@@ -17,6 +17,7 @@ It describes capabilities, permissions, presence, approvals, tasks, results, aud
 - Ordered, resumable observation streams
 - Stable error codes with client-localized presentation
 - Forward-compatible optional fields and explicit major-version negotiation
+- Session-bound surface, focus, coordinate, and fallback revisions that prevent misdirected adaptive input
 
 ## Non-goals
 
@@ -95,8 +96,35 @@ The first protocol surface is deliberately small:
 | `interactive.request` | Request a device-granted, user-presence-backed Interactive Control session |
 | `interactive.get` | Return the authoritative Interactive Control session state |
 | `interactive.end` | End the caller's Interactive Control session and invalidate its channel credentials |
+| `interactive.surface.list` | Return transient privacy-filtered app/window candidates inside the active session |
+| `interactive.surface.select` | Select Desktop, App Focus, window, or focused-region presentation using current revisions |
+| `interactive.surface.get` | Return the authoritative surface, focus, transition, and fallback state |
+| `interactive.surface.ack` | Acknowledge the new descriptor and keyframe before coordinate input resumes |
 
 Pairing and recovery use a separate pre-session flow with stricter rate limits.
+
+## Adaptive Remote Surface control
+
+Remote Surfaces improve presentation inside an already authorized Interactive Control session. They do not create durable application permissions, carry video in capability messages, or authorize anything outside that session.
+
+Every surface message binds:
+
+- Interactive Control session and authorization epoch
+- Random session-scoped surface and application/window tokens
+- Surface and coordinate-space revisions
+- Current focus revision when focus-derived behavior is requested
+- Privacy profile and permitted interaction class
+- Bounded expiry and per-direction sequence
+
+The initial surface kinds are `desktop`, `application`, `window`, and `focusedRegion`. Experimental `textInput` is available only after the host verifies a current ordinary editable focus. Later `semantic` and `provider` kinds require separate schema and effect review.
+
+`interactive.surface.list` is available only during an active unlocked Interactive Control session. It returns localized app names and icons, opaque tokens, generic window ordinals, and availability. It omits titles, document paths, URLs, thumbnails, Accessibility labels, and content by default.
+
+A successful selection advances surface and coordinate revisions. Coordinate input pauses until `interactive.surface.ack` confirms the new descriptor and keyframe boundary. If the source disappears, focus becomes ambiguous, or a modal surface cannot be included, the host emits `interactive.surface.fallback` and returns to a safe application or desktop surface.
+
+Experimental text messages use `interactive.text.begin`, `interactive.text.input`, and `interactive.text.end`. They also bind an opaque focus and element token. The first profile is keystroke-only and carries no field value. Focus loss, app or surface change, lock, timeout, or revision mismatch ends the text session before accepting another event.
+
+Secure or ambiguous fields never expose value, selection, length, label, placeholder, or description. The complete normative model is defined in `adaptive-remote-surfaces.md`.
 
 ## Snapshots and subscriptions
 
@@ -290,7 +318,7 @@ Errors carry a stable code, safe structured arguments, retry guidance, and corre
 
 Clients localize known codes. Unknown codes render a generic safe message plus the correlation ID. Raw provider errors, stack traces, filesystem paths, commands, secrets, and arbitrary server strings are not sent to remote clients.
 
-Representative namespaces are `auth.*`, `pairing.*`, `protocol.*`, `schema.*`, `policy.*`, `provider.*`, `operation.*`, `interactive.*`, `storage.*`, and `rateLimit.*`.
+Representative namespaces are `auth.*`, `pairing.*`, `protocol.*`, `schema.*`, `policy.*`, `provider.*`, `operation.*`, `interactive.*`, `interactive.surface.*`, `interactive.text.*`, `storage.*`, and `rateLimit.*`.
 
 ## Audit events
 
@@ -342,6 +370,9 @@ The executable protocol specification must test at least:
 - Forged, reordered, duplicated, oversized, or stale Interactive Control frames and input
 - Input after revocation, menu-app loss, lock transition, display change, or authorization-epoch change
 - Capture of the pre-lock desktop after macOS reports a locked or ambiguous user session
+- Surface-token substitution, stale coordinate or focus revisions, invisible modal windows, and app/window identity reuse
+- Accessibility timeouts or malformed metadata promoted into trusted semantic actions
+- Secure-field values, selections, labels, or typed content leaked through surface metadata, audit, or diagnostics
 - Compromised host and client keys, including documented recovery limits
 - Prompt injection and confused-deputy risks before any AI planner is added
 

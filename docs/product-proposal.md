@@ -9,7 +9,7 @@ The first implementation consists of:
 1. **Mac Companion Agent**, a standalone per-user macOS service with a trusted menu-bar administration UI.
 2. A native iOS and iPadOS client that pairs directly with one Mac initially, using identities that preserve future many-to-many support.
 3. A bounded, self-describing capability protocol shared by both apps.
-4. A separate Interactive Control protocol for an explicitly granted live screen, mouse, and keyboard session.
+4. A separate Interactive Control protocol with Adaptive Remote Surfaces for an explicitly granted live screen, mouse, and keyboard session.
 5. Bonjour discovery for local connections and saved user-managed private-network endpoints for remote connections.
 
 MacTools is not required for the MVP. After the native no-relay beta passes its repeat-use gate, a MacTools adapter becomes the first external provider so the product can validate its ecosystem advantage before publishing a general provider SDK.
@@ -18,7 +18,7 @@ MacTools is not required for the MVP. After the native no-relay beta passes its 
 
 Mac Companion is not a screen-first remote desktop. Existing products already provide pointer, keyboard, media, SSH, screenshot, community-package, and Tailscale features.
 
-Mac Companion starts with the job: show what the Mac is doing, offer dependable operations, and escalate to Interactive Control only when a dashboard or semantic action is insufficient.
+Mac Companion starts with the job: show what the Mac is doing, offer dependable operations, and escalate to Interactive Control only when a dashboard or semantic action is insufficient. Interactive Control adapts from the desktop to a phone-readable application, window, or focused region instead of treating the iPhone as a small monitor.
 
 Its operating model is:
 
@@ -26,6 +26,7 @@ Its operating model is:
 - Remote exposure is explicit and default-deny.
 - Actions have structured effects, permissions, availability, and results.
 - Interactive Control is a separate, named grant for live screen, mouse, and keyboard access.
+- App Focus and Smart Zoom improve presentation inside that grant without creating another permission tier.
 - Active viewing and control are visible and session-audited.
 - Consequential, destructive, credential, communication, and general shell operations are excluded from the first product.
 - MacTools capabilities can later be exposed through the same policy boundary without giving the remote client access to plugin internals.
@@ -52,7 +53,11 @@ Mac Companion works on a local network without an account or internet access. Re
 
 ### Dashboard-first, interactive when needed
 
-The client opens on current state, recent work, and named desired-state actions. Live screen, pointer, and keyboard control are an intentional escalation surface, not the default destination. This gives the user broad reach without reducing the product to a screen mirror.
+The client opens on current state, recent work, and named desired-state actions. Live screen, pointer, and keyboard control are an intentional escalation surface, not the default destination. Within that surface, the user can keep the desktop, focus one app or window, or zoom to the current control. This gives the user broad reach without reducing the product to a screen mirror.
+
+### Adaptive, with an honest fallback
+
+App Focus and Smart Zoom use ScreenCaptureKit and conservative Accessibility metadata to improve readability. The complete desktop remains one gesture away and becomes the automatic fallback when windows, dialogs, focus, or semantics cannot be resolved safely. A native control is shown only when the host can verify what it represents and can revalidate it immediately before use.
 
 ### Host-controlled
 
@@ -94,7 +99,11 @@ As an authorized user, I can invoke a small set of desired-state actions, unders
 
 ### Interactive intervention
 
-As an explicitly authorized owner, I can open a live view of one Mac display and use touch, pointer, scroll, and keyboard input when a semantic action is insufficient. Interactive Control is session-scoped, visible at the Mac, and immediately suspendable or revocable.
+As an explicitly authorized owner, I can open a live view of one Mac display and use touch, pointer, scroll, and keyboard input when a semantic action is insufficient. I can focus one app or window at phone-readable scale and zoom to the current control without losing a direct route back to the desktop. Interactive Control is session-scoped, visible at the Mac, and immediately suspendable or revocable.
+
+### Focused input
+
+As an iPhone user, when a compatible ordinary text field has focus, I can use a native iOS keyboard surface bound to that exact focus. If the field is secure, ambiguous, or changes before input is admitted, Mac Companion exposes no value and falls back to ordinary visual keyboard control.
 
 ### Future multiple devices
 
@@ -125,7 +134,7 @@ Each Mac has:
 
 1. **Overview:** System status, freshness, service health, and favorite approved controls.
 2. **Capabilities:** Controls grouped by provider, including Native System and later MacTools.
-3. **Interactive Control:** An explicit transition into a live screen, mouse, and keyboard session.
+3. **Interactive Control:** An explicit transition into a live screen, mouse, and keyboard session with Desktop, App Focus, and Smart Zoom modes.
 4. **Activity:** Connections, presence, decisions, approvals, results, and security events.
 
 Sensitive confirmations identify the Mac, provider, exact operation, parameters, effect categories, reversibility, expiration, and whether external systems or people are affected.
@@ -170,12 +179,16 @@ After the view-only lifecycle is trustworthy, the local Interactive Control alph
 
 - One selected display at a time
 - H.264 low-latency screen streaming
+- App/window switcher and App Focus using transient, privacy-filtered candidates
+- Smart Zoom around a verified focused element with manual visual fallback
 - Touch-derived absolute pointer, click, drag, and bounded scroll input
 - Physical-key and bounded text input with stuck-key recovery
 - A device-specific Interactive Control grant and fresh phone user presence at session start
 - Persistent menu-bar activity indication and a local suspend control
 - Explicit unlocked, locked, unavailable, ended, and revoked session states
 - No shell, file browser, clipboard synchronization, audio, relay, unattended pre-login operation, or multi-display composition
+
+Native Smart Input is an experiment during this alpha, not an exit requirement. It can enter the private-route beta only after focus-race, secure-field, Unicode, application-compatibility, and content-free-diagnostics gates pass. Generic semantic overlays and app-provided native surfaces remain post-MVP.
 
 Locked-session interaction is accepted only if physical-device spikes prove that public APIs show the genuine macOS lock surface and accept normal authentication input. Otherwise the session remains connected but reports `lockedInteractionUnavailable`.
 
@@ -190,6 +203,7 @@ The beta adds:
 - One evidence-backed desired-state native action
 - Durable operation IDs and reconnectable task results
 - Interactive Control over a user-managed private route
+- App Focus and Smart Zoom over the selected private route
 - Quantitative usability, reliability, resource, and repeated-use validation
 
 The first market-facing MVP continues to support one Mac and one phone in the product UX. Many-to-many presentation and the MacTools adapter follow the repeat-use gate; their identifiers and storage constraints are preserved from the start.
@@ -230,6 +244,8 @@ Initial product gates:
 - At least 3 identify one repeated monitoring or control job they would keep using.
 - Users can correctly explain paired, connected, viewing, and controlling after using the product.
 - Interactive Control testers can start, identify, suspend, and revoke a session without confusing it with Standard Control.
+- Interactive Control testers use App Focus and Smart Zoom for real tasks and prefer them to repeated desktop pinch-and-pan.
+- Modal dialogs, stale focus, or incompatible applications return to a comprehensible visual surface instead of accepting hidden or misdirected input.
 - Pointer and keyboard tasks succeed over LAN and the selected private route without hidden local activity.
 - No participant mistakes unreachable or stale status for live status, or assumes that unreachable proves the Mac is sleeping.
 

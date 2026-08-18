@@ -2,7 +2,7 @@
 
 Mac Companion is a native iPhone and iPad companion for observing, operating, and—when needed—interactively controlling a personal Mac through a standalone macOS agent.
 
-The product is local-first, policy-driven, and dashboard-first. Status and semantic actions are the primary experience; live screen, mouse, and keyboard control are an explicit escalation surface rather than the home screen. It is not a general shell, arbitrary file browser, vendor relay, or hidden agent. The Mac remains the final authority, and active remote use is visible and audited.
+The product is local-first, policy-driven, and dashboard-first. Status and semantic actions are the primary experience; adaptive live control is an explicit escalation surface rather than the home screen. It can move from the full desktop to a phone-readable application, window, or focused region while preserving the full desktop as an escape hatch. It is not a general shell, arbitrary file browser, vendor relay, or hidden agent. The Mac remains the final authority, and active remote use is visible and audited.
 
 > **Name decision:** The product and iPhone/iPad app are named **Mac Companion**, with the proposed App Store subtitle **Monitor and control your Mac**. The installed Mac component is **Mac Companion Agent**. This is final for planning and implementation, but public launch still requires trademark review and App Store name reservation.
 
@@ -16,6 +16,7 @@ Mac Companion is a secure operations console for personal Macs, especially alway
 - Understandable local audit history
 - Direct local or user-managed private-network connectivity
 - On-demand Interactive Control for live screen, mouse, and keyboard access
+- Adaptive Remote Surfaces: App Focus and Smart Zoom instead of forcing every task through a scaled desktop
 - A provider model that can expose MacTools and other canonical capabilities without exposing arbitrary internals
 
 ## Core decisions
@@ -32,6 +33,7 @@ Mac Companion is a secure operations console for personal Macs, especially alway
 - Keep iOS live monitoring foreground-oriented. A no-relay release does not promise background iPhone alerts or continuous sockets.
 - Use desired-state, retry-safe actions instead of toggles where possible.
 - Include live screen, pointer, and keyboard control in the MVP validation path, but keep shell, arbitrary files, clipboard synchronization, and AI outside it.
+- Include App Focus and Smart Zoom in the Interactive Control MVP. Treat native Smart Input as a gated experiment and semantic/app-provided surfaces as post-MVP work.
 - Require a logged-in macOS user. A locked session may remain observable and may expose the genuine macOS lock screen if public APIs permit; Mac Companion never bypasses authentication or reveals the desktop behind the lock.
 
 ## Documents
@@ -40,6 +42,7 @@ Mac Companion is a secure operations console for personal Macs, especially alway
 - [Architecture](docs/architecture.md)
 - [Protocol outline](docs/protocol-outline.md)
 - [Interactive Control specification](docs/interactive-control-spec.md)
+- [Adaptive Remote Surfaces](docs/adaptive-remote-surfaces.md)
 - [MVP plan](docs/mvp-plan.md)
 - [Distribution plan](docs/distribution-plan.md)
 - [Implementation orchestration](docs/implementation-orchestration.md)
@@ -47,7 +50,7 @@ Mac Companion is a secure operations console for personal Macs, especially alway
 
 ## Proposed products
 
-- **Mac Companion for iPhone and iPad:** Pair with Macs, view fresh status, invoke approved actions, open Interactive Control, review operations, and inspect activity.
+- **Mac Companion for iPhone and iPad:** Pair with Macs, view fresh status, invoke approved actions, open adaptive Interactive Control, focus an app or region, review operations, and inspect activity.
 - **Mac Companion Agent:** A per-user LaunchAgent that owns pairing, networking, identity, grants, policy, providers, audit history, and durable task state while that user remains logged in.
 - **Mac Companion menu app:** Persistent local administration and activity UI. It owns ScreenCaptureKit and Accessibility-mediated input, and Interactive Control stops if this visible process is unavailable.
 - **`maccompanionctl`:** Bundled diagnostic CLI that communicates only with the local service.
@@ -55,4 +58,4 @@ Mac Companion is a secure operations console for personal Macs, especially alway
 
 ## Current status
 
-This folder contains a product, architecture, protocol, Interactive Control, distribution, research, and delivery design only. It intentionally contains no implementation.
+This folder contains a product, architecture, protocol, Interactive Control, Adaptive Remote Surfaces, distribution, research, and delivery design only. It intentionally contains no implementation.

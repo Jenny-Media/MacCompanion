@@ -15,11 +15,18 @@ release-shaped bundle
   -> discovery and pairing
   -> view-only status and revocation
   -> locally granted Interactive Control
+  -> App Focus and Smart Zoom with deterministic fallback
   -> private-route diagnostics and one semantic action
   -> MacTools differentiation
 ```
 
 Interactive-control feasibility work starts alongside the view-only path, but it does not bypass identity, grants, authorization epochs, visibility, or lifecycle gates.
+
+### Protocol-first boundary
+
+The first production artifacts after the release-shaped scaffold are normative `spec/v0` documents, valid and invalid fixtures, pure state machines, and cross-target tests for identity, pairing, sessions, grants, authorization epochs, revocation, framing, bounds, errors, and one `status.snapshot`. Platform capture/input/window/focus experiments run in parallel because their results shape the Interactive Control extensions.
+
+Do not implement a broad provider protocol, optimize media framing, or build app UI against informal structs before the kernel fixtures exist. The first socket-backed convergence is deliberately narrow: pair, authenticate, request one current status snapshot, disconnect, and revoke. Interactive Control and Remote Surfaces then reuse that exact identity and fencing model.
 
 ## 2. Repository shape
 
@@ -29,6 +36,13 @@ Proposed layout:
 
 ```text
 MacCompanion/
+  LICENSE
+  NOTICE
+  TRADEMARKS.md
+  SECURITY.md
+  CONTRIBUTING.md
+  CODE_OF_CONDUCT.md
+  GOVERNANCE.md
   MacCompanion.xcworkspace
   MacCompanion.xcodeproj
   Apps/
@@ -45,16 +59,34 @@ MacCompanion/
     Integration/              # multi-process and network harness definitions
     System/                   # physical-device scenarios and evidence manifests
   Experiments/                # Stage 0 harness targets; never shipped by accident
+  spec/
+    capability-protocol/v0/   # normative, implementation-independent RFCs
+    interactive-control/v0/
+    adaptive-surfaces/v0/
+    schemas/
+    fixtures/                 # valid and invalid cross-implementation corpus
+    conformance/
   docs/
     adr/
     threat-model/
   scripts/                    # reproducible build, verify, package, notarize wrappers
-  .github/workflows/          # or the selected CI provider
+  .github/
+    CODEOWNERS
+    ISSUE_TEMPLATE/
+    workflows/
   AGENTS.md
   README.md
 ```
 
 The repository name may remain `MacCompanion`; user-facing spacing belongs in product metadata. The checked-in project is authoritative initially. Do not introduce a project generator, monorepo orchestrator, server stack, or code-generation pipeline until repeated manual drift proves one is needed.
+
+### Open-source posture
+
+Use one public monorepo while the protocol and both endpoints evolve together. The normative `spec/` tree is independent of Swift and Apple frameworks; the Swift package is one implementation. Split the protocol into another repository only when external implementers need an independent release cadence.
+
+Source availability does not confer Jenny Media signing identity, official update access, bundle identifiers, trademarks, or managed entitlements. Community forks use their own product identity, update feed, signing team, and Apple capability requests. Official release configuration and update URLs are injected separately and never become a usable trust anchor in an unofficial build.
+
+Before making the repository public, select an OSI license and contribution policy, reserve product trademarks separately, publish private vulnerability-reporting instructions, configure CODEOWNERS and protected branches, and enable secret scanning and push protection. Developer certificates, provisioning profiles, Sparkle private keys, notarization credentials, App Store keys, pairing material, and real diagnostic data never enter the repository.
 
 ## 3. Target and module boundaries
 
@@ -70,6 +102,7 @@ The first Swift package contains narrow targets rather than a single universal u
 | `CompanionHost` | macOS | Policy, operation admission, status, audit, provider registry | Remote sockets and TCC presentation |
 | `CompanionIPC` | macOS | Typed local messages, role restrictions, peer verification | Durable grants, media encoding |
 | `CompanionInteractiveShared` | macOS, iOS | Session model, media headers, display descriptors, input schemas | Capture, decode, input injection |
+| `CompanionRemoteSurfaces` | macOS, iOS | Surface/focus/text-session models, privacy profiles, transitions, fallbacks, fixtures | AX objects, capture filters, app activation, UI |
 | `CompanionInteractiveHost` | macOS | Capture/encode/input adapters behind executor interfaces | Device identity, network listener, durable grants |
 | `CompanionInteractiveClient` | iOS | Decode, render timing, touch/keyboard mapping | Host-state authority, remote grant changes |
 | `CompanionTestSupport` | test targets only | Fake clocks, randomness, stores, transports, providers, fixtures | Production linking |
@@ -87,8 +120,7 @@ The LaunchAgent links transport, persistence, host policy, security, wire, and I
 - CryptoKit and Security framework for supported cryptographic and Keychain operations
 - SQLite through a small repository boundary for agent-owned durable state; SwiftData is not the security record authority
 - NSXPCConnection/Mach service as the local IPC candidate, accepted only after the Stage 0 peer-identity spike
-- ScreenCaptureKit and VideoToolbox in the persistent menu app
-- Accessibility APIs and Core Graphics events in the persistent menu app
+- ScreenCaptureKit display/application/window filters and VideoToolbox encoding, AppKit activation, Accessibility observation, and Core Graphics events in the persistent menu app
 - OSLog with privacy annotations and a host-owned redaction allowlist
 - XCTest and Swift Testing where each is strongest; one fixture corpus is consumed by both Mac and iOS targets
 - Sparkle 2 as the only planned non-Apple runtime dependency in the first release
@@ -98,11 +130,12 @@ Any additional production dependency needs an ADR covering necessity, maintenanc
 ## 5. Concurrency and ownership rules
 
 - Each mutable subsystem has one actor or serialized executor as its authority.
-- The agent's session actor owns connection state; the authorization actor owns grants and epochs; the operation actor owns durable transitions; the interactive session actor owns the cross-process lease.
+- The agent's session actor owns connection state; the authorization actor owns grants and epochs; the operation actor owns durable transitions; the interactive session actor owns the cross-process lease; and its surface authority owns surface, coordinate, focus, and fallback revisions.
 - Database transactions remain below actor boundaries and never suspend while a write transaction is open.
 - ScreenCaptureKit callbacks immediately hand bounded samples to the encoder pipeline; they do not call policy or persistence.
 - Video is latency-first. Backpressure drops stale frames rather than growing tasks, buffers, or actor mailboxes.
 - Input admission is reliable and ordered. Pointer motion may coalesce; button, key, epoch, lock, and coordinate-revision transitions may not.
+- Window and Accessibility objects remain menu-app-local and map to ephemeral tokens. No actor caches an AX element or window identity beyond its surface revision.
 - UI state is a projection of authoritative snapshots and events. It cannot mutate grants or host state locally and then hope the agent agrees.
 - Cancellation is explicit at every process boundary. Disconnect and process death are tested as ordinary state transitions.
 
@@ -139,11 +172,13 @@ This begins as Stage 0 experiments and does not enter the shipped targets until 
 1. Verify managed-entitlement and TCC attribution using the final process identities.
 2. Measure ScreenCaptureKit to VideoToolbox H.264 on supported Macs.
 3. Verify Accessibility trust, bounded input injection, key/button release, and display transforms.
-4. Record exact behavior through lock, display sleep, user switch, logout, permission revocation, and menu-app crash.
-5. Freeze control and binary media fixtures.
-6. Add agent-issued authenticated IPC leases and authorization-epoch fencing.
-7. Deliver one granted, locally visible LAN session with no audit content leakage.
-8. Run latency, bandwidth, energy, memory, thermal, and one-hour failure tests.
+4. Prove display/application/window filter switching, app activation, related-window detection, modal fallback, and clean-keyframe transitions.
+5. Prove focus observation, bounds, stale-element behavior, AX timeout recovery, and secure-field redaction across native, browser, Electron, and custom-drawn apps.
+6. Record exact behavior through lock, display sleep, user switch, logout, permission revocation, and menu-app crash.
+7. Freeze control, surface, focus, text-session, and binary media fixtures.
+8. Add agent-issued authenticated IPC leases and authorization/surface/coordinate/focus fencing.
+9. Deliver one granted, locally visible LAN session with Desktop, App Focus, Smart Zoom, and no audit content leakage.
+10. Run latency, switch/fallback, bandwidth, energy, memory, thermal, and one-hour failure tests.
 
 This workstream produces Stage 2 only after Workstream B's identity and revocation foundations are used unchanged.
 
@@ -153,14 +188,16 @@ This workstream produces Stage 2 only after Workstream B's identity and revocati
 2. Create guided Tailscale and provider-neutral diagnostics without bundling VPN credentials or a relay.
 3. Add one evidence-backed desired-state action through the same policy, approval, persistence, and audit path.
 4. Adapt Interactive Control within the frozen route-independent authorization model.
-5. Run the repeat-use product study and market-MVP gates.
+5. Admit Smart Input only if its independent focus, secure-field, Unicode, keyboard-layout, input-method, and diagnostics gate passes.
+6. Run the repeat-use product study and market-MVP gates.
 
 ### Workstream E — differentiation after MVP
 
 1. Freeze a narrow MacTools bridge contract.
 2. Add default-deny remote exposure to reviewed actions.
 3. Prove provider disappearance, upgrade, generation, cancellation, and malicious-content handling.
-4. Generalize a provider SDK only from the working integration.
+4. Evaluate one confidence-rated semantic overlay or provider-native surface only after the market-MVP gate.
+5. Generalize a provider SDK only from the working integration.
 
 Shell, arbitrary files, clipboard, audio, multiple displays, headless service, pre-login control, and AI-driven input remain separate post-MVP workstreams.
 
@@ -186,18 +223,19 @@ The first implementation backlog should be created in this dependency order:
 | 14 | Screen capture and encoder experiment | Permission attribution, format, latency, resource report |
 | 15 | Input and display-transform experiment | Bounded input, stale revision, stuck-key tests |
 | 16 | Locked-session experiment | Exact public-API result and product-contract ADR |
-| 17 | Freeze Interactive Control framing | JSON and binary fixtures, fuzz bounds, keyframe recovery |
-| 18 | Deliver granted local Interactive Control | Local grant, phone user presence, indicator, suspend, audit privacy |
-| 19 | Package Stage 1/2 internal alpha | Clean install, update, uninstall, physical matrix |
-| 20 | Add private-route diagnostics and one action | No-relay Tailscale evidence and durable-operation tests |
+| 17 | App/window/focus experiment | Filter switching, modal fallback, AX timeout, secure-field, privacy report |
+| 18 | Freeze Interactive Control and Remote Surface framing | JSON/binary fixtures, revisions, fallback, fuzz bounds, keyframe recovery |
+| 19 | Deliver granted adaptive Interactive Control | Desktop, App Focus, Smart Zoom, grant, presence, indicator, suspend, audit privacy |
+| 20 | Package Stage 1/2 internal alpha | Clean install, update, uninstall, physical matrix |
+| 21 | Add private-route diagnostics and one action | No-relay Tailscale evidence and durable-operation tests |
 
-Issues 14–16 can run while 7–13 proceed because they are isolated platform probes. Issue 18 cannot merge by copying experimental shortcuts; it must consume the production identity, grant, epoch, IPC, and audit boundaries established earlier.
+Issues 14–17 can run while 7–13 proceed because they are isolated platform probes. Issue 19 cannot merge by copying experimental shortcuts; it must consume the production identity, grant, epoch, surface, IPC, and audit boundaries established earlier.
 
 ## 8. Change and review protocol
 
 - `main` remains releasable and protected. Use short-lived branches and small vertical pull requests.
 - One pull request owns a state-machine or wire change. Cross-cutting follow-ups rebase on that authority rather than editing parallel definitions.
-- Changes to identity, pairing, approval, epochs, grants, IPC roles, media credentials, updater trust, TCC ownership, or audit redaction require a threat-model note and a security-focused reviewer.
+- Changes to identity, pairing, approval, epochs, grants, IPC roles, media credentials, Remote Surface privacy or revisions, secure-field handling, updater trust, TCC ownership, or audit redaction require a threat-model note and a security-focused reviewer.
 - Changes to a versioned schema update fixtures first, document compatibility, and include negative tests.
 - A platform workaround that changes the product promise requires an ADR before implementation.
 - Experimental targets cannot be linked into a release configuration. Promotion from `Experiments` is a rewrite against approved interfaces, not a folder move.
@@ -213,6 +251,7 @@ For parallel work, assign one owner to each module and artifact. Avoid two branc
 - Unit-test all legal and illegal state transitions.
 - Run canonical wire and binary fixtures on Mac and iOS.
 - Run malformed length, Unicode, numeric-bound, replay, authorization-epoch, and migration tests.
+- Run surface-token substitution, stale surface/coordinate/focus revision, modal fallback, AX timeout, secure-field redaction, and text-session termination fixtures.
 - Run deterministic tests with fake time, randomness, network, storage, session, and provider boundaries.
 - Verify module dependency and release-configuration exclusions.
 - Scan logs and test artifacts for fixture secrets and prohibited content fields.
@@ -222,6 +261,7 @@ For parallel work, assign one owner to each module and artifact. Avoid two branc
 - LaunchAgent and menu app start, authenticate, negotiate, crash, recover, update, disable, and uninstall.
 - Pairing races, duplicate requests, lost replies, reconnect, revocation, and storage faults.
 - Interactive session start, frame gap, format change, lock, display change, permission loss, IPC loss, channel loss, and input reset.
+- Desktop/App Focus/Smart Zoom transitions, application/window destruction, modal-window fallback, focus races, secure fields, and manual-zoom fallback.
 - Old/new component compatibility and database migration.
 
 ### Physical-device checks
@@ -234,13 +274,14 @@ At minimum maintain:
 - One older supported iPhone, one current iPhone, and one iPad on the supported iOS/iPadOS line
 - LAN cases for Wi-Fi, Ethernet, interface change, Local Network denial, and degraded bandwidth
 - User-managed Tailscale cases only after the LAN identity path passes
+- AppKit, SwiftUI, browser, Electron, custom-drawn, multi-window, full-screen, ordinary-text, and secure-text compatibility cases
 
 ScreenCaptureKit, TCC, Accessibility, lock, sleep, Secure Enclave, Local Network, thermal, and updater conclusions cannot be accepted from Simulator-only evidence.
 
 ### Long-running and release checks
 
 - Seven-day idle/monitoring soak
-- One-hour Interactive Control session under input and display changes
+- One-hour Interactive Control session under input, display, app/window, modal, and focus changes
 - Repeated suspend/resume, menu-app crash, agent crash, network loss, and permission revoke loops
 - Clean install and uninstall on a user account with no development tools
 - Upgrade from the oldest supported stable version through every schema boundary
@@ -256,7 +297,7 @@ The first product has no centralized telemetry. Engineering evidence comes from:
 - Consented beta diaries and interviews
 - Deterministic operation and audit records within their documented quotas
 
-Diagnostic export applies the same host-owned allowlist as audit. It excludes host keys, pairing secrets, private addresses unless explicitly needed and previewed, video, screenshots, app/window titles, typed text, key events, pointer positions, clipboard data, and file contents.
+Diagnostic export applies the same host-owned allowlist as audit. It excludes host keys, pairing secrets, private addresses unless explicitly needed and previewed, video, screenshots, app/window titles and content, Accessibility labels and values, focus and text metadata, semantic trees, typed text, key events, pointer positions, clipboard data, and file contents.
 
 ## 11. Coding Definition of Ready
 
@@ -269,6 +310,7 @@ A work item is ready for implementation only when it has:
 - Failure, revocation, crash, update, and rollback behavior
 - Privacy and audit classification for every field
 - Protocol/schema version impact and fixture plan
+- Surface kind, confidence, coordinate/focus revisions, privacy allowlist, and visible fallback when adaptive presentation is involved
 - Physical-device evidence required
 - Explicit non-goals and dependencies
 
@@ -299,6 +341,7 @@ Only one product-level value blocks repository scaffolding: the company-controll
 - Exact canonical control framing and binary header offsets
 - Measured video adaptation thresholds
 - Whether public APIs support the genuine lock surface
+- Smart Input compatibility and whether any profile beyond keystroke-only can be supported safely
 - Final audit quota and retention numbers
 
 Each has a spike, acceptance evidence, fallback, and ADR location. None may silently broaden access or introduce a vendor relay.

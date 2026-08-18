@@ -4,7 +4,7 @@ Status: coding-baseline draft for Stage 0A and Stage 0B. Platform spikes may cha
 
 ## 1. Purpose and product boundary
 
-Interactive Control lets the owner of a paired iPhone or iPad view one display and send mouse and keyboard input to a logged-in personal Mac. It is an escalation from the Mac dashboard when a semantic action is unavailable or the user needs to inspect an unexpected state.
+Interactive Control lets the owner of a paired iPhone or iPad view one display and send mouse and keyboard input to a logged-in personal Mac. Its Adaptive Remote Surfaces can focus the desktop stream onto an application, window, or current region so the iPhone is more useful than a scaled monitor. It is an escalation from the Mac dashboard when a semantic action is unavailable or the user needs to inspect an unexpected state.
 
 Interactive Control is not:
 
@@ -14,7 +14,7 @@ Interactive Control is not:
 - A vendor relay, rendezvous service, VPN account, or public port-forwarding service
 - A way around macOS login, the lock screen, FileVault, TCC, or another macOS security boundary
 
-One device grant cannot imply any future administrator surface. Each later surface requires its own local grant, protocol, threat model, indicator treatment, and revocation behavior.
+One device grant cannot imply any future administrator capability such as shell, files, clipboard, audio, provider execution, or AI control. Each such capability requires its own local grant, protocol, threat model, indicator treatment, and revocation behavior. Desktop, App Focus, and Smart Zoom are presentation modes inside Interactive Control and do not broaden its grant.
 
 ## 2. Initial supported envelope
 
@@ -24,6 +24,7 @@ The first implementation supports:
 - One paired iPhone or iPad controlling one Mac at a time
 - One active Interactive Control session per Mac
 - One selected physical display per session
+- One authoritative visual surface at a time: Desktop, App Focus, one window, or a focused-region crop
 - H.264 video without audio
 - Absolute pointer movement, primary and secondary click, drag, bounded scrolling, physical-key input, modifiers, and bounded text input
 - Foreground iOS use over the local network or a user-managed private route such as Tailscale
@@ -35,7 +36,7 @@ It does not promise wake-from-sleep, logout or login-window control, FileVault p
 
 ### iOS client
 
-The client presents video, transforms touch and keyboard interaction into bounded input messages, obtains fresh user presence for every new session, pins the Mac identity, and reports foreground and rendering state honestly. It never decides that a grant exists or that the Mac is unlocked.
+The client presents video and host-declared Remote Surface modes, transforms touch and keyboard interaction into bounded input messages, obtains fresh user presence for every new session, pins the Mac identity, and reports foreground and rendering state honestly. It never decides that a grant exists, that the Mac is unlocked, or that pixels imply a safe semantic action.
 
 ### Per-user LaunchAgent
 
@@ -47,6 +48,7 @@ The agent is the sole network and authorization authority. It:
 - Creates the session and secondary-channel credentials
 - Enforces duration, foreground lease, rate, display, and input limits
 - Owns session state and audit metadata
+- Owns surface selection, privacy profile, focus, surface and coordinate revisions, and fallback state
 - Advances the authorization epoch and closes channels on suspension or revocation
 - Forwards only admitted session and input messages over authenticated local IPC
 - Relays bounded encoded media records returned over IPC to the media connection without decoding, inspecting, or persisting their content
@@ -59,6 +61,7 @@ The menu app is the sole interactive executor. It:
 
 - Owns ScreenCaptureKit capture and VideoToolbox encoding
 - Owns Accessibility trust and `CGEvent` input injection
+- Resolves ephemeral app/window candidates, focused-element bounds, capture filters, and Smart Zoom crops
 - Displays the controlling device and current activity in a persistent status item
 - Offers a local `Suspend <device>` action
 - Accepts work only with a current agent-issued IPC lease
@@ -79,7 +82,7 @@ A newly paired device receives Monitor Only. Pairing never grants Interactive Co
 
 ### Durable device grant
 
-Interactive Control is enabled from the Mac for one named paired device. The Mac shows a concrete warning that the device can see the current display and operate the mouse and keyboard, including interaction with other applications and potentially destructive UI. Acceptance records the device, grant revision, policy revision, time, configured Mac account, and current authorization epoch.
+Interactive Control is enabled from the Mac for one named paired device. The Mac shows a concrete warning that the device can see the current display, transiently enumerate applications and windows for App Focus, observe limited focus metadata for Smart Zoom, and operate the mouse and keyboard, including interaction with other applications and potentially destructive UI. Acceptance records the device, grant revision, policy revision, time, configured Mac account, and current authorization epoch.
 
 The grant remains until locally suspended, disabled, revoked, or invalidated by a security event. The device can request a session but cannot enable, broaden, or restore its own grant.
 
@@ -92,7 +95,7 @@ Every new session requires a fresh signature from the client's Secure Enclave-ba
 - Interactive Control capability and schema version
 - Device grant and policy revisions
 - Current authorization epoch
-- Requested display and session effects
+- Requested display, initial surface, and session effects
 - Issued and expiry times
 - Negotiated protocol version
 - Fresh server challenge and live authenticated-session identity
@@ -150,6 +153,8 @@ The coding contract is deliberately conservative:
 
 Text insertion is disabled while locked. Mac Companion does not label credential fields, inspect typed values, store key events, synthesize an unlock result, or preserve the last desktop image on the lock screen. The desktop stream resumes only after macOS reports the configured user active and a new coordinate-space revision has been acknowledged.
 
+Lock invalidates every application, window, focus, semantic, and text-session token before evaluating whether the genuine macOS lock surface is available. Adaptive app/window surfaces never continue on the lock screen.
+
 Support for `activeLocked` is a Stage 0 feasibility result, not a product promise until verified on the supported OS and hardware matrix. Failure of that spike does not block the unlocked Interactive Control MVP; it fixes the documented result at `lockedInteractionUnavailable`.
 
 ## 7. Transport profile
@@ -176,7 +181,9 @@ Session and input messages use the bounded envelope in `protocol-outline.md`. Th
 - `interactiveSessionID`
 - `authorizationEpoch`
 - Monotonic per-direction sequence
+- Surface revision and session-scoped surface token when a Remote Surface is involved
 - Coordinate-space revision when coordinates are present
+- Focus revision when focus-derived input is present
 - Message type and bounded payload length
 
 Duplicate state transitions are idempotent. Duplicate non-idempotent button and key transitions are rejected rather than replayed.
@@ -193,7 +200,7 @@ The media channel is a sequence of length-bounded binary records. The version-1 
 | Session ID and authorization epoch | Fence reuse across sessions and revocation. |
 | Media sequence | Detect duplicates and gaps. |
 | Presentation timestamp | Schedule display without relying on arrival time. |
-| Coordinate-space revision | Bind pixels to the current display transform. |
+| Coordinate-space revision | Bind pixels to the current visual-surface transform. |
 | Encoded width and height | Validate decoder and input transform state. |
 
 All integers use one documented network byte order. Unknown record types and oversized values close the media channel. Golden binary fixtures define the exact offsets, sizes, endianness, and invalid cases before implementation.
@@ -202,7 +209,7 @@ All integers use one documented network byte order. Unknown record types and ove
 
 The initial encoder profile is:
 
-- ScreenCaptureKit source from one explicitly selected physical display
+- ScreenCaptureKit source from one explicitly selected physical display, application/window filter, or host-derived crop
 - VideoToolbox hardware H.264 when available
 - H.264 High profile, level 4.1 or a lower mutually supported level
 - 4:2:0 video-range pixel buffers and AVCC access units
@@ -223,11 +230,11 @@ Initial performance targets on a healthy LAN are:
 
 The targets are gates for measurement, not claims for every private route.
 
-## 9. Display and coordinate model
+## 9. Visual surface and coordinate model
 
-At session start the host publishes a display descriptor containing a session-scoped display ID, pixel dimensions, point dimensions, scale, rotation, visible frame, encoded dimensions, and `coordinateSpaceRevision`.
+At session start the host publishes a Desktop surface descriptor containing a session-scoped display ID, pixel dimensions, point dimensions, scale, rotation, visible frame, encoded dimensions, `surfaceRevision`, and `coordinateSpaceRevision`.
 
-Pointer positions are encoded as unsigned normalized coordinates from 0 through 65,535 in the selected display's current unrotated logical space. The menu app applies the authoritative display transform. The client does not send raw global macOS coordinates.
+Pointer positions are encoded as unsigned normalized coordinates from 0 through 65,535 in the active visual surface's current logical space. The menu app applies the authoritative transform into the selected display, app/window, or crop. The client does not send raw global macOS coordinates.
 
 A display disconnect, resolution, scale, rotation, or selected-display change:
 
@@ -237,7 +244,15 @@ A display disconnect, resolution, scale, rotation, or selected-display change:
 4. Waits for client acknowledgement.
 5. Resumes with a fresh keyframe.
 
-Input carrying an old revision is rejected. The initial product ends or pauses the session if the selected display disappears; it does not silently redirect control to another display.
+Input carrying an old surface or coordinate revision is rejected. The initial product ends or pauses the session if the selected display disappears; it does not silently redirect control to another display.
+
+### Adaptive Remote Surface integration
+
+The required MVP modes are Desktop, App Focus, one-window focus, and Smart Zoom. A selection advances surface and coordinate revisions, pauses input, sends a discontinuity and clean keyframe, and waits for acknowledgement. An app quit, window disappearance, unresolved modal dialog, stale focus, Accessibility timeout, or inconsistent transform falls back to an application-filtered or Desktop surface rather than leaving invisible input active.
+
+The initial app/window picker transmits only localized app names and icons, opaque session tokens, generic window ordinals, and availability. Window titles, document paths, URLs, thumbnails, labels, values, and content are excluded. Smart Zoom initially uses category, bounds, editability, security status, and focus revision without transmitting the focused value or label.
+
+Smart Input is a gated experiment. Its first profile provides an iOS keyboard and visual focus crop while transmitting ordered key/text events, not field contents or whole-value replacements. Secure or ambiguous fields never transmit value, selection, length, label, placeholder, or description. The normative state and privacy rules are in `adaptive-remote-surfaces.md`.
 
 ## 10. Input profile
 
@@ -279,10 +294,10 @@ While a session is starting or active, the Mac status item remains visible and i
 Audit may store only bounded metadata such as:
 
 - Host, device, session, grant, policy, and authorization-epoch identifiers
-- Start and end times, route class, selected-display session identifier, format changes, byte and frame counters
-- State transitions, permission changes, rate-limit events, and terminal reason
+- Start and end times, route class, surface kind and ephemeral source-token changes, format changes, byte and frame counters
+- State and surface-kind transitions, privacy-safe fallback reason, permission changes, rate-limit events, and terminal reason
 
-Audit, logs, diagnostics, crash reports, and support bundles must not store video frames, screenshots, thumbnails, OCR, typed text, key identities, pointer coordinates, clipboard data, or application/window content. Providers cannot opt this data into logs.
+Audit, logs, diagnostics, crash reports, and support bundles must not store video frames, screenshots, thumbnails, OCR, typed text, key identities, pointer coordinates, clipboard data, application/window titles or content, Accessibility labels or values, focused-field metadata, or semantic trees. Providers cannot opt this data into logs.
 
 ## 13. Error model
 
@@ -299,6 +314,12 @@ The client distinguishes at least:
 - `interactive.accessibilityPermissionRequired`
 - `interactive.displayUnavailable`
 - `interactive.coordinateRevisionMismatch`
+- `interactive.surface.unavailable`
+- `interactive.surface.revisionMismatch`
+- `interactive.surface.fallback`
+- `interactive.surface.focusChanged`
+- `interactive.text.sessionEnded`
+- `interactive.text.secureFieldRestricted`
 - `interactive.channelExpired`
 - `interactive.authorizationChanged`
 - `interactive.rateLimited`
@@ -314,10 +335,11 @@ Coding can begin with isolated Stage 0 harnesses only after this specification i
 1. Persistent Content Capture entitlement request and approval path for the final App ID.
 2. TCC attribution and prompts when the persistent menu app owns ScreenCaptureKit and Accessibility while the agent owns the network.
 3. Capture, encoding, and input behavior on current stable macOS 26 hardware.
-4. Exact behavior through lock, display sleep, fast user switching, logout, menu-app crash, permission revocation, and OS update.
-5. Authenticated local IPC with code-identity and audit-token checks.
-6. TLS control and media framing over LAN and a user-managed Tailscale route, including revocation during active traffic.
-7. Latency, bandwidth, thermal, energy, and memory measurements against the initial budgets.
+4. Application/window capture switching, related-window fallback, Smart Zoom focus bounds, stale revisions, Accessibility timeouts, and secure-field redaction across the compatibility matrix.
+5. Exact behavior through lock, display sleep, fast user switching, logout, menu-app crash, permission revocation, and OS update.
+6. Authenticated local IPC with code-identity and audit-token checks.
+7. TLS control and media framing over LAN and a user-managed Tailscale route, including revocation during active traffic.
+8. Latency, bandwidth, thermal, energy, and memory measurements against the initial budgets.
 
 If locked-session interaction cannot be proved with public APIs, the supported contract becomes `lockedInteractionUnavailable`; no private API or credential workaround is acceptable.
 
@@ -330,8 +352,11 @@ Interactive Control is ready for an external alpha only when:
 - Revocation, suspension, epoch change, menu-app loss, logout, and user switch stop video and input deterministically.
 - Every remote key and button is released on every termination path.
 - Stale frames and stale coordinate input cannot cross a lock or display revision.
+- Stale surface and focus tokens cannot select, zoom, or type into a replaced app, window, or element.
+- App Focus and Smart Zoom fall back visibly when modal, Accessibility, or window identity is ambiguous.
 - The visible local indicator cannot be hidden while Interactive Control remains usable.
 - No content-bearing video or input data enters audit or diagnostics.
+- App/window/focus metadata follows the Adaptive Remote Surface allowlist and secure-field rules.
 - One-hour physical-device sessions meet documented resource and latency budgets or produce an approved ADR.
 - Testers can distinguish paired, connected, viewing, controlling, locked, suspended, and unreachable states without assistance.
 - An independent security review has no unresolved critical finding before public beta.

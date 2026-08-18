@@ -72,6 +72,16 @@ Apple's public documentation establishes capture and input APIs but does not pro
 
 **Decision:** locked interaction is a Stage 0 hardware spike, not an assumed capability. If public APIs and the approved entitlement expose the genuine macOS lock UI, Mac Companion may stream that surface and forward ordinary input while macOS performs authentication. It never captures a behind-lock desktop or implements an unlock mechanism. If support is absent, the explicit result is `lockedInteractionUnavailable`. Logout, another active console user, the no-user login window, and FileVault preboot remain unavailable.
 
+### Adaptive app, window, and focus presentation
+
+ScreenCaptureKit can enumerate displays, applications, and windows and capture one desktop-independent window with an [`SCContentFilter`](https://developer.apple.com/documentation/screencapturekit/sccontentfilter). A running [`SCStream` can update its content filter](https://developer.apple.com/documentation/screencapturekit/scstream/updatecontentfilter%28_%3Acompletionhandler%3A%29) without creating a separate identity or permission system. AppKit's [`NSRunningApplication`](https://developer.apple.com/documentation/appkit/nsrunningapplication) can identify and request activation of a running application.
+
+macOS Accessibility exposes the [`kAXFocusedUIElementAttribute`](https://developer.apple.com/documentation/applicationservices/carbon_accessibility/attributes/kaxfocuseduielemenattribute), element bounds, roles, attributes, and actions through [`AXUIElement`](https://developer.apple.com/documentation/applicationservices/axuielement). Editable elements may expose values and [`kAXSelectedTextRangeAttribute`](https://developer.apple.com/documentation/applicationservices/kaxselectedtextrangeattribute); secure fields have a documented [`kAXSecureTextFieldSubrole`](https://developer.apple.com/documentation/applicationservices/kaxsecuretextfieldsubrole).
+
+**Decision:** Mac Companion adopts Adaptive Remote Surfaces within Interactive Control. Desktop remains the visual escape hatch. App Focus and Smart Zoom are MVP requirements because public APIs provide credible primitives and they make the iPhone experience more useful than a small desktop mirror. Smart Input begins keystroke-only and remains gated on secure-field, focus-race, Unicode, input-method, and compatibility evidence. Generic semantic reconstruction and app-provided native surfaces follow the market-MVP gate.
+
+Accessibility metadata is advisory and can be incomplete, stale, or app-specific. The host confidence-rates it, uses ephemeral revision-bound tokens, and falls back to live pixels whenever it cannot prove the current app, window, focus, action, or privacy classification. Absence of a secure subrole is not proof that a value is safe to transmit.
+
 ### Local Network privacy
 
 Apple documents Local Network privacy behavior and common Bonjour issues in [TN3179: Understanding local network privacy](https://developer.apple.com/documentation/technotes/tn3179-understanding-local-network-privacy).
@@ -99,7 +109,7 @@ Unlocking the app and approving a particular operation are not treated as the sa
 
 Apple lists [`ProcessInfo.systemUptime`](https://developer.apple.com/documentation/foundation/processinfo/systemuptime) among APIs whose use may require an approved reason declaration in a privacy manifest.
 
-**Decision:** Stage 0 inventories every status API and release-manifest obligation. The alpha excludes public-IP discovery, top-process lists, application and window names, screenshots, and third-party data calls until each receives a separate value and privacy review.
+**Decision:** Stage 0 inventories every status API and release-manifest obligation. The alpha excludes public-IP discovery, top-process lists, screenshots, and third-party data calls until each receives a separate value and privacy review. Application/window/focus metadata is excluded from status and audit; the Adaptive Remote Surface allowlist permits only transient app names/icons, generic window ordinals, bounds, category, editability, and secure classification during an active Interactive Control session.
 
 ## Protocol research
 
@@ -165,6 +175,14 @@ LAN, private DNS, and user-managed overlay networks are routes to the same pinne
 
 The Mac app ships directly with Developer ID, hardened runtime, notarization, a notarized DMG, an embedded `SMAppService` agent, and signed Sparkle 2 updates. The iOS app uses TestFlight and then the App Store. The first deployment target is the stable macOS/iOS 26 generation, built with stable Xcode 26.6; generation 27 betas are compatibility tests. The Jenny Media LLC team is the release authority.
 
+### D14 — Adaptive Remote Surfaces inside Interactive Control
+
+Desktop, application, window, focused-region, and experimental text-input surfaces are ephemeral presentations inside the existing Interactive Control grant. The agent owns selection and revision authority; the visible menu app resolves ScreenCaptureKit and Accessibility objects; the iOS client renders declared confidence and fallback. Surface switching cannot persist beyond the session or broaden access.
+
+### D15 — Pixels outrank uncertain semantics
+
+Desktop is the universal escape hatch. App Focus and Smart Zoom may use verified application/window identity and focused-element bounds, but modal ambiguity, stale elements, timeout, incomplete Accessibility support, or privacy uncertainty returns to a visible app or desktop surface. Native controls require verified current semantics and are post-MVP; Mac Companion never guesses a consequential action from ambiguous metadata.
+
 ## Open decisions
 
 - Formal Mac Companion trademark review and App Store name reservation
@@ -174,5 +192,6 @@ The Mac app ships directly with Developer ID, hardened runtime, notarization, a 
 - Local IPC primitive and code-identity verification method
 - Pairing user experience and out-of-band fingerprint confirmation
 - Measured locked-session support using public APIs
+- Smart Input compatibility and secure-field evidence across the supported app and keyboard matrix
 - Audit quotas and retention periods
 - Which initial actions remain reliable across the supported OS matrix

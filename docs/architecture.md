@@ -8,6 +8,7 @@ flowchart TB
         LIBRARY["Mac library"]
         STATUS["Status and controls"]
         INTERACTIVE["Interactive Control"]
+        SURFACES["Desktop, App Focus, and Smart Zoom"]
         APPROVAL["Approvals and activity"]
         SESSIONKEY["Session identity key"]
         APPROVALKEY["User-presence approval key"]
@@ -31,6 +32,7 @@ flowchart TB
         TRANSPORT["Transport and negotiation"]
         PAIRING["Pairing and device registry"]
         PRESENCE["Sessions and presence leases"]
+        SURFACEAUTH["Remote Surface authority"]
         REGISTRY["Capability registry"]
         POLICY["Policy and permission engine"]
         EXECUTOR["Durable task executor"]
@@ -49,6 +51,8 @@ flowchart TB
     BONJOUR --> PROTOCOL
     PRIVATE --> PROTOCOL
     INTERACTIVE --> MEDIA
+    INTERACTIVE --> SURFACES
+    SURFACES --> MEDIA
     BONJOUR --> MEDIA
     PRIVATE --> MEDIA
     PROTOCOL <--> TRANSPORT
@@ -63,6 +67,8 @@ flowchart TB
 
     TRANSPORT <--> PAIRING
     PAIRING <--> PRESENCE
+    PRESENCE <--> SURFACEAUTH
+    SURFACEAUTH <--> IPC
     PRESENCE <--> REGISTRY
     REGISTRY --> POLICY
     POLICY --> EXECUTOR
@@ -128,6 +134,7 @@ The app owns trusted local presentation for:
 - Persistent active-viewing and active-control indication
 - Screen Recording, Persistent Content Capture, and Accessibility readiness and guidance
 - ScreenCaptureKit capture, H.264 encoding, and authorized mouse and keyboard execution
+- Privacy-filtered application/window resolution, App Focus, Smart Zoom, and transient focus observation
 
 If the UI is unavailable, the service retains its last approved configuration. New pairing approvals and permission elevation fail closed because there is no trusted local presentation surface. Interactive Control stops and cannot restart until the visible menu app and its authenticated IPC session return.
 
@@ -180,7 +187,7 @@ Stage 0 must choose and spike one exact transport rather than leaving "WebSocket
 
 The same application authentication and authorization runs over local and private-network endpoints. Tailscale, ZeroTier, WireGuard, or another user-managed route may supply reachability and network encryption but never substitutes for Mac Companion identity or policy. Mac Companion operates no relay, VPN account, rendezvous service, or public port-forwarding service.
 
-Interactive Control reuses the authenticated host and device session but has separate session-control, input, and video channels. The initial media profile is defined in `interactive-control-spec.md`; it does not add a second pairing or authorization system.
+Interactive Control reuses the authenticated host and device session but has separate session-control, input, and video channels. The initial media profile is defined in `interactive-control-spec.md`, and its adaptive presentation is defined in `adaptive-remote-surfaces.md`; neither adds a second pairing or authorization system.
 
 ## Device identity and pairing
 
@@ -241,7 +248,7 @@ The service distinguishes:
 - **Connected:** An authenticated live transport exists.
 - **Viewing:** A specific host detail surface is foreground-visible and renews a short lease.
 - **Controlling:** An admitted remote operation is active or an Interactive Control lease is accepting remote input.
-- **Capturing:** An Interactive Control session is capturing and transmitting one selected display.
+- **Capturing:** An Interactive Control session is capturing and transmitting the current Desktop, application/window, or focused-region visual surface.
 - **Agent active:** A future multi-step agent task is active.
 
 The host derives displayed state; clients cannot directly set an indicator to false while the corresponding operation is active.
@@ -261,6 +268,7 @@ The LaunchAgent:
 - Requires a fresh approval-key signature backed by phone user presence when a session starts
 - Creates and expires the session and its short-lived channel credentials
 - Enforces rate, duration, connection, display, and input limits
+- Owns authoritative surface selection, revisions, privacy policy, and fallback state
 - Forwards authorized control messages to the menu app over authenticated local IPC
 - Relays bounded encoded media records from the authenticated menu app to the session-bound media channel without decoding or persisting them
 - Suspends or ends the session on permission loss, menu-app loss, revocation, logout, user switch, or protocol failure
@@ -272,12 +280,14 @@ The persistent menu app:
 - Exposes a local `Suspend` command that asks the agent to advance the device authorization epoch
 - Rejects input unless it has a current, agent-issued session lease
 - Returns only bounded, session-tagged encoded media records over authenticated local IPC
+- Resolves session-scoped application/window tokens, focus bounds, and privacy-filtered surface metadata
+- Updates ScreenCaptureKit filters for App Focus and creates live crops for Smart Zoom
 - Releases pressed buttons and keys when the session ends or IPC is lost
 - Never receives the remote network socket, device private keys, or durable grants
 
-The iOS client opens Interactive Control from the Mac overview rather than making it the root experience. One selected display is supported initially. Multi-display selection may be added after the single-display coordinate and lifecycle model passes.
+The iOS client opens Interactive Control from the Mac overview rather than making it the root experience. One selected display is supported initially. Inside the session, Desktop is the visual escape hatch, App Focus can select one application or window, and Smart Zoom can enlarge a verified focused region. Multi-display selection may be added after the single-display coordinate and lifecycle model passes.
 
-The menu app never records screen pixels or remote input. Audit stores session metadata—device, start, stop, route, selected-display identifier, transitions, bytes, errors, and termination reason—not video, screenshots, typed text, or key events.
+The menu app never records screen pixels or remote input. Audit stores session metadata—device, start, stop, route, surface-kind transitions, ephemeral source-token changes, bytes, errors, and termination reason—not video, screenshots, titles, Accessibility values, focus content, typed text, or key events.
 
 ### Locked-session contract
 
@@ -291,6 +301,44 @@ When the Mac locks while the configured user remains logged in:
 - If lock-surface capture or input is unavailable, the client receives `lockedInteractionUnavailable`; it never receives the pre-lock desktop as though it were live.
 
 Logout, the no-user login window, another console user becoming active, and FileVault preboot terminate Interactive Control. Headless operation and wake-from-sleep are outside the initial contract until separate spikes prove a public, supportable design.
+
+## Adaptive Remote Surfaces
+
+A Remote Surface is an ephemeral, session-bound view and interaction context inside Interactive Control. It is not a capability grant, provider object, durable application identity, or second media session.
+
+Initial kinds are:
+
+- `desktop`: one selected display and its coordinate space
+- `application`: a selected application's relevant window set
+- `window`: one independently captured window
+- `focusedRegion`: a live crop around a verified focus or pointer region
+- `textInput`: an experimental native iOS keyboard presentation bound to one focused editable element
+
+Later `semantic` and `provider` surfaces may present verified native iOS controls. They do not ship in the market MVP.
+
+### Authority and data flow
+
+The LaunchAgent owns the current `surfaceID`, `surfaceRevision`, coordinate revision, privacy profile, authorization epoch, transition state, and fallback. It admits `interactive.surface.select` only for the active Interactive Control device and issues a bounded execution lease to the menu app.
+
+The menu app maps ephemeral surface tokens to ScreenCaptureKit, AppKit, and Accessibility objects. It can activate or raise an approved application/window, update a running capture filter, observe focus, produce an encoded crop, and return only allowlisted metadata. OS process IDs, window IDs, and Accessibility references never become durable wire identity.
+
+The iOS client renders the host's declared mode and confidence level. It cannot infer a semantic action from pixels, keep using a stale focus token, or convert an app/window listing into a capability outside the active session.
+
+### Transition and fallback
+
+Each surface switch advances the surface and coordinate revisions, stops coordinate input, sends a discontinuity and clean keyframe, and waits for client acknowledgement. Stale input is rejected.
+
+Sheets, popovers, menus, and dialogs may fall outside an independently captured window. The menu app either proves a related-window set, temporarily uses an application-filtered display, or returns to the desktop. It never lets the user interact with an invisible modal surface.
+
+App Focus and Smart Zoom remain available only while unlocked. A lock transition invalidates all app, window, focus, and text tokens before any lock-surface contract is evaluated.
+
+### Smart Input boundary
+
+The first Smart Input experiment is keystroke-only: the iPhone provides a native keyboard and toolbar while a live visual crop shows the target. It does not mirror or replace the field value and does not use the clipboard.
+
+A text session binds the current application, surface, coordinate, focus, element, and authorization revisions. Focus loss, app switch, surface change, lock, permission loss, or ambiguity ends it. Secure fields never transmit value, selection, length, label, placeholder, or description. Unknown fields fall back to keystroke-only or ordinary visual input.
+
+The complete state, privacy, protocol, compatibility, and acceptance rules are normative in `adaptive-remote-surfaces.md`.
 
 ## Capability and provider registry
 
@@ -398,7 +446,7 @@ The technical alpha exposes a bounded privacy-reviewed set:
 - Observed user-session state
 - Snapshot timestamp, source, and freshness
 
-Top processes, window/application names, public IP discovery, and third-party network calls are excluded until separately reviewed. Shared neutral sampling code may be extracted from MacTools, but the wire schema and privacy policy remain Mac Companion-owned.
+Top processes, public IP discovery, and third-party network calls are excluded until separately reviewed. Application/window metadata is also excluded from status and audit surfaces; the Adaptive Remote Surface specification permits only a transient, privacy-filtered subset during an active Interactive Control session. Shared neutral sampling code may be extracted from MacTools, but the wire schema and privacy policy remain Mac Companion-owned.
 
 Remote viewing can increase sampling frequency within a defined energy budget. When no eligible viewing lease exists, the provider returns to a lower-frequency schedule.
 
@@ -477,6 +525,7 @@ When disconnected, the client shows `unreachable` plus the last reported state a
 - Local IPC authenticates code, not merely the local user or socket path.
 - The approval key is separate from the reconnect key.
 - Interactive Control is a separate grant from semantic capabilities and covers only live screen, mouse, and keyboard.
+- App Focus, Smart Zoom, and experimental Smart Input are presentation and input profiles inside Interactive Control; they do not broaden its grant or survive its session.
 - The network-facing agent cannot directly capture the screen or inject input; the visible menu app requires a short-lived agent-issued lease over authenticated IPC.
 - Shell, files, clipboard, audio, autonomous agents, and desktop access behind the lock remain separate denied permissions.
 - AI can propose plans but never receives direct executor authority.

@@ -40,6 +40,12 @@ The prefix is a pre-scaffold decision because bundle IDs become part of Keychain
 
 The Persistent Content Capture entitlement is managed. Apple says it enables VNC apps to view and record the screen and requires a request before use; see [Persistent Content Capture](https://developer.apple.com/documentation/bundleresources/entitlements/com.apple.developer.persistent-content-capture). The Jenny Media LLC Account Holder should submit the request against the final Mac App ID as soon as the identifier exists. Stage 1 monitoring can proceed while it is pending; an external Interactive Control build cannot.
 
+### Open-source builds
+
+Publishing source does not publish Jenny Media's binary identity. Official Mac Companion releases alone use the Jenny Media bundle IDs, managed entitlement, Developer ID identity, notarization records, Sparkle feed, and App Store listing. A fork must choose its own product and bundle identities, request its own Apple capabilities, sign its own binaries, and configure an independent update feed.
+
+The repository may contain public keys, expected designated requirements for official verification, reproducible non-secret build logic, and release evidence formats. It must not contain Developer ID or distribution private keys, provisioning profiles, managed-entitlement profiles, notarization credentials, Sparkle private keys, App Store API keys, or a default configuration that lets an unofficial build consume the official update channel.
+
 ## 3. Shipped component boundary
 
 `Mac Companion.app` contains and signs as one release unit:
