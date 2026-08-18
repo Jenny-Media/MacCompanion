@@ -1,0 +1,41 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Xcode user and build state
+**/xcuserdata/
+*.xcuserstate
+*.xccheckout
+DerivedData/
+build/
+Archives/
+*.xcarchive
+*.dSYM
+*.dSYM.zip
+
+# Swift Package Manager
+.build/
+.swiftpm/
+
+# Packaged products
+*.app
+*.dmg
+*.pkg
+
+# Local configuration and release credentials
+.env
+.env.*
+!.env.example
+Secrets/
+.secrets/
+*.p12
+*.mobileprovision
+*.provisionprofile
+AuthKey_*.p8
+*.pem
+*.key
+
+# Local diagnostics
+*.log
+LocalData/

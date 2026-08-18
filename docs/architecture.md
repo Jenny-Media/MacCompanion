@@ -1,0 +1,483 @@
+# Mac Companion Architecture
+
+## System overview
+
+```mermaid
+flowchart TB
+    subgraph IOS["Mac Companion for iPhone and iPad"]
+        LIBRARY["Mac library"]
+        STATUS["Status and controls"]
+        INTERACTIVE["Interactive Control"]
+        APPROVAL["Approvals and activity"]
+        SESSIONKEY["Session identity key"]
+        APPROVALKEY["User-presence approval key"]
+    end
+
+    subgraph NETWORK["Private connectivity"]
+        BONJOUR["Bonjour discovery"]
+        PRIVATE["Saved Tailscale or private endpoint"]
+        PROTOCOL["Pinned encrypted capability protocol"]
+        MEDIA["Pinned Interactive Control channels"]
+    end
+
+    subgraph MAC["Mac user session"]
+        UI["Persistent menu-bar UI and interactive executor"]
+        CLI["maccompanionctl"]
+        SERVICE["Mac Companion Agent service"]
+        IPC["Authenticated local IPC"]
+    end
+
+    subgraph CORE["Service core"]
+        TRANSPORT["Transport and negotiation"]
+        PAIRING["Pairing and device registry"]
+        PRESENCE["Sessions and presence leases"]
+        REGISTRY["Capability registry"]
+        POLICY["Policy and permission engine"]
+        EXECUTOR["Durable task executor"]
+        AUDIT["Bounded audit store"]
+    end
+
+    subgraph PROVIDERS["Providers"]
+        SYSTEM["Native system status"]
+        SAFE["Desired-state system actions"]
+        BRIDGE["Authenticated provider bridge"]
+        MACTOOLS["MacTools adapter"]
+    end
+
+    LIBRARY --> BONJOUR
+    LIBRARY --> PRIVATE
+    BONJOUR --> PROTOCOL
+    PRIVATE --> PROTOCOL
+    INTERACTIVE --> MEDIA
+    BONJOUR --> MEDIA
+    PRIVATE --> MEDIA
+    PROTOCOL <--> TRANSPORT
+    MEDIA <--> TRANSPORT
+    SESSIONKEY <--> PAIRING
+    APPROVALKEY <--> POLICY
+
+    UI <--> IPC
+    CLI <--> IPC
+    IPC <--> SERVICE
+    SERVICE --- CORE
+
+    TRANSPORT <--> PAIRING
+    PAIRING <--> PRESENCE
+    PRESENCE <--> REGISTRY
+    REGISTRY --> POLICY
+    POLICY --> EXECUTOR
+    EXECUTOR <--> SYSTEM
+    EXECUTOR <--> SAFE
+    REGISTRY <--> SYSTEM
+    REGISTRY <--> SAFE
+    EXECUTOR --> AUDIT
+    PAIRING --> AUDIT
+    PRESENCE --> AUDIT
+
+    REGISTRY <--> BRIDGE
+    EXECUTOR <--> BRIDGE
+    BRIDGE <--> MACTOOLS
+```
+
+## Deployment decision
+
+The first service is a per-user LaunchAgent registered with Service Management. It starts after that user logs in, owns the listener and security state, and continues while the display is locked or a settings window is closed.
+
+The menu-bar app is a persistent status item while Mac Companion is enabled. It is the trusted local administration UI and owns ScreenCaptureKit capture and Accessibility-mediated input. It does not own the long-lived network listener. If the menu app quits or crashes, the LaunchAgent remains available for status and eligible semantic actions, immediately suspends Interactive Control, attempts to restore the menu app, and records the degraded state. Closing settings never hides or terminates the status item.
+
+For the first product:
+
+- A logged-in user session is required.
+- Locking the display does not stop the service.
+- Logging out stops that user's service.
+- Before login, after logout, and at a no-user login window, the host is unreachable.
+- Sleeping hosts are unreachable until they wake.
+- A locked display does not reveal the logged-in desktop. A physical-device spike may permit viewing and operating the genuine macOS lock screen; normal macOS authentication remains authoritative.
+- A future boot-time daemon requires a separate design for identity storage, TCC, provider access, user ownership, and UI coordination; it is not an implied extension of the LaunchAgent.
+
+The initial macOS product is distributed directly as a Developer ID-signed, hardened, notarized app under the Jenny Media LLC developer team. It targets the current stable macOS 26 line and is built with stable Xcode 26.6 and Swift 6.3; macOS 27 betas are compatibility targets, not deployment requirements. A Mac App Store build is not an MVP goal because Interactive Control and provider integration require capabilities that must be evaluated outside App Sandbox.
+
+## Process responsibilities
+
+### Mac Companion Agent
+
+The LaunchAgent owns:
+
+- Network listeners and Bonjour advertisement
+- Host identity and paired-device records
+- Per-device permission grants
+- Session credentials and revocation state
+- Capability and provider lifecycle
+- Policy decisions
+- Durable operation and idempotency records
+- Presence leases
+- Audit history and quotas
+
+### Menu-bar app
+
+The app owns trusted local presentation for:
+
+- Pairing approval and verification
+- Permission-profile changes
+- Device revocation
+- Active-session inspection and termination
+- Remote-exposure configuration
+- Activity and security history
+- Local Network and other permission guidance
+- Diagnostics and recovery
+- Persistent active-viewing and active-control indication
+- Screen Recording, Persistent Content Capture, and Accessibility readiness and guidance
+- ScreenCaptureKit capture, H.264 encoding, and authorized mouse and keyboard execution
+
+If the UI is unavailable, the service retains its last approved configuration. New pairing approvals and permission elevation fail closed because there is no trusted local presentation surface. Interactive Control stops and cannot restart until the visible menu app and its authenticated IPC session return.
+
+### Diagnostic CLI
+
+`maccompanionctl` communicates through authenticated local IPC and uses the same policy, executor, and audit path as the app and network clients.
+
+Initial responsibilities:
+
+- Show service state and endpoints
+- List providers and capabilities
+- List paired devices and active sessions
+- Revoke devices and terminate sessions when locally authorized
+- Tail sanitized diagnostic events
+- Validate provider manifests and protocol fixtures
+- Invoke explicitly CLI-enabled local test actions
+
+The service validates the connecting process using platform credentials such as the XPC audit token and an expected code-signing requirement. Filesystem path or same-user execution alone is not authentication. Administrative CLI operations are separately authorized and audited.
+
+## Networking
+
+### Discovery and permission
+
+The service advertises one declared Bonjour service type. The iOS app browses only that type. Both products include clear Local Network usage descriptions and explicit denied/restricted recovery UI.
+
+Bonjour provides endpoint discovery, not identity. TXT records contain only bounded non-secret hints such as protocol major versions and a truncated host-identity hint. Clients treat all discovery metadata as untrusted until the pinned secure session succeeds.
+
+### Endpoint identity
+
+The host creates a long-lived signing identity on first setup. Pairing pins that identity independently of hostname, IP address, Bonjour instance name, or Tailscale machine name.
+
+A paired host can therefore be reached through:
+
+- A resolved Bonjour endpoint
+- A saved Tailscale MagicDNS name
+- A saved private IPv4 or IPv6 address
+- Another user-managed private route that exposes a stable IP or DNS endpoint
+
+Changing an endpoint does not change host identity. Changing or losing the host identity requires an explicit recovery or re-pairing flow.
+
+### Transport
+
+Stage 0 must choose and spike one exact transport rather than leaving "WebSocket-style" undefined. The initial profile uses:
+
+- TLS 1.3 with pinned Mac Companion host identity
+- Explicit application protocol negotiation
+- One request/response stream for bounded commands
+- One ordered subscription stream for snapshots, changes, tasks, approvals, and presence
+- Strict frame, nesting, collection, string, artifact, and operation-duration limits
+
+The same application authentication and authorization runs over local and private-network endpoints. Tailscale, ZeroTier, WireGuard, or another user-managed route may supply reachability and network encryption but never substitutes for Mac Companion identity or policy. Mac Companion operates no relay, VPN account, rendezvous service, or public port-forwarding service.
+
+Interactive Control reuses the authenticated host and device session but has separate session-control, input, and video channels. The initial media profile is defined in `interactive-control-spec.md`; it does not add a second pairing or authorization system.
+
+## Device identity and pairing
+
+### Two client keys
+
+The iOS client uses two different keys:
+
+1. **Session identity key:** Device-only, non-synchronizing, and usable for unattended reconnection while the device is unlocked according to the selected Keychain accessibility class. It authenticates the installed client instance.
+2. **Approval key:** Secure Enclave-backed where available and gated by current biometric user presence. It signs exact approval challenges. Biometric enrollment changes invalidate or require re-enrollment of this key.
+
+Routine reconnection never triggers Face ID or Touch ID. Approval is a cryptographic signature, not merely a successful local UI callback.
+
+### Pairing flow
+
+```mermaid
+sequenceDiagram
+    participant I as iPhone or iPad
+    participant S as Mac Companion Agent
+    participant M as Mac administration UI
+    participant U as User
+    participant K as Keychain and Secure Enclave
+
+    M->>S: Request short-lived pairing session
+    S->>M: Pairing ID, endpoint candidates, host fingerprint
+    M->>U: Display QR and verification code
+    U->>I: Scan QR
+    I->>K: Create session and approval keys
+    I->>S: Pairing ID, public keys, client metadata
+    S->>I: Host identity and nonce challenge
+    I->>S: Signed challenge response
+    S->>M: Device details and matching verification code
+    U->>M: Approve and select initial profile
+    M->>S: Signed local authorization decision
+    S->>I: Issue proof-of-possession authorization record
+    S->>S: Store device, key bindings, scopes, and revocation state
+```
+
+The QR contains no permanent bearer credential. It contains an expiring pairing ID, endpoint candidates, protocol hints, and the host-identity fingerprint. The service rate-limits pairing, expires unused sessions, prevents verification-code reuse, and audits success and failure without recording secrets.
+
+### Revocation and recovery
+
+Revocation is immediate:
+
+- All authenticated sessions for the device are closed.
+- New requests and approvals are rejected.
+- Pending but unadmitted operations are denied.
+- Running cancellable operations receive cancellation requests.
+- Completed or non-cancellable effects are not represented as undone.
+- The revocation event is durably recorded before success is reported locally.
+
+Losing or reinstalling the iOS app creates a new device identity. Losing the host identity requires explicit recovery and invalidates prior pins. Backup and migration behavior is documented; private identity keys are not silently synchronized through iCloud Keychain.
+
+## Session and presence model
+
+The service distinguishes:
+
+- **Paired:** A durable authorization record exists.
+- **Connected:** An authenticated live transport exists.
+- **Viewing:** A specific host detail surface is foreground-visible and renews a short lease.
+- **Controlling:** An admitted remote operation is active or an Interactive Control lease is accepting remote input.
+- **Capturing:** An Interactive Control session is capturing and transmitting one selected display.
+- **Agent active:** A future multi-step agent task is active.
+
+The host derives displayed state; clients cannot directly set an indicator to false while the corresponding operation is active.
+
+Viewing leases include a lease ID, client session ID, host ID, screen/surface identifier, issued time, expiration, and monotonically increasing renewal counter. The service clears viewing after expiration and records state transitions rather than every heartbeat.
+
+The iOS Mac library screen does not automatically count as viewing every listed Mac. Viewing begins only when current data from a host is intentionally visible on an eligible detail surface.
+
+## Interactive Control
+
+Interactive Control is a device-specific permission for one live screen plus mouse and keyboard. It is deliberately separate from Standard Control and from future shell, file, clipboard, audio, automation, or AI permissions.
+
+The LaunchAgent:
+
+- Authenticates the device and pins the host identity
+- Verifies the Interactive Control grant and current authorization epoch
+- Requires a fresh approval-key signature backed by phone user presence when a session starts
+- Creates and expires the session and its short-lived channel credentials
+- Enforces rate, duration, connection, display, and input limits
+- Forwards authorized control messages to the menu app over authenticated local IPC
+- Relays bounded encoded media records from the authenticated menu app to the session-bound media channel without decoding or persisting them
+- Suspends or ends the session on permission loss, menu-app loss, revocation, logout, user switch, or protocol failure
+
+The persistent menu app:
+
+- Owns ScreenCaptureKit, VideoToolbox encoding, and Accessibility-mediated `CGEvent` injection
+- Shows a non-provider-controlled local activity indicator and the controlling device
+- Exposes a local `Suspend` command that asks the agent to advance the device authorization epoch
+- Rejects input unless it has a current, agent-issued session lease
+- Returns only bounded, session-tagged encoded media records over authenticated local IPC
+- Releases pressed buttons and keys when the session ends or IPC is lost
+- Never receives the remote network socket, device private keys, or durable grants
+
+The iOS client opens Interactive Control from the Mac overview rather than making it the root experience. One selected display is supported initially. Multi-display selection may be added after the single-display coordinate and lifecycle model passes.
+
+The menu app never records screen pixels or remote input. Audit stores session metadata—device, start, stop, route, selected-display identifier, transitions, bytes, errors, and termination reason—not video, screenshots, typed text, or key events.
+
+### Locked-session contract
+
+When the Mac locks while the configured user remains logged in:
+
+- The service stays reachable and allowed status and semantic operations remain available.
+- Desktop frames stop before the session reports the lock transition.
+- If the persistent-capture entitlement and public APIs expose the genuine macOS lock surface, the user may view it and send ordinary pointer and keyboard input to authenticate through macOS.
+- Mac Companion does not request, store, inspect, summarize, or audit the credential input and does not implement its own unlock mechanism.
+- The desktop stream resumes only after macOS reports the configured user session active.
+- If lock-surface capture or input is unavailable, the client receives `lockedInteractionUnavailable`; it never receives the pre-lock desktop as though it were live.
+
+Logout, the no-user login window, another console user becoming active, and FileVault preboot terminate Interactive Control. Headless operation and wake-from-sleep are outside the initial contract until separate spikes prove a public, supportable design.
+
+## Capability and provider registry
+
+The registry combines provider descriptions into a versioned capability snapshot. It owns stable namespaced IDs and detects:
+
+- Duplicate provider or capability IDs
+- Unsupported schema or protocol versions
+- Missing English localization fallbacks
+- Unsupported presentation schemas
+- Invalid or lowered effect declarations
+- Provider disappearance, generation changes, or stale state
+- Capabilities newly added after a permission profile was granted
+
+New capabilities are denied remotely until host policy explicitly includes them. A broad profile is a versioned host policy that expands to an inspectable allowlist; it is not a promise to authorize every future action below a provider-declared risk level.
+
+Provider content is untrusted input. Text, icons, URLs, errors, schemas, and presentation hints are bounded and sanitized. Providers never write directly to a network connection.
+
+## Policy model
+
+Every request passes through policy on receipt and again immediately before provider admission. The policy engine validates:
+
+- Client and session identity
+- Per-device capability grant
+- Remote exposure policy
+- Schema and canonical parameter digest
+- Provider availability, generation, and execution revision
+- Current user-session and host state
+- Required macOS permissions
+- Effect categories, reversibility, and user-presence requirement
+- Rate, concurrency, and exclusive-operation limits
+- Approval signature, binding, and expiration
+- Durable idempotency state
+
+### Effects instead of one ordinal risk value
+
+Providers declare minimum facts, and the host may only add restrictions:
+
+- Reads public status
+- Reads private data
+- Changes reversible local state
+- Disrupts availability or active work
+- Affects external systems or people
+- Uses credentials or protected resources
+- Destructive or difficult to reverse
+- Requires foreground interaction
+- Supports locked-session execution
+- Supports cancellation
+
+The host derives presentation and approval policy from these facts. This avoids pretending that private-data access and availability disruption are points on one universal scale.
+
+## User-presence approval
+
+The host issues a nonce challenge containing or hashing:
+
+- Host and client identities
+- Operation ID
+- Capability ID and schema version
+- Provider ID, version, generation, and execution revision
+- Canonical parameter digest
+- Declared effect facts and host-raised policy
+- Relevant host-session state
+- Issued and expiration times
+- Policy revision
+
+The client displays these exact semantics and signs the challenge with the approval key after biometric user presence. The server uses its own clock for expiration and revalidates current state immediately before admission. A changed field, provider revision, permission, or session state invalidates the approval.
+
+## Task execution and idempotency
+
+Each invocation has a client-generated operation ID bound to client identity, capability, and canonical parameters. The durable operation record is created before provider admission.
+
+Guarantees are deliberately bounded:
+
+- Reusing an operation ID with the same binding returns the existing task within the retention window.
+- Reusing it with different parameters or capability is rejected.
+- Network retries do not create a second admitted task.
+- Providers should expose desired-state or intrinsically idempotent actions.
+- If the host crashes after an external effect but before durable completion, the task may become `outcomeUnknown`; Mac Companion never silently retries such an effect.
+- Provider-specific reconciliation may later resolve an unknown outcome.
+
+Task states are:
+
+- `pendingPolicy`
+- `awaitingApproval`
+- `queued`
+- `running`
+- `succeeded`
+- `failed`
+- `cancelRequested`
+- `cancelled`
+- `outcomeUnknown`
+
+Cancellation is best-effort unless the provider contract explicitly guarantees more. A timeout does not automatically mean the underlying effect stopped.
+
+## Native providers
+
+### System status
+
+The technical alpha exposes a bounded privacy-reviewed set:
+
+- CPU and memory utilization
+- Disk capacity
+- Battery, power, and thermal state when available
+- System uptime
+- Mac Companion Agent health and version
+- Observed user-session state
+- Snapshot timestamp, source, and freshness
+
+Top processes, window/application names, public IP discovery, and third-party network calls are excluded until separately reviewed. Shared neutral sampling code may be extracted from MacTools, but the wire schema and privacy policy remain Mac Companion-owned.
+
+Remote viewing can increase sampling frequency within a defined energy budget. When no eligible viewing lease exists, the provider returns to a lower-frequency schedule.
+
+### Desired-state system actions
+
+The first action candidates are:
+
+- Set audio muted state
+- Set system appearance
+- Start or stop a bounded keep-awake lease
+
+They use explicit desired state, bounded execution time, structured results, live availability, and final host validation.
+
+## MacTools adapter
+
+The first external provider is an authenticated MacTools adapter. It maps MacTools' existing canonical action model into Mac Companion without opening a remote listener or transferring device credentials to MacTools.
+
+The adapter reuses where compatible:
+
+- Namespaced action keys and schema versions
+- Sorted and bounded primitive parameter sets
+- Privacy and portability metadata
+- Background, foreground, cancellation, progress, concurrency, and timeout metadata
+- Provider generation and execution-revision checks
+- Final MacTools availability and execution validation
+
+It adds or translates:
+
+- Explicit default-deny remote exposure independent of run-link policy
+- Mac Companion effect facts and host-raised approval policy
+- Requested-locale metadata with an English fallback
+- Durable operation and audit wrappers
+- Structured remote-safe errors and redaction
+
+MacTools remains final authority for MacTools actions. Quitting or upgrading MacTools changes only that provider generation and cannot affect native Mac Companion capabilities.
+
+Only after this adapter works should the provider bridge be generalized into a public SDK and manifest format.
+
+## Audit store
+
+The audit store is bounded from the first alpha. It records:
+
+- Pairing, key, permission, and revocation changes
+- Authentication and session lifecycle
+- Presence transitions
+- Capability-registry and provider-generation changes
+- Requested, denied, approved, admitted, completed, failed, cancelled, and unknown operations
+- Protocol, policy, storage, and security errors
+
+Every event includes a stable event ID, correlation/operation ID when applicable, actor identity, source, host wall-clock time, monotonic ordering value, event code, redacted fields, and policy revision.
+
+Sensitive schema fields are omitted or irreversibly summarized. Raw secrets, credentials, private keys, stack traces, filesystem paths, screenshot content, video frames, and input events are never logged. Providers may propose sensitivity metadata, but only a reviewed host-owned allowlist can add provider fields to audit storage.
+
+The store has a byte quota, age limit, rate limit, compaction policy, and disk-full behavior before the alpha ships. Security-relevant writes fail closed when their absence would make an operation unauditable. The local log is diagnostic and accountability-oriented; it is not claimed to resist a compromised local user unless a later tamper-evident export is added.
+
+## Host-state semantics
+
+Mac Companion represents current observations separately from inference:
+
+1. `userSessionActive`
+2. `userSessionLocked`
+3. `otherConsoleUserActive`
+4. `serviceStoppingForLogout`
+5. `hostPreparingForSleep`
+6. `unreachable`
+
+Stage 0 must prove that public session notifications distinguish lock from fast user switching on supported macOS versions. Until proven, the service maps ambiguity to `otherConsoleUserActive`, suspends Interactive Control, and denies locked-session-sensitive operations.
+
+When disconnected, the client shows `unreachable` plus the last reported state and timestamp. It never converts a lost connection into a definitive live `sleeping` or `offline` diagnosis.
+
+## Security boundaries
+
+- Tailscale peers and local-network peers are untrusted until Mac Companion authentication succeeds.
+- Providers cannot grant themselves remote exposure, device scope, or lower effect declarations.
+- A paired client can request only its explicit grants.
+- Local IPC authenticates code, not merely the local user or socket path.
+- The approval key is separate from the reconnect key.
+- Interactive Control is a separate grant from semantic capabilities and covers only live screen, mouse, and keyboard.
+- The network-facing agent cannot directly capture the screen or inject input; the visible menu app requires a short-lived agent-issued lease over authenticated IPC.
+- Shell, files, clipboard, audio, autonomous agents, and desktop access behind the lock remain separate denied permissions.
+- AI can propose plans but never receives direct executor authority.
+- A compromised host or compromised local user is outside the guarantee of remote audit integrity and can access data available to that host account; this limitation is explicit in the threat model.
