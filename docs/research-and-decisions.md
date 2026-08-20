@@ -1,6 +1,6 @@
 # Mac Companion Research and Decision Record
 
-Research checked on 2026-08-17. Product listings, platform behavior, and documentation can change. Naming notes are preliminary product research, not legal advice or trademark clearance.
+Research checked on 2026-08-19. Product listings, platform behavior, and documentation can change. Naming notes are preliminary product research, not legal advice or trademark clearance.
 
 ## Product-name decision
 
@@ -19,7 +19,7 @@ The current-product screen found that direct alternatives in this category are u
 
 **Why not Mac Connect:** it names the pairing step, not the lasting value, and is too generic to search or protect well.
 
-**Why not Mac Remote Control:** it is the clearest category label but is crowded and would reduce the product to its pointer-and-keyboard fallback. Mac Companion includes Interactive Control, but its differentiator is moving from status to semantic action to live intervention without making a blank remote screen the whole product.
+**Why not Mac Remote Control:** it is the clearest category label but is crowded and would reduce the product to only its flagship Control path. Mac Companion also supports status and bounded operations without requiring a screen session.
 
 **Naming constraint:** [Apple’s App Review Guideline 2.3.7](https://developer.apple.com/app-store/review/guidelines/#accurate-metadata) asks developers to choose a unique app name and limits it to 30 characters. [Apple’s third-party trademark guidance](https://www.apple.com/legal/intellectual-property/guidelinesfor3rdparties.html) permits “Mac” in a product name only under stated conditions, including combining it with a non-generic word. Legal review and App Store name reservation therefore remain release gates even though the planning name is final.
 
@@ -35,10 +35,22 @@ The adjacent market already contains products described as Mac remotes:
 - [Unyx](https://unyxapp.com/) uses “Mac companion” descriptively for its installed Mac component, illustrating why Mac Companion will need stronger visual identity and metadata rather than relying on exclusive ownership of the words.
 - [CommandDeck](https://apps.apple.com/us/app/commanddeck-remote-for-mac/id6774549798) markets a Mac menu-bar companion and community command packages.
 - [Shellcove](https://apps.apple.com/us/app/shellcove-remote-coding/id6774076404) markets remote coding with Tailscale and pinned TLS.
+- [Cuevello](https://cuevello.app/) already combines display and app-window streaming, app switching, touch and keyboard control, menus, workflows, files, and local or VPN connectivity.
+- [MacReacher](https://macreacher.app/) advertises full-desktop and single-app streaming, a remote app switcher, direct LAN or user-managed VPN sessions, and multiple touch-control modes.
+- [Apperture](https://runapperture.com/) is explicitly positioned around filling an iPhone or iPad with one Mac application rather than the complete desktop.
+- [Tomaco](https://tomaco.app/) competes on conventional remote-desktop performance, advertising peer-to-peer operation and up to 5K at 120 Hz on a local network.
 
-**Decision:** do not lead with “remote desktop for your Mac.” Position Mac Companion as a **secure companion for monitoring and controlling a Mac you own**: semantic status, bounded actions, visible presence, host-enforced policy, provider integrations, and a separately granted live screen/mouse/keyboard fallback.
+App/window focus, QR pairing, peer-to-peer networking, Tailscale compatibility, hardware video, and touch control are category features rather than sufficient differentiation by themselves.
 
-That is a hypothesis, not proof of demand. Stage -1 interviews and the differentiated-beta repeat-use gates are required before calling the product a market-facing MVP.
+**Decision:** position Mac Companion around three first-class paths: **Observe**, **Act**, and **Control**. Adaptive Remote Desktop is the flagship Control capability, but Mac Companion is not only a remote desktop: status and bounded actions remain useful without starting capture. The differentiation hypothesis is the combination of surface adaptation, interaction adaptation, honest fallback, host-authoritative safety, and nonvisual operations under one private device and permission model.
+
+That is a hypothesis, not proof of demand. Competitive teardown and product definition run alongside Stage 0 rather than blocking coding. Dogfooding, an external TestFlight cohort, user-exported privacy-preserving evidence, and repeat-use gates are required before calling the product a market-facing MVP; formal interviews are optional rather than mandatory.
+
+### App Store classification risk
+
+[App Review Guideline 4.2.7](https://developer.apple.com/app-store/review/guidelines/#minimum-functionality) adds restrictions when a remote desktop mirrors specific software rather than generically mirroring the host. Mac Companion therefore keeps full Desktop first-class, implements App and Window Focus generically rather than as an app catalog, renders and executes all Mac software on the user-owned host, and does not remotely install or sell Mac software. Because the product also supports a user-managed private route, its App Review explanation and TestFlight behavior must be tested early rather than treating approval as automatic.
+
+Apple recommends [`SCContentSharingPicker`](https://developer.apple.com/documentation/screencapturekit/sccontentsharingpicker) instead of a custom capture picker, while the managed [Persistent Content Capture entitlement](https://developer.apple.com/documentation/bundleresources/entitlements/com.apple.developer.persistent-content-capture) exists for VNC applications. Stage 0 must determine the supported relationship among local capture consent, persistent capture, and remotely requested display/application/window changes. The entitlement request and review notes describe the actual generic remote-desktop behavior rather than assuming that an iPhone-side app/window picker is automatically permitted.
 
 ## Platform findings
 
@@ -78,7 +90,7 @@ ScreenCaptureKit can enumerate displays, applications, and windows and capture o
 
 macOS Accessibility exposes the [`kAXFocusedUIElementAttribute`](https://developer.apple.com/documentation/applicationservices/carbon_accessibility/attributes/kaxfocuseduielemenattribute), element bounds, roles, attributes, and actions through [`AXUIElement`](https://developer.apple.com/documentation/applicationservices/axuielement). Editable elements may expose values and [`kAXSelectedTextRangeAttribute`](https://developer.apple.com/documentation/applicationservices/kaxselectedtextrangeattribute); secure fields have a documented [`kAXSecureTextFieldSubrole`](https://developer.apple.com/documentation/applicationservices/kaxsecuretextfieldsubrole).
 
-**Decision:** Mac Companion adopts Adaptive Remote Surfaces within Interactive Control. Desktop remains the visual escape hatch. App Focus and Smart Zoom are MVP requirements because public APIs provide credible primitives and they make the iPhone experience more useful than a small desktop mirror. Smart Input begins keystroke-only and remains gated on secure-field, focus-race, Unicode, input-method, and compatibility evidence. Generic semantic reconstruction and app-provided native surfaces follow the market-MVP gate.
+**Decision:** Mac Companion adopts Adaptive Remote Surfaces within Interactive Control. Desktop remains the visual escape hatch. App Focus, Window Focus, Smart Zoom, and surface-adaptive interaction are MVP requirements because public APIs provide credible primitives and they make the iPhone experience more useful than a small desktop mirror. Smart Input begins keystroke-only and remains gated on secure-field, focus-race, Unicode, input-method, and compatibility evidence. Generic semantic reconstruction and app-provided native surfaces follow the market-MVP gate.
 
 Accessibility metadata is advisory and can be incomplete, stale, or app-specific. The host confidence-rates it, uses ephemeral revision-bound tokens, and falls back to live pixels whenever it cannot prove the current app, window, focus, action, or privacy classification. Absence of a secure subrole is not proof that a value is safe to transmit.
 
@@ -123,9 +135,9 @@ The [JSON Canonicalization Scheme, RFC 8785](https://www.rfc-editor.org/rfc/rfc8
 
 ## Architecture decisions
 
-### D1 — Dashboard first, Interactive Control when needed
+### D1 — Observe, Act, and Control are first-class
 
-Status, semantic capabilities, visible sessions, and host-enforced policy are the core. A separately granted live screen, mouse, and keyboard session is the broad fallback in the MVP, opened from a Mac task or overview rather than used as the home screen. Terminal access, arbitrary commands, general filesystem browsing, clipboard, audio, and autonomous control remain outside the first product.
+The Mac library is the root, and each Mac workspace exposes current state, bounded capabilities, activity, and a prominent Connect or Resume control. Observe and Act never require a video session. Adaptive Remote Desktop is the flagship Control path and can be entered directly rather than only after another path fails. The three paths share identity, revocation, visibility, and audit foundations but retain separate grants. Terminal protocols, arbitrary commands, general filesystem browsing, clipboard, audio, and autonomous control remain outside the first product.
 
 ### D2 — Per-user authority plus a visible interactive executor
 
@@ -137,7 +149,7 @@ The first product reports unreachability honestly and refreshes on foreground/re
 
 ### D4 — Native MVP, then a MacTools adapter before a public provider SDK
 
-The view-only and Interactive Control MVP must not depend on MacTools. After the no-relay private-operations beta, MacTools supplies the first concrete integration model with bounded parameters, availability, progress, cancellation, concurrency, timeout, and final executor revalidation. The adapter must add a distinct default-deny remote-exposure policy and translate effects safely. Generalize only after this real integration exposes the correct boundary.
+The Observe, native Act, and Adaptive Control MVP must not depend on MacTools. Stage 0 records only a paper compatibility map. After the no-relay three-path beta, MacTools supplies the first concrete integration model with bounded parameters, availability, progress, cancellation, concurrency, timeout, and final executor revalidation. The adapter must add a distinct default-deny remote-exposure policy and translate effects safely. Generalize only after this real integration exposes the correct boundary.
 
 ### D5 — Effect facts instead of one risk number
 
@@ -161,7 +173,7 @@ Revoking a device closes active sessions and invalidates unused approvals. Audit
 
 ### D10 — Technical alphas before market MVP
 
-The local view-only alpha proves lifecycle, identity, freshness, presence, revocation, and audit. The local Interactive Control alpha proves capture, input, visibility, authorization fencing, and privacy. The no-relay operations beta must then demonstrate repeat use of the selected job before the project claims a market-facing MVP. MacTools breadth follows rather than defines that gate.
+The local Observe alpha proves lifecycle, identity, freshness, presence, revocation, and audit. The local Adaptive Control alpha proves capture, input, surface adaptation, interaction adaptation, visibility, authorization fencing, and privacy. The no-relay three-path beta must then demonstrate repeat use of real Control jobs and at least one nonvisual Observe or Act path before the project claims a market-facing MVP. No individual user is required to use all three. MacTools breadth follows rather than defines that gate.
 
 ### D11 — Consent permits broad control but does not erase containment
 
@@ -177,11 +189,11 @@ The Mac app ships directly with Developer ID, hardened runtime, notarization, a 
 
 ### D14 — Adaptive Remote Surfaces inside Interactive Control
 
-Desktop, application, window, focused-region, and experimental text-input surfaces are ephemeral presentations inside the existing Interactive Control grant. The agent owns selection and revision authority; the visible menu app resolves ScreenCaptureKit and Accessibility objects; the iOS client renders declared confidence and fallback. Surface switching cannot persist beyond the session or broaden access.
+Desktop, application, window, focused-region, and experimental text-input surfaces are ephemeral presentations inside the existing Interactive Control grant. The agent owns selection and revision authority; the visible menu app resolves ScreenCaptureKit and Accessibility objects; the iOS client renders declared confidence and fallback and selects a surface-appropriate input profile with a visible override. Surface switching cannot persist beyond the session or broaden access.
 
 ### D15 — Pixels outrank uncertain semantics
 
-Desktop is the universal escape hatch. App Focus and Smart Zoom may use verified application/window identity and focused-element bounds, but modal ambiguity, stale elements, timeout, incomplete Accessibility support, or privacy uncertainty returns to a visible app or desktop surface. Native controls require verified current semantics and are post-MVP; Mac Companion never guesses a consequential action from ambiguous metadata.
+Desktop is the universal escape hatch. App Focus, Window Focus, and Smart Zoom may use verified application/window identity and focused-element bounds, but modal ambiguity, stale elements, timeout, incomplete Accessibility support, or privacy uncertainty returns to a visible app or desktop surface. Native controls require verified current semantics and are post-MVP; Mac Companion never guesses a consequential action from ambiguous metadata.
 
 ## Open decisions
 
@@ -195,3 +207,5 @@ Desktop is the universal escape hatch. App Focus and Smart Zoom may use verified
 - Smart Input compatibility and secure-field evidence across the supported app and keyboard matrix
 - Audit quotas and retention periods
 - Which initial actions remain reliable across the supported OS matrix
+- Final open-source license and contribution policy; MPL 2.0 plus a DCO is the working candidate pending legal review before public contributions
+- Commercial model, free/Pro boundaries, pricing, and Family Sharing; a lifetime non-consumable is the working hypothesis while Mac Companion operates no recurring network service

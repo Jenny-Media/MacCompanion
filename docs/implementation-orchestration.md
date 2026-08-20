@@ -13,14 +13,14 @@ release-shaped bundle
   -> agent lifecycle and authenticated local IPC
   -> durable host identity and host-state model
   -> discovery and pairing
-  -> view-only status and revocation
-  -> locally granted Interactive Control
-  -> App Focus and Smart Zoom with deterministic fallback
-  -> private-route diagnostics and one semantic action
+  -> Observe status and revocation
+  -> locally granted Adaptive Control
+  -> App Focus, Window Focus, and Smart Zoom with deterministic fallback
+  -> private-route three-path beta with one semantic action
   -> MacTools differentiation
 ```
 
-Interactive-control feasibility work starts alongside the view-only path, but it does not bypass identity, grants, authorization epochs, visibility, or lifecycle gates.
+Adaptive Control is the flagship product capability, while Observe and Act remain independently useful without a stream. Control feasibility work starts alongside the Observe path, but it does not bypass identity, grants, authorization epochs, visibility, or lifecycle gates.
 
 ### Protocol-first boundary
 
@@ -55,7 +55,6 @@ MacCompanion/
   Packages/
     MacCompanionKit/          # shared Swift package with explicit targets below
   Tests/
-    Fixtures/                 # canonical JSON and binary protocol fixtures
     Integration/              # multi-process and network harness definitions
     System/                   # physical-device scenarios and evidence manifests
   Experiments/                # Stage 0 harness targets; never shipped by accident
@@ -64,7 +63,7 @@ MacCompanion/
     interactive-control/v0/
     adaptive-surfaces/v0/
     schemas/
-    fixtures/                 # valid and invalid cross-implementation corpus
+    fixtures/                 # single authoritative valid and invalid corpus
     conformance/
   docs/
     adr/
@@ -87,6 +86,8 @@ Use one public monorepo while the protocol and both endpoints evolve together. T
 Source availability does not confer Jenny Media signing identity, official update access, bundle identifiers, trademarks, or managed entitlements. Community forks use their own product identity, update feed, signing team, and Apple capability requests. Official release configuration and update URLs are injected separately and never become a usable trust anchor in an unofficial build.
 
 Before making the repository public, select an OSI license and contribution policy, reserve product trademarks separately, publish private vulnerability-reporting instructions, configure CODEOWNERS and protected branches, and enable secret scanning and push protection. Developer certificates, provisioning profiles, Sparkle private keys, notarization credentials, App Store keys, pairing material, and real diagnostic data never enter the repository.
+
+MPL 2.0 is the working license candidate because it keeps modifications to covered files available while permitting separately authored files in a larger work. Prefer one repository-wide code license initially; do not add an Apache-licensed protocol subtree until independent implementers create a real interoperability reason for the added policy. Use a Developer Certificate of Origin by default. Adopt a Contributor License Agreement only if Jenny Media LLC makes a deliberate dual-licensing or relicensing decision before accepting contributions. Final license, App Store compatibility, and trademark policy require written legal review before the repository becomes public.
 
 ## 3. Target and module boundaries
 
@@ -151,9 +152,9 @@ Concurrency design is part of the feature review. A detached task, unchecked sen
 4. Prove Developer ID archive, hardened runtime, notarization, DMG, clean install, login-item registration, and complete uninstall.
 5. Prove authenticated local IPC and fail-closed menu-app/agent version negotiation.
 
-No product feature merges before the same structure can produce a release-shaped internal artifact.
+No Apple-target product feature merges before the same structure can produce a release-shaped internal artifact. Normative specifications, pure cross-platform packages, fixtures, conformance tests, and disposable experiments may merge earlier when they do not freeze unresolved bundle identity, signing, TCC, or security semantics.
 
-### Workstream B — identity, storage, and view-only vertical slice
+### Workstream B — identity, storage, and Observe vertical slice
 
 1. Implement domain states and golden wire fixtures without sockets.
 2. Implement transactional SQLite migrations, host identity, grants, authorization epochs, audit quotas, and fault injection.
@@ -163,9 +164,9 @@ No product feature merges before the same structure can produce a release-shaped
 6. Deliver one bounded `status.snapshot` from a physical Mac to a physical iPhone.
 7. Add presence, freshness, reconnect, active revocation, and seven-day soak evidence.
 
-This workstream produces the Stage 1 view-only technical alpha.
+This workstream produces the Stage 1 Observe and lifecycle alpha. Its earlier merge order reflects shared infrastructure dependencies, not greater product importance than Control.
 
-### Workstream C — Interactive Control feasibility and vertical slice
+### Workstream C — Adaptive Control feasibility and vertical slice
 
 This begins as Stage 0 experiments and does not enter the shipped targets until its ADRs pass:
 
@@ -177,19 +178,19 @@ This begins as Stage 0 experiments and does not enter the shipped targets until 
 6. Record exact behavior through lock, display sleep, user switch, logout, permission revocation, and menu-app crash.
 7. Freeze control, surface, focus, text-session, and binary media fixtures.
 8. Add agent-issued authenticated IPC leases and authorization/surface/coordinate/focus fencing.
-9. Deliver one granted, locally visible LAN session with Desktop, App Focus, Smart Zoom, and no audit content leakage.
+9. Deliver one granted, locally visible LAN session with Desktop, App Focus, Window Focus, Smart Zoom, surface-adaptive input profiles, and no audit content leakage.
 10. Run latency, switch/fallback, bandwidth, energy, memory, thermal, and one-hour failure tests.
 
 This workstream produces Stage 2 only after Workstream B's identity and revocation foundations are used unchanged.
 
-### Workstream D — no-relay operations beta
+### Workstream D — no-relay three-path beta
 
 1. Add saved private endpoints without changing host identity.
 2. Create guided Tailscale and provider-neutral diagnostics without bundling VPN credentials or a relay.
 3. Add one evidence-backed desired-state action through the same policy, approval, persistence, and audit path.
 4. Adapt Interactive Control within the frozen route-independent authorization model.
 5. Admit Smart Input only if its independent focus, secure-field, Unicode, keyboard-layout, input-method, and diagnostics gate passes.
-6. Run the repeat-use product study and market-MVP gates.
+6. Run the dogfood and TestFlight repeat-use gates, including Control tasks and nonvisual Observe or Act tasks; no participant must use all three paths.
 
 ### Workstream E — differentiation after MVP
 
@@ -223,9 +224,9 @@ The first implementation backlog should be created in this dependency order:
 | 14 | Screen capture and encoder experiment | Permission attribution, format, latency, resource report |
 | 15 | Input and display-transform experiment | Bounded input, stale revision, stuck-key tests |
 | 16 | Locked-session experiment | Exact public-API result and product-contract ADR |
-| 17 | App/window/focus experiment | Filter switching, modal fallback, AX timeout, secure-field, privacy report |
+| 17 | App/window/focus experiment | App and Window Focus, filter switching, modal fallback, AX timeout, secure-field, privacy report |
 | 18 | Freeze Interactive Control and Remote Surface framing | JSON/binary fixtures, revisions, fallback, fuzz bounds, keyframe recovery |
-| 19 | Deliver granted adaptive Interactive Control | Desktop, App Focus, Smart Zoom, grant, presence, indicator, suspend, audit privacy |
+| 19 | Deliver granted Adaptive Control | Desktop, App Focus, Window Focus, Smart Zoom, interaction profiles, grant, presence, indicator, suspend, audit privacy |
 | 20 | Package Stage 1/2 internal alpha | Clean install, update, uninstall, physical matrix |
 | 21 | Add private-route diagnostics and one action | No-relay Tailscale evidence and durable-operation tests |
 
@@ -261,7 +262,7 @@ For parallel work, assign one owner to each module and artifact. Avoid two branc
 - LaunchAgent and menu app start, authenticate, negotiate, crash, recover, update, disable, and uninstall.
 - Pairing races, duplicate requests, lost replies, reconnect, revocation, and storage faults.
 - Interactive session start, frame gap, format change, lock, display change, permission loss, IPC loss, channel loss, and input reset.
-- Desktop/App Focus/Smart Zoom transitions, application/window destruction, modal-window fallback, focus races, secure fields, and manual-zoom fallback.
+- Desktop/App Focus/Window Focus/Smart Zoom transitions, interaction-profile overrides, application/window destruction, modal-window fallback, focus races, secure fields, and manual-zoom fallback.
 - Old/new component compatibility and database migration.
 
 ### Physical-device checks
@@ -294,7 +295,7 @@ The first product has no centralized telemetry. Engineering evidence comes from:
 - Bounded local metrics with no screen or input content
 - User-triggered diagnostic export with preview and consent
 - Test-run evidence manifests that record OS, hardware class, versions, scenario, and pass/fail
-- Consented beta diaries and interviews
+- Optional consented beta diaries and short surveys
 - Deterministic operation and audit records within their documented quotas
 
 Diagnostic export applies the same host-owned allowlist as audit. It excludes host keys, pairing secrets, private addresses unless explicitly needed and previewed, video, screenshots, app/window titles and content, Accessibility labels and values, focus and text metadata, semantic trees, typed text, key events, pointer positions, clipboard data, and file contents.
@@ -314,7 +315,7 @@ A work item is ready for implementation only when it has:
 - Physical-device evidence required
 - Explicit non-goals and dependencies
 
-The project as a whole is ready to begin Stage 0 coding when the bundle prefix is confirmed, the managed-entitlement request is submitted, and the existing design documents are accepted as the baseline. Entitlement approval and locked-session success are not required to begin isolated spikes or the view-only foundation.
+Stage 0 coding begins in independent lanes. Accepted specifications, pure Swift packages, conformance tests, CI, and disposable platform harnesses do not wait for a bundle prefix or managed-entitlement request. Final Apple target identities, designated requirements, Keychain groups, `SMAppService` labels, and release-shaped signing wait for the company prefix; the entitlement request follows creation of the final Mac App ID. Entitlement approval, locked-session success, formal interviews, and completed market validation are not required for identity-neutral work or the Observe foundation.
 
 ## 12. Definition of Done
 
@@ -334,7 +335,7 @@ Feature code existing on one developer Mac is not completion; the release-shaped
 
 ## 13. Remaining pre-code decisions
 
-Only one product-level value blocks repository scaffolding: the company-controlled reverse-DNS bundle prefix. The following are Stage 0 implementation decisions with bounded owners and do not require product clarification before experiments begin:
+The company-controlled reverse-DNS bundle prefix blocks only permanent Apple-target scaffolding. Stable Xcode and signing identity custody separately block signed release evidence, while entitlement approval blocks external Persistent Content Capture builds. None blocks the identity-neutral repository, specification, package, fixture, CI, or disposable-experiment lanes. The following are Stage 0 implementation decisions with bounded owners and do not require product clarification before experiments begin:
 
 - Exact authenticated local IPC peer-verification mechanism
 - Exact TLS certificate and channel-binding construction

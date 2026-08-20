@@ -8,7 +8,7 @@ flowchart TB
         LIBRARY["Mac library"]
         STATUS["Status and controls"]
         INTERACTIVE["Interactive Control"]
-        SURFACES["Desktop, App Focus, and Smart Zoom"]
+        SURFACES["Desktop, App Focus, Window Focus, and Smart Zoom"]
         APPROVAL["Approvals and activity"]
         SESSIONKEY["Session identity key"]
         APPROVALKEY["User-presence approval key"]
@@ -87,9 +87,9 @@ flowchart TB
 
 ## Deployment decision
 
-The first service is a per-user LaunchAgent registered with Service Management. It starts after that user logs in, owns the listener and security state, and continues while the display is locked or a settings window is closed.
+The first service is a per-user LaunchAgent registered with `SMAppService.agent`. It starts after that user logs in, owns the listener and security state, and continues while the display is locked or a settings window is closed. The containing menu app also registers its login launch through `SMAppService.mainApp` or a Stage 0-proven equivalent so a visible indicator is restored after login.
 
-The menu-bar app is a persistent status item while Mac Companion is enabled. It is the trusted local administration UI and owns ScreenCaptureKit capture and Accessibility-mediated input. It does not own the long-lived network listener. If the menu app quits or crashes, the LaunchAgent remains available for status and eligible semantic actions, immediately suspends Interactive Control, attempts to restore the menu app, and records the degraded state. Closing settings never hides or terminates the status item.
+The menu-bar app is a persistent status item while Mac Companion is enabled. It is the trusted local administration UI and owns ScreenCaptureKit capture, Accessibility observation, and post-event input. It does not own the long-lived network listener. If the menu app crashes, the LaunchAgent remains available for status and eligible semantic actions, immediately suspends Interactive Control, invokes only the Stage 0-approved recovery mechanism, and records the degraded state. Closing settings never hides or terminates the status item. An explicit local **Quit and Disable** action unregisters both login roles and is never treated as a crash to restore.
 
 For the first product:
 
@@ -134,7 +134,7 @@ The app owns trusted local presentation for:
 - Persistent active-viewing and active-control indication
 - Screen Recording, Persistent Content Capture, and Accessibility readiness and guidance
 - ScreenCaptureKit capture, H.264 encoding, and authorized mouse and keyboard execution
-- Privacy-filtered application/window resolution, App Focus, Smart Zoom, and transient focus observation
+- Privacy-filtered application/window resolution, App Focus, Window Focus, Smart Zoom, and transient focus observation
 
 If the UI is unavailable, the service retains its last approved configuration. New pairing approvals and permission elevation fail closed because there is no trusted local presentation surface. Interactive Control stops and cannot restart until the visible menu app and its authenticated IPC session return.
 
@@ -195,8 +195,8 @@ Interactive Control reuses the authenticated host and device session but has sep
 
 The iOS client uses two different keys:
 
-1. **Session identity key:** Device-only, non-synchronizing, and usable for unattended reconnection while the device is unlocked according to the selected Keychain accessibility class. It authenticates the installed client instance.
-2. **Approval key:** Secure Enclave-backed where available and gated by current biometric user presence. It signs exact approval challenges. Biometric enrollment changes invalidate or require re-enrollment of this key.
+1. **Session identity key:** Device-only, non-synchronizing, stored with `AfterFirstUnlockThisDeviceOnly`, and usable for unattended foreground reconnection after the first device unlock following reboot. It authenticates the installed client instance and cannot sign approval challenges.
+2. **Approval key:** Secure Enclave-backed where available, stored with `WhenUnlockedThisDeviceOnly`, and protected by `userPresence` so Face ID, Touch ID, or the device passcode can satisfy a fresh approval. It signs exact approval challenges and cannot authenticate routine reconnection. Passcode removal, restore, reinstall, key invalidation, and enrollment-change behavior are verified in Stage 0; loss of this key requires local re-enrollment and never broadens the session key.
 
 Routine reconnection never triggers Face ID or Touch ID. Approval is a cryptographic signature, not merely a successful local UI callback.
 
@@ -211,21 +211,23 @@ sequenceDiagram
     participant K as Keychain and Secure Enclave
 
     M->>S: Request short-lived pairing session
-    S->>M: Pairing ID, endpoint candidates, host fingerprint
-    M->>U: Display QR and verification code
+    S->>M: Pairing ID, 256-bit secret, endpoints, host fingerprint
+    M->>U: Display one-time QR
     U->>I: Scan QR
     I->>K: Create session and approval keys
-    I->>S: Pairing ID, public keys, client metadata
-    S->>I: Host identity and nonce challenge
-    I->>S: Signed challenge response
-    S->>M: Device details and matching verification code
-    U->>M: Approve and select initial profile
-    M->>S: Signed local authorization decision
+    I->>S: Pinned TLS, pairing ID, secret proof, keys, nonce
+    S->>I: Host nonce and transcript confirmation
+    I->>S: Signed transcript proof
+    S-->>I: Transcript-derived authentication string
+    S-->>M: Device details and same authentication string
+    I->>U: Display authentication string
+    U->>M: Name device, verify string, confirm Monitor Only
+    M->>S: Authenticated local decision bound to transcript hash
     S->>I: Issue proof-of-possession authorization record
-    S->>S: Store device, key bindings, scopes, and revocation state
+    S->>S: Atomically consume session and store device, keys, grant, epoch
 ```
 
-The QR contains no permanent bearer credential. It contains an expiring pairing ID, endpoint candidates, protocol hints, and the host-identity fingerprint. The service rate-limits pairing, expires unused sessions, prevents verification-code reuse, and audits success and failure without recording secrets.
+The QR contains no permanent bearer credential. It contains an expiring pairing ID, a 256-bit one-time secret, endpoint candidates, protocol hints, and the host-identity fingerprint. The phone pins that identity before disclosing a proof of the secret. The complete transcript binds the pairing ID, both long-term public keys, both nonces, host fingerprint, negotiated protocol, and one-time secret proof; both devices display a short authentication string derived from that transcript. Local approval names the client and transcript hash. The agent atomically consumes the pairing session in the same durable transaction that creates the device, initial Monitor Only grant, authorization epoch, and minimal audit event. It rate-limits attempts and audits success and failure without recording the QR secret or authentication string.
 
 ### Revocation and recovery
 
@@ -233,10 +235,13 @@ Revocation is immediate:
 
 - All authenticated sessions for the device are closed.
 - New requests and approvals are rejected.
-- Pending but unadmitted operations are denied.
+- Pending and awaiting-approval operations are denied or expired without admission.
+- Queued operations must re-claim execution under the current epoch; stale work becomes `failed(authorizationRevoked)` without calling the provider.
 - Running cancellable operations receive cancellation requests.
 - Completed or non-cancellable effects are not represented as undone.
-- The revocation event is durably recorded before success is reported locally.
+- The device grant, authorization epoch, and minimal revocation event commit atomically before durable success is reported locally.
+
+The security store and bounded audit detail have separate quotas so audit exhaustion cannot consume the revocation reserve. Stage 0 proves a preallocated, crash-consistent emergency deny latch. If the revocation transaction cannot commit, the agent activates that latch, closes all remote sessions and queued work, reports that device-specific revocation is not yet durable, and refuses all remote startup after a crash or restart until local recovery proves the security store writable and consistent and completes the intended revocation.
 
 Losing or reinstalling the iOS app creates a new device identity. Losing the host identity requires explicit recovery and invalidates prior pins. Backup and migration behavior is documented; private identity keys are not silently synchronized through iCloud Keychain.
 
@@ -256,6 +261,16 @@ The host derives displayed state; clients cannot directly set an indicator to fa
 Viewing leases include a lease ID, client session ID, host ID, screen/surface identifier, issued time, expiration, and monotonically increasing renewal counter. The service clears viewing after expiration and records state transitions rather than every heartbeat.
 
 The iOS Mac library screen does not automatically count as viewing every listed Mac. Viewing begins only when current data from a host is intentionally visible on an eligible detail surface.
+
+## Client product paths
+
+The iOS client exposes three first-class paths from each paired Mac workspace:
+
+- **Observe:** current or clearly last-known host state, readiness, and activity without screen capture
+- **Act:** explicitly exposed native or provider capabilities without requiring a video session
+- **Control:** a prominent Connect or Resume entry into Adaptive Remote Desktop
+
+The Mac library remains the product root and never starts capture merely because it becomes visible. Control is the flagship interactive capability, not a secondary error-recovery screen, while Observe and Act remain independently useful before, during, and after a Control session. The three paths share device identity, authorization epochs, presence, revocation, and audit infrastructure but retain separate grants and admission rules.
 
 ## Interactive Control
 
@@ -281,11 +296,11 @@ The persistent menu app:
 - Rejects input unless it has a current, agent-issued session lease
 - Returns only bounded, session-tagged encoded media records over authenticated local IPC
 - Resolves session-scoped application/window tokens, focus bounds, and privacy-filtered surface metadata
-- Updates ScreenCaptureKit filters for App Focus and creates live crops for Smart Zoom
+- Updates ScreenCaptureKit filters for App and Window Focus and creates live crops for Smart Zoom
 - Releases pressed buttons and keys when the session ends or IPC is lost
 - Never receives the remote network socket, device private keys, or durable grants
 
-The iOS client opens Interactive Control from the Mac overview rather than making it the root experience. One selected display is supported initially. Inside the session, Desktop is the visual escape hatch, App Focus can select one application or window, and Smart Zoom can enlarge a verified focused region. Multi-display selection may be added after the single-display coordinate and lifecycle model passes.
+The iOS client exposes a prominent Connect or Resume control from the Mac workspace. One selected display is supported initially. Inside the session, Desktop is the visual escape hatch, App Focus can select an application's related windows, Window Focus can isolate one window, and Smart Zoom can enlarge a verified focused region. The client selects a surface-appropriate trackpad, direct-touch, or keyboard profile while preserving an immediate manual override. Multi-display selection may be added after the single-display coordinate and lifecycle model passes.
 
 The menu app never records screen pixels or remote input. Audit stores session metadata—device, start, stop, route, surface-kind transitions, ephemeral source-token changes, bytes, errors, and termination reason—not video, screenshots, titles, Accessibility values, focus content, typed text, or key events.
 
@@ -330,7 +345,7 @@ Each surface switch advances the surface and coordinate revisions, stops coordin
 
 Sheets, popovers, menus, and dialogs may fall outside an independently captured window. The menu app either proves a related-window set, temporarily uses an application-filtered display, or returns to the desktop. It never lets the user interact with an invisible modal surface.
 
-App Focus and Smart Zoom remain available only while unlocked. A lock transition invalidates all app, window, focus, and text tokens before any lock-surface contract is evaluated.
+App Focus, Window Focus, and Smart Zoom remain available only while unlocked. A lock transition invalidates all app, window, focus, and text tokens before any lock-surface contract is evaluated.
 
 ### Smart Input boundary
 
@@ -358,7 +373,7 @@ Provider content is untrusted input. Text, icons, URLs, errors, schemas, and pre
 
 ## Policy model
 
-Every request passes through policy on receipt and again immediately before provider admission. The policy engine validates:
+Every request passes through policy on receipt, when its durable operation record is admitted, and again when queued work claims execution immediately before any provider call. The last check must compare the current authorization epoch, grant revision, policy revision, provider generation/execution revision, and host state with the admitted record; stale work terminates without provider execution. The policy engine validates:
 
 - Client and session identity
 - Per-device capability grant
@@ -400,10 +415,12 @@ The host issues a nonce challenge containing or hashing:
 - Canonical parameter digest
 - Declared effect facts and host-raised policy
 - Relevant host-session state
+- Device grant revision and authorization epoch
 - Issued and expiration times
 - Policy revision
+- Negotiated protocol version and authenticated-session identity
 
-The client displays these exact semantics and signs the challenge with the approval key after biometric user presence. The server uses its own clock for expiration and revalidates current state immediately before admission. A changed field, provider revision, permission, or session state invalidates the approval.
+The client displays these exact semantics and signs the challenge with the approval key after fresh user presence through Face ID, Touch ID, or the device passcode. The server uses its own clock for expiration and revalidates current state immediately before admission. A changed field, provider revision, permission, or session state invalidates the approval.
 
 ## Task execution and idempotency
 
@@ -421,7 +438,9 @@ Guarantees are deliberately bounded:
 Task states are:
 
 - `pendingPolicy`
+- `denied`
 - `awaitingApproval`
+- `expired`
 - `queued`
 - `running`
 - `succeeded`
@@ -500,6 +519,8 @@ Every event includes a stable event ID, correlation/operation ID when applicable
 
 Sensitive schema fields are omitted or irreversibly summarized. Raw secrets, credentials, private keys, stack traces, filesystem paths, screenshot content, video frames, and input events are never logged. Providers may propose sensitivity metadata, but only a reviewed host-owned allowlist can add provider fields to audit storage.
 
+The Mac administration UI may inspect all local audit records. The MVP remote grant `audit.readSelf` exposes only the requesting device's pairing/session lifecycle, its own requests and outcomes, and coarse host security-state transitions needed to explain availability. It never exposes another device's identity, activity, capability names, denial details, or network metadata. Broader remote audit access requires a separate locally granted capability and privacy review.
+
 The store has a byte quota, age limit, rate limit, compaction policy, and disk-full behavior before the alpha ships. Security-relevant writes fail closed when their absence would make an operation unauditable. The local log is diagnostic and accountability-oriented; it is not claimed to resist a compromised local user unless a later tamper-evident export is added.
 
 ## Host-state semantics
@@ -525,7 +546,7 @@ When disconnected, the client shows `unreachable` plus the last reported state a
 - Local IPC authenticates code, not merely the local user or socket path.
 - The approval key is separate from the reconnect key.
 - Interactive Control is a separate grant from semantic capabilities and covers only live screen, mouse, and keyboard.
-- App Focus, Smart Zoom, and experimental Smart Input are presentation and input profiles inside Interactive Control; they do not broaden its grant or survive its session.
+- App Focus, Window Focus, Smart Zoom, and experimental Smart Input are presentation and input profiles inside Interactive Control; they do not broaden its grant or survive its session.
 - The network-facing agent cannot directly capture the screen or inject input; the visible menu app requires a short-lived agent-issued lease over authenticated IPC.
 - Shell, files, clipboard, audio, autonomous agents, and desktop access behind the lock remain separate denied permissions.
 - AI can propose plans but never receives direct executor authority.

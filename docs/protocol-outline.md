@@ -2,9 +2,9 @@
 
 ## Purpose
 
-The Mac Companion Capability Protocol is a small, provider-neutral protocol for observing and operating a Mac from an explicitly paired Apple device over a private network.
+The Mac Companion Capability Protocol is a small, provider-neutral protocol supporting Mac Companion's **Observe** and **Act** paths and the shared authorization lifecycle for **Control** from an explicitly paired Apple device over a private network.
 
-It describes capabilities, permissions, presence, approvals, tasks, results, audit events, and the authorization lifecycle for Interactive Control. It does not expose a remote shell, mirror arbitrary local APIs, carry screen frames or input events, or make provider-specific objects part of the core wire contract. Interactive media and input use the separately bounded Mac Companion Interactive Control Protocol after this protocol authorizes a session.
+It describes status, capabilities, permissions, presence, approvals, tasks, results, audit events, and the authorization lifecycle for Interactive Control. Observe and Act do not require a video session. It does not expose a remote shell, mirror arbitrary local APIs, carry screen frames or input events, or make provider-specific objects part of the core wire contract. Control media and input use the separately bounded Mac Companion Interactive Control Protocol after this protocol authorizes a session.
 
 ## Design goals
 
@@ -97,7 +97,7 @@ The first protocol surface is deliberately small:
 | `interactive.get` | Return the authoritative Interactive Control session state |
 | `interactive.end` | End the caller's Interactive Control session and invalidate its channel credentials |
 | `interactive.surface.list` | Return transient privacy-filtered app/window candidates inside the active session |
-| `interactive.surface.select` | Select Desktop, App Focus, window, or focused-region presentation using current revisions |
+| `interactive.surface.select` | Select Desktop, App Focus, Window Focus, or focused-region presentation using current revisions |
 | `interactive.surface.get` | Return the authoritative surface, focus, transition, and fallback state |
 | `interactive.surface.ack` | Acknowledge the new descriptor and keyframe before coordinate input resumes |
 
@@ -228,17 +228,40 @@ The challenge binds:
 - Host and client identities
 - Operation ID
 - Capability ID and schema version
-- Provider ID and generation
-- Capability availability revision
+- Provider ID, version, generation, and execution revision
 - Canonical parameters or their digest
 - Effective effect facts
-- Session and grant revisions
+- Relevant host-session state
+- Device grant revision and authorization epoch
 - Policy revision
+- Negotiated protocol version and authenticated-session identity
 - Creation, expiry, and one-time challenge identifiers
 
 Changing any bound field invalidates the approval. Challenges are single-use, narrowly timed, and rejected after revocation or relevant state revision.
 
 The session key cannot satisfy a user-presence approval. An unlocked phone and an approved operation are intentionally different security states.
+
+## Device authorization lifecycle
+
+```mermaid
+stateDiagram-v2
+    [*] --> unpaired
+    unpaired --> pairingPending: local QR session created
+    pairingPending --> unpaired: expired/cancelled/failed
+    pairingPending --> activeMonitorOnly: transcript verified and committed
+    activeMonitorOnly --> activeGranted: local grant change
+    activeGranted --> activeMonitorOnly: local grant reduction
+    activeMonitorOnly --> suspended: local suspend
+    activeGranted --> suspended: local suspend
+    suspended --> activeMonitorOnly: local resume with Monitor Only
+    suspended --> activeGranted: local resume with reviewed grants
+    activeMonitorOnly --> revoked: local revoke
+    activeGranted --> revoked: local revoke
+    suspended --> revoked: local revoke
+    revoked --> unpaired: bounded tombstone retention expires
+```
+
+Pairing always commits `activeMonitorOnly`; it cannot enter `activeGranted`. Every durable grant change, suspend, resume, or revoke advances the authorization epoch. `revoked` is terminal for the device identity: re-pairing creates a new device identity rather than transitioning the old record back to active. The final tombstone transition removes only the retained anti-replay/audit marker after its documented window; it does not restore trust.
 
 ## Durable operations and idempotency
 
@@ -265,6 +288,7 @@ stateDiagram-v2
     awaitingApproval --> expired
     queued --> running
     queued --> cancelled
+    queued --> failed: stale epoch/grant/policy before execution
     running --> cancelRequested
     running --> succeeded
     running --> failed
@@ -289,7 +313,7 @@ Each live connection may renew a bounded lease declaring one advisory client act
 
 The host records client identity, scope, issue time, expiry, and the related operation or resource where applicable. It derives the trustworthy local indicator from actual status/subscription traffic, admitted operations, ScreenCaptureKit activity, and input admission. A client lease can refine which surface the client claims to display but cannot suppress host-derived data-access or control state.
 
-Opening the device library does not mark every listed Mac as viewed. Expired leases clear automatically. `Disconnect` closes current transports, `Suspend device` advances the authorization epoch and blocks reconnection until locally resumed, and `Revoke` removes the pairing. None undoes completed work or promises cancellation of a non-cancellable running task.
+Opening the device library does not mark every listed Mac as viewed. Expired leases clear automatically. `Disconnect` closes only the selected live connection or Interactive Control session and leaves the durable grant unchanged. `Suspend device` is device-wide: it advances the authorization epoch, closes all capability transports and Observe subscriptions, ends Interactive Control, invalidates approvals and channel credentials, prevents queued Act work from claiming execution, and blocks reconnection until local resume advances the epoch again. `Revoke` permanently removes the pairing and grants after durable fencing. None undoes completed work or promises cancellation of a non-cancellable running task.
 
 ## Reachability and host state
 
@@ -333,7 +357,7 @@ Audit events use stable event codes and include:
 - Redacted structured fields
 - Outcome code
 
-The API is paginated and bounded. Retention gaps are explicit. Clients must not infer “nothing happened” from data that aged out or could not be written.
+The API is paginated and bounded. `audit.list` requires `audit.readSelf` in the MVP and exposes only the requesting device's pairing/session lifecycle, requests and outcomes, and coarse host security-state transitions needed to explain availability. It excludes other device identities and activity, network metadata, and provider-private fields. Broader remote audit access requires a separate local grant and privacy review. Retention gaps are explicit. Clients must not infer “nothing happened” from data that aged out or could not be written.
 
 ## Versioning and compatibility
 

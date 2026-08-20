@@ -2,7 +2,7 @@
 
 ## Summary
 
-Mac Companion is a private operations companion for observing, operating, and interactively controlling personal Macs from a native iPhone or iPad app without a Mac Companion account or vendor-operated network relay.
+Mac Companion is a private companion for checking, operating, and directly controlling personal Macs from a native iPhone or iPad app without a Mac Companion account or vendor-operated network relay.
 
 The first implementation consists of:
 
@@ -16,24 +16,29 @@ MacTools is not required for the MVP. After the native no-relay beta passes its 
 
 ## Positioning
 
-Mac Companion is not a screen-first remote desktop. Existing products already provide pointer, keyboard, media, SSH, screenshot, community-package, and Tailscale features.
+Mac Companion is broader than a remote desktop and more capable than a monitoring dashboard. It gives the owner three first-class ways to use a Mac from iPhone or iPad:
 
-Mac Companion starts with the job: show what the Mac is doing, offer dependable operations, and escalate to Interactive Control only when a dashboard or semantic action is insufficient. Interactive Control adapts from the desktop to a phone-readable application, window, or focused region instead of treating the iPhone as a small monitor.
+1. **Observe:** inspect fresh or clearly last-known state without starting screen capture.
+2. **Act:** invoke an explicitly exposed native, MacTools, or future provider capability without navigating the desktop.
+3. **Control:** open Adaptive Remote Desktop for live screen, mouse, and keyboard access when the task is visual or unanticipated.
+
+Control is the flagship capability, not a buried emergency fallback. It adapts from the desktop to a phone-readable application, window, or focused region instead of treating the iPhone as a small monitor. Observe and Act remain independently useful because many checks and operations should not require the bandwidth, latency, attention, or privacy exposure of a video session.
 
 Its operating model is:
 
 - The Mac is always the final authority.
 - Remote exposure is explicit and default-deny.
+- Observe, Act, and Control have separate grants and lifecycle semantics; none silently authorizes another.
 - Actions have structured effects, permissions, availability, and results.
 - Interactive Control is a separate, named grant for live screen, mouse, and keyboard access.
-- App Focus and Smart Zoom improve presentation inside that grant without creating another permission tier.
+- App Focus, Window Focus, and Smart Zoom improve presentation inside that grant without creating another permission tier.
 - Active viewing and control are visible and session-audited.
 - Consequential, destructive, credential, communication, and general shell operations are excluded from the first product.
 - MacTools capabilities can later be exposed through the same policy boundary without giving the remote client access to plugin internals.
 
-The primary beachhead hypothesis is owners of a logged-in personal Mac who want private, no-relay remote operation. Research should compare these subsegments without treating any one as proven in advance:
+The primary beachhead hypothesis is owners of a logged-in personal Mac who want private, no-relay remote operation and may alternate among quick checks, bounded actions, and live visual control. Research should compare these subsegments without treating any one as proven in advance:
 
-1. People with an always-on Mac mini or home Mac who want status, dependable controls, and occasional live intervention.
+1. People with an always-on Mac mini or home Mac who want status, dependable controls, and adaptive live control.
 2. MacTools users who want carefully selected remote capabilities.
 3. People managing several personal Macs who value a single private operations surface.
 
@@ -43,7 +48,7 @@ Developers seeking a safer alternative to broad SSH access are a secondary audie
 
 Mac Companion Agent remains independent of MacTools. This provides a reference host for the protocol and prevents MacTools-specific packaging, plugin lifetime, or UI assumptions from defining the network model.
 
-Standalone-first does not mean designing in isolation. Stage 0 includes an explicit mapping to MacTools' existing action registry, parameters, concurrency, availability, permissions, and executor. Neutral status sampling code should be shared or extracted where practical rather than reimplemented twice.
+Standalone-first does not mean designing in isolation. Stage 0 includes a paper compatibility mapping to MacTools' existing action registry, parameters, concurrency, availability, permissions, and executor without implementing the bridge. Neutral status sampling code should be shared or extracted where practical rather than reimplemented twice.
 
 ## Product principles
 
@@ -51,13 +56,13 @@ Standalone-first does not mean designing in isolation. Stage 0 includes an expli
 
 Mac Companion works on a local network without an account or internet access. Remote access uses a private network the user already manages, such as Tailscale. Network reachability never grants Mac Companion authorization.
 
-### Dashboard-first, interactive when needed
+### Three first-class paths
 
-The client opens on current state, recent work, and named desired-state actions. Live screen, pointer, and keyboard control are an intentional escalation surface, not the default destination. Within that surface, the user can keep the desktop, focus one app or window, or zoom to the current control. This gives the user broad reach without reducing the product to a screen mirror.
+The client opens on a library of paired Macs rather than automatically capturing a screen. Selecting a Mac presents current state, favorite approved actions, recent activity, and a prominent Connect or Resume control. Observe and Act work without a video session. Control opens Adaptive Remote Desktop and can keep the desktop, focus one application or window, or zoom to the current control. The product never makes users open a screen stream for a task that a trustworthy bounded surface can complete directly.
 
 ### Adaptive, with an honest fallback
 
-App Focus and Smart Zoom use ScreenCaptureKit and conservative Accessibility metadata to improve readability. The complete desktop remains one gesture away and becomes the automatic fallback when windows, dialogs, focus, or semantics cannot be resolved safely. A native control is shown only when the host can verify what it represents and can revalidate it immediately before use.
+App Focus, Window Focus, and Smart Zoom use ScreenCaptureKit and conservative Accessibility metadata to improve readability. The complete desktop remains one gesture away and becomes the automatic fallback when windows, dialogs, focus, or semantics cannot be resolved safely. A native control is shown only when the host can verify what it represents and can revalidate it immediately before use.
 
 ### Host-controlled
 
@@ -97,9 +102,9 @@ As an iPhone user, I can see current or clearly labeled last-known status for ea
 
 As an authorized user, I can invoke a small set of desired-state actions, understand their effects, confirm sensitive operations with device user presence, and see durable progress and results.
 
-### Interactive intervention
+### Adaptive control
 
-As an explicitly authorized owner, I can open a live view of one Mac display and use touch, pointer, scroll, and keyboard input when a semantic action is insufficient. I can focus one app or window at phone-readable scale and zoom to the current control without losing a direct route back to the desktop. Interactive Control is session-scoped, visible at the Mac, and immediately suspendable or revocable.
+As an explicitly authorized owner, I can directly open a live view of one Mac display and use touch, pointer, scroll, and keyboard input for visual work or an unexpected state. I can focus one app or window at phone-readable scale and zoom to the current control without losing a direct route back to the desktop. Interactive Control is session-scoped, visible at the Mac, and immediately suspendable or revocable.
 
 ### Focused input
 
@@ -132,10 +137,12 @@ The root library lists paired Macs with:
 
 Each Mac has:
 
-1. **Overview:** System status, freshness, service health, and favorite approved controls.
-2. **Capabilities:** Controls grouped by provider, including Native System and later MacTools.
-3. **Interactive Control:** An explicit transition into a live screen, mouse, and keyboard session with Desktop, App Focus, and Smart Zoom modes.
+1. **Observe:** System status, freshness, service health, active work, and recent observations.
+2. **Act:** Favorite approved controls and capabilities grouped by provider, including Native System and later MacTools.
+3. **Control:** A prominent Connect or Resume entry into live screen, mouse, and keyboard access with Desktop, App Focus, Window Focus, and Smart Zoom modes.
 4. **Activity:** Connections, presence, decisions, approvals, results, and security events.
+
+The product may remember the last safe destination, but it never starts capture merely because the user opened a Mac. Status and action surfaces remain available before, during, and after a Control session when their own grants and host-state rules permit.
 
 Sensitive confirmations identify the Mac, provider, exact operation, parameters, effect categories, reversibility, expiration, and whether external systems or people are affected.
 
@@ -155,9 +162,9 @@ The menu-bar app provides:
 
 During remote activity, the menu-bar item changes appearance. Opening it identifies the device, activity type, operation, duration, and an End Session command. If the display is locked, the event remains audited and the indicator is visible after the session UI becomes visible again.
 
-## Technical alpha scope
+## Observe foundation alpha scope
 
-The local-only technical alpha includes:
+The local-only foundation alpha proves the shared identity, state, freshness, and revocation model used by all three paths. It includes:
 
 - One Mac and one iPhone
 - Per-user LaunchAgent and menu-bar administration app
@@ -173,14 +180,16 @@ The local-only technical alpha includes:
 
 It deliberately excludes Tailscale, many-to-many UX, generic provider manifests, remote actions, iOS background alerts, and MacTools integration.
 
-## Interactive-control alpha scope
+## Adaptive Control alpha scope
 
-After the view-only lifecycle is trustworthy, the local Interactive Control alpha adds:
+After the shared lifecycle is trustworthy, the local Adaptive Control alpha adds:
 
 - One selected display at a time
 - H.264 low-latency screen streaming
-- App/window switcher and App Focus using transient, privacy-filtered candidates
-- Smart Zoom around a verified focused element with manual visual fallback
+- App Focus and explicit Window Focus using transient, privacy-filtered candidates
+- Manual Smart Zoom plus verified focus-assisted framing with manual visual fallback
+- Surface-specific interaction profiles with an always-available trackpad/direct-touch override
+- Native iOS keyboard and modifier toolbar while live pixels remain authoritative
 - Touch-derived absolute pointer, click, drag, and bounded scroll input
 - Physical-key and bounded text input with stuck-key recovery
 - A device-specific Interactive Control grant and fresh phone user presence at session start
@@ -192,9 +201,9 @@ Native Smart Input is an experiment during this alpha, not an exit requirement. 
 
 Locked-session interaction is accepted only if physical-device spikes prove that public APIs show the genuine macOS lock surface and accept normal authentication input. Otherwise the session remains connected but reports `lockedInteractionUnavailable`.
 
-## First differentiated beta scope
+## First three-path differentiated beta scope
 
-The beta adds:
+The beta combines all three product paths over LAN and a user-managed private route:
 
 - Saved Tailscale or private-network endpoints
 - Guided, provider-neutral private-route diagnostics with no Mac Companion account or relay
@@ -203,7 +212,8 @@ The beta adds:
 - One evidence-backed desired-state native action
 - Durable operation IDs and reconnectable task results
 - Interactive Control over a user-managed private route
-- App Focus and Smart Zoom over the selected private route
+- App Focus, Window Focus, Smart Zoom, and surface-adaptive interaction over the selected private route
+- Independent completion of Observe and Act tasks without opening Interactive Control
 - Quantitative usability, reliability, resource, and repeated-use validation
 
 The first market-facing MVP continues to support one Mac and one phone in the product UX. Many-to-many presentation and the MacTools adapter follow the repeat-use gate; their identifiers and storage constraints are preserved from the start.
@@ -239,13 +249,14 @@ The technical alpha validates feasibility. The differentiated beta validates pro
 
 Initial product gates:
 
-- At least 5 target users complete pairing without documentation.
-- At least 4 use Mac Companion on three separate days during a two-week test.
-- At least 3 identify one repeated monitoring or control job they would keep using.
+- A 10–20 person TestFlight cohort attempts self-directed use over two weeks; initial percentages are treated as provisional until the cohort establishes a baseline.
+- Pairing, first current status, first frame, first input, first bounded action, surface transitions, and fallback recovery can be measured through an explicitly exported content-free study report.
+- Repeat users complete real Control tasks and at least one nonvisual Observe or Act task; no individual is required to use all three paths.
 - Users can correctly explain paired, connected, viewing, and controlling after using the product.
 - Interactive Control testers can start, identify, suspend, and revoke a session without confusing it with Standard Control.
-- Interactive Control testers use App Focus and Smart Zoom for real tasks and prefer them to repeated desktop pinch-and-pan.
+- Interactive Control testers use App Focus, Window Focus, or Smart Zoom for real tasks and prefer them to repeated desktop pinch-and-pan when the adaptive surface applies.
 - Modal dialogs, stale focus, or incompatible applications return to a comprehensible visual surface instead of accepting hidden or misdirected input.
+- No input reaches an unintended application, window, coordinate space, or field because of stale authority.
 - Pointer and keyboard tasks succeed over LAN and the selected private route without hidden local activity.
 - No participant mistakes unreachable or stale status for live status, or assumes that unreachable proves the Mac is sleeping.
 
@@ -262,7 +273,7 @@ Naming system:
 - Installed Mac component: **Mac Companion Agent**
 - Protocol: **Mac Companion Capability Protocol**
 - Interactive media protocol: **Mac Companion Interactive Control Protocol**
-- Plain-language description: **A secure companion for monitoring and controlling your Mac from iPhone and iPad.**
+- Plain-language description: **Check, operate, or directly control your Mac from iPhone and iPad.**
 
 The name deliberately favors immediate comprehension over a metaphorical brand. “Mac Connect” describes pairing more than the product’s lasting value. “Mac Remote Control” is crowded and makes the screen mirror the whole product. “Mac Companion” accommodates monitoring, bounded native controls, MacTools actions, and explicit Interactive Control without implying a general shell or arbitrary filesystem access.
 

@@ -7,7 +7,7 @@ Status: release baseline for the first implementation. This document fixes the i
 - The Mac product is distributed directly by Jenny Media LLC, outside the Mac App Store.
 - Every Mac executable is signed with Developer ID, uses the hardened runtime, is notarized, and ships in one app bundle.
 - The initial Mac installer experience is a notarized DMG containing `Mac Companion.app`; no root installer or separately copied daemon is required.
-- The embedded per-user LaunchAgent is registered through `SMAppService` after the user opens and enables the app.
+- The embedded per-user LaunchAgent and the containing menu app's login launch are registered through their appropriate `SMAppService` roles after the user opens and enables the app. Stage 0 verifies crash recovery separately from an intentional local Quit and Disable action.
 - Mac updates use Sparkle 2 with HTTPS, Ed25519 archive signatures, Developer ID validation, and notarized replacement bundles.
 - The iPhone and iPad app uses TestFlight for alpha and beta, then the App Store for release.
 - The initial deployment targets are macOS 26.0 and iOS/iPadOS 26.0. Release builds use stable Xcode 26.6 and Swift 6.3; Xcode and OS 27 betas are compatibility targets, not release dependencies.
@@ -17,7 +17,7 @@ Apple describes Developer ID and notarization for software distributed outside t
 
 ## 2. Identifier and account preflight
 
-The following values must be confirmed in the Jenny Media LLC Apple Developer account before the Xcode project is created:
+The following values must be confirmed in the Jenny Media LLC Apple Developer account before permanent release-shaped Apple targets are created. They do not block the normative specification, pure Swift packages, public unsigned CI, or disposable experiments:
 
 - Legal team name: Jenny Media LLC
 - Team ID
@@ -36,7 +36,7 @@ Until the prefix is confirmed, documentation uses these placeholders:
 | Local XPC services, if selected | `<bundle-prefix>.maccompanion.xpc.<role>` |
 | iOS/iPadOS app | `<bundle-prefix>.maccompanion.ios` |
 
-The prefix is a pre-scaffold decision because bundle IDs become part of Keychain access, designated requirements, LaunchAgent identity, update configuration, managed-entitlement approval, audit migrations, and App Store records. Renaming them later is not treated as a cosmetic change.
+The prefix is a precondition for permanent Apple-target scaffolding because bundle IDs become part of Keychain access, designated requirements, LaunchAgent identity, update configuration, managed-entitlement approval, audit migrations, and App Store records. Renaming them later is not treated as a cosmetic change.
 
 The Persistent Content Capture entitlement is managed. Apple says it enables VNC apps to view and record the screen and requires a request before use; see [Persistent Content Capture](https://developer.apple.com/documentation/bundleresources/entitlements/com.apple.developer.persistent-content-capture). The Jenny Media LLC Account Holder should submit the request against the final Mac App ID as soon as the identifier exists. Stage 1 monitoring can proceed while it is pending; an external Interactive Control build cannot.
 
@@ -68,12 +68,14 @@ The Stage 0 permission matrix must confirm the final target ownership. The basel
 | Capability | Executing target | Release requirement | User-facing behavior |
 | --- | --- | --- | --- |
 | Persistent display capture | Menu app | Managed Persistent Content Capture entitlement, provisioning profile, usage description, Screen Recording consent | Explain before the system prompt; show readiness and recovery in settings. |
-| Mouse and keyboard injection | Menu app | Accessibility trust; no attempt to bypass TCC | Explain exact control, deep-link to System Settings where supported, and recheck after revocation. |
+| Accessibility focus observation | Menu app | Accessibility authorization and a privacy-filtered metadata adapter | Explain focus-assisted framing separately; prove stale-element, secure-field, and revocation behavior. |
+| Mouse and keyboard injection | Menu app | Post-event authorization as required by supported macOS; no TCC bypass and no unnecessary Input Monitoring request | Explain exact control, deep-link to System Settings where supported, release all input on loss, and recheck after revocation. |
 | Private-network listener | LaunchAgent | Minimal network entitlement only if the selected sandbox requires it | Bind to selected private interfaces; never make discovery equal trust. |
 | Bonjour discovery | LaunchAgent and iOS app | One declared Bonjour service type and applicable Local Network usage descriptions | Explain local discovery and provide denial recovery. |
 | Device and approval keys | iOS app | Keychain and Secure Enclave access-control configuration | Pairing identity and fresh approval identity remain separate. |
 | Host identity and grants | LaunchAgent | Keychain access and service-owned protected database | Menu app receives bounded views over authenticated IPC, not direct database access. |
-| Login item | Containing Mac app | Embedded, signed `SMAppService` registration | User enables the agent explicitly and can disable it from both Mac Companion and System Settings. |
+| Agent login item | Containing Mac app | Embedded, signed `SMAppService.agent` registration | User enables the agent explicitly and can disable it from both Mac Companion and System Settings. |
+| Visible menu app at login | Containing Mac app | `SMAppService.mainApp` or a Stage 0-proven equivalent | Closing settings preserves the status item; intentional Quit and Disable is distinct from crash recovery. |
 | Automatic updates | Menu app | Sparkle public Ed25519 key, HTTPS appcast, signed update archives | Never replace the app during an active control session without explicit termination. |
 
 TCC grants belong to the code identity that performs the protected action. Stage 0 must verify attribution on clean machines; it must not move capture or input into the network agent merely to simplify prompts.
@@ -91,7 +93,7 @@ The clean-user path is:
 5. Establish the local authenticated IPC relationship and show agent health.
 6. Request Local Network access only when the user starts pairing or discovery.
 7. Pair an iPhone or iPad with Monitor Only by default.
-8. Request Screen Recording and Accessibility only when the user explicitly enables Interactive Control for a named device.
+8. Request Screen Recording, Accessibility observation, and post-event control only when the user explicitly enables the corresponding Interactive Control behavior for a named device; verify each grant and recovery independently.
 9. Confirm the visible status item, local suspend action, grants, and uninstall location.
 
 Onboarding never asks for an SSH password, administrator password, Tailscale credentials, Apple ID, or Mac Companion account. Tailscale guidance assumes the user installs and owns Tailscale separately; Mac Companion stores only the private endpoint needed to reach the already-paired host.
@@ -152,14 +154,24 @@ The iOS listing and review notes must state:
 - A separately downloaded, signed Mac Companion app is required.
 - The user's devices communicate directly over LAN or their own private route.
 - Mac Companion does not provide internet reachability, wake, or background alerts.
+- Mac Companion is a generic companion for a user-owned Mac: Observe and Act can work without capture, while Control can mirror the full desktop or generically focus an application or window.
+- All mirrored software executes and renders on the Mac. The iOS client does not offer a software catalog, remote installation, or a thin client to a hosted cloud Mac.
 - Interactive Control requires a logged-in Mac, a local device-specific grant, macOS Screen Recording and Accessibility permissions, and fresh phone user presence.
 - Lock-screen operation is described only if the supported public-API matrix proves it.
 
+Before external TestFlight, record an App Review strategy for Guidelines 4.2.3(i) and 4.2.7 plus the system ScreenCaptureKit picker recommendation. The required Mac companion, Observe/Act APIs beyond streaming, and private-route operation are explicit review risks. The first external review build is LAN-first, keeps full Desktop first-class, demonstrates a generic user-owned host mirror before App or Window Focus, supplies the notarized Mac download and complete reviewer pairing resources, and does not imply that Tailscale satisfies a LAN-only interpretation. Review notes explain how the approved Persistent Content Capture entitlement and local Mac consent support remotely initiated surface changes. Existing third-party approvals are market evidence, not a guarantee that Apple will classify Mac Companion the same way.
+
 App privacy answers are derived from actual data flows. No telemetry or account data is declared merely as future intent, and no diagnostics upload occurs without an explicit later design.
+
+### Commercialization hypothesis
+
+The no-account, no-relay architecture does not yet justify a recurring subscription. The working hypothesis is a free Mac host and iOS client with one non-consumable **Mac Companion Pro** purchase for convenience and advanced official-client features. Exact pricing, free limits, Family Sharing, and Pro features remain TestFlight experiments rather than release-baseline decisions.
+
+Encryption, device identity, consent, visibility, safe fallback, suspension, revocation, accessibility support, and essential diagnostics are never paywalled. Pairing and host grants do not trust StoreKit state. If a feature is commercialized, the official iOS client checks purchase entitlement when requesting it while the Mac independently enforces authorization and safe hardware, thermal, and bandwidth ceilings. Because the source is intended to be public, commercial value comes from official App Store distribution, Jenny Media signing and entitlements, updates, compatibility work, support, and brand trust rather than pretending that client-side feature gating is an unbreakable security boundary.
 
 ## 8. Release pipeline and evidence
 
-The repository will define reproducible, non-secret release commands after Stage 0. The release pipeline must produce and retain:
+Stage 0 defines the reproducible, non-secret build, verification, packaging, and evidence-manifest command skeleton needed by its own release-shaped experiments. Publication credentials and promotion automation are added only after those commands are proven. The release pipeline must produce and retain:
 
 - Clean build log with exact Xcode and SDK versions
 - Test and protocol-fixture results
@@ -172,6 +184,12 @@ The repository will define reproducible, non-secret release commands after Stage
 - Sparkle appcast entry and signature evidence
 - Human release approval, channel, and publication time
 - Clean-install, upgrade, rollback, permission-revocation, and complete-uninstall results on physical Macs
+
+CI is split into three trust lanes:
+
+- **Public pull request:** unsigned package builds, fixture conformance, dependency-boundary checks, linting, and tests with no Apple or publication secrets.
+- **Trusted internal:** development-signed Apple targets and controlled physical-device evidence; artifacts are never promoted automatically.
+- **Tagged release:** protected Developer ID/App Store signing, notarization, Sparkle signatures, checksums, SBOM, and an explicit human promotion record.
 
 A pull request build cannot publish. Stable publication requires a tagged revision, protected release credentials, and a separate promotion approval. CI logs must never print private signing keys, one-time notarization credentials, pairing material, or live provisioning profiles.
 
@@ -193,7 +211,7 @@ The Mac app provides `Disable and Remove Mac Companion Data` before the user del
 
 - Suspends access and advances all authorization epochs
 - Ends sessions and operations safely
-- Unregisters the per-user agent
+- Unregisters both the per-user agent and the menu app's login launch
 - Revokes pairings and removes durable grants, audit, operations, saved endpoints, and host keys after confirmation
 - Explains which macOS privacy grants may remain visible in System Settings and how to remove them
 - Leaves no privileged helper or copied executable because none was installed
@@ -202,14 +220,15 @@ Deleting only the app is detected as an incomplete uninstall case in testing. Do
 
 ## 11. Go/no-go gates
 
-### Ready to scaffold
+### Ready for permanent release-shaped Apple targets
 
 - Team ID and reverse-DNS prefix are confirmed.
 - Final target identifiers are registered.
 - Developer ID certificate custody is verified.
-- Persistent Content Capture request is submitted.
 - Stable Xcode 26.6 is installed and recorded.
 - The process, entitlement, TCC, and update ownership in this document has no unresolved boundary change.
+
+Registering the final Mac App ID triggers immediate Account Holder submission of the Persistent Content Capture request, but pending request status does not block non-capture permanent targets. Approval gates the release entitlement/profile and external persistent Control builds.
 
 ### Ready for external Mac alpha
 
@@ -221,7 +240,7 @@ Deleting only the app is detected as an incomplete uninstall case in testing. Do
 ### Ready for external Interactive Control beta
 
 - Apple's managed entitlement is approved for the shipped App ID, or a documented public alternative passes equivalent review.
-- Screen Recording and Accessibility onboarding and revocation are verified on every supported OS version.
+- Screen Recording, Persistent Content Capture, Accessibility observation, and post-event input onboarding and revocation are independently verified on every supported OS version.
 - Locked behavior matches the published contract exactly.
 - A security review has no unresolved critical finding in signing, update, local IPC, or Interactive Control.
 

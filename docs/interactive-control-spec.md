@@ -4,17 +4,17 @@ Status: coding-baseline draft for Stage 0A and Stage 0B. Platform spikes may cha
 
 ## 1. Purpose and product boundary
 
-Interactive Control lets the owner of a paired iPhone or iPad view one display and send mouse and keyboard input to a logged-in personal Mac. Its Adaptive Remote Surfaces can focus the desktop stream onto an application, window, or current region so the iPhone is more useful than a scaled monitor. It is an escalation from the Mac dashboard when a semantic action is unavailable or the user needs to inspect an unexpected state.
+Interactive Control implements Mac Companion's first-class **Control** path. It lets the owner of a paired iPhone or iPad view one display and send mouse and keyboard input to a logged-in personal Mac. Its Adaptive Remote Surfaces can focus the desktop stream onto an application, window, or current region so the iPhone is more useful than a scaled monitor. Users may enter Control directly for visual work; they do not need to attempt an Observe or Act task first.
 
 Interactive Control is not:
 
-- The default Mac Companion home screen
+- A requirement for Observe status or Act capabilities
 - Granted by pairing, Monitor Only, Standard Control, or a provider installation
 - A shell, arbitrary file browser, clipboard channel, audio stream, automation surface, or AI-control permission
 - A vendor relay, rendezvous service, VPN account, or public port-forwarding service
 - A way around macOS login, the lock screen, FileVault, TCC, or another macOS security boundary
 
-One device grant cannot imply any future administrator capability such as shell, files, clipboard, audio, provider execution, or AI control. Each such capability requires its own local grant, protocol, threat model, indicator treatment, and revocation behavior. Desktop, App Focus, and Smart Zoom are presentation modes inside Interactive Control and do not broaden its grant.
+One device grant cannot imply any future administrator capability such as shell, files, clipboard, audio, provider execution, or AI control. Each such capability requires its own local grant, protocol, threat model, indicator treatment, and revocation behavior. Desktop, App Focus, Window Focus, and Smart Zoom are presentation modes inside Interactive Control and do not broaden its grant.
 
 ## 2. Initial supported envelope
 
@@ -24,7 +24,7 @@ The first implementation supports:
 - One paired iPhone or iPad controlling one Mac at a time
 - One active Interactive Control session per Mac
 - One selected physical display per session
-- One authoritative visual surface at a time: Desktop, App Focus, one window, or a focused-region crop
+- One authoritative visual surface at a time: Desktop, App Focus, Window Focus, or a focused-region crop
 - H.264 video without audio
 - Absolute pointer movement, primary and secondary click, drag, bounded scrolling, physical-key input, modifiers, and bounded text input
 - Foreground iOS use over the local network or a user-managed private route such as Tailscale
@@ -36,7 +36,7 @@ It does not promise wake-from-sleep, logout or login-window control, FileVault p
 
 ### iOS client
 
-The client presents video and host-declared Remote Surface modes, transforms touch and keyboard interaction into bounded input messages, obtains fresh user presence for every new session, pins the Mac identity, and reports foreground and rendering state honestly. It never decides that a grant exists, that the Mac is unlocked, or that pixels imply a safe semantic action.
+The client presents video and host-declared Remote Surface modes, selects a surface-appropriate interaction profile with a visible user override, transforms touch and keyboard interaction into bounded input messages, obtains fresh user presence for every new session, pins the Mac identity, and reports foreground and rendering state honestly. It never decides that a grant exists, that the Mac is unlocked, or that pixels imply a safe semantic action.
 
 ### Per-user LaunchAgent
 
@@ -82,7 +82,7 @@ A newly paired device receives Monitor Only. Pairing never grants Interactive Co
 
 ### Durable device grant
 
-Interactive Control is enabled from the Mac for one named paired device. The Mac shows a concrete warning that the device can see the current display, transiently enumerate applications and windows for App Focus, observe limited focus metadata for Smart Zoom, and operate the mouse and keyboard, including interaction with other applications and potentially destructive UI. Acceptance records the device, grant revision, policy revision, time, configured Mac account, and current authorization epoch.
+Interactive Control is enabled from the Mac for one named paired device. The Mac shows a concrete warning that the device can see the current display, transiently enumerate applications and windows for App and Window Focus, observe limited focus metadata for Smart Zoom, and operate the mouse and keyboard, including interaction with other applications and potentially destructive UI. Acceptance records the device, grant revision, policy revision, time, configured Mac account, and current authorization epoch.
 
 The grant remains until locally suspended, disabled, revoked, or invalidated by a security event. The device can request a session but cannot enable, broaden, or restore its own grant.
 
@@ -105,7 +105,7 @@ The approval expires after 60 seconds, is consumed atomically once, and cannot a
 ### Suspension and revocation
 
 - `Disconnect` ends the current session without changing the durable device grant.
-- `Suspend device` advances the device authorization epoch, ends its active session, invalidates unused approvals and channel credentials, and prevents new sessions until the Mac owner resumes it locally.
+- `Suspend device` is device-wide: it advances the device authorization epoch, ends Interactive Control, closes the capability transport and Observe subscriptions, invalidates unused approvals and channel credentials, prevents queued Act work from claiming execution, and prevents reconnection until the Mac owner resumes it locally and advances the epoch again.
 - `Revoke device` permanently removes the pairing and all grants, advances the epoch, and closes every live transport for that device.
 
 Permission loss, menu-app loss, logout, fast user switching, active-console ambiguity, and local disablement have the same immediate effect on active capture and input as suspension, while preserving only the records required to explain and recover from the state.
@@ -248,7 +248,7 @@ Input carrying an old surface or coordinate revision is rejected. The initial pr
 
 ### Adaptive Remote Surface integration
 
-The required MVP modes are Desktop, App Focus, one-window focus, and Smart Zoom. A selection advances surface and coordinate revisions, pauses input, sends a discontinuity and clean keyframe, and waits for acknowledgement. An app quit, window disappearance, unresolved modal dialog, stale focus, Accessibility timeout, or inconsistent transform falls back to an application-filtered or Desktop surface rather than leaving invisible input active.
+The required MVP modes are Desktop, App Focus, Window Focus, and Smart Zoom. A selection advances surface and coordinate revisions, pauses input, sends a discontinuity and clean keyframe, and waits for acknowledgement. An app quit, window disappearance, unresolved modal dialog, stale focus, Accessibility timeout, or inconsistent transform falls back to an application-filtered or Desktop surface rather than leaving invisible input active.
 
 The initial app/window picker transmits only localized app names and icons, opaque session tokens, generic window ordinals, and availability. Window titles, document paths, URLs, thumbnails, labels, values, and content are excluded. Smart Zoom initially uses category, bounds, editability, security status, and focus revision without transmitting the focused value or label.
 
@@ -353,7 +353,7 @@ Interactive Control is ready for an external alpha only when:
 - Every remote key and button is released on every termination path.
 - Stale frames and stale coordinate input cannot cross a lock or display revision.
 - Stale surface and focus tokens cannot select, zoom, or type into a replaced app, window, or element.
-- App Focus and Smart Zoom fall back visibly when modal, Accessibility, or window identity is ambiguous.
+- App Focus, Window Focus, and Smart Zoom fall back visibly when modal, Accessibility, or window identity is ambiguous.
 - The visible local indicator cannot be hidden while Interactive Control remains usable.
 - No content-bearing video or input data enters audit or diagnostics.
 - App/window/focus metadata follows the Adaptive Remote Surface allowlist and secure-field rules.

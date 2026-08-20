@@ -2,31 +2,32 @@
 
 ## Objective
 
-Validate the riskiest platform, security, and product assumptions before expanding Mac Companion into a broad remote-control platform.
+Validate the riskiest platform, security, and product assumptions before expanding Mac Companion into a broad personal-Mac control platform.
 
 The plan distinguishes a technical alpha—proof that the secure lifecycle works—from a differentiated beta—proof that people repeatedly use Mac Companion for real operational jobs.
 
-Mac Companion validates three connected experiences: **Observe** current Mac state, **Act** through bounded semantic operations, and **Intervene** through an explicitly granted live screen, mouse, and keyboard session. Interactive Control is part of the MVP path because it supplies broad fallback reach, but it is not the default screen and does not include a shell, arbitrary files, clipboard, audio, or autonomous control. It must never be implied by ordinary pairing, `Standard Control`, a provider installation, or a broad “allow future capabilities” switch.
+Mac Companion validates three independently useful, connected experiences: **Observe** current Mac state, **Act** through bounded operations, and **Control** through an explicitly granted Adaptive Remote Desktop session. Control is the flagship capability and may be entered directly, but users do not need to stream the screen to check status or invoke an approved action. Interactive Control does not include a shell, arbitrary files, clipboard, audio, provider execution, or autonomous control and must never be implied by ordinary pairing, `Standard Control`, a provider installation, or a broad “allow future capabilities” switch.
 
-## Stage -1: name and product evidence
+## Product evidence workstream: positioning and validation
+
+This workstream runs alongside Stage 0 and does not block isolated platform spikes or repository scaffolding. Its evidence gates the external beta and public positioning rather than the start of coding.
 
 ### Work
 
 - Use **Mac Companion** as the working product and iPhone/iPad app name, **Mac Companion Agent** for the installed Mac component, and **Monitor and control your Mac** as the proposed App Store subtitle.
-- Complete written trademark review and reserve the App Store name before permanent bundle identifiers, domains, paid identity work, or public launch.
-- Build a task-level competitor matrix for Helm, CommandDeck, Shellcove, screen sharing, SSH, and adjacent remote-access products. Compare setup, remote reachability, supported jobs, authorization granularity, activity visibility, auditability, and extensibility.
-- Use owners of logged-in personal Macs who want private, no-relay remote operation as the beachhead hypothesis; interview MacTools users and multiple-Mac owners as subsegments rather than separate products.
-- Interview at least five people in the selected subsegment. Record the repeated job, frequency, current workaround, failure cost, and where a dashboard, semantic action, or Interactive Control is preferable.
-- Measure the current workaround's completion time, error rate, setup burden, and help required, then set the minimum improvement that would justify switching.
-- Test the “secure operations console,” “remote control,” and “monitoring dashboard” positions using the selected job rather than abstract feature descriptions.
-- Write an ADR selecting one adoption-driving segment, one repeated job, and the smallest control model that can solve it.
+- Complete written trademark review and reserve the App Store name before public branding, marketing domains, paid naming work, or external launch. Company-controlled bundle identifiers use stable role-based identifiers and do not wait for public-name reservation.
+- Build a task-level competitor matrix for Helm, Cuevello, MacReacher, Apperture, Tomaco, CommandDeck, Shellcove, generic screen sharing, and SSH. Compare pairing, time to first frame, LAN and private-route behavior, app/window focus, keyboard and touch behavior, nonvisual actions, permission onboarding, recovery, privacy, pricing, and support boundaries.
+- Use owners of logged-in personal Macs who want private, no-relay remote operation as the beachhead hypothesis. Define representative Observe, Act, and Control jobs without assuming that every user needs all three in every session.
+- Dogfood repeated jobs such as checking a build, inspecting Simulator, operating Terminal or Xcode, checking Mac health, running one bounded action, recovering from a modal dialog, and reconnecting over Tailscale. Record every return to the physical Mac and why it was necessary.
+- Define privacy-preserving TestFlight measurements and a tester-exported diagnostic report before the beta. Optional conversations and short surveys may add context, but formal interviews are not a prerequisite for implementation.
+- Write an ADR selecting the initial audience, representative jobs, positioning, and the smallest three-path product slice that can test the thesis.
 
 ### Exit criteria
 
-- No unresolved high-risk naming conflict in target markets; Mac Companion remains a working name until the evidence above is complete.
-- At least three independent people in the same selected segment report the same repeated remote job and a credible reason to replace or supplement the current workaround.
-- The initial audience, job, frequency, current workaround, and value hypothesis can be stated without depending on future AI or provider breadth.
-- The first implementation slice is selected from evidence. The three native actions remain protocol fixtures unless the selected job validates them as product features.
+- No unresolved high-risk naming conflict in target markets; Mac Companion remains the implementation and intended product name, while public use remains gated by written trademark review and App Store name reservation.
+- The initial audience, representative Observe, Act, and Control jobs, current workarounds, and value hypothesis can be stated without depending on future AI or provider breadth.
+- The competitive teardown identifies which features are category parity and which adaptive or nonvisual behaviors still need product proof.
+- The TestFlight evidence plan can detect pairing failure, connection failure, unintended input, adaptive-surface avoidance, nonvisual task completion, and repeat use without collecting screen contents, app titles, typed text, coordinates, or Accessibility values.
 
 ## Stage 0A: constraint spikes and architecture decisions
 
@@ -36,18 +37,20 @@ This stage produces small harnesses and decision records, not a polished app.
 
 - Initialize version control and CI before production scaffolding; release-shaped artifacts and security fixtures must be reproducible from a recorded revision.
 - Use the current stable macOS 26 and iOS/iPadOS 26 lines as the initial deployment target and stable Xcode 26.6 with Swift 6.3; test macOS and iOS 27 betas without making beta software a release dependency.
-- Select and spike the initial deployment topology: Developer ID distribution, an embedded `SMAppService` LaunchAgent, authenticated XPC/Mach IPC, and the process and bundle boundaries for the menu app, service, CLI, protocol library, and MacTools bridge.
+- Select and spike the initial deployment topology: Developer ID distribution, an embedded `SMAppService` LaunchAgent, authenticated XPC/Mach IPC, and the process and bundle boundaries for the menu app, service, CLI, and protocol libraries.
 - Validate code signing, hardened runtime, notarization, login-item registration, update, rollback, uninstall, and authenticated local IPC using release-shaped artifacts.
-- Decide whether a Mac App Store build is viable only after testing sandbox, listener entitlement, LaunchAgent, update, and provider-bridge constraints.
+- Decide whether a Mac App Store build is viable only after testing sandbox, listener entitlement, LaunchAgent, update, capture, and input constraints.
 - Prove the per-user LaunchAgent lifecycle through app quit, service crash, screen lock, fast user switching, logout, sleep, wake, and login-item disablement.
 - Write an ADR for one configured macOS account as the initial host owner. Define lock versus fast-user-switch behavior and fail closed when the active console owner cannot be established.
 - Write an ADR for activity visibility. Closing settings must not quit the menu-bar indicator while the service is enabled; define automatic restoration and degraded/fail-closed behavior if the indicator process crashes.
 - Submit the Persistent Content Capture managed-entitlement request through the Jenny Media LLC Account Holder and record approval status as an Interactive Control dependency.
+- Record how Apple’s system ScreenCaptureKit picker, the managed Persistent Content Capture entitlement, and remotely initiated display/application/window changes can coexist. Do not assume that a custom remote picker is acceptable without entitlement and App Review evidence.
+- Review App Store Guideline 4.2.7 against the actual iOS experience. Keep full Desktop first-class, keep App and Window Focus generic, render all Mac software on the user-owned host, avoid app-store-like browsing or remote installation, and test how user-managed private routes are described to App Review.
 - Spike the persistent menu app as the owner of ScreenCaptureKit, VideoToolbox, Accessibility trust, and `CGEvent` input while the LaunchAgent remains the network and policy authority.
 - Prove capture and input across unlocked, locked, display-sleep, display-change, menu-app crash, fast-user-switch, logout, and permission-revocation transitions. Lock-screen success means showing and operating only the genuine macOS lock surface.
 - Spike display-to-window and application-filter switching, related sheets/popovers/dialogs, full-screen Spaces, application activation, and clean-keyframe transitions.
 - Spike conservative Accessibility focus observation across AppKit, SwiftUI, browser, Electron, and custom-drawn apps. Measure stale-element and timeout behavior and prove that secure fields expose no value-derived metadata.
-- Write an ADR adopting Remote Surfaces: Desktop remains the visual escape hatch, App Focus and Smart Zoom are MVP requirements, Smart Input is a gated experiment, and semantic/provider-native surfaces are post-MVP.
+- Write an ADR adopting Remote Surfaces: Desktop remains the visual escape hatch, App Focus, Window Focus, and Smart Zoom are MVP requirements, Smart Input is a gated experiment, and semantic/provider-native surfaces are post-MVP.
 - Add a permission matrix mapping each capability to its executing process, entitlement or TCC service, allowed session states, onboarding owner, and revocation behavior.
 - Record SSH as excluded from runtime capability transport. A later SSH-assisted installer may deploy the same signed package, but may not retain SSH credentials or bypass pairing, policy, audit, and visibility.
 
@@ -66,19 +69,21 @@ This stage produces small harnesses and decision records, not a polished app.
 - Inventory required-reason API and privacy-manifest obligations, including system uptime.
 - Define the transient Remote Surface metadata allowlist. Application/window candidates, focus bounds, secure-field classification, and future semantic values must not inherit the status or audit data policy implicitly.
 - Spike `setAudioMuted`, `setAppearance`, and bounded keep-awake start/stop as desired-state actions.
-- Spike a narrow authenticated MacTools host/Core bridge. Do not assume the existing plugin API can enumerate or execute other providers' actions.
-- Design an explicit per-action MacTools remote manifest and map action, policy, provider generation, progress, cancellation, validation, effect, result, and error models. Default every action to unavailable remotely until reviewed.
+- Record a paper compatibility map to MacTools' current action, availability, concurrency, cancellation, result, and generation concepts. Do not build the bridge or let MacTools requirements expand the MVP protocol before the native three-path beta passes.
 - Select Keychain policy for private keys and a service-owned SQLite model for devices, grants, authorization epochs, replay windows, operations, and audit.
 - Define schema migration, rollback compatibility, transaction boundaries, quotas, and disk-full behavior before implementing pairing or control.
 - Establish the test harness architecture: injectable clock, randomness, storage, network, session state, and provider boundaries; golden fixtures; fuzz targets; crash hooks; and a fake provider.
 
 ### Exit criteria
 
-- Every decision above has a recorded result, rejected alternatives, and remaining risk.
-- Harnesses demonstrate the selected lifecycle and pinned connection on physical Macs and iPhones.
+Stage 0A is tracked as independently statusable platform, identity/networking, data/action, and delivery lanes. A blocked lane prevents only the artifact or promotion gate that depends on it; it does not stop unrelated specifications, pure packages, tests, or disposable experiments.
+
+- Every decision required by a promoted artifact has a recorded result, rejected alternatives, remaining risk, and evidence link or an explicit `no-go` disposition.
+- Harnesses demonstrate the selected lifecycle and pinned connection on physical Macs and iPhones before Stage 1 promotion; lack of that evidence does not block bundle-independent protocol work.
 - The team can name which claims are supported by public APIs and which remain conservative approximations.
 - No Stage 1 requirement depends on an unresolved entitlement or background-execution assumption.
-- Target, signing, IPC, TCC, data ownership, update order, and component compatibility are concrete enough to scaffold without later changing the security boundary.
+- Target, signing, IPC, TCC, data ownership, update order, and component compatibility are concrete before release-shaped targets are promoted, without preventing identity-neutral scaffolding.
+- The execution ledger identifies every external blocker and the independent work that continues around it.
 
 ## Stage 0B: executable mini-RFC and threat model
 
@@ -86,7 +91,7 @@ This stage produces small harnesses and decision records, not a polished app.
 
 - Freeze the first wire envelope, canonicalization method, size limits, timeouts, and version negotiation.
 - Specify a normative authenticated handshake: algorithms, certificate construction, QR-pinned host-key binding, fresh server challenge, client proof bound to the live TLS channel and protocol version, key confirmation, rotation, recovery, resumption, and a no-0-RTT rule for authentication or state changes.
-- Specify race-safe pairing using either a high-entropy one-time QR secret bound to the complete transcript or a short authentication string derived from both device keys, host identity, pairing ID, and transcript and compared on both devices. Pairing-session consumption is atomic and durable.
+- Specify race-safe pairing using a 256-bit one-time QR secret and a short authentication string derived from both device keys, host identity, pairing ID, negotiated protocol, and complete transcript. The phone pins the QR host identity before disclosure, both devices display the same authentication string, local approval binds its transcript hash, and pairing-session consumption is atomic and durable.
 - Define bounded status, capability, parameter, result, effect, error, presence, audit, and operation schemas.
 - Publish golden fixtures for canonical requests, approval challenges, signatures, errors, and version handling.
 - Define the exact signed operation digest, including host, client, capability and schema, provider generation, canonical parameters, effects, authorization epoch and policy revision, expiry, and protocol version.
@@ -116,9 +121,9 @@ This stage produces small harnesses and decision records, not a polished app.
 - Interactive tests reject stale or forged channel credentials, frames and input after epoch change, duplicate button transitions, stuck keys after disconnect, pre-lock desktop frames after a lock transition, and control while the menu app or indicator is unavailable.
 - Adaptive-surface tests reject substituted app/window tokens, stale surface/coordinate/focus revisions, invisible modal interaction, secure-field metadata, input after focus moves, and semantic promotion from ambiguous Accessibility data.
 - Open protocol questions are explicitly deferred and cannot silently change security semantics.
-- Pairing, privilege elevation, and consequential control fail closed when their required durable security record cannot be committed; revocation remains available under degraded storage.
+- Pairing, privilege elevation, and consequential control fail closed when their required durable security record cannot be committed. Revocation first advances the durable device epoch and records a minimal security event atomically; if that transaction fails, the service activates its reserved emergency deny latch, closes all remote work, and refuses remote startup until local recovery proves writable, consistent security storage.
 
-## Stage 1: local view-only technical alpha
+## Stage 1: local Observe and lifecycle alpha
 
 ### Scope
 
@@ -133,7 +138,7 @@ This stage produces small harnesses and decision records, not a polished app.
 - Bounded local audit history
 - Foreground-only iOS operation with clear unavailable and stale states
 
-Public IP lookup, top-process lists, application/window names, screenshots, control actions, and third-party providers are out of scope.
+Public IP lookup, top-process lists, application/window names, screenshots, control actions, and third-party providers are out of scope. This is an implementation dependency, not a statement that Observe outranks Act or Control in the product.
 
 ### Verification
 
@@ -150,15 +155,17 @@ Public IP lookup, top-process lists, application/window names, screenshots, cont
 
 Proceed only if lifecycle, presence, revocation, and freshness semantics are dependable enough that testers correctly understand who is connected and whether data is current.
 
-## Stage 2: local Interactive Control alpha
+## Stage 2: local Adaptive Control alpha
 
 ### Scope
 
 - One Mac and one paired iPhone or iPad on the local network
 - A separate, device-specific Interactive Control grant with fresh phone user presence at session start
 - One selected display streamed with the H.264 baseline profile
-- Desktop as the persistent escape hatch plus App Focus for one privacy-filtered application or window
-- Smart Zoom around a verified focused element with manual visual zoom as the fallback
+- Desktop as the persistent escape hatch, App Focus for a privacy-filtered related-window set, and explicit Window Focus for one independently captured window
+- Manual Smart Zoom plus verified focus-assisted framing, with manual visual zoom as the fallback
+- Surface-specific trackpad, direct-touch, and keyboard defaults with a persistent user override
+- Native iOS keyboard and modifier toolbar while live pixels remain authoritative
 - Absolute pointer movement, click, drag, bounded scroll, physical-key, modifier, and bounded text input
 - Persistent menu-bar indication identifying the controlling device and a local suspend control
 - Agent-enforced session creation, expiry, authorization epoch, channel credentials, rate limits, and audit metadata
@@ -181,13 +188,13 @@ Smart Input may run as a disabled-by-default compatibility experiment but is not
 - Video and input bytes, frames, text, and key events do not enter audit, diagnostics, crash metadata, or support bundles.
 - The alpha meets the initial LAN budgets in the Interactive Control specification or records an ADR changing them from measured evidence.
 - Five testers can start, identify, use, end, suspend, and revoke a session without assistance or confusion with Standard Control.
-- Five testers can enter and leave App Focus, recover from fallback, and complete focused tasks with less pinch-and-pan than Desktop-only control.
+- Five testers can move among Desktop, App Focus, Window Focus, and Smart Zoom, recover from fallback, override the interaction profile, and complete focused tasks with less pinch-and-pan than Desktop-only control.
 
 ### Exit gate
 
 Proceed only when the capture/input process boundary, visible-indicator dependency, authorization fencing, Remote Surface revisions and fallback, privacy rules, and lock transition are deterministic on physical devices. The managed entitlement must be approved or Apple must confirm a public alternative before an external Interactive Control beta.
 
-## Stage 3: no-relay private operations beta
+## Stage 3: no-relay three-path beta
 
 ### Scope
 
@@ -196,23 +203,24 @@ Proceed only when the capture/input process boundary, visible-indicator dependen
 - One evidence-backed desired-state action; use `setAudioMuted` as the fallback fixture
 - Durable operation records, bounded idempotency, approval when effects require it, progress, cancellation, terminal results, and `outcomeUnknown`
 - Interactive Control over the selected private route with adaptive frame rate, resolution, and bitrate
-- App Focus and Smart Zoom over that route with explicit fallback and mode indication
+- App Focus, Window Focus, Smart Zoom, and surface-adaptive interaction over that route with explicit fallback and mode indication
+- Observe and Act tasks that complete without starting or maintaining a screen stream
 - Smart Input only if its secure-field, focus-race, Unicode, input-method, compatibility, and content-free-diagnostics experiment gate passes
 - One Mac and one phone remain the supported UX; identifiers and storage preserve future many-to-many expansion
 
 ### Product evidence
 
-- At least four of five pilot users complete self-initiated real-world uses on three separate days within two weeks.
-- At least three repeatedly use the Observe, Act, or Intervene path for the validated job and prefer it to the workaround measured in Stage -1.
+- A 10–20 person calibration TestFlight cohort attempts self-initiated real-world uses over two weeks. Before reviewing its repeat-use results, record a dated ADR with the confirmatory cohort thresholds; the calibration cohort alone cannot establish the market-facing MVP.
+- A separate confirmatory cohort passes the preregistered thresholds. The initial targets are: at least 80% of eligible testers complete clean-install pairing without developer intervention, at least 60% of activated testers complete a real job on three distinct days within 14 days, at least five testers repeat a Control job, and at least three testers repeat an Observe or Act job. No individual user is required to use all three paths.
 - Testers can explain the difference between paired, connected, viewing, controlling, and approval-required.
-- Testers can distinguish Desktop, App Focus, Smart Zoom, visual fallback, and Smart Input when enabled without assuming that every app has a native iPhone interface.
-- Consented study-log exports plus tester diaries and interviews show no recurring confusion between unreachable, stale, locked, and sleeping; centralized telemetry is not assumed.
-- The validated workflow meets the Stage -1 improvement target for completion time, error rate, or setup burden.
-- Pause or pivot if fewer than three testers independently repeat and prefer the selected job.
+- Testers can distinguish Desktop, App Focus, Window Focus, Smart Zoom, interaction-profile overrides, visual fallback, and Smart Input when enabled without assuming that every app has a native iPhone interface.
+- Consented, user-exported study logs plus optional diaries or surveys show no recurring confusion between unreachable, stale, locked, and sleeping; centralized telemetry is not assumed.
+- No input reaches an unintended surface or field because of a stale application, window, coordinate, focus, or authorization revision.
+- If Control sessions spend overwhelmingly most of their time in Desktop and users avoid App Focus, Window Focus, and Smart Zoom, treat adaptive differentiation as unproven. If Observe and Act see little use, simplify those paths rather than making them mandatory ceremony.
 
 ### Exit gate
 
-Call the result a market-facing MVP only when both security gates and repeat-use evidence pass, no-relay onboarding succeeds without developer intervention, and Interactive Control is understood as an escalation from the dashboard rather than the entire product. Feature completeness alone is insufficient.
+Call the result a market-facing MVP only when both security gates and repeat-use evidence pass, no-relay onboarding succeeds without developer intervention, and users understand Observe, Act, and Control as independent paths with distinct permissions. Control must be easy to enter directly without making screen capture mandatory for other tasks. Feature completeness alone is insufficient.
 
 ## Stage 4: MacTools differentiation and provider contract
 
@@ -237,7 +245,7 @@ Call the result a market-facing MVP only when both security gates and repeat-use
 
 ## Stage 5: verified semantic and provider-native surfaces
 
-After the market-MVP gate, evaluate native iOS presentations that are more useful than either App Focus or a bounded capability.
+After the market-MVP gate, evaluate native iOS presentations that are more useful than an adaptive visual surface or a bounded capability.
 
 ### Scope
 
@@ -258,7 +266,7 @@ After the market-MVP gate, evaluate native iOS presentations that are more usefu
 
 ## Stage 6: additional administrator capabilities
 
-After the MVP proves demand, evaluate shell, file access, clipboard synchronization, audio, multi-display composition, headless support, and wake or pre-login components as separately grantable advanced capabilities. Mac Companion cannot semantically validate or make arbitrary commands, file operations, or clipboard contents safe.
+After the MVP proves demand, evaluate shell, file access, clipboard synchronization, audio, multi-display composition, headless support, and wake or pre-login components as separate workstreams and separately grantable advanced capabilities. Each receives its own `pass`, `no-go`, or `deferred` disposition; one blocker cannot hold the others open. Mac Companion cannot semantically validate or make arbitrary commands, file operations, or clipboard contents safe.
 
 ### Enablement and containment
 
@@ -292,6 +300,13 @@ Before any AI feature can request execution:
 - Prompt-injection and confused-deputy tests are part of the security gate.
 
 An AI feature cannot silently obtain or drive an Interactive Control, Remote Surface, or administrator-capability session. That requires a separate, explicit product and threat-model decision. No Stage 5, Stage 6, or Stage 7 promise is needed to validate the earlier product.
+
+### Exit criteria
+
+- One validated assisted-operation job has a written user outcome and performs materially better than the non-AI workflow, or Stage 7 receives an evidence-backed `no-go` or `deferred` disposition.
+- The planner cannot expand grants, bypass user presence, call unregistered capabilities, or convert visual content into authority.
+- Prompt-injection, malicious-provider, stale-plan, replay, cancellation, revocation, and partial-execution tests pass against the same policy and durable-operation boundaries as direct requests.
+- Every model, data flow, retention rule, disclosure, cost boundary, offline/unavailable state, and distribution dependency is documented before external testing.
 
 ## Cross-stage quality gates
 
@@ -342,8 +357,8 @@ Exact numbers are set during Stage 0A and measured continuously. At minimum trac
 
 ## Success definition
 
-The technical alpha succeeds when Mac Companion can establish, display, revoke, and audit a trustworthy foreground session and a visible local Interactive Control session, move safely among Desktop, App Focus, and Smart Zoom, and fall back without misleading the user about host or focus state.
+The technical alpha succeeds when Mac Companion can establish, display, revoke, and audit a trustworthy foreground session and a visible local Interactive Control session, move safely among Desktop, App Focus, Window Focus, and Smart Zoom with appropriate interaction profiles, and fall back without misleading the user about host or focus state.
 
-The differentiated beta succeeds when users repeatedly rely on the selected Mac job, choose appropriately among Observe, Act, and Intervene, and understand the security and activity model.
+The differentiated beta succeeds when users repeatedly rely on Mac Companion for real jobs, choose appropriately among Observe, Act, and Control, and understand the security and activity model. Success does not require every user or session to use every path.
 
 Only then should Mac Companion invest in MacTools breadth, a general provider ecosystem, background delivery infrastructure, additional administrator capabilities, or AI planning. Interactive Control is part of the MVP, but shell, files, clipboard, audio, and autonomous operation do not inherit its grant or security conclusions.

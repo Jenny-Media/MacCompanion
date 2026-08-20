@@ -1,6 +1,6 @@
 # Mac Companion Adaptive Remote Surfaces
 
-Status: coding-baseline product and protocol specification. This document defines how Interactive Control becomes more useful than a conventional scaled desktop. It is subordinate to the identity, grant, visibility, revocation, and lock rules in the Interactive Control specification.
+Status: coding-baseline product and protocol specification. This document defines the adaptive behavior of Mac Companion's flagship Control path. Observe and Act remain independently useful without screen capture. This document is subordinate to the identity, grant, visibility, revocation, and lock rules in the Interactive Control specification.
 
 ## 1. Purpose
 
@@ -12,7 +12,7 @@ An iPhone is not a small Mac display. Mac Companion should present the most usef
 - A native iOS input experience when a compatible editable element is focused
 - Later, verified native controls or an app-provided remote surface
 
-These representations are called **Remote Surfaces**. They make Interactive Control adaptive without hiding what is happening on the Mac or inventing authority that the Mac did not grant.
+These representations are called **Remote Surfaces**. They make Interactive Control adaptive without hiding what is happening on the Mac or inventing authority that the Mac did not grant. They are not the whole Mac Companion product and do not replace nonvisual status or capability surfaces.
 
 ## 2. Product principles
 
@@ -49,7 +49,7 @@ Remote Surfaces exist only inside an active Interactive Control session. They us
 | --- | --- | --- |
 | `desktop` | One selected display with absolute pointer and keyboard input | Required baseline |
 | `application` | The selected application's relevant window set, activated and scaled for iPhone | MVP App Focus |
-| `window` | One identified application window captured independently | MVP App Focus |
+| `window` | One identified application window captured independently | MVP Window Focus |
 | `focusedRegion` | A live crop around a verified focused element or pointer region | MVP Smart Zoom |
 | `textInput` | A native iOS keyboard/input presentation bound to one focused editable element | Gated MVP experiment |
 | `semantic` | Native iOS controls derived from verified Accessibility semantics | Post-MVP |
@@ -73,6 +73,20 @@ Every surface descriptor contains bounded, versioned fields:
 - Current focus token when safely available
 - Parent and fallback surface identifiers
 - Creation, freshness, and expiry times
+
+### Surface-adaptive interaction
+
+Visual adaptation and input adaptation are one product behavior. The host declares which interaction classes are valid for the current surface; the client selects an ergonomic default and always exposes an immediate override.
+
+| Surface | Initial default | Required alternative |
+| --- | --- | --- |
+| Desktop | Indirect trackpad pointer | Direct touch and temporary magnification |
+| App Focus | Trackpad until targets are demonstrably readable | Direct touch |
+| Window Focus | Direct touch when scale and target size permit | Trackpad |
+| Smart Zoom | Direct touch | Trackpad or pan/zoom |
+| Text focus | Native iOS keyboard and modifier toolbar with live visual target | Ordinary visual keyboard control |
+
+These defaults are usability hypotheses, not protocol truth. Physical-device testing may change them by device class, orientation, scale, or accessibility setting. Every admitted coordinate event remains bound to the current surface and coordinate revisions regardless of interaction profile.
 
 Process IDs, AXUIElement references, Core Graphics window IDs, and ScreenCaptureKit object identities are never durable protocol identity. The menu app maps them to opaque session tokens and invalidates those tokens when the source disappears or changes ownership.
 
@@ -202,7 +216,7 @@ Smart Input can enter the private-route beta only if physical-device tests show:
 - Application rejection, timeout, or invalid element returns to visual control without losing or duplicating input.
 - No text, selection, key identity, or field metadata enters audit, diagnostics, or crash reports.
 
-Failure of this gate does not block App Focus, Smart Zoom, or ordinary Interactive Control.
+Failure of this gate does not block App Focus, Window Focus, Smart Zoom, or ordinary Interactive Control.
 
 ## 9. Semantic and provider-native surfaces
 
@@ -318,7 +332,7 @@ On a healthy LAN:
 - Focus change to stable Smart Zoom crop: p95 at or below 300 ms
 - Surface fallback after invalidation: p95 at or below 500 ms
 - No unbounded window, AX element, icon, crop, or semantic metadata cache
-- App Focus does not increase the Interactive Control memory or energy budget by more than a measured and documented Stage 0 allowance
+- App Focus and Window Focus do not increase the Interactive Control memory or energy budget by more than a measured and documented Stage 0 allowance
 
 These targets are measured gates, not guarantees for every app or private route.
 
@@ -345,12 +359,13 @@ The adaptive Interactive Control MVP is ready when:
 
 - Desktop control remains usable without Accessibility-derived surface metadata.
 - A user can enter and leave App Focus without losing orientation or control.
+- A user can enter and leave Window Focus and override direct-touch or trackpad defaults without changing the authorized surface.
 - Modal and related-window ambiguity always produces a visible related surface or desktop fallback.
 - Smart Zoom follows verified focus without sending labels or values and becomes manual zoom when confidence is insufficient.
 - Surface, focus, and coordinate revisions reject stale selection and input.
 - Lock, suspension, revocation, menu-app loss, and epoch change invalidate every surface token immediately.
 - App/window/focus metadata is absent from durable logs and support artifacts.
-- Five testers use App Focus and Smart Zoom for real tasks and prefer them to manual desktop pinch-and-pan.
+- Five testers use App Focus, Window Focus, or Smart Zoom for real tasks and prefer an adaptive surface to manual desktop pinch-and-pan when it applies.
 - Smart Input remains disabled unless its independent experiment gate passes.
 
 The post-MVP semantic/provider phase is ready only after users demonstrate that native surfaces solve repeated jobs better than either App Focus or a bounded semantic capability.
