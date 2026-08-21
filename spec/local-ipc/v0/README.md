@@ -349,6 +349,17 @@ proven same-team exact-identifier peer requirements and must issue the Agent
 review from current durable state rather than caller-supplied identity facts or
 roles.
 
+The permanent macOS 26 adapter now constructs that transport boundary. Both
+sides install reciprocal same-team exact-signing-identifier requirements while
+inactive; the Agent repeats its requirement per peer. It accepts only the
+closed hello, publishes a generation-bound authenticated lifetime only after
+the exact acknowledgement is sent, and publishes invalidation only for a
+previously published lifetime. This handshake grants no method capability.
+The production construction evidence is recorded in
+`docs/evidence/2026-08-21-production-local-xpc-handshake-construction.md`.
+Status, recovery, and other method adapters must consume a capability bound to
+that exact generation and must lose it before any replacement can publish.
+
 The bundle-independent recovery delivery boundary is connection-scoped and is
 issued only after the platform adapter has authenticated and authorized the
 menu-app endpoint. It receives no caller-supplied role, audit token, endpoint

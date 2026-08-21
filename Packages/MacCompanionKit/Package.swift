@@ -19,6 +19,10 @@ let package = Package(
         .library(name: "CompanionCLI", targets: ["CompanionCLI"]),
         .library(name: "CompanionAgent", targets: ["CompanionAgent"]),
         .library(name: "CompanionAgentPlatform", targets: ["CompanionAgentPlatform"]),
+        .library(
+            name: "CompanionLocalXPCPlatform",
+            targets: ["CompanionLocalXPCPlatform"]
+        ),
         .library(name: "CompanionHost", targets: ["CompanionHost"]),
         .library(name: "CompanionHostWire", targets: ["CompanionHostWire"]),
         .library(name: "CompanionHostSession", targets: ["CompanionHostSession"]),
@@ -223,6 +227,14 @@ let package = Package(
             linkerSettings: [
                 .linkedFramework("ServiceManagement", .when(platforms: [.macOS])),
             ]
+        ),
+        .target(
+            name: "CompanionLocalXPCPlatformC",
+            publicHeadersPath: "include"
+        ),
+        .target(
+            name: "CompanionLocalXPCPlatform",
+            dependencies: ["CompanionLocalXPCPlatformC"]
         ),
         .target(
             name: "CompanionHost",
@@ -467,6 +479,10 @@ let package = Package(
                 "CompanionAgent", "CompanionAgentPlatform",
                 "CompanionLifecycle", "CompanionMacApp", "CompanionWire",
             ]
+        ),
+        .testTarget(
+            name: "CompanionLocalXPCPlatformTests",
+            dependencies: ["CompanionLocalXPCPlatform"]
         ),
         .testTarget(
             name: "CompanionHostTests",

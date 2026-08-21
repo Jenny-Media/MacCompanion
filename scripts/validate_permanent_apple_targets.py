@@ -37,6 +37,7 @@ EXPECTED_LAUNCH_AGENT = {
     "BundleProgram": "Contents/MacOS/MacCompanionAgent",
     "KeepAlive": True,
     "Label": AGENT_IDENTIFIER,
+    "MachServices": {AGENT_IDENTIFIER: True},
     "RunAtLoad": True,
 }
 
@@ -98,6 +99,13 @@ def validate_project_spec(content: str, failures: list[str]) -> None:
     }
     for label, needle in required.items():
         require_count(content, needle, 1, label, failures)
+    require_count(
+        content,
+        "        product: CompanionLocalXPCPlatform",
+        2,
+        "localXPCProducts",
+        failures,
+    )
     require_count(
         content, "        ENABLE_APP_SANDBOX: NO", 2, "noSandboxTargets", failures
     )
@@ -176,7 +184,7 @@ def validate_launch_agent(failures: list[str]) -> None:
         failures.append("launchAgentSchemaOrValueMismatch")
 
 
-def validate_inert_agent_source(content: str, failures: list[str]) -> None:
+def validate_narrow_agent_source(content: str, failures: list[str]) -> None:
     code = "\n".join(
         line.split("//", 1)[0] for line in content.splitlines()
     )
@@ -185,18 +193,23 @@ def validate_inert_agent_source(content: str, failures: list[str]) -> None:
         "import CompanionAgentPlatform",
         "import Dispatch",
         "@main",
+        "import CompanionLocalXPCPlatform",
+        "import Darwin",
         "enum MacCompanionAgentMain",
         "static func main()",
         "dispatchMain()",
+        "let localXPC = MacLocalXPCServerV1",
+        "try localXPC.start()",
     ):
         require_count(code, needle, 1, f"agentSource:{needle}", failures)
     for needle in (
         "SMAppService",
         "NWListener",
         ".register(",
-        ".start(",
         "UserDefaults",
+        "AgentPrimaryServicesV1",
         "Keychain",
+        "SQLite",
     ):
         if needle in code:
             failures.append(f"agentSourceUnexpectedAuthority:{needle}")
@@ -264,7 +277,7 @@ def main() -> int:
     validate_project_spec(project_spec, failures)
     validate_generated_project(generated_project, failures)
     validate_launch_agent(failures)
-    validate_inert_agent_source(agent_source, failures)
+    validate_narrow_agent_source(agent_source, failures)
     validate_login_role_composition(
         login_composition,
         mac_application,
@@ -276,8 +289,8 @@ def main() -> int:
         return 1
     print(
         "Validated permanent Mac/Agent topology, identities, signing flags, "
-        "LaunchAgent contract, and explicit side-effect-free SMAppService "
-        "composition."
+        "requirement-bound local handshake, LaunchAgent contract, and "
+        "explicit side-effect-free SMAppService composition."
     )
     return 0
 

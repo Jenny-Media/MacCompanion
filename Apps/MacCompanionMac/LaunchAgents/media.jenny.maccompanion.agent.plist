@@ -8,6 +8,11 @@
     <true/>
     <key>Label</key>
     <string>media.jenny.maccompanion.agent</string>
+    <key>MachServices</key>
+    <dict>
+        <key>media.jenny.maccompanion.agent</key>
+        <true/>
+    </dict>
     <key>RunAtLoad</key>
     <true/>
 </dict>

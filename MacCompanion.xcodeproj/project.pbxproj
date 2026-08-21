@@ -8,9 +8,11 @@
 
 /* Begin PBXBuildFile section */
 		0F8835B7FFA65720544938A0 /* CompanionAgentPlatform in Frameworks */ = {isa = PBXBuildFile; productRef = 80D9AE0F7D36237111CFE64A /* CompanionAgentPlatform */; };
-		281D3C00B605BF825BFCA0F4 /* CompanionMacApp in Frameworks */ = {isa = PBXBuildFile; productRef = 4E6E2C3ED3D78E6AD3075740 /* CompanionMacApp */; };
+		1C34633B83EAB9C100ABF652 /* CompanionLocalXPCPlatform in Frameworks */ = {isa = PBXBuildFile; productRef = 1CDE656098E73FC6CF249191 /* CompanionLocalXPCPlatform */; };
+		281D3C00B605BF825BFCA0F4 /* CompanionLocalXPCPlatform in Frameworks */ = {isa = PBXBuildFile; productRef = D80FDE8AEECB694B58AE4155 /* CompanionLocalXPCPlatform */; };
+		766C4BE8703736B3332F625B /* CompanionMacUI in Frameworks */ = {isa = PBXBuildFile; productRef = A41CC69D69523D4B80517C00 /* CompanionMacUI */; };
 		8454DF0C857C2BD213CF3354 /* MacCompanionAgent in Embed Dependencies */ = {isa = PBXBuildFile; fileRef = AE3D392DEDADD8FF0EA82A87 /* MacCompanionAgent */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
-		846BE6F9115ED668392FBB03 /* CompanionMacUI in Frameworks */ = {isa = PBXBuildFile; productRef = A41CC69D69523D4B80517C00 /* CompanionMacUI */; };
+		846BE6F9115ED668392FBB03 /* CompanionMacApp in Frameworks */ = {isa = PBXBuildFile; productRef = 4E6E2C3ED3D78E6AD3075740 /* CompanionMacApp */; };
 		9EA787566F61B8172FB4B367 /* CompanionAgentNetworkPlatform in Frameworks */ = {isa = PBXBuildFile; productRef = DCFF602F89E1AE1B2E84AFAF /* CompanionAgentNetworkPlatform */; };
 		BC48C8D41E65C3F53831C0BA /* MacCompanionApplication.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9224B6E6FD7914BF9ACCABD3 /* MacCompanionApplication.swift */; };
 		CC7F99B97D2306D662D55CDB /* CompanionAgentPlatform in Frameworks */ = {isa = PBXBuildFile; productRef = 69A6FD09175941ACB01C2C89 /* CompanionAgentPlatform */; };
@@ -73,8 +75,9 @@
 			files = (
 				ED3708C188DC07BBB95D0466 /* CompanionAgent in Frameworks */,
 				CC7F99B97D2306D662D55CDB /* CompanionAgentPlatform in Frameworks */,
-				281D3C00B605BF825BFCA0F4 /* CompanionMacApp in Frameworks */,
-				846BE6F9115ED668392FBB03 /* CompanionMacUI in Frameworks */,
+				281D3C00B605BF825BFCA0F4 /* CompanionLocalXPCPlatform in Frameworks */,
+				846BE6F9115ED668392FBB03 /* CompanionMacApp in Frameworks */,
+				766C4BE8703736B3332F625B /* CompanionMacUI in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -84,6 +87,7 @@
 			files = (
 				9EA787566F61B8172FB4B367 /* CompanionAgentNetworkPlatform in Frameworks */,
 				0F8835B7FFA65720544938A0 /* CompanionAgentPlatform in Frameworks */,
+				1C34633B83EAB9C100ABF652 /* CompanionLocalXPCPlatform in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -210,6 +214,7 @@
 			packageProductDependencies = (
 				DCFF602F89E1AE1B2E84AFAF /* CompanionAgentNetworkPlatform */,
 				80D9AE0F7D36237111CFE64A /* CompanionAgentPlatform */,
+				1CDE656098E73FC6CF249191 /* CompanionLocalXPCPlatform */,
 			);
 			productName = MacCompanionAgent;
 			productReference = AE3D392DEDADD8FF0EA82A87 /* MacCompanionAgent */;
@@ -234,6 +239,7 @@
 			packageProductDependencies = (
 				384AB5F79EBFE92182F4928C /* CompanionAgent */,
 				69A6FD09175941ACB01C2C89 /* CompanionAgentPlatform */,
+				D80FDE8AEECB694B58AE4155 /* CompanionLocalXPCPlatform */,
 				4E6E2C3ED3D78E6AD3075740 /* CompanionMacApp */,
 				A41CC69D69523D4B80517C00 /* CompanionMacUI */,
 			);
@@ -570,6 +576,10 @@
 /* End XCLocalSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
+		1CDE656098E73FC6CF249191 /* CompanionLocalXPCPlatform */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = CompanionLocalXPCPlatform;
+		};
 		384AB5F79EBFE92182F4928C /* CompanionAgent */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = CompanionAgent;
@@ -589,6 +599,10 @@
 		A41CC69D69523D4B80517C00 /* CompanionMacUI */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = CompanionMacUI;
+		};
+		D80FDE8AEECB694B58AE4155 /* CompanionLocalXPCPlatform */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = CompanionLocalXPCPlatform;
 		};
 		DCFF602F89E1AE1B2E84AFAF /* CompanionAgentNetworkPlatform */ = {
 			isa = XCSwiftPackageProductDependency;

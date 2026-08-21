@@ -139,6 +139,9 @@ xpc_probe_flags=(
 )
 "$xpc_probe_clang" "${xpc_probe_flags[@]}" Experiments/LocalXPCIdentityProbe/agent.c
 "$xpc_probe_clang" "${xpc_probe_flags[@]}" Experiments/LocalXPCIdentityProbe/client.c
+"$xpc_probe_clang" "${xpc_probe_flags[@]}" \
+  -IPackages/MacCompanionKit/Sources/CompanionLocalXPCPlatformC/include \
+  Packages/MacCompanionKit/Sources/CompanionLocalXPCPlatformC/CompanionLocalXPCPlatformC.c
 
 bash -n Experiments/LocalXPCIdentityProbe/run.sh
 git diff --check

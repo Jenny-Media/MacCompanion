@@ -24,8 +24,14 @@ request is the constant closed v0.1 hello. A
 [signed disposable probe](../evidence/2026-08-21-signed-local-xpc-peer-identity-probe.md)
 provisionally proves the exact Mac/Agent identities, invalid-identifier and
 invalid-signer rejection in both directions, and closed version/shape
-rejection. Production transport, invalidation, replacement, and capability
-revocation evidence remain required before IPC ships.
+rejection. The
+[production handshake construction](../evidence/2026-08-21-production-local-xpc-handshake-construction.md)
+now binds those requirements to the permanent Mach service and targets,
+publishes generation-bound authentication only after a successful exact
+acknowledgement, and invalidates that observable lifetime exactly once. It
+deliberately issues no method authority. Production status/lifecycle binding,
+replacement and late-reply fencing, signed permanent-target runtime, and
+capability revocation evidence remain required before IPC ships.
 
 If the menu app disappears, the agent ends capture/input leases, releases all input, suspends Interactive Control, and preserves eligible Observe or bounded Act service. Crash recovery is distinct from an explicit local **Quit and Disable**, which unregisters both login roles. Until recovery is proved, Control fails closed.
 
