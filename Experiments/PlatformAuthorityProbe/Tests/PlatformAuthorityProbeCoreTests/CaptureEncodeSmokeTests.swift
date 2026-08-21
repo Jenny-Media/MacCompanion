@@ -42,7 +42,7 @@ private actor SmokeGraph: CaptureEncodeSmokeGraph {
     private var sample:
         (@Sendable (CaptureEncodeSmokeSampleFacts) async -> Bool)?
     private var terminal:
-        (@Sendable (CaptureEncodeSmokeTerminal) -> Void)?
+        (@Sendable (CaptureEncodeSmokeTerminal) async -> Void)?
     private var starts = 0
     private var stops = 0
 
@@ -53,7 +53,7 @@ private actor SmokeGraph: CaptureEncodeSmokeGraph {
 
     func configure(
         sample: @escaping @Sendable (CaptureEncodeSmokeSampleFacts) async -> Bool,
-        terminal: @escaping @Sendable (CaptureEncodeSmokeTerminal) -> Void
+        terminal: @escaping @Sendable (CaptureEncodeSmokeTerminal) async -> Void
     ) {
         self.sample = sample
         self.terminal = terminal
@@ -66,9 +66,9 @@ private actor SmokeGraph: CaptureEncodeSmokeGraph {
             return
         case let .sample(facts):
             let accepted = await sample?(facts) ?? false
-            if !accepted { terminal?(.encoderTerminated) }
+            if !accepted { await terminal?(.encoderTerminated) }
         case let .terminal(reason):
-            terminal?(reason)
+            await terminal?(reason)
         case .startFailure:
             throw SmokeTestError.injected
         }
@@ -95,7 +95,7 @@ private actor SmokeBuilder: CaptureEncodeSmokeGraphBuilding {
 
     func makeMainDisplayGraph(
         sample: @escaping @Sendable (CaptureEncodeSmokeSampleFacts) async -> Bool,
-        terminal: @escaping @Sendable (CaptureEncodeSmokeTerminal) -> Void
+        terminal: @escaping @Sendable (CaptureEncodeSmokeTerminal) async -> Void
     ) async throws -> (any CaptureEncodeSmokeGraph)? {
         makes += 1
         switch mode {

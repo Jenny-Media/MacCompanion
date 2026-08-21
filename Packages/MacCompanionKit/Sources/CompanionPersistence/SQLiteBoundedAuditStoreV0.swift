@@ -87,6 +87,7 @@ public actor SQLiteBoundedAuditStoreV0 {
     public static let maximumPageSize = 100
 
     private let handle: AuditSQLiteHandleV0
+    private let preparedPath: String
     private let configuration: AuditStoreConfigurationV0
     private let injectedFaults: Set<AuditStoreFaultPointV0>
 
@@ -131,6 +132,7 @@ public actor SQLiteBoundedAuditStoreV0 {
             )
         }
         handle = AuditSQLiteHandleV0(opened)
+        self.preparedPath = preparedPath
         self.configuration = configuration
         self.injectedFaults = injectedFaults
         do {
@@ -152,6 +154,28 @@ public actor SQLiteBoundedAuditStoreV0 {
                 at: preparedPath
             )
         } catch is SQLiteStorePathSecurityError {
+            throw AuditStoreErrorV0.insecureStoragePath
+        }
+    }
+
+    /// Proves that the live SQLite handle still names the exact private file
+    /// approved during construction.
+    public nonisolated func validateStorageBinding() throws {
+        var hasMoved: Int32 = 0
+        guard sqlite3_file_control(
+            handle.pointer,
+            "main",
+            SQLITE_FCNTL_HAS_MOVED,
+            &hasMoved
+        ) == SQLITE_OK,
+              hasMoved == 0 else {
+            throw AuditStoreErrorV0.insecureStoragePath
+        }
+        do {
+            try SQLiteStorePathSecurity.validateDatabaseArtifacts(
+                at: preparedPath
+            )
+        } catch {
             throw AuditStoreErrorV0.insecureStoragePath
         }
     }

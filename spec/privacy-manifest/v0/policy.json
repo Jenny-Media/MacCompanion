@@ -45,6 +45,20 @@
       "platforms": ["macOS"]
     },
     {
+      "api": "lstat",
+      "category": "NSPrivacyAccessedAPICategoryFileTimestamp",
+      "path": "Packages/MacCompanionKit/Sources/CompanionAgentPlatform/MacAgentReleaseStorageV1.swift",
+      "count": 4,
+      "platforms": ["macOS"]
+    },
+    {
+      "api": "stat",
+      "category": "NSPrivacyAccessedAPICategoryFileTimestamp",
+      "path": "Packages/MacCompanionKit/Sources/CompanionAgentPlatform/MacAgentReleaseStorageV1.swift",
+      "count": 4,
+      "platforms": ["macOS"]
+    },
+    {
       "api": "fstat",
       "category": "NSPrivacyAccessedAPICategoryFileTimestamp",
       "path": "Packages/MacCompanionKit/Sources/CompanionAgentPlatform/MacRemoteAccessIntentStoreV1.swift",
@@ -83,6 +97,13 @@
       "api": "fstat",
       "category": "NSPrivacyAccessedAPICategoryFileTimestamp",
       "path": "Packages/MacCompanionKit/Sources/CompanionPersistence/EmergencyDenyLatch.swift",
+      "count": 2,
+      "platforms": ["macOS"]
+    },
+    {
+      "api": "lstat",
+      "category": "NSPrivacyAccessedAPICategoryFileTimestamp",
+      "path": "Packages/MacCompanionKit/Sources/CompanionPersistence/EmergencyDenyLatch.swift",
       "count": 1,
       "platforms": ["macOS"]
     },
@@ -90,7 +111,7 @@
       "api": "stat",
       "category": "NSPrivacyAccessedAPICategoryFileTimestamp",
       "path": "Packages/MacCompanionKit/Sources/CompanionPersistence/EmergencyDenyLatch.swift",
-      "count": 1,
+      "count": 3,
       "platforms": ["macOS"]
     },
     {

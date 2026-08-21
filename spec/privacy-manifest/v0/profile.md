@@ -30,12 +30,13 @@ Current covered APIs exist only in the macOS release graph:
 
 - `ProcessInfo.systemUptime` in Host status and Agent monotonic timing;
 - `.systemSize` and `.systemFreeSize` in Host disk status; and
-- conservative `stat`/`fstat` inventory in the durable deny latch and macOS
-  remote-access intent store.
+- conservative `stat`/`lstat`/`fstat` inventory in the durable deny latch, macOS
+  Agent release-storage root, and remote-access intent store.
 
 The Host and Persistence files are whole-file `#if os(macOS)` guarded. The
-Agent timing and Agent-platform intent files are not guarded, but both targets
-are outside the iOS app's transitive Swift target closure. Validation checks
+Agent timing and Agent-platform intent files are not guarded, while the Agent
+release-storage source is whole-file macOS-guarded; these targets are outside
+the iOS app's transitive Swift target closure. Validation checks
 both conditions from the current package graph instead of assuming that a
 shared module name implies an API is compiled for iOS.
 

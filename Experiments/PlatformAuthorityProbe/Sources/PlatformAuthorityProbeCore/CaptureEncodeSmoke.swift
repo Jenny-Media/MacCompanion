@@ -229,7 +229,7 @@ public protocol CaptureEncodeSmokeGraph: Sendable {
 public protocol CaptureEncodeSmokeGraphBuilding: Sendable {
     func makeMainDisplayGraph(
         sample: @escaping @Sendable (CaptureEncodeSmokeSampleFacts) async -> Bool,
-        terminal: @escaping @Sendable (CaptureEncodeSmokeTerminal) -> Void
+        terminal: @escaping @Sendable (CaptureEncodeSmokeTerminal) async -> Void
     ) async throws -> (any CaptureEncodeSmokeGraph)?
 }
 
@@ -366,9 +366,7 @@ public struct CaptureEncodeSmokeCoordinator: Sendable {
                 sample: { facts in
                     await channel.observe(facts)
                 },
-                terminal: { reason in
-                    Task { await channel.terminal(reason) }
-                }
+                terminal: { reason in await channel.terminal(reason) }
             ) else {
                 return .closed(
                     result: .mainDisplayUnavailable,
@@ -527,7 +525,7 @@ public struct ProductionCaptureEncodeSmokeGraphBuilder:
 
     public func makeMainDisplayGraph(
         sample: @escaping @Sendable (CaptureEncodeSmokeSampleFacts) async -> Bool,
-        terminal: @escaping @Sendable (CaptureEncodeSmokeTerminal) -> Void
+        terminal: @escaping @Sendable (CaptureEncodeSmokeTerminal) async -> Void
     ) async throws -> (any CaptureEncodeSmokeGraph)? {
         let content = try await SCShareableContent.excludingDesktopWindows(
             false,
@@ -580,7 +578,7 @@ public struct ProductionCaptureEncodeSmokeGraphBuilder:
                 ) else {
                     return
                 }
-                terminal(mapped)
+                Task { await terminal(mapped) }
             }
         )
         relay.bind(owner)

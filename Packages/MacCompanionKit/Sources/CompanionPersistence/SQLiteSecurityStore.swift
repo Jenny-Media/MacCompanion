@@ -518,6 +518,7 @@ public actor SQLiteSecurityStore {
     public static let operationRetentionMilliseconds: Int64 = 30 * 24 * 60 * 60 * 1_000
 
     private let handle: SQLiteDatabaseHandle
+    private let preparedPath: String
     private let injectedFaults: Set<PersistenceFaultPoint>
     private let retainedOperationLimitPerDevice: Int
 
@@ -593,8 +594,33 @@ public actor SQLiteSecurityStore {
             throw error
         }
         handle = SQLiteDatabaseHandle(opened)
+        self.preparedPath = preparedPath
         self.injectedFaults = injectedFaults
         self.retainedOperationLimitPerDevice = retainedOperationLimitPerDevice
+    }
+
+    /// Proves that the live SQLite handle still names the exact private file
+    /// approved during construction. Callers use this before publishing a
+    /// composition that would otherwise retain a path/handle split after a
+    /// same-user rename or substitution.
+    public nonisolated func validateStorageBinding() throws {
+        var hasMoved: Int32 = 0
+        guard sqlite3_file_control(
+            handle.pointer,
+            "main",
+            SQLITE_FCNTL_HAS_MOVED,
+            &hasMoved
+        ) == SQLITE_OK,
+              hasMoved == 0 else {
+            throw SecurityStoreError.insecureStoragePath
+        }
+        do {
+            try SQLiteStorePathSecurity.validateDatabaseArtifacts(
+                at: preparedPath
+            )
+        } catch {
+            throw SecurityStoreError.insecureStoragePath
+        }
     }
 
     public func currentSchemaVersion() throws -> Int32 {

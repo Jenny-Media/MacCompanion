@@ -11,19 +11,14 @@ from pathlib import Path
 REPOSITORY = Path(__file__).resolve().parents[1]
 PROJECT_SPEC = REPOSITORY / "project.yml"
 PROJECT_FILE = REPOSITORY / "MacCompanion.xcodeproj" / "project.pbxproj"
-MAC_APPLICATION = (
-    REPOSITORY
-    / "Apps"
-    / "MacCompanionMac"
-    / "MacCompanionApplication.swift"
-)
+MAC_TARGET_DIRECTORY = REPOSITORY / "Apps" / "MacCompanionMac"
 LOGIN_COMPOSITION = (
     REPOSITORY
     / "Apps"
     / "MacCompanionMac"
     / "MacCompanionLoginRoleComposition.swift"
 )
-AGENT_SOURCE = REPOSITORY / "Apps" / "MacCompanionAgent" / "MacCompanionAgentMain.swift"
+AGENT_TARGET_DIRECTORY = REPOSITORY / "Apps" / "MacCompanionAgent"
 LAUNCH_AGENT = (
     REPOSITORY
     / "Apps"
@@ -50,6 +45,14 @@ def read_text(path: Path, failures: list[str]) -> str:
             f"unreadable:{path.relative_to(REPOSITORY)}:{type(error).__name__}"
         )
         return ""
+
+
+def read_swift_target(directory: Path, failures: list[str]) -> str:
+    sources = sorted(directory.rglob("*.swift"))
+    if not sources:
+        failures.append(f"noSwiftSources:{directory.relative_to(REPOSITORY)}")
+        return ""
+    return "\n".join(read_text(source, failures) for source in sources)
 
 
 def require_count(
@@ -214,6 +217,7 @@ def validate_narrow_agent_source(content: str, failures: list[str]) -> None:
         ".menuLifecycleReadiness",
         "MacLocalXPCStatusReaderV1",
         "MacLocalXPCAgentProductV1",
+        "MacAgentReleaseStorageV1",
         "statusReader:",
     ):
         if needle in code:
@@ -277,6 +281,7 @@ def validate_login_role_composition(
     for needle in (
         "MacLocalXPCDashboardProductV1(",
         "MacAgentDashboardApplicationOwnerV0(",
+        "MacAgentReleaseStorageV1",
     ):
         if needle in application_code:
             failures.append(f"menuSourceUnexpectedAuthority:{needle}")
@@ -285,18 +290,47 @@ def validate_login_role_composition(
             failures.append(f"implicitLoginMutation:{needle}")
 
 
+def validate_storage_inertness_self_tests(
+    agent_source: str,
+    login_composition: str,
+    mac_application: str,
+    failures: list[str],
+) -> None:
+    injected = "\nlet _ = try MacAgentReleaseStorageV1.systemDefault()\n"
+
+    agent_failures: list[str] = []
+    validate_narrow_agent_source(agent_source + injected, agent_failures)
+    if "agentSourceUnexpectedAuthority:MacAgentReleaseStorageV1" not in agent_failures:
+        failures.append("agentStorageActivationFixtureAccepted")
+
+    menu_failures: list[str] = []
+    validate_login_role_composition(
+        login_composition,
+        mac_application + injected,
+        menu_failures,
+    )
+    if "menuSourceUnexpectedAuthority:MacAgentReleaseStorageV1" not in menu_failures:
+        failures.append("menuStorageActivationFixtureAccepted")
+
+
 def main() -> int:
     failures: list[str] = []
     project_spec = read_text(PROJECT_SPEC, failures)
     generated_project = read_text(PROJECT_FILE, failures)
-    agent_source = read_text(AGENT_SOURCE, failures)
-    mac_application = read_text(MAC_APPLICATION, failures)
+    agent_source = read_swift_target(AGENT_TARGET_DIRECTORY, failures)
+    mac_application = read_swift_target(MAC_TARGET_DIRECTORY, failures)
     login_composition = read_text(LOGIN_COMPOSITION, failures)
     validate_project_spec(project_spec, failures)
     validate_generated_project(generated_project, failures)
     validate_launch_agent(failures)
     validate_narrow_agent_source(agent_source, failures)
     validate_login_role_composition(
+        login_composition,
+        mac_application,
+        failures,
+    )
+    validate_storage_inertness_self_tests(
+        agent_source,
         login_composition,
         mac_application,
         failures,

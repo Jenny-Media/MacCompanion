@@ -117,4 +117,30 @@ import Testing
         )
     }
 }
+
+@Test func separateLatchInstancesSerializeConcurrentUpdates() async throws {
+    let temporary = try TemporaryDatabase()
+    defer { temporary.remove() }
+    let url = temporary.directory.appendingPathComponent("emergency-deny.latch")
+    let first = try EmergencyDenyLatch(url: url)
+    let second = try EmergencyDenyLatch(url: url)
+
+    try await withThrowingTaskGroup(of: Void.self) { group in
+        for index in 1...100 {
+            let latch = index.isMultiple(of: 2) ? first : second
+            group.addTask {
+                _ = try await latch.activate(
+                    pendingDeviceID: nil,
+                    reason: .securityStoreUnavailable,
+                    recordedAtUnixMilliseconds: Int64(index)
+                )
+            }
+        }
+        try await group.waitForAll()
+    }
+
+    let snapshot = try await first.snapshot()
+    #expect(snapshot.health == .active)
+    #expect(snapshot.generation == 100)
+}
 #endif

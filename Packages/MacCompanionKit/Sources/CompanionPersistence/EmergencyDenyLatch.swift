@@ -33,19 +33,49 @@ public enum EmergencyDenyLatchError: Error, Equatable, Sendable {
     case invalidRecord
 }
 
+private final class EmergencyDenyLatchFileHandle: @unchecked Sendable {
+    let descriptor: Int32
+
+    init(_ descriptor: Int32) {
+        self.descriptor = descriptor
+    }
+
+    deinit {
+        close(descriptor)
+    }
+}
+
 public actor EmergencyDenyLatch {
     public static let fileSize = 4_096
     public static let slotSize = 2_048
 
     private let path: String
+    private let file: EmergencyDenyLatchFileHandle
 
     public init(url: URL) throws {
         path = url.path
         try Self.createIfNeeded(path: path)
+        let descriptor = try Self.openExisting(path: path)
+        file = EmergencyDenyLatchFileHandle(descriptor)
+        try Self.validateStorageBinding(
+            path: path,
+            descriptor: descriptor
+        )
     }
 
     public func snapshot() throws -> EmergencyDenyLatchSnapshot {
-        try Self.readSnapshot(path: path)
+        try withFileLock(LOCK_SH) { descriptor in
+            try Self.readSnapshot(descriptor: descriptor)
+        }
+    }
+
+    /// Proves that the retained descriptor and visible release path still
+    /// designate the same private latch inode.
+    public nonisolated func validateStorageBinding() throws {
+        try Self.validateStorageBinding(
+            path: path,
+            descriptor: file.descriptor
+        )
     }
 
     @discardableResult
@@ -88,49 +118,74 @@ public actor EmergencyDenyLatch {
             throw EmergencyDenyLatchError.invalidRecord
         }
 
-        let records = try Self.readRecords(path: path)
-        guard records.allSatisfy(\.isValid),
-              let current = Self.authoritativeRecord(records) else {
-            throw EmergencyDenyLatchError.corruptRequiresLocalRepair
-        }
-        guard current.generation < UInt64.max else {
-            throw EmergencyDenyLatchError.generationExhausted
-        }
+        return try withFileLock(LOCK_EX) { descriptor in
+            let records = try Self.readRecords(descriptor: descriptor)
+            guard records.allSatisfy(\.isValid),
+                  let current = Self.authoritativeRecord(records) else {
+                throw EmergencyDenyLatchError.corruptRequiresLocalRepair
+            }
+            guard current.generation < UInt64.max else {
+                throw EmergencyDenyLatchError.generationExhausted
+            }
 
-        let targetIndex: Int
-        if records[0].generation == records[1].generation {
-            targetIndex = 0
-        } else {
-            targetIndex = records[0].generation < records[1].generation ? 0 : 1
+            let targetIndex: Int
+            if records[0].generation == records[1].generation {
+                targetIndex = 0
+            } else {
+                targetIndex = records[0].generation < records[1].generation ? 0 : 1
+            }
+            let next = SlotRecord(
+                isValid: true,
+                active: active,
+                generation: current.generation + 1,
+                pendingDeviceID: pendingDeviceID,
+                recordedAtUnixMilliseconds: recordedAtUnixMilliseconds,
+                reason: reason
+            )
+
+            try Self.writeAll(
+                next.encoded(),
+                descriptor: descriptor,
+                offset: off_t(targetIndex * Self.slotSize)
+            )
+            guard fsync(descriptor) == 0 else {
+                throw EmergencyDenyLatchError.posix(operation: "fsync latch", code: errno)
+            }
+
+            let verified = try Self.readSnapshot(descriptor: descriptor)
+            guard verified.health == (active ? .active : .clear),
+                  verified.generation == next.generation,
+                  verified.pendingDeviceID == pendingDeviceID,
+                  verified.reason == reason else {
+                throw EmergencyDenyLatchError.verificationFailed
+            }
+            return verified
         }
-        let next = SlotRecord(
-            isValid: true,
-            active: active,
-            generation: current.generation + 1,
-            pendingDeviceID: pendingDeviceID,
-            recordedAtUnixMilliseconds: recordedAtUnixMilliseconds,
-            reason: reason
+    }
+
+    private nonisolated func withFileLock<Result>(
+        _ operation: Int32,
+        body: (Int32) throws -> Result
+    ) throws -> Result {
+        let descriptor = file.descriptor
+        guard flock(descriptor, operation) == 0 else {
+            throw EmergencyDenyLatchError.posix(
+                operation: "lock latch",
+                code: errno
+            )
+        }
+        defer { _ = flock(descriptor, LOCK_UN) }
+
+        try Self.validateStorageBinding(
+            path: path,
+            descriptor: descriptor
         )
-
-        let descriptor = try Self.openExisting(path: path)
-        defer { close(descriptor) }
-        try Self.writeAll(
-            next.encoded(),
-            descriptor: descriptor,
-            offset: off_t(targetIndex * Self.slotSize)
+        let result = try body(descriptor)
+        try Self.validateStorageBinding(
+            path: path,
+            descriptor: descriptor
         )
-        guard fsync(descriptor) == 0 else {
-            throw EmergencyDenyLatchError.posix(operation: "fsync latch", code: errno)
-        }
-
-        let verified = try Self.readSnapshot(path: path)
-        guard verified.health == (active ? .active : .clear),
-              verified.generation == next.generation,
-              verified.pendingDeviceID == pendingDeviceID,
-              verified.reason == reason else {
-            throw EmergencyDenyLatchError.verificationFailed
-        }
-        return verified
+        return result
     }
 
     private static func createIfNeeded(path: String) throws {
@@ -199,7 +254,9 @@ public actor EmergencyDenyLatch {
             throw EmergencyDenyLatchError.posix(operation: "stat latch", code: code)
         }
         guard (status.st_mode & mode_t(S_IFMT)) == mode_t(S_IFREG),
-              (status.st_mode & 0o077) == 0,
+              status.st_uid == geteuid(),
+              status.st_nlink == 1,
+              (status.st_mode & 0o777) == 0o600,
               status.st_size == off_t(fileSize) else {
             close(descriptor)
             throw EmergencyDenyLatchError.invalidPermissions
@@ -207,8 +264,40 @@ public actor EmergencyDenyLatch {
         return descriptor
     }
 
-    private static func readSnapshot(path: String) throws -> EmergencyDenyLatchSnapshot {
-        let records = try readRecords(path: path)
+    private static func validateStorageBinding(
+        path: String,
+        descriptor: Int32
+    ) throws {
+        var descriptorStatus = stat()
+        guard fstat(descriptor, &descriptorStatus) == 0 else {
+            throw EmergencyDenyLatchError.posix(
+                operation: "stat retained latch",
+                code: errno
+            )
+        }
+        var pathStatus = stat()
+        guard lstat(path, &pathStatus) == 0 else {
+            throw EmergencyDenyLatchError.verificationFailed
+        }
+        for status in [descriptorStatus, pathStatus] {
+            guard (status.st_mode & mode_t(S_IFMT)) == mode_t(S_IFREG),
+                  status.st_uid == geteuid(),
+                  status.st_nlink == 1,
+                  (status.st_mode & 0o777) == 0o600,
+                  status.st_size == off_t(fileSize) else {
+                throw EmergencyDenyLatchError.invalidPermissions
+            }
+        }
+        guard descriptorStatus.st_dev == pathStatus.st_dev,
+              descriptorStatus.st_ino == pathStatus.st_ino else {
+            throw EmergencyDenyLatchError.verificationFailed
+        }
+    }
+
+    private static func readSnapshot(
+        descriptor: Int32
+    ) throws -> EmergencyDenyLatchSnapshot {
+        let records = try readRecords(descriptor: descriptor)
         guard records.allSatisfy(\.isValid),
               let record = authoritativeRecord(records) else {
             return EmergencyDenyLatchSnapshot(
@@ -228,9 +317,7 @@ public actor EmergencyDenyLatch {
         )
     }
 
-    private static func readRecords(path: String) throws -> [SlotRecord] {
-        let descriptor = try openExisting(path: path)
-        defer { close(descriptor) }
+    private static func readRecords(descriptor: Int32) throws -> [SlotRecord] {
         let bytes = try readAll(descriptor: descriptor)
         return [
             SlotRecord(decoding: Data(bytes[0..<slotSize])),
