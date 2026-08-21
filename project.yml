@@ -42,6 +42,10 @@ targets:
         copy:
           destination: executables
       - package: MacCompanionKit
+        product: CompanionAgent
+      - package: MacCompanionKit
+        product: CompanionAgentPlatform
+      - package: MacCompanionKit
         product: CompanionMacApp
       - package: MacCompanionKit
         product: CompanionMacUI

@@ -292,7 +292,7 @@ Concurrency design is part of the feature review. A detached task, unchecked sen
 
 1. Use the privately confirmed Team ID and registered `media.jenny.maccompanion` App ID; keep the standalone Agent's build-proven code identity distinct, register remaining bundle IDs only when their permanent targets require them, resolve Apple's prerelease App Store URL/Apple ID path, and submit the prepared entitlement request.
 2. Initialize version control, ownership rules, ADR template, and CI.
-3. Keep the checked-in containing app and embedded inert Agent topology regression-bound; next add authenticated local IPC/lifecycle composition, then the iOS app and CLI as their identifiers and signed boundaries become ready.
+3. Keep the checked-in containing app, embedded inert Agent, and exact side-effect-free `SMAppService` identities regression-bound; next wire durable explicit enable/disable to authenticated Agent lifecycle state, then add the iOS app and CLI as their identifiers and signed boundaries become ready.
 4. Prove Developer ID archive, hardened runtime, notarization, DMG, clean install, login-item registration, and complete uninstall.
 5. Prove authenticated local IPC and fail-closed menu-app/agent version negotiation.
 

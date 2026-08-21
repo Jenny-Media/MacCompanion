@@ -3,7 +3,11 @@ import CompanionMacUI
 import SwiftUI
 
 @main
+@MainActor
 struct MacCompanionApplication: App {
+    // Retains exact login-role identities without registering either role.
+    private let loginRoles = MacCompanionLoginRoleComposition()
+
     var body: some Scene {
         MenuBarExtra(
             "Mac Companion",

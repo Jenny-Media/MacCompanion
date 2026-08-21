@@ -11,6 +11,18 @@ from pathlib import Path
 REPOSITORY = Path(__file__).resolve().parents[1]
 PROJECT_SPEC = REPOSITORY / "project.yml"
 PROJECT_FILE = REPOSITORY / "MacCompanion.xcodeproj" / "project.pbxproj"
+MAC_APPLICATION = (
+    REPOSITORY
+    / "Apps"
+    / "MacCompanionMac"
+    / "MacCompanionApplication.swift"
+)
+LOGIN_COMPOSITION = (
+    REPOSITORY
+    / "Apps"
+    / "MacCompanionMac"
+    / "MacCompanionLoginRoleComposition.swift"
+)
 AGENT_SOURCE = REPOSITORY / "Apps" / "MacCompanionAgent" / "MacCompanionAgentMain.swift"
 LAUNCH_AGENT = (
     REPOSITORY
@@ -62,6 +74,12 @@ def validate_project_spec(content: str, failures: list[str]) -> None:
             "        codeSign: true\n"
             "        copy:\n"
             "          destination: executables"
+        ),
+        "lifecycleProducts": (
+            "      - package: MacCompanionKit\n"
+            "        product: CompanionAgent\n"
+            "      - package: MacCompanionKit\n"
+            "        product: CompanionAgentPlatform"
         ),
         "launchAgentSource": (
             "      - path: Apps/MacCompanionMac/LaunchAgents/"
@@ -184,22 +202,82 @@ def validate_inert_agent_source(content: str, failures: list[str]) -> None:
             failures.append(f"agentSourceUnexpectedAuthority:{needle}")
 
 
+def uncommented_swift(content: str) -> str:
+    return "\n".join(line.split("//", 1)[0] for line in content.splitlines())
+
+
+def validate_login_role_composition(
+    composition: str,
+    application: str,
+    failures: list[str],
+) -> None:
+    composition_code = uncommented_swift(composition)
+    application_code = uncommented_swift(application)
+    required = {
+        "agentPlistIdentity": (
+            'static let agentPlistName = '
+            '"media.jenny.maccompanion.agent.plist"'
+        ),
+        "agentService": "agentService: SMAppService = .agent(",
+        "agentPlistBinding": (
+            "plistName: MacCompanionLoginRoleComposition.agentPlistName"
+        ),
+        "menuService": "menuAppService: SMAppService = .mainApp",
+        "loginExecutor": "executor = AgentLoginRoleEffectExecutorV1(",
+        "applicationRetention": (
+            "private let loginRoles = MacCompanionLoginRoleComposition()"
+        ),
+    }
+    for label, needle in required.items():
+        haystack = (
+            application_code
+            if label == "applicationRetention"
+            else composition_code
+        )
+        require_count(haystack, needle, 1, label, failures)
+    require_count(
+        composition_code,
+        "AgentLoginRoleConvergingServiceV1(",
+        2,
+        "convergingLoginRoles",
+        failures,
+    )
+    require_count(
+        composition_code,
+        "SMAppServiceRawLoginRoleV1(service:",
+        2,
+        "rawLoginRoles",
+        failures,
+    )
+    for needle in (".register(", ".unregister(", "setEnabled("):
+        if needle in composition_code or needle in application_code:
+            failures.append(f"implicitLoginMutation:{needle}")
+
+
 def main() -> int:
     failures: list[str] = []
     project_spec = read_text(PROJECT_SPEC, failures)
     generated_project = read_text(PROJECT_FILE, failures)
     agent_source = read_text(AGENT_SOURCE, failures)
+    mac_application = read_text(MAC_APPLICATION, failures)
+    login_composition = read_text(LOGIN_COMPOSITION, failures)
     validate_project_spec(project_spec, failures)
     validate_generated_project(generated_project, failures)
     validate_launch_agent(failures)
     validate_inert_agent_source(agent_source, failures)
+    validate_login_role_composition(
+        login_composition,
+        mac_application,
+        failures,
+    )
     if failures:
         for failure in failures:
             print(f"permanent Apple target: {failure}", file=sys.stderr)
         return 1
     print(
-        "Validated the permanent Mac containing app and inert embedded Agent "
-        "topology, identities, signing flags, and LaunchAgent contract."
+        "Validated permanent Mac/Agent topology, identities, signing flags, "
+        "LaunchAgent contract, and explicit side-effect-free SMAppService "
+        "composition."
     )
     return 0
 

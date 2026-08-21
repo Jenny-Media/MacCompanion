@@ -32,7 +32,7 @@
       "bundleOwner": "self",
       "requiredReasonReporting": false,
       "manifest": "spec/privacy-manifest/v0/targets/mac-containing-app/PrivacyInfo.xcprivacy",
-      "swiftEntryTargets": [],
+      "swiftEntryTargets": ["CompanionAgent", "CompanionAgentPlatform", "CompanionMacApp", "CompanionMacUI"],
       "accessedAPITypes": []
     }
   ],

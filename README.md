@@ -206,6 +206,12 @@ and hardened runtime without tracking a team, credential, or managed
 entitlement. Authenticated local IPC, lifecycle registration, iOS, CLI,
 Keychain-group, and TCC evidence remain gated in the execution ledger.
 
+The [permanent `SMAppService` identity composition](docs/evidence/2026-08-21-permanent-smappservice-identity-composition.md)
+also retains the exact Agent-plist and main-app service objects through the
+tested convergence/executor chain. Launch proof confirms that construction
+does not register or start the Agent; explicit durable enablement and
+authenticated readiness remain separate work.
+
 The [bundle-independent diagnostic CLI v0.1 contract](spec/local-cli/v0/README.md)
 now accepts only content-free status, sanitized diagnostics export, help, and
 version. Its pure package target owns exact parsing, authenticated local-method
