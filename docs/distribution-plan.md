@@ -70,8 +70,10 @@ The Stage 0 permission matrix must confirm the final target ownership. The basel
 | Persistent display capture | Menu app | Managed Persistent Content Capture entitlement, provisioning profile, usage description, Screen Recording consent | Explain before the system prompt; show readiness and recovery in settings. |
 | Accessibility focus observation | Menu app | Accessibility authorization and a privacy-filtered metadata adapter | Explain focus-assisted framing separately; prove stale-element, secure-field, and revocation behavior. |
 | Mouse and keyboard injection | Menu app | Post-event authorization as required by supported macOS; no TCC bypass and no unnecessary Input Monitoring request | Explain exact control, deep-link to System Settings where supported, release all input on loss, and recheck after revocation. |
+| System appearance | None in MVP | No Automation entitlement or Apple Events usage description for this rejected action | Do not advertise the three-state action; a future menu-owned light/dark Automation capability requires separate product, permission, and distribution review. |
 | Private-network listener | LaunchAgent | Minimal network entitlement only if the selected sandbox requires it | Bind to selected private interfaces; never make discovery equal trust. |
 | Bonjour discovery | LaunchAgent and iOS app | One declared Bonjour service type and applicable Local Network usage descriptions | Explain local discovery and provide denial recovery. |
+| Pairing-code camera | iOS app | Camera usage description and foreground VisionKit QR scanning | Ask only after explicit Scan; accept one bounded Mac Companion candidate, stop immediately, and keep canonical/expiry verification in the pairing authority. |
 | Device and approval keys | iOS app | Keychain and Secure Enclave access-control configuration | Pairing identity and fresh approval identity remain separate. |
 | Host identity and grants | LaunchAgent | Keychain access and service-owned protected database | Menu app receives bounded views over authenticated IPC, not direct database access. |
 | Agent login item | Containing Mac app | Embedded, signed `SMAppService.agent` registration | User enables the agent explicitly and can disable it from both Mac Companion and System Settings. |
@@ -79,6 +81,17 @@ The Stage 0 permission matrix must confirm the final target ownership. The basel
 | Automatic updates | Menu app | Sparkle public Ed25519 key, HTTPS appcast, signed update archives | Never replace the app during an active control session without explicit termination. |
 
 TCC grants belong to the code identity that performs the protected action. Stage 0 must verify attribution on clean machines; it must not move capture or input into the network agent merely to simplify prompts.
+
+The normative [Apple privacy-manifest profile](../spec/privacy-manifest/v0/profile.md)
+owns a separate candidate `PrivacyInfo.xcprivacy` resource for the iOS app,
+Mac containing app, and embedded Agent service. The current no-relay,
+no-analytics architecture declares no developer collection, tracking, or
+tracking domains. The iOS target graph declares no required-reason API use;
+macOS-only covered calls remain source-inventoried even though Apple's current
+required-reason platform list does not include macOS. A dependency, telemetry,
+data-flow, covered-API, executable-topology, or Apple-catalog change requires a
+policy review before admission. Permanent targets must copy the indexed
+resource into each final executable bundle and retain the built-bundle proof.
 
 The first direct Mac build is not App Sandbox-enabled unless the Stage 0 lifecycle spike proves that sandboxing does not break the listener, IPC, updater, capture, input, or MacTools boundary. Hardened Runtime remains mandatory either way, and each exception requires a written reason.
 
@@ -161,7 +174,12 @@ The iOS listing and review notes must state:
 
 Before external TestFlight, record an App Review strategy for Guidelines 4.2.3(i) and 4.2.7 plus the system ScreenCaptureKit picker recommendation. The required Mac companion, Observe/Act APIs beyond streaming, and private-route operation are explicit review risks. The first external review build is LAN-first, keeps full Desktop first-class, demonstrates a generic user-owned host mirror before App or Window Focus, supplies the notarized Mac download and complete reviewer pairing resources, and does not imply that Tailscale satisfies a LAN-only interpretation. Review notes explain how the approved Persistent Content Capture entitlement and local Mac consent support remotely initiated surface changes. Existing third-party approvals are market evidence, not a guarantee that Apple will classify Mac Companion the same way.
 
-App privacy answers are derived from actual data flows. No telemetry or account data is declared merely as future intent, and no diagnostics upload occurs without an explicit later design.
+App privacy answers are derived from actual data flows. Under Apple's
+developer-access definition, current real-time peer-to-peer traffic and
+on-device records are not developer collection because neither Jenny Media LLC
+nor a third party can access them. No telemetry or account data is declared
+merely as future intent, and no diagnostics upload occurs without an explicit
+later design and a prior privacy-policy/manifest revision.
 
 ### Commercialization hypothesis
 
@@ -173,11 +191,28 @@ Encryption, device identity, consent, visibility, safe fallback, suspension, rev
 
 Stage 0 defines the reproducible, non-secret build, verification, packaging, and evidence-manifest command skeleton needed by its own release-shaped experiments. Publication credentials and promotion automation are added only after those commands are proven. The release pipeline must produce and retain:
 
+The normative [release evidence v0.1 profile](../spec/release-evidence/v0/profile.md)
+and its validator make `unsignedConstruction`, `signedCandidate`, and
+`promotionReady` distinct machine-checked claims. A lower claim cannot carry
+promotion evidence, and a higher claim cannot omit or placeholder the evidence
+listed below. The manifest records references and public verification results;
+it never embeds credentials. Every referenced file is path/size/SHA-256 bound,
+and a release job uses `--verify-files` against the retained bundle before
+promotion. The unsigned generator records the current source and toolchain but
+cannot create a signed-candidate or promotion-ready claim.
+
 - Clean build log with exact Xcode and SDK versions
 - Test and protocol-fixture results
 - Component version and compatibility manifest
 - Signed `.app`, update archive, and DMG checksums
 - Expanded entitlements and designated requirements for every executable
+- Descriptor-bound complete Mach-O/bundle/architecture discovery graph for the
+  exact application ZIP and xcarchive, with every Apple verification step
+  still explicitly `notRun` until the protected platform lane executes it
+- Canonical signing policy whose exact SHA-256 is supplied independently by the
+  protected release runner and whose object, slice, signer, requirement,
+  third-party, runtime, timestamp, and entitlement rules bind exactly to that
+  release, SBOM, and graph
 - `codesign` and Gatekeeper verification results
 - Notary submission ID, accepted log, and stapling verification
 - Software bill of materials and dependency licenses
@@ -189,7 +224,7 @@ CI is split into three trust lanes:
 
 - **Public pull request:** unsigned package builds, fixture conformance, dependency-boundary checks, linting, and tests with no Apple or publication secrets.
 - **Trusted internal:** development-signed Apple targets and controlled physical-device evidence; artifacts are never promoted automatically.
-- **Tagged release:** protected Developer ID/App Store signing, notarization, Sparkle signatures, checksums, SBOM, and an explicit human promotion record.
+- **Tagged release:** protected Developer ID/App Store signing, notarization, Sparkle signatures, checksums, the [exact-candidate artifact SBOM](../spec/artifact-sbom/v0/profile.md) derived from the packaged executable-bearing ZIPs, the independently pinned [signing policy](../spec/signing-policy/v0/profile.md), the fixed-tool [platform signing evidence](../spec/platform-signing-evidence/v0/profile.md), the [Mac packaging-equivalence receipt](../spec/mac-packaging-equivalence/v0/profile.md) produced by explicit read-only reinspection of the exact DMG, reviewed license evidence, and an explicit human promotion record. The deterministic source dependency SPDX document is an input, not a substitute for artifact inspection. Promotion revalidates the policy, platform record, receipt, ZIPs, and DMG after platform inspection; schema-only, synthetic, beta-toolchain, or attach-free evidence cannot make a signed-candidate claim.
 
 A pull request build cannot publish. Stable publication requires a tagged revision, protected release credentials, and a separate promotion approval. CI logs must never print private signing keys, one-time notarization credentials, pairing material, or live provisioning profiles.
 

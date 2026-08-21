@@ -1,0 +1,5 @@
+{
+  "entries": [
+    {"path": "App/pipe", "type": "fifo", "mode": "0600"}
+  ]
+}

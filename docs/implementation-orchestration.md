@@ -62,6 +62,7 @@ MacCompanion/
     capability-protocol/v0/   # normative, implementation-independent RFCs
     interactive-control/v0/
     adaptive-surfaces/v0/
+    local-ipc/v0/
     schemas/
     fixtures/                 # single authoritative valid and invalid corpus
     conformance/
@@ -85,7 +86,21 @@ Use one public monorepo while the protocol and both endpoints evolve together. T
 
 Source availability does not confer Jenny Media signing identity, official update access, bundle identifiers, trademarks, or managed entitlements. Community forks use their own product identity, update feed, signing team, and Apple capability requests. Official release configuration and update URLs are injected separately and never become a usable trust anchor in an unofficial build.
 
-Before making the repository public, select an OSI license and contribution policy, reserve product trademarks separately, publish private vulnerability-reporting instructions, configure CODEOWNERS and protected branches, and enable secret scanning and push protection. Developer certificates, provisioning profiles, Sparkle private keys, notarization credentials, App Store keys, pairing material, and real diagnostic data never enter the repository.
+The repository is already public, so the intended pre-publication controls are
+now immediate remediation gates: select an OSI license and contribution policy,
+reserve product trademarks separately, publish private vulnerability-reporting
+instructions, publish the local `CODEOWNERS`, configure protected branches, and
+enable secret scanning and push protection. Until the license and contribution
+terms are approved, the checked-in contribution hold says that external work is
+not accepted. Developer certificates, provisioning profiles, Sparkle private
+keys, notarization credentials, App Store keys, pairing material, and real
+diagnostic data never enter the repository.
+
+Every third-party GitHub Action is pinned to an immutable full commit SHA and
+reviewed before update; container actions are pinned by SHA-256 digest. Public
+validation jobs disable persisted checkout credentials unless a reviewed step
+has a narrow authenticated need. The repository gate rejects movable action
+tags before compilation.
 
 MPL 2.0 is the working license candidate because it keeps modifications to covered files available while permitting separately authored files in a larger work. Prefer one repository-wide code license initially; do not add an Apache-licensed protocol subtree until independent implementers create a real interoperability reason for the added policy. Use a Developer Certificate of Origin by default. Adopt a Contributor License Agreement only if Jenny Media LLC makes a deliberate dual-licensing or relicensing decision before accepting contributions. Final license, App Store compatibility, and trademark policy require written legal review before the repository becomes public.
 
@@ -97,20 +112,147 @@ The first Swift package contains narrow targets rather than a single universal u
 | --- | --- | --- | --- |
 | `CompanionDomain` | macOS, iOS | IDs, bounded values, host/session/operation state machines, errors | Network, storage, UI, Apple permission APIs |
 | `CompanionWire` | macOS, iOS | Versioned envelopes, canonicalization, size bounds, fixtures | Trust decisions, sockets, UI |
-| `CompanionSecurity` | macOS, iOS | Digests, challenge construction, key abstractions, authorization-epoch rules | Keychain UI, network routes, providers |
-| `CompanionTransport` | macOS, iOS | TLS connection roles, framing, backpressure, reconnect policy | Grants, semantic authorization, screen capture |
+| `CompanionSecurity` | macOS, iOS | Digests, challenge construction, key abstractions, authorization-epoch rules, and strict canonical host-certificate DER/profile/self-signature/current-validity inspection | Keychain UI, Security trust handles, network routes, providers |
+| `CompanionAuthentication` | macOS | Opaque connection challenges, proof verification, current-device/epoch revalidation, authenticated principal | TLS sockets, UI, grants, or session presentation |
+| `CompanionOperations` | macOS | Restricted-JCS/schema/registry admission, exact operation binding, transactional durable admission, and provider-neutral execution orchestration | UI, remote sockets, TCC APIs, or provider-owned trust decisions |
+| `CompanionNativeProviders` | macOS | Reviewed Apple-framework desired-state adapters and their exact capability descriptors; current implementations are verified default-output mute plus a candidate-only four-hour-capped IOPM user-idle system-sleep assertion with explicit start-until/stop and system timeout | Grants, policy, remote sockets, arbitrary scripts, provider discovery, display forcing, undocumented global-appearance mutation, Apple Events, unbounded assertions, or advertising candidates before their promotion gates |
+| `CompanionDiscovery` | macOS, iOS | Closed DNS-SD profile, canonical endpoint candidates, bounded untrusted TXT hints | Host identity, trust, sockets, Local Network permission UI |
+| `CompanionLifecycle` | macOS | Explicit enable/disable intent, console-session/process state, recovery effects, Observe/Control availability | `SMAppService`, launchd, GUI recovery mechanism, or code identity |
+| `CompanionObservation` | macOS, iOS | Conservative receipt-time freshness, monotonic expiry, live/stale/unreachable presentation state | Network connection ownership, UI, persistence, host sampling |
+| `CompanionPresentation` | macOS, iOS | Platform-neutral connection/freshness snapshots, explicit-accept client QR pairing trust/SAS/durable-publication presentation, exact-command Mac create/dismiss pairing presentation with lost-response retry and immediate invalidation, one-review Mac SAS/local-name decision presentation with exact retry and withdrawal, locally named exact-effect grant review, one-session Interactive warning/stop state, correlated local device-name editing, Interactive Mac/route/control/lock/surface presentation, and typed recovery causes | QR camera/render implementation, localized copy, SwiftUI, sockets, XPC, key custody, persistence, grant authority, or lifecycle authority |
+| `CompanionClient` | macOS, iOS | QR-secret/pinned-TLS client pairing, transcript/SAS and paired-identity publication, opaque session/approval key-custody interfaces, atomic client-record publication authority, strict canonical record encoding, bounded fsync/rename file persistence and restart recovery, pinned application handshake, all-or-nothing granted-capability catalog assembly, and schema-verified operation-result presentation | Security framework implementation, final container/Data Protection selection, sockets, grants, provider execution, arbitrary provider text, or SwiftUI |
+| `CompanionClientApp` | macOS, iOS | Application-global QR pairing composition across exact connection/deadline propagation, prepared identity, transcript/SAS presentation, revision-fenced cancellation, sanitized failure, and durable-before-paired publication with noncancelable atomic-commit convergence | Platform sockets, QR camera, SwiftUI, Keychain implementation, final container policy, background lifecycle, or physical-device claims |
+| `CompanionClientUI` | iOS | Value-driven pairing and connected-host SwiftUI surfaces, closed UI projections, and a stateless one-shot QR scanner surface whose UIKit controller owns camera lifecycle; preserves unverified/verified identity, durable-saving, view/control/lock, and Remote-Control-optional distinctions | App navigation, live pairing/network authority, final usage-description wiring, localization completion, final app target, signed camera permission recovery, or physical accessibility evidence |
+| `CompanionMacApp` | macOS | Bundle-independent menu-app pairing composition: authenticated-local-client abstractions; exact create/dismiss and SAS/name-decision command retries; receipt correlation; clock-bounded expiry; exact review withdrawal; Agent-loss generation fencing; secret erasure; and delayed-response suppression | XPC construction or peer trust, Agent pairing authority, SwiftUI navigation, final app target, signed lifecycle evidence, or physical QR exchange |
+| `CompanionMacUI` | macOS | Value-driven exact-effect capability review, one-session Interactive warning/stop, locally confirmed device-name surfaces, deterministic Core Image pairing-QR rendering, a reducer-driven QR sheet that prevents implicit close from masquerading as cancellation, and a SAS/local-name approval sheet that locks in-flight decisions and exposes only exact retry | XPC, pairing-session authority, durable authority mutation, capture/input ownership, final app target, localization completion, or physical accessibility evidence |
+| `CompanionClientPlatform` | macOS, iOS | Security.framework P-256 key creation/lookup/deletion, role-specific this-device-only access profiles, Secure Enclave selection, LocalAuthentication approval context, public-key revalidation, and DER-to-raw message signature conversion behind opaque custody references | Physical access-control evidence, final access group/container policy, UI ownership, sockets, grants, or private-key export |
+| `CompanionTransport` | macOS, iOS | TLS connection roles, framing, backpressure, reconnect policy, immutable-pin dial-round racing with authenticated-winner/late-route cleanup and authenticated command transport, and one reconnect owner for foreground/reachability/candidate/backoff transitions plus connected-route cleanup | Sockets, live trust extraction, grants, semantic authorization, screen capture |
 | `CompanionPersistence` | macOS | SQLite transactions, migrations, quotas, durable repositories | UI and provider execution |
-| `CompanionHost` | macOS | Policy, operation admission, status, audit, provider registry | Remote sockets and TCC presentation |
-| `CompanionIPC` | macOS | Typed local messages, role restrictions, peer verification | Durable grants, media encoding |
-| `CompanionInteractiveShared` | macOS, iOS | Session model, media headers, display descriptors, input schemas | Capture, decode, input injection |
-| `CompanionRemoteSurfaces` | macOS, iOS | Surface/focus/text-session models, privacy profiles, transitions, fallbacks, fixtures | AX objects, capture filters, app activation, UI |
-| `CompanionInteractiveHost` | macOS | Capture/encode/input adapters behind executor interfaces | Device identity, network listener, durable grants |
-| `CompanionInteractiveClient` | iOS | Decode, render timing, touch/keyboard mapping | Host-state authority, remote grant changes |
+| `CompanionPairing` | macOS | Boot-scoped five-minute/five-proof pairing authority, transcript verification, validated key fingerprints, local-decision/name binding, and atomic name/device/consumption adapter | QR presentation, transport routing, or approval UI |
+| `CompanionHost` | macOS | Host policy, status sampling, audit coordination, and native provider composition | Remote sockets and TCC presentation |
+| `CompanionHostWire` | macOS | Versioned mapping from authenticated principals and host-owned snapshots to validated wire responses | Sampling, transport, persistence, authorization decisions |
+| `CompanionHostSession` | macOS | Owns one host-side TLS-bound application session, authentication sequence, replay window, durable-principal revalidation, and status/Act/Interactive session-and-surface routing with host-owned command context | Listener construction, socket I/O, certificate custody, UI, or native authority |
+| `CompanionNetworkPlatform` | macOS | Strict TLS 1.3/no-resumption host listener parameter construction from an exact custodied `SecIdentity`; sealed one-shot listener lifecycle owner; exact accepted-connection readiness and negotiated-metadata evaluation; one-use, exact-first-frame `auth.hello`/`pairing.begin` classification without over-read; classified-primary proof-gated activation; and serialized primary/pairing Network.framework pumps with byte-independent deadlines, silent pairing completion, and injectable no-network frame I/O | Physical listener/handshake evidence, interface policy, semantic authorization, or UI |
+| `CompanionAgentNetworkPlatform` | macOS | Sole Agent ownership of the sealed listener lifecycle; a role-safe service constructor and generation-fenced ingress handoff with independent primary/pairing owners, proof-before-primary-replacement, and non-displacing visible pairing; exact Agent pairing-wire/pump binding; content-free network/route publication; atomic same-TLS-configuration/same-port listener-plus-pairing-context construction; and listener-plus-Bonjour-fenced pairing availability with active-QR invalidation on advertisement or listener loss | Host identity creation, additional private-route approval policy, pairing secret authority, authenticated XPC review publication, UI, or physical network evidence |
+| `CompanionClientNetworkPlatform` | macOS, iOS | Client Network.framework byte-pump adapter, one-shot TLS-attempt context binding one closed route/pin/callback/exact connection, strict `SecTrust` single-leaf extraction, durable-session-key-bound reconnect composition with system nonce/message-ID generation, concrete authenticated reconnect attempts, and a no-relay pairing factory that races bounded QR routes with one pin, retains one verified winner, frames serialized traffic, and enforces one immutable byte-independent deadline | Live socket/permission/radio/background evidence, private-key custody, semantic authorization, or UI |
+| `CompanionHostPersistence` | macOS | Adapters that commit host-owned sequence state through persistence repositories | Sampling, wire encoding, database schema ownership |
+| `CompanionIPC` | macOS | Typed local messages, role restrictions, bounded sanitized diagnostics, complete transcript/key-fingerprint-bound pairing review and approval-name/decline-null decisions, an already-authorized exact-review presentation endpoint capability, correlated device-name and exact grant-decision administration, completed-authority Interactive stop, and Interactive install/renew/revoke/surface-replacement leases and receipts; platform adapter supplies authenticated peer identity | Durable authority mutation, media encoding, caller-self-asserted roles |
+| `CompanionAgent` | macOS | Bundle-independent local administration orchestration: Agent-fact-owned one-visible pairing QR creation/dismissal with exact replay, compensating tombstones, and network-loss invalidation; exact SAS/key-fingerprint/policy-fenced local pairing review, atomic locally named pairing decision, bounded receipt replay, a connection-scoped exact-review delivery/withdrawal service issued by the local root, and a TLS-binding/host-identity-bound pairing wire owner that requires trusted-local acknowledgement before pending, withdraws every terminal review, closes unavailable review state early, and defers expiry across in-flight durable decisions; registry-generation/full-descriptor-bound one-time grant reviews, noninterleaving registry replacement, atomic SQLite grant-expansion adapter, exact dispatcher shutdown, ordered runtime safety-proof composition, authenticated initial-Desktop, target-inventory, and replacement surface sequencing, opaque-target resolution, Agent-issued install/replacement acknowledgement coordination, and bounded idempotency | XPC peer identity, capture/input effects, final-identity catalog binding, or independent provider-registry mutation outside this sole Agent serialization boundary |
+| `CompanionAgentPlatform` | macOS | Thin Apple-framework adapters supplied with exact containing-app-owned platform objects; current scope is closed `SMAppService` status projection, registration, completion-awaited unregistration, durable desired-state storage/startup repair, a lifecycle-revision/per-role-epoch-fenced process observation owner, a sealed post-`AgentPrimaryServicesV1` self-ready root that issues serialized exact-generation menu connection capabilities only after platform authentication, and fixed three-attempt idempotent menu-start recovery fenced by exact revision/epoch/replacement state | Bundle identifiers, plist labels, service construction, raw process/IPC authentication, inventing readiness from registration/PID/status, XPC identity, unbounded or semantic-effect retry, or user-facing error text |
+| `CompanionInteractiveShared` | macOS, iOS | Session authority, surface/focus models, privacy profiles, revision and input fences, transitions, fallbacks, and shared fixtures | Capture, decode, AX objects, input injection, app activation, UI |
+| `CompanionInteractiveWire` | macOS, iOS | Exact Interactive Control binary media/input framing plus separate closed primary-channel initial-Desktop and replacement exchanges, strict cross-device relative-validity descriptors, focus fences, and shared per-direction sequences | TLS sockets, authorization decisions, candidate inventory, H.264 parsing, capture, input injection |
+| `CompanionInteractiveHost` | macOS | Closed Interactive request/approval and initial/replacement surface-control dispatcher, atomic final-runtime admission contract, authenticated active-session/durable-admission rechecks, session/epoch/surface/expiry/input-stream composition, and capture/encode/input adapters behind executor interfaces | Device identity, network listener, durable grant storage, menu-app IPC, opaque-target resolution, or OS cryptographic randomness |
+| `CompanionInteractiveClient` | iOS | Exact primary-bound Interactive Control request/approval/acceptance, fresh-presence approval signing, pinned-TLS role-channel mutual proof, first-Desktop clean-media activation with atomic live media/input authority and sequence handoff into reset-before-replacement coordination, cross-device descriptor materialization, pre-decoder media fence/sequence/configuration/keyframe admission, media-derived exact acknowledgement, host-reply-gated input reactivation, and reliable descriptor-bound input production | Approval-key custody, H.264 decoding, UIKit gestures, sockets, host-state authority, or remote grant changes |
+| `CompanionInteractiveRuntime` | macOS | Single-owner visible-menu-app install/renew/revoke/surface-replacement authority, serialized async platform effects, lease expiry and Agent-IPC invalidation, idempotent receipts/actions, transition-ordered discontinuity/configuration/clean-keyframe admission, input suppression through exact Agent acknowledgement, current-lease input posting, digest-bound gap-free bounded media enqueue, and resumable fail-closed safety cleanup | XPC peer trust, TCC authority, capture/encoding/input implementation, AppKit UI, durable grants, or remote sockets |
+| `CompanionHostPlatform` | macOS | Security.framework Interactive material generation; compile-tested prompt-free host identity custody, exact certificate signing and `SecIdentity` composition; conservative SQLite plus revision-fenced visible-menu-app admission joins; no-enumeration ScreenCaptureKit profile/filter construction; concrete compile-only `SCStream` session plus complete-frame normalizer and single-owner bounded event handoff; injectable and concrete VideoToolbox H.264 configuration/session composition; bounded CoreMedia parameter-set/access-unit/sample normalization; one-in-flight/one-latest-waiting latency-first encoder ownership with awaited publication backpressure; configuration/keyframe/discontinuity/end media-record publication through the lease-validating runtime with sequence-preserving surface transitions | Final signed Keychain/Secure Enclave evidence, authenticated menu-app XPC transport, concrete transition-route/capture composition, live capture/encode/input execution, or UI |
 | `CompanionTestSupport` | test targets only | Fake clocks, randomness, stores, transports, providers, fixtures | Production linking |
 
 Platform app targets are composition roots. They create concrete Apple-framework adapters and presentation state, but business rules remain in the owning module.
 
-The LaunchAgent links transport, persistence, host policy, security, wire, and IPC modules. The Mac menu app links IPC and Interactive Host but not the remote transport or authorization database. The iOS app links transport, security, wire, domain, and Interactive Client. Build settings and dependency tests should enforce these negative boundaries.
+The pairing release path is narrower than the general platform-app rule. It
+must use `AgentNetworkPairingProductCompositionFactoryV0`, which consumes one
+sealed TLS listener configuration plus one complete startup-reconciled
+`AgentPrimaryServicesV1` and binds listener/context, host ID, primary authority,
+local status/route publishers, required-audit security store, pairing
+authority, QR session handler, local decision handler, and already-authorized
+review service. Split constructors are package-only test seams. See the
+[pairing product composition evidence](evidence/2026-08-20-pairing-product-composition.md).
+
+Interactive Control has the same release-root restriction for its durable
+security facts. Public Agent bootstrap accepts only visible-menu observation,
+OS-random material generation, runtime execution, and optional surface
+execution seams. The root constructs durable admission from its exact private
+security store and installs its required Interactive audit writer; raw primary
+sessions, raw dispatchers, and alternate complete-dispatcher bootstrap are
+package-only. The platform runtime still owes signed authenticated-XPC and
+same-authority final-revalidation evidence. See the
+[Interactive product composition evidence](evidence/2026-08-20-interactive-product-composition.md).
+
+The bundle-independent first-runtime boundary preserves the exact
+signature-bound approval effects and admitted menu generation/revision through
+one-use lease/command preparation. It advances the session and releases the
+role authorities only after an exact current receipt; ambiguity requires
+teardown. The signed XPC bridge still owns atomic final revalidation and
+installation. See the [initial runtime preparation evidence](evidence/2026-08-20-initial-runtime-preparation.md).
+
+Observe status is also sealed at the release Agent root. Public bootstrap
+accepts only a system sampler, clock, initial generation, and freshness bound;
+it constructs the status authority with the exact root host ID and the same
+private SQLite security store used by the other security authorities. Lazy
+construction preserves fail-closed bootstrap ordering without consuming a
+durable status revision when an earlier root gate fails. Raw status-provider
+injection remains package/test-only. See the
+[root-bound host-status evidence](evidence/2026-08-20-root-bound-host-status.md).
+
+The release root also owns host identity. It reads one ready singleton from the
+private security store instead of accepting a caller-authored host UUID, and
+the public pairing/listener factory compares both the TLS configuration's SPKI
+fingerprint and certificate DER to that exact record before consuming the
+one-use listener. Missing, recovery-fenced, or cross-wired identity opens no
+ingress. See the
+[durable host-identity root evidence](evidence/2026-08-20-durable-host-identity-root.md).
+
+Before that root can open, the host-identity startup coordinator persists a
+schema-v7 candidate host UUID and exact Keychain application tag before key
+creation. It resumes that same tag after a crash, atomically consumes the
+candidate only with ready identity plus event, reconstructs valid listener
+identity without rotation, replaces invalid certificates only around the same
+fingerprint, and returns explicit first-unlock, key-loss, and recovery-fenced
+states. See the
+[host-identity startup evidence](evidence/2026-08-20-host-identity-startup-coordinator.md).
+
+Locally confirmed destructive recovery is also composed below the final XPC
+seam. The required-audit root issues a local review/admission service over its
+exact private store and recovery coordinator. It atomically checks the reviewed
+host identity before fencing, resumes a recovery-UUID-tagged new key, deletes
+the old key while the fenced row still retains that tag, and only then
+atomically publishes the rotated identity, event, and replay receipt. The
+same fence transaction retains the exact bounded reviewed command intent, so a
+restarted Agent can reconstruct only that command and a restarted menu app can
+adopt it through a distinct authenticated resume delivery without reconfirming
+or issuing new identifiers. The revision-fenced Mac owner displays all fixed
+destructive effects and retains an exact failed command without gaining
+recovery authority. A connection-scoped delivery actor serializes fresh review,
+durable resume, and exact resolution against an already-authorized menu
+surface, with endpoint-loss withdrawal and generation-fenced reentrancy; it
+does not authenticate the final XPC peer. See the
+[confirmed host-identity recovery evidence](evidence/2026-08-20-host-identity-confirmed-recovery.md)
+and [local recovery confirmation evidence](evidence/2026-08-21-local-host-identity-recovery-composition.md).
+
+The Agent Network-platform public startup factory consumes that result using
+the same required-audit root and one wall-time sample. Non-ready identity states
+return before provider or network construction. Ready identity then flows
+through sealed TLS creation, provider/reconciliation/root bootstrap, and the
+existing exact-certificate pairing/listener factory; no public release path can
+substitute a prebuilt TLS configuration or primary root. See the
+[unified Agent network startup evidence](evidence/2026-08-20-agent-network-product-startup.md).
+
+The client reconnect release path similarly accepts key custody rather than a
+prebuilt signer. It selects the exact session-key reference from the immutable
+durable paired-host record, constructs the session-only signer internally,
+uses system-generated nonces/message IDs, and fixes the strict pinned-leaf
+evaluator. Raw primary-session, route-attempt, signer, randomness, and trust-
+evaluator injection are package/test seams. See the
+[client reconnect security evidence](evidence/2026-08-20-client-reconnect-security-composition.md).
+
+Above that runtime, the client Network-platform product factory reads one exact
+durable paired host and route revision, reconciles storage, constructs the
+session-key-bound reconnect controller, and returns a pessimistic background/
+unreachable application binding. The Client-platform UIKit factory owns the
+default Boolean-only reachability/application bridge while exposing the same
+lifecycle for local route settings. Pairing remains independently constructible
+for first launch. See the
+[configured-route Network product evidence](evidence/2026-08-20-client-configured-route-network-product.md).
+
+Client pairing has a parallel public product factory in the Network-platform
+module. It constructs the application owner, strict pinned-leaf route racer,
+system clocks, and system randomness as one graph; the iOS target supplies
+only client ID, custody, atomic persistence, queues, and presentation delivery.
+Generic connection, clock, randomness, trust-evaluator, and route-attempter
+injection are not public release paths. See the
+[client pairing product evidence](evidence/2026-08-20-client-pairing-product-composition.md).
+
+The LaunchAgent links transport, persistence, host policy, security, wire, and IPC modules. The Mac menu app links `CompanionMacApp`, IPC, Interactive Runtime, and platform adapters but not the remote transport or authorization database. The iOS app links `CompanionClientApp`, transport, security, wire, domain, and Interactive Client. Build settings and dependency tests should enforce these negative boundaries.
 
 ## 4. Technology baseline
 
@@ -220,7 +362,7 @@ The first implementation backlog should be created in this dependency order:
 | 10 | Prove Local Network and Bonjour recovery | Grant, denial, later recovery on physical iPhone |
 | 11 | Freeze pairing and authenticated-session RFC | Golden and negative transcript fixtures |
 | 12 | Deliver local pinned `status.snapshot` | One physical Mac/iPhone end-to-end test |
-| 13 | Add viewing presence and active revocation | Indicator truth and sub-second local revocation evidence |
+| 13 | Add viewing presence and active revocation | [Bundle-independent durable local revoke convergence](evidence/2026-08-21-local-device-revocation-convergence.md), indicator truth, authenticated XPC, and sub-second physical revocation evidence |
 | 14 | Screen capture and encoder experiment | Permission attribution, format, latency, resource report |
 | 15 | Input and display-transform experiment | Bounded input, stale revision, stuck-key tests |
 | 16 | Locked-session experiment | Exact public-API result and product-contract ADR |
@@ -338,8 +480,8 @@ Feature code existing on one developer Mac is not completion; the release-shaped
 The company-controlled reverse-DNS bundle prefix blocks only permanent Apple-target scaffolding. Stable Xcode and signing identity custody separately block signed release evidence, while entitlement approval blocks external Persistent Content Capture builds. None blocks the identity-neutral repository, specification, package, fixture, CI, or disposable-experiment lanes. The following are Stage 0 implementation decisions with bounded owners and do not require product clarification before experiments begin:
 
 - Exact authenticated local IPC peer-verification mechanism
-- Exact TLS certificate and channel-binding construction
-- Exact canonical control framing and binary header offsets
+- Signed/physical X.509 and Keychain execution plus authenticated local recovery confirmation under the frozen lifecycle profile
+- Live Network.framework SPKI extraction and pinned-leaf verification under the frozen role-admission profile
 - Measured video adaptation thresholds
 - Whether public APIs support the genuine lock surface
 - Smart Input compatibility and whether any profile beyond keystroke-only can be supported safely

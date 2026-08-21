@@ -1,0 +1,13 @@
+{
+  "version": { "major": 0, "minor": 1 },
+  "messageID": "018f0000-0000-7000-8000-000000002004",
+  "correlationID": "018f0000-0000-7000-8000-000000002003",
+  "channel": "command",
+  "kind": "pairing.pendingApproval",
+  "sentAtUnixMilliseconds": 1787198401030,
+  "body": {
+    "transcriptDigest": "A1pTAuirGuutta0GPxRQX2XTb_mkdzptlvOP00x1ccE",
+    "authenticationString": "23F-6F5",
+    "expiresAtUnixMilliseconds": 1787198700000
+  }
+}

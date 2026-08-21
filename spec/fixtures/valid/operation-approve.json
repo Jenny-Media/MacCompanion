@@ -1,0 +1,12 @@
+{
+  "version": { "major": 0, "minor": 1 },
+  "messageID": "018f7000-0000-7000-8000-000000000003",
+  "correlationID": null,
+  "channel": "command",
+  "kind": "operation.approve",
+  "sentAtUnixMilliseconds": 1787198500020,
+  "body": {
+    "approvalID": "018f7200-0000-7000-8000-000000000001",
+    "signature": "2apPB6dwlPRHWiNFe5-oZmVFtjSdhHPH7RyDfJMwUoJi4_bEQ38VZkXqLmlmpDsBecyyzs6ESV-we-6DYuPmhQ"
+  }
+}

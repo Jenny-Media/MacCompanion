@@ -1,0 +1,1 @@
+{"body":{"authorizationEpoch":4,"interactiveSessionID":"018f6000-0000-7000-8000-000000000001","sequence":3},"channel":"command","correlationID":null,"kind":"interactive.surface.targets.request","messageID":"018f6600-0000-7000-8000-000000000005","sentAtUnixMilliseconds":1720000000010,"version":{"major":0,"minor":1}}

@@ -33,7 +33,7 @@ Those systems may receive adapters later. The Mac Companion core remains narrowe
 
 ## Wire profile
 
-Stage 0 must select and document one exact framing and serialization profile. The decision must cover:
+The normative Stage 0 framing and serialization profile is `spec/capability-protocol/v0/README.md`, with closed message schemas and cryptographic byte encodings in its linked files. That profile covers:
 
 - TLS 1.3 connection setup and certificate pinning
 - Request/response multiplexing and ordered subscriptions
@@ -44,7 +44,7 @@ Stage 0 must select and document one exact framing and serialization profile. Th
 - Compression policy, initially disabled unless measurements justify it
 - Rejection of duplicate, unknown-critical, or malformed fields
 
-Signed or hashed JSON structures use the JSON Canonicalization Scheme defined by RFC 8785. An implementation may choose a deterministic binary encoding instead, but it must publish golden fixtures and cross-language tests before client and server development diverge.
+Signed or hashed JSON structures use the JSON Canonicalization Scheme defined by RFC 8785 over its documented safe-integer subset. Authentication and pairing use the normative length-prefixed binary constructions instead of JSON canonicalization. Any replacement encoding requires a new negotiated protocol version, golden fixtures, and cross-language tests before client and server development diverge.
 
 All limits are part of the conformance profile, not informal implementation details.
 
@@ -54,28 +54,28 @@ The client pins a Mac Companion host identity established during pairing. That i
 
 The client proves possession of its registered session key during connection setup. Successful transport encryption alone does not authorize requests. The host then attaches the connection to a paired-device record and its current grant revision.
 
-Session authorization should use short-lived proof-of-possession material rather than a reusable bearer token where the selected platform APIs permit it. Reauthentication is required after revocation, key rotation, permission revision, protocol downgrade, or a bounded session lifetime.
+Session authorization uses the short-lived proof-of-possession exchange in the normative v0 cryptographic profile and never a reusable bearer token. Reauthentication is required after revocation, key rotation, permission revision, protocol change, or a bounded session lifetime.
 
 ## Common envelope
 
-Every application message contains:
+The normative v0.1 envelope is closed and contains:
 
 ```json
 {
-  "protocolMajor": 1,
-  "protocolMinor": 0,
-  "messageID": "0193...",
-  "correlationID": "0193...",
-  "sentAt": "2026-08-17T18:00:00Z",
-  "type": "capabilities.list",
+  "version": { "major": 0, "minor": 1 },
+  "messageID": "018f0000-0000-7000-8000-000000000003",
+  "correlationID": null,
+  "channel": "command",
+  "kind": "status.snapshot.request",
+  "sentAtUnixMilliseconds": 1787198400000,
   "body": {}
 }
 ```
 
-- `messageID` is unique within the sender's retained replay window.
+- `messageID` is unique within the connection-scoped replay window; durable state changes also require their own operation or challenge identity.
 - `correlationID` connects a reply, task, error, and audit trail to the initiating request.
-- `sentAt` supports diagnostics and bounded freshness checks; it is not the sole replay defense.
-- Major versions must match. Minor versions negotiate feature flags and ignore only fields declared optional.
+- `sentAtUnixMilliseconds` supports diagnostics and bounded freshness checks; it is not the sole replay defense.
+- Major versions must match. Minor versions negotiate only explicitly registered features and fields.
 
 ## Core operations
 
@@ -93,9 +93,8 @@ The first protocol surface is deliberately small:
 | `operations.cancel` | Request best-effort cancellation |
 | `presence.lease` | Renew the client's declared activity lease |
 | `audit.list` | Return a bounded, permission-filtered activity page |
-| `interactive.request` | Request a device-granted, user-presence-backed Interactive Control session |
-| `interactive.get` | Return the authoritative Interactive Control session state |
-| `interactive.end` | End the caller's Interactive Control session and invalidate its channel credentials |
+| `interactive.session.request` | Request a device-granted, user-presence-backed Interactive Control session |
+| `interactive.session.end` | End the caller's exact Interactive Control session and invalidate its channel credentials |
 | `interactive.surface.list` | Return transient privacy-filtered app/window candidates inside the active session |
 | `interactive.surface.select` | Select Desktop, App Focus, Window Focus, or focused-region presentation using current revisions |
 | `interactive.surface.get` | Return the authoritative surface, focus, transition, and fallback state |
@@ -116,11 +115,18 @@ Every surface message binds:
 - Privacy profile and permitted interaction class
 - Bounded expiry and per-direction sequence
 
-The initial surface kinds are `desktop`, `application`, `window`, and `focusedRegion`. Experimental `textInput` is available only after the host verifies a current ordinary editable focus. Later `semantic` and `provider` kinds require separate schema and effect review.
+The surface kinds are `desktop`, `application`, `window`, and `focusedRegion`.
+The first Desktop uses a distinct request/descriptor/ack/acknowledged exchange:
+configuration and a clean keyframe precede the acknowledgement, and both
+endpoints keep input denied until its exact reply. Later selection uses the
+replacement exchange and the same per-direction sequences. Experimental
+`textInput` is available only after the host verifies a current ordinary
+editable focus. Later `semantic` and `provider` kinds require separate schema
+and effect review.
 
 `interactive.surface.list` is available only during an active unlocked Interactive Control session. It returns localized app names and icons, opaque tokens, generic window ordinals, and availability. It omits titles, document paths, URLs, thumbnails, Accessibility labels, and content by default.
 
-A successful selection advances surface and coordinate revisions. Coordinate input pauses until `interactive.surface.ack` confirms the new descriptor and keyframe boundary. If the source disappears, focus becomes ambiguous, or a modal surface cannot be included, the host emits `interactive.surface.fallback` and returns to a safe application or desktop surface.
+A successful selection advances surface and coordinate revisions. The closed primary-channel exchange is `interactive.surface.select` → `interactive.surface.selected` → `interactive.surface.ack` → `interactive.surface.acknowledged`. The selected response carries a relative-validity descriptor and exact prior-media boundary; the acknowledgement carries the full surface/focus fence and admitted clean-frame sequence. Coordinate input remains paused until the Agent/runtime proof is returned. If the source disappears, focus becomes ambiguous, or a modal surface cannot be included, the host emits `interactive.surface.fallback` and returns to a safe application or desktop surface.
 
 Experimental text messages use `interactive.text.begin`, `interactive.text.input`, and `interactive.text.end`. They also bind an opaque focus and element token. The first profile is keystroke-only and carries no field value. Focus loss, app or surface change, lock, timeout, or revision mismatch ends the text session before accepting another event.
 
@@ -142,6 +148,10 @@ An event contains the same resource identity plus a monotonically increasing seq
 Delivery is at least once within the retained resume window. Clients deduplicate by generation and sequence. If the server no longer retains the requested cursor, or the client observes a gap, it sends `resnapshotRequired`; the client fetches a new snapshot before presenting the resource as current.
 
 Reconnection never turns last-known data into live data. The UI retains the prior value only with its observation time and an unreachable or stale label.
+
+The v0.1 client races the ordered route candidates with a 250-millisecond stagger and accepts only the first route that completes the pinned host check and application authentication. Exhausted rounds use bounded jittered backoff; foreground entry, restored reachability, and route replacement reset that backoff. Backgrounding closes the foreground connection. Explicit Disconnect and authorization denial require explicit resumption and are never treated as transient route failures.
+
+Snapshot validity is anchored to the client monotonic clock when received after conservatively subtracting the host-reported snapshot age and the full measured request round trip. A connected but expired observation is `stale`; a disconnected retained observation is `unreachable`; neither is `live`.
 
 ## Capability description
 
@@ -190,7 +200,7 @@ Version 1 accepts only a restricted schema subset:
 
 - Closed objects with a bounded property count
 - Booleans
-- Integers and finite numbers with explicit minima and maxima
+- Safe integers with explicit minima and maxima; floating-point schemas require a later protocol profile and complete ECMAScript number-serialization conformance
 - Strings with explicit maximum length and optional enumerated values
 - Bounded arrays of supported primitive or closed-object items
 - Explicit required fields
@@ -250,6 +260,7 @@ stateDiagram-v2
     pairingPending --> unpaired: expired/cancelled/failed
     pairingPending --> activeMonitorOnly: transcript verified and committed
     activeMonitorOnly --> activeGranted: local grant change
+    activeGranted --> activeGranted: local grant replacement
     activeGranted --> activeMonitorOnly: local grant reduction
     activeMonitorOnly --> suspended: local suspend
     activeGranted --> suspended: local suspend
@@ -284,11 +295,13 @@ stateDiagram-v2
     pendingPolicy --> denied
     pendingPolicy --> awaitingApproval
     pendingPolicy --> queued
+    awaitingApproval --> denied
     awaitingApproval --> queued
     awaitingApproval --> expired
     queued --> running
     queued --> cancelled
     queued --> failed: stale epoch/grant/policy before execution
+    queued --> failed: startup cannot reconstruct live request
     running --> cancelRequested
     running --> succeeded
     running --> failed

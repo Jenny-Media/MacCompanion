@@ -1,0 +1,27 @@
+{
+  "applicationToken": null,
+  "authorizationEpoch": 4,
+  "coordinateSpaceRevision": 1,
+  "createdAtMonotonicMilliseconds": 1000,
+  "encodedHeight": 1080,
+  "encodedWidth": 1920,
+  "expiresAtMonotonicMilliseconds": 11000,
+  "fallbackSurfaceID": null,
+  "focus": null,
+  "interactionClasses": [
+    "keyboard",
+    "pointer",
+    "view"
+  ],
+  "interactiveSessionID": "018f6000-0000-7000-8000-000000000001",
+  "kind": "desktop",
+  "logicalHeightPoints": 900,
+  "logicalWidthPoints": 1440,
+  "metadataFields": [],
+  "parentSurfaceID": null,
+  "privacyProfile": "visualOnly",
+  "rotation": 0,
+  "surfaceID": "018f6100-0000-7000-8000-000000000001",
+  "surfaceRevision": 1,
+  "windowToken": null
+}

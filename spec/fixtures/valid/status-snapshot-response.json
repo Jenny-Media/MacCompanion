@@ -1,0 +1,30 @@
+{
+  "version": { "major": 0, "minor": 1 },
+  "messageID": "018f0000-0000-7000-8000-000000000004",
+  "correlationID": "018f0000-0000-7000-8000-000000000003",
+  "channel": "command",
+  "kind": "status.snapshot.response",
+  "sentAtUnixMilliseconds": 1787198401000,
+  "body": {
+    "hostID": "018f1000-0000-7000-8000-000000000001",
+    "resourceID": "host.status",
+    "generation": "018f3000-0000-7000-8000-000000000001",
+    "revision": 42,
+    "observedAtUnixMilliseconds": 1787198400900,
+    "validForMilliseconds": 5000,
+    "hostState": "userSessionActive",
+    "system": {
+      "osName": "macOS",
+      "osVersion": "26.6",
+      "osBuild": "25G100",
+      "uptimeSeconds": 86400,
+      "cpuUtilizationBasisPoints": 1250,
+      "memoryTotalBytes": 34359738368,
+      "memoryUsedBytes": 12884901888,
+      "storageTotalBytes": 994662584320,
+      "storageAvailableBytes": 536870912000,
+      "powerSource": "ac",
+      "batteryLevelPercent": null
+    }
+  }
+}

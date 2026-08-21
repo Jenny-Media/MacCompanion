@@ -1,0 +1,6 @@
+{
+  "entries": [],
+  "entries": [
+    {"path": "App/file", "type": "regularFile", "mode": "0644", "content": "duplicate"}
+  ]
+}

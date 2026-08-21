@@ -132,8 +132,8 @@ Allowed transitions are:
 
 ```text
 idle -> approvalRequired -> starting -> activeUnlocked
-activeUnlocked <-> activeLocked
-activeUnlocked|activeLocked -> lockedInteractionUnavailable
+activeUnlocked -> activeLocked|lockedInteractionUnavailable
+activeLocked|lockedInteractionUnavailable -> starting -> activeUnlocked
 approvalRequired|starting|active*|lockedInteractionUnavailable -> suspended|ending
 suspended -> ending
 ending -> ended
@@ -151,7 +151,7 @@ The coding contract is deliberately conservative:
 - Logged in and locked without public support: state becomes `lockedInteractionUnavailable`, the client blanks the last frame, and no input is accepted.
 - Another console user, logout, login window without the configured user, FileVault preboot, or unverifiable ownership: the session ends.
 
-Text insertion is disabled while locked. Mac Companion does not label credential fields, inspect typed values, store key events, synthesize an unlock result, or preserve the last desktop image on the lock screen. The desktop stream resumes only after macOS reports the configured user active and a new coordinate-space revision has been acknowledged.
+Text insertion is disabled while locked. Mac Companion does not label credential fields, inspect typed values, store key events, synthesize an unlock result, or preserve the last desktop image on the lock screen. The desktop stream resumes only after macOS reports the configured user active, the session returns through `starting`, and a new descriptor, coordinate-space revision, and clean keyframe have been acknowledged. Unlock never revives a pre-lock surface token.
 
 Lock invalidates every application, window, focus, semantic, and text-session token before evaluating whether the genuine macOS lock surface is available. Adaptive app/window surfaces never continue on the lock screen.
 
@@ -170,7 +170,7 @@ The media connection performs a fresh role-specific challenge/response bound to 
 - Cannot be used for input or a different session role
 - Becomes invalid on epoch change, session end, or primary-session loss
 
-The exact certificate, channel-binding, framing, and canonical-signature construction is frozen with golden fixtures in Stage 0B before production networking code. Authentication and state changes never use TLS 0-RTT.
+The exact approval signature and role-specific channel-binding constructions are frozen in `spec/interactive-control/v0/security-profile.md` with golden fixtures. Closed handshake messages and authority-state consumption must also be frozen before production networking code. Authentication and state changes never use TLS 0-RTT.
 
 TCP/TLS is the starting implementation because it is available on local and user-managed private routes without another system service. A QUIC or datagram media path requires a measured Stage 0 result and an ADR; it cannot create a second identity or authorization system.
 
@@ -198,12 +198,13 @@ The media channel is a sequence of length-bounded binary records. The version-1 
 | Record type and flags | Configuration, video access unit, discontinuity, or end. |
 | Header and payload lengths | Permit bounds checking before allocation. |
 | Session ID and authorization epoch | Fence reuse across sessions and revocation. |
+| Surface ID and surface revision | Fence reuse across adaptive-surface replacement. |
 | Media sequence | Detect duplicates and gaps. |
 | Presentation timestamp | Schedule display without relying on arrival time. |
 | Coordinate-space revision | Bind pixels to the current visual-surface transform. |
 | Encoded width and height | Validate decoder and input transform state. |
 
-All integers use one documented network byte order. Unknown record types and oversized values close the media channel. Golden binary fixtures define the exact offsets, sizes, endianness, and invalid cases before implementation.
+All integers use big-endian network byte order. Unknown record types and oversized values close the media channel. The exact 96-byte v1 layout and golden binary vectors are defined in `spec/interactive-control/v0/media-records.md`.
 
 ## 8. Video profile
 
@@ -248,11 +249,18 @@ Input carrying an old surface or coordinate revision is rejected. The initial pr
 
 ### Adaptive Remote Surface integration
 
-The required MVP modes are Desktop, App Focus, Window Focus, and Smart Zoom. A selection advances surface and coordinate revisions, pauses input, sends a discontinuity and clean keyframe, and waits for acknowledgement. An app quit, window disappearance, unresolved modal dialog, stale focus, Accessibility timeout, or inconsistent transform falls back to an application-filtered or Desktop surface rather than leaving invisible input active.
+The required MVP modes are Desktop, App Focus, Window Focus, and Smart Zoom. A selection advances surface and coordinate revisions, pauses and resets input under the old fence, obtains exact menu-runtime preparation proof, sends a discontinuity/configuration/clean-keyframe boundary under the new fence, and waits for the full surface/focus acknowledgement before either endpoint reactivates input. Cross-device descriptors carry relative validity rather than host-monotonic timestamps. An app quit, window disappearance, unresolved modal dialog, stale focus, Accessibility timeout, or inconsistent transform falls back to an application-filtered or Desktop surface rather than leaving invisible input active.
 
 The initial app/window picker transmits only localized app names and icons, opaque session tokens, generic window ordinals, and availability. Window titles, document paths, URLs, thumbnails, labels, values, and content are excluded. Smart Zoom initially uses category, bounds, editability, security status, and focus revision without transmitting the focused value or label.
 
 Smart Input is a gated experiment. Its first profile provides an iOS keyboard and visual focus crop while transmitting ordered key/text events, not field contents or whole-value replacements. Secure or ambiguous fields never transmit value, selection, length, label, placeholder, or description. The normative state and privacy rules are in `adaptive-remote-surfaces.md`.
+
+The baseline Desktop surface may still expose a manually invoked iOS software
+keyboard. That keyboard is not Smart Input: it does not inspect macOS focus,
+crop to a field, or receive field metadata. Its stateless proxy forwards each
+bounded UIKit insertion as one ordered text payload and Delete as a balanced
+physical-key stroke, retains no entered text, selection, or remote value, and
+resigns immediately when input authority closes.
 
 ## 10. Input profile
 
@@ -267,9 +275,17 @@ Supported input types are:
 - Bounded UTF-8 text insertion while unlocked
 - `input.reset` to release all remotely held buttons and keys
 
-Each event carries a sequence number and client monotonic timestamp. Pointer moves may be coalesced; button and key transitions may not. The agent and menu app enforce conservative per-session rates, with an initial ceiling of 120 pointer moves and 240 total input messages per second. A text insertion is limited to 4 KiB, is disabled while locked, and is never implemented by writing the clipboard.
+Each event carries a sequence number and client monotonic-millisecond timestamp. Pointer moves may be coalesced before sequence assignment; button and key transitions may not. The agent and menu app enforce sliding per-session rates, with a ceiling of 120 pointer moves and 240 total input messages in `(now - 1000 ms, now]`. A text insertion is limited to 4 KiB, requires an exact focus fence, is disabled while locked, and is never implemented by writing the clipboard. The exact closed envelope and tagged payload union are defined in `spec/interactive-control/v0/input-messages.md`.
 
 The host maintains the authoritative set of remotely pressed buttons and keys. It emits matching releases when the session ends, the channel stalls, IPC closes, the app resigns foreground without renewing its lease, or authorization changes. A repeated `down`, unmatched `up`, invalid HID usage, out-of-bounds coordinate, excessive delta, stale sequence, or stale coordinate revision is rejected and counted without entering content-bearing audit data.
+
+The phone's explicit Stop action sends `interactive.session.end` on the
+authenticated primary connection for the exact current session and
+authorization epoch. It disables local input immediately. The Mac clears
+admission before teardown and returns `interactive.session.ended` only after
+channels, input, capture, queued media, and retained output have crossed their
+idempotent safety boundary. Connection loss is still fail-closed teardown, but
+the phone must not present it as an acknowledged Stop reply.
 
 The first release documents keyboard-layout limitations. It must not silently claim that physical-key events reproduce every character on every layout.
 
@@ -279,7 +295,7 @@ The first release documents keyboard-layout limitations. It must not silently cl
 - Unused secondary-channel credential: 30 seconds
 - Agent-issued menu-app execution lease: 10 seconds, renewed while the full chain remains authorized
 - Lost primary connection or foreground lease: stop admitting input immediately and terminate within 15 seconds
-- Maximum session duration: four hours, followed by a new user-presence approval
+- Maximum session duration: four hours measured from approval consumption; setup, lock, unlock, reconnect, or surface replacement cannot extend it, and continuing requires a new user-presence approval
 - One active session and one starting request per host
 - No automatic session restart after agent, menu app, OS, network, or permission recovery
 

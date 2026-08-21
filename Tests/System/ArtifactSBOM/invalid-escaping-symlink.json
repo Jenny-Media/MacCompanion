@@ -1,0 +1,6 @@
+{
+  "entries": [
+    {"path": "App/", "type": "directory", "mode": "0755"},
+    {"path": "App/current", "type": "symlink", "mode": "0777", "target": "../../outside"}
+  ]
+}

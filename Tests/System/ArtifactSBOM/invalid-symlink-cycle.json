@@ -1,0 +1,7 @@
+{
+  "entries": [
+    {"path": "App/", "type": "directory", "mode": "0755"},
+    {"path": "App/one", "type": "symlink", "mode": "0777", "target": "two"},
+    {"path": "App/two", "type": "symlink", "mode": "0777", "target": "one"}
+  ]
+}

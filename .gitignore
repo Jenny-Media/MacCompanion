@@ -18,6 +18,10 @@ Archives/
 .build/
 .swiftpm/
 
+# Python tooling caches
+__pycache__/
+*.py[cod]
+
 # Packaged products
 *.app
 *.dmg

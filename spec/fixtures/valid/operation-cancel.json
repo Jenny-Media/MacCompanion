@@ -1,0 +1,11 @@
+{
+  "version": { "major": 0, "minor": 1 },
+  "messageID": "018f7000-0000-7000-8000-000000000006",
+  "correlationID": null,
+  "channel": "command",
+  "kind": "operation.cancel",
+  "sentAtUnixMilliseconds": 1787198500050,
+  "body": {
+    "operationID": "018f7100-0000-7000-8000-000000000001"
+  }
+}

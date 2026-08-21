@@ -16,7 +16,7 @@ flowchart TB
 
     subgraph NETWORK["Private connectivity"]
         BONJOUR["Bonjour discovery"]
-        PRIVATE["Saved Tailscale or private endpoint"]
+        PRIVATE["Saved user-managed private-network endpoint"]
         PROTOCOL["Pinned encrypted capability protocol"]
         MEDIA["Pinned Interactive Control channels"]
     end
@@ -91,6 +91,54 @@ The first service is a per-user LaunchAgent registered with `SMAppService.agent`
 
 The menu-bar app is a persistent status item while Mac Companion is enabled. It is the trusted local administration UI and owns ScreenCaptureKit capture, Accessibility observation, and post-event input. It does not own the long-lived network listener. If the menu app crashes, the LaunchAgent remains available for status and eligible semantic actions, immediately suspends Interactive Control, invokes only the Stage 0-approved recovery mechanism, and records the degraded state. Closing settings never hides or terminates the status item. An explicit local **Quit and Disable** action unregisters both login roles and is never treated as a crash to restore.
 
+The user's enabled/disabled choice is a small durable containing-app record,
+not an inference from running processes or `SMAppService` status. It is written
+with a revision-fenced atomic replacement before live lifecycle mutation.
+Startup loads it before constructing the Agent lifecycle; absence means
+disabled, and process readiness is always rediscovered. Enabled eligible roles
+restart at `starting`, never `ready`. The signed composition
+must reconcile the two login roles and live reducer to this record before
+listener readiness. This preserves an enable request across partial
+registration/start failure and makes disable the durable recovery direction
+before remote teardown and role removal.
+
+Process truth is generation-fenced independently for Agent and menu roles.
+Boot-scoped lifecycle revision prevents stale compare-and-commit after an ABA
+state sequence, while per-role epochs invalidate observations across enable,
+disable, login/logout, and process exit without treating lock/unlock as a new
+process. Registration, launch requests, service status, and PID presence never
+mean ready. The signed Agent/bootstrap and authenticated menu IPC/process
+sources activate exact generations; only their fresh ready observations advance
+the reducer. Exact termination advances remote safety before the matching
+recovery request, and stale generations cannot terminate or restart current
+authority.
+
+The concrete observation source root is created only from the complete
+startup-reconciled `AgentPrimaryServicesV1` graph. Root construction is the
+Agent self-ready signal. It issues a menu observation connection only after the
+final adapter has authenticated and authorized that exact local connection;
+the returned capability contains no caller role or identity claim. Connection
+ready and invalidation serialize, duplicate generations are rejected, terminal
+invalidation receipts replay exactly, and an old connection cannot affect its
+replacement. Failed or ambiguous menu recovery starts enter one exact
+revision/epoch-fenced three-attempt schedule at 250 milliseconds, 1 second, and
+4 seconds. Replacement observation, disable/logout, any lifecycle revision or
+role-epoch change, or success stops it; exhaustion never implies readiness and
+leaves the truthful degraded state available to local status. This replay is
+limited to the idempotent start request and cannot be used for semantic remote
+operations. The raw audit-token/designated-requirement check and physical XPC
+callbacks remain final-target responsibilities.
+
+Explicit enablement is a compensated saga rather than one optimistic toggle.
+The Agent prepares an exact compare-and-commit lifecycle transition; the
+containing app converges Agent then menu login registration; the Agent commits
+only if its lifecycle before-state is unchanged; and the containing app then
+requests both process starts. A failed stale commit compensates both
+registrations while intent remains disabled. Disable reverses the safety
+ordering: the Agent commits disabled intent and completes remote teardown
+before the containing app attempts both unregistrations. Cleanup failure cannot
+reopen remote ingress, and same-desired-state retries reconverge postconditions.
+
 For the first product:
 
 - A logged-in user session is required.
@@ -144,13 +192,20 @@ If the UI is unavailable, the service retains its last approved configuration. N
 
 Initial responsibilities:
 
-- Show service state and endpoints
-- List providers and capabilities
-- List paired devices and active sessions
-- Revoke devices and terminate sessions when locally authorized
-- Tail sanitized diagnostic events
-- Validate provider manifests and protocol fixtures
-- Invoke explicitly CLI-enabled local test actions
+- Show the content-free Agent status snapshot.
+- Export the bounded sanitized diagnostic snapshot and event page to standard
+  output.
+- Present local help and protocol version without contacting the Agent.
+
+The bundle-independent [v0.1 CLI profile](../spec/local-cli/v0/README.md)
+defines exact arguments, request plans, output, and fixed exit semantics. The
+signed executable and XPC adapter remain final-identity artifacts. Endpoint
+details, provider/capability lists, paired-device or session administration,
+revocation, session termination, event tailing, manifest/fixture validation,
+and test-action invocation are future candidates only. They remain denied until
+the local IPC method matrix adds a separately reviewed authenticated operation;
+the CLI must not approximate them from files, processes, sockets, or remote
+protocol calls.
 
 The service validates the connecting process using platform credentials such as the XPC audit token and an expected code-signing requirement. Filesystem path or same-user execution alone is not authentication. Administrative CLI operations are separately authorized and audited.
 
@@ -158,9 +213,9 @@ The service validates the connecting process using platform credentials such as 
 
 ### Discovery and permission
 
-The service advertises one declared Bonjour service type. The iOS app browses only that type. Both products include clear Local Network usage descriptions and explicit denied/restricted recovery UI.
+The service advertises exactly `_maccompanion._tcp` in `local.`. The iOS app browses only that type. Both products include clear Local Network usage descriptions and explicit denied/restricted recovery UI.
 
-Bonjour provides endpoint discovery, not identity. TXT records contain only bounded non-secret hints such as protocol major versions and a truncated host-identity hint. Clients treat all discovery metadata as untrusted until the pinned secure session succeeds.
+Bonjour provides endpoint discovery, not identity. The v0.1 TXT record is closed to `v=0` and `h=<first eight fingerprint bytes as 16 lowercase hexadecimal characters>`; it contains no host name, device name, user name, addresses, capabilities, or secrets. The hint is untrusted and only helps correlate candidates before the full pinned fingerprint is verified. Clients treat all discovery metadata as hostile until the pinned secure session succeeds.
 
 ### Endpoint identity
 
@@ -174,6 +229,8 @@ A paired host can therefore be reached through:
 - Another user-managed private route that exposes a stable IP or DNS endpoint
 
 Changing an endpoint does not change host identity. Changing or losing the host identity requires an explicit recovery or re-pairing flow.
+
+The v0.1 identity profile freezes a Secure Enclave P-256 key, exact DER SubjectPublicKeyInfo fingerprint, same-key 90-day certificate renewal, first-unlock waiting, and locally confirmed recovery after established-key loss. Certificate replacement preserves pins; key replacement invalidates every prior pin and pairing. A schema-v7 bootstrap singleton durably fixes the candidate host UUID and exact Keychain tag before key creation; establishment consumes it atomically with the ready identity and event. The same schema atomically retains the bounded exact locally reviewed recovery command with the identity fence, allowing only exact Agent/menu-process restart recovery and response replay. The exact X.509 path and a Security.framework startup/custody/listener-identity constructor are compile-tested; real Keychain/Secure Enclave behavior still requires final signed identities and physical fault evidence.
 
 ### Transport
 
@@ -215,9 +272,9 @@ sequenceDiagram
     M->>U: Display one-time QR
     U->>I: Scan QR
     I->>K: Create session and approval keys
-    I->>S: Pinned TLS, pairing ID, secret proof, keys, nonce
-    S->>I: Host nonce and transcript confirmation
-    I->>S: Signed transcript proof
+    I->>S: Pinned TLS, pairing ID, keys, client nonce
+    S->>I: Host nonce, selected version, fingerprint
+    I->>S: Secret proof and session-key transcript signature
     S-->>I: Transcript-derived authentication string
     S-->>M: Device details and same authentication string
     I->>U: Display authentication string
@@ -227,7 +284,7 @@ sequenceDiagram
     S->>S: Atomically consume session and store device, keys, grant, epoch
 ```
 
-The QR contains no permanent bearer credential. It contains an expiring pairing ID, a 256-bit one-time secret, endpoint candidates, protocol hints, and the host-identity fingerprint. The phone pins that identity before disclosing a proof of the secret. The complete transcript binds the pairing ID, both long-term public keys, both nonces, host fingerprint, negotiated protocol, and one-time secret proof; both devices display a short authentication string derived from that transcript. Local approval names the client and transcript hash. The agent atomically consumes the pairing session in the same durable transaction that creates the device, initial Monitor Only grant, authorization epoch, and minimal audit event. It rate-limits attempts and audits success and failure without recording the QR secret or authentication string.
+The QR contains no permanent bearer credential. It contains an expiring pairing ID, a 256-bit one-time secret, endpoint candidates, protocol hints, and the host-identity fingerprint. The phone pins that identity before disclosing a proof of the secret. The complete transcript binds the pairing ID, both long-term public keys, both nonces, host fingerprint, negotiated protocol, and one-time secret proof; both devices display a short authentication string derived from that transcript. The remote wire supplies no device name: during local approval the Mac user chooses the presentation-only client name, and the decision binds that name, client ID, both public-key fingerprints, and transcript hash. The agent atomically consumes the pairing session and stores the chosen name in the same durable transaction that creates the device, initial Monitor Only grant, authorization epoch, and minimal audit event. It rate-limits attempts and audits success and failure without recording the QR secret or authentication string.
 
 ### Revocation and recovery
 
@@ -241,7 +298,7 @@ Revocation is immediate:
 - Completed or non-cancellable effects are not represented as undone.
 - The device grant, authorization epoch, and minimal revocation event commit atomically before durable success is reported locally.
 
-The security store and bounded audit detail have separate quotas so audit exhaustion cannot consume the revocation reserve. Stage 0 proves a preallocated, crash-consistent emergency deny latch. If the revocation transaction cannot commit, the agent activates that latch, closes all remote sessions and queued work, reports that device-specific revocation is not yet durable, and refuses all remote startup after a crash or restart until local recovery proves the security store writable and consistent and completes the intended revocation.
+The security store and bounded audit detail have separate quotas so audit exhaustion cannot consume the revocation reserve. Stage 0 proves a preallocated, crash-consistent emergency deny latch. Revocation first writes and `fsync`s a pending-revocation deny record, then attempts the epoch/grant/event transaction, and clears the latch only after commit. If pre-arming or the transaction cannot be durably verified, the agent closes all remote sessions and queued work, reports that device-specific revocation is not yet durable, and refuses remote startup after a crash or restart until local recovery proves the latch and security store writable and consistent and completes the intended revocation.
 
 Losing or reinstalling the iOS app creates a new device identity. Losing the host identity requires explicit recovery and invalidates prior pins. Backup and migration behavior is documented; private identity keys are not silently synchronized through iCloud Keychain.
 
@@ -271,6 +328,108 @@ The iOS client exposes three first-class paths from each paired Mac workspace:
 - **Control:** a prominent Connect or Resume entry into Adaptive Remote Desktop
 
 The Mac library remains the product root and never starts capture merely because it becomes visible. Control is the flagship interactive capability, not a secondary error-recovery screen, while Observe and Act remain independently useful before, during, and after a Control session. The three paths share device identity, authorization epochs, presence, revocation, and audit infrastructure but retain separate grants and admission rules.
+
+The Observe surface is driven by one authenticated connection-bound owner, not
+socket reachability or cached UI state. It permits one current-status read and
+one bounded self-audit traversal at a time. Status generation is fixed for the
+connection and revisions must strictly increase. Freshness subtracts both
+host-reported age and the complete measured request round trip; after the
+exclusive validity deadline the snapshot is stale, and after disconnect the
+last validated snapshot may remain visible only as unreachable. Audit pages
+preserve exclusive cursors and explicit prune/drop gaps without building an
+unbounded client history. None of these reads starts or authorizes Control.
+
+The Act surface is built only from one completely assembled, authenticated
+granted-capability catalog. It renders the registered closed parameter schema,
+shows every effect fact, and never exposes an arbitrary command or JSON editor.
+One client operation owner binds the selected descriptor, durable operation ID,
+pinned host, authenticated client/device/connection, and exact grant/policy
+fence. Fresh approval uses the separately protected approval key with local
+user presence; a signature returned after connection replacement, background
+invalidation, expiry, or cancellation is discarded. Ambiguous delivery is
+recovered by querying the same durable operation ID, never by silently creating
+a replacement effect. One authenticated Act channel owner composes catalog
+pagination and that single-operation owner on the primary connection's injected
+byte sender. It publishes no partial catalog, requires exact page correlation,
+and treats any operation-command send failure as delivery-ambiguous while a
+catalog send failure invalidates only the load. None of these states starts or
+authorizes Control.
+
+All three paths share one connection-scoped client primary router after pinned
+TLS and application authentication. It registers each request before send,
+applies the 32-request limit, exact response-kind/correlation deadlines,
+and connection replay window, then routes the reply only to the request's
+immutable Observe, Act, or Control lane. Shared errors are routed by
+correlation, never inferred from the visible screen. A path receiver prepares
+its publication, but the router commits it only after confirming that primary
+connection replacement or invalidation has not won the race. The actual client
+Network pump is bound through an authentication-time bridge before product
+traffic becomes ready. Original lane requests have null correlation; the one
+closed continuation exception is `interactive.session.approve`, whose Control
+owner verifies and correlates the exact approval challenge before fresh user
+presence. Every parallel authenticated route owns its own inert
+Observe/Act/Control bridge, but that bridge cannot publish events or expose
+handles
+until the reconnect state machine accepts that exact route and the reconnect
+owner selects it as primary. Late, losing, stale, and pre-selection-terminated
+routes close without product publication. Selected events and termination are
+tagged with the immutable host and connection IDs so the application can fence
+retained state across replacement.
+
+One application-global primary state owner consumes those selected-route
+handoffs for the expected paired host. Its latest-one snapshot stream carries a
+strictly increasing local revision, validated Observe state, the latest bounded
+self-audit page, the granted Act catalog and operation presentation, and typed
+command handles only while their exact connection remains selected. Old
+connection publications and termination are counted and dropped without
+changing the current snapshot. Disconnect clears every Act authority and may
+retain validated status/activity only as unreachable; selecting a replacement
+clears that retained state and waits for the replacement connection's own
+status. Control state is also exact-connection fenced: disconnect or replacement
+clears pending approval and accepted role offers, while the UI sees only
+sanitized request, approval, accepted-but-preparing, or rejection state. The
+first-party iOS workspace projects this value into separate Mac
+Status, Approved Actions, and Remote Control entries. Its views have no raw
+socket, route, identity, signing, or grant authority.
+
+Accepted input and media offers are composed only with the endpoint and port
+that won the owning authenticated primary route. That endpoint is retained as
+package-private application state and never enters the UI snapshot. Each role
+uses a separate pinned-TLS authority and a four-byte big-endian, 4,096-byte
+bounded strict-JSON authentication pump whose exact reads stop immediately
+after the accepted frame. Input framing and the self-framing media header begin
+only after that boundary. Both role owners are one generation: either failure
+or primary replacement closes both, and the application remains
+accepted-but-preparing until both are ready and the initial Desktop clean-media
+acknowledgement completes.
+
+The concrete client role connector creates one one-shot Network.framework TLS
+context per role on that retained endpoint and transfers only exact-connection
+peer evidence into the role authority. A paired owner samples the selected
+primary before dialing and after both proofs, retains no partial success, and
+closes the exact pair on matching primary termination. Its ready sockets still
+remain below presentation and require Desktop clean-media activation before
+either viewing or input state can advance.
+
+The configured-route product owns a generation-fenced role binding after the
+selected-primary application state. Accepted Control starts one pair; retry,
+rejection, failure, replacement, or primary termination cancels it. Its public
+state contains only the Interactive session ID and distinguishes connecting,
+role-channels-ready, failed, and closed. Role-channels-ready is intentionally
+below the workspace and cannot be interpreted as clean media or active input.
+
+Initial Desktop activation begins only from that retained exact pair. The
+primary channel sends and correlates the descriptor exchange, while an
+exact-read media pump validates each fixed header before bounded payload
+allocation. Acknowledgement uses the first clean-keyframe sequence and is
+withheld until the current decoder generation returns that frame and the
+renderer accepts it. The exact acknowledged primary reply activates client
+input authority; secondary authentication, media receipt, decoder submission,
+or render callback admission alone cannot do so. Once active, a single
+serialized input owner assigns each reliable sequence through that descriptor
+authority, applies the bounded four-byte length prefix, and sends in order on
+the authenticated input-role socket. Teardown attempts one final reset before
+cancelling the role connection.
 
 ## Interactive Control
 
@@ -471,13 +630,29 @@ Remote viewing can increase sampling frequency within a defined energy budget. W
 
 ### Desired-state system actions
 
-The first action candidates are:
+The first evaluated action candidates are:
 
 - Set audio muted state
-- Set system appearance
+- Set system appearance — Stage 0 no-go as a three-state native action; public
+  AppKit is app-local, and the System Events Automation surface cannot express
+  the user's automatic/system mode
 - Start or stop a bounded keep-awake lease
 
 They use explicit desired state, bounded execution time, structured results, live availability, and final host validation.
+
+The keep-awake candidate is now frozen as separate start-until and idempotent
+stop capabilities. It uses only the public IOPM user-idle system-sleep
+assertion, leaves the display free to dim, caps each assertion at four hours,
+and installs a system-enforced timeout. It remains outside the advertised MVP
+registry until signed physical timeout/crash/logout evidence and a dedicated
+time-selection UI pass; `setAudioMuted` remains the one required MVP action.
+
+System appearance is not implemented through global defaults, Dock restarts,
+or undocumented notifications. A future Automation-backed light/dark-only
+capability would require a new identifier and schema, explicit menu-app-owned
+consent, read-back, revocation, signed physical evidence, and distribution
+review; Apple Events remain outside the Agent and current native-provider
+target.
 
 ## MacTools adapter
 
@@ -521,7 +696,7 @@ Sensitive schema fields are omitted or irreversibly summarized. Raw secrets, cre
 
 The Mac administration UI may inspect all local audit records. The MVP remote grant `audit.readSelf` exposes only the requesting device's pairing/session lifecycle, its own requests and outcomes, and coarse host security-state transitions needed to explain availability. It never exposes another device's identity, activity, capability names, denial details, or network metadata. Broader remote audit access requires a separate locally granted capability and privacy review.
 
-The store has a byte quota, age limit, rate limit, compaction policy, and disk-full behavior before the alpha ships. Security-relevant writes fail closed when their absence would make an operation unauditable. The local log is diagnostic and accountability-oriented; it is not claimed to resist a compromised local user unless a later tamper-evident export is added.
+The detailed store has a 16 MiB logical quota, 50,000-row limit, 30-day retention, 120-attempt-per-minute actor/device buckets, oldest-best-effort compaction, and explicit per-scope retention/drop gaps. Unexpired required-before-effect rows are never quota-evicted. Security-state mutations still atomically commit their minimal `security_events` row in the security database; a separately required detailed write fails closed before a new effect. Safety teardown never waits for audit. The local log is diagnostic and accountability-oriented; it is not claimed to resist a compromised local user unless a later tamper-evident export is added.
 
 ## Host-state semantics
 

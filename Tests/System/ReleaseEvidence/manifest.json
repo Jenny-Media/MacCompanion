@@ -1,0 +1,21 @@
+{
+  "cases": [
+    {"path": "valid-unsigned-construction.json", "expect": "valid"},
+    {"path": "invalid-unsigned-signing-policy.json", "expect": "invalid", "errors": ["unsignedEvidenceBroadened"]},
+    {"path": "valid-signed-mac-candidate.json", "expect": "valid"},
+    {"path": "valid-promotion-both-targets.json", "expect": "valid"},
+    {"path": "invalid-unknown-field.json", "expect": "invalid", "errors": ["unknownField"]},
+    {"path": "invalid-secret-material.json", "expect": "invalid", "errors": ["forbiddenSecretField", "forbiddenSecretMaterial"]},
+    {"path": "invalid-absolute-evidence-path.json", "expect": "invalid", "errors": ["unsafePath"]},
+    {"path": "invalid-artifact-digest.json", "expect": "invalid", "errors": ["invalidDigest"]},
+    {"path": "invalid-signed-candidate-incomplete.json", "expect": "invalid", "errors": ["missingMacArtifacts", "missingMacExecutables", "missingAcceptedNotarization", "missingSBOM"]},
+    {"path": "invalid-promotion-missing-physical.json", "expect": "invalid", "errors": ["missingPhysicalScenario", "failedPhysicalScenario"]},
+    {"path": "invalid-duplicate-validation-id.json", "expect": "invalid", "errors": ["duplicateIdentifier"]},
+    {"path": "invalid-dot-segment-path.json", "expect": "invalid", "errors": ["unsafePath"]},
+    {"path": "invalid-inapplicable-compatibility.json", "expect": "invalid", "errors": ["inapplicableCompatibility"]},
+    {"path": "invalid-duplicate-json-key.json", "expect": "invalid", "errors": ["invalidJSON"]},
+    {"path": "invalid-role-platform.json", "expect": "invalid", "errors": ["rolePlatformMismatch", "artifactPlatformMismatch", "executableTargetMismatch"]},
+    {"path": "invalid-scenario-platform.json", "expect": "invalid", "errors": ["scenarioPlatformMismatch"]},
+    {"path": "invalid-placeholder-hashes.json", "expect": "invalid", "errors": ["placeholderRevision", "placeholderDigest"]}
+  ]
+}

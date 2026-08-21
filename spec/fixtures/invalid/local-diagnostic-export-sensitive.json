@@ -1,0 +1,26 @@
+{
+  "contentBearingDataOmitted": false,
+  "events": [],
+  "privateRouteDetailsOmitted": true,
+  "status": {
+    "activeRemoteSessionCount": 0,
+    "agentProcess": "ready",
+    "consoleSession": "active",
+    "desiredEnabled": true,
+    "diagnosticSequence": 0,
+    "generatedAtUnixMilliseconds": 1724000001000,
+    "menuAppProcess": "ready",
+    "networkState": "listening",
+    "pairedDeviceCount": 1,
+    "protocolVersion": {
+      "major": 0,
+      "minor": 1
+    },
+    "providerCount": 0,
+    "routeKinds": [
+      "lan"
+    ],
+    "securityPosture": "nominal",
+    "warningCodes": []
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "profile": "maccompanion.apple-privacy-manifest-fixtures.v0",
+  "cases": [
+    {"path": "valid-ios.xcprivacy", "kind": "ios", "expectedCodes": []},
+    {"path": "valid-mac.xcprivacy", "kind": "mac", "expectedCodes": []},
+    {"path": "invalid-collected-data.xcprivacy", "kind": "ios", "expectedCodes": ["collectedDataMustBeEmpty"]},
+    {"path": "invalid-duplicate-category.xcprivacy", "kind": "ios", "expectedCodes": ["duplicateCategory"]},
+    {"path": "invalid-duplicate-key.xcprivacy", "kind": "ios", "expectedCodes": ["duplicatePlistKey"]},
+    {"path": "invalid-mac-accessed-types.xcprivacy", "kind": "mac", "expectedCodes": ["manifestSchema"]},
+    {"path": "invalid-missing-ios-accessed-types.xcprivacy", "kind": "ios", "expectedCodes": ["manifestSchema"]},
+    {"path": "invalid-reason.xcprivacy", "kind": "ios", "expectedCodes": ["invalidReason"]},
+    {"path": "invalid-sdk-only-reason.xcprivacy", "kind": "ios", "expectedCodes": ["sdkOnlyReason"]},
+    {"path": "invalid-tracking-domain.xcprivacy", "kind": "ios", "expectedCodes": ["trackingDomainsMustBeEmpty"]},
+    {"path": "invalid-tracking.xcprivacy", "kind": "ios", "expectedCodes": ["trackingMustBeFalse"]},
+    {"path": "invalid-unknown-key.xcprivacy", "kind": "ios", "expectedCodes": ["manifestSchema"]}
+  ]
+}

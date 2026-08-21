@@ -103,7 +103,7 @@ anyActive -> fallbackPending -> nearestSafeVisualSurface
 anyActive -> suspended|ended
 ```
 
-A selection request includes the current surface and coordinate revisions. The host rejects stale requests rather than applying them to a newly focused app or window. A successful transition sends a discontinuity, new descriptor, and keyframe before accepting coordinates in the new space.
+A selection request includes the current surface and coordinate revisions. The host rejects stale requests rather than applying them to a newly focused app or window. Descriptors have half-open monotonic lifetimes; future descriptors and descriptors at or beyond expiry authorize neither transitions nor input. A successful transition sends a discontinuity, new descriptor, and keyframe before accepting coordinates in the new space.
 
 Surface switching never restarts pairing or user-presence approval, but suspension, authorization-epoch change, lock transition, menu-app loss, or session expiry invalidates every surface token.
 
@@ -259,16 +259,16 @@ Initial messages are:
 | Message | Purpose |
 | --- | --- |
 | `interactive.surface.list` | Return bounded, privacy-filtered session candidates and the current surface. |
-| `interactive.surface.select` | Request a transition using current surface and coordinate revisions. |
+| `interactive.surface.select` / `interactive.surface.selected` | Request a transition under the current fence; return the exact Agent transition, relative-validity descriptor, and prior media boundary only after menu-runtime preparation. |
 | `interactive.surface.get` | Return authoritative surface, focus, fallback, and transition state. |
-| `interactive.surface.ack` | Acknowledge a new descriptor and keyframe boundary before coordinate input resumes. |
+| `interactive.surface.ack` / `interactive.surface.acknowledged` | Acknowledge the exact full surface/focus fence and clean-frame sequence; resume input only after the correlated Agent/runtime proof. |
 | `interactive.surface.focusChanged` | Publish a host-derived focus token and permitted assisted-visual metadata. |
 | `interactive.surface.fallback` | Explain a host-initiated return to a safer visual surface. |
 | `interactive.text.begin` | Request a bounded input profile for the current verified editable focus. |
 | `interactive.text.input` | Send ordered, rate-limited input bound to the text and focus revisions. |
 | `interactive.text.end` | End the text session and release transient input state. |
 
-Every message binds the Interactive Control session, authorization epoch, surface revision, and message sequence. Coordinate or text messages additionally bind the relevant coordinate or focus revision. Unknown kinds, actions, privacy values, or critical fields fail closed.
+Every message binds the Interactive Control session, authorization epoch, surface revision, and an exact per-direction safe-integer sequence. Coordinate or text messages additionally bind the relevant coordinate or focus revision. Network descriptors carry a bounded relative validity interval because one device's monotonic clock is never meaningful on the other; each endpoint materializes and enforces its own local deadline. Unknown kinds, actions, privacy values, or critical fields fail closed.
 
 Golden fixtures cover every MVP surface message, transition, stale-revision error, secure-field redaction, related-window fallback, and text-session termination path.
 

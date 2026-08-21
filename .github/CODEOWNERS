@@ -1,0 +1,11 @@
+# Default ownership remains with the sole current Jenny Media maintainer.
+* @xcv58
+
+# Security, protocol, release, and repository-policy changes always require
+# explicit maintainer review even if ownership becomes more granular later.
+/spec/ @xcv58
+/Packages/MacCompanionKit/Sources/CompanionSecurity/ @xcv58
+/Packages/MacCompanionKit/Sources/CompanionWire/ @xcv58
+/Packages/MacCompanionKit/Sources/CompanionInteractiveWire/ @xcv58
+/scripts/ @xcv58
+/.github/ @xcv58

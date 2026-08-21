@@ -1,0 +1,36 @@
+{
+  "profile": "maccompanion.swift-dependency-policy.v0",
+  "remoteDependenciesAllowed": false,
+  "binaryTargetsAllowed": false,
+  "buildToolPluginsAllowed": false,
+  "packages": [
+    {
+      "path": "Experiments/NetworkDiscoveryProbe",
+      "name": "NetworkDiscoveryProbe",
+      "identity": "networkdiscoveryprobe",
+      "toolsVersion": "6.0.0",
+      "localDependencies": ["Packages/MacCompanionKit"]
+    },
+    {
+      "path": "Experiments/NetworkTLSProbe",
+      "name": "NetworkTLSProbe",
+      "identity": "networktlsprobe",
+      "toolsVersion": "6.0.0",
+      "localDependencies": ["Packages/MacCompanionKit"]
+    },
+    {
+      "path": "Experiments/PlatformAuthorityProbe",
+      "name": "PlatformAuthorityProbe",
+      "identity": "platformauthorityprobe",
+      "toolsVersion": "6.0.0",
+      "localDependencies": ["Packages/MacCompanionKit"]
+    },
+    {
+      "path": "Packages/MacCompanionKit",
+      "name": "MacCompanionKit",
+      "identity": "maccompanionkit",
+      "toolsVersion": "6.0.0",
+      "localDependencies": []
+    }
+  ]
+}

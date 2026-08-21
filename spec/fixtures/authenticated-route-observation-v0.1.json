@@ -1,0 +1,85 @@
+{
+  "version": { "major": 0, "minor": 1 },
+  "freshnessWindowMilliseconds": 30000,
+  "heartbeatMaximumMilliseconds": 15000,
+  "cases": [
+    {
+      "name": "initialPrivateDNS",
+      "currentConnectionID": "AAECAwQFBgcICQoLDA0ODw",
+      "configuredRouteID": "UFFSU1RVVldYWVpbXF1eXw",
+      "routeClass": "privateDNS",
+      "observationSequence": 1,
+      "hostMonotonicMilliseconds": 100,
+      "expected": "accepted",
+      "freshThroughMonotonicMilliseconds": 30100
+    },
+    {
+      "name": "sameRouteHeartbeat",
+      "currentConnectionID": "AAECAwQFBgcICQoLDA0ODw",
+      "configuredRouteID": "UFFSU1RVVldYWVpbXF1eXw",
+      "routeClass": "privateDNS",
+      "observationSequence": 2,
+      "hostMonotonicMilliseconds": 15000,
+      "expected": "accepted",
+      "freshThroughMonotonicMilliseconds": 45000
+    },
+    {
+      "name": "sequenceReplay",
+      "currentConnectionID": "AAECAwQFBgcICQoLDA0ODw",
+      "configuredRouteID": "UFFSU1RVVldYWVpbXF1eXw",
+      "routeClass": "privateDNS",
+      "observationSequence": 1,
+      "hostMonotonicMilliseconds": 15001,
+      "expected": "protocol.duplicateMessage",
+      "preservesFreshThroughMonotonicMilliseconds": 45000
+    },
+    {
+      "name": "changedConfiguredRouteMismatch",
+      "currentConnectionID": "AAECAwQFBgcICQoLDA0ODw",
+      "configuredRouteID": "YGFiY2RlZmdoaWprbG1ubw",
+      "routeClass": "privateNetwork",
+      "observationSequence": 3,
+      "hostMonotonicMilliseconds": 15002,
+      "expected": "protocol.invalidFrame",
+      "preservesFreshThroughMonotonicMilliseconds": 45000
+    },
+    {
+      "name": "oldConnectionAfterReplacement",
+      "currentConnectionID": "EBESExQVFhcYGRobHB0eHw",
+      "observedConnectionID": "AAECAwQFBgcICQoLDA0ODw",
+      "configuredRouteID": "UFFSU1RVVldYWVpbXF1eXw",
+      "routeClass": "privateDNS",
+      "observationSequence": 3,
+      "hostMonotonicMilliseconds": 16000,
+      "expected": "protocol.invalidFrame",
+      "expectedRouteKinds": []
+    },
+    {
+      "name": "replacementPrivateNetwork",
+      "currentConnectionID": "EBESExQVFhcYGRobHB0eHw",
+      "configuredRouteID": "YGFiY2RlZmdoaWprbG1ubw",
+      "routeClass": "privateNetwork",
+      "observationSequence": 1,
+      "hostMonotonicMilliseconds": 16001,
+      "expected": "accepted",
+      "expectedRouteKinds": ["privateNetwork"],
+      "freshThroughMonotonicMilliseconds": 46001
+    },
+    {
+      "name": "inclusiveDeadline",
+      "snapshotMonotonicMilliseconds": 46001,
+      "expectedRouteKinds": ["privateNetwork"]
+    },
+    {
+      "name": "expiredAfterDeadline",
+      "snapshotMonotonicMilliseconds": 46002,
+      "expectedRouteKinds": []
+    },
+    {
+      "name": "disconnectWithdrawsImmediately",
+      "currentConnectionID": null,
+      "hostMonotonicMilliseconds": 46003,
+      "expectedRouteKinds": []
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "version": { "major": 0, "minor": 1 },
+  "messageID": "018f0000-0000-7000-8000-000000001100",
+  "correlationID": null,
+  "channel": "command",
+  "kind": "route.observation",
+  "sentAtUnixMilliseconds": 1787198400100,
+  "body": {
+    "connectionID": "AAECAwQFBgcICQoLDA0ODw",
+    "configuredRouteID": "UFFSU1RVVldYWVpbXF1eXw",
+    "routeClass": "privateDNS",
+    "observationSequence": 1
+  }
+}

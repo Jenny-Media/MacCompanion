@@ -1,0 +1,13 @@
+{
+  "version": { "major": 0, "minor": 1 },
+  "messageID": "018f7000-0000-7000-8000-000000000101",
+  "correlationID": null,
+  "channel": "command",
+  "kind": "capability.registry.request",
+  "sentAtUnixMilliseconds": 1787198500100,
+  "body": {
+    "expectedRegistryGeneration": null,
+    "expectedGrantRevision": null,
+    "afterCapabilityID": null
+  }
+}

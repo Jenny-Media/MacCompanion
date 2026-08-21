@@ -1,0 +1,53 @@
+{
+  "version": { "major": 0, "minor": 1 },
+  "messageID": "018f7000-0000-7000-8000-000000000102",
+  "correlationID": "018f7000-0000-7000-8000-000000000101",
+  "channel": "command",
+  "kind": "capability.registry.response",
+  "sentAtUnixMilliseconds": 1787198500101,
+  "body": {
+    "registryGeneration": "018f8100-0000-7000-8000-000000000001",
+    "grantRevision": 2,
+    "policyRevision": 3,
+    "capabilities": [
+      {
+        "capabilityID": "maccompanion.system.setAudioMuted",
+        "schemaVersion": 1,
+        "englishTitle": "Set Audio Mute",
+        "englishSummary": "Set the default Mac audio output to muted or unmuted.",
+        "parameterSchema": {
+          "type": "object",
+          "properties": [
+            {
+              "name": "muted",
+              "required": true,
+              "schema": { "type": "boolean" }
+            }
+          ]
+        },
+        "resultSchema": {
+          "type": "object",
+          "properties": [
+            {
+              "name": "muted",
+              "required": true,
+              "schema": { "type": "boolean" }
+            }
+          ]
+        },
+        "effects": {
+          "dataAccess": "none",
+          "changesLocalState": "reversible",
+          "mayDisruptUser": false,
+          "invokesExternalService": false,
+          "usesCredentials": false,
+          "destructive": false,
+          "requiresForegroundSession": false,
+          "allowedWhileLocked": false,
+          "cancellation": "notApplicable"
+        }
+      }
+    ],
+    "nextAfterCapabilityID": null
+  }
+}

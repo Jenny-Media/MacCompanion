@@ -1,0 +1,72 @@
+{
+  "validRecords": [
+    {
+      "configuredRouteID": "ABEiM0RVZneImaq7zN3u_w",
+      "endpoint": {
+        "kind": "bonjour",
+        "port": 443,
+        "value": "mac-0011223344556677._maccompanion._tcp.local."
+      },
+      "provenance": "localDiscovery"
+    },
+    {
+      "configuredRouteID": "ECEyQ1RldoeYqbq7zN3u_w",
+      "endpoint": {
+        "kind": "ipv4",
+        "port": 443,
+        "value": "192.168.1.20"
+      },
+      "provenance": "directPrivateAddress"
+    },
+    {
+      "configuredRouteID": "ICFCQ1RldoeYqbq7zN3u_w",
+      "endpoint": {
+        "kind": "dns",
+        "port": 443,
+        "value": "studio.example.net"
+      },
+      "provenance": "privateDNS"
+    },
+    {
+      "configuredRouteID": "MCFCQ1RldoeYqbq7zN3u_w",
+      "endpoint": {
+        "kind": "dns",
+        "port": 443,
+        "value": "macbook.tailnet.ts.net"
+      },
+      "provenance": "privateNetwork"
+    }
+  ],
+  "invalidProvenancePairs": [
+    {
+      "endpointKind": "bonjour",
+      "provenance": "privateNetwork"
+    },
+    {
+      "endpointKind": "ipv4",
+      "provenance": "privateDNS"
+    },
+    {
+      "endpointKind": "dns",
+      "provenance": "directPrivateAddress"
+    }
+  ],
+  "invalidRecords": [
+    {
+      "endpoint": {
+        "kind": "ipv4",
+        "port": 443,
+        "value": "203.0.113.5"
+      },
+      "provenance": "directPrivateAddress"
+    },
+    {
+      "endpoint": {
+        "kind": "ipv6",
+        "port": 443,
+        "value": "2001:db8::1"
+      },
+      "provenance": "directPrivateAddress"
+    }
+  ]
+}

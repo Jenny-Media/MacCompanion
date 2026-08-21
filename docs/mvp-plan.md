@@ -68,7 +68,7 @@ This stage produces small harnesses and decision records, not a polished app.
 - Verify every native status field on supported hardware, locked sessions, missing sensors, and permission-denied states.
 - Inventory required-reason API and privacy-manifest obligations, including system uptime.
 - Define the transient Remote Surface metadata allowlist. Application/window candidates, focus bounds, secure-field classification, and future semantic values must not inherit the status or audit data policy implicitly.
-- Spike `setAudioMuted`, `setAppearance`, and bounded keep-awake start/stop as desired-state actions.
+- Spike `setAudioMuted`, `setAppearance`, and bounded keep-awake start/stop as desired-state actions. Record the result for each independently: mute is the required MVP action, bounded keep-awake is candidate-only pending physical and UX proof, and the three-state system-appearance action is a no-go because public AppKit is app-local while System Events Automation cannot represent the user's automatic/system mode.
 - Record a paper compatibility map to MacTools' current action, availability, concurrency, cancellation, result, and generation concepts. Do not build the bridge or let MacTools requirements expand the MVP protocol before the native three-path beta passes.
 - Select Keychain policy for private keys and a service-owned SQLite model for devices, grants, authorization epochs, replay windows, operations, and audit.
 - Define schema migration, rollback compatibility, transaction boundaries, quotas, and disk-full behavior before implementing pairing or control.

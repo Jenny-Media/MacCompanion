@@ -1,0 +1,29 @@
+{
+  "profile": "maccompanion.mac-packaging-equivalence-fixtures.v0.1",
+  "cases": [
+    {"id": "valid-macos", "mutation": "none", "expect": "valid"},
+    {"id": "valid-combined-targets", "mutation": "combinedTargets", "expect": "valid"},
+    {"id": "deterministic-receipt", "mutation": "deterministic", "expect": "valid"},
+    {"id": "invalid-release-binding", "mutation": "releaseVersion", "expect": "invalid", "errorContains": "packaging release binding mismatch"},
+    {"id": "invalid-source-binding", "mutation": "sourceRevision", "expect": "invalid", "errorContains": "packaging source binding mismatch"},
+    {"id": "invalid-artifact-sbom-reference", "mutation": "artifactSBOMReference", "expect": "invalid", "errorContains": "artifact SBOM reference mismatch"},
+    {"id": "invalid-canonical-summary", "mutation": "summaryDigest", "expect": "invalid", "errorContains": "canonical app summary mismatch"},
+    {"id": "invalid-container-binding", "mutation": "containerHash", "expect": "invalid", "errorContains": "packaging container binding mismatch"},
+    {"id": "invalid-container-order", "mutation": "containerOrder", "expect": "invalid", "errorContains": "canonical order"},
+    {"id": "invalid-dmg-layout", "mutation": "receiptLayout", "expect": "invalid", "errorContains": "DMG root layout"},
+    {"id": "invalid-observed-dmg-payload", "mutation": "observedPayload", "expect": "invalid", "errorContains": "reinspected DMG app differs"},
+    {"id": "invalid-observed-dmg-layout", "mutation": "observedLayout", "expect": "invalid", "errorContains": "reinspected DMG layout mismatch"},
+    {"id": "invalid-duplicate-mac-application", "mutation": "duplicateMacApplication", "expect": "invalid", "errorContains": "exactly one macApplication"},
+    {"id": "invalid-missing-dmg", "mutation": "missingDMG", "expect": "invalid", "errorContains": "exactly one macDiskImage"},
+    {"id": "invalid-extra-root-field", "mutation": "extraRootField", "expect": "invalid", "errorContains": "must contain exactly"},
+    {"id": "invalid-container-bool-size", "mutation": "containerBoolSize", "expect": "invalid", "errorContains": "invalid packaging container"},
+    {"id": "invalid-created", "mutation": "created", "expect": "invalid", "errorContains": "created must"},
+    {"id": "invalid-dirty-source", "mutation": "dirtySource", "expect": "invalid", "errorContains": "invalid packaging source"},
+    {"id": "invalid-duplicate-target", "mutation": "duplicateTarget", "expect": "invalid", "errorContains": "invalid packaging release"},
+    {"id": "invalid-noncanonical-receipt", "mutation": "nonCanonical", "expect": "invalid", "errorContains": "not canonical"},
+    {"id": "invalid-duplicate-json-key", "mutation": "duplicateJSONKey", "expect": "invalid", "errorContains": "duplicate JSON key"},
+    {"id": "invalid-unpaired-surrogate", "mutation": "unpairedSurrogate", "expect": "invalid", "errorContains": "surrogates"},
+    {"id": "invalid-orphan-parent", "mutation": "orphanParent", "expect": "invalid", "errorContains": "parent directory is missing"},
+    {"id": "invalid-oversized-receipt", "mutation": "oversizedReceipt", "expect": "invalid", "errorContains": "bounded non-symlink file"}
+  ]
+}

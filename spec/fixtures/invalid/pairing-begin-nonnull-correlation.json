@@ -1,0 +1,15 @@
+{
+  "version": { "major": 0, "minor": 1 },
+  "messageID": "018f0000-0000-7000-8000-000000002011",
+  "correlationID": "018f0000-0000-7000-8000-000000002010",
+  "channel": "command",
+  "kind": "pairing.begin",
+  "sentAtUnixMilliseconds": 1787198401000,
+  "body": {
+    "pairingID": "018f4000-0000-7000-8000-000000000001",
+    "clientID": "018f2000-0000-7000-8000-000000000001",
+    "sessionPublicKey": "BGsX0fLhLEJH-Lzm5WOkQPJ3A32BLeszoPShOUXYmMKWT-NC4v4af5uO5-tKfA-eFivOM1drMV7Oy7ZAaDe_UfU",
+    "approvalPublicKey": "BHzyexiNA09-ilI4AwS1GsPAiWnid_IbNaYLSPxHZpl4B3dVENuO0EApPZrGn3Qw27p9reY86YIpngS3nSJ4c9E",
+    "clientNonce": "EBESExQVFhcYGRobHB0eHyAhIiMkJSYnKCkqKywtLi8"
+  }
+}

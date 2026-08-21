@@ -1,0 +1,15 @@
+{
+  "version": { "major": 0, "minor": 1 },
+  "messageID": "018f7000-0000-7000-8000-000000000007",
+  "correlationID": "018f7000-0000-7000-8000-000000000004",
+  "channel": "command",
+  "kind": "error",
+  "sentAtUnixMilliseconds": 1787198500060,
+  "body": {
+    "code": "operation.notFound",
+    "retry": "never",
+    "safeArguments": {
+      "operationID": "018f7100-0000-7000-8000-000000000001"
+    }
+  }
+}

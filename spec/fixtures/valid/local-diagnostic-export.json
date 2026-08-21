@@ -1,0 +1,47 @@
+{
+  "contentBearingDataOmitted": true,
+  "events": [
+    {
+      "code": "localNetworkDenied",
+      "component": "network",
+      "occurredAtUnixMilliseconds": 1724000000000,
+      "occurrenceCount": 1,
+      "sequence": 3,
+      "severity": "warning"
+    },
+    {
+      "code": "menuAppUnavailable",
+      "component": "lifecycle",
+      "occurredAtUnixMilliseconds": 1724000001000,
+      "occurrenceCount": 2,
+      "sequence": 4,
+      "severity": "error"
+    }
+  ],
+  "privateRouteDetailsOmitted": true,
+  "status": {
+    "activeRemoteSessionCount": 1,
+    "agentProcess": "ready",
+    "consoleSession": "active",
+    "desiredEnabled": true,
+    "diagnosticSequence": 4,
+    "generatedAtUnixMilliseconds": 1724000001000,
+    "menuAppProcess": "starting",
+    "networkState": "listening",
+    "pairedDeviceCount": 2,
+    "protocolVersion": {
+      "major": 0,
+      "minor": 1
+    },
+    "providerCount": 0,
+    "routeKinds": [
+      "lan",
+      "privateNetwork"
+    ],
+    "securityPosture": "nominal",
+    "warningCodes": [
+      "localNetworkDenied",
+      "menuAppUnavailable"
+    ]
+  }
+}

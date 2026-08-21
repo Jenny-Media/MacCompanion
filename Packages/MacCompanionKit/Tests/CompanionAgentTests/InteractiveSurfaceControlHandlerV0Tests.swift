@@ -1,0 +1,419 @@
+import CompanionAgent
+import CompanionDomain
+import CompanionInteractiveHost
+import CompanionInteractiveShared
+import CompanionInteractiveWire
+import CompanionIPC
+import CompanionWire
+import Foundation
+import Testing
+
+private let handlerHostID = UUID(
+    uuidString: "019b1000-0000-7000-8000-000000000001"
+)!
+private let handlerDeviceID = UUID(
+    uuidString: "019b2100-0000-7000-8000-000000000001"
+)!
+private let handlerClientID = UUID(
+    uuidString: "019b2000-0000-7000-8000-000000000001"
+)!
+private let handlerSessionID = UUID(
+    uuidString: "019b6000-0000-7000-8000-000000000001"
+)!
+private let handlerDisplayID = UUID(
+    uuidString: "019b6700-0000-7000-8000-000000000001"
+)!
+private let handlerInitialSurfaceID = UUID(
+    uuidString: "019b6100-0000-7000-8000-000000000001"
+)!
+private let handlerTargetSurfaceID = UUID(
+    uuidString: "019b6100-0000-7000-8000-000000000002"
+)!
+
+private struct HandlerClock: InteractiveSurfaceMonotonicClockV0 {
+    let value: UInt64
+    func nowNanoseconds() -> UInt64 { value }
+}
+
+private actor HandlerResolver: InteractiveSurfaceTargetResolvingV0 {
+    let target: AdaptiveSurfaceDescriptor
+    private(set) var count = 0
+
+    init(target: AdaptiveSurfaceDescriptor) {
+        self.target = target
+    }
+
+    func resolve(
+        _ request: InteractiveSurfaceSelectBodyV0,
+        context: InteractiveSessionCommandContextV0
+    ) async throws -> AdaptiveSurfaceDescriptor {
+        count += 1
+        return target
+    }
+}
+
+private struct HandlerInventoryProvider:
+    InteractiveSurfaceTargetInventoryProvidingV0
+{
+    func snapshot(
+        _ request: InteractiveSurfaceTargetsRequestBodyV0,
+        context: InteractiveSessionCommandContextV0
+    ) async throws -> AdaptiveSurfaceTargetInventorySnapshotV0 {
+        let token = UUID(
+            uuidString: "019b7200-0000-7000-8000-000000000001"
+        )!
+        return try AdaptiveSurfaceTargetInventorySnapshotV0(
+            interactiveSessionID: handlerSessionID,
+            authorizationEpoch: .init(rawValue: 4),
+            revision: 1,
+            createdAtMonotonicMilliseconds:
+                Int64(context.monotonicNowMilliseconds),
+            expiresAtMonotonicMilliseconds:
+                Int64(context.monotonicNowMilliseconds) + 10_000,
+            candidates: [
+                try AdaptiveSurfaceTargetCandidateV0(
+                    targetToken: token,
+                    kind: .application,
+                    applicationToken: token,
+                    applicationName: "Notes",
+                    windowOrdinal: nil,
+                    currentWindowAvailable: true
+                ),
+            ]
+        )
+    }
+}
+
+private actor HandlerRuntimeRoute: InteractiveSurfaceRuntimeRoutingV0 {
+    private(set) var prepareCount = 0
+    private(set) var acknowledgementCount = 0
+    private(set) var terminationCount = 0
+
+    func prepareSurfaceTransition(
+        _ command: InteractiveRuntimeSurfaceTransitionCommandV0,
+        nowMonotonicNanoseconds: UInt64
+    ) async throws -> InteractiveRuntimeSurfaceTransitionReceiptV0 {
+        prepareCount += 1
+        return try InteractiveRuntimeSurfaceTransitionReceiptV0(
+            correlationID: command.commandID,
+            previousLeaseID: command.previousLeaseID,
+            replacementLeaseID: command.replacement.leaseID,
+            interactiveSessionID: command.replacement.interactiveSessionID,
+            surfaceID: command.replacement.surfaceID,
+            surfaceRevision: command.replacement.surfaceRevision,
+            coordinateRevision: command.replacement.coordinateRevision,
+            mediaSequenceBeforeTransition: 4,
+            inputReleased: true,
+            captureSourcePrepared: true
+        )
+    }
+
+    func acknowledgeSurface(
+        _ command: InteractiveRuntimeSurfaceAcknowledgementCommandV0,
+        nowMonotonicNanoseconds: UInt64
+    ) async throws -> InteractiveRuntimeSurfaceAcknowledgementReceiptV0 {
+        acknowledgementCount += 1
+        return try InteractiveRuntimeSurfaceAcknowledgementReceiptV0(
+            correlationID: command.commandID,
+            transitionCommandID: command.transitionCommandID,
+            leaseID: command.leaseID,
+            interactiveSessionID: command.interactiveSessionID,
+            surfaceID: command.surfaceID,
+            surfaceRevision: command.surfaceRevision,
+            coordinateRevision: command.coordinateRevision,
+            focusToken: command.focusToken,
+            focusRevision: command.focusRevision,
+            readyMediaSequence: command.readyMediaSequence,
+            inputResumed: true
+        )
+    }
+
+    func terminateSurfaceFailure(
+        interactiveSessionID: UUID,
+        reason: InteractiveSessionEndReason
+    ) async throws -> Bool {
+        terminationCount += 1
+        return true
+    }
+}
+
+private func handlerDescriptor(
+    surfaceID: UUID,
+    revision: UInt64,
+    coordinateRevision: UInt64
+) throws -> AdaptiveSurfaceDescriptor {
+    try AdaptiveSurfaceDescriptor(
+        interactiveSessionID: handlerSessionID,
+        authorizationEpoch: .init(rawValue: 4),
+        surfaceID: surfaceID,
+        kind: .desktop,
+        surfaceRevision: .init(rawValue: revision),
+        coordinateSpaceRevision: .init(rawValue: coordinateRevision),
+        encodedWidth: 1_280,
+        encodedHeight: 720,
+        logicalWidthPoints: 1_280,
+        logicalHeightPoints: 720,
+        interactionClasses: [.view, .pointer, .keyboard],
+        privacyProfile: .visualOnly,
+        metadataFields: [],
+        createdAtMonotonicMilliseconds: 0,
+        expiresAtMonotonicMilliseconds: 10_000
+    )
+}
+
+private func handlerContext(
+    monotonicNowMilliseconds: UInt64 = 2_000
+) throws -> InteractiveSessionCommandContextV0 {
+    try InteractiveSessionCommandContextV0(
+        deviceID: handlerDeviceID,
+        clientID: handlerClientID,
+        deviceState: .activeGranted,
+        authorizationEpoch: .init(rawValue: 4),
+        grantRevision: .init(rawValue: 5),
+        policyRevision: .init(rawValue: 6),
+        primaryConnectionID: Data(repeating: 0x11, count: 16),
+        hostID: handlerHostID,
+        hostFingerprint: Data(repeating: 0x22, count: 32),
+        hostState: .userSessionActive,
+        wallNowUnixMilliseconds: 1_720_000_000_000,
+        monotonicNowMilliseconds: monotonicNowMilliseconds
+    )
+}
+
+private func handlerLease() throws -> InteractiveExecutionLease {
+    try InteractiveExecutionLease(
+        leaseID: UUID(),
+        hostID: handlerHostID,
+        deviceID: handlerDeviceID,
+        interactiveSessionID: handlerSessionID,
+        authorizationEpoch: .init(rawValue: 4),
+        selectedDisplayID: handlerDisplayID,
+        surfaceID: handlerInitialSurfaceID,
+        surfaceRevision: .init(rawValue: 1),
+        coordinateRevision: .init(rawValue: 1),
+        allowedInteractionClasses: [.view, .pointer, .keyboard],
+        renewalCounter: 0,
+        issuedAtMonotonicNanoseconds: 1_000_000_000,
+        expiresAtMonotonicNanoseconds: 8_000_000_000
+    )
+}
+
+private let handlerActivationID = UUID(
+    uuidString: "019b6900-0000-7000-8000-000000000001"
+)!
+
+private func makeHandler(initialPending: Bool = false) throws -> (
+    InteractiveSurfaceControlHandlerV0,
+    HandlerResolver,
+    HandlerRuntimeRoute
+) {
+    let initial = try handlerDescriptor(
+        surfaceID: handlerInitialSurfaceID,
+        revision: 1,
+        coordinateRevision: 1
+    )
+    let target = try handlerDescriptor(
+        surfaceID: handlerTargetSurfaceID,
+        revision: 2,
+        coordinateRevision: 2
+    )
+    let route = HandlerRuntimeRoute()
+    let coordinator = try InteractiveSurfaceRuntimeCoordinatorV0(
+        surfaceAuthority: AdaptiveSurfaceAuthority(
+            desktop: initial,
+            monotonicNowMilliseconds: 1_000
+        ),
+        currentLease: handlerLease(),
+        sessionDeadlineMonotonicNanoseconds: 12_000_000_000,
+        runtime: route,
+        initialActivationCommandID:
+            initialPending ? handlerActivationID : nil
+    )
+    let resolver = HandlerResolver(target: target)
+    return (
+        InteractiveSurfaceControlHandlerV0(
+            coordinator: coordinator,
+            resolver: resolver,
+            inventoryProvider: HandlerInventoryProvider(),
+            clock: HandlerClock(value: 2_000_000_000)
+        ),
+        resolver,
+        route
+    )
+}
+
+@Test func agentSurfaceHandlerGatesInitialDescriptorAndAck() async throws {
+    let (handler, resolver, route) = try makeHandler(initialPending: true)
+    let request = try InteractiveInitialSurfaceRequestBodyV0(
+        interactiveSessionID: WireUUID(handlerSessionID),
+        authorizationEpoch: .init(rawValue: 4),
+        sequence: 1
+    )
+    let described = try await handler.requestInitial(
+        request,
+        context: handlerContext()
+    )
+    #expect(described.activationID.rawValue == handlerActivationID)
+    #expect(described.sequence == 1)
+    #expect(described.mediaSequenceBeforeActivation == 0)
+    #expect(described.descriptor.kind == .desktop)
+    #expect(await resolver.count == 0)
+    #expect(await route.acknowledgementCount == 0)
+
+    let ack = try InteractiveInitialSurfaceAcknowledgementBodyV0(
+        interactiveSessionID: described.descriptor.interactiveSessionID,
+        authorizationEpoch: described.descriptor.authorizationEpoch,
+        activationID: described.activationID,
+        surfaceID: described.descriptor.surfaceID,
+        surfaceRevision: described.descriptor.surfaceRevision,
+        coordinateSpaceRevision:
+            described.descriptor.coordinateSpaceRevision,
+        readyMediaSequence: 2,
+        sequence: 2
+    )
+    let acknowledged = try await handler.acknowledgeInitial(
+        ack,
+        context: handlerContext(monotonicNowMilliseconds: 2_100)
+    )
+    #expect(acknowledged.sequence == 2)
+    #expect(acknowledged.inputResumed)
+    #expect(await route.acknowledgementCount == 1)
+    #expect(await route.terminationCount == 0)
+
+    let targets = try await handler.targets(
+        try InteractiveSurfaceTargetsRequestBodyV0(
+            interactiveSessionID: described.descriptor.interactiveSessionID,
+            authorizationEpoch: described.descriptor.authorizationEpoch,
+            sequence: 3
+        ),
+        context: handlerContext(monotonicNowMilliseconds: 2_150)
+    )
+    #expect(targets.sequence == 3)
+    #expect(targets.validForMilliseconds == 10_000)
+    #expect(targets.candidates.map(\.applicationName) == ["Notes"])
+
+    let selected = try await handler.select(
+        handlerSelection(sequence: 4),
+        context: handlerContext(monotonicNowMilliseconds: 2_200)
+    )
+    #expect(selected.sequence == 4)
+    let replacementAck = try InteractiveSurfaceAcknowledgementBodyV0(
+        interactiveSessionID: selected.descriptor.interactiveSessionID,
+        authorizationEpoch: selected.descriptor.authorizationEpoch,
+        transitionID: selected.transitionID,
+        surfaceID: selected.descriptor.surfaceID,
+        surfaceRevision: selected.descriptor.surfaceRevision,
+        coordinateSpaceRevision:
+            selected.descriptor.coordinateSpaceRevision,
+        readyMediaSequence: 9,
+        sequence: 5
+    )
+    let replacementAcknowledged = try await handler.acknowledge(
+        replacementAck,
+        context: handlerContext(monotonicNowMilliseconds: 2_300)
+    )
+    #expect(replacementAcknowledged.sequence == 5)
+    #expect(await resolver.count == 1)
+    #expect(await route.acknowledgementCount == 2)
+}
+
+private func handlerSelection(sequence: Int64 = 1) throws
+    -> InteractiveSurfaceSelectBodyV0
+{
+    try InteractiveSurfaceSelectBodyV0(
+        interactiveSessionID: WireUUID(handlerSessionID),
+        authorizationEpoch: .init(rawValue: 4),
+        currentSurfaceID: WireUUID(handlerInitialSurfaceID),
+        expectedSurfaceRevision: .init(rawValue: 1),
+        expectedCoordinateSpaceRevision: .init(rawValue: 1),
+        targetKind: .desktop,
+        targetToken: nil,
+        sequence: sequence
+    )
+}
+
+@Test func agentSurfaceHandlerBridgesSelectionAndAckWithExactSequences() async throws {
+    let (handler, resolver, route) = try makeHandler()
+    let selected = try await handler.select(
+        handlerSelection(),
+        context: handlerContext()
+    )
+    #expect(selected.sequence == 1)
+    #expect(selected.mediaSequenceBeforeTransition == 4)
+    #expect(selected.descriptor.validForMilliseconds == 8_000)
+    #expect(selected.descriptor.surfaceID.rawValue == handlerTargetSurfaceID)
+    #expect(await resolver.count == 1)
+    #expect(await route.prepareCount == 1)
+
+    let acknowledgement = try InteractiveSurfaceAcknowledgementBodyV0(
+        interactiveSessionID: selected.descriptor.interactiveSessionID,
+        authorizationEpoch: selected.descriptor.authorizationEpoch,
+        transitionID: selected.transitionID,
+        surfaceID: selected.descriptor.surfaceID,
+        surfaceRevision: selected.descriptor.surfaceRevision,
+        coordinateSpaceRevision:
+            selected.descriptor.coordinateSpaceRevision,
+        readyMediaSequence: 9,
+        sequence: 2
+    )
+    let acknowledged = try await handler.acknowledge(
+        acknowledgement,
+        context: handlerContext(monotonicNowMilliseconds: 2_100)
+    )
+    #expect(acknowledged.sequence == 2)
+    #expect(acknowledged.readyMediaSequence == 9)
+    #expect(acknowledged.inputResumed)
+    #expect(await route.acknowledgementCount == 1)
+    #expect(await route.terminationCount == 0)
+}
+
+@Test func agentSurfaceHandlerRejectsSequenceGapBeforeResolution() async throws {
+    let (handler, resolver, route) = try makeHandler()
+
+    await #expect(
+        throws: InteractiveSurfaceControlHandlerErrorV0
+            .sequenceMismatch(expected: 1, actual: 2)
+    ) {
+        _ = try await handler.select(
+            handlerSelection(sequence: 2),
+            context: handlerContext()
+        )
+    }
+    #expect(await resolver.count == 0)
+    #expect(await route.prepareCount == 0)
+    await #expect(throws: InteractiveSurfaceControlHandlerErrorV0.closed) {
+        _ = try await handler.select(
+            handlerSelection(),
+            context: handlerContext()
+        )
+    }
+}
+
+@Test func agentSurfaceHandlerRejectsChangedTransitionBeforeRuntimeAck() async throws {
+    let (handler, _, route) = try makeHandler()
+    let selected = try await handler.select(
+        handlerSelection(),
+        context: handlerContext()
+    )
+    let acknowledgement = try InteractiveSurfaceAcknowledgementBodyV0(
+        interactiveSessionID: selected.descriptor.interactiveSessionID,
+        authorizationEpoch: selected.descriptor.authorizationEpoch,
+        transitionID: WireUUID(UUID()),
+        surfaceID: selected.descriptor.surfaceID,
+        surfaceRevision: selected.descriptor.surfaceRevision,
+        coordinateSpaceRevision:
+            selected.descriptor.coordinateSpaceRevision,
+        readyMediaSequence: 9,
+        sequence: 2
+    )
+
+    await #expect(
+        throws: InteractiveSurfaceControlHandlerErrorV0.transitionMismatch
+    ) {
+        _ = try await handler.acknowledge(
+            acknowledgement,
+            context: handlerContext(monotonicNowMilliseconds: 2_100)
+        )
+    }
+    #expect(await route.acknowledgementCount == 0)
+}

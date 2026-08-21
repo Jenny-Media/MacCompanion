@@ -1,0 +1,35 @@
+{
+  "schemaVersion": "0.1",
+  "evidenceLevel": "unsignedConstruction",
+  "product": "Mac Companion",
+  "compatibility": {"capabilityProtocol": "0.1", "interactiveControl": "0.1", "localIPC": "0.1", "minimumMacOS": "26.0", "minimumIOS": "26.0"},
+  "release": {
+    "version": "0.0.0-development",
+    "buildNumber": "0",
+    "channel": "development",
+    "targets": ["macOS", "iOS"]
+  },
+  "source": {
+    "revision": "9861ca25819cf567c1a1412d7e7cec57941c3856",
+    "dirty": true
+  },
+  "toolchain": {
+    "xcodeVersion": "27.0 beta",
+    "swiftVersion": "6.4",
+    "hostOSVersion": "macOS 26.0",
+    "sdkVersions": ["macOS 27.0", "iOS Simulator 27.0"]
+  },
+  "validation": [
+    {
+      "id": "repository-gate",
+      "status": "passed",
+      "evidence": {"path": "validation/repository-gate.txt", "sha256": "ceffe727ab2fa2c7c3322ee4a1aa0c2d2a4664836c2133df93dd15055bb617be", "bytes": 1}
+    }
+  ],
+  "artifacts": [],
+  "executables": [],
+  "notarization": null,
+  "sbom": null,
+  "physicalScenarios": [],
+  "promotion": null
+}

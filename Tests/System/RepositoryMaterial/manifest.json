@@ -1,0 +1,19 @@
+{
+  "profile": "maccompanion.repository-material-fixtures.v0",
+  "cases": [
+    {"id":"valid-swift","path":"Sources/App.swift","contentBase64":"c3RydWN0IEFwcCB7fQo=","expectedCodes":[]},
+    {"id":"private-key","path":"notes.txt","contentBase64":"LS0tLS1CRUdJTiBQUklWQVRFIEtFWS0tLS0tClptRnJaUT09Ci0tLS0tRU5EIFBSSVZBVEUgS0VZLS0tLS0K","expectedCodes":["privateKeyMaterial"]},
+    {"id":"certificate","path":"notes.txt","contentBase64":"LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tClptRnJaUT09Ci0tLS0tRU5EIENFUlRJRklDQVRFLS0tLS0K","expectedCodes":["certificateMaterial"]},
+    {"id":"github","path":"notes.txt","contentBase64":"Z2hwX0FCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaYWJjZGVmZ2hpamtsbW5v","expectedCodes":["githubCredential"]},
+    {"id":"openai","path":"notes.txt","contentBase64":"c2stcHJvai1BQkNERUZHSElKS0xNTk9QUVJTVFVWV1hZWjEyMzQ1Njc4OTA=","expectedCodes":["openAICredential"]},
+    {"id":"aws","path":"notes.txt","contentBase64":"QUtJQUFCQ0RFRkdISUpLTE1OT1A=","expectedCodes":["awsCredential"]},
+    {"id":"slack","path":"notes.txt","contentBase64":"eG94Yi0xMjM0NTY3ODkwLWFiY2RlZmdoaWprbG1ub3BxcnN0dXZ3eHl6","expectedCodes":["slackCredential"]},
+    {"id":"stripe","path":"notes.txt","contentBase64":"c2tfbGl2ZV9BQkNERUZHSElKS0xNTk9QUVJTVFVWV1hZWjEyMzQ1Ng==","expectedCodes":["stripeCredential"]},
+    {"id":"google","path":"notes.txt","contentBase64":"QUl6YUFCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaMTIzNDU2Nzg5","expectedCodes":["googleCredential"]},
+    {"id":"apple-key-file","path":"AuthKey_TEST.p8","contentBase64":"b3BhcXVl","expectedCodes":["forbiddenCredentialFile"]},
+    {"id":"database","path":"LocalData/audit.sqlite","contentBase64":"U1FMaXRlIGZvcm1hdCAz","expectedCodes":["forbiddenDataStore"]},
+    {"id":"environment","path":".env.production","contentBase64":"VE9LRU49ZmFrZQ==","expectedCodes":["forbiddenEnvironmentFile"]},
+    {"id":"team","path":"Config/Signing.xcconfig","contentBase64":"REVWRUxPUE1FTlRfVEVBTSA9IEFCQ0RFMTIzNDU7","expectedCodes":["trackedSigningIdentity"]},
+    {"id":"profile","path":"Config/Signing.xcconfig","contentBase64":"UFJPVklTSU9OSU5HX1BST0ZJTEVfU1BFQ0lGSUVSID0gUHJpdmF0ZSBQcm9maWxlOw==","expectedCodes":["trackedSigningIdentity"]}
+  ]
+}

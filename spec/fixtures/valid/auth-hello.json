@@ -1,0 +1,14 @@
+{
+  "version": { "major": 0, "minor": 1 },
+  "messageID": "018f0000-0000-7000-8000-000000001001",
+  "correlationID": null,
+  "channel": "command",
+  "kind": "auth.hello",
+  "sentAtUnixMilliseconds": 1787198400000,
+  "body": {
+    "clientID": "018f2000-0000-7000-8000-000000000001",
+    "clientNonce": "EBESExQVFhcYGRobHB0eHyAhIiMkJSYnKCkqKywtLi8",
+    "minimumVersion": { "major": 0, "minor": 1 },
+    "maximumVersion": { "major": 0, "minor": 1 }
+  }
+}

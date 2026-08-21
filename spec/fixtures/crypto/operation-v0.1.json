@@ -1,0 +1,40 @@
+{
+  "profile": "MacCompanion durable operation binding v0.1",
+  "inputs": {
+    "hostID": "018f1000-0000-7000-8000-000000000001",
+    "deviceID": "018f2100-0000-7000-8000-000000000001",
+    "clientID": "018f2000-0000-7000-8000-000000000001",
+    "operationID": "018f8000-0000-7000-8000-000000000001",
+    "capabilityID": "maccompanion.system.setAudioMuted",
+    "schemaVersion": 1,
+    "providerID": "maccompanion.native",
+    "providerVersion": "1.0.0",
+    "providerGeneration": "018f8100-0000-7000-8000-000000000001",
+    "executionRevision": "018f8200-0000-7000-8000-000000000001",
+    "canonicalParametersUTF8": "{\"muted\":true}",
+    "effects": {
+      "dataAccess": "none",
+      "changesLocalState": "reversible",
+      "mayDisruptUser": false,
+      "invokesExternalService": false,
+      "usesCredentials": false,
+      "destructive": false,
+      "requiresForegroundSession": false,
+      "allowedWhileLocked": true,
+      "cancellation": "notApplicable"
+    },
+    "requiredHostState": "userSessionActive",
+    "authorizationEpoch": 4,
+    "grantRevision": 5,
+    "policyRevision": 6,
+    "expiresAtUnixMilliseconds": 1724000060000,
+    "selectedMajor": 0,
+    "selectedMinor": 1
+  },
+  "derived": {
+    "canonicalParametersSHA256Hex": "9eb359d5c41ff8c62bd2131d3f913573916de581854087d0074e0fef55df2308",
+    "operationDigestInputHex": "4d6163436f6d70616e696f6e2f4f7065726174696f6e2f76302e3100000010018f100000007000800000000000000100000010018f210000007000800000000000000100000010018f200000007000800000000000000100000010018f8000000070008000000000000001000000216d6163636f6d70616e696f6e2e73797374656d2e736574417564696f4d7574656400000001000000136d6163636f6d70616e696f6e2e6e617469766500000005312e302e3000000010018f810000007000800000000000000100000010018f8200000070008000000000000001000000209eb359d5c41ff8c62bd2131d3f913573916de581854087d0074e0fef55df23080001200001000000000000000400000000000000050000000000000006000001916669426000000001",
+    "operationDigestSHA256Hex": "455f03f44a78e9f98e7ff685fb3045618e0dc7f05295e1d007b2488390cb2210"
+  },
+  "warning": "Public conformance data only. This fixture contains no product credential."
+}

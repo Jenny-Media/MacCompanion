@@ -1,0 +1,17 @@
+{
+  "version": { "major": 0, "minor": 1 },
+  "messageID": "018f7000-0000-7000-8000-000000000005",
+  "correlationID": "018f7000-0000-7000-8000-000000000004",
+  "channel": "command",
+  "kind": "operation.status.response",
+  "sentAtUnixMilliseconds": 1787198500040,
+  "body": {
+    "operationID": "018f7100-0000-7000-8000-000000000001",
+    "state": "succeeded",
+    "terminalCode": "operation.succeeded",
+    "result": {
+      "items": ["Budget.pdf", "Notes.txt"],
+      "truncated": false
+    }
+  }
+}

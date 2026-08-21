@@ -1,0 +1,115 @@
+{
+  "profile": "maccompanion.apple-privacy-manifest.v0",
+  "appleDocumentationReviewedOn": "2026-08-20",
+  "requiredReasonPlatforms": ["iOS", "iPadOS", "tvOS", "visionOS", "watchOS"],
+  "collectionAssessment": {
+    "developerCollection": false,
+    "tracking": false,
+    "trackingDomains": []
+  },
+  "targets": [
+    {
+      "id": "ios-app",
+      "platform": "iOS",
+      "requiredReasonReporting": true,
+      "manifest": "spec/privacy-manifest/v0/targets/ios-app/PrivacyInfo.xcprivacy",
+      "swiftEntryTargets": ["CompanionClientPlatform", "CompanionClientUI"],
+      "accessedAPITypes": []
+    },
+    {
+      "id": "mac-agent-service",
+      "platform": "macOS",
+      "requiredReasonReporting": false,
+      "manifest": "spec/privacy-manifest/v0/targets/mac-agent-service/PrivacyInfo.xcprivacy",
+      "swiftEntryTargets": [],
+      "accessedAPITypes": []
+    },
+    {
+      "id": "mac-containing-app",
+      "platform": "macOS",
+      "requiredReasonReporting": false,
+      "manifest": "spec/privacy-manifest/v0/targets/mac-containing-app/PrivacyInfo.xcprivacy",
+      "swiftEntryTargets": [],
+      "accessedAPITypes": []
+    }
+  ],
+  "sourceInventory": [
+    {
+      "api": "systemUptime",
+      "category": "NSPrivacyAccessedAPICategorySystemBootTime",
+      "path": "Packages/MacCompanionKit/Sources/CompanionAgent/AgentLocalServiceRootV1.swift",
+      "count": 1,
+      "platforms": ["macOS"]
+    },
+    {
+      "api": "fstat",
+      "category": "NSPrivacyAccessedAPICategoryFileTimestamp",
+      "path": "Packages/MacCompanionKit/Sources/CompanionAgentPlatform/MacRemoteAccessIntentStoreV1.swift",
+      "count": 1,
+      "platforms": ["macOS"]
+    },
+    {
+      "api": "stat",
+      "category": "NSPrivacyAccessedAPICategoryFileTimestamp",
+      "path": "Packages/MacCompanionKit/Sources/CompanionAgentPlatform/MacRemoteAccessIntentStoreV1.swift",
+      "count": 1,
+      "platforms": ["macOS"]
+    },
+    {
+      "api": "systemFreeSize",
+      "category": "NSPrivacyAccessedAPICategoryDiskSpace",
+      "path": "Packages/MacCompanionKit/Sources/CompanionHost/MacSystemStatusSampler.swift",
+      "count": 1,
+      "platforms": ["macOS"]
+    },
+    {
+      "api": "systemSize",
+      "category": "NSPrivacyAccessedAPICategoryDiskSpace",
+      "path": "Packages/MacCompanionKit/Sources/CompanionHost/MacSystemStatusSampler.swift",
+      "count": 1,
+      "platforms": ["macOS"]
+    },
+    {
+      "api": "systemUptime",
+      "category": "NSPrivacyAccessedAPICategorySystemBootTime",
+      "path": "Packages/MacCompanionKit/Sources/CompanionHost/MacSystemStatusSampler.swift",
+      "count": 1,
+      "platforms": ["macOS"]
+    },
+    {
+      "api": "fstat",
+      "category": "NSPrivacyAccessedAPICategoryFileTimestamp",
+      "path": "Packages/MacCompanionKit/Sources/CompanionPersistence/EmergencyDenyLatch.swift",
+      "count": 1,
+      "platforms": ["macOS"]
+    },
+    {
+      "api": "stat",
+      "category": "NSPrivacyAccessedAPICategoryFileTimestamp",
+      "path": "Packages/MacCompanionKit/Sources/CompanionPersistence/EmergencyDenyLatch.swift",
+      "count": 1,
+      "platforms": ["macOS"]
+    },
+    {
+      "api": "fstat",
+      "category": "NSPrivacyAccessedAPICategoryFileTimestamp",
+      "path": "Packages/MacCompanionKit/Sources/CompanionPersistence/SQLiteStorePathSecurity.swift",
+      "count": 1,
+      "platforms": ["macOS"]
+    },
+    {
+      "api": "lstat",
+      "category": "NSPrivacyAccessedAPICategoryFileTimestamp",
+      "path": "Packages/MacCompanionKit/Sources/CompanionPersistence/SQLiteStorePathSecurity.swift",
+      "count": 3,
+      "platforms": ["macOS"]
+    },
+    {
+      "api": "stat",
+      "category": "NSPrivacyAccessedAPICategoryFileTimestamp",
+      "path": "Packages/MacCompanionKit/Sources/CompanionPersistence/SQLiteStorePathSecurity.swift",
+      "count": 3,
+      "platforms": ["macOS"]
+    }
+  ]
+}

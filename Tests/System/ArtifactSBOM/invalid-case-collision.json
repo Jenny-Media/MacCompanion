@@ -1,0 +1,6 @@
+{
+  "entries": [
+    {"path": "App/File", "type": "regularFile", "mode": "0644", "content": "one"},
+    {"path": "app/file", "type": "regularFile", "mode": "0644", "content": "two"}
+  ]
+}

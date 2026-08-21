@@ -1,0 +1,5 @@
+{
+  "entries": [
+    {"path": "App/é", "type": "regularFile", "mode": "0644", "content": "non nfc"}
+  ]
+}

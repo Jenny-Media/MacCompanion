@@ -1,0 +1,22 @@
+{
+  "profile": "maccompanion.signed-code-verification-fixtures.v0.1",
+  "cases": [
+    {"id": "valid-macos", "mutation": "none", "expect": "valid"},
+    {"id": "valid-ios", "mutation": "validIOS", "expect": "valid"},
+    {"id": "invalid-executable-binding", "mutation": "executablePath", "expect": "invalid", "errorContains": "executable binding"},
+    {"id": "invalid-member-binding", "mutation": "memberDigest", "expect": "invalid", "errorContains": "artifact-member binding"},
+    {"id": "invalid-member-mode", "mutation": "memberMode", "expect": "invalid", "errorContains": "artifact-member binding"},
+    {"id": "invalid-signing-identifier", "mutation": "signingIdentifier", "expect": "invalid", "errorContains": "code identity"},
+    {"id": "invalid-team-identifier", "mutation": "teamIdentifier", "expect": "invalid", "errorContains": "code identity"},
+    {"id": "invalid-cdhash", "mutation": "cdhash", "expect": "invalid", "errorContains": "code identity"},
+    {"id": "invalid-codesign-check", "mutation": "codesignCheck", "expect": "invalid", "errorContains": "did not pass"},
+    {"id": "invalid-platform-assessment", "mutation": "platformAssessment", "expect": "invalid", "errorContains": "did not pass"},
+    {"id": "invalid-duplicate-evidence-path", "mutation": "duplicateEvidencePath", "expect": "invalid", "errorContains": "must be distinct"},
+    {"id": "invalid-raw-evidence-digest", "mutation": "rawEvidenceDigest", "expect": "invalid", "errorContains": "raw evidence"},
+    {"id": "invalid-raw-evidence-symlink", "mutation": "rawEvidenceSymlink", "expect": "invalid", "errorContains": "unavailable"},
+    {"id": "invalid-unknown-field", "mutation": "unknownField", "expect": "invalid", "errorContains": "exactly"},
+    {"id": "invalid-noncanonical", "mutation": "nonCanonical", "expect": "invalid", "errorContains": "canonical JSON"},
+    {"id": "invalid-duplicate-key", "mutation": "duplicateKey", "expect": "invalid", "errorContains": "canonical JSON"},
+    {"id": "invalid-oversized", "mutation": "oversized", "expect": "invalid", "errorContains": "bounded regular file"}
+  ]
+}

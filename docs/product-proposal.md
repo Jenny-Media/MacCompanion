@@ -223,7 +223,7 @@ The first market-facing MVP continues to support one Mac and one phone in the pr
 Candidate actions are selected before the action protocol is finalized because they shape idempotency, approval, availability, and UI semantics:
 
 1. `setAudioMuted(Boolean)` — reversible and naturally idempotent.
-2. `setAppearance(system | light | dark)` — reversible and desired-state based.
+2. `setAppearance(system | light | dark)` — evaluated, but not admitted: public AppKit is app-local and System Events Automation does not expose the automatic/system state. A later explicit light/dark Automation action would be a separate capability.
 3. `startKeepAwake(until)` and `stopKeepAwake` — bounded, expiring, and reversible.
 
 Toggles, arbitrary scripts, clipboard access, process termination, sleep, restart, shutdown, purchases, communications, credential entry, and destructive actions are not initial native actions.

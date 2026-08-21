@@ -1,0 +1,16 @@
+{
+  "version": { "major": 0, "minor": 1 },
+  "messageID": "018f7000-0000-7000-8000-000000000002",
+  "correlationID": "018f7000-0000-7000-8000-000000000001",
+  "channel": "command",
+  "kind": "operation.approvalRequired",
+  "sentAtUnixMilliseconds": 1787198500010,
+  "body": {
+    "operationID": "018f7100-0000-7000-8000-000000000001",
+    "approvalID": "018f7200-0000-7000-8000-000000000001",
+    "operationDigest": "EBESExQVFhcYGRobHB0eHyAhIiMkJSYnKCkqKywtLi8",
+    "serverChallenge": "MDEyMzQ1Njc4OTo7PD0-P0BBQkNERUZHSElKS0xNTk8",
+    "issuedAtUnixMilliseconds": 1787198500010,
+    "expiresAtUnixMilliseconds": 1787198560010
+  }
+}

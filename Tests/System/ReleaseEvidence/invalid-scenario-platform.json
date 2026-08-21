@@ -1,0 +1,30 @@
+{
+  "schemaVersion": "0.1",
+  "evidenceLevel": "promotionReady",
+  "product": "Mac Companion",
+  "compatibility": {"capabilityProtocol": "0.1", "interactiveControl": "0.1", "localIPC": "0.1", "minimumMacOS": "26.0", "minimumIOS": null},
+  "release": {"version": "1.0.0-beta.2", "buildNumber": "101", "channel": "beta", "targets": ["macOS"]},
+  "source": {"revision": "410c25c9a9cf2c18866604919c4298c007114cb8", "dirty": false},
+  "toolchain": {"xcodeVersion": "26.6", "swiftVersion": "6.3", "hostOSVersion": "macOS 26.4", "sdkVersions": ["macOS 26.4"]},
+  "validation": [{"id": "repository-gate", "status": "passed", "evidence": {"path": "validation/gate.txt", "sha256": "ceffe727ab2fa2c7c3322ee4a1aa0c2d2a4664836c2133df93dd15055bb617be", "bytes": 1}}],
+  "artifacts": [
+    {"id": "mac-app", "kind": "macApplication", "path": "artifacts/app.zip", "sha256": "2356a4656ddb9cac48519b43a22761f9b9bddf2e5534d67413e08e4de4d903eb", "bytes": 1},
+    {"id": "mac-dmg", "kind": "macDiskImage", "path": "artifacts/app.dmg", "sha256": "25f9a2d0048c89cde54c6a4560acd5a41ddd89d7610503d4b83c3bf320fe8bd8", "bytes": 1},
+    {"id": "sparkle-archive", "kind": "sparkleArchive", "path": "artifacts/update.zip", "sha256": "653ec9e8bd177538fcb5372b8000f4a1a9eaa2b39c5bd7cb8bfd90d082e24eee", "bytes": 1}
+  ],
+  "executables": [
+    {"id": "mac-menu-app", "role": "macApp", "platform": "macOS", "bundleIdentifier": "com.example.maccompanion", "artifactID": "mac-app", "relativePath": "App.app/App", "signed": true, "verificationBundle": {"path": "verification/bundle.zip", "sha256": "ceffe727ab2fa2c7c3322ee4a1aa0c2d2a4664836c2133df93dd15055bb617be", "bytes": 1}},
+    {"id": "mac-agent", "role": "agent", "platform": "macOS", "bundleIdentifier": "com.example.maccompanion.agent", "artifactID": "mac-app", "relativePath": "App.app/Agent", "signed": true, "verificationBundle": {"path": "verification/bundle.zip", "sha256": "ceffe727ab2fa2c7c3322ee4a1aa0c2d2a4664836c2133df93dd15055bb617be", "bytes": 1}}
+  ],
+  "notarization": {"submissionID": "12345678-1234-1234-1234-123456789abc", "status": "accepted", "logEvidence": {"path": "notary/log.json", "sha256": "ceffe727ab2fa2c7c3322ee4a1aa0c2d2a4664836c2133df93dd15055bb617be", "bytes": 1}, "stapledArtifactIDs": ["mac-app", "mac-dmg"]},
+  "sbom": {"document": {"path": "supply/sbom.json", "sha256": "98f3ae1ef67113d8140d4f6cb8d2830070e21ea48f091be519659846c771a374", "bytes": 1}, "licenses": {"path": "supply/licenses.txt", "sha256": "ceffe727ab2fa2c7c3322ee4a1aa0c2d2a4664836c2133df93dd15055bb617be", "bytes": 1}},
+  "physicalScenarios": [
+    {"id": "clean-install", "platform": "iOS", "status": "passed", "evidence": {"path": "physical/clean-install.json", "sha256": "ceffe727ab2fa2c7c3322ee4a1aa0c2d2a4664836c2133df93dd15055bb617be", "bytes": 1}},
+    {"id": "upgrade", "platform": "macOS", "status": "passed", "evidence": {"path": "physical/upgrade.json", "sha256": "ceffe727ab2fa2c7c3322ee4a1aa0c2d2a4664836c2133df93dd15055bb617be", "bytes": 1}},
+    {"id": "rollback", "platform": "macOS", "status": "passed", "evidence": {"path": "physical/rollback.json", "sha256": "ceffe727ab2fa2c7c3322ee4a1aa0c2d2a4664836c2133df93dd15055bb617be", "bytes": 1}},
+    {"id": "permission-revocation", "platform": "macOS", "status": "passed", "evidence": {"path": "physical/permission-revocation.json", "sha256": "ceffe727ab2fa2c7c3322ee4a1aa0c2d2a4664836c2133df93dd15055bb617be", "bytes": 1}},
+    {"id": "complete-uninstall", "platform": "macOS", "status": "passed", "evidence": {"path": "physical/complete-uninstall.json", "sha256": "ceffe727ab2fa2c7c3322ee4a1aa0c2d2a4664836c2133df93dd15055bb617be", "bytes": 1}},
+    {"id": "quarantine-launch", "platform": "macOS", "status": "passed", "evidence": {"path": "physical/quarantine-launch.json", "sha256": "ceffe727ab2fa2c7c3322ee4a1aa0c2d2a4664836c2133df93dd15055bb617be", "bytes": 1}}
+  ],
+  "promotion": {"approvedAt": "2026-08-20T12:00:00Z", "approvalEvidence": {"path": "promotion/approval.json", "sha256": "ceffe727ab2fa2c7c3322ee4a1aa0c2d2a4664836c2133df93dd15055bb617be", "bytes": 1}, "publicationTargets": ["sparkle"], "sparkleAppcastEvidence": {"path": "promotion/appcast.xml", "sha256": "ceffe727ab2fa2c7c3322ee4a1aa0c2d2a4664836c2133df93dd15055bb617be", "bytes": 1}, "sparkleSignatureEvidence": {"path": "promotion/signature.txt", "sha256": "ceffe727ab2fa2c7c3322ee4a1aa0c2d2a4664836c2133df93dd15055bb617be", "bytes": 1}, "appStoreEvidence": null}
+}

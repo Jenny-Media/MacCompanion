@@ -1,0 +1,419 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		A10000000000000000000001 /* ClientUIHarnessApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000001 /* ClientUIHarnessApp.swift */; };
+		A10000000000000000000002 /* HarnessContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000002 /* HarnessContentView.swift */; };
+		A10000000000000000000003 /* HarnessFixtures.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000003 /* HarnessFixtures.swift */; };
+		A10000000000000000000004 /* HarnessApplicationLifecycleModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000005 /* HarnessApplicationLifecycleModel.swift */; };
+		A10000000000000000000011 /* CompanionClient in Frameworks */ = {isa = PBXBuildFile; productRef = A90000000000000000000001 /* CompanionClient */; };
+		A10000000000000000000012 /* CompanionClientUI in Frameworks */ = {isa = PBXBuildFile; productRef = A90000000000000000000002 /* CompanionClientUI */; };
+		A10000000000000000000013 /* CompanionDiscovery in Frameworks */ = {isa = PBXBuildFile; productRef = A90000000000000000000003 /* CompanionDiscovery */; };
+		A10000000000000000000014 /* CompanionDomain in Frameworks */ = {isa = PBXBuildFile; productRef = A90000000000000000000004 /* CompanionDomain */; };
+		A10000000000000000000015 /* CompanionInteractiveShared in Frameworks */ = {isa = PBXBuildFile; productRef = A90000000000000000000005 /* CompanionInteractiveShared */; };
+		A10000000000000000000016 /* CompanionInteractiveWire in Frameworks */ = {isa = PBXBuildFile; productRef = A90000000000000000000006 /* CompanionInteractiveWire */; };
+		A10000000000000000000017 /* CompanionPresentation in Frameworks */ = {isa = PBXBuildFile; productRef = A90000000000000000000007 /* CompanionPresentation */; };
+		A10000000000000000000018 /* CompanionWire in Frameworks */ = {isa = PBXBuildFile; productRef = A90000000000000000000008 /* CompanionWire */; };
+		A10000000000000000000019 /* CompanionClientPlatform in Frameworks */ = {isa = PBXBuildFile; productRef = A90000000000000000000009 /* CompanionClientPlatform */; };
+		A10000000000000000000020 /* CompanionTransport in Frameworks */ = {isa = PBXBuildFile; productRef = A9000000000000000000000A /* CompanionTransport */; };
+		A10000000000000000000021 /* ClientUIHarnessUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000021 /* ClientUIHarnessUITests.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		A20000000000000000000001 /* ClientUIHarnessApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClientUIHarnessApp.swift; sourceTree = "<group>"; };
+		A20000000000000000000002 /* HarnessContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HarnessContentView.swift; sourceTree = "<group>"; };
+		A20000000000000000000003 /* HarnessFixtures.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HarnessFixtures.swift; sourceTree = "<group>"; };
+		A20000000000000000000005 /* HarnessApplicationLifecycleModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HarnessApplicationLifecycleModel.swift; sourceTree = "<group>"; };
+		A20000000000000000000004 /* ClientUIHarness.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ClientUIHarness.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		A20000000000000000000021 /* ClientUIHarnessUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClientUIHarnessUITests.swift; sourceTree = "<group>"; };
+		A20000000000000000000022 /* ClientUIHarnessUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = ClientUIHarnessUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		A30000000000000000000001 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A10000000000000000000011 /* CompanionClient in Frameworks */,
+				A10000000000000000000012 /* CompanionClientUI in Frameworks */,
+				A10000000000000000000013 /* CompanionDiscovery in Frameworks */,
+				A10000000000000000000014 /* CompanionDomain in Frameworks */,
+				A10000000000000000000015 /* CompanionInteractiveShared in Frameworks */,
+				A10000000000000000000016 /* CompanionInteractiveWire in Frameworks */,
+				A10000000000000000000017 /* CompanionPresentation in Frameworks */,
+				A10000000000000000000018 /* CompanionWire in Frameworks */,
+				A10000000000000000000019 /* CompanionClientPlatform in Frameworks */,
+				A10000000000000000000020 /* CompanionTransport in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A30000000000000000000021 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		A40000000000000000000001 = {
+			isa = PBXGroup;
+			children = (
+				A40000000000000000000002 /* ClientUIHarness */,
+				A40000000000000000000004 /* ClientUIHarnessUITests */,
+				A40000000000000000000003 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		A40000000000000000000002 /* ClientUIHarness */ = {
+			isa = PBXGroup;
+			children = (
+				A20000000000000000000001 /* ClientUIHarnessApp.swift */,
+				A20000000000000000000002 /* HarnessContentView.swift */,
+				A20000000000000000000003 /* HarnessFixtures.swift */,
+				A20000000000000000000005 /* HarnessApplicationLifecycleModel.swift */,
+			);
+			path = ClientUIHarness;
+			sourceTree = "<group>";
+		};
+		A40000000000000000000003 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				A20000000000000000000004 /* ClientUIHarness.app */,
+				A20000000000000000000022 /* ClientUIHarnessUITests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		A40000000000000000000004 /* ClientUIHarnessUITests */ = {
+			isa = PBXGroup;
+			children = (
+				A20000000000000000000021 /* ClientUIHarnessUITests.swift */,
+			);
+			path = ClientUIHarnessUITests;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		A50000000000000000000001 /* ClientUIHarness */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A80000000000000000000002 /* Build configuration list for PBXNativeTarget "ClientUIHarness" */;
+			buildPhases = (
+				A30000000000000000000002 /* Sources */,
+				A30000000000000000000001 /* Frameworks */,
+				A30000000000000000000003 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = ClientUIHarness;
+			packageProductDependencies = (
+				A90000000000000000000001 /* CompanionClient */,
+				A90000000000000000000002 /* CompanionClientUI */,
+				A90000000000000000000003 /* CompanionDiscovery */,
+				A90000000000000000000004 /* CompanionDomain */,
+				A90000000000000000000005 /* CompanionInteractiveShared */,
+				A90000000000000000000006 /* CompanionInteractiveWire */,
+				A90000000000000000000007 /* CompanionPresentation */,
+				A90000000000000000000008 /* CompanionWire */,
+				A90000000000000000000009 /* CompanionClientPlatform */,
+				A9000000000000000000000A /* CompanionTransport */,
+			);
+			productName = ClientUIHarness;
+			productReference = A20000000000000000000004 /* ClientUIHarness.app */;
+			productType = "com.apple.product-type.application";
+		};
+		A50000000000000000000002 /* ClientUIHarnessUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A80000000000000000000003 /* Build configuration list for PBXNativeTarget "ClientUIHarnessUITests" */;
+			buildPhases = (
+				A30000000000000000000022 /* Sources */,
+				A30000000000000000000021 /* Frameworks */,
+				A30000000000000000000023 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				A50000000000000000000012 /* PBXTargetDependency */,
+			);
+			name = ClientUIHarnessUITests;
+			packageProductDependencies = (
+			);
+			productName = ClientUIHarnessUITests;
+			productReference = A20000000000000000000022 /* ClientUIHarnessUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXContainerItemProxy section */
+		A50000000000000000000011 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = A60000000000000000000001 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = A50000000000000000000001;
+			remoteInfo = ClientUIHarness;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXTargetDependency section */
+		A50000000000000000000012 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = A50000000000000000000001 /* ClientUIHarness */;
+			targetProxy = A50000000000000000000011 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin PBXProject section */
+		A60000000000000000000001 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 2700;
+				LastUpgradeCheck = 2700;
+				TargetAttributes = {
+					A50000000000000000000001 = {
+						CreatedOnToolsVersion = 27.0;
+					};
+					A50000000000000000000002 = {
+						CreatedOnToolsVersion = 27.0;
+						TestTargetID = A50000000000000000000001;
+					};
+				};
+			};
+			buildConfigurationList = A80000000000000000000001 /* Build configuration list for PBXProject "ClientUIHarness" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = A40000000000000000000001;
+			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				A90000000000000000000010 /* XCLocalSwiftPackageReference "MacCompanionKit" */,
+			);
+			preferredProjectObjectVersion = 77;
+			productRefGroup = A40000000000000000000003 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				A50000000000000000000001 /* ClientUIHarness */,
+				A50000000000000000000002 /* ClientUIHarnessUITests */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		A30000000000000000000003 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A30000000000000000000023 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		A30000000000000000000002 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A10000000000000000000001 /* ClientUIHarnessApp.swift in Sources */,
+				A10000000000000000000002 /* HarnessContentView.swift in Sources */,
+				A10000000000000000000003 /* HarnessFixtures.swift in Sources */,
+				A10000000000000000000004 /* HarnessApplicationLifecycleModel.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A30000000000000000000022 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A10000000000000000000021 /* ClientUIHarnessUITests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		A70000000000000000000001 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				ONLY_ACTIVE_ARCH = YES;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		A70000000000000000000002 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				COPY_PHASE_STRIP = YES;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				SWIFT_COMPILATION_MODE = wholemodule;
+			};
+			name = Release;
+		};
+		A70000000000000000000003 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGNING_ALLOWED = NO;
+				CODE_SIGNING_REQUIRED = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = "Mac Companion Harness";
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MARKETING_VERSION = 0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = dev.maccompanion.clientuiharness;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = iphonesimulator;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		A70000000000000000000004 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGNING_ALLOWED = NO;
+				CODE_SIGNING_REQUIRED = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = "Mac Companion Harness";
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MARKETING_VERSION = 0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = dev.maccompanion.clientuiharness;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = iphonesimulator;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		A70000000000000000000005 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGNING_ALLOWED = NO;
+				CODE_SIGNING_REQUIRED = NO;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				PRODUCT_BUNDLE_IDENTIFIER = dev.maccompanion.clientuiharness.uitests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = iphonesimulator;
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = ClientUIHarness;
+			};
+			name = Debug;
+		};
+		A70000000000000000000006 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGNING_ALLOWED = NO;
+				CODE_SIGNING_REQUIRED = NO;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				PRODUCT_BUNDLE_IDENTIFIER = dev.maccompanion.clientuiharness.uitests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = iphonesimulator;
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = ClientUIHarness;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		A80000000000000000000001 /* Build configuration list for PBXProject "ClientUIHarness" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A70000000000000000000001 /* Debug */,
+				A70000000000000000000002 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		A80000000000000000000002 /* Build configuration list for PBXNativeTarget "ClientUIHarness" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A70000000000000000000003 /* Debug */,
+				A70000000000000000000004 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		A80000000000000000000003 /* Build configuration list for PBXNativeTarget "ClientUIHarnessUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A70000000000000000000005 /* Debug */,
+				A70000000000000000000006 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		A90000000000000000000010 /* XCLocalSwiftPackageReference "MacCompanionKit" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = ../../Packages/MacCompanionKit;
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		A90000000000000000000001 /* CompanionClient */ = {isa = XCSwiftPackageProductDependency; package = A90000000000000000000010 /* XCLocalSwiftPackageReference "MacCompanionKit" */; productName = CompanionClient; };
+		A90000000000000000000002 /* CompanionClientUI */ = {isa = XCSwiftPackageProductDependency; package = A90000000000000000000010 /* XCLocalSwiftPackageReference "MacCompanionKit" */; productName = CompanionClientUI; };
+		A90000000000000000000003 /* CompanionDiscovery */ = {isa = XCSwiftPackageProductDependency; package = A90000000000000000000010 /* XCLocalSwiftPackageReference "MacCompanionKit" */; productName = CompanionDiscovery; };
+		A90000000000000000000004 /* CompanionDomain */ = {isa = XCSwiftPackageProductDependency; package = A90000000000000000000010 /* XCLocalSwiftPackageReference "MacCompanionKit" */; productName = CompanionDomain; };
+		A90000000000000000000005 /* CompanionInteractiveShared */ = {isa = XCSwiftPackageProductDependency; package = A90000000000000000000010 /* XCLocalSwiftPackageReference "MacCompanionKit" */; productName = CompanionInteractiveShared; };
+		A90000000000000000000006 /* CompanionInteractiveWire */ = {isa = XCSwiftPackageProductDependency; package = A90000000000000000000010 /* XCLocalSwiftPackageReference "MacCompanionKit" */; productName = CompanionInteractiveWire; };
+		A90000000000000000000007 /* CompanionPresentation */ = {isa = XCSwiftPackageProductDependency; package = A90000000000000000000010 /* XCLocalSwiftPackageReference "MacCompanionKit" */; productName = CompanionPresentation; };
+		A90000000000000000000008 /* CompanionWire */ = {isa = XCSwiftPackageProductDependency; package = A90000000000000000000010 /* XCLocalSwiftPackageReference "MacCompanionKit" */; productName = CompanionWire; };
+		A90000000000000000000009 /* CompanionClientPlatform */ = {isa = XCSwiftPackageProductDependency; package = A90000000000000000000010 /* XCLocalSwiftPackageReference "MacCompanionKit" */; productName = CompanionClientPlatform; };
+		A9000000000000000000000A /* CompanionTransport */ = {isa = XCSwiftPackageProductDependency; package = A90000000000000000000010 /* XCLocalSwiftPackageReference "MacCompanionKit" */; productName = CompanionTransport; };
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = A60000000000000000000001 /* Project object */;
+}

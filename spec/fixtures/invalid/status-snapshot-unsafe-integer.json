@@ -1,0 +1,9 @@
+{
+  "version": { "major": 0, "minor": 1 },
+  "messageID": "018f0000-0000-7000-8000-000000000010",
+  "correlationID": null,
+  "channel": "command",
+  "kind": "status.snapshot.request",
+  "sentAtUnixMilliseconds": 9007199254740992,
+  "body": {}
+}

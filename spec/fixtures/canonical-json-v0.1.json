@@ -1,0 +1,23 @@
+{
+  "profile": "Mac Companion restricted RFC 8785 canonical JSON v0.1",
+  "scope": "I-JSON literals, Unicode strings, arrays, objects, and safe integers; floating-point values are denied",
+  "vectors": [
+    {
+      "name": "rfc8785-property-sort",
+      "inputUTF8": "{\"€\":\"Euro Sign\",\"\\r\":\"Carriage Return\",\"דּ\":\"Hebrew Letter Dalet With Dagesh\",\"1\":\"One\",\"😀\":\"Emoji: Grinning Face\",\"\":\"Control\",\"ö\":\"Latin Small Letter O With Diaeresis\"}",
+      "canonicalUTF8": "{\"\\r\":\"Carriage Return\",\"1\":\"One\",\"\":\"Control\",\"ö\":\"Latin Small Letter O With Diaeresis\",\"€\":\"Euro Sign\",\"😀\":\"Emoji: Grinning Face\",\"דּ\":\"Hebrew Letter Dalet With Dagesh\"}"
+    },
+    {
+      "name": "recursive-safe-subset",
+      "inputUTF8": " { \"z\" : -0, \"a\" : [ null, true, false, 9007199254740991, -9007199254740991 ], \"s\" : \"\\u000F\\n\\\"\\\\/\", \"nested\" : { \"b\" : 2, \"a\" : 1 } } ",
+      "canonicalUTF8": "{\"a\":[null,true,false,9007199254740991,-9007199254740991],\"nested\":{\"a\":1,\"b\":2},\"s\":\"\\u000f\\n\\\"\\\\/\",\"z\":0}"
+    }
+  ],
+  "invalidInputs": [
+    "{\"a\":1,\"a\":2}",
+    "{\"a\":1.0}",
+    "{\"a\":9007199254740992}",
+    "{\"a\":\"\\uDEAD\"}"
+  ],
+  "source": "RFC 8785 sections 3.1, 3.2.1, 3.2.2, 3.2.3, and 3.2.4; property-sort vector derives from section 3.2.3"
+}

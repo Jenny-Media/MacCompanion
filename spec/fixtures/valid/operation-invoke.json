@@ -1,0 +1,17 @@
+{
+  "version": { "major": 0, "minor": 1 },
+  "messageID": "018f7000-0000-7000-8000-000000000001",
+  "correlationID": null,
+  "channel": "command",
+  "kind": "operation.invoke",
+  "sentAtUnixMilliseconds": 1787198500000,
+  "body": {
+    "operationID": "018f7100-0000-7000-8000-000000000001",
+    "capabilityID": "com.maccompanion.files.list.v1",
+    "parameters": {
+      "includeHidden": false,
+      "maxItems": 25,
+      "path": "/Users/example/Documents"
+    }
+  }
+}

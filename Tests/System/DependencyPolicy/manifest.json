@@ -1,0 +1,17 @@
+{
+  "profile": "maccompanion.swift-dependency-policy-fixtures.v0",
+  "cases": [
+    {"path": "valid-current.json", "expectedCodes": []},
+    {"path": "invalid-duplicate-package.json", "expectedCodes": ["duplicatePackagePath"]},
+    {"path": "invalid-external-artifact.json", "expectedCodes": ["externalArtifactDenied"]},
+    {"path": "invalid-identity.json", "expectedCodes": ["localDependencyIdentityMismatch"]},
+    {"path": "invalid-local-escape.json", "expectedCodes": ["localDependencyEscapesRepository", "missingLocalDependency"]},
+    {"path": "invalid-missing-local.json", "expectedCodes": ["missingLocalDependency"]},
+    {"path": "invalid-missing-package.json", "expectedCodes": ["missingPackage"]},
+    {"path": "invalid-name.json", "expectedCodes": ["packageNameMismatch"]},
+    {"path": "invalid-remote.json", "expectedCodes": ["missingLocalDependency", "remoteDependencyDenied"]},
+    {"path": "invalid-tools-version.json", "expectedCodes": ["toolsVersionMismatch"]},
+    {"path": "invalid-unexpected-local.json", "expectedCodes": ["missingLocalDependency", "unexpectedLocalDependency"]},
+    {"path": "invalid-unexpected-package.json", "expectedCodes": ["unexpectedPackage"]}
+  ]
+}

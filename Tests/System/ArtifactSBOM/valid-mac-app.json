@@ -1,0 +1,25 @@
+{
+  "entries": [
+    {"path": "Mac Companion.app/", "type": "directory", "mode": "0755"},
+    {"path": "Mac Companion.app/Contents/", "type": "directory", "mode": "0755"},
+    {"path": "Mac Companion.app/Contents/Info.plist", "type": "regularFile", "mode": "0644", "content": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\"><plist version=\"1.0\"><dict><key>CFBundleExecutable</key><string>Mac Companion</string><key>CFBundleIdentifier</key><string>example.maccompanion.fixture</string><key>CFBundlePackageType</key><string>APPL</string></dict></plist>"},
+    {"path": "Mac Companion.app/Contents/MacOS/", "type": "directory", "mode": "0755"},
+    {"path": "Mac Companion.app/Contents/MacOS/Mac Companion", "type": "regularFile", "mode": "0755", "contentHex": "cffaedfe0c000001000000000200000000000000000000000000000000000000"},
+    {"path": "Mac Companion.app/Contents/Library/", "type": "directory", "mode": "0755"},
+    {"path": "Mac Companion.app/Contents/Library/LaunchAgents/", "type": "directory", "mode": "0755"},
+    {"path": "Mac Companion.app/Contents/Library/LaunchAgents/MacCompanionAgent", "type": "regularFile", "mode": "0755", "contentHex": "cffaedfe0c000001000000000200000000000000000000000000000000000000"},
+    {"path": "Mac Companion.app/Contents/Library/LaunchAgents/MacCompanionAgent.plist", "type": "regularFile", "mode": "0644", "content": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\"><plist version=\"1.0\"><dict><key>BundleProgram</key><string>Contents/Library/LaunchAgents/MacCompanionAgent</string><key>Label</key><string>example.maccompanion.fixture.agent</string></dict></plist>"},
+    {"path": "Mac Companion.app/Contents/Frameworks/", "type": "directory", "mode": "0755"},
+    {"path": "Mac Companion.app/Contents/Frameworks/Fixture.framework/", "type": "directory", "mode": "0755"},
+    {"path": "Mac Companion.app/Contents/Frameworks/Fixture.framework/Fixture", "type": "symlink", "mode": "0777", "target": "Versions/Current/Fixture"},
+    {"path": "Mac Companion.app/Contents/Frameworks/Fixture.framework/Versions/", "type": "directory", "mode": "0755"},
+    {"path": "Mac Companion.app/Contents/Frameworks/Fixture.framework/Versions/A/", "type": "directory", "mode": "0755"},
+    {"path": "Mac Companion.app/Contents/Frameworks/Fixture.framework/Versions/A/Resources/", "type": "directory", "mode": "0755"},
+    {"path": "Mac Companion.app/Contents/Frameworks/Fixture.framework/Versions/A/Resources/Info.plist", "type": "regularFile", "mode": "0644", "content": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\"><plist version=\"1.0\"><dict><key>CFBundleExecutable</key><string>Fixture</string><key>CFBundleIdentifier</key><string>example.maccompanion.fixture.framework</string><key>CFBundlePackageType</key><string>FMWK</string></dict></plist>"},
+    {"path": "Mac Companion.app/Contents/Frameworks/Fixture.framework/Versions/A/Fixture", "type": "regularFile", "mode": "0755", "contentHex": "cffaedfe0c000001000000000600000000000000000000000000000000000000"},
+    {"path": "Mac Companion.app/Contents/Frameworks/Fixture.framework/Versions/Current", "type": "symlink", "mode": "0777", "target": "A"},
+    {"path": "Mac Companion.app/Contents/Resources/", "type": "directory", "mode": "0755"},
+    {"path": "Mac Companion.app/Contents/Resources/current", "type": "symlink", "mode": "0777", "target": "Info.txt"},
+    {"path": "Mac Companion.app/Contents/Resources/Info.txt", "type": "regularFile", "mode": "0644", "content": "fixture resource"}
+  ]
+}

@@ -1,0 +1,387 @@
+{
+  "version": 1,
+  "fixtures": [
+    {
+      "path": "valid/auth-hello.json",
+      "kind": "auth.hello",
+      "expect": "valid",
+      "canonicalSHA256": "dc74051c48b99fc6f57acc43ebb5945cf6d69410571faba83c9fbbdfffd2044b"
+    },
+    {
+      "path": "valid/auth-challenge.json",
+      "kind": "auth.challenge",
+      "expect": "valid",
+      "canonicalSHA256": "1781f1dd03eb1e90be4743ac93e5c19cba0ccde6cbafcc7fca02cc14a0517a68"
+    },
+    {
+      "path": "valid/auth-proof.json",
+      "kind": "auth.proof",
+      "expect": "valid",
+      "canonicalSHA256": "ffc28e40e76bf6f314884422264b1feddc025c8cd9d99659b06150da975563d6"
+    },
+    {
+      "path": "valid/pairing-begin.json",
+      "kind": "pairing.begin",
+      "expect": "valid",
+      "canonicalSHA256": "b2c92bb43974c62041d47310384c5ed49119a73aaabccd0898224d23bc149746"
+    },
+    {
+      "path": "valid/pairing-challenge.json",
+      "kind": "pairing.challenge",
+      "expect": "valid",
+      "canonicalSHA256": "b0a1b997d461bddc7bb1c83152a15778153ac23c545c05f7ba6dc3a586ae0df1"
+    },
+    {
+      "path": "valid/pairing-prove.json",
+      "kind": "pairing.prove",
+      "expect": "valid",
+      "canonicalSHA256": "9c1d801fe1fce470dfb58d218fecdfcf9b31d02b7685bd89665ac2731e37bd91"
+    },
+    {
+      "path": "valid/pairing-pending-approval.json",
+      "kind": "pairing.pendingApproval",
+      "expect": "valid",
+      "canonicalSHA256": "3208043cc9164b0cc3b9fb4a372fb975ba415ce6e9b2b29a5b7f901bb00f5ddd"
+    },
+    {
+      "path": "valid/pairing-complete.json",
+      "kind": "pairing.complete",
+      "expect": "valid",
+      "canonicalSHA256": "4e218672c33dd24064ade731f8762ab83271e8f72106d2ca2da2f7270d823cc7"
+    },
+    {
+      "path": "valid/pairing-qr-payload.json",
+      "kind": "pairing.qr",
+      "expect": "valid",
+      "canonicalSHA256": "d5015bf4b51641d716daf04653cd52b113cd9fc9f794b958ff3e6f73878368c5"
+    },
+    {
+      "path": "valid/status-snapshot-request.json",
+      "kind": "status.snapshot.request",
+      "expect": "valid",
+      "canonicalSHA256": "4af64d84131471b9df26e916271611a0b6cdff15099367d58600cf028d95fca8"
+    },
+    {
+      "path": "valid/session-describe-response.json",
+      "kind": "session.describe.response",
+      "expect": "valid",
+      "canonicalSHA256": "3f689d31f13b11c693d0087d91f09caa2931f5a8783d08b63b439a50b4dc6aae"
+    },
+    {
+      "path": "valid/route-observation-private-dns.json",
+      "kind": "route.observation",
+      "expect": "valid",
+      "canonicalSHA256": "70b3c9122fc52ac7e65836c101bc7b2305d1ebbc954ea17be851049b9572cf4e"
+    },
+    {
+      "path": "valid/route-observation-ack-private-dns.json",
+      "kind": "route.observation.ack",
+      "expect": "valid",
+      "canonicalSHA256": "79fc1603f2e98c068081ea726d21da9161c4ea1461a3d64802b4d713e07eb01e"
+    },
+    {
+      "path": "valid/status-snapshot-response.json",
+      "kind": "status.snapshot.response",
+      "expect": "valid",
+      "canonicalSHA256": "c063d3a09548104fc009bf7d2af9742a3cd6c87ba8a77663b2e23dc39ea4f077"
+    },
+    {
+      "path": "valid/capability-registry-request.json",
+      "kind": "capability.registry.request",
+      "expect": "valid",
+      "canonicalSHA256": "c92befb3f3912adead7a51a2447433e1df0a2d3c87d5bae2444c9086c95cfaeb"
+    },
+    {
+      "path": "valid/capability-registry-response.json",
+      "kind": "capability.registry.response",
+      "expect": "valid",
+      "canonicalSHA256": "40c06ed8175b005bb6e25bb7178f7062a02308ad64dd8dbe643e22f511d4c26a"
+    },
+    {
+      "path": "valid/audit-list-request.json",
+      "kind": "audit.list.request",
+      "expect": "valid",
+      "canonicalSHA256": "1356922089855083ecdfde7cfe6653fbab288965ea4fa44986ced3510a323588"
+    },
+    {
+      "path": "valid/audit-list-response.json",
+      "kind": "audit.list.response",
+      "expect": "valid",
+      "canonicalSHA256": "1e28dc186b1e684b1abceb242f75061b4907954dbf0b83bea3ff19357d12d0a8"
+    },
+    {
+      "path": "invalid/audit-list-host-leaks-device-field.json",
+      "kind": "audit.list.response",
+      "expect": "invalid",
+      "canonicalSHA256": "a38385aac1a84f6265cc103f4921fbfa8d7bda40932b1d053c66dd0d440690d7"
+    },
+    {
+      "path": "valid/operation-invoke.json",
+      "kind": "operation.invoke",
+      "expect": "valid",
+      "canonicalSHA256": "c1ea47128f72e0c63ea8b609a88f0d74d11c59a5f3c1c6de42379a80fe6a6aef"
+    },
+    {
+      "path": "valid/operation-approval-required.json",
+      "kind": "operation.approvalRequired",
+      "expect": "valid",
+      "canonicalSHA256": "b7ceb5decab271412f2f6c40e27f486513179a8a51f47343b05cccd270fdb383"
+    },
+    {
+      "path": "valid/operation-approve.json",
+      "kind": "operation.approve",
+      "expect": "valid",
+      "canonicalSHA256": "3fb24fb4f41703376a197591ed392b52255679d5e08804112bed967eca24462a"
+    },
+    {
+      "path": "valid/operation-status-request.json",
+      "kind": "operation.status.request",
+      "expect": "valid",
+      "canonicalSHA256": "2f96d53ac8b99fc59da7e07fb921f9c5fabea0d151d5e93cc35dcb7f64a791d1"
+    },
+    {
+      "path": "valid/operation-status-response.json",
+      "kind": "operation.status.response",
+      "expect": "valid",
+      "canonicalSHA256": "5866377e23c9229d1202b392eca4abf5558e3f064e1c9960306a71610b696369"
+    },
+    {
+      "path": "valid/operation-cancel.json",
+      "kind": "operation.cancel",
+      "expect": "valid",
+      "canonicalSHA256": "0848282f52ae66a40fc255a9582809bc23c25301a90eba86d23701e6c28aec4e"
+    },
+    {
+      "path": "valid/error-operation-not-found.json",
+      "kind": "error",
+      "expect": "valid",
+      "canonicalSHA256": "6701c6cd762a46d0f89c4d39e9387ad5e6071eb9f73d50c749a01887dd33f80b"
+    },
+    {
+      "path": "crypto/v0.1.json",
+      "kind": "crypto.v0.1",
+      "expect": "valid",
+      "canonicalSHA256": "34d2a0517f8e1d5e2a711dae5e869bbfd438c0e516adee84f2067996862f0e59"
+    },
+    {
+      "path": "crypto/interactive-v0.1.json",
+      "kind": "crypto.interactive.v0.1",
+      "expect": "valid",
+      "canonicalSHA256": "f5c11a88da642a6ab0bbd2caaa7c4b2d3dc9cd582f518b02a2ccac7ab5b44565"
+    },
+    {
+      "path": "crypto/tls-spki-v0.1.json",
+      "kind": "crypto.tls-spki.v0.1",
+      "expect": "valid",
+      "canonicalSHA256": "cb5127920218b8b17718faa98708d50589d7a945379722424fd4fa1994580e9d"
+    },
+    {
+      "path": "crypto/operation-v0.1.json",
+      "kind": "crypto.operation.v0.1",
+      "expect": "valid",
+      "canonicalSHA256": "411d28a15c716269fa16c8e5ba6524a4cb55710a0394081a4207252c58b1b8d5"
+    },
+    {
+      "path": "crypto/operation-approval-v0.1.json",
+      "kind": "crypto.operationApproval.v0.1",
+      "expect": "valid",
+      "canonicalSHA256": "c74b8e5e0f344f1cd01aad383c4be228a2a185a3cf550b7af697f863d0753416"
+    },
+    {
+      "path": "canonical-json-v0.1.json",
+      "kind": "canonicalJSON.v0.1",
+      "expect": "valid",
+      "canonicalSHA256": "e048ffc531a18b1f19d827259e0b7c0b08b6e266072bcfab27f627771aa28321"
+    },
+    {
+      "path": "authenticated-route-observation-v0.1.json",
+      "kind": "routeObservation.model.v0.1",
+      "expect": "valid",
+      "canonicalSHA256": "c749dd54798951045866f74d83b52cfb5ecf0ad3aa91ca7de709143dbd47e577"
+    },
+    {
+      "path": "client-configured-routes-v0.1.json",
+      "kind": "clientConfiguredRoutes.model.v0.1",
+      "expect": "valid",
+      "canonicalSHA256": "ec21f43d6349ac2af0e3b041c51a46a5416d8cdc7c242e10fe53eee145e6a81c"
+    },
+    {
+      "path": "cli-v0.1.json",
+      "kind": "localCLI.v0.1",
+      "expect": "valid",
+      "canonicalSHA256": "567e9d1bde3b22e57288917367ea644818057a224e6e8d91aa8d6d015853dede"
+    },
+    {
+      "path": "valid/interactive-desktop-surface.json",
+      "kind": "interactive.surface.desktop",
+      "expect": "valid",
+      "canonicalSHA256": "df4cd54fe07c218d46f354b40023e87fbc7c877482fc30580745e538b72a6945"
+    },
+    {
+      "path": "valid/local-diagnostic-export.json",
+      "kind": "localIPC.diagnosticExport",
+      "expect": "valid",
+      "canonicalSHA256": "90eda6dba1821fd8d568566e06d033293d29598311354d6b1c28100f12c3cdc1"
+    },
+    {
+      "path": "valid/interactive-media-header.json",
+      "kind": "interactive.media.header.v1",
+      "expect": "valid",
+      "canonicalSHA256": "aeb5bd85050d166b36ef13eaf90af43a7608a71c409f901a8f5e30252f5cbde9"
+    },
+    {
+      "path": "valid/interactive-input-physical-key.json",
+      "kind": "interactive.input",
+      "expect": "valid",
+      "canonicalSHA256": "1e0944f2899ebe2e7d06ec48b0d5588c7c9c152fcbd49d29829235da43d11e7a"
+    },
+    {
+      "path": "valid/interactive-session-approval-required.json",
+      "kind": "interactive.session.approvalRequired",
+      "expect": "valid",
+      "canonicalSHA256": "227c7802f23017bb7523229ffe11c34f75224e23915049315d546da91d39bbb3"
+    },
+    {
+      "path": "valid/interactive-session-end.json",
+      "kind": "interactive.session.end",
+      "expect": "valid",
+      "canonicalSHA256": "f43526abcd70ed570a798321ea46ade933a48ffc57e9c2ddbdb8ee48c64b32f4"
+    },
+    {
+      "path": "valid/interactive-session-ended.json",
+      "kind": "interactive.session.ended",
+      "expect": "valid",
+      "canonicalSHA256": "1616c91103feefa477b1aa846f0dee4904070d1290759c04d971a49ca8397c23"
+    },
+    {
+      "path": "valid/interactive-channel-hello.json",
+      "kind": "interactive.channel.hello",
+      "expect": "valid",
+      "canonicalSHA256": "affe360befc7282f099067f83a9e105581fd15ceb8f290883d08d349d3f8832e"
+    },
+    {
+      "path": "valid/interactive-channel-challenge.json",
+      "kind": "interactive.channel.challenge",
+      "expect": "valid",
+      "canonicalSHA256": "46e5b43436c32ce896394398cc44bf22f25820602bbd548498dc683d76950f21"
+    },
+    {
+      "path": "valid/interactive-initial-surface-descriptor.json",
+      "kind": "interactive.surface.initial.descriptor",
+      "expect": "valid",
+      "canonicalSHA256": "3c5de8dd36412d491ef700198f98e6ad2b70d6bf73ab088a584d9ac5192412a7"
+    },
+    {
+      "path": "valid/interactive-initial-surface-ack.json",
+      "kind": "interactive.surface.initial.ack",
+      "expect": "valid",
+      "canonicalSHA256": "cd34b0a5db1b92e84b703ef233f47caa2afc4b59de254f15d611e93599391a37"
+    },
+    {
+      "path": "valid/interactive-surface-targets-request.json",
+      "kind": "interactive.surface.targets.request",
+      "expect": "valid",
+      "canonicalSHA256": "17af4431a47c1cfa1cc53b656f6bafc28bc949e4547de0c197991dfeac9aead4"
+    },
+    {
+      "path": "valid/interactive-surface-targets-response.json",
+      "kind": "interactive.surface.targets.response",
+      "expect": "valid",
+      "canonicalSHA256": "34eb72c6d03719468fa5c3d91585c9729249f610ccd156b1f4a0544f166d226f"
+    },
+    {
+      "path": "valid/interactive-surface-selected.json",
+      "kind": "interactive.surface.selected",
+      "expect": "valid",
+      "canonicalSHA256": "9d770bfc1400495f4e59af5348f69b61f96fe2611ae9532d9b806af3870d5b69"
+    },
+    {
+      "path": "valid/interactive-surface-ack.json",
+      "kind": "interactive.surface.ack",
+      "expect": "valid",
+      "canonicalSHA256": "782499ece0bede31d1816fb254f617ecdd91f392769c5c98c768ebab5e63274f"
+    },
+    {
+      "path": "invalid/status-snapshot-unknown-field.json",
+      "kind": "status.snapshot.response",
+      "expect": "protocol.invalidFrame",
+      "fault": "unknown envelope field"
+    },
+    {
+      "path": "invalid/status-snapshot-invalid-bounds.json",
+      "kind": "status.snapshot.response",
+      "expect": "protocol.boundsExceeded",
+      "fault": "validForMilliseconds below minimum"
+    },
+    {
+      "path": "invalid/status-snapshot-duplicate-kind.json",
+      "kind": "status.snapshot.request",
+      "expect": "protocol.invalidFrame",
+      "fault": "duplicate envelope key"
+    },
+    {
+      "path": "invalid/status-snapshot-unsafe-integer.json",
+      "kind": "status.snapshot.request",
+      "expect": "protocol.boundsExceeded",
+      "fault": "sentAtUnixMilliseconds exceeds safe integer maximum"
+    },
+    {
+      "path": "invalid/auth-hello-noncanonical-base64url.json",
+      "kind": "auth.hello",
+      "expect": "protocol.invalidFrame",
+      "fault": "padded noncanonical base64url"
+    },
+    {
+      "path": "invalid/route-observation-unknown-class.json",
+      "kind": "route.observation",
+      "expect": "protocol.invalidFrame",
+      "fault": "unknown configured route class",
+      "canonicalSHA256": "33d7ce06ed403353faf2d0d551c6f71346387eaf4380c9fc6b6052e64a6aeb60"
+    },
+    {
+      "path": "invalid/route-observation-zero-sequence.json",
+      "kind": "route.observation",
+      "expect": "protocol.invalidFrame",
+      "fault": "observation sequence below one",
+      "canonicalSHA256": "bd63686ffbae28c989dcfb081cb771111e7777ce4e1063a6935bd394e4f04737"
+    },
+    {
+      "path": "invalid/pairing-begin-nonnull-correlation.json",
+      "kind": "pairing.begin",
+      "expect": "protocol.invalidFrame",
+      "fault": "original request has nonnull correlationID"
+    },
+    {
+      "path": "invalid/pairing-qr-noncanonical-ipv4.json",
+      "kind": "pairing.qr",
+      "expect": "protocol.invalidFrame",
+      "fault": "noncanonical IPv4 endpoint text"
+    },
+    {
+      "path": "invalid/interactive-surface-forbidden-metadata.json",
+      "kind": "interactive.surface.application",
+      "expect": "interactive.forbiddenMetadata",
+      "fault": "application surface includes focus-only metadata"
+    },
+    {
+      "path": "invalid/local-diagnostic-export-sensitive.json",
+      "kind": "localIPC.diagnosticExport",
+      "expect": "localIPC.sensitiveDetailNotOmitted",
+      "fault": "diagnostic export does not assert content-bearing data omission"
+    },
+    {
+      "path": "invalid/interactive-media-header-reserved.json",
+      "kind": "interactive.media.header.v1",
+      "expect": "interactive.media.reservedBitsSet",
+      "fault": "nonzero trailing reserved field",
+      "canonicalSHA256": "cb8e0bdf35b4466a11a65fe83ae2af8f48a40b6090ddb1f3c5566cad4e989bd2"
+    },
+    {
+      "path": "invalid/interactive-input-text-without-focus.json",
+      "kind": "interactive.input",
+      "expect": "interactive.input.focusRequired",
+      "fault": "text input omits its focus token and revision",
+      "canonicalSHA256": "8aad771d0523209ec5eabe93caa867124eacb06e8cad5ee5932fe64973f6f1ca"
+    }
+  ]
+}

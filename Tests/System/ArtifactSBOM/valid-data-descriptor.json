@@ -1,0 +1,6 @@
+{
+  "dataDescriptor": true,
+  "entries": [
+    {"path": "Mac Companion.app/Contents/MacOS/Mac Companion", "type": "regularFile", "mode": "0755", "content": "data descriptor fixture"}
+  ]
+}

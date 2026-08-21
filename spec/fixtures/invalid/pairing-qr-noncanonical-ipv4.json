@@ -1,0 +1,14 @@
+{
+  "version": { "major": 0, "minor": 1 },
+  "pairingID": "018f4000-0000-7000-8000-000000000001",
+  "oneTimeSecret": "wMHCw8TFxsfIycrLzM3Oz9DR0tPU1dbX2Nna29zd3t8",
+  "expiresAtUnixMilliseconds": 1787198700000,
+  "hostFingerprint": "808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9f",
+  "endpoints": [
+    {
+      "kind": "ipv4",
+      "value": "192.168.001.020",
+      "port": 47474
+    }
+  ]
+}

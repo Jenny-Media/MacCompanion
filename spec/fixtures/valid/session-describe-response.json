@@ -1,0 +1,19 @@
+{
+  "version": { "major": 0, "minor": 1 },
+  "messageID": "018f0000-0000-7000-8000-000000000002",
+  "correlationID": "018f0000-0000-7000-8000-000000000001",
+  "channel": "command",
+  "kind": "session.describe.response",
+  "sentAtUnixMilliseconds": 1787198400000,
+  "body": {
+    "hostID": "018f1000-0000-7000-8000-000000000001",
+    "deviceID": "018f2000-0000-7000-8000-000000000001",
+    "deviceState": "activeMonitorOnly",
+    "authorizationEpoch": 1,
+    "grantRevision": 1,
+    "policyRevision": 1,
+    "hostState": "userSessionActive",
+    "features": ["status.snapshot"],
+    "serverTimeUnixMilliseconds": 1787198400000
+  }
+}

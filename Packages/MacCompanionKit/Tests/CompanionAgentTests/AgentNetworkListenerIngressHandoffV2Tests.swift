@@ -1,0 +1,657 @@
+import CompanionAgentNetworkPlatform
+import CompanionDomain
+@testable import CompanionNetworkPlatform
+import CompanionSecurity
+import CompanionTransport
+import CompanionWire
+import CryptoKit
+import Dispatch
+import Foundation
+import Network
+import Testing
+
+private enum AgentNetworkIngressHandoffTestErrorV2: Error {
+    case cancelled
+    case noPlan
+}
+
+private final class AgentNetworkIngressAcceptedFakeV2:
+    AgentNetworkAcceptedConnectionStartingV1,
+    @unchecked Sendable
+{
+    private let lock = NSLock()
+    private var ready: (@Sendable (
+        NetworkHostVerifiedReadyConnectionV0
+    ) -> Void)?
+    private var terminal: (@Sendable (
+        NetworkHostAcceptedConnectionTerminationReasonV0
+    ) -> Void)?
+    private var cancelCountStorage = 0
+
+    var cancelCount: Int { lock.withLock { cancelCountStorage } }
+
+    func start(
+        queue: DispatchQueue,
+        ready: @escaping @Sendable (
+            NetworkHostVerifiedReadyConnectionV0
+        ) -> Void,
+        terminal: @escaping @Sendable (
+            NetworkHostAcceptedConnectionTerminationReasonV0
+        ) -> Void
+    ) throws {
+        lock.withLock {
+            self.ready = ready
+            self.terminal = terminal
+        }
+    }
+
+    func cancel() {
+        lock.withLock { cancelCountStorage += 1 }
+    }
+
+    func emitReady(_ value: NetworkHostVerifiedReadyConnectionV0) {
+        lock.withLock { ready }?(value)
+    }
+}
+
+private final class AgentNetworkIngressUnusedIOV2:
+    NetworkHostIngressFrameIOV0,
+    @unchecked Sendable
+{
+    private let lock = NSLock()
+    private var cancelCountStorage = 0
+
+    var cancelCount: Int { lock.withLock { cancelCountStorage } }
+
+    func receive(maximumLength: Int) async throws
+        -> NetworkHostIngressFrameChunkV0
+    {
+        throw AgentNetworkIngressHandoffTestErrorV2.noPlan
+    }
+
+    func send(_ data: Data) async throws {
+        throw AgentNetworkIngressHandoffTestErrorV2.noPlan
+    }
+
+    func cancel() {
+        lock.withLock { cancelCountStorage += 1 }
+    }
+}
+
+private final class AgentNetworkIngressClassifierFakeV2:
+    AgentNetworkIngressClassifyingV2,
+    @unchecked Sendable
+{
+    enum Behavior {
+        case immediate(NetworkHostClassifiedConnectionV0)
+        case suspended(NetworkHostClassifiedConnectionV0)
+    }
+
+    private let lock = NSLock()
+    private let behavior: Behavior
+    private var continuation: CheckedContinuation<
+        NetworkHostClassifiedConnectionV0,
+        Error
+    >?
+    private var cancelCountStorage = 0
+    private var startedStorage = false
+
+    init(_ behavior: Behavior) {
+        self.behavior = behavior
+    }
+
+    var cancelCount: Int { lock.withLock { cancelCountStorage } }
+    var started: Bool { lock.withLock { startedStorage } }
+
+    func classify() async throws -> NetworkHostClassifiedConnectionV0 {
+        switch behavior {
+        case .immediate(let value):
+            lock.withLock { startedStorage = true }
+            return value
+        case .suspended:
+            return try await withCheckedThrowingContinuation { continuation in
+                lock.withLock {
+                    startedStorage = true
+                    self.continuation = continuation
+                }
+            }
+        }
+    }
+
+    func cancel() async {
+        let continuation = lock.withLock { () -> CheckedContinuation<
+            NetworkHostClassifiedConnectionV0,
+            Error
+        >? in
+            cancelCountStorage += 1
+            let value = self.continuation
+            self.continuation = nil
+            return value
+        }
+        continuation?.resume(
+            throwing: AgentNetworkIngressHandoffTestErrorV2.cancelled
+        )
+    }
+
+    func resume() {
+        let pair = lock.withLock { () -> (
+            CheckedContinuation<NetworkHostClassifiedConnectionV0, Error>?,
+            NetworkHostClassifiedConnectionV0?
+        ) in
+            let continuation = self.continuation
+            self.continuation = nil
+            if case .suspended(let value) = behavior {
+                return (continuation, value)
+            }
+            return (continuation, nil)
+        }
+        if let continuation = pair.0, let value = pair.1 {
+            continuation.resume(returning: value)
+        }
+    }
+}
+
+private final class AgentNetworkIngressClassifierFactoryFakeV2:
+    AgentNetworkIngressClassifierMakingV2,
+    @unchecked Sendable
+{
+    private let lock = NSLock()
+    private var plans: [AgentNetworkIngressClassifierFakeV2]
+
+    init(_ plans: [AgentNetworkIngressClassifierFakeV2]) {
+        self.plans = plans
+    }
+
+    func makeClassifier(
+        verifiedReadyConnection: NetworkHostVerifiedReadyConnectionV0,
+        acceptedAtMonotonicMilliseconds: UInt64,
+        monotonicNowMilliseconds: @escaping @Sendable () -> UInt64
+    ) throws -> any AgentNetworkIngressClassifyingV2 {
+        verifiedReadyConnection.cancel()
+        return try lock.withLock {
+            guard !plans.isEmpty else {
+                throw AgentNetworkIngressHandoffTestErrorV2.noPlan
+            }
+            return plans.removeFirst()
+        }
+    }
+}
+
+private final class AgentNetworkBoundIngressFakeV2:
+    AgentNetworkBoundIngressConnectionV2,
+    @unchecked Sendable
+{
+    enum BeginBehavior {
+        case immediate
+        case suspended
+    }
+
+    private let lock = NSLock()
+    private let beginBehavior: BeginBehavior
+    private var beginCountStorage = 0
+    private var cancelCountStorage = 0
+    private var beginContinuation: CheckedContinuation<Void, Error>?
+
+    init(beginBehavior: BeginBehavior = .immediate) {
+        self.beginBehavior = beginBehavior
+    }
+
+    var beginCount: Int { lock.withLock { beginCountStorage } }
+    var cancelCount: Int { lock.withLock { cancelCountStorage } }
+
+    func begin() async throws {
+        switch beginBehavior {
+        case .immediate:
+            lock.withLock { beginCountStorage += 1 }
+        case .suspended:
+            try await withCheckedThrowingContinuation { continuation in
+                lock.withLock {
+                    beginCountStorage += 1
+                    beginContinuation = continuation
+                }
+            }
+        }
+    }
+
+    func cancel() async {
+        let continuation = lock.withLock { () -> CheckedContinuation<
+            Void,
+            Error
+        >? in
+            cancelCountStorage += 1
+            let value = beginContinuation
+            beginContinuation = nil
+            return value
+        }
+        continuation?.resume(
+            throwing: AgentNetworkIngressHandoffTestErrorV2.cancelled
+        )
+    }
+}
+
+private actor AgentNetworkIngressBinderFakeV2:
+    AgentNetworkPrimaryIngressBindingV2,
+    AgentNetworkPairingIngressBindingV2
+{
+    private var primaryPlans: [AgentNetworkBoundIngressFakeV2]
+    private var pairingPlans: [AgentNetworkBoundIngressFakeV2]
+    private var primaryTerminals: [@Sendable (
+        NetworkHostPrimaryTerminationReasonV0
+    ) -> Void] = []
+    private var pairingTerminals: [@Sendable (
+        NetworkHostPairingTerminationReasonV0
+    ) -> Void] = []
+
+    init(
+        primary: [AgentNetworkBoundIngressFakeV2],
+        pairing: [AgentNetworkBoundIngressFakeV2]
+    ) {
+        primaryPlans = primary
+        pairingPlans = pairing
+    }
+
+    func bindPrimaryIngress(
+        classifiedConnection: NetworkHostClassifiedConnectionV0,
+        acceptedAtMonotonicMilliseconds: UInt64,
+        context: @escaping @Sendable () -> NetworkHostRequestContextV0,
+        terminal: @escaping @Sendable (
+            NetworkHostPrimaryTerminationReasonV0
+        ) -> Void
+    ) throws -> any AgentNetworkBoundIngressConnectionV2 {
+        classifiedConnection.cancel()
+        primaryTerminals.append(terminal)
+        guard !primaryPlans.isEmpty else {
+            throw AgentNetworkIngressHandoffTestErrorV2.noPlan
+        }
+        return primaryPlans.removeFirst()
+    }
+
+    func bindPairingIngress(
+        classifiedConnection: NetworkHostClassifiedConnectionV0,
+        acceptedAtMonotonicMilliseconds: UInt64,
+        context: @escaping @Sendable () ->
+            NetworkHostPairingRequestContextV0,
+        terminal: @escaping @Sendable (
+            NetworkHostPairingTerminationReasonV0
+        ) -> Void
+    ) throws -> any AgentNetworkBoundIngressConnectionV2 {
+        classifiedConnection.cancel()
+        pairingTerminals.append(terminal)
+        guard !pairingPlans.isEmpty else {
+            throw AgentNetworkIngressHandoffTestErrorV2.noPlan
+        }
+        return pairingPlans.removeFirst()
+    }
+
+    func primaryBindCount() -> Int { primaryTerminals.count }
+    func pairingBindCount() -> Int { pairingTerminals.count }
+
+    func endPrimary(_ index: Int) {
+        primaryTerminals[index](.remoteClosed)
+    }
+
+    func endPairing(_ index: Int) {
+        pairingTerminals[index](.remoteClosed)
+    }
+}
+
+private func agentNetworkIngressVerifiedV2() throws
+    -> NetworkHostVerifiedReadyConnectionV0
+{
+    let key = P256.Signing.PrivateKey()
+    let spki = try CompanionSecurityV0.p256SubjectPublicKeyInfoDER(
+        publicKeyX963: key.publicKey.x963Representation
+    )
+    let fingerprint = try CompanionSecurityV0.hostFingerprint(
+        subjectPublicKeyInfoDER: spki
+    )
+    let binding = try HostApplicationTLSBinding(
+        evidence: HostTLSListenerEvidence(
+            negotiatedTLSMajor: 1,
+            negotiatedTLSMinor: 3,
+            earlyDataAccepted: false,
+            servedSubjectPublicKeyInfoDER: spki
+        ),
+        requiredHostFingerprint: fingerprint
+    )
+    return NetworkHostVerifiedReadyConnectionV0(
+        connection: NWConnection(
+            host: "127.0.0.1",
+            port: 9,
+            using: .tcp
+        ),
+        tlsBinding: binding
+    )
+}
+
+private func agentNetworkIngressClassifiedV2(
+    role: NetworkHostIngressRoleV0
+) throws -> NetworkHostClassifiedConnectionV0 {
+    let verified = try agentNetworkIngressVerifiedV2()
+    let binding = verified.tlsBinding
+    verified.cancel()
+    return NetworkHostClassifiedConnectionV0(
+        role: role,
+        tlsBinding: binding,
+        io: AgentNetworkIngressUnusedIOV2(),
+        initialFrame: Data([1])
+    )
+}
+
+private func agentNetworkIngressPrimaryContextV2()
+    -> NetworkHostRequestContextV0
+{
+    NetworkHostRequestContextV0(
+        hostState: .userSessionActive,
+        wallNowUnixMilliseconds: 1,
+        monotonicNowMilliseconds: 1,
+        responseMessageID: WireUUID(UUID())
+    )
+}
+
+private func agentNetworkIngressPairingContextV2()
+    -> NetworkHostPairingRequestContextV0
+{
+    NetworkHostPairingRequestContextV0(
+        wallNowUnixMilliseconds: 1,
+        monotonicNowMilliseconds: 1,
+        responseMessageID: WireUUID(UUID())
+    )
+}
+
+private func agentNetworkIngressEventuallyV2(
+    _ condition: @escaping @Sendable () async -> Bool
+) async -> Bool {
+    for _ in 0..<2_000 {
+        if await condition() { return true }
+        await Task.yield()
+    }
+    return false
+}
+
+private func agentNetworkIngressHandoffV2(
+    classifiers: [AgentNetworkIngressClassifierFakeV2],
+    binder: AgentNetworkIngressBinderFakeV2
+) -> AgentNetworkListenerIngressHandoffV2 {
+    AgentNetworkListenerIngressHandoffV2(
+        classifierFactory: AgentNetworkIngressClassifierFactoryFakeV2(
+            classifiers
+        ),
+        primaryBinder: binder,
+        pairingBinder: binder,
+        queue: DispatchQueue(label: "MacCompanionTests.IngressV2"),
+        monotonicNowMilliseconds: { 1 },
+        primaryContext: agentNetworkIngressPrimaryContextV2,
+        pairingContext: agentNetworkIngressPairingContextV2
+    )
+}
+
+@Test func pairingIngressDoesNotReplaceAnActivePrimary() async throws {
+    let primary = AgentNetworkBoundIngressFakeV2()
+    let pairing = AgentNetworkBoundIngressFakeV2()
+    let primaryClassifier = AgentNetworkIngressClassifierFakeV2(
+        .immediate(try agentNetworkIngressClassifiedV2(
+            role: .applicationPrimary
+        ))
+    )
+    let pairingClassifier = AgentNetworkIngressClassifierFakeV2(
+        .immediate(try agentNetworkIngressClassifiedV2(role: .pairing))
+    )
+    let binder = AgentNetworkIngressBinderFakeV2(
+        primary: [primary],
+        pairing: [pairing]
+    )
+    let handoff = agentNetworkIngressHandoffV2(
+        classifiers: [primaryClassifier, pairingClassifier],
+        binder: binder
+    )
+
+    let first = AgentNetworkIngressAcceptedFakeV2()
+    try await handoff.admit(first, acceptedAtMonotonicMilliseconds: 1)
+    first.emitReady(try agentNetworkIngressVerifiedV2())
+    #expect(await agentNetworkIngressEventuallyV2 {
+        await handoff.snapshot().hasActivePrimary
+    })
+
+    let second = AgentNetworkIngressAcceptedFakeV2()
+    try await handoff.admit(second, acceptedAtMonotonicMilliseconds: 2)
+    second.emitReady(try agentNetworkIngressVerifiedV2())
+    #expect(await agentNetworkIngressEventuallyV2 {
+        let snapshot = await handoff.snapshot()
+        return snapshot.hasActivePrimary && snapshot.hasActivePairing
+    })
+    #expect(primary.cancelCount == 0)
+    #expect(primary.beginCount == 1)
+    #expect(pairing.beginCount == 1)
+}
+
+@Test func secondPairingIngressCannotDisplaceVisibleDecisionOwner()
+    async throws
+{
+    let active = AgentNetworkBoundIngressFakeV2()
+    let firstClassifier = AgentNetworkIngressClassifierFakeV2(
+        .immediate(try agentNetworkIngressClassifiedV2(role: .pairing))
+    )
+    let secondIO = AgentNetworkIngressUnusedIOV2()
+    let secondClassified = NetworkHostClassifiedConnectionV0(
+        role: .pairing,
+        tlsBinding: try agentNetworkIngressVerifiedV2().tlsBinding,
+        io: secondIO,
+        initialFrame: Data([1])
+    )
+    let secondClassifier = AgentNetworkIngressClassifierFakeV2(
+        .immediate(secondClassified)
+    )
+    let binder = AgentNetworkIngressBinderFakeV2(
+        primary: [],
+        pairing: [active]
+    )
+    let handoff = agentNetworkIngressHandoffV2(
+        classifiers: [firstClassifier, secondClassifier],
+        binder: binder
+    )
+
+    let first = AgentNetworkIngressAcceptedFakeV2()
+    try await handoff.admit(first, acceptedAtMonotonicMilliseconds: 1)
+    first.emitReady(try agentNetworkIngressVerifiedV2())
+    #expect(await agentNetworkIngressEventuallyV2 {
+        await handoff.snapshot().hasActivePairing
+    })
+
+    let second = AgentNetworkIngressAcceptedFakeV2()
+    try await handoff.admit(second, acceptedAtMonotonicMilliseconds: 2)
+    second.emitReady(try agentNetworkIngressVerifiedV2())
+    #expect(await agentNetworkIngressEventuallyV2 {
+        secondIO.cancelCount == 1
+    })
+    #expect(await binder.pairingBindCount() == 1)
+    #expect(active.cancelCount == 0)
+    #expect((await handoff.snapshot()).hasActivePairing)
+}
+
+@Test func validPrimaryReplacementCancelsOnlyPreviousPrimary() async throws {
+    let firstBound = AgentNetworkBoundIngressFakeV2()
+    let secondBound = AgentNetworkBoundIngressFakeV2()
+    let binder = AgentNetworkIngressBinderFakeV2(
+        primary: [firstBound, secondBound],
+        pairing: []
+    )
+    let handoff = agentNetworkIngressHandoffV2(
+        classifiers: [
+            AgentNetworkIngressClassifierFakeV2(
+                .immediate(try agentNetworkIngressClassifiedV2(
+                    role: .applicationPrimary
+                ))
+            ),
+            AgentNetworkIngressClassifierFakeV2(
+                .immediate(try agentNetworkIngressClassifiedV2(
+                    role: .applicationPrimary
+                ))
+            ),
+        ],
+        binder: binder
+    )
+
+    let first = AgentNetworkIngressAcceptedFakeV2()
+    try await handoff.admit(first, acceptedAtMonotonicMilliseconds: 1)
+    first.emitReady(try agentNetworkIngressVerifiedV2())
+    #expect(await agentNetworkIngressEventuallyV2 {
+        firstBound.beginCount == 1
+    })
+    let second = AgentNetworkIngressAcceptedFakeV2()
+    try await handoff.admit(second, acceptedAtMonotonicMilliseconds: 2)
+    second.emitReady(try agentNetworkIngressVerifiedV2())
+    #expect(await agentNetworkIngressEventuallyV2 {
+        secondBound.beginCount == 1 && firstBound.cancelCount == 1
+    })
+    #expect(secondBound.cancelCount == 0)
+    #expect((await handoff.snapshot()).hasActivePrimary)
+}
+
+@Test func newerTLSCandidateCancelsSuspendedClassification() async throws {
+    let staleClassified = try agentNetworkIngressClassifiedV2(role: .pairing)
+    let stale = AgentNetworkIngressClassifierFakeV2(
+        .suspended(staleClassified)
+    )
+    let winner = AgentNetworkIngressClassifierFakeV2(
+        .immediate(try agentNetworkIngressClassifiedV2(
+            role: .applicationPrimary
+        ))
+    )
+    let bound = AgentNetworkBoundIngressFakeV2()
+    let binder = AgentNetworkIngressBinderFakeV2(
+        primary: [bound],
+        pairing: []
+    )
+    let handoff = agentNetworkIngressHandoffV2(
+        classifiers: [stale, winner],
+        binder: binder
+    )
+
+    let first = AgentNetworkIngressAcceptedFakeV2()
+    try await handoff.admit(first, acceptedAtMonotonicMilliseconds: 1)
+    first.emitReady(try agentNetworkIngressVerifiedV2())
+    #expect(await agentNetworkIngressEventuallyV2 { stale.started })
+
+    let second = AgentNetworkIngressAcceptedFakeV2()
+    try await handoff.admit(second, acceptedAtMonotonicMilliseconds: 2)
+    second.emitReady(try agentNetworkIngressVerifiedV2())
+    #expect(await agentNetworkIngressEventuallyV2 {
+        bound.beginCount == 1
+    })
+    #expect(stale.cancelCount == 1)
+    #expect(await binder.pairingBindCount() == 0)
+    #expect((await handoff.snapshot()).hasActivePrimary)
+}
+
+@Test func roleTerminalAndGlobalCancelRemainIsolatedAndExact() async throws {
+    let primary = AgentNetworkBoundIngressFakeV2()
+    let pairing = AgentNetworkBoundIngressFakeV2()
+    let binder = AgentNetworkIngressBinderFakeV2(
+        primary: [primary],
+        pairing: [pairing]
+    )
+    let handoff = agentNetworkIngressHandoffV2(
+        classifiers: [
+            AgentNetworkIngressClassifierFakeV2(
+                .immediate(try agentNetworkIngressClassifiedV2(
+                    role: .applicationPrimary
+                ))
+            ),
+            AgentNetworkIngressClassifierFakeV2(
+                .immediate(try agentNetworkIngressClassifiedV2(
+                    role: .pairing
+                ))
+            ),
+        ],
+        binder: binder
+    )
+
+    let first = AgentNetworkIngressAcceptedFakeV2()
+    try await handoff.admit(first, acceptedAtMonotonicMilliseconds: 1)
+    first.emitReady(try agentNetworkIngressVerifiedV2())
+    #expect(await agentNetworkIngressEventuallyV2 {
+        await handoff.snapshot().hasActivePrimary
+    })
+    let second = AgentNetworkIngressAcceptedFakeV2()
+    try await handoff.admit(second, acceptedAtMonotonicMilliseconds: 2)
+    second.emitReady(try agentNetworkIngressVerifiedV2())
+    #expect(await agentNetworkIngressEventuallyV2 {
+        await handoff.snapshot().hasActivePairing
+    })
+
+    await binder.endPairing(0)
+    #expect(await agentNetworkIngressEventuallyV2 {
+        let snapshot = await handoff.snapshot()
+        return snapshot.hasActivePrimary && !snapshot.hasActivePairing
+    })
+    #expect(primary.cancelCount == 0)
+
+    await handoff.cancel()
+    #expect(primary.cancelCount == 1)
+    #expect(pairing.cancelCount == 0)
+    #expect((await handoff.snapshot()).isCancelled)
+}
+
+@Test func unprovenPrimaryCandidateCannotEvictAuthenticatedPrimary()
+    async throws
+{
+    let active = AgentNetworkBoundIngressFakeV2()
+    let unproven = AgentNetworkBoundIngressFakeV2(
+        beginBehavior: .suspended
+    )
+    let pairing = AgentNetworkBoundIngressFakeV2()
+    let binder = AgentNetworkIngressBinderFakeV2(
+        primary: [active, unproven],
+        pairing: [pairing]
+    )
+    let handoff = agentNetworkIngressHandoffV2(
+        classifiers: [
+            AgentNetworkIngressClassifierFakeV2(
+                .immediate(try agentNetworkIngressClassifiedV2(
+                    role: .applicationPrimary
+                ))
+            ),
+            AgentNetworkIngressClassifierFakeV2(
+                .immediate(try agentNetworkIngressClassifiedV2(
+                    role: .applicationPrimary
+                ))
+            ),
+            AgentNetworkIngressClassifierFakeV2(
+                .immediate(try agentNetworkIngressClassifiedV2(
+                    role: .pairing
+                ))
+            ),
+        ],
+        binder: binder
+    )
+
+    let first = AgentNetworkIngressAcceptedFakeV2()
+    try await handoff.admit(first, acceptedAtMonotonicMilliseconds: 1)
+    first.emitReady(try agentNetworkIngressVerifiedV2())
+    #expect(await agentNetworkIngressEventuallyV2 {
+        await handoff.snapshot().hasActivePrimary
+    })
+
+    let second = AgentNetworkIngressAcceptedFakeV2()
+    try await handoff.admit(second, acceptedAtMonotonicMilliseconds: 2)
+    second.emitReady(try agentNetworkIngressVerifiedV2())
+    #expect(await agentNetworkIngressEventuallyV2 {
+        let snapshot = await handoff.snapshot()
+        return unproven.beginCount == 1
+            && snapshot.bindingRole == .applicationPrimary
+            && snapshot.hasActivePrimary
+    })
+    #expect(active.cancelCount == 0)
+
+    let third = AgentNetworkIngressAcceptedFakeV2()
+    try await handoff.admit(third, acceptedAtMonotonicMilliseconds: 3)
+    third.emitReady(try agentNetworkIngressVerifiedV2())
+    #expect(await agentNetworkIngressEventuallyV2 {
+        let snapshot = await handoff.snapshot()
+        return unproven.cancelCount == 1
+            && snapshot.hasActivePrimary
+            && snapshot.hasActivePairing
+    })
+    #expect(active.cancelCount == 0)
+}

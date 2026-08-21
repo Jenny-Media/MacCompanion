@@ -1,0 +1,503 @@
+@testable import CompanionClient
+import CompanionDiscovery
+import CompanionDomain
+import CryptoKit
+import Foundation
+import Testing
+
+private func storageIdentity(
+    pairingID: UUID,
+    clientID: UUID,
+    scalar: UInt8
+) throws -> ClientPreparedIdentityV0 {
+    func key(_ value: UInt8) throws -> P256.Signing.PrivateKey {
+        var bytes = Data(repeating: 0, count: 32)
+        bytes[31] = value
+        return try P256.Signing.PrivateKey(rawRepresentation: bytes)
+    }
+    let session = try key(scalar)
+    let approval = try key(scalar + 1)
+    return try ClientPreparedIdentityV0(
+        pairingID: pairingID,
+        clientID: clientID,
+        sessionKey: ClientCustodiedPublicKeyV0(
+            role: .session,
+            reference: ClientSigningKeyReferenceV0(UUID()),
+            publicKeyX963: session.publicKey.x963Representation,
+            protection: .afterFirstUnlockThisDeviceOnly
+        ),
+        approvalKey: ClientCustodiedPublicKeyV0(
+            role: .approval,
+            reference: ClientSigningKeyReferenceV0(UUID()),
+            publicKeyX963: approval.publicKey.x963Representation,
+            protection: .whenUnlockedThisDeviceOnlyUserPresence
+        )
+    )
+}
+
+private func storageRecord(
+    identity: ClientPreparedIdentityV0,
+    hostID: UUID = UUID()
+) throws -> ClientDurablePairedHostV0 {
+    try ClientDurablePairedHostV0(
+        host: ClientPairedHostV0(
+            pairingID: identity.pairingID,
+            clientID: identity.clientID,
+            hostID: hostID,
+            deviceID: UUID(),
+            hostFingerprint: Data(repeating: 0x77, count: 32),
+            endpoints: [
+                try EndpointCandidate(
+                    kind: .dns,
+                    value: "studio.example.test",
+                    port: 47_474
+                ),
+            ],
+            deviceState: .activeMonitorOnly,
+            authorizationEpoch: .init(rawValue: 1),
+            grantRevision: .init(rawValue: 1),
+            policyRevision: .init(rawValue: 2)
+        ),
+        identity: identity
+    )
+}
+
+private actor StorageRecoveryCustody: ClientIdentityRecoveryCustodyV0 {
+    var pending: [ClientPreparedIdentityV0]
+    var valid = true
+    var adopted: [ClientPreparedIdentityV0] = []
+    var discarded: [ClientPreparedIdentityV0] = []
+
+    init(_ pending: [ClientPreparedIdentityV0]) {
+        self.pending = pending
+    }
+
+    func prepareIdentity(
+        pairingID: UUID,
+        clientID: UUID
+    ) async throws -> ClientPreparedIdentityV0 {
+        throw ClientIdentityPublicationErrorV0.invalidPhase
+    }
+
+    func validatePreparedIdentity(
+        _ identity: ClientPreparedIdentityV0
+    ) async throws -> Bool {
+        valid && pending.contains(identity)
+    }
+
+    func signSessionInput(
+        _ input: Data,
+        using reference: ClientSigningKeyReferenceV0
+    ) async throws -> Data {
+        throw ClientIdentityPublicationErrorV0.invalidPhase
+    }
+
+    func signApprovalInput(
+        _ input: Data,
+        using reference: ClientSigningKeyReferenceV0,
+        reason: ClientApprovalPresenceReasonV0
+    ) async throws -> Data {
+        throw ClientIdentityPublicationErrorV0.invalidPhase
+    }
+
+    func discardPreparedIdentity(
+        _ identity: ClientPreparedIdentityV0
+    ) async throws {
+        discarded.append(identity)
+        pending.removeAll { $0 == identity }
+    }
+
+    func preparedIdentities() async throws -> [ClientPreparedIdentityV0] {
+        pending
+    }
+
+    func markPreparedIdentityPublished(
+        _ identity: ClientPreparedIdentityV0
+    ) async throws {
+        adopted.append(identity)
+        pending.removeAll { $0 == identity }
+    }
+
+    func mutationCounts() -> (Int, Int) {
+        (adopted.count, discarded.count)
+    }
+
+    func setValid(_ value: Bool) {
+        valid = value
+    }
+}
+
+private actor StorageRecoveryPersistence: ClientPairedHostRecoveryPersistenceV0 {
+    var records: [UUID: ClientDurablePairedHostV0]
+
+    init(_ records: [ClientDurablePairedHostV0]) {
+        self.records = Dictionary(uniqueKeysWithValues: records.map {
+            ($0.pairingID, $0)
+        })
+    }
+
+    func storedRecord(
+        pairingID: UUID,
+        clientID: UUID
+    ) async throws -> ClientDurablePairedHostV0? {
+        guard let value = records[pairingID], value.clientID == clientID else {
+            return nil
+        }
+        return value
+    }
+}
+
+private struct ClientStorageTemporaryDirectory {
+    let root: URL
+    let store: URL
+
+    init() throws {
+        root = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "maccompanion-client-store-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        store = root.appendingPathComponent("PairedHosts", isDirectory: true)
+    }
+
+    func remove() { try? FileManager.default.removeItem(at: root) }
+}
+
+@Test func pairedHostStorageHasCanonicalValidatedRoundTripWithoutPrivateKeys() throws {
+    let identity = try storageIdentity(
+        pairingID: UUID(),
+        clientID: UUID(),
+        scalar: 10
+    )
+    let record = try storageRecord(identity: identity)
+    let encoded = try ClientPairedHostStorageCodecV0.encode(record)
+    #expect(try ClientPairedHostStorageCodecV0.decode(encoded) == record)
+    let text = try #require(String(data: encoded, encoding: .utf8))
+    #expect(text.contains("\"schemaVersion\":1"))
+    #expect(text.contains("\"sessionKey\""))
+    #expect(text.contains("\"approvalKey\""))
+    #expect(!text.contains("privateKey"))
+}
+
+@Test func pairedHostStorageRejectsUnknownWhitespaceAndBroadenedState() throws {
+    let identity = try storageIdentity(
+        pairingID: UUID(),
+        clientID: UUID(),
+        scalar: 12
+    )
+    let encoded = try ClientPairedHostStorageCodecV0.encode(
+        storageRecord(identity: identity)
+    )
+    let text = try #require(String(data: encoded, encoding: .utf8))
+
+    #expect(throws: ClientPairedHostStorageErrorV0.invalidRecord) {
+        _ = try ClientPairedHostStorageCodecV0.decode(
+            Data(text.replacingOccurrences(
+                of: "{",
+                with: "{\"unknown\":1,",
+                options: [],
+                range: text.startIndex..<text.index(after: text.startIndex)
+            ).utf8)
+        )
+    }
+    #expect(throws: ClientPairedHostStorageErrorV0.nonCanonicalEncoding) {
+        _ = try ClientPairedHostStorageCodecV0.decode(Data((" " + text).utf8))
+    }
+    #expect(throws: ClientPairedHostStorageErrorV0.invalidRecord) {
+        _ = try ClientPairedHostStorageCodecV0.decode(Data(text
+            .replacingOccurrences(of: "activeMonitorOnly", with: "activeGranted")
+            .utf8))
+    }
+}
+
+@Test func restartReconciliationAdoptsCommittedAndDeletesOnlyOrphan() async throws {
+    let clientID = UUID()
+    let committed = try storageIdentity(
+        pairingID: UUID(),
+        clientID: clientID,
+        scalar: 14
+    )
+    let orphan = try storageIdentity(
+        pairingID: UUID(),
+        clientID: clientID,
+        scalar: 16
+    )
+    let custody = StorageRecoveryCustody([committed, orphan])
+    let persistence = StorageRecoveryPersistence([
+        try storageRecord(identity: committed),
+    ])
+
+    let result = try await ClientIdentityRestartReconcilerV0.reconcile(
+        custody: custody,
+        persistence: persistence
+    )
+    #expect(result.adoptedPublishedCount == 1)
+    #expect(result.discardedOrphanCount == 1)
+    let counts = await custody.mutationCounts()
+    #expect(counts.0 == 1)
+    #expect(counts.1 == 1)
+}
+
+@Test func restartConflictAndMissingKeyPreflightMutateNothing() async throws {
+    let clientID = UUID()
+    let pending = try storageIdentity(
+        pairingID: UUID(),
+        clientID: clientID,
+        scalar: 18
+    )
+    let differentKeys = try storageIdentity(
+        pairingID: pending.pairingID,
+        clientID: clientID,
+        scalar: 20
+    )
+    let conflictCustody = StorageRecoveryCustody([pending])
+    let conflictStore = StorageRecoveryPersistence([
+        try storageRecord(identity: differentKeys),
+    ])
+    await #expect(throws: ClientPairedHostStorageErrorV0.recoveryConflict) {
+        _ = try await ClientIdentityRestartReconcilerV0.reconcile(
+            custody: conflictCustody,
+            persistence: conflictStore
+        )
+    }
+    let conflictCounts = await conflictCustody.mutationCounts()
+    #expect(conflictCounts.0 == 0)
+    #expect(conflictCounts.1 == 0)
+
+    let missingCustody = StorageRecoveryCustody([pending])
+    await missingCustody.setValid(false)
+    let matchingStore = StorageRecoveryPersistence([
+        try storageRecord(identity: pending),
+    ])
+    await #expect(throws: ClientPairedHostStorageErrorV0.keyUnavailable) {
+        _ = try await ClientIdentityRestartReconcilerV0.reconcile(
+            custody: missingCustody,
+            persistence: matchingStore
+        )
+    }
+    let missingCounts = await missingCustody.mutationCounts()
+    #expect(missingCounts.0 == 0)
+    #expect(missingCounts.1 == 0)
+}
+
+@Test func atomicFileStorePersistsCanonicalRecordAndExactReplayAcrossRestart() async throws {
+    let temporary = try ClientStorageTemporaryDirectory()
+    defer { temporary.remove() }
+    let identity = try storageIdentity(
+        pairingID: UUID(),
+        clientID: UUID(),
+        scalar: 22
+    )
+    let record = try storageRecord(identity: identity)
+    let store = try AtomicFileClientPairedHostStoreV0(
+        directory: temporary.store
+    )
+    #expect(try await store.commitAtomically(record) == .inserted)
+
+    let restarted = try AtomicFileClientPairedHostStoreV0(
+        directory: temporary.store
+    )
+    #expect(try await restarted.storedRecord(
+        pairingID: record.pairingID,
+        clientID: record.clientID
+    ) == record)
+    #expect(try await restarted.commitAtomically(record)
+        == .alreadyPresentExactRecord)
+    let entries = try FileManager.default.contentsOfDirectory(
+        at: temporary.store,
+        includingPropertiesForKeys: nil
+    )
+    let file = try #require(entries.first)
+    let attributes = try FileManager.default.attributesOfItem(
+        atPath: file.path
+    )
+    #expect((attributes[.posixPermissions] as? NSNumber)?.intValue == 0o600)
+    let encoded = try Data(contentsOf: file)
+    #expect(try ClientPairedHostStorageCodecV0.decode(encoded) == record)
+    #expect(!String(decoding: encoded, as: UTF8.self).contains("privateKey"))
+}
+
+@Test func atomicFileStoreSupportsBoundedMultipleHostsAndRealRecoveryLookup() async throws {
+    let temporary = try ClientStorageTemporaryDirectory()
+    defer { temporary.remove() }
+    let clientID = UUID()
+    let firstIdentity = try storageIdentity(
+        pairingID: UUID(),
+        clientID: clientID,
+        scalar: 24
+    )
+    let secondIdentity = try storageIdentity(
+        pairingID: UUID(),
+        clientID: clientID,
+        scalar: 26
+    )
+    let first = try storageRecord(identity: firstIdentity)
+    let second = try storageRecord(identity: secondIdentity)
+    let store = try AtomicFileClientPairedHostStoreV0(
+        directory: temporary.store,
+        maximumRecordCount: 2
+    )
+    #expect(try await store.commitAtomically(first) == .inserted)
+    #expect(try await store.commitAtomically(second) == .inserted)
+    #expect(try await store.allRecords().count == 2)
+    #expect(try await store.pairedHost(hostID: first.hostID) == first)
+    #expect(try await store.pairedHost(hostID: UUID()) == nil)
+
+    let custody = StorageRecoveryCustody([firstIdentity, secondIdentity])
+    let result = try await ClientIdentityRestartReconcilerV0.reconcile(
+        custody: custody,
+        persistence: store
+    )
+    #expect(result.adoptedPublishedCount == 2)
+    #expect(result.discardedOrphanCount == 0)
+
+    let thirdIdentity = try storageIdentity(
+        pairingID: UUID(),
+        clientID: clientID,
+        scalar: 28
+    )
+    await #expect(throws: ClientPairedHostFileStoreErrorV0.quotaExceeded) {
+        _ = try await store.commitAtomically(
+            storageRecord(identity: thirdIdentity)
+        )
+    }
+}
+
+@Test func atomicFileStoreRejectsPairingHostAndKeyReferenceConflicts() async throws {
+    let temporary = try ClientStorageTemporaryDirectory()
+    defer { temporary.remove() }
+    let firstIdentity = try storageIdentity(
+        pairingID: UUID(),
+        clientID: UUID(),
+        scalar: 30
+    )
+    let hostID = UUID()
+    let first = try storageRecord(identity: firstIdentity, hostID: hostID)
+    let store = try AtomicFileClientPairedHostStoreV0(
+        directory: temporary.store
+    )
+    _ = try await store.commitAtomically(first)
+
+    let differentIdentity = try storageIdentity(
+        pairingID: firstIdentity.pairingID,
+        clientID: firstIdentity.clientID,
+        scalar: 32
+    )
+    await #expect(
+        throws: ClientIdentityPublicationErrorV0.persistenceConflict
+    ) {
+        _ = try await store.commitAtomically(
+            storageRecord(identity: differentIdentity)
+        )
+    }
+
+    let anotherIdentity = try storageIdentity(
+        pairingID: UUID(),
+        clientID: UUID(),
+        scalar: 34
+    )
+    await #expect(
+        throws: ClientIdentityPublicationErrorV0.persistenceConflict
+    ) {
+        _ = try await store.commitAtomically(
+            storageRecord(identity: anotherIdentity, hostID: hostID)
+        )
+    }
+    #expect(try await store.allRecords() == [first])
+}
+
+@Test func preRenameFaultsPublishNothingWhilePostRenameRetryConverges() async throws {
+    for point in [
+        ClientPairedHostFileFaultPointV0.afterTemporaryWrite,
+        .afterTemporarySync,
+        .beforeRename,
+    ] {
+        let temporary = try ClientStorageTemporaryDirectory()
+        defer { temporary.remove() }
+        let identity = try storageIdentity(
+            pairingID: UUID(),
+            clientID: UUID(),
+            scalar: 36
+        )
+        let record = try storageRecord(identity: identity)
+        let faulting = try AtomicFileClientPairedHostStoreV0(
+            directory: temporary.store,
+            injectedFaults: [point]
+        )
+        await #expect(
+            throws: ClientPairedHostFileStoreErrorV0.injectedFault(point)
+        ) {
+            _ = try await faulting.commitAtomically(record)
+        }
+        let restarted = try AtomicFileClientPairedHostStoreV0(
+            directory: temporary.store
+        )
+        #expect(try await restarted.allRecords().isEmpty)
+    }
+
+    let temporary = try ClientStorageTemporaryDirectory()
+    defer { temporary.remove() }
+    let identity = try storageIdentity(
+        pairingID: UUID(),
+        clientID: UUID(),
+        scalar: 38
+    )
+    let record = try storageRecord(identity: identity)
+    let point = ClientPairedHostFileFaultPointV0
+        .afterRenameBeforeDirectorySync
+    let faulting = try AtomicFileClientPairedHostStoreV0(
+        directory: temporary.store,
+        injectedFaults: [point]
+    )
+    await #expect(
+        throws: ClientPairedHostFileStoreErrorV0.injectedFault(point)
+    ) {
+        _ = try await faulting.commitAtomically(record)
+    }
+    let restarted = try AtomicFileClientPairedHostStoreV0(
+        directory: temporary.store
+    )
+    #expect(try await restarted.commitAtomically(record)
+        == .alreadyPresentExactRecord)
+}
+
+@Test func restartFailsClosedOnNoncanonicalOrUnexpectedVisibleFiles() async throws {
+    let temporary = try ClientStorageTemporaryDirectory()
+    defer { temporary.remove() }
+    let identity = try storageIdentity(
+        pairingID: UUID(),
+        clientID: UUID(),
+        scalar: 40
+    )
+    let record = try storageRecord(identity: identity)
+    let store = try AtomicFileClientPairedHostStoreV0(
+        directory: temporary.store
+    )
+    _ = try await store.commitAtomically(record)
+    let files = try FileManager.default.contentsOfDirectory(
+        at: temporary.store,
+        includingPropertiesForKeys: nil
+    )
+    let recordFile = try #require(files.first)
+    var tampered = try Data(contentsOf: recordFile)
+    tampered.append(0x0a)
+    try tampered.write(to: recordFile)
+    let restarted = try AtomicFileClientPairedHostStoreV0(
+        directory: temporary.store
+    )
+    await #expect(
+        throws: ClientPairedHostStorageErrorV0.nonCanonicalEncoding
+    ) {
+        _ = try await restarted.allRecords()
+    }
+
+    try FileManager.default.removeItem(at: recordFile)
+    try Data("unexpected".utf8).write(
+        to: temporary.store.appendingPathComponent("README.txt")
+    )
+    let unexpected = try AtomicFileClientPairedHostStoreV0(
+        directory: temporary.store
+    )
+    await #expect(throws: ClientPairedHostFileStoreErrorV0.unsafeStorage) {
+        _ = try await unexpected.allRecords()
+    }
+}

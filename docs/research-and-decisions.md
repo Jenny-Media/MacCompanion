@@ -119,9 +119,23 @@ Unlocking the app and approving a particular operation are not treated as the sa
 
 ### Status data and privacy manifests
 
-Apple lists [`ProcessInfo.systemUptime`](https://developer.apple.com/documentation/foundation/processinfo/systemuptime) among APIs whose use may require an approved reason declaration in a privacy manifest.
+Apple's privacy-manifest documentation applies data-collection declarations to
+all supported platforms, while its current required-reason API platform list
+does not include macOS. The current source nevertheless uses covered API
+families for Mac-only uptime, disk-space, and durable-latch implementation.
 
-**Decision:** Stage 0 inventories every status API and release-manifest obligation. The alpha excludes public-IP discovery, top-process lists, screenshots, and third-party data calls until each receives a separate value and privacy review. Application/window/focus metadata is excluded from status and audit; the Adaptive Remote Surface allowlist permits only transient app names/icons, generic window ordinals, bounds, category, editability, and secure classification during an active Interactive Control session.
+**Decision:** the strict [Apple privacy-manifest profile](../spec/privacy-manifest/v0/profile.md)
+and live validator inventory every covered source occurrence, validate the iOS
+transitive target closure, and own one candidate resource per planned
+executable bundle. The no-relay/no-analytics architecture currently declares
+no developer collection or tracking; any developer-accessible transmission,
+retention, SDK, or changed data flow must revise that decision before code is
+admitted. The alpha excludes public-IP discovery, top-process lists,
+screenshots, and third-party data calls until each receives a separate value
+and privacy review. Application/window/focus metadata is excluded from status
+and audit; the Adaptive Remote Surface allowlist permits only transient app
+names/icons, generic window ordinals, bounds, category, editability, and secure
+classification during an active Interactive Control session.
 
 ## Protocol research
 
@@ -159,9 +173,16 @@ Policy needs to know what an operation reads, changes, invokes, disrupts, and wh
 
 Operation records are stored before provider admission. Repeated identical IDs return the same record, while digest mismatches fail. After a crash, unknowable external effects become `outcomeUnknown`; generic exactly-once execution is not claimed and unsafe operations are not silently retried.
 
-### D7 — Desired-state actions first
+### D7 — Desired-state actions first, with independent feasibility gates
 
-The initial controls set audio mute, set appearance, and start or stop a bounded keep-awake lease. They are easier to validate and reconcile than toggles or imperative scripts.
+The initial controls favor desired state over toggles or imperative scripts.
+Audio mute is the required MVP action and bounded keep-awake is a
+candidate-only lease. The proposed three-state system-appearance action is a
+[Stage 0 no-go](research/2026-08-21-native-system-appearance-feasibility.md):
+public AppKit controls only Mac Companion's own appearance, while System Events
+Automation adds explicit permission but cannot represent the user's
+automatic/system mode. A later light/dark Automation action would be a new,
+separately reviewed capability.
 
 ### D8 — Current observation is distinct from last-known state
 

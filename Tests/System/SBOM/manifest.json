@@ -1,0 +1,12 @@
+{"profile":"maccompanion.source-sbom-fixtures.v0","cases":[
+  {"path":"valid-source.json","expectedCodes":[]},
+  {"path":"invalid-creator.json","expectedCodes":["creatorBoundary"]},
+  {"path":"invalid-files-analyzed.json","expectedCodes":["packageBoundary"]},
+  {"path":"invalid-license-claim.json","expectedCodes":["packageBoundary"]},
+  {"path":"invalid-namespace.json","expectedCodes":["documentNamespace","namespaceBinding"]},
+  {"path":"invalid-relationship.json","expectedCodes":["relationshipBoundary"]},
+  {"path":"invalid-remote-package.json","expectedCodes":["packageSet"]},
+  {"path":"invalid-scope.json","expectedCodes":["scopeComment"]},
+  {"path":"invalid-unknown-field.json","expectedCodes":["documentSchema"]},
+  {"path":"invalid-version-mismatch.json","expectedCodes":["versionMismatch"]}
+]}

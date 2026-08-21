@@ -1,0 +1,130 @@
+{
+  "profile": "maccompanion.local-cli.v0.1",
+  "validCommandCases": [
+    {
+      "arguments": ["status"],
+      "kind": "status",
+      "format": "text",
+      "requestMethods": ["negotiateProtocol", "readAgentStatus"]
+    },
+    {
+      "arguments": ["status", "--json"],
+      "kind": "status",
+      "format": "json",
+      "requestMethods": ["negotiateProtocol", "readAgentStatus"]
+    },
+    {
+      "arguments": ["diagnostics", "export"],
+      "kind": "exportDiagnostics",
+      "format": "text",
+      "requestMethods": ["negotiateProtocol", "exportDiagnostics"]
+    },
+    {
+      "arguments": ["diagnostics", "export", "--json"],
+      "kind": "exportDiagnostics",
+      "format": "json",
+      "requestMethods": ["negotiateProtocol", "exportDiagnostics"]
+    },
+    {
+      "arguments": ["help"],
+      "kind": "help",
+      "format": null,
+      "requestMethods": []
+    },
+    {
+      "arguments": ["--help"],
+      "kind": "help",
+      "format": null,
+      "requestMethods": []
+    },
+    {
+      "arguments": ["-h"],
+      "kind": "help",
+      "format": null,
+      "requestMethods": []
+    },
+    {
+      "arguments": ["version"],
+      "kind": "version",
+      "format": null,
+      "requestMethods": []
+    },
+    {
+      "arguments": ["--version"],
+      "kind": "version",
+      "format": null,
+      "requestMethods": []
+    }
+  ],
+  "invalidCommandCases": [
+    {"arguments": [], "error": "missingCommand"},
+    {"arguments": ["unknown"], "error": "unknownCommand"},
+    {"arguments": ["--json", "status"], "error": "unknownCommand"},
+    {"arguments": ["diagnostics"], "error": "incompleteCommand"},
+    {"arguments": ["diagnostics", "tail"], "error": "unexpectedArgument"},
+    {"arguments": ["status", "--pretty"], "error": "unexpectedArgument"},
+    {"arguments": ["status", "--json", "--json"], "error": "duplicateOption"},
+    {"arguments": ["diagnostics", "export", "--pretty"], "error": "unexpectedArgument"},
+    {"arguments": ["help", "extra"], "error": "unexpectedArgument"},
+    {"arguments": ["version", "extra"], "error": "unexpectedArgument"}
+  ],
+  "expectedText": {
+    "helpLines": [
+      "Usage:",
+      "  maccompanionctl status [--json]",
+      "  maccompanionctl diagnostics export [--json]",
+      "  maccompanionctl help",
+      "  maccompanionctl version"
+    ],
+    "versionLines": ["maccompanionctl local protocol 0.1"],
+    "statusLines": [
+      "Mac Companion Agent",
+      "Protocol: 0.1",
+      "Enabled: yes",
+      "Console session: active",
+      "Agent process: ready",
+      "Menu app process: starting",
+      "Network: listening",
+      "Security: nominal",
+      "Routes: lan, privateNetwork",
+      "Paired devices: 2",
+      "Active remote sessions: 1",
+      "Providers: 0",
+      "Warnings: localNetworkDenied, menuAppUnavailable",
+      "Diagnostic sequence: 4",
+      "Generated at Unix ms: 1724000001000"
+    ],
+    "exportLines": [
+      "Mac Companion Agent",
+      "Protocol: 0.1",
+      "Enabled: yes",
+      "Console session: active",
+      "Agent process: ready",
+      "Menu app process: starting",
+      "Network: listening",
+      "Security: nominal",
+      "Routes: lan, privateNetwork",
+      "Paired devices: 2",
+      "Active remote sessions: 1",
+      "Providers: 0",
+      "Warnings: localNetworkDenied, menuAppUnavailable",
+      "Diagnostic sequence: 4",
+      "Generated at Unix ms: 1724000001000",
+      "Diagnostic events: 2",
+      "Event 3: warning network localNetworkDenied x1 at Unix ms 1724000000000",
+      "Event 4: error lifecycle menuAppUnavailable x2 at Unix ms 1724000001000",
+      "Private route details omitted: yes",
+      "Content-bearing data omitted: yes"
+    ]
+  },
+  "failureCases": [
+    {"category": "usage", "exitStatus": 2, "message": "Invalid maccompanionctl command."},
+    {"category": "peerAuthentication", "exitStatus": 3, "message": "Mac Companion rejected the CLI signing identity."},
+    {"category": "protocolIncompatible", "exitStatus": 4, "message": "Mac Companion local protocol is incompatible."},
+    {"category": "serviceUnavailable", "exitStatus": 5, "message": "Mac Companion Agent is unavailable."},
+    {"category": "requestDenied", "exitStatus": 6, "message": "Mac Companion denied the diagnostic request."},
+    {"category": "invalidResponse", "exitStatus": 7, "message": "Mac Companion returned an invalid diagnostic response."},
+    {"category": "outputFailure", "exitStatus": 8, "message": "maccompanionctl could not write its output."},
+    {"category": "internalFailure", "exitStatus": 9, "message": "maccompanionctl failed."}
+  ]
+}

@@ -1,0 +1,17 @@
+{
+  "authorizationEpoch": 4,
+  "coordinateSpaceRevision": 3,
+  "encodedHeight": 1080,
+  "encodedWidth": 1920,
+  "flags": 1,
+  "headerHex": "4d434d31010200010060000000001000018f60000000700080000000000000010000000000000004018f610000007000800000000000000100000000000000020000000000000003000000000000000700000000075bcd150780043800000000",
+  "headerLength": 96,
+  "interactiveSessionID": "018f6000-0000-7000-8000-000000000001",
+  "mediaSequence": 7,
+  "payloadLength": 4096,
+  "presentationTimeNanoseconds": 123456789,
+  "recordType": "videoAccessUnit",
+  "surfaceID": "018f6100-0000-7000-8000-000000000001",
+  "surfaceRevision": 2,
+  "version": 1
+}

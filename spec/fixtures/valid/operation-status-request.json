@@ -1,0 +1,11 @@
+{
+  "version": { "major": 0, "minor": 1 },
+  "messageID": "018f7000-0000-7000-8000-000000000004",
+  "correlationID": null,
+  "channel": "command",
+  "kind": "operation.status.request",
+  "sentAtUnixMilliseconds": 1787198500030,
+  "body": {
+    "operationID": "018f7100-0000-7000-8000-000000000001"
+  }
+}
