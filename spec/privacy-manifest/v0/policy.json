@@ -1,6 +1,6 @@
 {
   "profile": "maccompanion.apple-privacy-manifest.v0",
-  "appleDocumentationReviewedOn": "2026-08-20",
+  "appleDocumentationReviewedOn": "2026-08-21",
   "requiredReasonPlatforms": ["iOS", "iPadOS", "tvOS", "visionOS", "watchOS"],
   "collectionAssessment": {
     "developerCollection": false,
@@ -11,6 +11,7 @@
     {
       "id": "ios-app",
       "platform": "iOS",
+      "bundleOwner": "self",
       "requiredReasonReporting": true,
       "manifest": "spec/privacy-manifest/v0/targets/ios-app/PrivacyInfo.xcprivacy",
       "swiftEntryTargets": ["CompanionClientPlatform", "CompanionClientUI"],
@@ -19,14 +20,16 @@
     {
       "id": "mac-agent-service",
       "platform": "macOS",
+      "bundleOwner": "mac-containing-app",
       "requiredReasonReporting": false,
       "manifest": "spec/privacy-manifest/v0/targets/mac-agent-service/PrivacyInfo.xcprivacy",
-      "swiftEntryTargets": [],
+      "swiftEntryTargets": ["CompanionAgentNetworkPlatform", "CompanionAgentPlatform"],
       "accessedAPITypes": []
     },
     {
       "id": "mac-containing-app",
       "platform": "macOS",
+      "bundleOwner": "self",
       "requiredReasonReporting": false,
       "manifest": "spec/privacy-manifest/v0/targets/mac-containing-app/PrivacyInfo.xcprivacy",
       "swiftEntryTargets": [],

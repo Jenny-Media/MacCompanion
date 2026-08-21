@@ -7,17 +7,59 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		0F8835B7FFA65720544938A0 /* CompanionAgentPlatform in Frameworks */ = {isa = PBXBuildFile; productRef = 80D9AE0F7D36237111CFE64A /* CompanionAgentPlatform */; };
+		8454DF0C857C2BD213CF3354 /* MacCompanionAgent in Embed Dependencies */ = {isa = PBXBuildFile; fileRef = AE3D392DEDADD8FF0EA82A87 /* MacCompanionAgent */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
+		9EA787566F61B8172FB4B367 /* CompanionAgentNetworkPlatform in Frameworks */ = {isa = PBXBuildFile; productRef = DCFF602F89E1AE1B2E84AFAF /* CompanionAgentNetworkPlatform */; };
 		BC48C8D41E65C3F53831C0BA /* MacCompanionApplication.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9224B6E6FD7914BF9ACCABD3 /* MacCompanionApplication.swift */; };
 		CC7F99B97D2306D662D55CDB /* CompanionMacUI in Frameworks */ = {isa = PBXBuildFile; productRef = A41CC69D69523D4B80517C00 /* CompanionMacUI */; };
 		D8290859ACAA145A04CA0ED1 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = A4F604F15E0382A43D678F69 /* PrivacyInfo.xcprivacy */; };
+		E66B259D61CFAFDFD8A71F09 /* MacCompanionAgentMain.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6D64FA7490F520B548282CD7 /* MacCompanionAgentMain.swift */; };
 		ED3708C188DC07BBB95D0466 /* CompanionMacApp in Frameworks */ = {isa = PBXBuildFile; productRef = 4E6E2C3ED3D78E6AD3075740 /* CompanionMacApp */; };
+		F45D094EAD266660CDA1A5AD /* media.jenny.maccompanion.agent.plist in CopyFiles */ = {isa = PBXBuildFile; fileRef = AA87F8A3795BEC0C4AAE31F2 /* media.jenny.maccompanion.agent.plist */; };
 /* End PBXBuildFile section */
 
+/* Begin PBXContainerItemProxy section */
+		ACDE3B6572221D1E64EEDA7E /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = E28FEAFF60C8AD0CA7571F3C /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 058C8404A27433B459AE7B92;
+			remoteInfo = MacCompanionAgent;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		2269A33DCFB2A0E5FB3BEABD /* CopyFiles */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = Contents/Library/LaunchAgents;
+			dstSubfolderSpec = 1;
+			files = (
+				F45D094EAD266660CDA1A5AD /* media.jenny.maccompanion.agent.plist in CopyFiles */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		F3D1DB4B78E22D1C31E11F9F /* Embed Dependencies */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 6;
+			files = (
+				8454DF0C857C2BD213CF3354 /* MacCompanionAgent in Embed Dependencies */,
+			);
+			name = "Embed Dependencies";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
 /* Begin PBXFileReference section */
+		6D64FA7490F520B548282CD7 /* MacCompanionAgentMain.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacCompanionAgentMain.swift; sourceTree = "<group>"; };
 		6EE5FB02460840012C115D0C /* MacCompanionKit */ = {isa = PBXFileReference; lastKnownFileType = folder; name = MacCompanionKit; path = Packages/MacCompanionKit; sourceTree = SOURCE_ROOT; };
 		9224B6E6FD7914BF9ACCABD3 /* MacCompanionApplication.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacCompanionApplication.swift; sourceTree = "<group>"; };
 		A4F604F15E0382A43D678F69 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
+		AA87F8A3795BEC0C4AAE31F2 /* media.jenny.maccompanion.agent.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = media.jenny.maccompanion.agent.plist; sourceTree = "<group>"; };
 		ACDC9CD0AAA32C73DC844846 /* MacCompanion.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = MacCompanion.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		AE3D392DEDADD8FF0EA82A87 /* MacCompanionAgent */ = {isa = PBXFileReference; includeInIndex = 0; path = MacCompanionAgent; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -27,6 +69,15 @@
 			files = (
 				ED3708C188DC07BBB95D0466 /* CompanionMacApp in Frameworks */,
 				CC7F99B97D2306D662D55CDB /* CompanionMacUI in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		F8D67FA84789F4EDC79E770C /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				9EA787566F61B8172FB4B367 /* CompanionAgentNetworkPlatform in Frameworks */,
+				0F8835B7FFA65720544938A0 /* CompanionAgentPlatform in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -54,6 +105,7 @@
 		199F53BF55A87C0EF07FD320 /* MacCompanionMac */ = {
 			isa = PBXGroup;
 			children = (
+				4E18300EDAD82C05188961B9 /* LaunchAgents */,
 				9224B6E6FD7914BF9ACCABD3 /* MacCompanionApplication.swift */,
 			);
 			path = MacCompanionMac;
@@ -75,12 +127,29 @@
 			path = "privacy-manifest";
 			sourceTree = "<group>";
 		};
+		4E18300EDAD82C05188961B9 /* LaunchAgents */ = {
+			isa = PBXGroup;
+			children = (
+				AA87F8A3795BEC0C4AAE31F2 /* media.jenny.maccompanion.agent.plist */,
+			);
+			path = LaunchAgents;
+			sourceTree = "<group>";
+		};
 		5A7ED1074BD7D73EC470233C /* Products */ = {
 			isa = PBXGroup;
 			children = (
 				ACDC9CD0AAA32C73DC844846 /* MacCompanion.app */,
+				AE3D392DEDADD8FF0EA82A87 /* MacCompanionAgent */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		67157B848972E4EF9560EC22 /* MacCompanionAgent */ = {
+			isa = PBXGroup;
+			children = (
+				6D64FA7490F520B548282CD7 /* MacCompanionAgentMain.swift */,
+			);
+			path = MacCompanionAgent;
 			sourceTree = "<group>";
 		};
 		70EA8A2D1FBAD5461016FD47 /* targets */ = {
@@ -110,6 +179,7 @@
 		EAF0BD077A796C90560849AF /* Apps */ = {
 			isa = PBXGroup;
 			children = (
+				67157B848972E4EF9560EC22 /* MacCompanionAgent */,
 				199F53BF55A87C0EF07FD320 /* MacCompanionMac */,
 			);
 			path = Apps;
@@ -118,17 +188,40 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
+		058C8404A27433B459AE7B92 /* MacCompanionAgent */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = B8B96D86E9EF6262B2AB4271 /* Build configuration list for PBXNativeTarget "MacCompanionAgent" */;
+			buildPhases = (
+				5191508D654936F3A5E96256 /* Sources */,
+				F8D67FA84789F4EDC79E770C /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = MacCompanionAgent;
+			packageProductDependencies = (
+				DCFF602F89E1AE1B2E84AFAF /* CompanionAgentNetworkPlatform */,
+				80D9AE0F7D36237111CFE64A /* CompanionAgentPlatform */,
+			);
+			productName = MacCompanionAgent;
+			productReference = AE3D392DEDADD8FF0EA82A87 /* MacCompanionAgent */;
+			productType = "com.apple.product-type.tool";
+		};
 		E5E19139B51975D7E1222A9A /* MacCompanion */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = E9AB5429B71E15ED44083232 /* Build configuration list for PBXNativeTarget "MacCompanion" */;
 			buildPhases = (
 				E9E7E43D95172F85DB31FC3C /* Sources */,
 				88358ED887D0DD6343426556 /* Resources */,
+				2269A33DCFB2A0E5FB3BEABD /* CopyFiles */,
 				2F1EBB6D3F9D3B75945EBF79 /* Frameworks */,
+				F3D1DB4B78E22D1C31E11F9F /* Embed Dependencies */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				B801A98032CC3E3F54C1FB7C /* PBXTargetDependency */,
 			);
 			name = MacCompanion;
 			packageProductDependencies = (
@@ -148,6 +241,9 @@
 				BuildIndependentTargetsInParallel = YES;
 				LastUpgradeCheck = 1430;
 				TargetAttributes = {
+					058C8404A27433B459AE7B92 = {
+						ProvisioningStyle = Automatic;
+					};
 					E5E19139B51975D7E1222A9A = {
 						ProvisioningStyle = Automatic;
 					};
@@ -171,6 +267,7 @@
 			projectRoot = "";
 			targets = (
 				E5E19139B51975D7E1222A9A /* MacCompanion */,
+				058C8404A27433B459AE7B92 /* MacCompanionAgent */,
 			);
 		};
 /* End PBXProject section */
@@ -187,6 +284,14 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
+		5191508D654936F3A5E96256 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				E66B259D61CFAFDFD8A71F09 /* MacCompanionAgentMain.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		E9E7E43D95172F85DB31FC3C /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -196,6 +301,14 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		B801A98032CC3E3F54C1FB7C /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 058C8404A27433B459AE7B92 /* MacCompanionAgent */;
+			targetProxy = ACDE3B6572221D1E64EEDA7E /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		03E25B6569716C8ED3E816A5 /* Release */ = {
@@ -347,6 +460,42 @@
 			};
 			name = Debug;
 		};
+		50BD45E4E9FF587749C6FD4D /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_INJECT_BASE_ENTITLEMENTS = NO;
+				COMBINE_HIDPI_IMAGES = YES;
+				ENABLE_APP_SANDBOX = NO;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				OTHER_CODE_SIGN_FLAGS = "-i $(PRODUCT_BUNDLE_IDENTIFIER)";
+				PRODUCT_BUNDLE_IDENTIFIER = media.jenny.maccompanion.agent;
+				PRODUCT_NAME = MacCompanionAgent;
+				SDKROOT = macosx;
+				SKIP_INSTALL = YES;
+			};
+			name = Release;
+		};
+		8CBE96B2767BF25E87121227 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_INJECT_BASE_ENTITLEMENTS = NO;
+				COMBINE_HIDPI_IMAGES = YES;
+				ENABLE_APP_SANDBOX = NO;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				OTHER_CODE_SIGN_FLAGS = "-i $(PRODUCT_BUNDLE_IDENTIFIER)";
+				PRODUCT_BUNDLE_IDENTIFIER = media.jenny.maccompanion.agent;
+				PRODUCT_NAME = MacCompanionAgent;
+				SDKROOT = macosx;
+				SKIP_INSTALL = YES;
+			};
+			name = Debug;
+		};
 		A11EDF2C2F67A6D656256588 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -383,6 +532,15 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Debug;
 		};
+		B8B96D86E9EF6262B2AB4271 /* Build configuration list for PBXNativeTarget "MacCompanionAgent" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				8CBE96B2767BF25E87121227 /* Debug */,
+				50BD45E4E9FF587749C6FD4D /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
 		E9AB5429B71E15ED44083232 /* Build configuration list for PBXNativeTarget "MacCompanion" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
@@ -406,9 +564,17 @@
 			isa = XCSwiftPackageProductDependency;
 			productName = CompanionMacApp;
 		};
+		80D9AE0F7D36237111CFE64A /* CompanionAgentPlatform */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = CompanionAgentPlatform;
+		};
 		A41CC69D69523D4B80517C00 /* CompanionMacUI */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = CompanionMacUI;
+		};
+		DCFF602F89E1AE1B2E84AFAF /* CompanionAgentNetworkPlatform */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = CompanionAgentNetworkPlatform;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

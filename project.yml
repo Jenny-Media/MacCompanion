@@ -5,6 +5,7 @@ options:
   deploymentTarget:
     macOS: "26.0"
   groupSortPosition: top
+  minimumXcodeGenVersion: 2.46.0
 
 packages:
   MacCompanionKit:
@@ -24,9 +25,22 @@ targets:
     platform: macOS
     sources:
       - path: Apps/MacCompanionMac
+        excludes:
+          - LaunchAgents
+      - path: Apps/MacCompanionMac/LaunchAgents/media.jenny.maccompanion.agent.plist
+        buildPhase:
+          copyFiles:
+            destination: wrapper
+            subpath: Contents/Library/LaunchAgents
       - path: spec/privacy-manifest/v0/targets/mac-containing-app/PrivacyInfo.xcprivacy
         buildPhase: resources
     dependencies:
+      - target: MacCompanionAgent
+        embed: true
+        link: false
+        codeSign: true
+        copy:
+          destination: executables
       - package: MacCompanionKit
         product: CompanionMacApp
       - package: MacCompanionKit
@@ -44,6 +58,25 @@ targets:
         MARKETING_VERSION: 0.1.0
         PRODUCT_BUNDLE_IDENTIFIER: media.jenny.maccompanion
         PRODUCT_NAME: Mac Companion
+
+  MacCompanionAgent:
+    type: tool
+    platform: macOS
+    sources:
+      - path: Apps/MacCompanionAgent
+    dependencies:
+      - package: MacCompanionKit
+        product: CompanionAgentNetworkPlatform
+      - package: MacCompanionKit
+        product: CompanionAgentPlatform
+    settings:
+      base:
+        CODE_SIGN_INJECT_BASE_ENTITLEMENTS: NO
+        ENABLE_APP_SANDBOX: NO
+        OTHER_CODE_SIGN_FLAGS: "-i $(PRODUCT_BUNDLE_IDENTIFIER)"
+        PRODUCT_BUNDLE_IDENTIFIER: media.jenny.maccompanion.agent
+        PRODUCT_NAME: MacCompanionAgent
+        SKIP_INSTALL: YES
 
 schemes:
   MacCompanion:

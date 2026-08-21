@@ -50,9 +50,8 @@ MacCompanion/
   MacCompanion.xcodeproj
   Apps/
     MacCompanionMac/          # menu bar, settings, TCC owner, interactive executor
+    MacCompanionAgent/        # embedded LaunchAgent executable and process root
     MacCompanioniOS/          # iPhone and iPad client
-  Services/
-    MacCompanionAgent/        # LaunchAgent, listener, policy, persistence, audit
   Tools/
     maccompanionctl/          # local bounded diagnostics
   Packages/
@@ -81,7 +80,7 @@ MacCompanion/
   README.md
 ```
 
-The repository name may remain `MacCompanion`; user-facing spacing belongs in product metadata. The checked-in project is authoritative initially. Do not introduce a project generator, monorepo orchestrator, server stack, or code-generation pipeline until repeated manual drift proves one is needed.
+The repository name remains `MacCompanion`; user-facing spacing belongs in product metadata. `project.yml` is the non-secret XcodeGen source and the generated `MacCompanion.xcodeproj` is checked in for normal Xcode use. Project regeneration must be deterministic and both files must pass the permanent-target topology validator. Do not introduce a separate monorepo orchestrator, server stack, or protocol code-generation pipeline until repeated drift proves one is needed.
 
 ### Open-source posture
 
@@ -291,9 +290,9 @@ Concurrency design is part of the feature review. A detached task, unchecked sen
 
 ### Workstream A — release and lifecycle foundation
 
-1. Use the privately confirmed Team ID and registered `media.jenny.maccompanion` App ID; register remaining role IDs when their permanent targets are ready, resolve Apple's required prerelease App Store URL/Apple ID path, and submit the prepared entitlement request.
+1. Use the privately confirmed Team ID and registered `media.jenny.maccompanion` App ID; keep the standalone Agent's build-proven code identity distinct, register remaining bundle IDs only when their permanent targets require them, resolve Apple's prerelease App Store URL/Apple ID path, and submit the prepared entitlement request.
 2. Initialize version control, ownership rules, ADR template, and CI.
-3. Extend the checked-in release-shaped Mac containing app with the embedded LaunchAgent, then add the iOS app and CLI as their identifiers and signed boundaries become ready.
+3. Keep the checked-in containing app and embedded inert Agent topology regression-bound; next add authenticated local IPC/lifecycle composition, then the iOS app and CLI as their identifiers and signed boundaries become ready.
 4. Prove Developer ID archive, hardened runtime, notarization, DMG, clean install, login-item registration, and complete uninstall.
 5. Prove authenticated local IPC and fail-closed menu-app/agent version negotiation.
 
@@ -460,7 +459,7 @@ A work item is ready for implementation only when it has:
 - Physical-device evidence required
 - Explicit non-goals and dependencies
 
-Stage 0 coding proceeds in independent lanes. Accepted specifications, pure Swift packages, conformance tests, CI, identity-neutral target planning, and disposable platform harnesses do not wait for the managed-entitlement request. The Team ID is confirmed privately and the containing-app App ID is registered; remaining role App IDs, designated requirements, Keychain groups, `SMAppService` labels, and release-shaped signing still require verified signed-build custody. The prepared entitlement request is blocked by Apple's required App Store URL and numeric Apple ID for the unreleased product, not by the Mac App ID. Entitlement approval, locked-session success, formal interviews, and completed market validation are not required for independent work or the Observe foundation.
+Stage 0 coding proceeds in independent lanes. Accepted specifications, pure Swift packages, conformance tests, CI, permanent non-entitled target composition, and disposable platform harnesses do not wait for the managed-entitlement request. The Team ID is confirmed privately, the containing-app App ID is registered, and the separately signed Agent identity and LaunchAgent topology are build-proven; remaining iOS/XPC App IDs, authenticated designated requirements, Keychain groups, live `SMAppService` registration, and release-shaped stable-toolchain signing still require proof. The prepared entitlement request is blocked by Apple's required App Store URL and numeric Apple ID for the unreleased product, not by the Mac App ID. Entitlement approval, locked-session success, formal interviews, and completed market validation are not required for independent work or the Observe foundation.
 
 ## 12. Definition of Done
 
@@ -480,7 +479,7 @@ Feature code existing on one developer Mac is not completion; the release-shaped
 
 ## 13. Remaining implementation decisions
 
-The company-controlled reverse-DNS prefix is resolved as `media.jenny`; the Team ID is confirmed privately and `media.jenny.maccompanion` is registered. The checked-in permanent containing-app target now proves local Apple Development and Developer ID signing, hardened runtime, exact identity/privacy binding, and launch on Xcode 27 beta without tracking a team or credential. Stable macOS 26/Xcode 26.6 and controlled release custody still gate final signed release evidence, while entitlement approval blocks only external Persistent Content Capture builds. The entitlement form is prepared but requires an App Store URL and numeric Apple ID; that truthful prerelease/direct-distribution path remains external. None of these blocks specifications, packages, fixtures, CI, Xcode 27 beta development, remaining permanent targets, or disposable experiments. The following are bounded implementation decisions and do not require more product clarification:
+The company-controlled reverse-DNS prefix is resolved as `media.jenny`; the Team ID is confirmed privately and `media.jenny.maccompanion` is registered. The checked-in permanent containing-app target now embeds the separately signed but inert Agent and proves local Apple Development and Developer ID signing, hardened runtime, distinct exact identities, universal construction, LaunchAgent layout, and privacy ownership on Xcode 27 beta without tracking a team, credential, profile, or managed entitlement. Stable macOS 26/Xcode 26.6, authenticated lifecycle execution, and controlled release custody still gate final signed release evidence, while entitlement approval blocks only external Persistent Content Capture builds. The entitlement form is prepared but requires an App Store URL and numeric Apple ID; that truthful prerelease/direct-distribution path remains external. None of these blocks specifications, packages, fixtures, CI, Xcode 27 beta development, authenticated Mac/Agent composition, remaining permanent targets, or disposable experiments. The following are bounded implementation decisions and do not require more product clarification:
 
 - Exact authenticated local IPC peer-verification mechanism
 - Signed/physical X.509 and Keychain execution plus authenticated local recovery confirmation under the frozen lifecycle profile

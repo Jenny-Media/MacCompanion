@@ -184,12 +184,14 @@ def validate_policy(policy: Any) -> set[str]:
         return errors | {"policyTargets"}
     ids: list[str] = []
     for target in targets:
-        if not exact_keys(target, {"id", "platform", "requiredReasonReporting", "manifest", "swiftEntryTargets", "accessedAPITypes"}):
+        if not exact_keys(target, {"id", "platform", "bundleOwner", "requiredReasonReporting", "manifest", "swiftEntryTargets", "accessedAPITypes"}):
             errors.add("policyTargetSchema")
             continue
         ids.append(target["id"] if isinstance(target["id"], str) else "")
         if target["platform"] not in {"iOS", "macOS"}:
             errors.add("targetPlatform")
+        if target["bundleOwner"] not in {"self", "mac-containing-app"}:
+            errors.add("targetBundleOwner")
         if not safe_path(target["manifest"]):
             errors.add("policyManifestPath")
         entries = target["swiftEntryTargets"]
@@ -203,6 +205,17 @@ def validate_policy(policy: Any) -> set[str]:
             errors.add("macReportingUnexpected")
     if ids != ["ios-app", "mac-agent-service", "mac-containing-app"]:
         errors.add("targetOrderOrDuplicate")
+    by_id = {
+        target["id"]: target
+        for target in targets
+        if isinstance(target, dict) and isinstance(target.get("id"), str)
+    }
+    if by_id.get("ios-app", {}).get("bundleOwner") != "self":
+        errors.add("iosBundleOwner")
+    if by_id.get("mac-containing-app", {}).get("bundleOwner") != "self":
+        errors.add("macContainingBundleOwner")
+    if by_id.get("mac-agent-service", {}).get("bundleOwner") != "mac-containing-app":
+        errors.add("macAgentBundleOwner")
     inventory = policy["sourceInventory"]
     if not isinstance(inventory, list):
         return errors | {"sourceInventory"}
@@ -331,6 +344,20 @@ def main() -> int:
             ]
             kind = "ios" if target["requiredReasonReporting"] else "mac"
             errors |= validate_manifest(REPOSITORY / target["manifest"], kind, expected)
+
+        targets_by_id = {target["id"]: target for target in policy["targets"]}
+        for target in policy["targets"]:
+            owner_id = target["bundleOwner"]
+            if owner_id == "self":
+                continue
+            owner = targets_by_id.get(owner_id)
+            if owner is None:
+                errors.add("missingBundleOwner")
+                continue
+            if (REPOSITORY / target["manifest"]).read_bytes() != (
+                REPOSITORY / owner["manifest"]
+            ).read_bytes():
+                errors.add("bundleOwnerManifestMismatch")
 
         observed = observed_source_inventory()
         expected_inventory = policy["sourceInventory"]

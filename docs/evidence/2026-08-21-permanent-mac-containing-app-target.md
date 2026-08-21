@@ -6,12 +6,13 @@ Status: provisional target and signing proof on Xcode 27 beta; not a release can
 
 ## Scope
 
-The first permanent Apple target is the visible Mac containing app only. It
+The first permanent Apple target began as the visible Mac containing app. It
 uses the registered `media.jenny.maccompanion` identifier and the package-owned
-Mac dashboard. Until authenticated local IPC is instantiated, the dashboard
-truthfully presents the Agent as unavailable. The target does not embed an
-Agent, listen on the network, start capture or input, or claim product
-readiness.
+Mac dashboard. The project now also embeds the separately signed but inert
+[permanent Agent target](2026-08-21-permanent-embedded-mac-agent-target.md).
+Until authenticated local IPC is instantiated, the dashboard truthfully
+presents the Agent as unavailable. Neither target listens on the network,
+starts capture or input, or claims product readiness.
 
 `project.yml` is the non-secret generator input and
 `MacCompanion.xcodeproj` is checked in for normal Xcode use. The project does
@@ -26,7 +27,8 @@ signing values are supplied only by the controlled local or release job.
 - Version/build: `0.1.0` / `1`
 - Deployment floor: macOS 26.0
 - Form: persistent `LSUIElement` menu-bar application
-- Dependencies: local `CompanionMacApp` and `CompanionMacUI` products only
+- Dependencies: local `CompanionMacApp` and `CompanionMacUI` products plus the
+  copy-time-signed permanent Agent command-line tool
 - Runtime: hardened
 - App Sandbox: disabled, matching the Stage 0 direct-distribution baseline
 - Entitlements: none; Persistent Content Capture is deliberately absent
@@ -71,10 +73,10 @@ was attempted; those would be false release evidence at this stage.
 
 - Repeat the target build and platform evidence with stable macOS 26 and Xcode
   26.6 before any release-candidate claim.
-- Register and bind the Agent identifier before adding its permanent target.
-- Embed the signed Agent, then prove local designated-requirement/audit-token
-  authentication, lifecycle registration, update choreography, and clean
-  uninstall.
+- Use the now-bound embedded Agent identity to prove local
+  designated-requirement/audit-token authentication, lifecycle registration,
+  update choreography, and clean uninstall. Packaging alone does not satisfy
+  those gates.
 - Add final icon, onboarding, Sparkle, packaging, notarization, stapling, and
   Gatekeeper evidence only against the exact external-alpha candidate.
 - Add Persistent Content Capture only after Apple approval and a matching

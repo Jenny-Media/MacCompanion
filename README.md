@@ -197,7 +197,14 @@ Actions remain available without entering or keeping the live screen visible.
 Its manual stateless iOS keyboard forwards bounded text/delete actions without
 claiming focus-aware Smart Input or retaining a remote field value.
 
-The first [permanent Mac containing-app target](docs/evidence/2026-08-21-permanent-mac-containing-app-target.md) is now checked in with the registered bundle identifier, exact privacy manifest, package-owned unavailable-state dashboard, hardened runtime, and provisional Apple Development plus Developer ID signing proof on Xcode 27 beta. It deliberately has no managed entitlement or embedded Agent yet. Permanent LaunchAgent, iOS, CLI, Keychain-group, and TCC identities remain gated in the execution ledger.
+The [permanent Mac containing-app target](docs/evidence/2026-08-21-permanent-mac-containing-app-target.md)
+now embeds the separately signed, deliberately inert [permanent Agent
+target](docs/evidence/2026-08-21-permanent-embedded-mac-agent-target.md), its
+exact LaunchAgent plist, and the bundle-owner-bound privacy resource. Xcode 27
+beta proves both reverse-DNS Developer ID identities, universal construction,
+and hardened runtime without tracking a team, credential, or managed
+entitlement. Authenticated local IPC, lifecycle registration, iOS, CLI,
+Keychain-group, and TCC evidence remain gated in the execution ledger.
 
 The [bundle-independent diagnostic CLI v0.1 contract](spec/local-cli/v0/README.md)
 now accepts only content-free status, sanitized diagnostics export, help, and

@@ -10,10 +10,13 @@ tracking, tracking domains, collected data, or required-reason APIs. The Mac
 containing-app and Agent-service templates declare no tracking, tracking
 domains, or collected data, and intentionally omit the required-reason key.
 
-This is a source and candidate-resource claim, not built-bundle or App Store
-evidence. Permanent Apple targets do not exist yet. Each final executable must
-copy its indexed `PrivacyInfo.xcprivacy` to Apple's required bundle location,
-and signed-candidate validation must inspect the resulting bundles.
+This is a source and candidate-resource claim, not App Store evidence. Each
+final executable bundle must copy its indexed `PrivacyInfo.xcprivacy` to
+Apple's required bundle location, and signed-candidate validation must inspect
+the resulting bundles. The permanent `SMAppService.agent` topology uses a
+separately signed standalone Mach-O rather than a nested bundle; its logical
+template is byte-bound to the containing-app manifest instead of inventing an
+unsupported helper Resources location.
 
 ## Primary-source basis
 
@@ -50,15 +53,20 @@ or target-topology change.
 5. It evaluates the live SwiftPM graph. A covered call reachable from either
    iOS entry target fails unless the entire source file is excluded by a
    whole-file `#if os(macOS)` guard.
+6. It enforces the Agent-to-containing-app bundle-owner relationship and exact
+   manifest byte equality for the standalone LaunchAgent topology.
 
 Twelve indexed plist fixtures prove valid iOS/Mac forms and rejection of
 collection, tracking, domains, missing/extra keys, duplicate XML keys,
 duplicate categories, invalid reason codes, and SDK-only reason codes that are
 not valid for these app-owned bundles. The live inventory currently
-contains six records: Agent and Host `systemUptime`, Host `systemSize` and
-`systemFreeSize`, and Persistence `stat`/`fstat`. The shared Persistence module
-is reachable from the client UI but its file is wholly macOS-guarded; the
-unguarded Agent occurrence is outside the iOS closure.
+contains 11 records: Agent and Host `systemUptime`; Host `systemSize` and
+`systemFreeSize`; Agent-platform intent-store `stat`/`fstat`; deny-latch
+`stat`/`fstat`; and SQLite path-security `stat`/`lstat`/`fstat`. The shared
+Persistence module is reachable from the client UI, but the inventoried files
+are wholly macOS-guarded. The unguarded Agent and Agent-platform occurrences
+are outside the iOS closure, including after the permanent Agent target bound
+both platform entry products.
 
 The validator runs in `scripts/validate.sh` before Swift compilation.
 

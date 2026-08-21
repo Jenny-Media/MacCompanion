@@ -37,7 +37,7 @@ The confirmed planned identifiers are:
 | Local XPC services, if selected | `media.jenny.maccompanion.xpc.<role>` |
 | iOS/iPadOS app | `media.jenny.maccompanion.ios` |
 
-The Team ID and final containing-app App ID preconditions are resolved. Remaining role App IDs, signed designated requirements, Keychain groups, LaunchAgent identity, update configuration, managed-entitlement approval, audit migrations, and App Store records still need to be bound deliberately. Renaming an official identifier later is not treated as a cosmetic change.
+The Team ID and final containing-app App ID preconditions are resolved. The embedded standalone Agent now has a build-proven reverse-DNS code-signing identifier and LaunchAgent identity without requiring a new portal App ID for this packaging step. Remaining iOS/XPC App IDs, authenticated designated-requirement policy, Keychain groups, update configuration, managed-entitlement approval, audit migrations, and App Store records still need to be bound deliberately. Renaming an official identifier later is not treated as a cosmetic change.
 
 The Persistent Content Capture entitlement is managed. Apple says it enables VNC apps to view and record the screen and requires a request before use; see [Persistent Content Capture](https://developer.apple.com/documentation/bundleresources/entitlements/com.apple.developer.persistent-content-capture). The Jenny Media LLC Account Holder prepared the request against `media.jenny.maccompanion`, including the authorization acknowledgement, but Apple's form requires an App Store URL and numeric App Apple ID. Because the directly distributed Mac app is unreleased, the request remains unsent until a truthful prerelease App Store Connect record path is verified or Apple Developer Support confirms the direct-distribution alternative. An Entitlements support case was opened on 2026-08-21 and its Case ID is retained privately. Stage 1 monitoring can proceed; an external persistent Interactive Control build cannot.
 
@@ -268,12 +268,14 @@ Deleting only the app is detected as an incomplete uninstall case in testing. Do
 
 The final Mac App ID is registered. Completing the Persistent Content Capture request now waits only on Apple's required App Store URL/Apple ID path for this unreleased, directly distributed Mac app. Pending request status does not block non-capture permanent targets; approval gates the release entitlement/profile and external persistent Control builds.
 
-The registered containing-app identity has therefore advanced independently:
-its [checked-in permanent target and provisional signed builds](evidence/2026-08-21-permanent-mac-containing-app-target.md)
-prove the non-capture bundle boundary on Xcode 27 beta. The checklist above is
-still the gate for completing the full Apple target topology and for final
-release evidence; the beta proof does not waive stable-toolchain, Agent,
-notarization, packaging, or clean-machine requirements.
+The registered containing-app identity and standalone Agent code identity have
+therefore advanced independently: the [containing-app target](evidence/2026-08-21-permanent-mac-containing-app-target.md)
+and [embedded inert Agent](evidence/2026-08-21-permanent-embedded-mac-agent-target.md)
+prove the non-capture bundle topology, distinct Developer ID designated
+identifiers, and privacy ownership on Xcode 27 beta. The checklist above still
+gates the remaining Apple targets and final release evidence; this proof does
+not waive stable-toolchain, authenticated lifecycle, notarization, packaging,
+or clean-machine requirements.
 
 ### Ready for external Mac alpha
 

@@ -50,11 +50,17 @@ and is not treated as `systemUptime` or `mach_absolute_time` by this profile.
 ## Target boundary
 
 The templates cover the iOS app, macOS containing app, and embedded macOS Agent
-service. They are not permanent Xcode targets. When final targets are created,
-the release build must prove each executable bundle receives its exact template
-at Apple's required bundle location. If final menu/login topology creates
-another executable bundle, it must receive a separately indexed manifest before
-promotion.
+service. The permanent Mac topology follows Apple's `SMAppService.agent`
+structure: the Agent is a separately signed command-line Mach-O inside the
+containing app, referenced by a `Contents/Library/LaunchAgents` property list.
+It is executable code but not a separate bundle with its own Resources
+directory. Apple's documented macOS privacy-manifest location is the app
+bundle's `Contents/Resources`, so the policy binds the Agent target to the
+containing app as its bundle owner and requires both logical target templates
+to remain byte-identical. The release build must prove the outer app receives
+that exact resource and that the Agent remains an unbundled helper. If the
+topology later creates another executable bundle, it must receive a separately
+indexed manifest at Apple's required location before promotion.
 
 Apple's categories and approved reason catalog can change. Re-check the primary
 documentation immediately before any App Store submission and whenever the
