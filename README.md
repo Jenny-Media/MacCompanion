@@ -72,7 +72,9 @@ The [Agent sanitized diagnostic export service](docs/evidence/2026-08-21-agent-d
 backs both the diagnostic CLI and Mac dashboard with a boot-scoped newest-256
 content-free event ring plus a fresh validated status snapshot. It exposes no
 arbitrary detail, file writer, upload path, or substitute for durable audit
-history; final signed local peer authentication remains a separate gate.
+history. A [signed disposable XPC probe](docs/evidence/2026-08-21-signed-local-xpc-peer-identity-probe.md)
+now proves reciprocal exact-identifier/same-team admission plus closed hello
+shape and version rejection; production transport and teardown remain gated.
 
 The [Mac dashboard action coordinator](docs/evidence/2026-08-21-mac-dashboard-action-coordinator.md)
 uses one shared admission policy for SwiftUI and execution, serializes every
@@ -217,8 +219,9 @@ now accepts only content-free status, sanitized diagnostics export, help, and
 version. Its pure package target owns exact parsing, authenticated local-method
 planning, fixed exit/error mapping, and revalidated text/JSON rendering. It is
 not an executable and cannot contact the Agent; the permanent
-`maccompanionctl` target still waits for final signing identity and
-audit-token/designated-requirement-authenticated XPC.
+`maccompanionctl` target still waits for final signing identity and its own
+reciprocal same-team exact-identifier XPC admission proof. It is not admitted
+through the already-proven menu-app role.
 
 Local validation with the currently available beta toolchain:
 

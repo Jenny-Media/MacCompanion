@@ -123,4 +123,22 @@ if [[ "${MACCOMPANION_DISABLE_SWIFTPM_SANDBOX:-0}" == "1" ]]; then
 fi
 swift "${tls_experiment_arguments[@]}"
 
+# The signed matrix is intentionally manual, but its C-only macOS 26 sources
+# must continue compiling in public CI without signing, launchd, or prompts.
+xpc_probe_sdk="$(xcrun --sdk macosx --show-sdk-path)"
+xpc_probe_clang="$(xcrun --find clang)"
+xpc_probe_flags=(
+  -std=c11
+  -fblocks
+  -mmacosx-version-min=26.0
+  -isysroot "$xpc_probe_sdk"
+  -Wall
+  -Wextra
+  -Werror
+  -fsyntax-only
+)
+"$xpc_probe_clang" "${xpc_probe_flags[@]}" Experiments/LocalXPCIdentityProbe/agent.c
+"$xpc_probe_clang" "${xpc_probe_flags[@]}" Experiments/LocalXPCIdentityProbe/client.c
+
+bash -n Experiments/LocalXPCIdentityProbe/run.sh
 git diff --check

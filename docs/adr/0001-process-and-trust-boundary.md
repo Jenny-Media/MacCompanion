@@ -16,7 +16,16 @@ The first product uses three process roles:
 2. **Mac Companion menu app** is the persistent visible administration and activity process. It owns ScreenCaptureKit, VideoToolbox, Accessibility observation, application/window activation, and post-event input. It registers login launch through `SMAppService.mainApp` or a Stage 0-proven equivalent. It acts only under short-lived agent-issued leases bound to device, authorization epoch, interactive session, surface revision, coordinate revision, and expiry.
 3. **iOS/iPadOS client** owns device identity, user-presence approval, presentation, decoding, and input intent. It is never authoritative for grants, host state, surface identity, policy, or operation outcome.
 
-The menu app and agent authenticate each other over typed local IPC. Stage 0 must select exact audit-token, code-signing, designated-requirement, version-negotiation, and invalid-peer checks using final process identities before production IPC ships.
+The menu app and Agent authenticate each other over typed local IPC. On macOS
+26, each inactive XPC endpoint installs a same-Apple-team requirement for the
+other process's exact signing identifier, and the Agent repeats its requirement
+on every incoming peer session before activation. The only pre-authentication
+request is the constant closed v0.1 hello. A
+[signed disposable probe](../evidence/2026-08-21-signed-local-xpc-peer-identity-probe.md)
+provisionally proves the exact Mac/Agent identities, invalid-identifier and
+invalid-signer rejection in both directions, and closed version/shape
+rejection. Production transport, invalidation, replacement, and capability
+revocation evidence remain required before IPC ships.
 
 If the menu app disappears, the agent ends capture/input leases, releases all input, suspends Interactive Control, and preserves eligible Observe or bounded Act service. Crash recovery is distinct from an explicit local **Quit and Disable**, which unregisters both login roles. Until recovery is proved, Control fails closed.
 
@@ -24,7 +33,11 @@ No root daemon, privileged helper, system extension, kernel extension, retained 
 
 ## Consequences
 
-- Official bundle identifiers use the confirmed Jenny Media `media.jenny` prefix. The Team ID is confirmed privately, the containing-app App ID `media.jenny.maccompanion` is registered, and provisional Apple Development plus Developer ID builds verify that identity. Cross-process release designated requirements still wait for the remaining role App IDs, embedded signed code, and stable-toolchain evidence.
+- Official bundle identifiers use the confirmed Jenny Media `media.jenny`
+  prefix. The Team ID remains private. Permanent embedded Mac and Agent targets
+  provisionally prove their exact reciprocal signing requirements without
+  tracking that Team ID. The CLI identity and stable-toolchain final-candidate
+  repetition remain separate gates.
 - Screen Recording, persistent capture, Accessibility observation, and post-event behavior must be tested against the menu app identity independently.
 - A menu-app compromise cannot directly rewrite grants or durable authorization state; an agent compromise remains security-critical and is contained by OS user scope, signed updates, bounded data, and local revocation rather than sandbox theater.
 - Logout and pre-login remain unsupported. Locked interaction is an optional physical-device result, not an architectural promise.

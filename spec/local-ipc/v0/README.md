@@ -1,8 +1,48 @@
 # Local IPC shared payload profile v0.1
 
-Status: normative for bundle-independent role policy, leases, status, and sanitized diagnostic payloads. The concrete XPC transport and peer-code verification remain gated on final signed identities.
+Status: normative for bundle-independent role policy, leases, status, sanitized
+diagnostic payloads, and the macOS 26 peer-identity boundary. The signed
+peer-requirement mechanism is provisionally proven on Xcode 27 beta; concrete
+production transport remains pending.
 
-Local IPC is not authenticated by a caller-supplied role. A macOS adapter first verifies the connection audit token and designated code requirement, assigns one of the closed roles `agent`, `menuApp`, or `diagnosticCLI`, and only then applies the method matrix in `CompanionIPC`.
+Local IPC is never authenticated by a caller-supplied role, PID, path, service
+label, or claimed audit token. The macOS adapter installs an XPC peer
+requirement derived from transport-owned process credentials, the exact signing
+identifier, and the caller's own Apple-issued signing team. Only after that
+requirement and version negotiation succeed may it assign one of the closed
+roles `agent`, `menuApp`, or `diagnosticCLI` and apply the method matrix in
+`CompanionIPC`.
+
+## macOS peer-identity boundary
+
+The Agent listener requires the same signing team and exact
+`media.jenny.maccompanion` identifier. The menu-app session requires the same
+team and exact `media.jenny.maccompanion.agent` identifier. Both use
+`xpc_peer_requirement_create_team_identity`; the private Team ID is not stored
+in source, configuration, messages, or evidence. The diagnostic CLI remains
+unadmitted until its permanent identifier and reciprocal requirements are
+separately signed and proven.
+
+The listener and client session are created inactive. The Agent installs its
+requirement on the listener and repeats it on every incoming peer session before
+activation. The menu app installs its Agent requirement before activating its
+session. A mismatch invalidates or rejects the platform connection before any
+role capability is issued.
+
+XPC checks received messages, so a substituted server may receive the first
+outgoing request before its reply is rejected. Exactly one pre-authentication
+request is allowed: the constant closed value
+`{"kind":"hello","version":1}`. Its reply must be exactly
+`{"kind":"hello.ack","version":1}` and arrive through the requirement-bound
+session. Neither message contains a role, identifier, token, credential,
+endpoint, path, capability, device data, user data, or authority.
+
+No status, lifecycle, pairing, diagnostic, recovery, lease, media, input, or
+surface message may be sent before that reply succeeds. Interruption,
+invalidation, requirement mismatch, malformed hello, version mismatch, or
+connection replacement revokes the issued role and every connection-scoped
+capability. The signed probe evidence is recorded in
+`docs/evidence/2026-08-21-signed-local-xpc-peer-identity-probe.md`.
 
 The menu app may call the Agent methods `createPairingSession`,
 `dismissPairingSession`, `decideGrantExpansion`, and `stopInteractiveSession`,
@@ -117,7 +157,8 @@ caller-supplied role, audit token, endpoint name, or authorization flag. A
 platform adapter may obtain it from the Agent local-service root only after it
 has authenticated the visible menu-app peer and authorized
 `publishPairingReview` and `resolveLocalApproval` through the closed method
-matrix. Final XPC peer authentication remains outside this profile.
+matrix. Production XPC composition remains outside this bundle-independent
+delivery profile; its peer-identity boundary is normative above.
 
 Exactly one review may be publishing, visible, or resolving on that boundary.
 The service accepts a review only when it exactly equals the pending review in
@@ -304,8 +345,9 @@ payload and cannot edit or reconfirm it.
 
 The bundle-independent payload, reducer, and application-owner boundaries do
 not authenticate XPC or perform recovery. Final transport binding requires the
-signed audit-token/designated-requirement evidence and must issue the Agent
-review from current durable state rather than caller-supplied identity facts.
+proven same-team exact-identifier peer requirements and must issue the Agent
+review from current durable state rather than caller-supplied identity facts or
+roles.
 
 The bundle-independent recovery delivery boundary is connection-scoped and is
 issued only after the platform adapter has authenticated and authorized the
@@ -388,8 +430,9 @@ Both the authenticated menu app and authenticated diagnostic CLI may call
 `exportDiagnostics`; other role directions and same-role connections remain
 denied. The bundle-independent export service accepts no caller-supplied role,
 token, identifier, or authorization flag. A platform adapter receives it only
-after audit-token/code-identity authentication and authorization through the
-closed method matrix. One export obtains a freshly validated status snapshot
+after same-team exact-identifier XPC authentication, closed hello negotiation,
+and authorization through the closed method matrix. One export obtains a
+freshly validated status snapshot
 and the current ordered event ring. If either source or final export validation
 fails, it returns only `sourceUnavailable` and no partial value.
 
@@ -516,8 +559,8 @@ identity, reconciliation, local-service, or primary-session failure can publish
 Agent ready.
 
 Menu process readiness is connection-scoped metadata, not a caller-supplied
-request or role. Only after the platform adapter authenticates the menu audit
-token/designated requirement and authorizes protocol negotiation may it ask the
+request or role. Only after the platform adapter enforces the menu's same-team
+exact-identifier requirement and authorizes protocol negotiation may it ask the
 sealed root for one exact-generation menu connection capability. Issuance alone
 leaves menu state `starting`. The capability publishes ready only when the
 authenticated connection and required visible-menu runtime are ready, and its
@@ -556,4 +599,11 @@ producer name, path, quota, or dropped content. The authenticated local menu UI
 may use that warning to offer repair guidance; the diagnostic CLI receives the
 same content-free fact through its already-authorized status method.
 
-The JSON fixtures exercise the platform-neutral model only. They do not define an XPC serialization or permit using JSON over a local socket. The signed-target spike must prove audit-token extraction, designated-requirement matching, wrong-signer rejection, version mismatch, connection invalidation, and lease revocation before the XPC adapter is accepted.
+The JSON fixtures exercise the platform-neutral model only. They do not define
+an XPC serialization or permit using JSON over a local socket. The signed probe
+proves system-bound same-team and exact-identifier enforcement in both
+directions, including wrong-identifier and wrong-signer rejection, and rejects
+unsupported or structurally broadened hello messages. The production adapter
+must carry those exact checks forward and still prove connection replacement,
+invalidation, late-message fencing, role-capability revocation, and Interactive
+lease teardown before it is accepted.
