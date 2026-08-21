@@ -15,12 +15,15 @@ release-shaped bundle
   -> discovery and pairing
   -> Observe status and revocation
   -> locally granted Adaptive Control
+  -> Desktop video plus mouse and keyboard
   -> App Focus, Window Focus, and Smart Zoom with deterministic fallback
-  -> private-route three-path beta with one semantic action
+  -> private-route three-path beta with native setAudioMuted
   -> MacTools differentiation
 ```
 
 Adaptive Control is the flagship product capability, while Observe and Act remain independently useful without a stream. Control feasibility work starts alongside the Observe path, but it does not bypass identity, grants, authorization epochs, visibility, or lifecycle gates.
+
+Whenever it is unblocked, the shortest signed, physical, runnable product slice takes precedence over additional construction-only infrastructure. Adaptive surfaces remain Stage 2 exit requirements, but they do not delay the first safe Desktop Control build.
 
 ### Protocol-first boundary
 
@@ -102,7 +105,7 @@ validation jobs disable persisted checkout credentials unless a reviewed step
 has a narrow authenticated need. The repository gate rejects movable action
 tags before compilation.
 
-MPL 2.0 is the working license candidate because it keeps modifications to covered files available while permitting separately authored files in a larger work. Prefer one repository-wide code license initially; do not add an Apache-licensed protocol subtree until independent implementers create a real interoperability reason for the added policy. Use a Developer Certificate of Origin by default. Adopt a Contributor License Agreement only if Jenny Media LLC makes a deliberate dual-licensing or relicensing decision before accepting contributions. Final license, App Store compatibility, and trademark policy require written legal review before the repository becomes public.
+Apache-2.0 is the selected repository-wide license, paired with a separate Mac Companion/Jenny Media trademark policy, subject to written legal review. Use a Developer Certificate of Origin by default. Adopt a Contributor License Agreement only if Jenny Media LLC makes a deliberate dual-licensing or relicensing decision before accepting contributions. GitHub private vulnerability reporting is the initial security channel. Because the repository is already public, further pushes and external contributions remain paused until the license, trademark, contribution, and security policies, full-history review, and provider-side branch/secret/push protections are complete.
 
 ## 3. Target and module boundaries
 
@@ -288,9 +291,9 @@ Concurrency design is part of the feature review. A detached task, unchecked sen
 
 ### Workstream A — release and lifecycle foundation
 
-1. Confirm Team ID, bundle prefix, target IDs, and entitlement request.
+1. Use the privately confirmed Team ID and registered `media.jenny.maccompanion` App ID; register remaining role IDs when their permanent targets are ready, resolve Apple's required prerelease App Store URL/Apple ID path, and submit the prepared entitlement request.
 2. Initialize version control, ownership rules, ADR template, and CI.
-3. Create the release-shaped containing app, embedded LaunchAgent, iOS app, CLI, and package targets.
+3. Extend the checked-in release-shaped Mac containing app with the embedded LaunchAgent, then add the iOS app and CLI as their identifiers and signed boundaries become ready.
 4. Prove Developer ID archive, hardened runtime, notarization, DMG, clean install, login-item registration, and complete uninstall.
 5. Prove authenticated local IPC and fail-closed menu-app/agent version negotiation.
 
@@ -457,7 +460,7 @@ A work item is ready for implementation only when it has:
 - Physical-device evidence required
 - Explicit non-goals and dependencies
 
-Stage 0 coding begins in independent lanes. Accepted specifications, pure Swift packages, conformance tests, CI, and disposable platform harnesses do not wait for a bundle prefix or managed-entitlement request. Final Apple target identities, designated requirements, Keychain groups, `SMAppService` labels, and release-shaped signing wait for the company prefix; the entitlement request follows creation of the final Mac App ID. Entitlement approval, locked-session success, formal interviews, and completed market validation are not required for identity-neutral work or the Observe foundation.
+Stage 0 coding proceeds in independent lanes. Accepted specifications, pure Swift packages, conformance tests, CI, identity-neutral target planning, and disposable platform harnesses do not wait for the managed-entitlement request. The Team ID is confirmed privately and the containing-app App ID is registered; remaining role App IDs, designated requirements, Keychain groups, `SMAppService` labels, and release-shaped signing still require verified signed-build custody. The prepared entitlement request is blocked by Apple's required App Store URL and numeric Apple ID for the unreleased product, not by the Mac App ID. Entitlement approval, locked-session success, formal interviews, and completed market validation are not required for independent work or the Observe foundation.
 
 ## 12. Definition of Done
 
@@ -475,9 +478,9 @@ A slice is done only when:
 
 Feature code existing on one developer Mac is not completion; the release-shaped, clean-user lifecycle is part of every security-sensitive feature.
 
-## 13. Remaining pre-code decisions
+## 13. Remaining implementation decisions
 
-The company-controlled reverse-DNS bundle prefix blocks only permanent Apple-target scaffolding. Stable Xcode and signing identity custody separately block signed release evidence, while entitlement approval blocks external Persistent Content Capture builds. None blocks the identity-neutral repository, specification, package, fixture, CI, or disposable-experiment lanes. The following are Stage 0 implementation decisions with bounded owners and do not require product clarification before experiments begin:
+The company-controlled reverse-DNS prefix is resolved as `media.jenny`; the Team ID is confirmed privately and `media.jenny.maccompanion` is registered. The checked-in permanent containing-app target now proves local Apple Development and Developer ID signing, hardened runtime, exact identity/privacy binding, and launch on Xcode 27 beta without tracking a team or credential. Stable macOS 26/Xcode 26.6 and controlled release custody still gate final signed release evidence, while entitlement approval blocks only external Persistent Content Capture builds. The entitlement form is prepared but requires an App Store URL and numeric Apple ID; that truthful prerelease/direct-distribution path remains external. None of these blocks specifications, packages, fixtures, CI, Xcode 27 beta development, remaining permanent targets, or disposable experiments. The following are bounded implementation decisions and do not require more product clarification:
 
 - Exact authenticated local IPC peer-verification mechanism
 - Signed/physical X.509 and Keychain execution plus authenticated local recovery confirmation under the frozen lifecycle profile

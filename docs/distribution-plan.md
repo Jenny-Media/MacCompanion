@@ -10,37 +10,40 @@ Status: release baseline for the first implementation. This document fixes the i
 - The embedded per-user LaunchAgent and the containing menu app's login launch are registered through their appropriate `SMAppService` roles after the user opens and enables the app. Stage 0 verifies crash recovery separately from an intentional local Quit and Disable action.
 - Mac updates use Sparkle 2 with HTTPS, Ed25519 archive signatures, Developer ID validation, and notarized replacement bundles.
 - The iPhone and iPad app uses TestFlight for alpha and beta, then the App Store for release.
-- The initial deployment targets are macOS 26.0 and iOS/iPadOS 26.0. Release builds use stable Xcode 26.6 and Swift 6.3; Xcode and OS 27 betas are compatibility targets, not release dependencies.
+- The initial deployment targets are macOS 26.0 and iOS/iPadOS 26.0. Installed Xcode 27 beta may be used for development, compatibility, signing setup, device work, and currently supported TestFlight uploads. Final release evidence is reproduced with stable Xcode 26.6 and Swift 6.3; generation 27 beta remains outside the final release dependency.
 - Mac Companion operates no account, relay, rendezvous, VPN, analytics, or update proxy. The download site and signed update feed are the only vendor-hosted runtime-adjacent services.
+- Development signing identities may live on the development Mac. Developer ID, App Store distribution, notarization, Sparkle, and promotion credentials remain in a separately controlled release environment.
 
 Apple describes Developer ID and notarization for software distributed outside the Mac App Store in [Signing Mac software with Developer ID](https://developer.apple.com/developer-id/) and [Notarizing macOS software before distribution](https://developer.apple.com/documentation/security/notarizing-macos-software-before-distribution). The toolchain baseline is recorded in [Xcode 26.6 release notes](https://developer.apple.com/documentation/xcode-release-notes/xcode-26_6-release-notes).
 
 ## 2. Identifier and account preflight
 
-The following values must be confirmed in the Jenny Media LLC Apple Developer account before permanent release-shaped Apple targets are created. They do not block the normative specification, pure Swift packages, public unsigned CI, or disposable experiments:
+The following account facts are tracked before permanent release-shaped Apple targets are completed. They do not block the normative specification, pure Swift packages, public unsigned CI, or disposable experiments:
 
 - Legal team name: Jenny Media LLC
-- Team ID
-- Reverse-DNS bundle prefix controlled by the company
+- Team ID (confirmed privately)
+- Reverse-DNS bundle prefix controlled by the company: `media.jenny` (confirmed)
 - Developer ID Application certificate availability and custody
 - Apple Development and Apple Distribution certificate strategy
 - App Store Connect access and agreements
-- Final macOS App ID to use for the Persistent Content Capture request
+- Final macOS App ID to use for the Persistent Content Capture request (registered as `media.jenny.maccompanion`)
 
-Until the prefix is confirmed, documentation uses these placeholders:
+The confirmed planned identifiers are:
 
 | Target | Planned identifier |
 | --- | --- |
-| macOS containing app and menu UI | `<bundle-prefix>.maccompanion` |
-| Embedded per-user agent | `<bundle-prefix>.maccompanion.agent` |
-| Local XPC services, if selected | `<bundle-prefix>.maccompanion.xpc.<role>` |
-| iOS/iPadOS app | `<bundle-prefix>.maccompanion.ios` |
+| macOS containing app and menu UI | `media.jenny.maccompanion` |
+| Embedded per-user agent | `media.jenny.maccompanion.agent` |
+| Local XPC services, if selected | `media.jenny.maccompanion.xpc.<role>` |
+| iOS/iPadOS app | `media.jenny.maccompanion.ios` |
 
-The prefix is a precondition for permanent Apple-target scaffolding because bundle IDs become part of Keychain access, designated requirements, LaunchAgent identity, update configuration, managed-entitlement approval, audit migrations, and App Store records. Renaming them later is not treated as a cosmetic change.
+The Team ID and final containing-app App ID preconditions are resolved. Remaining role App IDs, signed designated requirements, Keychain groups, LaunchAgent identity, update configuration, managed-entitlement approval, audit migrations, and App Store records still need to be bound deliberately. Renaming an official identifier later is not treated as a cosmetic change.
 
-The Persistent Content Capture entitlement is managed. Apple says it enables VNC apps to view and record the screen and requires a request before use; see [Persistent Content Capture](https://developer.apple.com/documentation/bundleresources/entitlements/com.apple.developer.persistent-content-capture). The Jenny Media LLC Account Holder should submit the request against the final Mac App ID as soon as the identifier exists. Stage 1 monitoring can proceed while it is pending; an external Interactive Control build cannot.
+The Persistent Content Capture entitlement is managed. Apple says it enables VNC apps to view and record the screen and requires a request before use; see [Persistent Content Capture](https://developer.apple.com/documentation/bundleresources/entitlements/com.apple.developer.persistent-content-capture). The Jenny Media LLC Account Holder prepared the request against `media.jenny.maccompanion`, including the authorization acknowledgement, but Apple's form requires an App Store URL and numeric App Apple ID. Because the directly distributed Mac app is unreleased, the request remains unsent until a truthful prerelease App Store Connect record path is verified or Apple Developer Support confirms the direct-distribution alternative. An Entitlements support case was opened on 2026-08-21 and its Case ID is retained privately. Stage 1 monitoring can proceed; an external persistent Interactive Control build cannot.
 
 ### Open-source builds
+
+The intended source license is Apache-2.0 with a separate Mac Companion/Jenny Media trademark policy, both subject to legal review. GitHub private vulnerability reporting is the initial reporting channel; a company security address may later supplement or replace it. Because the remote repository is already public, further pushes and external contributions remain paused until those policies, a full-history review, and provider-side branch/secret/push protections are complete.
 
 Publishing source does not publish Jenny Media's binary identity. Official Mac Companion releases alone use the Jenny Media bundle IDs, managed entitlement, Developer ID identity, notarization records, Sparkle feed, and App Store listing. A fork must choose its own product and bundle identities, request its own Apple capabilities, sign its own binaries, and configure an independent update feed.
 
@@ -257,13 +260,20 @@ Deleting only the app is detected as an incomplete uninstall case in testing. Do
 
 ### Ready for permanent release-shaped Apple targets
 
-- Team ID and reverse-DNS prefix are confirmed.
+- Team ID is confirmed privately; the reverse-DNS prefix is fixed as `media.jenny`.
 - Final target identifiers are registered.
 - Developer ID certificate custody is verified.
 - Stable Xcode 26.6 is installed and recorded.
 - The process, entitlement, TCC, and update ownership in this document has no unresolved boundary change.
 
-Registering the final Mac App ID triggers immediate Account Holder submission of the Persistent Content Capture request, but pending request status does not block non-capture permanent targets. Approval gates the release entitlement/profile and external persistent Control builds.
+The final Mac App ID is registered. Completing the Persistent Content Capture request now waits only on Apple's required App Store URL/Apple ID path for this unreleased, directly distributed Mac app. Pending request status does not block non-capture permanent targets; approval gates the release entitlement/profile and external persistent Control builds.
+
+The registered containing-app identity has therefore advanced independently:
+its [checked-in permanent target and provisional signed builds](evidence/2026-08-21-permanent-mac-containing-app-target.md)
+prove the non-capture bundle boundary on Xcode 27 beta. The checklist above is
+still the gate for completing the full Apple target topology and for final
+release evidence; the beta proof does not waive stable-toolchain, Agent,
+notarization, packaging, or clean-machine requirements.
 
 ### Ready for external Mac alpha
 

@@ -76,7 +76,7 @@ Apple documents ScreenCaptureKit as the framework for high-performance screen co
 
 **Decision:** Interactive Control is part of the MVP path and supports one live display plus mouse and keyboard. The persistent, visible menu app owns capture, encoding, Accessibility trust, and input injection. The LaunchAgent owns the network, device identity, grants, authorization epochs, session credentials, policy, and audit. If the menu app or its indicator is unavailable, Interactive Control stops while eligible status and semantic operations may remain available.
 
-The managed-entitlement request must be submitted by the Jenny Media LLC Account Holder against the final App ID. External Interactive Control distribution is gated on approval or a reviewed public alternative.
+The Jenny Media LLC Account Holder prepared the managed-entitlement request against the registered final Mac App ID. Apple's form requires an App Store URL and numeric App Apple ID; because the directly distributed product is unreleased, submission waits for a verified prerelease App Store Connect path or Apple Developer Support confirmation. An Entitlements support case was opened on 2026-08-21 with its Case ID retained privately. External persistent Interactive Control distribution remains gated on approval or a reviewed public alternative.
 
 ### Locked-session feasibility
 
@@ -216,11 +216,19 @@ Desktop, application, window, focused-region, and experimental text-input surfac
 
 Desktop is the universal escape hatch. App Focus, Window Focus, and Smart Zoom may use verified application/window identity and focused-element bounds, but modal ambiguity, stale elements, timeout, incomplete Accessibility support, or privacy uncertainty returns to a visible app or desktop surface. Native controls require verified current semantics and are post-MVP; Mac Companion never guesses a consequential action from ambiguous metadata.
 
+### D16 — Product-first execution and bounded completion
+
+When an end-to-end slice is unblocked, permanent signed targets and physical behavior outrank more construction-only infrastructure. The runnable order is LAN pairing and reconnection, Observe, native `setAudioMuted`, then Desktop pixels plus mouse and keyboard; adaptive surfaces then complete the Stage 2 proof. The goal completes at a signed, installable external Stage 3 beta with market-MVP evidence. Stages 4–7 may pass, receive an evidence-backed no-go, or remain explicitly deferred rather than forcing speculative scope into the release.
+
+### D17 — Official identity and open-source policy
+
+Jenny Media controls the `media.jenny` reverse-DNS namespace, so official role-based identifiers use `media.jenny.maccompanion`. Development identities may be installed on the development Mac, while distribution and promotion credentials remain in separate controlled custody. Apache-2.0 plus a distinct Mac Companion/Jenny Media trademark policy is the selected publication model subject to legal review, with GitHub private vulnerability reporting first. Further pushes and external contributions pause until the policy, history, and provider-protection gates pass.
+
 ## Open decisions
 
 - Formal Mac Companion trademark review and App Store name reservation
-- Jenny Media LLC Team ID and company-controlled reverse-DNS bundle prefix
-- Persistent Content Capture managed-entitlement approval
+- Remaining Agent/iOS/XPC App ID registration and signed identity binding; the Jenny Media LLC Team ID is confirmed privately, the company-controlled prefix is fixed as `media.jenny`, and `media.jenny.maccompanion` is registered
+- Persistent Content Capture request submission after resolving Apple's required App Store URL/Apple ID path, then managed-entitlement approval
 - Exact transport framing and serialization
 - Local IPC primitive and code-identity verification method
 - Pairing user experience and out-of-band fingerprint confirmation
@@ -228,5 +236,5 @@ Desktop is the universal escape hatch. App Focus, Window Focus, and Smart Zoom m
 - Smart Input compatibility and secure-field evidence across the supported app and keyboard matrix
 - Audit quotas and retention periods
 - Which initial actions remain reliable across the supported OS matrix
-- Final open-source license and contribution policy; MPL 2.0 plus a DCO is the working candidate pending legal review before public contributions
+- Final legal approval and publication of the selected Apache-2.0 license, trademark, contribution, and security-reporting policies
 - Commercial model, free/Pro boundaries, pricing, and Family Sharing; a lifetime non-consumable is the working hypothesis while Mac Companion operates no recurring network service

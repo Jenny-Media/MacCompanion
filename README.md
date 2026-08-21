@@ -197,7 +197,7 @@ Actions remain available without entering or keeping the live screen visible.
 Its manual stateless iOS keyboard forwards bounded text/delete actions without
 claiming focus-aware Smart Input or retaining a remote field value.
 
-Permanent macOS, LaunchAgent, iOS, CLI, signing, Keychain-group, and TCC identities are intentionally not scaffolded yet. Their gates and the safe work that continues in parallel are recorded in the execution ledger.
+The first [permanent Mac containing-app target](docs/evidence/2026-08-21-permanent-mac-containing-app-target.md) is now checked in with the registered bundle identifier, exact privacy manifest, package-owned unavailable-state dashboard, hardened runtime, and provisional Apple Development plus Developer ID signing proof on Xcode 27 beta. It deliberately has no managed entitlement or embedded Agent yet. Permanent LaunchAgent, iOS, CLI, Keychain-group, and TCC identities remain gated in the execution ledger.
 
 The [bundle-independent diagnostic CLI v0.1 contract](spec/local-cli/v0/README.md)
 now accepts only content-free status, sanitized diagnostics export, help, and

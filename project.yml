@@ -1,0 +1,56 @@
+name: MacCompanion
+
+options:
+  createIntermediateGroups: true
+  deploymentTarget:
+    macOS: "26.0"
+  groupSortPosition: top
+
+packages:
+  MacCompanionKit:
+    path: Packages/MacCompanionKit
+
+settings:
+  base:
+    CODE_SIGN_STYLE: Automatic
+    ENABLE_HARDENED_RUNTIME: YES
+    MACOSX_DEPLOYMENT_TARGET: "26.0"
+    SWIFT_STRICT_CONCURRENCY: complete
+    SWIFT_VERSION: "6.0"
+
+targets:
+  MacCompanion:
+    type: application
+    platform: macOS
+    sources:
+      - path: Apps/MacCompanionMac
+      - path: spec/privacy-manifest/v0/targets/mac-containing-app/PrivacyInfo.xcprivacy
+        buildPhase: resources
+    dependencies:
+      - package: MacCompanionKit
+        product: CompanionMacApp
+      - package: MacCompanionKit
+        product: CompanionMacUI
+    settings:
+      base:
+        CODE_SIGN_INJECT_BASE_ENTITLEMENTS: NO
+        CURRENT_PROJECT_VERSION: 1
+        ENABLE_APP_SANDBOX: NO
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: Mac Companion
+        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.utilities
+        INFOPLIST_KEY_LSUIElement: YES
+        INFOPLIST_KEY_NSHumanReadableCopyright: Copyright 2026 Jenny Media LLC
+        MARKETING_VERSION: 0.1.0
+        PRODUCT_BUNDLE_IDENTIFIER: media.jenny.maccompanion
+        PRODUCT_NAME: Mac Companion
+
+schemes:
+  MacCompanion:
+    build:
+      targets:
+        MacCompanion: all
+    run:
+      config: Debug
+    archive:
+      config: Release

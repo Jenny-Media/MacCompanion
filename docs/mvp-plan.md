@@ -8,6 +8,8 @@ The plan distinguishes a technical alpha—proof that the secure lifecycle works
 
 Mac Companion validates three independently useful, connected experiences: **Observe** current Mac state, **Act** through bounded operations, and **Control** through an explicitly granted Adaptive Remote Desktop session. Control is the flagship capability and may be entered directly, but users do not need to stream the screen to check status or invoke an approved action. Interactive Control does not include a shell, arbitrary files, clipboard, audio, provider execution, or autonomous control and must never be implied by ordinary pairing, `Standard Control`, a provider installation, or a broad “allow future capabilities” switch.
 
+The execution target is a signed, installable external Stage 3 beta that passes the market-MVP evidence gate. Stages 4–7 continue only where evidence and safety gates justify them and may close with explicit `passed`, `no-go`, or `deferred` decisions. Whenever unblocked, implementation prioritizes the shortest signed, physical, runnable product slice over additional construction-only infrastructure.
+
 ## Product evidence workstream: positioning and validation
 
 This workstream runs alongside Stage 0 and does not block isolated platform spikes or repository scaffolding. Its evidence gates the external beta and public positioning rather than the start of coding.
@@ -16,6 +18,7 @@ This workstream runs alongside Stage 0 and does not block isolated platform spik
 
 - Use **Mac Companion** as the working product and iPhone/iPad app name, **Mac Companion Agent** for the installed Mac component, and **Monitor and control your Mac** as the proposed App Store subtitle.
 - Complete written trademark review and reserve the App Store name before public branding, marketing domains, paid naming work, or external launch. Company-controlled bundle identifiers use stable role-based identifiers and do not wait for public-name reservation.
+- Prepare Apache-2.0 licensing and a separate Mac Companion/Jenny Media trademark policy, both subject to legal review. Use GitHub private vulnerability reporting initially and hold further pushes and external contributions until the license, trademark, security, full-history, and provider-protection gates are complete.
 - Build a task-level competitor matrix for Helm, Cuevello, MacReacher, Apperture, Tomaco, CommandDeck, Shellcove, generic screen sharing, and SSH. Compare pairing, time to first frame, LAN and private-route behavior, app/window focus, keyboard and touch behavior, nonvisual actions, permission onboarding, recovery, privacy, pricing, and support boundaries.
 - Use owners of logged-in personal Macs who want private, no-relay remote operation as the beachhead hypothesis. Define representative Observe, Act, and Control jobs without assuming that every user needs all three in every session.
 - Dogfood repeated jobs such as checking a build, inspecting Simulator, operating Terminal or Xcode, checking Mac health, running one bounded action, recovering from a modal dialog, and reconnecting over Tailscale. Record every return to the physical Mac and why it was necessary.
@@ -36,14 +39,16 @@ This stage produces small harnesses and decision records, not a polished app.
 ### Platform and distribution
 
 - Initialize version control and CI before production scaffolding; release-shaped artifacts and security fixtures must be reproducible from a recorded revision.
-- Use the current stable macOS 26 and iOS/iPadOS 26 lines as the initial deployment target and stable Xcode 26.6 with Swift 6.3; test macOS and iOS 27 betas without making beta software a release dependency.
+- Use macOS 26 and iOS/iPadOS 26 as the initial deployment targets. Permit installed Xcode 27 beta for development, compatibility, signing setup, device work, and currently supported TestFlight uploads; reproduce final signed release evidence with stable Xcode 26.6 and Swift 6.3.
+- Use the Jenny Media-controlled `media.jenny` bundle prefix and the role-based identifiers recorded in the distribution plan. The Team ID is confirmed privately and `media.jenny.maccompanion` is registered; register remaining permanent role App IDs only with their target scaffolds.
+- Permit development signing identities on the development Mac, while keeping Developer ID, App Store distribution, notarization, Sparkle, and promotion credentials in a separate controlled release environment. Provisional permanent-target builds now verify the local Apple Development and Developer ID Application identities, so do not create duplicates; stable-toolchain reproduction and final credential custody remain release gates.
 - Select and spike the initial deployment topology: Developer ID distribution, an embedded `SMAppService` LaunchAgent, authenticated XPC/Mach IPC, and the process and bundle boundaries for the menu app, service, CLI, and protocol libraries.
 - Validate code signing, hardened runtime, notarization, login-item registration, update, rollback, uninstall, and authenticated local IPC using release-shaped artifacts.
 - Decide whether a Mac App Store build is viable only after testing sandbox, listener entitlement, LaunchAgent, update, capture, and input constraints.
 - Prove the per-user LaunchAgent lifecycle through app quit, service crash, screen lock, fast user switching, logout, sleep, wake, and login-item disablement.
 - Write an ADR for one configured macOS account as the initial host owner. Define lock versus fast-user-switch behavior and fail closed when the active console owner cannot be established.
 - Write an ADR for activity visibility. Closing settings must not quit the menu-bar indicator while the service is enabled; define automatic restoration and degraded/fail-closed behavior if the indicator process crashes.
-- Submit the Persistent Content Capture managed-entitlement request through the Jenny Media LLC Account Holder and record approval status as an Interactive Control dependency.
+- Resolve Apple's required App Store URL and numeric Apple ID path for the unreleased, directly distributed product, then submit the already prepared Persistent Content Capture request through the Jenny Media LLC Account Holder and record its private status as an Interactive Control dependency.
 - Record how Apple’s system ScreenCaptureKit picker, the managed Persistent Content Capture entitlement, and remotely initiated display/application/window changes can coexist. Do not assume that a custom remote picker is acceptable without entitlement and App Review evidence.
 - Review App Store Guideline 4.2.7 against the actual iOS experience. Keep full Desktop first-class, keep App and Window Focus generic, render all Mac software on the user-owned host, avoid app-store-like browsing or remote installation, and test how user-managed private routes are described to App Review.
 - Spike the persistent menu app as the owner of ScreenCaptureKit, VideoToolbox, Accessibility trust, and `CGEvent` input while the LaunchAgent remains the network and policy authority.
@@ -57,6 +62,7 @@ This stage produces small harnesses and decision records, not a polished app.
 ### Networking and identity
 
 - Exercise Local Network permission grant, denial, later recovery, and Bonjour discovery using one declared service type.
+- Make first pairing a foreground same-LAN flow. After pairing, allow reconnection over ordinary private LAN routes or user-entered, explicitly saved Tailscale/private-DNS/IP endpoints; never infer a private-route product or authorization state from an interface, DNS suffix, or installed process.
 - Choose the default listener interfaces and re-evaluation behavior for Wi-Fi, Ethernet, VPN, Tailscale, and public-network transitions.
 - Select exact TLS 1.3 transport, channel framing, bounded message encoding, and canonicalization. Prefer the smallest implementation that satisfies the measured lifecycle; document why if choosing QUIC or HTTP/2 over TLS/TCP.
 - Prove host certificate pinning across Bonjour, direct private IP, and Tailscale endpoint changes.
@@ -157,6 +163,8 @@ Proceed only if lifecycle, presence, revocation, and freshness semantics are dep
 
 ## Stage 2: local Adaptive Control alpha
 
+The first runnable Control vertical slice is deliberately narrower than this stage's exit scope: one Desktop stream plus mouse and keyboard, with the required grant, visible indicator, suspension, revocation, and fail-closed lifecycle. App Focus, Window Focus, Smart Zoom, and interaction adaptation follow on the same authority and remain required before Stage 2 can pass.
+
 ### Scope
 
 - One Mac and one paired iPhone or iPad on the local network
@@ -200,7 +208,7 @@ Proceed only when the capture/input process boundary, visible-indicator dependen
 
 - Saved user-managed Tailscale MagicDNS, private DNS, IPv4, and IPv6 endpoints with no Mac Companion relay, rendezvous account, port forwarding, or embedded VPN credentials
 - Guided Tailscale setup and provider-neutral connectivity diagnostics that distinguish route, reachability, authentication, permission, lock, and sleep failures
-- One evidence-backed desired-state action; use `setAudioMuted` as the fallback fixture
+- One evidence-backed desired-state action, beginning with `setAudioMuted`
 - Durable operation records, bounded idempotency, approval when effects require it, progress, cancellation, terminal results, and `outcomeUnknown`
 - Interactive Control over the selected private route with adaptive frame rate, resolution, and bitrate
 - App Focus, Window Focus, Smart Zoom, and surface-adaptive interaction over that route with explicit fallback and mode indication
@@ -220,7 +228,7 @@ Proceed only when the capture/input process boundary, visible-indicator dependen
 
 ### Exit gate
 
-Call the result a market-facing MVP only when both security gates and repeat-use evidence pass, no-relay onboarding succeeds without developer intervention, and users understand Observe, Act, and Control as independent paths with distinct permissions. Control must be easy to enter directly without making screen capture mandatory for other tasks. Feature completeness alone is insufficient.
+Call the result a market-facing MVP only when a signed, installable external Stage 3 beta passes both security gates and repeat-use evidence, no-relay onboarding succeeds without developer intervention, and users understand Observe, Act, and Control as independent paths with distinct permissions. Control must be easy to enter directly without making screen capture mandatory for other tasks. Feature completeness alone is insufficient.
 
 ## Stage 4: MacTools differentiation and provider contract
 

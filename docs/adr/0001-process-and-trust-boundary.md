@@ -24,7 +24,7 @@ No root daemon, privileged helper, system extension, kernel extension, retained 
 
 ## Consequences
 
-- Release-shaped bundle identifiers and designated requirements cannot be finalized until the Jenny Media prefix is confirmed.
+- Official bundle identifiers use the confirmed Jenny Media `media.jenny` prefix. The Team ID is confirmed privately, the containing-app App ID `media.jenny.maccompanion` is registered, and provisional Apple Development plus Developer ID builds verify that identity. Cross-process release designated requirements still wait for the remaining role App IDs, embedded signed code, and stable-toolchain evidence.
 - Screen Recording, persistent capture, Accessibility observation, and post-event behavior must be tested against the menu app identity independently.
 - A menu-app compromise cannot directly rewrite grants or durable authorization state; an agent compromise remains security-critical and is contained by OS user scope, signed updates, bounded data, and local revocation rather than sandbox theater.
 - Logout and pre-login remain unsupported. Locked interaction is an optional physical-device result, not an architectural promise.
