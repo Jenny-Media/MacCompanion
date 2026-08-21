@@ -14,7 +14,9 @@ import Dispatch
 enum MacCompanionAgentMain {
     static func main() {
         do {
-            let localXPC = MacLocalXPCServerV1 { _ in
+            let localXPC = MacLocalXPCServerV1(
+                profile: .authenticationOnly
+            ) { _ in
                 // Authenticated connection events are intentionally not yet
                 // converted into lifecycle readiness or method authority.
             }

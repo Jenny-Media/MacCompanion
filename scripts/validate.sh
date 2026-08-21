@@ -78,6 +78,20 @@ if [[ "${MACCOMPANION_DISABLE_SWIFTPM_SANDBOX:-0}" == "1" ]]; then
 fi
 swift "${ios_client_platform_arguments[@]}"
 
+ios_local_xpc_platform_arguments=(
+  build
+  --package-path Packages/MacCompanionKit
+  --triple arm64-apple-ios17.0-simulator
+  --target CompanionLocalXPCPlatform
+)
+if [[ "${MACCOMPANION_DISABLE_SWIFTPM_SANDBOX:-0}" == "1" ]]; then
+  ios_local_xpc_platform_arguments+=(
+    --disable-sandbox
+    --scratch-path /private/tmp/maccompanion-ios-local-xpc-platform-build
+  )
+fi
+swift "${ios_local_xpc_platform_arguments[@]}"
+
 ios_client_ui_arguments=(
   build
   --package-path Packages/MacCompanionKit

@@ -74,24 +74,42 @@ MCLocalXPCListenerRef MCLocalXPCListenerCreateInactive(
     return (MCLocalXPCListenerRef)listener;
 }
 
-MCLocalXPCResult MCLocalXPCListenerRequireSameTeamIdentifier(
-    MCLocalXPCListenerRef listener,
-    const char *signing_identifier
+MCLocalXPCPeerRequirementRef
+MCLocalXPCPeerRequirementCreateSameTeamIdentifier(
+    const char *signing_identifier,
+    MCLocalXPCResult *result_out
 ) {
     xpc_rich_error_t error = NULL;
     xpc_peer_requirement_t requirement =
         xpc_peer_requirement_create_team_identity(signing_identifier, &error);
     if (requirement == NULL) {
         MCLocalXPCReleaseError(error);
-        return MCLocalXPCResultRequirementFailed;
+        if (result_out != NULL) {
+            *result_out = MCLocalXPCResultRequirementFailed;
+        }
+        return NULL;
     }
     MCLocalXPCReleaseError(error);
+    if (result_out != NULL) {
+        *result_out = MCLocalXPCResultOK;
+    }
+    return (MCLocalXPCPeerRequirementRef)requirement;
+}
+
+void MCLocalXPCPeerRequirementRelease(
+    MCLocalXPCPeerRequirementRef requirement
+) {
+    xpc_release((xpc_peer_requirement_t)requirement);
+}
+
+void MCLocalXPCListenerSetPeerRequirement(
+    MCLocalXPCListenerRef listener,
+    MCLocalXPCPeerRequirementRef requirement
+) {
     xpc_listener_set_peer_requirement(
         (xpc_listener_t)listener,
-        requirement
+        (xpc_peer_requirement_t)requirement
     );
-    xpc_release(requirement);
-    return MCLocalXPCResultOK;
 }
 
 MCLocalXPCResult MCLocalXPCListenerActivate(
@@ -108,6 +126,13 @@ MCLocalXPCResult MCLocalXPCListenerActivate(
 void MCLocalXPCListenerCancel(MCLocalXPCListenerRef listener) {
     xpc_listener_cancel((xpc_listener_t)listener);
     xpc_release((xpc_listener_t)listener);
+}
+
+void MCLocalXPCListenerRejectPeer(MCLocalXPCSessionRef peer) {
+    xpc_listener_reject_peer(
+        (xpc_session_t)peer,
+        "Mac Companion listener is not accepting this peer"
+    );
 }
 
 MCLocalXPCSessionRef MCLocalXPCSessionCreateInactive(
@@ -136,24 +161,14 @@ MCLocalXPCSessionRef MCLocalXPCSessionCreateInactive(
     return (MCLocalXPCSessionRef)session;
 }
 
-MCLocalXPCResult MCLocalXPCSessionRequireSameTeamIdentifier(
+void MCLocalXPCSessionSetPeerRequirement(
     MCLocalXPCSessionRef session,
-    const char *signing_identifier
+    MCLocalXPCPeerRequirementRef requirement
 ) {
-    xpc_rich_error_t error = NULL;
-    xpc_peer_requirement_t requirement =
-        xpc_peer_requirement_create_team_identity(signing_identifier, &error);
-    if (requirement == NULL) {
-        MCLocalXPCReleaseError(error);
-        return MCLocalXPCResultRequirementFailed;
-    }
-    MCLocalXPCReleaseError(error);
     xpc_session_set_peer_requirement(
         (xpc_session_t)session,
-        requirement
+        (xpc_peer_requirement_t)requirement
     );
-    xpc_release(requirement);
-    return MCLocalXPCResultOK;
 }
 
 void MCLocalXPCSessionSetCancelHandler(
@@ -195,6 +210,16 @@ void MCLocalXPCSessionCancel(MCLocalXPCSessionRef session) {
     xpc_session_cancel((xpc_session_t)session);
 }
 
+void MCLocalXPCSessionDisposeAfterFailedActivation(
+    MCLocalXPCSessionRef session
+) {
+    xpc_release((xpc_session_t)session);
+}
+
+void MCLocalXPCSessionRetain(MCLocalXPCSessionRef session) {
+    xpc_retain((xpc_session_t)session);
+}
+
 void MCLocalXPCSessionCancelOwned(MCLocalXPCSessionRef session) {
     xpc_session_cancel((xpc_session_t)session);
     xpc_release((xpc_session_t)session);
@@ -217,17 +242,87 @@ bool MCLocalXPCMessageIsExactHelloAcknowledgement(
     );
 }
 
-MCLocalXPCResult MCLocalXPCSessionReplyToHello(
+bool MCLocalXPCMessageIsExactMenuReady(MCLocalXPCMessageRef message) {
+    return MCLocalXPCMessageIsExact(
+        (xpc_object_t)message,
+        "lifecycle.menu-ready"
+    );
+}
+
+bool MCLocalXPCMessageIsExactMenuReadyAcknowledgement(
+    MCLocalXPCMessageRef message
+) {
+    return MCLocalXPCMessageIsExact(
+        (xpc_object_t)message,
+        "lifecycle.menu-ready.ack"
+    );
+}
+
+bool MCLocalXPCExactMessageParserSelfTest(void) {
+    bool valid = true;
+
+    xpc_object_t exact = xpc_dictionary_create_empty();
+    xpc_dictionary_set_string(exact, "kind", "hello");
+    xpc_dictionary_set_int64(exact, "version", 1);
+    valid = valid && MCLocalXPCMessageIsExact(exact, "hello");
+    xpc_release(exact);
+
+    xpc_object_t unsigned_version = xpc_dictionary_create_empty();
+    xpc_dictionary_set_string(unsigned_version, "kind", "hello");
+    xpc_dictionary_set_uint64(unsigned_version, "version", 1);
+    valid = valid
+        && !MCLocalXPCMessageIsExact(unsigned_version, "hello");
+    xpc_release(unsigned_version);
+
+    xpc_object_t double_version = xpc_dictionary_create_empty();
+    xpc_dictionary_set_string(double_version, "kind", "hello");
+    xpc_dictionary_set_double(double_version, "version", 1.0);
+    valid = valid
+        && !MCLocalXPCMessageIsExact(double_version, "hello");
+    xpc_release(double_version);
+
+    xpc_object_t bool_version = xpc_dictionary_create_empty();
+    xpc_dictionary_set_string(bool_version, "kind", "hello");
+    xpc_dictionary_set_bool(bool_version, "version", true);
+    valid = valid
+        && !MCLocalXPCMessageIsExact(bool_version, "hello");
+    xpc_release(bool_version);
+
+    xpc_object_t missing_version = xpc_dictionary_create_empty();
+    xpc_dictionary_set_string(missing_version, "kind", "hello");
+    valid = valid
+        && !MCLocalXPCMessageIsExact(missing_version, "hello");
+    xpc_release(missing_version);
+
+    xpc_object_t extra_field = xpc_dictionary_create_empty();
+    xpc_dictionary_set_string(extra_field, "kind", "hello");
+    xpc_dictionary_set_int64(extra_field, "version", 1);
+    xpc_dictionary_set_string(extra_field, "extra", "rejected");
+    valid = valid && !MCLocalXPCMessageIsExact(extra_field, "hello");
+    xpc_release(extra_field);
+
+    xpc_object_t wrong_kind_type = xpc_dictionary_create_empty();
+    xpc_dictionary_set_int64(wrong_kind_type, "kind", 1);
+    xpc_dictionary_set_int64(wrong_kind_type, "version", 1);
+    valid = valid
+        && !MCLocalXPCMessageIsExact(wrong_kind_type, "hello");
+    xpc_release(wrong_kind_type);
+
+    return valid;
+}
+
+static MCLocalXPCResult MCLocalXPCSessionReplyExact(
     MCLocalXPCSessionRef session,
-    MCLocalXPCMessageRef hello
+    MCLocalXPCMessageRef request,
+    const char *kind
 ) {
     xpc_object_t reply = xpc_dictionary_create_reply(
-        (xpc_object_t)hello
+        (xpc_object_t)request
     );
     if (reply == NULL) {
         return MCLocalXPCResultConstructionFailed;
     }
-    xpc_dictionary_set_string(reply, "kind", "hello.ack");
+    xpc_dictionary_set_string(reply, "kind", kind);
     xpc_dictionary_set_int64(reply, "version", 1);
     xpc_rich_error_t error = xpc_session_send_message(
         (xpc_session_t)session,
@@ -241,19 +336,56 @@ MCLocalXPCResult MCLocalXPCSessionReplyToHello(
     return MCLocalXPCResultOK;
 }
 
-void MCLocalXPCSessionSendHello(
+static void MCLocalXPCSessionSendExact(
     MCLocalXPCSessionRef session,
+    const char *kind,
     MCLocalXPCReplyHandler handler
 ) {
-    xpc_object_t hello = xpc_dictionary_create_empty();
-    xpc_dictionary_set_string(hello, "kind", "hello");
-    xpc_dictionary_set_int64(hello, "version", 1);
+    xpc_object_t request = xpc_dictionary_create_empty();
+    xpc_dictionary_set_string(request, "kind", kind);
+    xpc_dictionary_set_int64(request, "version", 1);
     xpc_session_send_message_with_reply_async(
         (xpc_session_t)session,
-        hello,
+        request,
         ^(xpc_object_t reply, xpc_rich_error_t error) {
             handler((MCLocalXPCMessageRef)reply, error != NULL);
         }
     );
-    xpc_release(hello);
+    xpc_release(request);
+}
+
+MCLocalXPCResult MCLocalXPCSessionReplyToHello(
+    MCLocalXPCSessionRef session,
+    MCLocalXPCMessageRef hello
+) {
+    return MCLocalXPCSessionReplyExact(session, hello, "hello.ack");
+}
+
+void MCLocalXPCSessionSendHello(
+    MCLocalXPCSessionRef session,
+    MCLocalXPCReplyHandler handler
+) {
+    MCLocalXPCSessionSendExact(session, "hello", handler);
+}
+
+MCLocalXPCResult MCLocalXPCSessionReplyToMenuReady(
+    MCLocalXPCSessionRef session,
+    MCLocalXPCMessageRef request
+) {
+    return MCLocalXPCSessionReplyExact(
+        session,
+        request,
+        "lifecycle.menu-ready.ack"
+    );
+}
+
+void MCLocalXPCSessionSendMenuReady(
+    MCLocalXPCSessionRef session,
+    MCLocalXPCReplyHandler handler
+) {
+    MCLocalXPCSessionSendExact(
+        session,
+        "lifecycle.menu-ready",
+        handler
+    );
 }

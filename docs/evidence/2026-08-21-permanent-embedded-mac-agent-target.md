@@ -13,11 +13,15 @@ The checked-in Mac project now contains the permanent
 copies the exact LaunchAgent property list to
 `Contents/Library/LaunchAgents/media.jenny.maccompanion.agent.plist`.
 
-The Agent entry point imports the two intended Agent platform products and then
-waits in `dispatchMain()`. It does not construct a listener, open local IPC,
-create keys, register itself, start capture or input, or report readiness. This
-checkpoint proves product topology and code identity without silently granting
-runtime authority.
+At this packaging checkpoint the Agent entry point imported the two intended
+Agent platform products and then waited in `dispatchMain()`. The subsequent
+[production local-XPC handshake](2026-08-21-production-local-xpc-handshake-construction.md)
+starts only a reciprocal-identity-bound local listener, and the later
+[menu-readiness binding](2026-08-21-local-xpc-menu-readiness-binding.md) remains
+package-only until complete bootstrap composition. The permanent target still
+does not create keys, register itself, start a remote listener, start capture or
+input, or report product readiness. This evidence remains topology and code
+identity proof, not broader runtime authority.
 
 ## Primary-source basis
 
@@ -92,9 +96,11 @@ the final embedded copy, rather than target settings alone, is authoritative.
 
 `scripts/validate_permanent_apple_targets.py` now fails if the generator or
 checked-in project loses the tool target, copy-time signing, reverse-DNS
-signing flag, LaunchAgent destination, exact plist contract, inert entry point,
-or no-secret/no-profile boundary. It runs in the repository-wide validation
-gate before compilation.
+signing flag, LaunchAgent destination, exact plist contract,
+authentication-only local-listener profile, or no-secret/no-profile boundary.
+It also rejects the menu-readiness profile, remote-listener composition, and
+other premature authority in the permanent Agent entry point. It runs in the
+repository-wide validation gate before compilation.
 
 The privacy validator separately owns source-graph API inventory and enforces
 the Agent-to-containing-app bundle-owner relationship and exact manifest byte
@@ -105,9 +111,9 @@ equality.
 - Construct `SMAppService.agent(plistName:)` from the permanent app, then prove
   explicit register/unregister convergence and the physical login, logout,
   crash, update, and uninstall matrix.
-- Bind the package-owned service graph only after authenticated local IPC and
-  durable startup are installed; until then the menu app must continue to show
-  the Agent as unavailable.
+- Bind the package-owned service graph only through the complete durable Agent
+  startup, ordered lifecycle adapter, and generation-bound status capability;
+  until then the menu app must continue to show the Agent as unavailable.
 - Prove audit-token/designated-requirement peer authentication using these
   final code identifiers.
 - Repeat exact signing and lifecycle evidence on stable macOS 26/Xcode 26.6.

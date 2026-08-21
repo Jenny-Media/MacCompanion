@@ -2,8 +2,9 @@
 
 Status: normative for bundle-independent role policy, leases, status, sanitized
 diagnostic payloads, and the macOS 26 peer-identity boundary. The signed
-peer-requirement mechanism is provisionally proven on Xcode 27 beta; concrete
-production transport remains pending.
+peer-requirement mechanism is provisionally proven on Xcode 27 beta. The
+production hello and menu-lifecycle-ready transport are constructed; permanent
+Agent bootstrap composition and signed runtime evidence remain pending.
 
 Local IPC is never authenticated by a caller-supplied role, PID, path, service
 label, or claimed audit token. The macOS adapter installs an XPC peer
@@ -37,14 +38,47 @@ request is allowed: the constant closed value
 session. Neither message contains a role, identifier, token, credential,
 endpoint, path, capability, device data, user data, or authority.
 
-No status, lifecycle, pairing, diagnostic, recovery, lease, media, input, or
-surface message may be sent before that reply succeeds. Interruption,
-invalidation, requirement mismatch, malformed hello, version mismatch, or
-connection replacement revokes the issued role and every connection-scoped
-capability. The signed probe evidence is recorded in
+The JSON-like notation above is descriptive only. On the wire, each handshake
+dictionary has exactly two keys: `kind` is `XPC_TYPE_STRING`, and `version` is
+the signed scalar `XPC_TYPE_INT64` with value `1`. Missing or additional keys,
+and unsigned-integer, floating-point, Boolean, or other alternate scalar types,
+are malformed even when their displayed value resembles `1`.
+
+After that reply succeeds, the menu app may send exactly one closed
+`{"kind":"lifecycle.menu-ready","version":1}` request. The Agent acknowledges
+it only with exact `{"kind":"lifecycle.menu-ready.ack","version":1}` and
+publishes readiness only after the acknowledgement is sent successfully. This
+message is the transport mapping of menu-only `publishMenuReady`; hello itself
+never publishes lifecycle readiness or authorizes another method.
+
+No status, pairing, diagnostic, recovery, lease, media, input, surface, or
+other lifecycle message may be sent before that readiness exchange. A malformed,
+premature, duplicate, or rejected readiness message cancels the exact peer.
+Lifecycle admission failure is returned to the transport owner so it can cancel
+only the still-current generation.
+
+Client transport callbacks are bound to monotonically increasing session
+generations. A cancelled session's delayed cancel, hello-reply, or
+readiness-reply callback is ignored and cannot authenticate, acknowledge,
+release, or cancel a restarted session. Each server listener run has its own
+monotonic generation, and every accepted callback requires both that active run
+and exact retained-peer membership. The Agent admits at most eight pre-hello
+candidates and cancels each after a generation-bound ten-second deadline.
+Listener shutdown fences the run before initiating cancellation of all retained
+peers and the listener; delayed callbacks from that run cannot enter a restart.
+
+Opening a candidate connection does not displace the current authenticated
+peer. Only a successfully acknowledged exact hello installs a replacement;
+that replacement immediately fences and cancels the old transport without
+publishing a false lifecycle-loss event. Old cancellation and late messages
+cannot clear or restore the newer generation. Interruption, invalidation,
+requirement mismatch, malformed hello, version mismatch, or current-connection
+replacement revokes the issued role and every connection-scoped capability.
+The signed probe evidence is recorded in
 `docs/evidence/2026-08-21-signed-local-xpc-peer-identity-probe.md`.
 
-The menu app may call the Agent methods `createPairingSession`,
+The menu app may publish `publishMenuReady` and call the Agent methods
+`createPairingSession`,
 `dismissPairingSession`, `decideGrantExpansion`, and `stopInteractiveSession`,
 may submit `recoverHostIdentity` only from an Agent-issued local review, and may
 read bounded local status, activity history, and sanitized diagnostics.

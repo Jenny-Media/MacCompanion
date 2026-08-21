@@ -199,6 +199,7 @@ def validate_narrow_agent_source(content: str, failures: list[str]) -> None:
         "static func main()",
         "dispatchMain()",
         "let localXPC = MacLocalXPCServerV1",
+        "profile: .authenticationOnly",
         "try localXPC.start()",
     ):
         require_count(code, needle, 1, f"agentSource:{needle}", failures)
@@ -210,6 +211,7 @@ def validate_narrow_agent_source(content: str, failures: list[str]) -> None:
         "AgentPrimaryServicesV1",
         "Keychain",
         "SQLite",
+        ".menuLifecycleReadiness",
     ):
         if needle in code:
             failures.append(f"agentSourceUnexpectedAuthority:{needle}")

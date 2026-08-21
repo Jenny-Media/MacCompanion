@@ -10,9 +10,10 @@ The first permanent Apple target began as the visible Mac containing app. It
 uses the registered `media.jenny.maccompanion` identifier and the package-owned
 Mac dashboard. The project now also embeds the separately signed but inert
 [permanent Agent target](2026-08-21-permanent-embedded-mac-agent-target.md).
-Until authenticated local IPC is instantiated, the dashboard truthfully
-presents the Agent as unavailable. Neither target listens on the network,
-starts capture or input, or claims product readiness.
+Until the authenticated local client, complete Agent bootstrap, and status
+capability are instantiated, the dashboard truthfully presents the Agent as
+unavailable. Neither target listens remotely, starts capture or input, or
+claims product readiness.
 
 `project.yml` is the non-secret generator input and
 `MacCompanion.xcodeproj` is checked in for normal Xcode use. The project does

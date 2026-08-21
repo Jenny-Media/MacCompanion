@@ -18,6 +18,7 @@ typedef enum : int32_t {
 typedef struct MCLocalXPCListener *MCLocalXPCListenerRef;
 typedef struct MCLocalXPCSession *MCLocalXPCSessionRef;
 typedef struct MCLocalXPCMessage *MCLocalXPCMessageRef;
+typedef struct MCLocalXPCPeerRequirement *MCLocalXPCPeerRequirementRef;
 
 typedef void (^MCLocalXPCIncomingSessionHandler)(MCLocalXPCSessionRef peer);
 typedef void (^MCLocalXPCCancelHandler)(void);
@@ -25,6 +26,18 @@ typedef void (^MCLocalXPCMessageHandler)(MCLocalXPCMessageRef message);
 typedef void (^MCLocalXPCReplyHandler)(
     MCLocalXPCMessageRef _Nullable reply,
     bool had_error
+);
+
+API_AVAILABLE(macos(26.0))
+MCLocalXPCPeerRequirementRef _Nullable
+MCLocalXPCPeerRequirementCreateSameTeamIdentifier(
+    const char *signing_identifier,
+    MCLocalXPCResult * _Nullable result_out
+);
+
+API_AVAILABLE(macos(26.0))
+void MCLocalXPCPeerRequirementRelease(
+    MCLocalXPCPeerRequirementRef requirement
 );
 
 API_AVAILABLE(macos(26.0))
@@ -36,9 +49,9 @@ MCLocalXPCListenerRef _Nullable MCLocalXPCListenerCreateInactive(
 );
 
 API_AVAILABLE(macos(26.0))
-MCLocalXPCResult MCLocalXPCListenerRequireSameTeamIdentifier(
+void MCLocalXPCListenerSetPeerRequirement(
     MCLocalXPCListenerRef listener,
-    const char *signing_identifier
+    MCLocalXPCPeerRequirementRef requirement
 );
 
 API_AVAILABLE(macos(26.0))
@@ -48,6 +61,9 @@ API_AVAILABLE(macos(26.0))
 void MCLocalXPCListenerCancel(MCLocalXPCListenerRef listener);
 
 API_AVAILABLE(macos(26.0))
+void MCLocalXPCListenerRejectPeer(MCLocalXPCSessionRef peer);
+
+API_AVAILABLE(macos(26.0))
 MCLocalXPCSessionRef _Nullable MCLocalXPCSessionCreateInactive(
     const char *service_name,
     dispatch_queue_t queue,
@@ -55,9 +71,9 @@ MCLocalXPCSessionRef _Nullable MCLocalXPCSessionCreateInactive(
 );
 
 API_AVAILABLE(macos(26.0))
-MCLocalXPCResult MCLocalXPCSessionRequireSameTeamIdentifier(
+void MCLocalXPCSessionSetPeerRequirement(
     MCLocalXPCSessionRef session,
-    const char *signing_identifier
+    MCLocalXPCPeerRequirementRef requirement
 );
 
 API_AVAILABLE(macos(26.0))
@@ -79,6 +95,14 @@ API_AVAILABLE(macos(26.0))
 void MCLocalXPCSessionCancel(MCLocalXPCSessionRef session);
 
 API_AVAILABLE(macos(26.0))
+void MCLocalXPCSessionDisposeAfterFailedActivation(
+    MCLocalXPCSessionRef session
+);
+
+API_AVAILABLE(macos(26.0))
+void MCLocalXPCSessionRetain(MCLocalXPCSessionRef session);
+
+API_AVAILABLE(macos(26.0))
 void MCLocalXPCSessionCancelOwned(MCLocalXPCSessionRef session);
 
 API_AVAILABLE(macos(26.0))
@@ -91,6 +115,17 @@ API_AVAILABLE(macos(26.0))
 bool MCLocalXPCMessageIsExactHelloAcknowledgement(MCLocalXPCMessageRef message);
 
 API_AVAILABLE(macos(26.0))
+bool MCLocalXPCMessageIsExactMenuReady(MCLocalXPCMessageRef message);
+
+API_AVAILABLE(macos(26.0))
+bool MCLocalXPCMessageIsExactMenuReadyAcknowledgement(
+    MCLocalXPCMessageRef message
+);
+
+API_AVAILABLE(macos(26.0))
+bool MCLocalXPCExactMessageParserSelfTest(void);
+
+API_AVAILABLE(macos(26.0))
 MCLocalXPCResult MCLocalXPCSessionReplyToHello(
     MCLocalXPCSessionRef session,
     MCLocalXPCMessageRef hello
@@ -98,6 +133,18 @@ MCLocalXPCResult MCLocalXPCSessionReplyToHello(
 
 API_AVAILABLE(macos(26.0))
 void MCLocalXPCSessionSendHello(
+    MCLocalXPCSessionRef session,
+    MCLocalXPCReplyHandler handler
+);
+
+API_AVAILABLE(macos(26.0))
+MCLocalXPCResult MCLocalXPCSessionReplyToMenuReady(
+    MCLocalXPCSessionRef session,
+    MCLocalXPCMessageRef request
+);
+
+API_AVAILABLE(macos(26.0))
+void MCLocalXPCSessionSendMenuReady(
     MCLocalXPCSessionRef session,
     MCLocalXPCReplyHandler handler
 );

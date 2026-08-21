@@ -28,10 +28,17 @@ rejection. The
 [production handshake construction](../evidence/2026-08-21-production-local-xpc-handshake-construction.md)
 now binds those requirements to the permanent Mach service and targets,
 publishes generation-bound authentication only after a successful exact
-acknowledgement, and invalidates that observable lifetime exactly once. It
-deliberately issues no method authority. Production status/lifecycle binding,
-replacement and late-reply fencing, signed permanent-target runtime, and
-capability revocation evidence remain required before IPC ships.
+acknowledgement, and invalidates that observable lifetime exactly once. The
+[menu-readiness binding](../evidence/2026-08-21-local-xpc-menu-readiness-binding.md)
+adds one exact post-authentication lifecycle-ready request, keeps hello
+non-authorizing, admits readiness only after its acknowledgement, and binds
+authentication/readiness/invalidation to the existing lifecycle root through
+one ordered generation-fenced event stream. Authenticated replacement cancels
+the old peer without a false recovery event; lifecycle failure returns the exact
+generation for fail-closed transport cancellation. Production content-free
+status binding, complete permanent-Agent bootstrap instantiation, signed
+permanent-target runtime, and broader capability revocation evidence remain
+required before IPC ships.
 
 If the menu app disappears, the agent ends capture/input leases, releases all input, suspends Interactive Control, and preserves eligible Observe or bounded Act service. Crash recovery is distinct from an explicit local **Quit and Disable**, which unregisters both login roles. Until recovery is proved, Control fails closed.
 

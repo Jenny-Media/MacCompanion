@@ -221,8 +221,8 @@ let package = Package(
         .target(
             name: "CompanionAgentPlatform",
             dependencies: [
-                "CompanionAgent", "CompanionLifecycle", "CompanionMacApp",
-                "CompanionWire",
+                "CompanionAgent", "CompanionLifecycle", "CompanionLocalXPCPlatform",
+                "CompanionMacApp", "CompanionWire",
             ],
             linkerSettings: [
                 .linkedFramework("ServiceManagement", .when(platforms: [.macOS])),
@@ -234,7 +234,12 @@ let package = Package(
         ),
         .target(
             name: "CompanionLocalXPCPlatform",
-            dependencies: ["CompanionLocalXPCPlatformC"]
+            dependencies: [
+                .target(
+                    name: "CompanionLocalXPCPlatformC",
+                    condition: .when(platforms: [.macOS])
+                ),
+            ]
         ),
         .target(
             name: "CompanionHost",
@@ -477,7 +482,8 @@ let package = Package(
             name: "CompanionAgentPlatformTests",
             dependencies: [
                 "CompanionAgent", "CompanionAgentPlatform",
-                "CompanionLifecycle", "CompanionMacApp", "CompanionWire",
+                "CompanionLifecycle", "CompanionLocalXPCPlatform",
+                "CompanionMacApp", "CompanionWire",
             ]
         ),
         .testTarget(

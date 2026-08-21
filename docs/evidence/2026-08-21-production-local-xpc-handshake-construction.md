@@ -3,7 +3,7 @@
 Date: 2026-08-21
 
 Status: production target construction and unsigned build evidence on Xcode 27 beta;
-signed permanent-target runtime and method-capability evidence remain open
+signed permanent-target runtime, status, and broader method evidence remain open
 
 ## Constructed boundary
 
@@ -47,9 +47,10 @@ session.
 
 ## Evidence executed
 
-- Seven focused `CompanionLocalXPCPlatformTests` pass, including cancellation
+- Twenty focused `CompanionLocalXPCPlatformTests` pass, including cancellation
   before hello, reply failure before publication, exact one-use publication,
-  repeated invalidation, malformed hello, and generation distinction.
+  repeated invalidation, malformed hello, client and listener generation
+  fencing, bounded pre-hello admission, and generation-bound deadline expiry.
 - The production C bridge compiles with `-Wall -Wextra -Werror` against the
   macOS 27 beta SDK at a macOS 26 deployment floor.
 - The permanent-target validator proves the exact Mach service, both package
@@ -69,11 +70,13 @@ diagnostic, action, lease, media, input, or remote-listener authority. The Mac
 application does not yet instantiate the client. The Agent creates no remote
 listener, keys, stores, provider graph, or readiness state from this handshake.
 
-The next production checkpoint must bind the first existing content-free
-status/lifecycle capability to the authenticated connection generation,
-revoke it on invalidation or replacement, and prove that late replies cannot
-restore authority. Persistent service registration remains an explicit user
-action and was not performed by this construction.
+The subsequent
+[menu-readiness checkpoint](2026-08-21-local-xpc-menu-readiness-binding.md)
+binds the first explicit lifecycle capability to the authenticated connection
+generation and proves replacement, ordering, and fail-closed cancellation
+seams. Content-free status transport and permanent Agent bootstrap instantiation
+remain next. Persistent service registration remains an explicit user action
+and was not performed by either construction.
 
 Stable Xcode 26.6 and signed permanent-target runtime evidence remain release
 gates; this beta-toolchain result is provisional.
