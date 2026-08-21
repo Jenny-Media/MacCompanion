@@ -213,6 +213,7 @@ def validate_narrow_agent_source(content: str, failures: list[str]) -> None:
         "SQLite",
         ".menuLifecycleReadiness",
         "MacLocalXPCStatusReaderV1",
+        "MacLocalXPCAgentProductV1",
         "statusReader:",
     ):
         if needle in code:
@@ -266,6 +267,19 @@ def validate_login_role_composition(
         "rawLoginRoles",
         failures,
     )
+    require_count(
+        application_code,
+        "@State private var source: MacAgentDashboardSourceV0 = .unavailable",
+        1,
+        "inertMenuDashboardSource",
+        failures,
+    )
+    for needle in (
+        "MacLocalXPCDashboardProductV1(",
+        "MacAgentDashboardApplicationOwnerV0(",
+    ):
+        if needle in application_code:
+            failures.append(f"menuSourceUnexpectedAuthority:{needle}")
     for needle in (".register(", ".unregister(", "setEnabled("):
         if needle in composition_code or needle in application_code:
             failures.append(f"implicitLoginMutation:{needle}")

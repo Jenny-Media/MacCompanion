@@ -18,6 +18,8 @@ let package = Package(
         .library(name: "CompanionIPC", targets: ["CompanionIPC"]),
         .library(name: "CompanionCLI", targets: ["CompanionCLI"]),
         .library(name: "CompanionAgent", targets: ["CompanionAgent"]),
+        // Host administration graph: macOS-only even though this aggregate
+        // package also advertises iOS for its explicitly cross-built client graph.
         .library(name: "CompanionAgentPlatform", targets: ["CompanionAgentPlatform"]),
         .library(
             name: "CompanionLocalXPCPlatform",

@@ -95,6 +95,27 @@ public actor MacAgentDashboardApplicationOwnerV0 {
         await publish()
     }
 
+    /// A closed source failure does not retire the authenticated transport.
+    /// A later sequential read on the same connection may recover, but it must
+    /// still advance the status sequence and cannot resurrect stale data.
+    public func statusTemporarilyUnavailable(
+        from token: MacAgentDashboardConnectionTokenV0
+    ) async throws {
+        try requireCurrent(token)
+        source = .unavailable
+        await publish()
+    }
+
+    /// Marks a user-initiated sequential retry without minting a replacement
+    /// connection generation or weakening status monotonicity.
+    public func statusRefreshStarted(
+        from token: MacAgentDashboardConnectionTokenV0
+    ) async throws {
+        try requireCurrent(token)
+        source = .loading
+        await publish()
+    }
+
     public func connectionUnavailable(
         _ token: MacAgentDashboardConnectionTokenV0
     ) async throws {
