@@ -235,6 +235,7 @@ let package = Package(
         .target(
             name: "CompanionLocalXPCPlatform",
             dependencies: [
+                "CompanionIPC",
                 .target(
                     name: "CompanionLocalXPCPlatformC",
                     condition: .when(platforms: [.macOS])
@@ -488,7 +489,7 @@ let package = Package(
         ),
         .testTarget(
             name: "CompanionLocalXPCPlatformTests",
-            dependencies: ["CompanionLocalXPCPlatform"]
+            dependencies: ["CompanionIPC", "CompanionLocalXPCPlatform"]
         ),
         .testTarget(
             name: "CompanionHostTests",

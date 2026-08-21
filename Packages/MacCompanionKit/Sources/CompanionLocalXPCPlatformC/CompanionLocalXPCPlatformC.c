@@ -44,6 +44,99 @@ static bool MCLocalXPCMessageIsExact(
         && xpc_dictionary_get_int64(message, "version") == 1;
 }
 
+static bool MCLocalXPCMessageIsExactStatusSuccess(
+    xpc_object_t message,
+    const void **payload_out,
+    size_t *payload_length_out
+) {
+    if (message == NULL
+        || xpc_get_type(message) != XPC_TYPE_DICTIONARY) {
+        return false;
+    }
+
+    __block size_t field_count = 0;
+    __block bool fields_are_closed = true;
+    xpc_dictionary_apply(
+        message,
+        ^bool(const char *key, xpc_object_t value) {
+            field_count += 1;
+            if (strcmp(key, "kind") == 0) {
+                fields_are_closed = fields_are_closed
+                    && xpc_get_type(value) == XPC_TYPE_STRING;
+            } else if (strcmp(key, "version") == 0) {
+                fields_are_closed = fields_are_closed
+                    && xpc_get_type(value) == XPC_TYPE_INT64;
+            } else if (strcmp(key, "payload") == 0) {
+                fields_are_closed = fields_are_closed
+                    && xpc_get_type(value) == XPC_TYPE_DATA;
+            } else {
+                fields_are_closed = false;
+            }
+            return true;
+        }
+    );
+
+    const char *kind = xpc_dictionary_get_string(message, "kind");
+    size_t length = 0;
+    const void *payload = xpc_dictionary_get_data(
+        message,
+        "payload",
+        &length
+    );
+    if (payload_out != NULL) {
+        *payload_out = payload;
+    }
+    if (payload_length_out != NULL) {
+        *payload_length_out = length;
+    }
+    return field_count == 3
+        && fields_are_closed
+        && kind != NULL
+        && strcmp(kind, "status.read.ack") == 0
+        && xpc_dictionary_get_int64(message, "version") == 1
+        && length > 0
+        && length <= MCLocalXPCMaximumStatusPayloadBytes;
+}
+
+static bool MCLocalXPCMessageIsExactStatusUnavailable(
+    xpc_object_t message
+) {
+    if (message == NULL
+        || xpc_get_type(message) != XPC_TYPE_DICTIONARY) {
+        return false;
+    }
+
+    __block size_t field_count = 0;
+    __block bool fields_are_closed = true;
+    xpc_dictionary_apply(
+        message,
+        ^bool(const char *key, xpc_object_t value) {
+            field_count += 1;
+            if (strcmp(key, "kind") == 0
+                || strcmp(key, "code") == 0) {
+                fields_are_closed = fields_are_closed
+                    && xpc_get_type(value) == XPC_TYPE_STRING;
+            } else if (strcmp(key, "version") == 0) {
+                fields_are_closed = fields_are_closed
+                    && xpc_get_type(value) == XPC_TYPE_INT64;
+            } else {
+                fields_are_closed = false;
+            }
+            return true;
+        }
+    );
+
+    const char *kind = xpc_dictionary_get_string(message, "kind");
+    const char *code = xpc_dictionary_get_string(message, "code");
+    return field_count == 3
+        && fields_are_closed
+        && kind != NULL
+        && strcmp(kind, "status.read.error") == 0
+        && code != NULL
+        && strcmp(code, "sourceUnavailable") == 0
+        && xpc_dictionary_get_int64(message, "version") == 1;
+}
+
 MCLocalXPCListenerRef MCLocalXPCListenerCreateInactive(
     const char *service_name,
     dispatch_queue_t queue,
@@ -257,6 +350,21 @@ bool MCLocalXPCMessageIsExactMenuReadyAcknowledgement(
         "lifecycle.menu-ready.ack"
     );
 }
+bool MCLocalXPCMessageIsExactStatusRead(MCLocalXPCMessageRef message) {
+    return MCLocalXPCMessageIsExact(
+        (xpc_object_t)message,
+        "status.read"
+    );
+}
+
+void MCLocalXPCMessageRetain(MCLocalXPCMessageRef message) {
+    xpc_retain((xpc_object_t)message);
+}
+
+void MCLocalXPCMessageRelease(MCLocalXPCMessageRef message) {
+    xpc_release((xpc_object_t)message);
+}
+
 
 bool MCLocalXPCExactMessageParserSelfTest(void) {
     bool valid = true;
@@ -307,6 +415,120 @@ bool MCLocalXPCExactMessageParserSelfTest(void) {
     valid = valid
         && !MCLocalXPCMessageIsExact(wrong_kind_type, "hello");
     xpc_release(wrong_kind_type);
+
+    const uint8_t status_bytes[] = {0x7b, 0x7d};
+    const void *parsed_status_bytes = NULL;
+    size_t parsed_status_length = 0;
+    xpc_object_t status_success = xpc_dictionary_create_empty();
+    xpc_dictionary_set_string(status_success, "kind", "status.read.ack");
+    xpc_dictionary_set_int64(status_success, "version", 1);
+    xpc_dictionary_set_data(
+        status_success,
+        "payload",
+        status_bytes,
+        sizeof(status_bytes)
+    );
+    valid = valid && MCLocalXPCMessageIsExactStatusSuccess(
+        status_success,
+        &parsed_status_bytes,
+        &parsed_status_length
+    );
+    valid = valid
+        && parsed_status_length == sizeof(status_bytes)
+        && memcmp(
+            parsed_status_bytes,
+            status_bytes,
+            sizeof(status_bytes)
+        ) == 0;
+    xpc_dictionary_set_bool(status_success, "extra", true);
+    valid = valid && !MCLocalXPCMessageIsExactStatusSuccess(
+        status_success,
+        &parsed_status_bytes,
+        &parsed_status_length
+    );
+    xpc_release(status_success);
+
+    xpc_object_t status_unavailable = xpc_dictionary_create_empty();
+    xpc_dictionary_set_string(
+        status_unavailable,
+        "kind",
+        "status.read.error"
+    );
+    xpc_dictionary_set_int64(status_unavailable, "version", 1);
+    xpc_dictionary_set_string(
+        status_unavailable,
+        "code",
+        "sourceUnavailable"
+    );
+    valid = valid
+        && MCLocalXPCMessageIsExactStatusUnavailable(status_unavailable);
+    xpc_dictionary_set_string(status_unavailable, "code", "other");
+    valid = valid
+        && !MCLocalXPCMessageIsExactStatusUnavailable(status_unavailable);
+    xpc_release(status_unavailable);
+
+    xpc_object_t status_request = xpc_dictionary_create_empty();
+    xpc_dictionary_set_string(status_request, "kind", "status.read");
+    xpc_dictionary_set_int64(status_request, "version", 1);
+    valid = valid
+        && MCLocalXPCMessageIsExactStatusRead(
+            (MCLocalXPCMessageRef)status_request
+        );
+    xpc_dictionary_set_bool(status_request, "extra", true);
+    valid = valid
+        && !MCLocalXPCMessageIsExactStatusRead(
+            (MCLocalXPCMessageRef)status_request
+        );
+    xpc_release(status_request);
+
+    xpc_object_t zero_status = xpc_dictionary_create_empty();
+    xpc_dictionary_set_string(zero_status, "kind", "status.read.ack");
+    xpc_dictionary_set_int64(zero_status, "version", 1);
+    xpc_dictionary_set_data(zero_status, "payload", status_bytes, 0);
+    valid = valid && !MCLocalXPCMessageIsExactStatusSuccess(
+        zero_status,
+        &parsed_status_bytes,
+        &parsed_status_length
+    );
+    xpc_release(zero_status);
+
+    xpc_object_t wrong_status_type = xpc_dictionary_create_empty();
+    xpc_dictionary_set_string(
+        wrong_status_type,
+        "kind",
+        "status.read.ack"
+    );
+    xpc_dictionary_set_int64(wrong_status_type, "version", 1);
+    xpc_dictionary_set_string(wrong_status_type, "payload", "{}");
+    valid = valid && !MCLocalXPCMessageIsExactStatusSuccess(
+        wrong_status_type,
+        &parsed_status_bytes,
+        &parsed_status_length
+    );
+    xpc_release(wrong_status_type);
+
+    uint8_t oversized_status[
+        MCLocalXPCMaximumStatusPayloadBytes + 1
+    ] = {0};
+    xpc_object_t oversized_status_reply = xpc_dictionary_create_empty();
+    xpc_dictionary_set_string(
+        oversized_status_reply,
+        "kind",
+        "status.read.ack"
+    );
+    xpc_dictionary_set_int64(oversized_status_reply, "version", 1);
+    xpc_dictionary_set_data(
+        oversized_status_reply,
+        "payload",
+        oversized_status,
+        sizeof(oversized_status)
+    );
+    valid = valid && !MCLocalXPCMessageIsExactStatusSuccess(
+        oversized_status_reply,
+        &parsed_status_bytes,
+        &parsed_status_length
+    );
+    xpc_release(oversized_status_reply);
 
     return valid;
 }
@@ -388,4 +610,101 @@ void MCLocalXPCSessionSendMenuReady(
         "lifecycle.menu-ready",
         handler
     );
+}
+
+MCLocalXPCResult MCLocalXPCSessionReplyToStatusReadSuccess(
+    MCLocalXPCSessionRef session,
+    MCLocalXPCMessageRef request,
+    const uint8_t *payload,
+    size_t payload_length
+) {
+    if (payload == NULL
+        || payload_length == 0
+        || payload_length > MCLocalXPCMaximumStatusPayloadBytes) {
+        return MCLocalXPCResultConstructionFailed;
+    }
+    xpc_object_t reply = xpc_dictionary_create_reply(
+        (xpc_object_t)request
+    );
+    if (reply == NULL) {
+        return MCLocalXPCResultConstructionFailed;
+    }
+    xpc_dictionary_set_string(reply, "kind", "status.read.ack");
+    xpc_dictionary_set_int64(reply, "version", 1);
+    xpc_dictionary_set_data(reply, "payload", payload, payload_length);
+    xpc_rich_error_t error = xpc_session_send_message(
+        (xpc_session_t)session,
+        reply
+    );
+    xpc_release(reply);
+    if (error != NULL) {
+        xpc_release(error);
+        return MCLocalXPCResultSendFailed;
+    }
+    return MCLocalXPCResultOK;
+}
+
+MCLocalXPCResult MCLocalXPCSessionReplyToStatusReadUnavailable(
+    MCLocalXPCSessionRef session,
+    MCLocalXPCMessageRef request
+) {
+    xpc_object_t reply = xpc_dictionary_create_reply(
+        (xpc_object_t)request
+    );
+    if (reply == NULL) {
+        return MCLocalXPCResultConstructionFailed;
+    }
+    xpc_dictionary_set_string(reply, "kind", "status.read.error");
+    xpc_dictionary_set_int64(reply, "version", 1);
+    xpc_dictionary_set_string(reply, "code", "sourceUnavailable");
+    xpc_rich_error_t error = xpc_session_send_message(
+        (xpc_session_t)session,
+        reply
+    );
+    xpc_release(reply);
+    if (error != NULL) {
+        xpc_release(error);
+        return MCLocalXPCResultSendFailed;
+    }
+    return MCLocalXPCResultOK;
+}
+
+void MCLocalXPCSessionSendStatusRead(
+    MCLocalXPCSessionRef session,
+    MCLocalXPCStatusReplyHandler handler
+) {
+    xpc_object_t request = xpc_dictionary_create_empty();
+    xpc_dictionary_set_string(request, "kind", "status.read");
+    xpc_dictionary_set_int64(request, "version", 1);
+    xpc_session_send_message_with_reply_async(
+        (xpc_session_t)session,
+        request,
+        ^(xpc_object_t reply, xpc_rich_error_t error) {
+            if (error != NULL) {
+                handler(NULL, 0, false, true);
+                return;
+            }
+            const void *payload = NULL;
+            size_t payload_length = 0;
+            if (MCLocalXPCMessageIsExactStatusSuccess(
+                    reply,
+                    &payload,
+                    &payload_length
+                )) {
+                handler(
+                    (const uint8_t *)payload,
+                    payload_length,
+                    false,
+                    false
+                );
+                return;
+            }
+            if (MCLocalXPCMessageIsExactStatusUnavailable(reply)) {
+                handler(NULL, 0, true, false);
+                return;
+            }
+            handler(NULL, 0, false, true);
+        }
+    );
+    xpc_release(request);
 }

@@ -3,8 +3,9 @@
 Status: normative for bundle-independent role policy, leases, status, sanitized
 diagnostic payloads, and the macOS 26 peer-identity boundary. The signed
 peer-requirement mechanism is provisionally proven on Xcode 27 beta. The
-production hello and menu-lifecycle-ready transport are constructed; permanent
-Agent bootstrap composition and signed runtime evidence remain pending.
+production hello, menu-lifecycle-ready, and content-free status-read transport
+are constructed; permanent Agent bootstrap composition and signed runtime
+evidence remain pending.
 
 Local IPC is never authenticated by a caller-supplied role, PID, path, service
 label, or claimed audit token. The macOS adapter installs an XPC peer
@@ -56,10 +57,37 @@ other lifecycle message may be sent before that readiness exchange. A malformed,
 premature, duplicate, or rejected readiness message cancels the exact peer.
 Lifecycle admission failure is returned to the transport owner so it can cancel
 only the still-current generation.
+Once readiness is acknowledged, an explicitly composed
+`menuLifecycleReadinessAndStatus` profile may accept sequential exact
+`{"kind":"status.read","version":1}` requests. It calls
+`LocalIPCAuthorizationPolicy` for the authenticated `menuApp`-to-`agent`
+`readAgentStatus` method and requires a typed reader issued from the complete
+Agent local-service root. The permanent target remains `authenticationOnly`;
+passing a reader to any narrower profile or constructing the status profile
+without one fails before listener construction.
+
+A successful response is exactly
+`{"kind":"status.read.ack","version":1,"payload":<data>}`, where `payload`
+is `XPC_TYPE_DATA` containing at most 4,096 bytes of canonical closed JSON for
+one validated `LocalAgentStatusSnapshot`. A source failure is exactly
+`{"code":"sourceUnavailable","kind":"status.read.error","version":1}` and
+carries no payload. Unknown members, alternate scalar types, open or
+noncanonical JSON, invalid closed values, missing data, or oversized data
+cancel the current generation; the menu client publishes only a decoded typed
+snapshot, never raw transport bytes.
+
+Only one status read may be in flight per peer and per client. Operation IDs,
+listener generations, peer generations, and client session generations fence
+late completion, timeout, cancellation, and replacement callbacks. The Agent
+cancels a read that exceeds two seconds; the menu client cancels its generation
+if no terminal reply arrives within three seconds. A source-unavailable reply
+does not invalidate an otherwise current connection, so a later sequential
+read may recover.
+
 
 Client transport callbacks are bound to monotonically increasing session
-generations. A cancelled session's delayed cancel, hello-reply, or
-readiness-reply callback is ignored and cannot authenticate, acknowledge,
+generations. A cancelled session's delayed cancel, hello, readiness, or status
+reply is ignored and cannot authenticate, acknowledge,
 release, or cancel a restarted session. Each server listener run has its own
 monotonic generation, and every accepted callback requires both that active run
 and exact retained-peer membership. The Agent admits at most eight pre-hello

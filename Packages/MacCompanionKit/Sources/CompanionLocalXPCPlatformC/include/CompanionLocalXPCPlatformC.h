@@ -27,6 +27,16 @@ typedef void (^MCLocalXPCReplyHandler)(
     MCLocalXPCMessageRef _Nullable reply,
     bool had_error
 );
+typedef void (^MCLocalXPCStatusReplyHandler)(
+    const uint8_t * _Nullable payload,
+    size_t payload_length,
+    bool source_unavailable,
+    bool malformed_or_transport_error
+);
+
+enum {
+    MCLocalXPCMaximumStatusPayloadBytes = 4096,
+};
 
 API_AVAILABLE(macos(26.0))
 MCLocalXPCPeerRequirementRef _Nullable
@@ -123,6 +133,15 @@ bool MCLocalXPCMessageIsExactMenuReadyAcknowledgement(
 );
 
 API_AVAILABLE(macos(26.0))
+bool MCLocalXPCMessageIsExactStatusRead(MCLocalXPCMessageRef message);
+
+API_AVAILABLE(macos(26.0))
+void MCLocalXPCMessageRetain(MCLocalXPCMessageRef message);
+
+API_AVAILABLE(macos(26.0))
+void MCLocalXPCMessageRelease(MCLocalXPCMessageRef message);
+
+API_AVAILABLE(macos(26.0))
 bool MCLocalXPCExactMessageParserSelfTest(void);
 
 API_AVAILABLE(macos(26.0))
@@ -147,6 +166,26 @@ API_AVAILABLE(macos(26.0))
 void MCLocalXPCSessionSendMenuReady(
     MCLocalXPCSessionRef session,
     MCLocalXPCReplyHandler handler
+);
+
+API_AVAILABLE(macos(26.0))
+MCLocalXPCResult MCLocalXPCSessionReplyToStatusReadSuccess(
+    MCLocalXPCSessionRef session,
+    MCLocalXPCMessageRef request,
+    const uint8_t *payload,
+    size_t payload_length
+);
+
+API_AVAILABLE(macos(26.0))
+MCLocalXPCResult MCLocalXPCSessionReplyToStatusReadUnavailable(
+    MCLocalXPCSessionRef session,
+    MCLocalXPCMessageRef request
+);
+
+API_AVAILABLE(macos(26.0))
+void MCLocalXPCSessionSendStatusRead(
+    MCLocalXPCSessionRef session,
+    MCLocalXPCStatusReplyHandler handler
 );
 
 XPC_ASSUME_NONNULL_END

@@ -1,10 +1,15 @@
 @testable import CompanionLocalXPCPlatform
+import CompanionIPC
 import Testing
 
 @Test
 @available(macOS 26.0, *)
 func exactMessageParserRejectsAlternateScalarTypesAndOpenDictionaries() {
     #expect(MacLocalXPCExactMessageParserValidationV1.selfTest())
+    #expect(
+        MacLocalXPCStatusWireV1.maximumPayloadBytes
+            == LocalAgentStatusWireCodecV1.maximumEncodedBytes
+    )
 }
 
 @Test
@@ -50,15 +55,179 @@ func delayedOldReadyReplyCannotPublishForRestartedClientGeneration() {
 }
 
 @Test
-func menuLifecycleReadinessIsAnExplicitServerProfile() {
+func menuLifecycleAndStatusAreExplicitServerProfiles() {
     #expect(
         !MacLocalXPCServerProfileV1.authenticationOnly
             .admitsMenuLifecycleReadiness
     )
     #expect(
+        !MacLocalXPCServerProfileV1.authenticationOnly
+            .admitsAgentStatus
+    )
+    #expect(
         MacLocalXPCServerProfileV1.menuLifecycleReadiness
             .admitsMenuLifecycleReadiness
     )
+    #expect(
+        !MacLocalXPCServerProfileV1.menuLifecycleReadiness
+            .admitsAgentStatus
+    )
+    #expect(
+        MacLocalXPCServerProfileV1.menuLifecycleReadinessAndStatus
+            .admitsMenuLifecycleReadiness
+    )
+    #expect(
+        MacLocalXPCServerProfileV1.menuLifecycleReadinessAndStatus
+            .admitsAgentStatus
+    )
+}
+
+@Test
+func statusTransactionCoversAdmissionSuccessUnavailableAndRecovery() throws {
+    var gate = MacLocalXPCStatusReadTransactionGateV1()
+
+    let bound = gate.bind(generation: 11)
+    #expect(bound)
+    let premature = gate.begin(generation: 11, permitted: false)
+    #expect(premature == nil)
+
+    let success = gate.begin(generation: 11, permitted: true)
+    #expect(success == 1)
+    let concurrent = gate.begin(generation: 11, permitted: true)
+    #expect(concurrent == nil)
+    let successOperation = try #require(success)
+    let completedSuccess = gate.finish(
+        generation: 11,
+        operation: successOperation
+    )
+    #expect(completedSuccess)
+
+    let unavailable = gate.begin(generation: 11, permitted: true)
+    #expect(unavailable == 2)
+    let unavailableOperation = try #require(unavailable)
+    let completedUnavailable = gate.finish(
+        generation: 11,
+        operation: unavailableOperation
+    )
+    #expect(completedUnavailable)
+    let recovery = gate.begin(generation: 11, permitted: true)
+    #expect(recovery == 3)
+}
+
+@Test
+func statusTimeoutAndReplacementFenceLateCompletion() throws {
+    var gate = MacLocalXPCStatusReadTransactionGateV1()
+    let boundOld = gate.bind(generation: 4)
+    #expect(boundOld)
+    let timedOutCandidate = gate.begin(
+        generation: 4,
+        permitted: true
+    )
+    let timedOut = try #require(timedOutCandidate)
+    let invalidatedOld = gate.invalidate(generation: 4)
+    #expect(invalidatedOld)
+    let lateCompletion = gate.finish(
+        generation: 4,
+        operation: timedOut
+    )
+    #expect(!lateCompletion)
+
+    let boundReplacement = gate.bind(generation: 5)
+    #expect(boundReplacement)
+    let replacementCandidate = gate.begin(
+        generation: 5,
+        permitted: true
+    )
+    let replacement = try #require(replacementCandidate)
+    #expect(!gate.admits(generation: 4, operation: timedOut))
+    let staleInvalidation = gate.invalidate(generation: 4)
+    #expect(!staleInvalidation)
+    #expect(gate.admits(generation: 5, operation: replacement))
+}
+
+private final class StatusRequestOwnershipCounterV1:
+    @unchecked Sendable
+{
+    private(set) var retains = 0
+    private(set) var releases = 0
+
+    func retain(_: Int) {
+        retains += 1
+    }
+
+    func release(_: Int) {
+        releases += 1
+    }
+}
+
+@Test
+@available(macOS 26.0, *)
+func statusRequestLeaseReleasesExactlyOnceOnEveryTerminalPath() {
+    let counter = StatusRequestOwnershipCounterV1()
+    do {
+        let lease = MacLocalXPCStatusRequestLeaseV1(
+            request: 7,
+            retainRequest: counter.retain,
+            releaseRequest: counter.release
+        )
+        #expect(counter.retains == 1)
+        lease.releaseIfOwned()
+        lease.releaseIfOwned()
+        #expect(counter.releases == 1)
+    }
+    #expect(counter.releases == 1)
+
+    do {
+        let lease = MacLocalXPCStatusRequestLeaseV1(
+            request: 8,
+            retainRequest: counter.retain,
+            releaseRequest: counter.release
+        )
+        let transferred = lease.takeOwnedRequest()
+        #expect(transferred == 8)
+        if let transferred {
+            counter.release(transferred)
+        }
+    }
+    #expect(counter.retains == 2)
+    #expect(counter.releases == 2)
+
+    do {
+        _ = MacLocalXPCStatusRequestLeaseV1(
+            request: 9,
+            retainRequest: counter.retain,
+            releaseRequest: counter.release
+        )
+    }
+    #expect(counter.retains == 3)
+    #expect(counter.releases == 3)
+}
+
+private struct UnavailableStatusReaderV1: MacLocalXPCStatusReadingV1 {
+    func readStatus() async
+        -> Result<LocalAgentStatusSnapshot, MacLocalXPCStatusReadErrorV1>
+    {
+        .failure(.sourceUnavailable)
+    }
+}
+
+@Test
+@available(macOS 26.0, *)
+func statusAuthorityRequiresTheExactExplicitServerProfile() {
+    let unexpectedReader = MacLocalXPCServerV1(
+        profile: .authenticationOnly,
+        statusReader: UnavailableStatusReaderV1()
+    ) { _ in }
+    #expect(throws: MacLocalXPCConstructionErrorV1.invalidProfile) {
+        try unexpectedReader.start()
+    }
+
+    let missingReader = MacLocalXPCServerV1(
+        profile: .menuLifecycleReadinessAndStatus
+    ) { _ in }
+    #expect(throws: MacLocalXPCConstructionErrorV1.invalidProfile) {
+        try missingReader.start()
+    }
 }
 
 @Test
@@ -246,13 +415,16 @@ func authenticatedAndInvalidatedEventsRemainGenerationBound() {
             != .invalidatedMenu(generation: 4)
     )
     #expect(
-
         MacLocalXPCClientEventV1.authenticatedAgent
             != .menuReadyAcknowledged
     )
     #expect(
         MacLocalXPCClientEventV1.menuReadyAcknowledged
             != .invalidated
+    )
+    #expect(
+        MacLocalXPCClientEventV1.agentStatusUnavailable(generation: 4)
+            != .agentStatusUnavailable(generation: 5)
     )
 }
 

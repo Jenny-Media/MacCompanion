@@ -212,6 +212,8 @@ def validate_narrow_agent_source(content: str, failures: list[str]) -> None:
         "Keychain",
         "SQLite",
         ".menuLifecycleReadiness",
+        "MacLocalXPCStatusReaderV1",
+        "statusReader:",
     ):
         if needle in code:
             failures.append(f"agentSourceUnexpectedAuthority:{needle}")
