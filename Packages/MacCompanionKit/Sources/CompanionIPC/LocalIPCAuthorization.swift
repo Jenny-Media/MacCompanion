@@ -6,6 +6,8 @@ public enum LocalProcessRole: String, Codable, CaseIterable, Sendable {
 
 public enum LocalIPCMethod: String, Codable, CaseIterable, Sendable {
     case negotiateProtocol
+    case readRemoteAccessBootstrap
+    case enableRemoteAccess
     case publishMenuReady
     case readAgentStatus
     case createPairingSession
@@ -114,6 +116,8 @@ public enum LocalIPCAuthorizationPolicy {
         case (.menuApp, .agent):
             [
                 .negotiateProtocol,
+                .readRemoteAccessBootstrap,
+                .enableRemoteAccess,
                 .publishMenuReady,
                 .readAgentStatus,
                 .createPairingSession,

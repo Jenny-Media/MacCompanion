@@ -4,6 +4,8 @@ import Testing
 @Test func localIPCRoleMatrixIsClosed() throws {
     let allowed: Set<String> = [
         "menuApp>agent:negotiateProtocol",
+        "menuApp>agent:readRemoteAccessBootstrap",
+        "menuApp>agent:enableRemoteAccess",
         "menuApp>agent:publishMenuReady",
         "menuApp>agent:readAgentStatus",
         "menuApp>agent:createPairingSession",

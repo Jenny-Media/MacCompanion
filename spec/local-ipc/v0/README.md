@@ -1,11 +1,12 @@
 # Local IPC shared payload profile v0.1
 
-Status: normative for bundle-independent role policy, leases, status, sanitized
-diagnostic payloads, and the macOS 26 peer-identity boundary. The signed
-peer-requirement mechanism is provisionally proven on Xcode 27 beta. The
-production hello, menu-lifecycle-ready, and content-free status-read transport
-are constructed; permanent Agent bootstrap composition and signed runtime
-evidence remain pending.
+Status: normative for bundle-independent role policy, disabled-Agent
+bootstrapping, leases, status, sanitized diagnostic payloads, and the macOS 26
+peer-identity boundary. The signed peer-requirement mechanism is provisionally
+proven on Xcode 27 beta. The production hello, menu-lifecycle-ready, and
+content-free status-read transport are constructed; the disabled-Agent
+bootstrap messages are frozen while their transport/handler composition and
+signed runtime evidence remain pending.
 
 Local IPC is never authenticated by a caller-supplied role, PID, path, service
 label, or claimed audit token. The macOS adapter installs an XPC peer
@@ -45,16 +46,72 @@ the signed scalar `XPC_TYPE_INT64` with value `1`. Missing or additional keys,
 and unsigned-integer, floating-point, Boolean, or other alternate scalar types,
 are malformed even when their displayed value resembles `1`.
 
-After that reply succeeds, the menu app may send exactly one closed
+## Disabled-Agent remote-access bootstrap
+
+Registering the Agent during one explicit foreground setup action is permitted
+before durable enabled intent exists only to make the exact
+`authenticationOnly` service reachable. That registration grants no remote
+authority, starts no network listener, publishes no readiness, and cannot be
+used as an enabled or healthy fact. The visible menu login role remains
+unregistered until the Agent has durably acknowledged enabled intent. An
+interrupted setup may therefore leave only an authentication-only Agent; a
+later explicit retry must resume or safely remove that registration.
+
+After exact same-team menu authentication and the closed hello exchange, an
+`authenticationOnly` peer may call only `readRemoteAccessBootstrap` and
+`enableRemoteAccess`. It may not publish menu readiness, read ordinary Agent
+status, pair a device, access diagnostics, present a local authority surface,
+or invoke Observe, Act, or Control. Recovery-mode authentication-only service
+rejects both bootstrap methods without revealing recovery details on the wire.
+
+`readRemoteAccessBootstrap` returns one
+`LocalRemoteAccessBootstrapOfferV0`: protocol version, random offer UUID,
+current disabled durable-intent revision, creation time, and expiry exactly
+five minutes later. Revision zero means no durable intent record exists;
+stored revisions are positive safe integers. The offer contains no process,
+registration, readiness, account, device, route, key, capability, grant,
+screen, input, or recovery data. At most one current offer exists per Agent
+boot, and a durable revision change, peer replacement, cancellation, expiry,
+or terminal failure invalidates it.
+
+Only the foreground menu UI may construct
+`LocalRemoteAccessEnableCommandV0` after displaying the fixed
+`agentRemoteAccessV1` consent profile and receiving explicit user confirmation.
+The command embeds the complete current Agent offer, a fresh command UUID, the
+closed consent profile, and a confirmation time inside the offer's half-open
+validity window. Caller text, a generic desired-state Boolean, capability IDs,
+and permission claims are not accepted.
+
+The Agent compares the exact offer and current disabled durable revision in one
+serialized mutation boundary. Success atomically records enabled intent at
+exactly the successor revision and returns
+`LocalRemoteAccessEnabledReceiptV0`, bound to the command UUID, offer UUID,
+successor revision, and completion time. Exact command replay returns the same
+receipt; changed-command reuse, stale offer, revision conflict, recovery,
+storage ambiguity, or expiry returns no success. The Agent sends the receipt
+only after the durable read-back is exact, then retires the authentication-only
+service so launchd can start a fresh Agent that loads enabled intent.
+
+The receipt authorizes the containing app to converge its already-selected
+Agent and visible-menu login roles, but it is not readiness. The restarted
+Agent must complete required-audit bootstrap, select the readiness/status
+profile, authenticate a fresh menu generation, acknowledge menu readiness, and
+return a typed status snapshot before either process may present the Agent as
+available. Observe, Act, Control, pairing, presentation, and network ingress
+remain separately gated.
+
+For a readiness-capable profile, after that reply succeeds the menu app may
+send exactly one closed
 `{"kind":"lifecycle.menu-ready","version":1}` request. The Agent acknowledges
 it only with exact `{"kind":"lifecycle.menu-ready.ack","version":1}` and
 publishes readiness only after the acknowledgement is sent successfully. This
 message is the transport mapping of menu-only `publishMenuReady`; hello itself
 never publishes lifecycle readiness or authorizes another method.
 
-No status, pairing, diagnostic, recovery, lease, media, input, surface, or
-other lifecycle message may be sent before that readiness exchange. A malformed,
-premature, duplicate, or rejected readiness message cancels the exact peer.
+Except for the two authentication-only bootstrap methods above, no status,
+pairing, diagnostic, recovery, lease, media, input, surface, or other lifecycle
+message may be sent before that readiness exchange. A malformed, premature,
+duplicate, or rejected readiness message cancels the exact peer.
 Lifecycle admission failure is returned to the transport owner so it can cancel
 only the still-current generation.
 Once readiness is acknowledged, an explicitly composed
@@ -110,8 +167,10 @@ replacement revokes the issued role and every connection-scoped capability.
 The signed probe evidence is recorded in
 `docs/evidence/2026-08-21-signed-local-xpc-peer-identity-probe.md`.
 
-The menu app may publish `publishMenuReady` and call the Agent methods
-`createPairingSession`,
+The menu app may call the pre-readiness Agent methods
+`readRemoteAccessBootstrap` and `enableRemoteAccess` only through the narrow
+authentication-only bootstrap profile. Through a readiness-capable profile it
+may publish `publishMenuReady` and call `createPairingSession`,
 `dismissPairingSession`, `decideGrantExpansion`, and `stopInteractiveSession`,
 may submit `recoverHostIdentity` only from an Agent-issued local review, and may
 read bounded local status, activity history, and sanitized diagnostics.
