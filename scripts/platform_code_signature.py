@@ -340,6 +340,266 @@ def entitlement_policy_from_plist(raw: bytes) -> dict[str, Any]:
     return result
 
 
+DER_TAG_BOOLEAN = 0x01
+DER_TAG_INTEGER = 0x02
+DER_TAG_UTF8_STRING = 0x0C
+DER_TAG_SEQUENCE = 0x30
+DER_TAG_CORE_ENTITLEMENTS = 0x70
+DER_TAG_DICTIONARY = 0xB0
+
+
+class _DEREntitlementBudget:
+    def __init__(self) -> None:
+        self.keys = 0
+        self.nodes = 0
+        self.string_bytes = 0
+
+    def charge_key(self, raw: bytes) -> str:
+        try:
+            value = raw.decode("ascii")
+        except UnicodeDecodeError as error:
+            raise PlatformCodeSignatureError("DER entitlement key is not ASCII") from error
+        if (
+            not value
+            or len(raw) > MAX_ENTITLEMENT_KEY_BYTES
+            or any(byte < 32 or byte == 127 for byte in raw)
+        ):
+            raise PlatformCodeSignatureError("DER entitlement key is outside the profile")
+        self.keys += 1
+        if self.keys > MAX_ENTITLEMENT_KEYS:
+            raise PlatformCodeSignatureError("DER entitlement key count exceeds the profile")
+        return value
+
+    def charge_node(self) -> None:
+        self.nodes += 1
+        if self.nodes > MAX_ENTITLEMENT_NODES:
+            raise PlatformCodeSignatureError("DER entitlement node count exceeds the profile")
+
+    def charge_string(self, raw: bytes) -> str:
+        try:
+            value = raw.decode("utf-8")
+        except UnicodeDecodeError as error:
+            raise PlatformCodeSignatureError("DER entitlement string is not UTF-8") from error
+        if (
+            not value
+            or value != unicodedata.normalize("NFC", value)
+            or len(raw) > MAX_ENTITLEMENT_STRING_BYTES
+            or any(ord(character) < 32 or ord(character) == 127 for character in value)
+        ):
+            raise PlatformCodeSignatureError("DER entitlement string is outside the profile")
+        self.string_bytes += len(raw)
+        if self.string_bytes > MAX_ENTITLEMENT_TOTAL_STRING_BYTES:
+            raise PlatformCodeSignatureError("DER entitlement string bytes exceed the profile")
+        return value
+
+
+def _der_tlv(
+    raw: bytes,
+    offset: int,
+    limit: int,
+    label: str,
+) -> tuple[int, int, int, int]:
+    if offset < 0 or limit > len(raw) or offset + 2 > limit:
+        raise PlatformCodeSignatureError(f"{label} is truncated")
+    tag = raw[offset]
+    offset += 1
+    first_length = raw[offset]
+    offset += 1
+    if first_length < 0x80:
+        length = first_length
+    else:
+        length_bytes = first_length & 0x7F
+        if (
+            length_bytes == 0
+            or length_bytes > 4
+            or offset + length_bytes > limit
+            or raw[offset] == 0
+        ):
+            raise PlatformCodeSignatureError(f"{label} length is not canonical DER")
+        length = int.from_bytes(raw[offset:offset + length_bytes], "big")
+        offset += length_bytes
+        if length < 0x80:
+            raise PlatformCodeSignatureError(f"{label} length is not canonical DER")
+    end = offset + length
+    if end > limit:
+        raise PlatformCodeSignatureError(f"{label} value is truncated")
+    return tag, offset, end, end
+
+
+def _der_integer(raw: bytes, start: int, end: int, label: str) -> int:
+    value = raw[start:end]
+    if not value:
+        raise PlatformCodeSignatureError(f"{label} integer is empty")
+    if len(value) > 8:
+        raise PlatformCodeSignatureError(f"{label} integer is outside the safe range")
+    if len(value) > 1 and (
+        (value[0] == 0x00 and value[1] & 0x80 == 0)
+        or (value[0] == 0xFF and value[1] & 0x80 != 0)
+    ):
+        raise PlatformCodeSignatureError(f"{label} integer is not canonical DER")
+    result = int.from_bytes(value, "big", signed=True)
+    if not -SAFE_INTEGER <= result <= SAFE_INTEGER:
+        raise PlatformCodeSignatureError(f"{label} integer is outside the safe range")
+    return result
+
+
+def _der_entitlement_value(
+    raw: bytes,
+    offset: int,
+    limit: int,
+    budget: _DEREntitlementBudget,
+    depth: int,
+) -> tuple[dict[str, Any], int]:
+    if depth > MAX_ENTITLEMENT_DEPTH:
+        raise PlatformCodeSignatureError("DER entitlement value exceeds the depth bound")
+    tag, start, end, next_offset = _der_tlv(
+        raw,
+        offset,
+        limit,
+        "DER entitlement value",
+    )
+    budget.charge_node()
+    if tag == DER_TAG_BOOLEAN:
+        if end - start != 1 or raw[start] not in {0x00, 0xFF}:
+            raise PlatformCodeSignatureError("DER entitlement Boolean is not canonical")
+        result = {"type": "boolean", "value": raw[start] == 0xFF}
+    elif tag == DER_TAG_INTEGER:
+        result = {
+            "type": "integer",
+            "value": _der_integer(raw, start, end, "DER entitlement"),
+        }
+    elif tag == DER_TAG_UTF8_STRING:
+        result = {"type": "string", "value": budget.charge_string(raw[start:end])}
+    elif tag == DER_TAG_SEQUENCE:
+        values: list[dict[str, Any]] = []
+        cursor = start
+        while cursor < end:
+            if len(values) >= MAX_ENTITLEMENT_CHILDREN:
+                raise PlatformCodeSignatureError("DER entitlement array exceeds the child bound")
+            child, cursor = _der_entitlement_value(
+                raw,
+                cursor,
+                end,
+                budget,
+                depth + 1,
+            )
+            values.append(child)
+        result = {"type": "array", "values": values}
+    elif tag == DER_TAG_DICTIONARY:
+        entries = _der_entitlement_entries(
+            raw,
+            start,
+            end,
+            budget,
+            depth + 1,
+            top_level=False,
+        )
+        result = {"type": "dictionary", "entries": entries}
+    else:
+        raise PlatformCodeSignatureError("DER entitlement value type is unsupported")
+    return result, next_offset
+
+
+def _der_entitlement_entries(
+    raw: bytes,
+    offset: int,
+    limit: int,
+    budget: _DEREntitlementBudget,
+    depth: int,
+    *,
+    top_level: bool,
+) -> list[dict[str, Any]]:
+    maximum = MAX_ENTITLEMENT_TOP_LEVEL_KEYS if top_level else MAX_ENTITLEMENT_CHILDREN
+    entries: list[dict[str, Any]] = []
+    keys: list[str] = []
+    cursor = offset
+    while cursor < limit:
+        if len(entries) >= maximum:
+            raise PlatformCodeSignatureError("DER entitlement dictionary exceeds the child bound")
+        tag, entry_start, entry_end, cursor = _der_tlv(
+            raw,
+            cursor,
+            limit,
+            "DER entitlement dictionary entry",
+        )
+        if tag != DER_TAG_SEQUENCE:
+            raise PlatformCodeSignatureError("DER entitlement dictionary entry tag is invalid")
+        key_tag, key_start, key_end, value_offset = _der_tlv(
+            raw,
+            entry_start,
+            entry_end,
+            "DER entitlement dictionary key",
+        )
+        if key_tag != DER_TAG_UTF8_STRING:
+            raise PlatformCodeSignatureError("DER entitlement dictionary key tag is invalid")
+        key = budget.charge_key(raw[key_start:key_end])
+        value, final_offset = _der_entitlement_value(
+            raw,
+            value_offset,
+            entry_end,
+            budget,
+            depth,
+        )
+        if final_offset != entry_end:
+            raise PlatformCodeSignatureError("DER entitlement dictionary entry has trailing data")
+        keys.append(key)
+        entries.append({"key": key, "value": value})
+    if cursor != limit:
+        raise PlatformCodeSignatureError("DER entitlement dictionary is truncated")
+    if keys != sorted(keys) or len(set(keys)) != len(keys):
+        raise PlatformCodeSignatureError("DER entitlement keys are not uniquely sorted")
+    return entries
+
+
+def entitlement_policy_from_der(raw: bytes) -> dict[str, Any]:
+    if not 1 <= len(raw) <= MAX_ENTITLEMENTS_BYTES:
+        raise PlatformCodeSignatureError("embedded DER entitlements size is outside the profile")
+    tag, root_start, root_end, root_next = _der_tlv(
+        raw,
+        0,
+        len(raw),
+        "embedded DER entitlements",
+    )
+    if tag != DER_TAG_CORE_ENTITLEMENTS or root_next != len(raw):
+        raise PlatformCodeSignatureError("embedded DER entitlements envelope is invalid")
+    version_tag, version_start, version_end, dictionary_offset = _der_tlv(
+        raw,
+        root_start,
+        root_end,
+        "DER entitlement version",
+    )
+    if (
+        version_tag != DER_TAG_INTEGER
+        or _der_integer(raw, version_start, version_end, "DER entitlement version") != 1
+    ):
+        raise PlatformCodeSignatureError("DER entitlement version is unsupported")
+    dictionary_tag, dictionary_start, dictionary_end, final_offset = _der_tlv(
+        raw,
+        dictionary_offset,
+        root_end,
+        "DER entitlement root dictionary",
+    )
+    if dictionary_tag != DER_TAG_DICTIONARY or final_offset != root_end:
+        raise PlatformCodeSignatureError("DER entitlement root dictionary is invalid")
+    budget = _DEREntitlementBudget()
+    result = {
+        "mode": "exact",
+        "entries": _der_entitlement_entries(
+            raw,
+            dictionary_start,
+            dictionary_end,
+            budget,
+            1,
+            top_level=True,
+        ),
+    }
+    try:
+        _entitlements(result, _EntitlementBudget())
+    except SigningPolicyError as error:
+        raise PlatformCodeSignatureError("embedded DER entitlements exceed signing policy") from error
+    return result
+
+
 def _entitlements_from_blobs(blobs: dict[int, bytes]) -> tuple[dict[str, Any], dict[str, Any]]:
     xml_blob = blobs.get(CSSLOT_ENTITLEMENTS)
     der_blob = blobs.get(CSSLOT_DER_ENTITLEMENTS)
@@ -364,14 +624,14 @@ def _entitlements_from_blobs(blobs: dict[int, bytes]) -> tuple[dict[str, Any], d
             MAX_ENTITLEMENTS_BYTES,
             "embedded DER entitlements",
         )
-        if len(der_blob) == 8:
-            raise PlatformCodeSignatureError("embedded DER entitlements are empty")
-        raise PlatformCodeSignatureError(
-            "DER entitlement semantics are outside v0.1"
-        )
+        der_policy = entitlement_policy_from_der(der_blob[8:])
+        if der_policy != policy:
+            raise PlatformCodeSignatureError(
+                "embedded XML and DER entitlement semantics differ"
+            )
     return policy, {
         "xmlSHA256": hashlib.sha256(xml_blob).hexdigest(),
-        "derSHA256": None,
+        "derSHA256": hashlib.sha256(der_blob).hexdigest() if der_blob is not None else None,
     }
 
 

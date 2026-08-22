@@ -47,6 +47,11 @@ checkpoint. They cannot be ignored or authorized from the XML sibling; a
 future semantic DER parser must prove the exact same tagged policy value before
 such a signature can match.
 
+This limitation is superseded by the later
+[semantic DER-entitlement equality checkpoint](2026-08-22-der-entitlement-semantic-equality.md),
+which admits only independently equal XML-plus-DER semantics while retaining
+the DER-only rejection.
+
 The bounded Apple-display parser treats tool text only as an independent
 cross-check. A positive synthetic grammar requires one graph-source-bound
 `Executable`, identifier, Team ID, full SHA-256 CodeDirectory digest and
@@ -91,3 +96,6 @@ asserted to match policy. DER entitlement semantics, outer recursive
 verification, notarization, stapling, Gatekeeper, and canonical evidence
 publication remain open. Synthetic fixture values are not production policy or
 identity authority.
+
+The DER portion of this non-claim is superseded by the later semantic-equality
+checkpoint linked above. The remaining outer and release gates are unchanged.

@@ -28,6 +28,7 @@ from platform_code_signature import (
     CS_RUNTIME,
     PlatformCodeSignatureError,
     compare_architecture_to_policy,
+    entitlement_policy_from_der,
     entitlement_policy_from_plist,
     inspect_embedded_signature,
 )
@@ -102,6 +103,58 @@ def entitlements_blob(value: dict[str, Any]) -> bytes:
     return blob(CSMAGIC_EMBEDDED_ENTITLEMENTS, raw)
 
 
+def der_length(value: int) -> bytes:
+    if value < 0x80:
+        return bytes([value])
+    raw = value.to_bytes((value.bit_length() + 7) // 8, "big")
+    return bytes([0x80 | len(raw)]) + raw
+
+
+def der_tlv(tag: int, value: bytes) -> bytes:
+    return bytes([tag]) + der_length(len(value)) + value
+
+
+def der_integer(value: int) -> bytes:
+    if value == 0:
+        raw = b"\0"
+    else:
+        size = max(1, (value.bit_length() + 8) // 8)
+        raw = value.to_bytes(size, "big", signed=True)
+        while len(raw) > 1 and (
+            (raw[0] == 0 and raw[1] & 0x80 == 0)
+            or (raw[0] == 0xFF and raw[1] & 0x80 != 0)
+        ):
+            raw = raw[1:]
+    return der_tlv(0x02, raw)
+
+
+def der_value(value: Any) -> bytes:
+    if isinstance(value, bool):
+        return der_tlv(0x01, b"\xff" if value else b"\0")
+    if isinstance(value, int):
+        return der_integer(value)
+    if isinstance(value, str):
+        return der_tlv(0x0C, value.encode("utf-8"))
+    if isinstance(value, list):
+        return der_tlv(0x30, b"".join(der_value(item) for item in value))
+    if isinstance(value, dict):
+        return der_dictionary(value)
+    raise TypeError("unsupported DER fixture value")
+
+
+def der_dictionary(value: dict[str, Any]) -> bytes:
+    entries = []
+    for key in sorted(value):
+        entries.append(
+            der_tlv(0x30, der_tlv(0x0C, key.encode("ascii")) + der_value(value[key]))
+        )
+    return der_tlv(0xB0, b"".join(entries))
+
+
+def der_entitlements(value: dict[str, Any]) -> bytes:
+    return der_tlv(0x70, der_integer(1) + der_dictionary(value))
+
+
 def embedded_signature(
     *,
     runtime: bool = True,
@@ -112,6 +165,7 @@ def embedded_signature(
     include_alternate: bool = False,
     der_only: bool = False,
     include_der: bool = False,
+    der_value_override: dict[str, Any] | None = None,
     unknown_slot: bool = False,
     additional_requirement: bool = False,
 ) -> bytes:
@@ -130,7 +184,16 @@ def embedded_signature(
     if entitlements is not None and not der_only:
         children.append((CSSLOT_ENTITLEMENTS, entitlements_blob(entitlements)))
     if der_only or include_der:
-        children.append((CSSLOT_DER_ENTITLEMENTS, blob(CSMAGIC_EMBEDDED_DER_ENTITLEMENTS, b"fixture-der")))
+        der_source = (
+            der_value_override
+            if der_value_override is not None
+            else entitlements if entitlements is not None
+            else {}
+        )
+        children.append((
+            CSSLOT_DER_ENTITLEMENTS,
+            blob(CSMAGIC_EMBEDDED_DER_ENTITLEMENTS, der_entitlements(der_source)),
+        ))
     if include_alternate:
         children.append((0x1000, code_directory(runtime=runtime)))
     if include_cms:
@@ -249,11 +312,30 @@ def main() -> int:
         lambda: entitlement_policy_from_plist(duplicate_xml),
         "not a valid plist",
     )
+    apple_codesign_vector = bytes.fromhex(
+        "7053020101b04e30180c07612d6172726179300d0c0566697273740201fe010100"
+        "300b0c06622d626f6f6c0101ff30180c06632d64696374b00e300c0c066e657374"
+        "656402020101300b0c06642d7a65726f020100"
+    )
+    apple_codesign_value = {
+        "a-array": ["first", -2, False],
+        "b-bool": True,
+        "c-dict": {"nested": 257},
+        "d-zero": 0,
+    }
+    if (
+        der_entitlements(apple_codesign_value) != apple_codesign_vector
+        or entitlement_policy_from_der(apple_codesign_vector)
+        != entitlement_policy_from_plist(
+            plistlib.dumps(apple_codesign_value, fmt=plistlib.FMT_XML, sort_keys=True)
+        )
+    ):
+        raise RuntimeError("Apple codesign DER entitlement vector changed")
     with tempfile.TemporaryDirectory(prefix="maccompanion-embedded-signature-") as value:
         root = Path(value)
         path, graph_architecture, facts = inspect(
             root,
-            embedded_signature(entitlements=exact_entitlements),
+            embedded_signature(entitlements=exact_entitlements, include_der=True),
         )
         if (
             facts["signingIdentifier"] != SIGNING_IDENTIFIER
@@ -263,6 +345,7 @@ def main() -> int:
             or facts["codeDirectories"][0]["cdhash"]
             != facts["codeDirectories"][0]["codeDirectorySHA256"][:40]
             or facts["designatedRequirementBytes"] != 12
+            or facts["entitlementBlobs"]["derSHA256"] is None
         ):
             raise RuntimeError("embedded signature facts are incomplete")
         result = compare_architecture_to_policy(
@@ -320,8 +403,12 @@ def main() -> int:
         (embedded_signature(include_alternate=True), "exactly one primary CodeDirectory"),
         (embedded_signature(der_only=True), "DER-only entitlements"),
         (
-            embedded_signature(entitlements={"fixture": True}, include_der=True),
-            "DER entitlement semantics",
+            embedded_signature(
+                entitlements={"fixture": True},
+                include_der=True,
+                der_value_override={"fixture": False},
+            ),
+            "semantics differ",
         ),
         (embedded_signature(unknown_slot=True), "unsupported slot"),
         (embedded_signature(additional_requirement=True), "additional internal requirements"),
@@ -341,6 +428,96 @@ def main() -> int:
                 ),
                 expected,
             )
+
+    duplicate_entry = der_tlv(
+        0x30,
+        der_tlv(0x0C, b"same") + der_tlv(0x01, b"\xff"),
+    )
+    invalid_der_cases = [
+        (b"", "size is outside"),
+        (der_tlv(0x71, der_integer(1) + der_dictionary({})), "envelope"),
+        (der_entitlements({}) + b"\0", "envelope"),
+        (der_tlv(0x70, der_integer(2) + der_dictionary({})), "version is unsupported"),
+        (b"\x70\x81\x05\x02\x01\x01\xb0\x00", "length is not canonical"),
+        (der_tlv(0x70, der_integer(1)), "root dictionary"),
+        (
+            der_tlv(0x70, der_integer(1) + der_tlv(0xB0, duplicate_entry + duplicate_entry)),
+            "not uniquely sorted",
+        ),
+        (
+            der_tlv(
+                0x70,
+                der_integer(1)
+                + der_tlv(
+                    0xB0,
+                    der_tlv(0x30, der_tlv(0x0C, b"z") + der_tlv(0x01, b"\xff"))
+                    + der_tlv(0x30, der_tlv(0x0C, b"a") + der_tlv(0x01, b"\xff")),
+                ),
+            ),
+            "not uniquely sorted",
+        ),
+        (
+            der_tlv(
+                0x70,
+                der_integer(1)
+                + der_tlv(
+                    0xB0,
+                    der_tlv(0x30, der_tlv(0x0C, b"bool") + der_tlv(0x01, b"\x01")),
+                ),
+            ),
+            "Boolean is not canonical",
+        ),
+        (
+            der_tlv(
+                0x70,
+                der_integer(1)
+                + der_tlv(
+                    0xB0,
+                    der_tlv(0x30, der_tlv(0x0C, b"integer") + der_tlv(0x02, b"\0\x01")),
+                ),
+            ),
+            "integer is not canonical",
+        ),
+        (
+            der_tlv(
+                0x70,
+                der_integer(1)
+                + der_tlv(
+                    0xB0,
+                    der_tlv(0x30, der_tlv(0x0C, b"string") + der_tlv(0x0C, b"\xff")),
+                ),
+            ),
+            "string is not UTF-8",
+        ),
+        (
+            der_tlv(
+                0x70,
+                der_integer(1)
+                + der_tlv(
+                    0xB0,
+                    der_tlv(0x30, der_tlv(0x0C, b"unsupported") + der_tlv(0x04, b"data")),
+                ),
+            ),
+            "value type is unsupported",
+        ),
+    ]
+    invalid_der_cases.extend([
+        (der_entitlements({"unsafe": 9_007_199_254_740_992}), "outside the safe range"),
+        (der_entitlements({"array": [True] * 65}), "array exceeds the child bound"),
+        (
+            der_entitlements({f"key-{index:03d}": True for index in range(129)}),
+            "dictionary exceeds the child bound",
+        ),
+        (
+            der_entitlements({"a": {"b": {"c": {"d": {"e": True}}}}}),
+            "exceeds the depth bound",
+        ),
+        (der_entitlements({"string": "e\u0301"}), "string is outside the profile"),
+        (der_entitlements({"string": "line\nfeed"}), "string is outside the profile"),
+        (der_entitlements({"k" * 129: True}), "key is outside the profile"),
+    ])
+    for raw, expected in invalid_der_cases:
+        require_failure(lambda raw=raw: entitlement_policy_from_der(raw), expected)
 
     with tempfile.TemporaryDirectory(prefix="maccompanion-signature-policy-") as value:
         _, _, facts = inspect(Path(value), embedded_signature())

@@ -98,3 +98,8 @@ DER entitlement slot. Outer recursive bundle verification,
 notarization/stapling/Gatekeeper correlation, canonical evidence publication,
 the exported IPA lane, stable supported toolchain evidence, final credential
 custody, and physical/promotion gates also remain open.
+
+The later [semantic DER-entitlement equality checkpoint](2026-08-22-der-entitlement-semantic-equality.md)
+supersedes only the DER limitation: matching XML-plus-DER signatures now pass
+independent semantic correlation. DER-only remains outside v0.1, and every
+outer, release, physical, and promotion gate above remains open.

@@ -145,10 +145,19 @@ CodeDirectories and extra internal requirements require a policy/profile
 revision.
 
 XML entitlement values use the exact tagged signing-policy projection and
-duplicate-aware plist parsing. DER entitlement semantics are not yet decoded;
-any DER entitlement slot therefore fails this construction checkpoint. It may
-not be ignored, treated as equal to an XML sibling, or authorized from
-`codesign --entitlements --xml` alone.
+duplicate-aware plist parsing. A present DER entitlement sibling is decoded
+independently as CoreEntitlements v1: one canonical application-`0x70`
+envelope, integer version `1`, dictionary-`0xb0` root, sequence entries and
+arrays, UTF-8 strings, canonical Booleans, and minimal signed integers. The
+same signing-policy depth, collection, key, node, string, normalization, type,
+and safe-integer bounds apply. Definite minimal lengths, uniquely sorted ASCII
+keys, complete entry consumption, and no trailing bytes are required.
+
+An XML-plus-DER signature is admitted only when both independent decoders
+produce the exact same tagged policy value; both complete blob digests are
+retained. DER-only entitlements remain outside v0.1 because the release profile
+requires the independently sealed XML sibling. Neither representation may be
+ignored or authorized from `codesign --entitlements --xml` alone.
 
 Fixed identity/requirement display and entitlement-display plans, bounded
 parsers, and protected execution now exist as independent cross-checks. The
@@ -159,9 +168,9 @@ contiguous certificate files opened without following links, bounded to eight
 identity invocation may not leave certificate output or contribute facts.
 
 Every composed architecture result remains
-`platformAcceptanceEligible: false`. DER semantic equality and assembly into
-the canonical evidence record remain required before this section can
-contribute to acceptance.
+`platformAcceptanceEligible: false`. DER semantic equality is implemented;
+assembly into the canonical evidence record remains required before this
+section can contribute to acceptance.
 
 For the final application and disk image it additionally retains Gatekeeper
 assessment, accepted notarization correlation, and stapling validation against
