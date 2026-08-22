@@ -38,12 +38,18 @@ typedef void (^MCLocalXPCStatusReplyHandler)(
     bool source_unavailable,
     bool malformed_or_transport_error
 );
+typedef void (^MCLocalXPCBootstrapPayloadReplyHandler)(
+    const uint8_t * _Nullable payload,
+    size_t payload_length,
+    bool malformed_or_transport_error
+);
 typedef void (^MCLocalXPCMenuPresentationReplyHandler)(
     MCLocalXPCMenuPresentationReply reply
 );
 
 enum {
     MCLocalXPCMaximumStatusPayloadBytes = 4096,
+    MCLocalXPCMaximumBootstrapPayloadBytes = 4096,
     MCLocalXPCMaximumMenuPresentationPayloadBytes = 4096,
 };
 
@@ -145,6 +151,18 @@ API_AVAILABLE(macos(26.0))
 bool MCLocalXPCMessageIsExactStatusRead(MCLocalXPCMessageRef message);
 
 API_AVAILABLE(macos(26.0))
+bool MCLocalXPCMessageIsExactRemoteAccessBootstrapRead(
+    MCLocalXPCMessageRef message
+);
+
+API_AVAILABLE(macos(26.0))
+bool MCLocalXPCMessageGetExactRemoteAccessEnable(
+    MCLocalXPCMessageRef message,
+    const uint8_t * _Nullable * _Nullable payload_out,
+    size_t * _Nullable payload_length_out
+);
+
+API_AVAILABLE(macos(26.0))
 void MCLocalXPCMessageRetain(MCLocalXPCMessageRef message);
 
 API_AVAILABLE(macos(26.0))
@@ -195,6 +213,36 @@ API_AVAILABLE(macos(26.0))
 void MCLocalXPCSessionSendStatusRead(
     MCLocalXPCSessionRef session,
     MCLocalXPCStatusReplyHandler handler
+);
+
+API_AVAILABLE(macos(26.0))
+MCLocalXPCResult MCLocalXPCSessionReplyToRemoteAccessBootstrapOffer(
+    MCLocalXPCSessionRef session,
+    MCLocalXPCMessageRef request,
+    const uint8_t *payload,
+    size_t payload_length
+);
+
+API_AVAILABLE(macos(26.0))
+void MCLocalXPCSessionSendRemoteAccessBootstrapRead(
+    MCLocalXPCSessionRef session,
+    MCLocalXPCBootstrapPayloadReplyHandler handler
+);
+
+API_AVAILABLE(macos(26.0))
+MCLocalXPCResult MCLocalXPCSessionReplyToRemoteAccessEnabled(
+    MCLocalXPCSessionRef session,
+    MCLocalXPCMessageRef request,
+    const uint8_t *payload,
+    size_t payload_length
+);
+
+API_AVAILABLE(macos(26.0))
+MCLocalXPCResult MCLocalXPCSessionSendRemoteAccessEnable(
+    MCLocalXPCSessionRef session,
+    const uint8_t *payload,
+    size_t payload_length,
+    MCLocalXPCBootstrapPayloadReplyHandler handler
 );
 
 /// Returns an owned exact request object. The caller releases it with

@@ -60,6 +60,17 @@ This is the living execution authority for the staged plan. A blocker applies on
 | Administrator capabilities | 6 | deferred | Each capability is independent | Separate demand, threat model, containment, and review per capability | Each item receives its own pass/no-go/deferred record |
 | Assisted operation | 7 | deferred | Untrusted-planner boundary documented | Earlier gates plus one validated assisted job and injection review | No model receives control authority implicitly |
 
+Latest disabled-Agent bootstrap-transport checkpoint, superseding the
+exact-envelope next-step wording in the Process and local IPC row: the
+[exact bootstrap transport](evidence/2026-08-22-disabled-agent-bootstrap-transport.md)
+now binds the two frozen methods to four closed XPC dictionaries, nonempty
+4,096-byte canonical codecs, and one ordered generation/operation-fenced offer
+then enable transaction. It rejects overlap, offer substitution, malformed
+receipts, timeout, cancellation, peer replacement, and delayed callbacks
+without adding durable mutation, readiness, presentation, or network authority.
+The next proof is the Agent-owned serialized durable offer/enable handler plus
+explicit foreground Agent-only setup registration and menu-client composition.
+
 Latest process/local-IPC checkpoint, superseding the receiver-next-step wording
 in the Stage 0A row: the [authenticated menu product composition](evidence/2026-08-21-authenticated-menu-product-composition.md)
 now connects accepted lifecycle readiness to the exact sender/router, binds the

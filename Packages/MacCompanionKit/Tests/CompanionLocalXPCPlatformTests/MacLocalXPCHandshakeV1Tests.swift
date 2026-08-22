@@ -15,6 +15,10 @@ func exactMessageParserRejectsAlternateScalarTypesAndOpenDictionaries() {
         MacLocalXPCMenuPresentationWireV1.maximumPayloadBytes
             == LocalMenuPresentationWireCodecV1.maximumEncodedBytes
     )
+    #expect(
+        MacLocalXPCRemoteAccessBootstrapWireV1.maximumPayloadBytes
+            == LocalRemoteAccessBootstrapWireCodecV1.maximumEncodedBytes
+    )
 }
 
 @Test

@@ -28,6 +28,14 @@ static const char MCLocalXPCHostRecoveryWithdrawalKind[] =
     "presentation.host-recovery.withdraw";
 static const char MCLocalXPCHostRecoveryWithdrawalAcknowledgementKind[] =
     "presentation.host-recovery.withdraw.ack";
+static const char MCLocalXPCRemoteAccessBootstrapReadKind[] =
+    "bootstrap.remote-access.read";
+static const char MCLocalXPCRemoteAccessBootstrapReadAcknowledgementKind[] =
+    "bootstrap.remote-access.read.ack";
+static const char MCLocalXPCRemoteAccessEnableKind[] =
+    "bootstrap.remote-access.enable";
+static const char MCLocalXPCRemoteAccessEnableAcknowledgementKind[] =
+    "bootstrap.remote-access.enable.ack";
 
 static void MCLocalXPCReleaseError(xpc_rich_error_t error) {
     if (error != NULL) {
@@ -69,6 +77,67 @@ static bool MCLocalXPCMessageIsExact(
         && kind != NULL
         && strcmp(kind, expected_kind) == 0
         && xpc_dictionary_get_int64(message, "version") == 1;
+}
+
+static bool MCLocalXPCMessageGetExactData(
+    xpc_object_t message,
+    const char *expected_kind,
+    size_t maximum_payload_length,
+    const uint8_t **payload_out,
+    size_t *payload_length_out
+) {
+    if (message == NULL
+        || xpc_get_type(message) != XPC_TYPE_DICTIONARY) {
+        return false;
+    }
+
+    __block size_t field_count = 0;
+    __block bool fields_are_closed = true;
+    xpc_dictionary_apply(
+        message,
+        ^bool(const char *key, xpc_object_t value) {
+            field_count += 1;
+            if (strcmp(key, "kind") == 0) {
+                fields_are_closed = fields_are_closed
+                    && xpc_get_type(value) == XPC_TYPE_STRING;
+            } else if (strcmp(key, "version") == 0) {
+                fields_are_closed = fields_are_closed
+                    && xpc_get_type(value) == XPC_TYPE_INT64;
+            } else if (strcmp(key, "payload") == 0) {
+                fields_are_closed = fields_are_closed
+                    && xpc_get_type(value) == XPC_TYPE_DATA;
+            } else {
+                fields_are_closed = false;
+            }
+            return true;
+        }
+    );
+
+    const char *kind = xpc_dictionary_get_string(message, "kind");
+    size_t length = 0;
+    const void *payload = xpc_dictionary_get_data(
+        message,
+        "payload",
+        &length
+    );
+    bool valid = field_count == 3
+        && fields_are_closed
+        && kind != NULL
+        && strcmp(kind, expected_kind) == 0
+        && xpc_dictionary_get_int64(message, "version") == 1
+        && payload != NULL
+        && length > 0
+        && length <= maximum_payload_length;
+    if (!valid) {
+        return false;
+    }
+    if (payload_out != NULL) {
+        *payload_out = (const uint8_t *)payload;
+    }
+    if (payload_length_out != NULL) {
+        *payload_length_out = length;
+    }
+    return true;
 }
 
 static bool MCLocalXPCMessageIsExactStatusSuccess(
@@ -600,6 +669,29 @@ bool MCLocalXPCMessageIsExactStatusRead(MCLocalXPCMessageRef message) {
     );
 }
 
+bool MCLocalXPCMessageIsExactRemoteAccessBootstrapRead(
+    MCLocalXPCMessageRef message
+) {
+    return MCLocalXPCMessageIsExact(
+        (xpc_object_t)message,
+        MCLocalXPCRemoteAccessBootstrapReadKind
+    );
+}
+
+bool MCLocalXPCMessageGetExactRemoteAccessEnable(
+    MCLocalXPCMessageRef message,
+    const uint8_t **payload_out,
+    size_t *payload_length_out
+) {
+    return MCLocalXPCMessageGetExactData(
+        (xpc_object_t)message,
+        MCLocalXPCRemoteAccessEnableKind,
+        MCLocalXPCMaximumBootstrapPayloadBytes,
+        payload_out,
+        payload_length_out
+    );
+}
+
 MCLocalXPCMessageRef MCLocalXPCMessageCreatePairingReviewPublish(
     const uint8_t *payload,
     size_t payload_length
@@ -884,6 +976,151 @@ bool MCLocalXPCExactMessageParserSelfTest(void) {
         &parsed_status_length
     );
     xpc_release(oversized_status_reply);
+
+    const uint8_t bootstrap_bytes[] = {0x7b, 0x7d};
+    const uint8_t *parsed_bootstrap_bytes = NULL;
+    size_t parsed_bootstrap_length = 0;
+    valid = valid
+        && strcmp(
+            MCLocalXPCRemoteAccessBootstrapReadKind,
+            "bootstrap.remote-access.read"
+        ) == 0
+        && strcmp(
+            MCLocalXPCRemoteAccessBootstrapReadAcknowledgementKind,
+            "bootstrap.remote-access.read.ack"
+        ) == 0
+        && strcmp(
+            MCLocalXPCRemoteAccessEnableKind,
+            "bootstrap.remote-access.enable"
+        ) == 0
+        && strcmp(
+            MCLocalXPCRemoteAccessEnableAcknowledgementKind,
+            "bootstrap.remote-access.enable.ack"
+        ) == 0;
+
+    xpc_object_t bootstrap_read = xpc_dictionary_create_empty();
+    xpc_dictionary_set_string(
+        bootstrap_read,
+        "kind",
+        MCLocalXPCRemoteAccessBootstrapReadKind
+    );
+    xpc_dictionary_set_int64(bootstrap_read, "version", 1);
+    valid = valid && MCLocalXPCMessageIsExactRemoteAccessBootstrapRead(
+        (MCLocalXPCMessageRef)bootstrap_read
+    );
+    xpc_dictionary_set_bool(bootstrap_read, "extra", true);
+    valid = valid && !MCLocalXPCMessageIsExactRemoteAccessBootstrapRead(
+        (MCLocalXPCMessageRef)bootstrap_read
+    );
+    xpc_release(bootstrap_read);
+
+    xpc_object_t bootstrap_enable = xpc_dictionary_create_empty();
+    xpc_dictionary_set_string(
+        bootstrap_enable,
+        "kind",
+        MCLocalXPCRemoteAccessEnableKind
+    );
+    xpc_dictionary_set_int64(bootstrap_enable, "version", 1);
+    xpc_dictionary_set_data(
+        bootstrap_enable,
+        "payload",
+        bootstrap_bytes,
+        sizeof(bootstrap_bytes)
+    );
+    valid = valid && MCLocalXPCMessageGetExactRemoteAccessEnable(
+        (MCLocalXPCMessageRef)bootstrap_enable,
+        &parsed_bootstrap_bytes,
+        &parsed_bootstrap_length
+    );
+    valid = valid
+        && parsed_bootstrap_length == sizeof(bootstrap_bytes)
+        && memcmp(
+            parsed_bootstrap_bytes,
+            bootstrap_bytes,
+            sizeof(bootstrap_bytes)
+        ) == 0;
+    xpc_dictionary_set_string(bootstrap_enable, "payload", "{}");
+    valid = valid && !MCLocalXPCMessageGetExactRemoteAccessEnable(
+        (MCLocalXPCMessageRef)bootstrap_enable,
+        &parsed_bootstrap_bytes,
+        &parsed_bootstrap_length
+    );
+    xpc_release(bootstrap_enable);
+
+    xpc_object_t bootstrap_offer = xpc_dictionary_create_empty();
+    xpc_dictionary_set_string(
+        bootstrap_offer,
+        "kind",
+        MCLocalXPCRemoteAccessBootstrapReadAcknowledgementKind
+    );
+    xpc_dictionary_set_int64(bootstrap_offer, "version", 1);
+    xpc_dictionary_set_data(
+        bootstrap_offer,
+        "payload",
+        bootstrap_bytes,
+        sizeof(bootstrap_bytes)
+    );
+    valid = valid && MCLocalXPCMessageGetExactData(
+        bootstrap_offer,
+        MCLocalXPCRemoteAccessBootstrapReadAcknowledgementKind,
+        MCLocalXPCMaximumBootstrapPayloadBytes,
+        &parsed_bootstrap_bytes,
+        &parsed_bootstrap_length
+    );
+    xpc_release(bootstrap_offer);
+
+    xpc_object_t bootstrap_receipt = xpc_dictionary_create_empty();
+    xpc_dictionary_set_string(
+        bootstrap_receipt,
+        "kind",
+        MCLocalXPCRemoteAccessEnableAcknowledgementKind
+    );
+    xpc_dictionary_set_int64(bootstrap_receipt, "version", 1);
+    xpc_dictionary_set_data(
+        bootstrap_receipt,
+        "payload",
+        bootstrap_bytes,
+        sizeof(bootstrap_bytes)
+    );
+    valid = valid && MCLocalXPCMessageGetExactData(
+        bootstrap_receipt,
+        MCLocalXPCRemoteAccessEnableAcknowledgementKind,
+        MCLocalXPCMaximumBootstrapPayloadBytes,
+        &parsed_bootstrap_bytes,
+        &parsed_bootstrap_length
+    );
+    xpc_dictionary_set_int64(bootstrap_receipt, "version", 2);
+    valid = valid && !MCLocalXPCMessageGetExactData(
+        bootstrap_receipt,
+        MCLocalXPCRemoteAccessEnableAcknowledgementKind,
+        MCLocalXPCMaximumBootstrapPayloadBytes,
+        &parsed_bootstrap_bytes,
+        &parsed_bootstrap_length
+    );
+    xpc_release(bootstrap_receipt);
+
+    uint8_t oversized_bootstrap[
+        MCLocalXPCMaximumBootstrapPayloadBytes + 1
+    ] = {0};
+    xpc_object_t oversized_bootstrap_enable = xpc_dictionary_create_empty();
+    xpc_dictionary_set_string(
+        oversized_bootstrap_enable,
+        "kind",
+        MCLocalXPCRemoteAccessEnableKind
+    );
+    xpc_dictionary_set_int64(oversized_bootstrap_enable, "version", 1);
+    xpc_dictionary_set_data(
+        oversized_bootstrap_enable,
+        "payload",
+        oversized_bootstrap,
+        sizeof(oversized_bootstrap)
+    );
+    valid = valid && !MCLocalXPCMessageGetExactRemoteAccessEnable(
+        (MCLocalXPCMessageRef)oversized_bootstrap_enable,
+        &parsed_bootstrap_bytes,
+        &parsed_bootstrap_length
+    );
+    xpc_release(oversized_bootstrap_enable);
 
     const uint8_t presentation_payload[] = {0x7b, 0x7d};
     const uint8_t review_uuid[16] = {
@@ -1480,6 +1717,183 @@ void MCLocalXPCSessionSendMenuReady(
     MCLocalXPCSessionSendExact(
         session,
         "lifecycle.menu-ready",
+        handler
+    );
+}
+
+static MCLocalXPCResult MCLocalXPCSessionReplyData(
+    MCLocalXPCSessionRef session,
+    MCLocalXPCMessageRef request,
+    const char *kind,
+    const uint8_t *payload,
+    size_t payload_length,
+    size_t maximum_payload_length
+) {
+    if (payload == NULL
+        || payload_length == 0
+        || payload_length > maximum_payload_length) {
+        return MCLocalXPCResultConstructionFailed;
+    }
+    xpc_object_t reply = xpc_dictionary_create_reply(
+        (xpc_object_t)request
+    );
+    if (reply == NULL) {
+        return MCLocalXPCResultConstructionFailed;
+    }
+    xpc_dictionary_set_string(reply, "kind", kind);
+    xpc_dictionary_set_int64(reply, "version", 1);
+    xpc_dictionary_set_data(reply, "payload", payload, payload_length);
+    xpc_rich_error_t error = xpc_session_send_message(
+        (xpc_session_t)session,
+        reply
+    );
+    xpc_release(reply);
+    if (error != NULL) {
+        xpc_release(error);
+        return MCLocalXPCResultSendFailed;
+    }
+    return MCLocalXPCResultOK;
+}
+
+static void MCLocalXPCSessionSendExactExpectingData(
+    MCLocalXPCSessionRef session,
+    const char *request_kind,
+    const char *acknowledgement_kind,
+    size_t maximum_payload_length,
+    MCLocalXPCBootstrapPayloadReplyHandler handler
+) {
+    xpc_object_t request = xpc_dictionary_create_empty();
+    xpc_dictionary_set_string(request, "kind", request_kind);
+    xpc_dictionary_set_int64(request, "version", 1);
+    xpc_session_send_message_with_reply_async(
+        (xpc_session_t)session,
+        request,
+        ^(xpc_object_t reply, xpc_rich_error_t error) {
+            if (error != NULL) {
+                handler(NULL, 0, true);
+                return;
+            }
+            const uint8_t *payload = NULL;
+            size_t payload_length = 0;
+            if (!MCLocalXPCMessageGetExactData(
+                    reply,
+                    acknowledgement_kind,
+                    maximum_payload_length,
+                    &payload,
+                    &payload_length
+                )) {
+                handler(NULL, 0, true);
+                return;
+            }
+            handler(payload, payload_length, false);
+        }
+    );
+    xpc_release(request);
+}
+
+static MCLocalXPCResult MCLocalXPCSessionSendDataExpectingData(
+    MCLocalXPCSessionRef session,
+    const char *request_kind,
+    const char *acknowledgement_kind,
+    const uint8_t *payload,
+    size_t payload_length,
+    size_t maximum_payload_length,
+    MCLocalXPCBootstrapPayloadReplyHandler handler
+) {
+    if (payload == NULL
+        || payload_length == 0
+        || payload_length > maximum_payload_length) {
+        return MCLocalXPCResultConstructionFailed;
+    }
+    xpc_object_t request = xpc_dictionary_create_empty();
+    xpc_dictionary_set_string(request, "kind", request_kind);
+    xpc_dictionary_set_int64(request, "version", 1);
+    xpc_dictionary_set_data(request, "payload", payload, payload_length);
+    xpc_session_send_message_with_reply_async(
+        (xpc_session_t)session,
+        request,
+        ^(xpc_object_t reply, xpc_rich_error_t error) {
+            if (error != NULL) {
+                handler(NULL, 0, true);
+                return;
+            }
+            const uint8_t *reply_payload = NULL;
+            size_t reply_payload_length = 0;
+            if (!MCLocalXPCMessageGetExactData(
+                    reply,
+                    acknowledgement_kind,
+                    maximum_payload_length,
+                    &reply_payload,
+                    &reply_payload_length
+                )) {
+                handler(NULL, 0, true);
+                return;
+            }
+            handler(reply_payload, reply_payload_length, false);
+        }
+    );
+    xpc_release(request);
+    return MCLocalXPCResultOK;
+}
+
+MCLocalXPCResult MCLocalXPCSessionReplyToRemoteAccessBootstrapOffer(
+    MCLocalXPCSessionRef session,
+    MCLocalXPCMessageRef request,
+    const uint8_t *payload,
+    size_t payload_length
+) {
+    return MCLocalXPCSessionReplyData(
+        session,
+        request,
+        MCLocalXPCRemoteAccessBootstrapReadAcknowledgementKind,
+        payload,
+        payload_length,
+        MCLocalXPCMaximumBootstrapPayloadBytes
+    );
+}
+
+void MCLocalXPCSessionSendRemoteAccessBootstrapRead(
+    MCLocalXPCSessionRef session,
+    MCLocalXPCBootstrapPayloadReplyHandler handler
+) {
+    MCLocalXPCSessionSendExactExpectingData(
+        session,
+        MCLocalXPCRemoteAccessBootstrapReadKind,
+        MCLocalXPCRemoteAccessBootstrapReadAcknowledgementKind,
+        MCLocalXPCMaximumBootstrapPayloadBytes,
+        handler
+    );
+}
+
+MCLocalXPCResult MCLocalXPCSessionReplyToRemoteAccessEnabled(
+    MCLocalXPCSessionRef session,
+    MCLocalXPCMessageRef request,
+    const uint8_t *payload,
+    size_t payload_length
+) {
+    return MCLocalXPCSessionReplyData(
+        session,
+        request,
+        MCLocalXPCRemoteAccessEnableAcknowledgementKind,
+        payload,
+        payload_length,
+        MCLocalXPCMaximumBootstrapPayloadBytes
+    );
+}
+
+MCLocalXPCResult MCLocalXPCSessionSendRemoteAccessEnable(
+    MCLocalXPCSessionRef session,
+    const uint8_t *payload,
+    size_t payload_length,
+    MCLocalXPCBootstrapPayloadReplyHandler handler
+) {
+    return MCLocalXPCSessionSendDataExpectingData(
+        session,
+        MCLocalXPCRemoteAccessEnableKind,
+        MCLocalXPCRemoteAccessEnableAcknowledgementKind,
+        payload,
+        payload_length,
+        MCLocalXPCMaximumBootstrapPayloadBytes,
         handler
     );
 }

@@ -74,6 +74,14 @@ screen, input, or recovery data. At most one current offer exists per Agent
 boot, and a durable revision change, peer replacement, cancellation, expiry,
 or terminal failure invalidates it.
 
+The exact XPC request is
+`{"kind":"bootstrap.remote-access.read","version":1}`. Success is exactly
+`{"kind":"bootstrap.remote-access.read.ack","version":1,"payload":<data>}`,
+where `payload` is nonempty `XPC_TYPE_DATA` containing at most 4,096 bytes of
+canonical closed JSON for the offer. Any additional field, alternate scalar
+type, empty/oversized data, noncanonical JSON, or invalid offer is terminal for
+that peer generation.
+
 Only the foreground menu UI may construct
 `LocalRemoteAccessEnableCommandV0` after displaying the fixed
 `agentRemoteAccessV1` consent profile and receiving explicit user confirmation.
@@ -81,6 +89,23 @@ The command embeds the complete current Agent offer, a fresh command UUID, the
 closed consent profile, and a confirmation time inside the offer's half-open
 validity window. Caller text, a generic desired-state Boolean, capability IDs,
 and permission claims are not accepted.
+
+The exact enable request is
+`{"kind":"bootstrap.remote-access.enable","version":1,"payload":<data>}`,
+with nonempty bounded canonical command JSON. Success is exactly
+`{"kind":"bootstrap.remote-access.enable.ack","version":1,"payload":<data>}`
+with canonical receipt JSON under the same 4,096-byte bound. There is no
+recoverable application-error envelope in this profile: stale, denied,
+conflicting, malformed, timed-out, or storage-ambiguous work cancels the exact
+peer and returns no success receipt.
+
+Each authenticated bootstrap peer generation is one fenced transaction: one
+offer read must complete before one enable command may begin, and only the
+command embedding that exact offer is admitted. Operations never overlap.
+Cancellation, timeout, malformed completion, authentication loss, or peer
+replacement invalidates the transaction; delayed callbacks cannot complete a
+replacement generation. A successfully enabled generation admits no further
+bootstrap operation and awaits Agent restart.
 
 The Agent compares the exact offer and current disabled durable revision in one
 serialized mutation boundary. Success atomically records enabled intent at
