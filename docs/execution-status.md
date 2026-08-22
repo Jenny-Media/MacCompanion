@@ -60,6 +60,14 @@ This is the living execution authority for the staged plan. A blocker applies on
 | Administrator capabilities | 6 | deferred | Each capability is independent | Separate demand, threat model, containment, and review per capability | Each item receives its own pass/no-go/deferred record |
 | Assisted operation | 7 | deferred | Untrusted-planner boundary documented | Earlier gates plus one validated assisted job and injection review | No model receives control authority implicitly |
 
+Latest process/local-IPC checkpoint, superseding the receiver-next-step wording
+in the Stage 0A row: the [authenticated menu presentation receiver](evidence/2026-08-21-authenticated-menu-presentation-receiver.md)
+now owns the exact production FIFO, retained XPC request leases, typed mutation
+state, acknowledgement ordering, two-second deadline, terminal fencing, and
+awaitable exact-ID cleanup behind package-only presentation surfaces. The next
+safe lane is sender/receiver/router/prepared-product composition; permanent
+target activation and signed two-process evidence remain gated.
+
 Local device administration now includes a [bundle-independent active-revoke
 convergence path](evidence/2026-08-21-local-device-revocation-convergence.md):
 closed five-minute review/command/receipt values, an independent primary-ingress

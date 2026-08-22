@@ -1499,6 +1499,8 @@ public final class MacLocalXPCClientV1: @unchecked Sendable {
     )
     private let queueKey = DispatchSpecificKey<UInt8>()
     private let onEvent: EventHandler
+    private let presentationSurfaces:
+        MacLocalXPCMenuPresentationReceiverSurfacesV1?
     private var session: MCLocalXPCSessionRef?
     private var gate = MacLocalXPCHandshakeGateV1()
     private var menuReadinessRequested = false
@@ -1507,9 +1509,32 @@ public final class MacLocalXPCClientV1: @unchecked Sendable {
     private var statusReadGate = MacLocalXPCStatusReadTransactionGateV1()
     private var statusReadDeadline: DispatchWorkItem?
     private let statusReadTimeout: DispatchTimeInterval = .seconds(3)
+    package static let menuPresentationReceiverTimeout:
+        DispatchTimeInterval =
+            MacLocalXPCMenuPresentationReceiverGenerationV1<
+                MCLocalXPCMessageRef
+            >.operationTimeout
+    private var presentationGeneration: UInt64?
+    private var presentationReceiver:
+        MacLocalXPCMenuPresentationReceiverGenerationV1<
+            MCLocalXPCMessageRef
+        >?
+    private var presentationRetirement:
+        (token: UUID, task: Task<Void, Never>)?
 
     public init(onEvent: @escaping EventHandler) {
         self.onEvent = onEvent
+        presentationSurfaces = nil
+        queue.setSpecific(key: queueKey, value: 1)
+    }
+
+    package init(
+        presentationSurfaces:
+            MacLocalXPCMenuPresentationReceiverSurfacesV1,
+        onEvent: @escaping EventHandler
+    ) {
+        self.onEvent = onEvent
+        self.presentationSurfaces = presentationSurfaces
         queue.setSpecific(key: queueKey, value: 1)
     }
 
@@ -1519,7 +1544,9 @@ public final class MacLocalXPCClientV1: @unchecked Sendable {
 
     public func start() throws {
         try syncOnQueue {
-            guard session == nil else {
+            guard session == nil,
+                  presentationSurfaces == nil
+                    || presentationRetirement == nil else {
                 throw MacLocalXPCConstructionErrorV1.alreadyStarted
             }
 
@@ -1543,6 +1570,9 @@ public final class MacLocalXPCClientV1: @unchecked Sendable {
             precondition(statusReadGate.bind(generation: generation))
             statusReadDeadline?.cancel()
             statusReadDeadline = nil
+            if presentationSurfaces != nil {
+                presentationGeneration = generation
+            }
 
             guard let candidate = MCLocalXPCSessionCreateInactive(
                 MacLocalXPCIdentityV1.serviceName,
@@ -1550,6 +1580,9 @@ public final class MacLocalXPCClientV1: @unchecked Sendable {
                 &result
             ), result == MCLocalXPCResultOK else {
                 _ = generationGate.invalidate(generation: generation)
+                discardUnactivatedPresentationGeneration(
+                    generation: generation
+                )
                 MCLocalXPCPeerRequirementRelease(requirement)
                 throw MacLocalXPCConstructionErrorV1.sessionConstruction
             }
@@ -1559,9 +1592,27 @@ public final class MacLocalXPCClientV1: @unchecked Sendable {
                 [weak self] in
                 self?.handleInvalidation(generation: generation)
             }
+            if presentationSurfaces != nil {
+                presentationReceiver = makePresentationReceiver(
+                    generation: generation
+                )
+            }
+            // The incoming handler is installed before activation even for the
+            // inert public initializer. Unexpected Agent-to-menu traffic then
+            // fails closed instead of falling through an unowned XPC surface.
+            MCLocalXPCSessionSetMessageHandler(candidate) {
+                [weak self] message in
+                self?.handleIncomingMenuPresentation(
+                    generation: generation,
+                    message: message
+                )
+            }
             guard MCLocalXPCSessionActivate(candidate)
                     == MCLocalXPCResultOK else {
                 _ = generationGate.invalidate(generation: generation)
+                discardUnactivatedPresentationGeneration(
+                    generation: generation
+                )
                 MCLocalXPCSessionDisposeAfterFailedActivation(candidate)
                 throw MacLocalXPCConstructionErrorV1.activation
             }
@@ -1617,8 +1668,17 @@ public final class MacLocalXPCClientV1: @unchecked Sendable {
             _ = statusReadGate.invalidate(generation: generation)
             statusReadDeadline?.cancel()
             statusReadDeadline = nil
+            retirePresentationReceiver(generation: generation)
             MCLocalXPCSessionCancelOwned(session)
         }
+    }
+
+    /// Initiates cancellation and returns only after any possibly retained
+    /// presentation from that generation has been withdrawn by exact ID.
+    package func finishMenuPresentationReceiver() async {
+        cancel()
+        let task = syncOnQueue { presentationRetirement?.task }
+        await task?.value
     }
 
     private func handleHelloReply(
@@ -1794,6 +1854,164 @@ public final class MacLocalXPCClientV1: @unchecked Sendable {
         invalidateOwnedSession(generation: generation)
     }
 
+    private func handleIncomingMenuPresentation(
+        generation: UInt64,
+        message: MCLocalXPCMessageRef
+    ) {
+        guard generationGate.admitsCallback(generation: generation) else {
+            return
+        }
+        guard let presentationReceiver,
+              presentationGeneration == generation else {
+            invalidateOwnedSession(generation: generation)
+            return
+        }
+        let request = MacLocalXPCMenuPresentationWireV1.copyExactRequest(
+            message
+        )
+        let authenticatedAndReady = session != nil
+            && gate.state == .authenticated
+            && menuReadinessPublished
+        let authorized = request.map {
+            authorizesAgentPresentationMethod($0.authorizationMethod)
+        } ?? false
+        presentationReceiver.receive(
+            copiedRequest: request,
+            borrowedRequest: message,
+            authenticatedAndReady: authenticatedAndReady,
+            authorized: authorized
+        )
+    }
+
+    private func makePresentationReceiver(
+        generation: UInt64
+    ) -> MacLocalXPCMenuPresentationReceiverGenerationV1<
+        MCLocalXPCMessageRef
+    >? {
+        guard let presentationSurfaces else { return nil }
+        let queue = self.queue
+        return MacLocalXPCMenuPresentationReceiverGenerationV1(
+            surfaces: presentationSurfaces,
+            retainRequest: MCLocalXPCMessageRetain,
+            releaseRequest: MCLocalXPCMessageRelease,
+            reply: { [weak self] request, kind in
+                self?.replyToIncomingMenuPresentation(
+                    generation: generation,
+                    request: request,
+                    kind: kind
+                ) ?? false
+            },
+            enqueue: { operation in
+                queue.async(execute: operation)
+            },
+            scheduleDeadline: { interval, operation in
+                let deadline = DispatchWorkItem(block: operation)
+                queue.asyncAfter(
+                    deadline: .now() + interval,
+                    execute: deadline
+                )
+                return MacLocalXPCMenuPresentationScheduledDeadlineV1 {
+                    deadline.cancel()
+                }
+            },
+            onTerminal: { [weak self] in
+                self?.invalidateOwnedSession(generation: generation)
+            }
+        )
+    }
+
+    private func replyToIncomingMenuPresentation(
+        generation: UInt64,
+        request: MCLocalXPCMessageRef,
+        kind: MacLocalXPCMenuPresentationRequestV1
+    ) -> Bool {
+        guard generationGate.admitsCallback(generation: generation),
+              presentationGeneration == generation,
+              presentationReceiver != nil,
+              gate.state == .authenticated,
+              menuReadinessPublished,
+              let session else {
+            return false
+        }
+        let result: MCLocalXPCResult = switch kind {
+        case .pairingReview:
+            MCLocalXPCSessionReplyToPairingReviewPublishAcknowledgement(
+                session,
+                request
+            )
+        case .pairingWithdrawal:
+            MCLocalXPCSessionReplyToPairingReviewWithdrawalAcknowledgement(
+                session,
+                request
+            )
+        case .hostRecoveryReview:
+            MCLocalXPCSessionReplyToHostRecoveryReviewPublishAcknowledgement(
+                session,
+                request
+            )
+        case .hostRecoveryResume:
+            MCLocalXPCSessionReplyToHostRecoveryResumePublishAcknowledgement(
+                session,
+                request
+            )
+        case .hostRecoveryWithdrawal:
+            MCLocalXPCSessionReplyToHostRecoveryWithdrawalAcknowledgement(
+                session,
+                request
+            )
+        }
+        return result == MCLocalXPCResultOK
+    }
+
+    private func authorizesAgentPresentationMethod(
+        _ method: LocalIPCMethod
+    ) -> Bool {
+        do {
+            try LocalIPCAuthorizationPolicy.authorize(
+                authenticatedCaller: .agent,
+                endpoint: .menuApp,
+                method: method,
+                version: .init()
+            )
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    private func discardUnactivatedPresentationGeneration(
+        generation: UInt64
+    ) {
+        guard presentationGeneration == generation else { return }
+        presentationGeneration = nil
+        presentationReceiver = nil
+    }
+
+    private func retirePresentationReceiver(generation: UInt64) {
+        guard presentationGeneration == generation,
+              let presentationReceiver else {
+            return
+        }
+        presentationGeneration = nil
+        self.presentationReceiver = nil
+        let cleanup = presentationReceiver.retire()
+
+        let token = UUID()
+        let queue = self.queue
+        let task = Task { [weak self, cleanup, queue] in
+            await cleanup.value
+            queue.async { [weak self] in
+                self?.completePresentationRetirement(token: token)
+            }
+        }
+        presentationRetirement = (token, task)
+    }
+
+    private func completePresentationRetirement(token: UUID) {
+        guard presentationRetirement?.token == token else { return }
+        presentationRetirement = nil
+    }
+
     private func invalidateOwnedSession(generation: UInt64) {
         guard generationGate.admitsCallback(generation: generation),
               let session else { return }
@@ -1805,6 +2023,7 @@ public final class MacLocalXPCClientV1: @unchecked Sendable {
         _ = statusReadGate.invalidate(generation: generation)
         statusReadDeadline?.cancel()
         statusReadDeadline = nil
+        retirePresentationReceiver(generation: generation)
         MCLocalXPCSessionCancelOwned(session)
         onEvent(.invalidated)
     }
@@ -1821,6 +2040,7 @@ public final class MacLocalXPCClientV1: @unchecked Sendable {
         _ = statusReadGate.invalidate(generation: generation)
         statusReadDeadline?.cancel()
         statusReadDeadline = nil
+        retirePresentationReceiver(generation: generation)
         MCLocalXPCSessionRelease(session)
         if shouldNotify {
             onEvent(.invalidated)

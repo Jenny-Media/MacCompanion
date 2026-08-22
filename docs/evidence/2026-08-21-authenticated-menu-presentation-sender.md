@@ -75,3 +75,10 @@ permanent target, or prove a signed two-process exchange. `Apps/`,
 `project.yml`, `Package.swift`, signing settings, entitlements, and release
 identities are unchanged. The next package-only slice is the bounded menu
 receiver and its awaitable retirement barrier.
+
+## Later checkpoint
+
+The subsequent [authenticated menu presentation receiver](2026-08-21-authenticated-menu-presentation-receiver.md)
+now completes that package-only receiving and retirement slice. The historical
+non-claims above remain accurate for this sender checkpoint; sender/receiver
+product composition and signed runtime evidence still follow.
