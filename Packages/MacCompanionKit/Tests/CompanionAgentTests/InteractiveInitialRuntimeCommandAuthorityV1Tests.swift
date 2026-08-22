@@ -319,3 +319,232 @@ private func initialReceipt(
         )
     }
 }
+
+private actor RuntimeOwnerAdmissionV1:
+    InteractiveSessionAdmissionReadingV0
+{
+    private var snapshots: [InteractiveSessionAdmissionSnapshotV0?]
+
+    init(_ snapshots: [InteractiveSessionAdmissionSnapshotV0?]) {
+        self.snapshots = snapshots
+    }
+
+    func snapshot(deviceID _: UUID) async throws
+        -> InteractiveSessionAdmissionSnapshotV0? {
+        guard !snapshots.isEmpty else { return nil }
+        return snapshots.removeFirst()
+    }
+}
+
+private actor RuntimeOwnerDesktopV1:
+    AgentInteractiveInitialDesktopPreparingV1
+{
+    let descriptor: AdaptiveSurfaceDescriptor
+    private var requestsStorage: [AgentInteractiveInitialDesktopRequestV1] = []
+
+    init(descriptor: AdaptiveSurfaceDescriptor) {
+        self.descriptor = descriptor
+    }
+
+    func prepareInitialDesktop(
+        _ request: AgentInteractiveInitialDesktopRequestV1
+    ) async throws -> AdaptiveSurfaceDescriptor {
+        requestsStorage.append(request)
+        return descriptor
+    }
+
+    func requests() -> [AgentInteractiveInitialDesktopRequestV1] {
+        requestsStorage
+    }
+}
+
+private actor RuntimeOwnerMenuRouteV1:
+    AgentInteractiveMenuRuntimeRoutingV1
+{
+    let wrongGeneration: Bool
+    private var installsStorage: [InteractiveRuntimeInstallCommandV0] = []
+    private var revokesStorage: [InteractiveRuntimeRevokeCommandV0] = []
+
+    init(wrongGeneration: Bool = false) {
+        self.wrongGeneration = wrongGeneration
+    }
+
+    func installInteractiveLease(
+        _ command: InteractiveRuntimeInstallCommandV0
+    ) async throws -> InteractiveRuntimeInstallReceiptV0 {
+        installsStorage.append(command)
+        return try InteractiveRuntimeInstallReceiptV0(
+            correlationID: command.commandID,
+            leaseID: command.lease.leaseID,
+            interactiveSessionID: command.lease.interactiveSessionID,
+            selectedDisplayID: command.lease.selectedDisplayID,
+            menuAppGeneration: wrongGeneration
+                ? UUID() : initialMenuGeneration,
+            menuAppRevision: 9,
+            readyInteractionClasses:
+                Set(command.lease.allowedInteractionClasses),
+            indicatorVisible: true
+        )
+    }
+
+    func renewInteractiveLease(
+        _: InteractiveRuntimeLeaseRenewalV0
+    ) async throws {}
+
+    func revokeInteractiveLease(
+        _ command: InteractiveRuntimeRevokeCommandV0
+    ) async throws -> InteractiveRuntimeRevokedReceiptV0 {
+        revokesStorage.append(command)
+        return try InteractiveRuntimeRevokedReceiptV0(
+            correlationID: command.commandID,
+            leaseID: command.leaseID,
+            interactiveSessionID: command.interactiveSessionID,
+            inputReleased: true,
+            captureStopped: true,
+            lastFrameBlanked: true,
+            indicatorCleared: true
+        )
+    }
+
+    func installs() -> [InteractiveRuntimeInstallCommandV0] {
+        installsStorage
+    }
+
+    func revokes() -> [InteractiveRuntimeRevokeCommandV0] {
+        revokesStorage
+    }
+}
+
+private final class RuntimeOwnerIdentifiersV1: @unchecked Sendable {
+    private let lock = NSLock()
+    private var values: [UUID]
+
+    init(_ values: [UUID]) { self.values = values }
+
+    func next() -> UUID {
+        lock.withLock { values.removeFirst() }
+    }
+}
+
+private final class RuntimeOwnerClockV1: @unchecked Sendable {
+    private let lock = NSLock()
+    private var values: [UInt64]
+
+    init(_ values: [UInt64]) { self.values = values }
+
+    func now() -> UInt64 {
+        lock.withLock { values.removeFirst() }
+    }
+}
+
+@Test func agentRuntimeOwnerRevalidatesInstallsAndRevokesExactly()
+    async throws
+{
+    let requirement = try initialRequirement()
+    let admission = RuntimeOwnerAdmissionV1([
+        requirement.admission, requirement.admission,
+    ])
+    let desktop = RuntimeOwnerDesktopV1(descriptor: try initialDesktop())
+    let route = RuntimeOwnerMenuRouteV1()
+    let commandID = UUID()
+    let leaseID = UUID()
+    let revokeID = UUID()
+    let identifiers = RuntimeOwnerIdentifiersV1([
+        commandID, leaseID, revokeID,
+    ])
+    let clock = RuntimeOwnerClockV1([
+        2_000_000_000, 2_100_000_000,
+    ])
+    let owner = AgentInteractiveRuntimeOwnerV1(
+        admission: admission,
+        desktop: desktop,
+        runtime: route,
+        monotonicNowNanoseconds: { clock.now() },
+        identifier: { identifiers.next() }
+    )
+
+    try await owner.install(
+        initialBootstrap(),
+        requirement: requirement
+    )
+    let installs = await route.installs()
+    #expect(installs.count == 1)
+    #expect(installs.first?.commandID == commandID)
+    #expect(installs.first?.lease.leaseID == leaseID)
+    #expect(await owner.state() == .active(
+        interactiveSessionID: initialSessionID,
+        leaseID: leaseID
+    ))
+
+    await owner.terminate(
+        interactiveSessionID: initialSessionID,
+        primaryConnectionID: initialConnectionID,
+        reason: .clientDisconnected
+    )
+    let revokes = await route.revokes()
+    #expect(revokes.count == 1)
+    #expect(revokes.first?.commandID == revokeID)
+    #expect(revokes.first?.reason == .clientDisconnected)
+    #expect(await owner.state() == .idle)
+}
+
+@Test func agentRuntimeOwnerRejectsAdmissionChangeBeforeRuntimeSend()
+    async throws
+{
+    let requirement = try initialRequirement()
+    let admission = RuntimeOwnerAdmissionV1([
+        requirement.admission, nil,
+    ])
+    let desktop = RuntimeOwnerDesktopV1(descriptor: try initialDesktop())
+    let route = RuntimeOwnerMenuRouteV1()
+    let clock = RuntimeOwnerClockV1([2_000_000_000])
+    let owner = AgentInteractiveRuntimeOwnerV1(
+        admission: admission,
+        desktop: desktop,
+        runtime: route,
+        monotonicNowNanoseconds: { clock.now() }
+    )
+
+    await #expect(
+        throws: AgentInteractiveRuntimeOwnerErrorV1.finalAdmissionChanged
+    ) {
+        try await owner.install(
+            initialBootstrap(),
+            requirement: requirement
+        )
+    }
+    #expect(await route.installs().isEmpty)
+    #expect(await owner.state() == .idle)
+}
+
+@Test func agentRuntimeOwnerLatchesMismatchedMenuReceipt() async throws {
+    let requirement = try initialRequirement()
+    let admission = RuntimeOwnerAdmissionV1([
+        requirement.admission, requirement.admission,
+    ])
+    let desktop = RuntimeOwnerDesktopV1(descriptor: try initialDesktop())
+    let route = RuntimeOwnerMenuRouteV1(wrongGeneration: true)
+    let identifiers = RuntimeOwnerIdentifiersV1([UUID(), UUID()])
+    let clock = RuntimeOwnerClockV1([
+        2_000_000_000, 2_100_000_000,
+    ])
+    let owner = AgentInteractiveRuntimeOwnerV1(
+        admission: admission,
+        desktop: desktop,
+        runtime: route,
+        monotonicNowNanoseconds: { clock.now() },
+        identifier: { identifiers.next() }
+    )
+
+    await #expect(
+        throws: AgentInteractiveRuntimeOwnerErrorV1.runtimeReceiptRejected
+    ) {
+        try await owner.install(
+            initialBootstrap(),
+            requirement: requirement
+        )
+    }
+    #expect(await owner.state() == .safetyRecoveryRequired(
+        interactiveSessionID: initialSessionID
+    ))
+}

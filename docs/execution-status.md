@@ -122,6 +122,16 @@ posting. The next independent slice is a separate final-state-revalidating
 Control authority plus concrete menu platform adapters; the existing stable
 pairing/recovery authority remains Control-free.
 
+The [Interactive runtime composition boundary](evidence/2026-08-22-interactive-runtime-composition-boundary.md)
+now forwards the exact lease lifecycle into one serialized menu runtime with a
+sticky cleanup-failure latch. Its Agent owner double-revalidates durable and
+visible admission around opaque Desktop preparation, transfers channel
+credentials only after the exact install receipt, and requires correlated
+four-effect revocation. The permanent target still selects the inert
+constructor. Visible-display publication and mapping, concrete platform
+effects, lease renewal, and secondary channel handoff remain the next Control
+composition gates.
+
 The [conservative network request-context checkpoint](evidence/2026-08-22-conservative-network-request-contexts.md)
 now supplies live clocks, unique response IDs, and an owned public macOS
 session/lifecycle source for that listener seam. [Primary-source API

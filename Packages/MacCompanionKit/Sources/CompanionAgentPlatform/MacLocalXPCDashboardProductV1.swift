@@ -410,6 +410,8 @@ public final class MacLocalXPCDashboardProductV1:
         pairingReviews: any LocalPairingReviewSurfaceV0,
         hostIdentityRecovery:
             any LocalHostIdentityRecoverySurfaceV0,
+        interactiveLeaseHandler:
+            (any MacLocalXPCInteractiveLeaseHandlingV1)? = nil,
         bufferCapacity: Int = 32
     ) {
         let surfaces = MacLocalXPCMenuPresentationReceiverSurfacesV1(
@@ -422,6 +424,7 @@ public final class MacLocalXPCDashboardProductV1:
             clientFactory: {
                 MacLocalXPCClientV1(
                     presentationSurfaces: surfaces,
+                    interactiveLeaseHandler: interactiveLeaseHandler,
                     onEvent: $0
                 )
             }

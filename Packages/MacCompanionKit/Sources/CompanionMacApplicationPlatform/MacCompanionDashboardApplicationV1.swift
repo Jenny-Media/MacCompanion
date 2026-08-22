@@ -2,6 +2,7 @@
 import AppKit
 import CompanionAgentPlatform
 import CompanionIPC
+import CompanionInteractiveRuntime
 import CompanionLocalXPCPlatform
 import CompanionMacApp
 import CompanionPresentation
@@ -165,6 +166,28 @@ public final class MacCompanionDashboardApplicationV1 {
     private var finishTask: Task<Void, Never>?
 
     public convenience init() {
+        self.init(interactiveLeaseHandler: nil)
+    }
+
+    /// Release composition seam for the visible menu runtime. Passing a
+    /// runtime does not start local XPC, capture, or input; those effects stay
+    /// behind the existing explicit application start and an Agent-issued
+    /// validated lease.
+    public convenience init(
+        interactiveRuntime: InteractiveMenuRuntimeOwnerV0
+    ) {
+        self.init(
+            interactiveLeaseHandler:
+                MacInteractiveLeaseRuntimeAdapterV1(
+                    runtime: interactiveRuntime
+                )
+        )
+    }
+
+    private convenience init(
+        interactiveLeaseHandler:
+            (any MacLocalXPCInteractiveLeaseHandlingV1)?
+    ) {
         let dashboardRelay = MacCompanionDashboardStateRelayV1()
         let dashboardOwner = MacAgentDashboardApplicationOwnerV0 {
             [weak dashboardRelay] source in
@@ -195,7 +218,8 @@ public final class MacCompanionDashboardApplicationV1 {
         let product = MacLocalXPCDashboardProductV1(
             owner: dashboardOwner,
             pairingReviews: reviewOwner,
-            hostIdentityRecovery: recoveryOwner
+            hostIdentityRecovery: recoveryOwner,
+            interactiveLeaseHandler: interactiveLeaseHandler
         )
         self.init(
             product: product,
