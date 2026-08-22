@@ -7,14 +7,23 @@ import tempfile
 from dataclasses import replace
 from pathlib import Path
 
+import platform_codesign_inspection as inspection_module
+import platform_codesign_outer as outer_module
 from platform_codesign_outer import (
     PlatformCodesignOuterError,
+    execute_correlated_outer_codesign_verification_plans,
     execute_outer_codesign_verification_plans,
     parse_outer_codesign_verification_output,
 )
 from platform_signing_fixed_tools import inspect_fixed_tool
 from platform_signing_subjects import derive_codesign_outer_verification_plans
-from validate_platform_signing_subjects import reconstruct
+from validate_platform_codesign_inspection_execution import (
+    execute_with_fakes,
+    fake_embedded_inspector,
+    invocation_result,
+    prepare as prepare_architecture,
+)
+from validate_platform_signing_subjects import TEAM_ID, reconstruct
 
 
 def require_failure(operation, expected: str) -> None:
@@ -71,6 +80,55 @@ def success_stderr(plan) -> bytes:
         f"{subject}: valid on disk\n"
         f"{subject}: satisfies its Designated Requirement\n"
     ).encode("utf-8")
+
+
+def execute_correlated_with_fakes(
+    context: dict,
+    architecture_records: list[dict],
+    *,
+    mutate_after_outer: bool = False,
+) -> list[dict]:
+    codesign = inspect_fixed_tool("apple.codesign", "/usr/bin/codesign")
+    plans = derive_codesign_outer_verification_plans(
+        graph=context["graph"],
+        reconstructed=context["subjects"],
+        codesign_tool=codesign,
+    )
+    original_runner = outer_module.run_fixed_tool_invocation
+    original_inspector = inspection_module.inspect_embedded_signature
+
+    def runner(invocation, work_root):
+        if len(plans) != 1 or invocation != plans[0].invocation:
+            raise RuntimeError("correlated outer fixture received an unknown invocation")
+        result = invocation_result(
+            invocation,
+            work_root,
+            b"",
+            success_stderr(plans[0]),
+        )
+        if mutate_after_outer:
+            certificate = work_root / architecture_records[0]["certificateFiles"][0]["path"]
+            certificate.write_bytes(b"post-outer certificate mutation")
+        return result
+
+    outer_module.run_fixed_tool_invocation = runner
+    inspection_module.inspect_embedded_signature = fake_embedded_inspector(context)
+    try:
+        return execute_correlated_outer_codesign_verification_plans(
+            plans=plans,
+            architecture_plans=context["plans"],
+            architecture_records=architecture_records,
+            verification_records=context["verificationRecords"],
+            reconstructed=context["subjects"],
+            composition=context["composition"],
+            graph=context["graph"],
+            policy=context["policy"],
+            team_id=TEAM_ID,
+            work_root=context["workRoot"],
+        )
+    finally:
+        outer_module.run_fixed_tool_invocation = original_runner
+        inspection_module.inspect_embedded_signature = original_inspector
 
 
 def main() -> int:
@@ -296,9 +354,73 @@ def main() -> int:
             "preflight reinspection",
         )
 
+    with tempfile.TemporaryDirectory(
+        prefix="maccompanion-outer-codesign-correlated-"
+    ) as value:
+        context = prepare_architecture(Path(value))
+        architecture_records = execute_with_fakes(context)
+        records = execute_correlated_with_fakes(context, architecture_records)
+        if (
+            len(records) != 1
+            or records[0]["status"] != "passed"
+            or records[0]["platformAcceptanceEligible"] is not False
+            or records[0]["architecturePrerequisitesRevalidatedAfterOuter"] is not True
+            or len(records[0]["architecturePrerequisites"])
+            != len(architecture_records)
+            or any(
+                item["status"] != "passed"
+                or item["policyMatched"] is not True
+                or item["platformAcceptanceEligible"] is not False
+                for item in records[0]["architecturePrerequisites"]
+            )
+        ):
+            raise RuntimeError("correlated outer codesign record is incomplete")
+
+    with tempfile.TemporaryDirectory(
+        prefix="maccompanion-outer-codesign-prerequisite-mutation-"
+    ) as value:
+        context = prepare_architecture(Path(value))
+        architecture_records = execute_with_fakes(context)
+        changed = copy.deepcopy(architecture_records)
+        changed[0]["status"] = "failed"
+        require_failure(
+            lambda: execute_correlated_with_fakes(context, changed),
+            "prerequisites failed reinspection",
+        )
+        if list(context["workRoot"].glob("codesign-outer-*.stdout")):
+            raise RuntimeError("invalid architecture prerequisite reached outer codesign")
+
+    with tempfile.TemporaryDirectory(
+        prefix="maccompanion-outer-codesign-prerequisite-omission-"
+    ) as value:
+        context = prepare_architecture(Path(value))
+        architecture_records = execute_with_fakes(context)
+        require_failure(
+            lambda: execute_correlated_with_fakes(
+                context,
+                architecture_records[:-1],
+            ),
+            "prerequisites failed reinspection",
+        )
+
+    with tempfile.TemporaryDirectory(
+        prefix="maccompanion-outer-codesign-postflight-mutation-"
+    ) as value:
+        context = prepare_architecture(Path(value))
+        architecture_records = execute_with_fakes(context)
+        require_failure(
+            lambda: execute_correlated_with_fakes(
+                context,
+                architecture_records,
+                mutate_after_outer=True,
+            ),
+            "postflight reinspection",
+        )
+
     print(
         "Validated exact Mac outer deep-codesign planning, immutable execution, "
-        "closed success grammar, and non-acceptance evidence."
+        "closed success grammar, exact whole/architecture prerequisite ordering, "
+        "and non-acceptance evidence."
     )
     return 0
 

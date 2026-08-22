@@ -5,6 +5,10 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from platform_codesign_inspection import (
+    PlatformCodesignInspectionError,
+    validate_codesign_architecture_records,
+)
 from platform_codesign_verification import (
     INVOCATION_RESULT_KEYS,
     PlatformCodesignVerificationError,
@@ -15,6 +19,7 @@ from platform_codesign_verification import (
 from platform_signing_fixed_tools import FixedToolError, run_fixed_tool_invocation
 from platform_signing_subjects import (
     PlatformSigningSubjectError,
+    PlannedCodeSignArchitectureInspection,
     PlannedCodeSignOuterVerification,
     ReconstructedSigningSubject,
     derive_codesign_outer_verification_plans,
@@ -23,6 +28,18 @@ from platform_signing_subjects import (
 
 class PlatformCodesignOuterError(ValueError):
     pass
+
+
+OUTER_EXECUTION_RECORD_KEYS = {
+    "artifactID",
+    "status",
+    "reason",
+    "platformAcceptanceEligible",
+    "subjectBefore",
+    "invocation",
+    "verification",
+    "subjectAfter",
+}
 
 
 def parse_outer_codesign_verification_output(
@@ -187,3 +204,92 @@ def execute_outer_codesign_verification_plans(
             "subjectAfter": after,
         })
     return records
+
+
+def execute_correlated_outer_codesign_verification_plans(
+    *,
+    plans: list[PlannedCodeSignOuterVerification],
+    architecture_plans: list[PlannedCodeSignArchitectureInspection],
+    architecture_records: list[dict[str, Any]],
+    verification_records: list[dict[str, Any]],
+    reconstructed: list[ReconstructedSigningSubject],
+    composition: dict[str, Any],
+    graph: dict[str, Any],
+    policy: dict[str, Any],
+    team_id: str,
+    work_root: Path,
+) -> list[dict[str, Any]]:
+    mac_subjects = [subject for subject in reconstructed if subject.platform == "macOS"]
+    if not mac_subjects:
+        if plans:
+            raise PlatformCodesignOuterError(
+                "correlated outer codesign plans exist without a Mac subject"
+            )
+        return []
+    try:
+        before = validate_codesign_architecture_records(
+            plans=architecture_plans,
+            records=architecture_records,
+            reconstructed=reconstructed,
+            composition=composition,
+            graph=graph,
+            policy=policy,
+            verification_records=verification_records,
+            team_id=team_id,
+            work_root=work_root,
+        )
+    except PlatformCodesignInspectionError as error:
+        raise PlatformCodesignOuterError(
+            "outer codesign architecture prerequisites failed reinspection"
+        ) from error
+    raw_records = execute_outer_codesign_verification_plans(
+        plans=plans,
+        reconstructed=reconstructed,
+        composition=composition,
+        graph=graph,
+        work_root=work_root,
+    )
+    try:
+        after = validate_codesign_architecture_records(
+            plans=architecture_plans,
+            records=architecture_records,
+            reconstructed=reconstructed,
+            composition=composition,
+            graph=graph,
+            policy=policy,
+            verification_records=verification_records,
+            team_id=team_id,
+            work_root=work_root,
+        )
+    except PlatformCodesignInspectionError as error:
+        raise PlatformCodesignOuterError(
+            "outer codesign architecture prerequisites failed postflight reinspection"
+        ) from error
+    if before != after:
+        raise PlatformCodesignOuterError(
+            "outer codesign architecture prerequisites changed during execution"
+        )
+    if len(raw_records) != len(plans):
+        raise PlatformCodesignOuterError(
+            "outer codesign execution record set is incomplete"
+        )
+    correlated: list[dict[str, Any]] = []
+    for plan, record in zip(plans, raw_records, strict=True):
+        prerequisites = [
+            item for item in before if item["artifactID"] == plan.artifact_id
+        ]
+        if (
+            not isinstance(record, dict)
+            or set(record) != OUTER_EXECUTION_RECORD_KEYS
+            or record.get("artifactID") != plan.artifact_id
+            or not prerequisites
+        ):
+            raise PlatformCodesignOuterError(
+                "outer codesign result lacks exact architecture prerequisites"
+            )
+        correlated.append({
+            **record,
+            "architecturePrerequisites": prerequisites,
+            "architecturePrerequisitesRevalidatedAfterOuter": True,
+        })
+    return correlated

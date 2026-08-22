@@ -18,6 +18,7 @@ from platform_codesign_inspection import (
     _require_certificate_prefix_clear,
     _retain_extracted_certificates,
     execute_codesign_architecture_inspection_plans,
+    validate_codesign_architecture_records,
 )
 from platform_codesign_verification import _composition_by_id, _rehash_subject
 from platform_signing_fixed_tools import (
@@ -413,6 +414,28 @@ def execute_with_fakes(
         inspection_module.inspect_embedded_signature = original_inspector
 
 
+def validate_with_fake_inspector(
+    context: dict[str, Any],
+    records: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    original_inspector = inspection_module.inspect_embedded_signature
+    inspection_module.inspect_embedded_signature = fake_embedded_inspector(context)
+    try:
+        return validate_codesign_architecture_records(
+            plans=context["plans"],
+            records=records,
+            reconstructed=context["subjects"],
+            composition=context["composition"],
+            graph=context["graph"],
+            policy=context["policy"],
+            verification_records=context["verificationRecords"],
+            team_id=TEAM_ID,
+            work_root=context["workRoot"],
+        )
+    finally:
+        inspection_module.inspect_embedded_signature = original_inspector
+
+
 def certificate_cases() -> None:
     with tempfile.TemporaryDirectory(prefix="maccompanion-certificate-files-") as value:
         root = Path(value) / "work"
@@ -493,6 +516,46 @@ def main() -> int:
                 or len(record["certificateFiles"]) != 1
             ):
                 raise RuntimeError("architecture execution record is incomplete")
+        summaries = validate_with_fake_inspector(context, records)
+        if (
+            len(summaries) != len(records)
+            or any(
+                summary["status"] != "passed"
+                or summary["policyMatched"] is not True
+                or summary["platformAcceptanceEligible"] is not False
+                or summary["wholeVerification"]["status"] != "passed"
+                for summary in summaries
+            )
+        ):
+            raise RuntimeError("architecture record reinspection is incomplete")
+
+    with tempfile.TemporaryDirectory(prefix="maccompanion-inspection-record-mutation-") as value:
+        context = prepare(Path(value))
+        records = execute_with_fakes(context)
+        changed = copy.deepcopy(records)
+        changed[0]["policyComparison"]["policyMatched"] = False
+        require_failure(
+            lambda: validate_with_fake_inspector(context, changed),
+            "did not pass unchanged",
+        )
+
+    with tempfile.TemporaryDirectory(prefix="maccompanion-inspection-certificate-mutation-") as value:
+        context = prepare(Path(value))
+        records = execute_with_fakes(context)
+        certificate = context["workRoot"] / records[0]["certificateFiles"][0]["path"]
+        certificate.write_bytes(b"substituted certificate")
+        require_failure(
+            lambda: validate_with_fake_inspector(context, records),
+            "certificate",
+        )
+
+    with tempfile.TemporaryDirectory(prefix="maccompanion-inspection-record-omission-") as value:
+        context = prepare(Path(value))
+        records = execute_with_fakes(context)
+        require_failure(
+            lambda: validate_with_fake_inspector(context, records[:-1]),
+            "coverage is incomplete",
+        )
 
     with tempfile.TemporaryDirectory(prefix="maccompanion-inspection-plan-") as value:
         context = prepare(Path(value))

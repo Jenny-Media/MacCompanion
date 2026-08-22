@@ -187,12 +187,19 @@ against the exact reconstructed `.app` after all nested objects are available:
 ]
 ```
 
-This check is implemented as immutable non-acceptance evidence. Success has
+This check is implemented as immutable non-acceptance evidence. Its correlated
+executor first rederives and reopens every complete whole-object and
+per-architecture record, including subject hashes, retained raw output,
+certificate files, embedded signature facts, display correlation, and policy
+comparison. It invokes the outer check only after all of those prerequisites
+pass, then repeats the complete reinspection and requires the same closed
+summary. Success has
 empty stdout and exactly two path-bound stderr lines: `valid on disk` and
 `satisfies its Designated Requirement`. `--deep` is a final consistency check,
 never discovery, repair, or a substitute for any per-object or
-per-architecture result. Canonical-record composition must enforce that
-ordering before it can contribute to acceptance.
+per-architecture result. The correlated record retains the exact prerequisite
+summaries and remains `platformAcceptanceEligible: false`; canonical-record
+composition is still required before it can contribute to acceptance.
 
 For the final application and disk image the collector additionally retains Gatekeeper
 assessment, accepted notarization correlation, and stapling validation against
