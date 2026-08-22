@@ -2,6 +2,33 @@
 
 #include <string.h>
 
+static const char MCLocalXPCPairingReviewPublishKind[] =
+    "presentation.pairing-review.publish";
+static const char MCLocalXPCPairingReviewPublishAcknowledgementKind[] =
+    "presentation.pairing-review.publish.ack";
+static const char MCLocalXPCPairingReviewPublishRejectionKind[] =
+    "presentation.pairing-review.publish.error";
+static const char MCLocalXPCPairingReviewWithdrawalKind[] =
+    "presentation.pairing-review.withdraw";
+static const char MCLocalXPCPairingReviewWithdrawalAcknowledgementKind[] =
+    "presentation.pairing-review.withdraw.ack";
+static const char MCLocalXPCHostRecoveryReviewPublishKind[] =
+    "presentation.host-recovery-review.publish";
+static const char MCLocalXPCHostRecoveryReviewPublishAcknowledgementKind[] =
+    "presentation.host-recovery-review.publish.ack";
+static const char MCLocalXPCHostRecoveryReviewPublishRejectionKind[] =
+    "presentation.host-recovery-review.publish.error";
+static const char MCLocalXPCHostRecoveryResumePublishKind[] =
+    "presentation.host-recovery-resume.publish";
+static const char MCLocalXPCHostRecoveryResumePublishAcknowledgementKind[] =
+    "presentation.host-recovery-resume.publish.ack";
+static const char MCLocalXPCHostRecoveryResumePublishRejectionKind[] =
+    "presentation.host-recovery-resume.publish.error";
+static const char MCLocalXPCHostRecoveryWithdrawalKind[] =
+    "presentation.host-recovery.withdraw";
+static const char MCLocalXPCHostRecoveryWithdrawalAcknowledgementKind[] =
+    "presentation.host-recovery.withdraw.ack";
+
 static void MCLocalXPCReleaseError(xpc_rich_error_t error) {
     if (error != NULL) {
         xpc_release(error);
@@ -136,6 +163,222 @@ static bool MCLocalXPCMessageIsExactStatusUnavailable(
         && strcmp(code, "sourceUnavailable") == 0
         && xpc_dictionary_get_int64(message, "version") == 1;
 }
+
+static bool MCLocalXPCMessageGetExactPresentationPublish(
+    xpc_object_t message,
+    const char *expected_kind,
+    const uint8_t **payload_out,
+    size_t *payload_length_out
+) {
+    if (message == NULL
+        || xpc_get_type(message) != XPC_TYPE_DICTIONARY) {
+        return false;
+    }
+
+    __block size_t field_count = 0;
+    __block bool fields_are_closed = true;
+    xpc_dictionary_apply(
+        message,
+        ^bool(const char *key, xpc_object_t value) {
+            field_count += 1;
+            if (strcmp(key, "kind") == 0) {
+                fields_are_closed = fields_are_closed
+                    && xpc_get_type(value) == XPC_TYPE_STRING;
+            } else if (strcmp(key, "version") == 0) {
+                fields_are_closed = fields_are_closed
+                    && xpc_get_type(value) == XPC_TYPE_INT64;
+            } else if (strcmp(key, "payload") == 0) {
+                fields_are_closed = fields_are_closed
+                    && xpc_get_type(value) == XPC_TYPE_DATA;
+            } else {
+                fields_are_closed = false;
+            }
+            return true;
+        }
+    );
+
+    const char *kind = xpc_dictionary_get_string(message, "kind");
+    size_t payload_length = 0;
+    const uint8_t *payload = xpc_dictionary_get_data(
+        message,
+        "payload",
+        &payload_length
+    );
+    bool exact = field_count == 3
+        && fields_are_closed
+        && kind != NULL
+        && strcmp(kind, expected_kind) == 0
+        && xpc_dictionary_get_int64(message, "version") == 1
+        && payload != NULL
+        && payload_length > 0
+        && payload_length
+            <= MCLocalXPCMaximumMenuPresentationPayloadBytes;
+    if (!exact) {
+        return false;
+    }
+    if (payload_out != NULL) {
+        *payload_out = payload;
+    }
+    if (payload_length_out != NULL) {
+        *payload_length_out = payload_length;
+    }
+    return true;
+}
+
+static const uint8_t *MCLocalXPCMessageGetExactPresentationWithdrawal(
+    xpc_object_t message,
+    const char *expected_kind
+) {
+    if (message == NULL
+        || xpc_get_type(message) != XPC_TYPE_DICTIONARY) {
+        return NULL;
+    }
+
+    __block size_t field_count = 0;
+    __block bool fields_are_closed = true;
+    xpc_dictionary_apply(
+        message,
+        ^bool(const char *key, xpc_object_t value) {
+            field_count += 1;
+            if (strcmp(key, "kind") == 0) {
+                fields_are_closed = fields_are_closed
+                    && xpc_get_type(value) == XPC_TYPE_STRING;
+            } else if (strcmp(key, "version") == 0) {
+                fields_are_closed = fields_are_closed
+                    && xpc_get_type(value) == XPC_TYPE_INT64;
+            } else if (strcmp(key, "reviewID") == 0) {
+                fields_are_closed = fields_are_closed
+                    && xpc_get_type(value) == XPC_TYPE_UUID;
+            } else {
+                fields_are_closed = false;
+            }
+            return true;
+        }
+    );
+
+    const char *kind = xpc_dictionary_get_string(message, "kind");
+    const uint8_t *review_id = xpc_dictionary_get_uuid(
+        message,
+        "reviewID"
+    );
+    if (field_count != 3
+        || !fields_are_closed
+        || kind == NULL
+        || strcmp(kind, expected_kind) != 0
+        || xpc_dictionary_get_int64(message, "version") != 1
+        || review_id == NULL) {
+        return NULL;
+    }
+    static const uint8_t zero_uuid[16] = {0};
+    return memcmp(review_id, zero_uuid, sizeof(zero_uuid)) == 0
+        ? NULL
+        : review_id;
+}
+
+static bool MCLocalXPCReviewIDBytesAreValid(
+    const uint8_t *review_id,
+    size_t review_id_length
+) {
+    static const uint8_t zero_uuid[16] = {0};
+    return review_id != NULL
+        && review_id_length == sizeof(zero_uuid)
+        && memcmp(review_id, zero_uuid, sizeof(zero_uuid)) != 0;
+}
+
+static xpc_object_t _Nullable MCLocalXPCCreatePresentationPublish(
+    const char *kind,
+    const uint8_t *payload,
+    size_t payload_length
+) {
+    if (payload == NULL
+        || payload_length == 0
+        || payload_length
+            > MCLocalXPCMaximumMenuPresentationPayloadBytes) {
+        return NULL;
+    }
+    xpc_object_t request = xpc_dictionary_create_empty();
+    if (request == NULL) {
+        return NULL;
+    }
+    xpc_dictionary_set_string(request, "kind", kind);
+    xpc_dictionary_set_int64(request, "version", 1);
+    xpc_dictionary_set_data(
+        request,
+        "payload",
+        payload,
+        payload_length
+    );
+    return request;
+}
+
+static xpc_object_t _Nullable MCLocalXPCCreatePresentationWithdrawal(
+    const char *kind,
+    const uint8_t *review_id,
+    size_t review_id_length
+) {
+    if (!MCLocalXPCReviewIDBytesAreValid(
+            review_id,
+            review_id_length
+        )) {
+        return NULL;
+    }
+    xpc_object_t request = xpc_dictionary_create_empty();
+    if (request == NULL) {
+        return NULL;
+    }
+    xpc_dictionary_set_string(request, "kind", kind);
+    xpc_dictionary_set_int64(request, "version", 1);
+    xpc_dictionary_set_uuid(request, "reviewID", review_id);
+    return request;
+}
+
+static bool MCLocalXPCMessageIsExactPresentationRejected(
+    xpc_object_t message,
+    const char *expected_kind
+) {
+    if (message == NULL
+        || xpc_get_type(message) != XPC_TYPE_DICTIONARY) {
+        return false;
+    }
+
+    __block size_t field_count = 0;
+    __block bool fields_are_closed = true;
+    xpc_dictionary_apply(
+        message,
+        ^bool(const char *key, xpc_object_t value) {
+            field_count += 1;
+            if (strcmp(key, "kind") == 0
+                || strcmp(key, "code") == 0) {
+                fields_are_closed = fields_are_closed
+                    && xpc_get_type(value) == XPC_TYPE_STRING;
+            } else if (strcmp(key, "version") == 0) {
+                fields_are_closed = fields_are_closed
+                    && xpc_get_type(value) == XPC_TYPE_INT64;
+            } else {
+                fields_are_closed = false;
+            }
+            return true;
+        }
+    );
+
+    const char *kind = xpc_dictionary_get_string(message, "kind");
+    const char *code = xpc_dictionary_get_string(message, "code");
+    return field_count == 3
+        && fields_are_closed
+        && kind != NULL
+        && strcmp(kind, expected_kind) == 0
+        && code != NULL
+        && strcmp(code, "presentationRejected") == 0
+        && xpc_dictionary_get_int64(message, "version") == 1;
+}
+
+static MCLocalXPCMenuPresentationReply
+MCLocalXPCClassifyMenuPresentationReply(
+    xpc_object_t reply,
+    xpc_rich_error_t error,
+    const char *acknowledgement_kind,
+    const char * _Nullable rejection_kind
+);
 
 MCLocalXPCListenerRef MCLocalXPCListenerCreateInactive(
     const char *service_name,
@@ -357,6 +600,118 @@ bool MCLocalXPCMessageIsExactStatusRead(MCLocalXPCMessageRef message) {
     );
 }
 
+MCLocalXPCMessageRef MCLocalXPCMessageCreatePairingReviewPublish(
+    const uint8_t *payload,
+    size_t payload_length
+) {
+    return (MCLocalXPCMessageRef)MCLocalXPCCreatePresentationPublish(
+        MCLocalXPCPairingReviewPublishKind,
+        payload,
+        payload_length
+    );
+}
+
+MCLocalXPCMessageRef MCLocalXPCMessageCreatePairingReviewWithdrawal(
+    const uint8_t *review_id,
+    size_t review_id_length
+) {
+    return (MCLocalXPCMessageRef)MCLocalXPCCreatePresentationWithdrawal(
+        MCLocalXPCPairingReviewWithdrawalKind,
+        review_id,
+        review_id_length
+    );
+}
+
+MCLocalXPCMessageRef MCLocalXPCMessageCreateHostRecoveryReviewPublish(
+    const uint8_t *payload,
+    size_t payload_length
+) {
+    return (MCLocalXPCMessageRef)MCLocalXPCCreatePresentationPublish(
+        MCLocalXPCHostRecoveryReviewPublishKind,
+        payload,
+        payload_length
+    );
+}
+
+MCLocalXPCMessageRef MCLocalXPCMessageCreateHostRecoveryResumePublish(
+    const uint8_t *payload,
+    size_t payload_length
+) {
+    return (MCLocalXPCMessageRef)MCLocalXPCCreatePresentationPublish(
+        MCLocalXPCHostRecoveryResumePublishKind,
+        payload,
+        payload_length
+    );
+}
+
+MCLocalXPCMessageRef MCLocalXPCMessageCreateHostRecoveryWithdrawal(
+    const uint8_t *review_id,
+    size_t review_id_length
+) {
+    return (MCLocalXPCMessageRef)MCLocalXPCCreatePresentationWithdrawal(
+        MCLocalXPCHostRecoveryWithdrawalKind,
+        review_id,
+        review_id_length
+    );
+}
+
+bool MCLocalXPCMessageGetExactPairingReviewPublish(
+    MCLocalXPCMessageRef message,
+    const uint8_t **payload_out,
+    size_t *payload_length_out
+) {
+    return MCLocalXPCMessageGetExactPresentationPublish(
+        (xpc_object_t)message,
+        MCLocalXPCPairingReviewPublishKind,
+        payload_out,
+        payload_length_out
+    );
+}
+
+const uint8_t *MCLocalXPCMessageGetExactPairingReviewWithdrawal(
+    MCLocalXPCMessageRef message
+) {
+    return MCLocalXPCMessageGetExactPresentationWithdrawal(
+        (xpc_object_t)message,
+        MCLocalXPCPairingReviewWithdrawalKind
+    );
+}
+
+bool MCLocalXPCMessageGetExactHostRecoveryReviewPublish(
+    MCLocalXPCMessageRef message,
+    const uint8_t **payload_out,
+    size_t *payload_length_out
+) {
+    return MCLocalXPCMessageGetExactPresentationPublish(
+        (xpc_object_t)message,
+        MCLocalXPCHostRecoveryReviewPublishKind,
+        payload_out,
+        payload_length_out
+    );
+}
+
+bool MCLocalXPCMessageGetExactHostRecoveryResumePublish(
+    MCLocalXPCMessageRef message,
+    const uint8_t **payload_out,
+    size_t *payload_length_out
+) {
+    return MCLocalXPCMessageGetExactPresentationPublish(
+        (xpc_object_t)message,
+        MCLocalXPCHostRecoveryResumePublishKind,
+        payload_out,
+        payload_length_out
+    );
+}
+
+const uint8_t *MCLocalXPCMessageGetExactHostRecoveryWithdrawal(
+    MCLocalXPCMessageRef message
+) {
+    return MCLocalXPCMessageGetExactPresentationWithdrawal(
+        (xpc_object_t)message,
+        MCLocalXPCHostRecoveryWithdrawalKind
+    );
+}
+
 void MCLocalXPCMessageRetain(MCLocalXPCMessageRef message) {
     xpc_retain((xpc_object_t)message);
 }
@@ -529,6 +884,523 @@ bool MCLocalXPCExactMessageParserSelfTest(void) {
         &parsed_status_length
     );
     xpc_release(oversized_status_reply);
+
+    const uint8_t presentation_payload[] = {0x7b, 0x7d};
+    const uint8_t review_uuid[16] = {
+        0x01, 0x8f, 0x43, 0x00, 0x00, 0x00, 0x70, 0x00,
+        0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xc1,
+    };
+    const uint8_t *parsed_presentation_payload = NULL;
+    size_t parsed_presentation_length = 0;
+    valid = valid
+        && strcmp(
+            MCLocalXPCPairingReviewPublishKind,
+            "presentation.pairing-review.publish"
+        ) == 0
+        && strcmp(
+            MCLocalXPCPairingReviewPublishAcknowledgementKind,
+            "presentation.pairing-review.publish.ack"
+        ) == 0
+        && strcmp(
+            MCLocalXPCPairingReviewPublishRejectionKind,
+            "presentation.pairing-review.publish.error"
+        ) == 0
+        && strcmp(
+            MCLocalXPCPairingReviewWithdrawalKind,
+            "presentation.pairing-review.withdraw"
+        ) == 0
+        && strcmp(
+            MCLocalXPCPairingReviewWithdrawalAcknowledgementKind,
+            "presentation.pairing-review.withdraw.ack"
+        ) == 0
+        && strcmp(
+            MCLocalXPCHostRecoveryReviewPublishKind,
+            "presentation.host-recovery-review.publish"
+        ) == 0
+        && strcmp(
+            MCLocalXPCHostRecoveryReviewPublishAcknowledgementKind,
+            "presentation.host-recovery-review.publish.ack"
+        ) == 0
+        && strcmp(
+            MCLocalXPCHostRecoveryReviewPublishRejectionKind,
+            "presentation.host-recovery-review.publish.error"
+        ) == 0
+        && strcmp(
+            MCLocalXPCHostRecoveryResumePublishKind,
+            "presentation.host-recovery-resume.publish"
+        ) == 0
+        && strcmp(
+            MCLocalXPCHostRecoveryResumePublishAcknowledgementKind,
+            "presentation.host-recovery-resume.publish.ack"
+        ) == 0
+        && strcmp(
+            MCLocalXPCHostRecoveryResumePublishRejectionKind,
+            "presentation.host-recovery-resume.publish.error"
+        ) == 0
+        && strcmp(
+            MCLocalXPCHostRecoveryWithdrawalKind,
+            "presentation.host-recovery.withdraw"
+        ) == 0
+        && strcmp(
+            MCLocalXPCHostRecoveryWithdrawalAcknowledgementKind,
+            "presentation.host-recovery.withdraw.ack"
+        ) == 0;
+
+    xpc_object_t pairing_publish = xpc_dictionary_create_empty();
+    xpc_dictionary_set_string(
+        pairing_publish,
+        "kind",
+        "presentation.pairing-review.publish"
+    );
+    xpc_dictionary_set_int64(pairing_publish, "version", 1);
+    xpc_dictionary_set_data(
+        pairing_publish,
+        "payload",
+        presentation_payload,
+        sizeof(presentation_payload)
+    );
+    valid = valid && MCLocalXPCMessageGetExactPairingReviewPublish(
+        (MCLocalXPCMessageRef)pairing_publish,
+        &parsed_presentation_payload,
+        &parsed_presentation_length
+    );
+    valid = valid
+        && parsed_presentation_length == sizeof(presentation_payload)
+        && memcmp(
+            parsed_presentation_payload,
+            presentation_payload,
+            sizeof(presentation_payload)
+        ) == 0;
+    valid = valid && !MCLocalXPCMessageGetExactHostRecoveryReviewPublish(
+        (MCLocalXPCMessageRef)pairing_publish,
+        NULL,
+        NULL
+    );
+    valid = valid && !MCLocalXPCMessageGetExactHostRecoveryResumePublish(
+        (MCLocalXPCMessageRef)pairing_publish,
+        NULL,
+        NULL
+    );
+    xpc_dictionary_set_bool(pairing_publish, "extra", true);
+    valid = valid && !MCLocalXPCMessageGetExactPairingReviewPublish(
+        (MCLocalXPCMessageRef)pairing_publish,
+        NULL,
+        NULL
+    );
+    xpc_release(pairing_publish);
+
+    xpc_object_t recovery_review_publish = xpc_dictionary_create_empty();
+    xpc_dictionary_set_string(
+        recovery_review_publish,
+        "kind",
+        "presentation.host-recovery-review.publish"
+    );
+    xpc_dictionary_set_int64(recovery_review_publish, "version", 1);
+    xpc_dictionary_set_data(
+        recovery_review_publish,
+        "payload",
+        presentation_payload,
+        sizeof(presentation_payload)
+    );
+    valid = valid && MCLocalXPCMessageGetExactHostRecoveryReviewPublish(
+        (MCLocalXPCMessageRef)recovery_review_publish,
+        NULL,
+        NULL
+    );
+    valid = valid && !MCLocalXPCMessageGetExactHostRecoveryResumePublish(
+        (MCLocalXPCMessageRef)recovery_review_publish,
+        NULL,
+        NULL
+    );
+    xpc_release(recovery_review_publish);
+
+    xpc_object_t recovery_resume_publish = xpc_dictionary_create_empty();
+    xpc_dictionary_set_string(
+        recovery_resume_publish,
+        "kind",
+        "presentation.host-recovery-resume.publish"
+    );
+    xpc_dictionary_set_int64(recovery_resume_publish, "version", 1);
+    xpc_dictionary_set_data(
+        recovery_resume_publish,
+        "payload",
+        presentation_payload,
+        sizeof(presentation_payload)
+    );
+    valid = valid && MCLocalXPCMessageGetExactHostRecoveryResumePublish(
+        (MCLocalXPCMessageRef)recovery_resume_publish,
+        NULL,
+        NULL
+    );
+    valid = valid && !MCLocalXPCMessageGetExactHostRecoveryReviewPublish(
+        (MCLocalXPCMessageRef)recovery_resume_publish,
+        NULL,
+        NULL
+    );
+    xpc_release(recovery_resume_publish);
+
+    xpc_object_t empty_presentation = xpc_dictionary_create_empty();
+    xpc_dictionary_set_string(
+        empty_presentation,
+        "kind",
+        "presentation.pairing-review.publish"
+    );
+    xpc_dictionary_set_int64(empty_presentation, "version", 1);
+    xpc_dictionary_set_data(
+        empty_presentation,
+        "payload",
+        presentation_payload,
+        0
+    );
+    valid = valid && !MCLocalXPCMessageGetExactPairingReviewPublish(
+        (MCLocalXPCMessageRef)empty_presentation,
+        NULL,
+        NULL
+    );
+    xpc_release(empty_presentation);
+
+    uint8_t oversized_presentation[
+        MCLocalXPCMaximumMenuPresentationPayloadBytes + 1
+    ] = {0};
+    xpc_object_t oversized_presentation_request =
+        xpc_dictionary_create_empty();
+    xpc_dictionary_set_string(
+        oversized_presentation_request,
+        "kind",
+        "presentation.pairing-review.publish"
+    );
+    xpc_dictionary_set_int64(
+        oversized_presentation_request,
+        "version",
+        1
+    );
+    xpc_dictionary_set_data(
+        oversized_presentation_request,
+        "payload",
+        oversized_presentation,
+        sizeof(oversized_presentation)
+    );
+    valid = valid && !MCLocalXPCMessageGetExactPairingReviewPublish(
+        (MCLocalXPCMessageRef)oversized_presentation_request,
+        NULL,
+        NULL
+    );
+    xpc_release(oversized_presentation_request);
+
+    xpc_object_t wrong_presentation_scalar = xpc_dictionary_create_empty();
+    xpc_dictionary_set_string(
+        wrong_presentation_scalar,
+        "kind",
+        "presentation.pairing-review.publish"
+    );
+    xpc_dictionary_set_uint64(wrong_presentation_scalar, "version", 1);
+    xpc_dictionary_set_string(wrong_presentation_scalar, "payload", "{}");
+    valid = valid && !MCLocalXPCMessageGetExactPairingReviewPublish(
+        (MCLocalXPCMessageRef)wrong_presentation_scalar,
+        NULL,
+        NULL
+    );
+    xpc_release(wrong_presentation_scalar);
+
+    xpc_object_t double_presentation_version =
+        xpc_dictionary_create_empty();
+    xpc_dictionary_set_string(
+        double_presentation_version,
+        "kind",
+        "presentation.pairing-review.publish"
+    );
+    xpc_dictionary_set_double(
+        double_presentation_version,
+        "version",
+        1.0
+    );
+    xpc_dictionary_set_data(
+        double_presentation_version,
+        "payload",
+        presentation_payload,
+        sizeof(presentation_payload)
+    );
+    valid = valid && !MCLocalXPCMessageGetExactPairingReviewPublish(
+        (MCLocalXPCMessageRef)double_presentation_version,
+        NULL,
+        NULL
+    );
+    xpc_release(double_presentation_version);
+
+    xpc_object_t boolean_presentation_version =
+        xpc_dictionary_create_empty();
+    xpc_dictionary_set_string(
+        boolean_presentation_version,
+        "kind",
+        "presentation.pairing-review.publish"
+    );
+    xpc_dictionary_set_bool(
+        boolean_presentation_version,
+        "version",
+        true
+    );
+    xpc_dictionary_set_data(
+        boolean_presentation_version,
+        "payload",
+        presentation_payload,
+        sizeof(presentation_payload)
+    );
+    valid = valid && !MCLocalXPCMessageGetExactPairingReviewPublish(
+        (MCLocalXPCMessageRef)boolean_presentation_version,
+        NULL,
+        NULL
+    );
+    xpc_release(boolean_presentation_version);
+
+    xpc_object_t pairing_withdraw = xpc_dictionary_create_empty();
+    xpc_dictionary_set_string(
+        pairing_withdraw,
+        "kind",
+        "presentation.pairing-review.withdraw"
+    );
+    xpc_dictionary_set_int64(pairing_withdraw, "version", 1);
+    xpc_dictionary_set_uuid(pairing_withdraw, "reviewID", review_uuid);
+    const uint8_t *parsed_pairing_uuid =
+        MCLocalXPCMessageGetExactPairingReviewWithdrawal(
+            (MCLocalXPCMessageRef)pairing_withdraw
+        );
+    valid = valid
+        && parsed_pairing_uuid != NULL
+        && memcmp(parsed_pairing_uuid, review_uuid, sizeof(review_uuid)) == 0;
+    valid = valid
+        && MCLocalXPCMessageGetExactHostRecoveryWithdrawal(
+            (MCLocalXPCMessageRef)pairing_withdraw
+        ) == NULL;
+    xpc_release(pairing_withdraw);
+
+    xpc_object_t recovery_withdraw = xpc_dictionary_create_empty();
+    xpc_dictionary_set_string(
+        recovery_withdraw,
+        "kind",
+        "presentation.host-recovery.withdraw"
+    );
+    xpc_dictionary_set_int64(recovery_withdraw, "version", 1);
+    xpc_dictionary_set_uuid(recovery_withdraw, "reviewID", review_uuid);
+    valid = valid
+        && MCLocalXPCMessageGetExactHostRecoveryWithdrawal(
+            (MCLocalXPCMessageRef)recovery_withdraw
+        ) != NULL;
+    valid = valid
+        && MCLocalXPCMessageGetExactPairingReviewWithdrawal(
+            (MCLocalXPCMessageRef)recovery_withdraw
+        ) == NULL;
+    xpc_release(recovery_withdraw);
+
+    const uint8_t zero_uuid[16] = {0};
+    xpc_object_t zero_withdraw = xpc_dictionary_create_empty();
+    xpc_dictionary_set_string(
+        zero_withdraw,
+        "kind",
+        "presentation.pairing-review.withdraw"
+    );
+    xpc_dictionary_set_int64(zero_withdraw, "version", 1);
+    xpc_dictionary_set_uuid(zero_withdraw, "reviewID", zero_uuid);
+    valid = valid
+        && MCLocalXPCMessageGetExactPairingReviewWithdrawal(
+            (MCLocalXPCMessageRef)zero_withdraw
+        ) == NULL;
+    xpc_release(zero_withdraw);
+
+    xpc_object_t wrong_withdraw_type = xpc_dictionary_create_empty();
+    xpc_dictionary_set_string(
+        wrong_withdraw_type,
+        "kind",
+        "presentation.pairing-review.withdraw"
+    );
+    xpc_dictionary_set_int64(wrong_withdraw_type, "version", 1);
+    xpc_dictionary_set_data(
+        wrong_withdraw_type,
+        "reviewID",
+        review_uuid,
+        sizeof(review_uuid)
+    );
+    valid = valid
+        && MCLocalXPCMessageGetExactPairingReviewWithdrawal(
+            (MCLocalXPCMessageRef)wrong_withdraw_type
+        ) == NULL;
+    xpc_release(wrong_withdraw_type);
+    valid = valid && !MCLocalXPCReviewIDBytesAreValid(review_uuid, 15);
+    valid = valid && MCLocalXPCReviewIDBytesAreValid(review_uuid, 16);
+    valid = valid && !MCLocalXPCReviewIDBytesAreValid(review_uuid, 17);
+    valid = valid && !MCLocalXPCReviewIDBytesAreValid(zero_uuid, 16);
+
+    xpc_object_t publish_ack = xpc_dictionary_create_empty();
+    xpc_dictionary_set_string(
+        publish_ack,
+        "kind",
+        MCLocalXPCPairingReviewPublishAcknowledgementKind
+    );
+    xpc_dictionary_set_int64(publish_ack, "version", 1);
+    valid = valid && MCLocalXPCMessageIsExact(
+        publish_ack,
+        "presentation.pairing-review.publish.ack"
+    );
+    xpc_release(publish_ack);
+
+    xpc_object_t publish_rejection = xpc_dictionary_create_empty();
+    xpc_dictionary_set_string(
+        publish_rejection,
+        "kind",
+        MCLocalXPCPairingReviewPublishRejectionKind
+    );
+    xpc_dictionary_set_int64(publish_rejection, "version", 1);
+    xpc_dictionary_set_string(
+        publish_rejection,
+        "code",
+        "presentationRejected"
+    );
+    valid = valid && MCLocalXPCMessageIsExactPresentationRejected(
+        publish_rejection,
+        "presentation.pairing-review.publish.error"
+    );
+    valid = valid && !MCLocalXPCMessageIsExactPresentationRejected(
+        publish_rejection,
+        "presentation.host-recovery-review.publish.error"
+    );
+    xpc_dictionary_set_string(publish_rejection, "code", "other");
+    valid = valid && !MCLocalXPCMessageIsExactPresentationRejected(
+        publish_rejection,
+        "presentation.pairing-review.publish.error"
+    );
+    xpc_release(publish_rejection);
+
+    const char *presentation_acknowledgements[] = {
+        "presentation.pairing-review.publish.ack",
+        "presentation.pairing-review.withdraw.ack",
+        "presentation.host-recovery-review.publish.ack",
+        "presentation.host-recovery-resume.publish.ack",
+        "presentation.host-recovery.withdraw.ack",
+    };
+    const char *presentation_optional_rejections[] = {
+        "presentation.pairing-review.publish.error",
+        NULL,
+        "presentation.host-recovery-review.publish.error",
+        "presentation.host-recovery-resume.publish.error",
+        NULL,
+    };
+    for (size_t index = 0;
+         index < sizeof(presentation_acknowledgements)
+            / sizeof(presentation_acknowledgements[0]);
+         index += 1) {
+        xpc_object_t acknowledgement = xpc_dictionary_create_empty();
+        xpc_dictionary_set_string(
+            acknowledgement,
+            "kind",
+            presentation_acknowledgements[index]
+        );
+        xpc_dictionary_set_int64(acknowledgement, "version", 1);
+        valid = valid && MCLocalXPCMessageIsExact(
+            acknowledgement,
+            presentation_acknowledgements[index]
+        );
+        valid = valid
+            && MCLocalXPCClassifyMenuPresentationReply(
+                acknowledgement,
+                NULL,
+                presentation_acknowledgements[index],
+                presentation_optional_rejections[index]
+            ) == MCLocalXPCMenuPresentationReplyAcknowledged;
+        size_t wrong_index = (index + 1)
+            % (sizeof(presentation_acknowledgements)
+                / sizeof(presentation_acknowledgements[0]));
+        valid = valid
+            && MCLocalXPCClassifyMenuPresentationReply(
+                acknowledgement,
+                NULL,
+                presentation_acknowledgements[wrong_index],
+                presentation_optional_rejections[wrong_index]
+            )
+                == MCLocalXPCMenuPresentationReplyMalformedOrTransportError;
+        xpc_dictionary_set_bool(acknowledgement, "extra", true);
+        valid = valid
+            && MCLocalXPCClassifyMenuPresentationReply(
+                acknowledgement,
+                NULL,
+                presentation_acknowledgements[index],
+                presentation_optional_rejections[index]
+            )
+                == MCLocalXPCMenuPresentationReplyMalformedOrTransportError;
+        xpc_release(acknowledgement);
+    }
+
+    const char *presentation_rejections[] = {
+        "presentation.pairing-review.publish.error",
+        "presentation.host-recovery-review.publish.error",
+        "presentation.host-recovery-resume.publish.error",
+    };
+    for (size_t index = 0;
+         index < sizeof(presentation_rejections)
+            / sizeof(presentation_rejections[0]);
+         index += 1) {
+        xpc_object_t rejection = xpc_dictionary_create_empty();
+        xpc_dictionary_set_string(
+            rejection,
+            "kind",
+            presentation_rejections[index]
+        );
+        xpc_dictionary_set_int64(rejection, "version", 1);
+        xpc_dictionary_set_string(
+            rejection,
+            "code",
+            "presentationRejected"
+        );
+        valid = valid && MCLocalXPCMessageIsExactPresentationRejected(
+            rejection,
+            presentation_rejections[index]
+        );
+        valid = valid
+            && MCLocalXPCClassifyMenuPresentationReply(
+                rejection,
+                NULL,
+                "not-an-acknowledgement",
+                presentation_rejections[index]
+            ) == MCLocalXPCMenuPresentationReplyRejected;
+        xpc_dictionary_set_uint64(rejection, "version", 1);
+        valid = valid
+            && MCLocalXPCClassifyMenuPresentationReply(
+                rejection,
+                NULL,
+                "not-an-acknowledgement",
+                presentation_rejections[index]
+            )
+                == MCLocalXPCMenuPresentationReplyMalformedOrTransportError;
+        xpc_release(rejection);
+    }
+
+    valid = valid
+        && MCLocalXPCClassifyMenuPresentationReply(
+            NULL,
+            NULL,
+            "presentation.pairing-review.publish.ack",
+            "presentation.pairing-review.publish.error"
+        ) == MCLocalXPCMenuPresentationReplyMalformedOrTransportError;
+
+    xpc_object_t withdrawal_error = xpc_dictionary_create_empty();
+    xpc_dictionary_set_string(
+        withdrawal_error,
+        "kind",
+        "presentation.pairing-review.withdraw.error"
+    );
+    xpc_dictionary_set_int64(withdrawal_error, "version", 1);
+    xpc_dictionary_set_string(
+        withdrawal_error,
+        "code",
+        "presentationRejected"
+    );
+    valid = valid
+        && MCLocalXPCClassifyMenuPresentationReply(
+            withdrawal_error,
+            NULL,
+            "presentation.pairing-review.withdraw.ack",
+            NULL
+        )
+            == MCLocalXPCMenuPresentationReplyMalformedOrTransportError;
+    xpc_release(withdrawal_error);
 
     return valid;
 }
@@ -707,4 +1579,265 @@ void MCLocalXPCSessionSendStatusRead(
         }
     );
     xpc_release(request);
+}
+
+static MCLocalXPCResult MCLocalXPCSessionReplyPresentationRejection(
+    MCLocalXPCSessionRef session,
+    MCLocalXPCMessageRef request,
+    const char *kind
+) {
+    xpc_object_t reply = xpc_dictionary_create_reply(
+        (xpc_object_t)request
+    );
+    if (reply == NULL) {
+        return MCLocalXPCResultConstructionFailed;
+    }
+    xpc_dictionary_set_string(reply, "kind", kind);
+    xpc_dictionary_set_int64(reply, "version", 1);
+    xpc_dictionary_set_string(
+        reply,
+        "code",
+        "presentationRejected"
+    );
+    xpc_rich_error_t error = xpc_session_send_message(
+        (xpc_session_t)session,
+        reply
+    );
+    xpc_release(reply);
+    if (error != NULL) {
+        xpc_release(error);
+        return MCLocalXPCResultSendFailed;
+    }
+    return MCLocalXPCResultOK;
+}
+
+MCLocalXPCResult MCLocalXPCSessionReplyToPairingReviewPublishAcknowledgement(
+    MCLocalXPCSessionRef session,
+    MCLocalXPCMessageRef request
+) {
+    return MCLocalXPCSessionReplyExact(
+        session,
+        request,
+        MCLocalXPCPairingReviewPublishAcknowledgementKind
+    );
+}
+
+MCLocalXPCResult MCLocalXPCSessionReplyToPairingReviewPublishRejection(
+    MCLocalXPCSessionRef session,
+    MCLocalXPCMessageRef request
+) {
+    return MCLocalXPCSessionReplyPresentationRejection(
+        session,
+        request,
+        MCLocalXPCPairingReviewPublishRejectionKind
+    );
+}
+
+MCLocalXPCResult
+MCLocalXPCSessionReplyToPairingReviewWithdrawalAcknowledgement(
+    MCLocalXPCSessionRef session,
+    MCLocalXPCMessageRef request
+) {
+    return MCLocalXPCSessionReplyExact(
+        session,
+        request,
+        MCLocalXPCPairingReviewWithdrawalAcknowledgementKind
+    );
+}
+
+MCLocalXPCResult
+MCLocalXPCSessionReplyToHostRecoveryReviewPublishAcknowledgement(
+    MCLocalXPCSessionRef session,
+    MCLocalXPCMessageRef request
+) {
+    return MCLocalXPCSessionReplyExact(
+        session,
+        request,
+        MCLocalXPCHostRecoveryReviewPublishAcknowledgementKind
+    );
+}
+
+MCLocalXPCResult MCLocalXPCSessionReplyToHostRecoveryReviewPublishRejection(
+    MCLocalXPCSessionRef session,
+    MCLocalXPCMessageRef request
+) {
+    return MCLocalXPCSessionReplyPresentationRejection(
+        session,
+        request,
+        MCLocalXPCHostRecoveryReviewPublishRejectionKind
+    );
+}
+
+MCLocalXPCResult
+MCLocalXPCSessionReplyToHostRecoveryResumePublishAcknowledgement(
+    MCLocalXPCSessionRef session,
+    MCLocalXPCMessageRef request
+) {
+    return MCLocalXPCSessionReplyExact(
+        session,
+        request,
+        MCLocalXPCHostRecoveryResumePublishAcknowledgementKind
+    );
+}
+
+MCLocalXPCResult MCLocalXPCSessionReplyToHostRecoveryResumePublishRejection(
+    MCLocalXPCSessionRef session,
+    MCLocalXPCMessageRef request
+) {
+    return MCLocalXPCSessionReplyPresentationRejection(
+        session,
+        request,
+        MCLocalXPCHostRecoveryResumePublishRejectionKind
+    );
+}
+
+MCLocalXPCResult
+MCLocalXPCSessionReplyToHostRecoveryWithdrawalAcknowledgement(
+    MCLocalXPCSessionRef session,
+    MCLocalXPCMessageRef request
+) {
+    return MCLocalXPCSessionReplyExact(
+        session,
+        request,
+        MCLocalXPCHostRecoveryWithdrawalAcknowledgementKind
+    );
+}
+
+static MCLocalXPCMenuPresentationReply
+MCLocalXPCClassifyMenuPresentationReply(
+    xpc_object_t reply,
+    xpc_rich_error_t error,
+    const char *acknowledgement_kind,
+    const char *rejection_kind
+) {
+    if (error != NULL || reply == NULL) {
+        return MCLocalXPCMenuPresentationReplyMalformedOrTransportError;
+    }
+    if (MCLocalXPCMessageIsExact(reply, acknowledgement_kind)) {
+        return MCLocalXPCMenuPresentationReplyAcknowledged;
+    }
+    if (rejection_kind != NULL
+        && MCLocalXPCMessageIsExactPresentationRejected(
+            reply,
+            rejection_kind
+        )) {
+        return MCLocalXPCMenuPresentationReplyRejected;
+    }
+    return MCLocalXPCMenuPresentationReplyMalformedOrTransportError;
+}
+
+static MCLocalXPCResult MCLocalXPCSessionSendConstructedPresentation(
+    MCLocalXPCSessionRef session,
+    xpc_object_t _Nullable request,
+    const char *acknowledgement_kind,
+    const char * _Nullable rejection_kind,
+    MCLocalXPCMenuPresentationReplyHandler handler
+) {
+    if (request == NULL) {
+        return MCLocalXPCResultConstructionFailed;
+    }
+    xpc_session_send_message_with_reply_async(
+        (xpc_session_t)session,
+        request,
+        ^(xpc_object_t reply, xpc_rich_error_t error) {
+            handler(MCLocalXPCClassifyMenuPresentationReply(
+                reply,
+                error,
+                acknowledgement_kind,
+                rejection_kind
+            ));
+        }
+    );
+    xpc_release(request);
+    return MCLocalXPCResultOK;
+}
+
+MCLocalXPCResult MCLocalXPCSessionSendPairingReviewPublish(
+    MCLocalXPCSessionRef session,
+    const uint8_t *payload,
+    size_t payload_length,
+    MCLocalXPCMenuPresentationReplyHandler handler
+) {
+    return MCLocalXPCSessionSendConstructedPresentation(
+        session,
+        (xpc_object_t)MCLocalXPCMessageCreatePairingReviewPublish(
+            payload,
+            payload_length
+        ),
+        MCLocalXPCPairingReviewPublishAcknowledgementKind,
+        MCLocalXPCPairingReviewPublishRejectionKind,
+        handler
+    );
+}
+
+MCLocalXPCResult MCLocalXPCSessionSendPairingReviewWithdrawal(
+    MCLocalXPCSessionRef session,
+    const uint8_t review_id[16],
+    size_t review_id_length,
+    MCLocalXPCMenuPresentationReplyHandler handler
+) {
+    return MCLocalXPCSessionSendConstructedPresentation(
+        session,
+        (xpc_object_t)MCLocalXPCMessageCreatePairingReviewWithdrawal(
+            review_id,
+            review_id_length
+        ),
+        MCLocalXPCPairingReviewWithdrawalAcknowledgementKind,
+        NULL,
+        handler
+    );
+}
+
+MCLocalXPCResult MCLocalXPCSessionSendHostRecoveryReviewPublish(
+    MCLocalXPCSessionRef session,
+    const uint8_t *payload,
+    size_t payload_length,
+    MCLocalXPCMenuPresentationReplyHandler handler
+) {
+    return MCLocalXPCSessionSendConstructedPresentation(
+        session,
+        (xpc_object_t)MCLocalXPCMessageCreateHostRecoveryReviewPublish(
+            payload,
+            payload_length
+        ),
+        MCLocalXPCHostRecoveryReviewPublishAcknowledgementKind,
+        MCLocalXPCHostRecoveryReviewPublishRejectionKind,
+        handler
+    );
+}
+
+MCLocalXPCResult MCLocalXPCSessionSendHostRecoveryResumePublish(
+    MCLocalXPCSessionRef session,
+    const uint8_t *payload,
+    size_t payload_length,
+    MCLocalXPCMenuPresentationReplyHandler handler
+) {
+    return MCLocalXPCSessionSendConstructedPresentation(
+        session,
+        (xpc_object_t)MCLocalXPCMessageCreateHostRecoveryResumePublish(
+            payload,
+            payload_length
+        ),
+        MCLocalXPCHostRecoveryResumePublishAcknowledgementKind,
+        MCLocalXPCHostRecoveryResumePublishRejectionKind,
+        handler
+    );
+}
+
+MCLocalXPCResult MCLocalXPCSessionSendHostRecoveryWithdrawal(
+    MCLocalXPCSessionRef session,
+    const uint8_t review_id[16],
+    size_t review_id_length,
+    MCLocalXPCMenuPresentationReplyHandler handler
+) {
+    return MCLocalXPCSessionSendConstructedPresentation(
+        session,
+        (xpc_object_t)MCLocalXPCMessageCreateHostRecoveryWithdrawal(
+            review_id,
+            review_id_length
+        ),
+        MCLocalXPCHostRecoveryWithdrawalAcknowledgementKind,
+        NULL,
+        handler
+    );
 }

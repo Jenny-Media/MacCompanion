@@ -203,7 +203,7 @@
       "path": "local-xpc-menu-presentation-v0.1.json",
       "kind": "localXPC.menuPresentation.v0.1",
       "expect": "valid",
-      "canonicalSHA256": "9579abaf31b08b383917114a8b19626fc7ac01ff5e4af3a1564b421c835ae2c5"
+      "canonicalSHA256": "72febb0c5f027a1bdf6251c0dc910b02f333b8a15413100add198e65ff8c4dd9"
     },
     {
       "path": "client-configured-routes-v0.1.json",

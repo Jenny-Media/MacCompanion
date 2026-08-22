@@ -304,6 +304,54 @@ only when the menu owner proves it retained no state; a thrown presentation
 call without that proof sends no recoverable error and terminally invalidates
 the generation.
 
+The receiver represents that proof with the closed result
+`rejectedWithoutRetainedState`: no presentation mutation attributable to the
+request occurred and any previously visible presentation is unchanged. A
+plain thrown error, cancellation, unknown result, or failure after possible
+retention is not that proof. The receiver sends no application-error reply for
+those ambiguous cases and instead makes the generation terminal. The initial
+transport implementation may conservatively omit recoverable rejection
+emission while still parsing the exact allowed error on the Agent side.
+
+Each ready generation admits one active presentation request and at most seven
+queued requests in one cross-family FIFO. Pairing and recovery therefore keep
+their exact arrival order without exposing parallel presentation mutation.
+In particular, a withdrawal requested while its earlier publication is
+suspended queues behind that publication; it cannot be sent or acknowledged
+until publication reaches an exact terminal reply. Queue overflow is terminal,
+and operation identifiers never appear on the wire. The menu receiver applies
+the same bound and serial order. A receiver operation that does not finish in
+two monotonic seconds and an Agent sender that does not receive an exact reply
+in three monotonic seconds terminate the exact generation. Delayed completion,
+reply, or timeout from an old operation may neither advance the FIFO nor affect
+a replacement generation.
+
+The Agent issues one opaque package-owned sender endpoint only after the exact
+menu-ready acknowledgement has been sent and readiness published for the
+current authenticated peer under an explicitly presentation-enabled server
+profile. The endpoint is cached for that peer generation, contains no raw XPC
+session, and cannot be reconstructed from a numeric generation alone. Before
+every send the server rechecks its listener run, retained peer identity,
+current generation, readiness, endpoint token, profile, method authorization,
+and head operation. Every post-authentication cancellation first fences new
+presentation admission and completes the active and queued operations before
+cancelling the session; no asynchronous send or reply may begin after that
+fence. Transport-driven terminal failure latches a finish request even if the
+router has not installed its terminal fence yet. Owner-driven endpoint
+retirement is idempotent and does not recursively request that fence.
+
+The menu client installs its incoming receiver before session activation, but
+admits no presentation until the exact Agent authentication and menu-readiness
+exchange complete. It synchronously copies borrowed XPC data or UUID bytes,
+retains the request exactly once across asynchronous presentation work, and
+revalidates the exact client generation immediately before replying. Fresh
+host-recovery review admission additionally requires receiver wall-clock proof
+`createdAtUnixMilliseconds <= now < expiresAtUnixMilliseconds`; a future-created
+or expired review is terminal. Durable recovery-resume delivery deliberately
+does not repeat that current-time check. Client invalidation fences admission,
+releases every retained request, and withdraws only the exact presentations
+retained by that generation before its awaitable retirement barrier completes.
+
 These messages are unavailable before authenticated menu readiness and are
 not admitted to a menu-to-Agent, same-role, or diagnostic-CLI caller. A
 concrete transport endpoint must repeat exact-current peer and generation

@@ -15,6 +15,11 @@ typedef enum : int32_t {
     MCLocalXPCResultActivationFailed = 3,
     MCLocalXPCResultSendFailed = 4,
 } MCLocalXPCResult;
+typedef enum : int32_t {
+    MCLocalXPCMenuPresentationReplyAcknowledged = 0,
+    MCLocalXPCMenuPresentationReplyRejected = 1,
+    MCLocalXPCMenuPresentationReplyMalformedOrTransportError = 2,
+} MCLocalXPCMenuPresentationReply;
 typedef struct MCLocalXPCListener *MCLocalXPCListenerRef;
 typedef struct MCLocalXPCSession *MCLocalXPCSessionRef;
 typedef struct MCLocalXPCMessage *MCLocalXPCMessageRef;
@@ -33,9 +38,13 @@ typedef void (^MCLocalXPCStatusReplyHandler)(
     bool source_unavailable,
     bool malformed_or_transport_error
 );
+typedef void (^MCLocalXPCMenuPresentationReplyHandler)(
+    MCLocalXPCMenuPresentationReply reply
+);
 
 enum {
     MCLocalXPCMaximumStatusPayloadBytes = 4096,
+    MCLocalXPCMaximumMenuPresentationPayloadBytes = 4096,
 };
 
 API_AVAILABLE(macos(26.0))
@@ -186,6 +195,161 @@ API_AVAILABLE(macos(26.0))
 void MCLocalXPCSessionSendStatusRead(
     MCLocalXPCSessionRef session,
     MCLocalXPCStatusReplyHandler handler
+);
+
+/// Returns an owned exact request object. The caller releases it with
+/// MCLocalXPCMessageRelease.
+API_AVAILABLE(macos(26.0))
+MCLocalXPCMessageRef _Nullable MCLocalXPCMessageCreatePairingReviewPublish(
+    const uint8_t *payload,
+    size_t payload_length
+);
+
+API_AVAILABLE(macos(26.0))
+MCLocalXPCMessageRef _Nullable MCLocalXPCMessageCreatePairingReviewWithdrawal(
+    const uint8_t *review_id,
+    size_t review_id_length
+);
+
+API_AVAILABLE(macos(26.0))
+MCLocalXPCMessageRef _Nullable
+MCLocalXPCMessageCreateHostRecoveryReviewPublish(
+    const uint8_t *payload,
+    size_t payload_length
+);
+
+API_AVAILABLE(macos(26.0))
+MCLocalXPCMessageRef _Nullable
+MCLocalXPCMessageCreateHostRecoveryResumePublish(
+    const uint8_t *payload,
+    size_t payload_length
+);
+
+API_AVAILABLE(macos(26.0))
+MCLocalXPCMessageRef _Nullable MCLocalXPCMessageCreateHostRecoveryWithdrawal(
+    const uint8_t *review_id,
+    size_t review_id_length
+);
+
+API_AVAILABLE(macos(26.0))
+bool MCLocalXPCMessageGetExactPairingReviewPublish(
+    MCLocalXPCMessageRef message,
+    const uint8_t * _Nullable * _Nullable payload_out,
+    size_t * _Nullable payload_length_out
+);
+
+API_AVAILABLE(macos(26.0))
+const uint8_t * _Nullable
+MCLocalXPCMessageGetExactPairingReviewWithdrawal(
+    MCLocalXPCMessageRef message
+);
+
+API_AVAILABLE(macos(26.0))
+bool MCLocalXPCMessageGetExactHostRecoveryReviewPublish(
+    MCLocalXPCMessageRef message,
+    const uint8_t * _Nullable * _Nullable payload_out,
+    size_t * _Nullable payload_length_out
+);
+
+API_AVAILABLE(macos(26.0))
+bool MCLocalXPCMessageGetExactHostRecoveryResumePublish(
+    MCLocalXPCMessageRef message,
+    const uint8_t * _Nullable * _Nullable payload_out,
+    size_t * _Nullable payload_length_out
+);
+
+API_AVAILABLE(macos(26.0))
+const uint8_t * _Nullable
+MCLocalXPCMessageGetExactHostRecoveryWithdrawal(
+    MCLocalXPCMessageRef message
+);
+
+API_AVAILABLE(macos(26.0))
+MCLocalXPCResult MCLocalXPCSessionReplyToPairingReviewPublishAcknowledgement(
+    MCLocalXPCSessionRef session,
+    MCLocalXPCMessageRef request
+);
+
+API_AVAILABLE(macos(26.0))
+MCLocalXPCResult MCLocalXPCSessionReplyToPairingReviewPublishRejection(
+    MCLocalXPCSessionRef session,
+    MCLocalXPCMessageRef request
+);
+
+API_AVAILABLE(macos(26.0))
+MCLocalXPCResult MCLocalXPCSessionReplyToPairingReviewWithdrawalAcknowledgement(
+    MCLocalXPCSessionRef session,
+    MCLocalXPCMessageRef request
+);
+
+API_AVAILABLE(macos(26.0))
+MCLocalXPCResult MCLocalXPCSessionReplyToHostRecoveryReviewPublishAcknowledgement(
+    MCLocalXPCSessionRef session,
+    MCLocalXPCMessageRef request
+);
+
+API_AVAILABLE(macos(26.0))
+MCLocalXPCResult MCLocalXPCSessionReplyToHostRecoveryReviewPublishRejection(
+    MCLocalXPCSessionRef session,
+    MCLocalXPCMessageRef request
+);
+
+API_AVAILABLE(macos(26.0))
+MCLocalXPCResult MCLocalXPCSessionReplyToHostRecoveryResumePublishAcknowledgement(
+    MCLocalXPCSessionRef session,
+    MCLocalXPCMessageRef request
+);
+
+API_AVAILABLE(macos(26.0))
+MCLocalXPCResult MCLocalXPCSessionReplyToHostRecoveryResumePublishRejection(
+    MCLocalXPCSessionRef session,
+    MCLocalXPCMessageRef request
+);
+
+API_AVAILABLE(macos(26.0))
+MCLocalXPCResult MCLocalXPCSessionReplyToHostRecoveryWithdrawalAcknowledgement(
+    MCLocalXPCSessionRef session,
+    MCLocalXPCMessageRef request
+);
+
+API_AVAILABLE(macos(26.0))
+MCLocalXPCResult MCLocalXPCSessionSendPairingReviewPublish(
+    MCLocalXPCSessionRef session,
+    const uint8_t *payload,
+    size_t payload_length,
+    MCLocalXPCMenuPresentationReplyHandler handler
+);
+
+API_AVAILABLE(macos(26.0))
+MCLocalXPCResult MCLocalXPCSessionSendPairingReviewWithdrawal(
+    MCLocalXPCSessionRef session,
+    const uint8_t *review_id,
+    size_t review_id_length,
+    MCLocalXPCMenuPresentationReplyHandler handler
+);
+
+API_AVAILABLE(macos(26.0))
+MCLocalXPCResult MCLocalXPCSessionSendHostRecoveryReviewPublish(
+    MCLocalXPCSessionRef session,
+    const uint8_t *payload,
+    size_t payload_length,
+    MCLocalXPCMenuPresentationReplyHandler handler
+);
+
+API_AVAILABLE(macos(26.0))
+MCLocalXPCResult MCLocalXPCSessionSendHostRecoveryResumePublish(
+    MCLocalXPCSessionRef session,
+    const uint8_t *payload,
+    size_t payload_length,
+    MCLocalXPCMenuPresentationReplyHandler handler
+);
+
+API_AVAILABLE(macos(26.0))
+MCLocalXPCResult MCLocalXPCSessionSendHostRecoveryWithdrawal(
+    MCLocalXPCSessionRef session,
+    const uint8_t *review_id,
+    size_t review_id_length,
+    MCLocalXPCMenuPresentationReplyHandler handler
 );
 
 XPC_ASSUME_NONNULL_END

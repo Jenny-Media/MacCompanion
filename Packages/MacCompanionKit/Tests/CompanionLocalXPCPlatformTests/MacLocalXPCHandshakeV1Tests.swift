@@ -1,5 +1,6 @@
 @testable import CompanionLocalXPCPlatform
 import CompanionIPC
+import Foundation
 import Testing
 
 @Test
@@ -10,6 +11,148 @@ func exactMessageParserRejectsAlternateScalarTypesAndOpenDictionaries() {
         MacLocalXPCStatusWireV1.maximumPayloadBytes
             == LocalAgentStatusWireCodecV1.maximumEncodedBytes
     )
+    #expect(
+        MacLocalXPCMenuPresentationWireV1.maximumPayloadBytes
+            == LocalMenuPresentationWireCodecV1.maximumEncodedBytes
+    )
+}
+
+@Test
+@available(macOS 26.0, *)
+func menuPresentationRequestKindsBindOnlyTheirClosedAuthorizationMethods() {
+    let reviewID = UUID(
+        uuidString: "018f4300-0000-7000-8000-0000000000c1"
+    )!
+    #expect(
+        MacLocalXPCMenuPresentationRequestV1.pairingReview(Data([1]))
+            .authorizationMethod == .publishPairingReview
+    )
+    #expect(
+        MacLocalXPCMenuPresentationRequestV1.pairingWithdrawal(reviewID)
+            .authorizationMethod == .withdrawPairingReview
+    )
+    #expect(
+        MacLocalXPCMenuPresentationRequestV1.hostRecoveryReview(Data([2]))
+            .authorizationMethod == .publishHostIdentityRecoveryReview
+    )
+    #expect(
+        MacLocalXPCMenuPresentationRequestV1.hostRecoveryResume(Data([3]))
+            .authorizationMethod == .publishHostIdentityRecoveryResume
+    )
+    #expect(
+        MacLocalXPCMenuPresentationRequestV1.hostRecoveryWithdrawal(reviewID)
+            .authorizationMethod == .withdrawHostIdentityRecovery
+    )
+}
+
+@Test
+@available(macOS 26.0, *)
+func menuPresentationWireCopiesAllBorrowedPayloadKindsBeforeReturn() throws {
+    for (kind, expected) in [
+        (
+            MacLocalXPCMenuPresentationPayloadKindV1.pairingReview,
+            MacLocalXPCMenuPresentationRequestV1.pairingReview(Data([1, 2]))
+        ),
+        (
+            .hostRecoveryReview,
+            .hostRecoveryReview(Data([1, 2]))
+        ),
+        (
+            .hostRecoveryResume,
+            .hostRecoveryResume(Data([1, 2]))
+        ),
+    ] {
+        var source: [UInt8] = [1, 2]
+        let copied = source.withUnsafeBufferPointer { buffer in
+            MacLocalXPCMenuPresentationWireV1.copyBorrowedPayload(
+                try! #require(buffer.baseAddress),
+                count: buffer.count,
+                kind: kind
+            )
+        }
+        source[0] = 9
+        #expect(copied == expected)
+    }
+
+    let one = [UInt8](repeating: 1, count: 1)
+    let empty = one.withUnsafeBufferPointer { buffer in
+        MacLocalXPCMenuPresentationWireV1.copyBorrowedPayload(
+            try! #require(buffer.baseAddress),
+            count: 0,
+            kind: .pairingReview
+        )
+    }
+    #expect(empty == nil)
+    let oversized = [UInt8](
+        repeating: 1,
+        count: MacLocalXPCMenuPresentationWireV1.maximumPayloadBytes + 1
+    )
+    let tooLarge = oversized.withUnsafeBufferPointer { buffer in
+        MacLocalXPCMenuPresentationWireV1.copyBorrowedPayload(
+            try! #require(buffer.baseAddress),
+            count: buffer.count,
+            kind: .pairingReview
+        )
+    }
+    #expect(tooLarge == nil)
+}
+
+@Test
+@available(macOS 26.0, *)
+func menuPresentationWireCopiesExactBorrowedWithdrawalUUIDs() throws {
+    let expected = UUID(
+        uuidString: "018f4300-0000-7000-8000-0000000000c1"
+    )!
+    var source = withUnsafeBytes(of: expected.uuid) { Array($0) }
+    let pairing = source.withUnsafeBufferPointer { buffer in
+        MacLocalXPCMenuPresentationWireV1.copyBorrowedWithdrawal(
+            try! #require(buffer.baseAddress),
+            count: buffer.count,
+            kind: .pairing
+        )
+    }
+    let recovery = source.withUnsafeBufferPointer { buffer in
+        MacLocalXPCMenuPresentationWireV1.copyBorrowedWithdrawal(
+            try! #require(buffer.baseAddress),
+            count: buffer.count,
+            kind: .hostRecovery
+        )
+    }
+    source[0] = 9
+    #expect(pairing == .pairingWithdrawal(expected))
+    #expect(recovery == .hostRecoveryWithdrawal(expected))
+
+    let zero = [UInt8](repeating: 0, count: 17)
+    for count in [15, 16, 17] {
+        let copied = zero.withUnsafeBufferPointer { buffer in
+            MacLocalXPCMenuPresentationWireV1.copyBorrowedWithdrawal(
+                try! #require(buffer.baseAddress),
+                count: count,
+                kind: .pairing
+            )
+        }
+        #expect(copied == nil)
+    }
+}
+
+@Test
+@available(macOS 26.0, *)
+func productionMenuPresentationBuildersTraverseTheExactCopyParser() {
+    let reviewID = UUID(
+        uuidString: "018f4300-0000-7000-8000-0000000000c1"
+    )!
+    for request in [
+        MacLocalXPCMenuPresentationRequestV1.pairingReview(Data([1, 2])),
+        .pairingWithdrawal(reviewID),
+        .hostRecoveryReview(Data([3, 4])),
+        .hostRecoveryResume(Data([5, 6])),
+        .hostRecoveryWithdrawal(reviewID),
+    ] {
+        #expect(
+            MacLocalXPCMenuPresentationWireV1
+                .copyExactConstructedRequest(request) == request
+        )
+    }
 }
 
 @Test

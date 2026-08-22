@@ -1,7 +1,11 @@
 {
   "profile": "Mac Companion local XPC menu presentation v0.1",
   "maximumPayloadBytes": 4096,
+  "maximumAdmittedRequestsPerGeneration": 8,
   "minimumGeneration": 1,
+  "receiverOperationTimeoutMilliseconds": 2000,
+  "recoverablePublishRejectionProof": "rejectedWithoutRetainedState",
+  "senderReplyTimeoutMilliseconds": 3000,
   "requests": [
     {
       "kind": "presentation.pairing-review.publish",
@@ -55,12 +59,18 @@
   ],
   "rules": [
     "menu readiness is required before presentation traffic",
+    "the Agent issues one opaque generation-bound endpoint only for the exact current ready peer",
+    "one request is active and at most seven requests are queued in one cross-family FIFO",
+    "withdrawal waits behind any earlier publication before it can be acknowledged",
     "publish payloads are nonempty canonical JSON data",
-    "fresh recovery review requires receiver-clock admission before expiry",
+    "fresh recovery review requires receiver-clock admission at or after creation and before expiry",
     "durable recovery resume may be delivered after review expiry",
+    "publish rejection is recoverable only from the closed rejectedWithoutRetainedState proof",
+    "a thrown or unknown presentation failure sends no recoverable reply and terminates the generation",
     "withdrawal review identifiers are nonzero",
     "withdrawal permits only exact acknowledgement",
-    "publish rejection is recoverable only with proof of no retained state",
+    "admission is fenced before cancellation and no request or reply is sent after that fence",
+    "sender timeout is three seconds and receiver operation timeout is two seconds on monotonic clocks",
     "unknown or additional members are rejected",
     "router generations and private tokens are not wire values"
   ]

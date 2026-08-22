@@ -243,6 +243,13 @@ func authoritativeMenuPresentationFixtureMatchesTheClosedCodeContract()
         object["maximumPayloadBytes"] as? Int
             == LocalMenuPresentationWireCodecV1.maximumEncodedBytes
     )
+    #expect(object["maximumAdmittedRequestsPerGeneration"] as? Int == 8)
+    #expect(object["receiverOperationTimeoutMilliseconds"] as? Int == 2_000)
+    #expect(object["senderReplyTimeoutMilliseconds"] as? Int == 3_000)
+    #expect(
+        object["recoverablePublishRejectionProof"] as? String
+            == "rejectedWithoutRetainedState"
+    )
     let requests = try #require(
         object["requests"] as? [[String: Any]]
     )
