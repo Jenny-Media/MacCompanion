@@ -152,7 +152,10 @@ let package = Package(
         ),
         .target(
             name: "CompanionMacApplicationPlatform",
-            dependencies: ["CompanionAgentPlatform", "CompanionMacApp"]
+            dependencies: ["CompanionAgentPlatform", "CompanionMacApp"],
+            linkerSettings: [
+                .linkedFramework("AppKit", .when(platforms: [.macOS])),
+            ]
         ),
         .target(
             name: "CompanionMacUI",

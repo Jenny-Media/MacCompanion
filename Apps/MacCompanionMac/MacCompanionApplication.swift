@@ -6,17 +6,20 @@ import SwiftUI
 @main
 @MainActor
 struct MacCompanionApplication: App {
+    @NSApplicationDelegateAdaptor(
+        MacCompanionDashboardApplicationDelegateV1.self
+    ) private var applicationDelegate
     // Retains exact login-role identities without registering either role.
     private let loginRoles = MacCompanionLoginRoleComposition()
-    // Construction retains the real dashboard product without starting XPC.
-    @State private var dashboard = MacCompanionDashboardApplicationV1()
 
     var body: some Scene {
         MenuBarExtra(
             "Mac Companion",
             systemImage: "macbook.and.iphone"
         ) {
-            MacCompanionDashboardRoot(application: dashboard)
+            MacCompanionDashboardRoot(
+                application: applicationDelegate.dashboard
+            )
         }
         .menuBarExtraStyle(.window)
     }

@@ -12,6 +12,14 @@ REPOSITORY = Path(__file__).resolve().parents[1]
 PROJECT_SPEC = REPOSITORY / "project.yml"
 PROJECT_FILE = REPOSITORY / "MacCompanion.xcodeproj" / "project.pbxproj"
 MAC_TARGET_DIRECTORY = REPOSITORY / "Apps" / "MacCompanionMac"
+MAC_APPLICATION_PLATFORM = (
+    REPOSITORY
+    / "Packages"
+    / "MacCompanionKit"
+    / "Sources"
+    / "CompanionMacApplicationPlatform"
+    / "MacCompanionDashboardApplicationV1.swift"
+)
 LOGIN_COMPOSITION = (
     REPOSITORY
     / "Apps"
@@ -577,9 +585,14 @@ def validate_login_role_composition(
         "menuApplicationPlatformImport": (
             "import CompanionMacApplicationPlatform"
         ),
-        "constructedInertDashboardApplication": (
-            "@State private var dashboard = "
-            "MacCompanionDashboardApplicationV1()"
+        "packageOwnedApplicationDelegate": (
+            "@NSApplicationDelegateAdaptor("
+        ),
+        "applicationDelegateType": (
+            "MacCompanionDashboardApplicationDelegateV1.self"
+        ),
+        "applicationDelegateDashboard": (
+            "application: applicationDelegate.dashboard"
         ),
         "dashboardTypedSource": (
             "private var source: MacAgentDashboardSourceV0 { "
@@ -597,6 +610,7 @@ def validate_login_role_composition(
         "CompanionAgentProductPlatform",
         "MacAgentProductBootstrapV1",
         "MacAgentPreparedProductV1",
+        "MacCompanionDashboardApplicationV1()",
         "Task.sleep",
         "application.start()",
         "dashboard.start()",
@@ -606,6 +620,43 @@ def validate_login_role_composition(
     for needle in (".register(", ".unregister(", "setEnabled("):
         if needle in composition_code or needle in application_code:
             failures.append(f"implicitLoginMutation:{needle}")
+
+
+def validate_menu_application_lifecycle_owner(
+    platform_source: str,
+    failures: list[str],
+) -> None:
+    marker = "public final class MacCompanionDashboardApplicationDelegateV1:"
+    start = platform_source.find(marker)
+    delegate = platform_source[start:] if start >= 0 else ""
+    for needle in (
+        marker,
+        "NSApplicationDelegate",
+        "public let dashboard: MacCompanionDashboardApplicationV1",
+        "public func applicationDidFinishLaunching",
+        "public func applicationWillTerminate",
+        "package func beginLaunch()",
+        "try await dashboard.start()",
+        "package func finish() async",
+        "await dashboard.finish()",
+    ):
+        if needle not in delegate:
+            failures.append(f"menuLifecycleOwnerMissing:{needle}")
+    require_count(
+        delegate,
+        "try await dashboard.start()",
+        1,
+        "menuLifecycleOwnerSingleStart",
+        failures,
+    )
+    for forbidden in (
+        "MacLocalXPCDashboardProductV1(",
+        "MacLocalXPCClientV1(",
+        "menuLifecycleReadinessStatusAndPresentation",
+        "MacLocalXPCMenuPresentationReceiverSurfacesV1",
+    ):
+        if forbidden in delegate:
+            failures.append(f"menuLifecycleOwnerUnexpectedAuthority:{forbidden}")
 
 
 def validate_product_inertness_self_tests(
@@ -950,6 +1001,7 @@ def main() -> int:
     agent_preparation_facade = read_text(AGENT_PREPARATION_FACADE, failures)
     agent_product_bootstrap = read_text(AGENT_PRODUCT_BOOTSTRAP, failures)
     mac_application = read_swift_target(MAC_TARGET_DIRECTORY, failures)
+    mac_application_platform = read_text(MAC_APPLICATION_PLATFORM, failures)
     login_composition = read_text(LOGIN_COMPOSITION, failures)
     validate_project_spec(project_spec, failures)
     validate_generated_project(generated_project, failures)
@@ -964,6 +1016,10 @@ def main() -> int:
     validate_login_role_composition(
         login_composition,
         mac_application,
+        failures,
+    )
+    validate_menu_application_lifecycle_owner(
+        mac_application_platform,
         failures,
     )
     validate_product_inertness_self_tests(
@@ -990,8 +1046,8 @@ def main() -> int:
     print(
         "Validated permanent Mac/Agent topology, identities, signing flags, "
         "requirement-bound local handshake, LaunchAgent contract, and "
-        "single-owner Agent local-service selection and activation-inert menu "
-        "application preparation."
+        "single-owner Agent local-service selection and package-owned menu "
+        "application launch lifecycle."
     )
     return 0
 

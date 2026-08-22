@@ -290,4 +290,74 @@ func deinitBeginsBestEffortCleanupWithoutStartingTransport() async {
     )
     #expect(product.snapshot() == (0, 0, 1))
 }
+
+@Test
+@available(macOS 26.0, *)
+func applicationDelegateLaunchStartsDashboardExactlyOnce() async {
+    let (application, product) = await makeDashboardApplicationV1()
+    let delegate = await MainActor.run {
+        MacCompanionDashboardApplicationDelegateV1(
+            dashboard: application
+        )
+    }
+
+    await MainActor.run {
+        delegate.beginLaunch()
+        delegate.beginLaunch()
+    }
+    await delegate.waitForLaunch()
+    #expect(product.snapshot() == (1, 0, 0))
+    #expect(await application.source == .loading)
+
+    await delegate.finish()
+    await delegate.finish()
+    #expect(product.snapshot() == (1, 0, 1))
+    #expect(await application.source == .unavailable)
+}
+
+@Test
+@available(macOS 26.0, *)
+func applicationDelegateLaunchFailureConvergesTerminally() async {
+    let (application, product) = await makeDashboardApplicationV1(
+        behavior: .fails
+    )
+    let delegate = await MainActor.run {
+        MacCompanionDashboardApplicationDelegateV1(
+            dashboard: application
+        )
+    }
+
+    await delegate.beginLaunch()
+    await delegate.waitForLaunch()
+    #expect(product.snapshot() == (1, 0, 1))
+    #expect(await application.source == .unavailable)
+    #expect(await application.retryStatus() == .notCompleted)
+    await delegate.finish()
+    #expect(product.snapshot() == (1, 0, 1))
+}
+
+@Test
+@available(macOS 26.0, *)
+func applicationDelegateFinishCancelsAndAwaitsSuspendedLaunch() async {
+    let (application, product) = await makeDashboardApplicationV1(
+        behavior: .suspends
+    )
+    let delegate = await MainActor.run {
+        MacCompanionDashboardApplicationDelegateV1(
+            dashboard: application
+        )
+    }
+    await delegate.beginLaunch()
+    #expect(
+        await eventuallyDashboardApplicationV1 {
+            await application.source == .loading
+                && product.startIsSuspended()
+        }
+    )
+
+    await delegate.finish()
+    await delegate.waitForLaunch()
+    #expect(product.snapshot() == (1, 0, 1))
+    #expect(await application.source == .unavailable)
+}
 #endif
