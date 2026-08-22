@@ -81,3 +81,37 @@ external mutations and require explicit release authorization. Credential
 names, passwords, API keys, session material, and temporary upload credentials
 never enter this record or the repository.
 
+## Protected notarytool execution construction
+
+`platform_notarytool_execution.py` defines the executor that an authorized
+release run will use. Before invoking Apple, it copies one exact source
+container through no-follow descriptors into a new private mode-`0400` upload,
+fsyncs it, and binds its device, inode, mode, modification time, size, and
+SHA-256. It accepts only the directly pinned stable or beta Xcode
+`notarytool` Mach-O.
+
+The executor uses three fixed shell-free calls:
+
+```text
+notarytool submit PRIVATE_UPLOAD --keychain-profile PRIVATE_PROFILE \
+  --output-format json --no-progress --no-wait --no-s3-acceleration
+notarytool info SUBMISSION_ID --keychain-profile PRIVATE_PROFILE \
+  --output-format json --no-progress
+notarytool log SUBMISSION_ID --keychain-profile PRIVATE_PROFILE
+```
+
+The credential profile exists only in the private runtime argv. Retained
+records replace it with `<redacted-keychain-profile>` and replace the absolute
+upload path with `<private-upload>/NAME`; the closed fixed-runner environment is
+not published. Both raw streams remain private mode-`0600` hashed references.
+The exact upload is rehashed before the call, after the process exits, and
+after raw evidence is reopened. Any mutation, warning/error stream, changed
+tool, nonzero exit, output substitution, credential-profile disclosure, or
+submission-record substitution fails closed.
+
+The submit call deliberately does not wait for Apple processing: it records
+only a successful upload and a returned UUID. A later explicitly authorized
+read-only status/log run must reach `Accepted` and pass the two-phase parser.
+Injected validator responses exercise this construction without network or
+Apple-account access; until a real release run measures the successful JSON,
+the result remains non-acceptance evidence.
