@@ -22,6 +22,7 @@ public struct MacAgentReleaseStoragePathsV1:
     public let securityDatabase: URL
     public let detailedAuditDatabase: URL
     public let emergencyDenyLatch: URL
+    public let remoteAccessIntentDirectory: URL
 
     fileprivate init(root: URL) {
         self.root = root
@@ -36,6 +37,10 @@ public struct MacAgentReleaseStoragePathsV1:
         emergencyDenyLatch = root.appendingPathComponent(
             "emergency-deny-v1.latch",
             isDirectory: false
+        )
+        remoteAccessIntentDirectory = root.appendingPathComponent(
+            "remote-access-intent-v1",
+            isDirectory: true
         )
     }
 }

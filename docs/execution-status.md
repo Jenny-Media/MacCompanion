@@ -99,8 +99,16 @@ Construction is safe-disabled and observer-free; start observes only public
 workspace lifecycle, and explicit or deinitializing terminal finish cannot
 resurrect state even through retained context closures. It creates no
 storage, Keychain, XPC, listener, process, login-role, or readiness authority.
-Durable-intent-ordered inert product preparation remains the next unsigned
-checkpoint before any permanent-target activation.
+The [durable-intent-ordered inert product preparation
+checkpoint](evidence/2026-08-22-durable-intent-agent-preparation.md) now loads
+the exact durable intent from its dedicated release-storage subdirectory before
+constructing primary inputs, rejects invented positive lifecycle state, and
+retains a ready prepared product behind its canonical lifecycle snapshot and
+terminal finish only. Construction may reconcile durable storage and host
+identity, but readiness-producing local-XPC construction is deferred; it starts
+no observer, XPC service, listener, process, login role, pairing session, or
+readiness path. Permanent-target
+invocation remains the next separately audited checkpoint.
 
 Local device administration now includes a [bundle-independent active-revoke
 convergence path](evidence/2026-08-21-local-device-revocation-convergence.md):

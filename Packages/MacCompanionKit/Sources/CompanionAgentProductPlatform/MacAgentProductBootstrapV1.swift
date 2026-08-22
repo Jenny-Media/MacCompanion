@@ -129,14 +129,109 @@ package actor MacAgentNetworkListenerRuntimeOwnerV1 {
     }
 }
 
+/// Defers readiness-producing local-XPC composition until explicit activation.
+/// Finishing an unactivated owner never invokes the factory.
+@available(macOS 26.0, *)
+package actor MacAgentDeferredLocalXPCOwnerV1 {
+    package typealias Factory = @Sendable () async throws ->
+        MacLocalXPCAgentProductV1
+
+    private let factory: Factory
+    private var product: MacLocalXPCAgentProductV1?
+    private var startTask: Task<MacLocalXPCAgentProductV1, Error>?
+    private var finishTask: Task<Void, Never>?
+
+    package init(factory: @escaping Factory) {
+        self.factory = factory
+    }
+
+    package func start() async throws {
+        guard finishTask == nil else {
+            throw MacAgentPreparedProductCompositionErrorV1.terminal
+        }
+        if let startTask {
+            do {
+                _ = try await awaitStart(startTask)
+                guard finishTask == nil else {
+                    throw MacAgentPreparedProductCompositionErrorV1.terminal
+                }
+                return
+            } catch {
+                await finish()
+                throw error
+            }
+        }
+        let factory = self.factory
+        let task = Task {
+            let product = try await factory()
+            do {
+                try Task.checkCancellation()
+                try await product.start()
+                try Task.checkCancellation()
+                return product
+            } catch {
+                await product.finish()
+                throw error
+            }
+        }
+        startTask = task
+        do {
+            let product = try await awaitStart(task)
+            guard finishTask == nil else {
+                throw MacAgentPreparedProductCompositionErrorV1.terminal
+            }
+            self.product = product
+        } catch {
+            await finish()
+            throw error
+        }
+    }
+
+    private func awaitStart(
+        _ task: Task<MacLocalXPCAgentProductV1, Error>
+    ) async throws -> MacLocalXPCAgentProductV1 {
+        try await withTaskCancellationHandler {
+            let product = try await task.value
+            try Task.checkCancellation()
+            return product
+        } onCancel: {
+            task.cancel()
+        }
+    }
+
+    package func finish() async {
+        if let finishTask {
+            await finishTask.value
+            return
+        }
+        let product = self.product
+        let startTask = self.startTask
+        startTask?.cancel()
+        let task = Task {
+            if let product { await product.finish() }
+            if let startTask {
+                switch await startTask.result {
+                case let .success(started) where started !== product:
+                    await started.finish()
+                case .success, .failure:
+                    break
+                }
+            }
+        }
+        finishTask = task
+        await task.value
+    }
+}
+
 /// Inert, release-shaped Agent root after durable identity and primary-service
 /// preparation. It retains the exact storage, prepared TLS/primary root, and
-/// lifecycle/status XPC product as one authority graph. It exposes no raw
+/// lifecycle/status XPC construction as one authority graph. It exposes no raw
 /// store, TLS configuration, primary services, pairing surface, or listener.
 ///
-/// Public construction remains inert. Package-owned activation first starts
-/// local authorization, waits for an authenticated menu generation, and may
-/// then compose an unstarted network product. The package seam now coordinates
+/// Public construction remains inert. The inert preparation path defers local
+/// XPC construction until package-owned activation first starts local
+/// authorization, waits for an authenticated menu generation, and may then
+/// compose an unstarted network product. The package seam now coordinates
 /// listener activation and rollback; live request-context composition and
 /// permanent-target activation remain later runtime checkpoints.
 @available(macOS 26.0, *)
@@ -181,6 +276,30 @@ public actor MacAgentPreparedProductV1 {
         }
         startLocalXPC = { try await localXPC.start() }
         finishLocalXPC = { await localXPC.finish() }
+        hostID = preparedPrimary.primaryServices.hostID
+        storagePaths = storage.paths
+    }
+
+    package init(
+        storage: MacAgentReleaseStorageV1,
+        preparedPrimary: AgentPreparedPrimaryStartupV1,
+        makeLocalXPC: @escaping @Sendable (AgentPrimaryServicesV1)
+            async throws -> MacLocalXPCAgentProductV1,
+        menuSurfaceAuthority:
+            MacAgentAuthenticatedMenuSurfaceAuthorityV1 =
+                MacAgentAuthenticatedMenuSurfaceAuthorityV1()
+    ) {
+        self.storage = storage
+        self.preparedPrimary = preparedPrimary
+        self.menuSurfaceAuthority = menuSurfaceAuthority
+        currentMenuGeneration = {
+            await menuSurfaceAuthority.currentGeneration()
+        }
+        let deferred = MacAgentDeferredLocalXPCOwnerV1 {
+            try await makeLocalXPC(preparedPrimary.primaryServices)
+        }
+        startLocalXPC = { try await deferred.start() }
+        finishLocalXPC = { await deferred.finish() }
         hostID = preparedPrimary.primaryServices.hostID
         storagePaths = storage.paths
     }
@@ -271,6 +390,12 @@ public actor MacAgentPreparedProductV1 {
         await preparedPrimary.snapshot()
     }
 
+    package func lifecycleSnapshot()
+        async -> AgentRemoteLifecycleSnapshotV1
+    {
+        await preparedPrimary.primaryServices.lifecycle.currentSnapshot()
+    }
+
     package func authenticatedMenuSurfaceGeneration() async -> UInt64? {
         await menuSurfaceAuthority.currentGeneration()
     }
@@ -292,23 +417,39 @@ public actor MacAgentPreparedProductV1 {
             throw MacAgentPreparedProductCompositionErrorV1.terminal
         }
         if let localStartTask {
-            try await localStartTask.value
-            guard finishTask == nil, !finished else {
-                throw MacAgentPreparedProductCompositionErrorV1.terminal
+            do {
+                try await awaitLocalStart(localStartTask)
+                guard finishTask == nil, !finished else {
+                    throw MacAgentPreparedProductCompositionErrorV1.terminal
+                }
+                return
+            } catch {
+                await finish()
+                throw error
             }
-            return
         }
         let startLocalXPC = self.startLocalXPC
         let task = Task { try await startLocalXPC() }
         localStartTask = task
         do {
-            try await task.value
+            try await awaitLocalStart(task)
             guard finishTask == nil, !finished else {
                 throw MacAgentPreparedProductCompositionErrorV1.terminal
             }
         } catch {
             await finish()
             throw error
+        }
+    }
+
+    private func awaitLocalStart(
+        _ task: Task<Void, Error>
+    ) async throws {
+        try await withTaskCancellationHandler {
+            try await task.value
+            try Task.checkCancellation()
+        } onCancel: {
+            task.cancel()
         }
     }
 
@@ -606,6 +747,11 @@ public enum MacAgentProductBootstrapResultV1: Sendable {
 /// until the authenticated menu-surface and runtime activation gates close.
 @available(macOS 26.0, *)
 public enum MacAgentProductBootstrapV1 {
+    private enum LocalXPCPreparationModeV1 {
+        case immediate
+        case deferredUntilActivation
+    }
+
     package typealias LocalXPCFactory = @Sendable (
         AgentPrimaryServicesV1
     ) async throws -> MacLocalXPCAgentProductV1
@@ -617,39 +763,52 @@ public enum MacAgentProductBootstrapV1 {
         processStarter: any MacDashboardLifecycleProcessStartingV1
     ) async throws -> MacAgentProductBootstrapResultV1 {
         let storage = try MacAgentReleaseStorageV1.systemDefault()
-        let menuSurfaceAuthority =
-            MacAgentAuthenticatedMenuSurfaceAuthorityV1()
-        let menuLossCoordinator = MacAgentMenuSurfaceLossCoordinatorV1()
+        return try await prepare(
+            storage: storage,
+            hostIdentityConfiguration: hostIdentityConfiguration,
+            inputs: inputs,
+            processStarter: processStarter
+        )
+    }
+
+    package static func prepare(
+        storage: MacAgentReleaseStorageV1,
+        hostIdentityConfiguration:
+            SecurityHostIdentityKeyCustodyConfigurationV0,
+        inputs: AgentNetworkPrimaryStartupInputsV1,
+        processStarter: any MacDashboardLifecycleProcessStartingV1
+    ) async throws -> MacAgentProductBootstrapResultV1 {
         let result = try await AgentNetworkPrimaryStartupFactoryV1.prepare(
             requiredAudit: storage.requiredAudit,
             hostIdentityConfiguration: hostIdentityConfiguration,
             inputs: inputs
         )
-        let composed = try await compose(
+        return try await composeProduction(
             storage: storage,
             preparation: result,
-            makeLocalXPC: { services in
-                try await MacLocalXPCAgentProductV1
-                    .afterAgentBootstrapWithMenuPresentation(
-                    services: services,
-                    processStarter: processStarter,
-                    onSurfaces: {
-                        try await menuSurfaceAuthority.install($0)
-                    },
-                    onSurfaceInvalidated: {
-                        await menuLossCoordinator
-                            .authenticatedMenuSurfaceUnavailable(
-                            generation: $0
-                        )
-                    }
-                )
-            },
-            menuSurfaceAuthority: menuSurfaceAuthority
+            processStarter: processStarter,
+            mode: .immediate
         )
-        if case let .ready(product) = composed {
-            await menuLossCoordinator.install(product)
-        }
-        return composed
+    }
+
+    package static func prepareInert(
+        storage: MacAgentReleaseStorageV1,
+        hostIdentityConfiguration:
+            SecurityHostIdentityKeyCustodyConfigurationV0,
+        inputs: AgentNetworkPrimaryStartupInputsV1,
+        processStarter: any MacDashboardLifecycleProcessStartingV1
+    ) async throws -> MacAgentProductBootstrapResultV1 {
+        let result = try await AgentNetworkPrimaryStartupFactoryV1.prepare(
+            requiredAudit: storage.requiredAudit,
+            hostIdentityConfiguration: hostIdentityConfiguration,
+            inputs: inputs
+        )
+        return try await composeProduction(
+            storage: storage,
+            preparation: result,
+            processStarter: processStarter,
+            mode: .deferredUntilActivation
+        )
     }
 
     package static func prepare(
@@ -671,6 +830,96 @@ public enum MacAgentProductBootstrapV1 {
             menuSurfaceAuthority:
                 MacAgentAuthenticatedMenuSurfaceAuthorityV1()
         )
+    }
+
+    package static func prepareInert(
+        storage: MacAgentReleaseStorageV1,
+        hostIdentityStartup: @escaping @Sendable () async throws ->
+            SecurityHostIdentityStartupResultV0,
+        inputs: AgentNetworkPrimaryStartupInputsV1,
+        makeLocalXPC: @escaping LocalXPCFactory
+    ) async throws -> MacAgentProductBootstrapResultV1 {
+        let result = try await AgentNetworkPrimaryStartupFactoryV1.prepare(
+            hostIdentityStartup: hostIdentityStartup,
+            requiredAudit: storage.requiredAudit,
+            inputs: inputs
+        )
+        return try await composeInert(
+            storage: storage,
+            preparation: result,
+            makeLocalXPC: makeLocalXPC
+        )
+    }
+
+    private static func composeProduction(
+        storage: MacAgentReleaseStorageV1,
+        preparation: AgentNetworkPrimaryStartupResultV1,
+        processStarter: any MacDashboardLifecycleProcessStartingV1,
+        mode: LocalXPCPreparationModeV1
+    ) async throws -> MacAgentProductBootstrapResultV1 {
+        let menuSurfaceAuthority =
+            MacAgentAuthenticatedMenuSurfaceAuthorityV1()
+        let menuLossCoordinator = MacAgentMenuSurfaceLossCoordinatorV1()
+        let makeLocalXPC: LocalXPCFactory = { services in
+            try await MacLocalXPCAgentProductV1
+                .afterAgentBootstrapWithMenuPresentation(
+                services: services,
+                processStarter: processStarter,
+                onSurfaces: {
+                    try await menuSurfaceAuthority.install($0)
+                },
+                onSurfaceInvalidated: {
+                    await menuLossCoordinator
+                        .authenticatedMenuSurfaceUnavailable(generation: $0)
+                }
+            )
+        }
+        let composed: MacAgentProductBootstrapResultV1
+        switch mode {
+        case .immediate:
+            composed = try await compose(
+                storage: storage,
+                preparation: preparation,
+                makeLocalXPC: makeLocalXPC,
+                menuSurfaceAuthority: menuSurfaceAuthority
+            )
+        case .deferredUntilActivation:
+            composed = try await composeInert(
+                storage: storage,
+                preparation: preparation,
+                makeLocalXPC: makeLocalXPC,
+                menuSurfaceAuthority: menuSurfaceAuthority
+            )
+        }
+        if case let .ready(product) = composed {
+            await menuLossCoordinator.install(product)
+        }
+        return composed
+    }
+
+    package static func composeInert(
+        storage: MacAgentReleaseStorageV1,
+        preparation: AgentNetworkPrimaryStartupResultV1,
+        makeLocalXPC: @escaping LocalXPCFactory,
+        menuSurfaceAuthority:
+            MacAgentAuthenticatedMenuSurfaceAuthorityV1 =
+                MacAgentAuthenticatedMenuSurfaceAuthorityV1()
+    ) async throws -> MacAgentProductBootstrapResultV1 {
+        switch preparation {
+        case .waitForFirstUnlock:
+            return .waitForFirstUnlock
+        case let .requireLocalRecovery(reason):
+            return .requireLocalRecovery(reason)
+        case let .recoveryFenced(recoveryID):
+            return .recoveryFenced(recoveryID)
+        case let .ready(preparedPrimary):
+            return .ready(MacAgentPreparedProductV1(
+                storage: storage,
+                preparedPrimary: preparedPrimary,
+                makeLocalXPC: makeLocalXPC,
+                menuSurfaceAuthority: menuSurfaceAuthority
+            ))
+        }
     }
 
     package static func compose(

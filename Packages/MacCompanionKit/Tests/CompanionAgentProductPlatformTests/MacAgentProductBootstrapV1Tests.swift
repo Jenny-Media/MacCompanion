@@ -110,6 +110,90 @@ private actor ProductBootstrapLocalXPCProbeV1 {
     func recordedHostIDs() -> [UUID] { hostIDs }
 }
 
+private actor ProductBootstrapFactoryCountV1 {
+    private var value = 0
+
+    func record() { value += 1 }
+    func count() -> Int { value }
+}
+
+@available(macOS 26.0, *)
+private actor ProductBootstrapLocalXPCRetentionV1 {
+    private var product: MacLocalXPCAgentProductV1?
+
+    func retain(_ product: MacLocalXPCAgentProductV1) {
+        self.product = product
+    }
+}
+
+private final class ProductBootstrapSyncStartGateV1:
+    @unchecked Sendable
+{
+    private let condition = NSCondition()
+    private var entered = false
+    private var released = false
+
+    func waitForRelease() {
+        condition.lock()
+        entered = true
+        condition.broadcast()
+        while !released {
+            _ = condition.wait(
+                until: Date().addingTimeInterval(0.005)
+            )
+        }
+        condition.unlock()
+    }
+
+    func release() {
+        condition.lock()
+        released = true
+        condition.broadcast()
+        condition.unlock()
+    }
+
+    func hasEntered() -> Bool {
+        condition.lock()
+        defer { condition.unlock() }
+        return entered
+    }
+}
+
+@available(macOS 26.0, *)
+private final class ProductBootstrapDeferredServerV1:
+    MacLocalXPCAgentServerV1,
+    @unchecked Sendable
+{
+    private let lock = NSLock()
+    private let startGate: ProductBootstrapSyncStartGateV1?
+    private let rejectStart: Bool
+    private var starts = 0
+    private var cancellations = 0
+
+    init(
+        startGate: ProductBootstrapSyncStartGateV1? = nil,
+        rejectStart: Bool = false
+    ) {
+        self.startGate = startGate
+        self.rejectStart = rejectStart
+    }
+
+    func start() throws {
+        lock.withLock { starts += 1 }
+        startGate?.waitForRelease()
+        if rejectStart {
+            throw ProductBootstrapProbeErrorV1.rejectedLocalXPC
+        }
+    }
+
+    func cancel() { lock.withLock { cancellations += 1 } }
+    func cancelPeer(generation _: UInt64) {}
+
+    func counts() -> (starts: Int, cancellations: Int) {
+        lock.withLock { (starts, cancellations) }
+    }
+}
+
 private actor ProductBootstrapFinishGateV1 {
     private var entered = false
     private var released = false
@@ -292,6 +376,17 @@ private func productBootstrapLocalXPCV1() -> MacLocalXPCAgentProductV1 {
     )
 }
 
+@available(macOS 26.0, *)
+private func productBootstrapLocalXPCV1(
+    server: ProductBootstrapDeferredServerV1
+) -> MacLocalXPCAgentProductV1 {
+    MacLocalXPCAgentProductV1.compose(
+        lifecycleFactory: ProductBootstrapLifecycleFactoryV1(),
+        statusReader: ProductBootstrapStatusReaderV1(),
+        serverFactory: { _, _, _ in server }
+    )
+}
+
 private struct ProductBootstrapIdentityV1 {
     let issued: SecurityHostIssuedIdentityV0
     let stored: StoredHostIdentityRecord
@@ -336,7 +431,13 @@ private func productBootstrapIdentityV1() throws
 }
 
 private func productBootstrapInputsV1(
-    loader: any AgentCapabilityProviderLoadingV1
+    loader: any AgentCapabilityProviderLoadingV1,
+    lifecycleState: ProductLifecycleState = ProductLifecycleState(
+        desiredEnabled: true,
+        consoleSession: .active,
+        agent: .starting,
+        menuApp: .starting
+    )
 ) throws -> AgentNetworkPrimaryStartupInputsV1 {
     AgentNetworkPrimaryStartupInputsV1(
         registry: try CapabilityRegistrySnapshotV1(
@@ -345,12 +446,7 @@ private func productBootstrapInputsV1(
         ),
         providerLoader: loader,
         wallNowUnixMilliseconds: productBootstrapTimeV1,
-        lifecycleState: ProductLifecycleState(
-            desiredEnabled: true,
-            consoleSession: .active,
-            agent: .starting,
-            menuApp: .starting
-        ),
+        lifecycleState: lifecycleState,
         statusPlatform: AgentHostStatusPlatformServicesV1(
             sampler: ProductBootstrapSamplerV1(),
             clock: ProductBootstrapClockV1(),
@@ -370,6 +466,950 @@ private func productBootstrapStorageV1(
     try MacAgentReleaseStorageV1(
         baseApplicationSupportDirectory: base
     )
+}
+
+@available(macOS 26.0, *)
+private func productBootstrapPreparedPrimaryV1(
+    storage: MacAgentReleaseStorageV1
+) async throws -> AgentPreparedPrimaryStartupV1 {
+    let identity = try productBootstrapIdentityV1()
+    try await storage.requiredAudit.securityStore.establishHostIdentity(
+        identity.stored
+    )
+    guard case let .ready(prepared) = try await
+        AgentNetworkPrimaryStartupFactoryV1.prepare(
+            hostIdentityStartup: {
+                .ready(
+                    record: identity.stored,
+                    issuedIdentity: identity.issued,
+                    renewalRecommended: false
+                )
+            },
+            requiredAudit: storage.requiredAudit,
+            inputs: try productBootstrapInputsV1(
+                loader: ProductBootstrapCountingLoaderV1()
+            )
+        ) else {
+        throw ProductBootstrapProbeErrorV1.unused
+    }
+    return prepared
+}
+
+private final class ProductApplicationPreparationProbeV1:
+    @unchecked Sendable
+{
+    private let lock = NSLock()
+    private var events: [String] = []
+    private var states: [ProductLifecycleState] = []
+    private var finishCount = 0
+
+    func record(_ event: String) {
+        lock.lock()
+        events.append(event)
+        lock.unlock()
+    }
+
+    func record(_ state: ProductLifecycleState) {
+        lock.lock()
+        states.append(state)
+        lock.unlock()
+    }
+
+    func recordFinish() {
+        lock.lock()
+        finishCount += 1
+        lock.unlock()
+    }
+
+    func snapshot() -> (
+        events: [String],
+        states: [ProductLifecycleState],
+        finishes: Int
+    ) {
+        lock.lock()
+        defer { lock.unlock() }
+        return (events, states, finishCount)
+    }
+}
+
+private actor ProductApplicationIntentStoreV1:
+    MacRemoteAccessIntentPersistenceV1
+{
+    private let value: MacRemoteAccessIntentSnapshotV1?
+    private let probe: ProductApplicationPreparationProbeV1
+    private let readGate: ProductBootstrapFinishGateV1?
+
+    init(
+        value: MacRemoteAccessIntentSnapshotV1?,
+        probe: ProductApplicationPreparationProbeV1,
+        readGate: ProductBootstrapFinishGateV1? = nil
+    ) {
+        self.value = value
+        self.probe = probe
+        self.readGate = readGate
+    }
+
+    func current() async throws -> MacRemoteAccessIntentSnapshotV1? {
+        probe.record("intentRead")
+        await readGate?.run()
+        return value
+    }
+
+    func replaceAtomically(
+        _: MacRemoteAccessIntentSnapshotV1,
+        expectedRevision _: UInt64?
+    ) async throws -> MacRemoteAccessIntentCommitResultV1 {
+        throw ProductBootstrapProbeErrorV1.unused
+    }
+}
+
+private actor ProductApplicationFinishSignalV1 {
+    private var count = 0
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    func record() {
+        count += 1
+        let retained = waiters
+        waiters.removeAll()
+        for waiter in retained { waiter.resume() }
+    }
+
+    func waitForFinish() async {
+        guard count == 0 else { return }
+        await withCheckedContinuation { waiters.append($0) }
+    }
+
+    func finishCount() -> Int { count }
+}
+
+private func productApplicationIntentV1(
+    enabled: Bool
+) throws -> MacRemoteAccessIntentSnapshotV1 {
+    try MacRemoteAccessIntentSnapshotV1(
+        revision: 1,
+        desiredEnabled: enabled,
+        commandID: UUID(
+            uuidString: "018f5000-0000-7000-8000-000000000101"
+        )!,
+        recordedAtUnixMilliseconds: productBootstrapTimeV1
+    )
+}
+
+@available(macOS 26.0, *)
+private func productApplicationPrepareV1(
+    storage: MacAgentReleaseStorageV1,
+    intent: MacRemoteAccessIntentSnapshotV1?,
+    probe: ProductApplicationPreparationProbeV1,
+    loader: any AgentCapabilityProviderLoadingV1,
+    readGate: ProductBootstrapFinishGateV1? = nil,
+    prepareRoot: @escaping @Sendable (
+        MacAgentReleaseStorageV1,
+        AgentNetworkPrimaryStartupInputsV1
+    ) async throws -> MacAgentPreparedApplicationRootResultV1
+) async throws -> MacAgentApplicationPreparationResultV1 {
+    let intentStore = ProductApplicationIntentStoreV1(
+        value: intent,
+        probe: probe,
+        readGate: readGate
+    )
+    return try await MacAgentApplicationPreparationFacadeV1.prepare(
+        makeStorage: {
+            probe.record("storage")
+            return storage
+        },
+        makeIntentStore: { directory in
+            probe.record("intentStore:\(directory.path)")
+            return intentStore
+        },
+        makePrimaryInputs: { state in
+            probe.record("inputs")
+            probe.record(state)
+            return try productBootstrapInputsV1(
+                loader: loader,
+                lifecycleState: state
+            )
+        },
+        prepareRoot: prepareRoot
+    )
+}
+
+@available(macOS 26.0, *)
+@Test func applicationPreparationRejectsEveryUnsafeInitialLifecycleClass() {
+    let valid = [
+        ProductLifecycleState(consoleSession: .otherConsoleUserActive),
+        ProductLifecycleState(
+            desiredEnabled: true,
+            consoleSession: .otherConsoleUserActive,
+            agent: .starting,
+            menuApp: .starting
+        ),
+    ]
+    for state in valid {
+        #expect(throws: Never.self) {
+            try MacAgentApplicationPreparationFacadeV1
+                .validateInitialLifecycleState(state)
+        }
+    }
+
+    let invalid = [
+        ProductLifecycleState(
+            desiredEnabled: true,
+            consoleSession: .active,
+            agent: .starting,
+            menuApp: .starting
+        ),
+        ProductLifecycleState(
+            desiredEnabled: true,
+            consoleSession: .locked,
+            agent: .starting,
+            menuApp: .starting
+        ),
+        ProductLifecycleState(consoleSession: .loggedOut),
+        ProductLifecycleState(
+            desiredEnabled: true,
+            consoleSession: .otherConsoleUserActive,
+            agent: .ready,
+            menuApp: .starting
+        ),
+        ProductLifecycleState(
+            desiredEnabled: true,
+            consoleSession: .otherConsoleUserActive,
+            agent: .starting,
+            menuApp: .ready
+        ),
+        ProductLifecycleState(
+            desiredEnabled: false,
+            consoleSession: .otherConsoleUserActive,
+            agent: .starting,
+            menuApp: .stopped
+        ),
+    ]
+    for state in invalid {
+        #expect(
+            throws:
+                MacAgentApplicationPreparationErrorV1
+                    .unsafeInitialLifecycleState
+        ) {
+            try MacAgentApplicationPreparationFacadeV1
+                .validateInitialLifecycleState(state)
+        }
+    }
+}
+
+@available(macOS 26.0, *)
+@Test func canonicalInertPreparationDefersReadinessProducingLocalXPC()
+    async throws
+{
+    let lifecycleStates = [
+        ProductLifecycleState(consoleSession: .otherConsoleUserActive),
+        ProductLifecycleState(
+            desiredEnabled: true,
+            consoleSession: .otherConsoleUserActive,
+            agent: .starting,
+            menuApp: .starting
+        ),
+    ]
+
+    for (index, state) in lifecycleStates.enumerated() {
+        let base = FileManager.default.temporaryDirectory
+            .appendingPathComponent(
+                "maccompanion-canonical-inert-\(index)-\(UUID())",
+                isDirectory: true
+            )
+        try FileManager.default.createDirectory(
+            at: base,
+            withIntermediateDirectories: false,
+            attributes: [.posixPermissions: 0o700]
+        )
+        defer { try? FileManager.default.removeItem(at: base) }
+        let storage = try productBootstrapStorageV1(base: base)
+        let identity = try productBootstrapIdentityV1()
+        try await storage.requiredAudit.securityStore.establishHostIdentity(
+            identity.stored
+        )
+        let loader = ProductBootstrapCountingLoaderV1()
+        let localXPCProbe = ProductBootstrapLocalXPCProbeV1()
+
+        guard case let .ready(product) = try await
+            MacAgentProductBootstrapV1.prepareInert(
+                storage: storage,
+                hostIdentityStartup: {
+                    .ready(
+                        record: identity.stored,
+                        issuedIdentity: identity.issued,
+                        renewalRecommended: false
+                    )
+                },
+                inputs: try productBootstrapInputsV1(
+                    loader: loader,
+                    lifecycleState: state
+                ),
+                makeLocalXPC: { services in
+                    await localXPCProbe.record(services.hostID)
+                    return productBootstrapLocalXPCV1()
+                }
+            ) else {
+            Issue.record("expected canonical inert prepared root")
+            continue
+        }
+
+        #expect(await localXPCProbe.recordedHostIDs().isEmpty)
+        #expect((await product.lifecycleSnapshot()).state == state)
+        #expect(!(await product.preparedPrimarySnapshot().consumed))
+        await product.finish()
+        #expect(await localXPCProbe.recordedHostIDs().isEmpty)
+        #expect((await product.lifecycleSnapshot()).state == state)
+    }
+}
+
+@available(macOS 26.0, *)
+@Test func deferredLocalXPCOwnerStartsOnceAndCleansStartFailure()
+    async throws
+{
+    let successServer = ProductBootstrapDeferredServerV1()
+    let successFactory = ProductBootstrapFactoryCountV1()
+    let successOwner = MacAgentDeferredLocalXPCOwnerV1 {
+        await successFactory.record()
+        return productBootstrapLocalXPCV1(server: successServer)
+    }
+
+    async let first: Void = successOwner.start()
+    async let second: Void = successOwner.start()
+    _ = try await (first, second)
+    #expect(await successFactory.count() == 1)
+    #expect(successServer.counts().starts == 1)
+    await successOwner.finish()
+    await successOwner.finish()
+    #expect(successServer.counts().cancellations == 1)
+
+    let failureServer = ProductBootstrapDeferredServerV1(
+        rejectStart: true
+    )
+    let failureFactory = ProductBootstrapFactoryCountV1()
+    let failureRetention = ProductBootstrapLocalXPCRetentionV1()
+    let failureOwner = MacAgentDeferredLocalXPCOwnerV1 {
+        await failureFactory.record()
+        let product = productBootstrapLocalXPCV1(server: failureServer)
+        await failureRetention.retain(product)
+        return product
+    }
+    await #expect(
+        throws: ProductBootstrapProbeErrorV1.rejectedLocalXPC
+    ) {
+        try await failureOwner.start()
+    }
+    #expect(await failureFactory.count() == 1)
+    #expect(failureServer.counts().starts == 1)
+    #expect(failureServer.counts().cancellations == 1)
+    await #expect(
+        throws: MacAgentPreparedProductCompositionErrorV1.terminal
+    ) {
+        try await failureOwner.start()
+    }
+
+    let joinedGate = ProductBootstrapSyncStartGateV1()
+    let joinedServer = ProductBootstrapDeferredServerV1(
+        startGate: joinedGate
+    )
+    let joinedFactory = ProductBootstrapFactoryCountV1()
+    let joinedRetention = ProductBootstrapLocalXPCRetentionV1()
+    let joinedOwner = MacAgentDeferredLocalXPCOwnerV1 {
+        await joinedFactory.record()
+        let product = productBootstrapLocalXPCV1(server: joinedServer)
+        await joinedRetention.retain(product)
+        return product
+    }
+    let firstStart = Task { try await joinedOwner.start() }
+    while !joinedGate.hasEntered() { await Task.yield() }
+    let cancelledJoin = Task { try await joinedOwner.start() }
+    cancelledJoin.cancel()
+    joinedGate.release()
+    await #expect(throws: CancellationError.self) {
+        try await cancelledJoin.value
+    }
+    await #expect(throws: CancellationError.self) {
+        try await firstStart.value
+    }
+    #expect(await joinedFactory.count() == 1)
+    #expect(joinedServer.counts().starts == 1)
+    #expect(joinedServer.counts().cancellations == 1)
+    await #expect(
+        throws: MacAgentPreparedProductCompositionErrorV1.terminal
+    ) {
+        try await joinedOwner.start()
+    }
+}
+
+@available(macOS 26.0, *)
+@Test func cancelledDeferredActivationFencesLateStartAndFinishesProduct()
+    async throws
+{
+    let base = FileManager.default.temporaryDirectory.appendingPathComponent(
+        "maccompanion-deferred-activation-cancel-\(UUID())",
+        isDirectory: true
+    )
+    try FileManager.default.createDirectory(
+        at: base,
+        withIntermediateDirectories: false,
+        attributes: [.posixPermissions: 0o700]
+    )
+    defer { try? FileManager.default.removeItem(at: base) }
+    let storage = try productBootstrapStorageV1(base: base)
+    let prepared = try await productBootstrapPreparedPrimaryV1(
+        storage: storage
+    )
+    let startGate = ProductBootstrapSyncStartGateV1()
+    let server = ProductBootstrapDeferredServerV1(startGate: startGate)
+    let factory = ProductBootstrapFactoryCountV1()
+    let retention = ProductBootstrapLocalXPCRetentionV1()
+    let product = MacAgentPreparedProductV1(
+        storage: storage,
+        preparedPrimary: prepared,
+        makeLocalXPC: { _ in
+            await factory.record()
+            let product = productBootstrapLocalXPCV1(server: server)
+            await retention.retain(product)
+            return product
+        }
+    )
+
+    let activation = Task { try await product.startLocalAuthorization() }
+    while !startGate.hasEntered() { await Task.yield() }
+    activation.cancel()
+    startGate.release()
+
+    await #expect(throws: CancellationError.self) {
+        try await activation.value
+    }
+    #expect(await factory.count() == 1)
+    #expect(server.counts().starts == 1)
+    #expect(server.counts().cancellations == 1)
+    #expect(await product.snapshot().finished)
+    #expect(await prepared.snapshot().consumed)
+    await #expect(
+        throws: MacAgentPreparedProductCompositionErrorV1.terminal
+    ) {
+        try await product.startLocalAuthorization()
+    }
+}
+
+@available(macOS 26.0, *)
+@Test func applicationPreparationRejectsLifecycleSubstitutionAtBothSeams()
+    async throws
+{
+    let base = FileManager.default.temporaryDirectory.appendingPathComponent(
+        "maccompanion-application-lifecycle-correlation-\(UUID())",
+        isDirectory: true
+    )
+    try FileManager.default.createDirectory(
+        at: base,
+        withIntermediateDirectories: false,
+        attributes: [.posixPermissions: 0o700]
+    )
+    defer { try? FileManager.default.removeItem(at: base) }
+    let storage = try productBootstrapStorageV1(base: base)
+    let inputProbe = ProductApplicationPreparationProbeV1()
+    let inputIntentStore = ProductApplicationIntentStoreV1(
+        value: nil,
+        probe: inputProbe
+    )
+    await #expect(
+        throws:
+            MacAgentApplicationPreparationErrorV1
+                .unsafeInitialLifecycleState
+    ) {
+        try await MacAgentApplicationPreparationFacadeV1.prepare(
+            makeStorage: { storage },
+            makeIntentStore: { _ in inputIntentStore },
+            makePrimaryInputs: { _ in
+                try productBootstrapInputsV1(
+                    loader: ProductBootstrapCountingLoaderV1(),
+                    lifecycleState: ProductLifecycleState(
+                        consoleSession: .active
+                    )
+                )
+            },
+            prepareRoot: { _, _ in
+                inputProbe.record("unexpectedRoot")
+                return .waitForFirstUnlock
+            }
+        )
+    }
+    #expect(!inputProbe.snapshot().events.contains("unexpectedRoot"))
+
+    let initialState = ProductLifecycleState(
+        consoleSession: .otherConsoleUserActive
+    )
+    let substitutedSnapshots = [
+        AgentRemoteLifecycleSnapshotV1(
+            revision: 0,
+            state: ProductLifecycleState(consoleSession: .active)
+        ),
+        AgentRemoteLifecycleSnapshotV1(
+            revision: 1,
+            state: initialState
+        ),
+        AgentRemoteLifecycleSnapshotV1(
+            revision: 0,
+            agentObservationEpoch: 1,
+            state: initialState
+        ),
+        AgentRemoteLifecycleSnapshotV1(
+            revision: 0,
+            menuAppObservationEpoch: 1,
+            state: initialState
+        ),
+    ]
+    for substituted in substitutedSnapshots {
+        let preparedProbe = ProductApplicationPreparationProbeV1()
+        await #expect(
+            throws:
+                MacAgentApplicationPreparationErrorV1
+                    .unsafeInitialLifecycleState
+        ) {
+            try await productApplicationPrepareV1(
+                storage: storage,
+                intent: nil,
+                probe: preparedProbe,
+                loader: ProductBootstrapCountingLoaderV1(),
+                prepareRoot: { storage, _ in
+                    .prepared(MacAgentPreparedProductHandleV1(
+                        hostID: UUID(),
+                        storagePaths: storage.paths,
+                        currentLifecycle: { substituted },
+                        finish: { preparedProbe.recordFinish() }
+                    ))
+                }
+            )
+        }
+        #expect(preparedProbe.snapshot().finishes == 1)
+    }
+}
+
+@available(macOS 26.0, *)
+@Test func applicationPreparationLoadsAbsentIntentBeforePrimaryConstruction()
+    async throws
+{
+    let base = FileManager.default.temporaryDirectory.appendingPathComponent(
+        "maccompanion-application-preparation-order-\(UUID())",
+        isDirectory: true
+    )
+    try FileManager.default.createDirectory(
+        at: base,
+        withIntermediateDirectories: false,
+        attributes: [.posixPermissions: 0o700]
+    )
+    defer { try? FileManager.default.removeItem(at: base) }
+    let storage = try productBootstrapStorageV1(base: base)
+    let probe = ProductApplicationPreparationProbeV1()
+    let loader = ProductBootstrapCountingLoaderV1()
+
+    guard case .waitForFirstUnlock = try await productApplicationPrepareV1(
+        storage: storage,
+        intent: nil,
+        probe: probe,
+        loader: loader,
+        prepareRoot: { _, inputs in
+            probe.record("prepareRoot")
+            #expect(!inputs.lifecycleState.desiredEnabled)
+            return .waitForFirstUnlock
+        }
+    ) else {
+        Issue.record("expected first-unlock wait")
+        return
+    }
+
+    let snapshot = probe.snapshot()
+    #expect(
+        snapshot.events == [
+            "storage",
+            "intentStore:\(storage.paths.remoteAccessIntentDirectory.path)",
+            "intentRead",
+            "inputs",
+            "prepareRoot",
+        ]
+    )
+    #expect(
+        snapshot.states == [
+            ProductLifecycleState(consoleSession: .otherConsoleUserActive),
+        ]
+    )
+    #expect(await loader.loadCount() == 0)
+    #expect(
+        storage.paths.remoteAccessIntentDirectory
+            == storage.paths.root.appendingPathComponent(
+                "remote-access-intent-v1",
+                isDirectory: true
+            )
+    )
+}
+
+@available(macOS 26.0, *)
+@Test func applicationPreparationRestoresEnabledIntentWithoutReadiness()
+    async throws
+{
+    let base = FileManager.default.temporaryDirectory.appendingPathComponent(
+        "maccompanion-application-preparation-enabled-\(UUID())",
+        isDirectory: true
+    )
+    try FileManager.default.createDirectory(
+        at: base,
+        withIntermediateDirectories: false,
+        attributes: [.posixPermissions: 0o700]
+    )
+    defer { try? FileManager.default.removeItem(at: base) }
+    let storage = try productBootstrapStorageV1(base: base)
+    let probe = ProductApplicationPreparationProbeV1()
+    let loader = ProductBootstrapCountingLoaderV1()
+
+    guard case .requireLocalRecovery(.invalidEstablishedKey) = try await
+        productApplicationPrepareV1(
+            storage: storage,
+            intent: try productApplicationIntentV1(enabled: true),
+            probe: probe,
+            loader: loader,
+            prepareRoot: { _, inputs in
+                let state = inputs.lifecycleState
+                #expect(state.desiredEnabled)
+                #expect(state.consoleSession == .otherConsoleUserActive)
+                #expect(state.agent == .starting)
+                #expect(state.menuApp == .starting)
+                #expect(!state.observeAvailable)
+                #expect(!state.newInteractiveControlAvailable)
+                #expect(!state.localAdministrationVisible)
+                return .requireLocalRecovery(.invalidEstablishedKey)
+            }
+        ) else {
+        Issue.record("expected local recovery requirement")
+        return
+    }
+}
+
+@available(macOS 26.0, *)
+@Test func preparedApplicationOwnerIsActivationInertAndFinishesOnce()
+    async throws
+{
+    let base = FileManager.default.temporaryDirectory.appendingPathComponent(
+        "maccompanion-application-preparation-ready-\(UUID())",
+        isDirectory: true
+    )
+    try FileManager.default.createDirectory(
+        at: base,
+        withIntermediateDirectories: false,
+        attributes: [.posixPermissions: 0o700]
+    )
+    defer { try? FileManager.default.removeItem(at: base) }
+    let storage = try productBootstrapStorageV1(base: base)
+    let probe = ProductApplicationPreparationProbeV1()
+    let loader = ProductBootstrapCountingLoaderV1()
+    let hostID = UUID(
+        uuidString: "018f5000-0000-7000-8000-000000000102"
+    )!
+
+    guard case let .prepared(owner) = try await
+        productApplicationPrepareV1(
+            storage: storage,
+            intent: try productApplicationIntentV1(enabled: true),
+            probe: probe,
+            loader: loader,
+            prepareRoot: { storage, inputs in
+                probe.record("preparedRoot")
+                return .prepared(MacAgentPreparedProductHandleV1(
+                    hostID: hostID,
+                    storagePaths: storage.paths,
+                    currentLifecycle: {
+                        AgentRemoteLifecycleSnapshotV1(
+                            revision: 0,
+                            state: inputs.lifecycleState
+                        )
+                    },
+                    finish: { probe.recordFinish() }
+                ))
+            }
+        ) else {
+        Issue.record("expected inert prepared owner")
+        return
+    }
+
+    let initial = await owner.snapshot()
+    #expect(initial.hostID == hostID)
+    #expect(initial.storagePaths == storage.paths)
+    #expect(initial.lifecycle.state.desiredEnabled)
+    #expect(
+        initial.lifecycle.state.consoleSession
+            == .otherConsoleUserActive
+    )
+    #expect(initial.lifecycle.state.agent == .starting)
+    #expect(initial.lifecycle.state.menuApp == .starting)
+    #expect(!initial.requestContexts.started)
+    #expect(!initial.finished)
+
+    async let first: Void = owner.finish()
+    async let second: Void = owner.finish()
+    _ = await (first, second)
+    #expect((await owner.snapshot()).finished)
+    #expect(
+        (await owner.snapshot()).requestContexts.hostState
+            == .serviceStoppingForLogout
+    )
+    #expect(probe.snapshot().finishes == 1)
+}
+
+@available(macOS 26.0, *)
+@Test func applicationPreparationCancellationDuringIntentReadSkipsRoot()
+    async throws
+{
+    let base = FileManager.default.temporaryDirectory.appendingPathComponent(
+        "maccompanion-application-preparation-read-cancel-\(UUID())",
+        isDirectory: true
+    )
+    try FileManager.default.createDirectory(
+        at: base,
+        withIntermediateDirectories: false,
+        attributes: [.posixPermissions: 0o700]
+    )
+    defer { try? FileManager.default.removeItem(at: base) }
+    let storage = try productBootstrapStorageV1(base: base)
+    let probe = ProductApplicationPreparationProbeV1()
+    let gate = ProductBootstrapFinishGateV1()
+    let loader = ProductBootstrapCountingLoaderV1()
+    let task = Task {
+        try await productApplicationPrepareV1(
+            storage: storage,
+            intent: nil,
+            probe: probe,
+            loader: loader,
+            readGate: gate,
+            prepareRoot: { _, _ in
+                probe.record("unexpectedRoot")
+                return .waitForFirstUnlock
+            }
+        )
+    }
+    await gate.waitUntilEntered()
+    task.cancel()
+    await gate.release()
+
+    do {
+        _ = try await task.value
+        Issue.record("expected cancellation")
+    } catch is CancellationError {
+        #expect(!probe.snapshot().events.contains("unexpectedRoot"))
+    }
+}
+
+@available(macOS 26.0, *)
+@Test func preparedApplicationOwnerDeinitBeginsBestEffortRetirement()
+    async throws
+{
+    let base = FileManager.default.temporaryDirectory.appendingPathComponent(
+        "maccompanion-application-preparation-deinit-\(UUID())",
+        isDirectory: true
+    )
+    try FileManager.default.createDirectory(
+        at: base,
+        withIntermediateDirectories: false,
+        attributes: [.posixPermissions: 0o700]
+    )
+    defer { try? FileManager.default.removeItem(at: base) }
+    let storage = try productBootstrapStorageV1(base: base)
+    let signal = ProductApplicationFinishSignalV1()
+    var owner: MacAgentInertApplicationLifecycleV1?
+    var result: MacAgentApplicationPreparationResultV1? = try await
+        productApplicationPrepareV1(
+            storage: storage,
+            intent: nil,
+            probe: ProductApplicationPreparationProbeV1(),
+            loader: ProductBootstrapCountingLoaderV1(),
+            prepareRoot: { storage, inputs in
+                .prepared(MacAgentPreparedProductHandleV1(
+                    hostID: UUID(
+                        uuidString:
+                            "018f5000-0000-7000-8000-000000000105"
+                    )!,
+                    storagePaths: storage.paths,
+                    currentLifecycle: {
+                        AgentRemoteLifecycleSnapshotV1(
+                            revision: 0,
+                            state: inputs.lifecycleState
+                        )
+                    },
+                    finish: { await signal.record() }
+                ))
+            }
+        )
+    switch result {
+    case let .prepared(prepared):
+        owner = prepared
+    default:
+        Issue.record("expected prepared owner")
+        return
+    }
+    result = nil
+    weak let weakOwner = owner
+    owner = nil
+    #expect(weakOwner == nil)
+    await signal.waitForFinish()
+    #expect(await signal.finishCount() == 1)
+}
+
+@available(macOS 26.0, *)
+@Test func cancellationAfterPreparedRootCompensatesExactlyOnce()
+    async throws
+{
+    let base = FileManager.default.temporaryDirectory.appendingPathComponent(
+        "maccompanion-application-preparation-ready-cancel-\(UUID())",
+        isDirectory: true
+    )
+    try FileManager.default.createDirectory(
+        at: base,
+        withIntermediateDirectories: false,
+        attributes: [.posixPermissions: 0o700]
+    )
+    defer { try? FileManager.default.removeItem(at: base) }
+    let storage = try productBootstrapStorageV1(base: base)
+    let probe = ProductApplicationPreparationProbeV1()
+    let gate = ProductBootstrapFinishGateV1()
+    let loader = ProductBootstrapCountingLoaderV1()
+    let hostID = UUID(
+        uuidString: "018f5000-0000-7000-8000-000000000103"
+    )!
+    let task = Task {
+        try await productApplicationPrepareV1(
+            storage: storage,
+            intent: nil,
+            probe: probe,
+            loader: loader,
+            prepareRoot: { storage, inputs in
+                await gate.run()
+                return .prepared(MacAgentPreparedProductHandleV1(
+                    hostID: hostID,
+                    storagePaths: storage.paths,
+                    currentLifecycle: {
+                        AgentRemoteLifecycleSnapshotV1(
+                            revision: 0,
+                            state: inputs.lifecycleState
+                        )
+                    },
+                    finish: { probe.recordFinish() }
+                ))
+            }
+        )
+    }
+    await gate.waitUntilEntered()
+    task.cancel()
+    await gate.release()
+
+    do {
+        _ = try await task.value
+        Issue.record("expected cancellation")
+    } catch is CancellationError {
+        #expect(probe.snapshot().finishes == 1)
+    }
+}
+
+@available(macOS 26.0, *)
+@Test func preparationMapsEveryNonreadyResultWithoutPreparedAuthority()
+    async throws
+{
+    let base = FileManager.default.temporaryDirectory.appendingPathComponent(
+        "maccompanion-application-preparation-nonready-\(UUID())",
+        isDirectory: true
+    )
+    try FileManager.default.createDirectory(
+        at: base,
+        withIntermediateDirectories: false,
+        attributes: [.posixPermissions: 0o700]
+    )
+    defer { try? FileManager.default.removeItem(at: base) }
+    let storage = try productBootstrapStorageV1(base: base)
+    let recoveryID = UUID(
+        uuidString: "018f5000-0000-7000-8000-000000000104"
+    )!
+    let roots: [MacAgentPreparedApplicationRootResultV1] = [
+        .waitForFirstUnlock,
+        .requireLocalRecovery(.missingEstablishedKey),
+        .recoveryFenced(recoveryID),
+    ]
+
+    for root in roots {
+        let probe = ProductApplicationPreparationProbeV1()
+        let result = try await productApplicationPrepareV1(
+            storage: storage,
+            intent: nil,
+            probe: probe,
+            loader: ProductBootstrapCountingLoaderV1(),
+            prepareRoot: { _, _ in root }
+        )
+        switch (root, result) {
+        case (.waitForFirstUnlock, .waitForFirstUnlock),
+             (
+                .requireLocalRecovery(.missingEstablishedKey),
+                .requireLocalRecovery(.missingEstablishedKey)
+             ),
+             (.recoveryFenced(recoveryID), .recoveryFenced(recoveryID)):
+            break
+        default:
+            Issue.record("nonready result mapping changed")
+        }
+        #expect(probe.snapshot().finishes == 0)
+    }
+}
+
+@available(macOS 26.0, *)
+@Test func preparationReopensExactDurableIntentDirectory()
+    async throws
+{
+    let base = FileManager.default.temporaryDirectory.appendingPathComponent(
+        "maccompanion-application-preparation-reopen-\(UUID())",
+        isDirectory: true
+    )
+    try FileManager.default.createDirectory(
+        at: base,
+        withIntermediateDirectories: false,
+        attributes: [.posixPermissions: 0o700]
+    )
+    defer { try? FileManager.default.removeItem(at: base) }
+    let makeStorage: @Sendable () throws -> MacAgentReleaseStorageV1 = {
+        try productBootstrapStorageV1(base: base)
+    }
+    let loader = ProductBootstrapCountingLoaderV1()
+
+    func prepare() async throws -> ProductLifecycleState {
+        let capture = ProductApplicationPreparationProbeV1()
+        _ = try await MacAgentApplicationPreparationFacadeV1.prepare(
+            makeStorage: makeStorage,
+            makeIntentStore: {
+                try AtomicFileMacRemoteAccessIntentStoreV1(directory: $0)
+            },
+            makePrimaryInputs: { state in
+                capture.record(state)
+                return try productBootstrapInputsV1(
+                    loader: loader,
+                    lifecycleState: state
+                )
+            },
+            prepareRoot: { _, _ in .waitForFirstUnlock }
+        )
+        return try #require(capture.snapshot().states.last)
+    }
+
+    #expect(!(try await prepare()).desiredEnabled)
+    let storage = try makeStorage()
+    let store = try AtomicFileMacRemoteAccessIntentStoreV1(
+        directory: storage.paths.remoteAccessIntentDirectory
+    )
+    #expect(
+        try await store.replaceAtomically(
+            productApplicationIntentV1(enabled: true),
+            expectedRevision: nil
+        ) == .inserted
+    )
+    let restored = try await prepare()
+    #expect(restored.desiredEnabled)
+    #expect(restored.consoleSession == .otherConsoleUserActive)
+    #expect(restored.agent == .starting)
+    #expect(restored.menuApp == .starting)
 }
 
 @available(macOS 26.0, *)
