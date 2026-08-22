@@ -177,19 +177,18 @@ def main() -> int:
             selector = f"{plan.cpu_type},{plan.cpu_subtype}"
             identity = plan.identity_invocation.arguments
             entitlements = plan.entitlements_invocation.arguments
-            if identity[:5] != (
+            if identity[:4] != (
                 "--display",
                 "--verbose=4",
                 "--requirements",
                 "-",
-                "--extract-certificates",
             ):
                 raise RuntimeError("identity inspection plan changed fixed option order")
-            if identity[5] != str(plan.certificate_prefix):
+            if identity[4] != f"--extract-certificates={plan.certificate_prefix}":
                 raise RuntimeError("identity inspection plan lost its certificate prefix")
-            if identity[6:8] != ("--architecture", selector):
+            if identity[5:7] != ("--architecture", selector):
                 raise RuntimeError("identity inspection plan lost its exact CPU tuple")
-            if Path(identity[8]) != plan.owned_subject_path:
+            if Path(identity[7]) != plan.owned_subject_path:
                 raise RuntimeError("identity inspection plan lost its owned subject")
             if entitlements[:6] != (
                 "--display",

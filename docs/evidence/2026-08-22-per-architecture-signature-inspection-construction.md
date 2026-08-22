@@ -2,6 +2,10 @@
 
 Date: 2026-08-22
 
+Execution status: the plan and parser construction claims below remain
+current. Their execution-time non-claims are superseded by the
+[protected execution checkpoint](2026-08-22-per-architecture-signature-inspection-execution.md).
+
 ## Claim
 
 The protected signing collector now has a graph-derived, shell-free inspection
@@ -80,11 +84,10 @@ of `scripts/validate.sh`.
 
 ## Non-claims and next gate
 
-No protected per-architecture command has yet collected and normalized real
-certificate files, and no real signed candidate is asserted to match policy.
-DER entitlement semantics, fixed invocation execution with before/after subject
-rehashing, exact certificate-file retention, full policy-record composition,
-outer recursive verification, notarization, stapling, Gatekeeper, and canonical
-evidence publication remain open. Synthetic fixture values are not production
-policy or identity authority.
-
+The protected executor now performs before/after subject rehashing, exact
+certificate-file retention, and policy correlation. Its positive execution
+fixture injects bounded Apple-tool output, so no real signed candidate is
+asserted to match policy. DER entitlement semantics, outer recursive
+verification, notarization, stapling, Gatekeeper, and canonical evidence
+publication remain open. Synthetic fixture values are not production policy or
+identity authority.

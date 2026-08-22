@@ -2,15 +2,41 @@
 
 from __future__ import annotations
 
+import hashlib
+import os
 import re
+import stat
+from pathlib import Path
 from typing import Any
 
 from platform_code_signature import (
     PlatformCodeSignatureError,
+    compare_architecture_to_policy,
     entitlement_policy_from_plist,
+    inspect_embedded_signature,
 )
-from platform_codesign_verification import INVOCATION_RESULT_KEYS
-from platform_signing_subjects import PlannedCodeSignArchitectureInspection
+from platform_codesign_verification import (
+    INVOCATION_RESULT_KEYS,
+    PlatformCodesignVerificationError,
+    _composition_by_id,
+    _read_raw_reference,
+    _rehash_subject,
+    parse_codesign_verification_output,
+)
+from platform_signing_fixed_tools import (
+    FixedToolError,
+    run_fixed_tool_invocation,
+)
+from platform_signing_subjects import (
+    PlatformSigningSubjectError,
+    PlannedCodeSignArchitectureInspection,
+    ReconstructedSigningSubject,
+    _private_root_provenance,
+    _require_permitted_extended_attributes,
+    derive_codesign_architecture_inspection_plans,
+    derive_codesign_verification_plans,
+)
+from signing_policy import SigningPolicyError, validate_policy
 
 
 SHA1_PATTERN = re.compile(r"^[0-9a-f]{40}$")
@@ -20,6 +46,17 @@ REQUIREMENT_LINE = re.compile(r"^[a-z][a-z0-9-]{0,31} => .{1,4096}$")
 MAX_DISPLAY_LINES = 256
 MAX_REQUIREMENT_LINES = 8
 MAX_LINE_BYTES = 4096
+MAX_CERTIFICATE_FILES = 8
+MAX_CERTIFICATE_BYTES = 1024 * 1024
+CERTIFICATE_REFERENCE_KEYS = {"path", "bytes", "sha256"}
+VERIFICATION_RECORD_KEYS = {
+    "artifactID",
+    "objectPath",
+    "subjectBefore",
+    "invocation",
+    "verification",
+    "subjectAfter",
+}
 
 
 class PlatformCodesignInspectionError(ValueError):
@@ -131,7 +168,7 @@ def parse_identity_inspection_output(
         "Identifier": [],
         "CandidateCDHashFull sha256": [],
         "CDHash": [],
-        "Signature": [],
+        "Signature size": [],
         "TeamIdentifier": [],
         "Timestamp": [],
         "Authority": [],
@@ -145,16 +182,15 @@ def parse_identity_inspection_output(
     identifier = _single(keys, "Identifier")
     code_directory_sha256 = _single(keys, "CandidateCDHashFull sha256")
     cdhash = _single(keys, "CDHash")
-    signature = _single(keys, "Signature")
+    signature = _single(keys, "Signature size")
     team_identifier = _single(keys, "TeamIdentifier")
     if (
         not identifier
         or SHA256_PATTERN.fullmatch(code_directory_sha256) is None
         or SHA1_PATTERN.fullmatch(cdhash) is None
         or cdhash != code_directory_sha256[:40]
-        or not signature.startswith("size=")
-        or not signature[5:].isdigit()
-        or int(signature[5:]) <= 0
+        or not signature.isdigit()
+        or int(signature) <= 0
         or TEAM_PATTERN.fullmatch(team_identifier) is None
         or not keys["Authority"]
         or len(keys["Authority"]) > 8
@@ -180,7 +216,7 @@ def parse_identity_inspection_output(
             "teamIdentifier": team_identifier,
             "codeDirectorySHA256": code_directory_sha256,
             "cdhash": cdhash,
-            "signatureBytes": int(signature[5:]),
+            "signatureBytes": int(signature),
             "secureTimestampPresent": bool(keys["Timestamp"]),
             "authorityCount": len(keys["Authority"]),
             "explicitDesignatedRequirementReported": True,
@@ -266,3 +302,559 @@ def correlate_codesign_inspection(
         "explicitDesignatedRequirementReported": True,
         "entitlementsMatched": True,
     }
+
+
+def _architecture_key(
+    plan: PlannedCodeSignArchitectureInspection,
+) -> tuple[str, str, int, int]:
+    return (
+        plan.artifact_id,
+        plan.source_path,
+        plan.cpu_type,
+        plan.cpu_subtype,
+    )
+
+
+def _graph_architectures(
+    graph: dict[str, Any],
+) -> dict[tuple[str, str, int, int], dict[str, Any]]:
+    artifacts = graph.get("artifacts")
+    if not isinstance(artifacts, list):
+        raise PlatformCodesignInspectionError(
+            "signed-code graph is unavailable for architecture inspection"
+        )
+    result: dict[tuple[str, str, int, int], dict[str, Any]] = {}
+    for artifact in artifacts:
+        binding = artifact.get("artifact") if isinstance(artifact, dict) else None
+        artifact_id = binding.get("id") if isinstance(binding, dict) else None
+        objects = artifact.get("machOObjects") if isinstance(artifact, dict) else None
+        if not isinstance(artifact_id, str) or not isinstance(objects, list):
+            raise PlatformCodesignInspectionError(
+                "signed-code graph architecture binding is invalid"
+            )
+        for item in objects:
+            if not isinstance(item, dict):
+                raise PlatformCodesignInspectionError(
+                    "signed-code graph Mach-O object is invalid"
+                )
+            if item.get("inDistributionSubject") is not True:
+                continue
+            path = item.get("path")
+            macho = item.get("machO")
+            architectures = (
+                macho.get("architectures")
+                if isinstance(macho, dict)
+                else None
+            )
+            if not isinstance(path, str) or not isinstance(architectures, list):
+                raise PlatformCodesignInspectionError(
+                    "signed-code graph architecture inventory is invalid"
+                )
+            for architecture in architectures:
+                if not isinstance(architecture, dict):
+                    raise PlatformCodesignInspectionError(
+                        "signed-code graph architecture is invalid"
+                    )
+                key = (
+                    artifact_id,
+                    path,
+                    architecture.get("cpuType"),
+                    architecture.get("cpuSubtype"),
+                )
+                if (
+                    not isinstance(key[2], int)
+                    or isinstance(key[2], bool)
+                    or not isinstance(key[3], int)
+                    or isinstance(key[3], bool)
+                    or key in result
+                ):
+                    raise PlatformCodesignInspectionError(
+                        "signed-code graph architecture key is ambiguous"
+                    )
+                result[key] = architecture
+    if not result:
+        raise PlatformCodesignInspectionError(
+            "signed-code graph architecture inventory is empty"
+        )
+    return result
+
+
+def _policy_architectures(
+    policy: dict[str, Any],
+) -> dict[tuple[str, str, int, int], dict[str, Any]]:
+    try:
+        validated = validate_policy(policy)
+    except SigningPolicyError as error:
+        raise PlatformCodesignInspectionError(
+            "signing policy is invalid for architecture inspection"
+        ) from error
+    result: dict[tuple[str, str, int, int], dict[str, Any]] = {}
+    for artifact in validated["artifacts"]:
+        artifact_id = artifact["artifact"]["id"]
+        for item in artifact["objects"]:
+            for architecture in item["architectures"]:
+                key = (
+                    artifact_id,
+                    item["path"],
+                    architecture["cpuType"],
+                    architecture["cpuSubtype"],
+                )
+                if key in result:
+                    raise PlatformCodesignInspectionError(
+                        "signing-policy architecture key is ambiguous"
+                    )
+                result[key] = architecture
+    if not result:
+        raise PlatformCodesignInspectionError(
+            "signing-policy architecture inventory is empty"
+        )
+    return result
+
+
+def _certificate_entry_names(prefix: Path, work_root: Path) -> list[str]:
+    if (
+        not prefix.is_absolute()
+        or prefix.parent != work_root
+        or not prefix.name
+        or len(prefix.name.encode("utf-8")) > 128
+    ):
+        raise PlatformCodesignInspectionError(
+            "certificate prefix is outside the fixed working root"
+        )
+    try:
+        names = [
+            entry.name
+            for entry in os.scandir(work_root)
+            if entry.name.startswith(prefix.name)
+        ]
+    except OSError as error:
+        raise PlatformCodesignInspectionError(
+            "certificate output inventory is unavailable"
+        ) from error
+    return sorted(names)
+
+
+def _require_certificate_prefix_clear(prefix: Path, work_root: Path) -> None:
+    if _certificate_entry_names(prefix, work_root):
+        raise PlatformCodesignInspectionError(
+            "certificate output prefix already exists"
+        )
+
+
+def _retain_certificate_file(path: Path, work_root: Path) -> dict[str, Any]:
+    flags = os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
+    try:
+        descriptor = os.open(path, flags)
+    except OSError as error:
+        raise PlatformCodesignInspectionError(
+            "extracted certificate is unavailable without following links"
+        ) from error
+    try:
+        initial = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(initial.st_mode)
+            or initial.st_uid != os.geteuid()
+            or initial.st_nlink != 1
+            or not 0 < initial.st_size <= MAX_CERTIFICATE_BYTES
+            or stat.S_IMODE(initial.st_mode) & 0o022
+        ):
+            raise PlatformCodesignInspectionError(
+                "extracted certificate has unsafe filesystem facts"
+            )
+        os.fchmod(descriptor, 0o600)
+        os.fsync(descriptor)
+        retained = os.fstat(descriptor)
+        if stat.S_IMODE(retained.st_mode) != 0o600:
+            raise PlatformCodesignInspectionError(
+                "extracted certificate could not be retained privately"
+            )
+        try:
+            provenance = _private_root_provenance(work_root)
+            _require_permitted_extended_attributes(path, provenance)
+        except PlatformSigningSubjectError as error:
+            raise PlatformCodesignInspectionError(
+                "extracted certificate has unsafe platform metadata"
+            ) from error
+        digest = hashlib.sha256()
+        size = 0
+        while True:
+            chunk = os.read(descriptor, 64 * 1024)
+            if not chunk:
+                break
+            size += len(chunk)
+            if size > MAX_CERTIFICATE_BYTES:
+                raise PlatformCodesignInspectionError(
+                    "extracted certificate exceeded its retained bound"
+                )
+            digest.update(chunk)
+        after = os.fstat(descriptor)
+        pathname = path.lstat()
+        stable_fields = (
+            "st_dev",
+            "st_ino",
+            "st_mode",
+            "st_uid",
+            "st_nlink",
+            "st_size",
+            "st_mtime_ns",
+            "st_ctime_ns",
+        )
+        if (
+            size != retained.st_size
+            or any(getattr(retained, key) != getattr(after, key) for key in stable_fields)
+            or any(getattr(after, key) != getattr(pathname, key) for key in stable_fields)
+        ):
+            raise PlatformCodesignInspectionError(
+                "extracted certificate changed during retention"
+            )
+    except OSError as error:
+        raise PlatformCodesignInspectionError(
+            "extracted certificate could not be retained"
+        ) from error
+    finally:
+        os.close(descriptor)
+    return {
+        "path": path.name,
+        "bytes": size,
+        "sha256": digest.hexdigest(),
+    }
+
+
+def _retain_extracted_certificates(
+    prefix: Path,
+    work_root: Path,
+) -> list[dict[str, Any]]:
+    names = _certificate_entry_names(prefix, work_root)
+    expected = [
+        f"{prefix.name}{index}"
+        for index in range(len(names))
+    ]
+    if (
+        not 1 <= len(names) <= MAX_CERTIFICATE_FILES
+        or names != expected
+    ):
+        raise PlatformCodesignInspectionError(
+            "extracted certificate inventory is not contiguous and bounded"
+        )
+    references = [
+        _retain_certificate_file(work_root / name, work_root)
+        for name in names
+    ]
+    if any(set(reference) != CERTIFICATE_REFERENCE_KEYS for reference in references):
+        raise PlatformCodesignInspectionError(
+            "extracted certificate reference is not closed"
+        )
+    return references
+
+
+def _validated_verification_prerequisites(
+    *,
+    records: list[dict[str, Any]],
+    reconstructed: list[ReconstructedSigningSubject],
+    composition: dict[str, Any],
+    graph: dict[str, Any],
+    team_id: str,
+    work_root: Path,
+    codesign_tool: Any,
+) -> dict[tuple[str, str], dict[str, Any]]:
+    try:
+        expected_plans = derive_codesign_verification_plans(
+            graph=graph,
+            reconstructed=reconstructed,
+            team_id=team_id,
+            codesign_tool=codesign_tool,
+        )
+        entries_by_id = _composition_by_id(composition)
+    except (PlatformSigningSubjectError, PlatformCodesignVerificationError) as error:
+        raise PlatformCodesignInspectionError(
+            "whole-subject verification prerequisites could not be rederived"
+        ) from error
+    if len(records) != len(expected_plans):
+        raise PlatformCodesignInspectionError(
+            "whole-subject verification record set is incomplete"
+        )
+    subjects_by_id = {item.artifact_id: item for item in reconstructed}
+    result: dict[tuple[str, str], dict[str, Any]] = {}
+    for expected, record in zip(expected_plans, records, strict=True):
+        key = (expected.artifact_id, expected.object_path)
+        subject = subjects_by_id.get(expected.artifact_id)
+        entries = entries_by_id.get(expected.artifact_id)
+        if (
+            not isinstance(record, dict)
+            or set(record) != VERIFICATION_RECORD_KEYS
+            or record.get("artifactID") != expected.artifact_id
+            or record.get("objectPath") != expected.object_path
+            or not isinstance(record.get("invocation"), dict)
+            or key in result
+            or subject is None
+            or entries is None
+        ):
+            raise PlatformCodesignInspectionError(
+                "whole-subject verification record differs from its exact plan"
+            )
+        try:
+            current = _rehash_subject(subject, entries, work_root)
+            stdout = _read_raw_reference(
+                work_root,
+                record["invocation"].get("stdout"),
+                f"{expected.invocation.invocation_id}.stdout",
+            )
+            stderr = _read_raw_reference(
+                work_root,
+                record["invocation"].get("stderr"),
+                f"{expected.invocation.invocation_id}.stderr",
+            )
+            parsed = parse_codesign_verification_output(
+                expected,
+                record["invocation"],
+                stdout,
+                stderr,
+            )
+        except PlatformCodesignVerificationError as error:
+            raise PlatformCodesignInspectionError(
+                "whole-subject verification evidence failed reinspection"
+            ) from error
+        if (
+            record["subjectBefore"] != current
+            or record["subjectAfter"] != current
+            or record["verification"] != parsed
+            or parsed.get("status") != "passed"
+            or parsed.get("messages") != [
+                "validOnDisk",
+                "satisfiesDesignatedRequirement",
+                "explicitRequirementSatisfied",
+            ]
+        ):
+            raise PlatformCodesignInspectionError(
+                "whole-subject verification did not pass unchanged"
+            )
+        result[key] = {
+            "artifactID": expected.artifact_id,
+            "objectPath": expected.object_path,
+            "invocationID": expected.invocation.invocation_id,
+            "status": "passed",
+            "codesignVerified": True,
+            "explicitRequirementVerified": True,
+        }
+    return result
+
+
+def execute_codesign_architecture_inspection_plans(
+    *,
+    plans: list[PlannedCodeSignArchitectureInspection],
+    reconstructed: list[ReconstructedSigningSubject],
+    composition: dict[str, Any],
+    graph: dict[str, Any],
+    policy: dict[str, Any],
+    verification_records: list[dict[str, Any]],
+    team_id: str,
+    work_root: Path,
+) -> list[dict[str, Any]]:
+    if not plans:
+        raise PlatformCodesignInspectionError(
+            "codesign architecture inspection plan set is empty"
+        )
+    tool = plans[0].identity_invocation.tool
+    try:
+        expected_plans = derive_codesign_architecture_inspection_plans(
+            graph=graph,
+            reconstructed=reconstructed,
+            codesign_tool=tool,
+        )
+        entries_by_id = _composition_by_id(composition)
+    except (PlatformSigningSubjectError, PlatformCodesignVerificationError) as error:
+        raise PlatformCodesignInspectionError(
+            "codesign architecture inspection plans failed exact rederivation"
+        ) from error
+    if plans != expected_plans:
+        raise PlatformCodesignInspectionError(
+            "codesign architecture inspection plans differ from exact rederivation"
+        )
+    graph_by_key = _graph_architectures(graph)
+    policy_by_key = _policy_architectures(policy)
+    plan_keys = [_architecture_key(plan) for plan in plans]
+    if (
+        len(set(plan_keys)) != len(plan_keys)
+        or set(plan_keys) != set(graph_by_key)
+        or set(plan_keys) != set(policy_by_key)
+    ):
+        raise PlatformCodesignInspectionError(
+            "graph, policy, and inspection architecture coverage differ"
+        )
+    prerequisites = _validated_verification_prerequisites(
+        records=verification_records,
+        reconstructed=reconstructed,
+        composition=composition,
+        graph=graph,
+        team_id=team_id,
+        work_root=work_root,
+        codesign_tool=tool,
+    )
+    subjects_by_id = {item.artifact_id: item for item in reconstructed}
+    if len(subjects_by_id) != len(reconstructed):
+        raise PlatformCodesignInspectionError(
+            "reconstructed signing subject set is ambiguous"
+        )
+
+    records: list[dict[str, Any]] = []
+    for plan, key in zip(plans, plan_keys, strict=True):
+        subject = subjects_by_id.get(plan.artifact_id)
+        entries = entries_by_id.get(plan.artifact_id)
+        prerequisite = prerequisites.get((plan.artifact_id, plan.object_path))
+        if subject is None or entries is None or prerequisite is None:
+            raise PlatformCodesignInspectionError(
+                "architecture inspection lacks a passed exact-subject prerequisite"
+            )
+        before = _rehash_subject(subject, entries, work_root)
+        try:
+            embedded = inspect_embedded_signature(
+                object_path=plan.owned_source_path,
+                graph_architecture=graph_by_key[key],
+            )
+        except PlatformCodeSignatureError as error:
+            raise PlatformCodesignInspectionError(
+                "embedded architecture signature failed independent inspection"
+            ) from error
+
+        _require_certificate_prefix_clear(plan.certificate_prefix, work_root)
+        try:
+            identity_result = run_fixed_tool_invocation(
+                plan.identity_invocation,
+                work_root,
+            )
+        except FixedToolError as error:
+            raise PlatformCodesignInspectionError(
+                "fixed identity inspection could not produce evidence"
+            ) from error
+        after_identity = _rehash_subject(subject, entries, work_root)
+        if before != after_identity:
+            raise PlatformCodesignInspectionError(
+                "reconstructed subject changed during identity inspection"
+            )
+        if identity_result.get("passed") is True:
+            certificate_files = _retain_extracted_certificates(
+                plan.certificate_prefix,
+                work_root,
+            )
+        else:
+            if _certificate_entry_names(plan.certificate_prefix, work_root):
+                raise PlatformCodesignInspectionError(
+                    "failed identity inspection produced certificate files"
+                )
+            certificate_files = []
+        try:
+            identity_stdout = _read_raw_reference(
+                work_root,
+                identity_result.get("stdout"),
+                f"{plan.identity_invocation.invocation_id}.stdout",
+            )
+            identity_stderr = _read_raw_reference(
+                work_root,
+                identity_result.get("stderr"),
+                f"{plan.identity_invocation.invocation_id}.stderr",
+            )
+        except PlatformCodesignVerificationError as error:
+            raise PlatformCodesignInspectionError(
+                "identity inspection raw evidence failed reinspection"
+            ) from error
+        identity = parse_identity_inspection_output(
+            plan,
+            identity_result,
+            identity_stdout,
+            identity_stderr,
+            [item["sha256"] for item in certificate_files],
+        )
+
+        try:
+            entitlements_result = run_fixed_tool_invocation(
+                plan.entitlements_invocation,
+                work_root,
+            )
+        except FixedToolError as error:
+            raise PlatformCodesignInspectionError(
+                "fixed entitlement inspection could not produce evidence"
+            ) from error
+        after = _rehash_subject(subject, entries, work_root)
+        if after_identity != after:
+            raise PlatformCodesignInspectionError(
+                "reconstructed subject changed during entitlement inspection"
+            )
+        try:
+            entitlements_stdout = _read_raw_reference(
+                work_root,
+                entitlements_result.get("stdout"),
+                f"{plan.entitlements_invocation.invocation_id}.stdout",
+            )
+            entitlements_stderr = _read_raw_reference(
+                work_root,
+                entitlements_result.get("stderr"),
+                f"{plan.entitlements_invocation.invocation_id}.stderr",
+            )
+        except PlatformCodesignVerificationError as error:
+            raise PlatformCodesignInspectionError(
+                "entitlement inspection raw evidence failed reinspection"
+            ) from error
+        entitlements = parse_entitlements_inspection_output(
+            plan,
+            entitlements_result,
+            entitlements_stdout,
+            entitlements_stderr,
+        )
+
+        if identity["status"] == "passed" and entitlements["status"] == "passed":
+            correlated = correlate_codesign_inspection(
+                embedded_facts=embedded,
+                identity_inspection=identity,
+                entitlements_inspection=entitlements,
+            )
+            try:
+                policy_result = compare_architecture_to_policy(
+                    facts=embedded,
+                    policy_architecture=policy_by_key[key],
+                    leaf_certificate_sha256=correlated["leafCertificateSHA256"],
+                    secure_timestamp_present=correlated["secureTimestampPresent"],
+                    codesign_verified=prerequisite["codesignVerified"],
+                    explicit_requirement_verified=prerequisite[
+                        "explicitRequirementVerified"
+                    ],
+                )
+            except PlatformCodeSignatureError as error:
+                raise PlatformCodesignInspectionError(
+                    "architecture signature differs from signing policy"
+                ) from error
+            status = "passed"
+            reason = None
+        else:
+            correlated = None
+            policy_result = None
+            status = "failed"
+            reason = (
+                identity["reason"]
+                if identity["status"] != "passed"
+                else entitlements["reason"]
+            )
+        records.append({
+            "artifactID": plan.artifact_id,
+            "sourcePath": plan.source_path,
+            "objectPath": plan.object_path,
+            "architectureSelector": {
+                "cpuType": plan.cpu_type,
+                "cpuSubtype": plan.cpu_subtype,
+            },
+            "status": status,
+            "reason": reason,
+            "platformAcceptanceEligible": False,
+            "verificationPrerequisite": prerequisite,
+            "subjectBefore": before,
+            "embeddedSignature": embedded,
+            "identityInvocation": identity_result,
+            "certificateFiles": certificate_files,
+            "identityInspection": identity,
+            "subjectAfterIdentity": after_identity,
+            "entitlementsInvocation": entitlements_result,
+            "entitlementsInspection": entitlements,
+            "correlation": correlated,
+            "policyComparison": policy_result,
+            "subjectAfter": after,
+        })
+    return records

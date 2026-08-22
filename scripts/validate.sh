@@ -24,6 +24,7 @@ python3 scripts/validate_platform_signing_subjects.py
 python3 scripts/validate_platform_codesign_verification.py
 python3 scripts/validate_platform_code_signature.py
 python3 scripts/validate_platform_codesign_inspection.py
+python3 scripts/validate_platform_codesign_inspection_execution.py
 python3 scripts/validate_mac_packaging_equivalence.py
 python3 scripts/validate_release_evidence.py
 python3 scripts/validate_native_appearance_boundary.py

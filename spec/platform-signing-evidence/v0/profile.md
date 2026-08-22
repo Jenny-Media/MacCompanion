@@ -150,10 +150,18 @@ any DER entitlement slot therefore fails this construction checkpoint. It may
 not be ignored, treated as equal to an XML sibling, or authorized from
 `codesign --entitlements --xml` alone.
 
-Fixed identity/requirement display and entitlement-display plans and bounded
-parsers now exist as independent cross-checks. Execution-time certificate-file
-collection, DER semantic equality, and assembly into the canonical evidence
-record remain required before this section can contribute to acceptance.
+Fixed identity/requirement display and entitlement-display plans, bounded
+parsers, and protected execution now exist as independent cross-checks. The
+executor requires passed and freshly revalidated whole-subject verification,
+rehashes the complete reconstructed subject around each call, and retains only
+contiguous certificate files opened without following links, bounded to eight
+1 MiB files, descriptor-hashed, synchronized, and mode `0600`. A failed
+identity invocation may not leave certificate output or contribute facts.
+
+Every composed architecture result remains
+`platformAcceptanceEligible: false`. DER semantic equality and assembly into
+the canonical evidence record remain required before this section can
+contribute to acceptance.
 
 For the final application and disk image it additionally retains Gatekeeper
 assessment, accepted notarization correlation, and stapling validation against
