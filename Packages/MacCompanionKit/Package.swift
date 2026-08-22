@@ -298,11 +298,16 @@ let package = Package(
             name: "CompanionAgentProductPlatform",
             dependencies: [
                 "CompanionAgent", "CompanionAgentNetworkPlatform",
-                "CompanionAgentPlatform", "CompanionHostPlatform",
+                "CompanionAgentPlatform", "CompanionDomain",
+                "CompanionHostPlatform",
                 "CompanionDiscovery", "CompanionIPC",
                 "CompanionLocalXPCPlatform",
                 "CompanionNetworkPlatform",
-                "CompanionSecurity",
+                "CompanionSecurity", "CompanionWire",
+            ],
+            linkerSettings: [
+                .linkedFramework("AppKit", .when(platforms: [.macOS])),
+                .linkedFramework("CoreGraphics", .when(platforms: [.macOS])),
             ]
         ),
         .target(

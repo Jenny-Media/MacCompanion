@@ -75,6 +75,15 @@ nonescaping product owner and leaves readiness to Network callbacks. Live
 request-context composition, permanent-target activation, and signed
 two-process evidence remain gated.
 
+The [conservative network request-context checkpoint](evidence/2026-08-22-conservative-network-request-contexts.md)
+now supplies live clocks, unique response IDs, and an owned public macOS
+session/lifecycle source for that listener seam. [Primary-source API
+research](research/2026-08-22-public-macos-session-state.md) found no documented
+lock-state discriminator: same-user/on-console/login-complete remains ambiguous
+and maps to `otherConsoleUserActive`, never unlocked or locked. Sleep and
+terminal lifecycle signals fail closed. Permanent-target invocation, Act and
+Control availability, and signed runtime evidence remain separate gates.
+
 Local device administration now includes a [bundle-independent active-revoke
 convergence path](evidence/2026-08-21-local-device-revocation-convergence.md):
 closed five-minute review/command/receipt values, an independent primary-ingress
