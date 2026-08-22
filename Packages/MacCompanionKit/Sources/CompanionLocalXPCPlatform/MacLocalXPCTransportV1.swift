@@ -40,12 +40,22 @@ public enum MacLocalXPCServerProfileV1: Equatable, Sendable {
     /// This profile requires an injected reader from the complete Agent root.
     case menuLifecycleReadinessAndStatus
 
+    /// Package-only construction profile that additionally issues the five
+    /// authenticated Agent-to-menu presentation capabilities after readiness.
+    /// Permanent product roots must opt in explicitly.
+    case menuLifecycleReadinessStatusAndPresentation
+
     var admitsMenuLifecycleReadiness: Bool {
         self != .authenticationOnly
     }
 
     var admitsAgentStatus: Bool {
         self == .menuLifecycleReadinessAndStatus
+            || self == .menuLifecycleReadinessStatusAndPresentation
+    }
+
+    var admitsMenuPresentation: Bool {
+        self == .menuLifecycleReadinessStatusAndPresentation
     }
 }
 
@@ -273,8 +283,13 @@ struct MacLocalXPCPendingCandidateGateV1: Sendable {
 }
 
 @available(macOS 26.0, *)
-public final class MacLocalXPCServerV1: @unchecked Sendable {
+public final class MacLocalXPCServerV1:
+    @unchecked Sendable,
+    MacLocalXPCMenuPresentationSendingV1
+{
     public typealias EventHandler = @Sendable (MacLocalXPCServerEventV1) -> Void
+    package static let maximumAdmittedPresentationsPerGeneration = 8
+    package static let presentationReplyTimeoutSeconds = 3
 
     private final class PendingStatusRead: @unchecked Sendable {
         let operation: UInt64
@@ -296,6 +311,61 @@ public final class MacLocalXPCServerV1: @unchecked Sendable {
         }
     }
 
+    private final class PresentationCancellationMarker: @unchecked Sendable {
+        private let lock = NSLock()
+        private var cancelled = false
+
+        func markCancelled() {
+            lock.lock()
+            cancelled = true
+            lock.unlock()
+        }
+
+        func isCancelled() -> Bool {
+            lock.lock()
+            defer { lock.unlock() }
+            return cancelled
+        }
+
+        func performSendUnlessCancelled<T>(
+            _ body: () -> T
+        ) -> T? {
+            lock.lock()
+            defer { lock.unlock() }
+            guard !cancelled else { return nil }
+            return body()
+        }
+    }
+
+    private final class PendingPresentation: @unchecked Sendable {
+        let requestID: UUID
+        let operation: UInt64
+        let request: MacLocalXPCMenuPresentationRequestV1
+        let cancellationMarker: PresentationCancellationMarker
+        let continuation: CheckedContinuation<
+            MacLocalXPCMenuPresentationSendOutcomeV1,
+            any Error
+        >
+        var deadline: DispatchWorkItem?
+
+        init(
+            requestID: UUID,
+            operation: UInt64,
+            request: MacLocalXPCMenuPresentationRequestV1,
+            cancellationMarker: PresentationCancellationMarker,
+            continuation: CheckedContinuation<
+                MacLocalXPCMenuPresentationSendOutcomeV1,
+                any Error
+            >
+        ) {
+            self.requestID = requestID
+            self.operation = operation
+            self.request = request
+            self.cancellationMarker = cancellationMarker
+            self.continuation = continuation
+        }
+    }
+
     private final class PeerState: @unchecked Sendable {
         let listenerGeneration: UInt64
         let generation: UInt64
@@ -303,6 +373,13 @@ public final class MacLocalXPCServerV1: @unchecked Sendable {
         var lifetime = MacLocalXPCAuthenticatedLifetimeV1()
         var statusReadGate = MacLocalXPCStatusReadTransactionGateV1()
         var pendingStatusRead: PendingStatusRead?
+        var presentationIssuanceGate:
+            MacLocalXPCMenuPresentationEndpointIssuanceGateV1
+        var presentationEndpoint:
+            MacLocalXPCAuthenticatedMenuPresentationEndpointV1?
+        var presentationFIFO: MacLocalXPCMenuPresentationFIFOStateV1
+        var pendingPresentations: [UUID: PendingPresentation] = [:]
+        var postAuthenticationFence = MacLocalXPCPostAuthenticationTrafficFenceV1()
         var handshakeDeadline: DispatchWorkItem?
         private var ownedPeer: MCLocalXPCSessionRef?
 
@@ -314,6 +391,11 @@ public final class MacLocalXPCServerV1: @unchecked Sendable {
             self.listenerGeneration = listenerGeneration
             self.generation = generation
             self.peer = peer
+            presentationIssuanceGate = .init(generation: generation)
+            presentationFIFO = .init(
+                limit: MacLocalXPCServerV1
+                    .maximumAdmittedPresentationsPerGeneration
+            )
             MCLocalXPCSessionRetain(peer)
             precondition(statusReadGate.bind(generation: generation))
             ownedPeer = peer
@@ -335,6 +417,7 @@ public final class MacLocalXPCServerV1: @unchecked Sendable {
             pendingStatusRead.task = nil
             pendingStatusRead.releaseOwnedRequest()
         }
+
     }
 
     private let queue = DispatchQueue(
@@ -462,7 +545,10 @@ public final class MacLocalXPCServerV1: @unchecked Sendable {
             for state in acceptedPeers {
                 state.handshakeDeadline?.cancel()
                 state.handshakeDeadline = nil
-                state.cancelPendingStatusRead()
+                fencePostAuthenticationTraffic(
+                    state,
+                    presentationError: .endpointUnavailable
+                )
                 if let ownedPeer = state.takeOwnedPeer() {
                     MCLocalXPCSessionCancelOwned(ownedPeer)
                 }
@@ -495,7 +581,554 @@ public final class MacLocalXPCServerV1: @unchecked Sendable {
                   peerStates[generation] === currentPeerState else {
                 return
             }
-            MCLocalXPCSessionCancel(currentPeerState.peer)
+            self.cancelAuthenticatedPeer(
+                currentPeerState,
+                presentationError: .endpointUnavailable
+            )
+        }
+    }
+
+    /// Returns the one cached opaque endpoint only for the exact current,
+    /// authenticated, ready peer under the explicit presentation profile.
+    /// The returned actor never owns or exposes the raw session.
+    package func authenticatedMenuPresentationEndpoint(
+        generation: UInt64
+    ) async -> (any MacLocalXPCAuthenticatedMenuSurfaceEndpointV1)? {
+        await withCheckedContinuation {
+            (continuation: CheckedContinuation<
+                (any MacLocalXPCAuthenticatedMenuSurfaceEndpointV1)?,
+                Never
+            >) in
+            queue.async { [weak self] in
+                guard let self,
+                      let state = currentPeerState,
+                      state.generation == generation,
+                      listenerRunGate.admits(
+                        generation: state.listenerGeneration
+                      ),
+                      peerStates[generation] === state,
+                      generationGate.admitsPostAuthenticationTraffic(
+                        generation: generation
+                      ),
+                      state.lifetime.menuReadinessPublished,
+                      state.postAuthenticationFence.admitsTraffic,
+                      !state.presentationFIFO.isTerminal,
+                      let token = state.presentationIssuanceGate.issue(
+                        generation: generation,
+                        permitted: profile.admitsMenuPresentation
+                      ) else {
+                    continuation.resume(returning: nil)
+                    return
+                }
+                if let endpoint = state.presentationEndpoint {
+                    continuation.resume(returning: endpoint)
+                    return
+                }
+                let endpoint =
+                    MacLocalXPCAuthenticatedMenuPresentationEndpointV1(
+                        generation: generation,
+                        endpointToken: token,
+                        sender: self
+                    )
+                state.presentationEndpoint = endpoint
+                continuation.resume(returning: endpoint)
+            }
+        }
+    }
+
+    package func sendMenuPresentation(
+        generation: UInt64,
+        endpointToken: UUID,
+        request: MacLocalXPCMenuPresentationRequestV1
+    ) async throws -> MacLocalXPCMenuPresentationSendOutcomeV1 {
+        let requestID = UUID()
+        let marker = PresentationCancellationMarker()
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                queue.async { [weak self] in
+                    guard let self else {
+                        continuation.resume(
+                            throwing: MacLocalXPCMenuPresentationSendErrorV1
+                                .endpointUnavailable
+                        )
+                        return
+                    }
+                    self.admitPresentation(
+                        generation: generation,
+                        endpointToken: endpointToken,
+                        requestID: requestID,
+                        request: request,
+                        cancellationMarker: marker,
+                        continuation: continuation
+                    )
+                }
+            }
+        } onCancel: { [weak self] in
+            marker.markCancelled()
+            self?.queue.async { [weak self] in
+                self?.cancelPresentationRequest(
+                    generation: generation,
+                    endpointToken: endpointToken,
+                    requestID: requestID
+                )
+            }
+        }
+    }
+
+    package func retireMenuPresentationEndpoint(
+        generation: UInt64,
+        endpointToken: UUID
+    ) async {
+        await withCheckedContinuation {
+            (continuation: CheckedContinuation<Void, Never>) in
+            queue.async { [weak self] in
+                defer { continuation.resume() }
+                guard let self,
+                      let state = currentPeerState,
+                      state.generation == generation,
+                      state.presentationIssuanceGate.token == endpointToken,
+                      peerStates[generation] === state else {
+                    return
+                }
+                self.cancelAuthenticatedPeer(
+                    state,
+                    presentationError: .retired
+                )
+            }
+        }
+    }
+
+    private func admitPresentation(
+        generation: UInt64,
+        endpointToken: UUID,
+        requestID: UUID,
+        request: MacLocalXPCMenuPresentationRequestV1,
+        cancellationMarker: PresentationCancellationMarker,
+        continuation: CheckedContinuation<
+            MacLocalXPCMenuPresentationSendOutcomeV1,
+            any Error
+        >
+    ) {
+        guard let state = currentPeerState,
+              state.generation == generation,
+              listenerRunGate.admits(generation: state.listenerGeneration),
+              peerStates[generation] === state,
+              generationGate.admitsPostAuthenticationTraffic(
+                generation: generation
+              ),
+              state.lifetime.menuReadinessPublished,
+              state.postAuthenticationFence.admitsTraffic,
+              profile.admitsMenuPresentation,
+              state.presentationIssuanceGate.token == endpointToken,
+              state.presentationEndpoint != nil,
+              !state.presentationFIFO.isTerminal,
+              authorizesAgentPresentationMethod(
+                request.authorizationMethod
+              ) else {
+            continuation.resume(
+                throwing: MacLocalXPCMenuPresentationSendErrorV1
+                    .endpointUnavailable
+            )
+            return
+        }
+        let admission = state.presentationFIFO.admit(
+            requestID: requestID,
+            cancelled: cancellationMarker.isCancelled()
+        )
+        switch admission {
+        case .cancelledBeforeAdmission:
+            continuation.resume(throwing: CancellationError())
+            return
+        case .overflow(let drainedRequestIDs):
+            continuation.resume(
+                throwing: MacLocalXPCMenuPresentationSendErrorV1
+                    .admissionOverflow
+            )
+            completePendingPresentations(
+                state,
+                requestIDs: drainedRequestIDs,
+                error: .admissionOverflow
+            )
+            cancelAuthenticatedPeer(
+                state,
+                presentationError: .admissionOverflow
+            )
+            return
+        case .operationExhausted(let drainedRequestIDs):
+            continuation.resume(
+                throwing: MacLocalXPCMenuPresentationSendErrorV1
+                    .operationExhausted
+            )
+            completePendingPresentations(
+                state,
+                requestIDs: drainedRequestIDs,
+                error: .operationExhausted
+            )
+            cancelAuthenticatedPeer(
+                state,
+                presentationError: .operationExhausted
+            )
+            return
+        case .terminal:
+            continuation.resume(
+                throwing: MacLocalXPCMenuPresentationSendErrorV1
+                    .endpointUnavailable
+            )
+            return
+        case .admitted(let operation, let startsImmediately):
+            state.pendingPresentations[requestID] = PendingPresentation(
+                requestID: requestID,
+                operation: operation,
+                request: request,
+                cancellationMarker: cancellationMarker,
+                continuation: continuation
+            )
+            if startsImmediately {
+                startNextPresentationIfNeeded(state)
+            }
+        }
+    }
+
+    private func startNextPresentationIfNeeded(_ state: PeerState) {
+        guard let head = state.presentationFIFO.head,
+              !head.sent,
+              let pending = state.pendingPresentations[head.requestID],
+              pending.operation == head.operation else {
+            return
+        }
+        guard listenerRunGate.admits(
+                generation: state.listenerGeneration
+              ),
+              peerStates[state.generation] === state,
+              currentPeerState === state,
+              generationGate.admitsPostAuthenticationTraffic(
+                generation: state.generation
+              ),
+              state.lifetime.menuReadinessPublished,
+              state.postAuthenticationFence.admitsTraffic,
+              profile.admitsMenuPresentation,
+              !state.presentationFIFO.isTerminal,
+              let token = state.presentationIssuanceGate.token,
+              state.presentationEndpoint != nil,
+              authorizesAgentPresentationMethod(
+                pending.request.authorizationMethod
+              ) else {
+            cancelAuthenticatedPeer(
+                state,
+                presentationError: .endpointUnavailable
+            )
+            return
+        }
+        let result = pending.cancellationMarker.performSendUnlessCancelled {
+            guard state.presentationFIFO.claimHeadForSend(
+                requestID: pending.requestID,
+                operation: pending.operation
+            ) else {
+                return MCLocalXPCResultConstructionFailed
+            }
+            return sendPresentationRequest(
+                pending.request,
+                on: state.peer
+            ) { [weak self, weak state] reply in
+                guard let self, let state else { return }
+                self.queue.async { [weak self, weak state] in
+                    guard let self, let state else { return }
+                    self.finishPresentationReply(
+                        state: state,
+                        endpointToken: token,
+                        operation: pending.operation,
+                        requestID: pending.requestID,
+                        reply: reply
+                    )
+                }
+            }
+        }
+        guard let result else {
+            _ = state.presentationFIFO.cancel(requestID: pending.requestID)
+            state.pendingPresentations.removeValue(
+                forKey: pending.requestID
+            )
+            pending.continuation.resume(throwing: CancellationError())
+            startNextPresentationIfNeeded(state)
+            return
+        }
+        guard result == MCLocalXPCResultOK else {
+            cancelAuthenticatedPeer(
+                state,
+                presentationError: .transportFailure
+            )
+            return
+        }
+        let deadline = DispatchWorkItem { [weak self, weak state] in
+            guard let self, let state else { return }
+            self.expirePresentation(
+                state: state,
+                endpointToken: token,
+                operation: pending.operation,
+                requestID: pending.requestID
+            )
+        }
+        pending.deadline = deadline
+        queue.asyncAfter(
+            deadline: .now() + .seconds(Self.presentationReplyTimeoutSeconds),
+            execute: deadline
+        )
+    }
+
+    private func sendPresentationRequest(
+        _ request: MacLocalXPCMenuPresentationRequestV1,
+        on peer: MCLocalXPCSessionRef,
+        reply: @escaping MCLocalXPCMenuPresentationReplyHandler
+    ) -> MCLocalXPCResult {
+        switch request {
+        case .pairingReview(let payload):
+            return payload.withUnsafeBytes { buffer in
+                guard let bytes = buffer.bindMemory(to: UInt8.self)
+                    .baseAddress else {
+                    return MCLocalXPCResultConstructionFailed
+                }
+                return MCLocalXPCSessionSendPairingReviewPublish(
+                    peer,
+                    bytes,
+                    payload.count,
+                    reply
+                )
+            }
+        case .pairingWithdrawal(let reviewID):
+            var bytes = reviewID.uuid
+            return withUnsafeBytes(of: &bytes) { buffer in
+                MCLocalXPCSessionSendPairingReviewWithdrawal(
+                    peer,
+                    buffer.bindMemory(to: UInt8.self).baseAddress!,
+                    buffer.count,
+                    reply
+                )
+            }
+        case .hostRecoveryReview(let payload):
+            return payload.withUnsafeBytes { buffer in
+                guard let bytes = buffer.bindMemory(to: UInt8.self)
+                    .baseAddress else {
+                    return MCLocalXPCResultConstructionFailed
+                }
+                return MCLocalXPCSessionSendHostRecoveryReviewPublish(
+                    peer,
+                    bytes,
+                    payload.count,
+                    reply
+                )
+            }
+        case .hostRecoveryResume(let payload):
+            return payload.withUnsafeBytes { buffer in
+                guard let bytes = buffer.bindMemory(to: UInt8.self)
+                    .baseAddress else {
+                    return MCLocalXPCResultConstructionFailed
+                }
+                return MCLocalXPCSessionSendHostRecoveryResumePublish(
+                    peer,
+                    bytes,
+                    payload.count,
+                    reply
+                )
+            }
+        case .hostRecoveryWithdrawal(let reviewID):
+            var bytes = reviewID.uuid
+            return withUnsafeBytes(of: &bytes) { buffer in
+                MCLocalXPCSessionSendHostRecoveryWithdrawal(
+                    peer,
+                    buffer.bindMemory(to: UInt8.self).baseAddress!,
+                    buffer.count,
+                    reply
+                )
+            }
+        }
+    }
+
+    private func finishPresentationReply(
+        state: PeerState,
+        endpointToken: UUID,
+        operation: UInt64,
+        requestID: UUID,
+        reply: MCLocalXPCMenuPresentationReply
+    ) {
+        guard listenerRunGate.admits(
+                generation: state.listenerGeneration
+              ),
+              peerStates[state.generation] === state,
+              currentPeerState === state,
+              generationGate.admitsPostAuthenticationTraffic(
+                generation: state.generation
+              ),
+              state.presentationIssuanceGate.token == endpointToken,
+              state.presentationFIFO.admitsActiveCallback(
+                requestID: requestID,
+                operation: operation
+              ),
+              let pending = state.pendingPresentations[requestID],
+              pending.operation == operation else {
+            return
+        }
+        pending.deadline?.cancel()
+        pending.deadline = nil
+        switch reply {
+        case MCLocalXPCMenuPresentationReplyAcknowledged:
+            guard state.presentationFIFO.completeHead(
+                requestID: requestID,
+                operation: operation
+            ) else { return }
+            state.pendingPresentations.removeValue(forKey: requestID)
+            pending.continuation.resume(returning: .acknowledged)
+            startNextPresentationIfNeeded(state)
+        case MCLocalXPCMenuPresentationReplyRejected:
+            guard pending.request.isPublish else {
+                cancelAuthenticatedPeer(
+                    state,
+                    presentationError: .transportFailure
+                )
+                return
+            }
+            guard state.presentationFIFO.completeHead(
+                requestID: requestID,
+                operation: operation
+            ) else { return }
+            state.pendingPresentations.removeValue(forKey: requestID)
+            pending.continuation.resume(
+                returning: .rejectedWithoutRetainedState
+            )
+            startNextPresentationIfNeeded(state)
+        default:
+            cancelAuthenticatedPeer(
+                state,
+                presentationError: .transportFailure
+            )
+        }
+    }
+
+    private func expirePresentation(
+        state: PeerState,
+        endpointToken: UUID,
+        operation: UInt64,
+        requestID: UUID
+    ) {
+        guard peerStates[state.generation] === state,
+              currentPeerState === state,
+              state.presentationIssuanceGate.token == endpointToken,
+              state.presentationFIFO.admitsActiveCallback(
+                requestID: requestID,
+                operation: operation
+              ) else {
+            return
+        }
+        cancelAuthenticatedPeer(state, presentationError: .replyTimedOut)
+    }
+
+    private func cancelPresentationRequest(
+        generation: UInt64,
+        endpointToken: UUID,
+        requestID: UUID
+    ) {
+        guard let state = currentPeerState,
+              state.generation == generation,
+              state.presentationIssuanceGate.token == endpointToken else {
+            return
+        }
+        switch state.presentationFIFO.cancel(requestID: requestID) {
+        case .absent:
+            return
+        case .cancelledBeforeSend:
+            guard let pending = state.pendingPresentations.removeValue(
+                forKey: requestID
+            ) else { return }
+            pending.continuation.resume(throwing: CancellationError())
+        case .terminalAfterSend(let drainedRequestIDs):
+            completePendingPresentations(
+                state,
+                requestIDs: drainedRequestIDs,
+                error: .cancelledAfterSend
+            )
+            cancelAuthenticatedPeer(
+                state,
+                presentationError: .cancelledAfterSend
+            )
+        }
+    }
+
+    private func fencePresentations(
+        _ state: PeerState,
+        error: MacLocalXPCMenuPresentationSendErrorV1
+    ) {
+        state.presentationIssuanceGate.invalidate(
+            generation: state.generation
+        )
+        let requestIDs = state.presentationFIFO.fence()
+        completePendingPresentations(
+            state,
+            requestIDs: requestIDs,
+            error: error
+        )
+        // A terminal state created by overflow or active cancellation already
+        // supplied its drain list to the caller. This invariant fallback keeps
+        // exact-once completion fail-closed if future glue violates that order.
+        if !state.pendingPresentations.isEmpty {
+            completePendingPresentations(
+                state,
+                requestIDs: Array(state.pendingPresentations.keys),
+                error: error
+            )
+        }
+    }
+
+    private func completePendingPresentations(
+        _ state: PeerState,
+        requestIDs: [UUID],
+        error: MacLocalXPCMenuPresentationSendErrorV1
+    ) {
+        for requestID in requestIDs {
+            guard let pending = state.pendingPresentations.removeValue(
+                forKey: requestID
+            ) else {
+                continue
+            }
+            pending.deadline?.cancel()
+            pending.deadline = nil
+            pending.continuation.resume(throwing: error)
+        }
+    }
+
+    private func cancelAuthenticatedPeer(
+        _ state: PeerState,
+        presentationError: MacLocalXPCMenuPresentationSendErrorV1
+    ) {
+        fencePostAuthenticationTraffic(
+            state,
+            presentationError: presentationError
+        )
+        guard state.postAuthenticationFence
+                .claimSessionCancellation() else { return }
+        MCLocalXPCSessionCancel(state.peer)
+    }
+
+    private func fencePostAuthenticationTraffic(
+        _ state: PeerState,
+        presentationError: MacLocalXPCMenuPresentationSendErrorV1
+    ) {
+        guard state.postAuthenticationFence.fence() else { return }
+        state.cancelPendingStatusRead()
+        fencePresentations(state, error: presentationError)
+    }
+
+    private func authorizesAgentPresentationMethod(
+        _ method: LocalIPCMethod
+    ) -> Bool {
+        do {
+            try LocalIPCAuthorizationPolicy.authorize(
+                authenticatedCaller: .agent,
+                endpoint: .menuApp,
+                method: method,
+                version: .init()
+            )
+            return true
+        } catch {
+            return false
         }
     }
 
@@ -537,6 +1170,10 @@ public final class MacLocalXPCServerV1: @unchecked Sendable {
                   self.peerStates[state.generation] === state else {
                 return
             }
+            self.fencePostAuthenticationTraffic(
+                state,
+                presentationError: .endpointUnavailable
+            )
             self.peerStates.removeValue(forKey: state.generation)
             self.pendingGate.remove(generation: state.generation)
             if self.currentPeerState === state {
@@ -584,7 +1221,10 @@ public final class MacLocalXPCServerV1: @unchecked Sendable {
                     replaced.handshakeDeadline?.cancel()
                     replaced.handshakeDeadline = nil
                     _ = replaced.lifetime.invalidate()
-                    replaced.cancelPendingStatusRead()
+                    self.fencePostAuthenticationTraffic(
+                        replaced,
+                        presentationError: .endpointUnavailable
+                    )
                     if let ownedPeer = replaced.takeOwnedPeer() {
                         MCLocalXPCSessionCancelOwned(ownedPeer)
                     }
@@ -597,10 +1237,14 @@ public final class MacLocalXPCServerV1: @unchecked Sendable {
             }
 
             guard self.currentPeerState === state,
+                  state.postAuthenticationFence.admitsTraffic,
                   self.generationGate.admitsPostAuthenticationTraffic(
                     generation: state.generation
                   ) else {
-                MCLocalXPCSessionCancel(peer)
+                self.cancelAuthenticatedPeer(
+                    state,
+                    presentationError: .endpointUnavailable
+                )
                 return
             }
 
@@ -612,7 +1256,19 @@ public final class MacLocalXPCServerV1: @unchecked Sendable {
                       MCLocalXPCSessionReplyToMenuReady(peer, message)
                         == MCLocalXPCResultOK,
                       state.lifetime.publishMenuReadiness() else {
-                    MCLocalXPCSessionCancel(peer)
+                    self.cancelAuthenticatedPeer(
+                        state,
+                        presentationError: .transportFailure
+                    )
+                    return
+                }
+                guard state.presentationIssuanceGate.publishReadiness(
+                    generation: state.generation
+                ) else {
+                    self.cancelAuthenticatedPeer(
+                        state,
+                        presentationError: .transportFailure
+                    )
                     return
                 }
                 self.onEvent(.menuReady(generation: state.generation))
@@ -621,7 +1277,10 @@ public final class MacLocalXPCServerV1: @unchecked Sendable {
 
             guard MCLocalXPCMessageIsExactStatusRead(message),
                   self.beginStatusRead(state: state, request: message) else {
-                MCLocalXPCSessionCancel(peer)
+                self.cancelAuthenticatedPeer(
+                    state,
+                    presentationError: .transportFailure
+                )
                 return
             }
         }
@@ -664,6 +1323,7 @@ public final class MacLocalXPCServerV1: @unchecked Sendable {
                     profile.admitsAgentStatus
                     && authorizesMenuMethod(.readAgentStatus)
                     && state.lifetime.menuReadinessPublished
+                    && state.postAuthenticationFence.admitsTraffic
               ) else {
             return false
         }
@@ -710,6 +1370,7 @@ public final class MacLocalXPCServerV1: @unchecked Sendable {
               ),
               peerStates[state.generation] === state,
               currentPeerState === state,
+              state.postAuthenticationFence.admitsTraffic,
               generationGate.admitsPostAuthenticationTraffic(
                 generation: state.generation
               ),
@@ -727,7 +1388,10 @@ public final class MacLocalXPCServerV1: @unchecked Sendable {
         pending.deadline = nil
         pending.task = nil
         guard let request = pending.takeOwnedRequest() else {
-            MCLocalXPCSessionCancel(state.peer)
+            cancelAuthenticatedPeer(
+                state,
+                presentationError: .transportFailure
+            )
             return
         }
         defer { MCLocalXPCMessageRelease(request) }
@@ -740,7 +1404,10 @@ public final class MacLocalXPCServerV1: @unchecked Sendable {
             ),
                   !payload.isEmpty,
                   payload.count <= MacLocalXPCStatusWireV1.maximumPayloadBytes else {
-                MCLocalXPCSessionCancel(state.peer)
+                cancelAuthenticatedPeer(
+                    state,
+                    presentationError: .transportFailure
+                )
                 return
             }
             replyResult = payload.withUnsafeBytes { rawBuffer in
@@ -763,7 +1430,10 @@ public final class MacLocalXPCServerV1: @unchecked Sendable {
             )
         }
         guard replyResult == MCLocalXPCResultOK else {
-            MCLocalXPCSessionCancel(state.peer)
+            cancelAuthenticatedPeer(
+                state,
+                presentationError: .transportFailure
+            )
             return
         }
     }
@@ -777,6 +1447,7 @@ public final class MacLocalXPCServerV1: @unchecked Sendable {
               ),
               peerStates[state.generation] === state,
               currentPeerState === state,
+              state.postAuthenticationFence.admitsTraffic,
               generationGate.admitsPostAuthenticationTraffic(
                 generation: state.generation
               ),
@@ -787,7 +1458,10 @@ public final class MacLocalXPCServerV1: @unchecked Sendable {
             return
         }
         state.cancelPendingStatusRead()
-        MCLocalXPCSessionCancel(state.peer)
+        cancelAuthenticatedPeer(
+            state,
+            presentationError: .transportFailure
+        )
     }
 
     private func expireCandidate(_ state: PeerState) {

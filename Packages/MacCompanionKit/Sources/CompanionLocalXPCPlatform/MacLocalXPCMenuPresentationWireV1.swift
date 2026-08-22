@@ -24,6 +24,15 @@ package enum MacLocalXPCMenuPresentationRequestV1: Equatable, Sendable {
             .withdrawHostIdentityRecovery
         }
     }
+
+    package var isPublish: Bool {
+        switch self {
+        case .pairingReview, .hostRecoveryReview, .hostRecoveryResume:
+            true
+        case .pairingWithdrawal, .hostRecoveryWithdrawal:
+            false
+        }
+    }
 }
 
 package enum MacLocalXPCMenuPresentationPayloadKindV1: Sendable {

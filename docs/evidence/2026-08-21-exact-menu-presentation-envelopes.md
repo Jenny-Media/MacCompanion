@@ -55,3 +55,10 @@ receiver, retain an asynchronous incoming request, activate a presentation
 server profile, compose either permanent target, or prove a signed two-process
 round trip. Those remain the next package-only slices and the later external
 runtime gate.
+
+## Later checkpoint
+
+The subsequent [authenticated current-ready sender checkpoint](2026-08-21-authenticated-menu-presentation-sender.md)
+implements the sender endpoint and production FIFO while preserving this
+checkpoint's menu-receiver, product-composition, permanent-target, and signed
+runtime non-claims.
