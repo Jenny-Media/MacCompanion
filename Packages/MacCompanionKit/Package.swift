@@ -517,7 +517,10 @@ let package = Package(
         ),
         .testTarget(
             name: "CompanionLocalXPCPlatformTests",
-            dependencies: ["CompanionIPC", "CompanionLocalXPCPlatform"]
+            dependencies: [
+                "CompanionDomain", "CompanionIPC",
+                "CompanionLocalXPCPlatform", "CompanionWire",
+            ]
         ),
         .testTarget(
             name: "CompanionHostTests",

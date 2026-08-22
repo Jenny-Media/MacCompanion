@@ -76,8 +76,8 @@ Focused verification passed under Xcode 27 beta:
   branches, a suspended concurrent finish barrier, and fail-closed XPC
   construction failure.
 
-The full repository gate passes across 895 repository files, 292 Swift source
-files, 1,223 unique package tests with zero duplicate names, 8 platform-probe
+The full repository gate passes across 898 repository files, 293 Swift source
+files, 1,243 unique package tests with zero duplicate names, 8 platform-probe
 tests, 14 privacy source records, all policy validators, and the supported iOS
 and macOS cross-builds. An unsigned Xcode 27 beta build of the macOS app and
 embedded Agent also completed with `BUILD SUCCEEDED`; its dependency graph did
@@ -91,7 +91,8 @@ or a network listener, register login items, authorize a pairing/recovery
 surface, exercise signed peer verification, or prove physical network
 behavior. When a future product owner explicitly invokes the public `prepare`,
 it intentionally creates the release storage and may inspect or create the
-prompt-free Keychain/Secure Enclave host identity. The next safe lane is a
-generation-bound authenticated menu router with pairing-review and
-recovery-only facets, followed by coordinated activation/rollback.
-Permanent-target integration remains behind those gates.
+prompt-free Keychain/Secure Enclave host identity. The later authenticated
+menu presentation-surface router now provides generation-bound pairing-review
+and recovery-only facets without adding XPC presentation messages. Strict
+bounded messages, a concrete generation-owned endpoint, and coordinated
+activation/rollback remain the next gates before permanent-target integration.
