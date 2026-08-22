@@ -1,4 +1,5 @@
 import CompanionMacApp
+import CompanionMacApplicationPlatform
 import CompanionMacUI
 import SwiftUI
 
@@ -7,20 +8,22 @@ import SwiftUI
 struct MacCompanionApplication: App {
     // Retains exact login-role identities without registering either role.
     private let loginRoles = MacCompanionLoginRoleComposition()
+    // Construction retains the real dashboard product without starting XPC.
+    @State private var dashboard = MacCompanionDashboardApplicationV1()
 
     var body: some Scene {
         MenuBarExtra(
             "Mac Companion",
             systemImage: "macbook.and.iphone"
         ) {
-            MacCompanionDashboardRoot()
+            MacCompanionDashboardRoot(application: dashboard)
         }
         .menuBarExtraStyle(.window)
     }
 }
 
 private struct MacCompanionDashboardRoot: View {
-    @State private var source: MacAgentDashboardSourceV0 = .unavailable
+    let application: MacCompanionDashboardApplicationV1
 
     var body: some View {
         dashboard
@@ -45,10 +48,10 @@ private struct MacCompanionDashboardRoot: View {
 
     private func perform(_ action: MacAgentDashboardActionV0) {
         guard action == .retryStatus else { return }
-        source = .loading
         Task { @MainActor in
-            try? await Task.sleep(for: .milliseconds(300))
-            source = .unavailable
+            _ = await application.retryStatus()
         }
     }
+
+    private var source: MacAgentDashboardSourceV0 { application.source }
 }

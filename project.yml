@@ -50,6 +50,8 @@ targets:
       - package: MacCompanionKit
         product: CompanionMacApp
       - package: MacCompanionKit
+        product: CompanionMacApplicationPlatform
+      - package: MacCompanionKit
         product: CompanionMacUI
     settings:
       base:

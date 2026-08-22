@@ -111,10 +111,13 @@ def pbx_product_names_by_identifier(content: str) -> dict[str, str]:
     return names
 
 
-def generated_agent_product_lists(content: str) -> tuple[list[str], list[str]]:
+def generated_target_product_lists(
+    content: str,
+    target_name: str,
+) -> tuple[list[str], list[str]]:
     objects = pbx_objects(content)
     product_names = pbx_product_names_by_identifier(content)
-    target = generated_native_target_block(content, "MacCompanionAgent")
+    target = generated_native_target_block(content, target_name)
 
     dependency_match = re.search(
         r"packageProductDependencies = \((?P<dependencies>.*?)\);",
@@ -187,7 +190,10 @@ def require_exact_agent_products(
         "CompanionLocalXPCPlatform",
     ]
     if generated:
-        dependencies, frameworks = generated_agent_product_lists(content)
+        dependencies, frameworks = generated_target_product_lists(
+            content,
+            "MacCompanionAgent",
+        )
         for label, actual in (
             ("generatedAgentDependencyProducts", dependencies),
             ("generatedAgentFrameworkProducts", frameworks),
@@ -210,6 +216,47 @@ def require_exact_agent_products(
         failures.append(
             f"{label}:expected={','.join(expected)}:"
             f"actual={','.join(actual)}"
+        )
+
+
+def require_exact_mac_products(
+    content: str,
+    generated: bool,
+    failures: list[str],
+) -> None:
+    expected = [
+        "CompanionAgent",
+        "CompanionAgentPlatform",
+        "CompanionLocalXPCPlatform",
+        "CompanionMacApp",
+        "CompanionMacApplicationPlatform",
+        "CompanionMacUI",
+    ]
+    if generated:
+        dependencies, frameworks = generated_target_product_lists(
+            content,
+            "MacCompanion",
+        )
+        for label, actual in (
+            ("generatedMacDependencyProducts", dependencies),
+            ("generatedMacFrameworkProducts", frameworks),
+        ):
+            if actual != expected:
+                failures.append(
+                    f"{label}:expected={','.join(expected)}:"
+                    f"actual={','.join(actual)}"
+                )
+        return
+    block = yaml_target_block(content, "MacCompanion")
+    actual = re.findall(
+        r"^\s+product:\s+([^\s#]+)\s*$",
+        block,
+        re.MULTILINE,
+    )
+    if actual != expected:
+        failures.append(
+            "projectSpecMacDependencyProducts:"
+            f"expected={','.join(expected)}:actual={','.join(actual)}"
         )
 
 
@@ -253,6 +300,7 @@ def validate_project_spec(content: str, failures: list[str]) -> None:
     for label, needle in required.items():
         require_count(content, needle, 1, label, failures)
     require_exact_agent_products(content, generated=False, failures=failures)
+    require_exact_mac_products(content, generated=False, failures=failures)
     require_count(
         content,
         "        product: CompanionLocalXPCPlatform",
@@ -288,6 +336,7 @@ def validate_generated_project(content: str, failures: list[str]) -> None:
         failures,
     )
     require_exact_agent_products(content, generated=True, failures=failures)
+    require_exact_mac_products(content, generated=True, failures=failures)
     require_count(
         content,
         'productType = "com.apple.product-type.tool";',
@@ -449,13 +498,23 @@ def validate_login_role_composition(
         "rawLoginRoles",
         failures,
     )
-    require_count(
-        application_code,
-        "@State private var source: MacAgentDashboardSourceV0 = .unavailable",
-        1,
-        "inertMenuDashboardSource",
-        failures,
-    )
+    for label, needle in {
+        "menuApplicationPlatformImport": (
+            "import CompanionMacApplicationPlatform"
+        ),
+        "constructedInertDashboardApplication": (
+            "@State private var dashboard = "
+            "MacCompanionDashboardApplicationV1()"
+        ),
+        "dashboardTypedSource": (
+            "private var source: MacAgentDashboardSourceV0 { "
+            "application.source }"
+        ),
+        "dashboardRetryForwarding": (
+            "_ = await application.retryStatus()"
+        ),
+    }.items():
+        require_count(application_code, needle, 1, label, failures)
     for needle in (
         "MacLocalXPCDashboardProductV1(",
         "MacAgentDashboardApplicationOwnerV0(",
@@ -463,6 +522,9 @@ def validate_login_role_composition(
         "CompanionAgentProductPlatform",
         "MacAgentProductBootstrapV1",
         "MacAgentPreparedProductV1",
+        "Task.sleep",
+        "application.start()",
+        "dashboard.start()",
     ):
         if needle in application_code:
             failures.append(f"menuSourceUnexpectedAuthority:{needle}")
@@ -519,6 +581,20 @@ def validate_product_inertness_self_tests(
         not in menu_failures
     ):
         failures.append("menuProductActivationFixtureAccepted")
+
+    menu_start_failures: list[str] = []
+    validate_login_role_composition(
+        login_composition,
+        mac_application
+        + "\nfunc injectedActivation() async throws { "
+        + "try await application.start() }\n",
+        menu_start_failures,
+    )
+    if (
+        "menuSourceUnexpectedAuthority:application.start()"
+        not in menu_start_failures
+    ):
+        failures.append("menuTransportActivationFixtureAccepted")
 
 
 def validate_product_link_inertness_self_tests(
@@ -647,6 +723,70 @@ def validate_product_link_inertness_self_tests(
                 f"generatedCommentPreservingSubstitutionAccepted:{label}"
             )
 
+    missing_mac_wrapper = project_spec.replace(
+        "      - package: MacCompanionKit\n"
+        "        product: CompanionMacApplicationPlatform\n",
+        "",
+        1,
+    )
+    missing_mac_failures: list[str] = []
+    validate_project_spec(missing_mac_wrapper, missing_mac_failures)
+    if not any(
+        failure.startswith("projectSpecMacDependencyProducts:")
+        for failure in missing_mac_failures
+    ):
+        failures.append("projectMissingMacApplicationWrapperFixtureAccepted")
+
+    mac_wrapper_ids = [
+        identifier for identifier, name in product_names.items()
+        if name == "CompanionMacApplicationPlatform"
+    ]
+    mac_ui_ids = [
+        identifier for identifier, name in product_names.items()
+        if name == "CompanionMacUI"
+    ]
+    mac_semantic_mutation = generated_project
+    if len(mac_wrapper_ids) == 1 and len(mac_ui_ids) == 1:
+        wrapper_id = mac_wrapper_ids[0]
+        wrong_id = mac_ui_ids[0]
+        mac_block = generated_native_target_block(
+            mac_semantic_mutation,
+            "MacCompanion",
+        )
+        dependency_match = re.search(
+            r"packageProductDependencies = \((?P<dependencies>.*?)\);",
+            mac_block,
+            re.DOTALL,
+        )
+        if dependency_match:
+            dependencies = dependency_match.group("dependencies")
+            changed = dependencies.replace(wrapper_id, wrong_id, 1)
+            mac_semantic_mutation = mac_semantic_mutation.replace(
+                dependencies,
+                changed,
+                1,
+            )
+        mac_semantic_mutation = mac_semantic_mutation.replace(
+            f"productRef = {wrapper_id}",
+            f"productRef = {wrong_id}",
+            1,
+        )
+    mac_semantic_failures: list[str] = []
+    validate_generated_project(
+        mac_semantic_mutation,
+        mac_semantic_failures,
+    )
+    for label in (
+        "generatedMacDependencyProducts:",
+        "generatedMacFrameworkProducts:",
+    ):
+        if not any(
+            failure.startswith(label) for failure in mac_semantic_failures
+        ):
+            failures.append(
+                f"generatedMacWrapperSubstitutionAccepted:{label}"
+            )
+
 
 def main() -> int:
     failures: list[str] = []
@@ -682,7 +822,7 @@ def main() -> int:
     print(
         "Validated permanent Mac/Agent topology, identities, signing flags, "
         "requirement-bound local handshake, LaunchAgent contract, and "
-        "narrow activation-inert application preparation."
+        "narrow activation-inert Agent and menu application preparation."
     )
     return 0
 

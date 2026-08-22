@@ -61,6 +61,10 @@ let package = Package(
         .library(name: "CompanionClientPlatform", targets: ["CompanionClientPlatform"]),
         .library(name: "CompanionClientUI", targets: ["CompanionClientUI"]),
         .library(name: "CompanionMacApp", targets: ["CompanionMacApp"]),
+        .library(
+            name: "CompanionMacApplicationPlatform",
+            targets: ["CompanionMacApplicationPlatform"]
+        ),
         .library(name: "CompanionMacUI", targets: ["CompanionMacUI"]),
         .library(name: "CompanionInteractiveShared", targets: ["CompanionInteractiveShared"]),
         .library(name: "CompanionInteractiveWire", targets: ["CompanionInteractiveWire"]),
@@ -145,6 +149,10 @@ let package = Package(
             dependencies: [
                 "CompanionIPC", "CompanionLifecycle", "CompanionPresentation",
             ]
+        ),
+        .target(
+            name: "CompanionMacApplicationPlatform",
+            dependencies: ["CompanionAgentPlatform", "CompanionMacApp"]
         ),
         .target(
             name: "CompanionMacUI",
@@ -433,6 +441,13 @@ let package = Package(
             dependencies: [
                 "CompanionDiscovery", "CompanionIPC", "CompanionLifecycle", "CompanionMacApp",
                 "CompanionPresentation", "CompanionWire",
+            ]
+        ),
+        .testTarget(
+            name: "CompanionMacApplicationPlatformTests",
+            dependencies: [
+                "CompanionAgentPlatform", "CompanionMacApp",
+                "CompanionMacApplicationPlatform",
             ]
         ),
         .testTarget(
