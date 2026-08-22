@@ -2,9 +2,9 @@
 
 Status: normative design for a protected release-only collector. The public
 repository contains non-acceptance fixed-runner, reconstruction, verification,
-per-architecture plan, embedded-parser, and display-parser foundations, but no
-acceptance-capable collector, production identity policy, or production policy
-digest.
+per-architecture plan, embedded-parser, display-parser, outer-correlation, and
+canonical construction-record foundations, but no acceptance-capable
+collector, production identity policy, or production policy digest.
 
 This profile defines the evidence that must replace
 `signedCodePlatformVerificationRequired`. It consumes one already validated
@@ -168,9 +168,10 @@ contiguous certificate files opened without following links, bounded to eight
 identity invocation may not leave certificate output or contribute facts.
 
 Every composed architecture result remains
-`platformAcceptanceEligible: false`. DER semantic equality is implemented;
-assembly into the canonical evidence record remains required before this
-section can contribute to acceptance.
+`platformAcceptanceEligible: false`. DER semantic equality is implemented and
+the exact results can now be revalidated into the bounded canonical
+construction record. Target-specific platform evidence remains required before
+this section can contribute to acceptance.
 
 The Mac distribution subject also receives one fixed outer consistency check
 against the exact reconstructed `.app` after all nested objects are available:
@@ -198,8 +199,9 @@ empty stdout and exactly two path-bound stderr lines: `valid on disk` and
 `satisfies its Designated Requirement`. `--deep` is a final consistency check,
 never discovery, repair, or a substitute for any per-object or
 per-architecture result. The correlated record retains the exact prerequisite
-summaries and remains `platformAcceptanceEligible: false`; canonical-record
-composition is still required before it can contribute to acceptance.
+summaries and remains `platformAcceptanceEligible: false`; canonical
+construction-record composition preserves that state and lists every remaining
+target gate explicitly.
 
 For the final application and disk image the collector additionally retains Gatekeeper
 assessment, accepted notarization correlation, and stapling validation against
@@ -219,7 +221,16 @@ platform gate.
 
 ## Acceptance and remaining gates
 
-A record is acceptance-eligible only when every input digest, object,
+A deterministic canonical construction record now binds exact release,
+artifact-SBOM, graph, and policy bytes; the fixed environment/tool identity;
+reconstructed subjects; complete whole-object, architecture, and correlated
+outer records; and target-specific unresolved gates. Its validator recomposes
+the record from freshly reopened execution evidence, enforces the 8 MiB bound,
+and permits only `constructionOnly` with
+`platformAcceptanceEligible: false`. Removing a gate or changing that Boolean
+is invalid rather than an upgrade path.
+
+A future acceptance-capable record is eligible only when every input digest, object,
 architecture, policy rule, invocation, raw reference, and target-specific
 result is present and passed. Unknown or extra objects, partial success,
 warnings treated as success, schema-only records, beta-toolchain evidence, or

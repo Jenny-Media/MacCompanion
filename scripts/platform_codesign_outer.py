@@ -40,6 +40,10 @@ OUTER_EXECUTION_RECORD_KEYS = {
     "verification",
     "subjectAfter",
 }
+CORRELATED_OUTER_RECORD_KEYS = OUTER_EXECUTION_RECORD_KEYS | {
+    "architecturePrerequisites",
+    "architecturePrerequisitesRevalidatedAfterOuter",
+}
 
 
 def parse_outer_codesign_verification_output(
@@ -293,3 +297,152 @@ def execute_correlated_outer_codesign_verification_plans(
             "architecturePrerequisitesRevalidatedAfterOuter": True,
         })
     return correlated
+
+
+def validate_correlated_outer_codesign_records(
+    *,
+    plans: list[PlannedCodeSignOuterVerification],
+    records: list[dict[str, Any]],
+    architecture_plans: list[PlannedCodeSignArchitectureInspection],
+    architecture_records: list[dict[str, Any]],
+    verification_records: list[dict[str, Any]],
+    reconstructed: list[ReconstructedSigningSubject],
+    composition: dict[str, Any],
+    graph: dict[str, Any],
+    policy: dict[str, Any],
+    team_id: str,
+    work_root: Path,
+) -> list[dict[str, Any]]:
+    mac_subjects = [subject for subject in reconstructed if subject.platform == "macOS"]
+    if not mac_subjects:
+        if plans or records:
+            raise PlatformCodesignOuterError(
+                "correlated outer codesign evidence exists without a Mac subject"
+            )
+        return []
+    if not plans:
+        raise PlatformCodesignOuterError(
+            "correlated outer codesign plan set is empty for a Mac subject"
+        )
+    try:
+        expected_plans = derive_codesign_outer_verification_plans(
+            graph=graph,
+            reconstructed=reconstructed,
+            codesign_tool=plans[0].invocation.tool,
+        )
+        entries_by_id = _composition_by_id(composition)
+        architecture_summaries = validate_codesign_architecture_records(
+            plans=architecture_plans,
+            records=architecture_records,
+            reconstructed=reconstructed,
+            composition=composition,
+            graph=graph,
+            policy=policy,
+            verification_records=verification_records,
+            team_id=team_id,
+            work_root=work_root,
+        )
+    except (
+        PlatformSigningSubjectError,
+        PlatformCodesignVerificationError,
+        PlatformCodesignInspectionError,
+    ) as error:
+        raise PlatformCodesignOuterError(
+            "correlated outer codesign evidence prerequisites failed reinspection"
+        ) from error
+    if plans != expected_plans or len(records) != len(plans):
+        raise PlatformCodesignOuterError(
+            "correlated outer codesign evidence coverage is incomplete"
+        )
+    subjects_by_id = {subject.artifact_id: subject for subject in reconstructed}
+    summaries: list[dict[str, Any]] = []
+    for plan, record in zip(plans, records, strict=True):
+        subject = subjects_by_id.get(plan.artifact_id)
+        entries = entries_by_id.get(plan.artifact_id)
+        prerequisites = [
+            item
+            for item in architecture_summaries
+            if item["artifactID"] == plan.artifact_id
+        ]
+        if (
+            not isinstance(record, dict)
+            or set(record) != CORRELATED_OUTER_RECORD_KEYS
+            or record.get("artifactID") != plan.artifact_id
+            or record.get("status") != "passed"
+            or record.get("reason") is not None
+            or record.get("platformAcceptanceEligible") is not False
+            or record.get("architecturePrerequisites") != prerequisites
+            or record.get("architecturePrerequisitesRevalidatedAfterOuter") is not True
+            or subject is None
+            or entries is None
+            or not prerequisites
+        ):
+            raise PlatformCodesignOuterError(
+                "correlated outer codesign record differs from its exact plan"
+            )
+        try:
+            current = _rehash_subject(subject, entries, work_root)
+            invocation = record.get("invocation")
+            if not isinstance(invocation, dict):
+                raise PlatformCodesignOuterError(
+                    "correlated outer codesign invocation is unavailable"
+                )
+            stdout = _read_raw_reference(
+                work_root,
+                invocation.get("stdout"),
+                f"{plan.invocation.invocation_id}.stdout",
+            )
+            stderr = _read_raw_reference(
+                work_root,
+                invocation.get("stderr"),
+                f"{plan.invocation.invocation_id}.stderr",
+            )
+            parsed = parse_outer_codesign_verification_output(
+                plan,
+                invocation,
+                stdout,
+                stderr,
+            )
+        except PlatformCodesignVerificationError as error:
+            raise PlatformCodesignOuterError(
+                "correlated outer codesign raw evidence failed reinspection"
+            ) from error
+        if (
+            record.get("subjectBefore") != current
+            or record.get("subjectAfter") != current
+            or record.get("verification") != parsed
+            or parsed.get("status") != "passed"
+        ):
+            raise PlatformCodesignOuterError(
+                "correlated outer codesign record did not pass unchanged"
+            )
+        summaries.append({
+            "artifactID": plan.artifact_id,
+            "invocationID": plan.invocation.invocation_id,
+            "status": "passed",
+            "deepConsistencyVerified": True,
+            "architectureCount": len(prerequisites),
+            "subject": current,
+            "platformAcceptanceEligible": False,
+        })
+    try:
+        after = validate_codesign_architecture_records(
+            plans=architecture_plans,
+            records=architecture_records,
+            reconstructed=reconstructed,
+            composition=composition,
+            graph=graph,
+            policy=policy,
+            verification_records=verification_records,
+            team_id=team_id,
+            work_root=work_root,
+        )
+    except PlatformCodesignInspectionError as error:
+        raise PlatformCodesignOuterError(
+            "correlated outer codesign prerequisites failed final reinspection"
+        ) from error
+    if architecture_summaries != after:
+        raise PlatformCodesignOuterError(
+            "correlated outer codesign prerequisites changed during validation"
+        )
+    return summaries

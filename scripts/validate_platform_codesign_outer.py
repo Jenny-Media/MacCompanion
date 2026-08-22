@@ -14,6 +14,7 @@ from platform_codesign_outer import (
     execute_correlated_outer_codesign_verification_plans,
     execute_outer_codesign_verification_plans,
     parse_outer_codesign_verification_output,
+    validate_correlated_outer_codesign_records,
 )
 from platform_signing_fixed_tools import inspect_fixed_tool
 from platform_signing_subjects import derive_codesign_outer_verification_plans
@@ -128,6 +129,37 @@ def execute_correlated_with_fakes(
         )
     finally:
         outer_module.run_fixed_tool_invocation = original_runner
+        inspection_module.inspect_embedded_signature = original_inspector
+
+
+def validate_correlated_with_fake_inspector(
+    context: dict,
+    architecture_records: list[dict],
+    outer_records: list[dict],
+) -> list[dict]:
+    codesign = inspect_fixed_tool("apple.codesign", "/usr/bin/codesign")
+    plans = derive_codesign_outer_verification_plans(
+        graph=context["graph"],
+        reconstructed=context["subjects"],
+        codesign_tool=codesign,
+    )
+    original_inspector = inspection_module.inspect_embedded_signature
+    inspection_module.inspect_embedded_signature = fake_embedded_inspector(context)
+    try:
+        return validate_correlated_outer_codesign_records(
+            plans=plans,
+            records=outer_records,
+            architecture_plans=context["plans"],
+            architecture_records=architecture_records,
+            verification_records=context["verificationRecords"],
+            reconstructed=context["subjects"],
+            composition=context["composition"],
+            graph=context["graph"],
+            policy=context["policy"],
+            team_id=TEAM_ID,
+            work_root=context["workRoot"],
+        )
+    finally:
         inspection_module.inspect_embedded_signature = original_inspector
 
 
@@ -375,6 +407,42 @@ def main() -> int:
             )
         ):
             raise RuntimeError("correlated outer codesign record is incomplete")
+        summaries = validate_correlated_with_fake_inspector(
+            context,
+            architecture_records,
+            records,
+        )
+        if summaries != [{
+            "artifactID": "mac-application",
+            "invocationID": "codesign-outer-01",
+            "status": "passed",
+            "deepConsistencyVerified": True,
+            "architectureCount": len(architecture_records),
+            "subject": records[0]["subjectAfter"],
+            "platformAcceptanceEligible": False,
+        }]:
+            raise RuntimeError("correlated outer record reinspection is incomplete")
+
+        changed = copy.deepcopy(records)
+        changed[0]["verification"]["status"] = "failed"
+        require_failure(
+            lambda: validate_correlated_with_fake_inspector(
+                context,
+                architecture_records,
+                changed,
+            ),
+            "did not pass unchanged",
+        )
+
+        omitted = records[:-1]
+        require_failure(
+            lambda: validate_correlated_with_fake_inspector(
+                context,
+                architecture_records,
+                omitted,
+            ),
+            "coverage is incomplete",
+        )
 
     with tempfile.TemporaryDirectory(
         prefix="maccompanion-outer-codesign-prerequisite-mutation-"

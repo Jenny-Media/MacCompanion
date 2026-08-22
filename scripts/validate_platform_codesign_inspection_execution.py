@@ -11,6 +11,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any, Callable
 
+from artifact_sbom import canonical_bytes
 import platform_codesign_inspection as inspection_module
 from platform_codesign_inspection import (
     MAX_CERTIFICATE_BYTES,
@@ -114,8 +115,8 @@ def invocation_result(
     }
 
 
-def reference(label: str) -> dict[str, Any]:
-    content = label.encode("utf-8")
+def reference(label: str, value: dict[str, Any]) -> dict[str, Any]:
+    content = canonical_bytes(value)
     return {
         "path": f"verification/{label}.json",
         "bytes": len(content),
@@ -169,8 +170,8 @@ def prepare(root: Path) -> dict[str, Any]:
     policy = generate_fixture_policy(
         release=policy_release,
         graph=graph,
-        graph_reference=reference("signed-code-graph"),
-        artifact_sbom_reference=reference("artifact-sbom"),
+        graph_reference=reference("signed-code-graph", graph),
+        artifact_sbom_reference=graph["artifactSBOM"],
     )
     for signer in policy["officialSigners"]:
         signer["leafCertificateSHA256"] = CERTIFICATE_SHA256
@@ -218,8 +219,11 @@ def prepare(root: Path) -> dict[str, Any]:
             "subjectAfter": current,
         })
     return {
+        "index": index,
+        "releaseManifest": policy_release,
         "composition": composition,
         "graph": graph,
+        "evidenceRoot": root,
         "workRoot": work_root,
         "subjects": subjects,
         "plans": plans,
