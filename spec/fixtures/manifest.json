@@ -206,6 +206,12 @@
       "canonicalSHA256": "72febb0c5f027a1bdf6251c0dc910b02f333b8a15413100add198e65ff8c4dd9"
     },
     {
+      "path": "local-xpc-menu-pairing-commands-v0.1.json",
+      "kind": "localXPC.menuPairingCommands.v0.1",
+      "expect": "valid",
+      "canonicalSHA256": "4714d211a9d7da07c4d4ba3526b1756a3f1214b6bb57ec2ed18b861dd7981383"
+    },
+    {
       "path": "client-configured-routes-v0.1.json",
       "kind": "clientConfiguredRoutes.model.v0.1",
       "expect": "valid",

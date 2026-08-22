@@ -1,7 +1,10 @@
 #if os(macOS)
 import AppKit
 import CompanionAgentPlatform
+import CompanionIPC
+import CompanionLocalXPCPlatform
 import CompanionMacApp
+import CompanionPresentation
 import Observation
 
 @available(macOS 26.0, *)
@@ -14,14 +17,113 @@ public enum MacCompanionDashboardApplicationErrorV1:
 }
 
 @available(macOS 26.0, *)
-package protocol MacCompanionDashboardProductV1: Sendable {
+public enum MacCompanionPairingActionV1: Sendable {
+    case retryCreation
+    case dismissPairing
+    case retryDismissal
+}
+
+@available(macOS 26.0, *)
+public enum MacCompanionPairingReviewActionV1: Sendable {
+    case approve
+    case decline
+    case retryDecision
+}
+
+@available(macOS 26.0, *)
+private final class MacCompanionPairingCommandProxyV1:
+    MacPairingLocalIPCClientV0,
+    MacPairingReviewLocalIPCClientV0,
+    @unchecked Sendable
+{
+    private let lock = NSLock()
+    private weak var product: (any MacCompanionDashboardProductV1)?
+
+    func install(_ product: any MacCompanionDashboardProductV1) {
+        lock.withLock {
+            precondition(self.product == nil)
+            self.product = product
+        }
+    }
+
+    func createPairingSession(
+        _ command: LocalPairingSessionCreateCommandV0
+    ) async throws -> LocalPairingSessionCreatedReceiptV0 {
+        guard let product = lock.withLock({ self.product }) else {
+            throw MacLocalXPCMenuPairingCommandErrorV1.unavailable
+        }
+        return try await product.createPairingSession(command)
+    }
+
+    func dismissPairingSession(
+        _ command: LocalPairingSessionDismissCommandV0
+    ) async throws -> LocalPairingSessionDismissedReceiptV0 {
+        guard let product = lock.withLock({ self.product }) else {
+            throw MacLocalXPCMenuPairingCommandErrorV1.unavailable
+        }
+        return try await product.dismissPairingSession(command)
+    }
+
+    func resolveLocalApproval(
+        _ command: LocalPairingDecisionCommandV0
+    ) async throws -> LocalPairingDecisionReceiptV0 {
+        guard let product = lock.withLock({ self.product }) else {
+            throw MacLocalXPCMenuPairingCommandErrorV1.unavailable
+        }
+        return try await product.resolveLocalApproval(command)
+    }
+}
+
+@available(macOS 26.0, *)
+private struct MacCompanionUnavailableRecoveryClientV1:
+    MacHostIdentityRecoveryLocalIPCClientV0
+{
+    func recoverHostIdentity(
+        _: LocalHostIdentityRecoveryCommandV0
+    ) async throws -> LocalHostIdentityRecoveredReceiptV0 {
+        throw MacLocalXPCMenuPairingCommandErrorV1.unavailable
+    }
+}
+
+@available(macOS 26.0, *)
+package protocol MacCompanionDashboardProductV1: AnyObject, Sendable {
     func start() async throws
     func retryStatus() async -> MacAgentDashboardEffectOutcomeV0
+    func createPairingSession(
+        _ command: LocalPairingSessionCreateCommandV0
+    ) async throws -> LocalPairingSessionCreatedReceiptV0
+    func dismissPairingSession(
+        _ command: LocalPairingSessionDismissCommandV0
+    ) async throws -> LocalPairingSessionDismissedReceiptV0
+    func resolveLocalApproval(
+        _ command: LocalPairingDecisionCommandV0
+    ) async throws -> LocalPairingDecisionReceiptV0
     func finish() async
 }
 
 @available(macOS 26.0, *)
 extension MacLocalXPCDashboardProductV1: MacCompanionDashboardProductV1 {}
+
+@available(macOS 26.0, *)
+extension MacCompanionDashboardProductV1 {
+    package func createPairingSession(
+        _: LocalPairingSessionCreateCommandV0
+    ) async throws -> LocalPairingSessionCreatedReceiptV0 {
+        throw MacLocalXPCMenuPairingCommandErrorV1.unavailable
+    }
+
+    package func dismissPairingSession(
+        _: LocalPairingSessionDismissCommandV0
+    ) async throws -> LocalPairingSessionDismissedReceiptV0 {
+        throw MacLocalXPCMenuPairingCommandErrorV1.unavailable
+    }
+
+    package func resolveLocalApproval(
+        _: LocalPairingDecisionCommandV0
+    ) async throws -> LocalPairingDecisionReceiptV0 {
+        throw MacLocalXPCMenuPairingCommandErrorV1.unavailable
+    }
+}
 
 /// Permanent menu-process ownership of the already-constructed dashboard
 /// product. Construction is deliberately transport-inert: only an explicit
@@ -40,23 +142,75 @@ public final class MacCompanionDashboardApplicationV1 {
     }
 
     public private(set) var source: MacAgentDashboardSourceV0 = .unavailable
+    public private(set) var pairingSession =
+        MacPairingSessionPresentationV0()
+    public private(set) var pairingReview =
+        MacPairingReviewPresentationV0()
+    public private(set) var hostIdentityRecovery =
+        MacHostIdentityRecoveryPresentationV0()
 
     @ObservationIgnored
     private let product: any MacCompanionDashboardProductV1
     @ObservationIgnored
     private let stateRelay: MacCompanionDashboardStateRelayV1
     @ObservationIgnored
+    private let pairingOwner: MacPairingApplicationOwnerV0?
+    @ObservationIgnored
+    private let pairingReviewOwner: MacPairingReviewApplicationOwnerV0?
+    @ObservationIgnored
+    private let recoveryOwner: MacHostIdentityRecoveryApplicationOwnerV0?
+    @ObservationIgnored
     private var phase: Phase = .idle
     @ObservationIgnored
     private var finishTask: Task<Void, Never>?
 
     public convenience init() {
-        self.init { owner in
-            MacLocalXPCDashboardProductV1(owner: owner)
+        let dashboardRelay = MacCompanionDashboardStateRelayV1()
+        let dashboardOwner = MacAgentDashboardApplicationOwnerV0 {
+            [weak dashboardRelay] source in
+            await dashboardRelay?.receive(source)
         }
+        let commandProxy = MacCompanionPairingCommandProxyV1()
+        let pairingRelay = MacCompanionPairingStateRelayV1()
+        let reviewRelay = MacCompanionPairingReviewStateRelayV1()
+        let recoveryRelay = MacCompanionRecoveryStateRelayV1()
+        let pairingOwner = MacPairingApplicationOwnerV0(
+            client: commandProxy,
+            stateChanged: { [weak pairingRelay] in
+                await pairingRelay?.receive($0)
+            }
+        )
+        let reviewOwner = MacPairingReviewApplicationOwnerV0(
+            client: commandProxy,
+            stateChanged: { [weak reviewRelay] in
+                await reviewRelay?.receive($0)
+            }
+        )
+        let recoveryOwner = MacHostIdentityRecoveryApplicationOwnerV0(
+            client: MacCompanionUnavailableRecoveryClientV1(),
+            stateChanged: { [weak recoveryRelay] in
+                await recoveryRelay?.receive($0)
+            }
+        )
+        let product = MacLocalXPCDashboardProductV1(
+            owner: dashboardOwner,
+            pairingReviews: reviewOwner,
+            hostIdentityRecovery: recoveryOwner
+        )
+        self.init(
+            product: product,
+            stateRelay: dashboardRelay,
+            pairingOwner: pairingOwner,
+            pairingReviewOwner: reviewOwner,
+            recoveryOwner: recoveryOwner,
+            pairingRelay: pairingRelay,
+            reviewRelay: reviewRelay,
+            recoveryRelay: recoveryRelay
+        )
+        commandProxy.install(product)
     }
 
-    package init(
+    package convenience init(
         productFactory: (
             MacAgentDashboardApplicationOwnerV0
         ) -> any MacCompanionDashboardProductV1
@@ -66,9 +220,37 @@ public final class MacCompanionDashboardApplicationV1 {
             [weak relay] source in
             await relay?.receive(source)
         }
-        stateRelay = relay
-        product = productFactory(owner)
-        relay.application = self
+        self.init(
+            product: productFactory(owner),
+            stateRelay: relay,
+            pairingOwner: nil,
+            pairingReviewOwner: nil,
+            recoveryOwner: nil,
+            pairingRelay: nil,
+            reviewRelay: nil,
+            recoveryRelay: nil
+        )
+    }
+
+    private init(
+        product: any MacCompanionDashboardProductV1,
+        stateRelay: MacCompanionDashboardStateRelayV1,
+        pairingOwner: MacPairingApplicationOwnerV0?,
+        pairingReviewOwner: MacPairingReviewApplicationOwnerV0?,
+        recoveryOwner: MacHostIdentityRecoveryApplicationOwnerV0?,
+        pairingRelay: MacCompanionPairingStateRelayV1?,
+        reviewRelay: MacCompanionPairingReviewStateRelayV1?,
+        recoveryRelay: MacCompanionRecoveryStateRelayV1?
+    ) {
+        self.product = product
+        self.stateRelay = stateRelay
+        self.pairingOwner = pairingOwner
+        self.pairingReviewOwner = pairingReviewOwner
+        self.recoveryOwner = recoveryOwner
+        stateRelay.application = self
+        pairingRelay?.application = self
+        reviewRelay?.application = self
+        recoveryRelay?.application = self
     }
 
     /// Reserved for the signed-runtime checkpoint. Calling this method is the
@@ -109,6 +291,44 @@ public final class MacCompanionDashboardApplicationV1 {
         return outcome
     }
 
+    public func beginPairing() async {
+        guard phase == .active else { return }
+        try? await pairingOwner?.begin()
+    }
+
+    public func performPairingAction(
+        _ action: MacCompanionPairingActionV1
+    ) async {
+        guard phase == .active, let pairingOwner else { return }
+        switch action {
+        case .retryCreation:
+            try? await pairingOwner.retryCreation()
+        case .dismissPairing:
+            try? await pairingOwner.requestDismissal()
+        case .retryDismissal:
+            try? await pairingOwner.retryDismissal()
+        }
+    }
+
+    public func updatePairingDeviceName(_ value: String) async {
+        guard phase == .active else { return }
+        try? await pairingReviewOwner?.updateDeviceNameDraft(value)
+    }
+
+    public func performPairingReviewAction(
+        _ action: MacCompanionPairingReviewActionV1
+    ) async {
+        guard phase == .active, let pairingReviewOwner else { return }
+        switch action {
+        case .approve:
+            try? await pairingReviewOwner.approve()
+        case .decline:
+            try? await pairingReviewOwner.decline()
+        case .retryDecision:
+            try? await pairingReviewOwner.retryDecision()
+        }
+    }
+
     public func finish() async {
         if let finishTask {
             await finishTask.value
@@ -117,7 +337,13 @@ public final class MacCompanionDashboardApplicationV1 {
         guard phase != .finished else { return }
         phase = .finishing
         let product = self.product
+        let pairingOwner = self.pairingOwner
+        let pairingReviewOwner = self.pairingReviewOwner
+        let recoveryOwner = self.recoveryOwner
         let task = Task { @MainActor [weak self] in
+            await pairingOwner?.agentInvalidated()
+            await pairingReviewOwner?.agentInvalidated()
+            await recoveryOwner?.agentInvalidated()
             await product.finish()
             guard let self else { return }
             self.source = .unavailable
@@ -131,6 +357,33 @@ public final class MacCompanionDashboardApplicationV1 {
         guard phase == .starting || phase == .active || phase == .finishing
         else { return }
         self.source = source
+        guard source == .unavailable else { return }
+        let pairingOwner = self.pairingOwner
+        let pairingReviewOwner = self.pairingReviewOwner
+        let recoveryOwner = self.recoveryOwner
+        Task {
+            await pairingOwner?.agentInvalidated()
+            await pairingReviewOwner?.agentInvalidated()
+            await recoveryOwner?.agentInvalidated()
+        }
+    }
+
+    fileprivate func receive(
+        _ presentation: MacPairingSessionPresentationV0
+    ) {
+        pairingSession = presentation
+    }
+
+    fileprivate func receive(
+        _ presentation: MacPairingReviewPresentationV0
+    ) {
+        pairingReview = presentation
+    }
+
+    fileprivate func receive(
+        _ presentation: MacHostIdentityRecoveryPresentationV0
+    ) {
+        hostIdentityRecovery = presentation
     }
 
     deinit {
@@ -147,6 +400,36 @@ private final class MacCompanionDashboardStateRelayV1 {
 
     func receive(_ source: MacAgentDashboardSourceV0) {
         application?.receive(source)
+    }
+}
+
+@available(macOS 26.0, *)
+@MainActor
+private final class MacCompanionPairingStateRelayV1 {
+    weak var application: MacCompanionDashboardApplicationV1?
+
+    func receive(_ presentation: MacPairingSessionPresentationV0) {
+        application?.receive(presentation)
+    }
+}
+
+@available(macOS 26.0, *)
+@MainActor
+private final class MacCompanionPairingReviewStateRelayV1 {
+    weak var application: MacCompanionDashboardApplicationV1?
+
+    func receive(_ presentation: MacPairingReviewPresentationV0) {
+        application?.receive(presentation)
+    }
+}
+
+@available(macOS 26.0, *)
+@MainActor
+private final class MacCompanionRecoveryStateRelayV1 {
+    weak var application: MacCompanionDashboardApplicationV1?
+
+    func receive(_ presentation: MacHostIdentityRecoveryPresentationV0) {
+        application?.receive(presentation)
     }
 }
 

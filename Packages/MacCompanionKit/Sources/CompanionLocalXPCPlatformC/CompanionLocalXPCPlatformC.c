@@ -36,6 +36,67 @@ static const char MCLocalXPCRemoteAccessEnableKind[] =
     "bootstrap.remote-access.enable";
 static const char MCLocalXPCRemoteAccessEnableAcknowledgementKind[] =
     "bootstrap.remote-access.enable.ack";
+static const char MCLocalXPCPairingSessionCreateKind[] =
+    "command.pairing-session.create";
+static const char MCLocalXPCPairingSessionCreateAcknowledgementKind[] =
+    "command.pairing-session.create.ack";
+static const char MCLocalXPCPairingSessionCreateFailureKind[] =
+    "command.pairing-session.create.error";
+static const char MCLocalXPCPairingSessionDismissKind[] =
+    "command.pairing-session.dismiss";
+static const char MCLocalXPCPairingSessionDismissAcknowledgementKind[] =
+    "command.pairing-session.dismiss.ack";
+static const char MCLocalXPCPairingSessionDismissFailureKind[] =
+    "command.pairing-session.dismiss.error";
+static const char MCLocalXPCPairingDecisionResolveKind[] =
+    "command.pairing-decision.resolve";
+static const char MCLocalXPCPairingDecisionResolveAcknowledgementKind[] =
+    "command.pairing-decision.resolve.ack";
+static const char MCLocalXPCPairingDecisionResolveFailureKind[] =
+    "command.pairing-decision.resolve.error";
+
+static const char * _Nullable MCLocalXPCMenuPairingCommandRequestKind(
+    MCLocalXPCMenuPairingCommandKind kind
+) {
+    switch (kind) {
+    case MCLocalXPCMenuPairingCommandCreate:
+        return MCLocalXPCPairingSessionCreateKind;
+    case MCLocalXPCMenuPairingCommandDismiss:
+        return MCLocalXPCPairingSessionDismissKind;
+    case MCLocalXPCMenuPairingCommandResolveDecision:
+        return MCLocalXPCPairingDecisionResolveKind;
+    }
+    return NULL;
+}
+
+static const char * _Nullable
+MCLocalXPCMenuPairingCommandAcknowledgementKind(
+    MCLocalXPCMenuPairingCommandKind kind
+) {
+    switch (kind) {
+    case MCLocalXPCMenuPairingCommandCreate:
+        return MCLocalXPCPairingSessionCreateAcknowledgementKind;
+    case MCLocalXPCMenuPairingCommandDismiss:
+        return MCLocalXPCPairingSessionDismissAcknowledgementKind;
+    case MCLocalXPCMenuPairingCommandResolveDecision:
+        return MCLocalXPCPairingDecisionResolveAcknowledgementKind;
+    }
+    return NULL;
+}
+
+static const char * _Nullable MCLocalXPCMenuPairingCommandFailureKind(
+    MCLocalXPCMenuPairingCommandKind kind
+) {
+    switch (kind) {
+    case MCLocalXPCMenuPairingCommandCreate:
+        return MCLocalXPCPairingSessionCreateFailureKind;
+    case MCLocalXPCMenuPairingCommandDismiss:
+        return MCLocalXPCPairingSessionDismissFailureKind;
+    case MCLocalXPCMenuPairingCommandResolveDecision:
+        return MCLocalXPCPairingDecisionResolveFailureKind;
+    }
+    return NULL;
+}
 
 static void MCLocalXPCReleaseError(xpc_rich_error_t error) {
     if (error != NULL) {
@@ -692,6 +753,47 @@ bool MCLocalXPCMessageGetExactRemoteAccessEnable(
     );
 }
 
+bool MCLocalXPCMessageGetExactMenuPairingCommand(
+    MCLocalXPCMessageRef message,
+    MCLocalXPCMenuPairingCommandKind *kind_out,
+    const uint8_t **payload_out,
+    size_t *payload_length_out
+) {
+    const MCLocalXPCMenuPairingCommandKind kinds[] = {
+        MCLocalXPCMenuPairingCommandCreate,
+        MCLocalXPCMenuPairingCommandDismiss,
+        MCLocalXPCMenuPairingCommandResolveDecision,
+    };
+    for (size_t index = 0;
+         index < sizeof(kinds) / sizeof(kinds[0]);
+         index += 1) {
+        const char *request_kind =
+            MCLocalXPCMenuPairingCommandRequestKind(kinds[index]);
+        const uint8_t *payload = NULL;
+        size_t payload_length = 0;
+        if (request_kind != NULL
+            && MCLocalXPCMessageGetExactData(
+                (xpc_object_t)message,
+                request_kind,
+                MCLocalXPCMaximumMenuPairingCommandPayloadBytes,
+                &payload,
+                &payload_length
+            )) {
+            if (kind_out != NULL) {
+                *kind_out = kinds[index];
+            }
+            if (payload_out != NULL) {
+                *payload_out = payload;
+            }
+            if (payload_length_out != NULL) {
+                *payload_length_out = payload_length;
+            }
+            return true;
+        }
+    }
+    return false;
+}
+
 MCLocalXPCMessageRef MCLocalXPCMessageCreatePairingReviewPublish(
     const uint8_t *payload,
     size_t payload_length
@@ -1121,6 +1223,94 @@ bool MCLocalXPCExactMessageParserSelfTest(void) {
         &parsed_bootstrap_length
     );
     xpc_release(oversized_bootstrap_enable);
+
+    const uint8_t menu_command_payload[] = {0x7b, 0x7d};
+    const MCLocalXPCMenuPairingCommandKind menu_command_kinds[] = {
+        MCLocalXPCMenuPairingCommandCreate,
+        MCLocalXPCMenuPairingCommandDismiss,
+        MCLocalXPCMenuPairingCommandResolveDecision,
+    };
+    for (size_t index = 0;
+         index < sizeof(menu_command_kinds) / sizeof(menu_command_kinds[0]);
+         index += 1) {
+        const MCLocalXPCMenuPairingCommandKind expected_kind =
+            menu_command_kinds[index];
+        const char *request_kind =
+            MCLocalXPCMenuPairingCommandRequestKind(expected_kind);
+        const char *acknowledgement_kind =
+            MCLocalXPCMenuPairingCommandAcknowledgementKind(expected_kind);
+        const char *failure_kind =
+            MCLocalXPCMenuPairingCommandFailureKind(expected_kind);
+        valid = valid
+            && request_kind != NULL
+            && acknowledgement_kind != NULL
+            && failure_kind != NULL;
+        xpc_object_t request = xpc_dictionary_create_empty();
+        xpc_dictionary_set_string(request, "kind", request_kind);
+        xpc_dictionary_set_int64(request, "version", 1);
+        xpc_dictionary_set_data(
+            request,
+            "payload",
+            menu_command_payload,
+            sizeof(menu_command_payload)
+        );
+        MCLocalXPCMenuPairingCommandKind parsed_kind =
+            MCLocalXPCMenuPairingCommandCreate;
+        const uint8_t *parsed_payload = NULL;
+        size_t parsed_length = 0;
+        valid = valid && MCLocalXPCMessageGetExactMenuPairingCommand(
+            (MCLocalXPCMessageRef)request,
+            &parsed_kind,
+            &parsed_payload,
+            &parsed_length
+        );
+        valid = valid
+            && parsed_kind == expected_kind
+            && parsed_length == sizeof(menu_command_payload)
+            && memcmp(
+                parsed_payload,
+                menu_command_payload,
+                sizeof(menu_command_payload)
+            ) == 0;
+        xpc_dictionary_set_bool(request, "extra", true);
+        valid = valid && !MCLocalXPCMessageGetExactMenuPairingCommand(
+            (MCLocalXPCMessageRef)request,
+            NULL,
+            NULL,
+            NULL
+        );
+        xpc_release(request);
+
+        xpc_object_t acknowledgement = xpc_dictionary_create_empty();
+        xpc_dictionary_set_string(
+            acknowledgement,
+            "kind",
+            acknowledgement_kind
+        );
+        xpc_dictionary_set_int64(acknowledgement, "version", 1);
+        xpc_dictionary_set_data(
+            acknowledgement,
+            "payload",
+            menu_command_payload,
+            sizeof(menu_command_payload)
+        );
+        valid = valid && MCLocalXPCMessageGetExactData(
+            acknowledgement,
+            acknowledgement_kind,
+            MCLocalXPCMaximumMenuPairingCommandPayloadBytes,
+            NULL,
+            NULL
+        );
+        xpc_release(acknowledgement);
+
+        xpc_object_t failure = xpc_dictionary_create_empty();
+        xpc_dictionary_set_string(failure, "kind", failure_kind);
+        xpc_dictionary_set_int64(failure, "version", 1);
+        valid = valid && MCLocalXPCMessageIsExact(failure, failure_kind);
+        xpc_dictionary_set_string(failure, "detail", "secret");
+        valid = valid && !MCLocalXPCMessageIsExact(failure, failure_kind);
+        xpc_release(failure);
+    }
 
     const uint8_t presentation_payload[] = {0x7b, 0x7d};
     const uint8_t review_uuid[16] = {
@@ -1896,6 +2086,125 @@ MCLocalXPCResult MCLocalXPCSessionSendRemoteAccessEnable(
         MCLocalXPCMaximumBootstrapPayloadBytes,
         handler
     );
+}
+
+static bool MCLocalXPCMenuPairingRequestMatchesKind(
+    MCLocalXPCMessageRef request,
+    MCLocalXPCMenuPairingCommandKind expected_kind
+) {
+    const char *request_kind =
+        MCLocalXPCMenuPairingCommandRequestKind(expected_kind);
+    return request_kind != NULL
+        && MCLocalXPCMessageGetExactData(
+            (xpc_object_t)request,
+            request_kind,
+            MCLocalXPCMaximumMenuPairingCommandPayloadBytes,
+            NULL,
+            NULL
+        );
+}
+
+MCLocalXPCResult MCLocalXPCSessionReplyToMenuPairingCommandSuccess(
+    MCLocalXPCSessionRef session,
+    MCLocalXPCMessageRef request,
+    MCLocalXPCMenuPairingCommandKind kind,
+    const uint8_t *payload,
+    size_t payload_length
+) {
+    const char *acknowledgement_kind =
+        MCLocalXPCMenuPairingCommandAcknowledgementKind(kind);
+    if (acknowledgement_kind == NULL
+        || !MCLocalXPCMenuPairingRequestMatchesKind(request, kind)) {
+        return MCLocalXPCResultConstructionFailed;
+    }
+    return MCLocalXPCSessionReplyData(
+        session,
+        request,
+        acknowledgement_kind,
+        payload,
+        payload_length,
+        MCLocalXPCMaximumMenuPairingCommandPayloadBytes
+    );
+}
+
+MCLocalXPCResult MCLocalXPCSessionReplyToMenuPairingCommandFailure(
+    MCLocalXPCSessionRef session,
+    MCLocalXPCMessageRef request,
+    MCLocalXPCMenuPairingCommandKind kind
+) {
+    const char *failure_kind =
+        MCLocalXPCMenuPairingCommandFailureKind(kind);
+    if (failure_kind == NULL
+        || !MCLocalXPCMenuPairingRequestMatchesKind(request, kind)) {
+        return MCLocalXPCResultConstructionFailed;
+    }
+    return MCLocalXPCSessionReplyExact(session, request, failure_kind);
+}
+
+MCLocalXPCResult MCLocalXPCSessionSendMenuPairingCommand(
+    MCLocalXPCSessionRef session,
+    MCLocalXPCMenuPairingCommandKind kind,
+    const uint8_t *payload,
+    size_t payload_length,
+    MCLocalXPCMenuPairingCommandReplyHandler handler
+) {
+    const char *request_kind =
+        MCLocalXPCMenuPairingCommandRequestKind(kind);
+    const char *acknowledgement_kind =
+        MCLocalXPCMenuPairingCommandAcknowledgementKind(kind);
+    const char *failure_kind =
+        MCLocalXPCMenuPairingCommandFailureKind(kind);
+    if (request_kind == NULL
+        || acknowledgement_kind == NULL
+        || failure_kind == NULL
+        || payload == NULL
+        || payload_length == 0
+        || payload_length
+            > MCLocalXPCMaximumMenuPairingCommandPayloadBytes) {
+        return MCLocalXPCResultConstructionFailed;
+    }
+
+    xpc_object_t request = xpc_dictionary_create_empty();
+    if (request == NULL) {
+        return MCLocalXPCResultConstructionFailed;
+    }
+    xpc_dictionary_set_string(request, "kind", request_kind);
+    xpc_dictionary_set_int64(request, "version", 1);
+    xpc_dictionary_set_data(request, "payload", payload, payload_length);
+    xpc_session_send_message_with_reply_async(
+        (xpc_session_t)session,
+        request,
+        ^(xpc_object_t reply, xpc_rich_error_t error) {
+            if (error != NULL) {
+                handler(NULL, 0, false, true);
+                return;
+            }
+            const uint8_t *reply_payload = NULL;
+            size_t reply_payload_length = 0;
+            if (MCLocalXPCMessageGetExactData(
+                    reply,
+                    acknowledgement_kind,
+                    MCLocalXPCMaximumMenuPairingCommandPayloadBytes,
+                    &reply_payload,
+                    &reply_payload_length
+                )) {
+                handler(
+                    reply_payload,
+                    reply_payload_length,
+                    false,
+                    false
+                );
+                return;
+            }
+            if (MCLocalXPCMessageIsExact(reply, failure_kind)) {
+                handler(NULL, 0, true, false);
+                return;
+            }
+            handler(NULL, 0, false, true);
+        }
+    );
+    xpc_release(request);
+    return MCLocalXPCResultOK;
 }
 
 MCLocalXPCResult MCLocalXPCSessionReplyToStatusReadSuccess(

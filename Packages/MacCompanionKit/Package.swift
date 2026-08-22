@@ -158,6 +158,7 @@ let package = Package(
             dependencies: [
                 "CompanionAgent", "CompanionAgentPlatform", "CompanionIPC",
                 "CompanionLocalXPCPlatform", "CompanionMacApp",
+                "CompanionPresentation",
             ],
             linkerSettings: [
                 .linkedFramework("AppKit", .when(platforms: [.macOS])),

@@ -9,12 +9,42 @@ package protocol MacLocalXPCDashboardClientV1: AnyObject, Sendable {
     func start() throws
     func publishMenuReady()
     func readAgentStatus()
+    func createPairingSession(
+        _ command: LocalPairingSessionCreateCommandV0
+    ) async throws -> LocalPairingSessionCreatedReceiptV0
+    func dismissPairingSession(
+        _ command: LocalPairingSessionDismissCommandV0
+    ) async throws -> LocalPairingSessionDismissedReceiptV0
+    func resolveLocalApproval(
+        _ command: LocalPairingDecisionCommandV0
+    ) async throws -> LocalPairingDecisionReceiptV0
     func cancel()
     func finishMenuPresentationReceiver() async
 }
 
 @available(macOS 26.0, *)
 extension MacLocalXPCClientV1: MacLocalXPCDashboardClientV1 {}
+
+@available(macOS 26.0, *)
+extension MacLocalXPCDashboardClientV1 {
+    package func createPairingSession(
+        _: LocalPairingSessionCreateCommandV0
+    ) async throws -> LocalPairingSessionCreatedReceiptV0 {
+        throw MacLocalXPCMenuPairingCommandErrorV1.unavailable
+    }
+
+    package func dismissPairingSession(
+        _: LocalPairingSessionDismissCommandV0
+    ) async throws -> LocalPairingSessionDismissedReceiptV0 {
+        throw MacLocalXPCMenuPairingCommandErrorV1.unavailable
+    }
+
+    package func resolveLocalApproval(
+        _: LocalPairingDecisionCommandV0
+    ) async throws -> LocalPairingDecisionReceiptV0 {
+        throw MacLocalXPCMenuPairingCommandErrorV1.unavailable
+    }
+}
 
 @available(macOS 26.0, *)
 private actor MacLocalXPCDashboardBindingV1 {
@@ -279,6 +309,39 @@ private final class MacLocalXPCDashboardRuntimeV1: @unchecked Sendable {
         return await binding?.retryStatus() ?? .notCompleted
     }
 
+    func createPairingSession(
+        _ command: LocalPairingSessionCreateCommandV0
+    ) async throws -> LocalPairingSessionCreatedReceiptV0 {
+        guard let client = lock.withLock({
+            acceptingEvents && shutdownTask == nil ? self.client : nil
+        }) else {
+            throw MacLocalXPCMenuPairingCommandErrorV1.unavailable
+        }
+        return try await client.createPairingSession(command)
+    }
+
+    func dismissPairingSession(
+        _ command: LocalPairingSessionDismissCommandV0
+    ) async throws -> LocalPairingSessionDismissedReceiptV0 {
+        guard let client = lock.withLock({
+            acceptingEvents && shutdownTask == nil ? self.client : nil
+        }) else {
+            throw MacLocalXPCMenuPairingCommandErrorV1.unavailable
+        }
+        return try await client.dismissPairingSession(command)
+    }
+
+    func resolveLocalApproval(
+        _ command: LocalPairingDecisionCommandV0
+    ) async throws -> LocalPairingDecisionReceiptV0 {
+        guard let client = lock.withLock({
+            acceptingEvents && shutdownTask == nil ? self.client : nil
+        }) else {
+            throw MacLocalXPCMenuPairingCommandErrorV1.unavailable
+        }
+        return try await client.resolveLocalApproval(command)
+    }
+
     func finish() async {
         await beginShutdown().value
     }
@@ -318,6 +381,8 @@ private final class MacLocalXPCDashboardRuntimeV1: @unchecked Sendable {
 @available(macOS 26.0, *)
 public final class MacLocalXPCDashboardProductV1:
     MacAgentDashboardStatusRetryingV0,
+    MacPairingLocalIPCClientV0,
+    MacPairingReviewLocalIPCClientV0,
     @unchecked Sendable
 {
     package typealias ClientFactory = @Sendable (
@@ -402,6 +467,24 @@ public final class MacLocalXPCDashboardProductV1:
 
     public func retryStatus() async -> MacAgentDashboardEffectOutcomeV0 {
         await runtime.retryStatus()
+    }
+
+    public func createPairingSession(
+        _ command: LocalPairingSessionCreateCommandV0
+    ) async throws -> LocalPairingSessionCreatedReceiptV0 {
+        try await runtime.createPairingSession(command)
+    }
+
+    public func dismissPairingSession(
+        _ command: LocalPairingSessionDismissCommandV0
+    ) async throws -> LocalPairingSessionDismissedReceiptV0 {
+        try await runtime.dismissPairingSession(command)
+    }
+
+    public func resolveLocalApproval(
+        _ command: LocalPairingDecisionCommandV0
+    ) async throws -> LocalPairingDecisionReceiptV0 {
+        try await runtime.resolveLocalApproval(command)
     }
 
     public func finish() async {

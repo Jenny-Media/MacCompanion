@@ -397,6 +397,30 @@ private struct UnavailableBootstrapHandlerV1:
     func invalidate(generation _: UInt64) async {}
 }
 
+private struct UnavailableMenuPairingCommandHandlerV1:
+    MacLocalXPCMenuPairingCommandHandlingV1
+{
+    private struct Unavailable: Error {}
+
+    func createPairingSession(
+        _: LocalPairingSessionCreateCommandV0
+    ) async throws -> LocalPairingSessionCreatedReceiptV0 {
+        throw Unavailable()
+    }
+
+    func dismissPairingSession(
+        _: LocalPairingSessionDismissCommandV0
+    ) async throws -> LocalPairingSessionDismissedReceiptV0 {
+        throw Unavailable()
+    }
+
+    func resolveLocalApproval(
+        _: LocalPairingDecisionCommandV0
+    ) async throws -> LocalPairingDecisionReceiptV0 {
+        throw Unavailable()
+    }
+}
+
 @Test
 @available(macOS 26.0, *)
 func injectedAuthoritiesRequireTheirExactExplicitServerProfiles() {
@@ -428,6 +452,23 @@ func injectedAuthoritiesRequireTheirExactExplicitServerProfiles() {
     ) { _ in }
     #expect(throws: MacLocalXPCConstructionErrorV1.invalidProfile) {
         try missingBootstrapAuthority.start()
+    }
+
+    let commandHandlerInClosedProfile = MacLocalXPCServerV1(
+        profile: .authenticationOnly,
+        menuPairingCommandHandler:
+            UnavailableMenuPairingCommandHandlerV1()
+    ) { _ in }
+    #expect(throws: MacLocalXPCConstructionErrorV1.invalidProfile) {
+        try commandHandlerInClosedProfile.start()
+    }
+
+    let missingPresentationCommandHandler = MacLocalXPCServerV1(
+        profile: .menuLifecycleReadinessStatusAndPresentation,
+        statusReader: UnavailableStatusReaderV1()
+    ) { _ in }
+    #expect(throws: MacLocalXPCConstructionErrorV1.invalidProfile) {
+        try missingPresentationCommandHandler.start()
     }
 }
 

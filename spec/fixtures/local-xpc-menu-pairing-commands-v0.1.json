@@ -1,0 +1,52 @@
+{
+  "profile": "Mac Companion local XPC menu pairing commands v0.1",
+  "maximumPayloadBytes": 4096,
+  "maximumInFlightCommandsPerGeneration": 1,
+  "minimumGeneration": 1,
+  "serverOperationTimeoutMilliseconds": 4000,
+  "clientReplyTimeoutMilliseconds": 5000,
+  "commands": [
+    {
+      "kind": "command.pairing-session.create",
+      "authorizationMethod": "createPairingSession",
+      "requestPayloadType": "LocalPairingSessionCreateCommandV0",
+      "successKind": "command.pairing-session.create.ack",
+      "successPayloadType": "LocalPairingSessionCreatedReceiptV0",
+      "failureKind": "command.pairing-session.create.error",
+      "requestAndSuccessFields": ["kind:string", "version:signedInt64=1", "payload:data"],
+      "failureFields": ["kind:string", "version:signedInt64=1"]
+    },
+    {
+      "kind": "command.pairing-session.dismiss",
+      "authorizationMethod": "dismissPairingSession",
+      "requestPayloadType": "LocalPairingSessionDismissCommandV0",
+      "successKind": "command.pairing-session.dismiss.ack",
+      "successPayloadType": "LocalPairingSessionDismissedReceiptV0",
+      "failureKind": "command.pairing-session.dismiss.error",
+      "requestAndSuccessFields": ["kind:string", "version:signedInt64=1", "payload:data"],
+      "failureFields": ["kind:string", "version:signedInt64=1"]
+    },
+    {
+      "kind": "command.pairing-decision.resolve",
+      "authorizationMethod": "resolveLocalApproval",
+      "requestPayloadType": "LocalPairingDecisionCommandV0",
+      "successKind": "command.pairing-decision.resolve.ack",
+      "successPayloadType": "LocalPairingDecisionReceiptV0",
+      "failureKind": "command.pairing-decision.resolve.error",
+      "requestAndSuccessFields": ["kind:string", "version:signedInt64=1", "payload:data"],
+      "failureFields": ["kind:string", "version:signedInt64=1"]
+    }
+  ],
+  "rules": [
+    "same-team exact-role authentication and menu readiness are required before command traffic",
+    "the menu client and Agent server each admit exactly one command at a time per authenticated generation",
+    "request and success payloads are nonempty canonical JSON data no larger than 4096 bytes",
+    "each request and success reply has exactly kind, signed integer version 1, and payload",
+    "each handled failure has exactly kind and signed integer version 1 and discloses no detail",
+    "typed payload decoding and authorization occur again before Agent authority invocation",
+    "the server times out after four monotonic seconds and the client after five",
+    "timeout, cancellation after send, malformed reply, unknown field, cross-kind payload, premature traffic, and concurrent admission terminate the generation",
+    "presentation owners retain exact commands for explicit retry and delivery alone is never success",
+    "QR payloads, review decisions, receipts, and errors never enter diagnostics, logs, crash metadata, or the diagnostic CLI"
+  ]
+}

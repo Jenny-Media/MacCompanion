@@ -6,6 +6,29 @@ import CompanionMacApp
 import Foundation
 import Testing
 
+@available(macOS 26.0, *)
+private struct ProductMenuPairingCommandHandlerV1:
+    MacLocalXPCMenuPairingCommandHandlingV1
+{
+    func createPairingSession(
+        _: LocalPairingSessionCreateCommandV0
+    ) async throws -> LocalPairingSessionCreatedReceiptV0 {
+        throw MacLocalXPCMenuPairingCommandErrorV1.unavailable
+    }
+
+    func dismissPairingSession(
+        _: LocalPairingSessionDismissCommandV0
+    ) async throws -> LocalPairingSessionDismissedReceiptV0 {
+        throw MacLocalXPCMenuPairingCommandErrorV1.unavailable
+    }
+
+    func resolveLocalApproval(
+        _: LocalPairingDecisionCommandV0
+    ) async throws -> LocalPairingDecisionReceiptV0 {
+        throw MacLocalXPCMenuPairingCommandErrorV1.unavailable
+    }
+}
+
 private func eventuallyV1(
     _ predicate: @escaping @Sendable () async -> Bool
 ) async -> Bool {
@@ -397,11 +420,12 @@ func agentPresentationProductBindsOnlyAfterAcceptedReadiness() async throws {
             connection: connection
         ),
         statusReader: ProductStatusReaderV1(),
+        menuPairingCommandHandler: ProductMenuPairingCommandHandlerV1(),
         onSurfaces: { await generations.record($0.generation) },
         onSurfaceInvalidated: {
             await invalidatedGenerations.record($0)
         },
-        serverFactory: { profile, _, handler in
+        serverFactory: { profile, _, _, handler in
             factory.record(profile)
             server.install(handler)
             return server
@@ -448,11 +472,12 @@ func authenticatedReplacementRevokesReadyPresentationBeforeNewReadiness()
             connection: ProductLifecycleConnectionV1()
         ),
         statusReader: ProductStatusReaderV1(),
+        menuPairingCommandHandler: ProductMenuPairingCommandHandlerV1(),
         onSurfaces: { await generations.record($0.generation) },
         onSurfaceInvalidated: {
             await invalidatedGenerations.record($0)
         },
-        serverFactory: { _, _, handler in
+        serverFactory: { _, _, _, handler in
             server.install(handler)
             return server
         }
@@ -487,8 +512,9 @@ func agentPresentationProductFailsCurrentPeerWhenEndpointIsAbsent() async {
             connection: ProductLifecycleConnectionV1()
         ),
         statusReader: ProductStatusReaderV1(),
+        menuPairingCommandHandler: ProductMenuPairingCommandHandlerV1(),
         onSurfaces: { _ in },
-        serverFactory: { _, _, handler in
+        serverFactory: { _, _, _, handler in
             server.install(handler)
             return server
         }

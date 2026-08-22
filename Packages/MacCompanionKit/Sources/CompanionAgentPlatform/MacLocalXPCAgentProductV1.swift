@@ -266,6 +266,12 @@ public final class MacLocalXPCAgentProductV1: @unchecked Sendable {
         any MacLocalXPCStatusReadingV1,
         @escaping MacLocalXPCServerV1.EventHandler
     ) -> any MacLocalXPCAgentServerV1
+    package typealias PresentationServerFactory = @Sendable (
+        MacLocalXPCServerProfileV1,
+        any MacLocalXPCStatusReadingV1,
+        any MacLocalXPCMenuPairingCommandHandlingV1,
+        @escaping MacLocalXPCServerV1.EventHandler
+    ) -> any MacLocalXPCAgentServerV1
 
     private let runtime: MacLocalXPCAgentRuntimeV1
 
@@ -300,6 +306,8 @@ public final class MacLocalXPCAgentProductV1: @unchecked Sendable {
         wallClock: any MacDashboardLifecycleWallClockV1 =
             SystemMacDashboardLifecycleWallClockV1(),
         transitionIDSource: @escaping @Sendable () -> UUID = { UUID() },
+        menuPairingCommandHandler:
+            any MacLocalXPCMenuPairingCommandHandlingV1,
         onSurfaces: @escaping @Sendable (
             MacLocalXPCAuthenticatedMenuSurfacesV1
         ) async throws -> Void,
@@ -318,6 +326,7 @@ public final class MacLocalXPCAgentProductV1: @unchecked Sendable {
             statusReader: MacLocalXPCStatusReaderV1(
                 statusReader: services.localServices.statusReader
             ),
+            menuPairingCommandHandler: menuPairingCommandHandler,
             onSurfaces: onSurfaces,
             onSurfaceInvalidated: onSurfaceInvalidated
         )
@@ -368,17 +377,20 @@ public final class MacLocalXPCAgentProductV1: @unchecked Sendable {
         lifecycleFactory:
             any MacLocalXPCMenuLifecycleConnectionFactoryV1,
         statusReader: any MacLocalXPCStatusReadingV1,
+        menuPairingCommandHandler:
+            any MacLocalXPCMenuPairingCommandHandlingV1,
         onSurfaces: @escaping @Sendable (
             MacLocalXPCAuthenticatedMenuSurfacesV1
         ) async throws -> Void,
         onSurfaceInvalidated: @escaping @Sendable (UInt64) async -> Void = {
             _ in
         },
-        serverFactory: @escaping ServerFactory = {
-            profile, statusReader, onEvent in
+        serverFactory: @escaping PresentationServerFactory = {
+            profile, statusReader, commandHandler, onEvent in
             MacLocalXPCServerV1(
                 profile: profile,
                 statusReader: statusReader,
+                menuPairingCommandHandler: commandHandler,
                 onEvent: onEvent
             )
         }
@@ -404,6 +416,7 @@ public final class MacLocalXPCAgentProductV1: @unchecked Sendable {
         let server = serverFactory(
             .menuLifecycleReadinessStatusAndPresentation,
             statusReader,
+            menuPairingCommandHandler,
             { [weak runtime] event in
                 runtime?.consume(event)
             }

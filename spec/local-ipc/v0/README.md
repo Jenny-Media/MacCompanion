@@ -271,6 +271,21 @@ verification, invalidate the connection on role/version failure, and discard
 the QR response when the local presentation closes. It must never make the
 encoded QR available to diagnostic or crash-reporting surfaces.
 
+The permanent XPC transport carries the three pairing mutations in the closed
+`command.pairing-session.create`, `command.pairing-session.dismiss`, and
+`command.pairing-decision.resolve` envelopes. Each request and successful
+reply contains exactly `kind`, signed integer `version = 1`, and one nonempty
+canonical JSON `payload` no larger than 4,096 bytes. A handled command failure
+returns only the corresponding exact `*.error` envelope with `kind` and
+`version`; it carries no authority, identifier, secret, diagnostic text, or
+provider error. Unknown fields, cross-kind payloads, malformed or
+noncanonical JSON, premature traffic, concurrent commands, timeout, role or
+version failure, and any other reply terminate the authenticated generation.
+The server permits one command at a time after menu readiness and finishes or
+fails it within four monotonic seconds. The menu client waits at most five
+monotonic seconds, retains the exact typed command in its presentation owner
+for explicit retry, and never treats transport delivery as product success.
+
 The Agent network owner exposes pairing context only while both the exact
 sealed listener and its Bonjour registration are ready. Their callbacks use
 independent increasing generations; stale callbacks cannot restore

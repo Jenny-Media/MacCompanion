@@ -68,6 +68,10 @@ public enum MacLocalXPCServerProfileV1: Equatable, Sendable {
     var admitsMenuPresentation: Bool {
         self == .menuLifecycleReadinessStatusAndPresentation
     }
+
+    var admitsMenuPairingCommands: Bool {
+        self == .menuLifecycleReadinessStatusAndPresentation
+    }
 }
 
 public enum MacLocalXPCConstructionErrorV1: Error, Equatable, Sendable {
@@ -302,6 +306,62 @@ public final class MacLocalXPCServerV1:
     package static let maximumAdmittedPresentationsPerGeneration = 8
     package static let presentationReplyTimeoutSeconds = 3
     package static let remoteAccessBootstrapTimeoutSeconds = 5
+    package static let menuPairingCommandTimeoutSeconds = 4
+
+    private enum MenuPairingCommand: Sendable {
+        case create(LocalPairingSessionCreateCommandV0)
+        case dismiss(LocalPairingSessionDismissCommandV0)
+        case resolveDecision(LocalPairingDecisionCommandV0)
+
+        var kind: MacLocalXPCMenuPairingCommandKindV1 {
+            switch self {
+            case .create: .create
+            case .dismiss: .dismiss
+            case .resolveDecision: .resolveDecision
+            }
+        }
+
+        var authorizationMethod: LocalIPCMethod {
+            switch self {
+            case .create: .createPairingSession
+            case .dismiss: .dismissPairingSession
+            case .resolveDecision: .resolveLocalApproval
+            }
+        }
+    }
+
+    private enum MenuPairingCommandResult: Sendable {
+        case created(LocalPairingSessionCreatedReceiptV0)
+        case dismissed(LocalPairingSessionDismissedReceiptV0)
+        case decision(LocalPairingDecisionReceiptV0)
+    }
+
+    private final class PendingMenuPairingCommand: @unchecked Sendable {
+        let transaction: MacLocalXPCMenuPairingCommandTransactionGateV1.Active
+        let command: MenuPairingCommand
+        var deadline: DispatchWorkItem?
+        var task: Task<Void, Never>?
+        private let requestLease:
+            MacLocalXPCStatusRequestLeaseV1<MCLocalXPCMessageRef>
+
+        init(
+            transaction: MacLocalXPCMenuPairingCommandTransactionGateV1.Active,
+            command: MenuPairingCommand,
+            request: MCLocalXPCMessageRef
+        ) {
+            self.transaction = transaction
+            self.command = command
+            requestLease = MacLocalXPCStatusRequestLeaseV1(request: request)
+        }
+
+        func takeOwnedRequest() -> MCLocalXPCMessageRef? {
+            requestLease.takeOwnedRequest()
+        }
+
+        func releaseOwnedRequest() {
+            requestLease.releaseIfOwned()
+        }
+    }
 
     private enum BootstrapRequestKind: Sendable {
         case offer
@@ -420,6 +480,9 @@ public final class MacLocalXPCServerV1:
         var pendingBootstrapRequest: PendingBootstrapRequest?
         var statusReadGate = MacLocalXPCStatusReadTransactionGateV1()
         var pendingStatusRead: PendingStatusRead?
+        var menuPairingCommandGate =
+            MacLocalXPCMenuPairingCommandTransactionGateV1()
+        var pendingMenuPairingCommand: PendingMenuPairingCommand?
         var presentationIssuanceGate:
             MacLocalXPCMenuPresentationEndpointIssuanceGateV1
         var presentationEndpoint:
@@ -446,6 +509,7 @@ public final class MacLocalXPCServerV1:
             MCLocalXPCSessionRetain(peer)
             precondition(bootstrapGate.bind(generation: generation))
             precondition(statusReadGate.bind(generation: generation))
+            precondition(menuPairingCommandGate.bind(generation: generation))
             ownedPeer = peer
         }
 
@@ -464,6 +528,17 @@ public final class MacLocalXPCServerV1:
             pendingStatusRead.task?.cancel()
             pendingStatusRead.task = nil
             pendingStatusRead.releaseOwnedRequest()
+        }
+
+        func cancelPendingMenuPairingCommand() {
+            _ = menuPairingCommandGate.invalidate(generation: generation)
+            guard let pendingMenuPairingCommand else { return }
+            self.pendingMenuPairingCommand = nil
+            pendingMenuPairingCommand.deadline?.cancel()
+            pendingMenuPairingCommand.deadline = nil
+            pendingMenuPairingCommand.task?.cancel()
+            pendingMenuPairingCommand.task = nil
+            pendingMenuPairingCommand.releaseOwnedRequest()
         }
 
         @discardableResult
@@ -497,6 +572,8 @@ public final class MacLocalXPCServerV1:
     private let bootstrapHandler:
         (any MacLocalXPCRemoteAccessBootstrapHandlingV1)?
     private let statusReader: (any MacLocalXPCStatusReadingV1)?
+    private let menuPairingCommandHandler:
+        (any MacLocalXPCMenuPairingCommandHandlingV1)?
     private let profile: MacLocalXPCServerProfileV1
     private let statusReadTimeout: DispatchTimeInterval = .seconds(2)
     private let bootstrapTimeout: DispatchTimeInterval = .seconds(
@@ -513,11 +590,14 @@ public final class MacLocalXPCServerV1:
         bootstrapHandler:
             (any MacLocalXPCRemoteAccessBootstrapHandlingV1)? = nil,
         statusReader: (any MacLocalXPCStatusReadingV1)? = nil,
+        menuPairingCommandHandler:
+            (any MacLocalXPCMenuPairingCommandHandlingV1)? = nil,
         onEvent: @escaping EventHandler
     ) {
         self.profile = profile
         self.bootstrapHandler = bootstrapHandler
         self.statusReader = statusReader
+        self.menuPairingCommandHandler = menuPairingCommandHandler
         self.onEvent = onEvent
         queue.setSpecific(key: queueKey, value: 1)
     }
@@ -537,6 +617,10 @@ public final class MacLocalXPCServerV1:
             }
             guard profile.admitsRemoteAccessBootstrap
                     == (bootstrapHandler != nil) else {
+                throw MacLocalXPCConstructionErrorV1.invalidProfile
+            }
+            guard profile.admitsMenuPairingCommands
+                    == (menuPairingCommandHandler != nil) else {
                 throw MacLocalXPCConstructionErrorV1.invalidProfile
             }
 
@@ -1191,6 +1275,7 @@ public final class MacLocalXPCServerV1:
         guard state.postAuthenticationFence.fence() else { return }
         invalidateRemoteAccessBootstrap(state)
         state.cancelPendingStatusRead()
+        state.cancelPendingMenuPairingCommand()
         fencePresentations(state, error: presentationError)
     }
 
@@ -1412,6 +1497,47 @@ public final class MacLocalXPCServerV1:
                 return
             }
 
+            var commandKind = MCLocalXPCMenuPairingCommandCreate
+            var commandPayload: UnsafePointer<UInt8>?
+            var commandPayloadLength = 0
+            if MCLocalXPCMessageGetExactMenuPairingCommand(
+                message,
+                &commandKind,
+                &commandPayload,
+                &commandPayloadLength
+            ) {
+                guard let commandPayload,
+                      commandPayloadLength > 0,
+                      commandPayloadLength <=
+                        LocalMenuPairingCommandWireCodecV1.maximumEncodedBytes
+                else {
+                    self.cancelAuthenticatedPeer(
+                        state,
+                        presentationError: .transportFailure
+                    )
+                    return
+                }
+                let payload = Data(
+                    bytes: commandPayload,
+                    count: commandPayloadLength
+                )
+                guard let command = self.decodeMenuPairingCommand(
+                    kind: commandKind,
+                    payload: payload
+                ), self.beginMenuPairingCommand(
+                    state: state,
+                    request: message,
+                    command: command
+                ) else {
+                    self.cancelAuthenticatedPeer(
+                        state,
+                        presentationError: .transportFailure
+                    )
+                    return
+                }
+                return
+            }
+
             guard MCLocalXPCMessageIsExactStatusRead(message),
                   self.beginStatusRead(state: state, request: message) else {
                 self.cancelAuthenticatedPeer(
@@ -1446,6 +1572,295 @@ public final class MacLocalXPCServerV1:
             return true
         } catch {
             return false
+        }
+    }
+
+    private func decodeMenuPairingCommand(
+        kind: MCLocalXPCMenuPairingCommandKind,
+        payload: Data
+    ) -> MenuPairingCommand? {
+        do {
+            switch kind {
+            case MCLocalXPCMenuPairingCommandCreate:
+                return .create(
+                    try LocalMenuPairingCommandWireCodecV1
+                        .decodeCreateCommand(payload)
+                )
+            case MCLocalXPCMenuPairingCommandDismiss:
+                return .dismiss(
+                    try LocalMenuPairingCommandWireCodecV1
+                        .decodeDismissCommand(payload)
+                )
+            case MCLocalXPCMenuPairingCommandResolveDecision:
+                return .resolveDecision(
+                    try LocalMenuPairingCommandWireCodecV1
+                        .decodeDecisionCommand(payload)
+                )
+            default:
+                return nil
+            }
+        } catch {
+            return nil
+        }
+    }
+
+    private func beginMenuPairingCommand(
+        state: PeerState,
+        request: MCLocalXPCMessageRef,
+        command: MenuPairingCommand
+    ) -> Bool {
+        guard let menuPairingCommandHandler,
+              state.lifetime.menuReadinessPublished,
+              let transaction = state.menuPairingCommandGate.begin(
+                generation: state.generation,
+                kind: command.kind,
+                permitted:
+                    profile.admitsMenuPairingCommands
+                    && authorizesMenuMethod(command.authorizationMethod)
+                    && state.postAuthenticationFence.admitsTraffic
+              ) else {
+            return false
+        }
+
+        let pending = PendingMenuPairingCommand(
+            transaction: transaction,
+            command: command,
+            request: request
+        )
+        state.pendingMenuPairingCommand = pending
+        let queue = self.queue
+        pending.task = Task {
+            [weak self, weak state, menuPairingCommandHandler, command, queue] in
+            do {
+                let result: MenuPairingCommandResult
+                switch command {
+                case .create(let value):
+                    result = .created(
+                        try await menuPairingCommandHandler
+                            .createPairingSession(value)
+                    )
+                case .dismiss(let value):
+                    result = .dismissed(
+                        try await menuPairingCommandHandler
+                            .dismissPairingSession(value)
+                    )
+                case .resolveDecision(let value):
+                    result = .decision(
+                        try await menuPairingCommandHandler
+                            .resolveLocalApproval(value)
+                    )
+                }
+                queue.async { [weak self, weak state] in
+                    guard let self, let state else { return }
+                    self.completeMenuPairingCommand(
+                        state: state,
+                        transaction: transaction,
+                        result: result
+                    )
+                }
+            } catch {
+                queue.async { [weak self, weak state] in
+                    guard let self, let state else { return }
+                    self.failMenuPairingCommand(
+                        state: state,
+                        transaction: transaction
+                    )
+                }
+            }
+        }
+        let deadline = DispatchWorkItem { [weak self, weak state] in
+            guard let self, let state else { return }
+            self.expireMenuPairingCommand(
+                state: state,
+                transaction: transaction
+            )
+        }
+        pending.deadline = deadline
+        queue.asyncAfter(
+            deadline: .now()
+                + .seconds(Self.menuPairingCommandTimeoutSeconds),
+            execute: deadline
+        )
+        return true
+    }
+
+    private func completeMenuPairingCommand(
+        state: PeerState,
+        transaction: MacLocalXPCMenuPairingCommandTransactionGateV1.Active,
+        result: MenuPairingCommandResult
+    ) {
+        guard admitsMenuPairingCommandCompletion(
+                state: state,
+                transaction: transaction
+              ),
+              let pending = state.pendingMenuPairingCommand,
+              pending.transaction == transaction,
+              let payload = validatedMenuPairingCommandReply(
+                command: pending.command,
+                result: result
+              ) else {
+            terminateMenuPairingCommand(
+                state: state,
+                transaction: transaction
+            )
+            return
+        }
+        guard state.menuPairingCommandGate.finish(transaction),
+              let request = takeMenuPairingCommandRequest(
+                state: state,
+                transaction: transaction
+              ) else {
+            cancelAuthenticatedPeer(
+                state,
+                presentationError: .transportFailure
+            )
+            return
+        }
+        defer { MCLocalXPCMessageRelease(request) }
+        let cKind = cMenuPairingCommandKind(transaction.kind)
+        let reply = payload.withUnsafeBytes { rawBuffer in
+            guard let bytes = rawBuffer.bindMemory(to: UInt8.self).baseAddress
+            else { return MCLocalXPCResultConstructionFailed }
+            return MCLocalXPCSessionReplyToMenuPairingCommandSuccess(
+                state.peer,
+                request,
+                cKind,
+                bytes,
+                payload.count
+            )
+        }
+        guard reply == MCLocalXPCResultOK else {
+            cancelAuthenticatedPeer(
+                state,
+                presentationError: .transportFailure
+            )
+            return
+        }
+    }
+
+    private func failMenuPairingCommand(
+        state: PeerState,
+        transaction: MacLocalXPCMenuPairingCommandTransactionGateV1.Active
+    ) {
+        guard admitsMenuPairingCommandCompletion(
+                state: state,
+                transaction: transaction
+              ) else { return }
+        guard state.menuPairingCommandGate.finish(transaction),
+              let request = takeMenuPairingCommandRequest(
+                state: state,
+                transaction: transaction
+              ) else {
+            cancelAuthenticatedPeer(
+                state,
+                presentationError: .transportFailure
+            )
+            return
+        }
+        defer { MCLocalXPCMessageRelease(request) }
+        guard MCLocalXPCSessionReplyToMenuPairingCommandFailure(
+            state.peer,
+            request,
+            cMenuPairingCommandKind(transaction.kind)
+        ) == MCLocalXPCResultOK else {
+            cancelAuthenticatedPeer(
+                state,
+                presentationError: .transportFailure
+            )
+            return
+        }
+    }
+
+    private func expireMenuPairingCommand(
+        state: PeerState,
+        transaction: MacLocalXPCMenuPairingCommandTransactionGateV1.Active
+    ) {
+        guard admitsMenuPairingCommandCompletion(
+            state: state,
+            transaction: transaction
+        ) else { return }
+        terminateMenuPairingCommand(
+            state: state,
+            transaction: transaction
+        )
+    }
+
+    private func terminateMenuPairingCommand(
+        state: PeerState,
+        transaction: MacLocalXPCMenuPairingCommandTransactionGateV1.Active
+    ) {
+        guard state.menuPairingCommandGate.admits(transaction) else { return }
+        state.cancelPendingMenuPairingCommand()
+        cancelAuthenticatedPeer(
+            state,
+            presentationError: .transportFailure
+        )
+    }
+
+    private func admitsMenuPairingCommandCompletion(
+        state: PeerState,
+        transaction: MacLocalXPCMenuPairingCommandTransactionGateV1.Active
+    ) -> Bool {
+        listenerRunGate.admits(generation: state.listenerGeneration)
+            && peerStates[state.generation] === state
+            && currentPeerState === state
+            && generationGate.admitsPostAuthenticationTraffic(
+                generation: state.generation
+            )
+            && state.lifetime.menuReadinessPublished
+            && state.postAuthenticationFence.admitsTraffic
+            && state.menuPairingCommandGate.admits(transaction)
+    }
+
+    private func takeMenuPairingCommandRequest(
+        state: PeerState,
+        transaction: MacLocalXPCMenuPairingCommandTransactionGateV1.Active
+    ) -> MCLocalXPCMessageRef? {
+        guard let pending = state.pendingMenuPairingCommand,
+              pending.transaction == transaction else { return nil }
+        state.pendingMenuPairingCommand = nil
+        pending.deadline?.cancel()
+        pending.deadline = nil
+        pending.task = nil
+        return pending.takeOwnedRequest()
+    }
+
+    private func validatedMenuPairingCommandReply(
+        command: MenuPairingCommand,
+        result: MenuPairingCommandResult
+    ) -> Data? {
+        do {
+            switch (command, result) {
+            case (.create(let command), .created(let receipt)):
+                guard receipt.correlationID == command.commandID else {
+                    return nil
+                }
+                return try LocalMenuPairingCommandWireCodecV1
+                    .encodeCreatedReceipt(receipt)
+            case (.dismiss(let command), .dismissed(let receipt)):
+                guard receipt.correlationID == command.commandID,
+                      receipt.pairingID == command.pairingID else { return nil }
+                return try LocalMenuPairingCommandWireCodecV1
+                    .encodeDismissedReceipt(receipt)
+            case (.resolveDecision(let command), .decision(let receipt)):
+                try receipt.validate(against: command)
+                return try LocalMenuPairingCommandWireCodecV1
+                    .encodeDecisionReceipt(receipt)
+            default:
+                return nil
+            }
+        } catch {
+            return nil
+        }
+    }
+
+    private func cMenuPairingCommandKind(
+        _ kind: MacLocalXPCMenuPairingCommandKindV1
+    ) -> MCLocalXPCMenuPairingCommandKind {
+        switch kind {
+        case .create: MCLocalXPCMenuPairingCommandCreate
+        case .dismiss: MCLocalXPCMenuPairingCommandDismiss
+        case .resolveDecision: MCLocalXPCMenuPairingCommandResolveDecision
         }
     }
 
@@ -1928,6 +2343,42 @@ public final class MacLocalXPCServerV1:
 public final class MacLocalXPCClientV1: @unchecked Sendable {
     public typealias EventHandler = @Sendable (MacLocalXPCClientEventV1) -> Void
 
+    private final class MenuPairingCommandCancellationMarker:
+        @unchecked Sendable
+    {
+        private let lock = NSLock()
+        private var cancelled = false
+
+        func markCancelled() {
+            lock.lock()
+            cancelled = true
+            lock.unlock()
+        }
+
+        func isCancelled() -> Bool {
+            lock.lock()
+            defer { lock.unlock() }
+            return cancelled
+        }
+    }
+
+    private final class PendingMenuPairingCommand: @unchecked Sendable {
+        let requestID: UUID
+        let transaction: MacLocalXPCMenuPairingCommandTransactionGateV1.Active
+        let continuation: CheckedContinuation<Data, any Error>
+        var deadline: DispatchWorkItem?
+
+        init(
+            requestID: UUID,
+            transaction: MacLocalXPCMenuPairingCommandTransactionGateV1.Active,
+            continuation: CheckedContinuation<Data, any Error>
+        ) {
+            self.requestID = requestID
+            self.transaction = transaction
+            self.continuation = continuation
+        }
+    }
+
     private let queue = DispatchQueue(
         label: "media.jenny.maccompanion.local-xpc.menu"
     )
@@ -1943,6 +2394,11 @@ public final class MacLocalXPCClientV1: @unchecked Sendable {
     private var statusReadGate = MacLocalXPCStatusReadTransactionGateV1()
     private var statusReadDeadline: DispatchWorkItem?
     private let statusReadTimeout: DispatchTimeInterval = .seconds(3)
+    private var menuPairingCommandGate =
+        MacLocalXPCMenuPairingCommandTransactionGateV1()
+    private var pendingMenuPairingCommand: PendingMenuPairingCommand?
+    private let menuPairingCommandReplyTimeout: DispatchTimeInterval =
+        .seconds(5)
     package static let menuPresentationReceiverTimeout:
         DispatchTimeInterval =
             MacLocalXPCMenuPresentationReceiverGenerationV1<
@@ -2002,6 +2458,10 @@ public final class MacLocalXPCClientV1: @unchecked Sendable {
             menuReadinessPublished = false
             statusReadGate.invalidateAll()
             precondition(statusReadGate.bind(generation: generation))
+            _ = menuPairingCommandGate.invalidate(
+                generation: menuPairingCommandGate.generation ?? 0
+            )
+            precondition(menuPairingCommandGate.bind(generation: generation))
             statusReadDeadline?.cancel()
             statusReadDeadline = nil
             if presentationSurfaces != nil {
@@ -2088,6 +2548,97 @@ public final class MacLocalXPCClientV1: @unchecked Sendable {
         }
     }
 
+    public func createPairingSession(
+        _ command: LocalPairingSessionCreateCommandV0
+    ) async throws -> LocalPairingSessionCreatedReceiptV0 {
+        let payload: Data
+        do {
+            payload = try LocalMenuPairingCommandWireCodecV1
+                .encodeCreateCommand(command)
+        } catch {
+            throw MacLocalXPCMenuPairingCommandErrorV1
+                .malformedOrTransportError
+        }
+        let reply = try await sendMenuPairingCommand(
+            kind: .create,
+            authorizationMethod: .createPairingSession,
+            payload: payload
+        )
+        do {
+            let receipt = try LocalMenuPairingCommandWireCodecV1
+                .decodeCreatedReceipt(reply)
+            guard receipt.correlationID == command.commandID else {
+                throw MacLocalXPCMenuPairingCommandErrorV1
+                    .malformedOrTransportError
+            }
+            return receipt
+        } catch {
+            invalidateCurrentGenerationAfterMalformedCommandReply()
+            throw MacLocalXPCMenuPairingCommandErrorV1
+                .malformedOrTransportError
+        }
+    }
+
+    public func dismissPairingSession(
+        _ command: LocalPairingSessionDismissCommandV0
+    ) async throws -> LocalPairingSessionDismissedReceiptV0 {
+        let payload: Data
+        do {
+            payload = try LocalMenuPairingCommandWireCodecV1
+                .encodeDismissCommand(command)
+        } catch {
+            throw MacLocalXPCMenuPairingCommandErrorV1
+                .malformedOrTransportError
+        }
+        let reply = try await sendMenuPairingCommand(
+            kind: .dismiss,
+            authorizationMethod: .dismissPairingSession,
+            payload: payload
+        )
+        do {
+            let receipt = try LocalMenuPairingCommandWireCodecV1
+                .decodeDismissedReceipt(reply)
+            guard receipt.correlationID == command.commandID,
+                  receipt.pairingID == command.pairingID else {
+                throw MacLocalXPCMenuPairingCommandErrorV1
+                    .malformedOrTransportError
+            }
+            return receipt
+        } catch {
+            invalidateCurrentGenerationAfterMalformedCommandReply()
+            throw MacLocalXPCMenuPairingCommandErrorV1
+                .malformedOrTransportError
+        }
+    }
+
+    public func resolveLocalApproval(
+        _ command: LocalPairingDecisionCommandV0
+    ) async throws -> LocalPairingDecisionReceiptV0 {
+        let payload: Data
+        do {
+            payload = try LocalMenuPairingCommandWireCodecV1
+                .encodeDecisionCommand(command)
+        } catch {
+            throw MacLocalXPCMenuPairingCommandErrorV1
+                .malformedOrTransportError
+        }
+        let reply = try await sendMenuPairingCommand(
+            kind: .resolveDecision,
+            authorizationMethod: .resolveLocalApproval,
+            payload: payload
+        )
+        do {
+            let receipt = try LocalMenuPairingCommandWireCodecV1
+                .decodeDecisionReceipt(reply)
+            try receipt.validate(against: command)
+            return receipt
+        } catch {
+            invalidateCurrentGenerationAfterMalformedCommandReply()
+            throw MacLocalXPCMenuPairingCommandErrorV1
+                .malformedOrTransportError
+        }
+    }
+
     public func cancel() {
         syncOnQueue {
             guard let session,
@@ -2102,6 +2653,10 @@ public final class MacLocalXPCClientV1: @unchecked Sendable {
             _ = statusReadGate.invalidate(generation: generation)
             statusReadDeadline?.cancel()
             statusReadDeadline = nil
+            finishPendingMenuPairingCommand(
+                generation: generation,
+                error: .unavailable
+            )
             retirePresentationReceiver(generation: generation)
             MCLocalXPCSessionCancelOwned(session)
         }
@@ -2113,6 +2668,253 @@ public final class MacLocalXPCClientV1: @unchecked Sendable {
         cancel()
         let task = syncOnQueue { presentationRetirement?.task }
         await task?.value
+    }
+
+    private func sendMenuPairingCommand(
+        kind: MacLocalXPCMenuPairingCommandKindV1,
+        authorizationMethod: LocalIPCMethod,
+        payload: Data
+    ) async throws -> Data {
+        let requestID = UUID()
+        let marker = MenuPairingCommandCancellationMarker()
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                queue.async { [weak self] in
+                    guard let self else {
+                        continuation.resume(
+                            throwing:
+                                MacLocalXPCMenuPairingCommandErrorV1
+                                    .unavailable
+                        )
+                        return
+                    }
+                    self.admitMenuPairingCommand(
+                        requestID: requestID,
+                        kind: kind,
+                        authorizationMethod: authorizationMethod,
+                        payload: payload,
+                        cancellationMarker: marker,
+                        continuation: continuation
+                    )
+                }
+            }
+        } onCancel: { [weak self] in
+            marker.markCancelled()
+            self?.queue.async { [weak self] in
+                self?.cancelMenuPairingCommand(requestID: requestID)
+            }
+        }
+    }
+
+    private func admitMenuPairingCommand(
+        requestID: UUID,
+        kind: MacLocalXPCMenuPairingCommandKindV1,
+        authorizationMethod: LocalIPCMethod,
+        payload: Data,
+        cancellationMarker: MenuPairingCommandCancellationMarker,
+        continuation: CheckedContinuation<Data, any Error>
+    ) {
+        guard !cancellationMarker.isCancelled() else {
+            continuation.resume(throwing: CancellationError())
+            return
+        }
+        guard let generation = generationGate.currentGeneration,
+              let session,
+              gate.state == .authenticated,
+              menuReadinessPublished,
+              payload.count > 0,
+              payload.count <=
+                LocalMenuPairingCommandWireCodecV1.maximumEncodedBytes,
+              authorizesMenuCommandMethod(authorizationMethod),
+              let transaction = menuPairingCommandGate.begin(
+                generation: generation,
+                kind: kind,
+                permitted: true
+              ) else {
+            continuation.resume(
+                throwing: MacLocalXPCMenuPairingCommandErrorV1.unavailable
+            )
+            return
+        }
+
+        let pending = PendingMenuPairingCommand(
+            requestID: requestID,
+            transaction: transaction,
+            continuation: continuation
+        )
+        pendingMenuPairingCommand = pending
+        let cKind = cMenuPairingCommandKind(kind)
+        let sendResult = payload.withUnsafeBytes { rawBuffer in
+            guard let bytes = rawBuffer.bindMemory(to: UInt8.self).baseAddress
+            else { return MCLocalXPCResultConstructionFailed }
+            return MCLocalXPCSessionSendMenuPairingCommand(
+                session,
+                cKind,
+                bytes,
+                payload.count
+            ) { [weak self] bytes, length, failed, malformed in
+                let copiedPayload = bytes.map {
+                    Data(bytes: $0, count: length)
+                }
+                self?.queue.async { [weak self] in
+                    self?.handleMenuPairingCommandReply(
+                        generation: generation,
+                        requestID: requestID,
+                        transaction: transaction,
+                        payload: copiedPayload,
+                        commandFailed: failed,
+                        malformedOrTransportError: malformed
+                    )
+                }
+            }
+        }
+        guard sendResult == MCLocalXPCResultOK else {
+            _ = menuPairingCommandGate.finish(transaction)
+            pendingMenuPairingCommand = nil
+            continuation.resume(
+                throwing: MacLocalXPCMenuPairingCommandErrorV1
+                    .malformedOrTransportError
+            )
+            invalidateOwnedSession(generation: generation)
+            return
+        }
+
+        let deadline = DispatchWorkItem { [weak self] in
+            self?.expireMenuPairingCommand(
+                generation: generation,
+                requestID: requestID,
+                transaction: transaction
+            )
+        }
+        pending.deadline = deadline
+        queue.asyncAfter(
+            deadline: .now() + menuPairingCommandReplyTimeout,
+            execute: deadline
+        )
+    }
+
+    private func handleMenuPairingCommandReply(
+        generation: UInt64,
+        requestID: UUID,
+        transaction: MacLocalXPCMenuPairingCommandTransactionGateV1.Active,
+        payload: Data?,
+        commandFailed: Bool,
+        malformedOrTransportError: Bool
+    ) {
+        guard generationGate.admitsCallback(generation: generation),
+              let pending = pendingMenuPairingCommand,
+              pending.requestID == requestID,
+              pending.transaction == transaction,
+              menuPairingCommandGate.finish(transaction) else { return }
+        pendingMenuPairingCommand = nil
+        pending.deadline?.cancel()
+        pending.deadline = nil
+
+        if commandFailed {
+            guard payload == nil, !malformedOrTransportError else {
+                pending.continuation.resume(
+                    throwing: MacLocalXPCMenuPairingCommandErrorV1
+                        .malformedOrTransportError
+                )
+                invalidateOwnedSession(generation: generation)
+                return
+            }
+            pending.continuation.resume(
+                throwing: MacLocalXPCMenuPairingCommandErrorV1.commandFailed
+            )
+            return
+        }
+        guard !malformedOrTransportError,
+              let payload,
+              !payload.isEmpty,
+              payload.count <=
+                LocalMenuPairingCommandWireCodecV1.maximumEncodedBytes else {
+            pending.continuation.resume(
+                throwing: MacLocalXPCMenuPairingCommandErrorV1
+                    .malformedOrTransportError
+            )
+            invalidateOwnedSession(generation: generation)
+            return
+        }
+        pending.continuation.resume(returning: payload)
+    }
+
+    private func expireMenuPairingCommand(
+        generation: UInt64,
+        requestID: UUID,
+        transaction: MacLocalXPCMenuPairingCommandTransactionGateV1.Active
+    ) {
+        guard generationGate.admitsCallback(generation: generation),
+              let pending = pendingMenuPairingCommand,
+              pending.requestID == requestID,
+              pending.transaction == transaction,
+              menuPairingCommandGate.finish(transaction) else { return }
+        pendingMenuPairingCommand = nil
+        pending.deadline = nil
+        pending.continuation.resume(
+            throwing: MacLocalXPCMenuPairingCommandErrorV1.replyTimedOut
+        )
+        invalidateOwnedSession(generation: generation)
+    }
+
+    private func cancelMenuPairingCommand(requestID: UUID) {
+        guard let generation = generationGate.currentGeneration,
+              let pending = pendingMenuPairingCommand,
+              pending.requestID == requestID,
+              menuPairingCommandGate.finish(pending.transaction) else { return }
+        pendingMenuPairingCommand = nil
+        pending.deadline?.cancel()
+        pending.deadline = nil
+        pending.continuation.resume(
+            throwing: MacLocalXPCMenuPairingCommandErrorV1.cancelledAfterSend
+        )
+        invalidateOwnedSession(generation: generation)
+    }
+
+    private func finishPendingMenuPairingCommand(
+        generation: UInt64,
+        error: MacLocalXPCMenuPairingCommandErrorV1
+    ) {
+        _ = menuPairingCommandGate.invalidate(generation: generation)
+        guard let pending = pendingMenuPairingCommand else { return }
+        pendingMenuPairingCommand = nil
+        pending.deadline?.cancel()
+        pending.deadline = nil
+        pending.continuation.resume(throwing: error)
+    }
+
+    private func invalidateCurrentGenerationAfterMalformedCommandReply() {
+        queue.async { [weak self] in
+            guard let self,
+                  let generation = generationGate.currentGeneration else {
+                return
+            }
+            self.invalidateOwnedSession(generation: generation)
+        }
+    }
+
+    private func authorizesMenuCommandMethod(_ method: LocalIPCMethod) -> Bool {
+        do {
+            try LocalIPCAuthorizationPolicy.authorize(
+                authenticatedCaller: .menuApp,
+                endpoint: .agent,
+                method: method,
+                version: .init()
+            )
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    private func cMenuPairingCommandKind(
+        _ kind: MacLocalXPCMenuPairingCommandKindV1
+    ) -> MCLocalXPCMenuPairingCommandKind {
+        switch kind {
+        case .create: MCLocalXPCMenuPairingCommandCreate
+        case .dismiss: MCLocalXPCMenuPairingCommandDismiss
+        case .resolveDecision: MCLocalXPCMenuPairingCommandResolveDecision
+        }
     }
 
     private func handleHelloReply(
@@ -2457,6 +3259,10 @@ public final class MacLocalXPCClientV1: @unchecked Sendable {
         _ = statusReadGate.invalidate(generation: generation)
         statusReadDeadline?.cancel()
         statusReadDeadline = nil
+        finishPendingMenuPairingCommand(
+            generation: generation,
+            error: .unavailable
+        )
         retirePresentationReceiver(generation: generation)
         MCLocalXPCSessionCancelOwned(session)
         onEvent(.invalidated)
@@ -2474,6 +3280,10 @@ public final class MacLocalXPCClientV1: @unchecked Sendable {
         _ = statusReadGate.invalidate(generation: generation)
         statusReadDeadline?.cancel()
         statusReadDeadline = nil
+        finishPendingMenuPairingCommand(
+            generation: generation,
+            error: .unavailable
+        )
         retirePresentationReceiver(generation: generation)
         MCLocalXPCSessionRelease(session)
         if shouldNotify {

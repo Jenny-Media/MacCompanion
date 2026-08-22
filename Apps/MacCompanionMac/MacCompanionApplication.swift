@@ -288,7 +288,24 @@ private struct MacCompanionDashboardRoot: View {
     let application: MacCompanionDashboardApplicationV1
 
     var body: some View {
-        dashboard
+        VStack(spacing: 0) {
+            dashboard
+            Divider()
+            HStack {
+                Spacer()
+                Button("Pair New Device") {
+                    Task { @MainActor in
+                        await application.beginPairing()
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(pairingSheetPresented)
+            }
+            .padding(16)
+        }
+        .sheet(isPresented: pairingSheetBinding) {
+            pairingSheet
+        }
     }
 
     @ViewBuilder
@@ -312,6 +329,71 @@ private struct MacCompanionDashboardRoot: View {
         guard action == .retryStatus else { return }
         Task { @MainActor in
             _ = await application.retryStatus()
+        }
+    }
+
+    @ViewBuilder
+    private var pairingSheet: some View {
+        if let review = try? MacPairingReviewViewV0(
+            presentation: application.pairingReview,
+            onDraftChanged: { value in
+                Task { @MainActor in
+                    await application.updatePairingDeviceName(value)
+                }
+            },
+            perform: { action in
+                Task { @MainActor in
+                    let mapped: MacCompanionPairingReviewActionV1 =
+                        switch action {
+                        case .approve: .approve
+                        case .decline: .decline
+                        case .retryDecision: .retryDecision
+                        }
+                    await application.performPairingReviewAction(mapped)
+                }
+            }
+        ) {
+            review
+        } else if let pairing = try? MacPairingSessionViewV0(
+            presentation: application.pairingSession,
+            perform: { action in
+                Task { @MainActor in
+                    let mapped: MacCompanionPairingActionV1 = switch action {
+                    case .retryCreation: .retryCreation
+                    case .dismissPairing: .dismissPairing
+                    case .retryDismissal: .retryDismissal
+                    }
+                    await application.performPairingAction(mapped)
+                }
+            }
+        ) {
+            pairing
+        } else {
+            ProgressView("Updating pairing state…")
+                .padding(32)
+        }
+    }
+
+    private var pairingSheetBinding: Binding<Bool> {
+        Binding(
+            get: { pairingSheetPresented },
+            set: { _ in }
+        )
+    }
+
+    private var pairingSheetPresented: Bool {
+        switch application.pairingReview.phase {
+        case .idle:
+            break
+        case .reviewing, .deciding, .decisionFailed:
+            return true
+        }
+        switch application.pairingSession.phase {
+        case .idle:
+            return false
+        case .creating, .creationFailed, .presenting, .dismissing,
+                .dismissalFailed:
+            return true
         }
     }
 

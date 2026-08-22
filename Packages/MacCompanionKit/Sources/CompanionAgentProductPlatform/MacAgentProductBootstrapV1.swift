@@ -245,6 +245,8 @@ public actor MacAgentPreparedProductV1 {
     private let finishLocalXPC: @Sendable () async -> Void
     private let menuSurfaceAuthority:
         MacAgentAuthenticatedMenuSurfaceAuthorityV1
+    private let localPairingCommandAuthority:
+        MacAgentLocalPairingCommandAuthorityV1?
     private let currentMenuGeneration: @Sendable () async -> UInt64?
     private var networkCompositionTask:
         Task<AgentNetworkPairingProductCompositionV0, Error>?
@@ -266,11 +268,14 @@ public actor MacAgentPreparedProductV1 {
         localXPC: MacLocalXPCAgentProductV1,
         menuSurfaceAuthority:
             MacAgentAuthenticatedMenuSurfaceAuthorityV1 =
-                MacAgentAuthenticatedMenuSurfaceAuthorityV1()
+                MacAgentAuthenticatedMenuSurfaceAuthorityV1(),
+        localPairingCommandAuthority:
+            MacAgentLocalPairingCommandAuthorityV1? = nil
     ) {
         self.storage = storage
         self.preparedPrimary = preparedPrimary
         self.menuSurfaceAuthority = menuSurfaceAuthority
+        self.localPairingCommandAuthority = localPairingCommandAuthority
         currentMenuGeneration = {
             await menuSurfaceAuthority.currentGeneration()
         }
@@ -287,11 +292,14 @@ public actor MacAgentPreparedProductV1 {
             async throws -> MacLocalXPCAgentProductV1,
         menuSurfaceAuthority:
             MacAgentAuthenticatedMenuSurfaceAuthorityV1 =
-                MacAgentAuthenticatedMenuSurfaceAuthorityV1()
+                MacAgentAuthenticatedMenuSurfaceAuthorityV1(),
+        localPairingCommandAuthority:
+            MacAgentLocalPairingCommandAuthorityV1? = nil
     ) {
         self.storage = storage
         self.preparedPrimary = preparedPrimary
         self.menuSurfaceAuthority = menuSurfaceAuthority
+        self.localPairingCommandAuthority = localPairingCommandAuthority
         currentMenuGeneration = {
             await menuSurfaceAuthority.currentGeneration()
         }
@@ -312,12 +320,15 @@ public actor MacAgentPreparedProductV1 {
         menuSurfaceAuthority:
             MacAgentAuthenticatedMenuSurfaceAuthorityV1 =
                 MacAgentAuthenticatedMenuSurfaceAuthorityV1(),
+        localPairingCommandAuthority:
+            MacAgentLocalPairingCommandAuthorityV1? = nil,
         currentMenuGeneration:
             (@Sendable () async -> UInt64?)? = nil
     ) {
         self.storage = storage
         self.preparedPrimary = preparedPrimary
         self.menuSurfaceAuthority = menuSurfaceAuthority
+        self.localPairingCommandAuthority = localPairingCommandAuthority
         self.currentMenuGeneration = currentMenuGeneration ?? {
             await menuSurfaceAuthority.currentGeneration()
         }
@@ -339,6 +350,7 @@ public actor MacAgentPreparedProductV1 {
         let finishLocalXPC = self.finishLocalXPC
         let preparedPrimary = self.preparedPrimary
         let menuSurfaceAuthority = self.menuSurfaceAuthority
+        let localPairingCommandAuthority = self.localPairingCommandAuthority
         let localStartTask = self.localStartTask
         let networkCompositionTask = self.networkCompositionTask
         let networkProduct = self.networkProduct
@@ -348,6 +360,7 @@ public actor MacAgentPreparedProductV1 {
         localStartTask?.cancel()
         networkListenerConstructionTask?.cancel()
         let task = Task {
+            await localPairingCommandAuthority?.finish()
             if let networkListenerOwner {
                 await networkListenerOwner.finish()
             } else if let networkListenerConstructionTask,
@@ -528,6 +541,14 @@ public actor MacAgentPreparedProductV1 {
             guard finishTask == nil, !finished else {
                 await product.authorizedSurfaceLost()
                 throw MacAgentPreparedProductCompositionErrorV1.terminal
+            }
+            if let localPairingCommandAuthority {
+                do {
+                    try await localPairingCommandAuthority.install(product)
+                } catch {
+                    await product.authorizedSurfaceLost()
+                    throw error
+                }
             }
             networkProduct = product
         } catch {
@@ -888,12 +909,15 @@ public enum MacAgentProductBootstrapV1 {
     ) async throws -> MacAgentProductBootstrapResultV1 {
         let menuSurfaceAuthority =
             MacAgentAuthenticatedMenuSurfaceAuthorityV1()
+        let localPairingCommandAuthority =
+            MacAgentLocalPairingCommandAuthorityV1()
         let menuLossCoordinator = MacAgentMenuSurfaceLossCoordinatorV1()
         let makeLocalXPC: LocalXPCFactory = { services in
             try await MacLocalXPCAgentProductV1
                 .afterAgentBootstrapWithMenuPresentation(
                 services: services,
                 processStarter: processStarter,
+                menuPairingCommandHandler: localPairingCommandAuthority,
                 onSurfaces: {
                     try await menuSurfaceAuthority.install($0)
                 },
@@ -910,14 +934,16 @@ public enum MacAgentProductBootstrapV1 {
                 storage: storage,
                 preparation: preparation,
                 makeLocalXPC: makeLocalXPC,
-                menuSurfaceAuthority: menuSurfaceAuthority
+                menuSurfaceAuthority: menuSurfaceAuthority,
+                localPairingCommandAuthority: localPairingCommandAuthority
             )
         case .deferredUntilActivation:
             composed = try await composeInert(
                 storage: storage,
                 preparation: preparation,
                 makeLocalXPC: makeLocalXPC,
-                menuSurfaceAuthority: menuSurfaceAuthority
+                menuSurfaceAuthority: menuSurfaceAuthority,
+                localPairingCommandAuthority: localPairingCommandAuthority
             )
         }
         if case let .ready(product) = composed {
@@ -932,7 +958,9 @@ public enum MacAgentProductBootstrapV1 {
         makeLocalXPC: @escaping LocalXPCFactory,
         menuSurfaceAuthority:
             MacAgentAuthenticatedMenuSurfaceAuthorityV1 =
-                MacAgentAuthenticatedMenuSurfaceAuthorityV1()
+                MacAgentAuthenticatedMenuSurfaceAuthorityV1(),
+        localPairingCommandAuthority:
+            MacAgentLocalPairingCommandAuthorityV1? = nil
     ) async throws -> MacAgentProductBootstrapResultV1 {
         switch preparation {
         case .waitForFirstUnlock:
@@ -946,7 +974,8 @@ public enum MacAgentProductBootstrapV1 {
                 storage: storage,
                 preparedPrimary: preparedPrimary,
                 makeLocalXPC: makeLocalXPC,
-                menuSurfaceAuthority: menuSurfaceAuthority
+                menuSurfaceAuthority: menuSurfaceAuthority,
+                localPairingCommandAuthority: localPairingCommandAuthority
             ))
         }
     }
@@ -957,7 +986,9 @@ public enum MacAgentProductBootstrapV1 {
         makeLocalXPC: @escaping LocalXPCFactory,
         menuSurfaceAuthority:
             MacAgentAuthenticatedMenuSurfaceAuthorityV1 =
-                MacAgentAuthenticatedMenuSurfaceAuthorityV1()
+                MacAgentAuthenticatedMenuSurfaceAuthorityV1(),
+        localPairingCommandAuthority:
+            MacAgentLocalPairingCommandAuthorityV1? = nil
     ) async throws -> MacAgentProductBootstrapResultV1 {
         switch preparation {
         case .waitForFirstUnlock:
@@ -975,7 +1006,8 @@ public enum MacAgentProductBootstrapV1 {
                     storage: storage,
                     preparedPrimary: preparedPrimary,
                     localXPC: localXPC,
-                    menuSurfaceAuthority: menuSurfaceAuthority
+                    menuSurfaceAuthority: menuSurfaceAuthority,
+                    localPairingCommandAuthority: localPairingCommandAuthority
                 ))
             } catch {
                 await preparedPrimary.discard()
