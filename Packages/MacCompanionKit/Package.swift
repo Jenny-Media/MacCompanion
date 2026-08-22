@@ -301,6 +301,7 @@ let package = Package(
                 "CompanionAgentPlatform", "CompanionHostPlatform",
                 "CompanionDiscovery", "CompanionIPC",
                 "CompanionLocalXPCPlatform",
+                "CompanionNetworkPlatform",
                 "CompanionSecurity",
             ]
         ),
@@ -513,6 +514,7 @@ let package = Package(
                 "CompanionInteractiveHost", "CompanionInteractiveShared",
                 "CompanionIPC", "CompanionLifecycle",
                 "CompanionLocalXPCPlatform", "CompanionMacApp",
+                "CompanionNetworkPlatform",
                 "CompanionOperations", "CompanionPersistence",
                 "CompanionSecurity", "CompanionWire",
             ]

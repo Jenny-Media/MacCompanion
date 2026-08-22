@@ -462,11 +462,13 @@ public actor AgentNetworkListenerServiceV1 {
         guard state == .idle else {
             throw AgentNetworkListenerServiceErrorV1.alreadyStarted
         }
-        await handoff.installStateChanged { [weak self] revision in
-            Task { await self?.handoffChanged(revision) }
-        }
         state = .starting
         do {
+            await handoff.installStateChanged { [weak self] revision in
+                Task { await self?.handoffChanged(revision) }
+            }
+            try Task.checkCancellation()
+            guard state == .starting else { throw CancellationError() }
             try listener.start(
                 queue: queue,
                 ready: { [weak self] in
@@ -488,14 +490,16 @@ public actor AgentNetworkListenerServiceV1 {
             )
             await publishCurrentStatus()
         } catch {
-            state = .terminal
-            listener.cancel()
-            await handoff.cancelForService()
-            await pairingContextStop?()
-            await invalidatePairingSessions(terminal: true)
-            await publishListenerRouteReadiness(false)
-            await publishAdvertisementRouteReadiness(false)
-            await publishCurrentStatus()
+            if state != .terminal {
+                state = .terminal
+                listener.cancel()
+                await handoff.cancelForService()
+                await pairingContextStop?()
+                await invalidatePairingSessions(terminal: true)
+                await publishListenerRouteReadiness(false)
+                await publishAdvertisementRouteReadiness(false)
+                await publishCurrentStatus()
+            }
             throw error
         }
     }

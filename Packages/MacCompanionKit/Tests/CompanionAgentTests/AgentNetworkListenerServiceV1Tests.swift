@@ -192,6 +192,53 @@ private actor AgentNetworkServiceBinderFakeV1:
     func recordedAcceptedTimes() -> [UInt64] { acceptedTimes }
 }
 
+private actor AgentNetworkServiceSuspendedInstallHandoffV1:
+    AgentNetworkListenerHandoffServingV1
+{
+    private var installEntered = false
+    private var cancelled = false
+    private var installWaiters: [CheckedContinuation<Void, Never>] = []
+    private var releaseWaiter: CheckedContinuation<Void, Never>?
+
+    func installStateChanged(
+        _: @escaping @Sendable (UInt64) -> Void
+    ) async {
+        installEntered = true
+        let waiters = installWaiters
+        installWaiters.removeAll()
+        for waiter in waiters { waiter.resume() }
+        await withCheckedContinuation { releaseWaiter = $0 }
+    }
+
+    func waitUntilInstallEntered() async {
+        guard !installEntered else { return }
+        await withCheckedContinuation { installWaiters.append($0) }
+    }
+
+    func releaseInstall() {
+        releaseWaiter?.resume()
+        releaseWaiter = nil
+    }
+
+    func admitForService(
+        _: any AgentNetworkAcceptedConnectionStartingV1,
+        acceptedAtMonotonicMilliseconds _: UInt64
+    ) async throws {
+        throw AgentNetworkListenerServiceTestErrorV1.startFailed
+    }
+
+    func cancelForService() { cancelled = true }
+
+    func snapshotForService() -> AgentNetworkListenerHandoffSnapshotV1 {
+        AgentNetworkListenerHandoffSnapshotV1(
+            isCancelled: cancelled,
+            hasPendingTLS: false,
+            isBinding: false,
+            hasActivePrimary: false
+        )
+    }
+}
+
 private final class AgentNetworkServiceRecorderV1: @unchecked Sendable {
     private let lock = NSLock()
     private var terminals: [NetworkHostListenerTerminationReasonV0] = []
@@ -452,6 +499,42 @@ private func agentNetworkServiceHarnessV1(
         recorder,
         statusRecorder
     )
+}
+
+@Test func listenerCancellationDuringHandoffInstallCannotStartNativeListener()
+    async
+{
+    let listener = AgentNetworkListenerFakeV1()
+    let handoff = AgentNetworkServiceSuspendedInstallHandoffV1()
+    let recorder = AgentNetworkServiceRecorderV1()
+    let service = AgentNetworkListenerServiceV1(
+        listener: listener,
+        handoff: handoff,
+        queue: DispatchQueue(
+            label: "MacCompanionTests.ListenerService.StartCancellation"
+        ),
+        monotonicNowMilliseconds: { 42 },
+        listenerTerminal: recorder.recordTerminal,
+        admissionFailure: recorder.recordFailure
+    )
+    let start = Task { try await service.start() }
+    await handoff.waitUntilInstallEntered()
+    #expect((await service.snapshot()).state == .starting)
+
+    await service.cancel()
+    #expect(listener.startCount == 0)
+    #expect(listener.cancelCount == 1)
+    #expect((await service.snapshot()).state == .terminal)
+
+    await handoff.releaseInstall()
+    await #expect(throws: CancellationError.self) {
+        try await start.value
+    }
+    #expect(listener.startCount == 0)
+    #expect(listener.cancelCount == 1)
+    #expect((await service.snapshot()).state == .terminal)
+    #expect((await service.snapshot()).handoff.isCancelled)
+    #expect(recorder.terminalReasons == [.localCancel])
 }
 
 @Test func listenerServiceOwnsStartAcceptanceTimestampAndHandoff() async throws {

@@ -6,8 +6,20 @@ import CompanionDiscovery
 import CompanionHostPlatform
 import CompanionIPC
 import CompanionLocalXPCPlatform
+import CompanionNetworkPlatform
 import CompanionSecurity
+import Dispatch
 import Foundation
+
+@available(macOS 26.0, *)
+package protocol MacAgentNetworkListenerRuntimeV1: AnyObject, Sendable {
+    func start() async throws
+    func cancel() async
+    func snapshot() async -> AgentNetworkListenerServiceSnapshotV1
+}
+
+@available(macOS 26.0, *)
+extension AgentNetworkListenerServiceV1: MacAgentNetworkListenerRuntimeV1 {}
 
 public struct MacAgentPreparedProductSnapshotV1:
     Equatable, Sendable
@@ -50,7 +62,71 @@ package enum MacAgentPreparedProductCompositionErrorV1:
 {
     case authenticatedMenuUnavailable
     case networkProductAlreadyComposed
+    case networkProductUnavailable
+    case networkListenerAlreadyStarted
     case terminal
+}
+
+@available(macOS 26.0, *)
+package actor MacAgentNetworkListenerRuntimeOwnerV1 {
+    private let runtime: any MacAgentNetworkListenerRuntimeV1
+    private var startTask: Task<Void, Error>?
+    private var finishTask: Task<Void, Never>?
+
+    package init(runtime: any MacAgentNetworkListenerRuntimeV1) {
+        self.runtime = runtime
+    }
+
+    package func start() async throws {
+        guard finishTask == nil else {
+            throw MacAgentPreparedProductCompositionErrorV1.terminal
+        }
+        guard startTask == nil else {
+            throw MacAgentPreparedProductCompositionErrorV1
+                .networkListenerAlreadyStarted
+        }
+        let runtime = self.runtime
+        let task = Task {
+            try Task.checkCancellation()
+            try await runtime.start()
+            try Task.checkCancellation()
+        }
+        startTask = task
+        do {
+            try await withTaskCancellationHandler {
+                try await task.value
+                try Task.checkCancellation()
+            } onCancel: {
+                Task { await self.finish() }
+            }
+            guard finishTask == nil else {
+                throw MacAgentPreparedProductCompositionErrorV1.terminal
+            }
+        } catch {
+            await finish()
+            throw error
+        }
+    }
+
+    package func finish() async {
+        if let finishTask {
+            await finishTask.value
+            return
+        }
+        let startTask = self.startTask
+        let runtime = self.runtime
+        startTask?.cancel()
+        let task = Task {
+            await runtime.cancel()
+            if let startTask { _ = await startTask.result }
+        }
+        finishTask = task
+        await task.value
+    }
+
+    package func snapshot() async -> AgentNetworkListenerServiceSnapshotV1 {
+        await runtime.snapshot()
+    }
 }
 
 /// Inert, release-shaped Agent root after durable identity and primary-service
@@ -60,8 +136,9 @@ package enum MacAgentPreparedProductCompositionErrorV1:
 ///
 /// Public construction remains inert. Package-owned activation first starts
 /// local authorization, waits for an authenticated menu generation, and may
-/// then compose an unstarted network product. Coordinated listener activation
-/// and rollback remain a later runtime checkpoint.
+/// then compose an unstarted network product. The package seam now coordinates
+/// listener activation and rollback; live request-context composition and
+/// permanent-target activation remain later runtime checkpoints.
 @available(macOS 26.0, *)
 public actor MacAgentPreparedProductV1 {
     public nonisolated let hostID: UUID
@@ -79,6 +156,11 @@ public actor MacAgentPreparedProductV1 {
     private var networkProduct:
         AgentNetworkPairingProductCompositionV0?
     private var networkCompositionReserved = false
+    private var networkListenerOwner:
+        MacAgentNetworkListenerRuntimeOwnerV1?
+    private var networkListenerConstructionTask:
+        Task<AgentNetworkListenerServiceV1, Error>?
+    private var networkListenerConstructionReserved = false
     private var localStartTask: Task<Void, Error>?
     private var finishTask: Task<Void, Never>?
     private var finished = false
@@ -141,8 +223,19 @@ public actor MacAgentPreparedProductV1 {
         let localStartTask = self.localStartTask
         let networkCompositionTask = self.networkCompositionTask
         let networkProduct = self.networkProduct
+        let networkListenerOwner = self.networkListenerOwner
+        let networkListenerConstructionTask =
+            self.networkListenerConstructionTask
         localStartTask?.cancel()
+        networkListenerConstructionTask?.cancel()
         let task = Task {
+            if let networkListenerOwner {
+                await networkListenerOwner.finish()
+            } else if let networkListenerConstructionTask,
+                      let listener = try?
+                        await networkListenerConstructionTask.value {
+                await listener.cancel()
+            }
             let composedNetwork: AgentNetworkPairingProductCompositionV0?
             if let networkProduct {
                 composedNetwork = networkProduct
@@ -325,6 +418,177 @@ public actor MacAgentPreparedProductV1 {
             }
             await composed.authenticatedMenuSurfaceUnavailable()
         }
+    }
+
+    /// Constructs the exact shared listener through the sealed network
+    /// aggregate and retains it without starting network traffic. This split
+    /// makes construction binding independently testable without a live port.
+    package func prepareNetworkListener(
+        queue: DispatchQueue,
+        monotonicNowMilliseconds: @escaping @Sendable () -> UInt64,
+        primaryContext: @escaping @Sendable () -> NetworkHostRequestContextV0,
+        pairingRequestContext: @escaping @Sendable () ->
+            NetworkHostPairingRequestContextV0,
+        acceptedTerminal: @escaping @Sendable (
+            NetworkHostAcceptedConnectionTerminationReasonV0
+        ) -> Void = { _ in },
+        primaryTerminal: @escaping @Sendable (
+            NetworkHostPrimaryTerminationReasonV0
+        ) -> Void = { _ in },
+        pairingTerminal: @escaping @Sendable (
+            NetworkHostPairingTerminationReasonV0
+        ) -> Void = { _ in },
+        listenerTerminal: @escaping @Sendable (
+            NetworkHostListenerTerminationReasonV0
+        ) -> Void = { _ in },
+        admissionFailure: @escaping @Sendable (
+            AgentNetworkListenerAdmissionFailureV1
+        ) -> Void = { _ in },
+        makeReviewID: @escaping @Sendable () -> UUID = { UUID() }
+    ) async throws {
+        guard finishTask == nil, !finished else {
+            throw MacAgentPreparedProductCompositionErrorV1.terminal
+        }
+        guard let networkProduct else {
+            throw MacAgentPreparedProductCompositionErrorV1
+                .networkProductUnavailable
+        }
+        guard !networkListenerConstructionReserved,
+              networkListenerConstructionTask == nil,
+              networkListenerOwner == nil else {
+            throw MacAgentPreparedProductCompositionErrorV1
+                .networkListenerAlreadyStarted
+        }
+        networkListenerConstructionReserved = true
+        let terminalHandler = networkListenerTerminalHandler(
+            forwarding: listenerTerminal
+        )
+        let task = Task {
+            let listener = try await networkProduct.makeListenerService(
+                queue: queue,
+                monotonicNowMilliseconds: monotonicNowMilliseconds,
+                primaryContext: primaryContext,
+                pairingRequestContext: pairingRequestContext,
+                acceptedTerminal: acceptedTerminal,
+                primaryTerminal: primaryTerminal,
+                pairingTerminal: pairingTerminal,
+                listenerTerminal: terminalHandler,
+                admissionFailure: admissionFailure,
+                makeReviewID: makeReviewID
+            )
+            do {
+                try Task.checkCancellation()
+                return listener
+            } catch {
+                await listener.cancel()
+                throw error
+            }
+        }
+        networkListenerConstructionTask = task
+        networkListenerConstructionReserved = false
+        do {
+            let listener = try await withTaskCancellationHandler {
+                try await task.value
+            } onCancel: {
+                task.cancel()
+            }
+            do {
+                try Task.checkCancellation()
+                guard finishTask == nil, !finished else {
+                    throw MacAgentPreparedProductCompositionErrorV1.terminal
+                }
+                networkListenerOwner = MacAgentNetworkListenerRuntimeOwnerV1(
+                    runtime: listener
+                )
+            } catch {
+                await listener.cancel()
+                throw error
+            }
+        } catch {
+            networkListenerConstructionReserved = false
+            await finish()
+            throw error
+        }
+    }
+
+    /// Starts only the exact service constructed by prepareNetworkListener.
+    /// Caller cancellation and any start failure join whole-product rollback.
+    package func startNetworkListener(
+        queue: DispatchQueue,
+        monotonicNowMilliseconds: @escaping @Sendable () -> UInt64,
+        primaryContext: @escaping @Sendable () -> NetworkHostRequestContextV0,
+        pairingRequestContext: @escaping @Sendable () ->
+            NetworkHostPairingRequestContextV0,
+        acceptedTerminal: @escaping @Sendable (
+            NetworkHostAcceptedConnectionTerminationReasonV0
+        ) -> Void = { _ in },
+        primaryTerminal: @escaping @Sendable (
+            NetworkHostPrimaryTerminationReasonV0
+        ) -> Void = { _ in },
+        pairingTerminal: @escaping @Sendable (
+            NetworkHostPairingTerminationReasonV0
+        ) -> Void = { _ in },
+        listenerTerminal: @escaping @Sendable (
+            NetworkHostListenerTerminationReasonV0
+        ) -> Void = { _ in },
+        admissionFailure: @escaping @Sendable (
+            AgentNetworkListenerAdmissionFailureV1
+        ) -> Void = { _ in },
+        makeReviewID: @escaping @Sendable () -> UUID = { UUID() }
+    ) async throws {
+        do {
+            if networkListenerOwner == nil {
+                try await prepareNetworkListener(
+                    queue: queue,
+                    monotonicNowMilliseconds: monotonicNowMilliseconds,
+                    primaryContext: primaryContext,
+                    pairingRequestContext: pairingRequestContext,
+                    acceptedTerminal: acceptedTerminal,
+                    primaryTerminal: primaryTerminal,
+                    pairingTerminal: pairingTerminal,
+                    listenerTerminal: listenerTerminal,
+                    admissionFailure: admissionFailure,
+                    makeReviewID: makeReviewID
+                )
+            }
+            guard let networkListenerOwner else {
+                throw MacAgentPreparedProductCompositionErrorV1.terminal
+            }
+            try await networkListenerOwner.start()
+            try Task.checkCancellation()
+        } catch let error as MacAgentPreparedProductCompositionErrorV1 {
+            throw error
+        } catch {
+            await finish()
+            throw error
+        }
+    }
+
+    package func networkListenerSnapshot()
+        async -> AgentNetworkListenerServiceSnapshotV1?
+    {
+        await networkListenerOwner?.snapshot()
+    }
+
+    /// Returns the exact non-authorizing terminal callback installed on the
+    /// listener. Tests can exercise the callback-to-product fence without
+    /// opening a live port or receiving the listener/network authority.
+    package func networkListenerTerminalHandler(
+        forwarding listenerTerminal: @escaping @Sendable (
+            NetworkHostListenerTerminationReasonV0
+        ) -> Void = { _ in }
+    ) -> @Sendable (NetworkHostListenerTerminationReasonV0) -> Void {
+        { [weak self] reason in
+            listenerTerminal(reason)
+            Task { await self?.networkListenerTerminated() }
+        }
+    }
+
+    /// Exact callback target for the listener service's terminal event. The
+    /// installed handler holds this product weakly, so runtime ownership has
+    /// no cycle while every terminal reason joins the same rollback.
+    package func networkListenerTerminated() async {
+        await finish()
     }
 }
 

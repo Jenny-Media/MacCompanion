@@ -69,9 +69,11 @@ before one-use construction of a nonescaping unstarted network product.
 Authenticated replacement and endpoint-terminal paths immediately fence the
 old generation; menu loss cancels pending visible review state while leaving
 primary ingress and Observe nonterminal for a later ready generation.
-Coordinated network-listener
-start/rollback, permanent-target activation, and signed two-process evidence
-remain gated.
+The [coordinated Agent network-listener activation](evidence/2026-08-21-coordinated-agent-network-listener-activation.md)
+now retains exact listener construction/start/rollback inside the same
+nonescaping product owner and leaves readiness to Network callbacks. Live
+request-context composition, permanent-target activation, and signed
+two-process evidence remain gated.
 
 Local device administration now includes a [bundle-independent active-revoke
 convergence path](evidence/2026-08-21-local-device-revocation-convergence.md):

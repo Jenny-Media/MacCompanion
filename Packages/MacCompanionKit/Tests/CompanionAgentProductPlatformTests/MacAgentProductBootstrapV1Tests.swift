@@ -12,6 +12,7 @@ import CompanionInteractiveShared
 import CompanionIPC
 import CompanionLifecycle
 import CompanionLocalXPCPlatform
+import CompanionNetworkPlatform
 import CompanionOperations
 import CompanionPersistence
 import CompanionSecurity
@@ -26,6 +27,67 @@ private let productBootstrapTimeV1: Int64 = 1_724_100_000_000
 private enum ProductBootstrapProbeErrorV1: Error, Equatable, Sendable {
     case unused
     case rejectedLocalXPC
+    case rejectedNetworkListener
+}
+
+@available(macOS 26.0, *)
+private actor ProductBootstrapNetworkListenerV1:
+    MacAgentNetworkListenerRuntimeV1
+{
+    private let rejectStart: Bool
+    private let startGate: ProductBootstrapFinishGateV1?
+    private let cancelReleasesStart: Bool
+    private var state: AgentNetworkListenerServiceStateV1 = .idle
+    private var starts = 0
+    private var cancellations = 0
+
+    init(
+        rejectStart: Bool = false,
+        startGate: ProductBootstrapFinishGateV1? = nil,
+        cancelReleasesStart: Bool = false
+    ) {
+        self.rejectStart = rejectStart
+        self.startGate = startGate
+        self.cancelReleasesStart = cancelReleasesStart
+    }
+
+    func start() async throws {
+        starts += 1
+        state = .starting
+        await startGate?.run()
+        guard state != .terminal else { throw CancellationError() }
+        if rejectStart {
+            throw ProductBootstrapProbeErrorV1.rejectedNetworkListener
+        }
+        state = .listening
+    }
+
+    func cancel() async {
+        cancellations += 1
+        state = .terminal
+        if cancelReleasesStart {
+            await startGate?.release()
+        }
+    }
+
+    func snapshot() -> AgentNetworkListenerServiceSnapshotV1 {
+        AgentNetworkListenerServiceSnapshotV1(
+            state: state,
+            handoff: AgentNetworkListenerHandoffSnapshotV1(
+                isCancelled: state == .terminal,
+                hasPendingTLS: false,
+                isBinding: false,
+                hasActivePrimary: false
+            ),
+            lastListenerTerminationReason:
+                state == .terminal ? .localCancel : nil,
+            hasAcceptedConnectionStartFailure: false
+        )
+    }
+
+    func counts() -> (starts: Int, cancellations: Int) {
+        (starts, cancellations)
+    }
 }
 
 private actor ProductBootstrapCountingLoaderV1:
@@ -659,6 +721,38 @@ private func productBootstrapStorageV1(
     let policy = StaticAgentLocalPairingPolicySourceV0(
         PolicyRevision(rawValue: 1)
     )
+    let listenerQueue = DispatchQueue(
+        label: "media.jenny.maccompanion.tests.listener-preparation"
+    )
+    let primaryContext: @Sendable () -> NetworkHostRequestContextV0 = {
+        NetworkHostRequestContextV0(
+            hostState: .userSessionActive,
+            wallNowUnixMilliseconds: productBootstrapTimeV1,
+            monotonicNowMilliseconds: 100,
+            responseMessageID: WireUUID(UUID())
+        )
+    }
+    let pairingContext: @Sendable () ->
+        NetworkHostPairingRequestContextV0 = {
+        NetworkHostPairingRequestContextV0(
+            wallNowUnixMilliseconds: productBootstrapTimeV1,
+            monotonicNowMilliseconds: 100,
+            responseMessageID: WireUUID(UUID())
+        )
+    }
+
+    await #expect(
+        throws:
+            MacAgentPreparedProductCompositionErrorV1
+                .networkProductUnavailable
+    ) {
+        try await product.prepareNetworkListener(
+            queue: listenerQueue,
+            monotonicNowMilliseconds: { 100 },
+            primaryContext: primaryContext,
+            pairingRequestContext: pairingContext
+        )
+    }
 
     await #expect(
         throws:
@@ -714,6 +808,30 @@ private func productBootstrapStorageV1(
             listenerServiceConstructed: false,
             terminal: false
         ))
+    try await product.prepareNetworkListener(
+        queue: listenerQueue,
+        monotonicNowMilliseconds: { 100 },
+        primaryContext: primaryContext,
+        pairingRequestContext: pairingContext
+    )
+    #expect(await product.networkPairingProductSnapshot()
+        == AgentNetworkPairingProductCompositionSnapshotV0(
+            listenerServiceConstructed: true,
+            terminal: false
+        ))
+    #expect(await product.networkListenerSnapshot()?.state == .idle)
+    await #expect(
+        throws:
+            MacAgentPreparedProductCompositionErrorV1
+                .networkListenerAlreadyStarted
+    ) {
+        try await product.prepareNetworkListener(
+            queue: listenerQueue,
+            monotonicNowMilliseconds: { 100 },
+            primaryContext: primaryContext,
+            pairingRequestContext: pairingContext
+        )
+    }
     await #expect(
         throws:
             MacAgentPreparedProductCompositionErrorV1
@@ -730,9 +848,10 @@ private func productBootstrapStorageV1(
     #expect(await product.authenticatedMenuSurfaceGeneration() == nil)
     #expect(await product.networkPairingProductSnapshot()
         == AgentNetworkPairingProductCompositionSnapshotV0(
-            listenerServiceConstructed: false,
+            listenerServiceConstructed: true,
             terminal: false
         ))
+    #expect(await product.networkListenerSnapshot()?.state == .idle)
 
     let replacement = try await router.bindAuthenticated(
         generation: 2,
@@ -741,12 +860,120 @@ private func productBootstrapStorageV1(
     try await authority.install(replacement)
     #expect(await product.authenticatedMenuSurfaceGeneration() == 2)
 
+    let terminalHandler = await product.networkListenerTerminalHandler()
+    terminalHandler(.listenerFailed)
+    while await product.networkListenerSnapshot()?.state != .terminal {
+        await Task.yield()
+    }
     await product.finish()
     #expect(await product.networkPairingProductSnapshot()
         == AgentNetworkPairingProductCompositionSnapshotV0(
-            listenerServiceConstructed: false,
+            listenerServiceConstructed: true,
             terminal: true
         ))
+    #expect(await product.networkListenerSnapshot()?.state == .terminal)
     await router.finish()
+}
+
+@available(macOS 26.0, *)
+@Test func networkListenerRuntimeOwnerRollsBackFailureAndCancellation()
+    async throws
+{
+    let rejected = ProductBootstrapNetworkListenerV1(rejectStart: true)
+    let rejectedOwner = MacAgentNetworkListenerRuntimeOwnerV1(
+        runtime: rejected
+    )
+
+    await #expect(
+        throws: ProductBootstrapProbeErrorV1.rejectedNetworkListener
+    ) {
+        try await rejectedOwner.start()
+    }
+    #expect(await rejected.counts().starts == 1)
+    #expect(await rejected.counts().cancellations == 1)
+    #expect(await rejectedOwner.snapshot().state == .terminal)
+
+    let gate = ProductBootstrapFinishGateV1()
+    let suspended = ProductBootstrapNetworkListenerV1(
+        startGate: gate,
+        cancelReleasesStart: true
+    )
+    let suspendedOwner = MacAgentNetworkListenerRuntimeOwnerV1(
+        runtime: suspended
+    )
+    let start = Task { try await suspendedOwner.start() }
+    await gate.waitUntilEntered()
+    start.cancel()
+    await #expect(throws: CancellationError.self) {
+        try await start.value
+    }
+    await suspendedOwner.finish()
+    #expect(await suspended.counts().starts == 1)
+    #expect(await suspended.counts().cancellations == 1)
+    #expect(await suspendedOwner.snapshot().state == .terminal)
+
+    let finishGate = ProductBootstrapFinishGateV1()
+    let finishBlocked = ProductBootstrapNetworkListenerV1(
+        startGate: finishGate
+    )
+    let finishBlockedOwner = MacAgentNetworkListenerRuntimeOwnerV1(
+        runtime: finishBlocked
+    )
+    let blockedStart = Task { try await finishBlockedOwner.start() }
+    await finishGate.waitUntilEntered()
+    let finishCompleted = ProductBootstrapCompletionProbeV1()
+    let finish = Task {
+        await finishBlockedOwner.finish()
+        await finishCompleted.record()
+    }
+    while await finishBlocked.counts().cancellations == 0 {
+        await Task.yield()
+    }
+    #expect(!(await finishCompleted.snapshot()))
+    #expect(await finishBlocked.counts().cancellations == 1)
+    await finishGate.release()
+    await finish.value
+    _ = await blockedStart.result
+    #expect(await finishBlockedOwner.snapshot().state == .terminal)
+
+    let listening = ProductBootstrapNetworkListenerV1()
+    let listeningOwner = MacAgentNetworkListenerRuntimeOwnerV1(
+        runtime: listening
+    )
+    try await listeningOwner.start()
+    await #expect(
+        throws:
+            MacAgentPreparedProductCompositionErrorV1
+                .networkListenerAlreadyStarted
+    ) {
+        try await listeningOwner.start()
+    }
+    #expect(await listening.counts().starts == 1)
+    #expect(await listening.counts().cancellations == 0)
+    #expect(await listeningOwner.snapshot().state == .listening)
+    await listeningOwner.finish()
+
+    let concurrentGate = ProductBootstrapFinishGateV1()
+    let concurrent = ProductBootstrapNetworkListenerV1(
+        startGate: concurrentGate
+    )
+    let concurrentOwner = MacAgentNetworkListenerRuntimeOwnerV1(
+        runtime: concurrent
+    )
+    let firstStart = Task { try await concurrentOwner.start() }
+    await concurrentGate.waitUntilEntered()
+    await #expect(
+        throws:
+            MacAgentPreparedProductCompositionErrorV1
+                .networkListenerAlreadyStarted
+    ) {
+        try await concurrentOwner.start()
+    }
+    #expect(await concurrent.counts().starts == 1)
+    #expect(await concurrent.counts().cancellations == 0)
+    await concurrentGate.release()
+    try await firstStart.value
+    #expect(await concurrentOwner.snapshot().state == .listening)
+    await concurrentOwner.finish()
 }
 #endif
