@@ -260,6 +260,9 @@ private final class MacLocalXPCLifecyclePumpShutdownStateV1:
 public final class MacLocalXPCLifecycleEventPumpV1: @unchecked Sendable {
     public typealias FailureHandler = @Sendable (UInt64) async -> Void
     public typealias ShutdownHandler = @Sendable () async -> Void
+    public typealias DispositionHandler = @Sendable (
+        MacLocalXPCLifecycleBindingDispositionV1
+    ) async -> Void
 
     private let binding: MacLocalXPCLifecycleBindingV1
     private let onShutdown: ShutdownHandler
@@ -272,6 +275,7 @@ public final class MacLocalXPCLifecycleEventPumpV1: @unchecked Sendable {
         binding: MacLocalXPCLifecycleBindingV1,
         bufferCapacity: Int = 32,
         onFailedClosed: @escaping FailureHandler,
+        onDisposition: @escaping DispositionHandler = { _ in },
         onShutdown: @escaping ShutdownHandler
     ) {
         self.binding = binding
@@ -288,6 +292,8 @@ public final class MacLocalXPCLifecycleEventPumpV1: @unchecked Sendable {
                 if case let .failedClosed(generation) = disposition {
                     await onFailedClosed(generation)
                 }
+                guard !Task.isCancelled else { break }
+                await onDisposition(disposition)
             }
         }
         shutdownState.install(drainTask: drainTask)

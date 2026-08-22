@@ -194,6 +194,17 @@ public actor AgentNetworkPairingProductCompositionV0 {
         return service
     }
 
+    /// Nonterminal loss of the replaceable authenticated menu generation.
+    /// Pairing review delivery converges immediately, including cancellation of
+    /// any still-pending visible review, while the listener, primary ingress,
+    /// QR context, and Observe services remain owned by this product. A later
+    /// authenticated menu generation may publish a fresh review through the
+    /// stable presentation authority retained by the review service.
+    public func authenticatedMenuSurfaceUnavailable() async {
+        guard !terminal else { return }
+        await pairingServices.reviews.authenticatedMenuSurfaceUnavailable()
+    }
+
     /// Terminal loss of the authenticated visible menu endpoint. Review
     /// delivery is closed first, then the exact listener service retires all
     /// pairing and primary ingress plus its QR context/session authority.

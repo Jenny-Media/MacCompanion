@@ -4,6 +4,7 @@ import CompanionAgent
 import CompanionAgentPlatform
 @testable import CompanionAgentProductPlatform
 import CompanionDiscovery
+import CompanionDomain
 import CompanionHost
 @testable import CompanionHostPlatform
 import CompanionInteractiveHost
@@ -83,6 +84,56 @@ private actor ProductBootstrapCompletionProbeV1 {
 
     func record() { value = true }
     func snapshot() -> Bool { value }
+}
+
+private actor ProductBootstrapMenuGenerationGateV1 {
+    private var armed = false
+    private var entered = false
+    private var enteredWaiters: [CheckedContinuation<Void, Never>] = []
+    private var releaseWaiter: CheckedContinuation<Void, Never>?
+
+    func arm() {
+        armed = true
+        entered = false
+    }
+
+    func waitIfArmed() async {
+        guard armed else { return }
+        entered = true
+        let waiters = enteredWaiters
+        enteredWaiters.removeAll()
+        for waiter in waiters { waiter.resume() }
+        await withCheckedContinuation { releaseWaiter = $0 }
+        armed = false
+    }
+
+    func waitUntilEntered() async {
+        guard !entered else { return }
+        await withCheckedContinuation { enteredWaiters.append($0) }
+    }
+
+    func release() {
+        releaseWaiter?.resume()
+        releaseWaiter = nil
+    }
+}
+
+private actor ProductBootstrapMenuEndpointV1:
+    MacLocalXPCAuthenticatedMenuSurfaceEndpointV1
+{
+    func installAuthenticatedMenuTerminalFence(
+        _: MacLocalXPCMenuSurfaceTerminalFenceV1
+    ) {}
+    func invalidateAuthenticatedMenuSurface() {}
+    func presentLocalPairingReview(_: LocalPairingReviewV0) async throws {}
+    func withdrawLocalPairingReview(reviewID _: UUID) {}
+    func presentHostIdentityRecoveryReview(
+        _: LocalHostIdentityRecoveryReviewV0
+    ) async throws {}
+    func presentHostIdentityRecoveryResume(
+        _: LocalHostIdentityRecoveryCommandV0
+    ) async throws {}
+    func withdrawHostIdentityRecovery(reviewID _: UUID) {}
 }
 
 private struct ProductBootstrapSamplerV1: HostSystemSampling {
@@ -483,5 +534,219 @@ private func productBootstrapStorageV1(
         )
     }
     #expect(await prepared.snapshot().consumed)
+}
+
+@available(macOS 26.0, *)
+@Test func existingLocalStartCannotReportSuccessAcrossFinish() async throws {
+    let base = FileManager.default.temporaryDirectory.appendingPathComponent(
+        "maccompanion-product-bootstrap-start-finish-\(UUID())",
+        isDirectory: true
+    )
+    try FileManager.default.createDirectory(
+        at: base,
+        withIntermediateDirectories: false,
+        attributes: [.posixPermissions: 0o700]
+    )
+    defer { try? FileManager.default.removeItem(at: base) }
+    let storage = try productBootstrapStorageV1(base: base)
+    let identity = try productBootstrapIdentityV1()
+    try await storage.requiredAudit.securityStore.establishHostIdentity(
+        identity.stored
+    )
+    guard case let .ready(prepared) = try await
+        AgentNetworkPrimaryStartupFactoryV1.prepare(
+            hostIdentityStartup: {
+                .ready(
+                    record: identity.stored,
+                    issuedIdentity: identity.issued,
+                    renewalRecommended: false
+                )
+            },
+            requiredAudit: storage.requiredAudit,
+            inputs: try productBootstrapInputsV1(
+                loader: ProductBootstrapCountingLoaderV1()
+            )
+        ) else {
+        Issue.record("expected prepared primary root")
+        return
+    }
+    let startGate = ProductBootstrapFinishGateV1()
+    let finishEntered = ProductBootstrapCompletionProbeV1()
+    let product = MacAgentPreparedProductV1(
+        storage: storage,
+        preparedPrimary: prepared,
+        startLocalXPC: { await startGate.run() },
+        finishLocalXPC: { await finishEntered.record() }
+    )
+
+    let firstStart = Task { try await product.startLocalAuthorization() }
+    await startGate.waitUntilEntered()
+    let secondStart = Task { try await product.startLocalAuthorization() }
+    for _ in 0..<100 { await Task.yield() }
+    let finish = Task { await product.finish() }
+    while !(await finishEntered.snapshot()) { await Task.yield() }
+
+    await startGate.release()
+    await #expect(
+        throws: MacAgentPreparedProductCompositionErrorV1.terminal
+    ) {
+        try await firstStart.value
+    }
+    await #expect(
+        throws: MacAgentPreparedProductCompositionErrorV1.terminal
+    ) {
+        try await secondStart.value
+    }
+    await finish.value
+    #expect(await product.snapshot().finished)
+}
+
+@available(macOS 26.0, *)
+@Test func preparedProductConsumesNetworkRootOnlyAfterMenuAuthorization()
+    async throws
+{
+    let base = FileManager.default.temporaryDirectory.appendingPathComponent(
+        "maccompanion-product-bootstrap-authorized-\(UUID())",
+        isDirectory: true
+    )
+    try FileManager.default.createDirectory(
+        at: base,
+        withIntermediateDirectories: false,
+        attributes: [.posixPermissions: 0o700]
+    )
+    defer { try? FileManager.default.removeItem(at: base) }
+    let storage = try productBootstrapStorageV1(base: base)
+    let identity = try productBootstrapIdentityV1()
+    try await storage.requiredAudit.securityStore.establishHostIdentity(
+        identity.stored
+    )
+    guard case let .ready(prepared) = try await
+        AgentNetworkPrimaryStartupFactoryV1.prepare(
+            hostIdentityStartup: {
+                .ready(
+                    record: identity.stored,
+                    issuedIdentity: identity.issued,
+                    renewalRecommended: false
+                )
+            },
+            requiredAudit: storage.requiredAudit,
+            inputs: try productBootstrapInputsV1(
+                loader: ProductBootstrapCountingLoaderV1()
+            )
+        ) else {
+        Issue.record("expected prepared primary root")
+        return
+    }
+    let authority = MacAgentAuthenticatedMenuSurfaceAuthorityV1()
+    let compositionGate = ProductBootstrapMenuGenerationGateV1()
+    let localStart = ProductBootstrapCompletionProbeV1()
+    let product = MacAgentPreparedProductV1(
+        storage: storage,
+        preparedPrimary: prepared,
+        startLocalXPC: { await localStart.record() },
+        finishLocalXPC: {},
+        menuSurfaceAuthority: authority,
+        currentMenuGeneration: {
+            await compositionGate.waitIfArmed()
+            return await authority.currentGeneration()
+        }
+    )
+    let time = try AgentLocalPairingTimeSampleV0(
+        wallNowUnixMilliseconds: productBootstrapTimeV1,
+        monotonicNowMilliseconds: 100
+    )
+    let timeSource = StaticAgentLocalPairingTimeSourceV0(time)
+    let policy = StaticAgentLocalPairingPolicySourceV0(
+        PolicyRevision(rawValue: 1)
+    )
+
+    await #expect(
+        throws:
+            MacAgentPreparedProductCompositionErrorV1
+                .authenticatedMenuUnavailable
+    ) {
+        _ = try await product.composeNetworkPairingProduct(
+            port: 43_210,
+            timeSource: timeSource,
+            policySource: policy
+        )
+    }
+    #expect(!(await prepared.snapshot().consumed))
+
+    let activationCompleted = ProductBootstrapCompletionProbeV1()
+    let activation = Task {
+        try await product.startAndComposeNetworkPairingProduct(
+                port: 43_210,
+                timeSource: timeSource,
+                policySource: policy
+            )
+        await activationCompleted.record()
+    }
+    while !(await localStart.snapshot()) { await Task.yield() }
+    for _ in 0..<100 { await Task.yield() }
+    #expect(!(await activationCompleted.snapshot()))
+    #expect(!(await prepared.snapshot().consumed))
+
+    let router = MacLocalXPCAuthenticatedMenuSurfaceRouterV1()
+    let surfaces = try await router.bindAuthenticated(
+        generation: 1,
+        endpointFactory: { ProductBootstrapMenuEndpointV1() }
+    )
+    await compositionGate.arm()
+    try await authority.install(surfaces)
+    await compositionGate.waitUntilEntered()
+    await #expect(
+        throws:
+            MacAgentPreparedProductCompositionErrorV1
+                .networkProductAlreadyComposed
+    ) {
+        _ = try await product.composeNetworkPairingProduct(
+            port: 43_210,
+            timeSource: timeSource,
+            policySource: policy
+        )
+    }
+    await compositionGate.release()
+    try await activation.value
+    #expect(await prepared.snapshot().consumed)
+    #expect(await product.networkPairingProductSnapshot()
+        == AgentNetworkPairingProductCompositionSnapshotV0(
+            listenerServiceConstructed: false,
+            terminal: false
+        ))
+    await #expect(
+        throws:
+            MacAgentPreparedProductCompositionErrorV1
+                .networkProductAlreadyComposed
+    ) {
+        _ = try await product.composeNetworkPairingProduct(
+            port: 43_210,
+            timeSource: timeSource,
+            policySource: policy
+        )
+    }
+
+    await product.authenticatedMenuSurfaceUnavailable(generation: 1)
+    #expect(await product.authenticatedMenuSurfaceGeneration() == nil)
+    #expect(await product.networkPairingProductSnapshot()
+        == AgentNetworkPairingProductCompositionSnapshotV0(
+            listenerServiceConstructed: false,
+            terminal: false
+        ))
+
+    let replacement = try await router.bindAuthenticated(
+        generation: 2,
+        endpointFactory: { ProductBootstrapMenuEndpointV1() }
+    )
+    try await authority.install(replacement)
+    #expect(await product.authenticatedMenuSurfaceGeneration() == 2)
+
+    await product.finish()
+    #expect(await product.networkPairingProductSnapshot()
+        == AgentNetworkPairingProductCompositionSnapshotV0(
+            listenerServiceConstructed: false,
+            terminal: true
+        ))
+    await router.finish()
 }
 #endif

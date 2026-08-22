@@ -191,6 +191,16 @@ private final class ProductAgentServerV1:
     private var starts = 0
     private var cancels = 0
     private var cancelledPeers: [UInt64] = []
+    private var endpointRequests: [UInt64] = []
+    private var presentationEndpoint:
+        (any MacLocalXPCAuthenticatedMenuSurfaceEndpointV1)?
+
+    init(
+        presentationEndpoint:
+            (any MacLocalXPCAuthenticatedMenuSurfaceEndpointV1)? = nil
+    ) {
+        self.presentationEndpoint = presentationEndpoint
+    }
 
     func install(_ handler: @escaping MacLocalXPCServerV1.EventHandler) {
         lock.withLock { self.handler = handler }
@@ -202,13 +212,70 @@ private final class ProductAgentServerV1:
         lock.withLock { cancelledPeers.append(generation) }
     }
 
+    func authenticatedMenuPresentationEndpoint(
+        generation: UInt64
+    ) async -> (any MacLocalXPCAuthenticatedMenuSurfaceEndpointV1)? {
+        lock.withLock {
+            endpointRequests.append(generation)
+            return presentationEndpoint
+        }
+    }
+
     func emit(_ event: MacLocalXPCServerEventV1) {
         lock.withLock { handler }?(event)
     }
 
-    func snapshot() -> (starts: Int, cancels: Int, peers: [UInt64]) {
-        lock.withLock { (starts, cancels, cancelledPeers) }
+    func snapshot() -> (
+        starts: Int,
+        cancels: Int,
+        peers: [UInt64],
+        endpointRequests: [UInt64]
+    ) {
+        lock.withLock {
+            (starts, cancels, cancelledPeers, endpointRequests)
+        }
     }
+}
+
+@available(macOS 26.0, *)
+private actor ProductMenuPresentationEndpointV1:
+    MacLocalXPCAuthenticatedMenuSurfaceEndpointV1
+{
+    private var fence: MacLocalXPCMenuSurfaceTerminalFenceV1?
+    private var invalidations = 0
+
+    func installAuthenticatedMenuTerminalFence(
+        _ fence: MacLocalXPCMenuSurfaceTerminalFenceV1
+    ) {
+        self.fence = fence
+    }
+
+    func invalidateAuthenticatedMenuSurface() {
+        invalidations += 1
+    }
+
+    func presentLocalPairingReview(_: LocalPairingReviewV0) async throws {}
+    func withdrawLocalPairingReview(reviewID _: UUID) async {}
+    func presentHostIdentityRecoveryReview(
+        _: LocalHostIdentityRecoveryReviewV0
+    ) async throws {}
+    func presentHostIdentityRecoveryResume(
+        _: LocalHostIdentityRecoveryCommandV0
+    ) async throws {}
+    func withdrawHostIdentityRecovery(reviewID _: UUID) async {}
+
+    func invalidationCount() -> Int { invalidations }
+
+    func requestTerminalFinish() async {
+        await fence?.requestFinish()
+    }
+}
+
+private actor ProductPresentedGenerationProbeV1 {
+    private var generations: [UInt64] = []
+
+    func record(_ generation: UInt64) { generations.append(generation) }
+    func values() -> [UInt64] { generations }
 }
 
 @available(macOS 26.0, *)
@@ -318,6 +385,124 @@ func agentProductFailureCancelsOnlyCurrentTransportGeneration() async {
 
 @Test
 @available(macOS 26.0, *)
+func agentPresentationProductBindsOnlyAfterAcceptedReadiness() async throws {
+    let endpoint = ProductMenuPresentationEndpointV1()
+    let server = ProductAgentServerV1(presentationEndpoint: endpoint)
+    let factory = ProductAgentFactoryProbeV1()
+    let generations = ProductPresentedGenerationProbeV1()
+    let invalidatedGenerations = ProductPresentedGenerationProbeV1()
+    let connection = ProductLifecycleConnectionV1()
+    let product = MacLocalXPCAgentProductV1.composeWithMenuPresentation(
+        lifecycleFactory: ProductLifecycleFactoryV1(
+            connection: connection
+        ),
+        statusReader: ProductStatusReaderV1(),
+        onSurfaces: { await generations.record($0.generation) },
+        onSurfaceInvalidated: {
+            await invalidatedGenerations.record($0)
+        },
+        serverFactory: { profile, _, handler in
+            factory.record(profile)
+            server.install(handler)
+            return server
+        }
+    )
+
+    #expect(
+        factory.recordedProfile()
+            == .menuLifecycleReadinessStatusAndPresentation
+    )
+    try await product.start()
+    server.emit(.authenticatedMenu(generation: 71))
+    for _ in 0..<50 { await Task.yield() }
+    #expect(server.snapshot().endpointRequests.isEmpty)
+    #expect(await connection.counts().ready == 0)
+    server.emit(.menuReady(generation: 71))
+    #expect(await eventuallyV1 { await generations.values() == [71] })
+    #expect(server.snapshot().endpointRequests == [71])
+
+    await endpoint.requestTerminalFinish()
+    #expect(await eventuallyV1 { await endpoint.invalidationCount() == 1 })
+    #expect(await invalidatedGenerations.values() == [71])
+    #expect(server.snapshot().peers == [71])
+
+    // The transport's later invalidation is a replay of the same exact loss.
+    server.emit(.invalidatedMenu(generation: 71))
+    for _ in 0..<50 { await Task.yield() }
+    #expect(await invalidatedGenerations.values() == [71])
+    #expect(server.snapshot().peers == [71])
+    await product.finish()
+}
+
+@Test
+@available(macOS 26.0, *)
+func authenticatedReplacementRevokesReadyPresentationBeforeNewReadiness()
+    async throws
+{
+    let endpoint = ProductMenuPresentationEndpointV1()
+    let server = ProductAgentServerV1(presentationEndpoint: endpoint)
+    let generations = ProductPresentedGenerationProbeV1()
+    let invalidatedGenerations = ProductPresentedGenerationProbeV1()
+    let product = MacLocalXPCAgentProductV1.composeWithMenuPresentation(
+        lifecycleFactory: ProductLifecycleFactoryV1(
+            connection: ProductLifecycleConnectionV1()
+        ),
+        statusReader: ProductStatusReaderV1(),
+        onSurfaces: { await generations.record($0.generation) },
+        onSurfaceInvalidated: {
+            await invalidatedGenerations.record($0)
+        },
+        serverFactory: { _, _, handler in
+            server.install(handler)
+            return server
+        }
+    )
+
+    try await product.start()
+    server.emit(.authenticatedMenu(generation: 81))
+    server.emit(.menuReady(generation: 81))
+    #expect(await eventuallyV1 { await generations.values() == [81] })
+
+    server.emit(.authenticatedMenu(generation: 82))
+    #expect(await eventuallyV1 {
+        await invalidatedGenerations.values() == [81]
+    })
+    #expect(await endpoint.invalidationCount() == 1)
+    #expect(server.snapshot().endpointRequests == [81])
+    #expect(server.snapshot().peers.isEmpty)
+
+    // A later stale invalidation for the replaced generation is idempotent.
+    server.emit(.invalidatedMenu(generation: 81))
+    for _ in 0..<50 { await Task.yield() }
+    #expect(await invalidatedGenerations.values() == [81])
+    await product.finish()
+}
+
+@Test
+@available(macOS 26.0, *)
+func agentPresentationProductFailsCurrentPeerWhenEndpointIsAbsent() async {
+    let server = ProductAgentServerV1()
+    let product = MacLocalXPCAgentProductV1.composeWithMenuPresentation(
+        lifecycleFactory: ProductLifecycleFactoryV1(
+            connection: ProductLifecycleConnectionV1()
+        ),
+        statusReader: ProductStatusReaderV1(),
+        onSurfaces: { _ in },
+        serverFactory: { _, _, handler in
+            server.install(handler)
+            return server
+        }
+    )
+
+    try? await product.start()
+    server.emit(.authenticatedMenu(generation: 72))
+    server.emit(.menuReady(generation: 72))
+    #expect(await eventuallyV1 { server.snapshot().peers == [72] })
+    await product.finish()
+}
+
+@Test
+@available(macOS 26.0, *)
 func agentProductCannotStartAfterTerminalFinish() async {
     let server = ProductAgentServerV1()
     let product = MacLocalXPCAgentProductV1.compose(
@@ -378,6 +563,7 @@ private final class ProductDashboardClientV1:
     private let handler: MacLocalXPCClientV1.EventHandler
     private let startError: Bool
     private let readyGate: ProductSyncStartGateV1?
+    private let finishGate: ProductAsyncGateV1?
     private var starts = 0
     private var readyRequests = 0
     private var statusRequests = 0
@@ -386,10 +572,12 @@ private final class ProductDashboardClientV1:
     init(
         startError: Bool = false,
         readyGate: ProductSyncStartGateV1? = nil,
+        finishGate: ProductAsyncGateV1? = nil,
         handler: @escaping MacLocalXPCClientV1.EventHandler
     ) {
         self.startError = startError
         self.readyGate = readyGate
+        self.finishGate = finishGate
         self.handler = handler
     }
 
@@ -408,6 +596,10 @@ private final class ProductDashboardClientV1:
     }
 
     func cancel() { lock.withLock { cancels += 1 } }
+    func finishMenuPresentationReceiver() async {
+        cancel()
+        await finishGate?.waitIfArmed()
+    }
     func emit(_ event: MacLocalXPCClientEventV1) { handler(event) }
 
     func snapshot() -> (starts: Int, ready: Int, status: Int, cancels: Int) {
@@ -692,6 +884,34 @@ func repeatedDashboardFinishAwaitsTheSameCleanupBarrier() async throws {
     await secondFinish.value
     #expect(secondCompleted.isSet())
     #expect(await owner.snapshot() == .unavailable)
+}
+
+@Test
+@available(macOS 26.0, *)
+func dashboardFinishAwaitsMenuReceiverRetirement() async throws {
+    let receiverGate = ProductAsyncGateV1()
+    receiverGate.arm()
+    let completed = ProductFlagV1()
+    let product = MacLocalXPCDashboardProductV1(
+        owner: MacAgentDashboardApplicationOwnerV0(),
+        clientFactory: {
+            ProductDashboardClientV1(
+                finishGate: receiverGate,
+                handler: $0
+            )
+        }
+    )
+    try await product.start()
+
+    let finish = Task {
+        await product.finish()
+        completed.set()
+    }
+    #expect(await eventuallyV1 { receiverGate.snapshot().entered })
+    #expect(!completed.isSet())
+    receiverGate.release()
+    await finish.value
+    #expect(completed.isSet())
 }
 
 @Test

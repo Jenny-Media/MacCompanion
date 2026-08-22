@@ -138,6 +138,10 @@ private struct MacLocalXPCHostIdentityRecoverySurfaceFacetV1:
 /// before returning the new facets. Every suspended acknowledgement is checked
 /// again after resumption, so a late success cannot authorize stale state.
 package actor MacLocalXPCAuthenticatedMenuSurfaceRouterV1 {
+    package typealias EndpointTerminalHandler = @Sendable (
+        UInt64
+    ) async -> Void
+
     private final class EndpointIdentityRecord {
         weak var endpoint: AnyObject?
 
@@ -165,8 +169,13 @@ package actor MacLocalXPCAuthenticatedMenuSurfaceRouterV1 {
         (token: UUID, task: Task<Void, Never>)?
     private var finishTask: Task<Void, Never>?
     private var acceptedEndpointIdentities: [EndpointIdentityRecord] = []
+    private let onEndpointTerminal: EndpointTerminalHandler
 
-    package init() {}
+    package init(
+        onEndpointTerminal: @escaping EndpointTerminalHandler = { _ in }
+    ) {
+        self.onEndpointTerminal = onEndpointTerminal
+    }
 
     /// Constructs a candidate endpoint only after numeric/policy pre-admission.
     /// A newly accepted endpoint receives its exact terminal fence after
@@ -337,12 +346,17 @@ package actor MacLocalXPCAuthenticatedMenuSurfaceRouterV1 {
     fileprivate func requestFinishFromEndpoint(
         generation: UInt64,
         token: UUID
-    ) {
+    ) async {
         guard current?.generation == generation,
               current?.token == token else {
             return
         }
         _ = beginFinish()
+        // Do not await the endpoint cleanup task here: the endpoint is waiting
+        // for this callback and cleanup calls back into that same endpoint.
+        // The product-level revocation callback is independent of the endpoint
+        // actor and must complete before terminal-fence admission returns.
+        await onEndpointTerminal(generation)
     }
 
     /// Marks the router terminal and waits for all endpoint retirement.

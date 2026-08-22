@@ -61,12 +61,17 @@ This is the living execution authority for the staged plan. A blocker applies on
 | Assisted operation | 7 | deferred | Untrusted-planner boundary documented | Earlier gates plus one validated assisted job and injection review | No model receives control authority implicitly |
 
 Latest process/local-IPC checkpoint, superseding the receiver-next-step wording
-in the Stage 0A row: the [authenticated menu presentation receiver](evidence/2026-08-21-authenticated-menu-presentation-receiver.md)
-now owns the exact production FIFO, retained XPC request leases, typed mutation
-state, acknowledgement ordering, two-second deadline, terminal fencing, and
-awaitable exact-ID cleanup behind package-only presentation surfaces. The next
-safe lane is sender/receiver/router/prepared-product composition; permanent
-target activation and signed two-process evidence remain gated.
+in the Stage 0A row: the [authenticated menu product composition](evidence/2026-08-21-authenticated-menu-product-composition.md)
+now connects accepted lifecycle readiness to the exact sender/router, binds the
+production dashboard receiver to menu-owned presenters with awaited teardown,
+and lets the prepared Agent wait for a replaceable authenticated menu authority
+before one-use construction of a nonescaping unstarted network product.
+Authenticated replacement and endpoint-terminal paths immediately fence the
+old generation; menu loss cancels pending visible review state while leaving
+primary ingress and Observe nonterminal for a later ready generation.
+Coordinated network-listener
+start/rollback, permanent-target activation, and signed two-process evidence
+remain gated.
 
 Local device administration now includes a [bundle-independent active-revoke
 convergence path](evidence/2026-08-21-local-device-revocation-convergence.md):

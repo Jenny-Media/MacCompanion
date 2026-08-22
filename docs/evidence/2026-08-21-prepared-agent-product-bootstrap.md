@@ -96,3 +96,10 @@ menu presentation-surface router now provides generation-bound pairing-review
 and recovery-only facets without adding XPC presentation messages. Strict
 bounded messages, a concrete generation-owned endpoint, and coordinated
 activation/rollback remain the next gates before permanent-target integration.
+
+## Later checkpoint
+
+The subsequent [authenticated menu product composition](2026-08-21-authenticated-menu-product-composition.md)
+adds the bounded sender/receiver/router connection, a replaceable stable review
+authority, and authorization-before-primary-consumption ordering. Network
+listener start/rollback and permanent-target integration remain later gates.

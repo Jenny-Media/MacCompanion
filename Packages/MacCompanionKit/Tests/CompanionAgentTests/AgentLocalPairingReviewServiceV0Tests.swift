@@ -16,11 +16,28 @@ private actor LocalReviewServiceDecisionAuthorityV0:
     let clientID: UUID
     private var failNext = false
     private var cancellationCountStorage = 0
+    private var suspendNext = false
+    private var decisionStarted = false
+    private var decisionStartWaiters: [CheckedContinuation<Void, Never>] = []
+    private var decisionContinuation: CheckedContinuation<Void, Never>?
 
     init(clientID: UUID) { self.clientID = clientID }
 
     func failNextDecision() { failNext = true }
+    func suspendNextDecision() { suspendNext = true }
     func cancellationCount() -> Int { cancellationCountStorage }
+
+    func waitUntilDecisionStarted() async {
+        guard !decisionStarted else { return }
+        await withCheckedContinuation {
+            decisionStartWaiters.append($0)
+        }
+    }
+
+    func resumeDecision() {
+        decisionContinuation?.resume()
+        decisionContinuation = nil
+    }
 
     func decideLocalPairing(
         pairingID: UUID,
@@ -32,6 +49,16 @@ private actor LocalReviewServiceDecisionAuthorityV0:
         wallNowUnixMilliseconds: Int64,
         monotonicNowMilliseconds: Int64
     ) async throws -> CompletedPairing {
+        decisionStarted = true
+        let waiters = decisionStartWaiters
+        decisionStartWaiters.removeAll()
+        for waiter in waiters { waiter.resume() }
+        if suspendNext {
+            suspendNext = false
+            await withCheckedContinuation {
+                decisionContinuation = $0
+            }
+        }
         if failNext {
             failNext = false
             throw LocalReviewServiceProbeErrorV0.injected
@@ -305,4 +332,98 @@ private func localReviewServiceCommandV0(
     await #expect(throws: AgentLocalPairingReviewServiceErrorV0.invalidated) {
         try await service.publishHostPairingReview(review)
     }
+}
+
+@Test func localReviewServiceTransientMenuLossCancelsVisibleAndAllowsFreshReview()
+    async throws
+{
+    let (service, decisions, authority, surface, review) =
+        try await localReviewServiceHarnessV0()
+    try await service.publishHostPairingReview(review)
+
+    await service.authenticatedMenuSurfaceUnavailable()
+    #expect(await service.visibleReview() == nil)
+    #expect(await surface.withdrawn() == [review.reviewID])
+    #expect(await authority.cancellationCount() == 1)
+
+    let fresh = try await decisions.registerCurrentPolicyReview(
+        localReviewServiceContextV0(),
+        reviewID: UUID()
+    )
+    try await service.publishHostPairingReview(fresh)
+    #expect(await service.visibleReview() == fresh)
+    #expect(await surface.presented() == [review, fresh])
+}
+
+@Test func localReviewServiceTransientMenuLossFencesSuspendedPublication()
+    async throws
+{
+    let (service, _, authority, surface, review) =
+        try await localReviewServiceHarnessV0()
+    await surface.suspendNext()
+    let publication = Task {
+        try await service.publishHostPairingReview(review)
+    }
+    await surface.waitUntilPresentationStarted()
+
+    await service.authenticatedMenuSurfaceUnavailable()
+    #expect(await service.visibleReview() == nil)
+    #expect(await authority.cancellationCount() == 1)
+    await surface.resumePresentation()
+
+    await #expect(throws: AgentLocalPairingReviewServiceErrorV0.self) {
+        try await publication.value
+    }
+    #expect(await service.visibleReview() == nil)
+    #expect(await surface.withdrawn().count == 2)
+}
+
+@Test func localReviewServiceTransientMenuLossPreservesInFlightDecision()
+    async throws
+{
+    let (service, _, authority, surface, review) =
+        try await localReviewServiceHarnessV0()
+    try await service.publishHostPairingReview(review)
+    let command = try localReviewServiceCommandV0(review: review)
+    await authority.suspendNextDecision()
+    let decision = Task { try await service.resolveLocalApproval(command) }
+    await authority.waitUntilDecisionStarted()
+
+    await service.authenticatedMenuSurfaceUnavailable()
+    #expect(await service.visibleReview() == nil)
+    #expect(await surface.withdrawn() == [review.reviewID])
+    #expect(await authority.cancellationCount() == 0)
+    await authority.resumeDecision()
+
+    let receipt = try await decision.value
+    try receipt.validate(against: command)
+    #expect(await service.visibleReview() == nil)
+    #expect(await surface.withdrawn() == [review.reviewID])
+    #expect(await authority.cancellationCount() == 0)
+}
+
+@Test func localReviewServiceTransientMenuLossCancelsRestoredFailedDecision()
+    async throws
+{
+    let (service, _, authority, surface, review) =
+        try await localReviewServiceHarnessV0()
+    try await service.publishHostPairingReview(review)
+    let command = try localReviewServiceCommandV0(review: review)
+    await authority.suspendNextDecision()
+    await authority.failNextDecision()
+    let decision = Task { try await service.resolveLocalApproval(command) }
+    await authority.waitUntilDecisionStarted()
+
+    await service.authenticatedMenuSurfaceUnavailable()
+    #expect(await authority.cancellationCount() == 0)
+    await authority.resumeDecision()
+
+    await #expect(
+        throws: AgentLocalPairingDecisionHandlerErrorV0.authorityUnavailable
+    ) {
+        try await decision.value
+    }
+    #expect(await service.visibleReview() == nil)
+    #expect(await surface.withdrawn() == [review.reviewID])
+    #expect(await authority.cancellationCount() == 1)
 }

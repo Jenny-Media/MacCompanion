@@ -467,6 +467,15 @@ private func listenerPairingConfigurationV0() throws
         LocalPairingSessionCreateCommandV0(commandID: UUID())
     )
 
+    await product.authenticatedMenuSurfaceUnavailable()
+    #expect(await product.snapshot()
+        == AgentNetworkPairingProductCompositionSnapshotV0(
+            listenerServiceConstructed: true,
+            terminal: false
+        ))
+    #expect(await listenerService.snapshot().state != .terminal)
+    #expect(!(await product.pairingContext.snapshot().terminal))
+
     await product.authorizedSurfaceLost()
     await product.authorizedSurfaceLost()
 

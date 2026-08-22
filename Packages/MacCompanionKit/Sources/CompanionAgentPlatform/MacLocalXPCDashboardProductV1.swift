@@ -1,4 +1,5 @@
 #if os(macOS)
+import CompanionIPC
 import CompanionLocalXPCPlatform
 import CompanionMacApp
 import Foundation
@@ -9,6 +10,7 @@ package protocol MacLocalXPCDashboardClientV1: AnyObject, Sendable {
     func publishMenuReady()
     func readAgentStatus()
     func cancel()
+    func finishMenuPresentationReceiver() async
 }
 
 @available(macOS 26.0, *)
@@ -295,7 +297,7 @@ private final class MacLocalXPCDashboardRuntimeV1: @unchecked Sendable {
                 if let startTask { _ = await startTask.result }
                 continuation?.finish()
                 drainTask?.cancel()
-                client?.cancel()
+                await client?.finishMenuPresentationReceiver()
                 await binding?.invalidate()
                 if let drainTask { await drainTask.value }
             }
@@ -332,6 +334,32 @@ public final class MacLocalXPCDashboardProductV1:
             owner: owner,
             bufferCapacity: bufferCapacity,
             clientFactory: { MacLocalXPCClientV1(onEvent: $0) }
+        )
+    }
+
+    /// Release-shaped construction seam for the exact menu-owned pairing and
+    /// recovery presenters. The transport still does not start until start()
+    /// is called, and finish() awaits exact receiver withdrawal.
+    public init(
+        owner: MacAgentDashboardApplicationOwnerV0,
+        pairingReviews: any LocalPairingReviewSurfaceV0,
+        hostIdentityRecovery:
+            any LocalHostIdentityRecoverySurfaceV0,
+        bufferCapacity: Int = 32
+    ) {
+        let surfaces = MacLocalXPCMenuPresentationReceiverSurfacesV1(
+            pairingReviews: pairingReviews,
+            hostIdentityRecovery: hostIdentityRecovery
+        )
+        runtime = Self.makeRuntime(
+            owner: owner,
+            bufferCapacity: bufferCapacity,
+            clientFactory: {
+                MacLocalXPCClientV1(
+                    presentationSurfaces: surfaces,
+                    onEvent: $0
+                )
+            }
         )
     }
 

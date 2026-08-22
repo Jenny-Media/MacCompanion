@@ -27,12 +27,18 @@ public actor AgentLocalPairingReviewServiceV0:
             LocalPairingDecisionCommandV0,
             UInt64
         )
+        case resolvingAfterSurfaceLoss(
+            LocalPairingReviewV0,
+            LocalPairingDecisionCommandV0,
+            UInt64
+        )
         case invalidated
 
         var review: LocalPairingReviewV0? {
             switch self {
             case let .publishing(review, _), let .visible(review, _),
-                 let .resolving(review, _, _):
+                 let .resolving(review, _, _),
+                 let .resolvingAfterSurfaceLoss(review, _, _):
                 review
             case .idle, .invalidated:
                 nil
@@ -65,7 +71,8 @@ public actor AgentLocalPairingReviewServiceV0:
         case let .visible(current, _) where current == review:
             return
         case let .visible(current, _), let .publishing(current, _),
-             let .resolving(current, _, _):
+             let .resolving(current, _, _),
+             let .resolvingAfterSurfaceLoss(current, _, _):
             throw AgentLocalPairingReviewServiceErrorV0
                 .reviewAlreadyVisible(current.reviewID)
         case .invalidated:
@@ -113,6 +120,36 @@ public actor AgentLocalPairingReviewServiceV0:
         await surface.withdrawLocalPairingReview(reviewID: reviewID)
     }
 
+    /// Nonterminal loss of the currently authenticated menu presentation
+    /// generation. Publishing or visible work is cancelled and the owner
+    /// returns to idle, allowing a later generation to publish a fresh review.
+    /// A durable decision already in flight is allowed to converge.
+    public func authenticatedMenuSurfaceUnavailable() async {
+        switch state {
+        case .idle, .invalidated:
+            return
+        case let .publishing(review, _), let .visible(review, _):
+            if (try? advanceGeneration()) != nil {
+                state = .idle
+            }
+            await surface.withdrawLocalPairingReview(
+                reviewID: review.reviewID
+            )
+            await decisions.cancel(reviewID: review.reviewID)
+        case let .resolving(review, command, operationGeneration):
+            state = .resolvingAfterSurfaceLoss(
+                review,
+                command,
+                operationGeneration
+            )
+            await surface.withdrawLocalPairingReview(
+                reviewID: review.reviewID
+            )
+        case .resolvingAfterSurfaceLoss:
+            return
+        }
+    }
+
     /// Already-authorized implementation of `resolveLocalApproval`. The
     /// command is forwarded unchanged and only exact post-commit replay is
     /// available after the visible review has cleared.
@@ -130,7 +167,7 @@ public actor AgentLocalPairingReviewServiceV0:
                 .reviewUnavailable(command.reviewID)
         case .publishing:
             throw AgentLocalPairingReviewServiceErrorV0.transitionInProgress
-        case .resolving:
+        case .resolving, .resolvingAfterSurfaceLoss:
             if let receipt = try await decisions.replayReceipt(for: command) {
                 return receipt
             }
@@ -175,15 +212,30 @@ public actor AgentLocalPairingReviewServiceV0:
         do {
             let receipt = try await decisions.handle(command)
             if isResolving(command, generation: operationGeneration) {
-                state = .idle
-                await surface.withdrawLocalPairingReview(
-                    reviewID: review.reviewID
+                let surfaceWasLost = isResolvingAfterSurfaceLoss(
+                    command,
+                    generation: operationGeneration
                 )
+                state = .idle
+                if !surfaceWasLost {
+                    await surface.withdrawLocalPairingReview(
+                        reviewID: review.reviewID
+                    )
+                }
             }
             return receipt
         } catch {
             if isResolving(command, generation: operationGeneration) {
-                if isRetryableDecisionError(error) {
+                if isResolvingAfterSurfaceLoss(
+                    command,
+                    generation: operationGeneration
+                ) {
+                    state = .idle
+                    // A retryable decision failure may have restored the
+                    // pending review after the loss callback observed the
+                    // decision in flight. Cancel that restored authority now.
+                    await decisions.cancel(reviewID: review.reviewID)
+                } else if isRetryableDecisionError(error) {
                     state = .visible(review, operationGeneration)
                 } else {
                     state = .idle
@@ -234,7 +286,24 @@ public actor AgentLocalPairingReviewServiceV0:
         _ command: LocalPairingDecisionCommandV0,
         generation: UInt64
     ) -> Bool {
-        guard case let .resolving(_, current, currentGeneration) = state else {
+        switch state {
+        case let .resolving(_, current, currentGeneration),
+             let .resolvingAfterSurfaceLoss(
+                _, current, currentGeneration
+             ):
+            return current == command && currentGeneration == generation
+        default:
+            return false
+        }
+    }
+
+    private func isResolvingAfterSurfaceLoss(
+        _ command: LocalPairingDecisionCommandV0,
+        generation: UInt64
+    ) -> Bool {
+        guard case let .resolvingAfterSurfaceLoss(
+            _, current, currentGeneration
+        ) = state else {
             return false
         }
         return current == command && currentGeneration == generation
@@ -247,6 +316,9 @@ public actor AgentLocalPairingReviewServiceV0:
         case let .visible(_, current) where current == operationGeneration:
             state = .idle
         case let .resolving(_, _, current)
+            where current == operationGeneration:
+            state = .idle
+        case let .resolvingAfterSurfaceLoss(_, _, current)
             where current == operationGeneration:
             state = .idle
         default:

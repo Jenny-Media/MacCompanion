@@ -75,3 +75,10 @@ authentication-only profile, start a permanent target, register or sign an App
 ID, use a managed entitlement, or prove a signed live two-process exchange.
 `Apps/`, `project.yml`, `Package.swift`, signing settings, entitlements, and
 release identities are unchanged.
+
+## Later checkpoint
+
+The subsequent [authenticated menu product composition](2026-08-21-authenticated-menu-product-composition.md)
+connects this receiver to menu-owned presentation owners and makes dashboard
+finish await its exact cleanup barrier. The historical non-claims above remain
+the boundary of this receiver-only checkpoint.

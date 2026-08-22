@@ -299,6 +299,8 @@ let package = Package(
             dependencies: [
                 "CompanionAgent", "CompanionAgentNetworkPlatform",
                 "CompanionAgentPlatform", "CompanionHostPlatform",
+                "CompanionDiscovery", "CompanionIPC",
+                "CompanionLocalXPCPlatform",
                 "CompanionSecurity",
             ]
         ),
