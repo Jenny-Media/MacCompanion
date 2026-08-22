@@ -27,6 +27,21 @@ public protocol MacDashboardLifecycleProcessStartingV1: Sendable {
     ) async -> MacAgentDashboardEffectOutcomeV0
 }
 
+/// Construction-only process-start seam for the permanent Agent before the
+/// containing app owns authenticated lifecycle execution. It performs no
+/// launch, registration, or process lookup and never reports completion.
+public struct InertMacDashboardLifecycleProcessStarterV1:
+    MacDashboardLifecycleProcessStartingV1
+{
+    public init() {}
+
+    public func requestStarts(
+        _: [ProductLifecycleEffect]
+    ) async -> MacAgentDashboardEffectOutcomeV0 {
+        .notCompleted
+    }
+}
+
 /// Composes dashboard desired-state commands with the Agent's lifecycle and
 /// login-role authorities. Enable is a saga: prepare, register Agent then menu,
 /// compare-and-commit, then request process starts. A stale/failed commit is

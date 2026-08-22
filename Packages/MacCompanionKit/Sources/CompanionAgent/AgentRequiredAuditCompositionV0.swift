@@ -2,6 +2,7 @@ import CompanionAuthentication
 import CompanionHostWire
 import CompanionHostSession
 import CompanionInteractiveHost
+import CompanionInteractiveShared
 import CompanionIPC
 import CompanionOperations
 import CompanionPairing
@@ -41,6 +42,65 @@ public struct AgentInteractivePlatformServicesV1: Sendable {
         self.runtime = runtime
         self.surfaceControl = surfaceControl
     }
+
+    /// Explicit construction-only platform for a permanent Agent that has not
+    /// yet bound authenticated visible-menu admission or a Control runtime.
+    /// Every attempted Interactive operation fails closed; termination remains
+    /// idempotent so product teardown can always converge.
+    public static func inertUnavailable() -> Self {
+        Self(
+            visibleAdmission: AgentInertVisibleInteractiveAdmissionV1(),
+            materials: AgentInertInteractiveMaterialsV1(),
+            runtime: AgentInertInteractiveRuntimeV1()
+        )
+    }
+}
+
+public enum AgentInertInteractivePlatformErrorV1:
+    Error,
+    Equatable,
+    Sendable
+{
+    case unavailable
+}
+
+private struct AgentInertVisibleInteractiveAdmissionV1:
+    VisibleInteractiveAdmissionReadingV0
+{
+    func snapshot() async throws -> VisibleInteractiveAdmissionStateV0 {
+        throw AgentInertInteractivePlatformErrorV1.unavailable
+    }
+}
+
+private struct AgentInertInteractiveMaterialsV1:
+    InteractiveSessionMaterialGeneratingV0
+{
+    func approvalMaterials() async throws -> InteractiveApprovalMaterialsV0 {
+        throw AgentInertInteractivePlatformErrorV1.unavailable
+    }
+
+    func bootstrapMaterials() async throws
+        -> InteractiveSessionBootstrapMaterials
+    {
+        throw AgentInertInteractivePlatformErrorV1.unavailable
+    }
+}
+
+private actor AgentInertInteractiveRuntimeV1:
+    InteractiveSessionRuntimeOwningV0
+{
+    func install(
+        _: InteractiveSessionBootstrap,
+        requirement _: InteractiveSessionRuntimeRequirementV0
+    ) async throws {
+        throw AgentInertInteractivePlatformErrorV1.unavailable
+    }
+
+    func terminate(
+        interactiveSessionID _: UUID,
+        primaryConnectionID _: Data,
+        reason _: InteractiveSessionEndReason
+    ) async {}
 }
 
 /// Identity-neutral construction root for Agent authorities whose audit

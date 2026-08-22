@@ -154,6 +154,30 @@ private func initialRequirement() throws
     )
 }
 
+@Test func inertInteractiveRuntimeRejectsInstallAndTerminatesIdempotently()
+    async throws
+{
+    let services = AgentInteractivePlatformServicesV1.inertUnavailable()
+    await #expect(
+        throws: AgentInertInteractivePlatformErrorV1.unavailable
+    ) {
+        try await services.runtime.install(
+            initialBootstrap(),
+            requirement: initialRequirement()
+        )
+    }
+    await services.runtime.terminate(
+        interactiveSessionID: initialSessionID,
+        primaryConnectionID: initialConnectionID,
+        reason: .localSuspension
+    )
+    await services.runtime.terminate(
+        interactiveSessionID: initialSessionID,
+        primaryConnectionID: initialConnectionID,
+        reason: .localSuspension
+    )
+}
+
 private func initialDesktop(
     classes: Set<SurfaceInteractionClass> = [.view, .pointer],
     expiresAtMilliseconds: Int64 = 20_000

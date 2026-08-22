@@ -72,9 +72,7 @@ targets:
       - path: Apps/MacCompanionAgent
     dependencies:
       - package: MacCompanionKit
-        product: CompanionAgentNetworkPlatform
-      - package: MacCompanionKit
-        product: CompanionAgentPlatform
+        product: CompanionAgentApplicationPlatform
       - package: MacCompanionKit
         product: CompanionLocalXPCPlatform
     settings:
