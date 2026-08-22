@@ -172,7 +172,29 @@ Every composed architecture result remains
 assembly into the canonical evidence record remains required before this
 section can contribute to acceptance.
 
-For the final application and disk image it additionally retains Gatekeeper
+The Mac distribution subject also receives one fixed outer consistency check
+against the exact reconstructed `.app` after all nested objects are available:
+
+```text
+[
+  "/usr/bin/codesign",
+  "--verify",
+  "--deep",
+  "--strict",
+  "--all-architectures",
+  "--verbose=4",
+  "SUBJECT"
+]
+```
+
+This check is implemented as immutable non-acceptance evidence. Success has
+empty stdout and exactly two path-bound stderr lines: `valid on disk` and
+`satisfies its Designated Requirement`. `--deep` is a final consistency check,
+never discovery, repair, or a substitute for any per-object or
+per-architecture result. Canonical-record composition must enforce that
+ordering before it can contribute to acceptance.
+
+For the final application and disk image the collector additionally retains Gatekeeper
 assessment, accepted notarization correlation, and stapling validation against
 the exact candidate. Packaging-equivalence platform verification must already
 pass for the same hashes. A recursive outer verification does not excuse a

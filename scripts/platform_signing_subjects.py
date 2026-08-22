@@ -84,6 +84,25 @@ class PlannedCodeSignVerification:
 
 
 @dataclass(frozen=True)
+class PlannedCodeSignOuterVerification:
+    artifact_id: str
+    owned_subject_path: Path
+    invocation: FixedToolInvocation
+
+    def public_record(self) -> dict[str, Any]:
+        return {
+            "artifactID": self.artifact_id,
+            "ownedSubjectPath": str(self.owned_subject_path),
+            "invocationID": self.invocation.invocation_id,
+            "tool": self.invocation.tool.public_record(),
+            "argv": [
+                self.invocation.tool.path,
+                *self.invocation.arguments,
+            ],
+        }
+
+
+@dataclass(frozen=True)
 class PlannedCodeSignArchitectureInspection:
     artifact_id: str
     source_path: str
@@ -1084,6 +1103,112 @@ def derive_codesign_verification_plans(
     }:
         raise PlatformSigningSubjectError(
             "codesign verification plan does not cover every reconstructed artifact"
+        )
+    return plans
+
+
+def derive_codesign_outer_verification_plans(
+    *,
+    graph: dict[str, Any],
+    reconstructed: list[ReconstructedSigningSubject],
+    codesign_tool: FixedToolIdentity,
+) -> list[PlannedCodeSignOuterVerification]:
+    if codesign_tool.tool_id != "apple.codesign" or codesign_tool.path != "/usr/bin/codesign":
+        raise PlatformSigningSubjectError(
+            "outer codesign verification requires the pinned absolute Apple tool"
+        )
+    reconstructed_by_id = {item.artifact_id: item for item in reconstructed}
+    if len(reconstructed_by_id) != len(reconstructed):
+        raise PlatformSigningSubjectError(
+            "reconstructed signing subjects contain duplicate artifacts"
+        )
+    graph_artifacts = graph.get("artifacts")
+    if not isinstance(graph_artifacts, list):
+        raise PlatformSigningSubjectError(
+            "signed-code graph artifact set is unavailable"
+        )
+    plans: list[PlannedCodeSignOuterVerification] = []
+    mac_artifact_ids: set[str] = set()
+    for artifact_index, graph_artifact in enumerate(graph_artifacts):
+        if not isinstance(graph_artifact, dict):
+            raise PlatformSigningSubjectError(
+                "signed-code graph artifact is not an object"
+            )
+        binding = graph_artifact.get("artifact")
+        if not isinstance(binding, dict):
+            raise PlatformSigningSubjectError(
+                "signed-code graph artifact binding is invalid"
+            )
+        artifact_id = binding.get("id")
+        platform = binding.get("platform")
+        kind = binding.get("kind")
+        if platform != "macOS":
+            continue
+        if kind != "macApplication" or not isinstance(artifact_id, str):
+            raise PlatformSigningSubjectError(
+                "outer codesign verification requires one Mac application binding"
+            )
+        if artifact_id in mac_artifact_ids:
+            raise PlatformSigningSubjectError(
+                "outer codesign verification artifact is ambiguous"
+            )
+        mac_artifact_ids.add(artifact_id)
+        subject = reconstructed_by_id.get(artifact_id)
+        subject_root = graph_artifact.get("subjectRoot")
+        if (
+            subject is None
+            or subject.platform != "macOS"
+            or subject.subject_root != subject_root
+            or not isinstance(subject_root, str)
+            or not subject_root.endswith(".app")
+        ):
+            raise PlatformSigningSubjectError(
+                "outer codesign verification lacks its reconstructed Mac application"
+            )
+        owned_path = subject.subject_path
+        try:
+            resolved_root = subject.artifact_root.resolve(strict=True)
+            resolved = owned_path.resolve(strict=True)
+        except OSError as error:
+            raise PlatformSigningSubjectError(
+                "outer codesign verification subject is unavailable"
+            ) from error
+        if (
+            resolved_root not in resolved.parents
+            or owned_path.is_symlink()
+            or not owned_path.is_dir()
+        ):
+            raise PlatformSigningSubjectError(
+                "outer codesign verification subject is unsafe"
+            )
+        invocation = FixedToolInvocation(
+            invocation_id=f"codesign-outer-{artifact_index + 1:02d}",
+            tool=codesign_tool,
+            arguments=(
+                "--verify",
+                "--deep",
+                "--strict",
+                "--all-architectures",
+                "--verbose=4",
+                str(owned_path),
+            ),
+            timeout_seconds=300,
+        )
+        plans.append(
+            PlannedCodeSignOuterVerification(
+                artifact_id=artifact_id,
+                owned_subject_path=owned_path,
+                invocation=invocation,
+            )
+        )
+    expected_mac_ids = {
+        subject.artifact_id
+        for subject in reconstructed
+        if subject.platform == "macOS"
+    }
+    if mac_artifact_ids != expected_mac_ids or len(plans) > 1:
+        raise PlatformSigningSubjectError(
+            "outer codesign verification does not exactly cover the Mac application"
         )
     return plans
 
