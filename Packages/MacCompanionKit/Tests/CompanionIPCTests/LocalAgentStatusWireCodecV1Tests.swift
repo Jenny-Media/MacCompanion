@@ -1,12 +1,15 @@
 import CompanionIPC
+import CompanionLifecycle
 import CompanionWire
 import Foundation
 import Testing
 
-private func wireStatusSnapshotV1() throws -> LocalAgentStatusSnapshot {
+private func wireStatusSnapshotV1(
+    consoleSession: ConsoleSessionState = .active
+) throws -> LocalAgentStatusSnapshot {
     try LocalAgentStatusSnapshot(
         desiredEnabled: true,
-        consoleSession: .active,
+        consoleSession: consoleSession,
         agentProcess: .ready,
         menuAppProcess: .starting,
         networkState: .listening,
@@ -19,6 +22,21 @@ private func wireStatusSnapshotV1() throws -> LocalAgentStatusSnapshot {
         diagnosticSequence: 9,
         generatedAtUnixMilliseconds: 1_724_000_000_000
     )
+}
+
+@Test
+func localAgentStatusWireCodecPreservesAmbiguousConsoleState() throws {
+    let expected = try wireStatusSnapshotV1(
+        consoleSession: .otherConsoleUserActive
+    )
+    let payload = try LocalAgentStatusWireCodecV1.encode(expected)
+    let text = try #require(String(data: payload, encoding: .utf8))
+
+    #expect(try CanonicalJSON.canonicalize(payload) == payload)
+    #expect(text.contains(
+        "\"consoleSession\":\"otherConsoleUserActive\""
+    ))
+    #expect(try LocalAgentStatusWireCodecV1.decode(payload) == expected)
 }
 
 @Test

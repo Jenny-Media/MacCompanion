@@ -335,15 +335,34 @@ private actor AgentProductInteractiveRuntimeV1:
         transitionID: UUID(),
         observedAtUnixMilliseconds: 2
     )
+    #expect(await network.session.phase == .awaitingHello)
+    #expect(await interactive.recordedCloseCount() == 3)
+    let lockedStatus = try await bootstrapped.localServices.statusReader.read()
+    #expect(lockedStatus.consoleSession == .locked)
     _ = try await bootstrapped.lifecycle.apply(
         .userUnlocked,
         transitionID: UUID(),
         observedAtUnixMilliseconds: 3
     )
+    _ = try await bootstrapped.lifecycle.apply(
+        .otherConsoleUserBecameActive,
+        transitionID: UUID(),
+        observedAtUnixMilliseconds: 4
+    )
+    #expect(await network.session.phase == .awaitingHello)
+    #expect(await interactive.recordedCloseCount() == 4)
+    let otherConsoleStatus = try await bootstrapped.localServices
+        .statusReader.read()
+    #expect(otherConsoleStatus.consoleSession == .otherConsoleUserActive)
+    _ = try await bootstrapped.lifecycle.apply(
+        .configuredUserBecameActive,
+        transitionID: UUID(),
+        observedAtUnixMilliseconds: 5
+    )
     let restoredState = await bootstrapped.lifecycle.state
     let afterABATransitions = await bootstrapped.lifecycle.currentSnapshot()
     #expect(staleMenuExit.completed.before == restoredState)
-    #expect(afterABATransitions.revision == beforeABATransitions.revision + 2)
+    #expect(afterABATransitions.revision == beforeABATransitions.revision + 4)
     #expect(afterABATransitions.agentObservationEpoch ==
         beforeABATransitions.agentObservationEpoch)
     #expect(afterABATransitions.menuAppObservationEpoch ==
@@ -357,7 +376,7 @@ private actor AgentProductInteractiveRuntimeV1:
     let preparedMenuExit = try await bootstrapped.lifecycle.prepare(
         .menuAppExited,
         transitionID: UUID(),
-        observedAtUnixMilliseconds: 4
+        observedAtUnixMilliseconds: 6
     )
     let menuExit = try await bootstrapped.lifecycle.commitPrepared(
         preparedMenuExit
@@ -368,7 +387,7 @@ private actor AgentProductInteractiveRuntimeV1:
     #expect(menuEpochAfterExit ==
         afterABATransitions.menuAppObservationEpoch + 1)
     #expect(await network.session.phase == .awaitingHello)
-    #expect(await interactive.recordedCloseCount() == 3)
+    #expect(await interactive.recordedCloseCount() == 5)
     let afterMenuExit = try await bootstrapped.localServices.statusReader.read()
     #expect(afterMenuExit.agentProcess == .ready)
     #expect(afterMenuExit.menuAppProcess == .starting)
@@ -376,7 +395,7 @@ private actor AgentProductInteractiveRuntimeV1:
     let agentExit = try await bootstrapped.lifecycle.apply(
         .agentExited,
         transitionID: UUID(),
-        observedAtUnixMilliseconds: 5
+        observedAtUnixMilliseconds: 7
     )
     #expect(agentExit.remainingPlatformEffects == [.requestAgentRecovery])
     let agentEpochAfterExit = await bootstrapped.lifecycle
@@ -384,7 +403,7 @@ private actor AgentProductInteractiveRuntimeV1:
     #expect(agentEpochAfterExit ==
         afterABATransitions.agentObservationEpoch + 1)
     #expect(await network.session.phase == .closed)
-    #expect(await interactive.recordedCloseCount() == 4)
+    #expect(await interactive.recordedCloseCount() == 6)
     let afterAgentExit = try await bootstrapped.localServices.statusReader.read()
     #expect(afterAgentExit.agentProcess == .starting)
     #expect(afterAgentExit.menuAppProcess == .starting)

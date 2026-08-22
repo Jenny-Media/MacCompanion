@@ -1,6 +1,6 @@
 # Mac Companion Execution and Blocker Ledger
 
-Status date: 2026-08-21
+Status date: 2026-08-22
 
 This is the living execution authority for the staged plan. A blocker applies only to work that names it as a dependency. Work in every other safe lane continues. Evidence links point to repository artifacts or reproducible commands; secrets and Apple-account records remain outside the repository.
 
@@ -83,6 +83,18 @@ lock-state discriminator: same-user/on-console/login-complete remains ambiguous
 and maps to `otherConsoleUserActive`, never unlocked or locked. Sleep and
 terminal lifecycle signals fail closed. Permanent-target invocation, Act and
 Control availability, and signed runtime evidence remain separate gates.
+
+The [other-console lifecycle checkpoint](evidence/2026-08-22-other-console-lifecycle-fail-closed.md)
+now carries that conservative state through the product lifecycle instead of
+forcing it into active, locked, or logged-out. A ready enabled Agent preserves
+Observe while another or ambiguous console user is active, but local
+administration and new Interactive Control require a positively observed active
+configured-user session; a takeover ends current Interactive Control without
+closing the primary Observe session. Lock currently follows the same
+fail-closed teardown until the ordered genuine-lock-surface transition is
+implemented and physically proven. The package-owned Agent application
+lifecycle facade remains the next unsigned checkpoint before any permanent
+target activation.
 
 Local device administration now includes a [bundle-independent active-revoke
 convergence path](evidence/2026-08-21-local-device-revocation-convergence.md):

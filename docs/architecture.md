@@ -474,6 +474,12 @@ When the Mac locks while the configured user remains logged in:
 - The desktop stream resumes only after macOS reports the configured user session active.
 - If lock-surface capture or input is unavailable, the client receives `lockedInteractionUnavailable`; it never receives the pre-lock desktop as though it were live.
 
+Until an implementation proves that ordered blanking, input release, token
+invalidation, and genuine-lock-surface transition, the lifecycle fails closed
+by ending Interactive Control on lock while preserving Observe. The conditional
+lock-surface behavior above replaces that teardown only after its separate
+platform and physical evidence gate passes.
+
 Logout, the no-user login window, another console user becoming active, and FileVault preboot terminate Interactive Control. Headless operation and wake-from-sleep are outside the initial contract until separate spikes prove a public, supportable design.
 
 ## Adaptive Remote Surfaces
@@ -710,6 +716,15 @@ Mac Companion represents current observations separately from inference:
 6. `unreachable`
 
 Stage 0 must prove that public session notifications distinguish lock from fast user switching on supported macOS versions. Until proven, the service maps ambiguity to `otherConsoleUserActive`, suspends Interactive Control, and denies locked-session-sensitive operations.
+
+The product lifecycle represents that ambiguity explicitly rather than
+fabricating `active` or `locked`. An enabled Agent may continue authenticated
+Observe service while `otherConsoleUserActive`, but new Interactive Control and
+local administration require a positively observed active configured-user
+session. Another console user taking over ends current Interactive Control
+without closing the Observe connection. Returning to `active` requires a
+separate supported positive observation; absence of a logout event is not
+enough.
 
 When disconnected, the client shows `unreachable` plus the last reported state and timestamp. It never converts a lost connection into a definitive live `sleeping` or `offline` diagnosis.
 

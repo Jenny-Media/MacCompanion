@@ -164,6 +164,14 @@ public struct MacAgentDashboardProjectionV0: Equatable, Sendable {
                 "lock.shield"
             )
         }
+        if snapshot.consoleSession == .otherConsoleUserActive {
+            return (
+                .ready,
+                "Mac Companion is on",
+                "The configured macOS session is not confirmed active. Status may remain available; Act and Control are unavailable.",
+                "person.2.fill"
+            )
+        }
         return (
             .ready,
             "Mac Companion is on",
@@ -344,6 +352,7 @@ public struct MacAgentDashboardProjectionV0: Equatable, Sendable {
         switch value {
         case .active: "Active"
         case .locked: "Locked"
+        case .otherConsoleUserActive: "Configured session not confirmed active"
         case .loggedOut: "Logged out"
         }
     }

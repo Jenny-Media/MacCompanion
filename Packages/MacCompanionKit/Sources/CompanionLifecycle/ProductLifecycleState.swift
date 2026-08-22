@@ -1,6 +1,7 @@
 public enum ConsoleSessionState: String, Codable, CaseIterable, Sendable {
     case active
     case locked
+    case otherConsoleUserActive
     case loggedOut
 }
 
@@ -16,6 +17,8 @@ public enum ProductLifecycleEvent: Equatable, Sendable {
     case userLoggedIn
     case userLocked
     case userUnlocked
+    case otherConsoleUserBecameActive
+    case configuredUserBecameActive
     case userLoggedOut
     case agentReady
     case agentExited
@@ -66,12 +69,13 @@ public struct ProductLifecycleState: Equatable, Sendable {
         desiredEnabled && consoleSession != .loggedOut && agent == .ready
     }
 
-    public var interactiveControlAvailable: Bool {
-        observeAvailable && menuApp == .ready
+    /// Whether a new Interactive Control session may be admitted.
+    public var newInteractiveControlAvailable: Bool {
+        observeAvailable && consoleSession == .active && menuApp == .ready
     }
 
     public var localAdministrationVisible: Bool {
-        desiredEnabled && consoleSession != .loggedOut && menuApp == .ready
+        desiredEnabled && consoleSession == .active && menuApp == .ready
     }
 
     @discardableResult
@@ -122,10 +126,24 @@ public struct ProductLifecycleState: Equatable, Sendable {
                 throw InvalidProductLifecycleTransition(event: event)
             }
             consoleSession = .locked
-            return []
+            return [.endInteractiveControl]
 
         case .userUnlocked:
             guard consoleSession == .locked else {
+                throw InvalidProductLifecycleTransition(event: event)
+            }
+            consoleSession = .active
+            return []
+
+        case .otherConsoleUserBecameActive:
+            guard consoleSession == .active || consoleSession == .locked else {
+                throw InvalidProductLifecycleTransition(event: event)
+            }
+            consoleSession = .otherConsoleUserActive
+            return [.endInteractiveControl]
+
+        case .configuredUserBecameActive:
+            guard consoleSession == .otherConsoleUserActive else {
                 throw InvalidProductLifecycleTransition(event: event)
             }
             consoleSession = .active

@@ -122,6 +122,26 @@ private func dashboardActionV0(
     #expect(try !dashboardActionV0(.openActivityHistory, in: projection).enabled)
 }
 
+@Test func otherConsoleUserDashboardPreservesOnlyStatusSemantics() throws {
+    let projection = try MacAgentDashboardProjectionV0(source: .status(
+        dashboardStatusV0(consoleSession: .otherConsoleUserActive)
+    ))
+
+    #expect(projection.state == .ready)
+    #expect(projection.systemImage == "person.2.fill")
+    #expect(projection.detail.contains("not confirmed active"))
+    #expect(projection.detail.contains("Status may remain available"))
+    #expect(projection.detail.contains("Act and Control are unavailable"))
+    #expect(projection.facts.first { $0.id == "session" }?.value
+        == "Configured session not confirmed active")
+    #expect(try !dashboardActionV0(.startPairing, in: projection).enabled)
+    #expect(try !dashboardActionV0(.openDevices, in: projection).enabled)
+    #expect(try !dashboardActionV0(.openActivityHistory, in: projection).enabled)
+    #expect(projection.primaryAction?.action == .disable)
+    #expect(projection.primaryAction?.enabled == true)
+    #expect(try dashboardActionV0(.exportDiagnostics, in: projection).enabled)
+}
+
 @Test func degradedDashboardProjectsOnlyClosedSanitizedWarnings() throws {
     let warningSet = Set(SanitizedDiagnosticCode.allCases)
     let projection = try MacAgentDashboardProjectionV0(source: .status(

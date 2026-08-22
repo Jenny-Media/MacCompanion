@@ -19,13 +19,13 @@ private func readyLifecycle() throws -> ProductLifecycleState {
         .requestMenuStart,
     ])
     #expect(!state.observeAvailable)
-    #expect(!state.interactiveControlAvailable)
+    #expect(!state.newInteractiveControlAvailable)
 
     _ = try state.apply(.agentReady)
     #expect(state.observeAvailable)
-    #expect(!state.interactiveControlAvailable)
+    #expect(!state.newInteractiveControlAvailable)
     _ = try state.apply(.menuAppReady)
-    #expect(state.interactiveControlAvailable)
+    #expect(state.newInteractiveControlAvailable)
     #expect(state.localAdministrationVisible)
 }
 
@@ -34,7 +34,7 @@ private func readyLifecycle() throws -> ProductLifecycleState {
     let effects = try state.apply(.menuAppExited)
     #expect(effects == [.endInteractiveControl, .requestMenuRecovery])
     #expect(state.observeAvailable)
-    #expect(!state.interactiveControlAvailable)
+    #expect(!state.newInteractiveControlAvailable)
     #expect(!state.localAdministrationVisible)
     #expect(state.menuApp == .starting)
 }
@@ -48,7 +48,7 @@ private func readyLifecycle() throws -> ProductLifecycleState {
         .requestAgentRecovery,
     ])
     #expect(!state.observeAvailable)
-    #expect(!state.interactiveControlAvailable)
+    #expect(!state.newInteractiveControlAvailable)
     #expect(state.agent == .starting)
 }
 
@@ -71,10 +71,12 @@ private func readyLifecycle() throws -> ProductLifecycleState {
 
 @Test func logoutIsOfflineWhileLoginRestoresEnabledIntentAndLockDoesNotKillProcesses() throws {
     var state = try readyLifecycle()
-    #expect(try state.apply(.userLocked).isEmpty)
+    #expect(try state.apply(.userLocked) == [.endInteractiveControl])
     #expect(state.observeAvailable)
-    #expect(state.interactiveControlAvailable)
+    #expect(!state.newInteractiveControlAvailable)
+    #expect(!state.localAdministrationVisible)
     #expect(try state.apply(.userUnlocked).isEmpty)
+    #expect(state.newInteractiveControlAvailable)
 
     #expect(try state.apply(.userLoggedOut) == [
         .endInteractiveControl,
@@ -88,4 +90,77 @@ private func readyLifecycle() throws -> ProductLifecycleState {
     ])
     #expect(state.agent == .starting)
     #expect(state.menuApp == .starting)
+}
+
+@Test func otherConsoleUserPreservesObserveButFailsControlClosed() throws {
+    var state = try readyLifecycle()
+
+    #expect(try state.apply(.otherConsoleUserBecameActive) == [
+        .endInteractiveControl,
+    ])
+    #expect(state.consoleSession == .otherConsoleUserActive)
+    #expect(state.observeAvailable)
+    #expect(!state.newInteractiveControlAvailable)
+    #expect(!state.localAdministrationVisible)
+    #expect(state.agent == .ready)
+    #expect(state.menuApp == .ready)
+
+    #expect(try state.apply(.configuredUserBecameActive).isEmpty)
+    #expect(state.consoleSession == .active)
+    #expect(state.observeAvailable)
+    #expect(state.newInteractiveControlAvailable)
+    #expect(state.localAdministrationVisible)
+}
+
+@Test func ambiguousInitialConsoleStateCanServeObserveWithoutControl() {
+    let state = ProductLifecycleState(
+        desiredEnabled: true,
+        consoleSession: .otherConsoleUserActive,
+        agent: .ready,
+        menuApp: .ready
+    )
+
+    #expect(state.observeAvailable)
+    #expect(!state.newInteractiveControlAvailable)
+    #expect(!state.localAdministrationVisible)
+}
+
+@Test func otherConsoleTransitionsRejectUnsupportedSources() throws {
+    var loggedOut = ProductLifecycleState(consoleSession: .loggedOut)
+    #expect(throws: InvalidProductLifecycleTransition(
+        event: .otherConsoleUserBecameActive
+    )) {
+        try loggedOut.apply(.otherConsoleUserBecameActive)
+    }
+
+    var active = ProductLifecycleState(consoleSession: .active)
+    #expect(throws: InvalidProductLifecycleTransition(
+        event: .configuredUserBecameActive
+    )) {
+        try active.apply(.configuredUserBecameActive)
+    }
+
+    var locked = ProductLifecycleState(
+        desiredEnabled: true,
+        consoleSession: .locked,
+        agent: .ready,
+        menuApp: .ready
+    )
+    #expect(try locked.apply(.otherConsoleUserBecameActive) == [
+        .endInteractiveControl,
+    ])
+    #expect(locked.consoleSession == .otherConsoleUserActive)
+    #expect(locked.observeAvailable)
+    #expect(throws: InvalidProductLifecycleTransition(
+        event: .otherConsoleUserBecameActive
+    )) {
+        try locked.apply(.otherConsoleUserBecameActive)
+    }
+    #expect(try locked.apply(.userLoggedOut) == [
+        .endInteractiveControl,
+        .closeAllRemoteSessions,
+    ])
+    #expect(!locked.observeAvailable)
+    #expect(locked.agent == .stopped)
+    #expect(locked.menuApp == .stopped)
 }

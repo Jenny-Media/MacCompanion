@@ -205,6 +205,16 @@ private actor RemoteIntentMemoryStoreV1:
     #expect(enabled.agent == .starting)
     #expect(enabled.menuApp == .starting)
 
+    let ambiguous = try await loader.loadInitialState(
+        consoleSession: .otherConsoleUserActive
+    )
+    #expect(ambiguous.desiredEnabled)
+    #expect(ambiguous.consoleSession == .otherConsoleUserActive)
+    #expect(ambiguous.agent == .starting)
+    #expect(ambiguous.menuApp == .starting)
+    #expect(!ambiguous.observeAvailable)
+    #expect(!ambiguous.newInteractiveControlAvailable)
+
     let loggedOut = try await loader.loadInitialState(
         consoleSession: .loggedOut
     )
