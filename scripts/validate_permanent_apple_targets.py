@@ -124,6 +124,8 @@ def validate_project_spec(content: str, failures: list[str]) -> None:
     ):
         if forbidden in content:
             failures.append(f"trackedSigningAuthority:{forbidden.rstrip(':')}")
+    if "product: CompanionAgentProductPlatform" in content:
+        failures.append("projectSpecLinksAgentProductPlatform")
 
 
 def validate_generated_project(content: str, failures: list[str]) -> None:
@@ -174,6 +176,8 @@ def validate_generated_project(content: str, failures: list[str]) -> None:
         content,
     ):
         failures.append("generatedProjectContainsSigningAuthority")
+    if "CompanionAgentProductPlatform" in content:
+        failures.append("generatedProjectLinksAgentProductPlatform")
 
 
 def validate_launch_agent(failures: list[str]) -> None:
@@ -218,6 +222,9 @@ def validate_narrow_agent_source(content: str, failures: list[str]) -> None:
         "MacLocalXPCStatusReaderV1",
         "MacLocalXPCAgentProductV1",
         "MacAgentReleaseStorageV1",
+        "CompanionAgentProductPlatform",
+        "MacAgentProductBootstrapV1",
+        "MacAgentPreparedProductV1",
         "statusReader:",
     ):
         if needle in code:
@@ -282,6 +289,9 @@ def validate_login_role_composition(
         "MacLocalXPCDashboardProductV1(",
         "MacAgentDashboardApplicationOwnerV0(",
         "MacAgentReleaseStorageV1",
+        "CompanionAgentProductPlatform",
+        "MacAgentProductBootstrapV1",
+        "MacAgentPreparedProductV1",
     ):
         if needle in application_code:
             failures.append(f"menuSourceUnexpectedAuthority:{needle}")
@@ -290,7 +300,7 @@ def validate_login_role_composition(
             failures.append(f"implicitLoginMutation:{needle}")
 
 
-def validate_storage_inertness_self_tests(
+def validate_product_inertness_self_tests(
     agent_source: str,
     login_composition: str,
     mac_application: str,
@@ -312,6 +322,57 @@ def validate_storage_inertness_self_tests(
     if "menuSourceUnexpectedAuthority:MacAgentReleaseStorageV1" not in menu_failures:
         failures.append("menuStorageActivationFixtureAccepted")
 
+    product_injected = (
+        "\nimport CompanionAgentProductPlatform\n"
+        "let _ = MacAgentProductBootstrapV1.self\n"
+    )
+    agent_failures = []
+    validate_narrow_agent_source(
+        agent_source + product_injected,
+        agent_failures,
+    )
+    if (
+        "agentSourceUnexpectedAuthority:MacAgentProductBootstrapV1"
+        not in agent_failures
+    ):
+        failures.append("agentProductActivationFixtureAccepted")
+
+    menu_failures = []
+    validate_login_role_composition(
+        login_composition,
+        mac_application + product_injected,
+        menu_failures,
+    )
+    if (
+        "menuSourceUnexpectedAuthority:MacAgentProductBootstrapV1"
+        not in menu_failures
+    ):
+        failures.append("menuProductActivationFixtureAccepted")
+
+
+def validate_product_link_inertness_self_tests(
+    project_spec: str,
+    generated_project: str,
+    failures: list[str],
+) -> None:
+    spec_failures: list[str] = []
+    validate_project_spec(
+        project_spec
+        + "\n      - package: MacCompanionKit\n"
+        + "        product: CompanionAgentProductPlatform\n",
+        spec_failures,
+    )
+    if "projectSpecLinksAgentProductPlatform" not in spec_failures:
+        failures.append("projectProductLinkFixtureAccepted")
+
+    generated_failures: list[str] = []
+    validate_generated_project(
+        generated_project + "\nCompanionAgentProductPlatform\n",
+        generated_failures,
+    )
+    if "generatedProjectLinksAgentProductPlatform" not in generated_failures:
+        failures.append("generatedProductLinkFixtureAccepted")
+
 
 def main() -> int:
     failures: list[str] = []
@@ -329,10 +390,15 @@ def main() -> int:
         mac_application,
         failures,
     )
-    validate_storage_inertness_self_tests(
+    validate_product_inertness_self_tests(
         agent_source,
         login_composition,
         mac_application,
+        failures,
+    )
+    validate_product_link_inertness_self_tests(
+        project_spec,
+        generated_project,
         failures,
     )
     if failures:

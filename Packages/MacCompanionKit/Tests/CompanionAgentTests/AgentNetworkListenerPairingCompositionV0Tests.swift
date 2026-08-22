@@ -665,6 +665,35 @@ private func networkProductStartupInputsV0(
     )
 }
 
+private func networkPrimaryStartupInputsV1(
+    providerLoader: any AgentCapabilityProviderLoadingV1
+) throws -> AgentNetworkPrimaryStartupInputsV1 {
+    AgentNetworkPrimaryStartupInputsV1(
+        registry: try CapabilityRegistrySnapshotV1(
+            generation: UUID(),
+            capabilities: []
+        ),
+        providerLoader: providerLoader,
+        wallNowUnixMilliseconds: listenerPairingIssuanceTimeV0,
+        lifecycleState: ProductLifecycleState(
+            desiredEnabled: true,
+            consoleSession: .active,
+            agent: .ready,
+            menuApp: .ready
+        ),
+        statusPlatform: AgentHostStatusPlatformServicesV1(
+            sampler: NetworkProductStartupSamplerV0(),
+            clock: NetworkProductStartupClockV0(),
+            initialGeneration: UUID()
+        ),
+        interactivePlatform: AgentInteractivePlatformServicesV1(
+            visibleAdmission: NetworkProductStartupVisibleAdmissionV0(),
+            materials: NetworkProductStartupMaterialsV0(),
+            runtime: NetworkProductStartupRuntimeV0()
+        )
+    )
+}
+
 private func networkProductStartupAuditRootV0(
     directory: URL,
     securityStore: SQLiteSecurityStore
@@ -678,6 +707,149 @@ private func networkProductStartupAuditRootV0(
             url: directory.appendingPathComponent("emergency-deny.latch")
         )
     )
+}
+
+@Test func networkPrimaryPreparationIsListenerFreeAndOneUse() async throws {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
+        "maccompanion-network-primary-preparation-\(UUID())",
+        isDirectory: true
+    )
+    try FileManager.default.createDirectory(
+        at: directory,
+        withIntermediateDirectories: false
+    )
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let store = try SQLiteSecurityStore(
+        path: directory.appendingPathComponent("security.sqlite3").path
+    )
+    let identity = try listenerPairingIdentityFixtureV0()
+    try await store.establishHostIdentity(identity.stored)
+    let loader = NetworkProductStartupCountingLoaderV0()
+
+    guard case let .ready(prepared) = try await
+        AgentNetworkPrimaryStartupFactoryV1.prepare(
+            hostIdentityStartup: {
+                .ready(
+                    record: identity.stored,
+                    issuedIdentity: identity.issued,
+                    renewalRecommended: false
+                )
+            },
+            requiredAudit: try networkProductStartupAuditRootV0(
+                directory: directory,
+                securityStore: store
+            ),
+            inputs: try networkPrimaryStartupInputsV1(
+                providerLoader: loader
+            )
+        ) else {
+        Issue.record("expected prepared primary Agent root")
+        return
+    }
+    #expect(await prepared.snapshot()
+        == AgentPreparedPrimaryStartupSnapshotV1(
+            hostID: identity.stored.hostID,
+            consumed: false
+        ))
+    #expect(await loader.loadCount() == 1)
+
+    let product = try await prepared.consumeForAuthorizedSurface(
+        port: 47_474,
+        additionalEndpoints: [],
+        timeSource: StaticAgentLocalPairingTimeSourceV0(try .init(
+            wallNowUnixMilliseconds:
+                listenerPairingIssuanceTimeV0 + 1_000,
+            monotonicNowMilliseconds: 1_000
+        )),
+        policySource: StaticAgentLocalPairingPolicySourceV0(
+            .init(rawValue: 1)
+        ),
+        alreadyAuthorizedSurface: ListenerPairingSurfaceV0()
+    )
+    #expect(product.primaryServices.hostID == identity.stored.hostID)
+    #expect(await prepared.snapshot().consumed)
+    await #expect(
+        throws: AgentNetworkPairingProductCompositionErrorV0.terminal
+    ) {
+        _ = try await prepared.consumeForAuthorizedSurface(
+            port: 47_474,
+            additionalEndpoints: [],
+            timeSource: StaticAgentLocalPairingTimeSourceV0(try .init(
+                wallNowUnixMilliseconds:
+                    listenerPairingIssuanceTimeV0 + 1_000,
+                monotonicNowMilliseconds: 1_000
+            )),
+            policySource: StaticAgentLocalPairingPolicySourceV0(
+                .init(rawValue: 1)
+            ),
+            alreadyAuthorizedSurface: ListenerPairingSurfaceV0()
+        )
+    }
+    await product.authorizedSurfaceLost()
+}
+
+@Test func allNonreadyIdentityPreparationsSkipProviders() async throws {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
+        "maccompanion-network-primary-nonready-\(UUID())",
+        isDirectory: true
+    )
+    try FileManager.default.createDirectory(
+        at: directory,
+        withIntermediateDirectories: false
+    )
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let store = try SQLiteSecurityStore(
+        path: directory.appendingPathComponent("security.sqlite3").path
+    )
+    let requiredAudit = try networkProductStartupAuditRootV0(
+        directory: directory,
+        securityStore: store
+    )
+
+    let waitLoader = NetworkProductStartupCountingLoaderV0()
+    guard case .waitForFirstUnlock = try await
+        AgentNetworkPrimaryStartupFactoryV1.prepare(
+            hostIdentityStartup: { .waitForFirstUnlock },
+            requiredAudit: requiredAudit,
+            inputs: try networkPrimaryStartupInputsV1(
+                providerLoader: waitLoader
+            )
+        ) else {
+        Issue.record("expected first-unlock wait")
+        return
+    }
+    #expect(await waitLoader.loadCount() == 0)
+
+    let recoveryLoader = NetworkProductStartupCountingLoaderV0()
+    guard case .requireLocalRecovery(.missingEstablishedKey) = try await
+        AgentNetworkPrimaryStartupFactoryV1.prepare(
+            hostIdentityStartup: {
+                .requireLocalRecovery(.missingEstablishedKey)
+            },
+            requiredAudit: requiredAudit,
+            inputs: try networkPrimaryStartupInputsV1(
+                providerLoader: recoveryLoader
+            )
+        ) else {
+        Issue.record("expected local recovery requirement")
+        return
+    }
+    #expect(await recoveryLoader.loadCount() == 0)
+
+    let fencedLoader = NetworkProductStartupCountingLoaderV0()
+    let recoveryID = UUID()
+    guard case .recoveryFenced(recoveryID) = try await
+        AgentNetworkPrimaryStartupFactoryV1.prepare(
+            hostIdentityStartup: { .recoveryFenced(recoveryID) },
+            requiredAudit: requiredAudit,
+            inputs: try networkPrimaryStartupInputsV1(
+                providerLoader: fencedLoader
+            )
+        ) else {
+        Issue.record("expected fenced recovery")
+        return
+    }
+    #expect(await fencedLoader.loadCount() == 0)
 }
 
 @Test func networkProductStartupBindsIdentityPrimaryAndListenerAsOneGraph()

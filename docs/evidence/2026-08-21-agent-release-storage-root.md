@@ -84,14 +84,17 @@ remains task-bridged, so live terminal ordering remains part of physical
 capture evidence. The eight-probe suite then passed 20 consecutive no-rebuild
 runs.
 
-The complete repository gate passes across 892 files, 291 Swift source files,
-1,217 unique MacCompanionKit Swift tests, 8 platform-probe tests, all policy
+The complete repository gate passes across 895 files, 292 Swift source files,
+1,223 unique MacCompanionKit Swift tests, 8 platform-probe tests, all policy
 validators, and every supported cross-build. The privacy validator records 14
 covered macOS source records. An unsigned Xcode 27 beta Mac application build also succeeds.
 
 ## Remaining boundary
 
-This proves stable storage construction, not host-identity/Keychain bootstrap,
-process-start recovery, live `SMAppService` registration, or signed local XPC.
-The permanent Agent remains authentication-only and the menu app remains
-unavailable until those dependencies are composed and verified together.
+This proves stable storage construction. The later
+[prepared Agent product bootstrap](2026-08-21-prepared-agent-product-bootstrap.md)
+now retains this exact root through host-identity-neutral injected preparation
+and inert lifecycle/status XPC construction, but it does not prove real
+Keychain custody, process-start recovery, live `SMAppService` registration, or
+signed local XPC. The permanent Agent remains authentication-only and the menu
+app remains unavailable until those dependencies are composed and verified.

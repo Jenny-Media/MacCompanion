@@ -34,6 +34,10 @@ let package = Package(
             targets: ["CompanionAgentNetworkPlatform"]
         ),
         .library(
+            name: "CompanionAgentProductPlatform",
+            targets: ["CompanionAgentProductPlatform"]
+        ),
+        .library(
             name: "CompanionClientNetworkPlatform",
             targets: ["CompanionClientNetworkPlatform"]
         ),
@@ -291,6 +295,14 @@ let package = Package(
             ]
         ),
         .target(
+            name: "CompanionAgentProductPlatform",
+            dependencies: [
+                "CompanionAgent", "CompanionAgentNetworkPlatform",
+                "CompanionAgentPlatform", "CompanionHostPlatform",
+                "CompanionSecurity",
+            ]
+        ),
+        .target(
             name: "CompanionClientNetworkPlatform",
             dependencies: [
                 "CompanionClient", "CompanionClientApp", "CompanionDiscovery",
@@ -487,6 +499,20 @@ let package = Package(
                 "CompanionAgent", "CompanionAgentPlatform",
                 "CompanionLifecycle", "CompanionLocalXPCPlatform",
                 "CompanionMacApp", "CompanionPersistence", "CompanionWire",
+            ]
+        ),
+        .testTarget(
+            name: "CompanionAgentProductPlatformTests",
+            dependencies: [
+                "CompanionAgent", "CompanionAgentNetworkPlatform",
+                "CompanionAgentPlatform", "CompanionAgentProductPlatform",
+                "CompanionDiscovery", "CompanionDomain",
+                "CompanionHost", "CompanionHostPlatform",
+                "CompanionInteractiveHost", "CompanionInteractiveShared",
+                "CompanionIPC", "CompanionLifecycle",
+                "CompanionLocalXPCPlatform", "CompanionMacApp",
+                "CompanionOperations", "CompanionPersistence",
+                "CompanionSecurity", "CompanionWire",
             ]
         ),
         .testTarget(
