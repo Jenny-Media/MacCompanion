@@ -116,6 +116,21 @@ stdout/stderr fails. Separate per-architecture inspection and policy comparison
 is still required, and embedded designated-requirement digest equality remains
 independent of the external test-requirement result.
 
+With the fixed `LANG=C` and `LC_ALL=C` environment, verification success has a
+closed output grammar. Stdout is empty. Stderr is exactly these three UTF-8,
+LF-terminated lines, where `SUBJECT` is the exact owned argv path:
+
+```text
+SUBJECT: valid on disk
+SUBJECT: satisfies its Designated Requirement
+SUBJECT: explicit requirement satisfied
+```
+
+Missing, reordered, additional, warning, wrong-path, CRLF, undecodable, or
+otherwise unrecognized output fails closed even after exit zero. A supported
+stable-toolchain change to this grammar requires new measured evidence and a
+profile revision before acceptance; it is not tolerated as an open parser.
+
 For the final application and disk image it additionally retains Gatekeeper
 assessment, accepted notarization correlation, and stapling validation against
 the exact candidate. Packaging-equivalence platform verification must already

@@ -71,8 +71,10 @@ or entitlements, compare the independent signing policy, validate the outer
 bundle, correlate notarization/stapling/Gatekeeper, or publish the canonical
 platform-signing evidence record.
 
-The next collector slice may pass only these already-owned, fixed plans to the
-fixed-tool runner. It must retain and parse bounded raw evidence, bind every
-reported fact to the exact graph object and architecture, compare every policy
-field, and keep platform acceptance closed on any missing, ambiguous, or
-unrecognized output.
+The subsequent [fixed verification execution and parsing
+slice](2026-08-22-platform-codesign-verification-execution.md) now passes only
+these already-owned plans to the runner, reinspects subjects around each
+invocation, and accepts only the profile's closed verification-success grammar.
+The next collector slice must inspect each architecture, bind every reported
+identity and entitlement fact, compare every policy field, and keep platform
+acceptance closed on any missing, ambiguous, or unrecognized output.

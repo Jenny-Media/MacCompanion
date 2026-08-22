@@ -21,6 +21,7 @@ python3 scripts/validate_signing_policy_binding.py
 python3 scripts/validate_signing_policy_cli.py
 python3 scripts/validate_platform_signing_fixed_tools.py
 python3 scripts/validate_platform_signing_subjects.py
+python3 scripts/validate_platform_codesign_verification.py
 python3 scripts/validate_mac_packaging_equivalence.py
 python3 scripts/validate_release_evidence.py
 python3 scripts/validate_native_appearance_boundary.py
