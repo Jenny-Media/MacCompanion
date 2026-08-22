@@ -71,8 +71,9 @@ status reply crossed the real Mach service. It does not prove launchd, login
 registration, Keychain/Secure Enclave access, TCC attribution, managed
 entitlements, presentation, pairing, networking, Observe, Act, or Control.
 
-Command-line Keychain inspection still reports zero valid code-signing
-identities. The next runtime gate is to provision or restore the Jenny Media LLC
-development identity and prove one reciprocal same-team Agent/menu
-readiness-and-status round trip from the generated app without enabling the
-presentation profile or network ingress.
+Subsequent [signing revalidation](2026-08-22-signing-identity-revalidation.md)
+proved that the login Keychain contains valid Jenny Media LLC development and
+Developer ID identities and that the permanent Debug app and embedded Agent
+sign correctly. The next runtime gate is a durable explicit enablement path,
+followed by one reciprocal same-team Agent/menu readiness-and-status round trip
+without enabling the presentation profile or network ingress.
