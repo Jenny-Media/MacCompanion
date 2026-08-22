@@ -34,6 +34,9 @@ private func requireLocalPairingReviewKeysV0(
 
 private let localPairingReviewMaximumTimeV0: Int64 =
     9_007_199_254_740_991
+private let localPairingReviewZeroUUIDV0 = UUID(
+    uuid: (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
+)
 
 public struct LocalPairingReviewV0: Codable, Equatable, Sendable {
     private enum CodingKeys: String, CodingKey, CaseIterable {
@@ -69,7 +72,14 @@ public struct LocalPairingReviewV0: Codable, Equatable, Sendable {
         guard protocolVersion == .init() else {
             throw LocalPairingSessionMessageErrorV0.invalidVersion
         }
-        guard expectedPolicyRevision.rawValue >= 1 else {
+        guard reviewID != localPairingReviewZeroUUIDV0,
+              pairingID != localPairingReviewZeroUUIDV0,
+              clientID != localPairingReviewZeroUUIDV0 else {
+            throw LocalPairingSessionMessageErrorV0.invalidIdentifier
+        }
+        guard (1...PolicyRevision.maximumWireValue).contains(
+            expectedPolicyRevision.rawValue
+        ) else {
             throw LocalPairingSessionMessageErrorV0.bindingMismatch
         }
         guard (1...localPairingReviewMaximumTimeV0).contains(

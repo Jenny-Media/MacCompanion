@@ -10,9 +10,10 @@ pairing-review presentation and host-identity-recovery presentation. It does
 not expose a caller role, authentication flag, transport endpoint, grant
 decision, recovery executor, Control authority, or any raw XPC payload.
 
-The router authorizes only the three existing Agent-to-menu presentation
-methods: publishPairingReview, publishHostIdentityRecoveryReview, and
-publishHostIdentityRecoveryResume. It does not add those messages to the XPC
+The router authorizes only the five Agent-to-menu presentation operations:
+publishPairingReview, withdrawPairingReview,
+publishHostIdentityRecoveryReview, publishHostIdentityRecoveryResume, and
+withdrawHostIdentityRecovery. It does not add those messages to the XPC
 profile or claim that a concrete endpoint exists.
 
 ## Generation and retirement fences
@@ -58,8 +59,8 @@ accepted-endpoint and rejected-candidate terminal requests, exact-retry fence
 preservation, active and retired cross-generation endpoint reuse rejection,
 and active-fence request versus owner-retirement ordering.
 
-The complete repository gate passes across 898 repository files, 293 Swift
-source files, 1,243 unique package tests with zero duplicate names, all 8
+The complete repository gate passes across 902 repository files, 294 Swift
+source files, 1,250 unique package tests with zero duplicate names, all 8
 platform-probe tests, 14 privacy source records, every policy validator, and
 the supported iOS and macOS cross-builds. A fresh unsigned Xcode 27 beta build
 of the Mac app and embedded Agent also completed with BUILD SUCCEEDED. The

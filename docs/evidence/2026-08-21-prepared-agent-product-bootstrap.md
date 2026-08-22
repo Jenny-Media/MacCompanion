@@ -76,8 +76,8 @@ Focused verification passed under Xcode 27 beta:
   branches, a suspended concurrent finish barrier, and fail-closed XPC
   construction failure.
 
-The full repository gate passes across 898 repository files, 293 Swift source
-files, 1,243 unique package tests with zero duplicate names, 8 platform-probe
+The full repository gate passes across 902 repository files, 294 Swift source
+files, 1,250 unique package tests with zero duplicate names, 8 platform-probe
 tests, 14 privacy source records, all policy validators, and the supported iOS
 and macOS cross-builds. An unsigned Xcode 27 beta build of the macOS app and
 embedded Agent also completed with `BUILD SUCCEEDED`; its dependency graph did

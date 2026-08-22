@@ -350,3 +350,52 @@ private func localPairingQRCode(
         )
     }
 }
+
+@Test func localPairingReviewRejectsUnsafeIdentifiersAndPolicyRevision() throws {
+    let valid = try localPairingReview()
+    let zero = UUID(uuid: (
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+    ))
+
+    for identifiers in [
+        (zero, valid.pairingID, valid.clientID),
+        (valid.reviewID, zero, valid.clientID),
+        (valid.reviewID, valid.pairingID, zero),
+    ] {
+        #expect(throws: LocalPairingSessionMessageErrorV0.invalidIdentifier) {
+            try LocalPairingReviewV0(
+                reviewID: identifiers.0,
+                pairingID: identifiers.1,
+                clientID: identifiers.2,
+                sessionPublicKeyFingerprint:
+                    valid.sessionPublicKeyFingerprint,
+                approvalPublicKeyFingerprint:
+                    valid.approvalPublicKeyFingerprint,
+                transcriptDigest: valid.transcriptDigest,
+                authenticationString: valid.authenticationString,
+                expectedPolicyRevision: valid.expectedPolicyRevision,
+                expiresAtUnixMilliseconds:
+                    valid.expiresAtUnixMilliseconds
+            )
+        }
+    }
+
+    for revision in [UInt64(0), PolicyRevision.maximumWireValue + 1] {
+        #expect(throws: LocalPairingSessionMessageErrorV0.bindingMismatch) {
+            try LocalPairingReviewV0(
+                reviewID: valid.reviewID,
+                pairingID: valid.pairingID,
+                clientID: valid.clientID,
+                sessionPublicKeyFingerprint:
+                    valid.sessionPublicKeyFingerprint,
+                approvalPublicKeyFingerprint:
+                    valid.approvalPublicKeyFingerprint,
+                transcriptDigest: valid.transcriptDigest,
+                authenticationString: valid.authenticationString,
+                expectedPolicyRevision: .init(rawValue: revision),
+                expiresAtUnixMilliseconds:
+                    valid.expiresAtUnixMilliseconds
+            )
+        }
+    }
+}

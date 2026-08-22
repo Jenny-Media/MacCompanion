@@ -1,0 +1,67 @@
+{
+  "profile": "Mac Companion local XPC menu presentation v0.1",
+  "maximumPayloadBytes": 4096,
+  "minimumGeneration": 1,
+  "requests": [
+    {
+      "kind": "presentation.pairing-review.publish",
+      "authorizationMethod": "publishPairingReview",
+      "payloadType": "LocalPairingReviewV0",
+      "fields": ["kind:string", "version:signedInt64=1", "payload:data"],
+      "successKind": "presentation.pairing-review.publish.ack",
+      "allowedReplies": [
+        "presentation.pairing-review.publish.ack",
+        "presentation.pairing-review.publish.error:presentationRejected"
+      ]
+    },
+    {
+      "kind": "presentation.pairing-review.withdraw",
+      "authorizationMethod": "withdrawPairingReview",
+      "identifierType": "nonzero-review-uuid",
+      "fields": ["kind:string", "version:signedInt64=1", "reviewID:uuid"],
+      "successKind": "presentation.pairing-review.withdraw.ack",
+      "allowedReplies": ["presentation.pairing-review.withdraw.ack"]
+    },
+    {
+      "kind": "presentation.host-recovery-review.publish",
+      "authorizationMethod": "publishHostIdentityRecoveryReview",
+      "payloadType": "LocalHostIdentityRecoveryReviewV0",
+      "fields": ["kind:string", "version:signedInt64=1", "payload:data"],
+      "successKind": "presentation.host-recovery-review.publish.ack",
+      "allowedReplies": [
+        "presentation.host-recovery-review.publish.ack",
+        "presentation.host-recovery-review.publish.error:presentationRejected"
+      ]
+    },
+    {
+      "kind": "presentation.host-recovery-resume.publish",
+      "authorizationMethod": "publishHostIdentityRecoveryResume",
+      "payloadType": "LocalHostIdentityRecoveryCommandV0",
+      "fields": ["kind:string", "version:signedInt64=1", "payload:data"],
+      "successKind": "presentation.host-recovery-resume.publish.ack",
+      "allowedReplies": [
+        "presentation.host-recovery-resume.publish.ack",
+        "presentation.host-recovery-resume.publish.error:presentationRejected"
+      ]
+    },
+    {
+      "kind": "presentation.host-recovery.withdraw",
+      "authorizationMethod": "withdrawHostIdentityRecovery",
+      "identifierType": "nonzero-review-uuid",
+      "fields": ["kind:string", "version:signedInt64=1", "reviewID:uuid"],
+      "successKind": "presentation.host-recovery.withdraw.ack",
+      "allowedReplies": ["presentation.host-recovery.withdraw.ack"]
+    }
+  ],
+  "rules": [
+    "menu readiness is required before presentation traffic",
+    "publish payloads are nonempty canonical JSON data",
+    "fresh recovery review requires receiver-clock admission before expiry",
+    "durable recovery resume may be delivered after review expiry",
+    "withdrawal review identifiers are nonzero",
+    "withdrawal permits only exact acknowledgement",
+    "publish rejection is recoverable only with proof of no retained state",
+    "unknown or additional members are rejected",
+    "router generations and private tokens are not wire values"
+  ]
+}

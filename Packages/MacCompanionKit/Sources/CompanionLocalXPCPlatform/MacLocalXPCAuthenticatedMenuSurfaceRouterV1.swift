@@ -500,8 +500,10 @@ package actor MacLocalXPCAuthenticatedMenuSurfaceRouterV1 {
     private static let authorizesPresentationMethods: Bool = {
         for method in [
             LocalIPCMethod.publishPairingReview,
+            .withdrawPairingReview,
             .publishHostIdentityRecoveryReview,
             .publishHostIdentityRecoveryResume,
+            .withdrawHostIdentityRecovery,
         ] {
             do {
                 try LocalIPCAuthorizationPolicy.authorize(

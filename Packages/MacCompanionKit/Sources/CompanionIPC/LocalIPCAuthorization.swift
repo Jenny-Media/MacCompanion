@@ -11,6 +11,7 @@ public enum LocalIPCMethod: String, Codable, CaseIterable, Sendable {
     case createPairingSession
     case dismissPairingSession
     case publishPairingReview
+    case withdrawPairingReview
     case resolveLocalApproval
     case administerDevices
     case decideGrantExpansion
@@ -26,6 +27,7 @@ public enum LocalIPCMethod: String, Codable, CaseIterable, Sendable {
     case publishInteractiveState
     case publishHostIdentityRecoveryReview
     case publishHostIdentityRecoveryResume
+    case withdrawHostIdentityRecovery
 }
 
 private struct LocalIPCVersionAnyCodingKey: CodingKey {
@@ -136,12 +138,14 @@ public enum LocalIPCAuthorizationPolicy {
             [
                 .negotiateProtocol,
                 .publishPairingReview,
+                .withdrawPairingReview,
                 .installInteractiveLease,
                 .revokeInteractiveLease,
                 .applyInteractiveInput,
                 .applyInteractiveSurface,
                 .publishHostIdentityRecoveryReview,
                 .publishHostIdentityRecoveryResume,
+                .withdrawHostIdentityRecovery,
             ]
         default:
             []

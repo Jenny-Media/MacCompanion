@@ -84,8 +84,8 @@ remains task-bridged, so live terminal ordering remains part of physical
 capture evidence. The eight-probe suite then passed 20 consecutive no-rebuild
 runs.
 
-The complete repository gate passes across 898 files, 293 Swift source files,
-1,243 unique MacCompanionKit Swift tests, 8 platform-probe tests, all policy
+The complete repository gate passes across 902 files, 294 Swift source files,
+1,250 unique MacCompanionKit Swift tests, 8 platform-probe tests, all policy
 validators, and every supported cross-build. The privacy validator records 14
 covered macOS source records. An unsigned Xcode 27 beta Mac application build also succeeds.
 

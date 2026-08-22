@@ -200,6 +200,12 @@
       "canonicalSHA256": "c749dd54798951045866f74d83b52cfb5ecf0ad3aa91ca7de709143dbd47e577"
     },
     {
+      "path": "local-xpc-menu-presentation-v0.1.json",
+      "kind": "localXPC.menuPresentation.v0.1",
+      "expect": "valid",
+      "canonicalSHA256": "9579abaf31b08b383917114a8b19626fc7ac01ff5e4af3a1564b421c835ae2c5"
+    },
+    {
       "path": "client-configured-routes-v0.1.json",
       "kind": "clientConfiguredRoutes.model.v0.1",
       "expect": "valid",

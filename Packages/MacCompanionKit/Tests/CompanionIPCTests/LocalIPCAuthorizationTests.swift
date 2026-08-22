@@ -22,12 +22,14 @@ import Testing
         "diagnosticCLI>agent:exportDiagnostics",
         "agent>menuApp:negotiateProtocol",
         "agent>menuApp:publishPairingReview",
+        "agent>menuApp:withdrawPairingReview",
         "agent>menuApp:installInteractiveLease",
         "agent>menuApp:revokeInteractiveLease",
         "agent>menuApp:applyInteractiveInput",
         "agent>menuApp:applyInteractiveSurface",
         "agent>menuApp:publishHostIdentityRecoveryReview",
         "agent>menuApp:publishHostIdentityRecoveryResume",
+        "agent>menuApp:withdrawHostIdentityRecovery",
     ]
 
     for caller in LocalProcessRole.allCases {

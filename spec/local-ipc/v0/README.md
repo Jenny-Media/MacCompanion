@@ -116,8 +116,9 @@ current connection generation before presentation. None of the mutating or
 detailed-history methods is available to the
 diagnostic CLI, the Agent-to-menu runtime endpoint, or a same-role connection.
 Agent-to-menu `publishHostIdentityRecoveryReview`,
-`publishHostIdentityRecoveryResume`, and `revokeInteractiveLease` remain
-separate delivery and execution-teardown
+`publishHostIdentityRecoveryResume`, `withdrawHostIdentityRecovery`,
+`withdrawPairingReview`, and `revokeInteractiveLease` remain separate
+delivery, presentation-revocation, and execution-teardown
 methods and cannot themselves mutate durable identity or grants.
 
 All receivers validate the v0.1 payload while decoding and again against current local authority before method admission. Version mismatch fails before method admission. Interactive execution additionally requires an unexpired agent-issued lease bound to the host, device, Interactive Control session, authorization epoch, selected display, surface, surface revision, and coordinate revision.
@@ -218,9 +219,10 @@ The bundle-independent delivery boundary is connection-scoped and receives no
 caller-supplied role, audit token, endpoint name, or authorization flag. A
 platform adapter may obtain it from the Agent local-service root only after it
 has authenticated the visible menu-app peer and authorized
-`publishPairingReview` and `resolveLocalApproval` through the closed method
-matrix. Production XPC composition remains outside this bundle-independent
-delivery profile; its peer-identity boundary is normative above.
+`publishPairingReview`, `withdrawPairingReview`, and
+`resolveLocalApproval` through the closed method matrix. Production XPC
+composition remains outside this bundle-independent delivery profile; its
+peer-identity boundary is normative above.
 
 Exactly one review may be publishing, visible, or resolving on that boundary.
 The service accepts a review only when it exactly equals the pending review in
@@ -253,6 +255,60 @@ prior command and receives the retained exact receipt. A nonmatching command
 cannot use replay to inspect or mutate another pending review. The delivery
 service stores no device keys, grants, pairing secret, durable approval, or
 independent outcome.
+
+### Authenticated menu presentation wire
+
+After exact menu readiness, the Agent may map only the following five
+authorized presentation operations onto its current authenticated menu XPC
+generation:
+
+| Request kind | Authorized method | Exact request members |
+| --- | --- | --- |
+| `presentation.pairing-review.publish` | `publishPairingReview` | `kind:string`, `version:int64=1`, `payload:data` |
+| `presentation.pairing-review.withdraw` | `withdrawPairingReview` | `kind:string`, `version:int64=1`, `reviewID:uuid` |
+| `presentation.host-recovery-review.publish` | `publishHostIdentityRecoveryReview` | `kind:string`, `version:int64=1`, `payload:data` |
+| `presentation.host-recovery-resume.publish` | `publishHostIdentityRecoveryResume` | `kind:string`, `version:int64=1`, `payload:data` |
+| `presentation.host-recovery.withdraw` | `withdrawHostIdentityRecovery` | `kind:string`, `version:int64=1`, `reviewID:uuid` |
+
+Every successful reply contains exactly `kind:string` and
+`version:int64=1`; its kind is the request kind plus `.ack`. Only the three
+publish requests may have an application-rejection reply, containing exactly
+those members plus `code:string="presentationRejected"` and using the request
+kind plus `.error`. Withdrawal has no error reply: anything other than its
+exact acknowledgement terminally invalidates the generation. No reply contains
+diagnostic text, roles, process identifiers, transport generations, endpoint
+names, authorization flags, or payload data. XPC request/reply association plus
+generation-bound local operation state is the sole transport correlation;
+router tokens and generations are never sent on the wire.
+
+Each publish payload is nonempty canonical JSON, carried as `XPC_TYPE_DATA`,
+and is limited to 4,096 bytes. The receiver first rejects duplicate JSON
+members and noncanonical encodings, then decodes the one expected closed
+`CompanionIPC` value, validates its constructor invariants, and requires exact
+canonical re-encoding equality. Pairing review, recovery review, and recovery
+resume payloads cannot substitute for one another. Withdrawal carries no JSON
+payload and accepts only a nonzero exact review UUID. Fresh recovery-review
+publication also requires receiver-clock proof that current wall time is before
+the review expiry; durable recovery-resume delivery may occur after that
+original confirmation window.
+
+A publish acknowledgement is sent only after the menu presentation owner has
+retained the exact immutable value. Exact visible replay is idempotent; the
+same identifier with changed bytes or review/resume mode substitution fails
+closed. Withdrawal is exact-ID-bound and idempotent: a wrong or already absent
+identifier removes nothing but may acknowledge. Malformed or unknown messages,
+wrong scalar types or version, an unrecognized reply, operation mismatch,
+timeout, send failure, or ambiguous withdrawal failure terminally invalidates
+that XPC generation. A publish `presentationRejected` response is recoverable
+only when the menu owner proves it retained no state; a thrown presentation
+call without that proof sends no recoverable error and terminally invalidates
+the generation.
+
+These messages are unavailable before authenticated menu readiness and are
+not admitted to a menu-to-Agent, same-role, or diagnostic-CLI caller. A
+concrete transport endpoint must repeat exact-current peer and generation
+checks on its serialized XPC queue before every send; it cannot expose a raw
+session, arbitrary kind string, raw payload, role, or authentication flag.
 
 ### Pairing product composition
 

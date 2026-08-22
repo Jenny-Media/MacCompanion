@@ -5,6 +5,7 @@ public enum LocalPairingSessionMessageErrorV0: Error, Equatable, Sendable {
     case invalidVersion
     case invalidTime
     case invalidQRCode
+    case invalidIdentifier
     case bindingMismatch
     case unknownOrMissingField
 }
