@@ -6,7 +6,8 @@ import Dispatch
 ///
 /// The application platform first reconciles private release storage, durable
 /// intent, and host identity, then selects exactly one hidden local service:
-/// authenticated readiness/status for canonical enabled startup,
+/// authenticated menu/readiness/status plus the single LAN product for
+/// canonical enabled startup,
 /// the exact durable bootstrap for canonical disabled startup, closed
 /// authentication-only for durable recovery, and none before first unlock.
 /// This executable cannot import LocalXPC, choose a profile, inject an

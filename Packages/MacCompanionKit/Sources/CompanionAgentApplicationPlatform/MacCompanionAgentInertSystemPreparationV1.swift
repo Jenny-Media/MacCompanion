@@ -19,7 +19,7 @@ public enum MacCompanionAgentInertPreparationDeferralV1:
 
 package enum MacCompanionAgentPreparedServiceModeV1: Sendable {
     case disabledRemoteAccessBootstrap
-    case readinessAndStatus
+    case enabledProduct
 }
 
 /// Narrow permanent-target preparation owner. Profile selection and activation
@@ -39,7 +39,7 @@ public actor MacCompanionAgentInertSystemOwnerV1 {
         let snapshot = try await prepared
             .canonicalInitialLifecycleSnapshot()
         return snapshot.state.desiredEnabled
-            ? .readinessAndStatus
+            ? .enabledProduct
             : .disabledRemoteAccessBootstrap
     }
 
@@ -49,7 +49,7 @@ public actor MacCompanionAgentInertSystemOwnerV1 {
         try await prepared.disabledRemoteAccessBootstrapIntentStore()
     }
 
-    package func startReadinessAndStatus() async throws {
+    package func startEnabledProduct() async throws {
         let snapshot = try await prepared
             .canonicalInitialLifecycleSnapshot()
         guard snapshot.state.desiredEnabled else {
@@ -355,7 +355,7 @@ extension MacCompanionAgentInertSystemOwnerV1:
     MacCompanionAgentSelectedServiceRuntimeV1
 {
     package func start() async throws {
-        try await startReadinessAndStatus()
+        try await startEnabledProduct()
     }
 }
 
@@ -410,7 +410,7 @@ public enum MacCompanionAgentLocalServiceStartupV1 {
             do {
                 try Task.checkCancellation()
                 switch try await owner.selectedServiceMode() {
-                case .readinessAndStatus:
+                case .enabledProduct:
                     return try await startAndRetain(
                         owner,
                         restartRequest: restartRequest

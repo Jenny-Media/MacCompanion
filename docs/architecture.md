@@ -217,6 +217,10 @@ The service advertises exactly `_maccompanion._tcp` in `local.`. The iOS app bro
 
 Bonjour provides endpoint discovery, not identity. The v0.1 TXT record is closed to `v=0` and `h=<first eight fingerprint bytes as 16 lowercase hexadecimal characters>`; it contains no host name, device name, user name, addresses, capabilities, or secrets. The hint is untrusted and only helps correlate candidates before the full pinned fingerprint is verified. Clients treat all discovery metadata as hostile until the pinned secure session succeeds.
 
+The v0.1 Agent listens on TCP port `59653` in the dynamic/private range. A
+bind conflict fails startup closed; the product does not silently choose a new
+port because saved user-managed private routes must remain deterministic.
+
 ### Endpoint identity
 
 The host creates a long-lived signing identity on first setup. Pairing pins that identity independently of hostname, IP address, Bonjour instance name, or Tailscale machine name.

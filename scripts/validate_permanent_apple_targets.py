@@ -50,6 +50,14 @@ AGENT_PRODUCT_BOOTSTRAP = (
     / "CompanionAgentProductPlatform"
     / "MacAgentProductBootstrapV1.swift"
 )
+AGENT_ENABLED_RUNTIME = (
+    REPOSITORY
+    / "Packages"
+    / "MacCompanionKit"
+    / "Sources"
+    / "CompanionAgentProductPlatform"
+    / "MacAgentEnabledProductRuntimeV1.swift"
+)
 LAUNCH_AGENT = (
     REPOSITORY
     / "Apps"
@@ -496,6 +504,7 @@ def validate_single_owner_agent_service_selection(
     application_platform: str,
     preparation_facade: str,
     product_bootstrap: str,
+    enabled_runtime: str,
     failures: list[str],
 ) -> None:
     for needle in (
@@ -503,7 +512,7 @@ def validate_single_owner_agent_service_selection(
         "MacCompanionAgentLocalServiceOwnerV1",
         "MacCompanionAgentAuthenticationOnlyRuntimeV1",
         "MacCompanionAgentDisabledBootstrapRuntimeV1",
-        "case .readinessAndStatus:",
+        "case .enabledProduct:",
         "case .disabledRemoteAccessBootstrap:",
         "case .deferred(.firstUnlockRequired):",
         "disabledRemoteAccessBootstrapIntentStore()",
@@ -521,28 +530,30 @@ def validate_single_owner_agent_service_selection(
             failures.append(f"agentApplicationSelectionTooBroad:{forbidden}")
     require_count(
         preparation_facade,
-        ".prepareStatusOnlyInert(",
+        ".prepareInert(",
         1,
-        "agentPreparationStatusOnlyFactory",
+        "agentPreparationFullFactory",
         failures,
     )
-    marker = "package static func prepareStatusOnlyInert("
-    start = product_bootstrap.find(marker)
-    end = product_bootstrap.find("\n    package static func ", start + len(marker))
-    status_only_body = (
-        product_bootstrap[start:end]
-        if start >= 0 and end > start
-        else ""
+    if ".prepareStatusOnlyInert(" in preparation_facade:
+        failures.append("agentPreparationRetainsStatusOnlyFactory")
+    for needle in (
+        "public static let listenerPort: UInt16 = 59_653",
+        "MacAgentEnabledProductRuntimeV1",
+        "startAndComposeNetworkPairingProduct(",
+        "startNetworkListener(",
+        "SystemAgentLocalPairingTimeSourceV1()",
+        "initialPairingPolicyRevision",
+        "await product.finish()",
+    ):
+        if needle not in enabled_runtime:
+            failures.append(f"agentEnabledRuntimeMissing:{needle}")
+    compose = enabled_runtime.find("try await product.composeForEnabledRuntime(")
+    listener = enabled_runtime.find(
+        "try await product.startListenerForEnabledRuntime("
     )
-    require_count(
-        status_only_body,
-        "MacLocalXPCAgentProductV1.afterAgentBootstrap(",
-        1,
-        "agentStatusOnlyBootstrap",
-        failures,
-    )
-    if "afterAgentBootstrapWithMenuPresentation" in status_only_body:
-        failures.append("agentStatusOnlyBootstrapSelectsPresentation")
+    if compose < 0 or listener < 0 or compose >= listener:
+        failures.append("agentEnabledRuntimeOrder")
 
 
 def uncommented_swift(content: str) -> str:
@@ -803,23 +814,24 @@ def validate_single_owner_agent_service_selection_self_tests(
     application_platform: str,
     preparation_facade: str,
     product_bootstrap: str,
+    enabled_runtime: str,
     failures: list[str],
 ) -> None:
-    broad_bootstrap = product_bootstrap.replace(
-        "MacLocalXPCAgentProductV1.afterAgentBootstrap(",
-        "MacLocalXPCAgentProductV1."
-        "afterAgentBootstrapWithMenuPresentation(",
+    status_only_preparation = preparation_facade.replace(
+        ".prepareInert(",
+        ".prepareStatusOnlyInert(",
         1,
     )
     injected_failures: list[str] = []
     validate_single_owner_agent_service_selection(
         application_platform,
-        preparation_facade,
-        broad_bootstrap,
+        status_only_preparation,
+        product_bootstrap,
+        enabled_runtime,
         injected_failures,
     )
-    if "agentStatusOnlyBootstrapSelectsPresentation" not in injected_failures:
-        failures.append("agentPresentationBootstrapFixtureAccepted")
+    if "agentPreparationFullFactory:expected=1:actual=0" not in injected_failures:
+        failures.append("agentStatusOnlyPreparationFixtureAccepted")
 
     injected_failures = []
     validate_single_owner_agent_service_selection(
@@ -827,6 +839,7 @@ def validate_single_owner_agent_service_selection_self_tests(
         + "\nlet _: MacLocalXPCAuthenticatedMenuSurfacesV1? = nil\n",
         preparation_facade,
         product_bootstrap,
+        enabled_runtime,
         injected_failures,
     )
     if not any(
@@ -834,6 +847,22 @@ def validate_single_owner_agent_service_selection_self_tests(
         for failure in injected_failures
     ):
         failures.append("agentPresentationSurfaceFixtureAccepted")
+
+    reordered_runtime = enabled_runtime.replace(
+        "try await product.composeForEnabledRuntime(",
+        "try await product.startListenerForEnabledRuntime(",
+        1,
+    )
+    injected_failures = []
+    validate_single_owner_agent_service_selection(
+        application_platform,
+        preparation_facade,
+        product_bootstrap,
+        reordered_runtime,
+        injected_failures,
+    )
+    if "agentEnabledRuntimeOrder" not in injected_failures:
+        failures.append("agentEnabledRuntimeOrderFixtureAccepted")
 
 
 def validate_product_link_inertness_self_tests(
@@ -1038,6 +1067,7 @@ def main() -> int:
     )
     agent_preparation_facade = read_text(AGENT_PREPARATION_FACADE, failures)
     agent_product_bootstrap = read_text(AGENT_PRODUCT_BOOTSTRAP, failures)
+    agent_enabled_runtime = read_text(AGENT_ENABLED_RUNTIME, failures)
     mac_application = read_swift_target(MAC_TARGET_DIRECTORY, failures)
     mac_application_platform = read_swift_target(
         MAC_APPLICATION_PLATFORM_DIRECTORY,
@@ -1052,6 +1082,7 @@ def main() -> int:
         agent_application_platform,
         agent_preparation_facade,
         agent_product_bootstrap,
+        agent_enabled_runtime,
         failures,
     )
     validate_login_role_composition(
@@ -1073,6 +1104,7 @@ def main() -> int:
         agent_application_platform,
         agent_preparation_facade,
         agent_product_bootstrap,
+        agent_enabled_runtime,
         failures,
     )
     validate_product_link_inertness_self_tests(
@@ -1087,8 +1119,8 @@ def main() -> int:
     print(
         "Validated permanent Mac/Agent topology, identities, signing flags, "
         "requirement-bound local handshake, LaunchAgent contract, and "
-        "single-owner Agent local-service selection and package-owned menu "
-        "application launch lifecycle."
+        "single-owner enabled Agent network activation and package-owned "
+        "menu application launch lifecycle."
     )
     return 0
 

@@ -4,6 +4,7 @@ import CompanionAgentNetworkPlatform
 import CompanionAgentPlatform
 import CompanionHostPlatform
 import CompanionLifecycle
+import CompanionNetworkPlatform
 import CompanionSecurity
 import Foundation
 
@@ -67,21 +68,33 @@ public struct MacAgentInertApplicationSnapshotV1: Equatable, Sendable {
 
 @available(macOS 26.0, *)
 package struct MacAgentPreparedProductHandleV1: Sendable {
+    package typealias PrimaryContext = @Sendable () ->
+        NetworkHostRequestContextV0
+    package typealias PairingContext = @Sendable () ->
+        NetworkHostPairingRequestContextV0
+
     package let hostID: UUID
     package let storagePaths: MacAgentReleaseStoragePathsV1
     private let currentLifecycle:
         @Sendable () async -> AgentRemoteLifecycleSnapshotV1
-    private let startPreparedLocalService: @Sendable () async throws -> Void
+    private let startPreparedLocalService: @Sendable (
+        @escaping PrimaryContext,
+        @escaping PairingContext
+    ) async throws -> Void
     private let finishPrepared: @Sendable () async -> Void
 
     package init(product: MacAgentPreparedProductV1) {
+        let runtime = MacAgentEnabledProductRuntimeV1(product: product)
         hostID = product.hostID
         storagePaths = product.storagePaths
         currentLifecycle = { await product.lifecycleSnapshot() }
-        startPreparedLocalService = {
-            try await product.startLocalAuthorization()
+        startPreparedLocalService = { primaryContext, pairingContext in
+            try await runtime.start(
+                primaryContext: primaryContext,
+                pairingContext: pairingContext
+            )
         }
-        finishPrepared = { await product.finish() }
+        finishPrepared = { await runtime.finish() }
     }
 
     package init(
@@ -95,7 +108,7 @@ package struct MacAgentPreparedProductHandleV1: Sendable {
         self.hostID = hostID
         self.storagePaths = storagePaths
         self.currentLifecycle = currentLifecycle
-        startPreparedLocalService = startLocalService
+        startPreparedLocalService = { _, _ in try await startLocalService() }
         self.finishPrepared = finish
     }
 
@@ -105,8 +118,11 @@ package struct MacAgentPreparedProductHandleV1: Sendable {
         await currentLifecycle()
     }
 
-    package func startLocalService() async throws {
-        try await startPreparedLocalService()
+    package func startLocalService(
+        primaryContext: @escaping PrimaryContext,
+        pairingContext: @escaping PairingContext
+    ) async throws {
+        try await startPreparedLocalService(primaryContext, pairingContext)
     }
 
     package func finish() async {
@@ -122,10 +138,10 @@ package enum MacAgentPreparedApplicationRootResultV1: Sendable {
     case recoveryFenced(UUID)
 }
 
-/// Owns a durable, prepared Agent root without exposing any activation method.
+/// Owns a durable, prepared Agent root without exposing profile selection.
 /// Storage and host identity may already have been created or reconciled, but
-/// readiness-producing local XPC construction is deferred and no listener,
-/// login role, or process is activated by this owner.
+/// authenticated local XPC, request-context observation, pairing, and the
+/// listener remain deferred until the package-owned enabled start method.
 @available(macOS 26.0, *)
 public actor MacAgentInertApplicationLifecycleV1 {
     public nonisolated let hostID: UUID
@@ -188,7 +204,12 @@ public actor MacAgentInertApplicationLifecycleV1 {
                 .unsafeInitialLifecycleState
         }
         do {
-            try await prepared.startLocalService()
+            try requestContexts.start()
+            try Task.checkCancellation()
+            try await prepared.startLocalService(
+                primaryContext: requestContexts.primaryContext,
+                pairingContext: requestContexts.pairingContext
+            )
             try Task.checkCancellation()
             guard finishTask == nil, !finished else {
                 throw MacAgentApplicationPreparationErrorV1
@@ -258,7 +279,7 @@ public enum MacAgentApplicationPreparationFacadeV1 {
             },
             prepareRoot: { storage, primaryInputs in
                 let result = try await MacAgentProductBootstrapV1
-                    .prepareStatusOnlyInert(
+                    .prepareInert(
                     storage: storage,
                     hostIdentityConfiguration:
                         inputs.hostIdentityConfiguration,
