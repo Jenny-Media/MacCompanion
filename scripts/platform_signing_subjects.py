@@ -103,6 +103,36 @@ class PlannedCodeSignOuterVerification:
 
 
 @dataclass(frozen=True)
+class PlannedMacPlatformAssessment:
+    artifact_id: str
+    owned_subject_path: Path
+    gatekeeper_invocation: FixedToolInvocation
+    stapler_invocation: FixedToolInvocation
+
+    def public_record(self) -> dict[str, Any]:
+        return {
+            "artifactID": self.artifact_id,
+            "ownedSubjectPath": str(self.owned_subject_path),
+            "gatekeeper": {
+                "invocationID": self.gatekeeper_invocation.invocation_id,
+                "tool": self.gatekeeper_invocation.tool.public_record(),
+                "argv": [
+                    self.gatekeeper_invocation.tool.path,
+                    *self.gatekeeper_invocation.arguments,
+                ],
+            },
+            "stapler": {
+                "invocationID": self.stapler_invocation.invocation_id,
+                "tool": self.stapler_invocation.tool.public_record(),
+                "argv": [
+                    self.stapler_invocation.tool.path,
+                    *self.stapler_invocation.arguments,
+                ],
+            },
+        }
+
+
+@dataclass(frozen=True)
 class PlannedCodeSignArchitectureInspection:
     artifact_id: str
     source_path: str
@@ -1209,6 +1239,72 @@ def derive_codesign_outer_verification_plans(
     if mac_artifact_ids != expected_mac_ids or len(plans) > 1:
         raise PlatformSigningSubjectError(
             "outer codesign verification does not exactly cover the Mac application"
+        )
+    return plans
+
+
+def derive_mac_platform_assessment_plans(
+    *,
+    graph: dict[str, Any],
+    reconstructed: list[ReconstructedSigningSubject],
+    codesign_tool: FixedToolIdentity,
+    gatekeeper_tool: FixedToolIdentity,
+    stapler_tool: FixedToolIdentity,
+) -> list[PlannedMacPlatformAssessment]:
+    if (
+        gatekeeper_tool.tool_id != "apple.spctl"
+        or gatekeeper_tool.path != "/usr/sbin/spctl"
+    ):
+        raise PlatformSigningSubjectError(
+            "Mac platform assessment requires the pinned Gatekeeper tool"
+        )
+    if (
+        stapler_tool.tool_id != "apple.stapler"
+        or stapler_tool.path
+        not in {
+            "/Applications/Xcode.app/Contents/Developer/usr/bin/stapler",
+            "/Applications/Xcode-beta.app/Contents/Developer/usr/bin/stapler",
+        }
+    ):
+        raise PlatformSigningSubjectError(
+            "Mac platform assessment requires the pinned Xcode stapler tool"
+        )
+    try:
+        outer_subjects = derive_codesign_outer_verification_plans(
+            graph=graph,
+            reconstructed=reconstructed,
+            codesign_tool=codesign_tool,
+        )
+    except PlatformSigningSubjectError as error:
+        raise PlatformSigningSubjectError(
+            "Mac platform assessment subject could not be rederived"
+        ) from error
+    plans: list[PlannedMacPlatformAssessment] = []
+    for index, outer in enumerate(outer_subjects):
+        subject = str(outer.owned_subject_path)
+        plans.append(
+            PlannedMacPlatformAssessment(
+                artifact_id=outer.artifact_id,
+                owned_subject_path=outer.owned_subject_path,
+                gatekeeper_invocation=FixedToolInvocation(
+                    invocation_id=f"spctl-assess-{index + 1:02d}",
+                    tool=gatekeeper_tool,
+                    arguments=(
+                        "--assess",
+                        "--type",
+                        "execute",
+                        "--verbose=4",
+                        subject,
+                    ),
+                    timeout_seconds=120,
+                ),
+                stapler_invocation=FixedToolInvocation(
+                    invocation_id=f"stapler-validate-{index + 1:02d}",
+                    tool=stapler_tool,
+                    arguments=("validate", subject),
+                    timeout_seconds=120,
+                ),
+            )
         )
     return plans
 

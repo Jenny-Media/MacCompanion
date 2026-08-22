@@ -209,6 +209,39 @@ the exact candidate. Packaging-equivalence platform verification must already
 pass for the same hashes. A recursive outer verification does not excuse a
 missing per-object result.
 
+The graph-bound Mac application construction now has fixed Gatekeeper and
+stapler plans after complete correlated signing reinspection. Gatekeeper uses:
+
+```text
+[
+  "/usr/sbin/spctl",
+  "--assess",
+  "--type",
+  "execute",
+  "--verbose=4",
+  "SUBJECT"
+]
+```
+
+Under the closed locale, success has empty stdout and exactly these stderr
+lines:
+
+```text
+SUBJECT: accepted
+source=Notarized Developer ID
+```
+
+The directly pinned Xcode `stapler` binary then uses `validate SUBJECT`.
+Success has empty stderr and exactly `Processing: SUBJECT` followed by
+`The validate action worked!` on stdout. Both calls rehash the complete subject
+and repeat the correlated signing prerequisite after execution. A failed
+Gatekeeper assessment does not contact stapler.
+
+These app-level plans and parsers remain construction-only. Final acceptance
+still requires the protected notary submission/Accepted-status correlation,
+the final app and DMG, packaging-equivalent hashes, stable tool identity, and
+the same checks against those exact release artifacts.
+
 ## iOS construction boundary
 
 An xcarchive-only result remains construction evidence. iOS platform acceptance
