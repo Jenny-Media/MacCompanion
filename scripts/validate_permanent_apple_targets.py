@@ -345,12 +345,18 @@ def validate_project_spec(content: str, failures: list[str]) -> None:
     )
     for forbidden in (
         "DEVELOPMENT_TEAM:",
-        "CODE_SIGN_IDENTITY:",
         "PROVISIONING_PROFILE",
         "CODE_SIGN_ENTITLEMENTS:",
     ):
         if forbidden in content:
             failures.append(f"trackedSigningAuthority:{forbidden.rstrip(':')}")
+    for match in re.finditer(
+        r'^\s*CODE_SIGN_IDENTITY:\s*(.*?)\s*$',
+        content,
+        re.MULTILINE,
+    ):
+        if match.group(1) != '""':
+            failures.append("trackedSigningAuthority:CODE_SIGN_IDENTITY")
     if "product: CompanionAgentProductPlatform" in content:
         failures.append("projectSpecLinksAgentProductPlatform")
 

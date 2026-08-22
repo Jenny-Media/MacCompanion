@@ -3,6 +3,7 @@ name: MacCompanion
 options:
   createIntermediateGroups: true
   deploymentTarget:
+    iOS: "26.0"
     macOS: "26.0"
   groupSortPosition: top
   minimumXcodeGenVersion: 2.46.0
@@ -84,11 +85,43 @@ targets:
         PRODUCT_NAME: MacCompanionAgent
         SKIP_INSTALL: YES
 
+  MacCompanionIOS:
+    type: application
+    platform: iOS
+    sources:
+      - path: Apps/MacCompanionIOS
+      - path: spec/privacy-manifest/v0/targets/ios-app/PrivacyInfo.xcprivacy
+        buildPhase: resources
+    dependencies:
+      - package: MacCompanionKit
+        product: CompanionClientPlatform
+    settings:
+      base:
+        CODE_SIGN_IDENTITY: ""
+        CURRENT_PROJECT_VERSION: 1
+        GENERATE_INFOPLIST_FILE: NO
+        INFOPLIST_FILE: Apps/MacCompanionIOS/Info.plist
+        IPHONEOS_DEPLOYMENT_TARGET: "26.0"
+        MARKETING_VERSION: 0.1.0
+        PRODUCT_BUNDLE_IDENTIFIER: media.jenny.maccompanion.ios
+        PRODUCT_NAME: Mac Companion
+        SUPPORTS_MACCATALYST: NO
+        SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD: NO
+        TARGETED_DEVICE_FAMILY: "1,2"
+
 schemes:
   MacCompanion:
     build:
       targets:
         MacCompanion: all
+    run:
+      config: Debug
+    archive:
+      config: Release
+  MacCompanionIOS:
+    build:
+      targets:
+        MacCompanionIOS: all
     run:
       config: Debug
     archive:

@@ -277,6 +277,13 @@ gates the remaining Apple targets and final release evidence; this proof does
 not waive stable-toolchain, authenticated lifecycle, notarization, packaging,
 or clean-machine requirements.
 
+The [permanent iOS application target](evidence/2026-08-22-permanent-ios-application-target.md)
+now fixes `media.jenny.maccompanion.ios`, iOS/iPadOS 26.0, the exact permission
+declarations, and the indexed privacy resource in a generated release-shaped
+bundle. Its protected restart bootstrap is transport-inert and the build is
+unsigned; App ID registration, provisioning, signed device launch, TestFlight,
+and final privacy/submission inspection remain promotion gates.
+
 ### Ready for external Mac alpha
 
 - Developer ID signing, hardened runtime, notarization, stapling, Gatekeeper, DMG, Sparkle, and clean uninstall pass on clean physical Macs.

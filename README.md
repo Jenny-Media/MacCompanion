@@ -210,7 +210,7 @@ The [disabled-Agent bootstrap transport](docs/evidence/2026-08-22-disabled-agent
 
 The [Agent bootstrap durable authority](docs/evidence/2026-08-22-agent-bootstrap-durable-authority.md) owns the revision-zero-or-disabled offer and exact successor enable commit over the existing cross-process-locked intent store. It requires exact post-write read-back, recovers only an exact post-rename commit, replays only the exact command without a second write, and fences every storage suspension by monotonic peer generation and operation ID. XPC injection, process restart, setup registration, the menu transaction, and receipt-gated dashboard construction are now bound; signed launchd execution and reciprocal readiness/status remain the next gate.
 
-The current hardened gate covers 947 repository files and includes 4 native-appearance boundary policy self-tests over 308 Swift source files.
+The current hardened gate covers 959 repository files and includes 4 native-appearance boundary policy self-tests over 313 Swift source files.
 
 Supply-chain coverage now also includes 26 exact-candidate artifact-SBOM fixtures, 18 artifact-SBOM/release-graph integration cases (including iOS and combined targets), 45 complete signed-code construction-discovery graph fixtures, 17 per-executable signed-code construction-correlation fixtures, 24 Mac packaging-equivalence fixtures, 8 mounted-tree/xattr-policy cases, 5 packaging release-integration cases, 3 partial-attach/recovery cases, 6 fail-closed recovery-refusal cases, 2 interrupted recovery-record update cases, and one concurrent public-path substitution case. The separately authorized packaging lane has 2 full APFS/UDZO reinspection cases; signed-code platform acceptance remains deliberately gated.
 
@@ -224,6 +224,14 @@ and a first-party iOS Observe/Act/Control workspace. A stale or replaced
 connection cannot republish status, actions, or teardown over the current
 connection, and entering Remote Control remains a separate intent rather than
 implicit authorization.
+
+The [permanent iOS application target](docs/evidence/2026-08-22-permanent-ios-application-target.md)
+now fixes the iOS 26 iPhone/iPad identity, exact Local Network/Bonjour/camera
+declarations, bundled privacy manifest, and a transport-inert protected restart
+bootstrap. It creates one stable non-backed-up installation identity and
+reports paired only after one exact saved host, its protected key references,
+and its sole route catalog revalidate. Signed launch, permissions, pairing, and
+live network composition remain separate gates.
 
 The [selected-primary Control session owner](docs/evidence/2026-08-21-client-primary-control-session.md)
 now binds an explicit Desktop request, fresh Control-specific device presence,
