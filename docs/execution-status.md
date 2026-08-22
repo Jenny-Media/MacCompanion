@@ -111,6 +111,17 @@ nonescaping product owner and leaves readiness to Network callbacks. Live
 request-context composition, permanent-target activation, and signed
 two-process evidence remain gated.
 
+The [Interactive lease local-XPC checkpoint](evidence/2026-08-22-interactive-lease-local-xpc-transport.md)
+now fixes and implements exact install, renewal, and revoke transport between
+one authenticated-and-ready Agent/menu generation. Strict canonical payloads,
+one cross-family transaction, asymmetric bounded deadlines, exact receipt
+correlation, and generation-wide failure on ambiguity preserve fail-closed
+ownership. Connection loss invokes local unacknowledged runtime invalidation.
+This checkpoint carries no input or media and does not activate capture or
+posting. The next independent slice is a separate final-state-revalidating
+Control authority plus concrete menu platform adapters; the existing stable
+pairing/recovery authority remains Control-free.
+
 The [conservative network request-context checkpoint](evidence/2026-08-22-conservative-network-request-contexts.md)
 now supplies live clocks, unique response IDs, and an owned public macOS
 session/lifecycle source for that listener seam. [Primary-source API

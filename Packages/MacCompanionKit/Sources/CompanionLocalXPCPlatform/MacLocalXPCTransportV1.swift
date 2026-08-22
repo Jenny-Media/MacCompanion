@@ -72,6 +72,10 @@ public enum MacLocalXPCServerProfileV1: Equatable, Sendable {
     var admitsMenuPairingCommands: Bool {
         self == .menuLifecycleReadinessStatusAndPresentation
     }
+
+    var admitsInteractiveLeaseTransport: Bool {
+        self == .menuLifecycleReadinessStatusAndPresentation
+    }
 }
 
 public enum MacLocalXPCConstructionErrorV1: Error, Equatable, Sendable {
@@ -300,13 +304,75 @@ struct MacLocalXPCPendingCandidateGateV1: Sendable {
 @available(macOS 26.0, *)
 public final class MacLocalXPCServerV1:
     @unchecked Sendable,
-    MacLocalXPCMenuPresentationSendingV1
+    MacLocalXPCMenuPresentationSendingV1,
+    MacLocalXPCInteractiveLeaseSendingV1
 {
     public typealias EventHandler = @Sendable (MacLocalXPCServerEventV1) -> Void
     package static let maximumAdmittedPresentationsPerGeneration = 8
     package static let presentationReplyTimeoutSeconds = 3
     package static let remoteAccessBootstrapTimeoutSeconds = 5
     package static let menuPairingCommandTimeoutSeconds = 4
+    package static let interactiveLeaseReplyTimeoutSeconds = 5
+
+    private enum InteractiveLeaseCommand: Sendable {
+        case install(InteractiveRuntimeInstallCommandV0)
+        case renew(InteractiveRuntimeLeaseRenewalV0)
+        case revoke(InteractiveRuntimeRevokeCommandV0)
+
+        var kind: MacLocalXPCInteractiveLeaseCommandKindV1 {
+            switch self {
+            case .install: .install
+            case .renew: .renew
+            case .revoke: .revoke
+            }
+        }
+
+        var authorizationMethod: LocalIPCMethod {
+            switch self {
+            case .install, .renew: .installInteractiveLease
+            case .revoke: .revokeInteractiveLease
+            }
+        }
+    }
+
+    private final class InteractiveLeaseCancellationMarker:
+        @unchecked Sendable
+    {
+        private let lock = NSLock()
+        private var cancelled = false
+
+        func markCancelled() {
+            lock.withLock { cancelled = true }
+        }
+
+        func isCancelled() -> Bool {
+            lock.withLock { cancelled }
+        }
+    }
+
+    private final class PendingInteractiveLeaseCommand:
+        @unchecked Sendable
+    {
+        let requestID: UUID
+        let transaction:
+            MacLocalXPCInteractiveLeaseTransactionGateV1.Active
+        let command: InteractiveLeaseCommand
+        let continuation: CheckedContinuation<Data?, any Error>
+        var deadline: DispatchWorkItem?
+
+        init(
+            requestID: UUID,
+            transaction:
+                MacLocalXPCInteractiveLeaseTransactionGateV1.Active,
+            command: InteractiveLeaseCommand,
+            continuation: CheckedContinuation<Data?, any Error>
+        ) {
+            self.requestID = requestID
+            self.transaction = transaction
+            self.command = command
+            self.continuation = continuation
+        }
+    }
 
     private enum MenuPairingCommand: Sendable {
         case create(LocalPairingSessionCreateCommandV0)
@@ -483,6 +549,10 @@ public final class MacLocalXPCServerV1:
         var menuPairingCommandGate =
             MacLocalXPCMenuPairingCommandTransactionGateV1()
         var pendingMenuPairingCommand: PendingMenuPairingCommand?
+        var interactiveLeaseGate =
+            MacLocalXPCInteractiveLeaseTransactionGateV1()
+        var pendingInteractiveLeaseCommand:
+            PendingInteractiveLeaseCommand?
         var presentationIssuanceGate:
             MacLocalXPCMenuPresentationEndpointIssuanceGateV1
         var presentationEndpoint:
@@ -510,6 +580,7 @@ public final class MacLocalXPCServerV1:
             precondition(bootstrapGate.bind(generation: generation))
             precondition(statusReadGate.bind(generation: generation))
             precondition(menuPairingCommandGate.bind(generation: generation))
+            precondition(interactiveLeaseGate.bind(generation: generation))
             ownedPeer = peer
         }
 
@@ -539,6 +610,19 @@ public final class MacLocalXPCServerV1:
             pendingMenuPairingCommand.task?.cancel()
             pendingMenuPairingCommand.task = nil
             pendingMenuPairingCommand.releaseOwnedRequest()
+        }
+
+        func cancelPendingInteractiveLeaseCommand(
+            error: MacLocalXPCInteractiveLeaseErrorV1
+        ) {
+            _ = interactiveLeaseGate.invalidate(generation: generation)
+            guard let pendingInteractiveLeaseCommand else { return }
+            self.pendingInteractiveLeaseCommand = nil
+            pendingInteractiveLeaseCommand.deadline?.cancel()
+            pendingInteractiveLeaseCommand.deadline = nil
+            pendingInteractiveLeaseCommand.continuation.resume(
+                throwing: error
+            )
         }
 
         @discardableResult
@@ -746,6 +830,342 @@ public final class MacLocalXPCServerV1:
                 currentPeerState,
                 presentationError: .endpointUnavailable
             )
+        }
+    }
+
+    public func installInteractiveLease(
+        _ command: InteractiveRuntimeInstallCommandV0
+    ) async throws -> InteractiveRuntimeInstallReceiptV0 {
+        let payload: Data
+        do {
+            payload = try LocalInteractiveLeaseWireCodecV1
+                .encodeInstallCommand(command)
+        } catch {
+            throw MacLocalXPCInteractiveLeaseErrorV1
+                .malformedOrTransportError
+        }
+        let reply = try await sendInteractiveLeaseCommand(
+            command: .install(command),
+            payload: payload
+        )
+        do {
+            guard let reply else {
+                throw MacLocalXPCInteractiveLeaseErrorV1
+                    .malformedOrTransportError
+            }
+            let receipt = try LocalInteractiveLeaseWireCodecV1
+                .decodeInstallReceipt(reply)
+            try receipt.validate(against: command)
+            return receipt
+        } catch {
+            cancelCurrentPeerAfterMalformedInteractiveReply()
+            throw MacLocalXPCInteractiveLeaseErrorV1
+                .malformedOrTransportError
+        }
+    }
+
+    public func renewInteractiveLease(
+        _ renewal: InteractiveRuntimeLeaseRenewalV0
+    ) async throws {
+        let payload: Data
+        do {
+            payload = try LocalInteractiveLeaseWireCodecV1
+                .encodeRenewal(renewal)
+        } catch {
+            throw MacLocalXPCInteractiveLeaseErrorV1
+                .malformedOrTransportError
+        }
+        let reply = try await sendInteractiveLeaseCommand(
+            command: .renew(renewal),
+            payload: payload
+        )
+        guard reply == nil else {
+            cancelCurrentPeerAfterMalformedInteractiveReply()
+            throw MacLocalXPCInteractiveLeaseErrorV1
+                .malformedOrTransportError
+        }
+    }
+
+    public func revokeInteractiveLease(
+        _ command: InteractiveRuntimeRevokeCommandV0
+    ) async throws -> InteractiveRuntimeRevokedReceiptV0 {
+        let payload: Data
+        do {
+            payload = try LocalInteractiveLeaseWireCodecV1
+                .encodeRevokeCommand(command)
+        } catch {
+            throw MacLocalXPCInteractiveLeaseErrorV1
+                .malformedOrTransportError
+        }
+        let reply = try await sendInteractiveLeaseCommand(
+            command: .revoke(command),
+            payload: payload
+        )
+        do {
+            guard let reply else {
+                throw MacLocalXPCInteractiveLeaseErrorV1
+                    .malformedOrTransportError
+            }
+            let receipt = try LocalInteractiveLeaseWireCodecV1
+                .decodeRevokedReceipt(reply)
+            try receipt.validate(against: command)
+            return receipt
+        } catch {
+            cancelCurrentPeerAfterMalformedInteractiveReply()
+            throw MacLocalXPCInteractiveLeaseErrorV1
+                .malformedOrTransportError
+        }
+    }
+
+    private func sendInteractiveLeaseCommand(
+        command: InteractiveLeaseCommand,
+        payload: Data
+    ) async throws -> Data? {
+        let requestID = UUID()
+        let marker = InteractiveLeaseCancellationMarker()
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                queue.async { [weak self] in
+                    guard let self else {
+                        continuation.resume(
+                            throwing: MacLocalXPCInteractiveLeaseErrorV1
+                                .unavailable
+                        )
+                        return
+                    }
+                    self.admitInteractiveLeaseCommand(
+                        requestID: requestID,
+                        command: command,
+                        payload: payload,
+                        cancellationMarker: marker,
+                        continuation: continuation
+                    )
+                }
+            }
+        } onCancel: { [weak self] in
+            marker.markCancelled()
+            self?.queue.async { [weak self] in
+                self?.cancelInteractiveLeaseCommand(requestID: requestID)
+            }
+        }
+    }
+
+    private func admitInteractiveLeaseCommand(
+        requestID: UUID,
+        command: InteractiveLeaseCommand,
+        payload: Data,
+        cancellationMarker: InteractiveLeaseCancellationMarker,
+        continuation: CheckedContinuation<Data?, any Error>
+    ) {
+        guard !cancellationMarker.isCancelled() else {
+            continuation.resume(throwing: CancellationError())
+            return
+        }
+        guard let state = currentPeerState,
+              listenerRunGate.admits(generation: state.listenerGeneration),
+              peerStates[state.generation] === state,
+              generationGate.admitsPostAuthenticationTraffic(
+                generation: state.generation
+              ),
+              state.lifetime.menuReadinessPublished,
+              state.postAuthenticationFence.admitsTraffic,
+              profile.admitsInteractiveLeaseTransport,
+              payload.count > 0,
+              payload.count <=
+                LocalInteractiveLeaseWireCodecV1.maximumEncodedBytes,
+              authorizesAgentPresentationMethod(
+                command.authorizationMethod
+              ),
+              let transaction = state.interactiveLeaseGate.begin(
+                generation: state.generation,
+                kind: command.kind,
+                permitted: true
+              ) else {
+            continuation.resume(
+                throwing: MacLocalXPCInteractiveLeaseErrorV1.unavailable
+            )
+            return
+        }
+
+        let pending = PendingInteractiveLeaseCommand(
+            requestID: requestID,
+            transaction: transaction,
+            command: command,
+            continuation: continuation
+        )
+        state.pendingInteractiveLeaseCommand = pending
+        let cKind = cInteractiveLeaseCommandKind(command.kind)
+        let sendResult = payload.withUnsafeBytes { rawBuffer in
+            guard let bytes = rawBuffer.bindMemory(to: UInt8.self).baseAddress
+            else { return MCLocalXPCResultConstructionFailed }
+            return MCLocalXPCSessionSendInteractiveLeaseCommand(
+                state.peer,
+                cKind,
+                bytes,
+                payload.count
+            ) { [weak self, weak state] bytes, length, malformed in
+                let copiedPayload = bytes.map {
+                    Data(bytes: $0, count: length)
+                }
+                self?.queue.async { [weak self, weak state] in
+                    guard let self, let state else { return }
+                    self.handleInteractiveLeaseReply(
+                        state: state,
+                        requestID: requestID,
+                        transaction: transaction,
+                        payload: copiedPayload,
+                        malformedOrTransportError: malformed
+                    )
+                }
+            }
+        }
+        guard sendResult == MCLocalXPCResultOK else {
+            _ = state.interactiveLeaseGate.finish(transaction)
+            state.pendingInteractiveLeaseCommand = nil
+            continuation.resume(
+                throwing: MacLocalXPCInteractiveLeaseErrorV1
+                    .malformedOrTransportError
+            )
+            cancelAuthenticatedPeer(
+                state,
+                presentationError: .transportFailure
+            )
+            return
+        }
+
+        let deadline = DispatchWorkItem { [weak self, weak state] in
+            guard let self, let state else { return }
+            self.expireInteractiveLeaseCommand(
+                state: state,
+                requestID: requestID,
+                transaction: transaction
+            )
+        }
+        pending.deadline = deadline
+        queue.asyncAfter(
+            deadline: .now()
+                + .seconds(Self.interactiveLeaseReplyTimeoutSeconds),
+            execute: deadline
+        )
+    }
+
+    private func handleInteractiveLeaseReply(
+        state: PeerState,
+        requestID: UUID,
+        transaction: MacLocalXPCInteractiveLeaseTransactionGateV1.Active,
+        payload: Data?,
+        malformedOrTransportError: Bool
+    ) {
+        guard admitsInteractiveLeaseCompletion(
+                state: state,
+                transaction: transaction
+              ),
+              let pending = state.pendingInteractiveLeaseCommand,
+              pending.requestID == requestID,
+              pending.transaction == transaction,
+              state.interactiveLeaseGate.finish(transaction) else { return }
+        state.pendingInteractiveLeaseCommand = nil
+        pending.deadline?.cancel()
+        pending.deadline = nil
+
+        let validPayloadShape: Bool = switch transaction.kind {
+        case .install, .revoke:
+            payload.map {
+                !$0.isEmpty
+                    && $0.count <= LocalInteractiveLeaseWireCodecV1
+                        .maximumEncodedBytes
+            } ?? false
+        case .renew:
+            payload == nil
+        }
+        guard !malformedOrTransportError, validPayloadShape else {
+            pending.continuation.resume(
+                throwing: MacLocalXPCInteractiveLeaseErrorV1
+                    .malformedOrTransportError
+            )
+            cancelAuthenticatedPeer(
+                state,
+                presentationError: .transportFailure
+            )
+            return
+        }
+        pending.continuation.resume(returning: payload)
+    }
+
+    private func expireInteractiveLeaseCommand(
+        state: PeerState,
+        requestID: UUID,
+        transaction: MacLocalXPCInteractiveLeaseTransactionGateV1.Active
+    ) {
+        guard admitsInteractiveLeaseCompletion(
+                state: state,
+                transaction: transaction
+              ),
+              let pending = state.pendingInteractiveLeaseCommand,
+              pending.requestID == requestID,
+              state.interactiveLeaseGate.finish(transaction) else { return }
+        state.pendingInteractiveLeaseCommand = nil
+        pending.deadline = nil
+        pending.continuation.resume(
+            throwing: MacLocalXPCInteractiveLeaseErrorV1.replyTimedOut
+        )
+        cancelAuthenticatedPeer(
+            state,
+            presentationError: .replyTimedOut
+        )
+    }
+
+    private func cancelInteractiveLeaseCommand(requestID: UUID) {
+        guard let state = currentPeerState,
+              let pending = state.pendingInteractiveLeaseCommand,
+              pending.requestID == requestID,
+              state.interactiveLeaseGate.finish(pending.transaction) else {
+            return
+        }
+        state.pendingInteractiveLeaseCommand = nil
+        pending.deadline?.cancel()
+        pending.deadline = nil
+        pending.continuation.resume(
+            throwing: MacLocalXPCInteractiveLeaseErrorV1.cancelledAfterSend
+        )
+        cancelAuthenticatedPeer(
+            state,
+            presentationError: .cancelledAfterSend
+        )
+    }
+
+    private func admitsInteractiveLeaseCompletion(
+        state: PeerState,
+        transaction: MacLocalXPCInteractiveLeaseTransactionGateV1.Active
+    ) -> Bool {
+        listenerRunGate.admits(generation: state.listenerGeneration)
+            && peerStates[state.generation] === state
+            && currentPeerState === state
+            && generationGate.admitsPostAuthenticationTraffic(
+                generation: state.generation
+            )
+            && state.lifetime.menuReadinessPublished
+            && state.postAuthenticationFence.admitsTraffic
+            && state.interactiveLeaseGate.admits(transaction)
+    }
+
+    private func cancelCurrentPeerAfterMalformedInteractiveReply() {
+        queue.async { [weak self] in
+            guard let self, let state = currentPeerState else { return }
+            self.cancelAuthenticatedPeer(
+                state,
+                presentationError: .transportFailure
+            )
+        }
+    }
+
+    private func cInteractiveLeaseCommandKind(
+        _ kind: MacLocalXPCInteractiveLeaseCommandKindV1
+    ) -> MCLocalXPCInteractiveLeaseCommandKind {
+        switch kind {
+        case .install: MCLocalXPCInteractiveLeaseCommandInstall
+        case .renew: MCLocalXPCInteractiveLeaseCommandRenew
+        case .revoke: MCLocalXPCInteractiveLeaseCommandRevoke
         }
     }
 
@@ -1276,6 +1696,7 @@ public final class MacLocalXPCServerV1:
         invalidateRemoteAccessBootstrap(state)
         state.cancelPendingStatusRead()
         state.cancelPendingMenuPairingCommand()
+        state.cancelPendingInteractiveLeaseCommand(error: .unavailable)
         fencePresentations(state, error: presentationError)
     }
 
@@ -2379,6 +2800,64 @@ public final class MacLocalXPCClientV1: @unchecked Sendable {
         }
     }
 
+    private enum IncomingInteractiveLeaseCommand: Sendable {
+        case install(InteractiveRuntimeInstallCommandV0)
+        case renew(InteractiveRuntimeLeaseRenewalV0)
+        case revoke(InteractiveRuntimeRevokeCommandV0)
+
+        var kind: MacLocalXPCInteractiveLeaseCommandKindV1 {
+            switch self {
+            case .install: .install
+            case .renew: .renew
+            case .revoke: .revoke
+            }
+        }
+
+        var authorizationMethod: LocalIPCMethod {
+            switch self {
+            case .install, .renew: .installInteractiveLease
+            case .revoke: .revokeInteractiveLease
+            }
+        }
+    }
+
+    private enum IncomingInteractiveLeaseResult: Sendable {
+        case install(InteractiveRuntimeInstallReceiptV0)
+        case renewed
+        case revoked(InteractiveRuntimeRevokedReceiptV0)
+    }
+
+    private final class PendingIncomingInteractiveLeaseCommand:
+        @unchecked Sendable
+    {
+        let transaction:
+            MacLocalXPCInteractiveLeaseTransactionGateV1.Active
+        let command: IncomingInteractiveLeaseCommand
+        var deadline: DispatchWorkItem?
+        var task: Task<Void, Never>?
+        private let requestLease:
+            MacLocalXPCStatusRequestLeaseV1<MCLocalXPCMessageRef>
+
+        init(
+            transaction:
+                MacLocalXPCInteractiveLeaseTransactionGateV1.Active,
+            command: IncomingInteractiveLeaseCommand,
+            request: MCLocalXPCMessageRef
+        ) {
+            self.transaction = transaction
+            self.command = command
+            requestLease = MacLocalXPCStatusRequestLeaseV1(request: request)
+        }
+
+        func takeOwnedRequest() -> MCLocalXPCMessageRef? {
+            requestLease.takeOwnedRequest()
+        }
+
+        func releaseOwnedRequest() {
+            requestLease.releaseIfOwned()
+        }
+    }
+
     private let queue = DispatchQueue(
         label: "media.jenny.maccompanion.local-xpc.menu"
     )
@@ -2386,6 +2865,9 @@ public final class MacLocalXPCClientV1: @unchecked Sendable {
     private let onEvent: EventHandler
     private let presentationSurfaces:
         MacLocalXPCMenuPresentationReceiverSurfacesV1?
+    private let interactiveLeaseHandler:
+        (any MacLocalXPCInteractiveLeaseHandlingV1)?
+    private let monotonicNowNanoseconds: @Sendable () -> UInt64
     private var session: MCLocalXPCSessionRef?
     private var gate = MacLocalXPCHandshakeGateV1()
     private var menuReadinessRequested = false
@@ -2399,6 +2881,12 @@ public final class MacLocalXPCClientV1: @unchecked Sendable {
     private var pendingMenuPairingCommand: PendingMenuPairingCommand?
     private let menuPairingCommandReplyTimeout: DispatchTimeInterval =
         .seconds(5)
+    private var interactiveLeaseGate =
+        MacLocalXPCInteractiveLeaseTransactionGateV1()
+    private var pendingIncomingInteractiveLeaseCommand:
+        PendingIncomingInteractiveLeaseCommand?
+    private let interactiveLeaseOperationTimeout: DispatchTimeInterval =
+        .seconds(4)
     package static let menuPresentationReceiverTimeout:
         DispatchTimeInterval =
             MacLocalXPCMenuPresentationReceiverGenerationV1<
@@ -2415,16 +2903,27 @@ public final class MacLocalXPCClientV1: @unchecked Sendable {
     public init(onEvent: @escaping EventHandler) {
         self.onEvent = onEvent
         presentationSurfaces = nil
+        interactiveLeaseHandler = nil
+        monotonicNowNanoseconds = {
+            DispatchTime.now().uptimeNanoseconds
+        }
         queue.setSpecific(key: queueKey, value: 1)
     }
 
     package init(
         presentationSurfaces:
             MacLocalXPCMenuPresentationReceiverSurfacesV1,
+        interactiveLeaseHandler:
+            (any MacLocalXPCInteractiveLeaseHandlingV1)? = nil,
+        monotonicNowNanoseconds: @escaping @Sendable () -> UInt64 = {
+            DispatchTime.now().uptimeNanoseconds
+        },
         onEvent: @escaping EventHandler
     ) {
         self.onEvent = onEvent
         self.presentationSurfaces = presentationSurfaces
+        self.interactiveLeaseHandler = interactiveLeaseHandler
+        self.monotonicNowNanoseconds = monotonicNowNanoseconds
         queue.setSpecific(key: queueKey, value: 1)
     }
 
@@ -2462,6 +2961,10 @@ public final class MacLocalXPCClientV1: @unchecked Sendable {
                 generation: menuPairingCommandGate.generation ?? 0
             )
             precondition(menuPairingCommandGate.bind(generation: generation))
+            _ = interactiveLeaseGate.invalidate(
+                generation: interactiveLeaseGate.generation ?? 0
+            )
+            precondition(interactiveLeaseGate.bind(generation: generation))
             statusReadDeadline?.cancel()
             statusReadDeadline = nil
             if presentationSurfaces != nil {
@@ -2496,7 +2999,7 @@ public final class MacLocalXPCClientV1: @unchecked Sendable {
             // fails closed instead of falling through an unowned XPC surface.
             MCLocalXPCSessionSetMessageHandler(candidate) {
                 [weak self] message in
-                self?.handleIncomingMenuPresentation(
+                self?.handleIncomingAgentMessage(
                     generation: generation,
                     message: message
                 )
@@ -2656,6 +3159,10 @@ public final class MacLocalXPCClientV1: @unchecked Sendable {
             finishPendingMenuPairingCommand(
                 generation: generation,
                 error: .unavailable
+            )
+            invalidateIncomingInteractiveLease(
+                generation: generation,
+                notifyRuntime: true
             )
             retirePresentationReceiver(generation: generation)
             MCLocalXPCSessionCancelOwned(session)
@@ -3090,11 +3597,41 @@ public final class MacLocalXPCClientV1: @unchecked Sendable {
         invalidateOwnedSession(generation: generation)
     }
 
-    private func handleIncomingMenuPresentation(
+    private func handleIncomingAgentMessage(
         generation: UInt64,
         message: MCLocalXPCMessageRef
     ) {
         guard generationGate.admitsCallback(generation: generation) else {
+            return
+        }
+        var interactiveKind = MCLocalXPCInteractiveLeaseCommandInstall
+        var interactivePayload: UnsafePointer<UInt8>?
+        var interactivePayloadLength = 0
+        if MCLocalXPCMessageGetExactInteractiveLeaseCommand(
+            message,
+            &interactiveKind,
+            &interactivePayload,
+            &interactivePayloadLength
+        ) {
+            guard let interactivePayload,
+                  interactivePayloadLength > 0,
+                  interactivePayloadLength <=
+                    LocalInteractiveLeaseWireCodecV1.maximumEncodedBytes,
+                  let command = decodeIncomingInteractiveLeaseCommand(
+                    kind: interactiveKind,
+                    payload: Data(
+                        bytes: interactivePayload,
+                        count: interactivePayloadLength
+                    )
+                  ),
+                  beginIncomingInteractiveLeaseCommand(
+                    generation: generation,
+                    request: message,
+                    command: command
+                  ) else {
+                invalidateOwnedSession(generation: generation)
+                return
+            }
             return
         }
         guard let presentationReceiver,
@@ -3117,6 +3654,243 @@ public final class MacLocalXPCClientV1: @unchecked Sendable {
             authenticatedAndReady: authenticatedAndReady,
             authorized: authorized
         )
+    }
+
+    private func decodeIncomingInteractiveLeaseCommand(
+        kind: MCLocalXPCInteractiveLeaseCommandKind,
+        payload: Data
+    ) -> IncomingInteractiveLeaseCommand? {
+        do {
+            switch kind {
+            case MCLocalXPCInteractiveLeaseCommandInstall:
+                return .install(
+                    try LocalInteractiveLeaseWireCodecV1
+                        .decodeInstallCommand(payload)
+                )
+            case MCLocalXPCInteractiveLeaseCommandRenew:
+                return .renew(
+                    try LocalInteractiveLeaseWireCodecV1
+                        .decodeRenewal(payload)
+                )
+            case MCLocalXPCInteractiveLeaseCommandRevoke:
+                return .revoke(
+                    try LocalInteractiveLeaseWireCodecV1
+                        .decodeRevokeCommand(payload)
+                )
+            default:
+                return nil
+            }
+        } catch {
+            return nil
+        }
+    }
+
+    private func beginIncomingInteractiveLeaseCommand(
+        generation: UInt64,
+        request: MCLocalXPCMessageRef,
+        command: IncomingInteractiveLeaseCommand
+    ) -> Bool {
+        guard let interactiveLeaseHandler,
+              self.session != nil,
+              gate.state == .authenticated,
+              menuReadinessPublished,
+              authorizesAgentPresentationMethod(
+                command.authorizationMethod
+              ),
+              let transaction = interactiveLeaseGate.begin(
+                generation: generation,
+                kind: command.kind,
+                permitted: true
+              ) else {
+            return false
+        }
+
+        let pending = PendingIncomingInteractiveLeaseCommand(
+            transaction: transaction,
+            command: command,
+            request: request
+        )
+        pendingIncomingInteractiveLeaseCommand = pending
+        let queue = self.queue
+        let monotonicNowNanoseconds = self.monotonicNowNanoseconds
+        pending.task = Task {
+            [weak self, interactiveLeaseHandler, command, queue] in
+            do {
+                let result: IncomingInteractiveLeaseResult
+                switch command {
+                case .install(let value):
+                    result = .install(
+                        try await interactiveLeaseHandler
+                            .installInteractiveLease(
+                                value,
+                                nowMonotonicNanoseconds:
+                                    monotonicNowNanoseconds()
+                            )
+                    )
+                case .renew(let value):
+                    try await interactiveLeaseHandler
+                        .renewInteractiveLease(
+                            value,
+                            nowMonotonicNanoseconds:
+                                monotonicNowNanoseconds()
+                        )
+                    result = .renewed
+                case .revoke(let value):
+                    result = .revoked(
+                        try await interactiveLeaseHandler
+                            .revokeInteractiveLease(value)
+                    )
+                }
+                queue.async { [weak self] in
+                    self?.completeIncomingInteractiveLeaseCommand(
+                        generation: generation,
+                        transaction: transaction,
+                        result: result
+                    )
+                }
+            } catch {
+                queue.async { [weak self] in
+                    self?.terminateIncomingInteractiveLeaseCommand(
+                        generation: generation,
+                        transaction: transaction
+                    )
+                }
+            }
+        }
+        let deadline = DispatchWorkItem { [weak self] in
+            self?.terminateIncomingInteractiveLeaseCommand(
+                generation: generation,
+                transaction: transaction
+            )
+        }
+        pending.deadline = deadline
+        queue.asyncAfter(
+            deadline: .now() + interactiveLeaseOperationTimeout,
+            execute: deadline
+        )
+        return true
+    }
+
+    private func completeIncomingInteractiveLeaseCommand(
+        generation: UInt64,
+        transaction: MacLocalXPCInteractiveLeaseTransactionGateV1.Active,
+        result: IncomingInteractiveLeaseResult
+    ) {
+        guard generationGate.admitsCallback(generation: generation),
+              gate.state == .authenticated,
+              menuReadinessPublished,
+              let session,
+              let pending = pendingIncomingInteractiveLeaseCommand,
+              pending.transaction == transaction,
+              interactiveLeaseGate.admits(transaction),
+              let payload = validatedIncomingInteractiveLeaseReply(
+                command: pending.command,
+                result: result
+              ) else {
+            terminateIncomingInteractiveLeaseCommand(
+                generation: generation,
+                transaction: transaction
+            )
+            return
+        }
+        guard interactiveLeaseGate.finish(transaction),
+              let request = takeIncomingInteractiveLeaseRequest(
+                transaction: transaction
+              ) else {
+            invalidateOwnedSession(generation: generation)
+            return
+        }
+        defer { MCLocalXPCMessageRelease(request) }
+        let reply = payload.withUnsafeBytes { rawBuffer in
+            let bytes = rawBuffer.bindMemory(to: UInt8.self).baseAddress
+            return MCLocalXPCSessionReplyToInteractiveLeaseCommandSuccess(
+                session,
+                request,
+                cInteractiveLeaseCommandKind(transaction.kind),
+                bytes,
+                payload.count
+            )
+        }
+        guard reply == MCLocalXPCResultOK else {
+            invalidateOwnedSession(generation: generation)
+            return
+        }
+    }
+
+    /// An empty value is the exact payload-free renewal acknowledgement.
+    private func validatedIncomingInteractiveLeaseReply(
+        command: IncomingInteractiveLeaseCommand,
+        result: IncomingInteractiveLeaseResult
+    ) -> Data? {
+        do {
+            switch (command, result) {
+            case (.install(let command), .install(let receipt)):
+                try receipt.validate(against: command)
+                return try LocalInteractiveLeaseWireCodecV1
+                    .encodeInstallReceipt(receipt)
+            case (.renew, .renewed):
+                return Data()
+            case (.revoke(let command), .revoked(let receipt)):
+                try receipt.validate(against: command)
+                return try LocalInteractiveLeaseWireCodecV1
+                    .encodeRevokedReceipt(receipt)
+            default:
+                return nil
+            }
+        } catch {
+            return nil
+        }
+    }
+
+    private func terminateIncomingInteractiveLeaseCommand(
+        generation: UInt64,
+        transaction: MacLocalXPCInteractiveLeaseTransactionGateV1.Active
+    ) {
+        guard generationGate.admitsCallback(generation: generation),
+              interactiveLeaseGate.admits(transaction) else { return }
+        invalidateOwnedSession(generation: generation)
+    }
+
+    private func takeIncomingInteractiveLeaseRequest(
+        transaction: MacLocalXPCInteractiveLeaseTransactionGateV1.Active
+    ) -> MCLocalXPCMessageRef? {
+        guard let pending = pendingIncomingInteractiveLeaseCommand,
+              pending.transaction == transaction else { return nil }
+        pendingIncomingInteractiveLeaseCommand = nil
+        pending.deadline?.cancel()
+        pending.deadline = nil
+        pending.task = nil
+        return pending.takeOwnedRequest()
+    }
+
+    private func invalidateIncomingInteractiveLease(
+        generation: UInt64,
+        notifyRuntime: Bool
+    ) {
+        let wasBound = interactiveLeaseGate.generation == generation
+        _ = interactiveLeaseGate.invalidate(generation: generation)
+        if let pending = pendingIncomingInteractiveLeaseCommand {
+            pendingIncomingInteractiveLeaseCommand = nil
+            pending.deadline?.cancel()
+            pending.deadline = nil
+            pending.task?.cancel()
+            pending.task = nil
+            pending.releaseOwnedRequest()
+        }
+        guard wasBound, notifyRuntime, let interactiveLeaseHandler else {
+            return
+        }
+        Task { await interactiveLeaseHandler.invalidateAgentAuthority() }
+    }
+
+    private func cInteractiveLeaseCommandKind(
+        _ kind: MacLocalXPCInteractiveLeaseCommandKindV1
+    ) -> MCLocalXPCInteractiveLeaseCommandKind {
+        switch kind {
+        case .install: MCLocalXPCInteractiveLeaseCommandInstall
+        case .renew: MCLocalXPCInteractiveLeaseCommandRenew
+        case .revoke: MCLocalXPCInteractiveLeaseCommandRevoke
+        }
     }
 
     private func makePresentationReceiver(
@@ -3263,6 +4037,10 @@ public final class MacLocalXPCClientV1: @unchecked Sendable {
             generation: generation,
             error: .unavailable
         )
+        invalidateIncomingInteractiveLease(
+            generation: generation,
+            notifyRuntime: true
+        )
         retirePresentationReceiver(generation: generation)
         MCLocalXPCSessionCancelOwned(session)
         onEvent(.invalidated)
@@ -3283,6 +4061,10 @@ public final class MacLocalXPCClientV1: @unchecked Sendable {
         finishPendingMenuPairingCommand(
             generation: generation,
             error: .unavailable
+        )
+        invalidateIncomingInteractiveLease(
+            generation: generation,
+            notifyRuntime: true
         )
         retirePresentationReceiver(generation: generation)
         MCLocalXPCSessionRelease(session)

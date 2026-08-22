@@ -212,6 +212,12 @@
       "canonicalSHA256": "4714d211a9d7da07c4d4ba3526b1756a3f1214b6bb57ec2ed18b861dd7981383"
     },
     {
+      "path": "local-xpc-interactive-lease-transport-v0.1.json",
+      "kind": "localXPC.interactiveLeaseTransport.v0.1",
+      "expect": "valid",
+      "canonicalSHA256": "e2fdaa14069bd2cd9fd95a504b5044dd2e0821b2e89a4a19acd01c30123ddca7"
+    },
+    {
       "path": "client-configured-routes-v0.1.json",
       "kind": "clientConfiguredRoutes.model.v0.1",
       "expect": "valid",

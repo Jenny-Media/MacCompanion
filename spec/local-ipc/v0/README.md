@@ -3,10 +3,11 @@
 Status: normative for bundle-independent role policy, disabled-Agent
 bootstrapping, leases, status, sanitized diagnostic payloads, and the macOS 26
 peer-identity boundary. The signed peer-requirement mechanism is provisionally
-proven on Xcode 27 beta. The production hello, menu-lifecycle-ready, and
-content-free status-read transport are constructed; the disabled-Agent
-bootstrap messages are frozen while their transport/handler composition and
-signed runtime evidence remain pending.
+proven on Xcode 27 beta. The production hello, menu-lifecycle-ready,
+content-free status-read, disabled-Agent bootstrap, and menu pairing-command
+transports are constructed. Interactive lease install, renewal, and revocation
+now have the exact transport profile below; permanent runtime composition and
+signed execution evidence remain pending.
 
 Local IPC is never authenticated by a caller-supplied role, PID, path, service
 label, or claimed audit token. The macOS adapter installs an XPC peer
@@ -532,6 +533,46 @@ The Agent sends `InteractiveRuntimeInstallCommandV0` only after final admission.
 A renewal replaces the lease ID, increments the renewal counter exactly once, preserves every host/device/session/authorization/display/surface/revision/class binding, and is issued before the old lease expires. It cannot widen authority or resurrect an expired lease.
 
 Revocation is exactly correlated to the current lease and session. Success is acknowledged only after input is released, capture is stopped, the last frame is blanked, and the visible indicator is cleared. Disconnect, timeout, version mismatch, or an incomplete receipt is treated as teardown failure and keeps remote Control denied.
+
+### Exact Interactive lease transport
+
+The first Agent-to-menu Interactive transport slice contains exactly three
+request kinds after the authenticated menu-readiness exchange:
+
+- `runtime.interactive.install` carries canonical
+  `InteractiveRuntimeInstallCommandV0` data and succeeds only with
+  `runtime.interactive.install.ack` carrying an exactly correlated canonical
+  `InteractiveRuntimeInstallReceiptV0`;
+- `runtime.interactive.renew` carries canonical
+  `InteractiveRuntimeLeaseRenewalV0` data and succeeds only with the exact
+  payload-free `runtime.interactive.renew.ack`; and
+- `runtime.interactive.revoke` carries canonical
+  `InteractiveRuntimeRevokeCommandV0` data and succeeds only with
+  `runtime.interactive.revoke.ack` carrying an exactly correlated canonical
+  `InteractiveRuntimeRevokedReceiptV0`.
+
+Every request and payload-bearing success dictionary contains exactly `kind`,
+signed integer `version = 1`, and one nonempty `XPC_TYPE_DATA` payload no
+larger than 4,096 bytes. The renewal acknowledgement contains exactly `kind`
+and signed integer `version = 1`. The payload bytes are closed canonical JSON
+and the typed value is validated again at the runtime boundary. The exact
+indexed fixture is `local-xpc-interactive-lease-transport-v0.1.json`.
+
+There is no handled application-error envelope. The Agent sender and menu
+receiver share one cross-family single-flight transaction for install, renew,
+and revoke. A rejected runtime operation, timeout, cancellation after send,
+malformed request or reply, premature message, cross-kind reply, concurrent
+command, or generation replacement terminates the exact authenticated XPC
+generation. The menu receiver finishes each runtime operation within four
+monotonic seconds; the Agent sender waits at most five. Generation loss invokes
+unacknowledged runtime invalidation locally, and the Agent treats every
+ambiguous completion as Control teardown rather than retrying or inferring
+success.
+
+This lease slice carries no input or media. `applyInteractiveInput`,
+`publishInteractiveMedia`, and surface-transition transport remain closed until
+their independently bounded binary/backpressure and runtime-fence mappings are
+frozen and implemented.
 
 The device display name is confirmed through authenticated local administration and stored by the Agent. It is NFC UTF-8, 1–64 bytes, has no surrounding whitespace, controls, illegal scalars, or directional formatting controls, and is never accepted as remote authority or copied from unauthenticated discovery metadata.
 

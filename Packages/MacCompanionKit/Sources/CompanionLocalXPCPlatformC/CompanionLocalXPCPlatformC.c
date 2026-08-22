@@ -54,6 +54,18 @@ static const char MCLocalXPCPairingDecisionResolveAcknowledgementKind[] =
     "command.pairing-decision.resolve.ack";
 static const char MCLocalXPCPairingDecisionResolveFailureKind[] =
     "command.pairing-decision.resolve.error";
+static const char MCLocalXPCInteractiveLeaseInstallKind[] =
+    "runtime.interactive.install";
+static const char MCLocalXPCInteractiveLeaseInstallAcknowledgementKind[] =
+    "runtime.interactive.install.ack";
+static const char MCLocalXPCInteractiveLeaseRenewKind[] =
+    "runtime.interactive.renew";
+static const char MCLocalXPCInteractiveLeaseRenewAcknowledgementKind[] =
+    "runtime.interactive.renew.ack";
+static const char MCLocalXPCInteractiveLeaseRevokeKind[] =
+    "runtime.interactive.revoke";
+static const char MCLocalXPCInteractiveLeaseRevokeAcknowledgementKind[] =
+    "runtime.interactive.revoke.ack";
 
 static const char * _Nullable MCLocalXPCMenuPairingCommandRequestKind(
     MCLocalXPCMenuPairingCommandKind kind
@@ -96,6 +108,41 @@ static const char * _Nullable MCLocalXPCMenuPairingCommandFailureKind(
         return MCLocalXPCPairingDecisionResolveFailureKind;
     }
     return NULL;
+}
+
+static const char * _Nullable MCLocalXPCInteractiveLeaseRequestKind(
+    MCLocalXPCInteractiveLeaseCommandKind kind
+) {
+    switch (kind) {
+    case MCLocalXPCInteractiveLeaseCommandInstall:
+        return MCLocalXPCInteractiveLeaseInstallKind;
+    case MCLocalXPCInteractiveLeaseCommandRenew:
+        return MCLocalXPCInteractiveLeaseRenewKind;
+    case MCLocalXPCInteractiveLeaseCommandRevoke:
+        return MCLocalXPCInteractiveLeaseRevokeKind;
+    }
+    return NULL;
+}
+
+static const char * _Nullable MCLocalXPCInteractiveLeaseAcknowledgementKind(
+    MCLocalXPCInteractiveLeaseCommandKind kind
+) {
+    switch (kind) {
+    case MCLocalXPCInteractiveLeaseCommandInstall:
+        return MCLocalXPCInteractiveLeaseInstallAcknowledgementKind;
+    case MCLocalXPCInteractiveLeaseCommandRenew:
+        return MCLocalXPCInteractiveLeaseRenewAcknowledgementKind;
+    case MCLocalXPCInteractiveLeaseCommandRevoke:
+        return MCLocalXPCInteractiveLeaseRevokeAcknowledgementKind;
+    }
+    return NULL;
+}
+
+static bool MCLocalXPCInteractiveLeaseReplyCarriesPayload(
+    MCLocalXPCInteractiveLeaseCommandKind kind
+) {
+    return kind == MCLocalXPCInteractiveLeaseCommandInstall
+        || kind == MCLocalXPCInteractiveLeaseCommandRevoke;
 }
 
 static void MCLocalXPCReleaseError(xpc_rich_error_t error) {
@@ -794,6 +841,47 @@ bool MCLocalXPCMessageGetExactMenuPairingCommand(
     return false;
 }
 
+bool MCLocalXPCMessageGetExactInteractiveLeaseCommand(
+    MCLocalXPCMessageRef message,
+    MCLocalXPCInteractiveLeaseCommandKind *kind_out,
+    const uint8_t **payload_out,
+    size_t *payload_length_out
+) {
+    const MCLocalXPCInteractiveLeaseCommandKind kinds[] = {
+        MCLocalXPCInteractiveLeaseCommandInstall,
+        MCLocalXPCInteractiveLeaseCommandRenew,
+        MCLocalXPCInteractiveLeaseCommandRevoke,
+    };
+    for (size_t index = 0;
+         index < sizeof(kinds) / sizeof(kinds[0]);
+         index += 1) {
+        const char *request_kind =
+            MCLocalXPCInteractiveLeaseRequestKind(kinds[index]);
+        const uint8_t *payload = NULL;
+        size_t payload_length = 0;
+        if (request_kind != NULL
+            && MCLocalXPCMessageGetExactData(
+                (xpc_object_t)message,
+                request_kind,
+                MCLocalXPCMaximumInteractiveLeasePayloadBytes,
+                &payload,
+                &payload_length
+            )) {
+            if (kind_out != NULL) {
+                *kind_out = kinds[index];
+            }
+            if (payload_out != NULL) {
+                *payload_out = payload;
+            }
+            if (payload_length_out != NULL) {
+                *payload_length_out = payload_length;
+            }
+            return true;
+        }
+    }
+    return false;
+}
+
 MCLocalXPCMessageRef MCLocalXPCMessageCreatePairingReviewPublish(
     const uint8_t *payload,
     size_t payload_length
@@ -1310,6 +1398,91 @@ bool MCLocalXPCExactMessageParserSelfTest(void) {
         xpc_dictionary_set_string(failure, "detail", "secret");
         valid = valid && !MCLocalXPCMessageIsExact(failure, failure_kind);
         xpc_release(failure);
+    }
+
+    const MCLocalXPCInteractiveLeaseCommandKind lease_kinds[] = {
+        MCLocalXPCInteractiveLeaseCommandInstall,
+        MCLocalXPCInteractiveLeaseCommandRenew,
+        MCLocalXPCInteractiveLeaseCommandRevoke,
+    };
+    for (size_t index = 0;
+         index < sizeof(lease_kinds) / sizeof(lease_kinds[0]);
+         index += 1) {
+        const MCLocalXPCInteractiveLeaseCommandKind expected_kind =
+            lease_kinds[index];
+        const char *request_kind =
+            MCLocalXPCInteractiveLeaseRequestKind(expected_kind);
+        const char *acknowledgement_kind =
+            MCLocalXPCInteractiveLeaseAcknowledgementKind(expected_kind);
+        valid = valid
+            && request_kind != NULL
+            && acknowledgement_kind != NULL;
+
+        xpc_object_t request = xpc_dictionary_create_empty();
+        xpc_dictionary_set_string(request, "kind", request_kind);
+        xpc_dictionary_set_int64(request, "version", 1);
+        xpc_dictionary_set_data(
+            request,
+            "payload",
+            menu_command_payload,
+            sizeof(menu_command_payload)
+        );
+        MCLocalXPCInteractiveLeaseCommandKind parsed_kind =
+            MCLocalXPCInteractiveLeaseCommandInstall;
+        const uint8_t *parsed_payload = NULL;
+        size_t parsed_length = 0;
+        valid = valid && MCLocalXPCMessageGetExactInteractiveLeaseCommand(
+            (MCLocalXPCMessageRef)request,
+            &parsed_kind,
+            &parsed_payload,
+            &parsed_length
+        );
+        valid = valid
+            && parsed_kind == expected_kind
+            && parsed_length == sizeof(menu_command_payload)
+            && memcmp(
+                parsed_payload,
+                menu_command_payload,
+                sizeof(menu_command_payload)
+            ) == 0;
+        xpc_dictionary_set_int64(request, "version", 2);
+        valid = valid
+            && !MCLocalXPCMessageGetExactInteractiveLeaseCommand(
+                (MCLocalXPCMessageRef)request,
+                NULL,
+                NULL,
+                NULL
+            );
+        xpc_release(request);
+
+        xpc_object_t acknowledgement = xpc_dictionary_create_empty();
+        xpc_dictionary_set_string(
+            acknowledgement,
+            "kind",
+            acknowledgement_kind
+        );
+        xpc_dictionary_set_int64(acknowledgement, "version", 1);
+        if (MCLocalXPCInteractiveLeaseReplyCarriesPayload(expected_kind)) {
+            xpc_dictionary_set_data(
+                acknowledgement,
+                "payload",
+                menu_command_payload,
+                sizeof(menu_command_payload)
+            );
+            valid = valid && MCLocalXPCMessageGetExactData(
+                acknowledgement,
+                acknowledgement_kind,
+                MCLocalXPCMaximumInteractiveLeasePayloadBytes,
+                NULL,
+                NULL
+            );
+        } else {
+            valid = valid && MCLocalXPCMessageIsExact(
+                acknowledgement,
+                acknowledgement_kind
+            );
+        }
+        xpc_release(acknowledgement);
     }
 
     const uint8_t presentation_payload[] = {0x7b, 0x7d};
@@ -2201,6 +2374,119 @@ MCLocalXPCResult MCLocalXPCSessionSendMenuPairingCommand(
                 return;
             }
             handler(NULL, 0, false, true);
+        }
+    );
+    xpc_release(request);
+    return MCLocalXPCResultOK;
+}
+
+static bool MCLocalXPCInteractiveLeaseRequestMatchesKind(
+    MCLocalXPCMessageRef request,
+    MCLocalXPCInteractiveLeaseCommandKind expected_kind
+) {
+    const char *request_kind =
+        MCLocalXPCInteractiveLeaseRequestKind(expected_kind);
+    return request_kind != NULL
+        && MCLocalXPCMessageGetExactData(
+            (xpc_object_t)request,
+            request_kind,
+            MCLocalXPCMaximumInteractiveLeasePayloadBytes,
+            NULL,
+            NULL
+        );
+}
+
+MCLocalXPCResult MCLocalXPCSessionReplyToInteractiveLeaseCommandSuccess(
+    MCLocalXPCSessionRef session,
+    MCLocalXPCMessageRef request,
+    MCLocalXPCInteractiveLeaseCommandKind kind,
+    const uint8_t *payload,
+    size_t payload_length
+) {
+    const char *acknowledgement_kind =
+        MCLocalXPCInteractiveLeaseAcknowledgementKind(kind);
+    if (acknowledgement_kind == NULL
+        || !MCLocalXPCInteractiveLeaseRequestMatchesKind(request, kind)) {
+        return MCLocalXPCResultConstructionFailed;
+    }
+    if (MCLocalXPCInteractiveLeaseReplyCarriesPayload(kind)) {
+        return MCLocalXPCSessionReplyData(
+            session,
+            request,
+            acknowledgement_kind,
+            payload,
+            payload_length,
+            MCLocalXPCMaximumInteractiveLeasePayloadBytes
+        );
+    }
+    if (payload != NULL || payload_length != 0) {
+        return MCLocalXPCResultConstructionFailed;
+    }
+    return MCLocalXPCSessionReplyExact(
+        session,
+        request,
+        acknowledgement_kind
+    );
+}
+
+MCLocalXPCResult MCLocalXPCSessionSendInteractiveLeaseCommand(
+    MCLocalXPCSessionRef session,
+    MCLocalXPCInteractiveLeaseCommandKind kind,
+    const uint8_t *payload,
+    size_t payload_length,
+    MCLocalXPCInteractiveLeaseReplyHandler handler
+) {
+    const char *request_kind =
+        MCLocalXPCInteractiveLeaseRequestKind(kind);
+    const char *acknowledgement_kind =
+        MCLocalXPCInteractiveLeaseAcknowledgementKind(kind);
+    if (request_kind == NULL
+        || acknowledgement_kind == NULL
+        || payload == NULL
+        || payload_length == 0
+        || payload_length > MCLocalXPCMaximumInteractiveLeasePayloadBytes) {
+        return MCLocalXPCResultConstructionFailed;
+    }
+
+    xpc_object_t request = xpc_dictionary_create_empty();
+    if (request == NULL) {
+        return MCLocalXPCResultConstructionFailed;
+    }
+    xpc_dictionary_set_string(request, "kind", request_kind);
+    xpc_dictionary_set_int64(request, "version", 1);
+    xpc_dictionary_set_data(request, "payload", payload, payload_length);
+    xpc_session_send_message_with_reply_async(
+        (xpc_session_t)session,
+        request,
+        ^(xpc_object_t reply, xpc_rich_error_t error) {
+            if (error != NULL) {
+                handler(NULL, 0, true);
+                return;
+            }
+            if (!MCLocalXPCInteractiveLeaseReplyCarriesPayload(kind)) {
+                handler(
+                    NULL,
+                    0,
+                    !MCLocalXPCMessageIsExact(
+                        reply,
+                        acknowledgement_kind
+                    )
+                );
+                return;
+            }
+            const uint8_t *reply_payload = NULL;
+            size_t reply_payload_length = 0;
+            if (MCLocalXPCMessageGetExactData(
+                    reply,
+                    acknowledgement_kind,
+                    MCLocalXPCMaximumInteractiveLeasePayloadBytes,
+                    &reply_payload,
+                    &reply_payload_length
+                )) {
+                handler(reply_payload, reply_payload_length, false);
+                return;
+            }
+            handler(NULL, 0, true);
         }
     );
     xpc_release(request);

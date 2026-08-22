@@ -1,0 +1,47 @@
+{
+  "profile": "Mac Companion local XPC Interactive lease transport v0.1",
+  "maximumPayloadBytes": 4096,
+  "maximumInFlightCommandsPerGeneration": 1,
+  "minimumGeneration": 1,
+  "receiverOperationTimeoutMilliseconds": 4000,
+  "senderReplyTimeoutMilliseconds": 5000,
+  "commands": [
+    {
+      "kind": "runtime.interactive.install",
+      "authorizationMethod": "installInteractiveLease",
+      "requestPayloadType": "InteractiveRuntimeInstallCommandV0",
+      "successKind": "runtime.interactive.install.ack",
+      "successPayloadType": "InteractiveRuntimeInstallReceiptV0",
+      "requestAndSuccessFields": ["kind:string", "version:signedInt64=1", "payload:data"]
+    },
+    {
+      "kind": "runtime.interactive.renew",
+      "authorizationMethod": "installInteractiveLease",
+      "requestPayloadType": "InteractiveRuntimeLeaseRenewalV0",
+      "successKind": "runtime.interactive.renew.ack",
+      "successPayloadType": null,
+      "requestFields": ["kind:string", "version:signedInt64=1", "payload:data"],
+      "successFields": ["kind:string", "version:signedInt64=1"]
+    },
+    {
+      "kind": "runtime.interactive.revoke",
+      "authorizationMethod": "revokeInteractiveLease",
+      "requestPayloadType": "InteractiveRuntimeRevokeCommandV0",
+      "successKind": "runtime.interactive.revoke.ack",
+      "successPayloadType": "InteractiveRuntimeRevokedReceiptV0",
+      "requestAndSuccessFields": ["kind:string", "version:signedInt64=1", "payload:data"]
+    }
+  ],
+  "rules": [
+    "same-team exact-role authentication and menu readiness are required before Interactive lease traffic",
+    "the Agent sender and menu receiver share exactly one cross-family command in flight per authenticated generation",
+    "request and payload-bearing success values are nonempty canonical JSON data no larger than 4096 bytes",
+    "install and revoke receipts are validated against the exact retained command before success",
+    "renewal success is the exact payload-free acknowledgement to its one retained request",
+    "the receiver revalidates current monotonic time and runtime authority inside the serialized runtime owner",
+    "the receiver completes within four monotonic seconds and the sender waits at most five",
+    "there is no handled application-error envelope; rejection, timeout, cancellation after send, malformed traffic, unknown fields, cross-kind replies, premature traffic, and concurrent admission terminate the generation",
+    "generation loss invokes menu-runtime authority invalidation and the Agent treats every ambiguous result as Control teardown",
+    "lease traffic contains no media, input, screen, focus, route, credential, private key, or arbitrary diagnostic text"
+  ]
+}

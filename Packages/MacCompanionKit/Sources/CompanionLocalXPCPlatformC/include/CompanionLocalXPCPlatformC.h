@@ -25,6 +25,11 @@ typedef enum : int32_t {
     MCLocalXPCMenuPairingCommandDismiss = 1,
     MCLocalXPCMenuPairingCommandResolveDecision = 2,
 } MCLocalXPCMenuPairingCommandKind;
+typedef enum : int32_t {
+    MCLocalXPCInteractiveLeaseCommandInstall = 0,
+    MCLocalXPCInteractiveLeaseCommandRenew = 1,
+    MCLocalXPCInteractiveLeaseCommandRevoke = 2,
+} MCLocalXPCInteractiveLeaseCommandKind;
 typedef struct MCLocalXPCListener *MCLocalXPCListenerRef;
 typedef struct MCLocalXPCSession *MCLocalXPCSessionRef;
 typedef struct MCLocalXPCMessage *MCLocalXPCMessageRef;
@@ -57,12 +62,18 @@ typedef void (^MCLocalXPCMenuPairingCommandReplyHandler)(
     bool command_failed,
     bool malformed_or_transport_error
 );
+typedef void (^MCLocalXPCInteractiveLeaseReplyHandler)(
+    const uint8_t * _Nullable payload,
+    size_t payload_length,
+    bool malformed_or_transport_error
+);
 
 enum {
     MCLocalXPCMaximumStatusPayloadBytes = 4096,
     MCLocalXPCMaximumBootstrapPayloadBytes = 4096,
     MCLocalXPCMaximumMenuPresentationPayloadBytes = 4096,
     MCLocalXPCMaximumMenuPairingCommandPayloadBytes = 4096,
+    MCLocalXPCMaximumInteractiveLeasePayloadBytes = 4096,
 };
 
 API_AVAILABLE(macos(26.0))
@@ -288,6 +299,32 @@ MCLocalXPCResult MCLocalXPCSessionSendMenuPairingCommand(
     const uint8_t *payload,
     size_t payload_length,
     MCLocalXPCMenuPairingCommandReplyHandler handler
+);
+
+API_AVAILABLE(macos(26.0))
+bool MCLocalXPCMessageGetExactInteractiveLeaseCommand(
+    MCLocalXPCMessageRef message,
+    MCLocalXPCInteractiveLeaseCommandKind * _Nullable kind_out,
+    const uint8_t * _Nullable * _Nullable payload_out,
+    size_t * _Nullable payload_length_out
+);
+
+API_AVAILABLE(macos(26.0))
+MCLocalXPCResult MCLocalXPCSessionReplyToInteractiveLeaseCommandSuccess(
+    MCLocalXPCSessionRef session,
+    MCLocalXPCMessageRef request,
+    MCLocalXPCInteractiveLeaseCommandKind kind,
+    const uint8_t * _Nullable payload,
+    size_t payload_length
+);
+
+API_AVAILABLE(macos(26.0))
+MCLocalXPCResult MCLocalXPCSessionSendInteractiveLeaseCommand(
+    MCLocalXPCSessionRef session,
+    MCLocalXPCInteractiveLeaseCommandKind kind,
+    const uint8_t *payload,
+    size_t payload_length,
+    MCLocalXPCInteractiveLeaseReplyHandler handler
 );
 
 /// Returns an owned exact request object. The caller releases it with
