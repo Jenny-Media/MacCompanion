@@ -1,0 +1,187 @@
+#if os(iOS)
+import CompanionClient
+import CompanionClientNetworkPlatform
+import CompanionWire
+import SwiftUI
+
+@available(iOS 17.0, *)
+private struct ClientApprovedActionDestinationV1: Identifiable {
+    let id: String
+    let descriptor: CapabilityDiscoveryDescriptorV1
+
+    init(_ descriptor: CapabilityDiscoveryDescriptorV1) {
+        id = descriptor.capabilityID
+        self.descriptor = descriptor
+    }
+}
+
+/// Release-shaped workspace shell over the value-driven Observe, Act, and
+/// independently authorized Control surfaces. Approved Action details are a
+/// selected-item sheet so they do not need a second competing navigation
+/// owner and never make Control the app's root flow.
+@available(iOS 17.0, *)
+public struct ClientPrimaryWorkspaceApplicationViewV1: View {
+    private let macName: String
+    @ObservedObject private var model: ClientPrimaryWorkspaceModelV0
+    private let interactiveRoles:
+        NetworkClientInteractiveRoleProductBindingV0
+    private let onCommandFailure:
+        @MainActor @Sendable (any Error) -> Void
+    @State private var selectedAction:
+        ClientApprovedActionDestinationV1?
+
+    public init(
+        macName: String,
+        model: ClientPrimaryWorkspaceModelV0,
+        interactiveRoles:
+            NetworkClientInteractiveRoleProductBindingV0,
+        onCommandFailure: @escaping @MainActor @Sendable
+            (any Error) -> Void = { _ in }
+    ) {
+        self.macName = macName
+        _model = ObservedObject(wrappedValue: model)
+        self.interactiveRoles = interactiveRoles
+        self.onCommandFailure = onCommandFailure
+    }
+
+    public var body: some View {
+        ClientPrimaryWorkspaceViewV0(
+            macName: macName,
+            model: model,
+            interactiveRoles: interactiveRoles,
+            onSelectAction: selectAction,
+            onCommandFailure: onCommandFailure
+        )
+        .sheet(item: $selectedAction) { destination in
+            NavigationStack {
+                ClientApprovedActionApplicationDetailV1(
+                    macName: macName,
+                    descriptor: destination.descriptor,
+                    model: model,
+                    onCommandFailure: onCommandFailure
+                )
+            }
+        }
+    }
+
+    private func selectAction(
+        _ descriptor: CapabilityDiscoveryDescriptorV1
+    ) {
+        guard (try? ClientCapabilityParameterDraftV1(
+            schema: CapabilitySchemaV1(
+                wireValue: descriptor.parameterSchema
+            )
+        )) != nil else {
+            onCommandFailure(ClientCapabilityParameterDraftErrorV1
+                .schemaViolation)
+            return
+        }
+        selectedAction = ClientApprovedActionDestinationV1(descriptor)
+    }
+}
+
+@available(iOS 17.0, *)
+private struct ClientApprovedActionApplicationDetailV1: View {
+    private let macName: String
+    private let descriptor: CapabilityDiscoveryDescriptorV1
+    @ObservedObject private var model: ClientPrimaryWorkspaceModelV0
+    private let onCommandFailure:
+        @MainActor @Sendable (any Error) -> Void
+    @State private var draft: ClientCapabilityParameterDraftV1?
+    @State private var explicitEffectReview = false
+    @Environment(\.dismiss) private var dismiss
+
+    init(
+        macName: String,
+        descriptor: CapabilityDiscoveryDescriptorV1,
+        model: ClientPrimaryWorkspaceModelV0,
+        onCommandFailure: @escaping @MainActor @Sendable
+            (any Error) -> Void
+    ) {
+        self.macName = macName
+        self.descriptor = descriptor
+        _model = ObservedObject(wrappedValue: model)
+        self.onCommandFailure = onCommandFailure
+        _draft = State(initialValue: try? ClientCapabilityParameterDraftV1(
+            schema: CapabilitySchemaV1(
+                wireValue: descriptor.parameterSchema
+            )
+        ))
+    }
+
+    var body: some View {
+        Group {
+            if let draft {
+                ClientApprovedActionDetailViewV1(
+                    macName: macName,
+                    descriptor: descriptor,
+                    draft: Binding(
+                        get: { draft },
+                        set: { self.draft = $0 }
+                    ),
+                    operationState: model.projection.operationState ?? .idle,
+                    explicitEffectReview: $explicitEffectReview,
+                    onInvoke: invoke,
+                    onCancel: cancel,
+                    onQuery: query
+                )
+            } else {
+                ContentUnavailableView(
+                    "Action unavailable",
+                    systemImage: "exclamationmark.triangle",
+                    description: Text(
+                        "The granted action schema could not be prepared."
+                    )
+                )
+            }
+        }
+        .toolbar {
+            ToolbarItem(placement: .cancellationAction) {
+                Button("Done") { dismiss() }
+            }
+        }
+        .onDisappear {
+            guard shouldFinishOperation else { return }
+            Task { try? await model.finishOperation() }
+        }
+    }
+
+    private func invoke(_ parameters: CanonicalJSONValue) {
+        perform {
+            _ = try await model.beginOperation(
+                capabilityID: descriptor.capabilityID,
+                parameters: parameters,
+                operationID: WireUUID(UUID())
+            )
+        }
+    }
+
+    private func cancel() {
+        perform { _ = try await model.cancelOperation() }
+    }
+
+    private func query() {
+        perform { _ = try await model.queryOperation() }
+    }
+
+    private func perform(
+        _ command: @escaping @MainActor () async throws -> Void
+    ) {
+        Task {
+            do { try await command() }
+            catch { onCommandFailure(error) }
+        }
+    }
+
+    private var shouldFinishOperation: Bool {
+        switch model.projection.operationState {
+        case .terminal, .remoteRejected:
+            true
+        case .idle, .awaitingInvokeReply, .awaitingUserPresence,
+             .awaitingApprovalReply, .observing, .awaitingStatusReply,
+             .awaitingCancelReply, .deliveryUnknown, .invalidated, nil:
+            false
+        }
+    }
+}
+#endif

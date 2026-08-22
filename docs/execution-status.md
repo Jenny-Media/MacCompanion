@@ -60,6 +60,18 @@ This is the living execution authority for the staged plan. A blocker applies on
 | Administrator capabilities | 6 | deferred | Each capability is independent | Separate demand, threat model, containment, and review per capability | Each item receives its own pass/no-go/deferred record |
 | Assisted operation | 7 | deferred | Untrusted-planner boundary documented | Earlier gates plus one validated assisted job and injection review | No model receives control authority implicitly |
 
+Latest permanent-iOS checkpoint, superseding the target-composition and
+signed-target-next-step wording in the Apple-target, Observe, Bounded Act,
+Adaptive Control, and route-classification rows: the
+[permanent iOS release composition](evidence/2026-08-22-permanent-ios-release-composition.md)
+now owns protected QR/SAS pairing, crash-recoverable first-route publication,
+configured no-relay reconnect, and the first-party Observe, Approved Actions,
+and independently authorized Remote Control workspace from the permanent
+target. It starts no configured connection before explicit route provenance
+and cannot infer authority from routing, reachability, or app lifecycle. The
+remaining proof is registered-identity signing and physical same-LAN pairing,
+followed by live Observe, `setAudioMuted`, and Interactive media/input evidence.
+
 Latest disabled-Agent durable-authority checkpoint, superseding the durable
 owner portion of the Process/local-IPC and Agent-lifecycle next steps: the
 [Agent bootstrap durable authority](evidence/2026-08-22-agent-bootstrap-durable-authority.md)

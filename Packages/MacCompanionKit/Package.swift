@@ -111,10 +111,13 @@ let package = Package(
         .target(
             name: "CompanionClientPlatform",
             dependencies: [
-                "CompanionClient", "CompanionClientNetworkPlatform",
+                "CompanionClient", "CompanionClientApp",
+                "CompanionClientNetworkPlatform",
+                "CompanionDiscovery",
                 "CompanionInteractiveClient",
                 "CompanionInteractiveShared", "CompanionInteractiveWire",
-                "CompanionSecurity",
+                "CompanionPresentation", "CompanionSecurity",
+                "CompanionWire",
             ],
             linkerSettings: [
                 .linkedFramework("AVFoundation", .when(platforms: [.iOS])),

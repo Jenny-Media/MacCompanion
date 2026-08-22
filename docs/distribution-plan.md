@@ -280,9 +280,13 @@ or clean-machine requirements.
 The [permanent iOS application target](evidence/2026-08-22-permanent-ios-application-target.md)
 now fixes `media.jenny.maccompanion.ios`, iOS/iPadOS 26.0, the exact permission
 declarations, and the indexed privacy resource in a generated release-shaped
-bundle. Its protected restart bootstrap is transport-inert and the build is
-unsigned; App ID registration, provisioning, signed device launch, TestFlight,
-and final privacy/submission inspection remain promotion gates.
+bundle. The [release application composition](evidence/2026-08-22-permanent-ios-release-composition.md)
+now binds protected QR/SAS pairing, crash-recoverable first-route provenance,
+configured no-relay reconnect, and the first-party Observe, Approved Actions,
+and separately authorized Remote Control workspace into that target. The build
+remains unsigned; App ID registration, provisioning, signed device launch,
+physical permission/network evidence, TestFlight, and final privacy/submission
+inspection remain promotion gates.
 
 ### Ready for external Mac alpha
 

@@ -95,6 +95,8 @@ targets:
     dependencies:
       - package: MacCompanionKit
         product: CompanionClientPlatform
+      - package: MacCompanionKit
+        product: CompanionClientUI
     settings:
       base:
         CODE_SIGN_IDENTITY: ""

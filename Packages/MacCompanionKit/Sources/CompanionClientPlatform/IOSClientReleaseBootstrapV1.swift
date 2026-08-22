@@ -17,6 +17,7 @@ public enum IOSClientReleaseBootstrapPhaseV1: Equatable, Sendable {
     case idle
     case preparing
     case unpaired
+    case pairedRouteConfigurationRequired(hostID: UUID)
     case paired(hostID: UUID)
     case unavailable(IOSClientReleaseBootstrapFailureV1)
     case closed
@@ -72,7 +73,8 @@ public actor IOSClientReleaseBootstrapV1 {
         switch snapshotValue.phase {
         case .idle, .unavailable:
             break
-        case .preparing, .unpaired, .paired, .closed:
+        case .preparing, .unpaired, .pairedRouteConfigurationRequired,
+             .paired, .closed:
             return snapshotValue
         }
 
@@ -115,13 +117,22 @@ public actor IOSClientReleaseBootstrapV1 {
         }
 
         if let record = records.first {
-            guard routeHostIDs == [record.hostID] else {
+            guard routeHostIDs.isEmpty || routeHostIDs == [record.hostID]
+            else {
                 return publish(.unavailable(.ambiguousSavedState))
             }
             do {
                 try await storage.custody.registerPublishedIdentity(record)
             } catch {
                 return publish(.unavailable(.keyUnavailable))
+            }
+            guard routeHostIDs == [record.hostID] else {
+                self.storage = storage
+                return publish(
+                    .pairedRouteConfigurationRequired(
+                        hostID: record.hostID
+                    )
+                )
             }
             do {
                 guard try await storage.routes.snapshot(
@@ -144,6 +155,17 @@ public actor IOSClientReleaseBootstrapV1 {
 
         self.storage = storage
         return publish(.unpaired)
+    }
+
+    package func preparedStorageForReleaseComposition()
+        -> IOSClientReleaseStorageV1?
+    {
+        switch snapshotValue.phase {
+        case .unpaired, .pairedRouteConfigurationRequired, .paired:
+            storage
+        case .idle, .preparing, .unavailable, .closed:
+            nil
+        }
     }
 
     public func finish() {

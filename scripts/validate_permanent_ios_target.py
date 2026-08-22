@@ -26,9 +26,33 @@ BOOTSTRAP_SOURCE = (
     / "CompanionClientPlatform"
     / "IOSClientReleaseBootstrapV1.swift"
 )
+APPLICATION_SOURCE = (
+    REPOSITORY
+    / "Packages"
+    / "MacCompanionKit"
+    / "Sources"
+    / "CompanionClientPlatform"
+    / "IOSClientReleaseApplicationV1.swift"
+)
+WORKSPACE_SOURCE = (
+    REPOSITORY
+    / "Packages"
+    / "MacCompanionKit"
+    / "Sources"
+    / "CompanionClientUI"
+    / "ClientPrimaryWorkspaceApplicationViewV1.swift"
+)
+ROUTE_VIEW_SOURCE = (
+    REPOSITORY
+    / "Packages"
+    / "MacCompanionKit"
+    / "Sources"
+    / "CompanionClientUI"
+    / "ClientRouteBootstrapApplicationViewV1.swift"
+)
 
 IOS_IDENTIFIER = "media.jenny.maccompanion.ios"
-IOS_PRODUCT = "CompanionClientPlatform"
+IOS_PRODUCTS = ["CompanionClientPlatform", "CompanionClientUI"]
 PRIVACY_MANIFEST = (
     "spec/privacy-manifest/v0/targets/ios-app/PrivacyInfo.xcprivacy"
 )
@@ -149,7 +173,7 @@ def require_exact_products(
     prefix: str,
     failures: list[str],
 ) -> None:
-    expected = [IOS_PRODUCT]
+    expected = IOS_PRODUCTS
     for label, actual in (
         (f"{prefix}Dependencies", dependencies),
         (f"{prefix}Frameworks", frameworks),
@@ -275,19 +299,26 @@ def validate_info_plist(data: bytes, failures: list[str]) -> None:
 
 def validate_app_source(content: str, failures: list[str]) -> None:
     imports = re.findall(r"^import (\S+)$", content, re.MULTILINE)
-    if imports != ["CompanionClientPlatform", "Foundation", "SwiftUI"]:
+    if imports != [
+        "CompanionClientPlatform",
+        "CompanionClientUI",
+        "Foundation",
+        "SwiftUI",
+    ]:
         failures.append(f"appSourceImports:{','.join(imports)}")
     required = (
         "@main",
         "struct MacCompanionIOSApplication: App",
-        "private let bootstrap = IOSClientReleaseBootstrapV1()",
-        "@State private var snapshot = ",
-        "IOSClientReleaseBootstrapSnapshotV1.idle",
-        ".task {",
-        "snapshot = await bootstrap.start()",
-        "case .unpaired:",
-        "case .paired:",
-        "case let .unavailable(reason):",
+        "@State private var application = IOSClientReleaseApplicationV1()",
+        ".task { await application.start() }",
+        ".sheet(item: $sheet)",
+        "ClientPairingScannerViewV0(",
+        "ClientPairingViewV0(",
+        "ClientRouteBootstrapApplicationViewV1(",
+        "ClientPrimaryWorkspaceApplicationViewV1(",
+        "case .routeSetupDeferred:",
+        "case .workspace:",
+        "await application.completeRouteSetup(choices)",
     )
     for needle in required:
         if content.count(needle) != 1:
@@ -302,6 +333,8 @@ def validate_app_source(content: str, failures: list[str]) -> None:
         "requestAccess",
         "openSettingsURLString",
         "hostID.uuidString",
+        "pairing.hostID",
+        "workspace.hostID",
     ):
         if forbidden in content:
             failures.append(f"appSourceUnexpectedAuthority:{forbidden}")
@@ -313,7 +346,9 @@ def validate_bootstrap_source(content: str, failures: list[str]) -> None:
         "public actor IOSClientReleaseBootstrapV1",
         "guard records.count <= 1",
         "guard records.allSatisfy({ $0.clientID == storage.clientID })",
-        "routeHostIDs == [record.hostID]",
+        "routeHostIDs.isEmpty || routeHostIDs == [record.hostID]",
+        "case pairedRouteConfigurationRequired(hostID: UUID)",
+        ".pairedRouteConfigurationRequired(",
         "try await storage.custody.registerPublishedIdentity(record)",
         "guard try await storage.routes.snapshot(",
         "guard routeHostIDs.isEmpty",
@@ -323,6 +358,7 @@ def validate_bootstrap_source(content: str, failures: list[str]) -> None:
         "values.isExcludedFromBackup = true",
         "? 0o700\n                : 0o600",
         "guard snapshotValue.phase != .closed else { return }",
+        "package func preparedStorageForReleaseComposition()",
     )
     for needle in required:
         if needle not in content:
@@ -341,17 +377,84 @@ def validate_bootstrap_source(content: str, failures: list[str]) -> None:
             failures.append(f"bootstrapUnexpectedAuthority:{forbidden}")
 
 
+def validate_application_source(content: str, failures: list[str]) -> None:
+    required = (
+        "@Observable",
+        "public final class IOSClientReleaseApplicationV1",
+        "NetworkClientPairingApplicationCompositionV0",
+        "ClientConfiguredRouteBootstrapAuthorityV1(",
+        "expectedRevision: nil",
+        "UIKitClientConfiguredRouteNetworkProductFactoryV1.make(",
+        "try await product.applicationOwner.start()",
+        "await product.interactiveRoles.close()",
+        "case let .pairedRouteConfigurationRequired(hostID):",
+        "phase: beginImmediately ? .routeSetup : .routeSetupDeferred",
+        "UInt16.random(in: 8_000 ... 12_000)",
+        "publish(phase: .idle)",
+    )
+    for needle in required:
+        if needle not in content:
+            failures.append(f"applicationCompositionMissing:{needle}")
+    for forbidden in (
+        "UserDefaults",
+        "URLSession",
+        "public let storage",
+        "public let custody",
+        "public let routes",
+        "hostID.uuidString",
+        "snapshot = .idle",
+    ):
+        if forbidden in content:
+            failures.append(
+                f"applicationCompositionUnexpectedAuthority:{forbidden}"
+            )
+
+
+def validate_workspace_source(content: str, failures: list[str]) -> None:
+    required = (
+        "public struct ClientPrimaryWorkspaceApplicationViewV1: View",
+        "ClientPrimaryWorkspaceViewV0(",
+        ".sheet(item: $selectedAction)",
+        "ClientApprovedActionDetailViewV1(",
+        "model.beginOperation(",
+        "model.cancelOperation()",
+        "model.queryOperation()",
+        "case .terminal, .remoteRejected:",
+    )
+    for needle in required:
+        if needle not in content:
+            failures.append(f"workspaceCompositionMissing:{needle}")
+    if "beginInteractiveControl" in content:
+        failures.append("workspaceCompositionDuplicatesControlAuthority")
+
+
+def validate_route_view_source(content: str, failures: list[str]) -> None:
+    required = (
+        "public struct ClientRouteBootstrapApplicationViewV1: View",
+        "@State private var selections:",
+        "ClientRouteBootstrapChoiceViewV1(",
+        "selections.removeValue(forKey: endpoint)",
+        "onComplete: onComplete",
+    )
+    for needle in required:
+        if needle not in content:
+            failures.append(f"routeViewCompositionMissing:{needle}")
+
+
 def validate_self_tests(
     project_spec: str,
     generated_project: str,
     info_data: bytes,
     app_source: str,
     bootstrap_source: str,
+    application_source: str,
+    workspace_source: str,
+    route_view_source: str,
     failures: list[str],
 ) -> None:
     mutated = project_spec.replace(
         "        product: CompanionClientPlatform",
-        "        product: CompanionClientUI",
+        "        product: CompanionClient",
         1,
     )
     injected: list[str] = []
@@ -387,10 +490,47 @@ def validate_self_tests(
     if "bootstrapMissing:values.isExcludedFromBackup = true" not in injected:
         failures.append("backupProtectionMutationAccepted")
 
+    injected = []
+    validate_application_source(
+        application_source.replace("expectedRevision: nil", "expectedRevision: 1", 1),
+        injected,
+    )
+    if not any(
+        item.startswith("applicationCompositionMissing:expectedRevision: nil")
+        for item in injected
+    ):
+        failures.append("unfencedRoutePublicationMutationAccepted")
+
+    injected = []
+    validate_workspace_source(
+        workspace_source.replace(".sheet(item: $selectedAction)", ".sheet(isPresented: .constant(true))", 1),
+        injected,
+    )
+    if not any(
+        item.startswith("workspaceCompositionMissing:.sheet(item:")
+        for item in injected
+    ):
+        failures.append("workspaceSheetMutationAccepted")
+
+    injected = []
+    validate_route_view_source(
+        route_view_source.replace(
+            "selections.removeValue(forKey: endpoint)",
+            "_ = endpoint",
+            1,
+        ),
+        injected,
+    )
+    if not any(
+        item.startswith("routeViewCompositionMissing:selections.removeValue")
+        for item in injected
+    ):
+        failures.append("routeDeselectionMutationAccepted")
+
     dependencies, _ = generated_products(
         generated_project, "MacCompanionIOS"
     )
-    if dependencies == [IOS_PRODUCT]:
+    if dependencies == IOS_PRODUCTS:
         product_ids = [
             identifier
             for identifier, body in pbx_objects(generated_project).items()
@@ -418,6 +558,9 @@ def main() -> int:
     generated_project = read_text(PROJECT_FILE, failures)
     app_source = read_text(APP_SOURCE, failures)
     bootstrap_source = read_text(BOOTSTRAP_SOURCE, failures)
+    application_source = read_text(APPLICATION_SOURCE, failures)
+    workspace_source = read_text(WORKSPACE_SOURCE, failures)
+    route_view_source = read_text(ROUTE_VIEW_SOURCE, failures)
     try:
         info_data = INFO_PLIST.read_bytes()
     except OSError as error:
@@ -429,12 +572,18 @@ def main() -> int:
     validate_info_plist(info_data, failures)
     validate_app_source(app_source, failures)
     validate_bootstrap_source(bootstrap_source, failures)
+    validate_application_source(application_source, failures)
+    validate_workspace_source(workspace_source, failures)
+    validate_route_view_source(route_view_source, failures)
     validate_self_tests(
         project_spec,
         generated_project,
         info_data,
         app_source,
         bootstrap_source,
+        application_source,
+        workspace_source,
+        route_view_source,
         failures,
     )
     if failures:
@@ -443,8 +592,8 @@ def main() -> int:
         return 1
     print(
         "Validated permanent iOS identity, privacy and permission declarations, "
-        "narrow package authority, protected restart bootstrap, and generated "
-        "target binding."
+        "narrow package authority, recoverable pairing/route composition, "
+        "Observe/Act/Control workspace binding, and generated target binding."
     )
     return 0
 

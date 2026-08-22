@@ -19,6 +19,7 @@
 		BC48C8D41E65C3F53831C0BA /* MacCompanionApplication.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9224B6E6FD7914BF9ACCABD3 /* MacCompanionApplication.swift */; };
 		CC7F99B97D2306D662D55CDB /* CompanionAgentPlatform in Frameworks */ = {isa = PBXBuildFile; productRef = 69A6FD09175941ACB01C2C89 /* CompanionAgentPlatform */; };
 		D0489C58E30BC9BD3F6E39AC /* MacCompanionLoginRoleComposition.swift in Sources */ = {isa = PBXBuildFile; fileRef = 177DD5F7DF123EE9E1BD7675 /* MacCompanionLoginRoleComposition.swift */; };
+		D0C1317DF3DEBBB65DFDDDFE /* CompanionClientUI in Frameworks */ = {isa = PBXBuildFile; productRef = E06A888AEEA953F1E208D53B /* CompanionClientUI */; };
 		D8290859ACAA145A04CA0ED1 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = A4F604F15E0382A43D678F69 /* PrivacyInfo.xcprivacy */; };
 		E66B259D61CFAFDFD8A71F09 /* MacCompanionAgentMain.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6D64FA7490F520B548282CD7 /* MacCompanionAgentMain.swift */; };
 		ED3708C188DC07BBB95D0466 /* CompanionAgent in Frameworks */ = {isa = PBXBuildFile; productRef = 384AB5F79EBFE92182F4928C /* CompanionAgent */; };
@@ -93,6 +94,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				9F43847B9D5B96A777822ADF /* CompanionClientPlatform in Frameworks */,
+				D0C1317DF3DEBBB65DFDDDFE /* CompanionClientUI in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -266,6 +268,7 @@
 			name = MacCompanionIOS;
 			packageProductDependencies = (
 				4AF885F65654DFE0BC148A93 /* CompanionClientPlatform */,
+				E06A888AEEA953F1E208D53B /* CompanionClientUI */,
 			);
 			productName = MacCompanionIOS;
 			productReference = 943C9B58FF652CF6598652AE /* MacCompanionIOS.app */;
@@ -734,6 +737,10 @@
 		D80FDE8AEECB694B58AE4155 /* CompanionLocalXPCPlatform */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = CompanionLocalXPCPlatform;
+		};
+		E06A888AEEA953F1E208D53B /* CompanionClientUI */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = CompanionClientUI;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

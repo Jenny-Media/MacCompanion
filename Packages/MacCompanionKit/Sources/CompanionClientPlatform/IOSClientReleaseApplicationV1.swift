@@ -1,0 +1,518 @@
+#if os(iOS)
+import CompanionClient
+import CompanionClientApp
+import CompanionClientNetworkPlatform
+import CompanionDiscovery
+import CompanionPresentation
+import CompanionWire
+import Dispatch
+import Foundation
+import Observation
+
+public enum IOSClientReleaseApplicationPhaseV1:
+    String, Equatable, Sendable
+{
+    case idle
+    case preparing
+    case pairing
+    case routeSetup
+    case routeSetupDeferred
+    case connecting
+    case workspace
+    case unavailable
+    case closed
+}
+
+public enum IOSClientReleaseApplicationFailureV1:
+    String, Equatable, Sendable
+{
+    case protectedStorageUnavailable
+    case invalidInstallationIdentity
+    case ambiguousSavedState
+    case protectedKeyUnavailable
+    case routeConfigurationUnavailable
+    case pairingCompositionUnavailable
+    case networkCompositionUnavailable
+}
+
+@available(iOS 17.0, *)
+@MainActor
+public struct IOSClientReleaseWorkspaceV1 {
+    public let hostID: UUID
+    public let macName: String
+    public let primaryState: NetworkClientPrimaryApplicationStateV0
+    public let interactiveRoles:
+        NetworkClientInteractiveRoleProductBindingV0
+
+    package init(
+        hostID: UUID,
+        macName: String,
+        primaryState: NetworkClientPrimaryApplicationStateV0,
+        interactiveRoles:
+            NetworkClientInteractiveRoleProductBindingV0
+    ) {
+        self.hostID = hostID
+        self.macName = macName
+        self.primaryState = primaryState
+        self.interactiveRoles = interactiveRoles
+    }
+}
+
+@available(iOS 17.0, *)
+@MainActor
+public struct IOSClientReleaseApplicationSnapshotV1 {
+    public static let idle = IOSClientReleaseApplicationSnapshotV1(
+        revision: 0,
+        phase: .idle,
+        pairing: nil,
+        routePlan: nil,
+        workspace: nil,
+        failure: nil
+    )
+
+    public let revision: UInt64
+    public let phase: IOSClientReleaseApplicationPhaseV1
+    public let pairing: PairingClientPresentation?
+    public let routePlan: ClientConfiguredRouteBootstrapPlanV1?
+    public let workspace: IOSClientReleaseWorkspaceV1?
+    public let failure: IOSClientReleaseApplicationFailureV1?
+
+    package init(
+        revision: UInt64,
+        phase: IOSClientReleaseApplicationPhaseV1,
+        pairing: PairingClientPresentation?,
+        routePlan: ClientConfiguredRouteBootstrapPlanV1?,
+        workspace: IOSClientReleaseWorkspaceV1?,
+        failure: IOSClientReleaseApplicationFailureV1?
+    ) {
+        self.revision = revision
+        self.phase = phase
+        self.pairing = pairing
+        self.routePlan = routePlan
+        self.workspace = workspace
+        self.failure = failure
+    }
+}
+
+/// One release-shaped iOS application owner. It is the only target-facing
+/// composition surface for protected bootstrap, verified pairing, first-route
+/// publication, configured reconnect, Observe, Act, and optional Control.
+/// Pairing never starts Control; route provenance never grants authority; and
+/// a partially completed pairing resumes route setup without dialing.
+@available(iOS 17.0, *)
+@MainActor
+@Observable
+public final class IOSClientReleaseApplicationV1 {
+    public private(set) var snapshot =
+        IOSClientReleaseApplicationSnapshotV1.idle
+
+    private var bootstrap: IOSClientReleaseBootstrapV1?
+    private var storage: IOSClientReleaseStorageV1?
+    private var pairingOwner: ClientPairingApplicationOwnerV0?
+    private var routePlan: ClientConfiguredRouteBootstrapPlanV1?
+    private var networkProduct: UIKitClientConfiguredRouteNetworkProductV1?
+    private var transitionInProgress = false
+
+    public init() {}
+
+    public func start() async {
+        guard !transitionInProgress else { return }
+        switch snapshot.phase {
+        case .idle, .unavailable:
+            break
+        case .preparing, .pairing, .routeSetup, .routeSetupDeferred,
+             .connecting, .workspace, .closed:
+            return
+        }
+        transitionInProgress = true
+        publish(phase: .preparing)
+        defer { transitionInProgress = false }
+
+        let bootstrap = IOSClientReleaseBootstrapV1()
+        self.bootstrap = bootstrap
+        let bootstrapSnapshot = await bootstrap.start()
+        guard let storage = await bootstrap
+            .preparedStorageForReleaseComposition() else {
+            publish(
+                phase: .unavailable,
+                failure: Self.failure(for: bootstrapSnapshot.phase)
+            )
+            return
+        }
+        self.storage = storage
+
+        switch bootstrapSnapshot.phase {
+        case .unpaired:
+            preparePairing(storage: storage)
+        case let .pairedRouteConfigurationRequired(hostID):
+            await prepareRouteSetup(
+                expectedHostID: hostID,
+                storage: storage,
+                beginImmediately: false
+            )
+        case let .paired(hostID):
+            await prepareWorkspace(
+                expectedHostID: hostID,
+                storage: storage
+            )
+        case .idle, .preparing, .unavailable, .closed:
+            publish(
+                phase: .unavailable,
+                failure: Self.failure(for: bootstrapSnapshot.phase)
+            )
+        }
+    }
+
+    public func receivePairingScan(_ value: String) async {
+        guard snapshot.phase == .pairing, let pairingOwner else { return }
+        do {
+            try await pairingOwner.receiveScan(value)
+        } catch {
+            await refreshPairingPresentation(from: pairingOwner)
+        }
+    }
+
+    public func acceptPairingPreview() async {
+        guard snapshot.phase == .pairing, let pairingOwner else { return }
+        do {
+            try await pairingOwner.acceptPreview()
+        } catch {
+            await refreshPairingPresentation(from: pairingOwner)
+        }
+    }
+
+    public func cancelPairing() async {
+        guard snapshot.phase == .pairing, let pairingOwner else { return }
+        await pairingOwner.cancel()
+        await refreshPairingPresentation(from: pairingOwner)
+    }
+
+    public func continueAfterPairing() async {
+        guard snapshot.phase == .pairing, !transitionInProgress,
+              let storage else { return }
+        transitionInProgress = true
+        defer { transitionInProgress = false }
+        await prepareRouteSetup(
+            expectedHostID: nil,
+            storage: storage,
+            beginImmediately: true
+        )
+    }
+
+    public func deferRouteSetup() {
+        guard snapshot.phase == .routeSetup, routePlan != nil else { return }
+        publish(phase: .routeSetupDeferred, routePlan: routePlan)
+    }
+
+    public func resumeRouteSetup() {
+        guard snapshot.phase == .routeSetupDeferred,
+              routePlan != nil else { return }
+        publish(phase: .routeSetup, routePlan: routePlan)
+    }
+
+    public func completeRouteSetup(
+        _ choices: [
+            EndpointCandidate: ClientConfiguredRouteProvenanceV1
+        ]
+    ) async {
+        guard snapshot.phase == .routeSetup, !transitionInProgress,
+              let routePlan, let storage else { return }
+        transitionInProgress = true
+        publish(phase: .connecting, routePlan: routePlan)
+        defer { transitionInProgress = false }
+        await publishRouteSetup(
+            choices,
+            routePlan: routePlan,
+            storage: storage
+        )
+    }
+
+    private func publishRouteSetup(
+        _ choices: [
+            EndpointCandidate: ClientConfiguredRouteProvenanceV1
+        ],
+        routePlan: ClientConfiguredRouteBootstrapPlanV1,
+        storage: IOSClientReleaseStorageV1
+    ) async {
+        do {
+            let authority = ClientConfiguredRouteBootstrapAuthorityV1(
+                plan: routePlan,
+                routeID: Self.makeRouteID,
+                publish: { value in
+                    _ = try await storage.routes.replaceAtomically(
+                        value,
+                        expectedRevision: nil
+                    )
+                }
+            )
+            _ = try await authority.complete(explicitChoices: choices)
+            await prepareWorkspace(
+                expectedHostID: routePlan.hostID,
+                storage: storage
+            )
+        } catch {
+            publish(
+                phase: .routeSetup,
+                routePlan: routePlan,
+                failure: .routeConfigurationUnavailable
+            )
+        }
+    }
+
+    public func retry() async {
+        guard snapshot.phase == .unavailable else { return }
+        await retireOwnedProducts()
+        publish(phase: .idle)
+        await start()
+    }
+
+    public func finish() async {
+        guard snapshot.phase != .closed else { return }
+        transitionInProgress = true
+        await retireOwnedProducts()
+        await bootstrap?.finish()
+        bootstrap = nil
+        storage = nil
+        routePlan = nil
+        transitionInProgress = false
+        publish(phase: .closed)
+    }
+
+    private func preparePairing(storage: IOSClientReleaseStorageV1) {
+        do {
+            let owner = try NetworkClientPairingApplicationCompositionV0
+                .makeOwner(
+                    clientID: storage.clientID,
+                    custody: storage.custody,
+                    persistence: storage.pairedHosts,
+                    verificationQueue: DispatchQueue(
+                        label: "media.jenny.maccompanion.ios.pairing.verify"
+                    ),
+                    connectionQueue: DispatchQueue(
+                        label: "media.jenny.maccompanion.ios.pairing.connection"
+                    ),
+                    stateChanged: { [weak self] presentation in
+                        await MainActor.run {
+                            self?.pairingDidChange(presentation)
+                        }
+                    }
+                )
+            pairingOwner = owner
+            publish(
+                phase: .pairing,
+                pairing: PairingClientPresentation()
+            )
+        } catch {
+            publish(
+                phase: .unavailable,
+                failure: .pairingCompositionUnavailable
+            )
+        }
+    }
+
+    private func pairingDidChange(
+        _ presentation: PairingClientPresentation
+    ) {
+        guard snapshot.phase == .pairing else { return }
+        publish(phase: .pairing, pairing: presentation)
+    }
+
+    private func refreshPairingPresentation(
+        from owner: ClientPairingApplicationOwnerV0
+    ) async {
+        pairingDidChange(await owner.snapshot())
+    }
+
+    private func prepareRouteSetup(
+        expectedHostID: UUID?,
+        storage: IOSClientReleaseStorageV1,
+        beginImmediately: Bool
+    ) async {
+        let records: [ClientDurablePairedHostV0]
+        do {
+            records = try await storage.pairedHosts.allRecords()
+        } catch {
+            publish(
+                phase: .unavailable,
+                failure: .protectedStorageUnavailable
+            )
+            return
+        }
+        guard records.count == 1, let record = records.first,
+              record.clientID == storage.clientID,
+              expectedHostID.map({ $0 == record.hostID }) ?? true else {
+            publish(
+                phase: .unavailable,
+                failure: .ambiguousSavedState
+            )
+            return
+        }
+        let plan = ClientConfiguredRouteBootstrapPlanV1(
+            pairedHost: record
+        )
+        routePlan = plan
+        pairingOwner = nil
+        if plan.endpointsRequiringExplicitChoice.isEmpty {
+            publish(phase: .connecting, routePlan: plan)
+            await publishRouteSetup(
+                [:],
+                routePlan: plan,
+                storage: storage
+            )
+        } else {
+            publish(
+                phase: beginImmediately ? .routeSetup : .routeSetupDeferred,
+                routePlan: plan
+            )
+        }
+    }
+
+    private func prepareWorkspace(
+        expectedHostID: UUID,
+        storage: IOSClientReleaseStorageV1
+    ) async {
+        guard !transitionInProgress || snapshot.phase == .connecting
+                || snapshot.phase == .preparing else { return }
+        publish(phase: .connecting)
+        do {
+            let runtime = NetworkClientReconnectRuntimeV1(
+                custody: storage.custody,
+                clock: Self.clock,
+                verificationQueue: DispatchQueue(
+                    label: "media.jenny.maccompanion.ios.primary.verify"
+                ),
+                connectionQueue: DispatchQueue(
+                    label: "media.jenny.maccompanion.ios.primary.connection"
+                ),
+                monotonicNow: Self.monotonicNow,
+                jitterBasisPoints: {
+                    UInt16.random(in: 8_000 ... 12_000)
+                }
+            )
+            let product = try await
+                UIKitClientConfiguredRouteNetworkProductFactoryV1.make(
+                    hostID: expectedHostID,
+                    pairedHosts: storage.pairedHosts,
+                    routes: storage.routes,
+                    runtime: runtime,
+                    failure: { [weak self] _ in
+                        self?.networkDidFail()
+                    }
+                )
+            do {
+                try await product.applicationOwner.start()
+            } catch {
+                await product.interactiveRoles.close()
+                await product.lifecycle.close()
+                throw error
+            }
+            networkProduct = product
+            routePlan = nil
+            publish(
+                phase: .workspace,
+                workspace: IOSClientReleaseWorkspaceV1(
+                    hostID: expectedHostID,
+                    macName: "Mac",
+                    primaryState: product.primaryState,
+                    interactiveRoles: product.interactiveRoles
+                )
+            )
+        } catch {
+            publish(
+                phase: .unavailable,
+                failure: .networkCompositionUnavailable
+            )
+        }
+    }
+
+    private func networkDidFail() {
+        guard snapshot.phase == .workspace || snapshot.phase == .connecting
+        else { return }
+        let product = networkProduct
+        networkProduct = nil
+        publish(
+            phase: .unavailable,
+            failure: .networkCompositionUnavailable
+        )
+        Task {
+            await product?.interactiveRoles.close()
+            await product?.lifecycle.close()
+        }
+    }
+
+    private func retireOwnedProducts() async {
+        if let pairingOwner { await pairingOwner.cancel() }
+        pairingOwner = nil
+        if let networkProduct {
+            await networkProduct.applicationOwner.stop()
+            await networkProduct.interactiveRoles.close()
+        }
+        networkProduct = nil
+    }
+
+    private func publish(
+        phase: IOSClientReleaseApplicationPhaseV1,
+        pairing: PairingClientPresentation? = nil,
+        routePlan: ClientConfiguredRouteBootstrapPlanV1? = nil,
+        workspace: IOSClientReleaseWorkspaceV1? = nil,
+        failure: IOSClientReleaseApplicationFailureV1? = nil
+    ) {
+        snapshot = IOSClientReleaseApplicationSnapshotV1(
+            revision: snapshot.revision + 1,
+            phase: phase,
+            pairing: pairing,
+            routePlan: routePlan,
+            workspace: workspace,
+            failure: failure
+        )
+    }
+
+    private static func failure(
+        for phase: IOSClientReleaseBootstrapPhaseV1
+    ) -> IOSClientReleaseApplicationFailureV1 {
+        guard case let .unavailable(value) = phase else {
+            return .protectedStorageUnavailable
+        }
+        return switch value {
+        case .storageUnavailable:
+            .protectedStorageUnavailable
+        case .invalidInstallationIdentity:
+            .invalidInstallationIdentity
+        case .ambiguousSavedState:
+            .ambiguousSavedState
+        case .keyUnavailable:
+            .protectedKeyUnavailable
+        case .routeConfigurationMissing:
+            .routeConfigurationUnavailable
+        }
+    }
+
+    nonisolated private static func makeRouteID(
+        _ endpoint: EndpointCandidate
+    ) throws -> WireBytes16 {
+        _ = endpoint
+        var identifier = UUID().uuid
+        return try withUnsafeBytes(of: &identifier) {
+            try WireBytes16(Data($0))
+        }
+    }
+
+    nonisolated private static func clock()
+        -> NetworkClientClockSnapshotV0
+    {
+        NetworkClientClockSnapshotV0(
+            wallNowUnixMilliseconds: max(
+                0,
+                Int64(Date().timeIntervalSince1970 * 1_000)
+            ),
+            monotonicNowMilliseconds:
+                DispatchTime.now().uptimeNanoseconds / 1_000_000
+        )
+    }
+
+    nonisolated private static func monotonicNow() -> Int64 {
+        let value = DispatchTime.now().uptimeNanoseconds / 1_000_000
+        return value <= UInt64(Int64.max) ? Int64(value) : -1
+    }
+}
+#endif
