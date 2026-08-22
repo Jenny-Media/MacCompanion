@@ -83,6 +83,50 @@ class PlannedCodeSignVerification:
         }
 
 
+@dataclass(frozen=True)
+class PlannedCodeSignArchitectureInspection:
+    artifact_id: str
+    source_path: str
+    object_path: str
+    owned_source_path: Path
+    owned_subject_path: Path
+    cpu_type: int
+    cpu_subtype: int
+    certificate_prefix: Path
+    identity_invocation: FixedToolInvocation
+    entitlements_invocation: FixedToolInvocation
+
+    def public_record(self) -> dict[str, Any]:
+        return {
+            "artifactID": self.artifact_id,
+            "sourcePath": self.source_path,
+            "objectPath": self.object_path,
+            "ownedSourcePath": str(self.owned_source_path),
+            "ownedSubjectPath": str(self.owned_subject_path),
+            "architectureSelector": {
+                "cpuType": self.cpu_type,
+                "cpuSubtype": self.cpu_subtype,
+            },
+            "certificatePrefix": str(self.certificate_prefix),
+            "identityInvocation": {
+                "invocationID": self.identity_invocation.invocation_id,
+                "tool": self.identity_invocation.tool.public_record(),
+                "argv": [
+                    self.identity_invocation.tool.path,
+                    *self.identity_invocation.arguments,
+                ],
+            },
+            "entitlementsInvocation": {
+                "invocationID": self.entitlements_invocation.invocation_id,
+                "tool": self.entitlements_invocation.tool.public_record(),
+                "argv": [
+                    self.entitlements_invocation.tool.path,
+                    *self.entitlements_invocation.arguments,
+                ],
+            },
+        }
+
+
 def _descriptor_identity(
     metadata: os.stat_result,
 ) -> tuple[int, int, int, int, int, int]:
@@ -1040,5 +1084,214 @@ def derive_codesign_verification_plans(
     }:
         raise PlatformSigningSubjectError(
             "codesign verification plan does not cover every reconstructed artifact"
+        )
+    return plans
+
+
+def derive_codesign_architecture_inspection_plans(
+    *,
+    graph: dict[str, Any],
+    reconstructed: list[ReconstructedSigningSubject],
+    codesign_tool: FixedToolIdentity,
+) -> list[PlannedCodeSignArchitectureInspection]:
+    if codesign_tool.tool_id != "apple.codesign" or codesign_tool.path != "/usr/bin/codesign":
+        raise PlatformSigningSubjectError(
+            "codesign inspection requires the pinned absolute Apple tool"
+        )
+    reconstructed_by_id = {item.artifact_id: item for item in reconstructed}
+    if len(reconstructed_by_id) != len(reconstructed):
+        raise PlatformSigningSubjectError(
+            "reconstructed signing subjects contain duplicate artifacts"
+        )
+    graph_artifacts = graph.get("artifacts")
+    if not isinstance(graph_artifacts, list):
+        raise PlatformSigningSubjectError(
+            "signed-code graph artifact set is unavailable"
+        )
+    plans: list[PlannedCodeSignArchitectureInspection] = []
+    for artifact_index, graph_artifact in enumerate(graph_artifacts):
+        if not isinstance(graph_artifact, dict):
+            raise PlatformSigningSubjectError(
+                "signed-code graph artifact is not an object"
+            )
+        binding = graph_artifact.get("artifact")
+        artifact_id = binding.get("id") if isinstance(binding, dict) else None
+        subject = reconstructed_by_id.get(artifact_id)
+        objects = graph_artifact.get("machOObjects")
+        graph_plan = graph_artifact.get("verificationPlan")
+        if subject is None or not isinstance(objects, list) or not isinstance(graph_plan, list):
+            raise PlatformSigningSubjectError(
+                "signed-code graph cannot be bound to inspection subjects"
+            )
+        selected = [
+            item for item in objects
+            if isinstance(item, dict) and item.get("inDistributionSubject") is True
+        ]
+        if len(selected) != sum(
+            1
+            for item in objects
+            if isinstance(item, dict) and item.get("inDistributionSubject") is True
+        ) or any(not isinstance(item, dict) for item in objects):
+            raise PlatformSigningSubjectError(
+                "signed-code graph Mach-O object is not an object"
+            )
+        selected.sort(key=lambda item: (-item.get("path", "").count("/"), item.get("path", "")))
+        expected_steps = [
+            step
+            for step in graph_plan
+            if isinstance(step, dict)
+            and step.get("action") in {"reportIdentityAndRequirements", "reportEntitlements"}
+        ]
+        if len(expected_steps) != sum(
+            1
+            for step in graph_plan
+            if isinstance(step, dict)
+            and step.get("action") in {"reportIdentityAndRequirements", "reportEntitlements"}
+        ):
+            raise PlatformSigningSubjectError(
+                "graph codesign inspection step is not an object"
+            )
+        derived_steps: list[dict[str, Any]] = []
+        for object_index, item in enumerate(selected):
+            architectures = item.get("machO", {}).get("architectures")
+            if not isinstance(architectures, list) or not architectures:
+                raise PlatformSigningSubjectError(
+                    "graph codesign inspection architectures are unavailable"
+                )
+            try:
+                source_path = safe_relative_path(
+                    item["path"], "graph Mach-O object path"
+                )
+                object_path = safe_relative_path(
+                    item.get("bundleMainFor") or source_path,
+                    "graph codesign inspection subject",
+                )
+            except (ArtifactSBOMError, KeyError) as error:
+                raise PlatformSigningSubjectError(str(error)) from error
+            if not source_path.startswith(subject.subject_root + "/"):
+                raise PlatformSigningSubjectError(
+                    "graph Mach-O object is outside its distribution subject"
+                )
+            if (
+                object_path != subject.subject_root
+                and not object_path.startswith(subject.subject_root + "/")
+            ):
+                raise PlatformSigningSubjectError(
+                    "graph codesign inspection subject is outside its distribution subject"
+                )
+            owned_source_path = subject.artifact_root / source_path
+            owned_subject_path = subject.artifact_root / object_path
+            try:
+                resolved_root = subject.artifact_root.resolve(strict=True)
+                resolved_source = owned_source_path.resolve(strict=True)
+                resolved_subject = owned_subject_path.resolve(strict=True)
+            except OSError as error:
+                raise PlatformSigningSubjectError(
+                    "graph codesign inspection path is unavailable"
+                ) from error
+            if (
+                resolved_root not in resolved_source.parents
+                or (resolved_subject != resolved_root and resolved_root not in resolved_subject.parents)
+                or owned_source_path.is_symlink()
+                or owned_subject_path.is_symlink()
+                or not owned_source_path.is_file()
+                or not (owned_subject_path.is_file() or owned_subject_path.is_dir())
+            ):
+                raise PlatformSigningSubjectError(
+                    "graph codesign inspection path is unsafe"
+                )
+            for architecture_index, architecture in enumerate(architectures):
+                if not isinstance(architecture, dict):
+                    raise PlatformSigningSubjectError(
+                        "graph codesign inspection architecture is not an object"
+                    )
+                cpu_type = architecture.get("cpuType")
+                cpu_subtype = architecture.get("cpuSubtype")
+                if (
+                    not isinstance(cpu_type, int)
+                    or isinstance(cpu_type, bool)
+                    or not isinstance(cpu_subtype, int)
+                    or isinstance(cpu_subtype, bool)
+                ):
+                    raise PlatformSigningSubjectError(
+                        "graph codesign inspection CPU tuple is invalid"
+                    )
+                selector_record = {
+                    "cpuType": cpu_type,
+                    "cpuSubtype": cpu_subtype,
+                }
+                for action in ("reportIdentityAndRequirements", "reportEntitlements"):
+                    derived_steps.append({
+                        "toolID": "apple.codesign",
+                        "action": action,
+                        "artifactID": artifact_id,
+                        "objectPath": object_path,
+                        "architectureSelector": selector_record,
+                        "status": "notRun",
+                    })
+                stem = (
+                    f"codesign-inspect-{artifact_index + 1:02d}-"
+                    f"{object_index + 1:04d}-{architecture_index + 1:02d}"
+                )
+                certificate_prefix = subject.artifact_root.parent.parent / f"{stem}.certificate-"
+                selector = f"{cpu_type},{cpu_subtype}"
+                identity_invocation = FixedToolInvocation(
+                    invocation_id=f"{stem}-identity",
+                    tool=codesign_tool,
+                    arguments=(
+                        "--display",
+                        "--verbose=4",
+                        "--requirements",
+                        "-",
+                        "--extract-certificates",
+                        str(certificate_prefix),
+                        "--architecture",
+                        selector,
+                        str(owned_subject_path),
+                    ),
+                    timeout_seconds=120,
+                    stdout_required=True,
+                    stderr_required=True,
+                )
+                entitlements_invocation = FixedToolInvocation(
+                    invocation_id=f"{stem}-entitlements",
+                    tool=codesign_tool,
+                    arguments=(
+                        "--display",
+                        "--entitlements",
+                        "-",
+                        "--xml",
+                        "--architecture",
+                        selector,
+                        str(owned_subject_path),
+                    ),
+                    timeout_seconds=120,
+                    stderr_required=True,
+                )
+                plans.append(
+                    PlannedCodeSignArchitectureInspection(
+                        artifact_id=artifact_id,
+                        source_path=source_path,
+                        object_path=object_path,
+                        owned_source_path=owned_source_path,
+                        owned_subject_path=owned_subject_path,
+                        cpu_type=cpu_type,
+                        cpu_subtype=cpu_subtype,
+                        certificate_prefix=certificate_prefix,
+                        identity_invocation=identity_invocation,
+                        entitlements_invocation=entitlements_invocation,
+                    )
+                )
+                if len(plans) > MAX_CODESIGN_PLANS:
+                    raise PlatformSigningSubjectError(
+                        "codesign inspection plan exceeds the profile"
+                    )
+        if derived_steps != expected_steps:
+            raise PlatformSigningSubjectError(
+                "derived codesign inspection order differs from the signed-code graph"
+            )
+    if set(reconstructed_by_id) != {item.artifact_id for item in plans}:
+        raise PlatformSigningSubjectError(
+            "codesign inspection plan does not cover every reconstructed artifact"
         )
     return plans

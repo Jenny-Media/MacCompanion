@@ -19,6 +19,7 @@ from platform_signing_subjects import (
     _list_extended_attributes,
     _private_root_provenance,
     _require_permitted_extended_attributes,
+    derive_codesign_architecture_inspection_plans,
     derive_codesign_verification_plans,
     reconstruct_signing_subjects,
 )
@@ -158,6 +159,53 @@ def main() -> int:
             raise RuntimeError("codesign plans are not deepest-first")
         if list(work_root.glob("*.stdout")) or list(work_root.glob("*.stderr")):
             raise RuntimeError("plan construction executed a platform tool")
+
+        inspection_plans = derive_codesign_architecture_inspection_plans(
+            graph=graph,
+            reconstructed=subjects,
+            codesign_tool=codesign,
+        )
+        expected_architectures = sum(
+            len(item["machO"]["architectures"])
+            for artifact in graph["artifacts"]
+            for item in artifact["machOObjects"]
+            if item["inDistributionSubject"] is True
+        )
+        if len(inspection_plans) != expected_architectures:
+            raise RuntimeError("codesign inspection plans omit graph architectures")
+        for plan in inspection_plans:
+            selector = f"{plan.cpu_type},{plan.cpu_subtype}"
+            identity = plan.identity_invocation.arguments
+            entitlements = plan.entitlements_invocation.arguments
+            if identity[:5] != (
+                "--display",
+                "--verbose=4",
+                "--requirements",
+                "-",
+                "--extract-certificates",
+            ):
+                raise RuntimeError("identity inspection plan changed fixed option order")
+            if identity[5] != str(plan.certificate_prefix):
+                raise RuntimeError("identity inspection plan lost its certificate prefix")
+            if identity[6:8] != ("--architecture", selector):
+                raise RuntimeError("identity inspection plan lost its exact CPU tuple")
+            if Path(identity[8]) != plan.owned_subject_path:
+                raise RuntimeError("identity inspection plan lost its owned subject")
+            if entitlements[:6] != (
+                "--display",
+                "--entitlements",
+                "-",
+                "--xml",
+                "--architecture",
+                selector,
+            ):
+                raise RuntimeError("entitlement inspection plan changed fixed arguments")
+            if Path(entitlements[6]) != plan.owned_subject_path:
+                raise RuntimeError("entitlement inspection plan lost its owned subject")
+            if not plan.owned_source_path.is_file() or plan.owned_source_path.is_symlink():
+                raise RuntimeError("inspection plan selected an unsafe Mach-O source")
+        if list(work_root.glob("codesign-inspect-*")):
+            raise RuntimeError("inspection plan construction executed a platform tool")
 
     with tempfile.TemporaryDirectory(prefix="maccompanion-signing-subject-implicit-") as value:
         root = Path(value)
@@ -343,6 +391,22 @@ def main() -> int:
                 codesign_tool=wrong_tool,
             ),
             "pinned absolute Apple tool",
+        )
+
+        changed_inspection = copy.deepcopy(graph)
+        report_step = next(
+            step
+            for step in changed_inspection["artifacts"][0]["verificationPlan"]
+            if step["action"] == "reportIdentityAndRequirements"
+        )
+        report_step["architectureSelector"]["cpuSubtype"] += 1
+        require_failure(
+            lambda: derive_codesign_architecture_inspection_plans(
+                graph=changed_inspection,
+                reconstructed=subjects,
+                codesign_tool=codesign,
+            ),
+            "inspection order differs",
         )
 
     print(

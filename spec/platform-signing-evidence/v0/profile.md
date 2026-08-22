@@ -1,8 +1,10 @@
 # Mac Companion platform signing evidence profile v0.1
 
 Status: normative design for a protected release-only collector. The public
-repository does not yet contain an acceptance-capable collector, production
-identity policy, or production policy digest.
+repository contains non-acceptance fixed-runner, reconstruction, verification,
+per-architecture plan, embedded-parser, and display-parser foundations, but no
+acceptance-capable collector, production identity policy, or production policy
+digest.
 
 This profile defines the evidence that must replace
 `signedCodePlatformVerificationRequired`. It consumes one already validated
@@ -130,6 +132,28 @@ Missing, reordered, additional, warning, wrong-path, CRLF, undecodable, or
 otherwise unrecognized output fails closed even after exit zero. A supported
 stable-toolchain change to this grammar requires new measured evidence and a
 profile revision before acceptance; it is not tolerated as an open parser.
+
+### Per-architecture construction checkpoint
+
+The graph's numeric CPU type and subtype select each architecture; symbolic
+aliases are forbidden. The collector independently rederives the graph slice
+and its `LC_CODE_SIGNATURE` range, then parses the bounded embedded SuperBlob
+rather than deriving cryptographic digests from display text. v0.1 admits one
+primary SHA-256 CodeDirectory, one explicit designated requirement, one CMS
+wrapper, optional XML entitlements, and no unrecognized slot. Alternate
+CodeDirectories and extra internal requirements require a policy/profile
+revision.
+
+XML entitlement values use the exact tagged signing-policy projection and
+duplicate-aware plist parsing. DER entitlement semantics are not yet decoded;
+any DER entitlement slot therefore fails this construction checkpoint. It may
+not be ignored, treated as equal to an XML sibling, or authorized from
+`codesign --entitlements --xml` alone.
+
+Fixed identity/requirement display and entitlement-display plans and bounded
+parsers now exist as independent cross-checks. Execution-time certificate-file
+collection, DER semantic equality, and assembly into the canonical evidence
+record remain required before this section can contribute to acceptance.
 
 For the final application and disk image it additionally retains Gatekeeper
 assessment, accepted notarization correlation, and stapling validation against
