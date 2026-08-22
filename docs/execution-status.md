@@ -92,9 +92,15 @@ administration and new Interactive Control require a positively observed active
 configured-user session; a takeover ends current Interactive Control without
 closing the primary Observe session. Lock currently follows the same
 fail-closed teardown until the ordered genuine-lock-surface transition is
-implemented and physically proven. The package-owned Agent application
-lifecycle facade remains the next unsigned checkpoint before any permanent
-target activation.
+implemented and physically proven. The [inert Agent application lifecycle
+facade](evidence/2026-08-22-inert-agent-application-lifecycle-facade.md) now
+retains that lifecycle and the conservative request contexts behind one owner.
+Construction is safe-disabled and observer-free; start observes only public
+workspace lifecycle, and explicit or deinitializing terminal finish cannot
+resurrect state even through retained context closures. It creates no
+storage, Keychain, XPC, listener, process, login-role, or readiness authority.
+Durable-intent-ordered inert product preparation remains the next unsigned
+checkpoint before any permanent-target activation.
 
 Local device administration now includes a [bundle-independent active-revoke
 convergence path](evidence/2026-08-21-local-device-revocation-convergence.md):

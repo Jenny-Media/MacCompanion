@@ -301,6 +301,7 @@ let package = Package(
                 "CompanionAgentPlatform", "CompanionDomain",
                 "CompanionHostPlatform",
                 "CompanionDiscovery", "CompanionIPC",
+                "CompanionLifecycle",
                 "CompanionLocalXPCPlatform",
                 "CompanionNetworkPlatform",
                 "CompanionSecurity", "CompanionWire",
