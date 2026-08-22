@@ -57,6 +57,18 @@ unregistered until the Agent has durably acknowledged enabled intent. An
 interrupted setup may therefore leave only an authentication-only Agent; a
 later explicit retry must resume or safely remove that registration.
 
+The containing app acquires the Agent role through the same serialized
+registration-convergence owner that performs the platform mutation. That
+acquisition returns whether this setup attempt introduced the registration or
+found it already enabled. Before an enable command may have been sent, a setup
+attempt may automatically unregister only a role it introduced. A preexisting
+registration is retained when transport or durable state is ambiguous; the app
+must reconcile by attempting fresh readiness or by resuming the bootstrap.
+After an exact current disabled offer, an explicit local decline may safely
+remove that preexisting setup-only registration. Registration status is only a
+launch-routing input and is never readiness, durable-enabled intent, or remote
+authorization.
+
 After exact same-team menu authentication and the closed hello exchange, an
 `authenticationOnly` peer may call only `readRemoteAccessBootstrap` and
 `enableRemoteAccess`. It may not publish menu readiness, read ordinary Agent
@@ -130,6 +142,14 @@ profile, authenticate a fresh menu generation, acknowledge menu readiness, and
 return a typed status snapshot before either process may present the Agent as
 available. Observe, Act, Control, pairing, presentation, and network ingress
 remain separately gated.
+
+The containing app's process-level router starts with one read of the retained
+Agent registration service. Absent registration exposes only explicit setup;
+enabled registration attempts a fresh readiness/status dashboard connection;
+approval-required registration exposes local recovery. A failed dashboard
+attempt may return to resumable setup without unregistering the preexisting
+Agent. Only the exact durable bootstrap receipt permits the setup path to
+register the visible-menu role and start a new dashboard attempt.
 
 For a readiness-capable profile, after that reply succeeds the menu app may
 send exactly one closed

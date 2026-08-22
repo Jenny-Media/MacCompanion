@@ -12,13 +12,12 @@ REPOSITORY = Path(__file__).resolve().parents[1]
 PROJECT_SPEC = REPOSITORY / "project.yml"
 PROJECT_FILE = REPOSITORY / "MacCompanion.xcodeproj" / "project.pbxproj"
 MAC_TARGET_DIRECTORY = REPOSITORY / "Apps" / "MacCompanionMac"
-MAC_APPLICATION_PLATFORM = (
+MAC_APPLICATION_PLATFORM_DIRECTORY = (
     REPOSITORY
     / "Packages"
     / "MacCompanionKit"
     / "Sources"
     / "CompanionMacApplicationPlatform"
-    / "MacCompanionDashboardApplicationV1.swift"
 )
 LOGIN_COMPOSITION = (
     REPOSITORY
@@ -563,13 +562,21 @@ def validate_login_role_composition(
         "menuService": "menuAppService: SMAppService = .mainApp",
         "loginExecutor": "executor = AgentLoginRoleEffectExecutorV1(",
         "applicationRetention": (
-            "private let loginRoles = MacCompanionLoginRoleComposition()"
+            "let loginRoles = MacCompanionLoginRoleComposition()"
+        ),
+        "setupAgentOwnership": "agent: loginRoles.agent",
+        "setupMenuOwnership": "menuApp: loginRoles.menuApp",
+        "registrationInspection": (
+            "agentRegistration: loginRoles.agentRaw"
         ),
     }
     for label, needle in required.items():
         haystack = (
             application_code
-            if label == "applicationRetention"
+            if label in {
+                "applicationRetention", "setupAgentOwnership",
+                "setupMenuOwnership", "registrationInspection",
+            }
             else composition_code
         )
         require_count(haystack, needle, 1, label, failures)
@@ -595,10 +602,25 @@ def validate_login_role_composition(
             "@NSApplicationDelegateAdaptor("
         ),
         "applicationDelegateType": (
-            "MacCompanionDashboardApplicationDelegateV1.self"
+            "MacCompanionApplicationDelegate.self"
         ),
-        "applicationDelegateDashboard": (
-            "application: applicationDelegate.dashboard"
+        "applicationDelegateProduct": (
+            "application: applicationDelegate.product"
+        ),
+        "setupApplication": (
+            "let setup = MacRemoteAccessSetupApplicationV1("
+        ),
+        "productApplication": (
+            "product = MacCompanionProductApplicationV1("
+        ),
+        "explicitSetupBegin": (
+            "await application.setup.begin()"
+        ),
+        "explicitSetupConfirmation": (
+            "await application.setup.confirm()"
+        ),
+        "explicitSetupDecline": (
+            "await application.setup.decline()"
         ),
         "dashboardTypedSource": (
             "private var source: MacAgentDashboardSourceV0 { "
@@ -632,25 +654,29 @@ def validate_menu_application_lifecycle_owner(
     platform_source: str,
     failures: list[str],
 ) -> None:
-    marker = "public final class MacCompanionDashboardApplicationDelegateV1:"
+    marker = "public final class MacCompanionProductApplicationV1 {"
     start = platform_source.find(marker)
     delegate = platform_source[start:] if start >= 0 else ""
     for needle in (
         marker,
-        "NSApplicationDelegate",
-        "public let dashboard: MacCompanionDashboardApplicationV1",
-        "public func applicationDidFinishLaunching",
-        "public func applicationWillTerminate",
-        "package func beginLaunch()",
-        "try await dashboard.start()",
-        "package func finish() async",
-        "await dashboard.finish()",
+        "public private(set) var route: MacCompanionProductRouteV1",
+        "public private(set) var dashboard:",
+        "public let setup: MacRemoteAccessSetupApplicationV1",
+        "setup.installStateObserver",
+        "public func start() async",
+        "switch await agentRegistration.status()",
+        "case .notRegistered:",
+        "case .enabled:",
+        "try await candidate.start()",
+        "public func finish() async",
+        "await setup.finish()",
+        "await dashboard?.finish()",
     ):
         if needle not in delegate:
             failures.append(f"menuLifecycleOwnerMissing:{needle}")
     require_count(
         delegate,
-        "try await dashboard.start()",
+        "try await candidate.start()",
         1,
         "menuLifecycleOwnerSingleStart",
         failures,
@@ -1007,7 +1033,10 @@ def main() -> int:
     agent_preparation_facade = read_text(AGENT_PREPARATION_FACADE, failures)
     agent_product_bootstrap = read_text(AGENT_PRODUCT_BOOTSTRAP, failures)
     mac_application = read_swift_target(MAC_TARGET_DIRECTORY, failures)
-    mac_application_platform = read_text(MAC_APPLICATION_PLATFORM, failures)
+    mac_application_platform = read_swift_target(
+        MAC_APPLICATION_PLATFORM_DIRECTORY,
+        failures,
+    )
     login_composition = read_text(LOGIN_COMPOSITION, failures)
     validate_project_spec(project_spec, failures)
     validate_generated_project(generated_project, failures)

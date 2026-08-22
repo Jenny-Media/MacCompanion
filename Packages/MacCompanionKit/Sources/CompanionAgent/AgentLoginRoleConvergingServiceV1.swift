@@ -30,11 +30,30 @@ public enum AgentLoginRoleConvergenceErrorV1:
     )
 }
 
+public enum AgentLoginRoleRegistrationAcquisitionV1:
+    Equatable,
+    Sendable
+{
+    case newlyRegistered
+    case alreadyRegistered
+}
+
+/// Narrow registration seam for the foreground disabled-Agent bootstrap.
+/// Ownership is derived from the exact pre-mutation status inside the same
+/// actor that performs and verifies registration, so rollback never guesses
+/// whether this setup attempt introduced the login role.
+public protocol AgentBootstrapLoginRoleServiceV1:
+    AgentLoginRoleServiceV1
+{
+    func acquireForBootstrap() async throws
+        -> AgentLoginRoleRegistrationAcquisitionV1
+}
+
 /// Makes the raw registration API idempotent and verifies every postcondition.
 /// A framework call that reports an error after reaching the requested state is
 /// accepted as converged; all other errors are reduced to a closed reason.
 public actor AgentLoginRoleConvergingServiceV1:
-    AgentLoginRoleServiceV1
+    AgentBootstrapLoginRoleServiceV1
 {
     private let raw: any AgentLoginRoleRawServiceV1
 
@@ -43,9 +62,15 @@ public actor AgentLoginRoleConvergingServiceV1:
     }
 
     public func register() async throws {
+        _ = try await acquireForBootstrap()
+    }
+
+    public func acquireForBootstrap() async throws
+        -> AgentLoginRoleRegistrationAcquisitionV1
+    {
         switch await raw.status() {
         case .enabled:
-            return
+            return .alreadyRegistered
         case .requiresApproval:
             throw AgentLoginRoleConvergenceErrorV1.requiresApproval
         case .notFound:
@@ -62,7 +87,7 @@ public actor AgentLoginRoleConvergingServiceV1:
             guard await raw.status() == .enabled else {
                 throw AgentLoginRoleConvergenceErrorV1.platformFailure
             }
-            return
+            return .newlyRegistered
         }
         let actual = await raw.status()
         guard actual == .enabled else {
@@ -71,6 +96,7 @@ public actor AgentLoginRoleConvergingServiceV1:
                 actual: actual
             )
         }
+        return .newlyRegistered
     }
 
     public func unregister() async throws {

@@ -152,7 +152,10 @@ let package = Package(
         ),
         .target(
             name: "CompanionMacApplicationPlatform",
-            dependencies: ["CompanionAgentPlatform", "CompanionMacApp"],
+            dependencies: [
+                "CompanionAgent", "CompanionAgentPlatform", "CompanionIPC",
+                "CompanionLocalXPCPlatform", "CompanionMacApp",
+            ],
             linkerSettings: [
                 .linkedFramework("AppKit", .when(platforms: [.macOS])),
             ]
@@ -450,7 +453,8 @@ let package = Package(
         .testTarget(
             name: "CompanionMacApplicationPlatformTests",
             dependencies: [
-                "CompanionAgentPlatform", "CompanionMacApp",
+                "CompanionAgent", "CompanionAgentPlatform", "CompanionIPC",
+                "CompanionLocalXPCPlatform", "CompanionMacApp",
                 "CompanionMacApplicationPlatform",
             ]
         ),

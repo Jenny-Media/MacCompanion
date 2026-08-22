@@ -94,6 +94,37 @@ private actor RawLoginRoleService:
     ])
 }
 
+@Test func bootstrapAcquisitionDistinguishesPreexistingRegistration()
+    async throws
+{
+    let raw = RawLoginRoleService(state: .enabled)
+    let service = AgentLoginRoleConvergingServiceV1(raw: raw)
+
+    #expect(
+        try await service.acquireForBootstrap() == .alreadyRegistered
+    )
+    #expect(await raw.events() == ["status.enabled"])
+}
+
+@Test func bootstrapAcquisitionOwnsEffectThenErrorRegistration()
+    async throws
+{
+    let raw = RawLoginRoleService(
+        state: .notRegistered,
+        registerBehavior: .throwAfterEffect
+    )
+    let service = AgentLoginRoleConvergingServiceV1(raw: raw)
+
+    #expect(
+        try await service.acquireForBootstrap() == .newlyRegistered
+    )
+    #expect(await raw.events() == [
+        "status.notRegistered",
+        "register",
+        "status.enabled",
+    ])
+}
+
 @Test func convergingLoginRoleRegisterPreservesApprovalRecovery() async throws {
     let raw = RawLoginRoleService(state: .requiresApproval)
     let service = AgentLoginRoleConvergingServiceV1(raw: raw)

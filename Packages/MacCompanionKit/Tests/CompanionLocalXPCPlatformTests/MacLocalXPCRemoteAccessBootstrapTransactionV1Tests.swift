@@ -222,3 +222,29 @@ func bootstrapTransactionInvalidatesExactMalformedReceiptOnly() throws {
     #expect(!staleInvalidation)
     #expect(gate.currentGeneration == 12)
 }
+
+@Test
+@available(macOS 26.0, *)
+func bootstrapClientHasAClosedOneUseEventAndDeadlineSurface() throws {
+    let offer = try transactionOfferV1()
+    let command = try transactionCommandV1(offer: offer)
+    let receipt = try transactionReceiptV1(command: command)
+
+    #expect(
+        MacLocalXPCRemoteAccessBootstrapClientV1
+            .handshakeTimeoutSeconds == 10
+    )
+    #expect(
+        MacLocalXPCRemoteAccessBootstrapClientV1
+            .operationTimeoutSeconds == 6
+    )
+    #expect(
+        MacLocalXPCRemoteAccessBootstrapClientEventV1.offer(
+            generation: 2,
+            offer: offer
+        ) != .enabled(generation: 2, receipt: receipt)
+    )
+
+    let client = MacLocalXPCRemoteAccessBootstrapClientV1 { _ in }
+    client.cancel()
+}

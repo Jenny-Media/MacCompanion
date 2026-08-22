@@ -12,6 +12,9 @@ import ServiceManagement
 final class MacCompanionLoginRoleComposition {
     static let agentPlistName = "media.jenny.maccompanion.agent.plist"
 
+    let agentRaw: SMAppServiceRawLoginRoleV1
+    let agent: AgentLoginRoleConvergingServiceV1
+    let menuApp: AgentLoginRoleConvergingServiceV1
     let executor: AgentLoginRoleEffectExecutorV1
 
     init(
@@ -20,12 +23,14 @@ final class MacCompanionLoginRoleComposition {
         ),
         menuAppService: SMAppService = .mainApp
     ) {
-        let agent = AgentLoginRoleConvergingServiceV1(
-            raw: SMAppServiceRawLoginRoleV1(service: agentService)
-        )
+        let agentRaw = SMAppServiceRawLoginRoleV1(service: agentService)
+        let agent = AgentLoginRoleConvergingServiceV1(raw: agentRaw)
         let menuApp = AgentLoginRoleConvergingServiceV1(
             raw: SMAppServiceRawLoginRoleV1(service: menuAppService)
         )
+        self.agentRaw = agentRaw
+        self.agent = agent
+        self.menuApp = menuApp
         executor = AgentLoginRoleEffectExecutorV1(
             agent: agent,
             menuApp: menuApp
