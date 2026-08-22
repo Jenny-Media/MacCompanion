@@ -19,6 +19,30 @@ LOGIN_COMPOSITION = (
     / "MacCompanionLoginRoleComposition.swift"
 )
 AGENT_TARGET_DIRECTORY = REPOSITORY / "Apps" / "MacCompanionAgent"
+AGENT_APPLICATION_PLATFORM = (
+    REPOSITORY
+    / "Packages"
+    / "MacCompanionKit"
+    / "Sources"
+    / "CompanionAgentApplicationPlatform"
+    / "MacCompanionAgentInertSystemPreparationV1.swift"
+)
+AGENT_PREPARATION_FACADE = (
+    REPOSITORY
+    / "Packages"
+    / "MacCompanionKit"
+    / "Sources"
+    / "CompanionAgentProductPlatform"
+    / "MacAgentApplicationPreparationFacadeV1.swift"
+)
+AGENT_PRODUCT_BOOTSTRAP = (
+    REPOSITORY
+    / "Packages"
+    / "MacCompanionKit"
+    / "Sources"
+    / "CompanionAgentProductPlatform"
+    / "MacAgentProductBootstrapV1.swift"
+)
 LAUNCH_AGENT = (
     REPOSITORY
     / "Apps"
@@ -185,10 +209,7 @@ def require_exact_agent_products(
     generated: bool,
     failures: list[str],
 ) -> None:
-    expected = [
-        "CompanionAgentApplicationPlatform",
-        "CompanionLocalXPCPlatform",
-    ]
+    expected = ["CompanionAgentApplicationPlatform"]
     if generated:
         dependencies, frameworks = generated_target_product_lists(
             content,
@@ -304,7 +325,7 @@ def validate_project_spec(content: str, failures: list[str]) -> None:
     require_count(
         content,
         "        product: CompanionLocalXPCPlatform",
-        2,
+        1,
         "localXPCProducts",
         failures,
     )
@@ -407,19 +428,14 @@ def validate_narrow_agent_source(content: str, failures: list[str]) -> None:
         "import CompanionAgentApplicationPlatform",
         "import Dispatch",
         "@main",
-        "import CompanionLocalXPCPlatform",
         "import Darwin",
         "enum MacCompanionAgentMain",
         "static func main() async",
-        "let retention: MacCompanionAgentInertStartupRetentionV1",
-        "MacCompanionAgentInertStartupCoordinatorV1",
-        ".prepareAndStartAuthentication",
-        "guard case .retryAfterFirstUnlock = retention",
+        "let outcome: MacCompanionAgentLocalServiceStartupOutcomeV1",
+        "MacCompanionAgentLocalServiceStartupV1.start()",
+        "guard case .retryAfterFirstUnlock = outcome",
         "dispatchMain()",
-        "let localXPC = MacLocalXPCServerV1",
-        "profile: .authenticationOnly",
-        "try localXPC.start()",
-        "withExtendedLifetime((retention, localXPC))",
+        "withExtendedLifetime(outcome)",
     ):
         require_count(code, needle, 1, f"agentSource:{needle}", failures)
     for needle in (
@@ -427,6 +443,11 @@ def validate_narrow_agent_source(content: str, failures: list[str]) -> None:
         "NWListener",
         ".register(",
         "UserDefaults",
+        "import CompanionLocalXPCPlatform",
+        "MacLocalXPCServerV1",
+        ".authenticationOnly",
+        ".menuLifecycleReadinessAndStatus",
+        ".menuLifecycleReadinessStatusAndPresentation",
         "AgentPrimaryServicesV1",
         "Keychain",
         "SQLite",
@@ -446,9 +467,63 @@ def validate_narrow_agent_source(content: str, failures: list[str]) -> None:
         "MacCompanionAgentInertSystemPreparationV1.prepare()",
         "import CompanionAgentNetworkPlatform",
         "import CompanionAgentPlatform",
+        "prepareAndStartAuthentication",
+        "startAuthentication:",
+        "makeAuthenticationOnly:",
     ):
         if needle in code:
             failures.append(f"agentSourceUnexpectedAuthority:{needle}")
+
+
+def validate_single_owner_agent_service_selection(
+    application_platform: str,
+    preparation_facade: str,
+    product_bootstrap: str,
+    failures: list[str],
+) -> None:
+    for needle in (
+        "MacCompanionAgentLocalServiceStartupV1",
+        "MacCompanionAgentLocalServiceOwnerV1",
+        "MacCompanionAgentAuthenticationOnlyRuntimeV1",
+        "case .readinessAndStatus:",
+        "case .authenticationOnly:",
+        "case .deferred(.firstUnlockRequired):",
+        "startAndRetain(owner)",
+        "makeAuthenticationOnly()",
+    ):
+        if needle not in application_platform:
+            failures.append(f"agentApplicationSelectionMissing:{needle}")
+    for forbidden in (
+        "menuLifecycleReadinessStatusAndPresentation",
+        "afterAgentBootstrapWithMenuPresentation",
+        "MacLocalXPCAuthenticatedMenuSurfacesV1",
+    ):
+        if forbidden in application_platform:
+            failures.append(f"agentApplicationSelectionTooBroad:{forbidden}")
+    require_count(
+        preparation_facade,
+        ".prepareStatusOnlyInert(",
+        1,
+        "agentPreparationStatusOnlyFactory",
+        failures,
+    )
+    marker = "package static func prepareStatusOnlyInert("
+    start = product_bootstrap.find(marker)
+    end = product_bootstrap.find("\n    package static func ", start + len(marker))
+    status_only_body = (
+        product_bootstrap[start:end]
+        if start >= 0 and end > start
+        else ""
+    )
+    require_count(
+        status_only_body,
+        "MacLocalXPCAgentProductV1.afterAgentBootstrap(",
+        1,
+        "agentStatusOnlyBootstrap",
+        failures,
+    )
+    if "afterAgentBootstrapWithMenuPresentation" in status_only_body:
+        failures.append("agentStatusOnlyBootstrapSelectsPresentation")
 
 
 def uncommented_swift(content: str) -> str:
@@ -595,6 +670,81 @@ def validate_product_inertness_self_tests(
         not in menu_start_failures
     ):
         failures.append("menuTransportActivationFixtureAccepted")
+
+    for label, injection, expected in (
+        (
+            "rawLocalXPCImport",
+            "\nimport CompanionLocalXPCPlatform\n",
+            "agentSourceUnexpectedAuthority:import CompanionLocalXPCPlatform",
+        ),
+        (
+            "rawAuthenticationProfile",
+            "\nlet _ = MacLocalXPCServerV1(profile: .authenticationOnly) { _ in }\n",
+            "agentSourceUnexpectedAuthority:MacLocalXPCServerV1",
+        ),
+        (
+            "rawStatusProfile",
+            "\nlet _ = MacLocalXPCServerProfileV1.menuLifecycleReadinessAndStatus\n",
+            "agentSourceUnexpectedAuthority:.menuLifecycleReadinessAndStatus",
+        ),
+        (
+            "presentationProfile",
+            "\nlet _ = MacLocalXPCServerProfileV1.menuLifecycleReadinessStatusAndPresentation\n",
+            "agentSourceUnexpectedAuthority:.menuLifecycleReadinessStatusAndPresentation",
+        ),
+        (
+            "secondServiceStart",
+            "\nlet _ = try await MacCompanionAgentLocalServiceStartupV1.start()\n",
+            "agentSource:MacCompanionAgentLocalServiceStartupV1.start()",
+        ),
+    ):
+        injected_failures: list[str] = []
+        validate_narrow_agent_source(
+            agent_source + injection,
+            injected_failures,
+        )
+        if not any(
+            failure == expected or failure.startswith(expected + ":")
+            for failure in injected_failures
+        ):
+            failures.append(f"agent{label}FixtureAccepted")
+
+
+def validate_single_owner_agent_service_selection_self_tests(
+    application_platform: str,
+    preparation_facade: str,
+    product_bootstrap: str,
+    failures: list[str],
+) -> None:
+    broad_bootstrap = product_bootstrap.replace(
+        "MacLocalXPCAgentProductV1.afterAgentBootstrap(",
+        "MacLocalXPCAgentProductV1."
+        "afterAgentBootstrapWithMenuPresentation(",
+        1,
+    )
+    injected_failures: list[str] = []
+    validate_single_owner_agent_service_selection(
+        application_platform,
+        preparation_facade,
+        broad_bootstrap,
+        injected_failures,
+    )
+    if "agentStatusOnlyBootstrapSelectsPresentation" not in injected_failures:
+        failures.append("agentPresentationBootstrapFixtureAccepted")
+
+    injected_failures = []
+    validate_single_owner_agent_service_selection(
+        application_platform
+        + "\nlet _: MacLocalXPCAuthenticatedMenuSurfacesV1? = nil\n",
+        preparation_facade,
+        product_bootstrap,
+        injected_failures,
+    )
+    if not any(
+        failure.startswith("agentApplicationSelectionTooBroad:")
+        for failure in injected_failures
+    ):
+        failures.append("agentPresentationSurfaceFixtureAccepted")
 
 
 def validate_product_link_inertness_self_tests(
@@ -793,12 +943,24 @@ def main() -> int:
     project_spec = read_text(PROJECT_SPEC, failures)
     generated_project = read_text(PROJECT_FILE, failures)
     agent_source = read_swift_target(AGENT_TARGET_DIRECTORY, failures)
+    agent_application_platform = read_text(
+        AGENT_APPLICATION_PLATFORM,
+        failures,
+    )
+    agent_preparation_facade = read_text(AGENT_PREPARATION_FACADE, failures)
+    agent_product_bootstrap = read_text(AGENT_PRODUCT_BOOTSTRAP, failures)
     mac_application = read_swift_target(MAC_TARGET_DIRECTORY, failures)
     login_composition = read_text(LOGIN_COMPOSITION, failures)
     validate_project_spec(project_spec, failures)
     validate_generated_project(generated_project, failures)
     validate_launch_agent(failures)
     validate_narrow_agent_source(agent_source, failures)
+    validate_single_owner_agent_service_selection(
+        agent_application_platform,
+        agent_preparation_facade,
+        agent_product_bootstrap,
+        failures,
+    )
     validate_login_role_composition(
         login_composition,
         mac_application,
@@ -808,6 +970,12 @@ def main() -> int:
         agent_source,
         login_composition,
         mac_application,
+        failures,
+    )
+    validate_single_owner_agent_service_selection_self_tests(
+        agent_application_platform,
+        agent_preparation_facade,
+        agent_product_bootstrap,
         failures,
     )
     validate_product_link_inertness_self_tests(
@@ -822,7 +990,8 @@ def main() -> int:
     print(
         "Validated permanent Mac/Agent topology, identities, signing flags, "
         "requirement-bound local handshake, LaunchAgent contract, and "
-        "narrow activation-inert Agent and menu application preparation."
+        "single-owner Agent local-service selection and activation-inert menu "
+        "application preparation."
     )
     return 0
 

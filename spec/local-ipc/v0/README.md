@@ -62,9 +62,14 @@ Once readiness is acknowledged, an explicitly composed
 `{"kind":"status.read","version":1}` requests. It calls
 `LocalIPCAuthorizationPolicy` for the authenticated `menuApp`-to-`agent`
 `readAgentStatus` method and requires a typed reader issued from the complete
-Agent local-service root. The permanent target remains `authenticationOnly`;
-passing a reader to any narrower profile or constructing the status profile
-without one fails before listener construction.
+Agent local-service root. The permanent Agent's sealed application owner
+selects exactly one profile only after durable preparation: canonical enabled
+and starting state selects `menuLifecycleReadinessAndStatus`; canonical disabled
+and stopped state or durable recovery selects `authenticationOnly`; first-unlock
+deferral constructs neither service. Selection is not caller-configurable,
+never falls back after start failure, and never selects the broader presentation
+profile. Passing a reader to any narrower profile or constructing the status
+profile without one fails before listener construction.
 
 A successful response is exactly
 `{"kind":"status.read.ack","version":1,"payload":<data>}`, where `payload`

@@ -7,71 +7,96 @@ import CompanionLifecycle
 import Foundation
 import Testing
 
-private enum InertStartupTestErrorV1: Error, Equatable {
-    case preparation
-    case authentication
+private enum AgentLocalServiceStartupTestErrorV1: Error, Equatable {
+    case selectedStart
 }
 
-private final class InertStartupProbeV1: @unchecked Sendable {
+private final class AgentLocalServiceStartupProbeV1: @unchecked Sendable {
     private let lock = NSLock()
     private var values: [String] = []
 
     func record(_ value: String) {
-        lock.lock()
-        values.append(value)
-        lock.unlock()
+        lock.withLock { values.append(value) }
     }
 
     func snapshot() -> [String] {
-        lock.lock()
-        defer { lock.unlock() }
-        return values
+        lock.withLock { values }
+    }
+}
+
+private actor AgentLocalServiceOneShotGateV1 {
+    private var entered = false
+    private var released = false
+    private var entryWaiters: [CheckedContinuation<Void, Never>] = []
+    private var releaseWaiters: [CheckedContinuation<Void, Never>] = []
+
+    func waitUntilEntered() async {
+        guard !entered else { return }
+        await withCheckedContinuation { entryWaiters.append($0) }
+    }
+
+    func enterAndWait() async throws {
+        entered = true
+        let entryWaiters = self.entryWaiters
+        self.entryWaiters.removeAll()
+        entryWaiters.forEach { $0.resume() }
+        guard !released else { return }
+        await withTaskCancellationHandler {
+            await withCheckedContinuation { releaseWaiters.append($0) }
+        } onCancel: {
+            Task { await self.release() }
+        }
+        try Task.checkCancellation()
+    }
+
+    func release() {
+        guard !released else { return }
+        released = true
+        let releaseWaiters = self.releaseWaiters
+        self.releaseWaiters.removeAll()
+        releaseWaiters.forEach { $0.resume() }
     }
 }
 
 @available(macOS 26.0, *)
-private func inertStartupPreparedLifecycleV1(
-    base: URL,
-    finishProbe: InertStartupProbeV1
-) throws -> MacAgentInertApplicationLifecycleV1 {
-    let storage = try MacAgentReleaseStorageV1(
-        baseApplicationSupportDirectory: base
-    )
-    let state = ProductLifecycleState(
-        consoleSession: .otherConsoleUserActive
-    )
-    let prepared = MacAgentPreparedProductHandleV1(
-        hostID: UUID(
-            uuidString: "018f6000-0000-7000-8000-000000000002"
-        )!,
-        storagePaths: storage.paths,
-        currentLifecycle: {
-            AgentRemoteLifecycleSnapshotV1(revision: 0, state: state)
-        },
-        finish: { finishProbe.record("finish") }
-    )
-    return MacAgentInertApplicationLifecycleV1(
-        requestContexts: MacAgentConservativeRequestContextProductV1(),
-        prepared: prepared
-    )
+private final class AgentLocalServiceTestRuntimeV1:
+    @unchecked Sendable,
+    MacCompanionAgentSelectedServiceRuntimeV1
+{
+    private let probe: AgentLocalServiceStartupProbeV1
+    private let label: String
+    private let onStart: @Sendable () async throws -> Void
+    private let lock = NSLock()
+    private var finished = false
+
+    init(
+        label: String,
+        probe: AgentLocalServiceStartupProbeV1,
+        onStart: @escaping @Sendable () async throws -> Void = {}
+    ) {
+        self.label = label
+        self.probe = probe
+        self.onStart = onStart
+    }
+
+    func start() async throws {
+        probe.record("\(label).start")
+        try await onStart()
+    }
+
+    func finish() async {
+        let shouldRecord = lock.withLock {
+            guard !finished else { return false }
+            finished = true
+            return true
+        }
+        if shouldRecord { probe.record("\(label).finish") }
+    }
 }
 
-@available(macOS 26.0, *)
-private func inertStartupPreparedOwnerV1(
-    base: URL,
-    finishProbe: InertStartupProbeV1
-) throws -> MacCompanionAgentInertSystemOwnerV1 {
-    MacCompanionAgentInertSystemOwnerV1(
-        prepared: try inertStartupPreparedLifecycleV1(
-            base: base,
-            finishProbe: finishProbe
-        )
-    )
-}
-
-private func inertStartupTemporaryBaseV1() throws -> URL {
+private func agentLocalServiceTemporaryBaseV1() throws -> URL {
     let base = FileManager.default.temporaryDirectory.appendingPathComponent(
-        "maccompanion-inert-startup-\(UUID())",
+        "maccompanion-local-service-startup-\(UUID())",
         isDirectory: true
     )
     try FileManager.default.createDirectory(
@@ -83,17 +108,87 @@ private func inertStartupTemporaryBaseV1() throws -> URL {
 }
 
 @available(macOS 26.0, *)
+private func agentLocalServicePreparedOwnerV1(
+    base: URL,
+    enabled: Bool,
+    revision: UInt64 = 0,
+    agentObservationEpoch: UInt64 = 0,
+    menuAppObservationEpoch: UInt64 = 0,
+    probe: AgentLocalServiceStartupProbeV1,
+    startLocalService: @escaping @Sendable () async throws -> Void = {}
+) throws -> MacCompanionAgentInertSystemOwnerV1 {
+    let storage = try MacAgentReleaseStorageV1(
+        baseApplicationSupportDirectory: base
+    )
+    let processState: ManagedProcessState = enabled ? .starting : .stopped
+    let state = ProductLifecycleState(
+        desiredEnabled: enabled,
+        consoleSession: .otherConsoleUserActive,
+        agent: processState,
+        menuApp: processState
+    )
+    let prepared = MacAgentPreparedProductHandleV1(
+        hostID: UUID(
+            uuidString: "018f6000-0000-7000-8000-000000000002"
+        )!,
+        storagePaths: storage.paths,
+        currentLifecycle: {
+            AgentRemoteLifecycleSnapshotV1(
+                revision: revision,
+                agentObservationEpoch: agentObservationEpoch,
+                menuAppObservationEpoch: menuAppObservationEpoch,
+                state: state
+            )
+        },
+        startLocalService: {
+            probe.record("status.start")
+            try await startLocalService()
+        },
+        finish: { probe.record("prepared.finish") }
+    )
+    return MacCompanionAgentInertSystemOwnerV1(
+        prepared: MacAgentInertApplicationLifecycleV1(
+            requestContexts: MacAgentConservativeRequestContextProductV1(),
+            prepared: prepared
+        )
+    )
+}
+
+@available(macOS 26.0, *)
+private func runningOwnerV1(
+    _ outcome: MacCompanionAgentLocalServiceStartupOutcomeV1
+) -> MacCompanionAgentLocalServiceOwnerV1? {
+    guard case let .running(owner) = outcome else { return nil }
+    return owner
+}
+
+@available(macOS 26.0, *)
 @Test func preparationMappingPreservesReadyAndEveryClosedDeferral()
     async throws
 {
-    let base = try inertStartupTemporaryBaseV1()
+    let base = try agentLocalServiceTemporaryBaseV1()
     defer { try? FileManager.default.removeItem(at: base) }
-    let finishProbe = InertStartupProbeV1()
+    let probe = AgentLocalServiceStartupProbeV1()
     guard case let .ready(owner) =
         MacCompanionAgentInertSystemPreparationV1.map(
-            .prepared(try inertStartupPreparedLifecycleV1(
-                base: base,
-                finishProbe: finishProbe
+            .prepared(MacAgentInertApplicationLifecycleV1(
+                requestContexts:
+                    MacAgentConservativeRequestContextProductV1(),
+                prepared: MacAgentPreparedProductHandleV1(
+                    hostID: UUID(),
+                    storagePaths: try MacAgentReleaseStorageV1(
+                        baseApplicationSupportDirectory: base
+                    ).paths,
+                    currentLifecycle: {
+                        AgentRemoteLifecycleSnapshotV1(
+                            revision: 0,
+                            state: ProductLifecycleState(
+                                consoleSession: .otherConsoleUserActive
+                            )
+                        )
+                    },
+                    finish: { probe.record("prepared.finish") }
+                )
             ))
         )
     else {
@@ -101,7 +196,7 @@ private func inertStartupTemporaryBaseV1() throws -> URL {
         return
     }
     await owner.finish()
-    #expect(finishProbe.snapshot() == ["finish"])
+    #expect(probe.snapshot() == ["prepared.finish"])
 
     guard case .deferred(.firstUnlockRequired) =
         MacCompanionAgentInertSystemPreparationV1.map(.waitForFirstUnlock)
@@ -114,148 +209,265 @@ private func inertStartupTemporaryBaseV1() throws -> URL {
             .requireLocalRecovery(.invalidEstablishedKey)
         )
     else {
-        Issue.record("expected local-recovery deferral")
+        Issue.record("expected local recovery")
         return
     }
-    let recoveryID = UUID()
     guard case .deferred(.recoveryFenced) =
         MacCompanionAgentInertSystemPreparationV1.map(
-            .recoveryFenced(recoveryID)
+            .recoveryFenced(UUID())
         )
     else {
-        Issue.record("expected recovery-fenced deferral")
+        Issue.record("expected recovery fence")
         return
     }
 }
 
 @available(macOS 26.0, *)
-@Test func startupRetriesOnlyFirstUnlockAndIdlesDurableRecovery()
+@Test func enabledStartsOnlyReadinessAndStatusWhileDisabledStartsOnlyAuthentication()
     async throws
 {
-    let firstUnlockProbe = InertStartupProbeV1()
-    let firstUnlock = try await
-        MacCompanionAgentInertStartupCoordinatorV1
-            .prepareAndStartAuthentication(
-                prepare: {
-                    firstUnlockProbe.record("prepare")
-                    return .deferred(.firstUnlockRequired)
-                },
-                startAuthentication: {
-                    firstUnlockProbe.record("authentication")
-                }
-            )
-    guard case .retryAfterFirstUnlock = firstUnlock else {
-        Issue.record("expected retry-after-first-unlock")
-        return
-    }
-    #expect(firstUnlockProbe.snapshot() == ["prepare"])
-
-    for reason in [
-        MacCompanionAgentInertPreparationDeferralV1.localRecoveryRequired,
-        .recoveryFenced,
-    ] {
-        let probe = InertStartupProbeV1()
-        let retention = try await
-            MacCompanionAgentInertStartupCoordinatorV1
-                .prepareAndStartAuthentication(
-                    prepare: {
-                        probe.record("prepare")
-                        return .deferred(reason)
-                    },
-                    startAuthentication: {
-                        probe.record("authentication")
-                    }
+    for enabled in [true, false] {
+        let base = try agentLocalServiceTemporaryBaseV1()
+        defer { try? FileManager.default.removeItem(at: base) }
+        let probe = AgentLocalServiceStartupProbeV1()
+        let prepared = try agentLocalServicePreparedOwnerV1(
+            base: base,
+            enabled: enabled,
+            probe: probe
+        )
+        let outcome = try await MacCompanionAgentLocalServiceStartupV1.start(
+            prepare: { .ready(prepared) },
+            makeAuthenticationOnly: {
+                probe.record("auth.construct")
+                return AgentLocalServiceTestRuntimeV1(
+                    label: "auth",
+                    probe: probe
                 )
-        guard case let .authenticationOnly(retainedReason) = retention else {
-            Issue.record("expected authentication-only recovery wait")
-            return
-        }
-        #expect(retainedReason == reason)
-        #expect(probe.snapshot() == ["prepare", "authentication"])
-    }
-}
-
-@available(macOS 26.0, *)
-@Test func startupOrdersReadyAuthenticationAndCompensatesStartFailure()
-    async throws
-{
-    let base = try inertStartupTemporaryBaseV1()
-    defer { try? FileManager.default.removeItem(at: base) }
-    let finishProbe = InertStartupProbeV1()
-    let owner = try inertStartupPreparedOwnerV1(
-        base: base,
-        finishProbe: finishProbe
-    )
-    let order = InertStartupProbeV1()
-    let retention = try await MacCompanionAgentInertStartupCoordinatorV1
-        .prepareAndStartAuthentication(
-            prepare: {
-                order.record("prepare")
-                return .ready(owner)
-            },
-            startAuthentication: {
-                order.record("authentication")
             }
         )
-    guard case let .prepared(retainedOwner) = retention else {
-        Issue.record("expected prepared retention")
+        let owner = try #require(runningOwnerV1(outcome))
+        await owner.finish()
+        await owner.finish()
+        #expect(
+            probe.snapshot() == (enabled
+                ? ["status.start", "prepared.finish"]
+                : [
+                    "auth.construct", "auth.start", "auth.finish",
+                    "prepared.finish",
+                ])
+        )
+    }
+}
+
+@available(macOS 26.0, *)
+@Test func recoveryUsesAuthenticationOnlyAndFirstUnlockConstructsNothing()
+    async throws
+{
+    for result in [
+        MacCompanionAgentInertSystemPreparationResultV1.deferred(
+            .localRecoveryRequired
+        ),
+        .deferred(.recoveryFenced),
+    ] {
+        let probe = AgentLocalServiceStartupProbeV1()
+        let outcome = try await MacCompanionAgentLocalServiceStartupV1.start(
+            prepare: { result },
+            makeAuthenticationOnly: {
+                probe.record("auth.construct")
+                return AgentLocalServiceTestRuntimeV1(
+                    label: "auth",
+                    probe: probe
+                )
+            }
+        )
+        let owner = try #require(runningOwnerV1(outcome))
+        await owner.finish()
+        #expect(probe.snapshot() == [
+            "auth.construct", "auth.start", "auth.finish",
+        ])
+    }
+
+    let firstUnlockProbe = AgentLocalServiceStartupProbeV1()
+    let firstUnlock = try await MacCompanionAgentLocalServiceStartupV1.start(
+        prepare: { .deferred(.firstUnlockRequired) },
+        makeAuthenticationOnly: {
+            firstUnlockProbe.record("auth.construct")
+            return AgentLocalServiceTestRuntimeV1(
+                label: "auth",
+                probe: firstUnlockProbe
+            )
+        }
+    )
+    guard case .retryAfterFirstUnlock = firstUnlock else {
+        Issue.record("expected retry after first unlock")
         return
     }
-    #expect(order.snapshot() == ["prepare", "authentication"])
-    #expect(finishProbe.snapshot().isEmpty)
-    await retainedOwner.finish()
-    await retainedOwner.finish()
-    #expect(finishProbe.snapshot() == ["finish"])
-
-    let failureBase = try inertStartupTemporaryBaseV1()
-    defer { try? FileManager.default.removeItem(at: failureBase) }
-    let failureFinishProbe = InertStartupProbeV1()
-    let failureOwner = try inertStartupPreparedOwnerV1(
-        base: failureBase,
-        finishProbe: failureFinishProbe
-    )
-    await #expect(throws: InertStartupTestErrorV1.authentication) {
-        try await MacCompanionAgentInertStartupCoordinatorV1
-            .prepareAndStartAuthentication(
-                prepare: { .ready(failureOwner) },
-                startAuthentication: {
-                    throw InertStartupTestErrorV1.authentication
-                }
-            )
-    }
-    #expect(failureFinishProbe.snapshot() == ["finish"])
+    #expect(firstUnlockProbe.snapshot().isEmpty)
 }
 
 @available(macOS 26.0, *)
-@Test func startupPreparationFailureNeverStartsAuthentication() async {
-    let probe = InertStartupProbeV1()
-    await #expect(throws: InertStartupTestErrorV1.preparation) {
-        try await MacCompanionAgentInertStartupCoordinatorV1
-            .prepareAndStartAuthentication(
-                prepare: {
-                    probe.record("prepare")
-                    throw InertStartupTestErrorV1.preparation
-                },
-                startAuthentication: {
-                    probe.record("authentication")
+@Test func selectedStartFailuresRetirePreparationAndNeverFallBack()
+    async throws
+{
+    for enabled in [true, false] {
+        let base = try agentLocalServiceTemporaryBaseV1()
+        defer { try? FileManager.default.removeItem(at: base) }
+        let probe = AgentLocalServiceStartupProbeV1()
+        let prepared = try agentLocalServicePreparedOwnerV1(
+            base: base,
+            enabled: enabled,
+            probe: probe,
+            startLocalService: {
+                throw AgentLocalServiceStartupTestErrorV1.selectedStart
+            }
+        )
+        await #expect(throws: AgentLocalServiceStartupTestErrorV1.selectedStart) {
+            try await MacCompanionAgentLocalServiceStartupV1.start(
+                prepare: { .ready(prepared) },
+                makeAuthenticationOnly: {
+                    probe.record("auth.construct")
+                    return AgentLocalServiceTestRuntimeV1(
+                        label: "auth",
+                        probe: probe,
+                        onStart: {
+                            throw AgentLocalServiceStartupTestErrorV1
+                                .selectedStart
+                        }
+                    )
                 }
             )
+        }
+        #expect(
+            probe.snapshot() == (enabled
+                ? ["status.start", "prepared.finish"]
+                : [
+                    "auth.construct", "auth.start", "auth.finish",
+                    "prepared.finish",
+                ])
+        )
     }
-    #expect(probe.snapshot() == ["prepare"])
 }
 
 @available(macOS 26.0, *)
-@Test func narrowOwnerDeinitBeginsPreparedRetirement() async throws {
-    let base = try inertStartupTemporaryBaseV1()
+@Test func noncanonicalReadySnapshotFailsBeforeEitherServiceStarts()
+    async throws
+{
+    for (revision, agentEpoch, menuEpoch) in [
+        (UInt64(1), UInt64(0), UInt64(0)),
+        (UInt64(0), UInt64(1), UInt64(0)),
+        (UInt64(0), UInt64(0), UInt64(1)),
+    ] {
+        let base = try agentLocalServiceTemporaryBaseV1()
+        defer { try? FileManager.default.removeItem(at: base) }
+        let probe = AgentLocalServiceStartupProbeV1()
+        let prepared = try agentLocalServicePreparedOwnerV1(
+            base: base,
+            enabled: true,
+            revision: revision,
+            agentObservationEpoch: agentEpoch,
+            menuAppObservationEpoch: menuEpoch,
+            probe: probe
+        )
+        await #expect(throws: MacAgentApplicationPreparationErrorV1.self) {
+            try await MacCompanionAgentLocalServiceStartupV1.start(
+                prepare: { .ready(prepared) },
+                makeAuthenticationOnly: {
+                    probe.record("auth.construct")
+                    return AgentLocalServiceTestRuntimeV1(
+                        label: "auth",
+                        probe: probe
+                    )
+                }
+            )
+        }
+        #expect(probe.snapshot() == ["prepared.finish"])
+    }
+}
+
+@available(macOS 26.0, *)
+@Test func cancellationImmediatelyAfterReadyPreparationRetiresOwner()
+    async throws
+{
+    let base = try agentLocalServiceTemporaryBaseV1()
     defer { try? FileManager.default.removeItem(at: base) }
-    let probe = InertStartupProbeV1()
-    var owner: MacCompanionAgentInertSystemOwnerV1? =
-        try inertStartupPreparedOwnerV1(base: base, finishProbe: probe)
-    #expect(owner != nil)
-    owner = nil
-    for _ in 0..<100 where probe.snapshot().isEmpty {
-        try await Task.sleep(for: .milliseconds(1))
+    let probe = AgentLocalServiceStartupProbeV1()
+    let prepared = try agentLocalServicePreparedOwnerV1(
+        base: base,
+        enabled: true,
+        probe: probe
+    )
+    let startup = Task {
+        try await MacCompanionAgentLocalServiceStartupV1.start(
+            prepare: {
+                withUnsafeCurrentTask { $0?.cancel() }
+                return .ready(prepared)
+            },
+            makeAuthenticationOnly: {
+                probe.record("auth.construct")
+                return AgentLocalServiceTestRuntimeV1(
+                    label: "auth",
+                    probe: probe
+                )
+            }
+        )
     }
-    #expect(probe.snapshot() == ["finish"])
+    await #expect(throws: CancellationError.self) {
+        _ = try await startup.value
+    }
+    #expect(probe.snapshot() == ["prepared.finish"])
+}
+
+@available(macOS 26.0, *)
+@Test func callerCancellationDuringSelectedStartJoinsTerminalCleanup()
+    async throws
+{
+    let base = try agentLocalServiceTemporaryBaseV1()
+    defer { try? FileManager.default.removeItem(at: base) }
+    let probe = AgentLocalServiceStartupProbeV1()
+    let gate = AgentLocalServiceOneShotGateV1()
+    let prepared = try agentLocalServicePreparedOwnerV1(
+        base: base,
+        enabled: true,
+        probe: probe,
+        startLocalService: { try await gate.enterAndWait() }
+    )
+    let startup = Task {
+        try await MacCompanionAgentLocalServiceStartupV1.start(
+            prepare: { .ready(prepared) },
+            makeAuthenticationOnly: {
+                probe.record("auth.construct")
+                return AgentLocalServiceTestRuntimeV1(
+                    label: "auth",
+                    probe: probe
+                )
+            }
+        )
+    }
+    await gate.waitUntilEntered()
+    startup.cancel()
+    await #expect(throws: CancellationError.self) {
+        _ = try await startup.value
+    }
+    #expect(probe.snapshot() == ["status.start", "prepared.finish"])
+}
+
+@available(macOS 26.0, *)
+@Test func runningOwnerConcurrentFinishSharesOneCompleteBarrier()
+    async throws
+{
+    let probe = AgentLocalServiceStartupProbeV1()
+    let runtime = AgentLocalServiceTestRuntimeV1(
+        label: "auth",
+        probe: probe
+    )
+    let outcome = try await MacCompanionAgentLocalServiceStartupV1.start(
+        prepare: { .deferred(.localRecoveryRequired) },
+        makeAuthenticationOnly: { runtime }
+    )
+    let owner = try #require(runningOwnerV1(outcome))
+    async let first: Void = owner.finish()
+    async let second: Void = owner.finish()
+    _ = await (first, second)
+    #expect(probe.snapshot() == ["auth.start", "auth.finish"])
 }
 #endif

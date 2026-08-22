@@ -811,6 +811,35 @@ public enum MacAgentProductBootstrapV1 {
         )
     }
 
+    /// Prepares the permanent Agent's first live local-service slice. The
+    /// deferred factory is fixed here, below the application boundary, so the
+    /// executable cannot substitute a presentation-capable profile or raw
+    /// status reader. Construction remains inert until the returned product's
+    /// package-owned local-authorization start is invoked.
+    package static func prepareStatusOnlyInert(
+        storage: MacAgentReleaseStorageV1,
+        hostIdentityConfiguration:
+            SecurityHostIdentityKeyCustodyConfigurationV0,
+        inputs: AgentNetworkPrimaryStartupInputsV1,
+        processStarter: any MacDashboardLifecycleProcessStartingV1
+    ) async throws -> MacAgentProductBootstrapResultV1 {
+        let result = try await AgentNetworkPrimaryStartupFactoryV1.prepare(
+            requiredAudit: storage.requiredAudit,
+            hostIdentityConfiguration: hostIdentityConfiguration,
+            inputs: inputs
+        )
+        return try await composeInert(
+            storage: storage,
+            preparation: result,
+            makeLocalXPC: { services in
+                try await MacLocalXPCAgentProductV1.afterAgentBootstrap(
+                    services: services,
+                    processStarter: processStarter
+                )
+            }
+        )
+    }
+
     package static func prepare(
         storage: MacAgentReleaseStorageV1,
         hostIdentityStartup: @escaping @Sendable () async throws ->

@@ -71,12 +71,16 @@ package struct MacAgentPreparedProductHandleV1: Sendable {
     package let storagePaths: MacAgentReleaseStoragePathsV1
     private let currentLifecycle:
         @Sendable () async -> AgentRemoteLifecycleSnapshotV1
+    private let startPreparedLocalService: @Sendable () async throws -> Void
     private let finishPrepared: @Sendable () async -> Void
 
     package init(product: MacAgentPreparedProductV1) {
         hostID = product.hostID
         storagePaths = product.storagePaths
         currentLifecycle = { await product.lifecycleSnapshot() }
+        startPreparedLocalService = {
+            try await product.startLocalAuthorization()
+        }
         finishPrepared = { await product.finish() }
     }
 
@@ -85,11 +89,13 @@ package struct MacAgentPreparedProductHandleV1: Sendable {
         storagePaths: MacAgentReleaseStoragePathsV1,
         currentLifecycle: @escaping @Sendable () async ->
             AgentRemoteLifecycleSnapshotV1,
+        startLocalService: @escaping @Sendable () async throws -> Void = {},
         finish: @escaping @Sendable () async -> Void
     ) {
         self.hostID = hostID
         self.storagePaths = storagePaths
         self.currentLifecycle = currentLifecycle
+        startPreparedLocalService = startLocalService
         self.finishPrepared = finish
     }
 
@@ -97,6 +103,10 @@ package struct MacAgentPreparedProductHandleV1: Sendable {
         -> AgentRemoteLifecycleSnapshotV1
     {
         await currentLifecycle()
+    }
+
+    package func startLocalService() async throws {
+        try await startPreparedLocalService()
     }
 
     package func finish() async {
@@ -154,6 +164,39 @@ public actor MacAgentInertApplicationLifecycleV1 {
         )
     }
 
+    package func canonicalInitialLifecycleSnapshot() async throws
+        -> AgentRemoteLifecycleSnapshotV1
+    {
+        let snapshot = await prepared.lifecycleSnapshot()
+        guard snapshot.revision == 0,
+              snapshot.agentObservationEpoch == 0,
+              snapshot.menuAppObservationEpoch == 0 else {
+            throw MacAgentApplicationPreparationErrorV1
+                .unsafeInitialLifecycleState
+        }
+        try MacAgentApplicationPreparationFacadeV1
+            .validateInitialLifecycleState(snapshot.state)
+        return snapshot
+    }
+
+    package func startPreparedLocalService() async throws {
+        guard finishTask == nil, !finished else {
+            throw MacAgentApplicationPreparationErrorV1
+                .unsafeInitialLifecycleState
+        }
+        do {
+            try await prepared.startLocalService()
+            try Task.checkCancellation()
+            guard finishTask == nil, !finished else {
+                throw MacAgentApplicationPreparationErrorV1
+                    .unsafeInitialLifecycleState
+            }
+        } catch {
+            await finish()
+            throw error
+        }
+    }
+
     public func finish() async {
         if let finishTask {
             await finishTask.value
@@ -200,7 +243,8 @@ public enum MacAgentApplicationPreparationFacadeV1 {
                 )
             },
             prepareRoot: { storage, primaryInputs in
-                let result = try await MacAgentProductBootstrapV1.prepareInert(
+                let result = try await MacAgentProductBootstrapV1
+                    .prepareStatusOnlyInert(
                     storage: storage,
                     hostIdentityConfiguration:
                         inputs.hostIdentityConfiguration,

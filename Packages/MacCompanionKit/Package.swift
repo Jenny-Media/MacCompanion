@@ -329,6 +329,7 @@ let package = Package(
                 "CompanionAgent", "CompanionAgentNetworkPlatform",
                 "CompanionAgentPlatform", "CompanionAgentProductPlatform",
                 "CompanionHost", "CompanionHostPlatform",
+                "CompanionLocalXPCPlatform",
             ]
         ),
         .target(

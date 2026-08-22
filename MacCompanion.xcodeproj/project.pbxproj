@@ -7,7 +7,6 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		0F8835B7FFA65720544938A0 /* CompanionLocalXPCPlatform in Frameworks */ = {isa = PBXBuildFile; productRef = 1CDE656098E73FC6CF249191 /* CompanionLocalXPCPlatform */; };
 		281D3C00B605BF825BFCA0F4 /* CompanionLocalXPCPlatform in Frameworks */ = {isa = PBXBuildFile; productRef = D80FDE8AEECB694B58AE4155 /* CompanionLocalXPCPlatform */; };
 		766C4BE8703736B3332F625B /* CompanionMacApplicationPlatform in Frameworks */ = {isa = PBXBuildFile; productRef = 45997269355B0A95903CEC2D /* CompanionMacApplicationPlatform */; };
 		7C52EF7713040BA0D1AF04BB /* CompanionMacUI in Frameworks */ = {isa = PBXBuildFile; productRef = A41CC69D69523D4B80517C00 /* CompanionMacUI */; };
@@ -87,7 +86,6 @@
 			buildActionMask = 2147483647;
 			files = (
 				9EA787566F61B8172FB4B367 /* CompanionAgentApplicationPlatform in Frameworks */,
-				0F8835B7FFA65720544938A0 /* CompanionLocalXPCPlatform in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -213,7 +211,6 @@
 			name = MacCompanionAgent;
 			packageProductDependencies = (
 				712A36891FC0D3BAA4856A09 /* CompanionAgentApplicationPlatform */,
-				1CDE656098E73FC6CF249191 /* CompanionLocalXPCPlatform */,
 			);
 			productName = MacCompanionAgent;
 			productReference = AE3D392DEDADD8FF0EA82A87 /* MacCompanionAgent */;
@@ -576,10 +573,6 @@
 /* End XCLocalSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
-		1CDE656098E73FC6CF249191 /* CompanionLocalXPCPlatform */ = {
-			isa = XCSwiftPackageProductDependency;
-			productName = CompanionLocalXPCPlatform;
-		};
 		384AB5F79EBFE92182F4928C /* CompanionAgent */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = CompanionAgent;
