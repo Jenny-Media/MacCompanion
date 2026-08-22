@@ -7,7 +7,7 @@
     {"path": "invalid-unknown-field.json", "expect": "invalid", "errors": ["unknownField"]},
     {"path": "invalid-secret-material.json", "expect": "invalid", "errors": ["forbiddenSecretField", "forbiddenSecretMaterial"]},
     {"path": "invalid-absolute-evidence-path.json", "expect": "invalid", "errors": ["unsafePath"]},
-    {"path": "invalid-artifact-digest.json", "expect": "invalid", "errors": ["invalidDigest"]},
+    {"path": "invalid-artifact-digest.json", "expect": "invalid", "errors": ["invalidDigest", "invalidNotarySubmissions"]},
     {"path": "invalid-signed-candidate-incomplete.json", "expect": "invalid", "errors": ["missingMacArtifacts", "missingMacExecutables", "missingAcceptedNotarization", "missingSBOM"]},
     {"path": "invalid-promotion-missing-physical.json", "expect": "invalid", "errors": ["missingPhysicalScenario", "failedPhysicalScenario"]},
     {"path": "invalid-duplicate-validation-id.json", "expect": "invalid", "errors": ["duplicateIdentifier"]},

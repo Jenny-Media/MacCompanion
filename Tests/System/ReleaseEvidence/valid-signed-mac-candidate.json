@@ -82,9 +82,8 @@
     }
   ],
   "notarization": {
-    "submissionID": "12345678-1234-1234-1234-123456789abc",
-    "status": "accepted",
-    "logEvidence": {"path": "notarization/log.json", "sha256": "ceffe727ab2fa2c7c3322ee4a1aa0c2d2a4664836c2133df93dd15055bb617be", "bytes": 1},
+    "evidence": {"path": "notarization/platform-notarization.json", "sha256": "ceffe727ab2fa2c7c3322ee4a1aa0c2d2a4664836c2133df93dd15055bb617be", "bytes": 1},
+    "acceptedSubmissionIDs": ["12345678-1234-1234-1234-123456789abc", "abcdefab-cdef-abcd-efab-cdefabcdefab"],
     "stapledArtifactIDs": ["mac-app", "mac-dmg"]
   },
   "sbom": {

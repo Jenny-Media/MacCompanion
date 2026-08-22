@@ -467,18 +467,24 @@ def validate_notarization(
 ) -> dict[str, Any] | None:
     obj = closed_object(
         value,
-        {"submissionID", "status", "logEvidence", "stapledArtifactIDs"},
+        {"evidence", "acceptedSubmissionIDs", "stapledArtifactIDs"},
         errors,
         nullable=True,
     )
     if obj is None:
         return None
-    submission = obj.get("submissionID")
-    if not isinstance(submission, str) or not NOTARY_ID.fullmatch(submission):
-        add(errors, "invalidNotaryID")
-    if obj.get("status") not in {"accepted", "rejected"}:
-        add(errors, "invalidNotaryStatus")
-    evidence_reference(obj.get("logEvidence"), errors)
+    evidence_reference(obj.get("evidence"), errors)
+    submissions = obj.get("acceptedSubmissionIDs")
+    if not isinstance(submissions, list) or len(submissions) != 2:
+        add(errors, "invalidNotarySubmissions")
+    else:
+        seen_submissions: set[str] = set()
+        for submission in submissions:
+            if not isinstance(submission, str) or not NOTARY_ID.fullmatch(submission):
+                add(errors, "invalidNotaryID")
+            if submission in seen_submissions:
+                add(errors, "duplicateValue")
+            seen_submissions.add(submission)
     stapled = obj.get("stapledArtifactIDs")
     if not isinstance(stapled, list) or len(stapled) > 16:
         add(errors, "invalidArray")
@@ -630,7 +636,7 @@ def validate_manifest(value: Any) -> set[str]:
                 add(errors, "missingMacArtifacts")
             if not {"macApp", "agent"}.issubset(executable_roles):
                 add(errors, "missingMacExecutables")
-            if notarization is None or notarization.get("status") != "accepted":
+            if notarization is None:
                 add(errors, "missingAcceptedNotarization")
             else:
                 stapled = set(notarization.get("stapledArtifactIDs", []))
@@ -762,7 +768,7 @@ def referenced_files(value: dict[str, Any]) -> list[dict[str, Any]]:
     # loader owns the 1 MiB cap, no-follow descriptor read, exact parsed-byte
     # reference comparison, and four 16 MiB raw-evidence caps.
     if value["notarization"] is not None:
-        references.append(value["notarization"]["logEvidence"])
+        references.append(value["notarization"]["evidence"])
     if value["sbom"] is not None:
         references.append(value["sbom"]["document"])
         references.append(value["sbom"]["licenses"])

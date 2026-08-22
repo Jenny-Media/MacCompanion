@@ -41,7 +41,9 @@ Every root key is required:
 - `executables`: signed-code evidence referring to declared artifacts plus one
   hashed verification bundle containing the designated requirement, expanded
   entitlements, code-sign verification, and platform assessment.
-- `notarization`: macOS notary receipt and stapling evidence, or `null`.
+- `notarization`: one hashed canonical two-phase platform-notarization record,
+  its two distinct accepted submission IDs, and final app/DMG stapling claims,
+  or `null`.
 - `sbom`: checksummed SBOM plus dependency-license evidence, or `null`.
 - `physicalScenarios`: uniquely identified passed/failed evidence records.
 - `promotion`: explicit human approval and publication evidence, or `null`.
@@ -57,9 +59,10 @@ segments, and `..` are forbidden.
 ## Target requirements
 
 A signed macOS candidate requires `macApplication`, `macDiskImage`, and
-`sparkleArchive` artifacts; signed `macApp` and `agent` executable roles; an
-accepted notarization record; and stapling evidence for the application and
-disk image. A signed iOS candidate requires an `iosArchive` artifact and a
+`sparkleArchive` artifacts; signed `macApp` and `agent` executable roles; a
+canonical [two-phase notarization record](../../platform-notarization-evidence/v0/profile.md)
+covering distinct accepted app-archive and disk-image submissions; and stapling
+evidence for the application and disk image. A signed iOS candidate requires an `iosArchive` artifact and a
 signed `iosApp` executable role. Every signed candidate requires an SBOM and
 dependency-license evidence.
 
