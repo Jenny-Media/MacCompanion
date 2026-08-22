@@ -51,8 +51,10 @@ inspect certificates or entitlements, compare a signing policy, correlate
 notarization, validate stapling or Gatekeeper, or publish the canonical 8 MiB
 evidence record.
 
-The next slice must reconstruct and rehash exact artifact-SBOM subjects inside
-an owned private root, then build only the profile's fixed deepest-first
-verification plans over graph-selected subjects. Those plans can consume this
-runner only after their tool identities and complete argument shapes are
-independently pinned.
+The subsequent [subject-reconstruction and plan-derivation
+slice](2026-08-22-platform-signing-subject-reconstruction.md) now rehashes exact
+artifact-SBOM subjects inside an owned private root and builds only the
+profile's fixed deepest-first verification plans over graph-selected subjects.
+Those plans remain inert. The next slice must execute them through this runner,
+parse the bounded raw evidence, and compare every reported platform fact to the
+independently pinned signing policy.
