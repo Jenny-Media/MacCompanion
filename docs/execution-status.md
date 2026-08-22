@@ -60,6 +60,17 @@ This is the living execution authority for the staged plan. A blocker applies on
 | Administrator capabilities | 6 | deferred | Each capability is independent | Separate demand, threat model, containment, and review per capability | Each item receives its own pass/no-go/deferred record |
 | Assisted operation | 7 | deferred | Untrusted-planner boundary documented | Earlier gates plus one validated assisted job and injection review | No model receives control authority implicitly |
 
+Latest disabled-Agent durable-authority checkpoint, superseding the durable
+owner portion of the Process/local-IPC and Agent-lifecycle next steps: the
+[Agent bootstrap durable authority](evidence/2026-08-22-agent-bootstrap-durable-authority.md)
+now issues revision-bound expiring offers and commits exact enabled successor
+intent through the existing locked atomic store. Exact read-back is required
+after every write outcome, exact command replay is write-free, and generation
+plus operation high-water fences prevent suspended storage work from crossing
+peer replacement. The next proof is injection into the exact XPC handler,
+successful-receipt service retirement, explicit Agent-only setup registration,
+and foreground menu-client composition.
+
 Latest disabled-Agent bootstrap-transport checkpoint, superseding the
 exact-envelope next-step wording in the Process and local IPC row: the
 [exact bootstrap transport](evidence/2026-08-22-disabled-agent-bootstrap-transport.md)
