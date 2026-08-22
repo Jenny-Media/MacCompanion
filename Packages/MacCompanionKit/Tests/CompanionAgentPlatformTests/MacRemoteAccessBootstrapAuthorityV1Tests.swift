@@ -30,10 +30,11 @@ private final class BootstrapAuthorityClockV1:
 private actor BootstrapAuthorityIntentStoreV1:
     MacRemoteAccessIntentPersistenceV1
 {
-    enum CommitMode: Sendable {
+    enum CommitMode: Equatable, Sendable {
         case normal
         case throwAfterWrite
         case replaceWithConflict
+        case suspendReadbackAfterWrite
     }
 
     private var snapshot: MacRemoteAccessIntentSnapshotV1?
@@ -69,7 +70,7 @@ private actor BootstrapAuthorityIntentStoreV1:
             throw MacRemoteAccessIntentStoreErrorV1.revisionConflict
         }
         switch commitMode {
-        case .normal, .throwAfterWrite:
+        case .normal, .throwAfterWrite, .suspendReadbackAfterWrite:
             snapshot = replacement
         case .replaceWithConflict:
             snapshot = try MacRemoteAccessIntentSnapshotV1(
@@ -82,7 +83,9 @@ private actor BootstrapAuthorityIntentStoreV1:
                     replacement.recordedAtUnixMilliseconds
             )
         }
-        if commitMode != .normal {
+        if commitMode == .suspendReadbackAfterWrite {
+            suspendNextCurrentRead = true
+        } else if commitMode != .normal {
             throw MacRemoteAccessIntentStoreErrorV1.ioFailure
         }
         return before == nil ? .inserted : .replaced
@@ -113,6 +116,25 @@ private actor BootstrapAuthorityIntentStoreV1:
         let continuation = suspendedCurrentRead
         suspendedCurrentRead = nil
         continuation?.resume()
+    }
+}
+
+private final class BootstrapAuthorityRestartCounterV1:
+    @unchecked Sendable
+{
+    private let lock = NSLock()
+    private var value = 0
+
+    func record() {
+        lock.lock()
+        value += 1
+        lock.unlock()
+    }
+
+    var count: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return value
     }
 }
 
@@ -356,4 +378,69 @@ func bootstrapAuthorityFencesSuspendedReadAcrossReplacement() async throws {
         command: command
     )
     try receipt.validate(against: command)
+}
+
+@Test
+func bootstrapAuthoritySignalsCommittedEnableWhenReplyBecomesImpossible()
+    async throws
+{
+    let store = BootstrapAuthorityIntentStoreV1(
+        try disabledBootstrapIntentV1()
+    )
+    let restart = BootstrapAuthorityRestartCounterV1()
+    let authority = MacRemoteAccessBootstrapAuthorityV1(
+        intentStore: store,
+        wallClock: BootstrapAuthorityClockV1(bootstrapAuthorityNowV1),
+        offerIDSource: { bootstrapAuthorityOfferIDV1 },
+        onUnacknowledgedDurableChange: { restart.record() }
+    )
+    let offer = try await authority.readOffer(generation: 12)
+    let command = try bootstrapAuthorityCommandV1(offer: offer)
+    await store.setCommitMode(.suspendReadbackAfterWrite)
+
+    let enable = Task {
+        try await authority.enable(generation: 12, command: command)
+    }
+    await store.waitForSuspendedCurrent()
+    await authority.invalidate(generation: 12)
+    await store.resumeSuspendedCurrent()
+    await #expect(
+        throws: MacRemoteAccessBootstrapAuthorityErrorV1.staleGeneration
+    ) {
+        try await enable.value
+    }
+    #expect(restart.count == 1)
+    let durable = try #require(await store.current())
+    #expect(durable.desiredEnabled)
+    #expect(durable.revision == 5)
+    #expect(durable.commandID == command.commandID)
+}
+
+@Test
+func bootstrapAuthoritySignalsDurableReceiptAcknowledgementFailureOnce()
+    async throws
+{
+    let store = BootstrapAuthorityIntentStoreV1(
+        try disabledBootstrapIntentV1()
+    )
+    let restart = BootstrapAuthorityRestartCounterV1()
+    let authority = MacRemoteAccessBootstrapAuthorityV1(
+        intentStore: store,
+        wallClock: BootstrapAuthorityClockV1(bootstrapAuthorityNowV1),
+        offerIDSource: { bootstrapAuthorityOfferIDV1 },
+        onUnacknowledgedDurableChange: { restart.record() }
+    )
+    let offer = try await authority.readOffer(generation: 13)
+    let command = try bootstrapAuthorityCommandV1(offer: offer)
+    _ = try await authority.enable(generation: 13, command: command)
+
+    await authority.enabledReceiptWasNotAcknowledged(generation: 13)
+    await authority.enabledReceiptWasNotAcknowledged(generation: 13)
+
+    #expect(restart.count == 1)
+    await #expect(
+        throws: MacRemoteAccessBootstrapAuthorityErrorV1.staleGeneration
+    ) {
+        try await authority.enable(generation: 13, command: command)
+    }
 }

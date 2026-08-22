@@ -7,6 +7,27 @@ public enum MacLocalXPCRemoteAccessBootstrapWireV1 {
         Int(MCLocalXPCMaximumBootstrapPayloadBytes)
 }
 
+/// Sealed Agent authority injected only into the disabled bootstrap profile.
+/// The transport owns authentication, exact envelopes, timeouts, and peer
+/// fencing; the handler owns the durable disabled-to-enabled transition.
+public protocol MacLocalXPCRemoteAccessBootstrapHandlingV1: Sendable {
+    func readOffer(
+        generation: UInt64
+    ) async throws -> LocalRemoteAccessBootstrapOfferV0
+
+    func enable(
+        generation: UInt64,
+        command: LocalRemoteAccessEnableCommandV0
+    ) async throws -> LocalRemoteAccessEnabledReceiptV0
+
+    /// Called only after `enable` returned a durable receipt but the exact XPC
+    /// acknowledgement could not be sent. The Agent must restart and reconcile
+    /// the committed intent rather than continue serving the disabled profile.
+    func enabledReceiptWasNotAcknowledged(generation: UInt64) async
+
+    func invalidate(generation: UInt64) async
+}
+
 /// Serializes the authentication-only bootstrap exchange for one exact peer
 /// generation. The gate carries no remote authority and performs no durable
 /// mutation; it only prevents reordering, overlap, and stale completion.

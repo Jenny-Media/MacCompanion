@@ -14,6 +14,7 @@ public enum MacLocalXPCIdentityV1 {
 public enum MacLocalXPCServerEventV1: Equatable, Sendable {
     case authenticatedMenu(generation: UInt64)
     case menuReady(generation: UInt64)
+    case remoteAccessEnabled(generation: UInt64)
     case invalidatedMenu(generation: UInt64)
 }
 
@@ -29,9 +30,13 @@ public enum MacLocalXPCClientEventV1: Equatable, Sendable {
 }
 
 public enum MacLocalXPCServerProfileV1: Equatable, Sendable {
-    /// The permanent target default: authenticate and reject every later
-    /// message until a complete authority owner is composed.
+    /// Closed recovery/default profile: authenticate and reject every later
+    /// message. It can never receive the disabled bootstrap authority.
     case authenticationOnly
+
+    /// Enables only the exact one-use disabled-to-enabled bootstrap exchange.
+    /// This profile requires an injected durable bootstrap authority.
+    case disabledRemoteAccessBootstrap
 
     /// Enables only the exact one-use lifecycle.menu-ready exchange.
     case menuLifecycleReadiness
@@ -46,7 +51,13 @@ public enum MacLocalXPCServerProfileV1: Equatable, Sendable {
     case menuLifecycleReadinessStatusAndPresentation
 
     var admitsMenuLifecycleReadiness: Bool {
-        self != .authenticationOnly
+        self == .menuLifecycleReadiness
+            || self == .menuLifecycleReadinessAndStatus
+            || self == .menuLifecycleReadinessStatusAndPresentation
+    }
+
+    var admitsRemoteAccessBootstrap: Bool {
+        self == .disabledRemoteAccessBootstrap
     }
 
     var admitsAgentStatus: Bool {
@@ -290,6 +301,39 @@ public final class MacLocalXPCServerV1:
     public typealias EventHandler = @Sendable (MacLocalXPCServerEventV1) -> Void
     package static let maximumAdmittedPresentationsPerGeneration = 8
     package static let presentationReplyTimeoutSeconds = 3
+    package static let remoteAccessBootstrapTimeoutSeconds = 5
+
+    private enum BootstrapRequestKind: Sendable {
+        case offer
+        case enable(LocalRemoteAccessEnableCommandV0)
+    }
+
+    private final class PendingBootstrapRequest: @unchecked Sendable {
+        let operation: UInt64
+        let kind: BootstrapRequestKind
+        var deadline: DispatchWorkItem?
+        var task: Task<Void, Never>?
+        private let requestLease:
+            MacLocalXPCStatusRequestLeaseV1<MCLocalXPCMessageRef>
+
+        init(
+            operation: UInt64,
+            kind: BootstrapRequestKind,
+            request: MCLocalXPCMessageRef
+        ) {
+            self.operation = operation
+            self.kind = kind
+            requestLease = MacLocalXPCStatusRequestLeaseV1(request: request)
+        }
+
+        func takeOwnedRequest() -> MCLocalXPCMessageRef? {
+            requestLease.takeOwnedRequest()
+        }
+
+        func releaseOwnedRequest() {
+            requestLease.releaseIfOwned()
+        }
+    }
 
     private final class PendingStatusRead: @unchecked Sendable {
         let operation: UInt64
@@ -371,6 +415,9 @@ public final class MacLocalXPCServerV1:
         let generation: UInt64
         let peer: MCLocalXPCSessionRef
         var lifetime = MacLocalXPCAuthenticatedLifetimeV1()
+        var bootstrapGate =
+            MacLocalXPCRemoteAccessBootstrapTransactionGateV1()
+        var pendingBootstrapRequest: PendingBootstrapRequest?
         var statusReadGate = MacLocalXPCStatusReadTransactionGateV1()
         var pendingStatusRead: PendingStatusRead?
         var presentationIssuanceGate:
@@ -397,6 +444,7 @@ public final class MacLocalXPCServerV1:
                     .maximumAdmittedPresentationsPerGeneration
             )
             MCLocalXPCSessionRetain(peer)
+            precondition(bootstrapGate.bind(generation: generation))
             precondition(statusReadGate.bind(generation: generation))
             ownedPeer = peer
         }
@@ -418,6 +466,23 @@ public final class MacLocalXPCServerV1:
             pendingStatusRead.releaseOwnedRequest()
         }
 
+        @discardableResult
+        func cancelRemoteAccessBootstrap() -> Bool {
+            let invalidated = bootstrapGate.invalidate(
+                generation: generation
+            )
+            guard let pendingBootstrapRequest else {
+                return invalidated
+            }
+            self.pendingBootstrapRequest = nil
+            pendingBootstrapRequest.deadline?.cancel()
+            pendingBootstrapRequest.deadline = nil
+            pendingBootstrapRequest.task?.cancel()
+            pendingBootstrapRequest.task = nil
+            pendingBootstrapRequest.releaseOwnedRequest()
+            return invalidated
+        }
+
     }
 
     private let queue = DispatchQueue(
@@ -429,9 +494,14 @@ public final class MacLocalXPCServerV1:
     private let queueKey = DispatchSpecificKey<UInt8>()
     private var nextGeneration: UInt64 = 0
     private var currentPeerState: PeerState?
+    private let bootstrapHandler:
+        (any MacLocalXPCRemoteAccessBootstrapHandlingV1)?
     private let statusReader: (any MacLocalXPCStatusReadingV1)?
     private let profile: MacLocalXPCServerProfileV1
     private let statusReadTimeout: DispatchTimeInterval = .seconds(2)
+    private let bootstrapTimeout: DispatchTimeInterval = .seconds(
+        remoteAccessBootstrapTimeoutSeconds
+    )
     private let handshakeTimeout: DispatchTimeInterval = .seconds(10)
     private var generationGate = MacLocalXPCPeerGenerationGateV1()
     private var listenerRunGate = MacLocalXPCServerRunGateV1()
@@ -440,10 +510,13 @@ public final class MacLocalXPCServerV1:
 
     public init(
         profile: MacLocalXPCServerProfileV1 = .authenticationOnly,
+        bootstrapHandler:
+            (any MacLocalXPCRemoteAccessBootstrapHandlingV1)? = nil,
         statusReader: (any MacLocalXPCStatusReadingV1)? = nil,
         onEvent: @escaping EventHandler
     ) {
         self.profile = profile
+        self.bootstrapHandler = bootstrapHandler
         self.statusReader = statusReader
         self.onEvent = onEvent
         queue.setSpecific(key: queueKey, value: 1)
@@ -460,6 +533,10 @@ public final class MacLocalXPCServerV1:
                 throw MacLocalXPCConstructionErrorV1.alreadyStarted
             }
             guard profile.admitsAgentStatus == (statusReader != nil) else {
+                throw MacLocalXPCConstructionErrorV1.invalidProfile
+            }
+            guard profile.admitsRemoteAccessBootstrap
+                    == (bootstrapHandler != nil) else {
                 throw MacLocalXPCConstructionErrorV1.invalidProfile
             }
 
@@ -1112,8 +1189,18 @@ public final class MacLocalXPCServerV1:
         presentationError: MacLocalXPCMenuPresentationSendErrorV1
     ) {
         guard state.postAuthenticationFence.fence() else { return }
+        invalidateRemoteAccessBootstrap(state)
         state.cancelPendingStatusRead()
         fencePresentations(state, error: presentationError)
+    }
+
+    private func invalidateRemoteAccessBootstrap(_ state: PeerState) {
+        guard state.cancelRemoteAccessBootstrap(),
+              let bootstrapHandler else { return }
+        let generation = state.generation
+        Task {
+            await bootstrapHandler.invalidate(generation: generation)
+        }
     }
 
     private func authorizesAgentPresentationMethod(
@@ -1248,6 +1335,56 @@ public final class MacLocalXPCServerV1:
                 return
             }
 
+            if MCLocalXPCMessageIsExactRemoteAccessBootstrapRead(message) {
+                guard self.beginRemoteAccessBootstrapOfferRead(
+                    state: state,
+                    request: message
+                ) else {
+                    self.cancelAuthenticatedPeer(
+                        state,
+                        presentationError: .transportFailure
+                    )
+                    return
+                }
+                return
+            }
+
+            var enablePayload: UnsafePointer<UInt8>?
+            var enablePayloadLength = 0
+            if MCLocalXPCMessageGetExactRemoteAccessEnable(
+                message,
+                &enablePayload,
+                &enablePayloadLength
+            ) {
+                guard let enablePayload,
+                      enablePayloadLength > 0 else {
+                    self.cancelAuthenticatedPeer(
+                        state,
+                        presentationError: .transportFailure
+                    )
+                    return
+                }
+                let payload = Data(
+                    bytes: enablePayload,
+                    count: enablePayloadLength
+                )
+                guard let command = try?
+                        LocalRemoteAccessBootstrapWireCodecV1
+                            .decodeEnableCommand(payload),
+                      self.beginRemoteAccessEnable(
+                        state: state,
+                        request: message,
+                        command: command
+                      ) else {
+                    self.cancelAuthenticatedPeer(
+                        state,
+                        presentationError: .transportFailure
+                    )
+                    return
+                }
+                return
+            }
+
             if MCLocalXPCMessageIsExactMenuReady(message) {
                 guard self.profile.admitsMenuLifecycleReadiness,
                       self.authorizesMenuMethod(.publishMenuReady),
@@ -1310,6 +1447,303 @@ public final class MacLocalXPCServerV1:
         } catch {
             return false
         }
+    }
+
+    private func beginRemoteAccessBootstrapOfferRead(
+        state: PeerState,
+        request: MCLocalXPCMessageRef
+    ) -> Bool {
+        guard let bootstrapHandler,
+              let operation = state.bootstrapGate.beginOfferRead(
+                generation: state.generation,
+                permitted:
+                    profile.admitsRemoteAccessBootstrap
+                    && authorizesMenuMethod(.readRemoteAccessBootstrap)
+                    && state.postAuthenticationFence.admitsTraffic
+              ) else {
+            return false
+        }
+
+        let pending = PendingBootstrapRequest(
+            operation: operation,
+            kind: .offer,
+            request: request
+        )
+        state.pendingBootstrapRequest = pending
+        let queue = self.queue
+        let generation = state.generation
+        pending.task = Task { [weak self, weak state, bootstrapHandler] in
+            do {
+                let offer = try await bootstrapHandler.readOffer(
+                    generation: generation
+                )
+                queue.async { [weak self, weak state] in
+                    guard let self, let state else { return }
+                    self.completeRemoteAccessBootstrapOfferRead(
+                        state: state,
+                        operation: operation,
+                        offer: offer
+                    )
+                }
+            } catch {
+                queue.async { [weak self, weak state] in
+                    guard let self, let state else { return }
+                    self.failRemoteAccessBootstrap(
+                        state: state,
+                        operation: operation
+                    )
+                }
+            }
+        }
+        installRemoteAccessBootstrapDeadline(
+            pending,
+            state: state,
+            operation: operation
+        )
+        return true
+    }
+
+    private func beginRemoteAccessEnable(
+        state: PeerState,
+        request: MCLocalXPCMessageRef,
+        command: LocalRemoteAccessEnableCommandV0
+    ) -> Bool {
+        guard let bootstrapHandler,
+              let operation = state.bootstrapGate.beginEnable(
+                generation: state.generation,
+                permitted:
+                    profile.admitsRemoteAccessBootstrap
+                    && authorizesMenuMethod(.enableRemoteAccess)
+                    && state.postAuthenticationFence.admitsTraffic,
+                command: command
+              ) else {
+            return false
+        }
+
+        let pending = PendingBootstrapRequest(
+            operation: operation,
+            kind: .enable(command),
+            request: request
+        )
+        state.pendingBootstrapRequest = pending
+        let queue = self.queue
+        let generation = state.generation
+        pending.task = Task { [weak self, weak state, bootstrapHandler] in
+            do {
+                let receipt = try await bootstrapHandler.enable(
+                    generation: generation,
+                    command: command
+                )
+                queue.async { [weak self, weak state] in
+                    guard let self, let state else { return }
+                    self.completeRemoteAccessEnable(
+                        state: state,
+                        operation: operation,
+                        receipt: receipt
+                    )
+                }
+            } catch {
+                queue.async { [weak self, weak state] in
+                    guard let self, let state else { return }
+                    self.failRemoteAccessBootstrap(
+                        state: state,
+                        operation: operation
+                    )
+                }
+            }
+        }
+        installRemoteAccessBootstrapDeadline(
+            pending,
+            state: state,
+            operation: operation
+        )
+        return true
+    }
+
+    private func installRemoteAccessBootstrapDeadline(
+        _ pending: PendingBootstrapRequest,
+        state: PeerState,
+        operation: UInt64
+    ) {
+        let deadline = DispatchWorkItem { [weak self, weak state] in
+            guard let self, let state else { return }
+            self.expireRemoteAccessBootstrap(
+                state: state,
+                operation: operation
+            )
+        }
+        pending.deadline = deadline
+        queue.asyncAfter(
+            deadline: .now() + bootstrapTimeout,
+            execute: deadline
+        )
+    }
+
+    private func completeRemoteAccessBootstrapOfferRead(
+        state: PeerState,
+        operation: UInt64,
+        offer: LocalRemoteAccessBootstrapOfferV0
+    ) {
+        guard admitsRemoteAccessBootstrapCompletion(
+                state: state,
+                operation: operation
+              ),
+              case .offer? = state.pendingBootstrapRequest?.kind,
+              state.bootstrapGate.finishOfferRead(
+                generation: state.generation,
+                operation: operation,
+                offer: offer
+              ),
+              let payload = try?
+                LocalRemoteAccessBootstrapWireCodecV1.encodeOffer(offer),
+              let request = takeRemoteAccessBootstrapRequest(
+                state: state,
+                operation: operation
+              ) else {
+            failRemoteAccessBootstrap(
+                state: state,
+                operation: operation
+            )
+            return
+        }
+        defer { MCLocalXPCMessageRelease(request) }
+        let reply = payload.withUnsafeBytes { rawBuffer in
+            guard let bytes = rawBuffer.bindMemory(to: UInt8.self).baseAddress
+            else { return MCLocalXPCResultConstructionFailed }
+            return MCLocalXPCSessionReplyToRemoteAccessBootstrapOffer(
+                state.peer,
+                request,
+                bytes,
+                payload.count
+            )
+        }
+        guard reply == MCLocalXPCResultOK else {
+            cancelAuthenticatedPeer(
+                state,
+                presentationError: .transportFailure
+            )
+            return
+        }
+    }
+
+    private func completeRemoteAccessEnable(
+        state: PeerState,
+        operation: UInt64,
+        receipt: LocalRemoteAccessEnabledReceiptV0
+    ) {
+        guard admitsRemoteAccessBootstrapCompletion(
+                state: state,
+                operation: operation
+              ),
+              case .enable? = state.pendingBootstrapRequest?.kind,
+              state.bootstrapGate.finishEnable(
+                generation: state.generation,
+                operation: operation,
+                receipt: receipt
+              ),
+              let payload = try?
+                LocalRemoteAccessBootstrapWireCodecV1
+                    .encodeEnabledReceipt(receipt),
+              let request = takeRemoteAccessBootstrapRequest(
+                state: state,
+                operation: operation
+              ) else {
+            failCommittedRemoteAccessEnable(
+                state: state,
+                operation: operation
+            )
+            return
+        }
+        defer { MCLocalXPCMessageRelease(request) }
+        let reply = payload.withUnsafeBytes { rawBuffer in
+            guard let bytes = rawBuffer.bindMemory(to: UInt8.self).baseAddress
+            else { return MCLocalXPCResultConstructionFailed }
+            return MCLocalXPCSessionReplyToRemoteAccessEnabled(
+                state.peer,
+                request,
+                bytes,
+                payload.count
+            )
+        }
+        guard reply == MCLocalXPCResultOK else {
+            notifyUnacknowledgedRemoteAccessEnable(state)
+            cancelAuthenticatedPeer(
+                state,
+                presentationError: .transportFailure
+            )
+            return
+        }
+        onEvent(.remoteAccessEnabled(generation: state.generation))
+    }
+
+    private func failCommittedRemoteAccessEnable(
+        state: PeerState,
+        operation: UInt64
+    ) {
+        notifyUnacknowledgedRemoteAccessEnable(state)
+        failRemoteAccessBootstrap(state: state, operation: operation)
+    }
+
+    private func notifyUnacknowledgedRemoteAccessEnable(_ state: PeerState) {
+        guard let bootstrapHandler else { return }
+        let generation = state.generation
+        Task {
+            await bootstrapHandler.enabledReceiptWasNotAcknowledged(
+                generation: generation
+            )
+        }
+    }
+
+    private func admitsRemoteAccessBootstrapCompletion(
+        state: PeerState,
+        operation: UInt64
+    ) -> Bool {
+        listenerRunGate.admits(generation: state.listenerGeneration)
+            && peerStates[state.generation] === state
+            && currentPeerState === state
+            && state.postAuthenticationFence.admitsTraffic
+            && generationGate.admitsPostAuthenticationTraffic(
+                generation: state.generation
+            )
+            && state.pendingBootstrapRequest?.operation == operation
+    }
+
+    private func takeRemoteAccessBootstrapRequest(
+        state: PeerState,
+        operation: UInt64
+    ) -> MCLocalXPCMessageRef? {
+        guard let pending = state.pendingBootstrapRequest,
+              pending.operation == operation else { return nil }
+        state.pendingBootstrapRequest = nil
+        pending.deadline?.cancel()
+        pending.deadline = nil
+        pending.task = nil
+        return pending.takeOwnedRequest()
+    }
+
+    private func failRemoteAccessBootstrap(
+        state: PeerState,
+        operation: UInt64
+    ) {
+        guard admitsRemoteAccessBootstrapCompletion(
+            state: state,
+            operation: operation
+        ) else { return }
+        _ = state.bootstrapGate.fail(
+            generation: state.generation,
+            operation: operation
+        )
+        cancelAuthenticatedPeer(
+            state,
+            presentationError: .transportFailure
+        )
+    }
+
+    private func expireRemoteAccessBootstrap(
+        state: PeerState,
+        operation: UInt64
+    ) {
+        failRemoteAccessBootstrap(state: state, operation: operation)
     }
 
     private func beginStatusRead(

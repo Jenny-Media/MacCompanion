@@ -133,15 +133,18 @@ public actor MacAgentInertApplicationLifecycleV1 {
     private let requestContexts:
         MacAgentConservativeRequestContextProductV1
     private let prepared: MacAgentPreparedProductHandleV1
+    private let intentStore: any MacRemoteAccessIntentPersistenceV1
     private var finishTask: Task<Void, Never>?
     private var finished = false
 
     package init(
         requestContexts: MacAgentConservativeRequestContextProductV1,
-        prepared: MacAgentPreparedProductHandleV1
+        prepared: MacAgentPreparedProductHandleV1,
+        intentStore: any MacRemoteAccessIntentPersistenceV1
     ) {
         self.requestContexts = requestContexts
         self.prepared = prepared
+        self.intentStore = intentStore
         hostID = prepared.hostID
         storagePaths = prepared.storagePaths
     }
@@ -195,6 +198,17 @@ public actor MacAgentInertApplicationLifecycleV1 {
             await finish()
             throw error
         }
+    }
+
+    package func disabledRemoteAccessBootstrapIntentStore() async throws
+        -> any MacRemoteAccessIntentPersistenceV1
+    {
+        let snapshot = try await canonicalInitialLifecycleSnapshot()
+        guard !snapshot.state.desiredEnabled else {
+            throw MacAgentApplicationPreparationErrorV1
+                .unsafeInitialLifecycleState
+        }
+        return intentStore
     }
 
     public func finish() async {
@@ -314,7 +328,8 @@ public enum MacAgentApplicationPreparationFacadeV1 {
             }
             let owner = MacAgentInertApplicationLifecycleV1(
                 requestContexts: requestContexts,
-                prepared: prepared
+                prepared: prepared,
+                intentStore: intentStore
             )
             do {
                 try Task.checkCancellation()

@@ -18,7 +18,7 @@ public enum MacCompanionAgentInertPreparationDeferralV1:
 }
 
 package enum MacCompanionAgentPreparedServiceModeV1: Sendable {
-    case authenticationOnly
+    case disabledRemoteAccessBootstrap
     case readinessAndStatus
 }
 
@@ -40,7 +40,13 @@ public actor MacCompanionAgentInertSystemOwnerV1 {
             .canonicalInitialLifecycleSnapshot()
         return snapshot.state.desiredEnabled
             ? .readinessAndStatus
-            : .authenticationOnly
+            : .disabledRemoteAccessBootstrap
+    }
+
+    package func disabledRemoteAccessBootstrapIntentStore() async throws
+        -> any MacRemoteAccessIntentPersistenceV1
+    {
+        try await prepared.disabledRemoteAccessBootstrapIntentStore()
     }
 
     package func startReadinessAndStatus() async throws {
@@ -70,9 +76,14 @@ public enum MacCompanionAgentInertSystemPreparationResultV1: Sendable {
 @available(macOS 26.0, *)
 public actor MacCompanionAgentLocalServiceOwnerV1 {
     private let finishSelected: @Sendable () async -> Void
+    private let restartRequest: MacCompanionAgentRestartRequestV1
     private var finishTask: Task<Void, Never>?
 
-    package init(finish: @escaping @Sendable () async -> Void) {
+    package init(
+        restartRequest: MacCompanionAgentRestartRequestV1,
+        finish: @escaping @Sendable () async -> Void
+    ) {
+        self.restartRequest = restartRequest
         finishSelected = finish
     }
 
@@ -91,6 +102,28 @@ public actor MacCompanionAgentLocalServiceOwnerV1 {
         let task = Task { await finishSelected() }
         finishTask = task
         await task.value
+    }
+
+    public func waitForRestartRequest() async {
+        await restartRequest.wait()
+    }
+}
+
+package actor MacCompanionAgentRestartRequestV1 {
+    private var requested = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    package func request() {
+        guard !requested else { return }
+        requested = true
+        let waiters = self.waiters
+        self.waiters.removeAll()
+        waiters.forEach { $0.resume() }
+    }
+
+    package func wait() async {
+        guard !requested else { return }
+        await withCheckedContinuation { waiters.append($0) }
     }
 }
 
@@ -237,6 +270,86 @@ package actor MacCompanionAgentAuthenticationOnlyRuntimeV1:
     }
 }
 
+/// Disabled startup runtime with exactly one injected durable bootstrap
+/// authority. Recovery keeps using the closed authentication-only runtime.
+@available(macOS 26.0, *)
+package actor MacCompanionAgentDisabledBootstrapRuntimeV1:
+    MacCompanionAgentSelectedServiceRuntimeV1
+{
+    private let server: MacLocalXPCServerV1
+    private var startTask: Task<Void, Error>?
+    private var finishTask: Task<Void, Never>?
+
+    package init(
+        intentStore: any MacRemoteAccessIntentPersistenceV1,
+        restartRequest: MacCompanionAgentRestartRequestV1
+    ) {
+        let onRestartRequired: @Sendable () -> Void = {
+            Task { await restartRequest.request() }
+        }
+        let authority = MacRemoteAccessBootstrapAuthorityV1(
+            intentStore: intentStore,
+            onUnacknowledgedDurableChange: onRestartRequired
+        )
+        server = MacLocalXPCServerV1(
+            profile: .disabledRemoteAccessBootstrap,
+            bootstrapHandler: authority
+        ) { event in
+            guard case .remoteAccessEnabled = event else { return }
+            onRestartRequired()
+        }
+    }
+
+    package func start() async throws {
+        guard startTask == nil, finishTask == nil else {
+            throw MacLocalXPCConstructionErrorV1.alreadyStarted
+        }
+        let server = self.server
+        let task = Task {
+            try Task.checkCancellation()
+            try server.start()
+            try Task.checkCancellation()
+        }
+        startTask = task
+        do {
+            try await withTaskCancellationHandler {
+                try await task.value
+                try Task.checkCancellation()
+            } onCancel: {
+                task.cancel()
+                Task { await self.finish() }
+            }
+            guard finishTask == nil else {
+                throw MacLocalXPCConstructionErrorV1.alreadyStarted
+            }
+        } catch {
+            await finish()
+            throw error
+        }
+    }
+
+    package func finish() async {
+        if let finishTask {
+            await finishTask.value
+            return
+        }
+        let server = self.server
+        let startTask = self.startTask
+        startTask?.cancel()
+        let task = Task {
+            server.cancel()
+            if let startTask { _ = await startTask.result }
+        }
+        finishTask = task
+        await task.value
+    }
+
+    deinit {
+        startTask?.cancel()
+        server.cancel()
+    }
+}
+
 @available(macOS 26.0, *)
 extension MacCompanionAgentInertSystemOwnerV1:
     MacCompanionAgentSelectedServiceRuntimeV1
@@ -248,8 +361,9 @@ extension MacCompanionAgentInertSystemOwnerV1:
 
 /// Prepares first, validates the exact revision-zero canonical lifecycle, and
 /// then constructs and starts exactly one local Mach-service owner:
-/// readiness/status for enabled startup, authentication-only for disabled or
-/// durable recovery, and no service before first unlock. A selected-service
+/// readiness/status for enabled startup, disabled bootstrap for canonical
+/// disabled startup, closed authentication-only for durable recovery, and no
+/// service before first unlock. A selected-service
 /// failure or cancellation retires all retained preparation and never falls
 /// back to the other profile.
 @available(macOS 26.0, *)
@@ -263,6 +377,12 @@ public enum MacCompanionAgentLocalServiceStartupV1 {
             },
             makeAuthenticationOnly: {
                 MacCompanionAgentAuthenticationOnlyRuntimeV1()
+            },
+            makeDisabledBootstrap: { intentStore, onRestartRequired in
+                MacCompanionAgentDisabledBootstrapRuntimeV1(
+                    intentStore: intentStore,
+                    restartRequest: onRestartRequired
+                )
             }
         )
     }
@@ -271,19 +391,36 @@ public enum MacCompanionAgentLocalServiceStartupV1 {
         prepare: @escaping @Sendable () async throws ->
             MacCompanionAgentInertSystemPreparationResultV1,
         makeAuthenticationOnly: @escaping @Sendable () ->
-            any MacCompanionAgentSelectedServiceRuntimeV1
+            any MacCompanionAgentSelectedServiceRuntimeV1,
+        makeDisabledBootstrap: @escaping @Sendable (
+            any MacRemoteAccessIntentPersistenceV1,
+            MacCompanionAgentRestartRequestV1
+        ) -> any MacCompanionAgentSelectedServiceRuntimeV1 = {
+            intentStore, restartRequest in
+            MacCompanionAgentDisabledBootstrapRuntimeV1(
+                intentStore: intentStore,
+                restartRequest: restartRequest
+            )
+        }
     ) async throws -> MacCompanionAgentLocalServiceStartupOutcomeV1 {
         let result = try await prepare()
+        let restartRequest = MacCompanionAgentRestartRequestV1()
         switch result {
         case let .ready(owner):
             do {
                 try Task.checkCancellation()
                 switch try await owner.selectedServiceMode() {
                 case .readinessAndStatus:
-                    return try await startAndRetain(owner)
-                case .authenticationOnly:
                     return try await startAndRetain(
-                        makeAuthenticationOnly(),
+                        owner,
+                        restartRequest: restartRequest
+                    )
+                case .disabledRemoteAccessBootstrap:
+                    let intentStore = try await owner
+                        .disabledRemoteAccessBootstrapIntentStore()
+                    return try await startAndRetain(
+                        makeDisabledBootstrap(intentStore, restartRequest),
+                        restartRequest: restartRequest,
                         additionallyFinish: { await owner.finish() }
                     )
                 }
@@ -295,18 +432,24 @@ public enum MacCompanionAgentLocalServiceStartupV1 {
             try Task.checkCancellation()
             return .retryAfterFirstUnlock
         case .deferred(.localRecoveryRequired), .deferred(.recoveryFenced):
-            return try await startAndRetain(makeAuthenticationOnly())
+            return try await startAndRetain(
+                makeAuthenticationOnly(),
+                restartRequest: restartRequest
+            )
         }
     }
 
     private static func startAndRetain(
         _ selected: any MacCompanionAgentSelectedServiceRuntimeV1,
+        restartRequest: MacCompanionAgentRestartRequestV1,
         additionallyFinish: @escaping @Sendable () async -> Void = {}
     ) async throws -> MacCompanionAgentLocalServiceStartupOutcomeV1 {
         do {
             try await selected.start()
             try Task.checkCancellation()
-            let owner = MacCompanionAgentLocalServiceOwnerV1 {
+            let owner = MacCompanionAgentLocalServiceOwnerV1(
+                restartRequest: restartRequest
+            ) {
                 await selected.finish()
                 await additionallyFinish()
             }

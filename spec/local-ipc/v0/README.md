@@ -63,6 +63,11 @@ After exact same-team menu authentication and the closed hello exchange, an
 status, pair a device, access diagnostics, present a local authority surface,
 or invoke Observe, Act, or Control. Recovery-mode authentication-only service
 rejects both bootstrap methods without revealing recovery details on the wire.
+The implementation therefore uses a distinct
+`disabledRemoteAccessBootstrap` construction profile that requires the sealed
+bootstrap authority. The closed `authenticationOnly` recovery profile cannot
+receive that authority or admit either method; the distinction is internal and
+does not add a wire-visible mode or state oracle.
 
 `readRemoteAccessBootstrap` returns one
 `LocalRemoteAccessBootstrapOfferV0`: protocol version, random offer UUID,
@@ -105,7 +110,8 @@ command embedding that exact offer is admitted. Operations never overlap.
 Cancellation, timeout, malformed completion, authentication loss, or peer
 replacement invalidates the transaction; delayed callbacks cannot complete a
 replacement generation. A successfully enabled generation admits no further
-bootstrap operation and awaits Agent restart.
+bootstrap operation and awaits Agent restart. Each Agent-side bootstrap
+operation has a five-second generation-bound deadline.
 
 The Agent compares the exact offer and current disabled durable revision in one
 serialized mutation boundary. Success atomically records enabled intent at
@@ -147,11 +153,13 @@ Once readiness is acknowledged, an explicitly composed
 Agent local-service root. The permanent Agent's sealed application owner
 selects exactly one profile only after durable preparation: canonical enabled
 and starting state selects `menuLifecycleReadinessAndStatus`; canonical disabled
-and stopped state or durable recovery selects `authenticationOnly`; first-unlock
-deferral constructs neither service. Selection is not caller-configurable,
-never falls back after start failure, and never selects the broader presentation
-profile. Passing a reader to any narrower profile or constructing the status
-profile without one fails before listener construction.
+and stopped state selects `disabledRemoteAccessBootstrap` with the sealed
+bootstrap authority; durable recovery selects the closed `authenticationOnly`
+profile; first-unlock deferral constructs neither service. Selection is not
+caller-configurable, never falls back after start failure, and never selects the
+broader presentation profile. Passing an authority or reader to any mismatched
+profile, or constructing a profile without its required authority, fails before
+listener construction.
 
 A successful response is exactly
 `{"kind":"status.read.ack","version":1,"payload":<data>}`, where `payload`

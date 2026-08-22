@@ -1,4 +1,5 @@
 import CompanionIPC
+import CompanionLocalXPCPlatform
 import Foundation
 
 public enum MacRemoteAccessBootstrapAuthorityErrorV1:
@@ -24,8 +25,11 @@ public enum MacRemoteAccessBootstrapAuthorityErrorV1:
 /// or Control capability. Every storage suspension is fenced by peer generation
 /// and a monotonic operation identity so actor reentrancy cannot revive stale
 /// work.
-public actor MacRemoteAccessBootstrapAuthorityV1 {
+public actor MacRemoteAccessBootstrapAuthorityV1:
+    MacLocalXPCRemoteAccessBootstrapHandlingV1
+{
     public typealias OfferIDSource = @Sendable () -> UUID
+    public typealias UnacknowledgedDurableChangeHandler = @Sendable () -> Void
 
     private struct ActiveOperation: Equatable, Sendable {
         let generation: UInt64
@@ -40,22 +44,29 @@ public actor MacRemoteAccessBootstrapAuthorityV1 {
     private let intentStore: any MacRemoteAccessIntentPersistenceV1
     private let wallClock: any MacDashboardLifecycleWallClockV1
     private let offerIDSource: OfferIDSource
+    private let onUnacknowledgedDurableChange:
+        UnacknowledgedDurableChangeHandler
     private var highestGeneration: UInt64 = 0
     private var currentGeneration: UInt64?
     private var nextOperation: UInt64 = 0
     private var activeOperation: ActiveOperation?
     private var currentOffer: LocalRemoteAccessBootstrapOfferV0?
     private var completedEnable: CompletedEnable?
+    private var unacknowledgedDurableChangeSignaled = false
 
     public init(
         intentStore: any MacRemoteAccessIntentPersistenceV1,
         wallClock: any MacDashboardLifecycleWallClockV1 =
             SystemMacDashboardLifecycleWallClockV1(),
-        offerIDSource: @escaping OfferIDSource = { UUID() }
+        offerIDSource: @escaping OfferIDSource = { UUID() },
+        onUnacknowledgedDurableChange:
+            @escaping UnacknowledgedDurableChangeHandler = {}
     ) {
         self.intentStore = intentStore
         self.wallClock = wallClock
         self.offerIDSource = offerIDSource
+        self.onUnacknowledgedDurableChange =
+            onUnacknowledgedDurableChange
     }
 
     public func readOffer(
@@ -188,10 +199,16 @@ public actor MacRemoteAccessBootstrapAuthorityV1 {
                 // Only exact durable read-back can convert that ambiguity into
                 // success; every other shape remains terminal.
             }
-            try requireCurrent(operation)
-            let after = try await intentStore.current()
-            try requireCurrent(operation)
+            let after: MacRemoteAccessIntentSnapshotV1?
+            do {
+                after = try await intentStore.current()
+            } catch {
+                signalUnacknowledgedDurableChange()
+                throw MacRemoteAccessBootstrapAuthorityErrorV1
+                    .storageAmbiguous
+            }
             guard after == snapshot else {
+                signalUnacknowledgedDurableChange()
                 throw MacRemoteAccessBootstrapAuthorityErrorV1
                     .storageAmbiguous
             }
@@ -210,6 +227,12 @@ public actor MacRemoteAccessBootstrapAuthorityV1 {
                 throw MacRemoteAccessBootstrapAuthorityErrorV1
                     .unsafeDurableState
             }
+            guard currentGeneration == operation.generation,
+                  activeOperation == operation else {
+                signalUnacknowledgedDurableChange()
+                throw MacRemoteAccessBootstrapAuthorityErrorV1
+                    .staleGeneration
+            }
             completedEnable = .init(command: command, receipt: receipt)
             finish(operation)
             return receipt
@@ -220,6 +243,12 @@ public actor MacRemoteAccessBootstrapAuthorityV1 {
     }
 
     public func invalidate(generation: UInt64) {
+        guard currentGeneration == generation else { return }
+        terminalizeCurrentGeneration()
+    }
+
+    public func enabledReceiptWasNotAcknowledged(generation: UInt64) {
+        signalUnacknowledgedDurableChange()
         guard currentGeneration == generation else { return }
         terminalizeCurrentGeneration()
     }
@@ -311,6 +340,12 @@ public actor MacRemoteAccessBootstrapAuthorityV1 {
         activeOperation = nil
         currentOffer = nil
         completedEnable = nil
+    }
+
+    private func signalUnacknowledgedDurableChange() {
+        guard !unacknowledgedDurableChangeSignaled else { return }
+        unacknowledgedDurableChangeSignaled = true
+        onUnacknowledgedDurableChange()
     }
 
     private func exactDurableReplay(

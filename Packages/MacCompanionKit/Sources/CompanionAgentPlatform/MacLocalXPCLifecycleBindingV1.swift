@@ -147,6 +147,11 @@ public actor MacLocalXPCLifecycleBindingV1 {
             )
             return .readinessPublished(generation: generation)
 
+        case let .remoteAccessEnabled(generation):
+            // Bootstrap servers route this terminal event directly to their
+            // restart owner. It is never valid in the readiness/status pump.
+            return .failedClosed(generation: generation)
+
         case let .invalidatedMenu(generation):
             if pendingAuthenticationGeneration == generation {
                 pendingAuthenticationGeneration = nil

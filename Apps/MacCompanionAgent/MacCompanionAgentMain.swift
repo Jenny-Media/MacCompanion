@@ -7,9 +7,10 @@ import Dispatch
 /// The application platform first reconciles private release storage, durable
 /// intent, and host identity, then selects exactly one hidden local service:
 /// authenticated readiness/status for canonical enabled startup,
-/// authentication-only for disabled or durable recovery, and none before first
-/// unlock. This executable cannot import LocalXPC, choose a profile, inject a
-/// reader, or construct a second Mach-service owner.
+/// the exact durable bootstrap for canonical disabled startup, closed
+/// authentication-only for durable recovery, and none before first unlock.
+/// This executable cannot import LocalXPC, choose a profile, inject an
+/// authority, or construct a second Mach-service owner.
 @main
 enum MacCompanionAgentMain {
     static func main() async {
@@ -22,11 +23,16 @@ enum MacCompanionAgentMain {
             exit(EXIT_FAILURE)
         }
 
-        guard case .retryAfterFirstUnlock = outcome else {
-            withExtendedLifetime(outcome) {
-                dispatchMain()
+        switch outcome {
+        case .retryAfterFirstUnlock:
+            exit(EXIT_FAILURE)
+        case .running(let owner):
+            Task {
+                await owner.waitForRestartRequest()
+                await owner.finish()
+                exit(EXIT_SUCCESS)
             }
+            withExtendedLifetime(outcome) { dispatchMain() }
         }
-        exit(EXIT_FAILURE)
     }
 }

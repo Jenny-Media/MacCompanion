@@ -212,6 +212,22 @@ func menuLifecycleAndStatusAreExplicitServerProfiles() {
             .admitsAgentStatus
     )
     #expect(
+        !MacLocalXPCServerProfileV1.authenticationOnly
+            .admitsRemoteAccessBootstrap
+    )
+    #expect(
+        MacLocalXPCServerProfileV1.disabledRemoteAccessBootstrap
+            .admitsRemoteAccessBootstrap
+    )
+    #expect(
+        !MacLocalXPCServerProfileV1.disabledRemoteAccessBootstrap
+            .admitsMenuLifecycleReadiness
+    )
+    #expect(
+        !MacLocalXPCServerProfileV1.disabledRemoteAccessBootstrap
+            .admitsAgentStatus
+    )
+    #expect(
         MacLocalXPCServerProfileV1.menuLifecycleReadiness
             .admitsMenuLifecycleReadiness
     )
@@ -358,9 +374,32 @@ private struct UnavailableStatusReaderV1: MacLocalXPCStatusReadingV1 {
     }
 }
 
+private struct UnavailableBootstrapHandlerV1:
+    MacLocalXPCRemoteAccessBootstrapHandlingV1
+{
+    private struct Unavailable: Error {}
+
+    func readOffer(
+        generation _: UInt64
+    ) async throws -> LocalRemoteAccessBootstrapOfferV0 {
+        throw Unavailable()
+    }
+
+    func enable(
+        generation _: UInt64,
+        command _: LocalRemoteAccessEnableCommandV0
+    ) async throws -> LocalRemoteAccessEnabledReceiptV0 {
+        throw Unavailable()
+    }
+
+    func enabledReceiptWasNotAcknowledged(generation _: UInt64) async {}
+
+    func invalidate(generation _: UInt64) async {}
+}
+
 @Test
 @available(macOS 26.0, *)
-func statusAuthorityRequiresTheExactExplicitServerProfile() {
+func injectedAuthoritiesRequireTheirExactExplicitServerProfiles() {
     let unexpectedReader = MacLocalXPCServerV1(
         profile: .authenticationOnly,
         statusReader: UnavailableStatusReaderV1()
@@ -374,6 +413,21 @@ func statusAuthorityRequiresTheExactExplicitServerProfile() {
     ) { _ in }
     #expect(throws: MacLocalXPCConstructionErrorV1.invalidProfile) {
         try missingReader.start()
+    }
+
+    let bootstrapInRecovery = MacLocalXPCServerV1(
+        profile: .authenticationOnly,
+        bootstrapHandler: UnavailableBootstrapHandlerV1()
+    ) { _ in }
+    #expect(throws: MacLocalXPCConstructionErrorV1.invalidProfile) {
+        try bootstrapInRecovery.start()
+    }
+
+    let missingBootstrapAuthority = MacLocalXPCServerV1(
+        profile: .disabledRemoteAccessBootstrap
+    ) { _ in }
+    #expect(throws: MacLocalXPCConstructionErrorV1.invalidProfile) {
+        try missingBootstrapAuthority.start()
     }
 }
 

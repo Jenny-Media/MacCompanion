@@ -120,6 +120,9 @@ private func agentLocalServicePreparedOwnerV1(
     let storage = try MacAgentReleaseStorageV1(
         baseApplicationSupportDirectory: base
     )
+    let intentStore = try AtomicFileMacRemoteAccessIntentStoreV1(
+        directory: storage.paths.remoteAccessIntentDirectory
+    )
     let processState: ManagedProcessState = enabled ? .starting : .stopped
     let state = ProductLifecycleState(
         desiredEnabled: enabled,
@@ -149,7 +152,8 @@ private func agentLocalServicePreparedOwnerV1(
     return MacCompanionAgentInertSystemOwnerV1(
         prepared: MacAgentInertApplicationLifecycleV1(
             requestContexts: MacAgentConservativeRequestContextProductV1(),
-            prepared: prepared
+            prepared: prepared,
+            intentStore: intentStore
         )
     )
 }
@@ -169,6 +173,9 @@ private func runningOwnerV1(
     let base = try agentLocalServiceTemporaryBaseV1()
     defer { try? FileManager.default.removeItem(at: base) }
     let probe = AgentLocalServiceStartupProbeV1()
+    let storage = try MacAgentReleaseStorageV1(
+        baseApplicationSupportDirectory: base
+    )
     guard case let .ready(owner) =
         MacCompanionAgentInertSystemPreparationV1.map(
             .prepared(MacAgentInertApplicationLifecycleV1(
@@ -176,9 +183,7 @@ private func runningOwnerV1(
                     MacAgentConservativeRequestContextProductV1(),
                 prepared: MacAgentPreparedProductHandleV1(
                     hostID: UUID(),
-                    storagePaths: try MacAgentReleaseStorageV1(
-                        baseApplicationSupportDirectory: base
-                    ).paths,
+                    storagePaths: storage.paths,
                     currentLifecycle: {
                         AgentRemoteLifecycleSnapshotV1(
                             revision: 0,
@@ -188,6 +193,9 @@ private func runningOwnerV1(
                         )
                     },
                     finish: { probe.record("prepared.finish") }
+                ),
+                intentStore: try AtomicFileMacRemoteAccessIntentStoreV1(
+                    directory: storage.paths.remoteAccessIntentDirectory
                 )
             ))
         )
@@ -223,7 +231,7 @@ private func runningOwnerV1(
 }
 
 @available(macOS 26.0, *)
-@Test func enabledStartsOnlyReadinessAndStatusWhileDisabledStartsOnlyAuthentication()
+@Test func enabledStartsReadinessWhileDisabledStartsOnlyBootstrap()
     async throws
 {
     for enabled in [true, false] {
@@ -243,6 +251,13 @@ private func runningOwnerV1(
                     label: "auth",
                     probe: probe
                 )
+            },
+            makeDisabledBootstrap: { _, _ in
+                probe.record("bootstrap.construct")
+                return AgentLocalServiceTestRuntimeV1(
+                    label: "bootstrap",
+                    probe: probe
+                )
             }
         )
         let owner = try #require(runningOwnerV1(outcome))
@@ -252,7 +267,8 @@ private func runningOwnerV1(
             probe.snapshot() == (enabled
                 ? ["status.start", "prepared.finish"]
                 : [
-                    "auth.construct", "auth.start", "auth.finish",
+                    "bootstrap.construct", "bootstrap.start",
+                    "bootstrap.finish",
                     "prepared.finish",
                 ])
         )
@@ -306,6 +322,39 @@ private func runningOwnerV1(
 }
 
 @available(macOS 26.0, *)
+@Test func disabledBootstrapRestartRequestIsLatchedForTheProcessOwner()
+    async throws
+{
+    let base = try agentLocalServiceTemporaryBaseV1()
+    defer { try? FileManager.default.removeItem(at: base) }
+    let probe = AgentLocalServiceStartupProbeV1()
+    let prepared = try agentLocalServicePreparedOwnerV1(
+        base: base,
+        enabled: false,
+        probe: probe
+    )
+    let outcome = try await MacCompanionAgentLocalServiceStartupV1.start(
+        prepare: { .ready(prepared) },
+        makeAuthenticationOnly: {
+            AgentLocalServiceTestRuntimeV1(label: "auth", probe: probe)
+        },
+        makeDisabledBootstrap: { _, restartRequest in
+            AgentLocalServiceTestRuntimeV1(
+                label: "bootstrap",
+                probe: probe,
+                onStart: { await restartRequest.request() }
+            )
+        }
+    )
+    let owner = try #require(runningOwnerV1(outcome))
+    await owner.waitForRestartRequest()
+    await owner.finish()
+    #expect(probe.snapshot() == [
+        "bootstrap.start", "bootstrap.finish", "prepared.finish",
+    ])
+}
+
+@available(macOS 26.0, *)
 @Test func selectedStartFailuresRetirePreparationAndNeverFallBack()
     async throws
 {
@@ -334,6 +383,17 @@ private func runningOwnerV1(
                                 .selectedStart
                         }
                     )
+                },
+                makeDisabledBootstrap: { _, _ in
+                    probe.record("bootstrap.construct")
+                    return AgentLocalServiceTestRuntimeV1(
+                        label: "bootstrap",
+                        probe: probe,
+                        onStart: {
+                            throw AgentLocalServiceStartupTestErrorV1
+                                .selectedStart
+                        }
+                    )
                 }
             )
         }
@@ -341,7 +401,8 @@ private func runningOwnerV1(
             probe.snapshot() == (enabled
                 ? ["status.start", "prepared.finish"]
                 : [
-                    "auth.construct", "auth.start", "auth.finish",
+                    "bootstrap.construct", "bootstrap.start",
+                    "bootstrap.finish",
                     "prepared.finish",
                 ])
         )

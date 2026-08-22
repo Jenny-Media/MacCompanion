@@ -441,7 +441,10 @@ def validate_narrow_agent_source(content: str, failures: list[str]) -> None:
         "static func main() async",
         "let outcome: MacCompanionAgentLocalServiceStartupOutcomeV1",
         "MacCompanionAgentLocalServiceStartupV1.start()",
-        "guard case .retryAfterFirstUnlock = outcome",
+        "case .retryAfterFirstUnlock:",
+        "case .running(let owner):",
+        "owner.waitForRestartRequest()",
+        "owner.finish()",
         "dispatchMain()",
         "withExtendedLifetime(outcome)",
     ):
@@ -454,6 +457,7 @@ def validate_narrow_agent_source(content: str, failures: list[str]) -> None:
         "import CompanionLocalXPCPlatform",
         "MacLocalXPCServerV1",
         ".authenticationOnly",
+        ".disabledRemoteAccessBootstrap",
         ".menuLifecycleReadinessAndStatus",
         ".menuLifecycleReadinessStatusAndPresentation",
         "AgentPrimaryServicesV1",
@@ -493,11 +497,13 @@ def validate_single_owner_agent_service_selection(
         "MacCompanionAgentLocalServiceStartupV1",
         "MacCompanionAgentLocalServiceOwnerV1",
         "MacCompanionAgentAuthenticationOnlyRuntimeV1",
+        "MacCompanionAgentDisabledBootstrapRuntimeV1",
         "case .readinessAndStatus:",
-        "case .authenticationOnly:",
+        "case .disabledRemoteAccessBootstrap:",
         "case .deferred(.firstUnlockRequired):",
-        "startAndRetain(owner)",
+        "disabledRemoteAccessBootstrapIntentStore()",
         "makeAuthenticationOnly()",
+        "makeDisabledBootstrap(intentStore, restartRequest)",
     ):
         if needle not in application_platform:
             failures.append(f"agentApplicationSelectionMissing:{needle}")
