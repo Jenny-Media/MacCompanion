@@ -156,9 +156,14 @@ makes the permanent target construct the menu runtime, publishes a named
 menu-bar and open-menu indicator with local Stop, keeps it visible while any
 prior safety effect is uncertain, and schedules exact monotonic expiry with
 renewal replacement, stale-token rejection, and early-wake correction. The
-full 1,438-test Swift catalog, cross-builds, and eight platform probes pass.
-Concrete capture/media/frame/input adapters remain the next independent
-Control slice.
+later
+[host Interactive role-ingress checkpoint](evidence/2026-08-22-host-interactive-role-ingress.md)
+adds strict secondary-role classification and mutual proof on the shared TLS
+listener, keeps one-time credentials inside the exact generation-bound Agent
+runtime, and retains only a same-client/primary/session/epoch input-media pair.
+The full 1,444-test Swift catalog, cross-builds, and eight platform probes pass.
+Concrete role-data handoff plus capture/media/frame/input adapters remain the
+next independent Control slice.
 
 The [visible Interactive admission checkpoint](evidence/2026-08-22-visible-interactive-admission-contract.md)
 now carries the closed canonical menu-process generation, exact revision, and

@@ -2,8 +2,10 @@ import CompanionAgent
 import CompanionDomain
 import CompanionInteractiveHost
 import CompanionInteractiveShared
+import CompanionInteractiveWire
 import CompanionIPC
 import CompanionSecurity
+import CompanionWire
 import CryptoKit
 import Foundation
 import Testing
@@ -635,6 +637,94 @@ private final class RuntimeOwnerClockV1: @unchecked Sendable {
     #expect(revokes.first?.leaseID == replacementLeaseID)
     #expect(revokes.first?.reason == .clientDisconnected)
     #expect(await owner.state() == .idle)
+}
+
+@Test func agentRuntimeOwnerConsumesExactRoleCredentialWithoutTransfer()
+    async throws
+{
+    let requirement = try initialRequirement()
+    let bootstrap = try initialBootstrap()
+    let inputOffer = bootstrap.acceptedBody.inputChannel
+    let admission = RuntimeOwnerAdmissionV1([
+        requirement.admission, requirement.admission,
+    ])
+    let clock = RuntimeOwnerClockV1([
+        2_000_000_000, 2_100_000_000,
+    ])
+    let identifiers = RuntimeOwnerIdentifiersV1([UUID(), UUID()])
+    let owner = AgentInteractiveRuntimeOwnerV1(
+        admission: admission,
+        desktop: RuntimeOwnerDesktopV1(
+            descriptor: try initialDesktop()
+        ),
+        runtime: RuntimeOwnerMenuRouteV1(),
+        monotonicNowNanoseconds: { clock.now() },
+        identifier: { identifiers.next() }
+    )
+    try await owner.install(bootstrap, requirement: requirement)
+
+    let clientNonce = try WireBytes32(
+        Data(repeating: 0x61, count: 32)
+    )
+    let hostNonce = try WireBytes32(
+        Data(repeating: 0x62, count: 32)
+    )
+    let hello = try InteractiveChannelHelloBody(
+        channelID: inputOffer.channelID,
+        role: .input,
+        clientID: WireUUID(initialClientID),
+        primaryConnectionID: try WireBytes16(initialConnectionID),
+        interactiveSessionID: WireUUID(initialSessionID),
+        authorizationEpoch: .init(rawValue: 4),
+        clientNonce: clientNonce
+    )
+    let challenge = try await owner.beginInteractiveChannel(
+        hello: hello,
+        hostNonce: hostNonce,
+        monotonicNowMilliseconds: 2_100
+    )
+    #expect(challenge.channelID == inputOffer.channelID)
+    #expect(challenge.role == .input)
+    #expect(challenge.hostID.rawValue == initialHostID)
+    #expect(challenge.hostFingerprint.rawValue == initialFingerprint)
+
+    let transcript = try hello.transcriptInput(
+        challenge: challenge,
+        version: .init()
+    )
+    let clientProof = try CompanionSecurityV0
+        .interactiveChannelClientProof(
+            credential: Data(repeating: 1, count: 32),
+            transcriptDigest: CompanionSecurityV0
+                .interactiveChannelTranscriptDigest(transcript)
+        )
+    let accepted = try await owner.consumeInteractiveChannel(
+        hello: hello,
+        proof: InteractiveChannelProofBody(
+            channelID: inputOffer.channelID,
+            clientProof: try WireBytes32(clientProof)
+        ),
+        monotonicNowMilliseconds: 2_101
+    )
+    #expect(accepted.channelID == inputOffer.channelID)
+    #expect(accepted.role == .input)
+    #expect(try accepted.serverProof.rawValue == CompanionSecurityV0
+        .interactiveChannelServerProof(
+            credential: Data(repeating: 1, count: 32),
+            transcriptDigest: CompanionSecurityV0
+                .interactiveChannelTranscriptDigest(transcript)
+        ))
+
+    await #expect(throws: InteractiveSecurityAuthorityError.notChallenged) {
+        _ = try await owner.consumeInteractiveChannel(
+            hello: hello,
+            proof: InteractiveChannelProofBody(
+                channelID: inputOffer.channelID,
+                clientProof: try WireBytes32(clientProof)
+            ),
+            monotonicNowMilliseconds: 2_102
+        )
+    }
 }
 
 @Test func agentRuntimeOwnerRejectsAdmissionChangeBeforeRuntimeSend()

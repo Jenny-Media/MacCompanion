@@ -1,3 +1,4 @@
+import CompanionInteractiveWire
 import CompanionTransport
 import CompanionWire
 import Foundation
@@ -6,6 +7,8 @@ import Network
 public enum NetworkHostIngressRoleV0: String, Equatable, Sendable {
     case applicationPrimary
     case pairing
+    case interactiveInput
+    case interactiveMedia
 }
 
 public enum NetworkHostIngressClassifierErrorV0:
@@ -167,8 +170,9 @@ public final class NetworkHostClassifiedConnectionV0: @unchecked Sendable {
 }
 
 /// Reads exactly one frame from an already verified-ready connection and
-/// classifies only `auth.hello` or `pairing.begin`. Reads are sized to the
-/// outstanding prefix/payload byte count, so a second frame is never consumed.
+/// classifies a complete primary, pairing, or Interactive role hello. Reads
+/// are sized to the outstanding prefix/payload byte count, so a second frame
+/// is never consumed.
 public actor NetworkHostIngressClassifierV0 {
     public static let maximumClassificationMilliseconds: UInt64 = 10_000
 
@@ -248,16 +252,29 @@ public actor NetworkHostIngressClassifierV0 {
             }
             let frame = try await readExactly(Int(length))
             try observeClock()
-            let kind = try WireCodec.messageKind(from: frame)
             let role: NetworkHostIngressRoleV0
-            switch kind {
-            case .authHello:
-                role = .applicationPrimary
-            case .pairingBegin:
-                role = .pairing
-            default:
-                throw NetworkHostIngressClassifierErrorV0
-                    .unexpectedFirstMessage(kind)
+            if let kind = try? WireCodec.messageKind(from: frame) {
+                switch kind {
+                case .authHello:
+                    role = .applicationPrimary
+                case .pairingBegin:
+                    role = .pairing
+                default:
+                    throw NetworkHostIngressClassifierErrorV0
+                        .unexpectedFirstMessage(kind)
+                }
+            } else if let hello = try? InteractiveChannelCodec.decode(
+                InteractiveChannelEnvelope<
+                    InteractiveChannelHelloBody
+                >.self,
+                from: frame
+            ) {
+                role = switch hello.body.role {
+                case .input: .interactiveInput
+                case .media: .interactiveMedia
+                }
+            } else {
+                throw NetworkHostIngressClassifierErrorV0.protocolFailure
             }
             guard !stopped else {
                 throw NetworkHostIngressClassifierErrorV0.deadlineExpired

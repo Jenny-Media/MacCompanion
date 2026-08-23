@@ -1,5 +1,7 @@
 import CompanionInteractiveHost
 import CompanionInteractiveShared
+import CompanionInteractiveWire
+import CompanionWire
 import Foundation
 
 public enum AgentInteractiveRuntimeBindingAuthorityErrorV1:
@@ -30,11 +32,14 @@ public enum AgentInteractiveRuntimeBindingAuthorityStateV1:
 /// later binds the sole concrete runtime. Binding, session operations,
 /// invalidation, and terminal teardown share one serialization chain.
 public actor AgentInteractiveRuntimeBindingAuthorityV1:
-    InteractiveSessionRuntimeOwningV0
+    InteractiveSessionRuntimeOwningV0,
+    HostInteractiveChannelAuthenticatingV0
 {
     private struct Bound: Sendable {
         let generation: UInt64
         let runtime: any InteractiveSessionRuntimeOwningV0
+        let channelAuthenticator:
+            (any HostInteractiveChannelAuthenticatingV0)?
     }
 
     private struct Active: Sendable {
@@ -67,13 +72,96 @@ public actor AgentInteractiveRuntimeBindingAuthorityV1:
         runtime: any InteractiveSessionRuntimeOwningV0,
         generation: UInt64
     ) async throws {
+        try await bind(
+            runtime: runtime,
+            channelAuthenticator: nil,
+            generation: generation
+        )
+    }
+
+    public func bind(
+        runtime: any InteractiveSessionRuntimeOwningV0,
+        channelAuthenticator:
+            (any HostInteractiveChannelAuthenticatingV0)?,
+        generation: UInt64
+    ) async throws {
         let predecessor = sequencingTail
         let operation = Task { [self] in
             await predecessor.value
-            try performBind(runtime: runtime, generation: generation)
+            try performBind(
+                runtime: runtime,
+                channelAuthenticator: channelAuthenticator,
+                generation: generation
+            )
         }
         sequencingTail = Task { _ = try? await operation.value }
         try await operation.value
+    }
+
+    public func beginInteractiveChannel(
+        hello: InteractiveChannelHelloBody,
+        hostNonce: WireBytes32,
+        monotonicNowMilliseconds: UInt64
+    ) async throws -> InteractiveChannelChallengeBody {
+        let predecessor = sequencingTail
+        let operation = Task { [self] in
+            await predecessor.value
+            guard !terminal, active != nil,
+                  let authenticator = bound?.channelAuthenticator else {
+                throw AgentInteractiveRuntimeBindingAuthorityErrorV1
+                    .unavailable
+            }
+            return try await authenticator.beginInteractiveChannel(
+                hello: hello,
+                hostNonce: hostNonce,
+                monotonicNowMilliseconds: monotonicNowMilliseconds
+            )
+        }
+        sequencingTail = Task { _ = try? await operation.value }
+        return try await operation.value
+    }
+
+    public func consumeInteractiveChannel(
+        hello: InteractiveChannelHelloBody,
+        proof: InteractiveChannelProofBody,
+        monotonicNowMilliseconds: UInt64
+    ) async throws -> InteractiveChannelAcceptedBody {
+        let predecessor = sequencingTail
+        let operation = Task { [self] in
+            await predecessor.value
+            guard !terminal, active != nil,
+                  let authenticator = bound?.channelAuthenticator else {
+                throw AgentInteractiveRuntimeBindingAuthorityErrorV1
+                    .unavailable
+            }
+            return try await authenticator.consumeInteractiveChannel(
+                hello: hello,
+                proof: proof,
+                monotonicNowMilliseconds: monotonicNowMilliseconds
+            )
+        }
+        sequencingTail = Task { _ = try? await operation.value }
+        return try await operation.value
+    }
+
+    public func invalidateInteractiveChannel(
+        channelID: UUID,
+        role: InteractiveChannelRoleName
+    ) async {
+        let predecessor = sequencingTail
+        let operation = Task { [self] in
+            await predecessor.value
+            guard !terminal, active != nil,
+                  let authenticator = bound?.channelAuthenticator else {
+                return
+            }
+            await authenticator.invalidateInteractiveChannel(
+                channelID: channelID,
+                role: role
+            )
+        }
+        sequencingTail = operation
+        await operation.value
     }
 
     @discardableResult
@@ -130,6 +218,8 @@ public actor AgentInteractiveRuntimeBindingAuthorityV1:
 
     private func performBind(
         runtime: any InteractiveSessionRuntimeOwningV0,
+        channelAuthenticator:
+            (any HostInteractiveChannelAuthenticatingV0)?,
         generation: UInt64
     ) throws {
         guard !terminal else {
@@ -152,7 +242,11 @@ public actor AgentInteractiveRuntimeBindingAuthorityV1:
                 .staleGeneration(generation)
         }
         highestGeneration = generation
-        bound = Bound(generation: generation, runtime: runtime)
+        bound = Bound(
+            generation: generation,
+            runtime: runtime,
+            channelAuthenticator: channelAuthenticator
+        )
     }
 
     private func performInstall(

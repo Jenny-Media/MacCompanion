@@ -1,4 +1,5 @@
 import CompanionAgent
+import CompanionInteractiveHost
 import CompanionNetworkPlatform
 import Dispatch
 import Foundation
@@ -311,6 +312,8 @@ public actor AgentNetworkListenerServiceV1 {
         listener: NetworkHostListenerOwnerV0,
         primarySessions: AgentPrimarySessionAuthorityV1,
         pairingConnections: AgentNetworkHostPairingConnectionFactoryV0,
+        interactiveBinder: any AgentNetworkInteractiveIngressBindingV2 =
+            AgentNetworkRejectingInteractiveIngressBinderV2(),
         networkStatus: AgentLocalNetworkStatusPublisherV1,
         lanRoutes: AgentLocalLANRouteEvidenceAuthorityV1,
         pairingAvailability: AgentNetworkPairingContextAuthorityV0,
@@ -330,6 +333,10 @@ public actor AgentNetworkListenerServiceV1 {
         pairingTerminal: @escaping @Sendable (
             NetworkHostPairingTerminationReasonV0
         ) -> Void = { _ in },
+        interactiveTerminal: @escaping @Sendable (
+            NetworkHostIngressRoleV0,
+            HostInteractiveRoleHandshakePumpErrorV0
+        ) -> Void = { _, _ in },
         listenerTerminal: @escaping @Sendable (
             NetworkHostListenerTerminationReasonV0
         ) -> Void = { _ in },
@@ -343,6 +350,7 @@ public actor AgentNetworkListenerServiceV1 {
                 primarySessions: primarySessions
             ),
             pairingBinder: pairingConnections,
+            interactiveBinder: interactiveBinder,
             queue: queue,
             monotonicNowMilliseconds: monotonicNowMilliseconds,
             primaryContext: primaryContext,
@@ -356,6 +364,8 @@ public actor AgentNetworkListenerServiceV1 {
                     primaryTerminal(value)
                 case .pairing(let value):
                     pairingTerminal(value)
+                case let .interactive(role, value):
+                    interactiveTerminal(role, value)
                 }
             }
         )

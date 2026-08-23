@@ -1,0 +1,22 @@
+{
+  "profile": "Mac Companion host Interactive role ingress v0.1",
+  "classificationDeadlineMilliseconds": 10000,
+  "handshakeDeadlineMilliseconds": 30000,
+  "maximumHandshakeJSONBytes": 4096,
+  "roles": ["input", "media"],
+  "rules": [
+    "classification requires a complete strict interactive.channel.hello and derives the closed role from its decoded body",
+    "the classifier transfers the exact first frame and already verified TLS connection together as one-use authority",
+    "one unauthenticated candidate progresses at a time and at most three later accepted connections wait in FIFO order before excess candidates close",
+    "parallel client input and media dials may both complete without concurrent unauthenticated framing work or in-flight candidate replacement",
+    "the host pump reads no role byte before exact accepted-frame send completion",
+    "hello is original and challenge, prove, and accepted each correlate to their immediate predecessor",
+    "fresh host nonce and distinct response message identifiers are generated for every attempted handshake",
+    "the Agent runtime owner retains and mutates the credential authority without transferring or copying its credential",
+    "begin and proof consumption each recheck exact client, primary connection, session, epoch, channel, and role",
+    "the listener retains each authenticated role identity and publishes a pair only when client, primary connection, session, and authorization epoch match",
+    "a cross-session or cross-epoch role candidate closes both role connections instead of replacing or combining either authority",
+    "malformed framing, duplicate IDs, correlation mismatch, authority rejection, timeout, cancellation, and connection failure invalidate the challenged authority and close the connection",
+    "ready handoff retains the verified TLS binding and exact channel, role, primary connection, session, and epoch fence"
+  ]
+}

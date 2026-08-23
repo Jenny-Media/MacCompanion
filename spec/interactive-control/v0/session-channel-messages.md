@@ -37,12 +37,51 @@ Each offered credential is used on a new pinned TLS 1.3 connection to the exact 
 
 Every secondary-channel handshake message is framed by an unsigned four-byte big-endian length followed by exactly that many strict UTF-8 JSON bytes. The length must be in `1...4,096`. Receivers read the four-byte length and then exactly the declared body; they must not read beyond an accepted message into immediately following role traffic. A zero, oversized, truncated, malformed, or trailing-byte handshake frame closes the role channel and consumes no authority. After `interactive.channel.accepted`, input traffic uses the same four-byte big-endian length framing with a strict-JSON body bound of `1...65,536`; media traffic begins directly with the self-framing 96-byte record header in `media-channel.md` and has no outer length prefix.
 
+The host's first-frame classifier recognizes a secondary connection only by a
+complete, strict `interactive.channel.hello`; it derives `input` or `media`
+from that decoded body's closed role and transfers both the exact first frame
+and the already verified TLS connection as one one-use authority. A channel
+hello is never accepted as an application-primary or pairing frame, and a
+generic top-level `kind` string is not sufficient to classify it.
+
+The shared listener advances one unauthenticated candidate at a time. It may
+retain at most three later accepted connections in FIFO order so the client's
+parallel input/media dials can both complete without concurrent framing or
+candidate replacement; an excess candidate closes immediately. Every queued
+candidate keeps its original acceptance time, so waiting never extends its
+classification or offer deadline.
+
+One host handshake owner then performs the complete four-message exchange on
+that exact connection. It serializes framing, correlation, monotonic deadline,
+and credential-authority calls; generates fresh host nonce and response IDs;
+and returns a ready role connection only after the accepted frame is sent. It
+never reads beyond the proof frame before readiness. Cancellation, transport
+failure, malformed framing, duplicate IDs, correlation mismatch, credential
+rejection, primary replacement, or deadline expiry invalidates the exact
+challenged credential and closes the connection. A ready connection retains
+its TLS binding, channel ID, role, session, primary-connection, and epoch fence;
+it cannot be reconstructed from a socket plus caller-asserted identifiers.
+
+The listener retains that authenticated identity with each ready connection.
+It combines input and media only when client ID, primary connection ID,
+Interactive session ID, and authorization epoch all match. A role candidate
+that conflicts with an already-ready peer closes both connections; it never
+replaces one side or creates a cross-session pair.
+
 1. `interactive.channel.hello`: channel ID/role, client ID, primary connection ID, Interactive Control session ID, authorization epoch, and 32-byte client nonce.
 2. `interactive.channel.challenge`: same channel ID/role, host ID/fingerprint, and 32-byte host nonce.
 3. `interactive.channel.prove`: channel ID and 32-byte `clientProof`.
 4. `interactive.channel.accepted`: channel ID/role and 32-byte `serverProof`.
 
 The hello and challenge reconstruct the exact transcript in `security-profile.md`. The client verifies the TLS pin, host ID/fingerprint, channel ID/role, correlation chain, and server proof. The host revalidates the live primary connection, client/session/epoch, role, unused monotonic deadline, and client proof immediately before atomic consumption. Any invalid or duplicate message destroys the credential and closes the connection. Input JSON or media records arriving before accepted state are protocol violations.
+
+The Agent retains both credential authorities inside the exact active
+Interactive runtime owner. The host handshake may invoke only that owner's
+begin, consume, and invalidate facets; it never takes or copies a credential.
+The owner matches every hello field to the active session and offered role,
+rechecks the current primary/session/epoch again for proof consumption, stores
+all terminal authority mutations, and refuses calls while installing,
+terminating, idle, or safety-recovery-required.
 
 Canonical fixtures cover the full signing transcript inputs and exact session
 end request/reply. Unknown keys, kinds, roles, malformed base64url,

@@ -1,3 +1,4 @@
+import CompanionInteractiveWire
 import CompanionSecurity
 import CompanionTestSupport
 import CompanionTransport
@@ -173,6 +174,42 @@ private func networkHostIngressPrefixV0(_ count: Int) -> Data {
     }
     classified.cancel()
     #expect(io.cancelCount == 1)
+}
+
+@Test func hostIngressClassifiesStrictInteractiveHelloByBodyRole()
+    async throws
+{
+    let hello = try networkHostIngressFixtureV0(
+        "interactive-channel-hello"
+    )
+    let decoded = try InteractiveChannelCodec.decode(
+        InteractiveChannelEnvelope<InteractiveChannelHelloBody>.self,
+        from: hello
+    )
+    let io = NetworkHostIngressClassifierFakeIOV0(chunks: [
+        .init(
+            data: networkHostIngressPrefixV0(hello.count),
+            isComplete: false
+        ),
+        .init(data: hello, isComplete: false),
+    ])
+    let classifier = try NetworkHostIngressClassifierV0(
+        io: io,
+        tlsBinding: try networkHostIngressClassifierBindingV0(),
+        acceptedAtMonotonicMilliseconds: 1,
+        monotonicNowMilliseconds: { 1 }
+    )
+
+    let classified = try await classifier.classify()
+    let expected: NetworkHostIngressRoleV0 = switch decoded.body.role {
+    case .input: .interactiveInput
+    case .media: .interactiveMedia
+    }
+    #expect(classified.role == expected)
+    #expect(io.requested == [4, hello.count])
+    let consumed = try classified.consume(expectedRole: expected)
+    #expect(consumed.initialFrame == hello)
+    consumed.io.cancel()
 }
 
 @Test func hostIngressRejectsARegisteredNonIngressKindAndCloses() async throws {

@@ -1,6 +1,7 @@
 import CompanionAgent
 import CompanionDiscovery
 import CompanionIPC
+import CompanionInteractiveHost
 import CompanionNetworkPlatform
 import Foundation
 import Network
@@ -144,6 +145,8 @@ public actor AgentNetworkPairingProductCompositionV0 {
             NetworkHostRequestContextV0,
         pairingRequestContext: @escaping @Sendable () ->
             NetworkHostPairingRequestContextV0,
+        interactiveAuthenticator:
+            (any HostInteractiveChannelAuthenticatingV0)? = nil,
         acceptedTerminal: @escaping @Sendable (
             NetworkHostAcceptedConnectionTerminationReasonV0
         ) -> Void = { _ in },
@@ -168,6 +171,16 @@ public actor AgentNetworkPairingProductCompositionV0 {
             throw AgentNetworkPairingProductCompositionErrorV0
                 .listenerServiceAlreadyConstructed
         }
+        let interactiveBinder: any AgentNetworkInteractiveIngressBindingV2
+        if let interactiveAuthenticator {
+            interactiveBinder = AgentNetworkInteractiveIngressFactoryV2(
+                authenticator: interactiveAuthenticator,
+                monotonicNowMilliseconds: monotonicNowMilliseconds
+            )
+        } else {
+            interactiveBinder =
+                AgentNetworkRejectingInteractiveIngressBinderV2()
+        }
         let service = AgentNetworkListenerServiceV1(
             listener: listener,
             primarySessions: primaryServices.primarySessions,
@@ -176,6 +189,7 @@ public actor AgentNetworkPairingProductCompositionV0 {
                 pairingServices: pairingServices,
                 makeReviewID: makeReviewID
             ),
+            interactiveBinder: interactiveBinder,
             networkStatus: primaryServices.localServices.networkStatus,
             lanRoutes: primaryServices.localServices.lanRoutes,
             pairingAvailability: pairingContext,

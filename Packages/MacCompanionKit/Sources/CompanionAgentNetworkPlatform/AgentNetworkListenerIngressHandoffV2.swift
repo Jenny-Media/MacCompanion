@@ -1,4 +1,6 @@
 import CompanionNetworkPlatform
+import CompanionInteractiveHost
+import CompanionInteractiveWire
 import Dispatch
 import Foundation
 
@@ -6,6 +8,10 @@ public enum AgentNetworkIngressTerminationV2: Equatable, Sendable {
     case classificationFailed
     case primary(NetworkHostPrimaryTerminationReasonV0)
     case pairing(NetworkHostPairingTerminationReasonV0)
+    case interactive(
+        role: NetworkHostIngressRoleV0,
+        reason: HostInteractiveRoleHandshakePumpErrorV0
+    )
 }
 
 private final class AgentNetworkIngressTerminationLatchV2:
@@ -46,6 +52,16 @@ public protocol AgentNetworkIngressClassifierMakingV2: Sendable {
 public protocol AgentNetworkBoundIngressConnectionV2: Sendable {
     func begin() async throws
     func cancel() async
+    func readyInteractiveChannel() async
+        -> HostInteractiveReadyRoleChannelV0?
+}
+
+public extension AgentNetworkBoundIngressConnectionV2 {
+    func readyInteractiveChannel() async
+        -> HostInteractiveReadyRoleChannelV0?
+    {
+        nil
+    }
 }
 
 public protocol AgentNetworkPrimaryIngressBindingV2: Sendable {
@@ -69,6 +85,97 @@ public protocol AgentNetworkPairingIngressBindingV2: Sendable {
             NetworkHostPairingTerminationReasonV0
         ) -> Void
     ) async throws -> any AgentNetworkBoundIngressConnectionV2
+}
+
+public protocol AgentNetworkInteractiveIngressBindingV2: Sendable {
+    func bindInteractiveIngress(
+        classifiedConnection: NetworkHostClassifiedConnectionV0,
+        terminal: @escaping @Sendable (
+            HostInteractiveRoleHandshakePumpErrorV0
+        ) -> Void
+    ) async throws -> any AgentNetworkBoundIngressConnectionV2
+}
+
+public enum AgentNetworkInteractiveIngressBindingErrorV2:
+    Error, Equatable, Sendable
+{
+    case unavailable
+}
+
+public struct AgentNetworkRejectingInteractiveIngressBinderV2:
+    AgentNetworkInteractiveIngressBindingV2,
+    Sendable
+{
+    public init() {}
+
+    public func bindInteractiveIngress(
+        classifiedConnection: NetworkHostClassifiedConnectionV0,
+        terminal: @escaping @Sendable (
+            HostInteractiveRoleHandshakePumpErrorV0
+        ) -> Void
+    ) async throws -> any AgentNetworkBoundIngressConnectionV2 {
+        classifiedConnection.cancel()
+        throw AgentNetworkInteractiveIngressBindingErrorV2.unavailable
+    }
+}
+
+private actor AgentNetworkBoundInteractiveIngressConnectionV2:
+    AgentNetworkBoundIngressConnectionV2
+{
+    private let connection: NetworkHostInteractiveRoleConnectionV0
+    private var ready: NetworkHostInteractiveReadyRoleConnectionV0?
+
+    init(connection: NetworkHostInteractiveRoleConnectionV0) {
+        self.connection = connection
+    }
+
+    func begin() async throws {
+        ready = try await connection.beginOnClassifiedConnection()
+    }
+
+    func cancel() async {
+        ready = nil
+        await connection.cancel()
+    }
+
+    func readyInteractiveChannel() async
+        -> HostInteractiveReadyRoleChannelV0?
+    {
+        ready?.channel
+    }
+}
+
+public struct AgentNetworkInteractiveIngressFactoryV2:
+    AgentNetworkInteractiveIngressBindingV2,
+    Sendable
+{
+    private let authenticator: any HostInteractiveChannelAuthenticatingV0
+    private let monotonicNowMilliseconds: @Sendable () -> UInt64
+
+    public init(
+        authenticator: any HostInteractiveChannelAuthenticatingV0,
+        monotonicNowMilliseconds: @escaping @Sendable () -> UInt64
+    ) {
+        self.authenticator = authenticator
+        self.monotonicNowMilliseconds = monotonicNowMilliseconds
+    }
+
+    public func bindInteractiveIngress(
+        classifiedConnection: NetworkHostClassifiedConnectionV0,
+        terminal: @escaping @Sendable (
+            HostInteractiveRoleHandshakePumpErrorV0
+        ) -> Void
+    ) async throws -> any AgentNetworkBoundIngressConnectionV2 {
+        let connection = try NetworkHostInteractiveRoleConnectionV0(
+            classifiedConnection: classifiedConnection,
+            authenticator: authenticator,
+            monotonicNowMilliseconds: monotonicNowMilliseconds,
+            terminal: terminal
+        )
+        return AgentNetworkBoundInteractiveIngressConnectionV2(
+            connection: connection
+        )
+    }
 }
 
 private actor AgentNetworkIngressClassifierAdapterV2:
@@ -170,6 +277,8 @@ public struct AgentNetworkListenerIngressSnapshotV2:
     public let bindingRole: NetworkHostIngressRoleV0?
     public let hasActivePrimary: Bool
     public let hasActivePairing: Bool
+    public let hasActiveInteractiveInput: Bool
+    public let hasActiveInteractiveMedia: Bool
 
     public init(
         isCancelled: Bool,
@@ -177,7 +286,9 @@ public struct AgentNetworkListenerIngressSnapshotV2:
         isClassifying: Bool,
         bindingRole: NetworkHostIngressRoleV0?,
         hasActivePrimary: Bool,
-        hasActivePairing: Bool
+        hasActivePairing: Bool,
+        hasActiveInteractiveInput: Bool = false,
+        hasActiveInteractiveMedia: Bool = false
     ) {
         self.isCancelled = isCancelled
         self.hasPendingTLS = hasPendingTLS
@@ -185,14 +296,18 @@ public struct AgentNetworkListenerIngressSnapshotV2:
         self.bindingRole = bindingRole
         self.hasActivePrimary = hasActivePrimary
         self.hasActivePairing = hasActivePairing
+        self.hasActiveInteractiveInput = hasActiveInteractiveInput
+        self.hasActiveInteractiveMedia = hasActiveInteractiveMedia
     }
 }
 
-/// Role-safe listener handoff. One newest unclassified candidate may progress,
-/// while primary and pairing generations remain independently owned. Pairing
-/// never replaces primary, and an active pairing connection cannot be displaced
-/// by a second pairing candidate.
+/// Role-safe listener handoff. One unclassified candidate progresses at a
+/// time while a bounded FIFO lets the client's parallel input/media dials wait
+/// without permitting concurrent unauthenticated framing work. Primary,
+/// pairing, and Interactive-role generations remain independently owned.
 public actor AgentNetworkListenerIngressHandoffV2 {
+    private static let maximumQueuedCandidates = 3
+
     private struct Pending {
         let token: UUID
         let accepted: any AgentNetworkAcceptedConnectionStartingV1
@@ -208,11 +323,13 @@ public actor AgentNetworkListenerIngressHandoffV2 {
     private struct Active {
         let token: UUID
         let connection: any AgentNetworkBoundIngressConnectionV2
+        let interactiveChannel: HostInteractiveReadyRoleChannelV0?
     }
 
     private let classifierFactory: any AgentNetworkIngressClassifierMakingV2
     private let primaryBinder: any AgentNetworkPrimaryIngressBindingV2
     private let pairingBinder: any AgentNetworkPairingIngressBindingV2
+    private let interactiveBinder: any AgentNetworkInteractiveIngressBindingV2
     private let queue: DispatchQueue
     private let monotonicNowMilliseconds: @Sendable () -> UInt64
     private let primaryContext: @Sendable () -> NetworkHostRequestContextV0
@@ -225,6 +342,7 @@ public actor AgentNetworkListenerIngressHandoffV2 {
         AgentNetworkIngressTerminationV2
     ) -> Void
     private var cancelled = false
+    private var queued: [Pending] = []
     private var pending: Pending?
     private var classifying: Classifying?
     private var bindingToken: UUID?
@@ -232,6 +350,8 @@ public actor AgentNetworkListenerIngressHandoffV2 {
     private var bindingConnection: Active?
     private var activePrimary: Active?
     private var activePairing: Active?
+    private var activeInteractiveInput: Active?
+    private var activeInteractiveMedia: Active?
     private var stateRevision: UInt64 = 0
     private var stateChanged: @Sendable (UInt64) -> Void = { _ in }
 
@@ -240,6 +360,8 @@ public actor AgentNetworkListenerIngressHandoffV2 {
             AgentNetworkIngressClassifierFactoryV2(),
         primaryBinder: any AgentNetworkPrimaryIngressBindingV2,
         pairingBinder: any AgentNetworkPairingIngressBindingV2,
+        interactiveBinder: any AgentNetworkInteractiveIngressBindingV2 =
+            AgentNetworkRejectingInteractiveIngressBinderV2(),
         queue: DispatchQueue,
         monotonicNowMilliseconds: @escaping @Sendable () -> UInt64,
         primaryContext: @escaping @Sendable () ->
@@ -256,6 +378,7 @@ public actor AgentNetworkListenerIngressHandoffV2 {
         self.classifierFactory = classifierFactory
         self.primaryBinder = primaryBinder
         self.pairingBinder = pairingBinder
+        self.interactiveBinder = interactiveBinder
         self.queue = queue
         self.monotonicNowMilliseconds = monotonicNowMilliseconds
         self.primaryContext = primaryContext
@@ -278,39 +401,50 @@ public actor AgentNetworkListenerIngressHandoffV2 {
             accepted.cancel()
             return
         }
-        pending?.accepted.cancel()
-        pending = nil
-        if let classifying {
-            self.classifying = nil
-            await classifying.classifier.cancel()
-        }
-        if let bindingConnection {
-            self.bindingConnection = nil
-            bindingToken = nil
-            bindingRole = nil
-            await bindingConnection.connection.cancel()
-        }
-        let token = UUID()
-        pending = Pending(
-            token: token,
+        let candidate = Pending(
+            token: UUID(),
             accepted: accepted,
             acceptedAtMonotonicMilliseconds:
                 acceptedAtMonotonicMilliseconds
         )
+        if pending != nil || classifying != nil || bindingToken != nil {
+            guard queued.count < Self.maximumQueuedCandidates else {
+                accepted.cancel()
+                return
+            }
+            queued.append(candidate)
+            notifyStateChanged()
+            return
+        }
+        try start(candidate)
+    }
+
+    private func start(_ candidate: Pending) throws {
+        pending = candidate
         notifyStateChanged()
         do {
-            try accepted.start(
+            try candidate.accepted.start(
                 queue: queue,
                 ready: { [weak self] verified in
-                    Task { await self?.ready(verified, token: token) }
+                    Task {
+                        await self?.ready(
+                            verified,
+                            token: candidate.token
+                        )
+                    }
                 },
                 terminal: { [weak self] reason in
-                    Task { await self?.acceptedEnded(reason, token: token) }
+                    Task {
+                        await self?.acceptedEnded(
+                            reason,
+                            token: candidate.token
+                        )
+                    }
                 }
             )
         } catch {
-            if pending?.token == token { pending = nil }
-            accepted.cancel()
+            if pending?.token == candidate.token { pending = nil }
+            candidate.accepted.cancel()
             notifyStateChanged()
             throw error
         }
@@ -320,33 +454,48 @@ public actor AgentNetworkListenerIngressHandoffV2 {
         guard !cancelled else { return }
         cancelled = true
         let pending = self.pending
+        let queued = self.queued
         let classifying = self.classifying
         let primary = activePrimary
         let pairing = activePairing
+        let interactiveInput = activeInteractiveInput
+        let interactiveMedia = activeInteractiveMedia
         let binding = bindingConnection
         self.pending = nil
+        self.queued = []
         self.classifying = nil
         bindingToken = nil
         bindingRole = nil
         bindingConnection = nil
         activePrimary = nil
         activePairing = nil
+        activeInteractiveInput = nil
+        activeInteractiveMedia = nil
         pending?.accepted.cancel()
+        for candidate in queued { candidate.accepted.cancel() }
         if let classifying { await classifying.classifier.cancel() }
         if let binding { await binding.connection.cancel() }
         if let primary { await primary.connection.cancel() }
         if let pairing { await pairing.connection.cancel() }
+        if let interactiveInput {
+            await interactiveInput.connection.cancel()
+        }
+        if let interactiveMedia {
+            await interactiveMedia.connection.cancel()
+        }
         notifyStateChanged()
     }
 
     public func snapshot() -> AgentNetworkListenerIngressSnapshotV2 {
         AgentNetworkListenerIngressSnapshotV2(
             isCancelled: cancelled,
-            hasPendingTLS: pending != nil,
+            hasPendingTLS: pending != nil || !queued.isEmpty,
             isClassifying: classifying != nil,
             bindingRole: bindingRole,
             hasActivePrimary: activePrimary != nil,
-            hasActivePairing: activePairing != nil
+            hasActivePairing: activePairing != nil,
+            hasActiveInteractiveInput: activeInteractiveInput != nil,
+            hasActiveInteractiveMedia: activeInteractiveMedia != nil
         )
     }
 
@@ -356,6 +505,7 @@ public actor AgentNetworkListenerIngressHandoffV2 {
     ) async {
         guard !cancelled, let pending, pending.token == token else {
             verified.cancel()
+            advanceQueue()
             return
         }
         self.pending = nil
@@ -371,6 +521,7 @@ public actor AgentNetworkListenerIngressHandoffV2 {
             verified.cancel()
             notifyStateChanged()
             ingressTerminal(.classificationFailed)
+            advanceQueue()
             return
         }
         classifying = Classifying(
@@ -388,11 +539,13 @@ public actor AgentNetworkListenerIngressHandoffV2 {
                 classifying = nil
                 notifyStateChanged()
                 ingressTerminal(.classificationFailed)
+                advanceQueue()
             }
             return
         }
         guard !cancelled, classifying?.token == token else {
             classified.cancel()
+            advanceQueue()
             return
         }
         classifying = nil
@@ -412,6 +565,19 @@ public actor AgentNetworkListenerIngressHandoffV2 {
     ) async {
         if classified.role == .pairing, activePairing != nil {
             classified.cancel()
+            advanceQueue()
+            return
+        }
+        if classified.role == .interactiveInput,
+           activeInteractiveInput != nil {
+            classified.cancel()
+            advanceQueue()
+            return
+        }
+        if classified.role == .interactiveMedia,
+           activeInteractiveMedia != nil {
+            classified.cancel()
+            advanceQueue()
             return
         }
         bindingToken = token
@@ -461,6 +627,24 @@ public actor AgentNetworkListenerIngressHandoffV2 {
                         }
                     }
                 )
+            case .interactiveInput, .interactiveMedia:
+                let role = classified.role
+                bound = try await interactiveBinder.bindInteractiveIngress(
+                    classifiedConnection: classified,
+                    terminal: { [weak self] reason in
+                        let value = AgentNetworkIngressTerminationV2
+                            .interactive(role: role, reason: reason)
+                        if latch.record(value) {
+                            Task {
+                                await self?.roleEnded(
+                                    value,
+                                    role: role,
+                                    token: token
+                                )
+                            }
+                        }
+                    }
+                )
             }
         } catch {
             if bindingToken == token {
@@ -469,13 +653,19 @@ public actor AgentNetworkListenerIngressHandoffV2 {
                 notifyStateChanged()
             }
             classified.cancel()
+            advanceQueue()
             return
         }
         guard !cancelled, bindingToken == token else {
             await bound.cancel()
+            advanceQueue()
             return
         }
-        bindingConnection = Active(token: token, connection: bound)
+        bindingConnection = Active(
+            token: token,
+            connection: bound,
+            interactiveChannel: nil
+        )
         do {
             try await bound.begin()
         } catch {
@@ -488,6 +678,7 @@ public actor AgentNetworkListenerIngressHandoffV2 {
                 await bound.cancel()
             }
             notifyStateChanged()
+            advanceQueue()
             return
         }
         guard !cancelled, bindingToken == token,
@@ -496,6 +687,7 @@ public actor AgentNetworkListenerIngressHandoffV2 {
                 bindingConnection = nil
                 await bound.cancel()
             }
+            advanceQueue()
             return
         }
         if let reason = latch.activate() {
@@ -505,12 +697,48 @@ public actor AgentNetworkListenerIngressHandoffV2 {
             await bound.cancel()
             notifyStateChanged()
             ingressTerminal(reason)
+            advanceQueue()
             return
         }
         bindingToken = nil
         bindingRole = nil
         bindingConnection = nil
-        let active = Active(token: token, connection: bound)
+        let readyChannel = await bound.readyInteractiveChannel()
+        if classified.role == .interactiveInput
+            || classified.role == .interactiveMedia {
+            guard let readyChannel,
+                  ingressRole(for: readyChannel.role) == classified.role else {
+                await bound.cancel()
+                notifyStateChanged()
+                ingressTerminal(.interactive(
+                    role: classified.role,
+                    reason: .authorityRejected
+                ))
+                advanceQueue()
+                return
+            }
+            let peer = classified.role == .interactiveInput
+                ? activeInteractiveMedia : activeInteractiveInput
+            if let peerChannel = peer?.interactiveChannel,
+               !sameInteractiveSession(readyChannel, peerChannel) {
+                await bound.cancel()
+                if let peer { await peer.connection.cancel() }
+                activeInteractiveInput = nil
+                activeInteractiveMedia = nil
+                notifyStateChanged()
+                ingressTerminal(.interactive(
+                    role: classified.role,
+                    reason: .authorityRejected
+                ))
+                advanceQueue()
+                return
+            }
+        }
+        let active = Active(
+            token: token,
+            connection: bound,
+            interactiveChannel: readyChannel
+        )
         switch classified.role {
         case .applicationPrimary:
             let previous = activePrimary
@@ -518,8 +746,13 @@ public actor AgentNetworkListenerIngressHandoffV2 {
             if let previous { await previous.connection.cancel() }
         case .pairing:
             activePairing = active
+        case .interactiveInput:
+            activeInteractiveInput = active
+        case .interactiveMedia:
+            activeInteractiveMedia = active
         }
         notifyStateChanged()
+        advanceQueue()
     }
 
     private func acceptedEnded(
@@ -530,6 +763,7 @@ public actor AgentNetworkListenerIngressHandoffV2 {
         pending = nil
         notifyStateChanged()
         acceptedTerminal(reason)
+        advanceQueue()
     }
 
     private func roleEnded(
@@ -554,6 +788,18 @@ public actor AgentNetworkListenerIngressHandoffV2 {
         case .pairing:
             guard activePairing?.token == token else { return }
             activePairing = nil
+        case .interactiveInput:
+            guard activeInteractiveInput?.token == token else { return }
+            activeInteractiveInput = nil
+            let peer = activeInteractiveMedia
+            activeInteractiveMedia = nil
+            if let peer { await peer.connection.cancel() }
+        case .interactiveMedia:
+            guard activeInteractiveMedia?.token == token else { return }
+            activeInteractiveMedia = nil
+            let peer = activeInteractiveInput
+            activeInteractiveInput = nil
+            if let peer { await peer.connection.cancel() }
         }
         notifyStateChanged()
         ingressTerminal(reason)
@@ -562,7 +808,8 @@ public actor AgentNetworkListenerIngressHandoffV2 {
     package func serviceSnapshot() -> AgentNetworkListenerHandoffSnapshotV1 {
         AgentNetworkListenerHandoffSnapshotV1(
             isCancelled: cancelled,
-            hasPendingTLS: pending != nil || classifying != nil,
+            hasPendingTLS: pending != nil || !queued.isEmpty
+                || classifying != nil,
             isBinding: bindingToken != nil,
             hasActivePrimary: activePrimary != nil
         )
@@ -572,5 +819,36 @@ public actor AgentNetworkListenerIngressHandoffV2 {
         guard stateRevision < UInt64.max else { return }
         stateRevision += 1
         stateChanged(stateRevision)
+    }
+
+    private func advanceQueue() {
+        guard !cancelled, pending == nil, classifying == nil,
+              bindingToken == nil, !queued.isEmpty else { return }
+        let candidate = queued.removeFirst()
+        do {
+            try start(candidate)
+        } catch {
+            acceptedTerminal(.connectionFailed)
+            advanceQueue()
+        }
+    }
+
+    private func ingressRole(
+        for role: InteractiveChannelRoleName
+    ) -> NetworkHostIngressRoleV0 {
+        switch role {
+        case .input: .interactiveInput
+        case .media: .interactiveMedia
+        }
+    }
+
+    private func sameInteractiveSession(
+        _ lhs: HostInteractiveReadyRoleChannelV0,
+        _ rhs: HostInteractiveReadyRoleChannelV0
+    ) -> Bool {
+        lhs.clientID == rhs.clientID
+            && lhs.primaryConnectionID == rhs.primaryConnectionID
+            && lhs.interactiveSessionID == rhs.interactiveSessionID
+            && lhs.authorizationEpoch == rhs.authorizationEpoch
     }
 }

@@ -300,7 +300,8 @@ let package = Package(
             name: "CompanionNetworkPlatform",
             dependencies: [
                 "CompanionDiscovery", "CompanionDomain", "CompanionHostPlatform",
-                "CompanionHostSession", "CompanionSecurity",
+                "CompanionHostSession", "CompanionInteractiveHost",
+                "CompanionInteractiveWire", "CompanionSecurity",
                 "CompanionTransport", "CompanionWire",
             ],
             linkerSettings: [
@@ -312,7 +313,8 @@ let package = Package(
             dependencies: [
                 "CompanionAgent", "CompanionDiscovery",
                 "CompanionHostPlatform", "CompanionHostSession",
-                "CompanionIPC",
+                "CompanionIPC", "CompanionInteractiveHost",
+                "CompanionInteractiveWire",
                 "CompanionLifecycle", "CompanionNetworkPlatform",
                 "CompanionNativeProviders",
                 "CompanionOperations", "CompanionSecurity",
@@ -622,7 +624,7 @@ let package = Package(
             dependencies: [
                 "CompanionAuthentication", "CompanionDomain", "CompanionHost",
                 "CompanionHostPlatform", "CompanionHostSession",
-                "CompanionNetworkPlatform", "CompanionOperations",
+                "CompanionInteractiveWire", "CompanionNetworkPlatform", "CompanionOperations",
                 "CompanionPersistence", "CompanionSecurity",
                 "CompanionTestSupport", "CompanionTransport", "CompanionWire",
             ]

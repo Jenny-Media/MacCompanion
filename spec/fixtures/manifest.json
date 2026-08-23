@@ -224,6 +224,12 @@
       "canonicalSHA256": "9e9950a6f40ad698d3284d17a056f3ddcefc35853c1133ad7f34167ba8b66aca"
     },
     {
+      "path": "host-interactive-role-ingress-v0.1.json",
+      "kind": "hostNetwork.interactiveRoleIngress.v0.1",
+      "expect": "valid",
+      "canonicalSHA256": "9b93729e910b9dbf25f1c8db5db1c0b39f526a9802347a2391d4e5ecf6c635bf"
+    },
+    {
       "path": "client-configured-routes-v0.1.json",
       "kind": "clientConfiguredRoutes.model.v0.1",
       "expect": "valid",

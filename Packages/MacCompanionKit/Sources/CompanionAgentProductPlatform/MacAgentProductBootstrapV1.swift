@@ -644,6 +644,7 @@ public actor MacAgentPreparedProductV1 {
                 monotonicNowMilliseconds: monotonicNowMilliseconds,
                 primaryContext: primaryContext,
                 pairingRequestContext: pairingRequestContext,
+                interactiveAuthenticator: interactiveRuntimeAuthority,
                 acceptedTerminal: acceptedTerminal,
                 primaryTerminal: primaryTerminal,
                 pairingTerminal: pairingTerminal,
@@ -976,6 +977,7 @@ public enum MacAgentProductBootstrapV1 {
                                 AgentInteractiveLeaseRenewalOwnerV1(
                                     runtime: owner
                                 ),
+                            channelAuthenticator: owner,
                             generation: surfaces.generation
                         )
                     } catch {

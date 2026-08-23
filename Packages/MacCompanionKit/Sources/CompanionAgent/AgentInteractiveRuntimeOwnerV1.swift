@@ -1,7 +1,9 @@
 import CompanionDomain
 import CompanionInteractiveHost
 import CompanionInteractiveShared
+import CompanionInteractiveWire
 import CompanionIPC
+import CompanionWire
 import Foundation
 
 public enum AgentInteractiveRuntimeOwnerErrorV1:
@@ -84,7 +86,8 @@ public protocol AgentInteractiveMenuRuntimeRoutingV1: Sendable {
 /// runtime receipt is accepted. Operations are explicitly sequenced so a
 /// concurrent termination cannot interleave with a suspended install.
 public actor AgentInteractiveRuntimeOwnerV1:
-    InteractiveSessionRuntimeOwningV0
+    InteractiveSessionRuntimeOwningV0,
+    HostInteractiveChannelAuthenticatingV0
 {
     private struct Active: Sendable {
         var bootstrap: InteractiveSessionBootstrap
@@ -152,6 +155,117 @@ public actor AgentInteractiveRuntimeOwnerV1:
     public func activeLeaseForScheduling() -> InteractiveExecutionLease? {
         guard case .active(let active) = storage else { return nil }
         return active.currentLease
+    }
+
+    public func beginInteractiveChannel(
+        hello: InteractiveChannelHelloBody,
+        hostNonce: WireBytes32,
+        monotonicNowMilliseconds: UInt64
+    ) async throws -> InteractiveChannelChallengeBody {
+        guard case var .active(active) = storage,
+              matches(hello, active: active) else {
+            throw AgentInteractiveRuntimeOwnerErrorV1.unavailable
+        }
+        var authority = channelAuthority(
+            for: hello.role,
+            active: active
+        )
+        do {
+            let challenge = try authority.beginChallenge(
+                clientNonce: hello.clientNonce.rawValue,
+                hostNonce: hostNonce.rawValue,
+                current: channelCurrentState(active),
+                monotonicNowMilliseconds: monotonicNowMilliseconds
+            )
+            guard challenge.channelID == hello.channelID.rawValue,
+                  challenge.role == hello.role.securityRole else {
+                authority.invalidate()
+                throw AgentInteractiveRuntimeOwnerErrorV1.unavailable
+            }
+            setChannelAuthority(
+                authority,
+                for: hello.role,
+                active: &active
+            )
+            storage = .active(active)
+            return InteractiveChannelChallengeBody(
+                channelID: hello.channelID,
+                role: hello.role,
+                hostID: WireUUID(active.requirement.command.hostID),
+                hostFingerprint: try WireFingerprint(
+                    active.requirement.command.hostFingerprint
+                ),
+                hostNonce: hostNonce
+            )
+        } catch {
+            setChannelAuthority(
+                authority,
+                for: hello.role,
+                active: &active
+            )
+            storage = .active(active)
+            throw error
+        }
+    }
+
+    public func consumeInteractiveChannel(
+        hello: InteractiveChannelHelloBody,
+        proof: InteractiveChannelProofBody,
+        monotonicNowMilliseconds: UInt64
+    ) async throws -> InteractiveChannelAcceptedBody {
+        guard case var .active(active) = storage,
+              matches(hello, active: active),
+              proof.channelID == hello.channelID else {
+            throw AgentInteractiveRuntimeOwnerErrorV1.unavailable
+        }
+        var authority = channelAuthority(
+            for: hello.role,
+            active: active
+        )
+        do {
+            let acceptance = try authority.verifyAndConsume(
+                clientProof: proof.clientProof.rawValue,
+                current: channelCurrentState(active),
+                monotonicNowMilliseconds: monotonicNowMilliseconds
+            )
+            setChannelAuthority(
+                authority,
+                for: hello.role,
+                active: &active
+            )
+            storage = .active(active)
+            guard acceptance.channelID == hello.channelID.rawValue,
+                  acceptance.role == hello.role.securityRole else {
+                throw AgentInteractiveRuntimeOwnerErrorV1.unavailable
+            }
+            return InteractiveChannelAcceptedBody(
+                channelID: hello.channelID,
+                role: hello.role,
+                serverProof: try WireBytes32(acceptance.serverProof)
+            )
+        } catch {
+            setChannelAuthority(
+                authority,
+                for: hello.role,
+                active: &active
+            )
+            storage = .active(active)
+            throw error
+        }
+    }
+
+    public func invalidateInteractiveChannel(
+        channelID: UUID,
+        role: InteractiveChannelRoleName
+    ) async {
+        guard case var .active(active) = storage,
+              offeredChannelID(for: role, active: active) == channelID else {
+            return
+        }
+        var authority = channelAuthority(for: role, active: active)
+        authority.invalidate()
+        setChannelAuthority(authority, for: role, active: &active)
+        storage = .active(active)
     }
 
     public func install(
@@ -468,5 +582,69 @@ public actor AgentInteractiveRuntimeOwnerV1:
     ) {
         bootstrap.inputChannelAuthority.invalidate()
         bootstrap.mediaChannelAuthority.invalidate()
+    }
+
+    private func matches(
+        _ hello: InteractiveChannelHelloBody,
+        active: Active
+    ) -> Bool {
+        hello.channelID.rawValue
+            == offeredChannelID(for: hello.role, active: active)
+            && hello.clientID.rawValue
+                == active.requirement.command.clientID
+            && hello.primaryConnectionID.rawValue
+                == active.primaryConnectionID
+            && hello.interactiveSessionID.rawValue
+                == active.currentLease.interactiveSessionID
+            && hello.authorizationEpoch
+                == active.currentLease.authorizationEpoch
+    }
+
+    private func offeredChannelID(
+        for role: InteractiveChannelRoleName,
+        active: Active
+    ) -> UUID {
+        switch role {
+        case .input:
+            active.bootstrap.acceptedBody.inputChannel.channelID.rawValue
+        case .media:
+            active.bootstrap.acceptedBody.mediaChannel.channelID.rawValue
+        }
+    }
+
+    private func channelCurrentState(
+        _ active: Active
+    ) -> InteractiveChannelCurrentState {
+        InteractiveChannelCurrentState(
+            clientID: active.requirement.command.clientID,
+            primaryConnectionID: active.primaryConnectionID,
+            interactiveSessionID:
+                active.currentLease.interactiveSessionID,
+            authorizationEpoch:
+                active.currentLease.authorizationEpoch.rawValue
+        )
+    }
+
+    private func channelAuthority(
+        for role: InteractiveChannelRoleName,
+        active: Active
+    ) -> InteractiveChannelCredentialAuthority {
+        switch role {
+        case .input: active.bootstrap.inputChannelAuthority
+        case .media: active.bootstrap.mediaChannelAuthority
+        }
+    }
+
+    private func setChannelAuthority(
+        _ authority: InteractiveChannelCredentialAuthority,
+        for role: InteractiveChannelRoleName,
+        active: inout Active
+    ) {
+        switch role {
+        case .input:
+            active.bootstrap.inputChannelAuthority = authority
+        case .media:
+            active.bootstrap.mediaChannelAuthority = authority
+        }
     }
 }

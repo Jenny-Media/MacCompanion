@@ -1,5 +1,7 @@
 import CompanionAgentNetworkPlatform
 import CompanionDomain
+import CompanionInteractiveHost
+import CompanionInteractiveWire
 @testable import CompanionNetworkPlatform
 import CompanionSecurity
 import CompanionTransport
@@ -27,8 +29,10 @@ private final class AgentNetworkIngressAcceptedFakeV2:
         NetworkHostAcceptedConnectionTerminationReasonV0
     ) -> Void)?
     private var cancelCountStorage = 0
+    private var startedStorage = false
 
     var cancelCount: Int { lock.withLock { cancelCountStorage } }
+    var started: Bool { lock.withLock { startedStorage } }
 
     func start(
         queue: DispatchQueue,
@@ -40,6 +44,7 @@ private final class AgentNetworkIngressAcceptedFakeV2:
         ) -> Void
     ) throws {
         lock.withLock {
+            startedStorage = true
             self.ready = ready
             self.terminal = terminal
         }
@@ -188,12 +193,17 @@ private final class AgentNetworkBoundIngressFakeV2:
 
     private let lock = NSLock()
     private let beginBehavior: BeginBehavior
+    private let readyChannel: HostInteractiveReadyRoleChannelV0?
     private var beginCountStorage = 0
     private var cancelCountStorage = 0
     private var beginContinuation: CheckedContinuation<Void, Error>?
 
-    init(beginBehavior: BeginBehavior = .immediate) {
+    init(
+        beginBehavior: BeginBehavior = .immediate,
+        readyChannel: HostInteractiveReadyRoleChannelV0? = nil
+    ) {
         self.beginBehavior = beginBehavior
+        self.readyChannel = readyChannel
     }
 
     var beginCount: Int { lock.withLock { beginCountStorage } }
@@ -227,14 +237,35 @@ private final class AgentNetworkBoundIngressFakeV2:
             throwing: AgentNetworkIngressHandoffTestErrorV2.cancelled
         )
     }
+
+    func resumeBegin() {
+        let continuation = lock.withLock { () -> CheckedContinuation<
+            Void,
+            Error
+        >? in
+            let value = beginContinuation
+            beginContinuation = nil
+            return value
+        }
+        continuation?.resume()
+    }
+
+    func readyInteractiveChannel() async
+        -> HostInteractiveReadyRoleChannelV0?
+    {
+        readyChannel
+    }
 }
 
 private actor AgentNetworkIngressBinderFakeV2:
     AgentNetworkPrimaryIngressBindingV2,
-    AgentNetworkPairingIngressBindingV2
+    AgentNetworkPairingIngressBindingV2,
+    AgentNetworkInteractiveIngressBindingV2
 {
     private var primaryPlans: [AgentNetworkBoundIngressFakeV2]
     private var pairingPlans: [AgentNetworkBoundIngressFakeV2]
+    private var inputPlans: [AgentNetworkBoundIngressFakeV2]
+    private var mediaPlans: [AgentNetworkBoundIngressFakeV2]
     private var primaryTerminals: [@Sendable (
         NetworkHostPrimaryTerminationReasonV0
     ) -> Void] = []
@@ -244,10 +275,14 @@ private actor AgentNetworkIngressBinderFakeV2:
 
     init(
         primary: [AgentNetworkBoundIngressFakeV2],
-        pairing: [AgentNetworkBoundIngressFakeV2]
+        pairing: [AgentNetworkBoundIngressFakeV2],
+        input: [AgentNetworkBoundIngressFakeV2] = [],
+        media: [AgentNetworkBoundIngressFakeV2] = []
     ) {
         primaryPlans = primary
         pairingPlans = pairing
+        inputPlans = input
+        mediaPlans = media
     }
 
     func bindPrimaryIngress(
@@ -281,6 +316,30 @@ private actor AgentNetworkIngressBinderFakeV2:
             throw AgentNetworkIngressHandoffTestErrorV2.noPlan
         }
         return pairingPlans.removeFirst()
+    }
+
+    func bindInteractiveIngress(
+        classifiedConnection: NetworkHostClassifiedConnectionV0,
+        terminal: @escaping @Sendable (
+            HostInteractiveRoleHandshakePumpErrorV0
+        ) -> Void
+    ) throws -> any AgentNetworkBoundIngressConnectionV2 {
+        let role = classifiedConnection.role
+        classifiedConnection.cancel()
+        switch role {
+        case .interactiveInput:
+            guard !inputPlans.isEmpty else {
+                throw AgentNetworkIngressHandoffTestErrorV2.noPlan
+            }
+            return inputPlans.removeFirst()
+        case .interactiveMedia:
+            guard !mediaPlans.isEmpty else {
+                throw AgentNetworkIngressHandoffTestErrorV2.noPlan
+            }
+            return mediaPlans.removeFirst()
+        case .applicationPrimary, .pairing:
+            throw AgentNetworkIngressHandoffTestErrorV2.noPlan
+        }
     }
 
     func primaryBindCount() -> Int { primaryTerminals.count }
@@ -379,11 +438,143 @@ private func agentNetworkIngressHandoffV2(
         ),
         primaryBinder: binder,
         pairingBinder: binder,
+        interactiveBinder: binder,
         queue: DispatchQueue(label: "MacCompanionTests.IngressV2"),
         monotonicNowMilliseconds: { 1 },
         primaryContext: agentNetworkIngressPrimaryContextV2,
         pairingContext: agentNetworkIngressPairingContextV2
     )
+}
+
+private func agentNetworkInteractiveReadyChannelV2(
+    role: InteractiveChannelRoleName,
+    sessionID: UUID,
+    epoch: UInt64 = 1
+) throws -> HostInteractiveReadyRoleChannelV0 {
+    HostInteractiveReadyRoleChannelV0(hello:
+        try InteractiveChannelHelloBody(
+            channelID: WireUUID(UUID()),
+            role: role,
+            clientID: WireUUID(UUID(uuidString:
+                "11111111-1111-4111-8111-111111111111"
+            )!),
+            primaryConnectionID: try WireBytes16(
+                Data(repeating: 7, count: 16)
+            ),
+            interactiveSessionID: WireUUID(sessionID),
+            authorizationEpoch: AuthorizationEpoch(rawValue: epoch),
+            clientNonce: try WireBytes32(Data(repeating: 8, count: 32))
+        )
+    )
+}
+
+@Test func interactiveIngressPublishesOnlyOneExactRolePair() async throws {
+    let sessionID = UUID()
+    let input = AgentNetworkBoundIngressFakeV2(
+        readyChannel: try agentNetworkInteractiveReadyChannelV2(
+            role: .input,
+            sessionID: sessionID
+        )
+    )
+    let media = AgentNetworkBoundIngressFakeV2(
+        readyChannel: try agentNetworkInteractiveReadyChannelV2(
+            role: .media,
+            sessionID: sessionID
+        )
+    )
+    let binder = AgentNetworkIngressBinderFakeV2(
+        primary: [],
+        pairing: [],
+        input: [input],
+        media: [media]
+    )
+    let handoff = agentNetworkIngressHandoffV2(
+        classifiers: [
+            AgentNetworkIngressClassifierFakeV2(.immediate(
+                try agentNetworkIngressClassifiedV2(
+                    role: .interactiveInput
+                )
+            )),
+            AgentNetworkIngressClassifierFakeV2(.immediate(
+                try agentNetworkIngressClassifiedV2(
+                    role: .interactiveMedia
+                )
+            )),
+        ],
+        binder: binder
+    )
+
+    let first = AgentNetworkIngressAcceptedFakeV2()
+    try await handoff.admit(first, acceptedAtMonotonicMilliseconds: 1)
+    let second = AgentNetworkIngressAcceptedFakeV2()
+    try await handoff.admit(second, acceptedAtMonotonicMilliseconds: 2)
+    #expect(!second.started)
+    first.emitReady(try agentNetworkIngressVerifiedV2())
+    #expect(await agentNetworkIngressEventuallyV2 {
+        second.started
+    })
+    second.emitReady(try agentNetworkIngressVerifiedV2())
+    #expect(await agentNetworkIngressEventuallyV2 {
+        let snapshot = await handoff.snapshot()
+        return snapshot.hasActiveInteractiveInput
+            && snapshot.hasActiveInteractiveMedia
+    })
+    #expect(input.cancelCount == 0)
+    #expect(media.cancelCount == 0)
+}
+
+@Test func interactiveIngressRejectsCrossSessionRolePair() async throws {
+    let input = AgentNetworkBoundIngressFakeV2(
+        readyChannel: try agentNetworkInteractiveReadyChannelV2(
+            role: .input,
+            sessionID: UUID()
+        )
+    )
+    let media = AgentNetworkBoundIngressFakeV2(
+        readyChannel: try agentNetworkInteractiveReadyChannelV2(
+            role: .media,
+            sessionID: UUID()
+        )
+    )
+    let binder = AgentNetworkIngressBinderFakeV2(
+        primary: [],
+        pairing: [],
+        input: [input],
+        media: [media]
+    )
+    let handoff = agentNetworkIngressHandoffV2(
+        classifiers: [
+            AgentNetworkIngressClassifierFakeV2(.immediate(
+                try agentNetworkIngressClassifiedV2(
+                    role: .interactiveInput
+                )
+            )),
+            AgentNetworkIngressClassifierFakeV2(.immediate(
+                try agentNetworkIngressClassifiedV2(
+                    role: .interactiveMedia
+                )
+            )),
+        ],
+        binder: binder
+    )
+
+    let first = AgentNetworkIngressAcceptedFakeV2()
+    try await handoff.admit(first, acceptedAtMonotonicMilliseconds: 1)
+    first.emitReady(try agentNetworkIngressVerifiedV2())
+    #expect(await agentNetworkIngressEventuallyV2 {
+        await handoff.snapshot().hasActiveInteractiveInput
+    })
+
+    let second = AgentNetworkIngressAcceptedFakeV2()
+    try await handoff.admit(second, acceptedAtMonotonicMilliseconds: 2)
+    second.emitReady(try agentNetworkIngressVerifiedV2())
+    #expect(await agentNetworkIngressEventuallyV2 {
+        let snapshot = await handoff.snapshot()
+        return !snapshot.hasActiveInteractiveInput
+            && !snapshot.hasActiveInteractiveMedia
+    })
+    #expect(input.cancelCount == 1)
+    #expect(media.cancelCount == 1)
 }
 
 @Test func pairingIngressDoesNotReplaceAnActivePrimary() async throws {
@@ -508,7 +699,9 @@ private func agentNetworkIngressHandoffV2(
     #expect((await handoff.snapshot()).hasActivePrimary)
 }
 
-@Test func newerTLSCandidateCancelsSuspendedClassification() async throws {
+@Test func newerTLSCandidateQueuesBehindSuspendedClassification()
+    async throws
+{
     let staleClassified = try agentNetworkIngressClassifiedV2(role: .pairing)
     let stale = AgentNetworkIngressClassifierFakeV2(
         .suspended(staleClassified)
@@ -521,7 +714,7 @@ private func agentNetworkIngressHandoffV2(
     let bound = AgentNetworkBoundIngressFakeV2()
     let binder = AgentNetworkIngressBinderFakeV2(
         primary: [bound],
-        pairing: []
+        pairing: [AgentNetworkBoundIngressFakeV2()]
     )
     let handoff = agentNetworkIngressHandoffV2(
         classifiers: [stale, winner],
@@ -535,12 +728,15 @@ private func agentNetworkIngressHandoffV2(
 
     let second = AgentNetworkIngressAcceptedFakeV2()
     try await handoff.admit(second, acceptedAtMonotonicMilliseconds: 2)
+    #expect(!second.started)
+    stale.resume()
+    #expect(await agentNetworkIngressEventuallyV2 { second.started })
     second.emitReady(try agentNetworkIngressVerifiedV2())
     #expect(await agentNetworkIngressEventuallyV2 {
         bound.beginCount == 1
     })
-    #expect(stale.cancelCount == 1)
-    #expect(await binder.pairingBindCount() == 0)
+    #expect(stale.cancelCount == 0)
+    #expect(await binder.pairingBindCount() == 1)
     #expect((await handoff.snapshot()).hasActivePrimary)
 }
 
@@ -646,12 +842,15 @@ private func agentNetworkIngressHandoffV2(
 
     let third = AgentNetworkIngressAcceptedFakeV2()
     try await handoff.admit(third, acceptedAtMonotonicMilliseconds: 3)
+    #expect(!third.started)
+    unproven.resumeBegin()
+    #expect(await agentNetworkIngressEventuallyV2 { third.started })
     third.emitReady(try agentNetworkIngressVerifiedV2())
     #expect(await agentNetworkIngressEventuallyV2 {
         let snapshot = await handoff.snapshot()
-        return unproven.cancelCount == 1
+        return unproven.cancelCount == 0
             && snapshot.hasActivePrimary
             && snapshot.hasActivePairing
     })
-    #expect(active.cancelCount == 0)
+    #expect(active.cancelCount == 1)
 }
