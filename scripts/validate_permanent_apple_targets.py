@@ -493,6 +493,8 @@ def validate_inert_update_adapter(
 ) -> None:
     for needle in (
         "final class MacCompanionSparkleAdapterV0",
+        "final class MacCompanionSparkleUserDriverV0",
+        "SPUUserDriver",
         "MacUpdateReleaseAuthorityV0(",
         "SPUStandardUserDriver(",
         "SPUUpdater(",
@@ -512,6 +514,13 @@ def validate_inert_update_adapter(
         "installationType: item.installationType",
         "deltaCount: item.deltaUpdates?.count ?? 0",
         "private var probePermit = false",
+        "willExtractUpdate item: SUAppcastItem",
+        "didExtractUpdate item: SUAppcastItem",
+        "correlation.installerDidStart(",
+        "func showReady(",
+        "readyToInstallHandler(reply)",
+        "reply(.skip)",
+        "await correlation.cancel()",
         "case notConfigured",
         "updates.start()",
         "MacCompanionUpdateFooter(adapter: updates)",
@@ -526,6 +535,8 @@ def validate_inert_update_adapter(
         "updater.sendsSystemProfile = true",
         "updater.automaticallyChecksForUpdates = true",
         "updater.automaticallyDownloadsUpdates = true",
+        "takePendingValidationCorrelation",
+        "reply(.install)",
     ):
         if forbidden in mac_application:
             failures.append(f"macUpdateAdapterUnexpectedAuthority:{forbidden}")
@@ -1168,6 +1179,16 @@ def main() -> int:
     validate_generated_project(generated_project, failures)
     validate_mac_info_plist(failures)
     validate_inert_update_adapter(mac_application, failures)
+    update_reply_failures: list[str] = []
+    validate_inert_update_adapter(
+        mac_application.replace("reply(.skip)", "reply(.install)", 1),
+        update_reply_failures,
+    )
+    if (
+        "macUpdateAdapterUnexpectedAuthority:reply(.install)"
+        not in update_reply_failures
+    ):
+        failures.append("macUpdateUnconditionalInstallFixtureAccepted")
     validate_launch_agent(failures)
     validate_narrow_agent_source(agent_source, failures)
     validate_single_owner_agent_service_selection(

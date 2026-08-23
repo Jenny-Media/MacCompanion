@@ -1,4 +1,4 @@
-# Mac Companion update trust policy v0.9
+# Mac Companion update trust policy v0.10
 
 Status: normative for the first direct-distribution beta.
 
@@ -165,6 +165,14 @@ user driver and withhold its `.install` reply to
 `showReadyToInstallAndRelaunch` until Mac Companion's foreground-confirmed
 runtime coordinator admits the exact prepared update. An arbitrary Boolean is
 not validation or installation-readiness evidence.
+
+The containing app uses a complete `SPUUserDriver` proxy rather than a Swift
+subclass. It forwards every required method to `SPUStandardUserDriver`,
+serializes exact `willExtractUpdate` and `didExtractUpdate` observations, and
+intercepts only the later readiness reply. Until the real foreground/runtime
+owner is bound, the proxy must cancel correlation and reply `.skip`; it must
+not reply `.dismiss`, because a dismissed prepared update may still install on
+application termination, and it must never forward `.install` directly.
 
 Neither lifecycle event is Mac Companion's Developer ID identity or
 notarization attestation. Sparkle 2.9.6 permits an Ed25519-valid update to

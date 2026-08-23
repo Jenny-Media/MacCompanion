@@ -39,10 +39,12 @@ final class MacCompanionSparkleAdapterV0:
     private let bundle: Bundle
     private let authority: MacUpdateReleaseAuthorityV0?
     private let currentBuild: UInt64?
-    private var userDriver: SPUStandardUserDriver?
+    private var userDriver: MacCompanionSparkleUserDriverV0?
     private var updaterInstance: SPUUpdater?
     private var probePermit = false
     private var pendingOffer: MacUpdatePublishedCandidateV0?
+    private var activeCorrelation: MacUpdateValidationCorrelationV0?
+    private var validationLifecycleTask: Task<Void, Never>?
 
     init(bundle: Bundle = .main) {
         self.bundle = bundle
@@ -80,10 +82,11 @@ final class MacCompanionSparkleAdapterV0:
     func start() {
         guard let authority, updaterInstance == nil else { return }
 
-        let userDriver = SPUStandardUserDriver(
-            hostBundle: bundle,
-            delegate: nil
-        )
+        let userDriver = MacCompanionSparkleUserDriverV0(
+            hostBundle: bundle
+        ) { [weak self] reply in
+            self?.handleReadyToInstall(reply: reply) ?? reply(.skip)
+        }
         let updater = SPUUpdater(
             hostBundle: bundle,
             applicationBundle: bundle,
@@ -113,22 +116,10 @@ final class MacCompanionSparkleAdapterV0:
             return
         }
         probePermit = true
+        retireValidationLifecycle()
         pendingOffer = nil
         phase = .checking(channel: authority.channel)
         updater.checkForUpdateInformation()
-    }
-
-    func takePendingValidationCorrelation()
-        -> MacUpdateValidationCorrelationV0?
-    {
-        guard case .updateAvailable = phase,
-              let offer = pendingOffer else {
-            return nil
-        }
-        pendingOffer = nil
-        return MacUpdateValidationCorrelationV0(
-            publication: offer
-        )
     }
 
     func feedURLString(for updater: SPUUpdater) -> String? {
@@ -214,6 +205,68 @@ final class MacCompanionSparkleAdapterV0:
         )
     }
 
+    func updater(
+        _ updater: SPUUpdater,
+        willExtractUpdate item: SUAppcastItem
+    ) {
+        guard let authority,
+              let currentBuild,
+              let pendingOffer,
+              let observed = Self.candidateOffer(
+                  item,
+                  authority: authority,
+                  currentBuild: currentBuild
+              ),
+              observed == pendingOffer else {
+            retireValidationLifecycle(asFailure: true)
+            return
+        }
+
+        let correlation = MacUpdateValidationCorrelationV0(
+            publication: pendingOffer
+        )
+        self.pendingOffer = nil
+        activeCorrelation = correlation
+        enqueueValidationEvent(correlation: correlation) {
+            try await correlation.willExtract(publication: observed)
+        }
+    }
+
+    func updater(
+        _ updater: SPUUpdater,
+        didExtractUpdate item: SUAppcastItem
+    ) {
+        guard let authority,
+              let currentBuild,
+              let correlation = activeCorrelation,
+              let observed = Self.candidateOffer(
+                  item,
+                  authority: authority,
+                  currentBuild: currentBuild
+              ) else {
+            retireValidationLifecycle(asFailure: true)
+            return
+        }
+
+        enqueueValidationEvent(correlation: correlation) {
+            try await correlation.installerDidStart(
+                publication: observed
+            )
+        }
+    }
+
+    func userDidCancelDownload(_ updater: SPUUpdater) {
+        guard activeCorrelation != nil
+                || validationLifecycleTask != nil else { return }
+        retireValidationLifecycle()
+    }
+
+    func updater(_ updater: SPUUpdater, didAbortWithError error: Error) {
+        guard activeCorrelation != nil
+                || validationLifecycleTask != nil else { return }
+        retireValidationLifecycle(asFailure: true)
+    }
+
     func updaterDidNotFindUpdate(
         _ updater: SPUUpdater,
         error: Error
@@ -238,6 +291,73 @@ final class MacCompanionSparkleAdapterV0:
         } else if case .checking = phase {
             pendingOffer = nil
             phase = .current(channel: authority.channel)
+        }
+    }
+
+    private func enqueueValidationEvent(
+        correlation: MacUpdateValidationCorrelationV0,
+        operation: @escaping @MainActor () async throws -> Void
+    ) {
+        let previous = validationLifecycleTask
+        validationLifecycleTask = Task { @MainActor [weak self] in
+            if let previous { await previous.value }
+            guard !Task.isCancelled else {
+                await correlation.cancel()
+                return
+            }
+            do {
+                try await operation()
+            } catch {
+                await correlation.cancel()
+                guard let self, !Task.isCancelled else { return }
+                activeCorrelation = nil
+                if let authority {
+                    phase = .failed(channel: authority.channel)
+                }
+            }
+        }
+    }
+
+    private func handleReadyToInstall(
+        reply: @escaping (SPUUserUpdateChoice) -> Void
+    ) {
+        guard let correlation = activeCorrelation,
+              let validationLifecycleTask else {
+            reply(.skip)
+            return
+        }
+        activeCorrelation = nil
+        self.validationLifecycleTask = nil
+
+        Task { @MainActor in
+            await validationLifecycleTask.value
+            guard !Task.isCancelled,
+                  await correlation.currentPhase()
+                    == .awaitingInstallationReadiness else {
+                await correlation.cancel()
+                reply(.skip)
+                return
+            }
+
+            // The real foreground confirmation and runtime shutdown owner are
+            // not bound yet. Cancelling here proves that this concrete Sparkle
+            // hold point cannot accidentally become installation authority.
+            await correlation.cancel()
+            reply(.skip)
+        }
+    }
+
+    private func retireValidationLifecycle(asFailure: Bool = false) {
+        validationLifecycleTask?.cancel()
+        validationLifecycleTask = nil
+        let correlation = activeCorrelation
+        activeCorrelation = nil
+        pendingOffer = nil
+        if let correlation {
+            Task { await correlation.cancel() }
+        }
+        if asFailure, let authority {
+            phase = .failed(channel: authority.channel)
         }
     }
 

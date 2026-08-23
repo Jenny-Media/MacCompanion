@@ -196,6 +196,14 @@ asynchronous validation and stage-one preparation. Every mismatch or race
 closes the actor, and the lower-level admission primitive remains
 package-internal. The adapter still implements none of these callbacks and
 does not enable a full update check.
+The subsequent
+[ready-to-install hold-point bridge](docs/evidence/2026-08-23-sparkle-ready-holdpoint-bridge.md)
+adds a complete containing-app `SPUUserDriver` proxy and serializes the exact
+`willExtractUpdate` and installer-start delegate events into that actor. The
+proxy intercepts Sparkle's later readiness reply, but cancels the staged update
+with `.skip` because the real foreground confirmation and runtime shutdown
+owner are not bound. Informational probes remain the only permitted update
+checks; no `.install` reply or live download path exists.
 
 The [exact-candidate artifact SBOM](docs/evidence/2026-08-21-exact-candidate-artifact-sbom.md) separately inventories the executable-bearing ZIPs themselves, emits reciprocal `filesAnalyzed: true` SPDX with SHA-1/SHA-256 and package verification codes, and binds release version/build/targets/revision, packaged hashes and sizes, and executable paths/modes. Signed-candidate `--verify-files` rejects source-SBOM substitution, unsafe or noncanonical archives/evidence, metadata substitution, and post-generation archive changes. The [Mac packaging-equivalence receipt](docs/evidence/2026-08-21-mac-packaging-equivalence.md) binds those exact ZIP trees to the sole release DMG through an explicitly authorized read-only APFS inspection, exact device cleanup, and post-inspection rehash. The current [Sparkle nested Developer ID packaging checkpoint](docs/evidence/2026-08-23-sparkle-nested-developer-id-packaging.md) independently verifies all five retained app, Agent, framework, and helper subjects, signs the DMG, and proves one 117-entry application tree across both ZIPs and the DMG while explicitly retaining the unnotarized, unstapled, unsigned-update, non-promotable state. A real signed-candidate claim remains closed until this path runs on the final signed/notarized artifacts under the stable release lane.
 

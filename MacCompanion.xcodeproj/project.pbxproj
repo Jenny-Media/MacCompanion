@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		27DDDA85154EA314BCA29BC3 /* MacCompanionSparkleUserDriverV0.swift in Sources */ = {isa = PBXBuildFile; fileRef = 091FBCCB2C78C6909D0AF377 /* MacCompanionSparkleUserDriverV0.swift */; };
 		281D3C00B605BF825BFCA0F4 /* CompanionLocalXPCPlatform in Frameworks */ = {isa = PBXBuildFile; productRef = D80FDE8AEECB694B58AE4155 /* CompanionLocalXPCPlatform */; };
 		3E9471AA38A0125DFE6B1B3B /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 4CBA2CAE8F6CDF8E39B19AC4 /* PrivacyInfo.xcprivacy */; };
 		5502B250FD83925BD69A04E2 /* CompanionMacUI in Frameworks */ = {isa = PBXBuildFile; productRef = A41CC69D69523D4B80517C00 /* CompanionMacUI */; };
@@ -64,6 +65,7 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		091FBCCB2C78C6909D0AF377 /* MacCompanionSparkleUserDriverV0.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacCompanionSparkleUserDriverV0.swift; sourceTree = "<group>"; };
 		0D7D684A6CC729FA8ED1E813 /* MacCompanionIOSApplication.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacCompanionIOSApplication.swift; sourceTree = "<group>"; };
 		177DD5F7DF123EE9E1BD7675 /* MacCompanionLoginRoleComposition.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacCompanionLoginRoleComposition.swift; sourceTree = "<group>"; };
 		2943C5F3784DF1F502859C89 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
@@ -142,6 +144,7 @@
 				9224B6E6FD7914BF9ACCABD3 /* MacCompanionApplication.swift */,
 				177DD5F7DF123EE9E1BD7675 /* MacCompanionLoginRoleComposition.swift */,
 				F2BDA9AE141E2A20CEFA5619 /* MacCompanionSparkleAdapterV0.swift */,
+				091FBCCB2C78C6909D0AF377 /* MacCompanionSparkleUserDriverV0.swift */,
 			);
 			path = MacCompanionMac;
 			sourceTree = "<group>";
@@ -424,6 +427,7 @@
 				BC48C8D41E65C3F53831C0BA /* MacCompanionApplication.swift in Sources */,
 				D0489C58E30BC9BD3F6E39AC /* MacCompanionLoginRoleComposition.swift in Sources */,
 				F4EA6ED27112E88EB4CB7C96 /* MacCompanionSparkleAdapterV0.swift in Sources */,
+				27DDDA85154EA314BCA29BC3 /* MacCompanionSparkleUserDriverV0.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

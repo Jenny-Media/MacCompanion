@@ -696,6 +696,15 @@ substitution, reordering, cancellation, concurrency, or reuse closes it. Seven
 tests cover the corrected lifecycle and keep the passing full count at 1,544.
 The app still implements none of these callbacks and still cannot start a
 download or install.
+The subsequent
+[Sparkle ready-to-install hold-point bridge](evidence/2026-08-23-sparkle-ready-holdpoint-bridge.md)
+adds a compile-verified complete `SPUUserDriver` proxy in the permanent app and
+serializes exact `willExtractUpdate` and installer-start callbacks into the
+package actor. It intercepts the later readiness reply but cancels with
+`.skip`; the source validator rejects an unconditional `.install` reply and
+all full/background update checks. The real foreground confirmation and
+runtime-effect owner remain open, so no download or installation authority is
+enabled.
 
 ## Blocker handling rule
 

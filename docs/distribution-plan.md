@@ -168,6 +168,15 @@ reuse close the actor. The production adapter must subclass or proxy the
 standard user driver and withhold `.install` until the foreground-confirmed
 runtime coordinator succeeds. No protected publication, download, extraction,
 or installation path is enabled yet.
+The subsequent
+[ready-to-install hold-point bridge](evidence/2026-08-23-sparkle-ready-holdpoint-bridge.md)
+implements the chosen proxy shape in the permanent app. It forwards the
+complete standard user-driver surface, serializes exact item-bearing delegate
+callbacks into the package actor, and intercepts the post-validation readiness
+reply. Until the real foreground/runtime owner is bound, it closes correlation
+and answers `.skip`, which cancels the prepared installation rather than
+allowing Sparkle's install-on-termination behavior. Full update checks and
+downloads remain source-policy denied.
 
 ### Channels
 
