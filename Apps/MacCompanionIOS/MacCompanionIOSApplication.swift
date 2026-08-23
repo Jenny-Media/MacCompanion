@@ -52,9 +52,15 @@ private struct MacCompanionIOSRootView: View {
                     )
                     .ignoresSafeArea()
                 case .studyReport:
-                    if let owner = application.studyReportOwner {
+                    if let owner = application.studyReportOwner,
+                       let capture = application.studyCapture {
                         NavigationStack {
-                            ClientStage3StudyReportViewV1(owner: owner)
+                            ClientStage3StudyReportViewV1(
+                                owner: owner,
+                                capture: capture,
+                                captureFailed:
+                                    application.studyCaptureFailed
+                            )
                         }
                     } else {
                         ContentUnavailableView(
@@ -214,7 +220,9 @@ private struct MacCompanionIOSWorkspaceRoot: View {
             primaryState: workspace.primaryState,
             monotonicNowMilliseconds: {
                 max(0, Int64(ProcessInfo.processInfo.systemUptime * 1_000))
-            }
+            },
+            studyCapture: workspace.studyCapture,
+            studyCaptureFailure: workspace.studyCaptureFailure
         ))
     }
 

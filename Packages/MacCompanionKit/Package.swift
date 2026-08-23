@@ -464,7 +464,7 @@ let package = Package(
                 "CompanionDomain", "CompanionInteractiveClient",
                 "CompanionInteractiveShared",
                 "CompanionInteractiveWire", "CompanionPresentation",
-                "CompanionTransport", "CompanionWire",
+                "CompanionStudy", "CompanionTransport", "CompanionWire",
             ]
         ),
         .testTarget(

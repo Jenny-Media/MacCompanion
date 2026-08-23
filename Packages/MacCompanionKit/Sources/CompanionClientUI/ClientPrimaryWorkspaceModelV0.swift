@@ -2,6 +2,7 @@ import CompanionClient
 import CompanionClientNetworkPlatform
 import CompanionInteractiveClient
 import CompanionInteractiveWire
+import CompanionStudy
 import CompanionWire
 import Combine
 import Foundation
@@ -21,19 +22,25 @@ public final class ClientPrimaryWorkspaceModelV0: ObservableObject {
     private let updates: AsyncStream<
         NetworkClientPrimaryApplicationSnapshotV0
     >
+    private let studyCapture: Stage3StudyLocalCaptureV1?
+    private let studyCaptureFailure: @MainActor @Sendable () -> Void
     private var updateTask: Task<Void, Never>?
 
     public convenience init(
         macName: String,
         primaryState: NetworkClientPrimaryApplicationStateV0,
-        monotonicNowMilliseconds: @escaping @Sendable () -> Int64
+        monotonicNowMilliseconds: @escaping @Sendable () -> Int64,
+        studyCapture: Stage3StudyLocalCaptureV1? = nil,
+        studyCaptureFailure: @escaping @MainActor @Sendable () -> Void = {}
     ) throws {
         try self.init(
             macName: macName,
             primaryState: primaryState,
             initialSnapshot: primaryState.snapshot(),
             updates: primaryState.updates,
-            monotonicNowMilliseconds: monotonicNowMilliseconds
+            monotonicNowMilliseconds: monotonicNowMilliseconds,
+            studyCapture: studyCapture,
+            studyCaptureFailure: studyCaptureFailure
         )
     }
 
@@ -42,12 +49,16 @@ public final class ClientPrimaryWorkspaceModelV0: ObservableObject {
         primaryState: NetworkClientPrimaryApplicationStateV0,
         initialSnapshot: NetworkClientPrimaryApplicationSnapshotV0,
         updates: AsyncStream<NetworkClientPrimaryApplicationSnapshotV0>,
-        monotonicNowMilliseconds: @escaping @Sendable () -> Int64
+        monotonicNowMilliseconds: @escaping @Sendable () -> Int64,
+        studyCapture: Stage3StudyLocalCaptureV1? = nil,
+        studyCaptureFailure: @escaping @MainActor @Sendable () -> Void = {}
     ) throws {
         self.macName = macName
         self.primaryState = primaryState
         self.monotonicNowMilliseconds = monotonicNowMilliseconds
         self.updates = updates
+        self.studyCapture = studyCapture
+        self.studyCaptureFailure = studyCaptureFailure
         projection = try ClientPrimaryWorkspaceProjectionV0(
             macName: macName,
             snapshot: initialSnapshot,
@@ -57,6 +68,11 @@ public final class ClientPrimaryWorkspaceModelV0: ObservableObject {
 
     public func start() {
         guard updateTask == nil else { return }
+        captureTransitions(
+            previousConnected: false,
+            previousObserveState: nil,
+            current: projection
+        )
         let updates = updates
         updateTask = Task { [weak self, updates] in
             for await snapshot in updates {
@@ -142,14 +158,67 @@ public final class ClientPrimaryWorkspaceModelV0: ObservableObject {
     private func apply(_ snapshot: NetworkClientPrimaryApplicationSnapshotV0) {
         guard snapshot.revision > projection.revision else { return }
         do {
-            projection = try ClientPrimaryWorkspaceProjectionV0(
+            let previous = projection
+            let next = try ClientPrimaryWorkspaceProjectionV0(
                 macName: macName,
                 snapshot: snapshot,
                 monotonicNowMilliseconds: monotonicNowMilliseconds()
             )
+            projection = next
             projectionFailed = false
+            captureTransitions(
+                previousConnected: previous.connected,
+                previousObserveState: previous.observe.status.state,
+                current: next
+            )
         } catch {
             projectionFailed = true
+        }
+    }
+
+    private func captureTransitions(
+        previousConnected: Bool,
+        previousObserveState: ClientObserveStatusStateV0?,
+        current: ClientPrimaryWorkspaceProjectionV0
+    ) {
+        guard let studyCapture else { return }
+        if !previousConnected, current.connected {
+            Task { [weak self, studyCapture] in
+                do {
+                    _ = try await studyCapture.recordOperationalEvent(
+                        kind: .connection,
+                        initiator: .system,
+                        result: .completed
+                    )
+                } catch let error as Stage3StudyLocalCaptureErrorV1
+                    where error == .noActiveSession
+                        || error == .noEnrollment {
+                    return
+                } catch {
+                    self?.studyCaptureFailure()
+                }
+            }
+        }
+        if previousObserveState != .live,
+           current.observe.status.state == .live {
+            Task { [weak self, studyCapture] in
+                do {
+                    guard let duration = await studyCapture
+                        .elapsedSinceSessionStartMilliseconds() else {
+                        return
+                    }
+                    _ = try await studyCapture.recordFirstFreshObserve(
+                        .completed,
+                        durationMilliseconds: duration
+                    )
+                } catch let error as Stage3StudyLocalCaptureErrorV1
+                    where error == .noActiveSession
+                        || error == .noEnrollment {
+                    return
+                } catch {
+                    self?.studyCaptureFailure()
+                }
+            }
         }
     }
 

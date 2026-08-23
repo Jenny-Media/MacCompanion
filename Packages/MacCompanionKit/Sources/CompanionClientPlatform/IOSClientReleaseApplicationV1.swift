@@ -44,18 +44,26 @@ public struct IOSClientReleaseWorkspaceV1 {
     public let primaryState: NetworkClientPrimaryApplicationStateV0
     public let interactiveRoles:
         NetworkClientInteractiveRoleProductBindingV0
+    public let studyCapture: Stage3StudyLocalCaptureV1
+    public let studyCaptureFailure:
+        @MainActor @Sendable () -> Void
 
     package init(
         hostID: UUID,
         macName: String,
         primaryState: NetworkClientPrimaryApplicationStateV0,
         interactiveRoles:
-            NetworkClientInteractiveRoleProductBindingV0
+            NetworkClientInteractiveRoleProductBindingV0,
+        studyCapture: Stage3StudyLocalCaptureV1,
+        studyCaptureFailure:
+            @escaping @MainActor @Sendable () -> Void
     ) {
         self.hostID = hostID
         self.macName = macName
         self.primaryState = primaryState
         self.interactiveRoles = interactiveRoles
+        self.studyCapture = studyCapture
+        self.studyCaptureFailure = studyCaptureFailure
     }
 }
 
@@ -108,6 +116,8 @@ public final class IOSClientReleaseApplicationV1 {
         IOSClientReleaseApplicationSnapshotV1.idle
     public private(set) var studyReportOwner:
         Stage3StudyLocalReportOwnerV1?
+    public private(set) var studyCapture: Stage3StudyLocalCaptureV1?
+    public private(set) var studyCaptureFailed = false
 
     private var bootstrap: IOSClientReleaseBootstrapV1?
     private var storage: IOSClientReleaseStorageV1?
@@ -115,6 +125,7 @@ public final class IOSClientReleaseApplicationV1 {
     private var routePlan: ClientConfiguredRouteBootstrapPlanV1?
     private var networkProduct: UIKitClientConfiguredRouteNetworkProductV1?
     private var transitionInProgress = false
+    private var studyPairingStartedAtMilliseconds: Int64?
 
     public init() {}
 
@@ -144,6 +155,7 @@ public final class IOSClientReleaseApplicationV1 {
         }
         self.storage = storage
         studyReportOwner = storage.studyReportOwner
+        studyCapture = storage.studyCapture
 
         switch bootstrapSnapshot.phase {
         case .unpaired:
@@ -169,6 +181,7 @@ public final class IOSClientReleaseApplicationV1 {
 
     public func receivePairingScan(_ value: String) async {
         guard snapshot.phase == .pairing, let pairingOwner else { return }
+        await beginStudyPairingIfActive()
         do {
             try await pairingOwner.receiveScan(value)
         } catch {
@@ -278,6 +291,8 @@ public final class IOSClientReleaseApplicationV1 {
         bootstrap = nil
         storage = nil
         studyReportOwner = nil
+        studyCapture = nil
+        studyPairingStartedAtMilliseconds = nil
         routePlan = nil
         transitionInProgress = false
         publish(phase: .closed)
@@ -320,6 +335,32 @@ public final class IOSClientReleaseApplicationV1 {
     ) {
         guard snapshot.phase == .pairing else { return }
         publish(phase: .pairing, pairing: presentation)
+        switch presentation.phase {
+        case .paired:
+            Task { [weak self] in
+                await self?.recordStudyPairingResult(
+                    .completed,
+                    developerIntervention: false
+                )
+            }
+        case .failed:
+            let result: Stage3StudyAttemptResultV1 = switch
+                presentation.failure {
+            case .hostRejected: .denied
+            case .clientStorageUnavailable, .unknown, nil: .outcomeUnknown
+            case .invalidOrExpiredCode, .connectionFailed,
+                 .identityVerificationFailed: .failed
+            }
+            Task { [weak self] in
+                await self?.recordStudyPairingResult(
+                    result,
+                    developerIntervention: false
+                )
+            }
+        case .scanning, .preview, .starting, .securing, .compareOnMac,
+             .saving:
+            break
+        }
     }
 
     private func refreshPairingPresentation(
@@ -419,7 +460,11 @@ public final class IOSClientReleaseApplicationV1 {
                     hostID: expectedHostID,
                     macName: "Mac",
                     primaryState: product.primaryState,
-                    interactiveRoles: product.interactiveRoles
+                    interactiveRoles: product.interactiveRoles,
+                    studyCapture: storage.studyCapture,
+                    studyCaptureFailure: { [weak self] in
+                        self?.studyCaptureFailed = true
+                    }
                 )
             )
         } catch {
@@ -453,6 +498,54 @@ public final class IOSClientReleaseApplicationV1 {
             await networkProduct.interactiveRoles.close()
         }
         networkProduct = nil
+    }
+
+    private func beginStudyPairingIfActive() async {
+        guard let studyCapture else { return }
+        do {
+            _ = try await studyCapture.recordSetupAttempted()
+            if studyPairingStartedAtMilliseconds == nil {
+                let now = Self.monotonicNow()
+                guard now >= 0 else {
+                    throw Stage3StudyLocalCaptureErrorV1.invalidTransition
+                }
+                studyPairingStartedAtMilliseconds = now
+            }
+        } catch let error as Stage3StudyLocalCaptureErrorV1
+            where error == .noActiveSession || error == .noEnrollment {
+            return
+        } catch {
+            studyCaptureFailed = true
+        }
+    }
+
+    private func recordStudyPairingResult(
+        _ result: Stage3StudyAttemptResultV1,
+        developerIntervention: Bool
+    ) async {
+        guard let studyCapture else { return }
+        let duration: Int64?
+        if result == .completed,
+           let start = studyPairingStartedAtMilliseconds {
+            duration = max(0, Self.monotonicNow() - start)
+        } else {
+            duration = nil
+        }
+        do {
+            _ = try await studyCapture.recordPairingResult(
+                result,
+                developerIntervention: developerIntervention,
+                durationMilliseconds: duration
+            )
+            if result == .completed {
+                studyPairingStartedAtMilliseconds = nil
+            }
+        } catch let error as Stage3StudyLocalCaptureErrorV1
+            where error == .noActiveSession || error == .noEnrollment {
+            return
+        } catch {
+            studyCaptureFailed = true
+        }
     }
 
     private func publish(

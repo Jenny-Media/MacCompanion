@@ -3,6 +3,7 @@ import CompanionClient
 @testable import CompanionClientUI
 import CompanionInteractiveClient
 import CompanionObservation
+import CompanionStudy
 import CompanionWire
 import Foundation
 import Testing
@@ -413,6 +414,100 @@ private func primaryWorkspaceSnapshot(
     #expect(model.projection.revision == 2)
     #expect(model.projection.connected)
     #expect(model.projection.observe.status.state == .waitingForStatus)
+    model.stop()
+    pair.continuation.finish()
+}
+
+@MainActor
+@Test func primaryWorkspaceModelCapturesConnectionAndFirstFreshObserveOnlyInSession()
+    async throws
+{
+    let directory = FileManager.default.temporaryDirectory
+        .appendingPathComponent(
+            "maccompanion-workspace-study-\(UUID().uuidString.lowercased())",
+            isDirectory: true
+        )
+    try FileManager.default.createDirectory(
+        at: directory,
+        withIntermediateDirectories: false
+    )
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let store = try AtomicFileStage3StudyReportStoreV1(
+        directory: directory
+    )
+    let owner = Stage3StudyLocalReportOwnerV1(persistence: store)
+    let capture = Stage3StudyLocalCaptureV1(
+        reportOwner: owner,
+        monotonicNowMilliseconds: { 2_000 }
+    )
+    _ = try await capture.enroll(Stage3StudyLocalEnrollmentV1(
+        cohortPhase: .dogfood,
+        studyCode: String(repeating: "A", count: 15) + "2",
+        build: try Stage3StudyBuildV1(
+            appVersion: "0.1.0",
+            buildNumber: "1",
+            iOSMajorVersion: 27,
+            macOSMajorVersion: 27
+        ),
+        workaround: .returnOrDefer,
+        adaptiveJobApplicable: false
+    ))
+    try await capture.beginSession(dayIndex: 0)
+    _ = try await capture.recordSetupAttempted()
+    _ = try await capture.recordPairingResult(
+        .completed,
+        developerIntervention: false,
+        durationMilliseconds: 10
+    )
+
+    let primaryState = NetworkClientPrimaryApplicationStateV0(
+        hostID: primaryWorkspaceHostID
+    )
+    let pair = AsyncStream<NetworkClientPrimaryApplicationSnapshotV0>
+        .makeStream(bufferingPolicy: .unbounded)
+    var captureFailureCount = 0
+    let model = try ClientPrimaryWorkspaceModelV0(
+        macName: "Studio Mac",
+        primaryState: primaryState,
+        initialSnapshot: primaryWorkspaceSnapshot(
+            revision: 0,
+            availability: .disconnected
+        ),
+        updates: pair.stream,
+        monotonicNowMilliseconds: { 1_201 },
+        studyCapture: capture,
+        studyCaptureFailure: { captureFailureCount += 1 }
+    )
+    model.start()
+    pair.continuation.yield(primaryWorkspaceSnapshot(
+        revision: 1,
+        availability: .connected
+    ))
+    pair.continuation.yield(primaryWorkspaceSnapshot(
+        revision: 2,
+        availability: .connected,
+        status: try primaryWorkspaceStatus()
+    ))
+
+    var report: Stage3StudyReportV1?
+    for _ in 0..<1_000 {
+        report = try await owner.currentReport()
+        if report?.operationalEvents.count == 1,
+           report?.firstFreshObserve == .completed { break }
+        await Task.yield()
+    }
+    #expect(report?.operationalEvents == [
+        try Stage3StudyOperationalEventV1(
+            dayIndex: 0,
+            kind: .connection,
+            initiator: .system,
+            result: .completed
+        ),
+    ])
+    #expect(report?.firstFreshObserve == .completed)
+    #expect(report?.timings.timeToFirstFreshObserveMilliseconds == 0)
+    #expect(captureFailureCount == 0)
+
     model.stop()
     pair.continuation.finish()
 }

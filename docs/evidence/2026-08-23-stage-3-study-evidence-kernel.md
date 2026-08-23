@@ -94,9 +94,11 @@ or confirmatory testing. The later
 bounded persistence and permanent-iOS preview/delete/export construction. It
 does not change this kernel's evidence or make a market-MVP claim.
 
-The next independent product-evidence slice is explicit local enrollment and
-content-free capture from already-validated product outcomes. Before any
-external cohort, the product must prove that recorded denial, failure,
-`outcomeUnknown`, fallback, Stop, and revocation facts agree with visible
-product truth and must complete the disclosure/legal and signed physical
-release gates.
+The later
+[local enrollment and initial capture](2026-08-23-stage-3-local-enrollment-capture.md)
+adds dogfood-only enrollment, explicit day sessions, and initial closed
+pairing/connection/Observe bindings. Before any external cohort, the product
+must complete the remaining Act/Control/tester-review bindings, prove that
+recorded denial, failure, `outcomeUnknown`, fallback, Stop, and revocation facts
+agree with visible product truth, and complete the disclosure/legal and signed
+physical release gates.

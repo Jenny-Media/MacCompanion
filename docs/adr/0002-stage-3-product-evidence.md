@@ -262,9 +262,12 @@ implements a separate versioned schema and deterministic evaluator that admit
 only the facts above and pass a prohibited-field corpus. The
 [local report owner](../evidence/2026-08-23-stage-3-local-report-owner.md) adds
 bounded atomic persistence plus exact preview, explicit export, and destructive
-delete in the permanent iOS product. Explicit enrollment, content-free product
-capture, participant disclosure, physical verification, and actual cohorts
-remain separate required work.
+delete in the permanent iOS product. The later
+[local enrollment and initial capture](../evidence/2026-08-23-stage-3-local-enrollment-capture.md)
+adds optional dogfood-only enrollment, explicit day sessions, and initial
+pairing/connection/first-live-Observe bindings. Remaining Act, Control,
+tester-review, disclosure, physical verification, and actual cohorts stay
+open.
 
 ## Consequences
 
@@ -305,6 +308,10 @@ remain separate required work.
   and bundle-independently verified.**
 - Local bounded storage, preview, delete, and explicit export UI. **Built and
   Simulator-compile verified; signed physical behavior remains.**
+- Optional explicit local dogfood enrollment and session-gated content-free
+  capture. **Pairing, authenticated connection, and first-live-Observe
+  bindings are built and compile/fault tested; remaining product facts and
+  signed physical truth comparison remain.**
 - Deterministic aggregation that reproduces every denominator and threshold in
   this ADR from fixtures without network access. **Built and
   bundle-independently verified.**

@@ -221,6 +221,7 @@ package struct IOSClientReleaseStorageV1: Sendable {
     package let routes: AtomicFileClientConfiguredRouteStoreV1
     package let studyReports: AtomicFileStage3StudyReportStoreV1
     package let studyReportOwner: Stage3StudyLocalReportOwnerV1
+    package let studyCapture: Stage3StudyLocalCaptureV1
     package let custody: SecurityClientIdentityKeyCustodyV0
 
     private let routeDirectory: URL
@@ -288,8 +289,12 @@ package struct IOSClientReleaseStorageV1: Sendable {
         self.studyReports = try AtomicFileStage3StudyReportStoreV1(
             directory: studyReports
         )
-        studyReportOwner = Stage3StudyLocalReportOwnerV1(
+        let studyReportOwner = Stage3StudyLocalReportOwnerV1(
             persistence: self.studyReports
+        )
+        self.studyReportOwner = studyReportOwner
+        studyCapture = Stage3StudyLocalCaptureV1(
+            reportOwner: studyReportOwner
         )
         custody = SecurityClientIdentityKeyCustodyV0(
             configuration: try SecurityClientKeyCustodyConfigurationV0(

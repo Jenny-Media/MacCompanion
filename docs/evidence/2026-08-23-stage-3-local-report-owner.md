@@ -107,8 +107,10 @@ destination, or prove Data Protection and UI behavior on a physical device. It
 does not supply calibration or confirmatory evidence and makes no market-MVP
 claim.
 
-The next independent slice is explicit local study enrollment plus
-content-free capture from already-validated product outcomes. Internal dogfood
-must then compare every recorded denial, failure, `outcomeUnknown`, fallback,
-Stop, revocation, recovery, and completed job against visible product truth
-before any external cohort begins.
+The later
+[local enrollment and initial capture](2026-08-23-stage-3-local-enrollment-capture.md)
+adds dogfood-only enrollment, explicit day sessions, and initial
+pairing/connection/Observe bindings. Internal dogfood must still compare every
+recorded denial, failure, `outcomeUnknown`, fallback, Stop, revocation,
+recovery, and completed job against visible product truth before any external
+cohort begins.
