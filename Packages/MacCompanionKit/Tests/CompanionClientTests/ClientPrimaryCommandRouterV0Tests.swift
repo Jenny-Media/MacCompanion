@@ -1,5 +1,6 @@
 @testable import CompanionClient
 import CompanionDomain
+import CompanionTestSupport
 import CompanionWire
 import Dispatch
 import Foundation
@@ -40,10 +41,14 @@ private final class RouterTestReceiver:
     private let queue = DispatchQueue(label: "MacCompanionTests.RouterReceiver")
     private var preparedStorage: [Data] = []
     private var publishedStorage: [Data] = []
+    private var preparedEventStorage: [Data] = []
+    private var publishedEventStorage: [Data] = []
     private var invalidationCountStorage = 0
 
     var prepared: [Data] { queue.sync { preparedStorage } }
     var published: [Data] { queue.sync { publishedStorage } }
+    var preparedEvents: [Data] { queue.sync { preparedEventStorage } }
+    var publishedEvents: [Data] { queue.sync { publishedEventStorage } }
     var invalidationCount: Int { queue.sync { invalidationCountStorage } }
 
     func preparePrimaryReply(
@@ -52,6 +57,15 @@ private final class RouterTestReceiver:
         queue.sync { preparedStorage.append(frame) }
         return ClientPrimaryPreparedReplyV0 { [self] in
             queue.sync { publishedStorage.append(frame) }
+        }
+    }
+
+    func preparePrimaryEvent(
+        _ frame: Data
+    ) async throws -> ClientPrimaryPreparedEventV0 {
+        queue.sync { preparedEventStorage.append(frame) }
+        return ClientPrimaryPreparedEventV0 { [self] in
+            queue.sync { publishedEventStorage.append(frame) }
         }
     }
 
@@ -159,6 +173,15 @@ private func makeRouter(
     )
 }
 
+private func routerFocusEvent() throws -> Data {
+    try Data(
+        contentsOf: FixturePaths.authoritativeFixtures()
+            .appendingPathComponent(
+                "valid/interactive-surface-focus-changed.json"
+            )
+    )
+}
+
 @Test func primaryRouterRoutesSharedErrorKindOnlyByCorrelation()
     async throws
 {
@@ -187,6 +210,41 @@ private func makeRouter(
     try await router.receive(routerError(correlationID: observeID))
     #expect(observe.published.count == 1)
     #expect(await router.state == .ready)
+}
+
+@Test func primaryRouterInterleavesFocusEventsWithoutConsumingCommands()
+    async throws
+{
+    let transport = RouterTestTransport()
+    let router = try makeRouter(transport: transport)
+    let observe = RouterTestReceiver()
+    let control = RouterTestReceiver()
+    try await router.installReceiver(observe, for: .observe)
+    try await router.installReceiver(control, for: .control)
+    try await router.activate()
+    let requestID = WireUUID(UUID())
+    try await router.sender(for: .observe).sendAuthenticatedCommand(
+        routerRequest(id: requestID, body: StatusSnapshotRequestBody())
+    )
+
+    let event = try routerFocusEvent()
+    try await router.receive(event)
+    #expect(control.preparedEvents.count == 1)
+    #expect(control.publishedEvents.count == 1)
+    #expect(control.published.isEmpty)
+    #expect(observe.published.isEmpty)
+
+    try await router.receive(routerError(correlationID: requestID))
+    #expect(observe.published.count == 1)
+    #expect(await router.state == .ready)
+
+    await #expect(throws: ClientPrimaryCommandRouterErrorV0.routingRejected) {
+        try await router.receive(event)
+    }
+    #expect(await router.state == .invalidated)
+    #expect(control.publishedEvents.count == 1)
+    #expect(control.invalidationCount == 1)
+    #expect(observe.invalidationCount == 1)
 }
 
 @Test func primaryRouterRejectsCrossLaneRequestsBeforeTransport()

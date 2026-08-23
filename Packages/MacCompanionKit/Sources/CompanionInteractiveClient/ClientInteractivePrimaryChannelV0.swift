@@ -113,6 +113,7 @@ public actor ClientInteractivePrimaryChannelV0:
     private let publish: @Sendable (
         ClientInteractivePrimarySessionEventV0
     ) -> Void
+    private let publishFocus: @Sendable (ClientSurfaceFocusEventV0) -> Void
     private var requestedEffects: [InteractiveControlEffect]?
     private var initialSurface: ClientInitialSurfaceCoordinatorV0?
     private var replacementSurface: ClientSurfaceControlCoordinatorV0?
@@ -133,6 +134,9 @@ public actor ClientInteractivePrimaryChannelV0:
         environment: ClientInteractivePrimaryEnvironmentV0,
         publish: @escaping @Sendable (
             ClientInteractivePrimarySessionEventV0
+        ) -> Void = { _ in },
+        publishFocus: @escaping @Sendable (
+            ClientSurfaceFocusEventV0
         ) -> Void = { _ in }
     ) throws {
         guard pairedHost.clientID == authenticatedSession.clientID,
@@ -160,6 +164,7 @@ public actor ClientInteractivePrimaryChannelV0:
         self.sender = sender
         self.environment = environment
         self.publish = publish
+        self.publishFocus = publishFocus
     }
 
     @discardableResult
@@ -356,6 +361,23 @@ public actor ClientInteractivePrimaryChannelV0:
             }
         default:
             throw ClientInteractivePrimaryChannelErrorV0.unavailable
+        }
+    }
+
+    public func preparePrimaryEvent(
+        _ frame: Data
+    ) async throws -> ClientPrimaryPreparedEventV0 {
+        guard !invalidated, var coordinator = replacementSurface else {
+            throw ClientInteractivePrimaryChannelErrorV0.unavailable
+        }
+        defer { replacementSurface = coordinator }
+        let event = try coordinator.receiveFocusEvent(
+            frame,
+            clientMonotonicNowMilliseconds:
+                try initialMonotonicMilliseconds()
+        )
+        return ClientPrimaryPreparedEventV0 { [publishFocus] in
+            publishFocus(event)
         }
     }
 
@@ -625,6 +647,10 @@ public actor ClientInteractivePrimaryChannelV0:
         -> AdaptiveSurfaceDescriptor?
     {
         replacementSurface?.descriptor
+    }
+
+    public func latestFocusEvent() -> ClientSurfaceFocusEventV0? {
+        replacementSurface?.latestFocusEvent
     }
 
     @discardableResult

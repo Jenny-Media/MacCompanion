@@ -310,8 +310,15 @@ The subsequent [manual visual Smart Zoom fallback](docs/evidence/2026-08-23-manu
 adds an explicit local pinch/pan/Fit mode to every live pixel surface. Remote
 gestures are reset and suppressed while the user adjusts it; direct points and
 trackpad deltas are inverse-mapped when interaction resumes. It transmits no
-new metadata and creates no new authority. Focus-pushed, Accessibility-assisted
-framing still requires a fixture-first ordered event lane.
+new metadata and creates no new authority.
+
+The [ordered focus-event lane](docs/evidence/2026-08-23-ordered-focus-event-lane.md)
+now freezes and implements that fixture-first client boundary. One closed,
+privacy-limited host event kind has independent replay and sequence state,
+cannot satisfy command requests, and offers only a short-lived one-use target
+for the proven replacement-surface exchange. The host Accessibility producer
+and automatic iOS application remain subsequent work; manual zoom stays the
+fallback.
 
 The [permanent Mac containing-app target](docs/evidence/2026-08-21-permanent-mac-containing-app-target.md)
 now embeds the separately signed, deliberately inert [permanent Agent

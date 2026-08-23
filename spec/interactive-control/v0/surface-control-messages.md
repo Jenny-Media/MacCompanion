@@ -80,4 +80,12 @@ but its publication/acknowledgement command is not overloaded onto replacement
 `transitionID`. Its separate exchange is frozen in
 `initial-surface-activation.md`.
 
-Host-initiated fallback uses the same replacement preparation and acknowledgement invariants. A later message profile may add an unsolicited event path only after ordered event-channel resumption and correlation are frozen; v0.1 does not infer fallback completion from media alone.
+Host-initiated fallback uses the same replacement preparation and
+acknowledgement invariants. The ordered focus-event lane does not itself
+perform fallback; v0.1 does not infer fallback completion from events or media.
+
+Privacy-limited focus candidates now use the separately ordered event lane in
+`focus-event-messages.md`. Its one-use target token feeds this ordinary
+client-requested replacement exchange; the event itself never selects a
+surface or resumes input. Host-initiated fallback remains a separate future
+profile and is not inferred from focus events or media.

@@ -41,13 +41,34 @@ public struct ClientPrimaryPreparedReplyV0: Sendable {
     fileprivate func publish() { commit() }
 }
 
+public struct ClientPrimaryPreparedEventV0: Sendable {
+    private let commit: @Sendable () -> Void
+
+    public init(commit: @escaping @Sendable () -> Void = {}) {
+        self.commit = commit
+    }
+
+    fileprivate func publish() { commit() }
+}
+
 public protocol ClientPrimaryReplyReceivingV0: Sendable {
     /// Decode and update path-owned state, but defer outward publication until
     /// the router atomically checks that its connection generation is current.
     func preparePrimaryReply(
         _ frame: Data
     ) async throws -> ClientPrimaryPreparedReplyV0
+    func preparePrimaryEvent(
+        _ frame: Data
+    ) async throws -> ClientPrimaryPreparedEventV0
     func invalidatePrimaryReplyReceiver() async
+}
+
+public extension ClientPrimaryReplyReceivingV0 {
+    func preparePrimaryEvent(
+        _ frame: Data
+    ) async throws -> ClientPrimaryPreparedEventV0 {
+        throw ClientPrimaryCommandRouterErrorV0.routingRejected
+    }
 }
 
 public struct ClientPrimaryLaneCommandSenderV0:
@@ -70,9 +91,10 @@ public struct ClientPrimaryLaneCommandSenderV0:
     }
 }
 
-/// One connection-scoped request/reply owner. Path receivers still own exact
-/// bodies and state machines; this actor owns replay, correlation, deadlines,
-/// and the non-crossable Observe/Act/Control lane assignment.
+/// One connection-scoped request/reply and ordered-event owner. Path receivers
+/// still own exact bodies and state machines; this actor owns replay,
+/// correlation, deadlines, and the non-crossable Observe/Act/Control lane
+/// assignment.
 public actor ClientPrimaryCommandRouterV0 {
     public let authenticatedSession: ClientAuthenticatedSessionV0
     public private(set) var state: ClientPrimaryCommandRouterStateV0 =
@@ -86,6 +108,7 @@ public actor ClientPrimaryCommandRouterV0 {
     private var pending = InFlightCommandTracker()
     private var pendingLanes: [WireUUID: ClientPrimaryProductLaneV0] = [:]
     private var incomingReplay = ConnectionReplayWindow()
+    private var incomingEventReplay = ConnectionReplayWindow()
     private var outgoingReplay = ConnectionReplayWindow()
     private var generation: UInt64 = 0
 
@@ -145,6 +168,10 @@ public actor ClientPrimaryCommandRouterV0 {
             await invalidate()
             throw ClientPrimaryCommandRouterErrorV0.invalidEnvelope
         }
+        if metadata.channel == .events {
+            try await receiveEvent(frame, metadata: metadata)
+            return
+        }
         guard let correlationID = metadata.correlationID else {
             await invalidate()
             throw ClientPrimaryCommandRouterErrorV0.routingRejected
@@ -195,6 +222,7 @@ public actor ClientPrimaryCommandRouterV0 {
         pending = InFlightCommandTracker()
         pendingLanes.removeAll()
         incomingReplay = ConnectionReplayWindow()
+        incomingEventReplay = ConnectionReplayWindow()
         outgoingReplay = ConnectionReplayWindow()
         for receiver in installed {
             await receiver.invalidatePrimaryReplyReceiver()
@@ -215,6 +243,9 @@ public actor ClientPrimaryCommandRouterV0 {
         do {
             metadata = try WireCodec.routingMetadata(from: frame)
         } catch {
+            throw ClientPrimaryCommandRouterErrorV0.invalidEnvelope
+        }
+        guard metadata.channel == .command else {
             throw ClientPrimaryCommandRouterErrorV0.invalidEnvelope
         }
         if metadata.kind == .interactiveSessionApprove {
@@ -281,6 +312,40 @@ public actor ClientPrimaryCommandRouterV0 {
             .interactiveSurfaceAcknowledgement,
         ],
     ]
+
+    private static let eventLanes: [
+        WireMessageKind: ClientPrimaryProductLaneV0
+    ] = [
+        .interactiveSurfaceFocusChanged: .control,
+    ]
+
+    private func receiveEvent(
+        _ frame: Data,
+        metadata: WireRoutingMetadata
+    ) async throws {
+        guard metadata.correlationID == nil,
+              let lane = Self.eventLanes[metadata.kind],
+              let receiver = receivers[lane] else {
+            await invalidate()
+            throw ClientPrimaryCommandRouterErrorV0.routingRejected
+        }
+        let expectedGeneration = generation
+        do {
+            try incomingEventReplay.admit(metadata.messageID)
+            let prepared = try await receiver.preparePrimaryEvent(frame)
+            guard state == .ready, generation == expectedGeneration,
+                  receivers[lane] != nil else {
+                throw ClientPrimaryCommandRouterErrorV0.invalidated
+            }
+            prepared.publish()
+        } catch let error as ClientPrimaryCommandRouterErrorV0 {
+            await invalidate()
+            throw error
+        } catch {
+            await invalidate()
+            throw ClientPrimaryCommandRouterErrorV0.routingRejected
+        }
+    }
 }
 
 public actor ClientActPrimaryReplyReceiverV1:

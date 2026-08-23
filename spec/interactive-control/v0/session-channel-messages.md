@@ -93,3 +93,10 @@ the closed command-channel exchange in `initial-surface-activation.md`. Later
 Adaptive Remote Surface selection and acknowledgement use
 `surface-control-messages.md`. Host-monotonic descriptor lifetimes never cross
 devices, and media-channel bytes alone never authorize input resumption.
+
+The same authenticated primary byte stream also admits the one closed
+host-origin event kind defined in `focus-event-messages.md`. Event messages use
+`channel: "events"`, null correlation, an independent exact sequence, and a
+separate Control event receiver; they cannot resolve command requests. v0.1
+does not resume an Interactive event cursor across primary connections because
+primary loss already terminates the owning Control session.

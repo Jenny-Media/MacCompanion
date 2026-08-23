@@ -526,6 +526,19 @@ unsolicited focus event without a separately frozen ordered event lane. Signed
 installation, TCC, real pixels/input, physical-iPhone gestures, focus latency,
 and lock behavior remain open evidence gates.
 
+The [ordered focus-event lane and client admission](evidence/2026-08-23-ordered-focus-event-lane.md)
+now replaces that strict request/reply limitation with one closed Control event
+kind. It has an independent replay window and exact sequence, carries only the
+current surface fence plus privacy-filtered focus shape, and cannot resolve or
+consume a command. Its short-lived one-use target token feeds only the existing
+reset, select, clean-frame, acknowledgement, and input-resumption exchange; a
+paused event suppresses local input until recovery. The full gate passes 73
+fixtures, the 1,477-test Swift catalog, macOS/iOS cross-builds, unsigned
+permanent application builds, and eight platform probes. The host
+Accessibility observer/token issuer and automatic iOS application are next;
+signed installation, TCC, real pixels/input, physical-iPhone focus behavior,
+latency, and lock behavior remain open evidence gates.
+
 ## Blocker handling rule
 
 Every blocked item records its affected artifact, evidence needed to unblock it, and parallel work. The project is not globally blocked while any safe in-scope lane remains active or ready. A later-stage capability is complete only with passing exit evidence or an explicit evidence-backed `no-go` or `deferred` disposition.

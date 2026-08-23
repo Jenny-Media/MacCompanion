@@ -350,6 +350,12 @@
       "canonicalSHA256": "782499ece0bede31d1816fb254f617ecdd91f392769c5c98c768ebab5e63274f"
     },
     {
+      "path": "valid/interactive-surface-focus-changed.json",
+      "kind": "interactive.surface.focusChanged",
+      "expect": "valid",
+      "canonicalSHA256": "4f2d9a9c4d6f5041c0ab790c65834992cb13b0204573cc703e7c29966f091504"
+    },
+    {
       "path": "invalid/status-snapshot-unknown-field.json",
       "kind": "status.snapshot.response",
       "expect": "protocol.invalidFrame",
@@ -410,6 +416,13 @@
       "kind": "interactive.surface.application",
       "expect": "interactive.forbiddenMetadata",
       "fault": "application surface includes focus-only metadata"
+    },
+    {
+      "path": "invalid/interactive-focus-event-leaks-label.json",
+      "kind": "interactive.surface.focusChanged",
+      "expect": "protocol.invalidFrame",
+      "fault": "forbidden focused label metadata",
+      "canonicalSHA256": "331bb5f94fa95744341c282dc6a8d5d1a8c27904aaae705a2cda1c07afef0627"
     },
     {
       "path": "invalid/local-diagnostic-export-sensitive.json",

@@ -39,6 +39,25 @@ private final class InteractivePrimaryEventRecorderV0:
     }
 }
 
+private final class InteractivePrimaryFocusRecorderV0:
+    @unchecked Sendable
+{
+    private let lock = NSLock()
+    private var storage: [ClientSurfaceFocusEventV0] = []
+
+    var events: [ClientSurfaceFocusEventV0] {
+        lock.lock()
+        defer { lock.unlock() }
+        return storage
+    }
+
+    func record(_ event: ClientSurfaceFocusEventV0) {
+        lock.lock()
+        storage.append(event)
+        lock.unlock()
+    }
+}
+
 private struct InteractivePrimarySignerV0:
     ClientInteractiveApprovalSigningV0
 {
@@ -93,6 +112,7 @@ private struct InteractivePrimaryHarnessV0 {
     let router: ClientPrimaryCommandRouterV0
     let channel: ClientInteractivePrimaryChannelV0
     let events: InteractivePrimaryEventRecorderV0
+    let focusEvents: InteractivePrimaryFocusRecorderV0
 }
 
 private func interactivePrimaryHarness() async throws
@@ -158,6 +178,7 @@ private func interactivePrimaryHarness() async throws
         monotonicNowNanoseconds: { 10_000_000_000 }
     )
     let events = InteractivePrimaryEventRecorderV0()
+    let focusEvents = InteractivePrimaryFocusRecorderV0()
     let channel = try ClientInteractivePrimaryChannelV0(
         pairedHost: host,
         authenticatedSession: session,
@@ -168,7 +189,8 @@ private func interactivePrimaryHarness() async throws
             wallNowUnixMilliseconds: { 1_002 },
             monotonicNowMilliseconds: { 10_000 }
         ),
-        publish: { events.record($0) }
+        publish: { events.record($0) },
+        publishFocus: { focusEvents.record($0) }
     )
     try await router.installReceiver(channel, for: .control)
     try await router.activate()
@@ -178,7 +200,8 @@ private func interactivePrimaryHarness() async throws
         transport: transport,
         router: router,
         channel: channel,
-        events: events
+        events: events,
+        focusEvents: focusEvents
     )
 }
 
@@ -426,6 +449,49 @@ private func interactivePrimaryAccepted(
         )
     )))
     #expect(await harness.channel.initialSurfacePhase() == .active)
+
+    let focusedRegionToken = WireUUID(UUID())
+    let focus = try SurfaceFocus(
+        token: UUID(),
+        revision: .init(rawValue: 1),
+        category: .text,
+        bounds: NormalizedSurfaceRect(
+            x: 200,
+            y: 120,
+            width: 320,
+            height: 80
+        ),
+        editable: true,
+        secure: false
+    )
+    try await harness.router.receive(WireCodec.encode(WireEnvelope(
+        messageID: WireUUID(UUID()),
+        correlationID: nil,
+        channel: .events,
+        sentAtUnixMilliseconds: 2_002,
+        body: try InteractiveSurfaceFocusChangedBodyV0(
+            interactiveSessionID: WireUUID(
+                descriptor.interactiveSessionID
+            ),
+            authorizationEpoch: descriptor.authorizationEpoch,
+            currentSurfaceID: WireUUID(descriptor.surfaceID),
+            currentSurfaceRevision: descriptor.surfaceRevision,
+            currentCoordinateSpaceRevision:
+                descriptor.coordinateSpaceRevision,
+            recommendedTargetKind: .focusedRegion,
+            targetToken: focusedRegionToken,
+            focus: InteractiveSurfaceWireFocusV0(focus),
+            inputPaused: false,
+            reason: .verifiedFocus,
+            validForMilliseconds: 1_000,
+            eventSequence: 1
+        )
+    )))
+    let publishedFocus = try #require(harness.focusEvents.events.last)
+    #expect(publishedFocus.targetToken == focusedRegionToken)
+    #expect(publishedFocus.focus == focus)
+    #expect(await harness.channel.latestFocusEvent() == publishedFocus)
+    #expect(await harness.router.state == .ready)
 
     let steadyDelta = try MediaRecordHeader(
         type: .videoAccessUnit,

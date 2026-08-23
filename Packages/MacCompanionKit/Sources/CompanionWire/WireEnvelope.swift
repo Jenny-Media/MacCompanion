@@ -98,6 +98,7 @@ public enum WireMessageKind: String, Codable, CaseIterable, Sendable {
     case interactiveSurfaceSelected = "interactive.surface.selected"
     case interactiveSurfaceAcknowledgement = "interactive.surface.ack"
     case interactiveSurfaceAcknowledged = "interactive.surface.acknowledged"
+    case interactiveSurfaceFocusChanged = "interactive.surface.focusChanged"
     case operationInvoke = "operation.invoke"
     case operationApprovalRequired = "operation.approvalRequired"
     case operationApprove = "operation.approve"
@@ -190,9 +191,6 @@ public struct WireEnvelope<Body: WireBody>: Codable, Equatable, Sendable {
                 actual: kind.rawValue
             )
         }
-        guard channel == .command else {
-            throw WireError.unknownKind(kind.rawValue)
-        }
         guard sentAtUnixMilliseconds >= 0,
               sentAtUnixMilliseconds <= WireLimits.maximumSafeInteger else {
             throw WireError.boundsExceeded(
@@ -200,25 +198,43 @@ public struct WireEnvelope<Body: WireBody>: Codable, Equatable, Sendable {
                 limit: Int(WireLimits.maximumSafeInteger)
             )
         }
-        switch kind {
-        case .authHello, .pairingBegin, .routeObservation,
-             .statusSnapshotRequest,
-             .capabilityRegistryRequest, .auditListRequest, .keepalivePing,
-             .interactiveSessionRequest, .interactiveSessionEnd,
-             .operationInvoke, .operationApprove,
-             .operationStatusRequest, .operationCancel,
-             .interactiveInitialSurfaceRequest,
-             .interactiveInitialSurfaceAcknowledgement,
-             .interactiveSurfaceTargetsRequest,
-             .interactiveSurfaceSelect, .interactiveSurfaceAcknowledgement:
-            guard correlationID == nil else {
-                throw WireError.invalidFrame(reason: "original request must have null correlationID")
+        switch channel {
+        case .events:
+            guard kind == .interactiveSurfaceFocusChanged,
+                  correlationID == nil else {
+                throw WireError.invalidFrame(
+                    reason: "invalid event kind or correlation"
+                )
             }
-        case .error:
-            break
-        default:
-            guard correlationID != nil else {
-                throw WireError.invalidFrame(reason: "reply must have correlationID")
+        case .command:
+            guard kind != .interactiveSurfaceFocusChanged else {
+                throw WireError.invalidFrame(reason: "event on command channel")
+            }
+            switch kind {
+            case .authHello, .pairingBegin, .routeObservation,
+                 .statusSnapshotRequest,
+                 .capabilityRegistryRequest, .auditListRequest, .keepalivePing,
+                 .interactiveSessionRequest, .interactiveSessionEnd,
+                 .operationInvoke, .operationApprove,
+                 .operationStatusRequest, .operationCancel,
+                 .interactiveInitialSurfaceRequest,
+                 .interactiveInitialSurfaceAcknowledgement,
+                 .interactiveSurfaceTargetsRequest,
+                 .interactiveSurfaceSelect,
+                 .interactiveSurfaceAcknowledgement:
+                guard correlationID == nil else {
+                    throw WireError.invalidFrame(
+                        reason: "original request must have null correlationID"
+                    )
+                }
+            case .error:
+                break
+            default:
+                guard correlationID != nil else {
+                    throw WireError.invalidFrame(
+                        reason: "reply must have correlationID"
+                    )
+                }
             }
         }
         try body.validate()
@@ -273,6 +289,7 @@ public enum WireCodec {
 public struct WireRoutingMetadata: Equatable, Sendable {
     public let messageID: WireUUID
     public let correlationID: WireUUID?
+    public let channel: WireChannel
     public let kind: WireMessageKind
     public let sentAtUnixMilliseconds: Int64
 
@@ -293,7 +310,8 @@ public struct WireRoutingMetadata: Equatable, Sendable {
                 == .integer(0),
               versionMembers.first(where: { $0.key == "minor" })?.value
                 == .integer(1),
-              case .string("command") = value("channel"),
+              case let .string(rawChannel) = value("channel"),
+              let parsedChannel = WireChannel(rawValue: rawChannel),
               case let .string(rawMessageID) = value("messageID"),
               let parsedMessageID = Self.canonicalUUID(rawMessageID),
               case let .string(rawKind) = value("kind"),
@@ -319,32 +337,50 @@ public struct WireRoutingMetadata: Equatable, Sendable {
         default:
             throw WireError.invalidFrame(reason: "invalid routing correlation")
         }
-        switch parsedKind {
-        case .authHello, .pairingBegin, .routeObservation,
-             .statusSnapshotRequest, .capabilityRegistryRequest,
-             .auditListRequest, .keepalivePing, .interactiveSessionRequest,
-             .interactiveSessionEnd,
-             .operationInvoke, .operationApprove, .operationStatusRequest,
-             .operationCancel, .interactiveInitialSurfaceRequest,
-             .interactiveInitialSurfaceAcknowledgement,
-             .interactiveSurfaceTargetsRequest, .interactiveSurfaceSelect,
-             .interactiveSurfaceAcknowledgement:
-            guard parsedCorrelationID == nil else {
+        switch parsedChannel {
+        case .events:
+            guard parsedKind == .interactiveSurfaceFocusChanged,
+                  parsedCorrelationID == nil else {
                 throw WireError.invalidFrame(
-                    reason: "original request must have null correlationID"
+                    reason: "invalid event kind or correlation"
                 )
             }
-        case .error:
-            break
-        default:
-            guard parsedCorrelationID != nil else {
+        case .command:
+            guard parsedKind != .interactiveSurfaceFocusChanged else {
                 throw WireError.invalidFrame(
-                    reason: "reply must have correlationID"
+                    reason: "event on command channel"
                 )
+            }
+            switch parsedKind {
+            case .authHello, .pairingBegin, .routeObservation,
+                 .statusSnapshotRequest, .capabilityRegistryRequest,
+                 .auditListRequest, .keepalivePing,
+                 .interactiveSessionRequest, .interactiveSessionEnd,
+                 .operationInvoke, .operationApprove,
+                 .operationStatusRequest, .operationCancel,
+                 .interactiveInitialSurfaceRequest,
+                 .interactiveInitialSurfaceAcknowledgement,
+                 .interactiveSurfaceTargetsRequest,
+                 .interactiveSurfaceSelect,
+                 .interactiveSurfaceAcknowledgement:
+                guard parsedCorrelationID == nil else {
+                    throw WireError.invalidFrame(
+                        reason: "original request must have null correlationID"
+                    )
+                }
+            case .error:
+                break
+            default:
+                guard parsedCorrelationID != nil else {
+                    throw WireError.invalidFrame(
+                        reason: "reply must have correlationID"
+                    )
+                }
             }
         }
         messageID = parsedMessageID
         correlationID = parsedCorrelationID
+        channel = parsedChannel
         kind = parsedKind
         sentAtUnixMilliseconds = parsedTime
     }

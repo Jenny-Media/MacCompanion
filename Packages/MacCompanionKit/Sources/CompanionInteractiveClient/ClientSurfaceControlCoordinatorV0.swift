@@ -27,6 +27,10 @@ public enum ClientSurfaceControlErrorV0: Error, Equatable, Sendable {
     case duplicateMessage
     case targetInventoryRequired
     case targetUnavailable
+    case focusEventSequenceMismatch(expected: Int64, actual: Int64)
+    case focusEventFenceMismatch
+    case focusEventExpired
+    case inputPausedByFocusEvent
 }
 
 public struct ClientSurfaceSelectionRequestV0: Equatable, Sendable {
@@ -39,6 +43,17 @@ public struct ClientSurfaceSelectionRequestV0: Equatable, Sendable {
     }
 }
 
+public struct ClientSurfaceFocusEventV0: Equatable, Sendable {
+    public let messageID: WireUUID
+    public let eventSequence: Int64
+    public let recommendedTargetKind: InteractiveSurfaceKind
+    public let targetToken: WireUUID?
+    public let focus: SurfaceFocus?
+    public let inputPaused: Bool
+    public let reason: InteractiveFocusEventReasonV0
+    public let expiresAtMonotonicMilliseconds: Int64
+}
+
 /// Owns the replacement-only client path from an already acknowledged surface
 /// through reliable reset, selection, media readiness, acknowledgement, and
 /// input reactivation. Initial Desktop activation remains a separate gate.
@@ -46,6 +61,7 @@ public struct ClientSurfaceControlCoordinatorV0: Sendable {
     private struct PendingSelection: Sendable {
         let requestMessageID: WireUUID
         let requestedKind: InteractiveSurfaceKind
+        let requestedFocus: SurfaceFocus?
     }
 
     private struct PendingTargetInventory: Sendable {
@@ -77,6 +93,8 @@ public struct ClientSurfaceControlCoordinatorV0: Sendable {
     public private(set) var input: ClientInputProducerV0
     public private(set) var targetCandidates:
         [InteractiveSurfaceTargetCandidateV0] = []
+    public private(set) var latestFocusEvent: ClientSurfaceFocusEventV0?
+    public private(set) var inputPausedByFocusEvent = false
 
     /// `nil` means no current inventory has completed. An empty array is a
     /// valid privacy-limited inventory and must not be confused with a reply
@@ -102,6 +120,7 @@ public struct ClientSurfaceControlCoordinatorV0: Sendable {
     private var renderedReadyMediaSequence: UInt64?
     private var nextClientSequence: Int64 = 1
     private var expectedServerSequence: Int64 = 1
+    private var expectedFocusEventSequence: Int64 = 1
     private var replay = ConnectionReplayWindow()
 
     public init(
@@ -198,6 +217,72 @@ public struct ClientSurfaceControlCoordinatorV0: Sendable {
     }
 
     @discardableResult
+    public mutating func receiveFocusEvent(
+        _ eventJSON: Data,
+        clientMonotonicNowMilliseconds: Int64
+    ) throws -> ClientSurfaceFocusEventV0 {
+        do {
+            try requirePhase(.active)
+            let envelope = try WireCodec.decode(
+                WireEnvelope<InteractiveSurfaceFocusChangedBodyV0>.self,
+                from: eventJSON
+            )
+            let body = envelope.body
+            guard body.eventSequence == expectedFocusEventSequence else {
+                throw ClientSurfaceControlErrorV0
+                    .focusEventSequenceMismatch(
+                        expected: expectedFocusEventSequence,
+                        actual: body.eventSequence
+                    )
+            }
+            guard body.interactiveSessionID.rawValue
+                    == interactiveSessionID,
+                  body.authorizationEpoch == authorizationEpoch,
+                  body.currentSurfaceID.rawValue
+                    == currentDescriptor.surfaceID,
+                  body.currentSurfaceRevision
+                    == currentDescriptor.surfaceRevision,
+                  body.currentCoordinateSpaceRevision
+                    == currentDescriptor.coordinateSpaceRevision else {
+                throw ClientSurfaceControlErrorV0.focusEventFenceMismatch
+            }
+            if currentDescriptor.kind == .focusedRegion {
+                guard body.inputPaused,
+                      body.focus?.revision != currentDescriptor.focus?.revision
+                        || body.focus?.token.rawValue
+                            != currentDescriptor.focus?.token else {
+                    throw ClientSurfaceControlErrorV0.focusEventFenceMismatch
+                }
+            }
+            let expiry = try body.clientExpiry(
+                receivedAtMonotonicMilliseconds:
+                    clientMonotonicNowMilliseconds
+            )
+            let event = ClientSurfaceFocusEventV0(
+                messageID: envelope.messageID,
+                eventSequence: body.eventSequence,
+                recommendedTargetKind: body.recommendedTargetKind,
+                targetToken: body.targetToken,
+                focus: try body.focus?.materialize(),
+                inputPaused: body.inputPaused,
+                reason: body.reason,
+                expiresAtMonotonicMilliseconds: expiry
+            )
+            guard expectedFocusEventSequence
+                    <= WireLimits.maximumSafeInteger else {
+                throw ClientSurfaceControlErrorV0.sequenceExhausted
+            }
+            expectedFocusEventSequence += 1
+            latestFocusEvent = event
+            if event.inputPaused { inputPausedByFocusEvent = true }
+            return event
+        } catch {
+            failClosed()
+            throw error
+        }
+    }
+
+    @discardableResult
     public mutating func receiveTargetInventory(
         _ responseJSON: Data,
         clientMonotonicNowMilliseconds: Int64
@@ -263,10 +348,22 @@ public struct ClientSurfaceControlCoordinatorV0: Sendable {
             guard pendingTargetInventory == nil else {
                 throw ClientSurfaceControlErrorV0.invalidConfiguration
             }
-            if targetKind != .desktop {
+            if targetKind == .focusedRegion {
                 guard clientMonotonicMilliseconds <= UInt64(Int64.max),
                       let targetToken,
-                      let targetInventory else {
+                      let focusEvent = latestFocusEvent,
+                      focusEvent.recommendedTargetKind == .focusedRegion,
+                      focusEvent.targetToken == targetToken else {
+                    throw ClientSurfaceControlErrorV0
+                        .targetInventoryRequired
+                }
+                guard Int64(clientMonotonicMilliseconds)
+                        < focusEvent.expiresAtMonotonicMilliseconds else {
+                    throw ClientSurfaceControlErrorV0.focusEventExpired
+                }
+            } else if targetKind != .desktop {
+                guard clientMonotonicMilliseconds <= UInt64(Int64.max),
+                      let targetToken, let targetInventory else {
                     throw ClientSurfaceControlErrorV0
                         .targetInventoryRequired
                 }
@@ -303,12 +400,17 @@ public struct ClientSurfaceControlCoordinatorV0: Sendable {
                 messageID: resetMessageID,
                 clientMonotonicMilliseconds: clientMonotonicMilliseconds
             )
+            let requestedFocus = targetKind == .focusedRegion
+                ? latestFocusEvent?.focus : nil
             nextClientSequence = sequence + 1
             targetInventory = nil
             targetCandidates = []
+            latestFocusEvent = nil
+            inputPausedByFocusEvent = false
             pendingSelection = PendingSelection(
                 requestMessageID: requestMessageID,
-                requestedKind: targetKind
+                requestedKind: targetKind,
+                requestedFocus: requestedFocus
             )
             phase = .awaitingSelection
             return ClientSurfaceSelectionRequestV0(
@@ -359,6 +461,7 @@ public struct ClientSurfaceControlCoordinatorV0: Sendable {
             let expectedCoordinateRevision = try
                 currentDescriptor.coordinateSpaceRevision.advanced()
             guard descriptor.kind == pendingSelection.requestedKind,
+                  descriptor.focus == pendingSelection.requestedFocus,
                   descriptor.surfaceRevision == expectedSurfaceRevision,
                   descriptor.coordinateSpaceRevision
                     == expectedCoordinateRevision,
@@ -539,6 +642,9 @@ public struct ClientSurfaceControlCoordinatorV0: Sendable {
         clientMonotonicMilliseconds: UInt64,
         payload: InteractiveInputPayload
     ) throws -> InteractiveInputEnvelope {
+        guard !inputPausedByFocusEvent else {
+            throw ClientSurfaceControlErrorV0.inputPausedByFocusEvent
+        }
         do {
             try requirePhase(.active)
             return try input.makeInput(
@@ -604,6 +710,8 @@ public struct ClientSurfaceControlCoordinatorV0: Sendable {
         pendingTargetInventory = nil
         targetInventory = nil
         targetCandidates = []
+        latestFocusEvent = nil
+        inputPausedByFocusEvent = false
         pendingTransition = nil
         pendingAcknowledgement = nil
         renderedReadyMediaSequence = nil
