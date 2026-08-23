@@ -42,6 +42,7 @@ targets:
         MacCompanionUpdateAuthorityProfile: $(MACCOMPANION_UPDATE_AUTHORITY_PROFILE)
         MacCompanionUpdateChannel: $(MACCOMPANION_UPDATE_CHANNEL)
         MacCompanionUpdateFeedURL: $(MACCOMPANION_UPDATE_FEED_URL)
+        MacCompanionUpdateUserInitiatedCheckProfile: $(MACCOMPANION_UPDATE_USER_INITIATED_CHECK_PROFILE)
         SUAllowsAutomaticUpdates: false
         SUAutomaticallyUpdate: false
         SUEnableAutomaticChecks: false

@@ -1,4 +1,4 @@
-# Mac Companion update trust policy v0.22
+# Mac Companion update trust policy v0.23
 
 Status: normative for the first direct-distribution beta.
 
@@ -106,6 +106,13 @@ and minimum-system facts are one signed publication unit.
 
 The first beta keeps automatic checks, automatic download, and automatic
 installation disabled in both the tracked property list and runtime adapter.
+A tracked empty execution profile leaves the visible `Check for Updates`
+action information-only. Only an exact release-injected
+`maccompanion.user-initiated-full-update-check.v1` profile, constructed around
+the already validated release authority and current canonical bundle build,
+may upgrade that explicit foreground action to Sparkle's user-initiated full
+check. An unknown, non-string, partial, or substituted profile makes the entire
+updater configuration invalid. The profile never admits a background check.
 A later automatic-check preference requires a policy and UX revision; it may
 not silently arise from Sparkle defaults. A beta or stable client never falls
 back to the other channel. Build numbers increase monotonically; downgrade is
@@ -225,9 +232,11 @@ dashboard or a replacement authenticated generation after transport ambiguity.
 Failure after Agent stop first completes exact source-Agent recovery and then
 reconstructs an authenticated dashboard generation before reopening. Until the
 ready callback supplies one exact admitted candidate and the user confirms in
-the foreground, construction and retention remain effect-inert. Ordinary menu
-checks remain information-only and cannot reach download, extraction, or this
-ready callback.
+the foreground, construction and retention remain effect-inert. Without the
+exact user-check execution profile, the menu action remains information-only
+and cannot reach download, extraction, or this ready callback. With it, the
+same visible action may stage one candidate, but neither download completion
+nor Sparkle's first user choice becomes installation authority.
 
 Only one dashboard reconciliation may run at a time. A current active
 generation retries an explicit command failure, but `unavailable`, malformed,

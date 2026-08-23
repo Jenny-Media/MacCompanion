@@ -92,6 +92,9 @@ EXPECTED_MAC_INFO_PLIST = {
     ),
     "MacCompanionUpdateChannel": "$(MACCOMPANION_UPDATE_CHANNEL)",
     "MacCompanionUpdateFeedURL": "$(MACCOMPANION_UPDATE_FEED_URL)",
+    "MacCompanionUpdateUserInitiatedCheckProfile": (
+        "$(MACCOMPANION_UPDATE_USER_INITIATED_CHECK_PROFILE)"
+    ),
     "NSBonjourServices": ["_maccompanion._tcp"],
     "NSHumanReadableCopyright": "Copyright 2026 Jenny Media LLC",
     "NSLocalNetworkUsageDescription": (
@@ -503,10 +506,13 @@ def validate_inert_update_adapter(
         "updater.automaticallyDownloadsUpdates = false",
         "updater.httpHeaders = nil",
         "updater.checkForUpdateInformation()",
+        "updater.checkForUpdates()",
+        "MacUpdateUserInitiatedCheckAuthorityV0",
+        "updateCheck == expectedUpdateCheck",
+        "MacCompanionUpdateUserInitiatedCheckProfile",
         "func feedParameters(",
         "func allowedSystemProfileKeys(",
         "shouldProceedWithUpdate item: SUAppcastItem",
-        "updateCheck == .updateInformation",
         "MacUpdateFeedCandidateV0(",
         "currentBuild: currentBuild",
         "itemChannel: item.channel",
@@ -551,7 +557,6 @@ def validate_inert_update_adapter(
         if needle not in mac_application:
             failures.append(f"macUpdateAdapterMissing:{needle}")
     for forbidden in (
-        ".checkForUpdates()",
         ".checkForUpdatesInBackground()",
         ".setFeedURL(",
         "URLSession",
@@ -573,6 +578,17 @@ def validate_inert_update_adapter(
         mac_application,
     ):
         failures.append("macUpdatePreparedReplyMappingMismatch")
+    if mac_application.count("updater.checkForUpdates()") != 1:
+        failures.append(
+            "macUpdateAdapterUnexpectedAuthority:updater.checkForUpdates()"
+        )
+    if not re.search(
+        r"if userInitiatedCheckAuthority == nil \{\s*"
+        r"updater\.checkForUpdateInformation\(\)\s*"
+        r"\} else \{\s*updater\.checkForUpdates\(\)\s*\}",
+        mac_application,
+    ):
+        failures.append("macUpdateUserCheckAuthorityMappingMismatch")
 
 
 def validate_narrow_agent_source(content: str, failures: list[str]) -> None:

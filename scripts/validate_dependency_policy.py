@@ -392,6 +392,9 @@ def expected_xcode_state() -> dict[str, Any]:
             ),
             "MacCompanionUpdateChannel": "$(MACCOMPANION_UPDATE_CHANNEL)",
             "MacCompanionUpdateFeedURL": "$(MACCOMPANION_UPDATE_FEED_URL)",
+            "MacCompanionUpdateUserInitiatedCheckProfile": (
+                "$(MACCOMPANION_UPDATE_USER_INITIATED_CHECK_PROFILE)"
+            ),
             "NSBonjourServices": ["_maccompanion._tcp"],
             "NSLocalNetworkUsageDescription": (
                 "Let your paired devices find and connect directly to this Mac on "
@@ -596,6 +599,9 @@ def live_xcode_state() -> dict[str, Any]:
             ),
             "MacCompanionUpdateFeedURL": info_plist.get(
                 "MacCompanionUpdateFeedURL"
+            ),
+            "MacCompanionUpdateUserInitiatedCheckProfile": info_plist.get(
+                "MacCompanionUpdateUserInitiatedCheckProfile"
             ),
             "NSBonjourServices": info_plist.get("NSBonjourServices"),
             "NSLocalNetworkUsageDescription": info_plist.get(

@@ -831,6 +831,18 @@ listener mutation, Agent stop, and updater handoff remain disabled pending the
 signed two-version lane and physical confirmation/recovery evidence.
 The final complete gate passes 1,603 package tests plus 8 platform probes; no
 package-test count changed in this source-only permanent-target binding.
+The subsequent
+[release-gated user update check](evidence/2026-08-23-release-gated-user-update-check.md)
+adds an exact typed execution profile around the validated release channel and
+installed build. Its absence keeps `Check for Updates` information-only;
+malformation invalidates the updater; its exact presence upgrades only that
+visible action to Sparkle's user-initiated full check. Automatic/background
+checks and downloads stay disabled. Two focused authority tests, dependency
+and permanent-source validators, and an unsigned app build pass. No check,
+network, download, extraction, listener, Agent, or installer action ran. Signed
+two-version execution and release-manifest binding remain protected evidence
+work.
+The complete gate passes 1,605 package tests plus 8 platform probes.
 
 ## Blocker handling rule
 

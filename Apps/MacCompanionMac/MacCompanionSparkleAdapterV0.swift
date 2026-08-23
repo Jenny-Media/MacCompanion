@@ -43,10 +43,12 @@ private struct MacCompanionUpdateCandidateSummaryV0: Equatable {
 
 /// Containing-app-only Sparkle boundary. Missing protected release authority
 /// is an ordinary inert state: no Sparkle object is constructed and no network
-/// work begins. Configured builds permit explicit informational probes only;
-/// every download/install check remains denied. If Sparkle reaches its held
-/// ready callback, only the package-owned runtime gate may hand off the exact
-/// admitted candidate after a second explicit local confirmation.
+/// work begins. Configured builds default the visible action to an informational
+/// probe. One additional exact release profile may upgrade only that action to
+/// a full user-initiated check; background and automatic checks remain denied.
+/// If Sparkle reaches its held ready callback, only the package-owned runtime
+/// gate may hand off the exact admitted candidate after a second explicit local
+/// confirmation.
 @MainActor
 final class MacCompanionSparkleAdapterV0:
     NSObject,
@@ -57,6 +59,8 @@ final class MacCompanionSparkleAdapterV0:
         "MacCompanionUpdateAuthorityProfile"
     static let channelKey = "MacCompanionUpdateChannel"
     static let feedURLKey = "MacCompanionUpdateFeedURL"
+    static let userInitiatedCheckProfileKey =
+        "MacCompanionUpdateUserInitiatedCheckProfile"
     static let publicKey = "SUPublicEDKey"
 
     @Published private(set) var phase: MacCompanionUpdatePhaseV0
@@ -64,6 +68,8 @@ final class MacCompanionSparkleAdapterV0:
     private let bundle: Bundle
     private let authority: MacUpdateReleaseAuthorityV0?
     private let currentBuild: UInt64?
+    private let userInitiatedCheckAuthority:
+        MacUpdateUserInitiatedCheckAuthorityV0?
     private var userDriver: MacCompanionSparkleUserDriverV0?
     private var updaterInstance: SPUUpdater?
     private var probePermit = false
@@ -85,14 +91,17 @@ final class MacCompanionSparkleAdapterV0:
         case .absent:
             authority = nil
             currentBuild = nil
+            userInitiatedCheckAuthority = nil
             phase = .notConfigured
         case .invalid:
             authority = nil
             currentBuild = nil
+            userInitiatedCheckAuthority = nil
             phase = .invalidConfiguration
-        case let .valid(value, build):
+        case let .valid(value, build, checkAuthority):
             authority = value
             currentBuild = build
+            userInitiatedCheckAuthority = checkAuthority
             phase = .ready(channel: value.channel)
         }
         super.init()
@@ -163,7 +172,11 @@ final class MacCompanionSparkleAdapterV0:
         retireValidationLifecycle()
         pendingOffer = nil
         phase = .checking(channel: authority.channel)
-        updater.checkForUpdateInformation()
+        if userInitiatedCheckAuthority == nil {
+            updater.checkForUpdateInformation()
+        } else {
+            updater.checkForUpdates()
+        }
     }
 
     func confirmPendingInstallation() {
@@ -280,7 +293,7 @@ final class MacCompanionSparkleAdapterV0:
         _ updater: SPUUpdater,
         mayPerform updateCheck: SPUUpdateCheck
     ) throws {
-        guard updateCheck == .updateInformation,
+        guard updateCheck == expectedUpdateCheck,
               probePermit,
               case .checking = phase else {
             throw Self.deniedError(
@@ -295,7 +308,7 @@ final class MacCompanionSparkleAdapterV0:
         shouldProceedWithUpdate item: SUAppcastItem,
         updateCheck: SPUUpdateCheck
     ) throws {
-        guard updateCheck == .updateInformation,
+        guard updateCheck == expectedUpdateCheck,
               case .checking = phase,
               let authority,
               let currentBuild,
@@ -411,7 +424,7 @@ final class MacCompanionSparkleAdapterV0:
         didFinishUpdateCycleFor updateCheck: SPUUpdateCheck,
         error: Error?
     ) {
-        guard let authority, updateCheck == .updateInformation else {
+        guard let authority, updateCheck == expectedUpdateCheck else {
             return
         }
         probePermit = false
@@ -593,7 +606,18 @@ final class MacCompanionSparkleAdapterV0:
     private enum LoadedAuthority {
         case absent
         case invalid
-        case valid(MacUpdateReleaseAuthorityV0, currentBuild: UInt64)
+        case valid(
+            MacUpdateReleaseAuthorityV0,
+            currentBuild: UInt64,
+            userInitiatedCheckAuthority:
+                MacUpdateUserInitiatedCheckAuthorityV0?
+        )
+    }
+
+    private var expectedUpdateCheck: SPUUpdateCheck {
+        userInitiatedCheckAuthority == nil
+            ? .updateInformation
+            : .updates
     }
 
     private static func loadAuthority(
@@ -601,9 +625,16 @@ final class MacCompanionSparkleAdapterV0:
     ) -> LoadedAuthority {
         let keys = [authorityProfileKey, channelKey, feedURLKey, publicKey]
         let values = keys.map { dictionary[$0] as? String }
-        let present = values.compactMap { $0 }.filter { !$0.isEmpty }
+        let checkProfileValue = dictionary[userInitiatedCheckProfileKey]
+        let checkProfile = checkProfileValue as? String
+        let present = (values + [checkProfile])
+            .compactMap { $0 }
+            .filter { !$0.isEmpty }
         guard !present.isEmpty else { return .absent }
         guard values.allSatisfy({ $0?.isEmpty == false }) else {
+            return .invalid
+        }
+        guard checkProfileValue == nil || checkProfile != nil else {
             return .invalid
         }
         do {
@@ -617,7 +648,22 @@ final class MacCompanionSparkleAdapterV0:
                   let build = canonicalBuild(buildText) else {
                 return .invalid
             }
-            return .valid(authority, currentBuild: build)
+            let checkAuthority:
+                MacUpdateUserInitiatedCheckAuthorityV0?
+            if let checkProfile, !checkProfile.isEmpty {
+                checkAuthority = try MacUpdateUserInitiatedCheckAuthorityV0(
+                    profile: checkProfile,
+                    releaseAuthority: authority,
+                    currentBuild: build
+                )
+            } else {
+                checkAuthority = nil
+            }
+            return .valid(
+                authority,
+                currentBuild: build,
+                userInitiatedCheckAuthority: checkAuthority
+            )
         } catch {
             return .invalid
         }

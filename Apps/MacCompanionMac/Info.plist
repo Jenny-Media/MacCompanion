@@ -30,6 +30,8 @@
 	<string>$(MACCOMPANION_UPDATE_CHANNEL)</string>
 	<key>MacCompanionUpdateFeedURL</key>
 	<string>$(MACCOMPANION_UPDATE_FEED_URL)</string>
+	<key>MacCompanionUpdateUserInitiatedCheckProfile</key>
+	<string>$(MACCOMPANION_UPDATE_USER_INITIATED_CHECK_PROFILE)</string>
 	<key>NSBonjourServices</key>
 	<array>
 		<string>_maccompanion._tcp</string>

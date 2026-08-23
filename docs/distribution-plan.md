@@ -438,10 +438,15 @@ after exact signed-candidate validation reaches Sparkle's held readiness point,
 it can present `Not Now` and `Install and Restart`, and only the latter may ask
 the package-owned shutdown coordinator to close sessions, stop the Agent, and
 resolve the one-shot installer reply. This source binding does not enable a
-shipping update path. The visible check action remains information-only, all
-automatic and background checks remain disabled, and a protected build must
-not enable a full check until signed old-to-new installation, foreground-loss,
-forced-loss recovery, rollback, and clean-machine evidence is retained.
+shipping update path by default. The tracked empty
+`MacCompanionUpdateUserInitiatedCheckProfile` leaves the visible action
+information-only. A protected two-version evidence build may inject only the
+exact `maccompanion.user-initiated-full-update-check.v1` profile to make that
+same foreground action stage an update. Automatic and background checks remain
+disabled. No externally distributed beta may carry the full-check profile
+until signed old-to-new installation, foreground-loss, forced-loss recovery,
+rollback, and clean-machine evidence is retained and the release manifest
+binds that exact profile.
 
 ## 9. Versioning and compatibility policy
 
