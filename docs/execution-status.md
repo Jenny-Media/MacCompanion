@@ -604,6 +604,19 @@ builds, and eight platform probes. Signed two-process TCC execution, physical
 crop pixels, physical-iPhone focus latency/usability, multi-display edges, and
 lock behavior remain open without blocking other safe lanes.
 
+The [signed physical launch baseline](evidence/2026-08-23-signed-physical-launch-baseline.md)
+now advances the external evidence lane without changing tracked signing
+authority. Fresh invocation-only Apple Development builds pass strict
+signature inspection for the iOS app and the Mac containing app plus embedded
+Agent. The iOS app installs, launches, and survives on a paired physical iPhone
+17 Pro Max running iOS 27 beta; the signed Mac containing app launches a live
+menu-bar process and status-item scene while the Agent remains absent. The
+available iOS profile is wildcard development only, and an unrelated
+foreground-app screenshot is intentionally rejected as visual evidence.
+Explicit Remote Access enablement/Agent registration requires action-time
+confirmation; privacy consent, reciprocal local-XPC readiness, physical
+pairing, Observe, Act, Control, and distribution evidence remain open.
+
 ## Blocker handling rule
 
 Every blocked item records its affected artifact, evidence needed to unblock it, and parallel work. The project is not globally blocked while any safe in-scope lane remains active or ready. A later-stage capability is complete only with passing exit evidence or an explicit evidence-backed `no-go` or `deferred` disposition.

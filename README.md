@@ -365,6 +365,16 @@ after the coordinate space changes. Signed TCC execution, real crop pixels,
 physical-iPhone behavior and latency, multi-display edges, and lock behavior
 remain evidence gates.
 
+The [signed physical launch baseline](docs/evidence/2026-08-23-signed-physical-launch-baseline.md)
+now proves invocation-only Apple Development signing for both permanent apps,
+strict Mac containing-app/embedded-Agent verification, physical iPhone
+installation and surviving process launch, and a live signed Mac menu-bar
+process without writing signing authority into the repository. The iOS build
+uses a wildcard development profile, not an explicit distribution identity.
+Agent registration, privacy consent, pairing, transport, pixels, and input were
+not exercised; explicit Remote Access enablement remains the next confirmed
+persistent-access action.
+
 The [permanent Mac containing-app target](docs/evidence/2026-08-21-permanent-mac-containing-app-target.md)
 now embeds the separately signed, deliberately inert [permanent Agent
 target](docs/evidence/2026-08-21-permanent-embedded-mac-agent-target.md), its
