@@ -363,6 +363,7 @@ private actor RuntimeOwnerMenuRouteV1:
 {
     let wrongGeneration: Bool
     private var installsStorage: [InteractiveRuntimeInstallCommandV0] = []
+    private var renewalsStorage: [InteractiveRuntimeLeaseRenewalV0] = []
     private var revokesStorage: [InteractiveRuntimeRevokeCommandV0] = []
 
     init(wrongGeneration: Bool = false) {
@@ -388,8 +389,10 @@ private actor RuntimeOwnerMenuRouteV1:
     }
 
     func renewInteractiveLease(
-        _: InteractiveRuntimeLeaseRenewalV0
-    ) async throws {}
+        _ renewal: InteractiveRuntimeLeaseRenewalV0
+    ) async throws {
+        renewalsStorage.append(renewal)
+    }
 
     func revokeInteractiveLease(
         _ command: InteractiveRuntimeRevokeCommandV0
@@ -412,6 +415,10 @@ private actor RuntimeOwnerMenuRouteV1:
 
     func revokes() -> [InteractiveRuntimeRevokeCommandV0] {
         revokesStorage
+    }
+
+    func renewals() -> [InteractiveRuntimeLeaseRenewalV0] {
+        renewalsStorage
     }
 }
 
@@ -443,14 +450,18 @@ private final class RuntimeOwnerClockV1: @unchecked Sendable {
     let requirement = try initialRequirement()
     let admission = RuntimeOwnerAdmissionV1([
         requirement.admission, requirement.admission,
+        requirement.admission,
     ])
     let desktop = RuntimeOwnerDesktopV1(descriptor: try initialDesktop())
     let route = RuntimeOwnerMenuRouteV1()
     let commandID = UUID()
     let leaseID = UUID()
+    let replacementLeaseID = UUID()
+    let renewalCommandID = UUID()
     let revokeID = UUID()
     let identifiers = RuntimeOwnerIdentifiersV1([
-        commandID, leaseID, revokeID,
+        commandID, leaseID, replacementLeaseID, renewalCommandID,
+        revokeID,
     ])
     let clock = RuntimeOwnerClockV1([
         2_000_000_000, 2_100_000_000,
@@ -476,6 +487,20 @@ private final class RuntimeOwnerClockV1: @unchecked Sendable {
         leaseID: leaseID
     ))
 
+    try await owner.renewActiveLease(
+        nowMonotonicNanoseconds: 5_000_000_000
+    )
+    let renewals = await route.renewals()
+    #expect(renewals.count == 1)
+    #expect(renewals.first?.commandID == renewalCommandID)
+    #expect(renewals.first?.previousLeaseID == leaseID)
+    #expect(renewals.first?.replacement.leaseID == replacementLeaseID)
+    #expect(renewals.first?.replacement.renewalCounter == 1)
+    #expect(await owner.state() == .active(
+        interactiveSessionID: initialSessionID,
+        leaseID: replacementLeaseID
+    ))
+
     await owner.terminate(
         interactiveSessionID: initialSessionID,
         primaryConnectionID: initialConnectionID,
@@ -484,6 +509,7 @@ private final class RuntimeOwnerClockV1: @unchecked Sendable {
     let revokes = await route.revokes()
     #expect(revokes.count == 1)
     #expect(revokes.first?.commandID == revokeID)
+    #expect(revokes.first?.leaseID == replacementLeaseID)
     #expect(revokes.first?.reason == .clientDisconnected)
     #expect(await owner.state() == .idle)
 }
@@ -517,14 +543,14 @@ private final class RuntimeOwnerClockV1: @unchecked Sendable {
     #expect(await owner.state() == .idle)
 }
 
-@Test func agentRuntimeOwnerLatchesMismatchedMenuReceipt() async throws {
+@Test func agentRuntimeOwnerCompensatesMismatchedMenuReceipt() async throws {
     let requirement = try initialRequirement()
     let admission = RuntimeOwnerAdmissionV1([
         requirement.admission, requirement.admission,
     ])
     let desktop = RuntimeOwnerDesktopV1(descriptor: try initialDesktop())
     let route = RuntimeOwnerMenuRouteV1(wrongGeneration: true)
-    let identifiers = RuntimeOwnerIdentifiersV1([UUID(), UUID()])
+    let identifiers = RuntimeOwnerIdentifiersV1([UUID(), UUID(), UUID()])
     let clock = RuntimeOwnerClockV1([
         2_000_000_000, 2_100_000_000,
     ])
@@ -544,7 +570,6 @@ private final class RuntimeOwnerClockV1: @unchecked Sendable {
             requirement: requirement
         )
     }
-    #expect(await owner.state() == .safetyRecoveryRequired(
-        interactiveSessionID: initialSessionID
-    ))
+    #expect(await route.revokes().count == 1)
+    #expect(await owner.state() == .idle)
 }

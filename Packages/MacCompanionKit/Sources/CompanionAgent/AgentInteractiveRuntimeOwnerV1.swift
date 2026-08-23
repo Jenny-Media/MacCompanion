@@ -90,6 +90,8 @@ public actor AgentInteractiveRuntimeOwnerV1:
         var bootstrap: InteractiveSessionBootstrap
         let preparation: InteractiveInitialRuntimePreparationV1
         let primaryConnectionID: Data
+        let requirement: InteractiveSessionRuntimeRequirementV0
+        var currentLease: InteractiveExecutionLease
     }
 
     private enum Storage: Sendable {
@@ -133,14 +135,14 @@ public actor AgentInteractiveRuntimeOwnerV1:
         case let .active(active):
             .active(
                 interactiveSessionID:
-                    active.preparation.command.lease.interactiveSessionID,
-                leaseID: active.preparation.command.lease.leaseID
+                    active.currentLease.interactiveSessionID,
+                leaseID: active.currentLease.leaseID
             )
         case let .terminating(active):
             .terminating(
                 interactiveSessionID:
-                    active.preparation.command.lease.interactiveSessionID,
-                leaseID: active.preparation.command.lease.leaseID
+                    active.currentLease.interactiveSessionID,
+                leaseID: active.currentLease.leaseID
             )
         case let .safetyRecoveryRequired(sessionID):
             .safetyRecoveryRequired(interactiveSessionID: sessionID)
@@ -179,6 +181,24 @@ public actor AgentInteractiveRuntimeOwnerV1:
         }
         sequencingTail = operation
         await operation.value
+    }
+
+    /// Renews only the exact active lease after another final admission read.
+    /// A higher-level product scheduler calls this before the current deadline;
+    /// this owner never infers success from a send or silently retries an
+    /// ambiguous acknowledgement.
+    public func renewActiveLease(
+        nowMonotonicNanoseconds: UInt64
+    ) async throws {
+        let predecessor = sequencingTail
+        let operation = Task { [self] in
+            await predecessor.value
+            try await performRenewal(
+                nowMonotonicNanoseconds: nowMonotonicNanoseconds
+            )
+        }
+        sequencingTail = Task { _ = try? await operation.value }
+        return try await operation.value
     }
 
     private func performInstall(
@@ -236,10 +256,17 @@ public actor AgentInteractiveRuntimeOwnerV1:
                     preparation.command
                 )
             } catch {
-                invalidateCredentials(&bootstrap)
-                storage = .safetyRecoveryRequired(sessionID)
-                throw AgentInteractiveRuntimeOwnerErrorV1
-                    .safetyRecoveryRequired
+                let revoked = await attemptRevoke(
+                    lease: preparation.command.lease,
+                    bootstrap: &bootstrap,
+                    reason: .protocolViolation
+                )
+                storage = revoked
+                    ? .idle : .safetyRecoveryRequired(sessionID)
+                throw revoked
+                    ? AgentInteractiveRuntimeOwnerErrorV1.unavailable
+                    : AgentInteractiveRuntimeOwnerErrorV1
+                        .safetyRecoveryRequired
             }
 
             do {
@@ -249,15 +276,22 @@ public actor AgentInteractiveRuntimeOwnerV1:
                 )
                 bootstrap = try authority.takeInstalledBootstrap()
             } catch {
-                invalidateCredentials(&bootstrap)
-                storage = .safetyRecoveryRequired(sessionID)
+                let revoked = await attemptRevoke(
+                    lease: preparation.command.lease,
+                    bootstrap: &bootstrap,
+                    reason: .protocolViolation
+                )
+                storage = revoked
+                    ? .idle : .safetyRecoveryRequired(sessionID)
                 throw AgentInteractiveRuntimeOwnerErrorV1
                     .runtimeReceiptRejected
             }
             storage = .active(Active(
                 bootstrap: bootstrap,
                 preparation: preparation,
-                primaryConnectionID: requirement.command.primaryConnectionID
+                primaryConnectionID: requirement.command.primaryConnectionID,
+                requirement: requirement,
+                currentLease: preparation.command.lease
             ))
         } catch let error as AgentInteractiveRuntimeOwnerErrorV1 {
             if case .installing = storage {
@@ -274,35 +308,137 @@ public actor AgentInteractiveRuntimeOwnerV1:
         }
     }
 
+    private func performRenewal(
+        nowMonotonicNanoseconds: UInt64
+    ) async throws {
+        guard case var .active(active) = storage else {
+            if case .safetyRecoveryRequired = storage {
+                throw AgentInteractiveRuntimeOwnerErrorV1
+                    .safetyRecoveryRequired
+            }
+            throw AgentInteractiveRuntimeOwnerErrorV1.unavailable
+        }
+        do {
+            try await requireExactFinalAdmission(active.requirement)
+            let current = active.currentLease
+            guard nowMonotonicNanoseconds
+                    >= current.issuedAtMonotonicNanoseconds,
+                  nowMonotonicNanoseconds
+                    < current.expiresAtMonotonicNanoseconds,
+                  nowMonotonicNanoseconds
+                    < active.preparation.command
+                        .sessionDeadlineMonotonicNanoseconds,
+                  current.renewalCounter
+                    < MonotonicRevision<AuthorizationEpochTag>
+                        .maximumWireValue else {
+                throw AgentInteractiveRuntimeOwnerErrorV1.unavailable
+            }
+            let (maximumExpiry, overflow) = nowMonotonicNanoseconds
+                .addingReportingOverflow(
+                    InteractiveExecutionLease.maximumLifetimeNanoseconds
+                )
+            guard !overflow else {
+                throw AgentInteractiveRuntimeOwnerErrorV1.unavailable
+            }
+            let expiry = min(
+                maximumExpiry,
+                active.preparation.command
+                    .sessionDeadlineMonotonicNanoseconds
+            )
+            guard expiry > nowMonotonicNanoseconds else {
+                throw AgentInteractiveRuntimeOwnerErrorV1.unavailable
+            }
+            let replacement = try InteractiveExecutionLease(
+                leaseID: identifier(),
+                hostID: current.hostID,
+                deviceID: current.deviceID,
+                interactiveSessionID: current.interactiveSessionID,
+                authorizationEpoch: current.authorizationEpoch,
+                selectedDisplayID: current.selectedDisplayID,
+                surfaceID: current.surfaceID,
+                surfaceRevision: current.surfaceRevision,
+                coordinateRevision: current.coordinateRevision,
+                allowedInteractionClasses:
+                    Set(current.allowedInteractionClasses),
+                renewalCounter: current.renewalCounter + 1,
+                issuedAtMonotonicNanoseconds: nowMonotonicNanoseconds,
+                expiresAtMonotonicNanoseconds: expiry
+            )
+            let renewal = try InteractiveRuntimeLeaseRenewalV0(
+                commandID: identifier(),
+                previousLeaseID: current.leaseID,
+                replacement: replacement
+            )
+            try renewal.validate(current: current)
+            try await runtime.renewInteractiveLease(renewal)
+            active.currentLease = replacement
+            storage = .active(active)
+        } catch let error as AgentInteractiveRuntimeOwnerErrorV1 {
+            let revoked = await attemptRevoke(
+                lease: active.currentLease,
+                bootstrap: &active.bootstrap,
+                reason: .authorizationChanged
+            )
+            storage = revoked ? .idle : .safetyRecoveryRequired(
+                active.currentLease.interactiveSessionID
+            )
+            throw error
+        } catch {
+            let revoked = await attemptRevoke(
+                lease: active.currentLease,
+                bootstrap: &active.bootstrap,
+                reason: .protocolViolation
+            )
+            storage = revoked ? .idle : .safetyRecoveryRequired(
+                active.currentLease.interactiveSessionID
+            )
+            if revoked { throw error }
+            throw AgentInteractiveRuntimeOwnerErrorV1.safetyRecoveryRequired
+        }
+    }
+
     private func performTerminate(
         interactiveSessionID: UUID,
         primaryConnectionID: Data,
         reason: InteractiveSessionEndReason
     ) async {
         guard case var .active(active) = storage,
-              active.preparation.command.lease.interactiveSessionID
-                == interactiveSessionID,
+              active.currentLease.interactiveSessionID == interactiveSessionID,
               active.bootstrap.acceptedBody.interactiveSessionID.rawValue
                 == interactiveSessionID,
               active.primaryConnectionID == primaryConnectionID else {
             return
         }
         storage = .terminating(active)
-        let command: InteractiveRuntimeRevokeCommandV0
+        if await attemptRevoke(
+            lease: active.currentLease,
+            bootstrap: &active.bootstrap,
+            reason: reason
+        ) {
+            storage = .idle
+        } else {
+            storage = .safetyRecoveryRequired(interactiveSessionID)
+        }
+    }
+
+    private func attemptRevoke(
+        lease: InteractiveExecutionLease,
+        bootstrap: inout InteractiveSessionBootstrap,
+        reason: InteractiveSessionEndReason
+    ) async -> Bool {
+        defer { invalidateCredentials(&bootstrap) }
         do {
-            command = try InteractiveRuntimeRevokeCommandV0(
+            let command = try InteractiveRuntimeRevokeCommandV0(
                 commandID: identifier(),
-                leaseID: active.preparation.command.lease.leaseID,
-                interactiveSessionID: interactiveSessionID,
+                leaseID: lease.leaseID,
+                interactiveSessionID: lease.interactiveSessionID,
                 reason: reason
             )
             let receipt = try await runtime.revokeInteractiveLease(command)
             try receipt.validate(against: command)
-            invalidateCredentials(&active.bootstrap)
-            storage = .idle
+            return true
         } catch {
-            invalidateCredentials(&active.bootstrap)
-            storage = .safetyRecoveryRequired(interactiveSessionID)
+            return false
         }
     }
 

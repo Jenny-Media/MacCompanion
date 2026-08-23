@@ -30,21 +30,25 @@ boundary required by `InteractiveSessionRuntimeOwningV0`. It:
   `InteractiveInitialRuntimeCommandAuthorityV1`;
 - transfers channel credentials into active ownership only after the exact
   menu generation/revision install receipt is accepted; and
-- serializes termination behind installation, sends one exact revoke, validates
-  all four cleanup facts, and invalidates unused channel credentials.
+- renews only the exact current lease after another final admission read; and
+- serializes termination behind installation or renewal, sends one exact
+  revoke, validates all four cleanup facts, and invalidates unused channel
+  credentials.
 
-Any ambiguous runtime send, mismatched receipt, or incomplete revoke latches
-the Agent owner in `safetyRecoveryRequired`. A product-layer type adapter gives
-that owner only the three local-XPC lease lifecycle operations; the server,
-presentation surfaces, peer handles, and status authority do not escape.
+Any failed install, renewal, or mismatched receipt immediately attempts an
+exact compensating revoke. A proved four-effect cleanup returns the owner to
+idle; ambiguity or incomplete cleanup latches `safetyRecoveryRequired`. A
+product-layer type adapter gives that owner only the three local-XPC lease
+lifecycle operations; the server, presentation surfaces, peer handles, and
+status authority do not escape.
 
 ## Verification
 
 - Three menu-adapter tests prove exact forwarding, runtime-reported recovery
   latching, and one-shot latching after ambiguous connection-loss cleanup.
 - Three Agent-owner tests prove double admission revalidation, no send after a
-  changed final admission, exact install/terminate correlation, and mismatched
-  menu-generation receipt latching.
+  changed final admission, exact install/renew/terminate correlation, and
+  compensating revocation after a mismatched menu-generation receipt.
 - Focused dashboard/application/product tests passed after the new injection
   seams.
 - The complete MacCompanionKit Swift Testing catalog passed all 1,406 tests
@@ -61,5 +65,6 @@ Before Control can be enabled, the menu must publish an exact revisioned
 visible-display admission and retain the opaque UUID-to-`CGDirectDisplayID`
 mapping, prepare the first Desktop descriptor/capture source, and construct the
 indicator, capture, input-release, frame-blanking, input-posting, and bounded
-media-queue adapters. The Agent owner also needs generation-fenced lease renewal
-and secondary input/media channel handoff before a session can remain live.
+media-queue adapters. The Agent owner also needs automatic generation-fenced
+renewal scheduling and secondary input/media channel handoff before a session
+can remain live.
