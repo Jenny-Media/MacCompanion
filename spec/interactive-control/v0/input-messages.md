@@ -44,4 +44,12 @@ Using host monotonic receipt time, the host admits at most 240 total messages an
 
 The host owns the pressed-button, pressed-key, and modifier sets. `reset`, channel loss, foreground-lease loss, IPC loss, lock, suspension, epoch change, session end, or any protocol violation releases all state. Text is denied while locked even if public APIs later prove ordinary physical-key operation on the genuine macOS lock surface.
 
+The host data-plane owner starts only after the authenticated input and media
+connections form one exact role pair. It reads the four-byte input length and
+then exactly the declared body, rechecks the pair's session and authorization
+epoch against every strict envelope, and forwards it only through the current
+generation-bound menu route. It never treats network receipt as execution.
+Failure or ambiguity cancels both role connections and requests exact session
+termination; role bytes cannot install, renew, or broaden a lease.
+
 `spec/fixtures/valid/interactive-input-physical-key.json` is the canonical envelope fixture. Invalid fixtures cover cross-field rules; implementation tests cover every union member, exact round trips, transition balance, rate boundaries, sequencing, and locked-text denial.

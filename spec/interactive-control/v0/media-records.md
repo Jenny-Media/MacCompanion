@@ -4,6 +4,13 @@ Status: normative binary framing. Channel authentication, credential constructio
 
 Each media record is one 96-byte header followed by exactly `payloadLength` bytes. Integers are unsigned big-endian. UUIDs are the 16 RFC 4122 bytes in network order. A receiver reads and validates the fixed header before allocating payload storage. Any mismatch closes the media channel.
 
+On the host, the role-pair data owner requests one complete menu-produced
+record at a time, validates its payload length plus authenticated session and
+authorization epoch, and awaits the exact header-plus-payload network send
+before requesting another. Sequence must strictly increase. Source closure,
+send ambiguity, or any fence mismatch closes both role connections and
+requests exact Interactive-session termination.
+
 | Offset | Bytes | Field | Rule |
 | ---: | ---: | --- | --- |
 | 0 | 4 | magic | ASCII `MCM1` |

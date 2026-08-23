@@ -161,9 +161,14 @@ later
 adds strict secondary-role classification and mutual proof on the shared TLS
 listener, keeps one-time credentials inside the exact generation-bound Agent
 runtime, and retains only a same-client/primary/session/epoch input-media pair.
-The full 1,444-test Swift catalog, cross-builds, and eight platform probes pass.
-Concrete role-data handoff plus capture/media/frame/input adapters remain the
-next independent Control slice.
+The later
+[host Interactive role-data-plane checkpoint](evidence/2026-08-22-host-interactive-role-data-plane.md)
+transfers the concrete pair to one generation- and runtime-fenced Agent owner,
+applies bounded exact input framing, and enforces one-record-at-a-time media
+backpressure with paired fail-closed teardown. The full 1,449-test Swift
+catalog, cross-builds, and eight platform probes pass. Authenticated local-XPC
+input/media routing plus concrete capture/frame/input adapters remain the next
+independent Control slice.
 
 The [visible Interactive admission checkpoint](evidence/2026-08-22-visible-interactive-admission-contract.md)
 now carries the closed canonical menu-process generation, exact revision, and

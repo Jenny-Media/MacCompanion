@@ -1,0 +1,14 @@
+{
+  "profile": "Mac Companion host Interactive role data plane v0.1",
+  "maximumInputJSONBytes": 65536,
+  "mediaHeaderBytes": 96,
+  "rules": [
+    "one data-plane owner starts only after both authenticated role connections carry the same client, primary connection, session, and authorization epoch",
+    "input uses exact four-byte big-endian length framing and never reads beyond the declared strict JSON body",
+    "every input envelope must match the authenticated session and authorization epoch before the Agent forwards it to the generation-bound menu route",
+    "the media source yields one complete validated header and payload and the Agent awaits its network send before requesting the next record",
+    "every media header must match the authenticated session and authorization epoch and media sequence must strictly increase",
+    "failure, closure, cancellation, or fence mismatch on either direction cancels both role connections and requests exact session termination",
+    "role traffic carries no credential and cannot create, replace, renew, or broaden an Interactive lease"
+  ]
+}

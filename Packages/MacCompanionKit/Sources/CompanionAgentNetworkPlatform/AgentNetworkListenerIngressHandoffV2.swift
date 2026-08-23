@@ -54,11 +54,19 @@ public protocol AgentNetworkBoundIngressConnectionV2: Sendable {
     func cancel() async
     func readyInteractiveChannel() async
         -> HostInteractiveReadyRoleChannelV0?
+    func readyInteractiveConnection() async
+        -> NetworkHostInteractiveReadyRoleConnectionV0?
 }
 
 public extension AgentNetworkBoundIngressConnectionV2 {
     func readyInteractiveChannel() async
         -> HostInteractiveReadyRoleChannelV0?
+    {
+        nil
+    }
+
+    func readyInteractiveConnection() async
+        -> NetworkHostInteractiveReadyRoleConnectionV0?
     {
         nil
     }
@@ -142,6 +150,12 @@ private actor AgentNetworkBoundInteractiveIngressConnectionV2:
         -> HostInteractiveReadyRoleChannelV0?
     {
         ready?.channel
+    }
+
+    func readyInteractiveConnection() async
+        -> NetworkHostInteractiveReadyRoleConnectionV0?
+    {
+        ready
     }
 }
 
@@ -324,12 +338,17 @@ public actor AgentNetworkListenerIngressHandoffV2 {
         let token: UUID
         let connection: any AgentNetworkBoundIngressConnectionV2
         let interactiveChannel: HostInteractiveReadyRoleChannelV0?
+        let interactiveConnection:
+            NetworkHostInteractiveReadyRoleConnectionV0?
     }
 
     private let classifierFactory: any AgentNetworkIngressClassifierMakingV2
     private let primaryBinder: any AgentNetworkPrimaryIngressBindingV2
     private let pairingBinder: any AgentNetworkPairingIngressBindingV2
     private let interactiveBinder: any AgentNetworkInteractiveIngressBindingV2
+    private let interactivePairReady: (@Sendable (
+        AgentInteractiveReadyRolePairV0
+    ) async throws -> Void)?
     private let queue: DispatchQueue
     private let monotonicNowMilliseconds: @Sendable () -> UInt64
     private let primaryContext: @Sendable () -> NetworkHostRequestContextV0
@@ -362,6 +381,9 @@ public actor AgentNetworkListenerIngressHandoffV2 {
         pairingBinder: any AgentNetworkPairingIngressBindingV2,
         interactiveBinder: any AgentNetworkInteractiveIngressBindingV2 =
             AgentNetworkRejectingInteractiveIngressBinderV2(),
+        interactivePairReady: (@Sendable (
+            AgentInteractiveReadyRolePairV0
+        ) async throws -> Void)? = nil,
         queue: DispatchQueue,
         monotonicNowMilliseconds: @escaping @Sendable () -> UInt64,
         primaryContext: @escaping @Sendable () ->
@@ -379,6 +401,7 @@ public actor AgentNetworkListenerIngressHandoffV2 {
         self.primaryBinder = primaryBinder
         self.pairingBinder = pairingBinder
         self.interactiveBinder = interactiveBinder
+        self.interactivePairReady = interactivePairReady
         self.queue = queue
         self.monotonicNowMilliseconds = monotonicNowMilliseconds
         self.primaryContext = primaryContext
@@ -664,7 +687,8 @@ public actor AgentNetworkListenerIngressHandoffV2 {
         bindingConnection = Active(
             token: token,
             connection: bound,
-            interactiveChannel: nil
+            interactiveChannel: nil,
+            interactiveConnection: nil
         )
         do {
             try await bound.begin()
@@ -704,6 +728,7 @@ public actor AgentNetworkListenerIngressHandoffV2 {
         bindingRole = nil
         bindingConnection = nil
         let readyChannel = await bound.readyInteractiveChannel()
+        let readyConnection = await bound.readyInteractiveConnection()
         if classified.role == .interactiveInput
             || classified.role == .interactiveMedia {
             guard let readyChannel,
@@ -737,7 +762,8 @@ public actor AgentNetworkListenerIngressHandoffV2 {
         let active = Active(
             token: token,
             connection: bound,
-            interactiveChannel: readyChannel
+            interactiveChannel: readyChannel,
+            interactiveConnection: readyConnection
         )
         switch classified.role {
         case .applicationPrimary:
@@ -752,6 +778,12 @@ public actor AgentNetworkListenerIngressHandoffV2 {
             activeInteractiveMedia = active
         }
         notifyStateChanged()
+        if classified.role == .interactiveInput
+            || classified.role == .interactiveMedia {
+            await activateInteractivePairIfReady(
+                triggeringRole: classified.role
+            )
+        }
         advanceQueue()
     }
 
@@ -850,5 +882,57 @@ public actor AgentNetworkListenerIngressHandoffV2 {
             && lhs.primaryConnectionID == rhs.primaryConnectionID
             && lhs.interactiveSessionID == rhs.interactiveSessionID
             && lhs.authorizationEpoch == rhs.authorizationEpoch
+    }
+
+    private func activateInteractivePairIfReady(
+        triggeringRole: NetworkHostIngressRoleV0
+    ) async {
+        guard let interactivePairReady,
+              let input = activeInteractiveInput,
+              let media = activeInteractiveMedia else { return }
+        guard let inputConnection = input.interactiveConnection,
+              let mediaConnection = media.interactiveConnection else {
+            await rejectInteractivePair(
+                input: input,
+                media: media,
+                triggeringRole: triggeringRole
+            )
+            return
+        }
+        do {
+            let pair = try AgentInteractiveReadyRolePairV0(
+                input: inputConnection,
+                media: mediaConnection
+            )
+            try await interactivePairReady(pair)
+        } catch {
+            guard activeInteractiveInput?.token == input.token,
+                  activeInteractiveMedia?.token == media.token else {
+                return
+            }
+            await rejectInteractivePair(
+                input: input,
+                media: media,
+                triggeringRole: triggeringRole
+            )
+        }
+    }
+
+    private func rejectInteractivePair(
+        input: Active,
+        media: Active,
+        triggeringRole: NetworkHostIngressRoleV0
+    ) async {
+        guard activeInteractiveInput?.token == input.token,
+              activeInteractiveMedia?.token == media.token else { return }
+        activeInteractiveInput = nil
+        activeInteractiveMedia = nil
+        await input.connection.cancel()
+        await media.connection.cancel()
+        notifyStateChanged()
+        ingressTerminal(.interactive(
+            role: triggeringRole,
+            reason: .authorityRejected
+        ))
     }
 }

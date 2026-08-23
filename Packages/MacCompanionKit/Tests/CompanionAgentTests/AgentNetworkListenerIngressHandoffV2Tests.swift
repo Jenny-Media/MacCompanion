@@ -194,16 +194,21 @@ private final class AgentNetworkBoundIngressFakeV2:
     private let lock = NSLock()
     private let beginBehavior: BeginBehavior
     private let readyChannel: HostInteractiveReadyRoleChannelV0?
+    private let readyConnection:
+        NetworkHostInteractiveReadyRoleConnectionV0?
     private var beginCountStorage = 0
     private var cancelCountStorage = 0
     private var beginContinuation: CheckedContinuation<Void, Error>?
 
     init(
         beginBehavior: BeginBehavior = .immediate,
-        readyChannel: HostInteractiveReadyRoleChannelV0? = nil
+        readyChannel: HostInteractiveReadyRoleChannelV0? = nil,
+        readyConnection:
+            NetworkHostInteractiveReadyRoleConnectionV0? = nil
     ) {
         self.beginBehavior = beginBehavior
-        self.readyChannel = readyChannel
+        self.readyChannel = readyChannel ?? readyConnection?.channel
+        self.readyConnection = readyConnection
     }
 
     var beginCount: Int { lock.withLock { beginCountStorage } }
@@ -254,6 +259,12 @@ private final class AgentNetworkBoundIngressFakeV2:
         -> HostInteractiveReadyRoleChannelV0?
     {
         readyChannel
+    }
+
+    func readyInteractiveConnection() async
+        -> NetworkHostInteractiveReadyRoleConnectionV0?
+    {
+        readyConnection
     }
 }
 
@@ -430,7 +441,10 @@ private func agentNetworkIngressEventuallyV2(
 
 private func agentNetworkIngressHandoffV2(
     classifiers: [AgentNetworkIngressClassifierFakeV2],
-    binder: AgentNetworkIngressBinderFakeV2
+    binder: AgentNetworkIngressBinderFakeV2,
+    interactivePairReady: (@Sendable (
+        AgentInteractiveReadyRolePairV0
+    ) async throws -> Void)? = nil
 ) -> AgentNetworkListenerIngressHandoffV2 {
     AgentNetworkListenerIngressHandoffV2(
         classifierFactory: AgentNetworkIngressClassifierFactoryFakeV2(
@@ -439,10 +453,52 @@ private func agentNetworkIngressHandoffV2(
         primaryBinder: binder,
         pairingBinder: binder,
         interactiveBinder: binder,
+        interactivePairReady: interactivePairReady,
         queue: DispatchQueue(label: "MacCompanionTests.IngressV2"),
         monotonicNowMilliseconds: { 1 },
         primaryContext: agentNetworkIngressPrimaryContextV2,
         pairingContext: agentNetworkIngressPairingContextV2
+    )
+}
+
+private actor AgentNetworkInteractivePairRecorderV2 {
+    private(set) var sessionIDs: [UUID] = []
+
+    func record(_ pair: AgentInteractiveReadyRolePairV0) {
+        sessionIDs.append(pair.interactiveSessionID)
+    }
+}
+
+private func agentNetworkInteractiveReadyConnectionV2(
+    role: InteractiveChannelRoleName,
+    sessionID: UUID
+) throws -> NetworkHostInteractiveReadyRoleConnectionV0 {
+    let key = P256.Signing.PrivateKey()
+    let spki = try CompanionSecurityV0.p256SubjectPublicKeyInfoDER(
+        publicKeyX963: key.publicKey.x963Representation
+    )
+    let binding = try HostApplicationTLSBinding(
+        evidence: HostTLSListenerEvidence(
+            negotiatedTLSMajor: 1,
+            negotiatedTLSMinor: 3,
+            earlyDataAccepted: false,
+            servedSubjectPublicKeyInfoDER: spki
+        ),
+        requiredHostFingerprint: CompanionSecurityV0.hostFingerprint(
+            subjectPublicKeyInfoDER: spki
+        )
+    )
+    return NetworkHostInteractiveReadyRoleConnectionV0(
+        tlsBinding: binding,
+        channel: try agentNetworkInteractiveReadyChannelV2(
+            role: role,
+            sessionID: sessionID
+        ),
+        receive: { _ in
+            throw AgentNetworkIngressHandoffTestErrorV2.noPlan
+        },
+        send: { _ in },
+        cancel: {}
     )
 }
 
@@ -518,6 +574,60 @@ private func agentNetworkInteractiveReadyChannelV2(
         let snapshot = await handoff.snapshot()
         return snapshot.hasActiveInteractiveInput
             && snapshot.hasActiveInteractiveMedia
+    })
+    #expect(input.cancelCount == 0)
+    #expect(media.cancelCount == 0)
+}
+
+@Test func interactiveIngressTransfersExactReadyConnectionsToPairOwner()
+    async throws
+{
+    let sessionID = UUID()
+    let input = AgentNetworkBoundIngressFakeV2(
+        readyConnection: try agentNetworkInteractiveReadyConnectionV2(
+            role: .input,
+            sessionID: sessionID
+        )
+    )
+    let media = AgentNetworkBoundIngressFakeV2(
+        readyConnection: try agentNetworkInteractiveReadyConnectionV2(
+            role: .media,
+            sessionID: sessionID
+        )
+    )
+    let binder = AgentNetworkIngressBinderFakeV2(
+        primary: [],
+        pairing: [],
+        input: [input],
+        media: [media]
+    )
+    let recorder = AgentNetworkInteractivePairRecorderV2()
+    let handoff = agentNetworkIngressHandoffV2(
+        classifiers: [
+            AgentNetworkIngressClassifierFakeV2(.immediate(
+                try agentNetworkIngressClassifiedV2(
+                    role: .interactiveInput
+                )
+            )),
+            AgentNetworkIngressClassifierFakeV2(.immediate(
+                try agentNetworkIngressClassifiedV2(
+                    role: .interactiveMedia
+                )
+            )),
+        ],
+        binder: binder,
+        interactivePairReady: { pair in await recorder.record(pair) }
+    )
+
+    let first = AgentNetworkIngressAcceptedFakeV2()
+    let second = AgentNetworkIngressAcceptedFakeV2()
+    try await handoff.admit(first, acceptedAtMonotonicMilliseconds: 1)
+    try await handoff.admit(second, acceptedAtMonotonicMilliseconds: 2)
+    first.emitReady(try agentNetworkIngressVerifiedV2())
+    #expect(await agentNetworkIngressEventuallyV2 { second.started })
+    second.emitReady(try agentNetworkIngressVerifiedV2())
+    #expect(await agentNetworkIngressEventuallyV2 {
+        await recorder.sessionIDs == [sessionID]
     })
     #expect(input.cancelCount == 0)
     #expect(media.cancelCount == 0)

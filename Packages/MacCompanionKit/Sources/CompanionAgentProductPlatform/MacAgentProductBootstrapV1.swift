@@ -249,6 +249,8 @@ public actor MacAgentPreparedProductV1 {
         MacAgentLocalPairingCommandAuthorityV1?
     private let interactiveRuntimeAuthority:
         AgentInteractiveRuntimeBindingAuthorityV1?
+    private let interactiveRoleDataAuthority:
+        AgentInteractiveRoleDataBindingAuthorityV0?
     private let currentMenuGeneration: @Sendable () async -> UInt64?
     private var networkCompositionTask:
         Task<AgentNetworkPairingProductCompositionV0, Error>?
@@ -274,13 +276,16 @@ public actor MacAgentPreparedProductV1 {
         localPairingCommandAuthority:
             MacAgentLocalPairingCommandAuthorityV1? = nil,
         interactiveRuntimeAuthority:
-            AgentInteractiveRuntimeBindingAuthorityV1? = nil
+            AgentInteractiveRuntimeBindingAuthorityV1? = nil,
+        interactiveRoleDataAuthority:
+            AgentInteractiveRoleDataBindingAuthorityV0? = nil
     ) {
         self.storage = storage
         self.preparedPrimary = preparedPrimary
         self.menuSurfaceAuthority = menuSurfaceAuthority
         self.localPairingCommandAuthority = localPairingCommandAuthority
         self.interactiveRuntimeAuthority = interactiveRuntimeAuthority
+        self.interactiveRoleDataAuthority = interactiveRoleDataAuthority
         currentMenuGeneration = {
             await menuSurfaceAuthority.currentGeneration()
         }
@@ -301,13 +306,16 @@ public actor MacAgentPreparedProductV1 {
         localPairingCommandAuthority:
             MacAgentLocalPairingCommandAuthorityV1? = nil,
         interactiveRuntimeAuthority:
-            AgentInteractiveRuntimeBindingAuthorityV1? = nil
+            AgentInteractiveRuntimeBindingAuthorityV1? = nil,
+        interactiveRoleDataAuthority:
+            AgentInteractiveRoleDataBindingAuthorityV0? = nil
     ) {
         self.storage = storage
         self.preparedPrimary = preparedPrimary
         self.menuSurfaceAuthority = menuSurfaceAuthority
         self.localPairingCommandAuthority = localPairingCommandAuthority
         self.interactiveRuntimeAuthority = interactiveRuntimeAuthority
+        self.interactiveRoleDataAuthority = interactiveRoleDataAuthority
         currentMenuGeneration = {
             await menuSurfaceAuthority.currentGeneration()
         }
@@ -332,6 +340,8 @@ public actor MacAgentPreparedProductV1 {
             MacAgentLocalPairingCommandAuthorityV1? = nil,
         interactiveRuntimeAuthority:
             AgentInteractiveRuntimeBindingAuthorityV1? = nil,
+        interactiveRoleDataAuthority:
+            AgentInteractiveRoleDataBindingAuthorityV0? = nil,
         currentMenuGeneration:
             (@Sendable () async -> UInt64?)? = nil
     ) {
@@ -340,6 +350,7 @@ public actor MacAgentPreparedProductV1 {
         self.menuSurfaceAuthority = menuSurfaceAuthority
         self.localPairingCommandAuthority = localPairingCommandAuthority
         self.interactiveRuntimeAuthority = interactiveRuntimeAuthority
+        self.interactiveRoleDataAuthority = interactiveRoleDataAuthority
         self.currentMenuGeneration = currentMenuGeneration ?? {
             await menuSurfaceAuthority.currentGeneration()
         }
@@ -363,6 +374,7 @@ public actor MacAgentPreparedProductV1 {
         let menuSurfaceAuthority = self.menuSurfaceAuthority
         let localPairingCommandAuthority = self.localPairingCommandAuthority
         let interactiveRuntimeAuthority = self.interactiveRuntimeAuthority
+        let interactiveRoleDataAuthority = self.interactiveRoleDataAuthority
         let localStartTask = self.localStartTask
         let networkCompositionTask = self.networkCompositionTask
         let networkProduct = self.networkProduct
@@ -373,6 +385,7 @@ public actor MacAgentPreparedProductV1 {
         networkListenerConstructionTask?.cancel()
         let task = Task {
             await localPairingCommandAuthority?.finish()
+            await interactiveRoleDataAuthority?.finish()
             await interactiveRuntimeAuthority?.finish()
             if let networkListenerOwner {
                 await networkListenerOwner.finish()
@@ -638,6 +651,16 @@ public actor MacAgentPreparedProductV1 {
         let terminalHandler = networkListenerTerminalHandler(
             forwarding: listenerTerminal
         )
+        let interactivePairReady: (@Sendable (
+            AgentInteractiveReadyRolePairV0
+        ) async throws -> Void)?
+        if let interactiveRoleDataAuthority {
+            interactivePairReady = { pair in
+                try await interactiveRoleDataAuthority.accept(pair)
+            }
+        } else {
+            interactivePairReady = nil
+        }
         let task = Task {
             let listener = try await networkProduct.makeListenerService(
                 queue: queue,
@@ -645,6 +668,7 @@ public actor MacAgentPreparedProductV1 {
                 primaryContext: primaryContext,
                 pairingRequestContext: pairingRequestContext,
                 interactiveAuthenticator: interactiveRuntimeAuthority,
+                interactivePairReady: interactivePairReady,
                 acceptedTerminal: acceptedTerminal,
                 primaryTerminal: primaryTerminal,
                 pairingTerminal: pairingTerminal,
@@ -948,6 +972,10 @@ public enum MacAgentProductBootstrapV1 {
         let localPairingCommandAuthority =
             MacAgentLocalPairingCommandAuthorityV1()
         let menuLossCoordinator = MacAgentMenuSurfaceLossCoordinatorV1()
+        let interactiveRoleData =
+            AgentInteractiveRoleDataBindingAuthorityV0(
+                runtime: interactiveRuntime
+            )
         let makeLocalXPC: LocalXPCFactory = { services in
             try await MacLocalXPCAgentProductV1
                 .afterAgentBootstrapWithMenuPresentation(
@@ -991,6 +1019,7 @@ public enum MacAgentProductBootstrapV1 {
                     }
                 },
                 onSurfaceInvalidated: {
+                    _ = await interactiveRoleData.invalidate(generation: $0)
                     _ = await interactiveRuntime.invalidate(generation: $0)
                     await menuLossCoordinator
                         .authenticatedMenuSurfaceUnavailable(generation: $0)
@@ -1006,7 +1035,8 @@ public enum MacAgentProductBootstrapV1 {
                 makeLocalXPC: makeLocalXPC,
                 menuSurfaceAuthority: menuSurfaceAuthority,
                 localPairingCommandAuthority: localPairingCommandAuthority,
-                interactiveRuntimeAuthority: interactiveRuntime
+                interactiveRuntimeAuthority: interactiveRuntime,
+                interactiveRoleDataAuthority: interactiveRoleData
             )
         case .deferredUntilActivation:
             composed = try await composeInert(
@@ -1015,7 +1045,8 @@ public enum MacAgentProductBootstrapV1 {
                 makeLocalXPC: makeLocalXPC,
                 menuSurfaceAuthority: menuSurfaceAuthority,
                 localPairingCommandAuthority: localPairingCommandAuthority,
-                interactiveRuntimeAuthority: interactiveRuntime
+                interactiveRuntimeAuthority: interactiveRuntime,
+                interactiveRoleDataAuthority: interactiveRoleData
             )
         }
         if case let .ready(product) = composed {
@@ -1034,7 +1065,9 @@ public enum MacAgentProductBootstrapV1 {
         localPairingCommandAuthority:
             MacAgentLocalPairingCommandAuthorityV1? = nil,
         interactiveRuntimeAuthority:
-            AgentInteractiveRuntimeBindingAuthorityV1? = nil
+            AgentInteractiveRuntimeBindingAuthorityV1? = nil,
+        interactiveRoleDataAuthority:
+            AgentInteractiveRoleDataBindingAuthorityV0? = nil
     ) async throws -> MacAgentProductBootstrapResultV1 {
         switch preparation {
         case .waitForFirstUnlock:
@@ -1050,7 +1083,8 @@ public enum MacAgentProductBootstrapV1 {
                 makeLocalXPC: makeLocalXPC,
                 menuSurfaceAuthority: menuSurfaceAuthority,
                 localPairingCommandAuthority: localPairingCommandAuthority,
-                interactiveRuntimeAuthority: interactiveRuntimeAuthority
+                interactiveRuntimeAuthority: interactiveRuntimeAuthority,
+                interactiveRoleDataAuthority: interactiveRoleDataAuthority
             ))
         }
     }
@@ -1065,7 +1099,9 @@ public enum MacAgentProductBootstrapV1 {
         localPairingCommandAuthority:
             MacAgentLocalPairingCommandAuthorityV1? = nil,
         interactiveRuntimeAuthority:
-            AgentInteractiveRuntimeBindingAuthorityV1? = nil
+            AgentInteractiveRuntimeBindingAuthorityV1? = nil,
+        interactiveRoleDataAuthority:
+            AgentInteractiveRoleDataBindingAuthorityV0? = nil
     ) async throws -> MacAgentProductBootstrapResultV1 {
         switch preparation {
         case .waitForFirstUnlock:
@@ -1086,7 +1122,9 @@ public enum MacAgentProductBootstrapV1 {
                     menuSurfaceAuthority: menuSurfaceAuthority,
                     localPairingCommandAuthority: localPairingCommandAuthority,
                     interactiveRuntimeAuthority:
-                        interactiveRuntimeAuthority
+                        interactiveRuntimeAuthority,
+                    interactiveRoleDataAuthority:
+                        interactiveRoleDataAuthority
                 ))
             } catch {
                 await preparedPrimary.discard()

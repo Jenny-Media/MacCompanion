@@ -147,6 +147,9 @@ public actor AgentNetworkPairingProductCompositionV0 {
             NetworkHostPairingRequestContextV0,
         interactiveAuthenticator:
             (any HostInteractiveChannelAuthenticatingV0)? = nil,
+        interactivePairReady: (@Sendable (
+            AgentInteractiveReadyRolePairV0
+        ) async throws -> Void)? = nil,
         acceptedTerminal: @escaping @Sendable (
             NetworkHostAcceptedConnectionTerminationReasonV0
         ) -> Void = { _ in },
@@ -172,14 +175,22 @@ public actor AgentNetworkPairingProductCompositionV0 {
                 .listenerServiceAlreadyConstructed
         }
         let interactiveBinder: any AgentNetworkInteractiveIngressBindingV2
+        let pairReady: (@Sendable (
+            AgentInteractiveReadyRolePairV0
+        ) async throws -> Void)?
         if let interactiveAuthenticator {
             interactiveBinder = AgentNetworkInteractiveIngressFactoryV2(
                 authenticator: interactiveAuthenticator,
                 monotonicNowMilliseconds: monotonicNowMilliseconds
             )
+            pairReady = interactivePairReady ?? { _ in
+                throw AgentNetworkInteractiveIngressBindingErrorV2
+                    .unavailable
+            }
         } else {
             interactiveBinder =
                 AgentNetworkRejectingInteractiveIngressBinderV2()
+            pairReady = nil
         }
         let service = AgentNetworkListenerServiceV1(
             listener: listener,
@@ -190,6 +201,7 @@ public actor AgentNetworkPairingProductCompositionV0 {
                 makeReviewID: makeReviewID
             ),
             interactiveBinder: interactiveBinder,
+            interactivePairReady: pairReady,
             networkStatus: primaryServices.localServices.networkStatus,
             lanRoutes: primaryServices.localServices.lanRoutes,
             pairingAvailability: pairingContext,

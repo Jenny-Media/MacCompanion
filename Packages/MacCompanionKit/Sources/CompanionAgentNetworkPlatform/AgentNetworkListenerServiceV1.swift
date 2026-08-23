@@ -314,6 +314,9 @@ public actor AgentNetworkListenerServiceV1 {
         pairingConnections: AgentNetworkHostPairingConnectionFactoryV0,
         interactiveBinder: any AgentNetworkInteractiveIngressBindingV2 =
             AgentNetworkRejectingInteractiveIngressBinderV2(),
+        interactivePairReady: (@Sendable (
+            AgentInteractiveReadyRolePairV0
+        ) async throws -> Void)? = nil,
         networkStatus: AgentLocalNetworkStatusPublisherV1,
         lanRoutes: AgentLocalLANRouteEvidenceAuthorityV1,
         pairingAvailability: AgentNetworkPairingContextAuthorityV0,
@@ -351,6 +354,7 @@ public actor AgentNetworkListenerServiceV1 {
             ),
             pairingBinder: pairingConnections,
             interactiveBinder: interactiveBinder,
+            interactivePairReady: interactivePairReady,
             queue: queue,
             monotonicNowMilliseconds: monotonicNowMilliseconds,
             primaryContext: primaryContext,

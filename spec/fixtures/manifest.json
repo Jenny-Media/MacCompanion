@@ -230,6 +230,12 @@
       "canonicalSHA256": "9b93729e910b9dbf25f1c8db5db1c0b39f526a9802347a2391d4e5ecf6c635bf"
     },
     {
+      "path": "host-interactive-role-data-plane-v0.1.json",
+      "kind": "hostNetwork.interactiveRoleDataPlane.v0.1",
+      "expect": "valid",
+      "canonicalSHA256": "e0493f64005973e06bfbdc034d1229c4dfb58a7d0081ab6df2041b7e0111ab4f"
+    },
+    {
       "path": "client-configured-routes-v0.1.json",
       "kind": "clientConfiguredRoutes.model.v0.1",
       "expect": "valid",
