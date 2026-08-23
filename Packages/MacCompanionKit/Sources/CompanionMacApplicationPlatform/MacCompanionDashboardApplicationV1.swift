@@ -161,6 +161,9 @@ public final class MacCompanionDashboardApplicationV1 {
     @ObservationIgnored
     private let recoveryOwner: MacHostIdentityRecoveryApplicationOwnerV0?
     @ObservationIgnored
+    private let interactiveDisplaySelection:
+        MacInteractiveOpaqueDisplaySelectionV1?
+    @ObservationIgnored
     private var phase: Phase = .idle
     @ObservationIgnored
     private var finishTask: Task<Void, Never>?
@@ -188,6 +191,8 @@ public final class MacCompanionDashboardApplicationV1 {
         interactiveLeaseHandler:
             (any MacLocalXPCInteractiveLeaseHandlingV1)?
     ) {
+        let interactiveDisplaySelection = try?
+            MacInteractiveOpaqueDisplaySelectionV1()
         let dashboardRelay = MacCompanionDashboardStateRelayV1()
         let dashboardOwner = MacAgentDashboardApplicationOwnerV0 {
             [weak dashboardRelay] source in
@@ -219,7 +224,9 @@ public final class MacCompanionDashboardApplicationV1 {
             owner: dashboardOwner,
             pairingReviews: reviewOwner,
             hostIdentityRecovery: recoveryOwner,
-            interactiveLeaseHandler: interactiveLeaseHandler
+            interactiveLeaseHandler: interactiveLeaseHandler,
+            selectedDisplayID: interactiveDisplaySelection?
+                .opaqueSelectedDisplayID()
         )
         self.init(
             product: product,
@@ -229,7 +236,8 @@ public final class MacCompanionDashboardApplicationV1 {
             recoveryOwner: recoveryOwner,
             pairingRelay: pairingRelay,
             reviewRelay: reviewRelay,
-            recoveryRelay: recoveryRelay
+            recoveryRelay: recoveryRelay,
+            interactiveDisplaySelection: interactiveDisplaySelection
         )
         commandProxy.install(product)
     }
@@ -252,7 +260,8 @@ public final class MacCompanionDashboardApplicationV1 {
             recoveryOwner: nil,
             pairingRelay: nil,
             reviewRelay: nil,
-            recoveryRelay: nil
+            recoveryRelay: nil,
+            interactiveDisplaySelection: nil
         )
     }
 
@@ -264,13 +273,16 @@ public final class MacCompanionDashboardApplicationV1 {
         recoveryOwner: MacHostIdentityRecoveryApplicationOwnerV0?,
         pairingRelay: MacCompanionPairingStateRelayV1?,
         reviewRelay: MacCompanionPairingReviewStateRelayV1?,
-        recoveryRelay: MacCompanionRecoveryStateRelayV1?
+        recoveryRelay: MacCompanionRecoveryStateRelayV1?,
+        interactiveDisplaySelection:
+            MacInteractiveOpaqueDisplaySelectionV1?
     ) {
         self.product = product
         self.stateRelay = stateRelay
         self.pairingOwner = pairingOwner
         self.pairingReviewOwner = pairingReviewOwner
         self.recoveryOwner = recoveryOwner
+        self.interactiveDisplaySelection = interactiveDisplaySelection
         stateRelay.application = self
         pairingRelay?.application = self
         reviewRelay?.application = self

@@ -149,6 +149,11 @@ public actor AgentInteractiveRuntimeOwnerV1:
         }
     }
 
+    public func activeLeaseForScheduling() -> InteractiveExecutionLease? {
+        guard case .active(let active) = storage else { return nil }
+        return active.currentLease
+    }
+
     public func install(
         _ bootstrap: InteractiveSessionBootstrap,
         requirement: InteractiveSessionRuntimeRequirementV0
@@ -189,11 +194,11 @@ public actor AgentInteractiveRuntimeOwnerV1:
     /// ambiguous acknowledgement.
     public func renewActiveLease(
         nowMonotonicNanoseconds: UInt64
-    ) async throws {
+    ) async throws -> InteractiveExecutionLease {
         let predecessor = sequencingTail
         let operation = Task { [self] in
             await predecessor.value
-            try await performRenewal(
+            return try await performRenewal(
                 nowMonotonicNanoseconds: nowMonotonicNanoseconds
             )
         }
@@ -310,7 +315,7 @@ public actor AgentInteractiveRuntimeOwnerV1:
 
     private func performRenewal(
         nowMonotonicNanoseconds: UInt64
-    ) async throws {
+    ) async throws -> InteractiveExecutionLease {
         guard case var .active(active) = storage else {
             if case .safetyRecoveryRequired = storage {
                 throw AgentInteractiveRuntimeOwnerErrorV1
@@ -373,6 +378,7 @@ public actor AgentInteractiveRuntimeOwnerV1:
             try await runtime.renewInteractiveLease(renewal)
             active.currentLease = replacement
             storage = .active(active)
+            return replacement
         } catch let error as AgentInteractiveRuntimeOwnerErrorV1 {
             let revoked = await attemptRevoke(
                 lease: active.currentLease,

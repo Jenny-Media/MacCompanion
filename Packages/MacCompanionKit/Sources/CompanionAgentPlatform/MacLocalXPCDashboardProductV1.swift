@@ -69,6 +69,7 @@ private actor MacLocalXPCDashboardBindingV1 {
     private let client: any MacLocalXPCDashboardClientV1
     private let publishesInteractiveAdmission: Bool
     private let menuAppGeneration: UUID
+    private let initialSelectedDisplayID: UUID?
     private var token: MacAgentDashboardConnectionTokenV0?
     private var transportGeneration: UInt64?
     private var statusReadOutstanding = false
@@ -80,12 +81,14 @@ private actor MacLocalXPCDashboardBindingV1 {
         owner: MacAgentDashboardApplicationOwnerV0,
         client: any MacLocalXPCDashboardClientV1,
         publishesInteractiveAdmission: Bool,
-        menuAppGeneration: UUID
+        menuAppGeneration: UUID,
+        initialSelectedDisplayID: UUID?
     ) {
         self.owner = owner
         self.client = client
         self.publishesInteractiveAdmission = publishesInteractiveAdmission
         self.menuAppGeneration = menuAppGeneration
+        self.initialSelectedDisplayID = initialSelectedDisplayID
     }
 
     func begin() async throws {
@@ -133,7 +136,7 @@ private actor MacLocalXPCDashboardBindingV1 {
                             commandID: UUID(),
                             menuAppGeneration: menuAppGeneration,
                             revision: 1,
-                            selectedDisplayID: nil
+                            selectedDisplayID: initialSelectedDisplayID
                         )
                     _ = try await client.publishInteractiveAdmission(
                         publication
@@ -440,6 +443,7 @@ public final class MacLocalXPCDashboardProductV1:
             any LocalHostIdentityRecoverySurfaceV0,
         interactiveLeaseHandler:
             (any MacLocalXPCInteractiveLeaseHandlingV1)? = nil,
+        selectedDisplayID: UUID? = nil,
         bufferCapacity: Int = 32
     ) {
         let surfaces = MacLocalXPCMenuPresentationReceiverSurfacesV1(
@@ -456,7 +460,8 @@ public final class MacLocalXPCDashboardProductV1:
                     onEvent: $0
                 )
             },
-            publishesInteractiveAdmission: true
+            publishesInteractiveAdmission: true,
+            initialSelectedDisplayID: selectedDisplayID
         )
     }
 
@@ -464,13 +469,15 @@ public final class MacLocalXPCDashboardProductV1:
         owner: MacAgentDashboardApplicationOwnerV0,
         bufferCapacity: Int = 32,
         publishesInteractiveAdmission: Bool = false,
+        initialSelectedDisplayID: UUID? = nil,
         clientFactory: @escaping ClientFactory
     ) {
         runtime = Self.makeRuntime(
             owner: owner,
             bufferCapacity: bufferCapacity,
             clientFactory: clientFactory,
-            publishesInteractiveAdmission: publishesInteractiveAdmission
+            publishesInteractiveAdmission: publishesInteractiveAdmission,
+            initialSelectedDisplayID: initialSelectedDisplayID
         )
     }
 
@@ -478,7 +485,8 @@ public final class MacLocalXPCDashboardProductV1:
         owner: MacAgentDashboardApplicationOwnerV0,
         bufferCapacity: Int,
         clientFactory: @escaping ClientFactory,
-        publishesInteractiveAdmission: Bool
+        publishesInteractiveAdmission: Bool,
+        initialSelectedDisplayID: UUID? = nil
     ) -> MacLocalXPCDashboardRuntimeV1 {
         let runtime = MacLocalXPCDashboardRuntimeV1()
         let client = clientFactory { [weak runtime] event in
@@ -488,7 +496,8 @@ public final class MacLocalXPCDashboardProductV1:
             owner: owner,
             client: client,
             publishesInteractiveAdmission: publishesInteractiveAdmission,
-            menuAppGeneration: UUID()
+            menuAppGeneration: UUID(),
+            initialSelectedDisplayID: initialSelectedDisplayID
         )
         runtime.install(
             client: client,

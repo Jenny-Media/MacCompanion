@@ -129,9 +129,13 @@ visible admission around opaque Desktop preparation, transfers channel
 credentials only after the exact install receipt, renews only the exact current
 lease after another final admission read, and requires correlated four-effect
 revocation or compensation. The permanent target still selects the inert
-constructor. Visible-display publication and mapping, concrete platform
-effects, automatic renewal scheduling, and secondary channel handoff remain
-the next Control composition gates.
+constructor. The subsequent
+[opaque-display and lease-scheduling checkpoint](evidence/2026-08-22-opaque-display-and-lease-scheduling.md)
+retains the physical main-display mapping only in the menu-platform module,
+publishes its opaque UUID, refuses redirection after display loss, and renews
+from exact acknowledged lease deadlines without retrying ambiguity. Concrete
+platform effects and secondary channel handoff remain the next Control
+composition gates.
 
 The [visible Interactive admission checkpoint](evidence/2026-08-22-visible-interactive-admission-contract.md)
 now carries the closed canonical menu-process generation, exact revision, and
@@ -141,7 +145,9 @@ one stable authority into both its durable-plus-visible admission reader and
 the presentation-capable XPC profile; the menu publishes revision 1 after
 readiness and before status. Exact replay, +1 replacement, bounded deadlines,
 and generation-loss withdrawal fail closed. The initial display is nil and
-grants nothing. Menu-owned opaque physical-display mapping remains next.
+grants nothing. The following opaque-display checkpoint now replaces that nil
+with a menu-owned random token for the current main online display while
+keeping the physical identifier process-local and non-presentational.
 
 The [conservative network request-context checkpoint](evidence/2026-08-22-conservative-network-request-contexts.md)
 now supplies live clocks, unique response IDs, and an owned public macOS

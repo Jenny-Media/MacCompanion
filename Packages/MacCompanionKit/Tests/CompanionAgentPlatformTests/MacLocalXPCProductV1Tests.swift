@@ -773,9 +773,11 @@ func dashboardProductPublishesTypedStatusAndRecoversUnavailable() async throws {
 func presentationDashboardPublishesInitialAdmissionBeforeStatus() async throws {
     let owner = MacAgentDashboardApplicationOwnerV0()
     let box = ProductDashboardClientBoxV1()
+    let selectedDisplayID = UUID()
     let product = MacLocalXPCDashboardProductV1(
         owner: owner,
         publishesInteractiveAdmission: true,
+        initialSelectedDisplayID: selectedDisplayID,
         clientFactory: { handler in
             let client = ProductDashboardClientV1(handler: handler)
             box.install(client)
@@ -794,7 +796,7 @@ func presentationDashboardPublishesInitialAdmissionBeforeStatus() async throws {
     })
     let publication = try #require(client.snapshot().admissions.first)
     #expect(publication.revision == 1)
-    #expect(publication.selectedDisplayID == nil)
+    #expect(publication.selectedDisplayID == selectedDisplayID)
 
     await product.finish()
 }

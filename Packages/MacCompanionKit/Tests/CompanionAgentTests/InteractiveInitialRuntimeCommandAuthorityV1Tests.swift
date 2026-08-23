@@ -487,7 +487,7 @@ private final class RuntimeOwnerClockV1: @unchecked Sendable {
         leaseID: leaseID
     ))
 
-    try await owner.renewActiveLease(
+    _ = try await owner.renewActiveLease(
         nowMonotonicNanoseconds: 5_000_000_000
     )
     let renewals = await route.renewals()
@@ -572,4 +572,236 @@ private final class RuntimeOwnerClockV1: @unchecked Sendable {
     }
     #expect(await route.revokes().count == 1)
     #expect(await owner.state() == .idle)
+}
+
+private enum RenewalSchedulerProbeErrorV1: Error {
+    case stop
+    case renewalFailed
+}
+
+private actor RenewalSchedulerRuntimeV1:
+    AgentInteractiveLeaseRenewingRuntimeV1
+{
+    enum RenewalResult: Sendable {
+        case replacement(InteractiveExecutionLease)
+        case failure
+    }
+
+    private let initialLease: InteractiveExecutionLease
+    private let renewalResult: RenewalResult
+    private var installCountStorage = 0
+    private var renewalSamplesStorage: [UInt64] = []
+    private var terminationsStorage: [InteractiveSessionEndReason] = []
+
+    init(
+        initialLease: InteractiveExecutionLease,
+        renewalResult: RenewalResult
+    ) {
+        self.initialLease = initialLease
+        self.renewalResult = renewalResult
+    }
+
+    func install(
+        _: InteractiveSessionBootstrap,
+        requirement _: InteractiveSessionRuntimeRequirementV0
+    ) async throws {
+        installCountStorage += 1
+    }
+
+    func activeLeaseForScheduling() -> InteractiveExecutionLease? {
+        initialLease
+    }
+
+    func renewActiveLease(
+        nowMonotonicNanoseconds: UInt64
+    ) async throws -> InteractiveExecutionLease {
+        renewalSamplesStorage.append(nowMonotonicNanoseconds)
+        switch renewalResult {
+        case .replacement(let replacement):
+            return replacement
+        case .failure:
+            throw RenewalSchedulerProbeErrorV1.renewalFailed
+        }
+    }
+
+    func terminate(
+        interactiveSessionID _: UUID,
+        primaryConnectionID _: Data,
+        reason: InteractiveSessionEndReason
+    ) async {
+        terminationsStorage.append(reason)
+    }
+
+    func installCount() -> Int { installCountStorage }
+    func renewalSamples() -> [UInt64] { renewalSamplesStorage }
+    func terminations() -> [InteractiveSessionEndReason] {
+        terminationsStorage
+    }
+}
+
+private actor RenewalSchedulerSleeperV1 {
+    private let successfulCalls: Int
+    private var delaysStorage: [UInt64] = []
+
+    init(successfulCalls: Int) {
+        self.successfulCalls = successfulCalls
+    }
+
+    func sleep(nanoseconds: UInt64) async throws {
+        delaysStorage.append(nanoseconds)
+        if delaysStorage.count > successfulCalls {
+            throw RenewalSchedulerProbeErrorV1.stop
+        }
+    }
+
+    func delays() -> [UInt64] { delaysStorage }
+}
+
+private func schedulerLease(
+    leaseID: UUID = UUID(),
+    selectedDisplayID: UUID = initialDisplayID,
+    renewalCounter: UInt64,
+    issuedAt: UInt64,
+    expiresAt: UInt64
+) throws -> InteractiveExecutionLease {
+    try InteractiveExecutionLease(
+        leaseID: leaseID,
+        hostID: initialHostID,
+        deviceID: initialDeviceID,
+        interactiveSessionID: initialSessionID,
+        authorizationEpoch: .init(rawValue: 4),
+        selectedDisplayID: selectedDisplayID,
+        surfaceID: initialSurfaceID,
+        surfaceRevision: .init(rawValue: 1),
+        coordinateRevision: .init(rawValue: 1),
+        allowedInteractionClasses: [.view, .pointer],
+        renewalCounter: renewalCounter,
+        issuedAtMonotonicNanoseconds: issuedAt,
+        expiresAtMonotonicNanoseconds: expiresAt
+    )
+}
+
+@Test func interactiveLeaseSchedulerRenewsOnceFromReturnedDeadline()
+    async throws
+{
+    let initial = try schedulerLease(
+        renewalCounter: 0,
+        issuedAt: 2_000_000_000,
+        expiresAt: 12_000_000_000
+    )
+    let replacement = try schedulerLease(
+        renewalCounter: 1,
+        issuedAt: 10_000_000_000,
+        expiresAt: 20_000_000_000
+    )
+    let runtime = RenewalSchedulerRuntimeV1(
+        initialLease: initial,
+        renewalResult: .replacement(replacement)
+    )
+    let clock = RuntimeOwnerClockV1([
+        2_000_000_000, 10_000_000_000, 10_000_000_000,
+    ])
+    let sleeper = RenewalSchedulerSleeperV1(successfulCalls: 1)
+    let owner = AgentInteractiveLeaseRenewalOwnerV1(
+        runtime: runtime,
+        monotonicNowNanoseconds: { clock.now() },
+        sleep: { try await sleeper.sleep(nanoseconds: $0) }
+    )
+
+    try await owner.install(
+        initialBootstrap(),
+        requirement: initialRequirement()
+    )
+    for _ in 0..<100 where await runtime.renewalSamples().isEmpty {
+        await Task.yield()
+    }
+
+    #expect(await runtime.installCount() == 1)
+    #expect(await runtime.renewalSamples() == [10_000_000_000])
+    #expect(await sleeper.delays().first == 8_000_000_000)
+
+    await owner.terminate(
+        interactiveSessionID: initialSessionID,
+        primaryConnectionID: initialConnectionID,
+        reason: .clientDisconnected
+    )
+    #expect(await runtime.terminations() == [.clientDisconnected])
+}
+
+@Test func interactiveLeaseSchedulerNeverRetriesAmbiguousRenewal()
+    async throws
+{
+    let initial = try schedulerLease(
+        renewalCounter: 0,
+        issuedAt: 2_000_000_000,
+        expiresAt: 12_000_000_000
+    )
+    let runtime = RenewalSchedulerRuntimeV1(
+        initialLease: initial,
+        renewalResult: .failure
+    )
+    let clock = RuntimeOwnerClockV1([2_000_000_000, 10_000_000_000])
+    let sleeper = RenewalSchedulerSleeperV1(successfulCalls: 1)
+    let owner = AgentInteractiveLeaseRenewalOwnerV1(
+        runtime: runtime,
+        monotonicNowNanoseconds: { clock.now() },
+        sleep: { try await sleeper.sleep(nanoseconds: $0) }
+    )
+
+    try await owner.install(
+        initialBootstrap(),
+        requirement: initialRequirement()
+    )
+    for _ in 0..<100 where await runtime.renewalSamples().isEmpty {
+        await Task.yield()
+    }
+    for _ in 0..<20 { await Task.yield() }
+
+    #expect(await runtime.renewalSamples() == [10_000_000_000])
+    #expect(await sleeper.delays() == [8_000_000_000])
+
+    await owner.terminate(
+        interactiveSessionID: initialSessionID,
+        primaryConnectionID: initialConnectionID,
+        reason: .protocolViolation
+    )
+    #expect(await runtime.terminations() == [.protocolViolation])
+}
+
+@Test func interactiveLeaseSchedulerTerminatesStructurallyChangedLease()
+    async throws
+{
+    let initial = try schedulerLease(
+        renewalCounter: 0,
+        issuedAt: 2_000_000_000,
+        expiresAt: 12_000_000_000
+    )
+    let changed = try schedulerLease(
+        selectedDisplayID: UUID(),
+        renewalCounter: 1,
+        issuedAt: 10_000_000_000,
+        expiresAt: 20_000_000_000
+    )
+    let runtime = RenewalSchedulerRuntimeV1(
+        initialLease: initial,
+        renewalResult: .replacement(changed)
+    )
+    let clock = RuntimeOwnerClockV1([2_000_000_000, 10_000_000_000])
+    let sleeper = RenewalSchedulerSleeperV1(successfulCalls: 1)
+    let owner = AgentInteractiveLeaseRenewalOwnerV1(
+        runtime: runtime,
+        monotonicNowNanoseconds: { clock.now() },
+        sleep: { try await sleeper.sleep(nanoseconds: $0) }
+    )
+
+    try await owner.install(
+        initialBootstrap(),
+        requirement: initialRequirement()
+    )
+    for _ in 0..<100 where await runtime.terminations().isEmpty {
+        await Task.yield()
+    }
+
+    #expect(await runtime.renewalSamples() == [10_000_000_000])
+    #expect(await runtime.terminations() == [.protocolViolation])
 }

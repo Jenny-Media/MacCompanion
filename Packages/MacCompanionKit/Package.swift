@@ -163,6 +163,7 @@ let package = Package(
             ],
             linkerSettings: [
                 .linkedFramework("AppKit", .when(platforms: [.macOS])),
+                .linkedFramework("CoreGraphics", .when(platforms: [.macOS])),
             ]
         ),
         .target(
