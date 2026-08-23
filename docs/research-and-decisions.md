@@ -27,6 +27,16 @@ Other candidates were screened out because exact or close names were already use
 
 ## Market evidence and positioning
 
+The [2026-08-23 task-level competitive matrix](research/2026-08-23-competitive-task-matrix.md)
+supersedes the initial feature-list comparison below. It records official-source
+claims, pricing, conflicts, unknown time-to-first-frame evidence, a hands-on
+calibration protocol, and explicit Stage 4–7 re-entry gates. The principal
+finding is that app/window focus, QR pairing, direct LAN/private routes, and
+touch control are category parity. The product hypothesis to test is instead
+the combination of independently useful Observe/Act/Control paths,
+revision-safe adaptive interaction, and truthful authorization, recovery, and
+route state.
+
 The adjacent market already contains products described as Mac remotes:
 
 - [Helm: Mac Remote Controller](https://apps.apple.com/us/app/helm-mac-remote-controller/id6761204919) occupies the exact former name and category.

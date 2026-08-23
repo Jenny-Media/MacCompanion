@@ -60,6 +60,7 @@ Mac Companion is a private control companion for personal Macs, especially alway
 - [ADR-0001: process and trust boundary](docs/adr/0001-process-and-trust-boundary.md)
 - [Stage 0 threat model](docs/threat-model/stage-0-trust-kernel.md)
 - [Research and decisions](docs/research-and-decisions.md)
+- [Competitive task matrix](docs/research/2026-08-23-competitive-task-matrix.md)
 
 ## Proposed products
 
