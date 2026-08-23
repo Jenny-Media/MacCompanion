@@ -176,7 +176,9 @@ public enum MacCompanionAgentInertSystemPreparationV1 {
                 clock: SystemHostStatusClock(),
                 initialGeneration: UUID()
             ),
-            interactivePlatform: .inertUnavailable(),
+            interactivePlatform: .deferredMenuBinding(
+                materials: SecurityInteractiveSessionMaterialGeneratorV0()
+            ),
             processStarter: InertMacDashboardLifecycleProcessStarterV1()
         )
     }

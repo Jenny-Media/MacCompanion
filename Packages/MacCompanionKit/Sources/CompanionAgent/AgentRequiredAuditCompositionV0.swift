@@ -54,6 +54,22 @@ public struct AgentInteractivePlatformServicesV1: Sendable {
             runtime: AgentInertInteractiveRuntimeV1()
         )
     }
+
+    /// Release-preparation shape for an Agent that may retain a production
+    /// cryptographic material source before authenticated menu admission and
+    /// runtime ownership are bound. Construction invokes no material method;
+    /// visibility and runtime effects remain fail-closed until the product
+    /// root replaces those two authorities for an authenticated menu
+    /// generation.
+    public static func deferredMenuBinding(
+        materials: any InteractiveSessionMaterialGeneratingV0
+    ) -> Self {
+        Self(
+            visibleAdmission: AgentInertVisibleInteractiveAdmissionV1(),
+            materials: materials,
+            runtime: AgentInertInteractiveRuntimeV1()
+        )
+    }
 }
 
 public enum AgentInertInteractivePlatformErrorV1:

@@ -9,7 +9,7 @@ import Foundation
 import Testing
 
 @available(macOS 26.0, *)
-@Test func systemPreparationInputsAreStableAndFailClosedUntilActivation()
+@Test func systemPreparationInputsBindMaterialsButEffectsStayClosed()
     async throws
 {
     let registryGeneration = UUID(
@@ -46,15 +46,17 @@ import Testing
     ) {
         try await inputs.interactivePlatform.visibleAdmission.snapshot()
     }
-    await #expect(
-        throws: AgentInertInteractivePlatformErrorV1.unavailable
-    ) {
-        try await inputs.interactivePlatform.materials.approvalMaterials()
-    }
-    await #expect(
-        throws: AgentInertInteractivePlatformErrorV1.unavailable
-    ) {
-        try await inputs.interactivePlatform.materials.bootstrapMaterials()
-    }
+    let approval = try await inputs.interactivePlatform.materials
+        .approvalMaterials()
+    #expect(approval.serverChallenge.count == 32)
+
+    let bootstrap = try await inputs.interactivePlatform.materials
+        .bootstrapMaterials()
+    #expect(bootstrap.inputCredential.count == 32)
+    #expect(bootstrap.mediaCredential.count == 32)
+    #expect(bootstrap.inputCredential != bootstrap.mediaCredential)
+    #expect(bootstrap.interactiveSessionID != bootstrap.inputChannelID)
+    #expect(bootstrap.interactiveSessionID != bootstrap.mediaChannelID)
+    #expect(bootstrap.inputChannelID != bootstrap.mediaChannelID)
 }
 #endif

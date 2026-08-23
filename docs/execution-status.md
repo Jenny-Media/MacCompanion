@@ -198,6 +198,17 @@ latency, lock/takeover, final-identity XPC, and stable-Xcode evidence remain the
 next Control gates; persistent capture authorization remains independent and
 is not claimed by this ordinary-consent implementation.
 
+The [permanent Agent Interactive-material checkpoint](evidence/2026-08-23-permanent-agent-interactive-materials.md)
+closes the last construction-only material source in that release path. The
+Agent now retains the Security.framework cryptographic generator across the
+existing authenticated-menu replacement of visible admission, runtime, and
+surface-control authorities. Preparation still starts no effect, and visible
+admission plus runtime remain fail-closed before menu binding, but an admitted
+Control request can now create its bounded approval challenge and distinct
+one-time input/media credentials instead of terminating at the inert material
+seam. Signed two-process approval, channel activation, pixels, input, lock, and
+latency remain physical gates.
+
 The [visible Interactive admission checkpoint](evidence/2026-08-22-visible-interactive-admission-contract.md)
 now carries the closed canonical menu-process generation, exact revision, and
 optional opaque selected-display publication through an independent
