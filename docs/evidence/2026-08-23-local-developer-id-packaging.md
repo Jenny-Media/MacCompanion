@@ -4,6 +4,11 @@ Date: 2026-08-23
 
 ## Outcome
 
+This evidence records the pre-Sparkle packaging checkpoint. The later
+[Sparkle nested Developer ID packaging checkpoint](2026-08-23-sparkle-nested-developer-id-packaging.md)
+supersedes its executable topology, artifact hashes, fixture count, and
+three-container tree measurement while retaining this historical result.
+
 A fresh Release `.xcarchive` built with Xcode 27 beta from clean revision
 `81b71377072f578083a56ab63954879222fde9a2`. The signing team and identity were
 supplied only to the build invocation. Strict recursive verification accepted

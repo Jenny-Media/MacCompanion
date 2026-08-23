@@ -74,6 +74,9 @@ ran. Before an update can install, the adapter must translate a validated
 signed-feed candidate into the existing update trust model, bind one exact
 foreground confirmation and runtime-shutdown authority to Sparkle's proceed
 path, preserve cancellation/recovery, and pass a signed two-version upgrade and
-failure matrix. Protected beta/stable values, a real Ed25519 key pair, nested
-Developer ID inspection, notarization/stapling, final SBOM/packaging equivalence,
-and physical clean-machine acceptance remain release gates.
+failure matrix. The subsequent
+[nested Developer ID packaging checkpoint](2026-08-23-sparkle-nested-developer-id-packaging.md)
+now verifies all five retained signed subjects and exact ZIP/DMG equivalence.
+Protected beta/stable values, a real Ed25519 key pair, notarization/stapling,
+final post-staple SBOM/packaging equivalence, and physical clean-machine
+acceptance remain release gates.

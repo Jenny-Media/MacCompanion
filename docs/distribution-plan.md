@@ -134,7 +134,11 @@ disable runtime profiling and custom feed parameters; the
 now does so while admitting only explicit informational probes behind complete
 release-injected authority. Download and installation remain disconnected from
 the UI until the runtime installation authority controls one exact handoff.
-Signed archive builds must re-sign and inspect every retained nested object. See
+Signed archive builds must re-sign and inspect every retained nested object.
+The [nested Developer ID packaging checkpoint](evidence/2026-08-23-sparkle-nested-developer-id-packaging.md)
+now proves this for the containing app, Agent, Sparkle framework, `Autoupdate`,
+and `Updater.app`; an outer `codesign --deep` result is not accepted as a
+substitute for those exact per-subject checks. See
 [Sparkle documentation](https://sparkle-project.org/documentation/) and the
 [2.9.6 release](https://github.com/sparkle-project/Sparkle/releases/tag/2.9.6).
 
@@ -265,10 +269,13 @@ CI is split into three trust lanes:
 A pull request build cannot publish. Stable publication requires a tagged revision, protected release credentials, and a separate promotion approval. CI logs must never print private signing keys, one-time notarization credentials, pairing material, or live provisioning profiles.
 
 The local trusted lane begins with an already Developer ID-signed `.xcarchive`.
-`scripts/package_mac_release.py` verifies the official app/Agent identity and
-runtime facts, produces the canonical app and update ZIPs, creates an APFS/UDZO
-DMG with `diskutil image create from`, signs that DMG, and publishes a
-no-overwrite local directory. Its summary must retain `notarized`, `stapled`,
+`scripts/package_mac_release.py` verifies the exact official app, Agent,
+Sparkle framework, `Autoupdate`, and `Updater.app` identities; requires their
+Developer ID authority, timestamps, hardened runtime, and one common team; and
+rejects a missing, substituted, ad-hoc, cross-team, or XPC-bearing topology. It
+then produces the canonical app and update ZIPs, creates an APFS/UDZO DMG with
+`diskutil image create from`, signs that DMG, and publishes a no-overwrite
+local directory. Its summary must retain `notarized`, `stapled`,
 `sparkleArchiveSigned`, and `promotionReady` as false. The artifact-SBOM and
 packaging-equivalence generators then inspect those outputs independently.
 Notarization and every later promotion action remain separate, explicitly
