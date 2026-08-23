@@ -58,21 +58,19 @@ historical blob-paths, 73 indexed JSON fixtures, 372 Swift source files, 1,609
 MacCompanionKit Swift tests, eight platform-probe tests, cross-platform
 compiles, and the three no-prompt/no-network probes.
 
-## Deliberately still open
+## Subsequent completion boundary
 
 This checkpoint does not execute destructive host recovery. No Keychain key,
 host identity, pairing, grant, work, or audit record was mutated.
 
-The current request/reply transport can durably replay an exact submitted
-command while the Agent stays in recovery mode, but it has no separate
-content-free acknowledgement proving that the menu validated and retained the
-completion receipt before the Agent restarts into its normal enabled product.
-That acknowledgement, durable retirement rule, and restart fence remain the
-next source-safe protocol/lifecycle item. Until they exist, this checkpoint
-does not claim crash-safe completion across the final response/restart
-boundary.
+The subsequent [host-recovery completion acknowledgement](2026-08-23-host-recovery-completion-acknowledgement.md)
+adds the exact receipt echo, atomic replay-journal retirement, recovery-only
+startup replay before acknowledgement, and one-shot restart convergence after
+durability. It supersedes this checkpoint's open source-level
+response/restart boundary.
 
-Signed reciprocal process execution, real Secure Enclave/Keychain recovery,
+No real recovery was executed by this checkpoint. Signed reciprocal process
+execution, real Secure Enclave/Keychain recovery,
 stable Xcode, first-unlock and response-loss fault injection, accessibility,
 and explicit user-observed destructive confirmation remain release evidence
 gates.

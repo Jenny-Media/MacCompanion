@@ -220,6 +220,14 @@ private func deliveryRecoveryCommandV0(
     let receipt = try await resumedDelivery.recoverHostIdentity(command)
     try receipt.validate(against: command)
     #expect(await resumedExecutor.callCount() == 1)
+    try await resumedDelivery.acknowledgeCompletion(receipt)
+    #expect(try await store.hostIdentityRecoveryIntent() == nil)
+    #expect(try await store.hostIdentityRecoveryReceipt() == nil)
+    await #expect(
+        throws: AgentLocalHostIdentityRecoveryDeliveryErrorV0.unavailable
+    ) {
+        try await resumedDelivery.acknowledgeCompletion(receipt)
+    }
 }
 
 @Test func recoveryDeliveryInvalidationFencesSuspendedPublication()

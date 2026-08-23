@@ -171,6 +171,15 @@ private func agentStoredRecoveryIntentV0(
     )
     #expect(try await restarted.recoverHostIdentity(command) == receipt)
     #expect(await restartedExecutor.callCount() == 0)
+    try await restarted.acknowledgeCompletion(receipt)
+    #expect(try await store.hostIdentityRecoveryIntent() == nil)
+    #expect(try await store.hostIdentityRecoveryReceipt() == nil)
+    #expect(try await store.securityEventCount() == 4)
+    await #expect(
+        throws: AgentLocalHostIdentityRecoveryServiceErrorV0.reviewNotCurrent
+    ) {
+        try await restarted.acknowledgeCompletion(receipt)
+    }
 }
 
 @Test func agentLocalRecoveryServiceRejectsForgedReviewBeforeFencing()

@@ -1010,6 +1010,56 @@ public actor SQLiteSecurityStore {
         )
     }
 
+    /// Retires only the exact completed replay journal after the authenticated
+    /// menu has validated its full receipt. The recovered identity and coarse
+    /// security history remain durable.
+    public func acknowledgeHostIdentityRecoveryCompletion(
+        commandID: UUID,
+        receipt: StoredHostIdentityRecoveryReceipt,
+        occurredAtUnixMilliseconds: Int64
+    ) throws {
+        guard occurredAtUnixMilliseconds >= receipt.completedAtUnixMilliseconds,
+              occurredAtUnixMilliseconds <= 9_007_199_254_440_991 else {
+            throw SecurityStoreError.invalidRecord
+        }
+        try transaction {
+            guard try hostIdentityRecoveryReceipt() == receipt,
+                  let intent = try hostIdentityRecoveryIntent(),
+                  intent.commandID == commandID,
+                  intent.recoveryID == receipt.recoveryID,
+                  intent.expectedHostID == receipt.replacedHostID,
+                  intent.expectedHostFingerprint
+                    == receipt.replacedHostFingerprint,
+                  let identity = try hostIdentity(),
+                  identity.state == .ready,
+                  identity.recoveryID == nil,
+                  identity.hostID == receipt.newHostID,
+                  identity.hostFingerprint == receipt.newHostFingerprint,
+                  identity.updatedAtUnixMilliseconds
+                    == receipt.completedAtUnixMilliseconds else {
+                throw SecurityStoreError.hostIdentityRecoveryConflict
+            }
+            try execute(
+                "DELETE FROM host_identity_recovery_receipt WHERE singleton = 1"
+            )
+            guard sqlite3_changes(database) == 1 else {
+                throw SecurityStoreError.hostIdentityRecoveryConflict
+            }
+            try execute(
+                "DELETE FROM host_identity_recovery_intent WHERE singleton = 1"
+            )
+            guard sqlite3_changes(database) == 1 else {
+                throw SecurityStoreError.hostIdentityRecoveryConflict
+            }
+            try inject(.beforeSecurityEvent)
+            try insertSecurityEvent(
+                kind: "hostIdentity.recoveryAcknowledged",
+                deviceID: nil,
+                occurredAtUnixMilliseconds: occurredAtUnixMilliseconds
+            )
+        }
+    }
+
     public func hostIdentityRecoveryIntent() throws
         -> StoredHostIdentityRecoveryIntent?
     {

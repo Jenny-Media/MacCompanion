@@ -214,6 +214,15 @@ package protocol MacCompanionAgentSelectedServiceRuntimeV1:
 }
 
 @available(macOS 26.0, *)
+package protocol MacCompanionAgentRecoveryServiceRuntimeV1:
+    MacCompanionAgentSelectedServiceRuntimeV1
+{
+    func installRestartRequest(
+        _ request: @escaping @Sendable () async -> Void
+    ) async throws
+}
+
+@available(macOS 26.0, *)
 package actor MacCompanionAgentAuthenticationOnlyRuntimeV1:
     MacCompanionAgentSelectedServiceRuntimeV1
 {
@@ -366,7 +375,7 @@ extension MacCompanionAgentInertSystemOwnerV1:
 
 @available(macOS 26.0, *)
 extension MacAgentHostIdentityRecoveryProductV1:
-    MacCompanionAgentSelectedServiceRuntimeV1
+    MacCompanionAgentRecoveryServiceRuntimeV1
 {}
 
 /// Prepares first, validates the exact revision-zero canonical lifecycle, and
@@ -439,7 +448,7 @@ public enum MacCompanionAgentLocalServiceStartupV1 {
                 throw error
             }
         case let .recovery(product):
-            return try await startAndRetain(
+            return try await startRecoveryAndRetain(
                 product,
                 restartRequest: restartRequest
             )
@@ -454,6 +463,20 @@ public enum MacCompanionAgentLocalServiceStartupV1 {
                 restartRequest: restartRequest
             )
         }
+    }
+
+    package static func startRecoveryAndRetain(
+        _ selected: any MacCompanionAgentRecoveryServiceRuntimeV1,
+        restartRequest: MacCompanionAgentRestartRequestV1 =
+            MacCompanionAgentRestartRequestV1()
+    ) async throws -> MacCompanionAgentLocalServiceStartupOutcomeV1 {
+        try await selected.installRestartRequest {
+            await restartRequest.request()
+        }
+        return try await startAndRetain(
+            selected,
+            restartRequest: restartRequest
+        )
     }
 
     private static func startAndRetain(

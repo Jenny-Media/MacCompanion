@@ -189,12 +189,38 @@ public actor SecurityHostIdentityStartupCoordinatorV0 {
         _ record: StoredHostIdentityRecord,
         now: Int64
     ) async throws -> SecurityHostIdentityStartupResultV0 {
+        let recoveryIntent = try await store.hostIdentityRecoveryIntent()
+        let recoveryReceipt = try await store.hostIdentityRecoveryReceipt()
+        if let recoveryReceipt {
+            guard let recoveryIntent,
+                  recoveryIntent.recoveryID == recoveryReceipt.recoveryID,
+                  recoveryIntent.expectedHostID
+                    == recoveryReceipt.replacedHostID,
+                  recoveryIntent.expectedHostFingerprint
+                    == recoveryReceipt.replacedHostFingerprint,
+                  record.state == .ready,
+                  record.recoveryID == nil,
+                  record.hostID == recoveryReceipt.newHostID,
+                  record.hostFingerprint
+                    == recoveryReceipt.newHostFingerprint,
+                  record.updatedAtUnixMilliseconds
+                    == recoveryReceipt.completedAtUnixMilliseconds else {
+                throw SecurityHostIdentityStartupErrorV0
+                    .inconsistentDurableIdentity
+            }
+            return .recoveryFenced(recoveryReceipt.recoveryID)
+        }
         guard record.state == .ready, record.recoveryID == nil else {
-            guard let recoveryID = record.recoveryID else {
+            guard let recoveryID = record.recoveryID,
+                  recoveryIntent?.recoveryID == recoveryID else {
                 throw SecurityHostIdentityStartupErrorV0
                     .inconsistentDurableIdentity
             }
             return .recoveryFenced(recoveryID)
+        }
+        guard recoveryIntent == nil else {
+            throw SecurityHostIdentityStartupErrorV0
+                .inconsistentDurableIdentity
         }
 
         let key = try await custody.availability(

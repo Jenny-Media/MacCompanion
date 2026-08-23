@@ -15,6 +15,7 @@ import Testing
         "menuApp>agent:decideGrantExpansion",
         "menuApp>agent:stopInteractiveSession",
         "menuApp>agent:recoverHostIdentity",
+        "menuApp>agent:acknowledgeHostIdentityRecoveryCompletion",
         "menuApp>agent:readAuditHistory",
         "menuApp>agent:exportDiagnostics",
         "menuApp>agent:publishInteractiveMedia",

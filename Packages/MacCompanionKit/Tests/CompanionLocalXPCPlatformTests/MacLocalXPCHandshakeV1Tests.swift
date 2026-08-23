@@ -484,6 +484,17 @@ private struct UnavailableHostIdentityRecoveryHandlerV1:
     ) async throws -> LocalHostIdentityRecoveredReceiptV0 {
         throw Unavailable()
     }
+
+    func acknowledgeHostIdentityRecoveryCompletion(
+        _: LocalHostIdentityRecoveredReceiptV0
+    ) async throws -> LocalHostIdentityRecoveredReceiptV0 {
+        throw Unavailable()
+    }
+
+    func hostIdentityRecoveryCompletionAcknowledgementDidBecomeDurable(
+        _: LocalHostIdentityRecoveredReceiptV0,
+        replyWasSent _: Bool
+    ) async {}
 }
 
 private struct UnavailableUpdateQuiescenceHandlerV0:

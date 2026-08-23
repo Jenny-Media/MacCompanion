@@ -194,7 +194,8 @@ bootstrap authority; durable recovery selects the closed
 service. Selection is not caller-configurable and never falls back after start
 failure. The recovery profile admits menu readiness, returns only the closed
 source-unavailable status reply, publishes only host-recovery review/resume/
-withdrawal, and accepts only the exact `recoverHostIdentity` command. It cannot
+withdrawal, and accepts only the exact `recoverHostIdentity` command followed
+by its exact completion acknowledgement. It cannot
 receive pairing, bootstrap, update, Interactive, listener, or provider
 authority. Passing an authority or reader to any mismatched profile, or
 constructing a profile without its required authority, fails before listener
@@ -298,7 +299,8 @@ read bounded local status, activity history, and sanitized diagnostics, and
 issue the exact update network close, drain, and recovery-only reopen methods
 defined above. The recovery profile may read only source-unavailable status
 and submit `recoverHostIdentity` only from its Agent-issued local review or
-durable resume. Neither profile inherits the other's commands or authorities.
+durable resume, then acknowledge only the exact validated completion receipt.
+Neither profile inherits the other's commands or authorities.
 `readAgentStatus` returns only the closed content-free
 `LocalAgentStatusSnapshot`; the menu application binds each response to its
 current connection generation before presentation. None of the mutating or
@@ -372,6 +374,33 @@ remain distinct. A timeout, cancellation after send, malformed or mismatched
 receipt, endpoint replacement, or transport ambiguity invalidates the exact
 generation and cannot cause an automatic semantic retry. Only the retained
 exact command may later use the separately published durable-resume authority.
+
+After the menu receives and validates that exact receipt, it sends the distinct
+`command.host-identity.recovery-complete.acknowledge` request with the complete
+receipt as its canonical payload. Success echoes only that same receipt in
+`command.host-identity.recovery-complete.acknowledge.ack`; handled failure uses
+the content-free
+`command.host-identity.recovery-complete.acknowledge.error`. The Agent admits
+this request only on the same authenticated recovery profile after that
+generation has returned the matching receipt. It compares the complete receipt
+to the durable recovery intent, durable completion receipt, and current new
+host identity, then atomically retires only the replay journal and records a
+coarse acknowledgement audit event. It does not delete the recovered identity
+or restore any old pairing, grant, route, or work authority.
+
+Until that durable acknowledgement, an Agent restart selects the recovery-only
+profile even though the new key is usable, republishes the exact retained
+resume command, and replays the exact receipt. After acknowledgement, the Agent
+requests launchd restart only after the acknowledgement reply send succeeds or
+that reply becomes impossible after the durable transition. A process exit in
+the intervening window is also safe: the next launch sees no replay journal
+and may select ordinary enabled or disabled service from canonical intent. A
+missing,
+mismatched, premature, duplicate-after-retirement, or cross-generation
+acknowledgement cannot retire recovery evidence or request restart. Transport
+ambiguity while acknowledging is not a second destructive recovery; the
+already validated recovery receipt remains the only semantic result and normal
+startup or exact durable resume reconciles the acknowledgement boundary.
 
 The Agent network owner exposes pairing context only while both the exact
 sealed listener and its Bonjour registration are ready. Their callbacks use
@@ -843,7 +872,11 @@ re-publish only that exact immutable review, and accepts only the exact command
 bound to the retained intent; it never manufactures a new review or accepts a
 different command for the same recovery UUID. After completion the intent is
 retained with the last receipt so a lost success response remains exactly
-replayable. A mismatch, expired review before its first durable fence,
+replayable until the authenticated menu validates and acknowledges the
+complete receipt. That acknowledgement atomically retires the intent and
+receipt without erasing coarse recovery audit history, then permits Agent
+restart into its canonical ordinary mode. A mismatch, expired review before
+its first durable fence,
 Agent/menu endpoint loss, storage or Keychain failure, partial deletion, or an
 incomplete receipt remains
 failed or in-progress and never claims recovery. The presentation clears an

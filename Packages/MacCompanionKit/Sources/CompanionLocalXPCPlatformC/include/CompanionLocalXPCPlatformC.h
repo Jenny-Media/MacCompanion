@@ -25,6 +25,7 @@ typedef enum : int32_t {
     MCLocalXPCMenuPairingCommandDismiss = 1,
     MCLocalXPCMenuPairingCommandResolveDecision = 2,
     MCLocalXPCMenuPairingCommandRecoverHostIdentity = 3,
+    MCLocalXPCMenuPairingCommandAcknowledgeHostIdentityRecovery = 4,
 } MCLocalXPCMenuPairingCommandKind;
 typedef enum : int32_t {
     MCLocalXPCUpdateQuiescenceCloseNetworkAdmission = 0,

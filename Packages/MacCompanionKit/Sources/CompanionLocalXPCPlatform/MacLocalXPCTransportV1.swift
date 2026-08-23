@@ -52,9 +52,9 @@ public enum MacLocalXPCServerProfileV1: Equatable, Sendable {
     case menuLifecycleReadinessStatusAndPresentation
 
     /// Recovery-only profile: readiness, content-free unavailable status,
-    /// recovery presentation, and the exact destructive recovery command.
-    /// It admits no pairing, bootstrap, update, Interactive, or network
-    /// authority.
+    /// recovery presentation, the exact destructive recovery command, and its
+    /// receipt-bound completion acknowledgement. It admits no pairing,
+    /// bootstrap, update, Interactive, or network authority.
     case hostIdentityRecovery
 
     var admitsMenuLifecycleReadiness: Bool {
@@ -533,6 +533,9 @@ public final class MacLocalXPCServerV1:
         case dismiss(LocalPairingSessionDismissCommandV0)
         case resolveDecision(LocalPairingDecisionCommandV0)
         case recoverHostIdentity(LocalHostIdentityRecoveryCommandV0)
+        case acknowledgeHostIdentityRecoveryCompletion(
+            LocalHostIdentityRecoveredReceiptV0
+        )
 
         var kind: MacLocalXPCMenuPairingCommandKindV1 {
             switch self {
@@ -540,6 +543,8 @@ public final class MacLocalXPCServerV1:
             case .dismiss: .dismiss
             case .resolveDecision: .resolveDecision
             case .recoverHostIdentity: .recoverHostIdentity
+            case .acknowledgeHostIdentityRecoveryCompletion:
+                .acknowledgeHostIdentityRecoveryCompletion
             }
         }
 
@@ -549,13 +554,17 @@ public final class MacLocalXPCServerV1:
             case .dismiss: .dismissPairingSession
             case .resolveDecision: .resolveLocalApproval
             case .recoverHostIdentity: .recoverHostIdentity
+            case .acknowledgeHostIdentityRecoveryCompletion:
+                .acknowledgeHostIdentityRecoveryCompletion
             }
         }
 
         var isPairing: Bool {
             switch self {
             case .create, .dismiss, .resolveDecision: true
-            case .recoverHostIdentity: false
+            case .recoverHostIdentity,
+                    .acknowledgeHostIdentityRecoveryCompletion:
+                false
             }
         }
 
@@ -567,6 +576,9 @@ public final class MacLocalXPCServerV1:
         case dismissed(LocalPairingSessionDismissedReceiptV0)
         case decision(LocalPairingDecisionReceiptV0)
         case recovered(LocalHostIdentityRecoveredReceiptV0)
+        case recoveryCompletionAcknowledged(
+            LocalHostIdentityRecoveredReceiptV0
+        )
     }
 
     private final class PendingMenuPairingCommand: @unchecked Sendable {
@@ -3523,6 +3535,11 @@ public final class MacLocalXPCServerV1:
                     try LocalHostIdentityRecoveryWireCodecV1
                         .decodeCommand(payload)
                 )
+            case MCLocalXPCMenuPairingCommandAcknowledgeHostIdentityRecovery:
+                return .acknowledgeHostIdentityRecoveryCompletion(
+                    try LocalHostIdentityRecoveryWireCodecV1
+                        .decodeReceipt(payload)
+                )
             default:
                 return nil
             }
@@ -3596,9 +3613,31 @@ public final class MacLocalXPCServerV1:
                         try await hostIdentityRecoveryHandler
                             .recoverHostIdentity(value)
                     )
+                case .acknowledgeHostIdentityRecoveryCompletion(let value):
+                    guard let hostIdentityRecoveryHandler else {
+                        throw MacLocalXPCMenuPairingCommandErrorV1.unavailable
+                    }
+                    result = .recoveryCompletionAcknowledged(
+                        try await hostIdentityRecoveryHandler
+                            .acknowledgeHostIdentityRecoveryCompletion(value)
+                    )
                 }
-                queue.async { [weak self, weak state] in
-                    guard let self, let state else { return }
+                queue.async {
+                    [weak self, weak state, hostIdentityRecoveryHandler] in
+                    guard let self, let state else {
+                        if case let .recoveryCompletionAcknowledged(receipt) =
+                            result,
+                           let hostIdentityRecoveryHandler {
+                            Task {
+                                await hostIdentityRecoveryHandler
+                                    .hostIdentityRecoveryCompletionAcknowledgementDidBecomeDurable(
+                                        receipt,
+                                        replyWasSent: false
+                                    )
+                            }
+                        }
+                        return
+                    }
                     self.completeMenuPairingCommand(
                         state: state,
                         transaction: transaction,
@@ -3834,6 +3873,7 @@ public final class MacLocalXPCServerV1:
         transaction: MacLocalXPCMenuPairingCommandTransactionGateV1.Active,
         result: MenuPairingCommandResult
     ) {
+        let durableAcknowledgement = recoveryAcknowledgementReceipt(result)
         guard admitsMenuPairingCommandCompletion(
                 state: state,
                 transaction: transaction
@@ -3844,6 +3884,10 @@ public final class MacLocalXPCServerV1:
                 command: pending.command,
                 result: result
               ) else {
+            notifyRecoveryAcknowledgementDurable(
+                durableAcknowledgement,
+                replyWasSent: false
+            )
             terminateMenuPairingCommand(
                 state: state,
                 transaction: transaction
@@ -3855,6 +3899,10 @@ public final class MacLocalXPCServerV1:
                 state: state,
                 transaction: transaction
               ) else {
+            notifyRecoveryAcknowledgementDurable(
+                durableAcknowledgement,
+                replyWasSent: false
+            )
             cancelAuthenticatedPeer(
                 state,
                 presentationError: .transportFailure
@@ -3875,11 +3923,42 @@ public final class MacLocalXPCServerV1:
             )
         }
         guard reply == MCLocalXPCResultOK else {
+            notifyRecoveryAcknowledgementDurable(
+                durableAcknowledgement,
+                replyWasSent: false
+            )
             cancelAuthenticatedPeer(
                 state,
                 presentationError: .transportFailure
             )
             return
+        }
+        notifyRecoveryAcknowledgementDurable(
+            durableAcknowledgement,
+            replyWasSent: true
+        )
+    }
+
+    private func recoveryAcknowledgementReceipt(
+        _ result: MenuPairingCommandResult
+    ) -> LocalHostIdentityRecoveredReceiptV0? {
+        guard case let .recoveryCompletionAcknowledged(receipt) = result else {
+            return nil
+        }
+        return receipt
+    }
+
+    private func notifyRecoveryAcknowledgementDurable(
+        _ receipt: LocalHostIdentityRecoveredReceiptV0?,
+        replyWasSent: Bool
+    ) {
+        guard let receipt, let hostIdentityRecoveryHandler else { return }
+        Task {
+            await hostIdentityRecoveryHandler
+                .hostIdentityRecoveryCompletionAcknowledgementDidBecomeDurable(
+                    receipt,
+                    replyWasSent: replyWasSent
+                )
         }
     }
 
@@ -3995,6 +4074,13 @@ public final class MacLocalXPCServerV1:
                 try receipt.validate(against: command)
                 return try LocalHostIdentityRecoveryWireCodecV1
                     .encodeReceipt(receipt)
+            case (
+                .acknowledgeHostIdentityRecoveryCompletion(let expected),
+                .recoveryCompletionAcknowledged(let receipt)
+            ):
+                guard receipt == expected else { return nil }
+                return try LocalHostIdentityRecoveryWireCodecV1
+                    .encodeReceipt(receipt)
             default:
                 return nil
             }
@@ -4012,6 +4098,8 @@ public final class MacLocalXPCServerV1:
         case .resolveDecision: MCLocalXPCMenuPairingCommandResolveDecision
         case .recoverHostIdentity:
             MCLocalXPCMenuPairingCommandRecoverHostIdentity
+        case .acknowledgeHostIdentityRecoveryCompletion:
+            MCLocalXPCMenuPairingCommandAcknowledgeHostIdentityRecovery
         }
     }
 
@@ -5097,6 +5185,20 @@ public final class MacLocalXPCClientV1:
             let receipt = try LocalHostIdentityRecoveryWireCodecV1
                 .decodeReceipt(reply)
             try receipt.validate(against: command)
+            let acknowledgementPayload = try
+                LocalHostIdentityRecoveryWireCodecV1.encodeReceipt(receipt)
+            let acknowledgementReply = try await sendMenuPairingCommand(
+                kind: .acknowledgeHostIdentityRecoveryCompletion,
+                authorizationMethod:
+                    .acknowledgeHostIdentityRecoveryCompletion,
+                payload: acknowledgementPayload
+            )
+            let acknowledged = try LocalHostIdentityRecoveryWireCodecV1
+                .decodeReceipt(acknowledgementReply)
+            guard acknowledged == receipt else {
+                throw MacLocalXPCMenuPairingCommandErrorV1
+                    .malformedOrTransportError
+            }
             return receipt
         } catch {
             invalidateCurrentGenerationAfterMalformedCommandReply()
@@ -6014,6 +6116,8 @@ public final class MacLocalXPCClientV1:
         case .resolveDecision: MCLocalXPCMenuPairingCommandResolveDecision
         case .recoverHostIdentity:
             MCLocalXPCMenuPairingCommandRecoverHostIdentity
+        case .acknowledgeHostIdentityRecoveryCompletion:
+            MCLocalXPCMenuPairingCommandAcknowledgeHostIdentityRecovery
         }
     }
 

@@ -30,6 +30,9 @@ public actor AgentLocalHostIdentityRecoveryDeliveryV0 {
         )
         case visibleResume(LocalHostIdentityRecoveryCommandV0, UInt64)
         case resolving(LocalHostIdentityRecoveryCommandV0, UInt64)
+        case completed(LocalHostIdentityRecoveredReceiptV0, UInt64)
+        case acknowledging(LocalHostIdentityRecoveredReceiptV0, UInt64)
+        case acknowledged(LocalHostIdentityRecoveredReceiptV0)
         case invalidated
 
         var reviewID: UUID? {
@@ -41,7 +44,8 @@ public actor AgentLocalHostIdentityRecoveryDeliveryV0 {
                  let .visibleResume(command, _),
                  let .resolving(command, _):
                 command.review.reviewID
-            case .idle, .preparing, .invalidated:
+            case .idle, .preparing, .completed, .acknowledging,
+                    .acknowledged, .invalidated:
                 nil
             }
         }
@@ -143,10 +147,11 @@ public actor AgentLocalHostIdentityRecoveryDeliveryV0 {
             break
         case .invalidated:
             throw AgentLocalHostIdentityRecoveryDeliveryErrorV0.invalidated
-        case .preparing, .publishingReview, .publishingResume, .resolving:
+        case .preparing, .publishingReview, .publishingResume, .resolving,
+                .acknowledging:
             throw AgentLocalHostIdentityRecoveryDeliveryErrorV0
                 .transitionInProgress
-        case .idle, .visibleReview, .visibleResume:
+        case .idle, .visibleReview, .visibleResume, .completed, .acknowledged:
             throw AgentLocalHostIdentityRecoveryDeliveryErrorV0.unavailable
         }
 
@@ -157,7 +162,7 @@ public actor AgentLocalHostIdentityRecoveryDeliveryV0 {
             guard isResolving(command, generation: operationGeneration) else {
                 throw AgentLocalHostIdentityRecoveryDeliveryErrorV0.invalidated
             }
-            state = .idle
+            state = .completed(receipt, operationGeneration)
             return receipt
         } catch {
             let resumable = try? await recovery.resumableCommand()
@@ -169,6 +174,33 @@ public actor AgentLocalHostIdentityRecoveryDeliveryV0 {
             } else {
                 state = .visibleReview(command.review, operationGeneration)
             }
+            throw error
+        }
+    }
+
+    public func acknowledgeCompletion(
+        _ receipt: LocalHostIdentityRecoveredReceiptV0
+    ) async throws {
+        guard case let .completed(current, _) = state,
+              current == receipt else {
+            throw AgentLocalHostIdentityRecoveryDeliveryErrorV0.unavailable
+        }
+        let operationGeneration = try advanceGeneration()
+        state = .acknowledging(receipt, operationGeneration)
+        do {
+            try await recovery.acknowledgeCompletion(receipt)
+            if case let .acknowledging(current, generation) = state,
+               current == receipt,
+               generation == operationGeneration {
+                state = .acknowledged(receipt)
+            }
+        } catch {
+            guard case let .acknowledging(current, generation) = state,
+                  current == receipt,
+                  generation == operationGeneration else {
+                throw AgentLocalHostIdentityRecoveryDeliveryErrorV0.invalidated
+            }
+            state = .completed(receipt, operationGeneration)
             throw error
         }
     }
@@ -202,7 +234,8 @@ public actor AgentLocalHostIdentityRecoveryDeliveryV0 {
                 .alreadyVisible(command.review.reviewID)
         case .invalidated:
             throw AgentLocalHostIdentityRecoveryDeliveryErrorV0.invalidated
-        case .preparing, .publishingReview, .publishingResume, .resolving:
+        case .preparing, .publishingReview, .publishingResume, .resolving,
+                .completed, .acknowledging, .acknowledged:
             throw AgentLocalHostIdentityRecoveryDeliveryErrorV0
                 .transitionInProgress
         }
@@ -267,6 +300,11 @@ public actor AgentLocalHostIdentityRecoveryDeliveryV0 {
                 where current == operationGeneration,
              let .resolving(_, current)
                 where current == operationGeneration:
+            state = .idle
+        case let .completed(_, current)
+            where current == operationGeneration,
+             let .acknowledging(_, current)
+            where current == operationGeneration:
             state = .idle
         default:
             break

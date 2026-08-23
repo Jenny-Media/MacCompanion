@@ -39,6 +39,17 @@ private struct ProductHostIdentityRecoveryHandlerV1:
     ) async throws -> LocalHostIdentityRecoveredReceiptV0 {
         throw MacLocalXPCMenuPairingCommandErrorV1.unavailable
     }
+
+    func acknowledgeHostIdentityRecoveryCompletion(
+        _: LocalHostIdentityRecoveredReceiptV0
+    ) async throws -> LocalHostIdentityRecoveredReceiptV0 {
+        throw MacLocalXPCMenuPairingCommandErrorV1.unavailable
+    }
+
+    func hostIdentityRecoveryCompletionAcknowledgementDidBecomeDurable(
+        _: LocalHostIdentityRecoveredReceiptV0,
+        replyWasSent _: Bool
+    ) async {}
 }
 
 @available(macOS 26.0, *)

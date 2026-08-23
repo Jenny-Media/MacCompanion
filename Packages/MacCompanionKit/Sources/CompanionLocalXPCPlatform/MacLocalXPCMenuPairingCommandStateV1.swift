@@ -22,15 +22,26 @@ package enum MacLocalXPCMenuPairingCommandKindV1:
     case dismiss
     case resolveDecision
     case recoverHostIdentity
+    case acknowledgeHostIdentityRecoveryCompletion
 }
 
 /// Destructive recovery authority is injected separately from pairing. The
 /// shared transport gate serializes both secret-bearing command families, but
-/// this protocol exposes only the exact recovery operation.
+/// this protocol exposes only the exact recovery operation and its
+/// receipt-bound completion acknowledgement.
 public protocol MacLocalXPCHostIdentityRecoveryHandlingV1: Sendable {
     func recoverHostIdentity(
         _ command: LocalHostIdentityRecoveryCommandV0
     ) async throws -> LocalHostIdentityRecoveredReceiptV0
+
+    func acknowledgeHostIdentityRecoveryCompletion(
+        _ receipt: LocalHostIdentityRecoveredReceiptV0
+    ) async throws -> LocalHostIdentityRecoveredReceiptV0
+
+    func hostIdentityRecoveryCompletionAcknowledgementDidBecomeDurable(
+        _ receipt: LocalHostIdentityRecoveredReceiptV0,
+        replyWasSent: Bool
+    ) async
 }
 
 /// Exact Agent authority injected only into the readiness-and-presentation

@@ -60,6 +60,13 @@ static const char MCLocalXPCHostIdentityRecoverAcknowledgementKind[] =
     "command.host-identity.recover.ack";
 static const char MCLocalXPCHostIdentityRecoverFailureKind[] =
     "command.host-identity.recover.error";
+static const char MCLocalXPCHostIdentityRecoveryAcknowledgeKind[] =
+    "command.host-identity.recovery-complete.acknowledge";
+static const char
+    MCLocalXPCHostIdentityRecoveryAcknowledgeAcknowledgementKind[] =
+        "command.host-identity.recovery-complete.acknowledge.ack";
+static const char MCLocalXPCHostIdentityRecoveryAcknowledgeFailureKind[] =
+    "command.host-identity.recovery-complete.acknowledge.error";
 static const char MCLocalXPCInteractiveLeaseInstallKind[] =
     "runtime.interactive.install";
 static const char MCLocalXPCInteractiveLeaseInstallAcknowledgementKind[] =
@@ -186,6 +193,8 @@ static const char * _Nullable MCLocalXPCMenuPairingCommandRequestKind(
         return MCLocalXPCPairingDecisionResolveKind;
     case MCLocalXPCMenuPairingCommandRecoverHostIdentity:
         return MCLocalXPCHostIdentityRecoverKind;
+    case MCLocalXPCMenuPairingCommandAcknowledgeHostIdentityRecovery:
+        return MCLocalXPCHostIdentityRecoveryAcknowledgeKind;
     }
     return NULL;
 }
@@ -203,6 +212,8 @@ MCLocalXPCMenuPairingCommandAcknowledgementKind(
         return MCLocalXPCPairingDecisionResolveAcknowledgementKind;
     case MCLocalXPCMenuPairingCommandRecoverHostIdentity:
         return MCLocalXPCHostIdentityRecoverAcknowledgementKind;
+    case MCLocalXPCMenuPairingCommandAcknowledgeHostIdentityRecovery:
+        return MCLocalXPCHostIdentityRecoveryAcknowledgeAcknowledgementKind;
     }
     return NULL;
 }
@@ -219,6 +230,8 @@ static const char * _Nullable MCLocalXPCMenuPairingCommandFailureKind(
         return MCLocalXPCPairingDecisionResolveFailureKind;
     case MCLocalXPCMenuPairingCommandRecoverHostIdentity:
         return MCLocalXPCHostIdentityRecoverFailureKind;
+    case MCLocalXPCMenuPairingCommandAcknowledgeHostIdentityRecovery:
+        return MCLocalXPCHostIdentityRecoveryAcknowledgeFailureKind;
     }
     return NULL;
 }
@@ -1004,6 +1017,7 @@ bool MCLocalXPCMessageGetExactMenuPairingCommand(
         MCLocalXPCMenuPairingCommandDismiss,
         MCLocalXPCMenuPairingCommandResolveDecision,
         MCLocalXPCMenuPairingCommandRecoverHostIdentity,
+        MCLocalXPCMenuPairingCommandAcknowledgeHostIdentityRecovery,
     };
     for (size_t index = 0;
          index < sizeof(kinds) / sizeof(kinds[0]);
@@ -1689,6 +1703,7 @@ bool MCLocalXPCExactMessageParserSelfTest(void) {
         MCLocalXPCMenuPairingCommandDismiss,
         MCLocalXPCMenuPairingCommandResolveDecision,
         MCLocalXPCMenuPairingCommandRecoverHostIdentity,
+        MCLocalXPCMenuPairingCommandAcknowledgeHostIdentityRecovery,
     };
     for (size_t index = 0;
          index < sizeof(menu_command_kinds) / sizeof(menu_command_kinds[0]);

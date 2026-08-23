@@ -20,6 +20,7 @@ package enum MacAgentHostIdentityRecoveryProductErrorV1:
     case unavailable
     case duplicateGeneration(UInt64)
     case recoveryMismatch
+    case duplicateRestartBinding
 }
 
 /// Stable server-side method route. It owns no store or raw recovery
@@ -35,7 +36,20 @@ package actor MacAgentHostIdentityRecoveryCommandAuthorityV1:
     }
 
     private var current: Current?
+    private var acknowledgedReceipt: LocalHostIdentityRecoveredReceiptV0?
+    private var requestRestart: (@Sendable () async -> Void)?
+    private var restartRequested = false
     private var terminal = false
+
+    package func installRestartRequest(
+        _ request: @escaping @Sendable () async -> Void
+    ) throws {
+        guard !terminal, requestRestart == nil else {
+            throw MacAgentHostIdentityRecoveryProductErrorV1
+                .duplicateRestartBinding
+        }
+        requestRestart = request
+    }
 
     package func bind(
         _ delivery: AgentLocalHostIdentityRecoveryDeliveryV0,
@@ -60,6 +74,25 @@ package actor MacAgentHostIdentityRecoveryCommandAuthorityV1:
         return try await current.delivery.recoverHostIdentity(command)
     }
 
+    public func acknowledgeHostIdentityRecoveryCompletion(
+        _ receipt: LocalHostIdentityRecoveredReceiptV0
+    ) async throws -> LocalHostIdentityRecoveredReceiptV0 {
+        guard !terminal, let current else {
+            throw MacAgentHostIdentityRecoveryProductErrorV1.unavailable
+        }
+        try await current.delivery.acknowledgeCompletion(receipt)
+        acknowledgedReceipt = receipt
+        return receipt
+    }
+
+    public func hostIdentityRecoveryCompletionAcknowledgementDidBecomeDurable(
+        _ receipt: LocalHostIdentityRecoveredReceiptV0,
+        replyWasSent _: Bool
+    ) async {
+        guard acknowledgedReceipt == receipt else { return }
+        await requestRestartIfNeeded()
+    }
+
     @discardableResult
     package func invalidate(generation: UInt64) async -> Bool {
         guard let current, current.generation == generation else {
@@ -67,6 +100,9 @@ package actor MacAgentHostIdentityRecoveryCommandAuthorityV1:
         }
         self.current = nil
         await current.delivery.invalidate()
+        if acknowledgedReceipt != nil {
+            await requestRestartIfNeeded()
+        }
         return true
     }
 
@@ -79,6 +115,12 @@ package actor MacAgentHostIdentityRecoveryCommandAuthorityV1:
     }
 
     package func currentGeneration() -> UInt64? { current?.generation }
+
+    private func requestRestartIfNeeded() async {
+        guard !restartRequested, let requestRestart else { return }
+        restartRequested = true
+        await requestRestart()
+    }
 }
 
 /// Inertly constructed recovery-only Agent product. Startup opens only the
@@ -148,6 +190,12 @@ public actor MacAgentHostIdentityRecoveryProductV1 {
             throw MacAgentHostIdentityRecoveryProductErrorV1.unavailable
         }
         try await localXPC.start()
+    }
+
+    package func installRestartRequest(
+        _ request: @escaping @Sendable () async -> Void
+    ) async throws {
+        try await commandAuthority.installRestartRequest(request)
     }
 
     public func finish() async {

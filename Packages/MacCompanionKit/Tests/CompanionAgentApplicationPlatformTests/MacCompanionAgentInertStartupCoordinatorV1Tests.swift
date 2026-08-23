@@ -94,6 +94,37 @@ private final class AgentLocalServiceTestRuntimeV1:
     }
 }
 
+@available(macOS 26.0, *)
+private final class AgentLocalRecoveryTestRuntimeV1:
+    @unchecked Sendable,
+    MacCompanionAgentRecoveryServiceRuntimeV1
+{
+    private let probe: AgentLocalServiceStartupProbeV1
+    private let lock = NSLock()
+    private var requestRestart: (@Sendable () async -> Void)?
+
+    init(probe: AgentLocalServiceStartupProbeV1) {
+        self.probe = probe
+    }
+
+    func installRestartRequest(
+        _ request: @escaping @Sendable () async -> Void
+    ) async throws {
+        probe.record("recovery.restart.install")
+        lock.withLock { requestRestart = request }
+    }
+
+    func start() async throws {
+        probe.record("recovery.start")
+        let request = lock.withLock { requestRestart }
+        await request?()
+    }
+
+    func finish() async {
+        probe.record("recovery.finish")
+    }
+}
+
 private func agentLocalServiceTemporaryBaseV1() throws -> URL {
     let base = FileManager.default.temporaryDirectory.appendingPathComponent(
         "maccompanion-local-service-startup-\(UUID())",
@@ -371,6 +402,25 @@ private func runningOwnerV1(
     await owner.finish()
     #expect(probe.snapshot() == [
         "bootstrap.start", "bootstrap.finish", "prepared.finish",
+    ])
+}
+
+@available(macOS 26.0, *)
+@Test func recoveryRestartRequestIsInstalledBeforeStartAndLatched()
+    async throws
+{
+    let probe = AgentLocalServiceStartupProbeV1()
+    let outcome = try await MacCompanionAgentLocalServiceStartupV1
+        .startRecoveryAndRetain(
+            AgentLocalRecoveryTestRuntimeV1(probe: probe)
+        )
+    let owner = try #require(runningOwnerV1(outcome))
+    await owner.waitForRestartRequest()
+    await owner.finish()
+    #expect(probe.snapshot() == [
+        "recovery.restart.install",
+        "recovery.start",
+        "recovery.finish",
     ])
 }
 

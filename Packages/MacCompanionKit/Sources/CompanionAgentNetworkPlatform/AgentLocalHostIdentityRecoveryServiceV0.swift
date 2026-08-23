@@ -172,6 +172,34 @@ public actor AgentLocalHostIdentityRecoveryServiceV0 {
         activeReview = nil
     }
 
+    /// Retires the exact replay journal only after the authenticated menu has
+    /// decoded and validated the complete completion receipt.
+    public func acknowledgeCompletion(
+        _ receipt: LocalHostIdentityRecoveredReceiptV0
+    ) async throws {
+        let now = wallNowUnixMilliseconds()
+        guard now >= receipt.completedAtUnixMilliseconds,
+              now <= 9_007_199_254_440_991 else {
+            throw AgentLocalHostIdentityRecoveryServiceErrorV0.invalidTime
+        }
+        guard let stored = try await store.hostIdentityRecoveryReceipt(),
+              stored.recoveryID == receipt.recoveryID,
+              stored.replacedHostID == receipt.replacedHostID,
+              stored.newHostID == receipt.newHostID,
+              stored.newHostFingerprint
+                == receipt.newHostFingerprint.rawValue,
+              stored.completedAtUnixMilliseconds
+                == receipt.completedAtUnixMilliseconds else {
+            throw AgentLocalHostIdentityRecoveryServiceErrorV0
+                .reviewNotCurrent
+        }
+        try await store.acknowledgeHostIdentityRecoveryCompletion(
+            commandID: receipt.correlationID,
+            receipt: stored,
+            occurredAtUnixMilliseconds: now
+        )
+    }
+
     /// Reconstructs only the exact review durably accepted before the fence.
     /// A ready identity without a completed matching receipt has no resumable
     /// review, and a legacy fence without an intent remains unavailable.

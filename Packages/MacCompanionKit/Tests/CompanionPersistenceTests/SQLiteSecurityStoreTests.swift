@@ -805,6 +805,74 @@ private func rawSQLiteText(
     ) == .alreadyCompleted(receipt: receipt))
     #expect(try await store.device(device.deviceID)?.authorization.state == .revoked)
     #expect(try await store.securityEventCount() == 4)
+    await #expect(throws: SecurityStoreError.hostIdentityRecoveryConflict) {
+        try await store.acknowledgeHostIdentityRecoveryCompletion(
+            commandID: UUID(),
+            receipt: receipt,
+            occurredAtUnixMilliseconds: 4_001
+        )
+    }
+    #expect(try await store.hostIdentityRecoveryReceipt() == receipt)
+    #expect(try await store.hostIdentityRecoveryIntent() == intent)
+    try await store.acknowledgeHostIdentityRecoveryCompletion(
+        commandID: intent.commandID,
+        receipt: receipt,
+        occurredAtUnixMilliseconds: 4_001
+    )
+    #expect(try await store.hostIdentityRecoveryReceipt() == nil)
+    #expect(try await store.hostIdentityRecoveryIntent() == nil)
+    #expect(try await store.hostIdentity() == replacement)
+    #expect(try await store.securityEventCount() == 5)
+}
+
+@Test func hostRecoveryAcknowledgementAuditFailureKeepsReplayJournal()
+    async throws
+{
+    let temporary = try TemporaryDatabase()
+    defer { temporary.remove() }
+    let original = try storedHostIdentity()
+    let recoveryID = UUID(
+        uuidString: "018f6900-0000-7000-8000-000000000003"
+    )!
+    let intent = try storedRecoveryIntent(
+        recoveryID: recoveryID,
+        expectedHostID: original.hostID,
+        expectedHostFingerprint: original.hostFingerprint
+    )
+    let replacement = try storedHostIdentity(suffix: 3, timestamp: 3_000)
+    let receipt: StoredHostIdentityRecoveryReceipt
+    do {
+        let setup = try SQLiteSecurityStore(path: temporary.database.path)
+        try await setup.establishHostIdentity(original)
+        _ = try await setup.beginHostIdentityRecovery(
+            intent: intent,
+            occurredAtUnixMilliseconds: 2_000
+        )
+        try await setup.completeHostIdentityRecovery(
+            recoveryID: recoveryID,
+            replacement: replacement
+        )
+        receipt = try #require(
+            try await setup.hostIdentityRecoveryReceipt()
+        )
+    }
+    let faulting = try SQLiteSecurityStore(
+        path: temporary.database.path,
+        injectedFaults: [.beforeSecurityEvent]
+    )
+    await #expect(
+        throws: SecurityStoreError.injectedFault(.beforeSecurityEvent)
+    ) {
+        try await faulting.acknowledgeHostIdentityRecoveryCompletion(
+            commandID: intent.commandID,
+            receipt: receipt,
+            occurredAtUnixMilliseconds: 4_000
+        )
+    }
+    #expect(try await faulting.hostIdentityRecoveryReceipt() == receipt)
+    #expect(try await faulting.hostIdentityRecoveryIntent() == intent)
+    #expect(try await faulting.hostIdentity() == replacement)
+    #expect(try await faulting.securityEventCount() == 3)
 }
 
 @Test func staleExpectedHostCannotBeginIdentityRecovery() async throws {

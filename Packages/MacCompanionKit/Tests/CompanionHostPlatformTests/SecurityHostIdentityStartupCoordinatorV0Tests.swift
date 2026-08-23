@@ -517,6 +517,32 @@ private func recoveryCoordinatorV0(
     #expect(replaySnapshot.issueCount == snapshot.issueCount)
     #expect(replaySnapshot.deletedTags == snapshot.deletedTags)
     #expect(try await store.securityEventCount() == 3)
+
+    guard case .recoveryFenced(recoveryIDV0) =
+        try await startupCoordinatorV0(
+            store: store,
+            custody: custody
+        ).start() else {
+        Issue.record("completed recovery must remain replay-only before ack")
+        return
+    }
+    let completion = try #require(
+        try await store.hostIdentityRecoveryReceipt()
+    )
+    try await store.acknowledgeHostIdentityRecoveryCompletion(
+        commandID: recoveryIntentV0(original: original).commandID,
+        receipt: completion,
+        occurredAtUnixMilliseconds: startupNowV0 + 1_001
+    )
+    guard case let .ready(ready, _, _) = try await startupCoordinatorV0(
+        store: store,
+        custody: custody
+    ).start() else {
+        Issue.record("acknowledged recovery should permit ordinary startup")
+        return
+    }
+    #expect(ready == recovered.record)
+    #expect(try await store.securityEventCount() == 4)
 }
 
 @Test func recoveryCompletionFailureResumesAfterOldKeyDeletion() async throws {

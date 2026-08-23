@@ -19,6 +19,7 @@ public enum LocalIPCMethod: String, Codable, CaseIterable, Sendable {
     case decideGrantExpansion
     case stopInteractiveSession
     case recoverHostIdentity
+    case acknowledgeHostIdentityRecoveryCompletion
     case readAuditHistory
     case exportDiagnostics
     case installInteractiveLease
@@ -130,6 +131,7 @@ public enum LocalIPCAuthorizationPolicy {
                 .decideGrantExpansion,
                 .stopInteractiveSession,
                 .recoverHostIdentity,
+                .acknowledgeHostIdentityRecoveryCompletion,
                 .readAuditHistory,
                 .exportDiagnostics,
                 .publishInteractiveMedia,

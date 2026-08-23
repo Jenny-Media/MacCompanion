@@ -39,12 +39,30 @@ import Testing
     let repeatedFinish = gate.finish(first!)
     #expect(!repeatedFinish)
 
+    let recovery = gate.begin(
+        generation: 7,
+        kind: .recoverHostIdentity,
+        permitted: true
+    )
+    #expect(recovery?.operation == 2)
+    let finishedRecovery = gate.finish(recovery!)
+    #expect(finishedRecovery)
+
+    let acknowledgement = gate.begin(
+        generation: 7,
+        kind: .acknowledgeHostIdentityRecoveryCompletion,
+        permitted: true
+    )
+    #expect(acknowledgement?.operation == 3)
+    let finishedAcknowledgement = gate.finish(acknowledgement!)
+    #expect(finishedAcknowledgement)
+
     let second = gate.begin(
         generation: 7,
         kind: .resolveDecision,
         permitted: true
     )
-    #expect(second?.operation == 2)
+    #expect(second?.operation == 4)
     let staleInvalidation = gate.invalidate(generation: 8)
     #expect(staleInvalidation == nil)
     let invalidated = gate.invalidate(generation: 7)
