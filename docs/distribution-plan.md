@@ -412,6 +412,13 @@ cannot create a signed-candidate or promotion-ready claim.
 - Human release approval, channel, and publication time
 - Clean-install, upgrade, rollback, permission-revocation, and complete-uninstall results on physical Macs
 
+The protected Mac update lane records `upgrade` and `rollback` through one
+canonical [Mac update physical-evidence profile](../spec/mac-update-physical-evidence/v0/profile.md).
+Its twelve ordered cases bind denial and forced-loss recovery to the exact
+source build, successful/clean-user/no-background-network behavior to the exact
+candidate build, and every observation to distinct retained bytes. This closes
+the evidence shape but does not replace execution on signed physical machines.
+
 CI is split into three trust lanes:
 
 - **Public pull request:** unsigned package builds, fixture conformance, dependency-boundary checks, linting, and tests with no Apple or publication secrets.

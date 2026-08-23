@@ -856,6 +856,18 @@ mounting a disk image or running an updater. Signed two-version and physical
 recovery evidence remain open.
 The complete gate passes 1,605 package tests plus 8 platform probes.
 
+The subsequent
+[closed Mac update physical-evidence matrix](evidence/2026-08-23-mac-update-physical-evidence-matrix.md)
+replaces opaque promotion-ready upgrade/rollback files with one canonical
+twelve-case record bound to the exact candidate, source revision, reviewed
+full-check profile, and three release artifacts. Exact observed source or
+candidate builds are required for decline, foreground/Control denial,
+transition-specific forced loss, successful upgrade, rollback, clean-user, and
+no-background-network cases; all thirteen source/case observations are
+distinct and transitively verified. Sixteen focused cases pass without running
+an app, updater, network, installer, rollback, signing, notarization, or mount.
+Signed physical capture remains open.
+
 ## Blocker handling rule
 
 Every blocked item records its affected artifact, evidence needed to unblock it, and parallel work. The project is not globally blocked while any safe in-scope lane remains active or ready. A later-stage capability is complete only with passing exit evidence or an explicit evidence-backed `no-go` or `deferred` disposition.

@@ -1,4 +1,4 @@
-# Mac Companion update trust policy v0.24
+# Mac Companion update trust policy v0.25
 
 Status: normative for the first direct-distribution beta.
 
@@ -124,6 +124,15 @@ canonical application archive's `Info.plist` and requires the observed value
 to equal that fact exactly. An absent or empty value is normalized to `null`
 and remains information-only; any unknown value, type, or manifest/archive
 substitution rejects the candidate before platform or promotion gates.
+
+For a macOS promotion claim, `upgrade` and `rollback` share one canonical
+`maccompanion.mac-update-physical-evidence.v0.1` record. It binds the exact
+candidate and three artifacts, requires an older signed source installation,
+and retains distinct observations for explicit decline, foreground loss,
+Control denial, cleanup uncertainty, forced loss at four transition points,
+successful upgrade, rollback, clean-user upgrade, and absence of background
+network activity. Each case names the exact source or candidate version/build
+that must be running; opaque passed files do not satisfy this matrix.
 
 ## Runtime installation gate
 

@@ -25,6 +25,11 @@ from mac_packaging_equivalence import (
     load_canonical_receipt_with_bytes,
     validate_receipt,
 )
+from mac_update_physical_evidence import (
+    MacUpdatePhysicalEvidenceError,
+    load_canonical_record as load_mac_update_physical_record,
+    validate_record as validate_mac_update_physical_record,
+)
 from signed_code_verification import (
     SignedCodeVerificationError,
     load_bundle as load_signed_code_bundle,
@@ -1096,12 +1101,63 @@ def verify_files(
                 # release-only lane to rerun and interpret Apple signing tools
                 # against the exact extracted candidate.
                 add(errors, "signedCodePlatformVerificationRequired")
+        has_mac = "macOS" in value.get("release", {}).get("targets", [])
+        if value.get("evidenceLevel") == "promotionReady" and has_mac:
+            scenario_by_id = {
+                scenario.get("id"): scenario
+                for scenario in value.get("physicalScenarios", [])
+                if isinstance(scenario, dict)
+            }
+            upgrade = scenario_by_id.get("upgrade")
+            rollback = scenario_by_id.get("rollback")
+            upgrade_reference = upgrade.get("evidence") if isinstance(upgrade, dict) else None
+            rollback_reference = rollback.get("evidence") if isinstance(rollback, dict) else None
+            if (
+                not isinstance(upgrade_reference, dict)
+                or upgrade_reference != rollback_reference
+                or PurePosixPath(upgrade_reference.get("path", "")).name
+                != "mac-update-physical-evidence.json"
+            ):
+                add(errors, "invalidMacUpdatePhysicalEvidence")
+            else:
+                try:
+                    matrix_path = resolve_artifact_path(
+                        root,
+                        upgrade_reference["path"],
+                        must_exist=True,
+                    )
+                    matrix, matrix_raw = load_mac_update_physical_record(matrix_path)
+                    if (
+                        len(matrix_raw) != upgrade_reference["bytes"]
+                        or hashlib.sha256(matrix_raw).hexdigest()
+                        != upgrade_reference["sha256"]
+                    ):
+                        raise MacUpdatePhysicalEvidenceError(
+                            "update matrix reference mismatch"
+                        )
+                    validate_mac_update_physical_record(
+                        matrix,
+                        release_manifest=value,
+                        evidence_root=root,
+                        verify_files=True,
+                    )
+                except (
+                    ArtifactSBOMError,
+                    MacUpdatePhysicalEvidenceError,
+                    OSError,
+                    KeyError,
+                    TypeError,
+                    ValueError,
+                    json.JSONDecodeError,
+                    DuplicateKeyError,
+                ):
+                    add(errors, "invalidMacUpdatePhysicalEvidence")
+
         packaging_records = [
             record
             for record in value.get("validation", [])
             if isinstance(record, dict) and record.get("id") == "mac-packaging-equivalence"
         ]
-        has_mac = "macOS" in value.get("release", {}).get("targets", [])
         if not has_mac:
             if packaging_records:
                 add(errors, "unexpectedMacPackagingEquivalence")

@@ -85,6 +85,10 @@ scenarios plus an App Store/TestFlight record. The promotion publication
 targets must exactly match the release targets. Required scenario identifiers
 are bound to their exact platform, and every recorded promotion scenario must
 pass; a failed extra scenario cannot be hidden beside the required set.
+The macOS `upgrade` and `rollback` scenarios must share the same canonical
+[Mac update physical-evidence record](../../mac-update-physical-evidence/v0/profile.md).
+File verification validates every transitive observation and exact candidate
+binding; opaque or divergent scenario files cannot satisfy those two gates.
 
 ## Secret exclusion
 
