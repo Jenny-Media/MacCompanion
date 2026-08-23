@@ -1,5 +1,7 @@
 #if os(macOS)
 import CompanionIPC
+import CompanionInteractiveRuntime
+import CompanionInteractiveWire
 import CompanionLocalXPCPlatform
 import CompanionMacApp
 import Foundation
@@ -21,6 +23,10 @@ package protocol MacLocalXPCDashboardClientV1: AnyObject, Sendable {
     func publishInteractiveAdmission(
         _ publication: LocalInteractiveAdmissionPublicationV1
     ) async throws -> LocalInteractiveAdmissionPublishedReceiptV1
+    func publishInteractiveMedia(
+        header: MediaRecordHeader,
+        payload: Data
+    ) async throws
     func cancel()
     func finishMenuPresentationReceiver() async
 }
@@ -52,6 +58,13 @@ extension MacLocalXPCDashboardClientV1 {
         _: LocalInteractiveAdmissionPublicationV1
     ) async throws -> LocalInteractiveAdmissionPublishedReceiptV1 {
         throw MacLocalXPCInteractiveAdmissionErrorV1.unavailable
+    }
+
+    package func publishInteractiveMedia(
+        header _: MediaRecordHeader,
+        payload _: Data
+    ) async throws {
+        throw MacLocalXPCInteractiveRoleDataErrorV1.unavailable
     }
 }
 
@@ -445,6 +458,7 @@ public final class MacLocalXPCDashboardProductV1:
             (any MacLocalXPCInteractiveLeaseHandlingV1)? = nil,
         interactiveInputHandler:
             (any MacLocalXPCInteractiveInputHandlingV1)? = nil,
+        interactiveMediaQueue: BoundedInteractiveMediaQueueV0? = nil,
         selectedDisplayID: UUID? = nil,
         bufferCapacity: Int = 32
     ) {
@@ -456,11 +470,16 @@ public final class MacLocalXPCDashboardProductV1:
             owner: owner,
             bufferCapacity: bufferCapacity,
             clientFactory: {
-                MacLocalXPCClientV1(
+                let client = MacLocalXPCClientV1(
                     presentationSurfaces: surfaces,
                     interactiveLeaseHandler: interactiveLeaseHandler,
                     interactiveInputHandler: interactiveInputHandler,
                     onEvent: $0
+                )
+                guard let interactiveMediaQueue else { return client }
+                return MacLocalXPCInteractiveMediaDrainClientV1(
+                    client: client,
+                    mediaQueue: interactiveMediaQueue
                 )
             },
             publishesInteractiveAdmission: true,

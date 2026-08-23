@@ -1,0 +1,58 @@
+{
+  "profile": "Mac Companion concrete macOS Interactive platform effects v0.1",
+  "surfaceKind": "desktop",
+  "capture": {
+    "framework": "ScreenCaptureKit",
+    "pixelFormat": "420YpCbCr8BiPlanarVideoRange",
+    "maximumWidth": 1920,
+    "maximumHeight": 1200,
+    "maximumPixelCount": 2304000,
+    "maximumFramesPerSecond": 30,
+    "maximumQueueDepth": 3,
+    "maximumBufferedNewestCaptureFrames": 1,
+    "showsCursor": true,
+    "capturesAudio": false
+  },
+  "encoder": {
+    "framework": "VideoToolbox",
+    "codec": "H264",
+    "realTime": true,
+    "frameReordering": false,
+    "maximumTargetBitrateBitsPerSecond": 8000000,
+    "maximumKeyframeIntervalMilliseconds": 2000,
+    "maximumInFlightFrames": 1,
+    "maximumWaitingFrames": 1
+  },
+  "mediaDrain": {
+    "maximumQueuedRecords": 8,
+    "maximumQueuedPayloadBytes": 16777216,
+    "maximumLocalXPCPublicationsInFlight": 1,
+    "purgeBeforeRenderedFrameBlank": true
+  },
+  "input": {
+    "framework": "CoreGraphics",
+    "eventTap": "cghidEventTap",
+    "requiresPreflightPostEventAccess": true,
+    "supportedClasses": [
+      "pointer",
+      "keyboard",
+      "text"
+    ],
+    "normalizedAxisMaximum": 65535,
+    "postsOnlyAfterRuntimeFenceValidation": true,
+    "releaseAllBeforeCaptureStop": true
+  },
+  "rules": [
+    "construction is inert and neither enumerates capture content nor requests or consumes Control authority",
+    "capture starts only for the exact active Desktop descriptor, opaque selected-display mapping, visible indicator, and validated execution lease",
+    "ordinary ScreenCaptureKit user consent is sufficient for this beta slice; persistent capture authorization is not claimed or required",
+    "input classes require a positive CGPreflightPostEventAccess result before capture installation succeeds and never trigger an implicit permission prompt from remote traffic",
+    "the capture profile must exactly match the descriptor dimensions and the selected physical display must still match the opaque menu-owned mapping",
+    "ScreenCaptureKit retains at most the newest one unconsumed callback while VideoToolbox owns at most one encoding frame and one newest waiting frame",
+    "VideoToolbox output crosses the serialized runtime fence before entering the bounded media queue and the XPC drain awaits one exact acknowledgement before dequeueing another record",
+    "input planning, event construction, and posting are serialized under one local owner and state commits only after the complete planned event batch is constructed",
+    "display loss, permission loss, capture or encoder failure, media rejection, queue overflow, input construction failure, or post-lifecycle ambiguity terminates the exact Interactive session",
+    "cleanup releases every tracked key, modifier, and pointer button before stopping capture, purges queued media, clears retained frame state, and clears the visible indicator",
+    "this profile grants no shell, file, clipboard, audio, automation, provider, Accessibility inspection, window metadata, or persistent unattended capture authority"
+  ]
+}

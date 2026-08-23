@@ -181,7 +181,9 @@ public final class MacCompanionDashboardApplicationV1 {
     ) {
         self.init(
             interactiveRuntime: Optional(interactiveRuntime),
-            interactiveIndicator: nil
+            interactiveIndicator: nil,
+            interactiveMediaQueue: nil,
+            interactiveDisplaySelection: nil
         )
     }
 
@@ -191,16 +193,54 @@ public final class MacCompanionDashboardApplicationV1 {
     ) {
         self.init(
             interactiveRuntime: Optional(interactiveRuntime),
-            interactiveIndicator: interactiveIndicator
+            interactiveIndicator: interactiveIndicator,
+            interactiveMediaQueue: nil,
+            interactiveDisplaySelection: nil
         )
+    }
+
+    /// Permanent release composition. Construction is effect-inert: the
+    /// concrete capture, encoder, media drain, and input poster remain behind
+    /// the authenticated local-XPC lifecycle and an Agent-issued lease.
+    public convenience init(
+        interactiveIndicator: MacInteractiveActivityIndicatorV1
+    ) {
+        let displaySelection = try?
+            MacInteractiveOpaqueDisplaySelectionV1()
+        if let displaySelection,
+           let composition = try?
+            MacInteractiveControlRuntimeCompositionV1.make(
+                indicator: interactiveIndicator,
+                displaySelection: displaySelection
+            ) {
+            self.init(
+                interactiveRuntime: composition.runtime,
+                interactiveIndicator: interactiveIndicator,
+                interactiveMediaQueue: composition.mediaQueue,
+                interactiveDisplaySelection: displaySelection
+            )
+        } else {
+            self.init(
+                interactiveRuntime:
+                    MacInteractiveUnavailableRuntimeCompositionV1.make(
+                        indicator: interactiveIndicator
+                    ),
+                interactiveIndicator: interactiveIndicator,
+                interactiveMediaQueue: nil,
+                interactiveDisplaySelection: displaySelection
+            )
+        }
     }
 
     private convenience init(
         interactiveRuntime: InteractiveMenuRuntimeOwnerV0?,
-        interactiveIndicator: MacInteractiveActivityIndicatorV1? = nil
+        interactiveIndicator: MacInteractiveActivityIndicatorV1? = nil,
+        interactiveMediaQueue: BoundedInteractiveMediaQueueV0? = nil,
+        interactiveDisplaySelection providedDisplaySelection:
+            MacInteractiveOpaqueDisplaySelectionV1? = nil
     ) {
-        let interactiveDisplaySelection = try?
-            MacInteractiveOpaqueDisplaySelectionV1()
+        let interactiveDisplaySelection = providedDisplaySelection
+            ?? (try? MacInteractiveOpaqueDisplaySelectionV1())
         let interactiveLeaseHandler:
             (any MacLocalXPCInteractiveLeaseHandlingV1)?
         let interactiveInputHandler:
@@ -258,6 +298,7 @@ public final class MacCompanionDashboardApplicationV1 {
             hostIdentityRecovery: recoveryOwner,
             interactiveLeaseHandler: interactiveLeaseHandler,
             interactiveInputHandler: interactiveInputHandler,
+            interactiveMediaQueue: interactiveMediaQueue,
             selectedDisplayID: interactiveDisplaySelection?
                 .opaqueSelectedDisplayID()
         )

@@ -33,6 +33,8 @@ public final class BoundedInteractiveMediaQueueV0:
     private let maximumBytes: Int
     private var records: [QueuedInteractiveMediaRecordV0] = []
     private var byteCount = 0
+    private var enqueuedHandler:
+        (token: UUID, action: @Sendable () -> Void)?
 
     public init(maximumRecords: Int = 8, maximumBytes: Int = 16 * 1_024 * 1_024) throws {
         guard (1...Self.maximumRecordLimit).contains(maximumRecords),
@@ -51,19 +53,21 @@ public final class BoundedInteractiveMediaQueueV0:
             header: header,
             payload: payload
         ) else { return false }
-        return lock.withLock {
+        let result = lock.withLock {
             guard records.count < maximumRecords,
                   payload.count <= maximumBytes - byteCount,
                   records.first.map({
                       $0.header.interactiveSessionID
                         == header.interactiveSessionID
                   }) ?? true else {
-                return false
+                return (false, nil as (@Sendable () -> Void)?)
             }
             records.append(record)
             byteCount += payload.count
-            return true
+            return (true, enqueuedHandler?.action)
         }
+        result.1?()
+        return result.0
     }
 
     /// Transfers one complete record to the downstream adapter. A record
@@ -91,6 +95,30 @@ public final class BoundedInteractiveMediaQueueV0:
 
     public func status() -> (recordCount: Int, byteCount: Int) {
         lock.withLock { (records.count, byteCount) }
+    }
+
+    /// Installs the sole downstream wakeup without transferring record
+    /// ownership. If records already exist, the handler is invoked after the
+    /// lock is released so the drain cannot miss its initial edge.
+    public func installEnqueuedHandler(
+        token: UUID,
+        _ action: @escaping @Sendable () -> Void
+    ) -> Bool {
+        let shouldSignal = lock.withLock {
+            guard enqueuedHandler == nil else { return nil as Bool? }
+            enqueuedHandler = (token, action)
+            return !records.isEmpty
+        }
+        guard let shouldSignal else { return false }
+        if shouldSignal { action() }
+        return true
+    }
+
+    public func removeEnqueuedHandler(token: UUID) {
+        lock.withLock {
+            guard enqueuedHandler?.token == token else { return }
+            enqueuedHandler = nil
+        }
     }
 }
 

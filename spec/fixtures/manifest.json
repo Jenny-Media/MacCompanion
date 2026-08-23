@@ -230,6 +230,12 @@
       "canonicalSHA256": "3f1b43bb66973399949b5bed1234bb9aeca557740088923522b9a29fd901fc73"
     },
     {
+      "path": "mac-interactive-platform-effects-v0.1.json",
+      "kind": "mac.interactivePlatformEffects.v0.1",
+      "expect": "valid",
+      "canonicalSHA256": "cb24c49a221b489d4b959a963af748a79e74fabc604fefd0785c5349fc238d47"
+    },
+    {
       "path": "host-interactive-role-ingress-v0.1.json",
       "kind": "hostNetwork.interactiveRoleIngress.v0.1",
       "expect": "valid",

@@ -59,14 +59,19 @@ private actor PairingRouteAttemptProbeV0:
 
     private let winningEndpoint: EndpointCandidate?
     private let candidate: NetworkClientPairingRouteCandidateV0?
+    private let expectedAttemptCount: Int?
     private var attemptsStorage: [Attempt] = []
+    private var winnerContinuation:
+        CheckedContinuation<Void, Never>?
 
     init(
         winningEndpoint: EndpointCandidate?,
-        candidate: NetworkClientPairingRouteCandidateV0?
+        candidate: NetworkClientPairingRouteCandidateV0?,
+        expectedAttemptCount: Int? = nil
     ) {
         self.winningEndpoint = winningEndpoint
         self.candidate = candidate
+        self.expectedAttemptCount = expectedAttemptCount
     }
 
     func attempts() -> [Attempt] { attemptsStorage }
@@ -81,7 +86,19 @@ private actor PairingRouteAttemptProbeV0:
             fingerprint: requiredHostFingerprint,
             timeoutMilliseconds: connectTimeoutMilliseconds
         ))
+        if let expectedAttemptCount,
+           attemptsStorage.count == expectedAttemptCount {
+            let continuation = winnerContinuation
+            winnerContinuation = nil
+            continuation?.resume()
+        }
         guard endpoint == winningEndpoint else { return nil }
+        if let expectedAttemptCount,
+           attemptsStorage.count < expectedAttemptCount {
+            await withCheckedContinuation {
+                winnerContinuation = $0
+            }
+        }
         return candidate
     }
 }
@@ -209,7 +226,8 @@ private func pairingCandidateV0(
     let io = PairingFrameIOProbeV0()
     let probe = PairingRouteAttemptProbeV0(
         winningEndpoint: endpoints[1],
-        candidate: pairingCandidateV0(endpoint: endpoints[1], io: io)
+        candidate: pairingCandidateV0(endpoint: endpoints[1], io: io),
+        expectedAttemptCount: endpoints.count
     )
     let barrier = PairingStaggerBarrierV0(expectedCount: endpoints.count)
     let request = try pairingRequestV0(endpoints: endpoints)

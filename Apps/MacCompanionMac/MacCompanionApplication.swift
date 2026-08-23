@@ -53,10 +53,6 @@ private final class MacCompanionApplicationDelegate:
             menuApp: loginRoles.menuApp
         )
         let interactiveIndicator = MacInteractiveActivityIndicatorV1()
-        let interactiveRuntime =
-            MacInteractiveUnavailableRuntimeCompositionV1.make(
-                indicator: interactiveIndicator
-            )
         self.loginRoles = loginRoles
         self.interactiveIndicator = interactiveIndicator
         product = MacCompanionProductApplicationV1(
@@ -64,7 +60,6 @@ private final class MacCompanionApplicationDelegate:
             setup: setup,
             dashboardFactory: {
                 MacCompanionDashboardApplicationV1(
-                    interactiveRuntime: interactiveRuntime,
                     interactiveIndicator: interactiveIndicator
                 )
             }

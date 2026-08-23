@@ -40,6 +40,14 @@ private actor RenderBlankProbe: InteractiveRuntimeRenderedFrameBlankingV0 {
     }
 }
 
+private final class QueueWakeupProbeV0: @unchecked Sendable {
+    private let lock = NSLock()
+    private var callsStorage = 0
+
+    func call() { lock.withLock { callsStorage += 1 } }
+    func calls() -> Int { lock.withLock { callsStorage } }
+}
+
 @Test func boundedMediaQueueRejectsWithoutEvictingOrPartialAcceptance() throws {
     let queue = try BoundedInteractiveMediaQueueV0(
         maximumRecords: 1,
@@ -89,6 +97,37 @@ private actor RenderBlankProbe: InteractiveRuntimeRenderedFrameBlankingV0 {
         ),
         payload: Data([2])
     ))
+}
+
+@Test func queueWakeupHasSoleExactOwnerAndCannotMissRetainedRecords()
+    throws
+{
+    let queue = try BoundedInteractiveMediaQueueV0()
+    #expect(queue.enqueueInteractiveMedia(
+        header: try queueHeader(sequence: 1, payloadLength: 1),
+        payload: Data([1])
+    ))
+    let probe = QueueWakeupProbeV0()
+    let firstToken = UUID()
+    #expect(queue.installEnqueuedHandler(token: firstToken) {
+        probe.call()
+    })
+    #expect(probe.calls() == 1)
+    #expect(!queue.installEnqueuedHandler(token: UUID()) {})
+
+    queue.removeEnqueuedHandler(token: UUID())
+    #expect(queue.enqueueInteractiveMedia(
+        header: try queueHeader(sequence: 2, payloadLength: 1),
+        payload: Data([2])
+    ))
+    #expect(probe.calls() == 2)
+
+    queue.removeEnqueuedHandler(token: firstToken)
+    #expect(queue.enqueueInteractiveMedia(
+        header: try queueHeader(sequence: 3, payloadLength: 1),
+        payload: Data([3])
+    ))
+    #expect(probe.calls() == 2)
 }
 
 @Test func compositeBlankPurgesQueueEvenWhenRendererFails() async throws {

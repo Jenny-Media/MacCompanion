@@ -253,6 +253,7 @@ let package = Package(
             name: "CompanionAgentPlatform",
             dependencies: [
                 "CompanionAgent", "CompanionIPC", "CompanionLifecycle", "CompanionLocalXPCPlatform",
+                "CompanionInteractiveRuntime", "CompanionInteractiveWire",
                 "CompanionMacApp", "CompanionPersistence", "CompanionWire",
             ],
             linkerSettings: [
@@ -464,9 +465,11 @@ let package = Package(
             name: "CompanionMacApplicationPlatformTests",
             dependencies: [
                 "CompanionAgent", "CompanionAgentPlatform", "CompanionIPC",
-                "CompanionInteractiveRuntime",
+                "CompanionDomain", "CompanionHostPlatform",
+                "CompanionInteractiveRuntime", "CompanionInteractiveShared",
+                "CompanionInteractiveWire",
                 "CompanionLocalXPCPlatform", "CompanionMacApp",
-                "CompanionMacApplicationPlatform",
+                "CompanionMacApplicationPlatform", "CompanionWire",
             ]
         ),
         .testTarget(
@@ -552,6 +555,7 @@ let package = Package(
             name: "CompanionAgentPlatformTests",
             dependencies: [
                 "CompanionAgent", "CompanionAgentPlatform", "CompanionIPC",
+                "CompanionInteractiveRuntime", "CompanionInteractiveWire",
                 "CompanionLifecycle", "CompanionLocalXPCPlatform",
                 "CompanionMacApp", "CompanionPersistence", "CompanionWire",
             ]

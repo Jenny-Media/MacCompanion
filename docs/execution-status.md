@@ -181,6 +181,23 @@ only to the current authenticated menu generation. Concrete ScreenCaptureKit,
 VideoToolbox, queue-drain, Core Graphics posting, and signed physical evidence
 remain the next independent Control slice.
 
+The [concrete macOS Interactive effects checkpoint](evidence/2026-08-22-concrete-macos-interactive-effects.md)
+now closes that construction slice in the permanent menu application. The
+exact authenticated lease activates a Desktop-only ScreenCaptureKit stream,
+bounded real-time VideoToolbox H.264 owner, non-evicting queue with one
+acknowledged local-XPC publication in flight, and the sole release Core
+Graphics HID-post boundary. Construction remains inert; display mapping and
+input permission are revalidated before capture starts; event planning commits
+only after complete construction/posting; and failure withdraws the queue
+callback and invokes ordered four-effect cleanup. The indexed fixture count is
+71 and the full 1,461-test Swift catalog, macOS/iOS cross-builds, and eight
+platform probes pass on Xcode 27 beta. A flaky pre-existing synthetic
+route-racing barrier was corrected and passed 20 isolated repetitions. Signed
+two-process TCC behavior, real posted input, physical iPhone pixels and
+latency, lock/takeover, final-identity XPC, and stable-Xcode evidence remain the
+next Control gates; persistent capture authorization remains independent and
+is not claimed by this ordinary-consent implementation.
+
 The [visible Interactive admission checkpoint](evidence/2026-08-22-visible-interactive-admission-contract.md)
 now carries the closed canonical menu-process generation, exact revision, and
 optional opaque selected-display publication through an independent
