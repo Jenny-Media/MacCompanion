@@ -7,6 +7,7 @@ cd "$repository_root"
 
 python3 scripts/validate_fixtures.py
 python3 scripts/validate_ci.py
+python3 scripts/validate_open_source_policy.py
 python3 scripts/validate_repository_material.py
 python3 scripts/validate_dependency_policy.py
 python3 scripts/validate_update_policy.py

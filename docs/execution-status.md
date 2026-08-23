@@ -22,7 +22,7 @@ This is the living execution authority for the staged plan. A blocker applies on
 - Execution prefers the shortest signed, physical, runnable product slice over more construction-only infrastructure whenever that slice is unblocked: permanent targets, LAN pairing and reconnection, Observe, `setAudioMuted`, then Desktop video plus mouse and keyboard. App Focus, Window Focus, Smart Zoom, and interaction adaptation remain Stage 2 exit requirements but do not delay the first Desktop Control build.
 - First pairing is foreground and same-LAN. A paired device may later reconnect only over ordinary private LAN routes or explicitly saved user-managed private endpoints such as Tailscale MagicDNS, private DNS, IPv4, or IPv6. Route classification never grants authority and Mac Companion does not infer Tailscale from interfaces, DNS, or installed processes.
 - Through Stage 3, “full control” means the separately granted live pixel stream, mouse and keyboard input, plus independently granted bounded capabilities. Shell, arbitrary SSH commands, general files, clipboard, audio, automation, provider execution, and future capabilities remain outside the MVP and never inherit Control authorization.
-- The intended source license is Apache-2.0 with a separate Mac Companion/Jenny Media trademark policy, both subject to legal review. GitHub private vulnerability reporting is the initial security-reporting channel; a company security address may replace or supplement it later. Because the remote repository is already public, no further push or contribution intake occurs until license/trademark/security publication, full-history review, and provider-side repository protections are resolved.
+- The local repository now carries the byte-exact Apache-2.0 license plus mutually linked draft Mac Companion/Jenny Media trademark, security, contribution, and conduct policies. They remain subject to written legal review and unpublished on the already-public remote. GitHub private vulnerability reporting is the intended initial security channel but is not operational until enabled and verified. No further push or contribution intake occurs until policy approval/publication, full-history review, and provider-side repository protections are resolved.
 - The completion boundary is a signed, installable external Stage 3 beta with market-MVP evidence. Stages 4–7 may close with evidence-backed `passed`, `no-go`, or `deferred` decisions; they are not required to ship speculative breadth.
 
 ## Current lanes
@@ -276,6 +276,14 @@ until approved license, contribution, trademark, and private-reporting policies
 exist. No remote setting or published file was changed. Provider controls,
 private reporting, license approval, history review, and publication of the
 local safeguards remain urgent authorized work rather than future launch tasks.
+
+The subsequent [local open-source policy bundle](evidence/2026-08-23-open-source-policy-bundle.md)
+adds the exact Apache-2.0 text, `NOTICE`, separate draft trademark and security
+terms, the contribution hold, conduct expectations, README discovery, and a
+cross-file validation gate. This closes the missing-file construction gap only.
+Written legal approval, an operational and independently checked private-report
+route, provider protections, exact-head history review, and explicit
+confirmation before any push remain open.
 
 ## Immediate milestone
 

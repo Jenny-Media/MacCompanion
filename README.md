@@ -40,6 +40,12 @@ Mac Companion is a private control companion for personal Macs, especially alway
 
 ## Documents
 
+- [Apache-2.0 license](LICENSE)
+- [Trademark policy](TRADEMARKS.md)
+- [Security policy](SECURITY.md)
+- [Contribution hold](CONTRIBUTING.md)
+- [Community code of conduct](CODE_OF_CONDUCT.md)
+
 - [Product proposal](docs/product-proposal.md)
 - [Architecture](docs/architecture.md)
 - [Protocol outline](docs/protocol-outline.md)

@@ -30,6 +30,15 @@ current files, 1,751 reachable historical blob paths, and 14 adversarial
 fixtures. That is evidence about the local reachable history, not a substitute
 for GitHub provider controls or legal approval.
 
+## Subsequent local policy checkpoint
+
+After this live audit, the local branch added the mutually linked policy bundle
+described in [the open-source policy checkpoint](2026-08-23-open-source-policy-bundle.md).
+The remote findings above remain the verified live state: no file was pushed and
+no GitHub setting was changed. The local drafts reduce publication ambiguity but
+do not satisfy written legal review, make private reporting operational, or
+replace the exact-head pre-push review below.
+
 ## Publication hold
 
 Do not push the 74 local commits until all of the following are complete:
