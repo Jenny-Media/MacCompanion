@@ -55,6 +55,7 @@ let package = Package(
         .library(name: "CompanionDiscovery", targets: ["CompanionDiscovery"]),
         .library(name: "CompanionLifecycle", targets: ["CompanionLifecycle"]),
         .library(name: "CompanionObservation", targets: ["CompanionObservation"]),
+        .library(name: "CompanionStudy", targets: ["CompanionStudy"]),
         .library(name: "CompanionPresentation", targets: ["CompanionPresentation"]),
         .library(name: "CompanionClient", targets: ["CompanionClient"]),
         .library(name: "CompanionClientApp", targets: ["CompanionClientApp"]),
@@ -84,6 +85,10 @@ let package = Package(
         .target(
             name: "CompanionObservation",
             dependencies: ["CompanionDomain"]
+        ),
+        .target(
+            name: "CompanionStudy",
+            dependencies: ["CompanionWire"]
         ),
         .target(
             name: "CompanionPresentation",
@@ -420,6 +425,11 @@ let package = Package(
         .testTarget(
             name: "CompanionObservationTests",
             dependencies: ["CompanionDomain", "CompanionObservation"]
+        ),
+        .testTarget(
+            name: "CompanionStudyTests",
+            dependencies: ["CompanionStudy", "CompanionWire"],
+            resources: [.process("Fixtures")]
         ),
         .testTarget(
             name: "CompanionPresentationTests",

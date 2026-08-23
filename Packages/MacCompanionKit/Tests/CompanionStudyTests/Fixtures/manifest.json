@@ -1,0 +1,25 @@
+{
+  "profile": "maccompanion.stage3.study-report-fixtures.v1",
+  "cases": [
+    {
+      "path": "valid-content-free.json",
+      "accepted": true
+    },
+    {
+      "path": "invalid-screen-title.json",
+      "accepted": false
+    },
+    {
+      "path": "invalid-typed-text.json",
+      "accepted": false
+    },
+    {
+      "path": "invalid-ip-address.json",
+      "accepted": false
+    },
+    {
+      "path": "invalid-duplicate-schema.json",
+      "accepted": false
+    }
+  ]
+}

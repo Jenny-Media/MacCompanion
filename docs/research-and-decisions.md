@@ -37,6 +37,12 @@ the combination of independently useful Observe/Act/Control paths,
 revision-safe adaptive interaction, and truthful authorization, recovery, and
 route state.
 
+[ADR-0002](adr/0002-stage-3-product-evidence.md) converts that hypothesis into
+the Stage 3 product gate: it freezes the initial audience, real-job definitions,
+smallest three-path slice, separate calibration/confirmatory cohorts, exact
+denominators and thresholds, safety overrides, and local user-exported evidence
+boundary before any cohort result is reviewed.
+
 The adjacent market already contains products described as Mac remotes:
 
 - [Helm: Mac Remote Controller](https://apps.apple.com/us/app/helm-mac-remote-controller/id6761204919) occupies the exact former name and category.

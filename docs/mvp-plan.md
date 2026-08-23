@@ -25,6 +25,11 @@ This workstream runs alongside Stage 0 and does not block isolated platform spik
 - Define privacy-preserving TestFlight measurements and a tester-exported diagnostic report before the beta. Optional conversations and short surveys may add context, but formal interviews are not a prerequisite for implementation.
 - Write an ADR selecting the initial audience, representative jobs, positioning, and the smallest three-path product slice that can test the thesis.
 
+The audience, jobs, smallest slice, cohort sequence, exact denominators,
+confirmatory thresholds, safety overrides, and content-free evidence boundary
+are frozen in [ADR-0002](adr/0002-stage-3-product-evidence.md). Any later change
+to a confirmatory rule requires a new dated ADR before a new cohort begins.
+
 ### Exit criteria
 
 - No unresolved high-risk naming conflict in target markets; Mac Companion remains the implementation and intended product name, while public use remains gated by written trademark review and App Store name reservation.
