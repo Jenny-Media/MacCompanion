@@ -1,4 +1,4 @@
-# Mac Companion update trust policy v0.6
+# Mac Companion update trust policy v0.7
 
 Status: normative for the first direct-distribution beta.
 
@@ -75,6 +75,28 @@ a nonzero archive length no greater than 4 GiB plus one canonical Base64
 display version, archive URL, archive length, and archive signature remain one
 immutable observation through later admission.
 
+The enclosure must also carry the closed Mac Companion release-evidence
+projection in the namespace
+`https://jenny.media/maccompanion/update-evidence/1`, using the exact
+`maccompanion` prefix. Its 17 required attributes are:
+
+- profile `maccompanion.update-release-evidence.v1` and evidence level
+  `signedCandidate`;
+- exact channel, candidate build, display version, archive URL, archive length,
+  and archive Ed25519 signature duplicates;
+- canonical non-placeholder SHA-256 digests for the archive, signed-candidate
+  release manifest, platform-signing record, two-phase notarization record,
+  and packaging-equivalence receipt; and
+- exact `passed` claims for the Developer ID graph, notarization, application
+  stapling, and whole-application ZIP evidence.
+
+Missing, extra, non-string, noncanonical, failed, or candidate-mismatched custom
+attributes make the item unavailable. The final signed appcast is itself
+publication evidence, so its projection binds the complete `signedCandidate`
+manifest rather than a `promotionReady` manifest that would include the
+appcast and create a content-hash cycle. Human approval, physical scenarios,
+and channel publication remain external release-lane gates.
+
 The official build must enable both signed-feed verification and archive
 verification before extraction. Every whole-application ZIP is signed with
 Ed25519, Developer ID validated, and replaced only by a notarized complete
@@ -116,6 +138,15 @@ URL, archive length, and archive signature and carry every required trust fact
 before it can mint the single-use runtime authority. Mismatch, missing trust,
 cancellation, or reuse consumes that candidate and requires a fresh
 informational observation.
+
+Developer ID, notarization, stapling, and whole-ZIP requirements cross this
+boundary only through the typed release-evidence value bound to the exact
+candidate. The lower-level gate no longer accepts free Boolean parameters for
+those release claims. The signed appcast authenticates the projection; the
+protected release lane remains responsible for constructing it only from the
+referenced passing records. Sparkle's archive signature continues to bind the
+downloaded bytes because its delegate does not expose the staged archive for a
+second client-side hash.
 
 Sparkle's successful post-extraction validation is not, by itself, Mac
 Companion's Developer ID identity or notarization attestation. Sparkle 2.9.6

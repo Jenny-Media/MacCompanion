@@ -148,6 +148,15 @@ before admission. Sparkle's post-extraction callback cannot independently
 attest the required Jenny Media Developer ID graph or Apple notarization; the
 release lane must publish protected evidence for those facts and the runtime
 bridge must bind it to the same archive before installation authority opens.
+The [release-evidence projection](evidence/2026-08-23-update-release-evidence-projection.md)
+now freezes the client side of that publication: 17 exact
+`maccompanion`-namespaced enclosure attributes bind the signed-candidate
+manifest, platform-signing record, two-phase notarization record,
+packaging-equivalence receipt, archive digest, exact candidate, and four passed
+release claims. It deliberately binds `signedCandidate`, not `promotionReady`,
+because the final signed appcast is itself publication evidence and may not
+participate in a circular content hash. The protected release job must still
+generate and sign this projection from the real passing records.
 
 ### Channels
 

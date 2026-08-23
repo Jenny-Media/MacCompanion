@@ -28,9 +28,7 @@ public struct MacUpdateValidatedCandidateV0: Equatable, Sendable {
         signedFeedVerified: Bool,
         archiveSignatureVerified: Bool,
         verifiedBeforeExtraction: Bool,
-        developerIDValidated: Bool,
-        notarizedReplacement: Bool,
-        wholeApplicationZIP: Bool
+        releaseEvidence: MacUpdateReleaseEvidenceV0
     ) throws {
         guard installedChannel == candidateChannel else {
             throw MacUpdateCandidateValidationErrorV0.channelMismatch
@@ -41,9 +39,8 @@ public struct MacUpdateValidatedCandidateV0: Equatable, Sendable {
         guard signedFeedVerified,
               archiveSignatureVerified,
               verifiedBeforeExtraction,
-              developerIDValidated,
-              notarizedReplacement,
-              wholeApplicationZIP else {
+              releaseEvidence.channel == candidateChannel,
+              releaseEvidence.candidateBuild == candidateBuild else {
             throw MacUpdateCandidateValidationErrorV0
                 .trustRequirementMissing
         }

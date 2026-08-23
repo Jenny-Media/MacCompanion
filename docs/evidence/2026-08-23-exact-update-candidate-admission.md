@@ -20,12 +20,15 @@ no longer public to production consumers.
 `MacUpdateInstallCandidateBindingV0` requires a later, independent
 post-validation observation to match the reviewed candidate's channel, current
 build, candidate build, display version, canonical archive URL, archive length,
-and Ed25519 signature exactly. It also requires all six frozen trust facts:
-signed feed, archive signature, verification before extraction, Developer ID
-validation, notarized replacement, and whole-application ZIP. The later
+and Ed25519 signature exactly. At this checkpoint it also required six frozen
+trust facts: signed feed, archive signature, verification before extraction,
+Developer ID validation, notarized replacement, and whole-application ZIP. The
+later
 [signed-publication binding](2026-08-23-signed-update-publication-binding.md)
 added the length and signature fields after auditing the exact Sparkle 2.9.6
-lifecycle.
+lifecycle, and the subsequent
+[release-evidence projection](2026-08-23-update-release-evidence-projection.md)
+replaced the final three free Booleans with one closed typed evidence value.
 
 `MacUpdateInstallCandidateAdmissionV0` owns one feed candidate and can mint at
 most one `MacUpdateInstallAuthorityV0`. Success, mismatch, missing trust,

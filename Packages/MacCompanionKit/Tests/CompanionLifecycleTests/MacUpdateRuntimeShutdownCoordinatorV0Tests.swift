@@ -46,9 +46,7 @@ private func runtimeAdmissionV0() async throws
         signedFeedVerified: true,
         archiveSignatureVerified: true,
         verifiedBeforeExtraction: true,
-        developerIDValidated: true,
-        notarizedReplacement: true,
-        wholeApplicationZIP: true
+        releaseEvidence: admittedReleaseEvidenceV0(for: candidate)
     )
 }
 

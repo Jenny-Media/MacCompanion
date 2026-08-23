@@ -64,3 +64,8 @@ callback bridge, updater download check, foreground confirmation UI, concrete
 shutdown effect, or installation handoff exists at this checkpoint. It proves
 signed-publication admission and preserves the distinction between Sparkle
 validation and Mac Companion release policy; it does not prove a usable update.
+
+The later
+[release-evidence projection](2026-08-23-update-release-evidence-projection.md)
+closes the format and typed-binding portion of this non-claim. Protected
+appcast generation and every live update action remain absent.

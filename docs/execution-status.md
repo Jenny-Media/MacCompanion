@@ -675,6 +675,15 @@ may carry a changed Apple signing identity. Developer ID and notarization facts
 therefore remain unavailable until a protected release-evidence bridge binds
 them to the same candidate. Two new tests bring the passing full count to
 1,532; no live feed, download, extraction, or install action ran.
+The subsequent
+[update release-evidence projection](evidence/2026-08-23-update-release-evidence-projection.md)
+replaces the three release-trust Booleans with a typed, exact-candidate-bound
+value carrying five canonical artifact/evidence digests and four required
+passing release claims. The permanent adapter now rejects an informational
+item unless its signed enclosure has exactly the 17 frozen custom attributes;
+unknown, missing, malformed, failed, or substituted fields close the offer.
+Five new tests bring the passing full count to 1,537, while every Sparkle
+download and installation check remains denied.
 
 ## Blocker handling rule
 

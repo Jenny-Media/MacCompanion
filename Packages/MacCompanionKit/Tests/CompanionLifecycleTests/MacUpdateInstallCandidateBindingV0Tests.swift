@@ -44,9 +44,7 @@ private func candidateBinding(
     signedFeedVerified: Bool = true,
     archiveSignatureVerified: Bool = true,
     verifiedBeforeExtraction: Bool = true,
-    developerIDValidated: Bool = true,
-    notarizedReplacement: Bool = true,
-    wholeApplicationZIP: Bool = true
+    releaseEvidence: MacUpdateReleaseEvidenceV0? = nil
 ) throws -> MacUpdateInstallCandidateBindingV0 {
     let candidate = try candidate ?? bindingFeedCandidate()
     return try MacUpdateInstallCandidateBindingV0(
@@ -63,9 +61,8 @@ private func candidateBinding(
         signedFeedVerified: signedFeedVerified,
         archiveSignatureVerified: archiveSignatureVerified,
         verifiedBeforeExtraction: verifiedBeforeExtraction,
-        developerIDValidated: developerIDValidated,
-        notarizedReplacement: notarizedReplacement,
-        wholeApplicationZIP: wholeApplicationZIP
+        releaseEvidence:
+            try releaseEvidence ?? admittedReleaseEvidenceV0(for: candidate)
     )
 }
 
@@ -112,12 +109,22 @@ private func candidateBinding(
                 Data(repeating: 0x94, count: 64).base64EncodedString()
         )
     }
+    let otherCandidate = try updateTestFeedCandidateV0(
+        channel: .beta,
+        currentBuild: 10,
+        candidateBuild: 12
+    )
+    #expect(throws: MacUpdateInstallCandidateBindingErrorV0.candidateMismatch) {
+        try candidateBinding(
+            releaseEvidence:
+                admittedReleaseEvidenceV0(for: otherCandidate)
+        )
+    }
 }
 
 @Test(
     arguments: [
         "signedFeed", "archiveSignature", "beforeExtraction",
-        "developerID", "notarization", "wholeBundle",
     ]
 )
 func everyPostValidationTrustFactIsRequired(_ missing: String) {
@@ -129,10 +136,7 @@ func everyPostValidationTrustFactIsRequired(_ missing: String) {
         try candidateBinding(
             signedFeedVerified: missing != "signedFeed",
             archiveSignatureVerified: missing != "archiveSignature",
-            verifiedBeforeExtraction: missing != "beforeExtraction",
-            developerIDValidated: missing != "developerID",
-            notarizedReplacement: missing != "notarization",
-            wholeApplicationZIP: missing != "wholeBundle"
+            verifiedBeforeExtraction: missing != "beforeExtraction"
         )
     }
 }
@@ -156,9 +160,7 @@ async throws {
         signedFeedVerified: true,
         archiveSignatureVerified: true,
         verifiedBeforeExtraction: true,
-        developerIDValidated: true,
-        notarizedReplacement: true,
-        wholeApplicationZIP: true
+        releaseEvidence: admittedReleaseEvidenceV0(for: candidate)
     )
 
     #expect(admission.displayVersion == candidate.displayVersion)
@@ -182,9 +184,7 @@ async throws {
             signedFeedVerified: true,
             archiveSignatureVerified: true,
             verifiedBeforeExtraction: true,
-            developerIDValidated: true,
-            notarizedReplacement: true,
-            wholeApplicationZIP: true
+            releaseEvidence: admittedReleaseEvidenceV0(for: candidate)
         )
     }
 }
@@ -210,9 +210,7 @@ async throws {
             signedFeedVerified: true,
             archiveSignatureVerified: true,
             verifiedBeforeExtraction: true,
-            developerIDValidated: true,
-            notarizedReplacement: true,
-            wholeApplicationZIP: true
+            releaseEvidence: admittedReleaseEvidenceV0(for: candidate)
         )
     }
     await #expect(
@@ -230,9 +228,7 @@ async throws {
             signedFeedVerified: true,
             archiveSignatureVerified: true,
             verifiedBeforeExtraction: true,
-            developerIDValidated: true,
-            notarizedReplacement: true,
-            wholeApplicationZIP: true
+            releaseEvidence: admittedReleaseEvidenceV0(for: candidate)
         )
     }
 
@@ -255,9 +251,7 @@ async throws {
             signedFeedVerified: true,
             archiveSignatureVerified: true,
             verifiedBeforeExtraction: true,
-            developerIDValidated: true,
-            notarizedReplacement: true,
-            wholeApplicationZIP: true
+            releaseEvidence: admittedReleaseEvidenceV0(for: candidate)
         )
     }
 }

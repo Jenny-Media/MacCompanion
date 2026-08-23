@@ -176,6 +176,15 @@ correlates both archive facts exactly at admission. The audited 2.9.6 callback
 does not prove Jenny Media signing identity or notarization, so those facts
 remain closed behind a protected release-evidence bridge rather than being
 manufactured from `didExtractUpdate`.
+The subsequent
+[update release-evidence projection](docs/evidence/2026-08-23-update-release-evidence-projection.md)
+defines that bridge as a closed 17-attribute signed-enclosure schema. It binds
+the exact candidate and five canonical artifact/evidence digests, replaces the
+three ambiguous release-trust Booleans with one typed value, and requires all
+Developer ID, notarization, application-stapling, and whole-ZIP claims to be
+`passed`. The app still permits only informational probes and exposes no
+download or installation path; it can only consume the reviewed offer once
+into an inert candidate/evidence seed for the later validation bridge.
 
 The [exact-candidate artifact SBOM](docs/evidence/2026-08-21-exact-candidate-artifact-sbom.md) separately inventories the executable-bearing ZIPs themselves, emits reciprocal `filesAnalyzed: true` SPDX with SHA-1/SHA-256 and package verification codes, and binds release version/build/targets/revision, packaged hashes and sizes, and executable paths/modes. Signed-candidate `--verify-files` rejects source-SBOM substitution, unsafe or noncanonical archives/evidence, metadata substitution, and post-generation archive changes. The [Mac packaging-equivalence receipt](docs/evidence/2026-08-21-mac-packaging-equivalence.md) binds those exact ZIP trees to the sole release DMG through an explicitly authorized read-only APFS inspection, exact device cleanup, and post-inspection rehash. The current [Sparkle nested Developer ID packaging checkpoint](docs/evidence/2026-08-23-sparkle-nested-developer-id-packaging.md) independently verifies all five retained app, Agent, framework, and helper subjects, signs the DMG, and proves one 117-entry application tree across both ZIPs and the DMG while explicitly retaining the unnotarized, unstapled, unsigned-update, non-promotable state. A real signed-candidate claim remains closed until this path runs on the final signed/notarized artifacts under the stable release lane.
 

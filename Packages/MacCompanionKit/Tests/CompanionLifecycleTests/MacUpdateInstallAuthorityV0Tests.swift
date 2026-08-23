@@ -9,12 +9,17 @@ private func updateCandidate(
     candidateBuild: UInt64 = 11,
     signedFeedVerified: Bool = true,
     archiveSignatureVerified: Bool = true,
-    verifiedBeforeExtraction: Bool = true,
-    developerIDValidated: Bool = true,
-    notarizedReplacement: Bool = true,
-    wholeApplicationZIP: Bool = true
+    verifiedBeforeExtraction: Bool = true
 ) throws -> MacUpdateValidatedCandidateV0 {
-    try MacUpdateValidatedCandidateV0(
+    let evidenceBuild = candidateBuild > currentBuild
+        ? candidateBuild
+        : currentBuild + 1
+    let evidenceCandidate = try updateTestFeedCandidateV0(
+        channel: candidateChannel,
+        currentBuild: currentBuild,
+        candidateBuild: evidenceBuild
+    )
+    return try MacUpdateValidatedCandidateV0(
         installedChannel: installedChannel,
         candidateChannel: candidateChannel,
         currentBuild: currentBuild,
@@ -22,9 +27,8 @@ private func updateCandidate(
         signedFeedVerified: signedFeedVerified,
         archiveSignatureVerified: archiveSignatureVerified,
         verifiedBeforeExtraction: verifiedBeforeExtraction,
-        developerIDValidated: developerIDValidated,
-        notarizedReplacement: notarizedReplacement,
-        wholeApplicationZIP: wholeApplicationZIP
+        releaseEvidence:
+            admittedReleaseEvidenceV0(for: evidenceCandidate)
     )
 }
 
@@ -43,7 +47,6 @@ private func updateCandidate(
 @Test(
     arguments: [
         "signedFeed", "archiveSignature", "beforeExtraction",
-        "developerID", "notarization", "wholeBundle",
     ]
 )
 func updateCandidateRequiresEveryTrustFact(_ missing: String) {
@@ -52,10 +55,7 @@ func updateCandidateRequiresEveryTrustFact(_ missing: String) {
         try updateCandidate(
             signedFeedVerified: missing != "signedFeed",
             archiveSignatureVerified: missing != "archiveSignature",
-            verifiedBeforeExtraction: missing != "beforeExtraction",
-            developerIDValidated: missing != "developerID",
-            notarizedReplacement: missing != "notarization",
-            wholeApplicationZIP: missing != "wholeBundle"
+            verifiedBeforeExtraction: missing != "beforeExtraction"
         )
     }
 }

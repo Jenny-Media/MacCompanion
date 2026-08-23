@@ -7,10 +7,10 @@ enum MacUpdateInstallCandidateBindingErrorV0:
     case trustRequirementMissing
 }
 
-/// Exact bridge between a signed-feed observation and a later updater-owned
-/// validation result. The two observations are deliberately independent: an
-/// informational item cannot become installation authority merely by being
-/// copied into this value.
+/// Exact bridge between a signed-feed observation and later updater-owned
+/// validation plus protected release-evidence results. The observations are
+/// deliberately independent: an informational item cannot become installation
+/// authority merely by being copied into this value.
 struct MacUpdateInstallCandidateBindingV0: Equatable, Sendable {
     let validatedCandidate: MacUpdateValidatedCandidateV0
     let displayVersion: String
@@ -28,9 +28,7 @@ struct MacUpdateInstallCandidateBindingV0: Equatable, Sendable {
         signedFeedVerified: Bool,
         archiveSignatureVerified: Bool,
         verifiedBeforeExtraction: Bool,
-        developerIDValidated: Bool,
-        notarizedReplacement: Bool,
-        wholeApplicationZIP: Bool
+        releaseEvidence: MacUpdateReleaseEvidenceV0
     ) throws {
         guard validatedChannel == feedCandidate.channel,
               validatedCurrentBuild == feedCandidate.currentBuild,
@@ -40,16 +38,14 @@ struct MacUpdateInstallCandidateBindingV0: Equatable, Sendable {
               validatedArchiveContentLength
                 == feedCandidate.archiveContentLength,
               validatedArchiveEd25519Signature
-                == feedCandidate.archiveEd25519Signature else {
+                == feedCandidate.archiveEd25519Signature,
+              releaseEvidence.isBound(to: feedCandidate) else {
             throw MacUpdateInstallCandidateBindingErrorV0
                 .candidateMismatch
         }
         guard signedFeedVerified,
               archiveSignatureVerified,
-              verifiedBeforeExtraction,
-              developerIDValidated,
-              notarizedReplacement,
-              wholeApplicationZIP else {
+              verifiedBeforeExtraction else {
             throw MacUpdateInstallCandidateBindingErrorV0
                 .trustRequirementMissing
         }
@@ -62,9 +58,7 @@ struct MacUpdateInstallCandidateBindingV0: Equatable, Sendable {
             signedFeedVerified: signedFeedVerified,
             archiveSignatureVerified: archiveSignatureVerified,
             verifiedBeforeExtraction: verifiedBeforeExtraction,
-            developerIDValidated: developerIDValidated,
-            notarizedReplacement: notarizedReplacement,
-            wholeApplicationZIP: wholeApplicationZIP
+            releaseEvidence: releaseEvidence
         )
         displayVersion = validatedDisplayVersion
         archiveURL = validatedArchiveURL
@@ -106,9 +100,7 @@ public actor MacUpdateInstallCandidateAdmissionV0 {
         signedFeedVerified: Bool,
         archiveSignatureVerified: Bool,
         verifiedBeforeExtraction: Bool,
-        developerIDValidated: Bool,
-        notarizedReplacement: Bool,
-        wholeApplicationZIP: Bool
+        releaseEvidence: MacUpdateReleaseEvidenceV0
     ) throws -> MacUpdateInstallAdmissionV0 {
         guard let feedCandidate else {
             throw MacUpdateInstallCandidateAdmissionErrorV0.closed
@@ -131,9 +123,7 @@ public actor MacUpdateInstallCandidateAdmissionV0 {
                 signedFeedVerified: signedFeedVerified,
                 archiveSignatureVerified: archiveSignatureVerified,
                 verifiedBeforeExtraction: verifiedBeforeExtraction,
-                developerIDValidated: developerIDValidated,
-                notarizedReplacement: notarizedReplacement,
-                wholeApplicationZIP: wholeApplicationZIP
+                releaseEvidence: releaseEvidence
             )
         } catch MacUpdateInstallCandidateBindingErrorV0.candidateMismatch {
             throw MacUpdateInstallCandidateAdmissionErrorV0
