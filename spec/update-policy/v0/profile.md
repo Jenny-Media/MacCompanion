@@ -1,4 +1,4 @@
-# Mac Companion update trust policy v0.3
+# Mac Companion update trust policy v0.4
 
 Status: normative for the first direct-distribution beta.
 
@@ -103,6 +103,13 @@ Before handing installation authority to Sparkle, Mac Companion must:
 Any missing, stale, ambiguous, or failed fact denies installation. The updater
 replaces the containing application as one unit and never swaps the embedded
 Agent independently.
+
+An informational signed-feed observation is not archive or replacement-bundle
+validation. A later updater-owned validation observation must match its exact
+channel, installed build, candidate build, display version, and canonical
+archive URL and carry every required trust fact before it can mint the
+single-use runtime authority. Mismatch, missing trust, cancellation, or reuse
+consumes that candidate and requires a fresh informational observation.
 
 ## Rotation and custody
 

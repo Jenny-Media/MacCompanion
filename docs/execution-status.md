@@ -652,8 +652,13 @@ no-authority/no-updater construction, disabled profiling/parameters/headers,
 disabled automatic checks/downloads, an explicit informational-probe-only menu
 surface, and a fail-closed prohibition on download or installation checks. Its
 nine focused tests and the full 1,520-test gate pass. Protected feed values,
-runtime-gate handoff, signed two-version upgrade, and rollback evidence remain
-open.
+Sparkle validation callbacks, signed two-version upgrade, and rollback evidence
+remain open. The subsequent
+[exact update candidate admission](evidence/2026-08-23-exact-update-candidate-admission.md)
+now correlates the reviewed feed item with an independent post-validation
+observation, requires all six trust facts, closes direct production construction
+of the lower-level candidate, and mints at most one runtime authority. Five new
+tests bring the full gate to 1,525; no live updater action ran.
 
 ## Blocker handling rule
 

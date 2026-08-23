@@ -1,4 +1,4 @@
-import CompanionLifecycle
+@testable import CompanionLifecycle
 import Foundation
 import Testing
 

@@ -18,7 +18,9 @@ public struct MacUpdateValidatedCandidateV0: Equatable, Sendable {
     public let currentBuild: UInt64
     public let candidateBuild: UInt64
 
-    public init(
+    /// Internal constructor used only after the public exact-candidate binding
+    /// has correlated independent feed and post-validation observations.
+    init(
         installedChannel: MacUpdateChannelV0,
         candidateChannel: MacUpdateChannelV0,
         currentBuild: UInt64,
@@ -117,7 +119,9 @@ public actor MacUpdateInstallAuthorityV0 {
     private var recoveryRequirement =
         MacUpdateInstallRecoveryRequirementV0.none
 
-    public init(candidate: MacUpdateValidatedCandidateV0) {
+    /// Internal so production consumers obtain this authority only from the
+    /// single-use exact-candidate admission owner.
+    init(candidate: MacUpdateValidatedCandidateV0) {
         self.candidate = candidate
     }
 

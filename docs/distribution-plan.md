@@ -178,6 +178,12 @@ Before installation the menu app:
 
 The update never swaps an individual agent executable in place. Pairing keys and grants remain in Keychain and service-owned data rather than in the replaceable bundle. A rollback must understand the stored schema or refuse with a clear recovery path; silently reading a newer schema is forbidden.
 
+The [exact update candidate admission](evidence/2026-08-23-exact-update-candidate-admission.md)
+separates the informational feed observation from later updater validation and
+requires exact channel, build, display-version, and archive-URL correlation plus
+every trust fact before issuing one runtime authority. A rejected, cancelled,
+or consumed observation cannot be reused.
+
 Automatic checks and download may be offered later; the initial beta keeps both
 off. Initial beta installs require a fresh
 five-minute local foreground confirmation that is cancelled when the menu app

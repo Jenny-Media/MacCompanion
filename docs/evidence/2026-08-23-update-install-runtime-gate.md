@@ -4,6 +4,11 @@ Date: 2026-08-23
 
 ## Outcome
 
+The later [exact update candidate admission](2026-08-23-exact-update-candidate-admission.md)
+closes the production construction path between this authority and an
+informational feed item; this file retains the original runtime-gate
+checkpoint.
+
 `CompanionLifecycle` now owns a bundle-independent, single-use update
 installation authority. An updater adapter cannot receive its start callback
 until the candidate and runtime converge through the complete direct-update
@@ -78,4 +83,3 @@ topology review, followed by a release-injected, unusable-by-default adapter
 that maps the authority's effects to the existing lifecycle owners. Real
 upgrade evidence still requires two notarized versions and explicit release
 credentials.
-
