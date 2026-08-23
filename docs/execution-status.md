@@ -577,6 +577,18 @@ Swift catalog, all cross-builds/unsigned permanent builds, and eight platform
 probes. A permanent Agent observation/event owner, focused-region capture crop,
 automatic iOS application, and signed physical evidence remain open.
 
+The [permanent focus-event observer](evidence/2026-08-23-permanent-focus-event-observer.md)
+now closes the live Agent publication lane. It polls only when the exact
+server-issued primary connection ID still matches the acknowledged Interactive
+session, fences menu-generation replacement across suspension, creates the
+ordered one-use event through the existing Agent surface authority, and sends
+through the current authenticated primary's serialized write lane. Publication
+failure revokes the token and closes surface control. The full gate passes 73
+fixtures, the 1,493-test Swift catalog, all cross-builds/unsigned permanent
+builds, and eight platform probes. Focused-region ScreenCaptureKit crop
+construction, automatic iOS Smart Zoom application, and signed physical
+evidence remain open.
+
 ## Blocker handling rule
 
 Every blocked item records its affected artifact, evidence needed to unblock it, and parallel work. The project is not globally blocked while any safe in-scope lane remains active or ready. A later-stage capability is complete only with passing exit evidence or an explicit evidence-backed `no-go` or `deferred` disposition.

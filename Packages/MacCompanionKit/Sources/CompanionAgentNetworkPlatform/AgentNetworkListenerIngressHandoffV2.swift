@@ -52,6 +52,11 @@ public protocol AgentNetworkIngressClassifierMakingV2: Sendable {
 public protocol AgentNetworkBoundIngressConnectionV2: Sendable {
     func begin() async throws
     func cancel() async
+    func authenticatedPrimaryConnectionID() async -> Data?
+    func sendAuthenticatedEvent(
+        _ eventJSON: Data,
+        primaryConnectionID: Data
+    ) async throws
     func readyInteractiveChannel() async
         -> HostInteractiveReadyRoleChannelV0?
     func readyInteractiveConnection() async
@@ -59,6 +64,15 @@ public protocol AgentNetworkBoundIngressConnectionV2: Sendable {
 }
 
 public extension AgentNetworkBoundIngressConnectionV2 {
+    func authenticatedPrimaryConnectionID() async -> Data? { nil }
+
+    func sendAuthenticatedEvent(
+        _ eventJSON: Data,
+        primaryConnectionID: Data
+    ) async throws {
+        throw AgentNetworkAuthenticatedEventSinkErrorV2.unavailable
+    }
+
     func readyInteractiveChannel() async
         -> HostInteractiveReadyRoleChannelV0?
     {
@@ -70,6 +84,13 @@ public extension AgentNetworkBoundIngressConnectionV2 {
     {
         nil
     }
+}
+
+public enum AgentNetworkAuthenticatedEventSinkErrorV2:
+    Error, Equatable, Sendable
+{
+    case unavailable
+    case primaryReplaced
 }
 
 public protocol AgentNetworkPrimaryIngressBindingV2: Sendable {
@@ -520,6 +541,46 @@ public actor AgentNetworkListenerIngressHandoffV2 {
             hasActiveInteractiveInput: activeInteractiveInput != nil,
             hasActiveInteractiveMedia: activeInteractiveMedia != nil
         )
+    }
+
+    /// Sends only through the exact authenticated primary generation that is
+    /// active at both ends of the suspension. The connection owns wire-lane
+    /// validation and serialized framing; this authority owns replacement.
+    public func hasAuthenticatedPrimaryEventSink(
+        primaryConnectionID: Data
+    ) async -> Bool {
+        guard !cancelled, primaryConnectionID.count == 16,
+              let primary = activePrimary else { return false }
+        let authenticatedID = await primary.connection
+            .authenticatedPrimaryConnectionID()
+        let matches = authenticatedID == primaryConnectionID
+        guard !cancelled, activePrimary?.token == primary.token else {
+            return false
+        }
+        return matches
+    }
+
+    public func sendAuthenticatedPrimaryEvent(
+        _ eventJSON: Data,
+        primaryConnectionID: Data
+    ) async throws {
+        guard !cancelled, let primary = activePrimary else {
+            throw AgentNetworkAuthenticatedEventSinkErrorV2.unavailable
+        }
+        let authenticatedID = await primary.connection
+            .authenticatedPrimaryConnectionID()
+        guard !cancelled, activePrimary?.token == primary.token,
+              primaryConnectionID.count == 16,
+              authenticatedID == primaryConnectionID else {
+            throw AgentNetworkAuthenticatedEventSinkErrorV2.unavailable
+        }
+        try await primary.connection.sendAuthenticatedEvent(
+            eventJSON,
+            primaryConnectionID: primaryConnectionID
+        )
+        guard !cancelled, activePrimary?.token == primary.token else {
+            throw AgentNetworkAuthenticatedEventSinkErrorV2.primaryReplaced
+        }
     }
 
     private func ready(

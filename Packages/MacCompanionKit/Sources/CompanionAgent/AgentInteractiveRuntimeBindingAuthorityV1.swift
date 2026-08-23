@@ -276,6 +276,55 @@ public actor AgentInteractiveRuntimeBindingAuthorityV1:
         await operation.value
     }
 
+    public func currentFocusEventReadiness() async
+        -> InteractiveFocusEventReadinessV0?
+    {
+        let predecessor = sequencingTail
+        let operation = Task { [self] in
+            await predecessor.value
+            guard !terminal, active != nil,
+                  let control = bound?.surfaceControl else {
+                return Optional<InteractiveFocusEventReadinessV0>.none
+            }
+            return await control.currentFocusEventReadiness()
+        }
+        sequencingTail = Task { _ = await operation.value }
+        return await operation.value
+    }
+
+    public func prepareFocusEvent(
+        candidate: InteractiveFocusEventCandidateV0,
+        hostContext: InteractiveFocusEventHostContextV0
+    ) async throws -> InteractivePreparedFocusEventV0 {
+        let predecessor = sequencingTail
+        let operation = Task { [self] in
+            await predecessor.value
+            guard !terminal, active != nil,
+                  let control = bound?.surfaceControl else {
+                throw AgentInteractiveRuntimeBindingAuthorityErrorV1
+                    .unavailable
+            }
+            return try await control.prepareFocusEvent(
+                candidate: candidate,
+                hostContext: hostContext
+            )
+        }
+        sequencingTail = Task { _ = try? await operation.value }
+        return try await operation.value
+    }
+
+    public func revokePreparedFocusEvent() async {
+        let predecessor = sequencingTail
+        let operation = Task { [self] in
+            await predecessor.value
+            guard !terminal, active != nil,
+                  let control = bound?.surfaceControl else { return }
+            await control.revokePreparedFocusEvent()
+        }
+        sequencingTail = operation
+        await operation.value
+    }
+
     @discardableResult
     public func invalidate(generation: UInt64) async -> Bool {
         let predecessor = sequencingTail

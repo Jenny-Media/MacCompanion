@@ -49,6 +49,21 @@ public struct AgentNetworkPrimaryConnectionV1:
         await pump.cancel()
         await primarySessions.closeIfCurrent(session)
     }
+
+    public func authenticatedPrimaryConnectionID() async -> Data? {
+        await session.authenticatedPrimaryConnectionID()
+    }
+
+    public func sendAuthenticatedEvent(
+        _ eventJSON: Data,
+        primaryConnectionID: Data
+    ) async throws {
+        let authenticatedID = await session.authenticatedPrimaryConnectionID()
+        guard primaryConnectionID == authenticatedID else {
+            throw AgentNetworkAuthenticatedEventSinkErrorV2.unavailable
+        }
+        try await pump.sendAuthenticatedEvent(eventJSON)
+    }
 }
 
 /// Consumes one exact verified-ready connection and binds its frame pump to the

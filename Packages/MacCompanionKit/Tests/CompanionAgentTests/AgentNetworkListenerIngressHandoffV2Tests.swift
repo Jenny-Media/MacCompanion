@@ -196,23 +196,28 @@ private final class AgentNetworkBoundIngressFakeV2:
     private let readyChannel: HostInteractiveReadyRoleChannelV0?
     private let readyConnection:
         NetworkHostInteractiveReadyRoleConnectionV0?
+    private let primaryConnectionID: Data
     private var beginCountStorage = 0
     private var cancelCountStorage = 0
+    private var sentEventsStorage: [Data] = []
     private var beginContinuation: CheckedContinuation<Void, Error>?
 
     init(
         beginBehavior: BeginBehavior = .immediate,
+        primaryConnectionID: Data = Data(repeating: 0x31, count: 16),
         readyChannel: HostInteractiveReadyRoleChannelV0? = nil,
         readyConnection:
             NetworkHostInteractiveReadyRoleConnectionV0? = nil
     ) {
         self.beginBehavior = beginBehavior
+        self.primaryConnectionID = primaryConnectionID
         self.readyChannel = readyChannel ?? readyConnection?.channel
         self.readyConnection = readyConnection
     }
 
     var beginCount: Int { lock.withLock { beginCountStorage } }
     var cancelCount: Int { lock.withLock { cancelCountStorage } }
+    var sentEvents: [Data] { lock.withLock { sentEventsStorage } }
 
     func begin() async throws {
         switch beginBehavior {
@@ -241,6 +246,20 @@ private final class AgentNetworkBoundIngressFakeV2:
         continuation?.resume(
             throwing: AgentNetworkIngressHandoffTestErrorV2.cancelled
         )
+    }
+
+    func authenticatedPrimaryConnectionID() async -> Data? {
+        primaryConnectionID
+    }
+
+    func sendAuthenticatedEvent(
+        _ eventJSON: Data,
+        primaryConnectionID: Data
+    ) async throws {
+        guard primaryConnectionID == self.primaryConnectionID else {
+            throw AgentNetworkAuthenticatedEventSinkErrorV2.unavailable
+        }
+        lock.withLock { sentEventsStorage.append(eventJSON) }
     }
 
     func resumeBegin() {
@@ -807,6 +826,86 @@ private func agentNetworkInteractiveReadyChannelV2(
     })
     #expect(secondBound.cancelCount == 0)
     #expect((await handoff.snapshot()).hasActivePrimary)
+}
+
+@Test func authenticatedEventUsesOnlyCurrentPrimaryGeneration() async throws {
+    let firstID = Data(repeating: 0x41, count: 16)
+    let secondID = Data(repeating: 0x42, count: 16)
+    let firstBound = AgentNetworkBoundIngressFakeV2(
+        primaryConnectionID: firstID
+    )
+    let secondBound = AgentNetworkBoundIngressFakeV2(
+        primaryConnectionID: secondID
+    )
+    let binder = AgentNetworkIngressBinderFakeV2(
+        primary: [firstBound, secondBound],
+        pairing: []
+    )
+    let handoff = agentNetworkIngressHandoffV2(
+        classifiers: [
+            AgentNetworkIngressClassifierFakeV2(
+                .immediate(try agentNetworkIngressClassifiedV2(
+                    role: .applicationPrimary
+                ))
+            ),
+            AgentNetworkIngressClassifierFakeV2(
+                .immediate(try agentNetworkIngressClassifiedV2(
+                    role: .applicationPrimary
+                ))
+            ),
+        ],
+        binder: binder
+    )
+
+    await #expect(throws: AgentNetworkAuthenticatedEventSinkErrorV2.unavailable) {
+        try await handoff.sendAuthenticatedPrimaryEvent(
+            Data([0]), primaryConnectionID: firstID
+        )
+    }
+
+    let first = AgentNetworkIngressAcceptedFakeV2()
+    try await handoff.admit(first, acceptedAtMonotonicMilliseconds: 1)
+    first.emitReady(try agentNetworkIngressVerifiedV2())
+    #expect(await agentNetworkIngressEventuallyV2 {
+        firstBound.beginCount == 1
+    })
+    #expect(await handoff.hasAuthenticatedPrimaryEventSink(
+        primaryConnectionID: firstID
+    ))
+    try await handoff.sendAuthenticatedPrimaryEvent(
+        Data([1]), primaryConnectionID: firstID
+    )
+    #expect(firstBound.sentEvents == [Data([1])])
+
+    let second = AgentNetworkIngressAcceptedFakeV2()
+    try await handoff.admit(second, acceptedAtMonotonicMilliseconds: 2)
+    second.emitReady(try agentNetworkIngressVerifiedV2())
+    #expect(await agentNetworkIngressEventuallyV2 {
+        secondBound.beginCount == 1 && firstBound.cancelCount == 1
+    })
+    #expect(!(await handoff.hasAuthenticatedPrimaryEventSink(
+        primaryConnectionID: firstID
+    )))
+    #expect(await handoff.hasAuthenticatedPrimaryEventSink(
+        primaryConnectionID: secondID
+    ))
+    await #expect(throws: AgentNetworkAuthenticatedEventSinkErrorV2.unavailable) {
+        try await handoff.sendAuthenticatedPrimaryEvent(
+            Data([8]), primaryConnectionID: firstID
+        )
+    }
+    try await handoff.sendAuthenticatedPrimaryEvent(
+        Data([2]), primaryConnectionID: secondID
+    )
+    #expect(firstBound.sentEvents == [Data([1])])
+    #expect(secondBound.sentEvents == [Data([2])])
+
+    await handoff.cancel()
+    await #expect(throws: AgentNetworkAuthenticatedEventSinkErrorV2.unavailable) {
+        try await handoff.sendAuthenticatedPrimaryEvent(
+            Data([3]), primaryConnectionID: secondID
+        )
+    }
 }
 
 @Test func newerTLSCandidateQueuesBehindSuspendedClassification()

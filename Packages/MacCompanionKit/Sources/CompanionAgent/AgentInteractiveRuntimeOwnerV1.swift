@@ -459,6 +459,54 @@ public actor AgentInteractiveRuntimeOwnerV1:
         await operation.value
     }
 
+    public func currentFocusEventReadiness() async
+        -> InteractiveFocusEventReadinessV0?
+    {
+        let predecessor = sequencingTail
+        let operation = Task { [self] in
+            await predecessor.value
+            guard case let .active(active) = storage,
+                  let control = active.surfaceControl else {
+                return Optional<InteractiveFocusEventReadinessV0>.none
+            }
+            return await control.currentFocusEventReadiness()
+        }
+        sequencingTail = Task { _ = await operation.value }
+        return await operation.value
+    }
+
+    public func prepareFocusEvent(
+        candidate: InteractiveFocusEventCandidateV0,
+        hostContext: InteractiveFocusEventHostContextV0
+    ) async throws -> InteractivePreparedFocusEventV0 {
+        let predecessor = sequencingTail
+        let operation = Task { [self] in
+            await predecessor.value
+            guard case let .active(active) = storage,
+                  let control = active.surfaceControl else {
+                throw AgentInteractiveRuntimeOwnerErrorV1.unavailable
+            }
+            return try await control.prepareFocusEvent(
+                candidate: candidate,
+                hostContext: hostContext
+            )
+        }
+        sequencingTail = Task { _ = try? await operation.value }
+        return try await operation.value
+    }
+
+    public func revokePreparedFocusEvent() async {
+        let predecessor = sequencingTail
+        let operation = Task { [self] in
+            await predecessor.value
+            guard case let .active(active) = storage,
+                  let control = active.surfaceControl else { return }
+            await control.revokePreparedFocusEvent()
+        }
+        sequencingTail = operation
+        await operation.value
+    }
+
     private func synchronizeSurfaceLease(
         _ coordinator: InteractiveSurfaceRuntimeCoordinatorV0,
         interactiveSessionID: UUID

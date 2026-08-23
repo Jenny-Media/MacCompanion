@@ -65,6 +65,7 @@ public actor InteractiveSurfaceControlHandlerV0:
     private var initialWasDescribed = false
     private var initialWasAcknowledged = false
     private var focusEvents: InteractiveFocusEventAuthorityV0?
+    private var lastAuthenticatedContext: InteractiveSessionCommandContextV0?
     private var closed = false
 
     public init(
@@ -169,6 +170,7 @@ public actor InteractiveSurfaceControlHandlerV0:
                 sequence: serverSequence
             )
             initialWasAcknowledged = true
+            lastAuthenticatedContext = context
             expectedClientSequence += 1
             nextServerSequence += 1
             return body
@@ -403,7 +405,63 @@ public actor InteractiveSurfaceControlHandlerV0:
     public func primarySessionClosed() async {
         closed = true
         prepared = nil
+        lastAuthenticatedContext = nil
         focusEvents?.invalidate()
+    }
+
+    public func currentFocusEventReadiness() async
+        -> InteractiveFocusEventReadinessV0?
+    {
+        guard !closed, initialWasAcknowledged, prepared == nil,
+              focusEvents != nil, let lastAuthenticatedContext else {
+            return nil
+        }
+        guard let descriptor = try? await coordinator.currentDescriptor()
+        else { return nil }
+        return try? InteractiveFocusEventReadinessV0(
+            descriptor: descriptor,
+            primaryConnectionID:
+                lastAuthenticatedContext.primaryConnectionID
+        )
+    }
+
+    public func prepareFocusEvent(
+        candidate: InteractiveFocusEventCandidateV0,
+        hostContext: InteractiveFocusEventHostContextV0
+    ) async throws -> InteractivePreparedFocusEventV0 {
+        guard let previous = lastAuthenticatedContext else {
+            throw InteractiveFocusEventAuthorityErrorV0.unavailable
+        }
+        guard hostContext.hostState == .userSessionActive,
+              hostContext.wallNowUnixMilliseconds
+                >= previous.wallNowUnixMilliseconds,
+              hostContext.monotonicNowMilliseconds
+                >= previous.monotonicNowMilliseconds else {
+            throw InteractiveFocusEventAuthorityErrorV0.unavailable
+        }
+        let context = try InteractiveSessionCommandContextV0(
+            deviceID: previous.deviceID,
+            clientID: previous.clientID,
+            deviceState: previous.deviceState,
+            authorizationEpoch: previous.authorizationEpoch,
+            grantRevision: previous.grantRevision,
+            policyRevision: previous.policyRevision,
+            primaryConnectionID: previous.primaryConnectionID,
+            hostID: previous.hostID,
+            hostFingerprint: previous.hostFingerprint,
+            hostState: hostContext.hostState,
+            wallNowUnixMilliseconds: hostContext.wallNowUnixMilliseconds,
+            monotonicNowMilliseconds: hostContext.monotonicNowMilliseconds
+        )
+        return try await prepareFocusEvent(
+            candidate: candidate,
+            context: context,
+            eventMessageID: hostContext.eventMessageID
+        )
+    }
+
+    public func revokePreparedFocusEvent() async {
+        focusEvents?.revokeCurrent()
     }
 
     public func prepareFocusEvent(

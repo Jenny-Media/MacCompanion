@@ -345,6 +345,14 @@ acknowledgement; raw Accessibility and platform identifiers never cross the
 process boundary. Permanent Agent observation/event publication, live focus
 crop construction, and automatic iOS application remain next.
 
+The [permanent focus-event observer checkpoint](docs/evidence/2026-08-23-permanent-focus-event-observer.md)
+now binds that candidate to the production Agent lifecycle and the exact
+authenticated primary connection that authorized the Interactive session. It
+does not sample focus for a missing or replacement primary, emits at most one
+event per current surface fence, and revokes plus closes on a send race. Live
+focused-region capture cropping and automatic iOS Smart Zoom application are
+the next construction lanes.
+
 The [permanent Mac containing-app target](docs/evidence/2026-08-21-permanent-mac-containing-app-target.md)
 now embeds the separately signed, deliberately inert [permanent Agent
 target](docs/evidence/2026-08-21-permanent-embedded-mac-agent-target.md), its

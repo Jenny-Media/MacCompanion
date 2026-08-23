@@ -153,6 +153,14 @@ public actor AuthenticatedPrimarySessionV0 {
         AuthenticatedRouteObservationSessionV1?
     private var routeObservationDeadlineMonotonicMilliseconds: UInt64?
 
+    /// Returns the server-issued connection binding only after the primary
+    /// has completed authentication. The value is never accepted from wire
+    /// input and is cleared by terminal teardown.
+    public func authenticatedPrimaryConnectionID() -> Data? {
+        guard phase == .ready else { return nil }
+        return connectionID
+    }
+
     package init(
         hostID: UUID,
         tlsBinding: HostApplicationTLSBinding,

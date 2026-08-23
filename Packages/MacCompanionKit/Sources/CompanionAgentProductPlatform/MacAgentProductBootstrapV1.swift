@@ -16,6 +16,27 @@ package protocol MacAgentNetworkListenerRuntimeV1: AnyObject, Sendable {
     func start() async throws
     func cancel() async
     func snapshot() async -> AgentNetworkListenerServiceSnapshotV1
+    func hasAuthenticatedEventSink(
+        primaryConnectionID: Data
+    ) async -> Bool
+    func sendAuthenticatedEvent(
+        _ eventJSON: Data,
+        primaryConnectionID: Data
+    ) async throws
+}
+
+@available(macOS 26.0, *)
+package extension MacAgentNetworkListenerRuntimeV1 {
+    func hasAuthenticatedEventSink(
+        primaryConnectionID: Data
+    ) async -> Bool { false }
+
+    func sendAuthenticatedEvent(
+        _ eventJSON: Data,
+        primaryConnectionID: Data
+    ) async throws {
+        throw AgentNetworkAuthenticatedEventSinkErrorV2.unavailable
+    }
 }
 
 @available(macOS 26.0, *)
@@ -122,6 +143,28 @@ package actor MacAgentNetworkListenerRuntimeOwnerV1 {
         }
         finishTask = task
         await task.value
+    }
+
+    package func sendAuthenticatedEvent(
+        _ eventJSON: Data,
+        primaryConnectionID: Data
+    ) async throws {
+        guard finishTask == nil else {
+            throw MacAgentPreparedProductCompositionErrorV1.terminal
+        }
+        try await runtime.sendAuthenticatedEvent(
+            eventJSON,
+            primaryConnectionID: primaryConnectionID
+        )
+    }
+
+    package func hasAuthenticatedPrimaryEventSink(
+        primaryConnectionID: Data
+    ) async -> Bool {
+        guard finishTask == nil else { return false }
+        return await runtime.hasAuthenticatedEventSink(
+            primaryConnectionID: primaryConnectionID
+        )
     }
 
     package func snapshot() async -> AgentNetworkListenerServiceSnapshotV1 {
@@ -251,6 +294,9 @@ public actor MacAgentPreparedProductV1 {
         AgentInteractiveRuntimeBindingAuthorityV1?
     private let interactiveRoleDataAuthority:
         AgentInteractiveRoleDataBindingAuthorityV0?
+    private let focusCandidateSourceAuthority:
+        MacAgentFocusCandidateSourceAuthorityV1?
+    private let focusEventObserver: MacAgentFocusEventObserverV1?
     private let currentMenuGeneration: @Sendable () async -> UInt64?
     private var networkCompositionTask:
         Task<AgentNetworkPairingProductCompositionV0, Error>?
@@ -278,7 +324,10 @@ public actor MacAgentPreparedProductV1 {
         interactiveRuntimeAuthority:
             AgentInteractiveRuntimeBindingAuthorityV1? = nil,
         interactiveRoleDataAuthority:
-            AgentInteractiveRoleDataBindingAuthorityV0? = nil
+            AgentInteractiveRoleDataBindingAuthorityV0? = nil,
+        focusCandidateSourceAuthority:
+            MacAgentFocusCandidateSourceAuthorityV1? = nil,
+        focusEventObserver: MacAgentFocusEventObserverV1? = nil
     ) {
         self.storage = storage
         self.preparedPrimary = preparedPrimary
@@ -286,6 +335,8 @@ public actor MacAgentPreparedProductV1 {
         self.localPairingCommandAuthority = localPairingCommandAuthority
         self.interactiveRuntimeAuthority = interactiveRuntimeAuthority
         self.interactiveRoleDataAuthority = interactiveRoleDataAuthority
+        self.focusCandidateSourceAuthority = focusCandidateSourceAuthority
+        self.focusEventObserver = focusEventObserver
         currentMenuGeneration = {
             await menuSurfaceAuthority.currentGeneration()
         }
@@ -308,7 +359,10 @@ public actor MacAgentPreparedProductV1 {
         interactiveRuntimeAuthority:
             AgentInteractiveRuntimeBindingAuthorityV1? = nil,
         interactiveRoleDataAuthority:
-            AgentInteractiveRoleDataBindingAuthorityV0? = nil
+            AgentInteractiveRoleDataBindingAuthorityV0? = nil,
+        focusCandidateSourceAuthority:
+            MacAgentFocusCandidateSourceAuthorityV1? = nil,
+        focusEventObserver: MacAgentFocusEventObserverV1? = nil
     ) {
         self.storage = storage
         self.preparedPrimary = preparedPrimary
@@ -316,6 +370,8 @@ public actor MacAgentPreparedProductV1 {
         self.localPairingCommandAuthority = localPairingCommandAuthority
         self.interactiveRuntimeAuthority = interactiveRuntimeAuthority
         self.interactiveRoleDataAuthority = interactiveRoleDataAuthority
+        self.focusCandidateSourceAuthority = focusCandidateSourceAuthority
+        self.focusEventObserver = focusEventObserver
         currentMenuGeneration = {
             await menuSurfaceAuthority.currentGeneration()
         }
@@ -342,6 +398,9 @@ public actor MacAgentPreparedProductV1 {
             AgentInteractiveRuntimeBindingAuthorityV1? = nil,
         interactiveRoleDataAuthority:
             AgentInteractiveRoleDataBindingAuthorityV0? = nil,
+        focusCandidateSourceAuthority:
+            MacAgentFocusCandidateSourceAuthorityV1? = nil,
+        focusEventObserver: MacAgentFocusEventObserverV1? = nil,
         currentMenuGeneration:
             (@Sendable () async -> UInt64?)? = nil
     ) {
@@ -351,6 +410,8 @@ public actor MacAgentPreparedProductV1 {
         self.localPairingCommandAuthority = localPairingCommandAuthority
         self.interactiveRuntimeAuthority = interactiveRuntimeAuthority
         self.interactiveRoleDataAuthority = interactiveRoleDataAuthority
+        self.focusCandidateSourceAuthority = focusCandidateSourceAuthority
+        self.focusEventObserver = focusEventObserver
         self.currentMenuGeneration = currentMenuGeneration ?? {
             await menuSurfaceAuthority.currentGeneration()
         }
@@ -375,6 +436,9 @@ public actor MacAgentPreparedProductV1 {
         let localPairingCommandAuthority = self.localPairingCommandAuthority
         let interactiveRuntimeAuthority = self.interactiveRuntimeAuthority
         let interactiveRoleDataAuthority = self.interactiveRoleDataAuthority
+        let focusCandidateSourceAuthority =
+            self.focusCandidateSourceAuthority
+        let focusEventObserver = self.focusEventObserver
         let localStartTask = self.localStartTask
         let networkCompositionTask = self.networkCompositionTask
         let networkProduct = self.networkProduct
@@ -384,6 +448,8 @@ public actor MacAgentPreparedProductV1 {
         localStartTask?.cancel()
         networkListenerConstructionTask?.cancel()
         let task = Task {
+            await focusEventObserver?.finish()
+            await focusCandidateSourceAuthority?.finish()
             await localPairingCommandAuthority?.finish()
             await interactiveRoleDataAuthority?.finish()
             await interactiveRuntimeAuthority?.finish()
@@ -697,9 +763,14 @@ public actor MacAgentPreparedProductV1 {
                 guard finishTask == nil, !finished else {
                     throw MacAgentPreparedProductCompositionErrorV1.terminal
                 }
-                networkListenerOwner = MacAgentNetworkListenerRuntimeOwnerV1(
+                let owner = MacAgentNetworkListenerRuntimeOwnerV1(
                     runtime: listener
                 )
+                try await focusEventObserver?.install(
+                    listener: owner,
+                    context: primaryContext
+                )
+                networkListenerOwner = owner
             } catch {
                 await listener.cancel()
                 throw error
@@ -755,6 +826,7 @@ public actor MacAgentPreparedProductV1 {
                 throw MacAgentPreparedProductCompositionErrorV1.terminal
             }
             try await networkListenerOwner.start()
+            try await focusEventObserver?.start()
             try Task.checkCancellation()
         } catch let error as MacAgentPreparedProductCompositionErrorV1 {
             throw error
@@ -978,6 +1050,12 @@ public enum MacAgentProductBootstrapV1 {
             )
         let localInteractiveRoleData =
             MacLocalXPCInteractiveRoleDataRouteV1()
+        let focusCandidateSource =
+            MacAgentFocusCandidateSourceAuthorityV1()
+        let focusEventObserver = MacAgentFocusEventObserverV1(
+            source: focusCandidateSource,
+            control: interactiveRuntime
+        )
         let makeLocalXPC: LocalXPCFactory = { services in
             try await MacLocalXPCAgentProductV1
                 .afterAgentBootstrapWithMenuPresentation(
@@ -994,6 +1072,10 @@ public enum MacAgentProductBootstrapV1 {
                             MacLocalXPCInteractiveMenuRuntimeRouteV1(
                                 sender: surfaces.interactiveRuntime
                             )
+                        try await focusCandidateSource.bind(
+                            route,
+                            generation: surfaces.generation
+                        )
                         let owner = AgentInteractiveRuntimeOwnerV1(
                             admission:
                                 SQLiteInteractiveSessionAdmissionReaderV0(
@@ -1031,6 +1113,9 @@ public enum MacAgentProductBootstrapV1 {
                         _ = await interactiveRuntime.invalidate(
                             generation: surfaces.generation
                         )
+                        _ = await focusCandidateSource.invalidate(
+                            generation: surfaces.generation
+                        )
                         _ = await menuSurfaceAuthority.invalidate(
                             generation: surfaces.generation
                         )
@@ -1040,6 +1125,7 @@ public enum MacAgentProductBootstrapV1 {
                 onSurfaceInvalidated: {
                     _ = await interactiveRoleData.invalidate(generation: $0)
                     await localInteractiveRoleData.invalidate(generation: $0)
+                    _ = await focusCandidateSource.invalidate(generation: $0)
                     _ = await interactiveRuntime.invalidate(generation: $0)
                     await menuLossCoordinator
                         .authenticatedMenuSurfaceUnavailable(generation: $0)
@@ -1056,7 +1142,9 @@ public enum MacAgentProductBootstrapV1 {
                 menuSurfaceAuthority: menuSurfaceAuthority,
                 localPairingCommandAuthority: localPairingCommandAuthority,
                 interactiveRuntimeAuthority: interactiveRuntime,
-                interactiveRoleDataAuthority: interactiveRoleData
+                interactiveRoleDataAuthority: interactiveRoleData,
+                focusCandidateSourceAuthority: focusCandidateSource,
+                focusEventObserver: focusEventObserver
             )
         case .deferredUntilActivation:
             composed = try await composeInert(
@@ -1066,7 +1154,9 @@ public enum MacAgentProductBootstrapV1 {
                 menuSurfaceAuthority: menuSurfaceAuthority,
                 localPairingCommandAuthority: localPairingCommandAuthority,
                 interactiveRuntimeAuthority: interactiveRuntime,
-                interactiveRoleDataAuthority: interactiveRoleData
+                interactiveRoleDataAuthority: interactiveRoleData,
+                focusCandidateSourceAuthority: focusCandidateSource,
+                focusEventObserver: focusEventObserver
             )
         }
         if case let .ready(product) = composed {
@@ -1087,7 +1177,10 @@ public enum MacAgentProductBootstrapV1 {
         interactiveRuntimeAuthority:
             AgentInteractiveRuntimeBindingAuthorityV1? = nil,
         interactiveRoleDataAuthority:
-            AgentInteractiveRoleDataBindingAuthorityV0? = nil
+            AgentInteractiveRoleDataBindingAuthorityV0? = nil,
+        focusCandidateSourceAuthority:
+            MacAgentFocusCandidateSourceAuthorityV1? = nil,
+        focusEventObserver: MacAgentFocusEventObserverV1? = nil
     ) async throws -> MacAgentProductBootstrapResultV1 {
         switch preparation {
         case .waitForFirstUnlock:
@@ -1104,7 +1197,10 @@ public enum MacAgentProductBootstrapV1 {
                 menuSurfaceAuthority: menuSurfaceAuthority,
                 localPairingCommandAuthority: localPairingCommandAuthority,
                 interactiveRuntimeAuthority: interactiveRuntimeAuthority,
-                interactiveRoleDataAuthority: interactiveRoleDataAuthority
+                interactiveRoleDataAuthority: interactiveRoleDataAuthority,
+                focusCandidateSourceAuthority:
+                    focusCandidateSourceAuthority,
+                focusEventObserver: focusEventObserver
             ))
         }
     }
@@ -1121,7 +1217,10 @@ public enum MacAgentProductBootstrapV1 {
         interactiveRuntimeAuthority:
             AgentInteractiveRuntimeBindingAuthorityV1? = nil,
         interactiveRoleDataAuthority:
-            AgentInteractiveRoleDataBindingAuthorityV0? = nil
+            AgentInteractiveRoleDataBindingAuthorityV0? = nil,
+        focusCandidateSourceAuthority:
+            MacAgentFocusCandidateSourceAuthorityV1? = nil,
+        focusEventObserver: MacAgentFocusEventObserverV1? = nil
     ) async throws -> MacAgentProductBootstrapResultV1 {
         switch preparation {
         case .waitForFirstUnlock:
@@ -1144,7 +1243,10 @@ public enum MacAgentProductBootstrapV1 {
                     interactiveRuntimeAuthority:
                         interactiveRuntimeAuthority,
                     interactiveRoleDataAuthority:
-                        interactiveRoleDataAuthority
+                        interactiveRoleDataAuthority,
+                    focusCandidateSourceAuthority:
+                        focusCandidateSourceAuthority,
+                    focusEventObserver: focusEventObserver
                 ))
             } catch {
                 await preparedPrimary.discard()

@@ -407,6 +407,11 @@ private func makeHandler(initialPending: Bool = false) throws -> (
         ),
         context: handlerContext(monotonicNowMilliseconds: 2_100)
     )
+    let readiness = try #require(
+        await handler.currentFocusEventReadiness()
+    )
+    #expect(readiness.descriptor == initial)
+    #expect(readiness.primaryConnectionID == Data(repeating: 0x11, count: 16))
     let preparedEvent = try await handler.prepareFocusEvent(
         candidate: try InteractiveFocusEventCandidateV0(
             recommendedTargetKind: .focusedRegion,
@@ -414,8 +419,12 @@ private func makeHandler(initialPending: Bool = false) throws -> (
             inputPaused: false,
             reason: .verifiedFocus
         ),
-        context: handlerContext(monotonicNowMilliseconds: 2_150),
-        eventMessageID: WireUUID(UUID())
+        hostContext: try InteractiveFocusEventHostContextV0(
+            hostState: .userSessionActive,
+            wallNowUnixMilliseconds: 1_720_000_000_100,
+            monotonicNowMilliseconds: 2_150,
+            eventMessageID: WireUUID(UUID())
+        )
     )
     #expect(preparedEvent.targetToken == WireUUID(targetToken))
 

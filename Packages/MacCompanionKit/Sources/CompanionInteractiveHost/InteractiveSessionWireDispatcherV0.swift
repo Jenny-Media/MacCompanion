@@ -88,6 +88,50 @@ public struct InteractiveSessionCommandContextV0: Equatable, Sendable {
     }
 }
 
+/// Fresh non-principal facts used by an Agent-owned background event. Device,
+/// grant, policy, host identity, and primary binding remain inherited from the
+/// last authenticated command admitted by the active surface authority.
+public struct InteractiveFocusEventHostContextV0: Equatable, Sendable {
+    public let hostState: HostState
+    public let wallNowUnixMilliseconds: Int64
+    public let monotonicNowMilliseconds: UInt64
+    public let eventMessageID: WireUUID
+
+    public init(
+        hostState: HostState,
+        wallNowUnixMilliseconds: Int64,
+        monotonicNowMilliseconds: UInt64,
+        eventMessageID: WireUUID
+    ) throws {
+        guard wallNowUnixMilliseconds >= 0,
+              wallNowUnixMilliseconds
+                <= WireLimits.maximumSafeInteger - 60_000,
+              monotonicNowMilliseconds <= UInt64(Int64.max) - 60_000 else {
+            throw InteractiveSessionWireDispatcherErrorV0.invalidConfiguration
+        }
+        self.hostState = hostState
+        self.wallNowUnixMilliseconds = wallNowUnixMilliseconds
+        self.monotonicNowMilliseconds = monotonicNowMilliseconds
+        self.eventMessageID = eventMessageID
+    }
+}
+
+public struct InteractiveFocusEventReadinessV0: Equatable, Sendable {
+    public let descriptor: AdaptiveSurfaceDescriptor
+    public let primaryConnectionID: Data
+
+    public init(
+        descriptor: AdaptiveSurfaceDescriptor,
+        primaryConnectionID: Data
+    ) throws {
+        guard primaryConnectionID.count == 16 else {
+            throw InteractiveSessionWireDispatcherErrorV0.invalidConfiguration
+        }
+        self.descriptor = descriptor
+        self.primaryConnectionID = primaryConnectionID
+    }
+}
+
 public struct InteractiveSessionAdmissionSnapshotV0: Equatable, Sendable {
     public let deviceID: UUID
     public let clientID: UUID
@@ -248,6 +292,33 @@ public protocol InteractiveSurfaceControlDispatchingV0: Sendable {
     ) async throws -> InteractiveSurfaceAcknowledgedBodyV0
 
     func primarySessionClosed() async
+
+    func currentFocusEventReadiness() async
+        -> InteractiveFocusEventReadinessV0?
+
+    func prepareFocusEvent(
+        candidate: InteractiveFocusEventCandidateV0,
+        hostContext: InteractiveFocusEventHostContextV0
+    ) async throws -> InteractivePreparedFocusEventV0
+
+    func revokePreparedFocusEvent() async
+}
+
+public extension InteractiveSurfaceControlDispatchingV0 {
+    func currentFocusEventReadiness() async
+        -> InteractiveFocusEventReadinessV0?
+    {
+        nil
+    }
+
+    func prepareFocusEvent(
+        candidate: InteractiveFocusEventCandidateV0,
+        hostContext: InteractiveFocusEventHostContextV0
+    ) async throws -> InteractivePreparedFocusEventV0 {
+        throw InteractiveFocusEventAuthorityErrorV0.unavailable
+    }
+
+    func revokePreparedFocusEvent() async {}
 }
 
 public actor InteractiveSessionWireDispatcherV0 {

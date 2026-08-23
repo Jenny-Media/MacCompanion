@@ -47,6 +47,26 @@ protocol AgentNetworkListenerHandoffServingV1: Sendable {
     ) async throws
     func cancelForService() async
     func snapshotForService() async -> AgentNetworkListenerHandoffSnapshotV1
+    func hasAuthenticatedEventSinkForService(
+        primaryConnectionID: Data
+    ) async -> Bool
+    func sendAuthenticatedEventForService(
+        _ eventJSON: Data,
+        primaryConnectionID: Data
+    ) async throws
+}
+
+extension AgentNetworkListenerHandoffServingV1 {
+    func hasAuthenticatedEventSinkForService(
+        primaryConnectionID: Data
+    ) async -> Bool { false }
+
+    func sendAuthenticatedEventForService(
+        _ eventJSON: Data,
+        primaryConnectionID: Data
+    ) async throws {
+        throw AgentNetworkAuthenticatedEventSinkErrorV2.unavailable
+    }
 }
 
 extension AgentNetworkListenerHandoffV1:
@@ -78,6 +98,7 @@ extension AgentNetworkListenerHandoffV1:
     {
         snapshot()
     }
+
 }
 
 extension AgentNetworkListenerIngressHandoffV2:
@@ -108,6 +129,24 @@ extension AgentNetworkListenerIngressHandoffV2:
         -> AgentNetworkListenerHandoffSnapshotV1
     {
         serviceSnapshot()
+    }
+
+    func hasAuthenticatedEventSinkForService(
+        primaryConnectionID: Data
+    ) async -> Bool {
+        await hasAuthenticatedPrimaryEventSink(
+            primaryConnectionID: primaryConnectionID
+        )
+    }
+
+    func sendAuthenticatedEventForService(
+        _ eventJSON: Data,
+        primaryConnectionID: Data
+    ) async throws {
+        try await sendAuthenticatedPrimaryEvent(
+            eventJSON,
+            primaryConnectionID: primaryConnectionID
+        )
     }
 }
 
@@ -539,6 +578,24 @@ public actor AgentNetworkListenerServiceV1 {
             lastListenerTerminationReason: lastListenerTerminationReason,
             hasAcceptedConnectionStartFailure:
                 hasAcceptedConnectionStartFailure
+        )
+    }
+
+    public func hasAuthenticatedEventSink(
+        primaryConnectionID: Data
+    ) async -> Bool {
+        await handoff.hasAuthenticatedEventSinkForService(
+            primaryConnectionID: primaryConnectionID
+        )
+    }
+
+    public func sendAuthenticatedEvent(
+        _ eventJSON: Data,
+        primaryConnectionID: Data
+    ) async throws {
+        try await handoff.sendAuthenticatedEventForService(
+            eventJSON,
+            primaryConnectionID: primaryConnectionID
         )
     }
 
