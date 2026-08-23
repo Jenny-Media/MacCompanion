@@ -231,6 +231,16 @@ permits at most one newly authenticated replacement with a 40-attempt,
 generation, exhaustion, cancellation, or lifecycle loss stays closed. These
 closures remain inert at construction and the app still has no prepared-
 installer adapter, feed, archive, or installation authority.
+The subsequent
+[one-shot prepared-installer reply checkpoint](evidence/2026-08-23-one-shot-prepared-installer-reply.md)
+adds a main-actor reply owner that satisfies only the coordinator's final
+prepared-installer effect. It resolves install exactly once, resolves ordinary
+cancel or owner loss to skip, and rejects reuse. The Sparkle ready callback now
+constructs this typed owner, but the permanent adapter still cancels it because
+foreground confirmation and runtime coordination are not yet bound. Source
+validation permits exactly one install token in the closed install/skip mapping
+and rejects any direct app invocation, so full update checks and installation
+remain unreachable.
 
 ### Channels
 

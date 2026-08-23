@@ -1,4 +1,4 @@
-# Mac Companion update trust policy v0.17
+# Mac Companion update trust policy v0.18
 
 Status: normative for the first direct-distribution beta.
 
@@ -238,6 +238,17 @@ seconds. Ambiguity on the replacement, exhaustion, registration loss,
 cancellation, lifecycle finish, or an unknown effect remains closed. Setup and
 ordinary route retry cannot replace the dashboard while reconciliation owns
 it. Constructing either the command or recovery closure performs no effect.
+
+The prepared-installer boundary owns exactly one readiness reply. Only its
+`startPreparedUpdate` protocol effect may resolve `install`; explicit cancel,
+owner loss, a second start, and every path that does not complete the runtime
+shutdown authority resolve `skip` or fail closed. The reply owner exposes no
+feed, archive, candidate construction, Sparkle controller, or repeatable
+choice. The containing app may construct that owner at the held ready callback,
+but until the foreground confirmation and runtime coordinator are bound it
+must cancel the correlation and owner. A source policy permits the single
+`install` reply only in the exact typed install-to-install mapping and rejects
+any direct permanent-app invocation of `startPreparedUpdate`.
 
 The reactivation receipt must use the frozen canonical JSON projection in the
 menu app's private Application Support root. Reads require one no-follow regular

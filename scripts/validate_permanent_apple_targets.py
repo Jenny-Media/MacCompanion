@@ -519,6 +519,10 @@ def validate_inert_update_adapter(
         "correlation.installerDidStart(",
         "func showReady(",
         "readyToInstallHandler(reply)",
+        "MacUpdatePreparedInstallerReplyOwnerV0",
+        "preparedInstaller.cancel()",
+        "case .install:",
+        "reply(.install)",
         "reply(.skip)",
         "await correlation.cancel()",
         "case notConfigured",
@@ -536,10 +540,20 @@ def validate_inert_update_adapter(
         "updater.automaticallyChecksForUpdates = true",
         "updater.automaticallyDownloadsUpdates = true",
         "takePendingValidationCorrelation",
-        "reply(.install)",
+        ".startPreparedUpdate()",
     ):
         if forbidden in mac_application:
             failures.append(f"macUpdateAdapterUnexpectedAuthority:{forbidden}")
+    if mac_application.count("reply(.install)") != 1:
+        failures.append(
+            "macUpdateAdapterUnexpectedAuthority:reply(.install)"
+        )
+    if not re.search(
+        r"case \.install:\s+reply\(\.install\)\s+"
+        r"case \.skip:\s+reply\(\.skip\)",
+        mac_application,
+    ):
+        failures.append("macUpdatePreparedReplyMappingMismatch")
 
 
 def validate_narrow_agent_source(content: str, failures: list[str]) -> None:
@@ -1189,6 +1203,17 @@ def main() -> int:
         not in update_reply_failures
     ):
         failures.append("macUpdateUnconditionalInstallFixtureAccepted")
+    prepared_reply_failures: list[str] = []
+    validate_inert_update_adapter(
+        mac_application.replace(
+            "case .install:\n                reply(.install)",
+            "case .install:\n                reply(.skip)",
+            1,
+        ),
+        prepared_reply_failures,
+    )
+    if "macUpdatePreparedReplyMappingMismatch" not in prepared_reply_failures:
+        failures.append("macUpdatePreparedReplySubstitutionFixtureAccepted")
     validate_launch_agent(failures)
     validate_narrow_agent_source(agent_source, failures)
     validate_single_owner_agent_service_selection(

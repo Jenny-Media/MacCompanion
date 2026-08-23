@@ -321,9 +321,10 @@ final class MacCompanionSparkleAdapterV0:
     private func handleReadyToInstall(
         reply: @escaping (SPUUserUpdateChoice) -> Void
     ) {
+        let preparedInstaller = Self.preparedInstaller(reply: reply)
         guard let correlation = activeCorrelation,
               let validationLifecycleTask else {
-            reply(.skip)
+            preparedInstaller.cancel()
             return
         }
         activeCorrelation = nil
@@ -335,7 +336,7 @@ final class MacCompanionSparkleAdapterV0:
                   await correlation.currentPhase()
                     == .awaitingInstallationReadiness else {
                 await correlation.cancel()
-                reply(.skip)
+                preparedInstaller.cancel()
                 return
             }
 
@@ -343,7 +344,20 @@ final class MacCompanionSparkleAdapterV0:
             // not bound yet. Cancelling here proves that this concrete Sparkle
             // hold point cannot accidentally become installation authority.
             await correlation.cancel()
-            reply(.skip)
+            preparedInstaller.cancel()
+        }
+    }
+
+    private static func preparedInstaller(
+        reply: @escaping (SPUUserUpdateChoice) -> Void
+    ) -> MacUpdatePreparedInstallerReplyOwnerV0 {
+        MacUpdatePreparedInstallerReplyOwnerV0 { choice in
+            switch choice {
+            case .install:
+                reply(.install)
+            case .skip:
+                reply(.skip)
+            }
         }
     }
 

@@ -775,6 +775,16 @@ tests pass. The permanent app still has no prepared-installer adapter, and no
 app, Agent, login role, XPC service, listener, network connection, or updater
 was started. The complete gate passes 1,596 package tests plus 8 platform
 probes.
+The subsequent
+[one-shot prepared-installer reply](evidence/2026-08-23-one-shot-prepared-installer-reply.md)
+adds a main-actor owner for the coordinator's final updater effect. Install can
+resolve once; explicit cancellation and owner retirement resolve skip; reuse
+fails closed. The permanent Sparkle hold point constructs this typed adapter
+but still cancels it, while source validation permits the sole install reply
+only in the exact closed mapping and forbids any permanent-app start call. Four
+focused tests pass. Full update checks, foreground confirmation, coordinator
+construction, listener mutation, Agent stop, and installation remain closed;
+the complete gate passes 1,598 package tests plus 8 platform probes.
 
 ## Blocker handling rule
 

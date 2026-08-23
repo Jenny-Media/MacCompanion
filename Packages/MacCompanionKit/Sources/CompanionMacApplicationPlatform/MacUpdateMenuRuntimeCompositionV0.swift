@@ -9,7 +9,58 @@ public protocol MacUpdateMenuAgentCommandingV0: Sendable {
 }
 
 public protocol MacUpdatePreparedInstallerStartingV0: Sendable {
+    @MainActor
     func startPreparedUpdate() async throws
+}
+
+public enum MacUpdatePreparedInstallerReplyV0: Equatable, Sendable {
+    case install
+    case skip
+}
+
+public enum MacUpdatePreparedInstallerReplyOwnerErrorV0:
+    Error,
+    Equatable,
+    Sendable
+{
+    case alreadyResolved
+}
+
+/// One-shot ownership of a prepared updater reply. Only the runtime shutdown
+/// coordinator may select `install`; every ordinary cancellation and owner
+/// loss resolves `skip`. This value has no feed, archive, or Sparkle authority.
+@MainActor
+public final class MacUpdatePreparedInstallerReplyOwnerV0:
+    MacUpdatePreparedInstallerStartingV0
+{
+    public typealias Reply = @MainActor (
+        MacUpdatePreparedInstallerReplyV0
+    ) -> Void
+
+    private var reply: Reply?
+
+    public init(reply: @escaping Reply) {
+        self.reply = reply
+    }
+
+    public func startPreparedUpdate() async throws {
+        guard let reply else {
+            throw MacUpdatePreparedInstallerReplyOwnerErrorV0
+                .alreadyResolved
+        }
+        self.reply = nil
+        reply(.install)
+    }
+
+    public func cancel() {
+        guard let reply else { return }
+        self.reply = nil
+        reply(.skip)
+    }
+
+    isolated deinit {
+        reply?(.skip)
+    }
 }
 
 @available(macOS 26.0, *)

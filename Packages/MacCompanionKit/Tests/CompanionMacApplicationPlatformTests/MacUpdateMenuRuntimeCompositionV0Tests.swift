@@ -31,8 +31,9 @@ private actor MenuUpdateCompositionHarnessV0:
         try record("reopenNetwork")
     }
 
-    func startPreparedUpdate() throws {
-        try record("startInstaller")
+    @MainActor
+    func startPreparedUpdate() async throws {
+        try await record("startInstaller")
     }
 
     func registrationState() -> MacUpdateAgentRegistrationStateV0 {
@@ -61,6 +62,45 @@ private actor MenuUpdateCompositionHarnessV0:
             throw MenuUpdateCompositionFailureV0.injected
         }
     }
+}
+
+@Test @MainActor
+func preparedInstallerReplyOwnerInstallsExactlyOnce() async throws {
+    var replies: [MacUpdatePreparedInstallerReplyV0] = []
+    let owner = MacUpdatePreparedInstallerReplyOwnerV0 {
+        replies.append($0)
+    }
+
+    try await owner.startPreparedUpdate()
+    owner.cancel()
+    await #expect(
+        throws: MacUpdatePreparedInstallerReplyOwnerErrorV0.alreadyResolved
+    ) {
+        try await owner.startPreparedUpdate()
+    }
+
+    #expect(replies == [.install])
+}
+
+@Test @MainActor
+func preparedInstallerReplyOwnerCancelsOrRetiresToSkip() async {
+    var replies: [MacUpdatePreparedInstallerReplyV0] = []
+    var owner: MacUpdatePreparedInstallerReplyOwnerV0? =
+        MacUpdatePreparedInstallerReplyOwnerV0 {
+            replies.append($0)
+        }
+    owner?.cancel()
+    owner?.cancel()
+    owner = nil
+
+    var retired: MacUpdatePreparedInstallerReplyOwnerV0? =
+        MacUpdatePreparedInstallerReplyOwnerV0 {
+            replies.append($0)
+        }
+    retired = nil
+    _ = retired
+
+    #expect(replies == [.skip, .skip])
 }
 
 private func menuUpdateAdmissionV0() async throws
