@@ -220,7 +220,7 @@ The [Interactive runtime composition boundary](docs/evidence/2026-08-22-interact
 
 The [visible Interactive admission checkpoint](docs/evidence/2026-08-22-visible-interactive-admission-contract.md) maps the strict canonical menu-generation/revision/optional opaque-display publication through an independent authenticated local-XPC request/ack transaction into one stable Agent authority. The permanent Agent inserts that same authority into its durable-plus-visible admission reader and presentation-capable XPC profile, while the menu publishes revision 1 only after readiness acknowledgement and before status. Generation loss withdraws it fail-closed. That checkpoint initially published no display; the later opaque-display checkpoint now supplies the random menu-owned selection without itself granting Control.
 
-The [adaptive surface runtime binding](docs/evidence/2026-08-23-adaptive-surface-runtime-binding.md) now closes the construction path from authenticated primary target inventory and selection through the permanent Agent, nine-command generation-fenced local XPC family, menu-owned opaque ScreenCaptureKit catalog, two-phase source preparation/runtime-fence commit/activation, continuous media sequencing, clean-frame acknowledgement, and exact replacement-lease expiry. Desktop, application, window, and Desktop escape-hatch transitions are concrete; physical identifiers, bundle/PID/window IDs, titles, and capture objects remain in the menu process. This is compile- and fault-tested construction, not signed live-pixel, posted-input, physical-iPhone, TCC, lock, latency, or external-beta evidence.
+The [adaptive surface runtime binding](docs/evidence/2026-08-23-adaptive-surface-runtime-binding.md) now closes the construction path from authenticated primary target inventory and selection through the permanent Agent, generation-fenced local XPC family, menu-owned opaque ScreenCaptureKit catalog, two-phase source preparation/runtime-fence commit/activation, continuous media sequencing, clean-frame acknowledgement, and exact replacement-lease expiry. Desktop, application, window, and Desktop escape-hatch transitions are concrete; physical identifiers, bundle/PID/window IDs, titles, and capture objects remain in the menu process. This is compile- and fault-tested construction, not signed live-pixel, posted-input, physical-iPhone, TCC, lock, latency, or external-beta evidence.
 
 The [Agent bootstrap durable authority](docs/evidence/2026-08-22-agent-bootstrap-durable-authority.md) owns the revision-zero-or-disabled offer and exact successor enable commit over the existing cross-process-locked intent store. It requires exact post-write read-back, recovers only an exact post-rename commit, replays only the exact command without a second write, and fences every storage suspension by monotonic peer generation and operation ID. XPC injection, process restart, setup registration, the menu transaction, and receipt-gated dashboard construction are now bound; signed launchd execution and reciprocal readiness/status remain the next gate.
 
@@ -335,6 +335,15 @@ normalized geometry; it never reads field values, selected text, labels,
 titles, descriptions, or identifiers. Authenticated local candidate delivery,
 live focus observation, capture cropping, and automatic client application are
 still subsequent work.
+
+The [authenticated focus-candidate local-XPC checkpoint](docs/evidence/2026-08-23-authenticated-focus-candidate-xpc.md)
+adds the tenth exact operation to that generation-fenced family. The reply
+echoes the complete current surface fence and contains only the sanitized
+candidate. A changed focus inside an existing Focused Region releases input
+once and keeps it closed until the ordinary replacement clean-frame
+acknowledgement; raw Accessibility and platform identifiers never cross the
+process boundary. Permanent Agent observation/event publication, live focus
+crop construction, and automatic iOS application remain next.
 
 The [permanent Mac containing-app target](docs/evidence/2026-08-21-permanent-mac-containing-app-target.md)
 now embeds the separately signed, deliberately inert [permanent Agent

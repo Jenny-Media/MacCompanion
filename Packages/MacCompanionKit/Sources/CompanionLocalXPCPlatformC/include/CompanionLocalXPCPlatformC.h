@@ -35,6 +35,7 @@ typedef enum : int32_t {
     MCLocalXPCInteractiveLeaseCommandSurfaceTransition = 6,
     MCLocalXPCInteractiveLeaseCommandSurfaceAcknowledgement = 7,
     MCLocalXPCInteractiveLeaseCommandSurfaceFailure = 8,
+    MCLocalXPCInteractiveLeaseCommandFocusSnapshot = 9,
 } MCLocalXPCInteractiveLeaseCommandKind;
 typedef struct MCLocalXPCListener *MCLocalXPCListenerRef;
 typedef struct MCLocalXPCSession *MCLocalXPCSessionRef;

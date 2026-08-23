@@ -49,6 +49,19 @@ public enum FocusElementCategory: String, Codable, CaseIterable, Sendable {
     case unknown
 }
 
+/// Closed, content-free reason shared by the menu-process focus projection,
+/// authenticated local IPC, and the public Interactive event.
+public enum InteractiveFocusEventReasonV0:
+    String, Codable, CaseIterable, Sendable
+{
+    case verifiedFocus
+    case noVerifiedFocus
+    case accessibilityUnavailable
+    case ambiguousGeometry
+    case systemSurface
+    case targetDisappeared
+}
+
 public enum SurfaceRotation: UInt16, Codable, CaseIterable, Sendable {
     case degrees0 = 0
     case degrees90 = 90

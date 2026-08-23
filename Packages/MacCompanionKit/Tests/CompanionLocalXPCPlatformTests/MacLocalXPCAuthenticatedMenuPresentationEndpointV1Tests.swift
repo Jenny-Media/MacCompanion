@@ -24,6 +24,8 @@ private actor MenuPresentationSenderProbeV1:
         LocalInteractiveInitialDesktopPreparedReceiptV1?
     private var surfaceFailureReceipt:
         LocalInteractiveSurfaceFailureReceiptV1?
+    private var focusSnapshotReceipt:
+        LocalInteractiveFocusSnapshotReceiptV1?
     private var interactiveGenerations: [UInt64] = []
     private var interactiveTokens: [UUID] = []
 
@@ -32,11 +34,14 @@ private actor MenuPresentationSenderProbeV1:
         desktopReceipt:
             LocalInteractiveInitialDesktopPreparedReceiptV1? = nil,
         surfaceFailureReceipt:
-            LocalInteractiveSurfaceFailureReceiptV1? = nil
+            LocalInteractiveSurfaceFailureReceiptV1? = nil,
+        focusSnapshotReceipt:
+            LocalInteractiveFocusSnapshotReceiptV1? = nil
     ) {
         self.responses = responses
         self.desktopReceipt = desktopReceipt
         self.surfaceFailureReceipt = surfaceFailureReceipt
+        self.focusSnapshotReceipt = focusSnapshotReceipt
     }
 
     func sendMenuPresentation(
@@ -121,6 +126,19 @@ private actor MenuPresentationSenderProbeV1:
             throw MacLocalXPCInteractiveLeaseErrorV1.unavailable
         }
         return surfaceFailureReceipt
+    }
+
+    func interactiveFocusSnapshot(
+        generation: UInt64,
+        endpointToken: UUID,
+        command _: LocalInteractiveFocusSnapshotCommandV1
+    ) async throws -> LocalInteractiveFocusSnapshotReceiptV1 {
+        interactiveGenerations.append(generation)
+        interactiveTokens.append(endpointToken)
+        guard let focusSnapshotReceipt else {
+            throw MacLocalXPCInteractiveLeaseErrorV1.unavailable
+        }
+        return focusSnapshotReceipt
     }
 
     func recordedInteractiveGenerations() -> [UInt64] {
@@ -333,11 +351,32 @@ func opaqueEndpointEncodesAllFiveClosedRequests() async throws {
         interactiveSessionID: surfaceFailureCommand.interactiveSessionID,
         terminated: true
     )
+    let focusSnapshotCommand = try LocalInteractiveFocusSnapshotCommandV1(
+        commandID: UUID(),
+        interactiveSessionID: command.interactiveSessionID,
+        authorizationEpoch: command.authorizationEpoch,
+        currentSurfaceID: receipt.descriptor.surfaceID,
+        expectedSurfaceRevision: receipt.descriptor.surfaceRevision,
+        expectedCoordinateSpaceRevision:
+            receipt.descriptor.coordinateSpaceRevision
+    )
+    let focusSnapshotReceipt = LocalInteractiveFocusSnapshotReceiptV1(
+        correlationID: focusSnapshotCommand.commandID,
+        command: focusSnapshotCommand,
+        candidate: try LocalInteractiveFocusCandidateV1(
+            recommendedTargetKind: .desktop,
+            focus: nil,
+            inputPaused: false,
+            reason: .noVerifiedFocus,
+            validForMilliseconds: 1_000
+        )
+    )
     let token = UUID()
     let sender = MenuPresentationSenderProbeV1(
         [],
         desktopReceipt: receipt,
-        surfaceFailureReceipt: surfaceFailureReceipt
+        surfaceFailureReceipt: surfaceFailureReceipt,
+        focusSnapshotReceipt: focusSnapshotReceipt
     )
     let endpoint = endpointV1(
         sender: sender,
@@ -359,8 +398,13 @@ func opaqueEndpointEncodesAllFiveClosedRequests() async throws {
             .terminateInteractiveSurfaceFailure(surfaceFailureCommand)
             == surfaceFailureReceipt
     )
-    #expect(await sender.recordedInteractiveGenerations() == [7, 7])
-    #expect(await sender.recordedInteractiveTokens() == [token, token])
+    #expect(
+        try await surfaces.interactiveRuntime
+            .interactiveFocusSnapshot(focusSnapshotCommand)
+            == focusSnapshotReceipt
+    )
+    #expect(await sender.recordedInteractiveGenerations() == [7, 7, 7])
+    #expect(await sender.recordedInteractiveTokens() == [token, token, token])
 
     #expect(await router.invalidate(generation: 7))
     await #expect(
@@ -370,7 +414,7 @@ func opaqueEndpointEncodesAllFiveClosedRequests() async throws {
         try await surfaces.interactiveRuntime
             .prepareInitialInteractiveDesktop(command)
     }
-    #expect(await sender.recordedInteractiveGenerations() == [7, 7])
+    #expect(await sender.recordedInteractiveGenerations() == [7, 7, 7])
 }
 
 @Test

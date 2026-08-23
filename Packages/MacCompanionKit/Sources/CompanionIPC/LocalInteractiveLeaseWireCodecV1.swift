@@ -215,6 +215,26 @@ public enum LocalInteractiveLeaseWireCodecV1 {
         try decode(LocalInteractiveSurfaceFailureReceiptV1.self, from: data)
     }
 
+    public static func encodeFocusSnapshotCommand(
+        _ command: LocalInteractiveFocusSnapshotCommandV1
+    ) throws -> Data { try encode(command) }
+
+    public static func decodeFocusSnapshotCommand(
+        _ data: Data
+    ) throws -> LocalInteractiveFocusSnapshotCommandV1 {
+        try decode(LocalInteractiveFocusSnapshotCommandV1.self, from: data)
+    }
+
+    public static func encodeFocusSnapshotReceipt(
+        _ receipt: LocalInteractiveFocusSnapshotReceiptV1
+    ) throws -> Data { try encode(receipt) }
+
+    public static func decodeFocusSnapshotReceipt(
+        _ data: Data
+    ) throws -> LocalInteractiveFocusSnapshotReceiptV1 {
+        try decode(LocalInteractiveFocusSnapshotReceiptV1.self, from: data)
+    }
+
     private static func encode<Value: Encodable>(
         _ value: Value
     ) throws -> Data {

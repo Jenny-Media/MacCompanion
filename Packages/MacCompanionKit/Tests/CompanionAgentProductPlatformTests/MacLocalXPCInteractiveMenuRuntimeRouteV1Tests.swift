@@ -16,11 +16,18 @@ private actor InteractiveMenuRouteSenderV1:
     MacLocalXPCInteractiveLeaseSendingV1
 {
     let receipt: LocalInteractiveInitialDesktopPreparedReceiptV1
+    let focusReceipt: LocalInteractiveFocusSnapshotReceiptV1?
     private var commandsStorage:
         [LocalInteractiveInitialDesktopPreparationCommandV1] = []
+    private var focusCommandsStorage:
+        [LocalInteractiveFocusSnapshotCommandV1] = []
 
-    init(receipt: LocalInteractiveInitialDesktopPreparedReceiptV1) {
+    init(
+        receipt: LocalInteractiveInitialDesktopPreparedReceiptV1,
+        focusReceipt: LocalInteractiveFocusSnapshotReceiptV1? = nil
+    ) {
         self.receipt = receipt
+        self.focusReceipt = focusReceipt
     }
 
     func prepareInitialInteractiveDesktop(
@@ -48,9 +55,23 @@ private actor InteractiveMenuRouteSenderV1:
         throw InteractiveMenuRouteProbeErrorV1.unavailable
     }
 
+    func interactiveFocusSnapshot(
+        _ command: LocalInteractiveFocusSnapshotCommandV1
+    ) async throws -> LocalInteractiveFocusSnapshotReceiptV1 {
+        focusCommandsStorage.append(command)
+        guard let focusReceipt else {
+            throw InteractiveMenuRouteProbeErrorV1.unavailable
+        }
+        return focusReceipt
+    }
+
     func commands()
         -> [LocalInteractiveInitialDesktopPreparationCommandV1] {
         commandsStorage
+    }
+
+    func focusCommands() -> [LocalInteractiveFocusSnapshotCommandV1] {
+        focusCommandsStorage
     }
 }
 
@@ -105,5 +126,70 @@ private actor InteractiveMenuRouteSenderV1:
     #expect(sent.authorizationEpoch.rawValue == 4)
     #expect(sent.selectedDisplayID == displayID)
     #expect(sent.interactionClasses == [.pointer, .view])
+}
+
+@available(macOS 26.0, *)
+@Test func interactiveMenuRouteReturnsOnlyValidatedFocusCandidate()
+    async throws
+{
+    let commandID = UUID()
+    let sessionID = UUID()
+    let descriptor = try AdaptiveSurfaceDescriptor(
+        interactiveSessionID: sessionID,
+        authorizationEpoch: .init(rawValue: 4),
+        surfaceID: UUID(),
+        kind: .desktop,
+        surfaceRevision: .init(rawValue: 3),
+        coordinateSpaceRevision: .init(rawValue: 5),
+        encodedWidth: 1_440,
+        encodedHeight: 900,
+        logicalWidthPoints: 1_440,
+        logicalHeightPoints: 900,
+        interactionClasses: [.view, .pointer],
+        privacyProfile: .visualOnly,
+        metadataFields: [],
+        createdAtMonotonicMilliseconds: 2_000,
+        expiresAtMonotonicMilliseconds: 12_000
+    )
+    let initialReceipt = try LocalInteractiveInitialDesktopPreparedReceiptV1(
+        correlationID: UUID(),
+        descriptor: descriptor
+    )
+    let localCommand = try LocalInteractiveFocusSnapshotCommandV1(
+        commandID: commandID,
+        interactiveSessionID: sessionID,
+        authorizationEpoch: descriptor.authorizationEpoch,
+        currentSurfaceID: descriptor.surfaceID,
+        expectedSurfaceRevision: descriptor.surfaceRevision,
+        expectedCoordinateSpaceRevision:
+            descriptor.coordinateSpaceRevision
+    )
+    let localReceipt = LocalInteractiveFocusSnapshotReceiptV1(
+        correlationID: commandID,
+        command: localCommand,
+        candidate: try LocalInteractiveFocusCandidateV1(
+            recommendedTargetKind: .desktop,
+            focus: nil,
+            inputPaused: false,
+            reason: .accessibilityUnavailable,
+            validForMilliseconds: 1_000
+        )
+    )
+    let sender = InteractiveMenuRouteSenderV1(
+        receipt: initialReceipt,
+        focusReceipt: localReceipt
+    )
+    let route = MacLocalXPCInteractiveMenuRuntimeRouteV1(
+        sender: sender,
+        identifier: { commandID }
+    )
+
+    let candidate = try await route.focusCandidate(current: descriptor)
+
+    #expect(candidate.recommendedTargetKind == .desktop)
+    #expect(candidate.focus == nil)
+    #expect(candidate.reason == .accessibilityUnavailable)
+    #expect(candidate.inputPaused == false)
+    #expect(await sender.focusCommands() == [localCommand])
 }
 #endif

@@ -3,17 +3,6 @@ import CompanionInteractiveShared
 import CompanionWire
 import Foundation
 
-public enum InteractiveFocusEventReasonV0:
-    String, Codable, CaseIterable, Sendable
-{
-    case verifiedFocus
-    case noVerifiedFocus
-    case accessibilityUnavailable
-    case ambiguousGeometry
-    case systemSurface
-    case targetDisappeared
-}
-
 public enum InteractiveFocusEventWireErrorV0:
     Error, Equatable, Sendable
 {

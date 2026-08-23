@@ -63,12 +63,21 @@ import Testing
     let repeatedFinish = gate.finish(preparation!)
     #expect(!repeatedFinish)
 
+    let focusSnapshot = gate.begin(
+        generation: 11,
+        kind: .focusSnapshot,
+        permitted: true
+    )
+    #expect(focusSnapshot?.operation == 2)
+    let finishedFocusSnapshot = gate.finish(focusSnapshot!)
+    #expect(finishedFocusSnapshot)
+
     let renewal = gate.begin(
         generation: 11,
         kind: .renew,
         permitted: true
     )
-    #expect(renewal?.operation == 2)
+    #expect(renewal?.operation == 3)
     #expect(gate.invalidate(generation: 12) == nil)
     #expect(gate.invalidate(generation: 11) == renewal)
     #expect(gate.generation == nil)

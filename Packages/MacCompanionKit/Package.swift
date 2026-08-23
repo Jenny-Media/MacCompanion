@@ -158,7 +158,8 @@ let package = Package(
             dependencies: [
                 "CompanionAgent", "CompanionAgentPlatform", "CompanionIPC",
                 "CompanionHostPlatform", "CompanionInteractiveShared",
-                "CompanionInteractiveRuntime", "CompanionInteractiveWire",
+                "CompanionInteractiveHost", "CompanionInteractiveRuntime",
+                "CompanionInteractiveWire",
                 "CompanionLocalXPCPlatform", "CompanionMacApp",
                 "CompanionPresentation",
             ],

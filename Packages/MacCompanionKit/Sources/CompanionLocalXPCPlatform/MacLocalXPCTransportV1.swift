@@ -417,6 +417,7 @@ public final class MacLocalXPCServerV1:
             InteractiveRuntimeSurfaceAcknowledgementCommandV0
         )
         case surfaceFailure(LocalInteractiveSurfaceFailureCommandV1)
+        case focusSnapshot(LocalInteractiveFocusSnapshotCommandV1)
 
         var kind: MacLocalXPCInteractiveLeaseCommandKindV1 {
             switch self {
@@ -429,6 +430,7 @@ public final class MacLocalXPCServerV1:
             case .surfaceTransition: .surfaceTransition
             case .surfaceAcknowledgement: .surfaceAcknowledgement
             case .surfaceFailure: .surfaceFailure
+            case .focusSnapshot: .focusSnapshot
             }
         }
 
@@ -440,6 +442,8 @@ public final class MacLocalXPCServerV1:
             case .surfaceTargets, .surfaceResolve,
                     .surfaceTransition, .surfaceAcknowledgement,
                     .surfaceFailure:
+                .applyInteractiveSurface
+            case .focusSnapshot:
                 .applyInteractiveSurface
             }
         }
@@ -1722,6 +1726,57 @@ public final class MacLocalXPCServerV1:
         }
     }
 
+    public func interactiveFocusSnapshot(
+        _ command: LocalInteractiveFocusSnapshotCommandV1
+    ) async throws -> LocalInteractiveFocusSnapshotReceiptV1 {
+        try await interactiveFocusSnapshot(command, endpointBinding: nil)
+    }
+
+    package func interactiveFocusSnapshot(
+        generation: UInt64,
+        endpointToken: UUID,
+        command: LocalInteractiveFocusSnapshotCommandV1
+    ) async throws -> LocalInteractiveFocusSnapshotReceiptV1 {
+        try await interactiveFocusSnapshot(
+            command,
+            endpointBinding: .init(
+                generation: generation,
+                endpointToken: endpointToken
+            )
+        )
+    }
+
+    private func interactiveFocusSnapshot(
+        _ command: LocalInteractiveFocusSnapshotCommandV1,
+        endpointBinding: MacLocalXPCInteractiveLeaseEndpointBindingV1?
+    ) async throws -> LocalInteractiveFocusSnapshotReceiptV1 {
+        let payload = try encodeInteractiveLeasePayload {
+            try LocalInteractiveLeaseWireCodecV1
+                .encodeFocusSnapshotCommand(command)
+        }
+        let reply = try await sendInteractiveLeaseCommand(
+            command: .focusSnapshot(command),
+            payload: payload,
+            endpointBinding: endpointBinding
+        )
+        do {
+            guard let reply else {
+                throw MacLocalXPCInteractiveLeaseErrorV1
+                    .malformedOrTransportError
+            }
+            let receipt = try LocalInteractiveLeaseWireCodecV1
+                .decodeFocusSnapshotReceipt(reply)
+            try receipt.validate(against: command)
+            return receipt
+        } catch {
+            cancelPeerAfterMalformedInteractiveReply(
+                endpointBinding: endpointBinding
+            )
+            throw MacLocalXPCInteractiveLeaseErrorV1
+                .malformedOrTransportError
+        }
+    }
+
     private func encodeInteractiveLeasePayload(
         _ body: () throws -> Data
     ) throws -> Data {
@@ -1896,7 +1951,7 @@ public final class MacLocalXPCServerV1:
         let validPayloadShape: Bool = switch transaction.kind {
         case .prepareInitialDesktop, .install, .revoke,
                 .surfaceTargets, .surfaceResolve, .surfaceTransition,
-                .surfaceAcknowledgement, .surfaceFailure:
+                .surfaceAcknowledgement, .surfaceFailure, .focusSnapshot:
             payload.map {
                 !$0.isEmpty
                     && $0.count <= LocalInteractiveLeaseWireCodecV1
@@ -2011,6 +2066,8 @@ public final class MacLocalXPCServerV1:
             MCLocalXPCInteractiveLeaseCommandSurfaceAcknowledgement
         case .surfaceFailure:
             MCLocalXPCInteractiveLeaseCommandSurfaceFailure
+        case .focusSnapshot:
+            MCLocalXPCInteractiveLeaseCommandFocusSnapshot
         }
     }
 
@@ -4150,6 +4207,7 @@ public final class MacLocalXPCClientV1:
             InteractiveRuntimeSurfaceAcknowledgementCommandV0
         )
         case surfaceFailure(LocalInteractiveSurfaceFailureCommandV1)
+        case focusSnapshot(LocalInteractiveFocusSnapshotCommandV1)
 
         var kind: MacLocalXPCInteractiveLeaseCommandKindV1 {
             switch self {
@@ -4162,6 +4220,7 @@ public final class MacLocalXPCClientV1:
             case .surfaceTransition: .surfaceTransition
             case .surfaceAcknowledgement: .surfaceAcknowledgement
             case .surfaceFailure: .surfaceFailure
+            case .focusSnapshot: .focusSnapshot
             }
         }
 
@@ -4173,6 +4232,8 @@ public final class MacLocalXPCClientV1:
             case .surfaceTargets, .surfaceResolve,
                     .surfaceTransition, .surfaceAcknowledgement,
                     .surfaceFailure:
+                .applyInteractiveSurface
+            case .focusSnapshot:
                 .applyInteractiveSurface
             }
         }
@@ -4192,6 +4253,7 @@ public final class MacLocalXPCClientV1:
             InteractiveRuntimeSurfaceAcknowledgementReceiptV0
         )
         case surfaceFailure(LocalInteractiveSurfaceFailureReceiptV1)
+        case focusSnapshot(LocalInteractiveFocusSnapshotReceiptV1)
     }
 
     private final class PendingIncomingInteractiveLeaseCommand:
@@ -5696,6 +5758,11 @@ public final class MacLocalXPCClientV1:
                     try LocalInteractiveLeaseWireCodecV1
                         .decodeSurfaceFailureCommand(payload)
                 )
+            case MCLocalXPCInteractiveLeaseCommandFocusSnapshot:
+                return .focusSnapshot(
+                    try LocalInteractiveLeaseWireCodecV1
+                        .decodeFocusSnapshotCommand(payload)
+                )
             default:
                 return nil
             }
@@ -5808,6 +5875,15 @@ public final class MacLocalXPCClientV1:
                     result = .surfaceFailure(
                         try await interactiveLeaseHandler
                             .terminateInteractiveSurfaceFailure(value)
+                    )
+                case .focusSnapshot(let value):
+                    result = .focusSnapshot(
+                        try await interactiveLeaseHandler
+                            .interactiveFocusSnapshot(
+                                value,
+                                nowMonotonicNanoseconds:
+                                    monotonicNowNanoseconds()
+                            )
                     )
                 }
                 queue.async { [weak self] in
@@ -5936,6 +6012,10 @@ public final class MacLocalXPCClientV1:
                 try receipt.validate(against: command)
                 return try LocalInteractiveLeaseWireCodecV1
                     .encodeSurfaceFailureReceipt(receipt)
+            case (.focusSnapshot(let command), .focusSnapshot(let receipt)):
+                try receipt.validate(against: command)
+                return try LocalInteractiveLeaseWireCodecV1
+                    .encodeFocusSnapshotReceipt(receipt)
             default:
                 return nil
             }
@@ -6004,6 +6084,8 @@ public final class MacLocalXPCClientV1:
             MCLocalXPCInteractiveLeaseCommandSurfaceAcknowledgement
         case .surfaceFailure:
             MCLocalXPCInteractiveLeaseCommandSurfaceFailure
+        case .focusSnapshot:
+            MCLocalXPCInteractiveLeaseCommandFocusSnapshot
         }
     }
 

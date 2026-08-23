@@ -1,5 +1,6 @@
 #if os(macOS)
 import CompanionIPC
+import CompanionInteractiveHost
 import CompanionInteractiveRuntime
 import CompanionInteractiveWire
 import CompanionLocalXPCPlatform
@@ -127,6 +128,9 @@ package protocol MacInteractiveMenuRuntimeLeaseOwningV1: Sendable {
         _ command: InteractiveRuntimeSurfaceTransitionCommandV0,
         nowMonotonicNanoseconds: UInt64
     ) async throws -> InteractiveRuntimeSurfaceTransitionReceiptV0
+    func pauseInputForFocusChange(
+        _ command: LocalInteractiveFocusSnapshotCommandV1
+    ) async throws -> Bool
     func acknowledgeSurface(
         _ command: InteractiveRuntimeSurfaceAcknowledgementCommandV0,
         nowMonotonicNanoseconds: UInt64
@@ -159,6 +163,11 @@ extension MacInteractiveMenuRuntimeLeaseOwningV1 {
         _: InteractiveRuntimeSurfaceTransitionCommandV0,
         nowMonotonicNanoseconds _: UInt64
     ) async throws -> InteractiveRuntimeSurfaceTransitionReceiptV0 {
+        throw MacLocalXPCInteractiveLeaseErrorV1.unavailable
+    }
+    package func pauseInputForFocusChange(
+        _: LocalInteractiveFocusSnapshotCommandV1
+    ) async throws -> Bool {
         throw MacLocalXPCInteractiveLeaseErrorV1.unavailable
     }
     package func acknowledgeSurface(
@@ -446,6 +455,52 @@ public actor MacInteractiveLeaseRuntimeAdapterV1:
             interactiveSessionID: command.interactiveSessionID,
             terminated: terminated
         )
+    }
+
+    public func interactiveFocusSnapshot(
+        _ command: LocalInteractiveFocusSnapshotCommandV1,
+        nowMonotonicNanoseconds _: UInt64
+    ) async throws -> LocalInteractiveFocusSnapshotReceiptV1 {
+        try requireAvailable()
+        guard let surfaceTargets else {
+            throw MacLocalXPCInteractiveLeaseErrorV1.unavailable
+        }
+        var projection = try await surfaceTargets.focusCandidate(
+            command,
+            inputPaused: false
+        )
+        if projection.requiresInputPause {
+            guard try await runtime.pauseInputForFocusChange(command) else {
+                throw MacLocalXPCInteractiveLeaseErrorV1.unavailable
+            }
+            let value = projection.candidate
+            let paused = try InteractiveFocusEventCandidateV0(
+                recommendedTargetKind: value.recommendedTargetKind,
+                focus: value.focus,
+                inputPaused: true,
+                reason: value.reason,
+                validForMilliseconds: value.validForMilliseconds
+            )
+            projection = MacInteractiveFocusCandidateProjectionV1(
+                candidate: paused,
+                requiresInputPause: true
+            )
+        }
+        let value = projection.candidate
+        let candidate = try LocalInteractiveFocusCandidateV1(
+            recommendedTargetKind: value.recommendedTargetKind,
+            focus: value.focus,
+            inputPaused: value.inputPaused,
+            reason: value.reason,
+            validForMilliseconds: value.validForMilliseconds
+        )
+        let receipt = LocalInteractiveFocusSnapshotReceiptV1(
+            correlationID: command.commandID,
+            command: command,
+            candidate: candidate
+        )
+        try receipt.validate(against: command)
+        return receipt
     }
 
     public func invalidateAgentAuthority() async {

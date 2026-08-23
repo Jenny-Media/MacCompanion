@@ -387,6 +387,87 @@ private func codecDesktopDescriptor()
         .decodeSurfaceFailureReceipt(failureReceiptData)
     #expect(decodedFailureReceipt == failureReceipt)
     try decodedFailureReceipt.validate(against: failure)
+
+    let focusSnapshot = try LocalInteractiveFocusSnapshotCommandV1(
+        commandID: UUID(),
+        interactiveSessionID: codecSessionID,
+        authorizationEpoch: .init(rawValue: 4),
+        currentSurfaceID: nextSurfaceID,
+        expectedSurfaceRevision: .init(rawValue: 2),
+        expectedCoordinateSpaceRevision: .init(rawValue: 2)
+    )
+    let focusSnapshotData = try LocalInteractiveLeaseWireCodecV1
+        .encodeFocusSnapshotCommand(focusSnapshot)
+    #expect(
+        try LocalInteractiveLeaseWireCodecV1
+            .decodeFocusSnapshotCommand(focusSnapshotData) == focusSnapshot
+    )
+    let focus = try SurfaceFocus(
+        token: UUID(),
+        revision: .init(rawValue: 3),
+        category: .text,
+        bounds: NormalizedSurfaceRect(
+            x: 100,
+            y: 200,
+            width: 300,
+            height: 400
+        ),
+        editable: true,
+        secure: false
+    )
+    let focusCandidate = try LocalInteractiveFocusCandidateV1(
+        recommendedTargetKind: .focusedRegion,
+        focus: focus,
+        inputPaused: false,
+        reason: .verifiedFocus,
+        validForMilliseconds: 1_000
+    )
+    let focusReceipt = LocalInteractiveFocusSnapshotReceiptV1(
+        correlationID: focusSnapshot.commandID,
+        command: focusSnapshot,
+        candidate: focusCandidate
+    )
+    let focusReceiptData = try LocalInteractiveLeaseWireCodecV1
+        .encodeFocusSnapshotReceipt(focusReceipt)
+    let decodedFocusReceipt = try LocalInteractiveLeaseWireCodecV1
+        .decodeFocusSnapshotReceipt(focusReceiptData)
+    #expect(decodedFocusReceipt == focusReceipt)
+    try decodedFocusReceipt.validate(against: focusSnapshot)
+}
+
+@Test func localFocusSnapshotRejectsBroadenedOrMismatchedShapes() throws {
+    let command = try LocalInteractiveFocusSnapshotCommandV1(
+        commandID: UUID(),
+        interactiveSessionID: codecSessionID,
+        authorizationEpoch: .init(rawValue: 4),
+        currentSurfaceID: codecSurfaceID,
+        expectedSurfaceRevision: .init(rawValue: 1),
+        expectedCoordinateSpaceRevision: .init(rawValue: 1)
+    )
+    #expect(throws: LocalInteractiveSurfaceRuntimeErrorV1.invalidReceipt) {
+        _ = try LocalInteractiveFocusCandidateV1(
+            recommendedTargetKind: .application,
+            focus: nil,
+            inputPaused: false,
+            reason: .noVerifiedFocus,
+            validForMilliseconds: 1_000
+        )
+    }
+    let desktop = try LocalInteractiveFocusCandidateV1(
+        recommendedTargetKind: .desktop,
+        focus: nil,
+        inputPaused: true,
+        reason: .targetDisappeared,
+        validForMilliseconds: 1_000
+    )
+    let mismatched = LocalInteractiveFocusSnapshotReceiptV1(
+        correlationID: UUID(),
+        command: command,
+        candidate: desktop
+    )
+    #expect(throws: LocalInteractiveSurfaceRuntimeErrorV1.invalidReceipt) {
+        try mismatched.validate(against: command)
+    }
 }
 
 @Test func surfaceTargetReceiptMaximalNamesRemainWithinXPCBound() throws {

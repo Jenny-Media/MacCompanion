@@ -106,6 +106,31 @@ package struct MacLocalXPCInteractiveMenuRuntimeRouteV1:
         return receipt.descriptor
     }
 
+    package func focusCandidate(
+        current descriptor: AdaptiveSurfaceDescriptor
+    ) async throws -> InteractiveFocusEventCandidateV0 {
+        let command = try LocalInteractiveFocusSnapshotCommandV1(
+            commandID: identifier(),
+            interactiveSessionID: descriptor.interactiveSessionID,
+            authorizationEpoch: descriptor.authorizationEpoch,
+            currentSurfaceID: descriptor.surfaceID,
+            expectedSurfaceRevision: descriptor.surfaceRevision,
+            expectedCoordinateSpaceRevision:
+                descriptor.coordinateSpaceRevision
+        )
+        let receipt = try await sender.interactiveFocusSnapshot(command)
+        try receipt.validate(against: command)
+        return try InteractiveFocusEventCandidateV0(
+            recommendedTargetKind:
+                receipt.candidate.recommendedTargetKind,
+            focus: receipt.candidate.focus,
+            inputPaused: receipt.candidate.inputPaused,
+            reason: receipt.candidate.reason,
+            validForMilliseconds:
+                receipt.candidate.validForMilliseconds
+        )
+    }
+
     package func prepareSurfaceTransition(
         _ command: InteractiveRuntimeSurfaceTransitionCommandV0,
         nowMonotonicNanoseconds _: UInt64

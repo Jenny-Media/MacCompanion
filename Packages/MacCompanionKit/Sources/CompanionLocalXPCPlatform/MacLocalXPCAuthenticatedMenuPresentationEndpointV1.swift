@@ -262,6 +262,18 @@ package actor MacLocalXPCAuthenticatedMenuPresentationEndpointV1:
         }
     }
 
+    package func interactiveFocusSnapshot(
+        _ command: LocalInteractiveFocusSnapshotCommandV1
+    ) async throws -> LocalInteractiveFocusSnapshotReceiptV1 {
+        try await submitInteractive { sender in
+            try await sender.interactiveFocusSnapshot(
+                generation: generation,
+                endpointToken: endpointToken,
+                command: command
+            )
+        }
+    }
+
     package func applyInteractiveInput(
         _ envelope: InteractiveInputEnvelope
     ) async throws {

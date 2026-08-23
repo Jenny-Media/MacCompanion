@@ -484,8 +484,8 @@ other bundle-independent work.
 Latest Adaptive Control construction checkpoint, superseding the
 authenticated-XPC/app-window-transition next-step wording above: the
 [adaptive surface runtime binding](evidence/2026-08-23-adaptive-surface-runtime-binding.md)
-connects the permanent Agent's authenticated primary surface dispatcher to a
-nine-command exact-generation local-XPC family and a menu-only opaque
+connects the permanent Agent's authenticated primary surface dispatcher to an
+exact-generation local-XPC family and a menu-only opaque
 ScreenCaptureKit target owner. Desktop, application, window, and Desktop
 escape-hatch transitions now use ordered input release, source preparation,
 runtime fence/lease commit, activation, discontinuity/configuration/clean-frame
@@ -564,6 +564,18 @@ builds, and eight platform probes. Authenticated local-XPC candidate delivery,
 live observation, Agent product emission, ScreenCaptureKit crop construction,
 and automatic iOS application remain the next safe lanes; signed TCC and
 physical evidence remains open.
+
+The following [authenticated focus-candidate local XPC](evidence/2026-08-23-authenticated-focus-candidate-xpc.md)
+extends that family to ten closed operations. One canonical request/reply binds
+the exact current session, epoch, surface, surface revision, and coordinate
+revision while carrying only the sanitized target/focus/reason/input-paused
+candidate. The menu retains current global input bounds, assigns opaque stable
+focus identity from the reduced tuple, and—when an existing Focused Region
+changes—releases posted input once and keeps new input closed until the normal
+replacement acknowledgement. The full gate passes 73 fixtures, the 1,488-test
+Swift catalog, all cross-builds/unsigned permanent builds, and eight platform
+probes. A permanent Agent observation/event owner, focused-region capture crop,
+automatic iOS application, and signed physical evidence remain open.
 
 ## Blocker handling rule
 

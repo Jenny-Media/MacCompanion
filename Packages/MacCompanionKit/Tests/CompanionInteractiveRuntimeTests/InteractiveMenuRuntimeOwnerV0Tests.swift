@@ -869,6 +869,183 @@ private func installAndActivateInitial(
     ])
 }
 
+@Test func focusChangePauseReleasesOnceAndFeedsOrdinaryTransition()
+    async throws
+{
+    let effects = RuntimeEffectsProbe(
+        readyClasses: [.view, .pointer, .keyboard]
+    )
+    let owner = runtimeOwner(probe: effects)
+    let desktop = try runtimeLease(
+        allowedClasses: [.view, .pointer, .keyboard]
+    )
+    _ = try await installAndActivateInitial(
+        owner,
+        command: installCommand(lease: desktop)
+    )
+    let current = try runtimeLease(
+        leaseID: UUID(),
+        allowedClasses: [.view, .pointer, .keyboard],
+        surfaceID: UUID(),
+        surfaceRevision: 6,
+        coordinateRevision: 9,
+        renewalCounter: 1,
+        issuedAt: 3_000,
+        expiresAt: 7_000
+    )
+    let focus = try SurfaceFocus(
+        token: UUID(),
+        revision: .init(rawValue: 1),
+        category: .text,
+        bounds: NormalizedSurfaceRect(
+            x: 1_000,
+            y: 1_000,
+            width: 10_000,
+            height: 5_000
+        ),
+        editable: true,
+        secure: false
+    )
+    let descriptor = try AdaptiveSurfaceDescriptor(
+        interactiveSessionID: current.interactiveSessionID,
+        authorizationEpoch: current.authorizationEpoch,
+        surfaceID: current.surfaceID,
+        kind: .focusedRegion,
+        surfaceRevision: .init(rawValue: current.surfaceRevision.rawValue),
+        coordinateSpaceRevision: .init(
+            rawValue: current.coordinateRevision.rawValue
+        ),
+        applicationToken: UUID(),
+        parentSurfaceID: UUID(),
+        fallbackSurfaceID: UUID(),
+        encodedWidth: 100,
+        encodedHeight: 100,
+        logicalWidthPoints: 100,
+        logicalHeightPoints: 100,
+        interactionClasses: Set(current.allowedInteractionClasses),
+        privacyProfile: .assistedVisual,
+        metadataFields: [.editable, .focusBounds, .focusCategory, .secure],
+        focus: focus,
+        createdAtMonotonicMilliseconds: 0,
+        expiresAtMonotonicMilliseconds: 10_000
+    )
+    let focusedTransition = try
+        InteractiveRuntimeSurfaceTransitionCommandV0(
+            commandID: UUID(),
+            previousLeaseID: desktop.leaseID,
+            replacement: current,
+            descriptor: descriptor
+        )
+    _ = try await owner.prepareSurfaceTransition(
+        focusedTransition,
+        nowMonotonicNanoseconds: 4_000
+    )
+    try await owner.publishMedia(
+        InteractiveRuntimeMediaActionV0(
+            commandID: UUID(),
+            fence: runtimeFence(lease: current),
+            header: try runtimeMediaHeader(
+                lease: current,
+                sequence: 3,
+                payloadLength: 0,
+                type: .discontinuity
+            ),
+            payload: Data()
+        ),
+        nowMonotonicNanoseconds: 4_100
+    )
+    try await owner.publishMedia(
+        InteractiveRuntimeMediaActionV0(
+            commandID: UUID(),
+            fence: runtimeFence(lease: current),
+            header: try runtimeMediaHeader(
+                lease: current,
+                sequence: 4,
+                payloadLength: UInt32(runtimeDecoderConfiguration.count),
+                type: .decoderConfiguration
+            ),
+            payload: runtimeDecoderConfiguration
+        ),
+        nowMonotonicNanoseconds: 4_200
+    )
+    try await owner.publishMedia(
+        InteractiveRuntimeMediaActionV0(
+            commandID: UUID(),
+            fence: runtimeFence(lease: current),
+            header: try runtimeMediaHeader(
+                lease: current,
+                sequence: 5,
+                type: .videoAccessUnit,
+                cleanKeyframe: true
+            ),
+            payload: Data([0, 0, 0, 2, 0x65, 0])
+        ),
+        nowMonotonicNanoseconds: 4_300
+    )
+    _ = try await owner.acknowledgeSurface(
+        InteractiveRuntimeSurfaceAcknowledgementCommandV0(
+            commandID: UUID(),
+            transitionCommandID: focusedTransition.commandID,
+            leaseID: current.leaseID,
+            interactiveSessionID: current.interactiveSessionID,
+            surfaceID: current.surfaceID,
+            surfaceRevision: current.surfaceRevision,
+            coordinateRevision: current.coordinateRevision,
+            focusToken: focus.token,
+            focusRevision: focus.revision,
+            readyMediaSequence: 5
+        ),
+        nowMonotonicNanoseconds: 4_400
+    )
+    let snapshot = try LocalInteractiveFocusSnapshotCommandV1(
+        commandID: UUID(),
+        interactiveSessionID: current.interactiveSessionID,
+        authorizationEpoch: current.authorizationEpoch,
+        currentSurfaceID: current.surfaceID,
+        expectedSurfaceRevision: descriptor.surfaceRevision,
+        expectedCoordinateSpaceRevision:
+            descriptor.coordinateSpaceRevision
+    )
+
+    #expect(try await owner.pauseInputForFocusChange(snapshot))
+    #expect(try await owner.pauseInputForFocusChange(snapshot))
+    #expect(await owner.surfaceAdmissionState() == .focusPaused)
+    await #expect(throws: InteractiveMenuRuntimeErrorV0.surfaceNotAcknowledged) {
+        try await owner.postInput(
+            InteractiveRuntimeInputActionV0(
+                commandID: UUID(),
+                fence: runtimeFence(lease: current),
+                envelope: runtimeInput(lease: current)
+            ),
+            nowMonotonicNanoseconds: 4_500
+        )
+    }
+
+    let replacement = try runtimeLease(
+        leaseID: UUID(),
+        allowedClasses: [.view, .pointer, .keyboard],
+        surfaceID: UUID(),
+        surfaceRevision: 7,
+        coordinateRevision: 10,
+        renewalCounter: 2,
+        issuedAt: 5_000,
+        expiresAt: 8_000
+    )
+    let transition = try runtimeSurfaceTransition(
+        current: current,
+        replacement: replacement
+    )
+    _ = try await owner.prepareSurfaceTransition(
+        transition,
+        nowMonotonicNanoseconds: 5_100
+    )
+    #expect(await effects.events() == [
+        .show, .start,
+        .release, .prepare, .activate,
+        .release, .prepare, .activate,
+    ])
+}
+
 @Test func surfaceTransitionMediaOrderFailureTerminatesRuntime()
     async throws
 {

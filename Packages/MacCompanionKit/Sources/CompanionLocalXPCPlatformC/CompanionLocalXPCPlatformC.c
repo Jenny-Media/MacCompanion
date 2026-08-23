@@ -90,6 +90,10 @@ static const char MCLocalXPCInteractiveSurfaceFailureKind[] =
     "runtime.interactive.surface.failure";
 static const char MCLocalXPCInteractiveSurfaceFailureAcknowledgementKind[] =
     "runtime.interactive.surface.failure.ack";
+static const char MCLocalXPCInteractiveFocusSnapshotKind[] =
+    "runtime.interactive.focus.snapshot";
+static const char MCLocalXPCInteractiveFocusSnapshotAcknowledgementKind[] =
+    "runtime.interactive.focus.snapshot.ack";
 static const char MCLocalXPCInteractiveAdmissionPublicationKind[] =
     "runtime.interactive.admission.publish";
 static const char MCLocalXPCInteractiveAdmissionAcknowledgementKind[] =
@@ -168,6 +172,8 @@ static const char * _Nullable MCLocalXPCInteractiveLeaseRequestKind(
         return MCLocalXPCInteractiveSurfaceAcknowledgementKind;
     case MCLocalXPCInteractiveLeaseCommandSurfaceFailure:
         return MCLocalXPCInteractiveSurfaceFailureKind;
+    case MCLocalXPCInteractiveLeaseCommandFocusSnapshot:
+        return MCLocalXPCInteractiveFocusSnapshotKind;
     }
     return NULL;
 }
@@ -194,6 +200,8 @@ static const char * _Nullable MCLocalXPCInteractiveLeaseAcknowledgementKind(
         return MCLocalXPCInteractiveSurfaceAcknowledgementAcknowledgementKind;
     case MCLocalXPCInteractiveLeaseCommandSurfaceFailure:
         return MCLocalXPCInteractiveSurfaceFailureAcknowledgementKind;
+    case MCLocalXPCInteractiveLeaseCommandFocusSnapshot:
+        return MCLocalXPCInteractiveFocusSnapshotAcknowledgementKind;
     }
     return NULL;
 }
@@ -208,7 +216,8 @@ static bool MCLocalXPCInteractiveLeaseReplyCarriesPayload(
         || kind == MCLocalXPCInteractiveLeaseCommandSurfaceResolve
         || kind == MCLocalXPCInteractiveLeaseCommandSurfaceTransition
         || kind == MCLocalXPCInteractiveLeaseCommandSurfaceAcknowledgement
-        || kind == MCLocalXPCInteractiveLeaseCommandSurfaceFailure;
+        || kind == MCLocalXPCInteractiveLeaseCommandSurfaceFailure
+        || kind == MCLocalXPCInteractiveLeaseCommandFocusSnapshot;
 }
 
 static void MCLocalXPCReleaseError(xpc_rich_error_t error) {
@@ -923,6 +932,7 @@ bool MCLocalXPCMessageGetExactInteractiveLeaseCommand(
         MCLocalXPCInteractiveLeaseCommandSurfaceTransition,
         MCLocalXPCInteractiveLeaseCommandSurfaceAcknowledgement,
         MCLocalXPCInteractiveLeaseCommandSurfaceFailure,
+        MCLocalXPCInteractiveLeaseCommandFocusSnapshot,
     };
     for (size_t index = 0;
          index < sizeof(kinds) / sizeof(kinds[0]);
@@ -1583,6 +1593,7 @@ bool MCLocalXPCExactMessageParserSelfTest(void) {
         MCLocalXPCInteractiveLeaseCommandSurfaceTransition,
         MCLocalXPCInteractiveLeaseCommandSurfaceAcknowledgement,
         MCLocalXPCInteractiveLeaseCommandSurfaceFailure,
+        MCLocalXPCInteractiveLeaseCommandFocusSnapshot,
     };
     for (size_t index = 0;
          index < sizeof(lease_kinds) / sizeof(lease_kinds[0]);

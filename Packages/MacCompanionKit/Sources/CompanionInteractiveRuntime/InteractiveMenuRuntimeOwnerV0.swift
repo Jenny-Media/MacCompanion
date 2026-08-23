@@ -203,6 +203,7 @@ public enum InteractiveRuntimeSurfaceAdmissionStateV0:
     Sendable
 {
     case ready
+    case focusPaused
     case preparing(transitionCommandID: UUID)
     case requiresDiscontinuity(transitionCommandID: UUID)
     case requiresConfiguration(transitionCommandID: UUID)
@@ -354,6 +355,20 @@ public actor InteractiveMenuRuntimeOwnerV0 {
                 command,
                 nowMonotonicNanoseconds: nowMonotonicNanoseconds
             )
+        }
+        sequencingTail = Task { _ = try? await operation.value }
+        return try await operation.value
+    }
+
+    /// Releases all currently posted input and keeps new input closed while a
+    /// focus-driven replacement is offered to the client.
+    public func pauseInputForFocusChange(
+        _ command: LocalInteractiveFocusSnapshotCommandV1
+    ) async throws -> Bool {
+        let predecessor = sequencingTail
+        let operation = Task { [self] in
+            await predecessor.value
+            return try await performPauseInputForFocusChange(command)
         }
         sequencingTail = Task { _ = try? await operation.value }
         return try await operation.value
@@ -676,7 +691,10 @@ public actor InteractiveMenuRuntimeOwnerV0 {
             try receipt.validate(against: transition)
             return receipt
         }
-        guard active.surfaceAdmission == .ready else {
+        let inputWasAlreadyReleased =
+            active.surfaceAdmission == .focusPaused
+        guard active.surfaceAdmission == .ready
+                || inputWasAlreadyReleased else {
             throw InteractiveMenuRuntimeErrorV0
                 .surfaceTransitionInProgress
         }
@@ -710,10 +728,12 @@ public actor InteractiveMenuRuntimeOwnerV0 {
             transitionCommandID: transition.commandID
         )
         storage = .active(active)
-        var inputReleased = false
+        var inputReleased = inputWasAlreadyReleased
         do {
-            try await input.releaseAllInteractiveInput()
-            inputReleased = true
+            if !inputReleased {
+                try await input.releaseAllInteractiveInput()
+                inputReleased = true
+            }
             let readyClasses = try await capture
                 .prepareInteractiveCaptureTransition(transition)
             guard readyClasses.isSuperset(
@@ -960,6 +980,39 @@ public actor InteractiveMenuRuntimeOwnerV0 {
         storage = .active(active)
     }
 
+    private func performPauseInputForFocusChange(
+        _ command: LocalInteractiveFocusSnapshotCommandV1
+    ) async throws -> Bool {
+        guard case var .active(active) = storage else {
+            if case .safetyRecoveryRequired = storage {
+                throw InteractiveMenuRuntimeErrorV0.safetyRecoveryRequired
+            }
+            throw InteractiveMenuRuntimeErrorV0.noActiveSession
+        }
+        let descriptor = active.command.surfaceDescriptor
+        guard descriptor.kind == .focusedRegion,
+              command.interactiveSessionID
+                == descriptor.interactiveSessionID,
+              command.authorizationEpoch == descriptor.authorizationEpoch,
+              command.currentSurfaceID == descriptor.surfaceID,
+              command.expectedSurfaceRevision == descriptor.surfaceRevision,
+              command.expectedCoordinateSpaceRevision
+                == descriptor.coordinateSpaceRevision else {
+            throw InteractiveMenuRuntimeErrorV0.bindingMismatch
+        }
+        if active.surfaceAdmission == .focusPaused { return true }
+        guard active.surfaceAdmission == .ready else {
+            throw InteractiveMenuRuntimeErrorV0
+                .surfaceTransitionInProgress
+        }
+        active.surfaceAdmission = .focusPaused
+        storage = .active(active)
+        try await input.releaseAllInteractiveInput()
+        active.inputReleasedForSurfaceTransition = true
+        storage = .active(active)
+        return true
+    }
+
     private func performInputEnvelope(
         _ envelope: InteractiveInputEnvelope,
         nowMonotonicNanoseconds: UInt64
@@ -1086,6 +1139,8 @@ public actor InteractiveMenuRuntimeOwnerV0 {
         switch current {
         case .ready:
             return .ready
+        case .focusPaused:
+            return .focusPaused
         case .preparing:
             throw InteractiveMenuRuntimeErrorV0
                 .invalidSurfaceMediaTransition

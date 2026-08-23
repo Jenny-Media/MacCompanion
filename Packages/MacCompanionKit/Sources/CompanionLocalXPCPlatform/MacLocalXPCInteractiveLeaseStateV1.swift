@@ -47,6 +47,9 @@ public protocol MacLocalXPCInteractiveLeaseSendingV1: Sendable {
     func terminateInteractiveSurfaceFailure(
         _ command: LocalInteractiveSurfaceFailureCommandV1
     ) async throws -> LocalInteractiveSurfaceFailureReceiptV1
+    func interactiveFocusSnapshot(
+        _ command: LocalInteractiveFocusSnapshotCommandV1
+    ) async throws -> LocalInteractiveFocusSnapshotReceiptV1
 }
 
 extension MacLocalXPCInteractiveLeaseSendingV1 {
@@ -73,6 +76,11 @@ extension MacLocalXPCInteractiveLeaseSendingV1 {
     public func terminateInteractiveSurfaceFailure(
         _: LocalInteractiveSurfaceFailureCommandV1
     ) async throws -> LocalInteractiveSurfaceFailureReceiptV1 {
+        throw MacLocalXPCInteractiveLeaseErrorV1.unavailable
+    }
+    public func interactiveFocusSnapshot(
+        _: LocalInteractiveFocusSnapshotCommandV1
+    ) async throws -> LocalInteractiveFocusSnapshotReceiptV1 {
         throw MacLocalXPCInteractiveLeaseErrorV1.unavailable
     }
 }
@@ -134,6 +142,11 @@ package protocol MacLocalXPCGenerationBoundInteractiveLeaseSendingV1:
         endpointToken: UUID,
         command: LocalInteractiveSurfaceFailureCommandV1
     ) async throws -> LocalInteractiveSurfaceFailureReceiptV1
+    func interactiveFocusSnapshot(
+        generation: UInt64,
+        endpointToken: UUID,
+        command: LocalInteractiveFocusSnapshotCommandV1
+    ) async throws -> LocalInteractiveFocusSnapshotReceiptV1
 }
 
 extension MacLocalXPCGenerationBoundInteractiveLeaseSendingV1 {
@@ -172,6 +185,13 @@ extension MacLocalXPCGenerationBoundInteractiveLeaseSendingV1 {
     ) async throws -> LocalInteractiveSurfaceFailureReceiptV1 {
         throw MacLocalXPCInteractiveLeaseErrorV1.unavailable
     }
+    package func interactiveFocusSnapshot(
+        generation _: UInt64,
+        endpointToken _: UUID,
+        command _: LocalInteractiveFocusSnapshotCommandV1
+    ) async throws -> LocalInteractiveFocusSnapshotReceiptV1 {
+        throw MacLocalXPCInteractiveLeaseErrorV1.unavailable
+    }
 }
 
 package enum MacLocalXPCInteractiveLeaseCommandKindV1:
@@ -187,6 +207,7 @@ package enum MacLocalXPCInteractiveLeaseCommandKindV1:
     case surfaceTransition
     case surfaceAcknowledgement
     case surfaceFailure
+    case focusSnapshot
 }
 
 /// Pure queue-admission binding copied from the opaque ready-generation
@@ -256,6 +277,10 @@ public protocol MacLocalXPCInteractiveLeaseHandlingV1: Sendable {
     func terminateInteractiveSurfaceFailure(
         _ command: LocalInteractiveSurfaceFailureCommandV1
     ) async throws -> LocalInteractiveSurfaceFailureReceiptV1
+    func interactiveFocusSnapshot(
+        _ command: LocalInteractiveFocusSnapshotCommandV1,
+        nowMonotonicNanoseconds: UInt64
+    ) async throws -> LocalInteractiveFocusSnapshotReceiptV1
 
     func invalidateAgentAuthority() async
 }
@@ -295,6 +320,12 @@ extension MacLocalXPCInteractiveLeaseHandlingV1 {
     public func terminateInteractiveSurfaceFailure(
         _: LocalInteractiveSurfaceFailureCommandV1
     ) async throws -> LocalInteractiveSurfaceFailureReceiptV1 {
+        throw MacLocalXPCInteractiveLeaseErrorV1.unavailable
+    }
+    public func interactiveFocusSnapshot(
+        _: LocalInteractiveFocusSnapshotCommandV1,
+        nowMonotonicNanoseconds _: UInt64
+    ) async throws -> LocalInteractiveFocusSnapshotReceiptV1 {
         throw MacLocalXPCInteractiveLeaseErrorV1.unavailable
     }
 }

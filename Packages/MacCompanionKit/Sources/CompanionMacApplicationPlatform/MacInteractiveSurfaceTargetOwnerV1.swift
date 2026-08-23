@@ -2,6 +2,7 @@
 import CompanionDomain
 import CompanionHostPlatform
 import CompanionIPC
+import CompanionInteractiveHost
 import CompanionInteractiveShared
 import CompanionInteractiveWire
 import CoreGraphics
@@ -17,6 +18,19 @@ public enum MacInteractiveSurfaceTargetOwnerErrorV1:
     case transitionInProgress
 }
 
+public struct MacInteractiveFocusCandidateProjectionV1: Sendable {
+    public let candidate: InteractiveFocusEventCandidateV0
+    public let requiresInputPause: Bool
+
+    public init(
+        candidate: InteractiveFocusEventCandidateV0,
+        requiresInputPause: Bool
+    ) {
+        self.candidate = candidate
+        self.requiresInputPause = requiresInputPause
+    }
+}
+
 /// The menu-process-only bridge between privacy-filtered opaque picker tokens
 /// and live ScreenCaptureKit objects. The Agent can receive only sanitized
 /// inventory and descriptors; the selected filter and global input geometry
@@ -29,24 +43,42 @@ public actor MacInteractiveSurfaceTargetOwnerV1 {
         let physicalDisplayID: CGDirectDisplayID
         let desktopRotation: SurfaceRotation
         let catalog: ScreenCaptureKitOpaqueTargetCatalogV0
+        var inputBounds: CGRect
+    }
+
+    private struct FocusFingerprint: Equatable {
+        let category: FocusElementCategory
+        let bounds: NormalizedSurfaceRect
+        let editable: Bool
+        let secure: Bool
     }
 
     private let excludedBundleIdentifiers: Set<String>
     private let excludedProcessIdentifiers: Set<pid_t>
     private let identifier: @Sendable () -> UUID
+    private let focusReader: any MacAccessibilityFocusReadingV0
+    private let focusProjector = MacAccessibilityFocusProjectorV0()
     private var active: Active?
     private var pending: ScreenCaptureKitResolvedSurfaceV0?
+    private var taken: ScreenCaptureKitResolvedSurfaceV0?
+    private var lastFocusFingerprint: FocusFingerprint?
+    private var focusToken: UUID?
+    private var focusRevision: UInt64 = 0
+    private var issuedFocusTokens: Set<UUID> = []
 
     public init(
         excludedBundleIdentifiers: Set<String> = [
             "media.jenny.maccompanion",
         ],
         excludedProcessIdentifiers: Set<pid_t> = [getpid()],
-        identifier: @escaping @Sendable () -> UUID = { UUID() }
+        identifier: @escaping @Sendable () -> UUID = { UUID() },
+        focusReader: any MacAccessibilityFocusReadingV0 =
+            SystemMacAccessibilityFocusReaderV0()
     ) {
         self.excludedBundleIdentifiers = excludedBundleIdentifiers
         self.excludedProcessIdentifiers = excludedProcessIdentifiers
         self.identifier = identifier
+        self.focusReader = focusReader
     }
 
     /// Binds the initial Desktop without ScreenCaptureKit enumeration. This is
@@ -56,8 +88,10 @@ public actor MacInteractiveSurfaceTargetOwnerV1 {
         descriptor: AdaptiveSurfaceDescriptor,
         physicalDisplayID: CGDirectDisplayID
     ) throws {
-        guard active == nil, pending == nil,
+        let inputBounds = CGDisplayBounds(physicalDisplayID)
+        guard active == nil, pending == nil, taken == nil,
               physicalDisplayID != 0,
+              Self.valid(inputBounds),
               descriptor.interactiveSessionID
                 == command.interactiveSessionID,
               descriptor.authorizationEpoch == command.authorizationEpoch,
@@ -79,14 +113,15 @@ public actor MacInteractiveSurfaceTargetOwnerV1 {
             lease: nil,
             physicalDisplayID: physicalDisplayID,
             desktopRotation: descriptor.rotation,
-            catalog: catalog
+            catalog: catalog,
+            inputBounds: inputBounds
         )
     }
 
     public func bindInstalledLease(
         _ command: InteractiveRuntimeInstallCommandV0
     ) throws {
-        guard var active, pending == nil,
+        guard var active, pending == nil, taken == nil,
               active.lease == nil,
               active.descriptor == command.surfaceDescriptor,
               command.lease.interactiveSessionID
@@ -109,7 +144,7 @@ public actor MacInteractiveSurfaceTargetOwnerV1 {
         authorizationEpoch: AuthorizationEpoch,
         nowMonotonicMilliseconds: Int64
     ) async throws -> AdaptiveSurfaceTargetInventorySnapshotV0 {
-        guard let active, pending == nil,
+        guard let active, pending == nil, taken == nil,
               active.lease != nil,
               active.descriptor.interactiveSessionID
                 == interactiveSessionID,
@@ -129,7 +164,7 @@ public actor MacInteractiveSurfaceTargetOwnerV1 {
         _ request: LocalInteractiveSurfaceResolveCommandV1,
         nowMonotonicMilliseconds: Int64
     ) async throws -> AdaptiveSurfaceDescriptor {
-        guard let active, pending == nil,
+        guard let active, pending == nil, taken == nil,
               active.lease != nil,
               request.interactiveSessionID
                 == active.descriptor.interactiveSessionID,
@@ -191,6 +226,7 @@ public actor MacInteractiveSurfaceTargetOwnerV1 {
             throw MacInteractiveSurfaceTargetOwnerErrorV1.bindingMismatch
         }
         self.pending = nil
+        taken = pending
         return pending
     }
 
@@ -198,7 +234,7 @@ public actor MacInteractiveSurfaceTargetOwnerV1 {
         _ transition: InteractiveRuntimeSurfaceTransitionCommandV0
     ) throws {
         guard var active, let lease = active.lease,
-              pending == nil,
+              pending == nil, let taken,
               transition.previousLeaseID == lease.leaseID,
               transition.descriptor.interactiveSessionID
                 == active.descriptor.interactiveSessionID,
@@ -207,18 +243,111 @@ public actor MacInteractiveSurfaceTargetOwnerV1 {
               transition.replacement.surfaceRevision.rawValue
                 == transition.descriptor.surfaceRevision.rawValue,
               transition.replacement.coordinateRevision.rawValue
-                == transition.descriptor.coordinateSpaceRevision.rawValue else {
+                == transition.descriptor.coordinateSpaceRevision.rawValue,
+              taken.descriptor == transition.descriptor,
+              Self.valid(taken.inputBounds) else {
             throw MacInteractiveSurfaceTargetOwnerErrorV1.bindingMismatch
         }
         active.descriptor = transition.descriptor
         active.lease = transition.replacement
+        active.inputBounds = taken.inputBounds
         self.active = active
+        self.taken = nil
+        lastFocusFingerprint = nil
+        focusToken = nil
+    }
+
+    public func focusCandidate(
+        _ command: LocalInteractiveFocusSnapshotCommandV1,
+        inputPaused: Bool
+    ) throws -> MacInteractiveFocusCandidateProjectionV1 {
+        guard let active, pending == nil, taken == nil,
+              active.lease != nil,
+              command.interactiveSessionID
+                == active.descriptor.interactiveSessionID,
+              command.authorizationEpoch
+                == active.descriptor.authorizationEpoch,
+              command.currentSurfaceID == active.descriptor.surfaceID,
+              command.expectedSurfaceRevision
+                == active.descriptor.surfaceRevision,
+              command.expectedCoordinateSpaceRevision
+                == active.descriptor.coordinateSpaceRevision,
+              Self.valid(active.inputBounds) else {
+            throw MacInteractiveSurfaceTargetOwnerErrorV1.bindingMismatch
+        }
+        let projected = try focusProjector.project(
+            focusReader.readCurrentFocus(),
+            currentSurfaceGlobalBounds: active.inputBounds,
+            focusToken: command.commandID,
+            focusRevision: FocusRevision(rawValue: 1),
+            inputPaused: inputPaused
+        )
+        guard let projectedFocus = projected.focus else {
+            lastFocusFingerprint = nil
+            focusToken = nil
+            return MacInteractiveFocusCandidateProjectionV1(
+                candidate: projected,
+                requiresInputPause:
+                    active.descriptor.kind == .focusedRegion
+                        && active.descriptor.focus != nil
+            )
+        }
+        let fingerprint = FocusFingerprint(
+            category: projectedFocus.category,
+            bounds: projectedFocus.bounds,
+            editable: projectedFocus.editable,
+            secure: projectedFocus.secure
+        )
+        if fingerprint != lastFocusFingerprint {
+            guard focusRevision < FocusRevision.maximumWireValue,
+                  issuedFocusTokens.count < 100_000 else {
+                throw MacInteractiveSurfaceTargetOwnerErrorV1.unavailable
+            }
+            let nextToken = identifier()
+            guard nextToken != active.descriptor.surfaceID,
+                  !issuedFocusTokens.contains(nextToken) else {
+                throw MacInteractiveSurfaceTargetOwnerErrorV1.unavailable
+            }
+            focusRevision += 1
+            focusToken = nextToken
+            issuedFocusTokens.insert(nextToken)
+            lastFocusFingerprint = fingerprint
+        }
+        guard let focusToken, focusRevision >= 1 else {
+            throw MacInteractiveSurfaceTargetOwnerErrorV1.unavailable
+        }
+        let focus = try SurfaceFocus(
+            token: focusToken,
+            revision: FocusRevision(rawValue: focusRevision),
+            category: projectedFocus.category,
+            bounds: projectedFocus.bounds,
+            editable: projectedFocus.editable,
+            secure: projectedFocus.secure
+        )
+        let candidate = try InteractiveFocusEventCandidateV0(
+            recommendedTargetKind: projected.recommendedTargetKind,
+            focus: focus,
+            inputPaused: projected.inputPaused,
+            reason: projected.reason,
+            validForMilliseconds: projected.validForMilliseconds
+        )
+        return MacInteractiveFocusCandidateProjectionV1(
+            candidate: candidate,
+            requiresInputPause:
+                active.descriptor.kind == .focusedRegion
+                    && candidate.focus != active.descriptor.focus
+        )
     }
 
     public func invalidate() {
         active?.catalog.invalidate()
         active = nil
         pending = nil
+        taken = nil
+        lastFocusFingerprint = nil
+        focusToken = nil
+        focusRevision = 0
+        issuedFocusTokens.removeAll(keepingCapacity: false)
     }
 
     private func makeDesktopReplacement(
@@ -277,6 +406,12 @@ public actor MacInteractiveSurfaceTargetOwnerV1 {
                 ScreenCaptureKitOpaqueTargetCatalogV0
                     .backingScaleFactor(for: active.physicalDisplayID)
         )
+    }
+
+    private static func valid(_ bounds: CGRect) -> Bool {
+        bounds.origin.x.isFinite && bounds.origin.y.isFinite
+            && bounds.width.isFinite && bounds.height.isFinite
+            && bounds.width > 0 && bounds.height > 0
     }
 }
 #endif
