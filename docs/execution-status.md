@@ -128,14 +128,13 @@ sticky cleanup-failure latch. Its Agent owner double-revalidates durable and
 visible admission around opaque Desktop preparation, transfers channel
 credentials only after the exact install receipt, renews only the exact current
 lease after another final admission read, and requires correlated four-effect
-revocation or compensation. The permanent target still selects the inert
-constructor. The subsequent
+revocation or compensation. The subsequent
 [opaque-display and lease-scheduling checkpoint](evidence/2026-08-22-opaque-display-and-lease-scheduling.md)
 retains the physical main-display mapping only in the menu-platform module,
 publishes its opaque UUID, refuses redirection after display loss, and renews
 from exact acknowledged lease deadlines without retrying ambiguity. Concrete
-platform effects and secondary channel handoff remain the next Control
-composition gates.
+platform effects and secondary channel handoff remain Control composition
+gates.
 
 The [initial Desktop runtime transport checkpoint](evidence/2026-08-22-initial-desktop-runtime-transport.md)
 now adds Desktop preparation as the fourth operation on the authenticated
@@ -145,10 +144,16 @@ returns only a bounded, exactly correlated descriptor without ScreenCaptureKit
 enumeration or platform effects. Install now carries that complete descriptor,
 binds it to every lease surface dimension during construction and decoding,
 revalidates Desktop kind plus monotonic validity before indicator/capture, and
-passes the full command into the capture seam. The full 1,426-test Swift catalog,
-cross-builds, and eight platform probes pass. Permanent Agent runtime-owner
-composition and concrete menu indicator/capture/media/input adapters remain the
-next independent Control slice.
+passes the full command into the capture seam. The later
+[permanent Agent runtime binding](evidence/2026-08-22-permanent-agent-interactive-runtime-binding.md)
+installs one stable fail-closed authority in the dispatcher before XPC and
+binds only the exact authenticated-ready generation through its cached opaque
+endpoint. The server queue rechecks that generation and its private issuance
+token, so stale endpoints cannot redirect work to replacements; menu loss and
+product finish serially retire the bound owner. The full 1,431-test Swift
+catalog, cross-builds, and eight platform probes pass. Concrete menu
+indicator/capture/media/input adapters remain the next independent Control
+slice.
 
 The [visible Interactive admission checkpoint](evidence/2026-08-22-visible-interactive-admission-contract.md)
 now carries the closed canonical menu-process generation, exact revision, and

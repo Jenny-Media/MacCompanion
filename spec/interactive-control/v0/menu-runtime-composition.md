@@ -4,6 +4,16 @@ Status: normative for the bundle-independent single-owner runtime seam. Authenti
 
 ## Ownership and admission
 
+The permanent Agent primary dispatcher receives one stable fail-closed runtime
+authority before local XPC construction. That authority contains no runtime at
+construction. Only an exact authenticated-and-ready menu generation may bind
+one concrete runtime owner, and every install/termination is serialized with
+generation binding, invalidation, and replacement. A stale generation cannot
+bind, a replacement cannot silently redirect an active session, and generation
+loss terminates the bound session with `menuAppUnavailable` before a later
+generation can bind. Terminal Agent teardown makes the authority permanently
+unavailable.
+
 Exactly one visible menu-app runtime owner serializes install, renewal, acknowledged revoke, lease expiry, and Agent-IPC invalidation. Actor reentrancy may enqueue another command but cannot overlap platform effects. No view model, capture callback, XPC callback, or remote channel owns execution state independently.
 
 Install accepts only the typed local-IPC command and a current local monotonic

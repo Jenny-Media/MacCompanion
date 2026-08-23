@@ -5,9 +5,10 @@ bootstrapping, leases, status, sanitized diagnostic payloads, and the macOS 26
 peer-identity boundary. The signed peer-requirement mechanism is provisionally
 proven on Xcode 27 beta. The production hello, menu-lifecycle-ready,
 content-free status-read, disabled-Agent bootstrap, and menu pairing-command
-transports are constructed. Interactive lease install, renewal, and revocation
-and visible-admission publication now have exact transport profiles below;
-their permanent transport composition and signed execution evidence remain
+transports are constructed. Interactive Desktop preparation, lease install,
+renewal, revocation, and visible-admission publication now have exact transport
+profiles and permanent authenticated-generation composition below. Concrete
+capture, media, and input adapters and signed execution evidence remain
 pending.
 
 Local IPC is never authenticated by a caller-supplied role, PID, path, service
@@ -562,6 +563,19 @@ larger than 4,096 bytes. The renewal acknowledgement contains exactly `kind`
 and signed integer `version = 1`. The payload bytes are closed canonical JSON
 and the typed value is validated again at the runtime boundary. The exact
 indexed fixture is `local-xpc-interactive-lease-transport-v0.1.json`.
+
+The permanent Agent installs one stable fail-closed runtime authority in its
+primary dispatcher before local XPC exists. Only an exact authenticated,
+menu-ready generation may bind that authority to its cached opaque Interactive
+sender endpoint. Every runtime request repeats the listener-run, retained-peer,
+transport-generation, and unforgeable private endpoint-token checks on the
+server queue immediately before admission. A retired endpoint therefore fails
+locally or fences only its own generation; it can never resolve "the current
+menu" and redirect an old command to a replacement process. Generation loss
+first invalidates the matching runtime binding and terminates any active lease,
+then retires the remaining presentation surface. A higher generation can bind
+only after that serialized teardown, and terminal product shutdown forbids all
+later binding.
 
 There is no handled application-error envelope. The Agent sender and menu
 receiver share one cross-family single-flight transaction for Desktop

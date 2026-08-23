@@ -33,6 +33,39 @@ public protocol MacLocalXPCInteractiveLeaseSendingV1: Sendable {
     ) async throws -> InteractiveRuntimeRevokedReceiptV0
 }
 
+/// Transport-internal sender used only by the opaque endpoint issued for one
+/// exact authenticated-and-ready menu generation. Both generation and private
+/// endpoint token are rechecked in the server queue at command admission, so a
+/// retained stale endpoint can never redirect a command to its replacement.
+package protocol MacLocalXPCGenerationBoundInteractiveLeaseSendingV1:
+    AnyObject,
+    Sendable
+{
+    func prepareInitialInteractiveDesktop(
+        generation: UInt64,
+        endpointToken: UUID,
+        command: LocalInteractiveInitialDesktopPreparationCommandV1
+    ) async throws -> LocalInteractiveInitialDesktopPreparedReceiptV1
+
+    func installInteractiveLease(
+        generation: UInt64,
+        endpointToken: UUID,
+        command: InteractiveRuntimeInstallCommandV0
+    ) async throws -> InteractiveRuntimeInstallReceiptV0
+
+    func renewInteractiveLease(
+        generation: UInt64,
+        endpointToken: UUID,
+        renewal: InteractiveRuntimeLeaseRenewalV0
+    ) async throws
+
+    func revokeInteractiveLease(
+        generation: UInt64,
+        endpointToken: UUID,
+        command: InteractiveRuntimeRevokeCommandV0
+    ) async throws -> InteractiveRuntimeRevokedReceiptV0
+}
+
 package enum MacLocalXPCInteractiveLeaseCommandKindV1:
     Equatable,
     Sendable
@@ -41,6 +74,30 @@ package enum MacLocalXPCInteractiveLeaseCommandKindV1:
     case install
     case renew
     case revoke
+}
+
+/// Pure queue-admission binding copied from the opaque ready-generation
+/// endpoint. Both values are mandatory and exact.
+package struct MacLocalXPCInteractiveLeaseEndpointBindingV1:
+    Equatable,
+    Sendable
+{
+    package let generation: UInt64
+    package let endpointToken: UUID
+
+    package init(generation: UInt64, endpointToken: UUID) {
+        self.generation = generation
+        self.endpointToken = endpointToken
+    }
+
+    package func admits(
+        generation: UInt64,
+        issuedEndpointToken: UUID?
+    ) -> Bool {
+        self.generation > 0
+            && self.generation == generation
+            && endpointToken == issuedEndpointToken
+    }
 }
 
 /// Menu-process runtime authority. The concrete receiver supplies its own

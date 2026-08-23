@@ -1,6 +1,26 @@
 #if os(macOS)
 @testable import CompanionLocalXPCPlatform
+import Foundation
 import Testing
+
+@Test func interactiveLeaseEndpointRequiresExactGenerationAndPrivateToken() {
+    let token = UUID()
+    let binding = MacLocalXPCInteractiveLeaseEndpointBindingV1(
+        generation: 11,
+        endpointToken: token
+    )
+
+    #expect(binding.admits(generation: 11, issuedEndpointToken: token))
+    #expect(!binding.admits(generation: 12, issuedEndpointToken: token))
+    #expect(!binding.admits(generation: 11, issuedEndpointToken: UUID()))
+    #expect(!binding.admits(generation: 11, issuedEndpointToken: nil))
+    #expect(
+        !MacLocalXPCInteractiveLeaseEndpointBindingV1(
+            generation: 0,
+            endpointToken: token
+        ).admits(generation: 0, issuedEndpointToken: token)
+    )
+}
 
 @Test func interactiveLeaseGateIsCrossFamilySingleFlightAndGenerationFenced() {
     var gate = MacLocalXPCInteractiveLeaseTransactionGateV1()

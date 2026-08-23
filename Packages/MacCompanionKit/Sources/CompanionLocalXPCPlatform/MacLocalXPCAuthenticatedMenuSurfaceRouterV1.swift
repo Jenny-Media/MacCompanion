@@ -16,6 +16,7 @@ package protocol MacLocalXPCAuthenticatedMenuSurfaceEndpointV1:
     AnyObject,
     LocalHostIdentityRecoverySurfaceV0,
     LocalPairingReviewSurfaceV0,
+    MacLocalXPCInteractiveLeaseSendingV1,
     Sendable
 {
     func installAuthenticatedMenuTerminalFence(
@@ -69,6 +70,34 @@ package struct MacLocalXPCAuthenticatedMenuSurfacesV1: Sendable {
     package let pairingReviews: any LocalPairingReviewSurfaceV0
     package let hostIdentityRecovery:
         any LocalHostIdentityRecoverySurfaceV0
+    package let interactiveRuntime:
+        any MacLocalXPCInteractiveLeaseSendingV1
+}
+
+extension MacLocalXPCAuthenticatedMenuSurfaceEndpointV1 {
+    package func prepareInitialInteractiveDesktop(
+        _: LocalInteractiveInitialDesktopPreparationCommandV1
+    ) async throws -> LocalInteractiveInitialDesktopPreparedReceiptV1 {
+        throw MacLocalXPCInteractiveLeaseErrorV1.unavailable
+    }
+
+    package func installInteractiveLease(
+        _: InteractiveRuntimeInstallCommandV0
+    ) async throws -> InteractiveRuntimeInstallReceiptV0 {
+        throw MacLocalXPCInteractiveLeaseErrorV1.unavailable
+    }
+
+    package func renewInteractiveLease(
+        _: InteractiveRuntimeLeaseRenewalV0
+    ) async throws {
+        throw MacLocalXPCInteractiveLeaseErrorV1.unavailable
+    }
+
+    package func revokeInteractiveLease(
+        _: InteractiveRuntimeRevokeCommandV0
+    ) async throws -> InteractiveRuntimeRevokedReceiptV0 {
+        throw MacLocalXPCInteractiveLeaseErrorV1.unavailable
+    }
 }
 
 private struct MacLocalXPCPairingReviewSurfaceFacetV1:
@@ -302,7 +331,10 @@ package actor MacLocalXPCAuthenticatedMenuSurfaceRouterV1 {
         generation: UInt64,
         token: UUID
     ) -> MacLocalXPCAuthenticatedMenuSurfacesV1 {
-        MacLocalXPCAuthenticatedMenuSurfacesV1(
+        precondition(
+            current?.generation == generation && current?.token == token
+        )
+        return MacLocalXPCAuthenticatedMenuSurfacesV1(
             generation: generation,
             pairingReviews: MacLocalXPCPairingReviewSurfaceFacetV1(
                 router: self,
@@ -314,7 +346,8 @@ package actor MacLocalXPCAuthenticatedMenuSurfaceRouterV1 {
                     router: self,
                     generation: generation,
                     token: token
-                )
+                ),
+            interactiveRuntime: current!.endpoint
         )
     }
 

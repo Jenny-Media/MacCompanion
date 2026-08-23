@@ -215,7 +215,7 @@
       "path": "local-xpc-interactive-lease-transport-v0.1.json",
       "kind": "localXPC.interactiveLeaseTransport.v0.1",
       "expect": "valid",
-      "canonicalSHA256": "a4c18d444b6d91151f52d9b1d863d679713b8f1c2e9ce1aecc0447d83e4c25a1"
+      "canonicalSHA256": "642e77f65471f9bbfb01f4aa08c202734b8e9e2d65926f4ac8f780b9217add43"
     },
     {
       "path": "local-xpc-interactive-admission-transport-v0.1.json",

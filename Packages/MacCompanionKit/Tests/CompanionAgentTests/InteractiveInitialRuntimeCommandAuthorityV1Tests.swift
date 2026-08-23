@@ -178,6 +178,129 @@ private func initialRequirement() throws
     )
 }
 
+private actor RuntimeBindingProbeV1: InteractiveSessionRuntimeOwningV0 {
+    private var installCountStorage = 0
+    private var terminationsStorage: [(
+        interactiveSessionID: UUID,
+        primaryConnectionID: Data,
+        reason: InteractiveSessionEndReason
+    )] = []
+
+    func install(
+        _: InteractiveSessionBootstrap,
+        requirement _: InteractiveSessionRuntimeRequirementV0
+    ) async throws {
+        installCountStorage += 1
+    }
+
+    func terminate(
+        interactiveSessionID: UUID,
+        primaryConnectionID: Data,
+        reason: InteractiveSessionEndReason
+    ) async {
+        terminationsStorage.append((
+            interactiveSessionID,
+            primaryConnectionID,
+            reason
+        ))
+    }
+
+    func installCount() -> Int { installCountStorage }
+    func terminationReasons() -> [InteractiveSessionEndReason] {
+        terminationsStorage.map(\.reason)
+    }
+}
+
+@Test func runtimeBindingAuthorityIsUnavailableUntilExactGenerationBinds()
+    async throws
+{
+    let authority = AgentInteractiveRuntimeBindingAuthorityV1()
+
+    await #expect(
+        throws: AgentInteractiveRuntimeBindingAuthorityErrorV1.unavailable
+    ) {
+        try await authority.install(
+            initialBootstrap(),
+            requirement: initialRequirement()
+        )
+    }
+    await #expect(
+        throws:
+            AgentInteractiveRuntimeBindingAuthorityErrorV1
+                .invalidGeneration
+    ) {
+        try await authority.bind(
+            runtime: RuntimeBindingProbeV1(),
+            generation: 0
+        )
+    }
+    #expect(await authority.state() == .unavailable)
+}
+
+@Test func runtimeBindingAuthorityTerminatesBeforeGenerationReplacement()
+    async throws
+{
+    let authority = AgentInteractiveRuntimeBindingAuthorityV1()
+    let first = RuntimeBindingProbeV1()
+    let second = RuntimeBindingProbeV1()
+    try await authority.bind(runtime: first, generation: 7)
+    try await authority.install(
+        initialBootstrap(),
+        requirement: initialRequirement()
+    )
+
+    #expect(await first.installCount() == 1)
+    #expect(await authority.state() == .active(
+        generation: 7,
+        interactiveSessionID: initialSessionID
+    ))
+    #expect(await authority.invalidate(generation: 6) == false)
+    #expect(await authority.invalidate(generation: 7))
+    #expect(await first.terminationReasons() == [.menuAppUnavailable])
+    #expect(await authority.state() == .unavailable)
+
+    await #expect(
+        throws:
+            AgentInteractiveRuntimeBindingAuthorityErrorV1
+                .staleGeneration(7)
+    ) {
+        try await authority.bind(runtime: second, generation: 7)
+    }
+    try await authority.bind(runtime: second, generation: 8)
+    #expect(await authority.state() == .bound(generation: 8))
+}
+
+@Test func runtimeBindingAuthorityExplicitTerminationAndFinishAreTerminal()
+    async throws
+{
+    let authority = AgentInteractiveRuntimeBindingAuthorityV1()
+    let runtime = RuntimeBindingProbeV1()
+    try await authority.bind(runtime: runtime, generation: 1)
+    try await authority.install(
+        initialBootstrap(),
+        requirement: initialRequirement()
+    )
+    await authority.terminate(
+        interactiveSessionID: initialSessionID,
+        primaryConnectionID: initialConnectionID,
+        reason: .clientDisconnected
+    )
+
+    #expect(await runtime.terminationReasons() == [.clientDisconnected])
+    #expect(await authority.state() == .bound(generation: 1))
+    await authority.finish()
+    await authority.finish()
+    #expect(await authority.state() == .terminal)
+    await #expect(
+        throws: AgentInteractiveRuntimeBindingAuthorityErrorV1.terminal
+    ) {
+        try await authority.bind(
+            runtime: RuntimeBindingProbeV1(),
+            generation: 2
+        )
+    }
+}
+
 private func initialDesktop(
     classes: Set<SurfaceInteractionClass> = [.view, .pointer],
     expiresAtMilliseconds: Int64 = 20_000

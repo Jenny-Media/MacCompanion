@@ -247,6 +247,8 @@ public actor MacAgentPreparedProductV1 {
         MacAgentAuthenticatedMenuSurfaceAuthorityV1
     private let localPairingCommandAuthority:
         MacAgentLocalPairingCommandAuthorityV1?
+    private let interactiveRuntimeAuthority:
+        AgentInteractiveRuntimeBindingAuthorityV1?
     private let currentMenuGeneration: @Sendable () async -> UInt64?
     private var networkCompositionTask:
         Task<AgentNetworkPairingProductCompositionV0, Error>?
@@ -270,12 +272,15 @@ public actor MacAgentPreparedProductV1 {
             MacAgentAuthenticatedMenuSurfaceAuthorityV1 =
                 MacAgentAuthenticatedMenuSurfaceAuthorityV1(),
         localPairingCommandAuthority:
-            MacAgentLocalPairingCommandAuthorityV1? = nil
+            MacAgentLocalPairingCommandAuthorityV1? = nil,
+        interactiveRuntimeAuthority:
+            AgentInteractiveRuntimeBindingAuthorityV1? = nil
     ) {
         self.storage = storage
         self.preparedPrimary = preparedPrimary
         self.menuSurfaceAuthority = menuSurfaceAuthority
         self.localPairingCommandAuthority = localPairingCommandAuthority
+        self.interactiveRuntimeAuthority = interactiveRuntimeAuthority
         currentMenuGeneration = {
             await menuSurfaceAuthority.currentGeneration()
         }
@@ -294,12 +299,15 @@ public actor MacAgentPreparedProductV1 {
             MacAgentAuthenticatedMenuSurfaceAuthorityV1 =
                 MacAgentAuthenticatedMenuSurfaceAuthorityV1(),
         localPairingCommandAuthority:
-            MacAgentLocalPairingCommandAuthorityV1? = nil
+            MacAgentLocalPairingCommandAuthorityV1? = nil,
+        interactiveRuntimeAuthority:
+            AgentInteractiveRuntimeBindingAuthorityV1? = nil
     ) {
         self.storage = storage
         self.preparedPrimary = preparedPrimary
         self.menuSurfaceAuthority = menuSurfaceAuthority
         self.localPairingCommandAuthority = localPairingCommandAuthority
+        self.interactiveRuntimeAuthority = interactiveRuntimeAuthority
         currentMenuGeneration = {
             await menuSurfaceAuthority.currentGeneration()
         }
@@ -322,6 +330,8 @@ public actor MacAgentPreparedProductV1 {
                 MacAgentAuthenticatedMenuSurfaceAuthorityV1(),
         localPairingCommandAuthority:
             MacAgentLocalPairingCommandAuthorityV1? = nil,
+        interactiveRuntimeAuthority:
+            AgentInteractiveRuntimeBindingAuthorityV1? = nil,
         currentMenuGeneration:
             (@Sendable () async -> UInt64?)? = nil
     ) {
@@ -329,6 +339,7 @@ public actor MacAgentPreparedProductV1 {
         self.preparedPrimary = preparedPrimary
         self.menuSurfaceAuthority = menuSurfaceAuthority
         self.localPairingCommandAuthority = localPairingCommandAuthority
+        self.interactiveRuntimeAuthority = interactiveRuntimeAuthority
         self.currentMenuGeneration = currentMenuGeneration ?? {
             await menuSurfaceAuthority.currentGeneration()
         }
@@ -351,6 +362,7 @@ public actor MacAgentPreparedProductV1 {
         let preparedPrimary = self.preparedPrimary
         let menuSurfaceAuthority = self.menuSurfaceAuthority
         let localPairingCommandAuthority = self.localPairingCommandAuthority
+        let interactiveRuntimeAuthority = self.interactiveRuntimeAuthority
         let localStartTask = self.localStartTask
         let networkCompositionTask = self.networkCompositionTask
         let networkProduct = self.networkProduct
@@ -361,6 +373,7 @@ public actor MacAgentPreparedProductV1 {
         networkListenerConstructionTask?.cancel()
         let task = Task {
             await localPairingCommandAuthority?.finish()
+            await interactiveRuntimeAuthority?.finish()
             if let networkListenerOwner {
                 await networkListenerOwner.finish()
             } else if let networkListenerConstructionTask,
@@ -801,8 +814,11 @@ public enum MacAgentProductBootstrapV1 {
     ) async throws -> MacAgentProductBootstrapResultV1 {
         let interactiveAdmission =
             AgentVisibleInteractiveAdmissionAuthorityV1()
-        let boundInputs = inputs.replacingVisibleInteractiveAdmission(
-            interactiveAdmission
+        let interactiveRuntime =
+            AgentInteractiveRuntimeBindingAuthorityV1()
+        let boundInputs = inputs.replacingInteractiveAuthorities(
+            admission: interactiveAdmission,
+            runtime: interactiveRuntime
         )
         let result = try await AgentNetworkPrimaryStartupFactoryV1.prepare(
             requiredAudit: storage.requiredAudit,
@@ -814,7 +830,8 @@ public enum MacAgentProductBootstrapV1 {
             preparation: result,
             processStarter: processStarter,
             mode: .immediate,
-            interactiveAdmission: interactiveAdmission
+            interactiveAdmission: interactiveAdmission,
+            interactiveRuntime: interactiveRuntime
         )
     }
 
@@ -827,8 +844,11 @@ public enum MacAgentProductBootstrapV1 {
     ) async throws -> MacAgentProductBootstrapResultV1 {
         let interactiveAdmission =
             AgentVisibleInteractiveAdmissionAuthorityV1()
-        let boundInputs = inputs.replacingVisibleInteractiveAdmission(
-            interactiveAdmission
+        let interactiveRuntime =
+            AgentInteractiveRuntimeBindingAuthorityV1()
+        let boundInputs = inputs.replacingInteractiveAuthorities(
+            admission: interactiveAdmission,
+            runtime: interactiveRuntime
         )
         let result = try await AgentNetworkPrimaryStartupFactoryV1.prepare(
             requiredAudit: storage.requiredAudit,
@@ -840,7 +860,8 @@ public enum MacAgentProductBootstrapV1 {
             preparation: result,
             processStarter: processStarter,
             mode: .deferredUntilActivation,
-            interactiveAdmission: interactiveAdmission
+            interactiveAdmission: interactiveAdmission,
+            interactiveRuntime: interactiveRuntime
         )
     }
 
@@ -918,7 +939,8 @@ public enum MacAgentProductBootstrapV1 {
         preparation: AgentNetworkPrimaryStartupResultV1,
         processStarter: any MacDashboardLifecycleProcessStartingV1,
         mode: LocalXPCPreparationModeV1,
-        interactiveAdmission: AgentVisibleInteractiveAdmissionAuthorityV1
+        interactiveAdmission: AgentVisibleInteractiveAdmissionAuthorityV1,
+        interactiveRuntime: AgentInteractiveRuntimeBindingAuthorityV1
     ) async throws -> MacAgentProductBootstrapResultV1 {
         let menuSurfaceAuthority =
             MacAgentAuthenticatedMenuSurfaceAuthorityV1()
@@ -933,9 +955,41 @@ public enum MacAgentProductBootstrapV1 {
                 menuPairingCommandHandler: localPairingCommandAuthority,
                 interactiveAdmissionHandler: interactiveAdmission,
                 onSurfaces: {
-                    try await menuSurfaceAuthority.install($0)
+                    let surfaces = $0
+                    do {
+                        try await menuSurfaceAuthority.install(surfaces)
+                        let route =
+                            MacLocalXPCInteractiveMenuRuntimeRouteV1(
+                                sender: surfaces.interactiveRuntime
+                            )
+                        let owner = AgentInteractiveRuntimeOwnerV1(
+                            admission:
+                                SQLiteInteractiveSessionAdmissionReaderV0(
+                                    store: storage.requiredAudit.securityStore,
+                                    visible: interactiveAdmission
+                                ),
+                            desktop: route,
+                            runtime: route
+                        )
+                        try await interactiveRuntime.bind(
+                            runtime:
+                                AgentInteractiveLeaseRenewalOwnerV1(
+                                    runtime: owner
+                                ),
+                            generation: surfaces.generation
+                        )
+                    } catch {
+                        _ = await interactiveRuntime.invalidate(
+                            generation: surfaces.generation
+                        )
+                        _ = await menuSurfaceAuthority.invalidate(
+                            generation: surfaces.generation
+                        )
+                        throw error
+                    }
                 },
                 onSurfaceInvalidated: {
+                    _ = await interactiveRuntime.invalidate(generation: $0)
                     await menuLossCoordinator
                         .authenticatedMenuSurfaceUnavailable(generation: $0)
                 }
@@ -949,7 +1003,8 @@ public enum MacAgentProductBootstrapV1 {
                 preparation: preparation,
                 makeLocalXPC: makeLocalXPC,
                 menuSurfaceAuthority: menuSurfaceAuthority,
-                localPairingCommandAuthority: localPairingCommandAuthority
+                localPairingCommandAuthority: localPairingCommandAuthority,
+                interactiveRuntimeAuthority: interactiveRuntime
             )
         case .deferredUntilActivation:
             composed = try await composeInert(
@@ -957,7 +1012,8 @@ public enum MacAgentProductBootstrapV1 {
                 preparation: preparation,
                 makeLocalXPC: makeLocalXPC,
                 menuSurfaceAuthority: menuSurfaceAuthority,
-                localPairingCommandAuthority: localPairingCommandAuthority
+                localPairingCommandAuthority: localPairingCommandAuthority,
+                interactiveRuntimeAuthority: interactiveRuntime
             )
         }
         if case let .ready(product) = composed {
@@ -974,7 +1030,9 @@ public enum MacAgentProductBootstrapV1 {
             MacAgentAuthenticatedMenuSurfaceAuthorityV1 =
                 MacAgentAuthenticatedMenuSurfaceAuthorityV1(),
         localPairingCommandAuthority:
-            MacAgentLocalPairingCommandAuthorityV1? = nil
+            MacAgentLocalPairingCommandAuthorityV1? = nil,
+        interactiveRuntimeAuthority:
+            AgentInteractiveRuntimeBindingAuthorityV1? = nil
     ) async throws -> MacAgentProductBootstrapResultV1 {
         switch preparation {
         case .waitForFirstUnlock:
@@ -989,7 +1047,8 @@ public enum MacAgentProductBootstrapV1 {
                 preparedPrimary: preparedPrimary,
                 makeLocalXPC: makeLocalXPC,
                 menuSurfaceAuthority: menuSurfaceAuthority,
-                localPairingCommandAuthority: localPairingCommandAuthority
+                localPairingCommandAuthority: localPairingCommandAuthority,
+                interactiveRuntimeAuthority: interactiveRuntimeAuthority
             ))
         }
     }
@@ -1002,7 +1061,9 @@ public enum MacAgentProductBootstrapV1 {
             MacAgentAuthenticatedMenuSurfaceAuthorityV1 =
                 MacAgentAuthenticatedMenuSurfaceAuthorityV1(),
         localPairingCommandAuthority:
-            MacAgentLocalPairingCommandAuthorityV1? = nil
+            MacAgentLocalPairingCommandAuthorityV1? = nil,
+        interactiveRuntimeAuthority:
+            AgentInteractiveRuntimeBindingAuthorityV1? = nil
     ) async throws -> MacAgentProductBootstrapResultV1 {
         switch preparation {
         case .waitForFirstUnlock:
@@ -1021,7 +1082,9 @@ public enum MacAgentProductBootstrapV1 {
                     preparedPrimary: preparedPrimary,
                     localXPC: localXPC,
                     menuSurfaceAuthority: menuSurfaceAuthority,
-                    localPairingCommandAuthority: localPairingCommandAuthority
+                    localPairingCommandAuthority: localPairingCommandAuthority,
+                    interactiveRuntimeAuthority:
+                        interactiveRuntimeAuthority
                 ))
             } catch {
                 await preparedPrimary.discard()
@@ -1032,8 +1095,9 @@ public enum MacAgentProductBootstrapV1 {
 }
 
 private extension AgentNetworkPrimaryStartupInputsV1 {
-    func replacingVisibleInteractiveAdmission(
-        _ admission: AgentVisibleInteractiveAdmissionAuthorityV1
+    func replacingInteractiveAuthorities(
+        admission: AgentVisibleInteractiveAdmissionAuthorityV1,
+        runtime: AgentInteractiveRuntimeBindingAuthorityV1
     ) -> Self {
         Self(
             registry: registry,
@@ -1044,7 +1108,7 @@ private extension AgentNetworkPrimaryStartupInputsV1 {
             interactivePlatform: AgentInteractivePlatformServicesV1(
                 visibleAdmission: admission,
                 materials: interactivePlatform.materials,
-                runtime: interactivePlatform.runtime,
+                runtime: runtime,
                 surfaceControl: interactivePlatform.surfaceControl
             )
         )

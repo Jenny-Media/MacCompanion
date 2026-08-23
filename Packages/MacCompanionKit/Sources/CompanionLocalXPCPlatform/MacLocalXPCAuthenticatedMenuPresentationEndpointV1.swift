@@ -62,6 +62,8 @@ package actor MacLocalXPCAuthenticatedMenuPresentationEndpointV1:
     private let generation: UInt64
     private let endpointToken: UUID
     private weak var sender: (any MacLocalXPCMenuPresentationSendingV1)?
+    private weak var interactiveSender:
+        (any MacLocalXPCGenerationBoundInteractiveLeaseSendingV1)?
     private var terminalFence: MacLocalXPCMenuSurfaceTerminalFenceV1?
     private var terminalFailureLatched = false
     private var terminalFenceRequested = false
@@ -76,6 +78,8 @@ package actor MacLocalXPCAuthenticatedMenuPresentationEndpointV1:
         self.generation = generation
         self.endpointToken = endpointToken
         self.sender = sender
+        interactiveSender = sender as?
+            any MacLocalXPCGenerationBoundInteractiveLeaseSendingV1
     }
 
     package func installAuthenticatedMenuTerminalFence(
@@ -91,6 +95,7 @@ package actor MacLocalXPCAuthenticatedMenuPresentationEndpointV1:
         retired = true
         let sender = self.sender
         self.sender = nil
+        interactiveSender = nil
         // Owner-driven retirement is deliberately not a transport-failure
         // callback and therefore never recursively requests the router fence.
         await sender?.retireMenuPresentationEndpoint(
@@ -141,6 +146,54 @@ package actor MacLocalXPCAuthenticatedMenuPresentationEndpointV1:
             return
         }
         await withdraw(.hostRecoveryWithdrawal(reviewID))
+    }
+
+    package func prepareInitialInteractiveDesktop(
+        _ command: LocalInteractiveInitialDesktopPreparationCommandV1
+    ) async throws -> LocalInteractiveInitialDesktopPreparedReceiptV1 {
+        try await submitInteractive { sender in
+            try await sender.prepareInitialInteractiveDesktop(
+                generation: generation,
+                endpointToken: endpointToken,
+                command: command
+            )
+        }
+    }
+
+    package func installInteractiveLease(
+        _ command: InteractiveRuntimeInstallCommandV0
+    ) async throws -> InteractiveRuntimeInstallReceiptV0 {
+        try await submitInteractive { sender in
+            try await sender.installInteractiveLease(
+                generation: generation,
+                endpointToken: endpointToken,
+                command: command
+            )
+        }
+    }
+
+    package func renewInteractiveLease(
+        _ renewal: InteractiveRuntimeLeaseRenewalV0
+    ) async throws {
+        try await submitInteractive { sender in
+            try await sender.renewInteractiveLease(
+                generation: generation,
+                endpointToken: endpointToken,
+                renewal: renewal
+            )
+        }
+    }
+
+    package func revokeInteractiveLease(
+        _ command: InteractiveRuntimeRevokeCommandV0
+    ) async throws -> InteractiveRuntimeRevokedReceiptV0 {
+        try await submitInteractive { sender in
+            try await sender.revokeInteractiveLease(
+                generation: generation,
+                endpointToken: endpointToken,
+                command: command
+            )
+        }
     }
 
     private func publish(
@@ -198,6 +251,31 @@ package actor MacLocalXPCAuthenticatedMenuPresentationEndpointV1:
             }
             throw MacLocalXPCAuthenticatedMenuPresentationEndpointErrorV1
                 .endpointClosed
+        } catch {
+            await latchTerminalFailure()
+            throw MacLocalXPCAuthenticatedMenuPresentationEndpointErrorV1
+                .endpointClosed
+        }
+    }
+
+    private func submitInteractive<Value: Sendable>(
+        _ operation: @Sendable (
+            any MacLocalXPCGenerationBoundInteractiveLeaseSendingV1
+        ) async throws -> Value
+    ) async throws -> Value {
+        guard !retired, !terminalFailureLatched else {
+            throw MacLocalXPCAuthenticatedMenuPresentationEndpointErrorV1
+                .endpointClosed
+        }
+        guard let interactiveSender else {
+            await latchTerminalFailure()
+            throw MacLocalXPCAuthenticatedMenuPresentationEndpointErrorV1
+                .endpointClosed
+        }
+        do {
+            return try await operation(interactiveSender)
+        } catch is CancellationError {
+            throw CancellationError()
         } catch {
             await latchTerminalFailure()
             throw MacLocalXPCAuthenticatedMenuPresentationEndpointErrorV1

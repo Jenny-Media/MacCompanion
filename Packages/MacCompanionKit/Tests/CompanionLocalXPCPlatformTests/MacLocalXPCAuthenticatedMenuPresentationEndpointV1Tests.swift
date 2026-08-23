@@ -1,12 +1,14 @@
 @testable import CompanionLocalXPCPlatform
 import CompanionDomain
 import CompanionIPC
+import CompanionInteractiveShared
 import CompanionWire
 import Foundation
 import Testing
 
 private actor MenuPresentationSenderProbeV1:
-    MacLocalXPCMenuPresentationSendingV1
+    MacLocalXPCMenuPresentationSendingV1,
+    MacLocalXPCGenerationBoundInteractiveLeaseSendingV1
 {
     enum Response: Sendable {
         case acknowledged
@@ -18,9 +20,18 @@ private actor MenuPresentationSenderProbeV1:
     private var responses: [Response]
     private var requests: [MacLocalXPCMenuPresentationRequestV1] = []
     private var retirements: [(UInt64, UUID)] = []
+    private var desktopReceipt:
+        LocalInteractiveInitialDesktopPreparedReceiptV1?
+    private var interactiveGenerations: [UInt64] = []
+    private var interactiveTokens: [UUID] = []
 
-    init(_ responses: [Response]) {
+    init(
+        _ responses: [Response],
+        desktopReceipt:
+            LocalInteractiveInitialDesktopPreparedReceiptV1? = nil
+    ) {
         self.responses = responses
+        self.desktopReceipt = desktopReceipt
     }
 
     func sendMenuPresentation(
@@ -56,6 +67,49 @@ private actor MenuPresentationSenderProbeV1:
     }
 
     func retirementCount() -> Int { retirements.count }
+
+    func prepareInitialInteractiveDesktop(
+        generation: UInt64,
+        endpointToken: UUID,
+        command _: LocalInteractiveInitialDesktopPreparationCommandV1
+    ) async throws -> LocalInteractiveInitialDesktopPreparedReceiptV1 {
+        interactiveGenerations.append(generation)
+        interactiveTokens.append(endpointToken)
+        guard let desktopReceipt else {
+            throw MacLocalXPCInteractiveLeaseErrorV1.unavailable
+        }
+        return desktopReceipt
+    }
+
+    func installInteractiveLease(
+        generation _: UInt64,
+        endpointToken _: UUID,
+        command _: InteractiveRuntimeInstallCommandV0
+    ) async throws -> InteractiveRuntimeInstallReceiptV0 {
+        throw MacLocalXPCInteractiveLeaseErrorV1.unavailable
+    }
+
+    func renewInteractiveLease(
+        generation _: UInt64,
+        endpointToken _: UUID,
+        renewal _: InteractiveRuntimeLeaseRenewalV0
+    ) async throws {
+        throw MacLocalXPCInteractiveLeaseErrorV1.unavailable
+    }
+
+    func revokeInteractiveLease(
+        generation _: UInt64,
+        endpointToken _: UUID,
+        command _: InteractiveRuntimeRevokeCommandV0
+    ) async throws -> InteractiveRuntimeRevokedReceiptV0 {
+        throw MacLocalXPCInteractiveLeaseErrorV1.unavailable
+    }
+
+    func recordedInteractiveGenerations() -> [UInt64] {
+        interactiveGenerations
+    }
+
+    func recordedInteractiveTokens() -> [UUID] { interactiveTokens }
 }
 
 private func endpointPairingReviewV1() throws -> LocalPairingReviewV0 {
@@ -109,6 +163,43 @@ private func endpointV1(
         generation: generation,
         endpointToken: token,
         sender: sender
+    )
+}
+
+private func endpointInitialDesktopCommandV1()
+    throws -> LocalInteractiveInitialDesktopPreparationCommandV1
+{
+    try LocalInteractiveInitialDesktopPreparationCommandV1(
+        commandID: UUID(),
+        interactiveSessionID: UUID(),
+        authorizationEpoch: .init(rawValue: 1),
+        selectedDisplayID: UUID(),
+        interactionClasses: [.view]
+    )
+}
+
+private func endpointInitialDesktopReceiptV1(
+    command: LocalInteractiveInitialDesktopPreparationCommandV1
+) throws -> LocalInteractiveInitialDesktopPreparedReceiptV1 {
+    try LocalInteractiveInitialDesktopPreparedReceiptV1(
+        correlationID: command.commandID,
+        descriptor: AdaptiveSurfaceDescriptor(
+            interactiveSessionID: command.interactiveSessionID,
+            authorizationEpoch: command.authorizationEpoch,
+            surfaceID: UUID(),
+            kind: .desktop,
+            surfaceRevision: .init(rawValue: 1),
+            coordinateSpaceRevision: .init(rawValue: 1),
+            encodedWidth: 100,
+            encodedHeight: 100,
+            logicalWidthPoints: 100,
+            logicalHeightPoints: 100,
+            interactionClasses: [.view],
+            privacyProfile: .visualOnly,
+            metadataFields: [],
+            createdAtMonotonicMilliseconds: 1,
+            expiresAtMonotonicMilliseconds: 10_001
+        )
     )
 }
 
@@ -207,6 +298,45 @@ func opaqueEndpointEncodesAllFiveClosedRequests() async throws {
         ),
         .hostRecoveryWithdrawal(recovery.reviewID),
     ])
+}
+
+@Test func opaqueEndpointBindsInteractiveRuntimeToExactGenerationAndToken()
+    async throws
+{
+    let command = try endpointInitialDesktopCommandV1()
+    let receipt = try endpointInitialDesktopReceiptV1(command: command)
+    let token = UUID()
+    let sender = MenuPresentationSenderProbeV1(
+        [],
+        desktopReceipt: receipt
+    )
+    let endpoint = endpointV1(
+        sender: sender,
+        generation: 7,
+        token: token
+    )
+    let router = MacLocalXPCAuthenticatedMenuSurfaceRouterV1()
+    let surfaces = try await router.bindAuthenticated(
+        generation: 7,
+        endpointFactory: { endpoint }
+    )
+
+    #expect(
+        try await surfaces.interactiveRuntime
+            .prepareInitialInteractiveDesktop(command) == receipt
+    )
+    #expect(await sender.recordedInteractiveGenerations() == [7])
+    #expect(await sender.recordedInteractiveTokens() == [token])
+
+    #expect(await router.invalidate(generation: 7))
+    await #expect(
+        throws: MacLocalXPCAuthenticatedMenuPresentationEndpointErrorV1
+            .endpointClosed
+    ) {
+        try await surfaces.interactiveRuntime
+            .prepareInitialInteractiveDesktop(command)
+    }
+    #expect(await sender.recordedInteractiveGenerations() == [7])
 }
 
 @Test

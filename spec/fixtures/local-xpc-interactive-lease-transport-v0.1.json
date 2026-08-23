@@ -42,6 +42,8 @@
   ],
   "rules": [
     "same-team exact-role authentication and menu readiness are required before Interactive lease traffic",
+    "the permanent Agent runtime receives only the one cached opaque sender endpoint issued for an exact authenticated-and-ready menu generation",
+    "every request rechecks the exact listener run, retained peer, transport generation, and private endpoint token on the server queue; a stale endpoint never redirects traffic to a replacement generation",
     "the Agent sender and menu receiver share exactly one cross-family command in flight for Desktop preparation, install, renewal, and revoke per authenticated generation",
     "request and payload-bearing success values are nonempty canonical JSON data no larger than 4096 bytes",
     "Desktop preparation receives the exact session, authorization epoch, opaque selected-display UUID, and canonical interaction classes and returns one exactly correlated Desktop descriptor",

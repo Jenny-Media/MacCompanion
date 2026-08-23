@@ -1561,10 +1561,13 @@ private func productApplicationPrepareV1(
         return
     }
     let finishGate = ProductBootstrapFinishGateV1()
+    let interactiveRuntimeAuthority =
+        AgentInteractiveRuntimeBindingAuthorityV1()
     let product = MacAgentPreparedProductV1(
         storage: storage,
         preparedPrimary: prepared,
-        finishLocalXPC: { await finishGate.run() }
+        finishLocalXPC: { await finishGate.run() },
+        interactiveRuntimeAuthority: interactiveRuntimeAuthority
     )
     let first = Task { await product.finish() }
     await finishGate.waitUntilEntered()
@@ -1581,6 +1584,7 @@ private func productApplicationPrepareV1(
     #expect(!(await secondCompleted.snapshot()))
     #expect(!(await product.snapshot().finished))
     #expect(!(await prepared.snapshot().consumed))
+    #expect(await interactiveRuntimeAuthority.state() == .terminal)
     #expect(await finishGate.count() == 1)
 
     await finishGate.release()

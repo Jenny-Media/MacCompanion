@@ -309,6 +309,7 @@ struct MacLocalXPCPendingCandidateGateV1: Sendable {
 public final class MacLocalXPCServerV1:
     @unchecked Sendable,
     MacLocalXPCMenuPresentationSendingV1,
+    MacLocalXPCGenerationBoundInteractiveLeaseSendingV1,
     MacLocalXPCInteractiveLeaseSendingV1
 {
     public typealias EventHandler = @Sendable (MacLocalXPCServerEventV1) -> Void
@@ -910,6 +911,30 @@ public final class MacLocalXPCServerV1:
     public func prepareInitialInteractiveDesktop(
         _ command: LocalInteractiveInitialDesktopPreparationCommandV1
     ) async throws -> LocalInteractiveInitialDesktopPreparedReceiptV1 {
+        try await prepareInitialInteractiveDesktop(
+            command,
+            endpointBinding: nil
+        )
+    }
+
+    package func prepareInitialInteractiveDesktop(
+        generation: UInt64,
+        endpointToken: UUID,
+        command: LocalInteractiveInitialDesktopPreparationCommandV1
+    ) async throws -> LocalInteractiveInitialDesktopPreparedReceiptV1 {
+        try await prepareInitialInteractiveDesktop(
+            command,
+            endpointBinding: .init(
+                generation: generation,
+                endpointToken: endpointToken
+            )
+        )
+    }
+
+    private func prepareInitialInteractiveDesktop(
+        _ command: LocalInteractiveInitialDesktopPreparationCommandV1,
+        endpointBinding: MacLocalXPCInteractiveLeaseEndpointBindingV1?
+    ) async throws -> LocalInteractiveInitialDesktopPreparedReceiptV1 {
         let payload: Data
         do {
             payload = try LocalInteractiveLeaseWireCodecV1
@@ -920,7 +945,8 @@ public final class MacLocalXPCServerV1:
         }
         let reply = try await sendInteractiveLeaseCommand(
             command: .prepareInitialDesktop(command),
-            payload: payload
+            payload: payload,
+            endpointBinding: endpointBinding
         )
         do {
             guard let reply else {
@@ -932,7 +958,9 @@ public final class MacLocalXPCServerV1:
             try receipt.validate(against: command)
             return receipt
         } catch {
-            cancelCurrentPeerAfterMalformedInteractiveReply()
+            cancelPeerAfterMalformedInteractiveReply(
+                endpointBinding: endpointBinding
+            )
             throw MacLocalXPCInteractiveLeaseErrorV1
                 .malformedOrTransportError
         }
@@ -940,6 +968,27 @@ public final class MacLocalXPCServerV1:
 
     public func installInteractiveLease(
         _ command: InteractiveRuntimeInstallCommandV0
+    ) async throws -> InteractiveRuntimeInstallReceiptV0 {
+        try await installInteractiveLease(command, endpointBinding: nil)
+    }
+
+    package func installInteractiveLease(
+        generation: UInt64,
+        endpointToken: UUID,
+        command: InteractiveRuntimeInstallCommandV0
+    ) async throws -> InteractiveRuntimeInstallReceiptV0 {
+        try await installInteractiveLease(
+            command,
+            endpointBinding: .init(
+                generation: generation,
+                endpointToken: endpointToken
+            )
+        )
+    }
+
+    private func installInteractiveLease(
+        _ command: InteractiveRuntimeInstallCommandV0,
+        endpointBinding: MacLocalXPCInteractiveLeaseEndpointBindingV1?
     ) async throws -> InteractiveRuntimeInstallReceiptV0 {
         let payload: Data
         do {
@@ -951,7 +1000,8 @@ public final class MacLocalXPCServerV1:
         }
         let reply = try await sendInteractiveLeaseCommand(
             command: .install(command),
-            payload: payload
+            payload: payload,
+            endpointBinding: endpointBinding
         )
         do {
             guard let reply else {
@@ -963,7 +1013,9 @@ public final class MacLocalXPCServerV1:
             try receipt.validate(against: command)
             return receipt
         } catch {
-            cancelCurrentPeerAfterMalformedInteractiveReply()
+            cancelPeerAfterMalformedInteractiveReply(
+                endpointBinding: endpointBinding
+            )
             throw MacLocalXPCInteractiveLeaseErrorV1
                 .malformedOrTransportError
         }
@@ -971,6 +1023,27 @@ public final class MacLocalXPCServerV1:
 
     public func renewInteractiveLease(
         _ renewal: InteractiveRuntimeLeaseRenewalV0
+    ) async throws {
+        try await renewInteractiveLease(renewal, endpointBinding: nil)
+    }
+
+    package func renewInteractiveLease(
+        generation: UInt64,
+        endpointToken: UUID,
+        renewal: InteractiveRuntimeLeaseRenewalV0
+    ) async throws {
+        try await renewInteractiveLease(
+            renewal,
+            endpointBinding: .init(
+                generation: generation,
+                endpointToken: endpointToken
+            )
+        )
+    }
+
+    private func renewInteractiveLease(
+        _ renewal: InteractiveRuntimeLeaseRenewalV0,
+        endpointBinding: MacLocalXPCInteractiveLeaseEndpointBindingV1?
     ) async throws {
         let payload: Data
         do {
@@ -982,10 +1055,13 @@ public final class MacLocalXPCServerV1:
         }
         let reply = try await sendInteractiveLeaseCommand(
             command: .renew(renewal),
-            payload: payload
+            payload: payload,
+            endpointBinding: endpointBinding
         )
         guard reply == nil else {
-            cancelCurrentPeerAfterMalformedInteractiveReply()
+            cancelPeerAfterMalformedInteractiveReply(
+                endpointBinding: endpointBinding
+            )
             throw MacLocalXPCInteractiveLeaseErrorV1
                 .malformedOrTransportError
         }
@@ -993,6 +1069,27 @@ public final class MacLocalXPCServerV1:
 
     public func revokeInteractiveLease(
         _ command: InteractiveRuntimeRevokeCommandV0
+    ) async throws -> InteractiveRuntimeRevokedReceiptV0 {
+        try await revokeInteractiveLease(command, endpointBinding: nil)
+    }
+
+    package func revokeInteractiveLease(
+        generation: UInt64,
+        endpointToken: UUID,
+        command: InteractiveRuntimeRevokeCommandV0
+    ) async throws -> InteractiveRuntimeRevokedReceiptV0 {
+        try await revokeInteractiveLease(
+            command,
+            endpointBinding: .init(
+                generation: generation,
+                endpointToken: endpointToken
+            )
+        )
+    }
+
+    private func revokeInteractiveLease(
+        _ command: InteractiveRuntimeRevokeCommandV0,
+        endpointBinding: MacLocalXPCInteractiveLeaseEndpointBindingV1?
     ) async throws -> InteractiveRuntimeRevokedReceiptV0 {
         let payload: Data
         do {
@@ -1004,7 +1101,8 @@ public final class MacLocalXPCServerV1:
         }
         let reply = try await sendInteractiveLeaseCommand(
             command: .revoke(command),
-            payload: payload
+            payload: payload,
+            endpointBinding: endpointBinding
         )
         do {
             guard let reply else {
@@ -1016,7 +1114,9 @@ public final class MacLocalXPCServerV1:
             try receipt.validate(against: command)
             return receipt
         } catch {
-            cancelCurrentPeerAfterMalformedInteractiveReply()
+            cancelPeerAfterMalformedInteractiveReply(
+                endpointBinding: endpointBinding
+            )
             throw MacLocalXPCInteractiveLeaseErrorV1
                 .malformedOrTransportError
         }
@@ -1024,7 +1124,8 @@ public final class MacLocalXPCServerV1:
 
     private func sendInteractiveLeaseCommand(
         command: InteractiveLeaseCommand,
-        payload: Data
+        payload: Data,
+        endpointBinding: MacLocalXPCInteractiveLeaseEndpointBindingV1?
     ) async throws -> Data? {
         let requestID = UUID()
         let marker = InteractiveLeaseCancellationMarker()
@@ -1042,6 +1143,7 @@ public final class MacLocalXPCServerV1:
                         requestID: requestID,
                         command: command,
                         payload: payload,
+                        endpointBinding: endpointBinding,
                         cancellationMarker: marker,
                         continuation: continuation
                     )
@@ -1059,6 +1161,7 @@ public final class MacLocalXPCServerV1:
         requestID: UUID,
         command: InteractiveLeaseCommand,
         payload: Data,
+        endpointBinding: MacLocalXPCInteractiveLeaseEndpointBindingV1?,
         cancellationMarker: InteractiveLeaseCancellationMarker,
         continuation: CheckedContinuation<Data?, any Error>
     ) {
@@ -1067,6 +1170,13 @@ public final class MacLocalXPCServerV1:
             return
         }
         guard let state = currentPeerState,
+              endpointBinding.map({
+                  $0.admits(
+                      generation: state.generation,
+                      issuedEndpointToken:
+                          state.presentationIssuanceGate.token
+                  )
+              }) ?? true,
               listenerRunGate.admits(generation: state.listenerGeneration),
               peerStates[state.generation] === state,
               generationGate.admitsPostAuthenticationTraffic(
@@ -1254,7 +1364,13 @@ public final class MacLocalXPCServerV1:
             && state.interactiveLeaseGate.admits(transaction)
     }
 
-    private func cancelCurrentPeerAfterMalformedInteractiveReply() {
+    private func cancelPeerAfterMalformedInteractiveReply(
+        endpointBinding: MacLocalXPCInteractiveLeaseEndpointBindingV1?
+    ) {
+        if let endpointBinding {
+            cancelPeer(generation: endpointBinding.generation)
+            return
+        }
         queue.async { [weak self] in
             guard let self, let state = currentPeerState else { return }
             self.cancelAuthenticatedPeer(
