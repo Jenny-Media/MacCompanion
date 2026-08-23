@@ -443,6 +443,8 @@ public final class MacLocalXPCDashboardProductV1:
             any LocalHostIdentityRecoverySurfaceV0,
         interactiveLeaseHandler:
             (any MacLocalXPCInteractiveLeaseHandlingV1)? = nil,
+        interactiveInputHandler:
+            (any MacLocalXPCInteractiveInputHandlingV1)? = nil,
         selectedDisplayID: UUID? = nil,
         bufferCapacity: Int = 32
     ) {
@@ -457,6 +459,7 @@ public final class MacLocalXPCDashboardProductV1:
                 MacLocalXPCClientV1(
                     presentationSurfaces: surfaces,
                     interactiveLeaseHandler: interactiveLeaseHandler,
+                    interactiveInputHandler: interactiveInputHandler,
                     onEvent: $0
                 )
             },

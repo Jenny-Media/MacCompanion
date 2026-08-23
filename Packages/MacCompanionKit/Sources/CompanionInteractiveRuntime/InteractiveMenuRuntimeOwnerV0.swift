@@ -395,6 +395,25 @@ public actor InteractiveMenuRuntimeOwnerV0 {
         return try await operation.value
     }
 
+    /// Accepts only the wire envelope; the full command fence is derived from
+    /// the currently active lease inside this actor turn so no transport or
+    /// adapter can manufacture stale host, display, or lease authority.
+    public func postInputEnvelope(
+        _ envelope: InteractiveInputEnvelope,
+        nowMonotonicNanoseconds: UInt64
+    ) async throws {
+        let predecessor = sequencingTail
+        let operation = Task { [self] in
+            await predecessor.value
+            try performInputEnvelope(
+                envelope,
+                nowMonotonicNanoseconds: nowMonotonicNanoseconds
+            )
+        }
+        sequencingTail = Task { _ = try? await operation.value }
+        return try await operation.value
+    }
+
     public func publishMedia(
         _ action: InteractiveRuntimeMediaActionV0,
         nowMonotonicNanoseconds: UInt64
@@ -895,6 +914,38 @@ public actor InteractiveMenuRuntimeOwnerV0 {
         }
         active.lastInputAction = action
         storage = .active(active)
+    }
+
+    private func performInputEnvelope(
+        _ envelope: InteractiveInputEnvelope,
+        nowMonotonicNanoseconds: UInt64
+    ) throws {
+        guard case let .active(active) = storage else {
+            if case .safetyRecoveryRequired = storage {
+                throw InteractiveMenuRuntimeErrorV0.safetyRecoveryRequired
+            }
+            throw InteractiveMenuRuntimeErrorV0.noActiveSession
+        }
+        let lease = active.command.lease
+        let action = try InteractiveRuntimeInputActionV0(
+            commandID: envelope.messageID.rawValue,
+            fence: .init(
+                leaseID: lease.leaseID,
+                hostID: lease.hostID,
+                deviceID: lease.deviceID,
+                interactiveSessionID: lease.interactiveSessionID,
+                authorizationEpoch: lease.authorizationEpoch,
+                selectedDisplayID: lease.selectedDisplayID,
+                surfaceID: lease.surfaceID,
+                surfaceRevision: lease.surfaceRevision,
+                coordinateRevision: lease.coordinateRevision
+            ),
+            envelope: envelope
+        )
+        try performInput(
+            action,
+            nowMonotonicNanoseconds: nowMonotonicNanoseconds
+        )
     }
 
     private func performMedia(

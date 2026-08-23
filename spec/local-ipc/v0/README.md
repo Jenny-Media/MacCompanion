@@ -596,10 +596,39 @@ display only inside its platform module, and returns one Desktop
 contain or be accompanied by physical display IDs, display names, process or
 window IDs, permission facts, or platform objects.
 
-This runtime slice carries no input or media. `applyInteractiveInput`,
-`publishInteractiveMedia`, and surface-transition transport remain closed until
-their independently bounded binary/backpressure and runtime-fence mappings are
-frozen and implemented.
+### Exact Interactive role-data transport
+
+Input and media use two independent single-flight request lanes after the same
+authenticated menu-readiness exchange. They may overlap each other and lease
+lifecycle traffic, but neither lane queues or retries ambiguous work.
+
+`runtime.interactive.input.apply` carries one strict canonical
+`InteractiveInputEnvelope` in the exact `kind`, signed integer `version = 1`,
+and nonempty `XPC_TYPE_DATA` `payload` dictionary. The payload is at most 65,536
+bytes. The exact payload-free `runtime.interactive.input.apply.ack` is sent only
+after the menu samples its monotonic clock, derives the complete current lease
+fence inside its serialized runtime owner, and accepts the action. The receiver
+finishes within 1.5 seconds and the Agent waits at most 2 seconds.
+
+`runtime.interactive.media.publish` carries exactly `kind`, signed integer
+`version = 1`, a 96-byte `XPC_TYPE_DATA` `header`, and `XPC_TYPE_DATA` `payload`.
+The payload length must exactly equal the decoded header and satisfy its
+record-specific bound, including an empty payload for discontinuity/end. The
+Agent rechecks the inbound transport generation and transfers the complete
+record only to the exact authenticated role-pair source. The exact payload-free
+`runtime.interactive.media.publish.ack` is withheld until that source accepts
+the record; one menu publication remains in flight, preserving backpressure.
+The receiver finishes within 3 seconds and the menu waits at most 4 seconds.
+
+There is no handled application-error envelope. Rejection, timeout,
+cancellation after send, malformed or cross-kind traffic, fence mismatch,
+same-lane overlap, or generation replacement terminates that exact XPC
+generation and therefore Control. Role-data traffic cannot establish or widen
+a lease. The exact indexed fixture is
+`local-xpc-interactive-role-data-transport-v0.1.json`.
+
+Surface-transition transport remains closed until its independent runtime-fence
+mapping is frozen and implemented.
 
 ### Exact visible Interactive admission publication
 

@@ -74,6 +74,14 @@ static const char MCLocalXPCInteractiveAdmissionPublicationKind[] =
     "runtime.interactive.admission.publish";
 static const char MCLocalXPCInteractiveAdmissionAcknowledgementKind[] =
     "runtime.interactive.admission.publish.ack";
+static const char MCLocalXPCInteractiveInputKind[] =
+    "runtime.interactive.input.apply";
+static const char MCLocalXPCInteractiveInputAcknowledgementKind[] =
+    "runtime.interactive.input.apply.ack";
+static const char MCLocalXPCInteractiveMediaPublicationKind[] =
+    "runtime.interactive.media.publish";
+static const char MCLocalXPCInteractiveMediaAcknowledgementKind[] =
+    "runtime.interactive.media.publish.ack";
 
 static const char * _Nullable MCLocalXPCMenuPairingCommandRequestKind(
     MCLocalXPCMenuPairingCommandKind kind
@@ -908,6 +916,93 @@ bool MCLocalXPCMessageGetExactInteractiveAdmissionPublication(
         payload_out,
         payload_length_out
     );
+}
+
+bool MCLocalXPCMessageGetExactInteractiveInput(
+    MCLocalXPCMessageRef message,
+    const uint8_t **payload_out,
+    size_t *payload_length_out
+) {
+    return MCLocalXPCMessageGetExactData(
+        (xpc_object_t)message,
+        MCLocalXPCInteractiveInputKind,
+        MCLocalXPCMaximumInteractiveInputPayloadBytes,
+        payload_out,
+        payload_length_out
+    );
+}
+
+bool MCLocalXPCMessageGetExactInteractiveMediaPublication(
+    MCLocalXPCMessageRef message,
+    const uint8_t **header_out,
+    size_t *header_length_out,
+    const uint8_t **payload_out,
+    size_t *payload_length_out
+) {
+    xpc_object_t value = (xpc_object_t)message;
+    if (value == NULL || xpc_get_type(value) != XPC_TYPE_DICTIONARY) {
+        return false;
+    }
+    __block size_t field_count = 0;
+    __block bool fields_are_closed = true;
+    xpc_dictionary_apply(
+        value,
+        ^bool(const char *key, xpc_object_t field) {
+            field_count += 1;
+            if (strcmp(key, "kind") == 0) {
+                fields_are_closed = fields_are_closed
+                    && xpc_get_type(field) == XPC_TYPE_STRING;
+            } else if (strcmp(key, "version") == 0) {
+                fields_are_closed = fields_are_closed
+                    && xpc_get_type(field) == XPC_TYPE_INT64;
+            } else if (strcmp(key, "header") == 0
+                       || strcmp(key, "payload") == 0) {
+                fields_are_closed = fields_are_closed
+                    && xpc_get_type(field) == XPC_TYPE_DATA;
+            } else {
+                fields_are_closed = false;
+            }
+            return true;
+        }
+    );
+    const char *kind = xpc_dictionary_get_string(value, "kind");
+    size_t header_length = 0;
+    const void *header = xpc_dictionary_get_data(
+        value,
+        "header",
+        &header_length
+    );
+    size_t payload_length = 0;
+    const void *payload = xpc_dictionary_get_data(
+        value,
+        "payload",
+        &payload_length
+    );
+    bool valid = field_count == 4
+        && fields_are_closed
+        && kind != NULL
+        && strcmp(kind, MCLocalXPCInteractiveMediaPublicationKind) == 0
+        && xpc_dictionary_get_int64(value, "version") == 1
+        && header != NULL
+        && header_length == MCLocalXPCInteractiveMediaHeaderBytes
+        && (payload != NULL || payload_length == 0)
+        && payload_length <= MCLocalXPCMaximumInteractiveMediaPayloadBytes;
+    if (!valid) {
+        return false;
+    }
+    if (header_out != NULL) {
+        *header_out = (const uint8_t *)header;
+    }
+    if (header_length_out != NULL) {
+        *header_length_out = header_length;
+    }
+    if (payload_out != NULL) {
+        *payload_out = (const uint8_t *)payload;
+    }
+    if (payload_length_out != NULL) {
+        *payload_length_out = payload_length;
+    }
+    return true;
 }
 
 MCLocalXPCMessageRef MCLocalXPCMessageCreatePairingReviewPublish(
@@ -2090,6 +2185,135 @@ bool MCLocalXPCExactMessageParserSelfTest(void) {
             == MCLocalXPCMenuPresentationReplyMalformedOrTransportError;
     xpc_release(withdrawal_error);
 
+    const uint8_t interactive_input_bytes[] = {0x7b, 0x7d};
+    const uint8_t *parsed_interactive_input = NULL;
+    size_t parsed_interactive_input_length = 0;
+    xpc_object_t interactive_input = xpc_dictionary_create_empty();
+    xpc_dictionary_set_string(
+        interactive_input,
+        "kind",
+        MCLocalXPCInteractiveInputKind
+    );
+    xpc_dictionary_set_int64(interactive_input, "version", 1);
+    xpc_dictionary_set_data(
+        interactive_input,
+        "payload",
+        interactive_input_bytes,
+        sizeof(interactive_input_bytes)
+    );
+    valid = valid && MCLocalXPCMessageGetExactInteractiveInput(
+        (MCLocalXPCMessageRef)interactive_input,
+        &parsed_interactive_input,
+        &parsed_interactive_input_length
+    );
+    valid = valid
+        && parsed_interactive_input_length == sizeof(interactive_input_bytes)
+        && memcmp(
+            parsed_interactive_input,
+            interactive_input_bytes,
+            sizeof(interactive_input_bytes)
+        ) == 0;
+    xpc_dictionary_set_bool(interactive_input, "extra", true);
+    valid = valid && !MCLocalXPCMessageGetExactInteractiveInput(
+        (MCLocalXPCMessageRef)interactive_input,
+        NULL,
+        NULL
+    );
+    xpc_release(interactive_input);
+
+    uint8_t interactive_media_header[
+        MCLocalXPCInteractiveMediaHeaderBytes
+    ] = {0};
+    const uint8_t interactive_media_payload[] = {0x01, 0x02};
+    const uint8_t *parsed_interactive_media_header = NULL;
+    size_t parsed_interactive_media_header_length = 0;
+    const uint8_t *parsed_interactive_media_payload = NULL;
+    size_t parsed_interactive_media_payload_length = 0;
+    xpc_object_t interactive_media = xpc_dictionary_create_empty();
+    xpc_dictionary_set_string(
+        interactive_media,
+        "kind",
+        MCLocalXPCInteractiveMediaPublicationKind
+    );
+    xpc_dictionary_set_int64(interactive_media, "version", 1);
+    xpc_dictionary_set_data(
+        interactive_media,
+        "header",
+        interactive_media_header,
+        sizeof(interactive_media_header)
+    );
+    xpc_dictionary_set_data(
+        interactive_media,
+        "payload",
+        interactive_media_payload,
+        sizeof(interactive_media_payload)
+    );
+    valid = valid && MCLocalXPCMessageGetExactInteractiveMediaPublication(
+        (MCLocalXPCMessageRef)interactive_media,
+        &parsed_interactive_media_header,
+        &parsed_interactive_media_header_length,
+        &parsed_interactive_media_payload,
+        &parsed_interactive_media_payload_length
+    );
+    valid = valid
+        && parsed_interactive_media_header_length
+            == sizeof(interactive_media_header)
+        && parsed_interactive_media_payload_length
+            == sizeof(interactive_media_payload)
+        && memcmp(
+            parsed_interactive_media_header,
+            interactive_media_header,
+            sizeof(interactive_media_header)
+        ) == 0
+        && memcmp(
+            parsed_interactive_media_payload,
+            interactive_media_payload,
+            sizeof(interactive_media_payload)
+        ) == 0;
+    xpc_dictionary_set_data(
+        interactive_media,
+        "header",
+        interactive_media_header,
+        sizeof(interactive_media_header) - 1
+    );
+    valid = valid && !MCLocalXPCMessageGetExactInteractiveMediaPublication(
+        (MCLocalXPCMessageRef)interactive_media,
+        NULL,
+        NULL,
+        NULL,
+        NULL
+    );
+    xpc_release(interactive_media);
+
+    static const uint8_t empty_interactive_media_payload = 0;
+    xpc_object_t empty_interactive_media = xpc_dictionary_create_empty();
+    xpc_dictionary_set_string(
+        empty_interactive_media,
+        "kind",
+        MCLocalXPCInteractiveMediaPublicationKind
+    );
+    xpc_dictionary_set_int64(empty_interactive_media, "version", 1);
+    xpc_dictionary_set_data(
+        empty_interactive_media,
+        "header",
+        interactive_media_header,
+        sizeof(interactive_media_header)
+    );
+    xpc_dictionary_set_data(
+        empty_interactive_media,
+        "payload",
+        &empty_interactive_media_payload,
+        0
+    );
+    valid = valid && MCLocalXPCMessageGetExactInteractiveMediaPublication(
+        (MCLocalXPCMessageRef)empty_interactive_media,
+        NULL,
+        NULL,
+        NULL,
+        NULL
+    );
+    xpc_release(empty_interactive_media);
+
     return valid;
 }
 
@@ -2619,6 +2843,118 @@ MCLocalXPCResult MCLocalXPCSessionSendInteractiveAdmissionPublication(
         MCLocalXPCMaximumInteractiveAdmissionPayloadBytes,
         handler
     );
+}
+
+MCLocalXPCResult MCLocalXPCSessionReplyToInteractiveInputSuccess(
+    MCLocalXPCSessionRef session,
+    MCLocalXPCMessageRef request
+) {
+    if (!MCLocalXPCMessageGetExactInteractiveInput(request, NULL, NULL)) {
+        return MCLocalXPCResultConstructionFailed;
+    }
+    return MCLocalXPCSessionReplyExact(
+        session,
+        request,
+        MCLocalXPCInteractiveInputAcknowledgementKind
+    );
+}
+
+MCLocalXPCResult MCLocalXPCSessionSendInteractiveInput(
+    MCLocalXPCSessionRef session,
+    const uint8_t *payload,
+    size_t payload_length,
+    MCLocalXPCInteractiveRoleDataReplyHandler handler
+) {
+    if (session == NULL || handler == NULL || payload == NULL
+        || payload_length == 0
+        || payload_length > MCLocalXPCMaximumInteractiveInputPayloadBytes) {
+        return MCLocalXPCResultConstructionFailed;
+    }
+    xpc_object_t request = xpc_dictionary_create_empty();
+    if (request == NULL) {
+        return MCLocalXPCResultConstructionFailed;
+    }
+    xpc_dictionary_set_string(request, "kind", MCLocalXPCInteractiveInputKind);
+    xpc_dictionary_set_int64(request, "version", 1);
+    xpc_dictionary_set_data(request, "payload", payload, payload_length);
+    xpc_session_send_message_with_reply_async(
+        (xpc_session_t)session,
+        request,
+        ^(xpc_object_t reply, xpc_rich_error_t error) {
+            handler(error != NULL || !MCLocalXPCMessageIsExact(
+                reply,
+                MCLocalXPCInteractiveInputAcknowledgementKind
+            ));
+        }
+    );
+    xpc_release(request);
+    return MCLocalXPCResultOK;
+}
+
+MCLocalXPCResult MCLocalXPCSessionReplyToInteractiveMediaPublication(
+    MCLocalXPCSessionRef session,
+    MCLocalXPCMessageRef request
+) {
+    if (!MCLocalXPCMessageGetExactInteractiveMediaPublication(
+            request,
+            NULL,
+            NULL,
+            NULL,
+            NULL
+        )) {
+        return MCLocalXPCResultConstructionFailed;
+    }
+    return MCLocalXPCSessionReplyExact(
+        session,
+        request,
+        MCLocalXPCInteractiveMediaAcknowledgementKind
+    );
+}
+
+MCLocalXPCResult MCLocalXPCSessionSendInteractiveMediaPublication(
+    MCLocalXPCSessionRef session,
+    const uint8_t *header,
+    size_t header_length,
+    const uint8_t *payload,
+    size_t payload_length,
+    MCLocalXPCInteractiveRoleDataReplyHandler handler
+) {
+    if (session == NULL || handler == NULL || header == NULL
+        || header_length != MCLocalXPCInteractiveMediaHeaderBytes
+        || (payload == NULL && payload_length != 0)
+        || payload_length > MCLocalXPCMaximumInteractiveMediaPayloadBytes) {
+        return MCLocalXPCResultConstructionFailed;
+    }
+    xpc_object_t request = xpc_dictionary_create_empty();
+    if (request == NULL) {
+        return MCLocalXPCResultConstructionFailed;
+    }
+    static const uint8_t empty_payload = 0;
+    xpc_dictionary_set_string(
+        request,
+        "kind",
+        MCLocalXPCInteractiveMediaPublicationKind
+    );
+    xpc_dictionary_set_int64(request, "version", 1);
+    xpc_dictionary_set_data(request, "header", header, header_length);
+    xpc_dictionary_set_data(
+        request,
+        "payload",
+        payload_length == 0 ? &empty_payload : payload,
+        payload_length
+    );
+    xpc_session_send_message_with_reply_async(
+        (xpc_session_t)session,
+        request,
+        ^(xpc_object_t reply, xpc_rich_error_t error) {
+            handler(error != NULL || !MCLocalXPCMessageIsExact(
+                reply,
+                MCLocalXPCInteractiveMediaAcknowledgementKind
+            ));
+        }
+    );
+    xpc_release(request);
+    return MCLocalXPCResultOK;
 }
 
 MCLocalXPCResult MCLocalXPCSessionReplyToStatusReadSuccess(

@@ -158,7 +158,7 @@ let package = Package(
             dependencies: [
                 "CompanionAgent", "CompanionAgentPlatform", "CompanionIPC",
                 "CompanionHostPlatform", "CompanionInteractiveShared",
-                "CompanionInteractiveRuntime",
+                "CompanionInteractiveRuntime", "CompanionInteractiveWire",
                 "CompanionLocalXPCPlatform", "CompanionMacApp",
                 "CompanionPresentation",
             ],
@@ -266,7 +266,7 @@ let package = Package(
         .target(
             name: "CompanionLocalXPCPlatform",
             dependencies: [
-                "CompanionIPC",
+                "CompanionIPC", "CompanionInteractiveWire",
                 .target(
                     name: "CompanionLocalXPCPlatformC",
                     condition: .when(platforms: [.macOS])
@@ -328,7 +328,7 @@ let package = Package(
                 "CompanionAgentPlatform", "CompanionDomain",
                 "CompanionHostPlatform",
                 "CompanionDiscovery", "CompanionIPC",
-                "CompanionInteractiveShared",
+                "CompanionInteractiveShared", "CompanionInteractiveWire",
                 "CompanionLifecycle",
                 "CompanionLocalXPCPlatform",
                 "CompanionNetworkPlatform",
@@ -564,11 +564,13 @@ let package = Package(
                 "CompanionDiscovery", "CompanionDomain",
                 "CompanionHost", "CompanionHostPlatform",
                 "CompanionInteractiveHost", "CompanionInteractiveShared",
+                "CompanionInteractiveWire",
                 "CompanionIPC", "CompanionLifecycle",
                 "CompanionLocalXPCPlatform", "CompanionMacApp",
                 "CompanionNetworkPlatform",
                 "CompanionOperations", "CompanionPersistence",
                 "CompanionSecurity", "CompanionWire",
+                "CompanionTransport",
             ]
         ),
         .testTarget(

@@ -1,5 +1,6 @@
 #if os(macOS)
 import CompanionIPC
+import CompanionInteractiveWire
 import Foundation
 
 /// Platform-owned endpoint for one exact, already-authenticated menu
@@ -17,6 +18,7 @@ package protocol MacLocalXPCAuthenticatedMenuSurfaceEndpointV1:
     LocalHostIdentityRecoverySurfaceV0,
     LocalPairingReviewSurfaceV0,
     MacLocalXPCInteractiveLeaseSendingV1,
+    MacLocalXPCInteractiveInputSendingV1,
     Sendable
 {
     func installAuthenticatedMenuTerminalFence(
@@ -72,6 +74,8 @@ package struct MacLocalXPCAuthenticatedMenuSurfacesV1: Sendable {
         any LocalHostIdentityRecoverySurfaceV0
     package let interactiveRuntime:
         any MacLocalXPCInteractiveLeaseSendingV1
+    package let interactiveInput:
+        any MacLocalXPCInteractiveInputSendingV1
 }
 
 extension MacLocalXPCAuthenticatedMenuSurfaceEndpointV1 {
@@ -97,6 +101,12 @@ extension MacLocalXPCAuthenticatedMenuSurfaceEndpointV1 {
         _: InteractiveRuntimeRevokeCommandV0
     ) async throws -> InteractiveRuntimeRevokedReceiptV0 {
         throw MacLocalXPCInteractiveLeaseErrorV1.unavailable
+    }
+
+    package func applyInteractiveInput(
+        _: InteractiveInputEnvelope
+    ) async throws {
+        throw MacLocalXPCInteractiveRoleDataErrorV1.unavailable
     }
 }
 
@@ -347,7 +357,8 @@ package actor MacLocalXPCAuthenticatedMenuSurfaceRouterV1 {
                     generation: generation,
                     token: token
                 ),
-            interactiveRuntime: current!.endpoint
+            interactiveRuntime: current!.endpoint,
+            interactiveInput: current!.endpoint
         )
     }
 

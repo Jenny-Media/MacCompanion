@@ -224,6 +224,12 @@
       "canonicalSHA256": "9e9950a6f40ad698d3284d17a056f3ddcefc35853c1133ad7f34167ba8b66aca"
     },
     {
+      "path": "local-xpc-interactive-role-data-transport-v0.1.json",
+      "kind": "localXPC.interactiveRoleDataTransport.v0.1",
+      "expect": "valid",
+      "canonicalSHA256": "3f1b43bb66973399949b5bed1234bb9aeca557740088923522b9a29fd901fc73"
+    },
+    {
       "path": "host-interactive-role-ingress-v0.1.json",
       "kind": "hostNetwork.interactiveRoleIngress.v0.1",
       "expect": "valid",

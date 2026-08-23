@@ -1,6 +1,7 @@
 #if os(macOS)
 import CompanionIPC
 import CompanionInteractiveRuntime
+import CompanionInteractiveWire
 import CompanionLocalXPCPlatform
 import Dispatch
 import Foundation
@@ -123,11 +124,24 @@ package protocol MacInteractiveMenuRuntimeLeaseOwningV1: Sendable {
     ) async throws -> InteractiveRuntimeRevokedReceiptV0
 
     func invalidateAgentAuthority() async throws
+    func postInputEnvelope(
+        _ envelope: InteractiveInputEnvelope,
+        nowMonotonicNanoseconds: UInt64
+    ) async throws
     func state() async -> InteractiveMenuRuntimeStateV0
     func nextLeaseDeadlineMonotonicNanoseconds() async -> UInt64?
     func expireLeaseIfRequired(
         nowMonotonicNanoseconds: UInt64
     ) async throws -> Bool
+}
+
+extension MacInteractiveMenuRuntimeLeaseOwningV1 {
+    package func postInputEnvelope(
+        _: InteractiveInputEnvelope,
+        nowMonotonicNanoseconds _: UInt64
+    ) async throws {
+        throw MacLocalXPCInteractiveRoleDataErrorV1.unavailable
+    }
 }
 
 extension InteractiveMenuRuntimeOwnerV0:
@@ -140,7 +154,8 @@ extension InteractiveMenuRuntimeOwnerV0:
 /// completion, this adapter latches closed for the rest of its lifetime.
 @available(macOS 26.0, *)
 public actor MacInteractiveLeaseRuntimeAdapterV1:
-    MacLocalXPCInteractiveLeaseHandlingV1
+    MacLocalXPCInteractiveLeaseHandlingV1,
+    MacLocalXPCInteractiveInputHandlingV1
 {
     private let runtime: any MacInteractiveMenuRuntimeLeaseOwningV1
     private let desktop: any MacInteractiveInitialDesktopPreparingV1
@@ -203,6 +218,17 @@ public actor MacInteractiveLeaseRuntimeAdapterV1:
 
     public func state() -> MacInteractiveLeaseRuntimeAdapterStateV1 {
         stateStorage
+    }
+
+    public func applyInteractiveInput(
+        _ envelope: InteractiveInputEnvelope,
+        nowMonotonicNanoseconds: UInt64
+    ) async throws {
+        try requireAvailable()
+        try await runtime.postInputEnvelope(
+            envelope,
+            nowMonotonicNanoseconds: nowMonotonicNanoseconds
+        )
     }
 
     public func prepareInitialInteractiveDesktop(

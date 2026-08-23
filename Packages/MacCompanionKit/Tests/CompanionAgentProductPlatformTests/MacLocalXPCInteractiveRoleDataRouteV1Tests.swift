@@ -1,0 +1,217 @@
+#if os(macOS)
+import CompanionAgentNetworkPlatform
+@testable import CompanionAgentProductPlatform
+import CompanionDomain
+import CompanionInteractiveHost
+import CompanionInteractiveShared
+import CompanionInteractiveWire
+import CompanionLocalXPCPlatform
+@testable import CompanionNetworkPlatform
+import CompanionSecurity
+import CompanionTransport
+import CompanionWire
+import CryptoKit
+import Foundation
+import Testing
+
+private actor InteractiveRoleDataInputSenderV1:
+    MacLocalXPCInteractiveInputSendingV1
+{
+    private(set) var values: [InteractiveInputEnvelope] = []
+
+    func applyInteractiveInput(
+        _ envelope: InteractiveInputEnvelope
+    ) {
+        values.append(envelope)
+    }
+}
+
+private actor InteractiveRoleDataCompletionV1 {
+    private(set) var completed = false
+    func complete() { completed = true }
+}
+
+private func interactiveRoleDataPairV1(
+    sessionID: UUID,
+    epoch: AuthorizationEpoch
+) throws -> AgentInteractiveReadyRolePairV0 {
+    func connection(
+        role: InteractiveChannelRoleName
+    ) throws -> NetworkHostInteractiveReadyRoleConnectionV0 {
+        let key = P256.Signing.PrivateKey()
+        let spki = try CompanionSecurityV0.p256SubjectPublicKeyInfoDER(
+            publicKeyX963: key.publicKey.x963Representation
+        )
+        let binding = try HostApplicationTLSBinding(
+            evidence: HostTLSListenerEvidence(
+                negotiatedTLSMajor: 1,
+                negotiatedTLSMinor: 3,
+                earlyDataAccepted: false,
+                servedSubjectPublicKeyInfoDER: spki
+            ),
+            requiredHostFingerprint: CompanionSecurityV0.hostFingerprint(
+                subjectPublicKeyInfoDER: spki
+            )
+        )
+        let channel = HostInteractiveReadyRoleChannelV0(hello:
+            try InteractiveChannelHelloBody(
+                channelID: WireUUID(UUID()),
+                role: role,
+                clientID: WireUUID(UUID(uuidString:
+                    "11111111-1111-4111-8111-111111111111"
+                )!),
+                primaryConnectionID: try WireBytes16(
+                    Data(repeating: 1, count: 16)
+                ),
+                interactiveSessionID: WireUUID(sessionID),
+                authorizationEpoch: epoch,
+                clientNonce: try WireBytes32(Data(repeating: 2, count: 32))
+            )
+        )
+        return NetworkHostInteractiveReadyRoleConnectionV0(
+            tlsBinding: binding,
+            channel: channel,
+            receive: { _ in
+                NetworkHostInteractiveRoleTrafficChunkV0(
+                    data: Data(),
+                    isComplete: true
+                )
+            },
+            send: { _ in },
+            cancel: {}
+        )
+    }
+    return try AgentInteractiveReadyRolePairV0(
+        input: connection(role: .input),
+        media: connection(role: .media)
+    )
+}
+
+@available(macOS 26.0, *)
+@Test func localXPCInteractiveRoleDataRouteRendezvousAndInputAreFenced()
+    async throws
+{
+    let generation: UInt64 = 7
+    let sessionID = UUID()
+    let epoch = AuthorizationEpoch(rawValue: 4)
+    let surfaceID = UUID()
+    let pair = try interactiveRoleDataPairV1(
+        sessionID: sessionID,
+        epoch: epoch
+    )
+    let sender = InteractiveRoleDataInputSenderV1()
+    let route = MacLocalXPCInteractiveRoleDataRouteV1()
+    try await route.bind(generation: generation, input: sender)
+
+    let envelope = try InteractiveInputEnvelope(
+        messageID: WireUUID(UUID()),
+        interactiveSessionID: WireUUID(sessionID),
+        authorizationEpoch: epoch,
+        sequence: 1,
+        clientMonotonicMilliseconds: 1,
+        surfaceID: WireUUID(surfaceID),
+        surfaceRevision: SurfaceRevision(rawValue: 1),
+        coordinateSpaceRevision: CoordinateSpaceRevision(rawValue: 1),
+        input: .reset
+    )
+    try await route.applyInteractiveInput(
+        envelope,
+        pair: pair,
+        nowMonotonicNanoseconds: 1
+    )
+    #expect(await sender.values == [envelope])
+
+    let header = try MediaRecordHeader(
+        type: .discontinuity,
+        payloadLength: 0,
+        interactiveSessionID: sessionID,
+        authorizationEpoch: epoch,
+        surfaceID: surfaceID,
+        surfaceRevision: SurfaceRevision(rawValue: 1),
+        coordinateSpaceRevision: CoordinateSpaceRevision(rawValue: 1),
+        mediaSequence: 1,
+        presentationTimeNanoseconds: 0,
+        encodedWidth: 0,
+        encodedHeight: 0
+    )
+    let completion = InteractiveRoleDataCompletionV1()
+    let publication = Task {
+        try await route.publishInteractiveMedia(
+            header: header,
+            payload: Data(),
+            transportGeneration: generation
+        )
+        await completion.complete()
+    }
+    await Task.yield()
+    #expect(!(await completion.completed))
+
+    let received = try #require(
+        try await route.nextInteractiveMediaRecord(pair: pair)
+    )
+    try await publication.value
+    #expect(await completion.completed)
+    #expect(received.header == header)
+    #expect(received.payload.isEmpty)
+
+    await route.invalidate(generation: generation)
+    await #expect(throws:
+        MacLocalXPCInteractiveRoleDataRouteErrorV1.staleGeneration
+    ) {
+        try await route.applyInteractiveInput(
+            envelope,
+            pair: pair,
+            nowMonotonicNanoseconds: 2
+        )
+    }
+}
+
+@available(macOS 26.0, *)
+@Test func localXPCInteractiveRoleDataRendezvousCancellationNeverHangs()
+    async throws
+{
+    let sessionID = UUID()
+    let epoch = AuthorizationEpoch(rawValue: 2)
+    let pair = try interactiveRoleDataPairV1(
+        sessionID: sessionID,
+        epoch: epoch
+    )
+    let route = MacLocalXPCInteractiveRoleDataRouteV1()
+    try await route.bind(
+        generation: 9,
+        input: InteractiveRoleDataInputSenderV1()
+    )
+    let header = try MediaRecordHeader(
+        type: .end,
+        payloadLength: 0,
+        interactiveSessionID: sessionID,
+        authorizationEpoch: epoch,
+        surfaceID: UUID(),
+        surfaceRevision: SurfaceRevision(rawValue: 1),
+        coordinateSpaceRevision: CoordinateSpaceRevision(rawValue: 1),
+        mediaSequence: 1,
+        presentationTimeNanoseconds: 0,
+        encodedWidth: 0,
+        encodedHeight: 0
+    )
+    let publication = Task {
+        try await route.publishInteractiveMedia(
+            header: header,
+            payload: Data(),
+            transportGeneration: 9
+        )
+    }
+    publication.cancel()
+    await #expect(throws: CancellationError.self) {
+        try await publication.value
+    }
+
+    let consumer = Task {
+        try await route.nextInteractiveMediaRecord(pair: pair)
+    }
+    consumer.cancel()
+    await #expect(throws: CancellationError.self) {
+        _ = try await consumer.value
+    }
+}
+#endif

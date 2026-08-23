@@ -1,5 +1,6 @@
 #if os(macOS)
 import CompanionIPC
+import CompanionInteractiveWire
 import Foundation
 
 package enum MacLocalXPCMenuPresentationSendOutcomeV1:
@@ -64,6 +65,8 @@ package actor MacLocalXPCAuthenticatedMenuPresentationEndpointV1:
     private weak var sender: (any MacLocalXPCMenuPresentationSendingV1)?
     private weak var interactiveSender:
         (any MacLocalXPCGenerationBoundInteractiveLeaseSendingV1)?
+    private weak var interactiveInputSender:
+        (any MacLocalXPCGenerationBoundInteractiveInputSendingV1)?
     private var terminalFence: MacLocalXPCMenuSurfaceTerminalFenceV1?
     private var terminalFailureLatched = false
     private var terminalFenceRequested = false
@@ -80,6 +83,8 @@ package actor MacLocalXPCAuthenticatedMenuPresentationEndpointV1:
         self.sender = sender
         interactiveSender = sender as?
             any MacLocalXPCGenerationBoundInteractiveLeaseSendingV1
+        interactiveInputSender = sender as?
+            any MacLocalXPCGenerationBoundInteractiveInputSendingV1
     }
 
     package func installAuthenticatedMenuTerminalFence(
@@ -96,6 +101,7 @@ package actor MacLocalXPCAuthenticatedMenuPresentationEndpointV1:
         let sender = self.sender
         self.sender = nil
         interactiveSender = nil
+        interactiveInputSender = nil
         // Owner-driven retirement is deliberately not a transport-failure
         // callback and therefore never recursively requests the router fence.
         await sender?.retireMenuPresentationEndpoint(
@@ -196,6 +202,18 @@ package actor MacLocalXPCAuthenticatedMenuPresentationEndpointV1:
         }
     }
 
+    package func applyInteractiveInput(
+        _ envelope: InteractiveInputEnvelope
+    ) async throws {
+        try await submitInteractiveInput { sender in
+            try await sender.applyInteractiveInput(
+                generation: generation,
+                endpointToken: endpointToken,
+                envelope: envelope
+            )
+        }
+    }
+
     private func publish(
         _ request: MacLocalXPCMenuPresentationRequestV1
     ) async throws {
@@ -274,6 +292,28 @@ package actor MacLocalXPCAuthenticatedMenuPresentationEndpointV1:
         }
         do {
             return try await operation(interactiveSender)
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            await latchTerminalFailure()
+            throw MacLocalXPCAuthenticatedMenuPresentationEndpointErrorV1
+                .endpointClosed
+        }
+    }
+
+    private func submitInteractiveInput(
+        _ operation: @Sendable (
+            any MacLocalXPCGenerationBoundInteractiveInputSendingV1
+        ) async throws -> Void
+    ) async throws {
+        guard !retired, !terminalFailureLatched,
+              let interactiveInputSender else {
+            await latchTerminalFailure()
+            throw MacLocalXPCAuthenticatedMenuPresentationEndpointErrorV1
+                .endpointClosed
+        }
+        do {
+            try await operation(interactiveInputSender)
         } catch is CancellationError {
             throw CancellationError()
         } catch {

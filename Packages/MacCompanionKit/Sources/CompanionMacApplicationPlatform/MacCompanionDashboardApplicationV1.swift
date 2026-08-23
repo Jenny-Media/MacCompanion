@@ -203,6 +203,8 @@ public final class MacCompanionDashboardApplicationV1 {
             MacInteractiveOpaqueDisplaySelectionV1()
         let interactiveLeaseHandler:
             (any MacLocalXPCInteractiveLeaseHandlingV1)?
+        let interactiveInputHandler:
+            (any MacLocalXPCInteractiveInputHandlingV1)?
         if let interactiveRuntime, let interactiveDisplaySelection {
             let handler = MacInteractiveLeaseRuntimeAdapterV1(
                 runtime: interactiveRuntime,
@@ -211,6 +213,7 @@ public final class MacCompanionDashboardApplicationV1 {
                 )
             )
             interactiveLeaseHandler = handler
+            interactiveInputHandler = handler
             interactiveIndicator?.installStopAction { [weak handler] in
                 guard let handler else {
                     throw MacInteractiveActivityIndicatorErrorV1
@@ -220,6 +223,7 @@ public final class MacCompanionDashboardApplicationV1 {
             }
         } else {
             interactiveLeaseHandler = nil
+            interactiveInputHandler = nil
         }
         let dashboardRelay = MacCompanionDashboardStateRelayV1()
         let dashboardOwner = MacAgentDashboardApplicationOwnerV0 {
@@ -253,6 +257,7 @@ public final class MacCompanionDashboardApplicationV1 {
             pairingReviews: reviewOwner,
             hostIdentityRecovery: recoveryOwner,
             interactiveLeaseHandler: interactiveLeaseHandler,
+            interactiveInputHandler: interactiveInputHandler,
             selectedDisplayID: interactiveDisplaySelection?
                 .opaqueSelectedDisplayID()
         )

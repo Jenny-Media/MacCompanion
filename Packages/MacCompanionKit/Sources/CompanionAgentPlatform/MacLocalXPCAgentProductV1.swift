@@ -271,6 +271,7 @@ public final class MacLocalXPCAgentProductV1: @unchecked Sendable {
         any MacLocalXPCStatusReadingV1,
         any MacLocalXPCMenuPairingCommandHandlingV1,
         any MacLocalXPCInteractiveAdmissionHandlingV1,
+        (any MacLocalXPCInteractiveMediaHandlingV1)?,
         @escaping MacLocalXPCServerV1.EventHandler
     ) -> any MacLocalXPCAgentServerV1
 
@@ -311,6 +312,8 @@ public final class MacLocalXPCAgentProductV1: @unchecked Sendable {
             any MacLocalXPCMenuPairingCommandHandlingV1,
         interactiveAdmissionHandler:
             any MacLocalXPCInteractiveAdmissionHandlingV1,
+        interactiveMediaHandler:
+            (any MacLocalXPCInteractiveMediaHandlingV1)? = nil,
         onSurfaces: @escaping @Sendable (
             MacLocalXPCAuthenticatedMenuSurfacesV1
         ) async throws -> Void,
@@ -331,6 +334,7 @@ public final class MacLocalXPCAgentProductV1: @unchecked Sendable {
             ),
             menuPairingCommandHandler: menuPairingCommandHandler,
             interactiveAdmissionHandler: interactiveAdmissionHandler,
+            interactiveMediaHandler: interactiveMediaHandler,
             onSurfaces: onSurfaces,
             onSurfaceInvalidated: onSurfaceInvalidated
         )
@@ -385,6 +389,8 @@ public final class MacLocalXPCAgentProductV1: @unchecked Sendable {
             any MacLocalXPCMenuPairingCommandHandlingV1,
         interactiveAdmissionHandler:
             any MacLocalXPCInteractiveAdmissionHandlingV1,
+        interactiveMediaHandler:
+            (any MacLocalXPCInteractiveMediaHandlingV1)? = nil,
         onSurfaces: @escaping @Sendable (
             MacLocalXPCAuthenticatedMenuSurfacesV1
         ) async throws -> Void,
@@ -392,12 +398,14 @@ public final class MacLocalXPCAgentProductV1: @unchecked Sendable {
             _ in
         },
         serverFactory: @escaping PresentationServerFactory = {
-            profile, statusReader, commandHandler, admissionHandler, onEvent in
+            profile, statusReader, commandHandler, admissionHandler,
+            mediaHandler, onEvent in
             MacLocalXPCServerV1(
                 profile: profile,
                 statusReader: statusReader,
                 menuPairingCommandHandler: commandHandler,
                 interactiveAdmissionHandler: admissionHandler,
+                interactiveMediaHandler: mediaHandler,
                 onEvent: onEvent
             )
         }
@@ -425,6 +433,7 @@ public final class MacLocalXPCAgentProductV1: @unchecked Sendable {
             statusReader,
             menuPairingCommandHandler,
             interactiveAdmissionHandler,
+            interactiveMediaHandler,
             { [weak runtime] event in
                 runtime?.consume(event)
             }

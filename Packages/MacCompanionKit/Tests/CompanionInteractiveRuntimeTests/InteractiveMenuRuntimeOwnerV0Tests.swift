@@ -399,6 +399,51 @@ private func installAndActivateInitial(
     return receipt
 }
 
+@Test func inputEnvelopeDerivesFullFenceInsideActiveRuntimeOwner()
+    async throws
+{
+    let effects = RuntimeEffectsProbe(
+        readyClasses: [.view, .pointer, .keyboard]
+    )
+    let poster = RuntimeInputPosterProbe()
+    let owner = runtimeOwner(probe: effects, poster: poster)
+    let lease = try runtimeLease(
+        allowedClasses: [.view, .pointer, .keyboard]
+    )
+    _ = try await installAndActivateInitial(
+        owner,
+        command: installCommand(lease: lease)
+    )
+    let envelope = try runtimeInput(lease: lease)
+
+    try await owner.postInputEnvelope(
+        envelope,
+        nowMonotonicNanoseconds: 2_040
+    )
+    #expect(poster.postedInputs() == [envelope])
+
+    let stale = try InteractiveInputEnvelope(
+        messageID: WireUUID(UUID()),
+        interactiveSessionID: WireUUID(UUID()),
+        authorizationEpoch: lease.authorizationEpoch,
+        sequence: 2,
+        clientMonotonicMilliseconds: 2,
+        surfaceID: WireUUID(lease.surfaceID),
+        surfaceRevision: .init(rawValue: lease.surfaceRevision.rawValue),
+        coordinateSpaceRevision: .init(
+            rawValue: lease.coordinateRevision.rawValue
+        ),
+        input: .reset
+    )
+    await #expect(throws: InteractiveMenuRuntimeErrorV0.bindingMismatch) {
+        try await owner.postInputEnvelope(
+            stale,
+            nowMonotonicNanoseconds: 2_050
+        )
+    }
+    #expect(poster.postedInputs() == [envelope])
+}
+
 @Test func installIsVisibleBeforeCaptureAndDuplicateIsIdempotent() async throws {
     let probe = RuntimeEffectsProbe()
     let owner = runtimeOwner(probe: probe)

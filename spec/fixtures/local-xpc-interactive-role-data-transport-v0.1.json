@@ -1,0 +1,55 @@
+{
+  "profile": "Mac Companion local XPC Interactive role-data transport v0.1",
+  "minimumTransportGeneration": 1,
+  "input": {
+    "kind": "runtime.interactive.input.apply",
+    "authorizationMethod": "applyInteractiveInput",
+    "maximumPayloadBytes": 65536,
+    "maximumInFlightPerGeneration": 1,
+    "receiverOperationTimeoutMilliseconds": 1500,
+    "senderReplyTimeoutMilliseconds": 2000,
+    "requestFields": [
+      "kind:string",
+      "version:signedInt64=1",
+      "payload:data"
+    ],
+    "successKind": "runtime.interactive.input.apply.ack",
+    "successFields": [
+      "kind:string",
+      "version:signedInt64=1"
+    ]
+  },
+  "media": {
+    "kind": "runtime.interactive.media.publish",
+    "authorizationMethod": "publishInteractiveMedia",
+    "headerBytes": 96,
+    "maximumPayloadBytes": 8388608,
+    "maximumInFlightPerGeneration": 1,
+    "receiverOperationTimeoutMilliseconds": 3000,
+    "senderReplyTimeoutMilliseconds": 4000,
+    "requestFields": [
+      "kind:string",
+      "version:signedInt64=1",
+      "header:data",
+      "payload:data"
+    ],
+    "successKind": "runtime.interactive.media.publish.ack",
+    "successFields": [
+      "kind:string",
+      "version:signedInt64=1"
+    ]
+  },
+  "rules": [
+    "same-team exact-role authentication and accepted menu readiness are required before role-data traffic",
+    "input and media use independent single-flight lanes and may overlap lease lifecycle traffic without widening its authority",
+    "the Agent sends only a strict canonical InteractiveInputEnvelope and the menu derives the current complete lease fence inside its serialized runtime owner",
+    "the menu samples its local monotonic clock immediately before input runtime admission and success means the exact input action was accepted",
+    "media carries one separately typed 96-byte header and its exact payload; the Agent validates both before transferring the record to the exact authenticated role-pair owner",
+    "media success is withheld until the Agent role-data source accepts the complete record, so the menu retains at most one publication in flight",
+    "input payloads are at most 65536 bytes and media payloads are at most 8388608 bytes with record-specific bounds enforced by the decoded header",
+    "every request rechecks the retained peer, transport generation, readiness, authorization method, and private endpoint token or exact inbound generation immediately before admission",
+    "there is no handled application-error envelope and neither direction retries after ambiguous delivery",
+    "rejection, timeout, cancellation after send, malformed traffic, wrong kind, cross-fence data, overlap on one lane, or generation loss terminates the exact authenticated generation",
+    "role-data traffic cannot create, replace, renew, revoke, or broaden an Interactive lease and carries no credential, route, private key, arbitrary file, shell command, clipboard, or audio"
+  ]
+}

@@ -976,6 +976,8 @@ public enum MacAgentProductBootstrapV1 {
             AgentInteractiveRoleDataBindingAuthorityV0(
                 runtime: interactiveRuntime
             )
+        let localInteractiveRoleData =
+            MacLocalXPCInteractiveRoleDataRouteV1()
         let makeLocalXPC: LocalXPCFactory = { services in
             try await MacLocalXPCAgentProductV1
                 .afterAgentBootstrapWithMenuPresentation(
@@ -983,6 +985,7 @@ public enum MacAgentProductBootstrapV1 {
                 processStarter: processStarter,
                 menuPairingCommandHandler: localPairingCommandAuthority,
                 interactiveAdmissionHandler: interactiveAdmission,
+                interactiveMediaHandler: localInteractiveRoleData,
                 onSurfaces: {
                     let surfaces = $0
                     do {
@@ -1008,7 +1011,21 @@ public enum MacAgentProductBootstrapV1 {
                             channelAuthenticator: owner,
                             generation: surfaces.generation
                         )
+                        try await localInteractiveRoleData.bind(
+                            generation: surfaces.generation,
+                            input: surfaces.interactiveInput
+                        )
+                        try await interactiveRoleData.bind(
+                            route: localInteractiveRoleData,
+                            generation: surfaces.generation
+                        )
                     } catch {
+                        await localInteractiveRoleData.invalidate(
+                            generation: surfaces.generation
+                        )
+                        _ = await interactiveRoleData.invalidate(
+                            generation: surfaces.generation
+                        )
                         _ = await interactiveRuntime.invalidate(
                             generation: surfaces.generation
                         )
@@ -1020,6 +1037,7 @@ public enum MacAgentProductBootstrapV1 {
                 },
                 onSurfaceInvalidated: {
                     _ = await interactiveRoleData.invalidate(generation: $0)
+                    await localInteractiveRoleData.invalidate(generation: $0)
                     _ = await interactiveRuntime.invalidate(generation: $0)
                     await menuLossCoordinator
                         .authenticatedMenuSurfaceUnavailable(generation: $0)

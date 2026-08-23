@@ -73,6 +73,9 @@ typedef void (^MCLocalXPCInteractiveAdmissionReplyHandler)(
     size_t payload_length,
     bool malformed_or_transport_error
 );
+typedef void (^MCLocalXPCInteractiveRoleDataReplyHandler)(
+    bool malformed_or_transport_error
+);
 
 enum {
     MCLocalXPCMaximumStatusPayloadBytes = 4096,
@@ -81,6 +84,9 @@ enum {
     MCLocalXPCMaximumMenuPairingCommandPayloadBytes = 4096,
     MCLocalXPCMaximumInteractiveLeasePayloadBytes = 4096,
     MCLocalXPCMaximumInteractiveAdmissionPayloadBytes = 4096,
+    MCLocalXPCMaximumInteractiveInputPayloadBytes = 65536,
+    MCLocalXPCInteractiveMediaHeaderBytes = 96,
+    MCLocalXPCMaximumInteractiveMediaPayloadBytes = 8388608,
 };
 
 API_AVAILABLE(macos(26.0))
@@ -355,6 +361,52 @@ MCLocalXPCResult MCLocalXPCSessionSendInteractiveAdmissionPublication(
     const uint8_t *payload,
     size_t payload_length,
     MCLocalXPCInteractiveAdmissionReplyHandler handler
+);
+
+API_AVAILABLE(macos(26.0))
+bool MCLocalXPCMessageGetExactInteractiveInput(
+    MCLocalXPCMessageRef message,
+    const uint8_t * _Nullable * _Nullable payload_out,
+    size_t * _Nullable payload_length_out
+);
+
+API_AVAILABLE(macos(26.0))
+MCLocalXPCResult MCLocalXPCSessionReplyToInteractiveInputSuccess(
+    MCLocalXPCSessionRef session,
+    MCLocalXPCMessageRef request
+);
+
+API_AVAILABLE(macos(26.0))
+MCLocalXPCResult MCLocalXPCSessionSendInteractiveInput(
+    MCLocalXPCSessionRef session,
+    const uint8_t *payload,
+    size_t payload_length,
+    MCLocalXPCInteractiveRoleDataReplyHandler handler
+);
+
+API_AVAILABLE(macos(26.0))
+bool MCLocalXPCMessageGetExactInteractiveMediaPublication(
+    MCLocalXPCMessageRef message,
+    const uint8_t * _Nullable * _Nullable header_out,
+    size_t * _Nullable header_length_out,
+    const uint8_t * _Nullable * _Nullable payload_out,
+    size_t * _Nullable payload_length_out
+);
+
+API_AVAILABLE(macos(26.0))
+MCLocalXPCResult MCLocalXPCSessionReplyToInteractiveMediaPublication(
+    MCLocalXPCSessionRef session,
+    MCLocalXPCMessageRef request
+);
+
+API_AVAILABLE(macos(26.0))
+MCLocalXPCResult MCLocalXPCSessionSendInteractiveMediaPublication(
+    MCLocalXPCSessionRef session,
+    const uint8_t *header,
+    size_t header_length,
+    const uint8_t * _Nullable payload,
+    size_t payload_length,
+    MCLocalXPCInteractiveRoleDataReplyHandler handler
 );
 
 /// Returns an owned exact request object. The caller releases it with

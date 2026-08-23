@@ -169,6 +169,17 @@ backpressure with paired fail-closed teardown. The full 1,449-test Swift
 catalog, cross-builds, and eight platform probes pass. Authenticated local-XPC
 input/media routing plus concrete capture/frame/input adapters remain the next
 independent Control slice.
+The subsequent
+[authenticated local-XPC Interactive role-data checkpoint](evidence/2026-08-22-authenticated-local-xpc-role-data-transport.md)
+closes that process boundary with exact input and media dictionaries,
+independent generation-fenced single-flight lanes, asymmetric deadlines, and
+generation-wide fail-closed invalidation. Input reconstructs its full command
+fence only inside the active serialized menu runtime. Media uses a zero-buffer
+Agent rendezvous that withholds the menu acknowledgement until the exact
+network media role takes the complete record. Production binds both directions
+only to the current authenticated menu generation. Concrete ScreenCaptureKit,
+VideoToolbox, queue-drain, Core Graphics posting, and signed physical evidence
+remain the next independent Control slice.
 
 The [visible Interactive admission checkpoint](evidence/2026-08-22-visible-interactive-admission-contract.md)
 now carries the closed canonical menu-process generation, exact revision, and

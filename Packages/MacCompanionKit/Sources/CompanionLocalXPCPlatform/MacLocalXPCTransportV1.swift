@@ -1,5 +1,6 @@
 #if os(macOS)
 import CompanionIPC
+import CompanionInteractiveWire
 import CompanionLocalXPCPlatformC
 import Dispatch
 import Foundation
@@ -310,7 +311,9 @@ public final class MacLocalXPCServerV1:
     @unchecked Sendable,
     MacLocalXPCMenuPresentationSendingV1,
     MacLocalXPCGenerationBoundInteractiveLeaseSendingV1,
-    MacLocalXPCInteractiveLeaseSendingV1
+    MacLocalXPCInteractiveLeaseSendingV1,
+    MacLocalXPCGenerationBoundInteractiveInputSendingV1,
+    MacLocalXPCInteractiveInputSendingV1
 {
     public typealias EventHandler = @Sendable (MacLocalXPCServerEventV1) -> Void
     package static let maximumAdmittedPresentationsPerGeneration = 8
@@ -319,6 +322,55 @@ public final class MacLocalXPCServerV1:
     package static let menuPairingCommandTimeoutSeconds = 4
     package static let interactiveLeaseReplyTimeoutSeconds = 5
     package static let interactiveAdmissionTimeoutSeconds = 3
+    package static let interactiveInputReplyTimeoutSeconds = 2
+    package static let interactiveMediaOperationTimeoutSeconds = 3
+
+    private final class PendingInteractiveInput: @unchecked Sendable {
+        let requestID: UUID
+        let transaction:
+            MacLocalXPCInteractiveRoleDataTransactionGateV1.Active
+        let continuation: CheckedContinuation<Void, any Error>
+        var deadline: DispatchWorkItem?
+
+        init(
+            requestID: UUID,
+            transaction:
+                MacLocalXPCInteractiveRoleDataTransactionGateV1.Active,
+            continuation: CheckedContinuation<Void, any Error>
+        ) {
+            self.requestID = requestID
+            self.transaction = transaction
+            self.continuation = continuation
+        }
+    }
+
+    private final class PendingInteractiveMediaPublication:
+        @unchecked Sendable
+    {
+        let transaction:
+            MacLocalXPCInteractiveRoleDataTransactionGateV1.Active
+        var deadline: DispatchWorkItem?
+        var task: Task<Void, Never>?
+        private let requestLease:
+            MacLocalXPCStatusRequestLeaseV1<MCLocalXPCMessageRef>
+
+        init(
+            transaction:
+                MacLocalXPCInteractiveRoleDataTransactionGateV1.Active,
+            request: MCLocalXPCMessageRef
+        ) {
+            self.transaction = transaction
+            requestLease = MacLocalXPCStatusRequestLeaseV1(request: request)
+        }
+
+        func takeOwnedRequest() -> MCLocalXPCMessageRef? {
+            requestLease.takeOwnedRequest()
+        }
+
+        func releaseOwnedRequest() {
+            requestLease.releaseIfOwned()
+        }
+    }
 
     private final class PendingInteractiveAdmissionPublication:
         @unchecked Sendable
@@ -599,6 +651,13 @@ public final class MacLocalXPCServerV1:
             MacLocalXPCInteractiveAdmissionTransactionGateV1()
         var pendingInteractiveAdmissionPublication:
             PendingInteractiveAdmissionPublication?
+        var interactiveInputGate =
+            MacLocalXPCInteractiveRoleDataTransactionGateV1()
+        var pendingInteractiveInput: PendingInteractiveInput?
+        var interactiveMediaGate =
+            MacLocalXPCInteractiveRoleDataTransactionGateV1()
+        var pendingInteractiveMediaPublication:
+            PendingInteractiveMediaPublication?
         var presentationIssuanceGate:
             MacLocalXPCMenuPresentationEndpointIssuanceGateV1
         var presentationEndpoint:
@@ -630,6 +689,8 @@ public final class MacLocalXPCServerV1:
             precondition(
                 interactiveAdmissionGate.bind(generation: generation)
             )
+            precondition(interactiveInputGate.bind(generation: generation))
+            precondition(interactiveMediaGate.bind(generation: generation))
             ownedPeer = peer
         }
 
@@ -672,6 +733,34 @@ public final class MacLocalXPCServerV1:
             pendingInteractiveLeaseCommand.continuation.resume(
                 throwing: error
             )
+        }
+
+        func cancelPendingInteractiveInput(
+            error: MacLocalXPCInteractiveRoleDataErrorV1
+        ) {
+            _ = interactiveInputGate.invalidate(generation: generation)
+            guard let pendingInteractiveInput else { return }
+            self.pendingInteractiveInput = nil
+            pendingInteractiveInput.deadline?.cancel()
+            pendingInteractiveInput.deadline = nil
+            pendingInteractiveInput.continuation.resume(throwing: error)
+        }
+
+        @discardableResult
+        func cancelPendingInteractiveMediaPublication() -> Bool {
+            let invalidated = interactiveMediaGate.invalidate(
+                generation: generation
+            ) != nil
+            guard let pendingInteractiveMediaPublication else {
+                return invalidated
+            }
+            self.pendingInteractiveMediaPublication = nil
+            pendingInteractiveMediaPublication.deadline?.cancel()
+            pendingInteractiveMediaPublication.deadline = nil
+            pendingInteractiveMediaPublication.task?.cancel()
+            pendingInteractiveMediaPublication.task = nil
+            pendingInteractiveMediaPublication.releaseOwnedRequest()
+            return true
         }
 
         @discardableResult
@@ -726,6 +815,8 @@ public final class MacLocalXPCServerV1:
         (any MacLocalXPCMenuPairingCommandHandlingV1)?
     private let interactiveAdmissionHandler:
         (any MacLocalXPCInteractiveAdmissionHandlingV1)?
+    private let interactiveMediaHandler:
+        (any MacLocalXPCInteractiveMediaHandlingV1)?
     private let profile: MacLocalXPCServerProfileV1
     private let statusReadTimeout: DispatchTimeInterval = .seconds(2)
     private let bootstrapTimeout: DispatchTimeInterval = .seconds(
@@ -746,6 +837,8 @@ public final class MacLocalXPCServerV1:
             (any MacLocalXPCMenuPairingCommandHandlingV1)? = nil,
         interactiveAdmissionHandler:
             (any MacLocalXPCInteractiveAdmissionHandlingV1)? = nil,
+        interactiveMediaHandler:
+            (any MacLocalXPCInteractiveMediaHandlingV1)? = nil,
         onEvent: @escaping EventHandler
     ) {
         self.profile = profile
@@ -753,6 +846,7 @@ public final class MacLocalXPCServerV1:
         self.statusReader = statusReader
         self.menuPairingCommandHandler = menuPairingCommandHandler
         self.interactiveAdmissionHandler = interactiveAdmissionHandler
+        self.interactiveMediaHandler = interactiveMediaHandler
         self.onEvent = onEvent
         queue.setSpecific(key: queueKey, value: 1)
     }
@@ -906,6 +1000,250 @@ public final class MacLocalXPCServerV1:
                 presentationError: .endpointUnavailable
             )
         }
+    }
+
+    public func applyInteractiveInput(
+        _ envelope: InteractiveInputEnvelope
+    ) async throws {
+        try await applyInteractiveInput(envelope, endpointBinding: nil)
+    }
+
+    package func applyInteractiveInput(
+        generation: UInt64,
+        endpointToken: UUID,
+        envelope: InteractiveInputEnvelope
+    ) async throws {
+        try await applyInteractiveInput(
+            envelope,
+            endpointBinding: .init(
+                generation: generation,
+                endpointToken: endpointToken
+            )
+        )
+    }
+
+    private func applyInteractiveInput(
+        _ envelope: InteractiveInputEnvelope,
+        endpointBinding: MacLocalXPCInteractiveLeaseEndpointBindingV1?
+    ) async throws {
+        let payload: Data
+        do {
+            payload = try InteractiveInputCodec.encode(envelope)
+        } catch {
+            throw MacLocalXPCInteractiveRoleDataErrorV1
+                .malformedOrTransportError
+        }
+        let requestID = UUID()
+        let marker = InteractiveLeaseCancellationMarker()
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation {
+                (continuation: CheckedContinuation<Void, any Error>) in
+                queue.async { [weak self] in
+                    guard let self else {
+                        continuation.resume(throwing:
+                            MacLocalXPCInteractiveRoleDataErrorV1.unavailable
+                        )
+                        return
+                    }
+                    self.admitInteractiveInput(
+                        requestID: requestID,
+                        payload: payload,
+                        endpointBinding: endpointBinding,
+                        cancellationMarker: marker,
+                        continuation: continuation
+                    )
+                }
+            }
+        } onCancel: { [weak self] in
+            marker.markCancelled()
+            self?.queue.async { [weak self] in
+                self?.cancelInteractiveInput(requestID: requestID)
+            }
+        }
+    }
+
+    private func admitInteractiveInput(
+        requestID: UUID,
+        payload: Data,
+        endpointBinding: MacLocalXPCInteractiveLeaseEndpointBindingV1?,
+        cancellationMarker: InteractiveLeaseCancellationMarker,
+        continuation: CheckedContinuation<Void, any Error>
+    ) {
+        guard !cancellationMarker.isCancelled() else {
+            continuation.resume(throwing: CancellationError())
+            return
+        }
+        guard let state = currentPeerState,
+              endpointBinding.map({
+                  $0.admits(
+                      generation: state.generation,
+                      issuedEndpointToken:
+                          state.presentationIssuanceGate.token
+                  )
+              }) ?? true,
+              listenerRunGate.admits(generation: state.listenerGeneration),
+              peerStates[state.generation] === state,
+              generationGate.admitsPostAuthenticationTraffic(
+                  generation: state.generation
+              ),
+              state.lifetime.menuReadinessPublished,
+              state.postAuthenticationFence.admitsTraffic,
+              profile.admitsMenuPresentation,
+              payload.count > 0,
+              payload.count <= Int(
+                  MCLocalXPCMaximumInteractiveInputPayloadBytes
+              ),
+              authorizesAgentPresentationMethod(.applyInteractiveInput),
+              let transaction = state.interactiveInputGate.begin(
+                  generation: state.generation,
+                  permitted: true
+              ) else {
+            continuation.resume(throwing:
+                MacLocalXPCInteractiveRoleDataErrorV1.unavailable
+            )
+            return
+        }
+        let pending = PendingInteractiveInput(
+            requestID: requestID,
+            transaction: transaction,
+            continuation: continuation
+        )
+        state.pendingInteractiveInput = pending
+        let result = payload.withUnsafeBytes { rawBuffer in
+            guard let bytes = rawBuffer.bindMemory(to: UInt8.self).baseAddress
+            else { return MCLocalXPCResultConstructionFailed }
+            return MCLocalXPCSessionSendInteractiveInput(
+                state.peer,
+                bytes,
+                payload.count
+            ) { [weak self, weak state] malformed in
+                self?.queue.async { [weak self, weak state] in
+                    guard let self, let state else { return }
+                    self.handleInteractiveInputReply(
+                        state: state,
+                        requestID: requestID,
+                        transaction: transaction,
+                        malformedOrTransportError: malformed
+                    )
+                }
+            }
+        }
+        guard result == MCLocalXPCResultOK else {
+            _ = state.interactiveInputGate.finish(transaction)
+            state.pendingInteractiveInput = nil
+            continuation.resume(throwing:
+                MacLocalXPCInteractiveRoleDataErrorV1
+                    .malformedOrTransportError
+            )
+            cancelAuthenticatedPeer(
+                state,
+                presentationError: .transportFailure
+            )
+            return
+        }
+        let deadline = DispatchWorkItem { [weak self, weak state] in
+            guard let self, let state else { return }
+            self.expireInteractiveInput(
+                state: state,
+                requestID: requestID,
+                transaction: transaction
+            )
+        }
+        pending.deadline = deadline
+        queue.asyncAfter(
+            deadline: .now() + .seconds(
+                Self.interactiveInputReplyTimeoutSeconds
+            ),
+            execute: deadline
+        )
+    }
+
+    private func handleInteractiveInputReply(
+        state: PeerState,
+        requestID: UUID,
+        transaction:
+            MacLocalXPCInteractiveRoleDataTransactionGateV1.Active,
+        malformedOrTransportError: Bool
+    ) {
+        guard admitsInteractiveInputCompletion(
+                state: state,
+                transaction: transaction
+              ),
+              let pending = state.pendingInteractiveInput,
+              pending.requestID == requestID,
+              pending.transaction == transaction,
+              state.interactiveInputGate.finish(transaction) else { return }
+        state.pendingInteractiveInput = nil
+        pending.deadline?.cancel()
+        pending.deadline = nil
+        guard !malformedOrTransportError else {
+            pending.continuation.resume(throwing:
+                MacLocalXPCInteractiveRoleDataErrorV1
+                    .malformedOrTransportError
+            )
+            cancelAuthenticatedPeer(
+                state,
+                presentationError: .transportFailure
+            )
+            return
+        }
+        pending.continuation.resume()
+    }
+
+    private func expireInteractiveInput(
+        state: PeerState,
+        requestID: UUID,
+        transaction:
+            MacLocalXPCInteractiveRoleDataTransactionGateV1.Active
+    ) {
+        guard admitsInteractiveInputCompletion(
+                state: state,
+                transaction: transaction
+              ),
+              let pending = state.pendingInteractiveInput,
+              pending.requestID == requestID,
+              state.interactiveInputGate.finish(transaction) else { return }
+        state.pendingInteractiveInput = nil
+        pending.deadline = nil
+        pending.continuation.resume(throwing:
+            MacLocalXPCInteractiveRoleDataErrorV1.replyTimedOut
+        )
+        cancelAuthenticatedPeer(state, presentationError: .replyTimedOut)
+    }
+
+    private func cancelInteractiveInput(requestID: UUID) {
+        guard let state = currentPeerState,
+              let pending = state.pendingInteractiveInput,
+              pending.requestID == requestID,
+              state.interactiveInputGate.finish(pending.transaction) else {
+            return
+        }
+        state.pendingInteractiveInput = nil
+        pending.deadline?.cancel()
+        pending.deadline = nil
+        pending.continuation.resume(throwing:
+            MacLocalXPCInteractiveRoleDataErrorV1.cancelledAfterSend
+        )
+        cancelAuthenticatedPeer(
+            state,
+            presentationError: .cancelledAfterSend
+        )
+    }
+
+    private func admitsInteractiveInputCompletion(
+        state: PeerState,
+        transaction:
+            MacLocalXPCInteractiveRoleDataTransactionGateV1.Active
+    ) -> Bool {
+        listenerRunGate.admits(generation: state.listenerGeneration)
+            && peerStates[state.generation] === state
+            && currentPeerState === state
+            && generationGate.admitsPostAuthenticationTraffic(
+                generation: state.generation
+            )
+            && state.lifetime.menuReadinessPublished
+            && state.postAuthenticationFence.admitsTraffic
+            && state.interactiveInputGate.admits(transaction)
     }
 
     public func prepareInitialInteractiveDesktop(
@@ -1920,7 +2258,9 @@ public final class MacLocalXPCServerV1:
         state.cancelPendingStatusRead()
         state.cancelPendingMenuPairingCommand()
         state.cancelPendingInteractiveLeaseCommand(error: .unavailable)
+        state.cancelPendingInteractiveInput(error: .unavailable)
         invalidateInteractiveAdmission(state)
+        invalidateInteractiveMedia(state)
         fencePresentations(state, error: presentationError)
     }
 
@@ -1933,6 +2273,17 @@ public final class MacLocalXPCServerV1:
                 .invalidateInteractiveAdmission(
                     transportGeneration: generation
                 )
+        }
+    }
+
+    private func invalidateInteractiveMedia(_ state: PeerState) {
+        _ = state.cancelPendingInteractiveMediaPublication()
+        guard let interactiveMediaHandler else { return }
+        let generation = state.generation
+        Task {
+            await interactiveMediaHandler.invalidateInteractiveMedia(
+                transportGeneration: generation
+            )
         }
     }
 
@@ -2193,6 +2544,48 @@ public final class MacLocalXPCServerV1:
                 return
             }
 
+            var mediaHeaderBytes: UnsafePointer<UInt8>?
+            var mediaHeaderLength = 0
+            var mediaPayloadBytes: UnsafePointer<UInt8>?
+            var mediaPayloadLength = 0
+            if MCLocalXPCMessageGetExactInteractiveMediaPublication(
+                message,
+                &mediaHeaderBytes,
+                &mediaHeaderLength,
+                &mediaPayloadBytes,
+                &mediaPayloadLength
+            ) {
+                guard let mediaHeaderBytes,
+                      mediaHeaderLength == MediaRecordHeader.byteCount,
+                      mediaPayloadBytes != nil || mediaPayloadLength == 0,
+                      let header = try? MediaRecordHeader.decode(Data(
+                          bytes: mediaHeaderBytes,
+                          count: mediaHeaderLength
+                      )),
+                      mediaPayloadLength == Int(header.payloadLength),
+                      mediaPayloadLength <= Int(
+                          MCLocalXPCMaximumInteractiveMediaPayloadBytes
+                      ),
+                      self.beginInteractiveMediaPublication(
+                          state: state,
+                          request: message,
+                          header: header,
+                          payload: mediaPayloadLength == 0
+                            ? Data()
+                            : Data(
+                                bytes: mediaPayloadBytes!,
+                                count: mediaPayloadLength
+                            )
+                      ) else {
+                    self.cancelAuthenticatedPeer(
+                        state,
+                        presentationError: .transportFailure
+                    )
+                    return
+                }
+                return
+            }
+
             var commandKind = MCLocalXPCMenuPairingCommandCreate
             var commandPayload: UnsafePointer<UInt8>?
             var commandPayloadLength = 0
@@ -2429,6 +2822,152 @@ public final class MacLocalXPCServerV1:
             return
         }
         _ = state.cancelPendingInteractiveAdmissionPublication()
+        cancelAuthenticatedPeer(
+            state,
+            presentationError: .transportFailure
+        )
+    }
+
+    private func beginInteractiveMediaPublication(
+        state: PeerState,
+        request: MCLocalXPCMessageRef,
+        header: MediaRecordHeader,
+        payload: Data
+    ) -> Bool {
+        guard let interactiveMediaHandler,
+              state.lifetime.menuReadinessPublished,
+              let transaction = state.interactiveMediaGate.begin(
+                generation: state.generation,
+                permitted:
+                    profile.admitsMenuPresentation
+                    && authorizesMenuMethod(.publishInteractiveMedia)
+                    && state.postAuthenticationFence.admitsTraffic
+              ) else {
+            return false
+        }
+
+        let pending = PendingInteractiveMediaPublication(
+            transaction: transaction,
+            request: request
+        )
+        state.pendingInteractiveMediaPublication = pending
+        let queue = self.queue
+        let generation = state.generation
+        pending.task = Task {
+            [weak self, weak state, interactiveMediaHandler] in
+            do {
+                try await interactiveMediaHandler.publishInteractiveMedia(
+                    header: header,
+                    payload: payload,
+                    transportGeneration: generation
+                )
+                queue.async { [weak self, weak state] in
+                    guard let self, let state else { return }
+                    self.completeInteractiveMediaPublication(
+                        state: state,
+                        transaction: transaction
+                    )
+                }
+            } catch {
+                queue.async { [weak self, weak state] in
+                    guard let self, let state else { return }
+                    self.terminateInteractiveMediaPublication(
+                        state: state,
+                        transaction: transaction
+                    )
+                }
+            }
+        }
+        let deadline = DispatchWorkItem { [weak self, weak state] in
+            guard let self, let state else { return }
+            self.terminateInteractiveMediaPublication(
+                state: state,
+                transaction: transaction
+            )
+        }
+        pending.deadline = deadline
+        queue.asyncAfter(
+            deadline: .now()
+                + .seconds(Self.interactiveMediaOperationTimeoutSeconds),
+            execute: deadline
+        )
+        return true
+    }
+
+    private func completeInteractiveMediaPublication(
+        state: PeerState,
+        transaction: MacLocalXPCInteractiveRoleDataTransactionGateV1.Active
+    ) {
+        guard admitsInteractiveMediaCompletion(
+                state: state,
+                transaction: transaction
+              ),
+              let pending = state.pendingInteractiveMediaPublication,
+              pending.transaction == transaction else {
+            terminateInteractiveMediaPublication(
+                state: state,
+                transaction: transaction
+            )
+            return
+        }
+        guard state.interactiveMediaGate.finish(transaction),
+              let request = takeInteractiveMediaRequest(
+                state: state,
+                transaction: transaction
+              ) else {
+            cancelAuthenticatedPeer(
+                state,
+                presentationError: .transportFailure
+            )
+            return
+        }
+        defer { MCLocalXPCMessageRelease(request) }
+        guard MCLocalXPCSessionReplyToInteractiveMediaPublication(
+            state.peer,
+            request
+        ) == MCLocalXPCResultOK else {
+            cancelAuthenticatedPeer(
+                state,
+                presentationError: .transportFailure
+            )
+            return
+        }
+    }
+
+    private func admitsInteractiveMediaCompletion(
+        state: PeerState,
+        transaction: MacLocalXPCInteractiveRoleDataTransactionGateV1.Active
+    ) -> Bool {
+        listenerRunGate.admits(generation: state.listenerGeneration)
+            && peerStates[state.generation] === state
+            && currentPeerState === state
+            && generationGate.admitsPostAuthenticationTraffic(
+                generation: state.generation
+            )
+            && state.lifetime.menuReadinessPublished
+            && state.postAuthenticationFence.admitsTraffic
+            && state.interactiveMediaGate.admits(transaction)
+    }
+
+    private func takeInteractiveMediaRequest(
+        state: PeerState,
+        transaction: MacLocalXPCInteractiveRoleDataTransactionGateV1.Active
+    ) -> MCLocalXPCMessageRef? {
+        guard let pending = state.pendingInteractiveMediaPublication,
+              pending.transaction == transaction else { return nil }
+        state.pendingInteractiveMediaPublication = nil
+        pending.deadline?.cancel()
+        pending.deadline = nil
+        pending.task = nil
+        return pending.takeOwnedRequest()
+    }
+
+    private func terminateInteractiveMediaPublication(
+        state: PeerState,
+        transaction: MacLocalXPCInteractiveRoleDataTransactionGateV1.Active
+    ) {
+        guard state.interactiveMediaGate.admits(transaction) else { return }
+        invalidateInteractiveMedia(state)
         cancelAuthenticatedPeer(
             state,
             presentationError: .transportFailure
@@ -3202,7 +3741,8 @@ public final class MacLocalXPCServerV1:
 @available(macOS 26.0, *)
 public final class MacLocalXPCClientV1:
     @unchecked Sendable,
-    MacLocalXPCInteractiveAdmissionPublishingV1
+    MacLocalXPCInteractiveAdmissionPublishingV1,
+    MacLocalXPCInteractiveMediaPublishingV1
 {
     public typealias EventHandler = @Sendable (MacLocalXPCClientEventV1) -> Void
 
@@ -3260,6 +3800,55 @@ public final class MacLocalXPCClientV1:
             self.requestID = requestID
             self.transaction = transaction
             self.continuation = continuation
+        }
+    }
+
+    private final class PendingInteractiveMediaPublication:
+        @unchecked Sendable
+    {
+        let requestID: UUID
+        let transaction:
+            MacLocalXPCInteractiveRoleDataTransactionGateV1.Active
+        let continuation: CheckedContinuation<Void, any Error>
+        var deadline: DispatchWorkItem?
+
+        init(
+            requestID: UUID,
+            transaction:
+                MacLocalXPCInteractiveRoleDataTransactionGateV1.Active,
+            continuation: CheckedContinuation<Void, any Error>
+        ) {
+            self.requestID = requestID
+            self.transaction = transaction
+            self.continuation = continuation
+        }
+    }
+
+    private final class PendingIncomingInteractiveInput:
+        @unchecked Sendable
+    {
+        let transaction:
+            MacLocalXPCInteractiveRoleDataTransactionGateV1.Active
+        var deadline: DispatchWorkItem?
+        var task: Task<Void, Never>?
+        private let requestLease:
+            MacLocalXPCStatusRequestLeaseV1<MCLocalXPCMessageRef>
+
+        init(
+            transaction:
+                MacLocalXPCInteractiveRoleDataTransactionGateV1.Active,
+            request: MCLocalXPCMessageRef
+        ) {
+            self.transaction = transaction
+            requestLease = MacLocalXPCStatusRequestLeaseV1(request: request)
+        }
+
+        func takeOwnedRequest() -> MCLocalXPCMessageRef? {
+            requestLease.takeOwnedRequest()
+        }
+
+        func releaseOwnedRequest() {
+            requestLease.releaseIfOwned()
         }
     }
 
@@ -3338,6 +3927,8 @@ public final class MacLocalXPCClientV1:
         MacLocalXPCMenuPresentationReceiverSurfacesV1?
     private let interactiveLeaseHandler:
         (any MacLocalXPCInteractiveLeaseHandlingV1)?
+    private let interactiveInputHandler:
+        (any MacLocalXPCInteractiveInputHandlingV1)?
     private let monotonicNowNanoseconds: @Sendable () -> UInt64
     private var session: MCLocalXPCSessionRef?
     private var gate = MacLocalXPCHandshakeGateV1()
@@ -3364,6 +3955,18 @@ public final class MacLocalXPCClientV1:
         PendingIncomingInteractiveLeaseCommand?
     private let interactiveLeaseOperationTimeout: DispatchTimeInterval =
         .seconds(4)
+    private var interactiveMediaGate =
+        MacLocalXPCInteractiveRoleDataTransactionGateV1()
+    private var pendingInteractiveMediaPublication:
+        PendingInteractiveMediaPublication?
+    private let interactiveMediaReplyTimeout: DispatchTimeInterval =
+        .seconds(4)
+    private var interactiveInputGate =
+        MacLocalXPCInteractiveRoleDataTransactionGateV1()
+    private var pendingIncomingInteractiveInput:
+        PendingIncomingInteractiveInput?
+    private let interactiveInputOperationTimeout: DispatchTimeInterval =
+        .milliseconds(1_500)
     package static let menuPresentationReceiverTimeout:
         DispatchTimeInterval =
             MacLocalXPCMenuPresentationReceiverGenerationV1<
@@ -3381,6 +3984,7 @@ public final class MacLocalXPCClientV1:
         self.onEvent = onEvent
         presentationSurfaces = nil
         interactiveLeaseHandler = nil
+        interactiveInputHandler = nil
         monotonicNowNanoseconds = {
             DispatchTime.now().uptimeNanoseconds
         }
@@ -3392,6 +3996,8 @@ public final class MacLocalXPCClientV1:
             MacLocalXPCMenuPresentationReceiverSurfacesV1,
         interactiveLeaseHandler:
             (any MacLocalXPCInteractiveLeaseHandlingV1)? = nil,
+        interactiveInputHandler:
+            (any MacLocalXPCInteractiveInputHandlingV1)? = nil,
         monotonicNowNanoseconds: @escaping @Sendable () -> UInt64 = {
             DispatchTime.now().uptimeNanoseconds
         },
@@ -3400,6 +4006,7 @@ public final class MacLocalXPCClientV1:
         self.onEvent = onEvent
         self.presentationSurfaces = presentationSurfaces
         self.interactiveLeaseHandler = interactiveLeaseHandler
+        self.interactiveInputHandler = interactiveInputHandler
         self.monotonicNowNanoseconds = monotonicNowNanoseconds
         queue.setSpecific(key: queueKey, value: 1)
     }
@@ -3448,6 +4055,14 @@ public final class MacLocalXPCClientV1:
                 generation: interactiveLeaseGate.generation ?? 0
             )
             precondition(interactiveLeaseGate.bind(generation: generation))
+            _ = interactiveMediaGate.invalidate(
+                generation: interactiveMediaGate.generation ?? 0
+            )
+            precondition(interactiveMediaGate.bind(generation: generation))
+            _ = interactiveInputGate.invalidate(
+                generation: interactiveInputGate.generation ?? 0
+            )
+            precondition(interactiveInputGate.bind(generation: generation))
             statusReadDeadline?.cancel()
             statusReadDeadline = nil
             if presentationSurfaces != nil {
@@ -3651,6 +4266,186 @@ public final class MacLocalXPCClientV1:
         }
     }
 
+    public func publishInteractiveMedia(
+        header: MediaRecordHeader,
+        payload: Data
+    ) async throws {
+        guard header.encode().count == MediaRecordHeader.byteCount,
+              payload.count == Int(header.payloadLength),
+              payload.count <= Int(
+                MCLocalXPCMaximumInteractiveMediaPayloadBytes
+              ) else {
+            throw MacLocalXPCInteractiveRoleDataErrorV1
+                .malformedOrTransportError
+        }
+        let requestID = UUID()
+        let marker = MenuPairingCommandCancellationMarker()
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation {
+                (continuation: CheckedContinuation<Void, any Error>) in
+                queue.async { [weak self] in
+                    guard let self else {
+                        continuation.resume(throwing:
+                            MacLocalXPCInteractiveRoleDataErrorV1.unavailable
+                        )
+                        return
+                    }
+                    self.admitInteractiveMediaPublication(
+                        requestID: requestID,
+                        header: header.encode(),
+                        payload: payload,
+                        cancellationMarker: marker,
+                        continuation: continuation
+                    )
+                }
+            }
+        } onCancel: { [weak self] in
+            marker.markCancelled()
+            self?.queue.async { [weak self] in
+                self?.cancelInteractiveMediaPublication(
+                    requestID: requestID
+                )
+            }
+        }
+    }
+
+    private func admitInteractiveMediaPublication(
+        requestID: UUID,
+        header: Data,
+        payload: Data,
+        cancellationMarker: MenuPairingCommandCancellationMarker,
+        continuation: CheckedContinuation<Void, any Error>
+    ) {
+        guard !cancellationMarker.isCancelled() else {
+            continuation.resume(throwing: CancellationError())
+            return
+        }
+        guard let generation = generationGate.currentGeneration,
+              generationGate.admitsCallback(generation: generation),
+              let session,
+              gate.state == .authenticated,
+              menuReadinessPublished,
+              authorizesMenuCommandMethod(.publishInteractiveMedia),
+              let transaction = interactiveMediaGate.begin(
+                generation: generation,
+                permitted: true
+              ) else {
+            continuation.resume(throwing:
+                MacLocalXPCInteractiveRoleDataErrorV1.unavailable
+            )
+            return
+        }
+        let pending = PendingInteractiveMediaPublication(
+            requestID: requestID,
+            transaction: transaction,
+            continuation: continuation
+        )
+        pendingInteractiveMediaPublication = pending
+        let result = header.withUnsafeBytes { headerRaw in
+            guard let headerBytes = headerRaw.bindMemory(
+                to: UInt8.self
+            ).baseAddress else { return MCLocalXPCResultConstructionFailed }
+            return payload.withUnsafeBytes { payloadRaw in
+                MCLocalXPCSessionSendInteractiveMediaPublication(
+                    session,
+                    headerBytes,
+                    header.count,
+                    payloadRaw.bindMemory(to: UInt8.self).baseAddress,
+                    payload.count
+                ) { [weak self] malformed in
+                    self?.queue.async { [weak self] in
+                        self?.handleInteractiveMediaReply(
+                            generation: generation,
+                            requestID: requestID,
+                            transaction: transaction,
+                            malformedOrTransportError: malformed
+                        )
+                    }
+                }
+            }
+        }
+        guard result == MCLocalXPCResultOK else {
+            _ = interactiveMediaGate.finish(transaction)
+            pendingInteractiveMediaPublication = nil
+            continuation.resume(throwing:
+                MacLocalXPCInteractiveRoleDataErrorV1
+                    .malformedOrTransportError
+            )
+            invalidateOwnedSession(generation: generation)
+            return
+        }
+        let deadline = DispatchWorkItem { [weak self] in
+            self?.expireInteractiveMediaPublication(
+                generation: generation,
+                requestID: requestID,
+                transaction: transaction
+            )
+        }
+        pending.deadline = deadline
+        queue.asyncAfter(
+            deadline: .now() + interactiveMediaReplyTimeout,
+            execute: deadline
+        )
+    }
+
+    private func handleInteractiveMediaReply(
+        generation: UInt64,
+        requestID: UUID,
+        transaction: MacLocalXPCInteractiveRoleDataTransactionGateV1.Active,
+        malformedOrTransportError: Bool
+    ) {
+        guard generationGate.admitsCallback(generation: generation),
+              let pending = pendingInteractiveMediaPublication,
+              pending.requestID == requestID,
+              pending.transaction == transaction,
+              interactiveMediaGate.finish(transaction) else { return }
+        pendingInteractiveMediaPublication = nil
+        pending.deadline?.cancel()
+        pending.deadline = nil
+        guard !malformedOrTransportError else {
+            pending.continuation.resume(throwing:
+                MacLocalXPCInteractiveRoleDataErrorV1
+                    .malformedOrTransportError
+            )
+            invalidateOwnedSession(generation: generation)
+            return
+        }
+        pending.continuation.resume()
+    }
+
+    private func expireInteractiveMediaPublication(
+        generation: UInt64,
+        requestID: UUID,
+        transaction: MacLocalXPCInteractiveRoleDataTransactionGateV1.Active
+    ) {
+        guard generationGate.admitsCallback(generation: generation),
+              let pending = pendingInteractiveMediaPublication,
+              pending.requestID == requestID,
+              interactiveMediaGate.finish(transaction) else { return }
+        pendingInteractiveMediaPublication = nil
+        pending.deadline = nil
+        pending.continuation.resume(throwing:
+            MacLocalXPCInteractiveRoleDataErrorV1.replyTimedOut
+        )
+        invalidateOwnedSession(generation: generation)
+    }
+
+    private func cancelInteractiveMediaPublication(requestID: UUID) {
+        guard let generation = generationGate.currentGeneration,
+              let pending = pendingInteractiveMediaPublication,
+              pending.requestID == requestID,
+              interactiveMediaGate.finish(pending.transaction) else {
+            return
+        }
+        pendingInteractiveMediaPublication = nil
+        pending.deadline?.cancel()
+        pending.deadline = nil
+        pending.continuation.resume(throwing:
+            MacLocalXPCInteractiveRoleDataErrorV1.cancelledAfterSend
+        )
+        invalidateOwnedSession(generation: generation)
+    }
+
     public func cancel() {
         syncOnQueue {
             guard let session,
@@ -3673,10 +4468,15 @@ public final class MacLocalXPCClientV1:
                 generation: generation,
                 error: .unavailable
             )
+            finishPendingInteractiveMediaPublication(
+                generation: generation,
+                error: .unavailable
+            )
             invalidateIncomingInteractiveLease(
                 generation: generation,
                 notifyRuntime: true
             )
+            invalidateIncomingInteractiveInput(generation: generation)
             retirePresentationReceiver(generation: generation)
             MCLocalXPCSessionCancelOwned(session)
         }
@@ -3882,6 +4682,18 @@ public final class MacLocalXPCClientV1:
             return
         }
         pendingInteractiveAdmissionPublication = nil
+        pending.deadline?.cancel()
+        pending.deadline = nil
+        pending.continuation.resume(throwing: error)
+    }
+
+    private func finishPendingInteractiveMediaPublication(
+        generation: UInt64,
+        error: MacLocalXPCInteractiveRoleDataErrorV1
+    ) {
+        _ = interactiveMediaGate.invalidate(generation: generation)
+        guard let pending = pendingInteractiveMediaPublication else { return }
+        pendingInteractiveMediaPublication = nil
         pending.deadline?.cancel()
         pending.deadline = nil
         pending.continuation.resume(throwing: error)
@@ -4324,6 +5136,32 @@ public final class MacLocalXPCClientV1:
         guard generationGate.admitsCallback(generation: generation) else {
             return
         }
+        var inputPayload: UnsafePointer<UInt8>?
+        var inputPayloadLength = 0
+        if MCLocalXPCMessageGetExactInteractiveInput(
+            message,
+            &inputPayload,
+            &inputPayloadLength
+        ) {
+            guard let inputPayload,
+                  inputPayloadLength > 0,
+                  inputPayloadLength <= Int(
+                    MCLocalXPCMaximumInteractiveInputPayloadBytes
+                  ),
+                  let envelope = try? InteractiveInputCodec.decode(Data(
+                    bytes: inputPayload,
+                    count: inputPayloadLength
+                  )),
+                  beginIncomingInteractiveInput(
+                    generation: generation,
+                    request: message,
+                    envelope: envelope
+                  ) else {
+                invalidateOwnedSession(generation: generation)
+                return
+            }
+            return
+        }
         var interactiveKind = MCLocalXPCInteractiveLeaseCommandInstall
         var interactivePayload: UnsafePointer<UInt8>?
         var interactivePayloadLength = 0
@@ -4374,6 +5212,130 @@ public final class MacLocalXPCClientV1:
             authenticatedAndReady: authenticatedAndReady,
             authorized: authorized
         )
+    }
+
+    private func beginIncomingInteractiveInput(
+        generation: UInt64,
+        request: MCLocalXPCMessageRef,
+        envelope: InteractiveInputEnvelope
+    ) -> Bool {
+        guard let interactiveInputHandler,
+              session != nil,
+              gate.state == .authenticated,
+              menuReadinessPublished,
+              authorizesAgentPresentationMethod(.applyInteractiveInput),
+              let transaction = interactiveInputGate.begin(
+                generation: generation,
+                permitted: true
+              ) else {
+            return false
+        }
+        let pending = PendingIncomingInteractiveInput(
+            transaction: transaction,
+            request: request
+        )
+        pendingIncomingInteractiveInput = pending
+        let queue = self.queue
+        let now = monotonicNowNanoseconds
+        pending.task = Task { [weak self, interactiveInputHandler, queue] in
+            do {
+                try await interactiveInputHandler.applyInteractiveInput(
+                    envelope,
+                    nowMonotonicNanoseconds: now()
+                )
+                queue.async { [weak self] in
+                    self?.completeIncomingInteractiveInput(
+                        generation: generation,
+                        transaction: transaction
+                    )
+                }
+            } catch {
+                queue.async { [weak self] in
+                    self?.terminateIncomingInteractiveInput(
+                        generation: generation,
+                        transaction: transaction
+                    )
+                }
+            }
+        }
+        let deadline = DispatchWorkItem { [weak self] in
+            self?.terminateIncomingInteractiveInput(
+                generation: generation,
+                transaction: transaction
+            )
+        }
+        pending.deadline = deadline
+        queue.asyncAfter(
+            deadline: .now() + interactiveInputOperationTimeout,
+            execute: deadline
+        )
+        return true
+    }
+
+    private func completeIncomingInteractiveInput(
+        generation: UInt64,
+        transaction: MacLocalXPCInteractiveRoleDataTransactionGateV1.Active
+    ) {
+        guard generationGate.admitsCallback(generation: generation),
+              gate.state == .authenticated,
+              menuReadinessPublished,
+              let session,
+              let pending = pendingIncomingInteractiveInput,
+              pending.transaction == transaction,
+              interactiveInputGate.admits(transaction) else {
+            terminateIncomingInteractiveInput(
+                generation: generation,
+                transaction: transaction
+            )
+            return
+        }
+        guard interactiveInputGate.finish(transaction),
+              let request = takeIncomingInteractiveInputRequest(
+                transaction: transaction
+              ) else {
+            invalidateOwnedSession(generation: generation)
+            return
+        }
+        defer { MCLocalXPCMessageRelease(request) }
+        guard MCLocalXPCSessionReplyToInteractiveInputSuccess(
+            session,
+            request
+        ) == MCLocalXPCResultOK else {
+            invalidateOwnedSession(generation: generation)
+            return
+        }
+    }
+
+    private func takeIncomingInteractiveInputRequest(
+        transaction: MacLocalXPCInteractiveRoleDataTransactionGateV1.Active
+    ) -> MCLocalXPCMessageRef? {
+        guard let pending = pendingIncomingInteractiveInput,
+              pending.transaction == transaction else { return nil }
+        pendingIncomingInteractiveInput = nil
+        pending.deadline?.cancel()
+        pending.deadline = nil
+        pending.task = nil
+        return pending.takeOwnedRequest()
+    }
+
+    private func terminateIncomingInteractiveInput(
+        generation: UInt64,
+        transaction: MacLocalXPCInteractiveRoleDataTransactionGateV1.Active
+    ) {
+        guard generationGate.admitsCallback(generation: generation),
+              interactiveInputGate.admits(transaction) else { return }
+        invalidateOwnedSession(generation: generation)
+    }
+
+    private func invalidateIncomingInteractiveInput(generation: UInt64) {
+        _ = interactiveInputGate.invalidate(generation: generation)
+        guard let pending = pendingIncomingInteractiveInput else { return }
+        pendingIncomingInteractiveInput = nil
+        pending.deadline?.cancel()
+        pending.deadline = nil
+        pending.task?.cancel()
+        pending.task = nil
+        pending.releaseOwnedRequest()
     }
 
     private func decodeIncomingInteractiveLeaseCommand(
@@ -4784,10 +5746,15 @@ public final class MacLocalXPCClientV1:
             generation: generation,
             error: .unavailable
         )
+        finishPendingInteractiveMediaPublication(
+            generation: generation,
+            error: .unavailable
+        )
         invalidateIncomingInteractiveLease(
             generation: generation,
             notifyRuntime: true
         )
+        invalidateIncomingInteractiveInput(generation: generation)
         retirePresentationReceiver(generation: generation)
         MCLocalXPCSessionCancelOwned(session)
         onEvent(.invalidated)
@@ -4813,10 +5780,15 @@ public final class MacLocalXPCClientV1:
             generation: generation,
             error: .unavailable
         )
+        finishPendingInteractiveMediaPublication(
+            generation: generation,
+            error: .unavailable
+        )
         invalidateIncomingInteractiveLease(
             generation: generation,
             notifyRuntime: true
         )
+        invalidateIncomingInteractiveInput(generation: generation)
         retirePresentationReceiver(generation: generation)
         MCLocalXPCSessionRelease(session)
         if shouldNotify {

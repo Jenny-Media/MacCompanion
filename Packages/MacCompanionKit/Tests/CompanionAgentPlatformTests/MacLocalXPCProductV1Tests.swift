@@ -448,7 +448,7 @@ func agentPresentationProductBindsOnlyAfterAcceptedReadiness() async throws {
         onSurfaceInvalidated: {
             await invalidatedGenerations.record($0)
         },
-        serverFactory: { profile, _, _, _, handler in
+        serverFactory: { profile, _, _, _, _, handler in
             factory.record(profile)
             server.install(handler)
             return server
@@ -502,7 +502,7 @@ func authenticatedReplacementRevokesReadyPresentationBeforeNewReadiness()
         onSurfaceInvalidated: {
             await invalidatedGenerations.record($0)
         },
-        serverFactory: { _, _, _, _, handler in
+        serverFactory: { _, _, _, _, _, handler in
             server.install(handler)
             return server
         }
@@ -541,7 +541,7 @@ func agentPresentationProductFailsCurrentPeerWhenEndpointIsAbsent() async {
         interactiveAdmissionHandler:
             ProductInteractiveAdmissionHandlerV1(),
         onSurfaces: { _ in },
-        serverFactory: { _, _, _, _, handler in
+        serverFactory: { _, _, _, _, _, handler in
             server.install(handler)
             return server
         }
