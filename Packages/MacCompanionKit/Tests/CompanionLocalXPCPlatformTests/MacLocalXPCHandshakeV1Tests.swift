@@ -509,6 +509,31 @@ func injectedAuthoritiesRequireTheirExactExplicitServerProfiles() {
 }
 
 @Test
+@available(macOS 26.0, *)
+func serverRejectsMissingCanonicalAgentBuildBeforeListenerCreation() {
+    let server = MacLocalXPCServerV1(
+        agentBuild: nil
+    ) { _ in }
+    #expect(throws: MacLocalXPCConstructionErrorV1.invalidAgentBuild) {
+        try server.start()
+    }
+}
+
+@Test
+func processBuildRequiresOneCanonicalDecimalString() {
+    #expect(MacLocalXPCProcessBuildV1.canonical("0") == 0)
+    #expect(MacLocalXPCProcessBuildV1.canonical("42") == 42)
+    #expect(MacLocalXPCProcessBuildV1.canonical(42) == nil)
+    #expect(MacLocalXPCProcessBuildV1.canonical("") == nil)
+    #expect(MacLocalXPCProcessBuildV1.canonical("01") == nil)
+    #expect(MacLocalXPCProcessBuildV1.canonical("-1") == nil)
+    #expect(
+        MacLocalXPCProcessBuildV1.canonical("18446744073709551616")
+            == nil
+    )
+}
+
+@Test
 func candidatePeerDoesNotDisplaceAuthenticatedGenerationBeforeHello() {
     var gate = MacLocalXPCPeerGenerationGateV1()
 
@@ -693,7 +718,7 @@ func authenticatedAndInvalidatedEventsRemainGenerationBound() {
             != .invalidatedMenu(generation: 4)
     )
     #expect(
-        MacLocalXPCClientEventV1.authenticatedAgent
+        MacLocalXPCClientEventV1.authenticatedAgent(build: 42)
             != .menuReadyAcknowledged
     )
     #expect(

@@ -20,7 +20,7 @@ public enum MacLocalXPCServerEventV1: Equatable, Sendable {
 }
 
 public enum MacLocalXPCClientEventV1: Equatable, Sendable {
-    case authenticatedAgent
+    case authenticatedAgent(build: UInt64)
     case menuReadyAcknowledged
     case agentStatus(
         generation: UInt64,
@@ -91,6 +91,28 @@ public enum MacLocalXPCConstructionErrorV1: Error, Equatable, Sendable {
     case activation
     case generationExhausted
     case invalidProfile
+    case invalidAgentBuild
+}
+
+/// Reads the immutable numeric build owned by the current process bundle.
+/// The value crosses local XPC only after signed-peer authentication and is
+/// rejected unless it has one canonical decimal representation.
+public enum MacLocalXPCProcessBuildV1 {
+    public static func current(bundle: Bundle = .main) -> UInt64? {
+        canonical(bundle.object(forInfoDictionaryKey: "CFBundleVersion"))
+    }
+
+    package static func canonical(_ value: Any?) -> UInt64? {
+        guard let text = value as? String,
+              !text.isEmpty,
+              text.utf8.count <= 20,
+              text.first != "0" || text == "0",
+              let build = UInt64(text),
+              String(build) == text else {
+            return nil
+        }
+        return build
+    }
 }
 
 @available(macOS 26.0, *)
@@ -838,6 +860,7 @@ public final class MacLocalXPCServerV1:
     private let interactiveMediaHandler:
         (any MacLocalXPCInteractiveMediaHandlingV1)?
     private let profile: MacLocalXPCServerProfileV1
+    private let agentBuild: UInt64?
     private let statusReadTimeout: DispatchTimeInterval = .seconds(2)
     private let bootstrapTimeout: DispatchTimeInterval = .seconds(
         remoteAccessBootstrapTimeoutSeconds
@@ -848,7 +871,7 @@ public final class MacLocalXPCServerV1:
     private var pendingGate = MacLocalXPCPendingCandidateGateV1(limit: 8)
     private var peerStates: [UInt64: PeerState] = [:]
 
-    public init(
+    public convenience init(
         profile: MacLocalXPCServerProfileV1 = .authenticationOnly,
         bootstrapHandler:
             (any MacLocalXPCRemoteAccessBootstrapHandlingV1)? = nil,
@@ -861,12 +884,41 @@ public final class MacLocalXPCServerV1:
             (any MacLocalXPCInteractiveMediaHandlingV1)? = nil,
         onEvent: @escaping EventHandler
     ) {
+        self.init(
+            profile: profile,
+            bootstrapHandler: bootstrapHandler,
+            statusReader: statusReader,
+            menuPairingCommandHandler: menuPairingCommandHandler,
+            interactiveAdmissionHandler: interactiveAdmissionHandler,
+            interactiveMediaHandler: interactiveMediaHandler,
+            agentBuild: MacLocalXPCProcessBuildV1.current(),
+            onEvent: onEvent
+        )
+    }
+
+    /// Test-only construction seam. Permanent consumers cannot substitute a
+    /// caller-selected build for the process bundle measurement.
+    package init(
+        profile: MacLocalXPCServerProfileV1 = .authenticationOnly,
+        bootstrapHandler:
+            (any MacLocalXPCRemoteAccessBootstrapHandlingV1)? = nil,
+        statusReader: (any MacLocalXPCStatusReadingV1)? = nil,
+        menuPairingCommandHandler:
+            (any MacLocalXPCMenuPairingCommandHandlingV1)? = nil,
+        interactiveAdmissionHandler:
+            (any MacLocalXPCInteractiveAdmissionHandlingV1)? = nil,
+        interactiveMediaHandler:
+            (any MacLocalXPCInteractiveMediaHandlingV1)? = nil,
+        agentBuild: UInt64?,
+        onEvent: @escaping EventHandler
+    ) {
         self.profile = profile
         self.bootstrapHandler = bootstrapHandler
         self.statusReader = statusReader
         self.menuPairingCommandHandler = menuPairingCommandHandler
         self.interactiveAdmissionHandler = interactiveAdmissionHandler
         self.interactiveMediaHandler = interactiveMediaHandler
+        self.agentBuild = agentBuild
         self.onEvent = onEvent
         queue.setSpecific(key: queueKey, value: 1)
     }
@@ -895,6 +947,9 @@ public final class MacLocalXPCServerV1:
             guard profile.admitsInteractiveAdmissionPublication
                     == (interactiveAdmissionHandler != nil) else {
                 throw MacLocalXPCConstructionErrorV1.invalidProfile
+            }
+            guard agentBuild != nil else {
+                throw MacLocalXPCConstructionErrorV1.invalidAgentBuild
             }
 
             var result = MCLocalXPCResultOK
@@ -2723,7 +2778,12 @@ public final class MacLocalXPCServerV1:
                 let exact = MCLocalXPCMessageIsExactHello(message)
                 guard state.lifetime.receiveHello(exact: exact)
                         == .acknowledgeAndAuthenticate,
-                      MCLocalXPCSessionReplyToHello(peer, message)
+                      let agentBuild,
+                      MCLocalXPCSessionReplyToHello(
+                        peer,
+                        message,
+                        agentBuild
+                      )
                         == MCLocalXPCResultOK,
                       state.lifetime.publishAuthentication() else {
                     MCLocalXPCSessionCancel(peer)
@@ -4483,16 +4543,20 @@ public final class MacLocalXPCClientV1:
             session = candidate
             MCLocalXPCSessionSendHello(candidate) {
                 [weak self] reply, error in
-                let exactAcknowledgement: Bool
+                let acknowledgedBuild: UInt64?
                 if let reply {
-                    exactAcknowledgement =
-                        MCLocalXPCMessageIsExactHelloAcknowledgement(reply)
+                    var build: UInt64 = 0
+                    acknowledgedBuild =
+                        MCLocalXPCMessageGetExactHelloAcknowledgementBuild(
+                            reply,
+                            &build
+                        ) ? build : nil
                 } else {
-                    exactAcknowledgement = false
+                    acknowledgedBuild = nil
                 }
                 self?.handleHelloReply(
                     generation: generation,
-                    exactAcknowledgement: exactAcknowledgement,
+                    acknowledgedBuild: acknowledgedBuild,
                     hadError: error
                 )
             }
@@ -5327,18 +5391,20 @@ public final class MacLocalXPCClientV1:
 
     private func handleHelloReply(
         generation: UInt64,
-        exactAcknowledgement: Bool,
+        acknowledgedBuild: UInt64?,
         hadError: Bool
     ) {
         guard generationGate.admitsCallback(generation: generation) else {
             return
         }
-        guard !hadError, gate.receive(exactHello: exactAcknowledgement)
+        guard !hadError,
+              let acknowledgedBuild,
+              gate.receive(exactHello: true)
                 == .acknowledgeAndAuthenticate else {
             invalidateOwnedSession(generation: generation)
             return
         }
-        onEvent(.authenticatedAgent)
+        onEvent(.authenticatedAgent(build: acknowledgedBuild))
     }
 
     private func sendMenuReady() {

@@ -179,7 +179,10 @@ API_AVAILABLE(macos(26.0))
 bool MCLocalXPCMessageIsExactHello(MCLocalXPCMessageRef message);
 
 API_AVAILABLE(macos(26.0))
-bool MCLocalXPCMessageIsExactHelloAcknowledgement(MCLocalXPCMessageRef message);
+bool MCLocalXPCMessageGetExactHelloAcknowledgementBuild(
+    MCLocalXPCMessageRef message,
+    uint64_t * _Nullable agent_build_out
+);
 
 API_AVAILABLE(macos(26.0))
 bool MCLocalXPCMessageIsExactMenuReady(MCLocalXPCMessageRef message);
@@ -216,7 +219,8 @@ bool MCLocalXPCExactMessageParserSelfTest(void);
 API_AVAILABLE(macos(26.0))
 MCLocalXPCResult MCLocalXPCSessionReplyToHello(
     MCLocalXPCSessionRef session,
-    MCLocalXPCMessageRef hello
+    MCLocalXPCMessageRef hello,
+    uint64_t agent_build
 );
 
 API_AVAILABLE(macos(26.0))

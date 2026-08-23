@@ -112,9 +112,13 @@ public final class MacLocalXPCRemoteAccessBootstrapClientV1:
             installHandshakeDeadline(generation: generation)
             MCLocalXPCSessionSendHello(candidate) {
                 [weak self] reply, hadError in
-                let exact = reply.map(
-                    MCLocalXPCMessageIsExactHelloAcknowledgement
-                ) ?? false
+                var ignoredBuild: UInt64 = 0
+                let exact = reply.map {
+                    MCLocalXPCMessageGetExactHelloAcknowledgementBuild(
+                        $0,
+                        &ignoredBuild
+                    )
+                } ?? false
                 self?.handleHelloReply(
                     generation: generation,
                     exactAcknowledgement: exact,

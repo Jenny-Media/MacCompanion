@@ -1,4 +1,4 @@
-# Mac Companion update trust policy v0.12
+# Mac Companion update trust policy v0.13
 
 Status: normative for the first direct-distribution beta.
 
@@ -182,6 +182,15 @@ failed handoff re-registers and verifies the source Agent. After a successful
 replacement, only the exact source or candidate app build may re-register its
 matching Agent and clear the receipt. Missing exact readiness or any receipt
 conflict retains recovery state and keeps installation authority closed.
+
+Registration state and the embedded Agent file are not evidence of the build
+currently executing. The Agent must project its canonical numeric bundle build
+inside the exact acknowledgement on the reciprocal code-signing-requirement
+local-XPC handshake. Startup recovery may use a bounded one-use probe before
+the dashboard starts. Runtime update shutdown must instead consume the build
+observed on its already-authenticated dashboard lifetime, so it cannot replace
+that live connection merely to query version. Malformed, missing, timed-out,
+stale, or mismatched build evidence denies stop, recovery, or receipt clearing.
 
 The reactivation receipt must use the frozen canonical JSON projection in the
 menu app's private Application Support root. Reads require one no-follow regular

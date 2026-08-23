@@ -821,13 +821,58 @@ bool MCLocalXPCMessageIsExactHello(MCLocalXPCMessageRef message) {
     return MCLocalXPCMessageIsExact((xpc_object_t)message, "hello");
 }
 
-bool MCLocalXPCMessageIsExactHelloAcknowledgement(
-    MCLocalXPCMessageRef message
+bool MCLocalXPCMessageGetExactHelloAcknowledgementBuild(
+    MCLocalXPCMessageRef message,
+    uint64_t *agent_build_out
 ) {
-    return MCLocalXPCMessageIsExact(
+    if (message == NULL
+        || xpc_get_type((xpc_object_t)message) != XPC_TYPE_DICTIONARY) {
+        return false;
+    }
+
+    __block size_t field_count = 0;
+    __block bool fields_are_closed = true;
+    xpc_dictionary_apply(
         (xpc_object_t)message,
-        "hello.ack"
+        ^bool(const char *key, xpc_object_t value) {
+            field_count += 1;
+            if (strcmp(key, "kind") == 0) {
+                fields_are_closed = fields_are_closed
+                    && xpc_get_type(value) == XPC_TYPE_STRING;
+            } else if (strcmp(key, "version") == 0) {
+                fields_are_closed = fields_are_closed
+                    && xpc_get_type(value) == XPC_TYPE_INT64;
+            } else if (strcmp(key, "agentBuild") == 0) {
+                fields_are_closed = fields_are_closed
+                    && xpc_get_type(value) == XPC_TYPE_UINT64;
+            } else {
+                fields_are_closed = false;
+            }
+            return true;
+        }
     );
+
+    const char *kind = xpc_dictionary_get_string(
+        (xpc_object_t)message,
+        "kind"
+    );
+    if (field_count != 3
+        || !fields_are_closed
+        || kind == NULL
+        || strcmp(kind, "hello.ack") != 0
+        || xpc_dictionary_get_int64(
+            (xpc_object_t)message,
+            "version"
+        ) != 1) {
+        return false;
+    }
+    if (agent_build_out != NULL) {
+        *agent_build_out = xpc_dictionary_get_uint64(
+            (xpc_object_t)message,
+            "agentBuild"
+        );
+    }
+    return true;
 }
 
 bool MCLocalXPCMessageIsExactMenuReady(MCLocalXPCMessageRef message) {
@@ -1235,6 +1280,50 @@ bool MCLocalXPCExactMessageParserSelfTest(void) {
     valid = valid
         && !MCLocalXPCMessageIsExact(wrong_kind_type, "hello");
     xpc_release(wrong_kind_type);
+
+    uint64_t parsed_agent_build = 0;
+    xpc_object_t exact_hello_ack = xpc_dictionary_create_empty();
+    xpc_dictionary_set_string(exact_hello_ack, "kind", "hello.ack");
+    xpc_dictionary_set_int64(exact_hello_ack, "version", 1);
+    xpc_dictionary_set_uint64(exact_hello_ack, "agentBuild", 42);
+    valid = valid
+        && MCLocalXPCMessageGetExactHelloAcknowledgementBuild(
+            exact_hello_ack,
+            &parsed_agent_build
+        )
+        && parsed_agent_build == 42;
+    xpc_release(exact_hello_ack);
+
+    xpc_object_t signed_hello_ack_build = xpc_dictionary_create_empty();
+    xpc_dictionary_set_string(
+        signed_hello_ack_build,
+        "kind",
+        "hello.ack"
+    );
+    xpc_dictionary_set_int64(signed_hello_ack_build, "version", 1);
+    xpc_dictionary_set_int64(signed_hello_ack_build, "agentBuild", 42);
+    valid = valid
+        && !MCLocalXPCMessageGetExactHelloAcknowledgementBuild(
+            signed_hello_ack_build,
+            NULL
+        );
+    xpc_release(signed_hello_ack_build);
+
+    xpc_object_t extra_hello_ack_field = xpc_dictionary_create_empty();
+    xpc_dictionary_set_string(
+        extra_hello_ack_field,
+        "kind",
+        "hello.ack"
+    );
+    xpc_dictionary_set_int64(extra_hello_ack_field, "version", 1);
+    xpc_dictionary_set_uint64(extra_hello_ack_field, "agentBuild", 42);
+    xpc_dictionary_set_bool(extra_hello_ack_field, "extra", true);
+    valid = valid
+        && !MCLocalXPCMessageGetExactHelloAcknowledgementBuild(
+            extra_hello_ack_field,
+            NULL
+        );
+    xpc_release(extra_hello_ack_field);
 
     const uint8_t status_bytes[] = {0x7b, 0x7d};
     const void *parsed_status_bytes = NULL;
@@ -2428,9 +2517,28 @@ static void MCLocalXPCSessionSendExact(
 
 MCLocalXPCResult MCLocalXPCSessionReplyToHello(
     MCLocalXPCSessionRef session,
-    MCLocalXPCMessageRef hello
+    MCLocalXPCMessageRef hello,
+    uint64_t agent_build
 ) {
-    return MCLocalXPCSessionReplyExact(session, hello, "hello.ack");
+    xpc_object_t reply = xpc_dictionary_create_reply(
+        (xpc_object_t)hello
+    );
+    if (reply == NULL) {
+        return MCLocalXPCResultConstructionFailed;
+    }
+    xpc_dictionary_set_string(reply, "kind", "hello.ack");
+    xpc_dictionary_set_int64(reply, "version", 1);
+    xpc_dictionary_set_uint64(reply, "agentBuild", agent_build);
+    xpc_rich_error_t error = xpc_session_send_message(
+        (xpc_session_t)session,
+        reply
+    );
+    xpc_release(reply);
+    if (error != NULL) {
+        xpc_release(error);
+        return MCLocalXPCResultSendFailed;
+    }
+    return MCLocalXPCResultOK;
 }
 
 void MCLocalXPCSessionSendHello(

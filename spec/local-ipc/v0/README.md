@@ -39,15 +39,27 @@ XPC checks received messages, so a substituted server may receive the first
 outgoing request before its reply is rejected. Exactly one pre-authentication
 request is allowed: the constant closed value
 `{"kind":"hello","version":1}`. Its reply must be exactly
-`{"kind":"hello.ack","version":1}` and arrive through the requirement-bound
-session. Neither message contains a role, identifier, token, credential,
-endpoint, path, capability, device data, user data, or authority.
+`{"agentBuild":<uint64>,"kind":"hello.ack","version":1}` and arrive through
+the requirement-bound session. The acknowledgement's `agentBuild` is the
+canonical numeric `CFBundleVersion` read by the Agent process before listener
+activation. It is immutable version metadata, not readiness or authority.
+Neither message contains a role, identifier, token, credential, endpoint,
+path, capability, device data, or user data.
 
-The JSON-like notation above is descriptive only. On the wire, each handshake
-dictionary has exactly two keys: `kind` is `XPC_TYPE_STRING`, and `version` is
-the signed scalar `XPC_TYPE_INT64` with value `1`. Missing or additional keys,
-and unsigned-integer, floating-point, Boolean, or other alternate scalar types,
-are malformed even when their displayed value resembles `1`.
+The JSON-like notation above is descriptive only. On the wire, the request has
+exactly two keys and the acknowledgement exactly three. `kind` is
+`XPC_TYPE_STRING`; `version` is the signed scalar `XPC_TYPE_INT64` with value
+`1`; and `agentBuild` is `XPC_TYPE_UINT64`. Missing or additional keys and
+alternate scalar types are malformed even when their displayed values match.
+The Agent refuses listener activation when its bundle build is absent or not
+one canonical decimal `UInt64`.
+
+A bounded one-use startup probe may consume only this authenticated build and
+then cancel its session. It must run before the dashboard connection because
+the Agent intentionally admits one current menu lifetime. During ordinary app
+operation, update shutdown must use the build already observed on the active
+authenticated dashboard lifetime; it must not open a competing probe and
+displace that connection.
 
 ## Disabled-Agent remote-access bootstrap
 

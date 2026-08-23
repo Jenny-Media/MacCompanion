@@ -722,6 +722,14 @@ cover reopen, phase advance, clear, faults, unsafe filesystem entries, and
 concurrent writers. A cached-URL-size mismatch found by the tests was removed
 in favor of sole descriptor `fstat` authority. No live Application Support or
 Agent mutation ran.
+The subsequent
+[authenticated Agent build attestation](evidence/2026-08-23-authenticated-agent-build-attestation.md)
+extends the reciprocal signed-peer hello acknowledgement with one exact
+`UInt64` Agent bundle build, rejects malformed or open dictionaries in C, and
+adds a bounded startup-only probe that always cancels its session. Focused
+local-XPC tests pass without launching an Agent. Registration state and the
+embedded helper file are no longer candidates for running-build evidence; app
+startup repair and active-dashboard observation remain to be wired.
 
 ## Blocker handling rule
 

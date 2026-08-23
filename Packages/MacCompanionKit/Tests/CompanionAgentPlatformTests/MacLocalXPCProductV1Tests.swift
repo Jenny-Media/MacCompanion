@@ -741,7 +741,7 @@ func dashboardProductPublishesTypedStatusAndRecoversUnavailable() async throws {
     try await product.start()
     let client = try #require(box.client())
 
-    client.emit(.authenticatedAgent)
+    client.emit(.authenticatedAgent(build: 42))
     #expect(await eventuallyV1 { client.snapshot().ready == 1 })
     client.emit(.menuReadyAcknowledged)
     #expect(await eventuallyV1 { client.snapshot().status == 1 })
@@ -787,7 +787,7 @@ func presentationDashboardPublishesInitialAdmissionBeforeStatus() async throws {
     try await product.start()
     let client = try #require(box.client())
 
-    client.emit(.authenticatedAgent)
+    client.emit(.authenticatedAgent(build: 42))
     #expect(await eventuallyV1 { client.snapshot().ready == 1 })
     client.emit(.menuReadyAcknowledged)
     #expect(await eventuallyV1 {
@@ -838,7 +838,7 @@ func dashboardProductRejectsStatusFromAReplacementGeneration() async throws {
     )
     try await product.start()
     let client = try #require(box.client())
-    client.emit(.authenticatedAgent)
+    client.emit(.authenticatedAgent(build: 42))
     client.emit(.menuReadyAcknowledged)
     #expect(await eventuallyV1 { client.snapshot().status == 1 })
 
@@ -951,7 +951,7 @@ func dashboardRetryReservesSingleFlightBeforeOwnerSuspension() async throws {
     )
     try await product.start()
     let client = try #require(box.client())
-    client.emit(.authenticatedAgent)
+    client.emit(.authenticatedAgent(build: 42))
     client.emit(.menuReadyAcknowledged)
     #expect(await eventuallyV1 { client.snapshot().status == 1 })
     client.emit(.agentStatusUnavailable(generation: 41))
@@ -1044,7 +1044,7 @@ func dashboardProductDeinitRetiresAnExternallyRetainedOwner() async throws {
         )
     try await product?.start()
     let client = try #require(box.client())
-    client.emit(.authenticatedAgent)
+    client.emit(.authenticatedAgent(build: 42))
     client.emit(.menuReadyAcknowledged)
     #expect(await eventuallyV1 { client.snapshot().status == 1 })
     let status = try productDashboardStatusV1(
@@ -1082,7 +1082,7 @@ func dashboardOverflowSynchronouslyFencesAdmissionAndFailsClosed() async throws 
     )
     try await product.start()
     let client = try #require(box.client())
-    client.emit(.authenticatedAgent)
+    client.emit(.authenticatedAgent(build: 42))
     #expect(await eventuallyV1 { readyGate.snapshot().entered })
 
     client.emit(.menuReadyAcknowledged)
@@ -1117,7 +1117,7 @@ func dashboardInvalidationRetiresRetryBeforeOwnerSuspension() async throws {
     )
     try await product.start()
     let client = try #require(box.client())
-    client.emit(.authenticatedAgent)
+    client.emit(.authenticatedAgent(build: 42))
     client.emit(.menuReadyAcknowledged)
     #expect(await eventuallyV1 { client.snapshot().status == 1 })
     client.emit(.agentStatusUnavailable(generation: 61))
