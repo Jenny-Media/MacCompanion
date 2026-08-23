@@ -1,5 +1,6 @@
 #if os(macOS)
 import CompanionAgent
+import CompanionLocalXPCPlatform
 import CompanionMacApp
 import Observation
 
@@ -10,6 +11,17 @@ public enum MacCompanionProductRouteV1: Equatable, Sendable {
     case dashboard
     case requiresLoginItemApproval
     case unavailable
+}
+
+public enum MacCompanionUpdateNetworkReconciliationErrorV0:
+    Error,
+    Equatable,
+    Sendable
+{
+    case unavailable
+    case registrationUnavailable
+    case effectFailed
+    case exhausted
 }
 
 /// Process-level containing-app router. Login registration is only a routing
@@ -25,6 +37,8 @@ public final class MacCompanionProductApplicationV1 {
         -> MacCompanionDashboardApplicationV1
     public typealias StartupRepair = @MainActor @Sendable () async throws
         -> Void
+    public typealias UpdateReconciliationDelay =
+        @MainActor @Sendable () async throws -> Void
 
     private enum Phase {
         case idle
@@ -44,9 +58,13 @@ public final class MacCompanionProductApplicationV1 {
     @ObservationIgnored
     private let dashboardFactory: DashboardFactory
     @ObservationIgnored
+    private let updateReconciliationDelay: UpdateReconciliationDelay
+    @ObservationIgnored
     private var phase: Phase = .idle
     @ObservationIgnored
     private var dashboardStartTask: Task<Void, Never>?
+    @ObservationIgnored
+    private var updateReconciliationActive = false
     @ObservationIgnored
     private var finishTask: Task<Void, Never>?
 
@@ -56,12 +74,17 @@ public final class MacCompanionProductApplicationV1 {
         startupRepair: @escaping StartupRepair = {},
         dashboardFactory: @escaping DashboardFactory = {
             MacCompanionDashboardApplicationV1()
-        }
+        },
+        updateReconciliationDelay:
+            @escaping UpdateReconciliationDelay = {
+                try await Task.sleep(for: .milliseconds(250))
+            }
     ) {
         self.agentRegistration = agentRegistration
         self.setup = setup
         self.startupRepair = startupRepair
         self.dashboardFactory = dashboardFactory
+        self.updateReconciliationDelay = updateReconciliationDelay
         setup.installStateObserver { [weak self] state in
             self?.receiveSetupState(state)
         }
@@ -83,7 +106,8 @@ public final class MacCompanionProductApplicationV1 {
 
     public func retryRoute() async {
         guard phase == .active,
-              dashboardStartTask == nil else { return }
+              dashboardStartTask == nil,
+              !updateReconciliationActive else { return }
         route = .checking
         await reconcileRoute()
     }
@@ -126,7 +150,7 @@ public final class MacCompanionProductApplicationV1 {
     }
 
     private func receiveSetupState(_ state: MacRemoteAccessSetupStateV1) {
-        guard phase == .active else { return }
+        guard phase == .active, !updateReconciliationActive else { return }
         switch state {
         case .enabled:
             beginDashboardAfterSetupReceipt()
@@ -138,7 +162,8 @@ public final class MacCompanionProductApplicationV1 {
     }
 
     private func beginDashboardAfterSetupReceipt() {
-        guard dashboardStartTask == nil else { return }
+        guard dashboardStartTask == nil,
+              !updateReconciliationActive else { return }
         let task = Task { @MainActor [weak self] in
             guard let self else { return }
             await self.startFreshDashboard(failureRoute: .unavailable)
@@ -147,25 +172,123 @@ public final class MacCompanionProductApplicationV1 {
         dashboardStartTask = task
     }
 
+    @discardableResult
     private func startFreshDashboard(
         failureRoute: MacCompanionProductRouteV1
-    ) async {
-        guard phase == .active else { return }
+    ) async -> Bool {
+        guard phase == .active else { return false }
         if let dashboard {
             await dashboard.finish()
-            guard phase == .active else { return }
+            guard phase == .active else { return false }
         }
         let candidate = dashboardFactory()
         dashboard = candidate
         route = .dashboard
         do {
             try await candidate.start()
+            return phase == .active && dashboard === candidate
         } catch {
             await candidate.finish()
-            guard phase == .active else { return }
+            guard phase == .active else { return false }
             dashboard = nil
             route = failureRoute
+            return false
         }
+    }
+
+    /// Reconciles only Agent listener admission after a failed update attempt.
+    /// It prefers the current authenticated dashboard, permits one bounded
+    /// replacement after transport ambiguity, and never starts an updater.
+    public func reconcileNetworkAdmissionForUpdate() async throws {
+        guard phase == .active, dashboardStartTask == nil,
+              !updateReconciliationActive else {
+            throw MacCompanionUpdateNetworkReconciliationErrorV0.unavailable
+        }
+        updateReconciliationActive = true
+        defer { updateReconciliationActive = false }
+
+        for generationAttempt in 0...1 {
+            guard phase == .active else {
+                throw MacCompanionUpdateNetworkReconciliationErrorV0
+                    .unavailable
+            }
+            if generationAttempt > 0 || dashboard == nil {
+                guard await agentRegistration.status() == .enabled else {
+                    throw MacCompanionUpdateNetworkReconciliationErrorV0
+                        .registrationUnavailable
+                }
+                guard await startFreshDashboard(
+                    failureRoute: .unavailable
+                ) else {
+                    throw MacCompanionUpdateNetworkReconciliationErrorV0
+                        .unavailable
+                }
+            }
+            guard let dashboard else {
+                throw MacCompanionUpdateNetworkReconciliationErrorV0
+                    .unavailable
+            }
+
+            let disposition = try await reconcile(
+                dashboard: dashboard,
+                permitsReplacement: generationAttempt == 0
+            )
+            if disposition == .reconciled { return }
+        }
+        throw MacCompanionUpdateNetworkReconciliationErrorV0.exhausted
+    }
+
+    private enum UpdateReconciliationDisposition {
+        case reconciled
+        case replaceGeneration
+    }
+
+    private func reconcile(
+        dashboard: MacCompanionDashboardApplicationV1,
+        permitsReplacement: Bool
+    ) async throws -> UpdateReconciliationDisposition {
+        for attempt in 0..<40 {
+            guard phase == .active, self.dashboard === dashboard else {
+                throw MacCompanionUpdateNetworkReconciliationErrorV0
+                    .unavailable
+            }
+            do {
+                try await dashboard
+                    .reopenNetworkAdmissionAfterUpdateFailure()
+                return .reconciled
+            } catch let error as MacLocalXPCUpdateQuiescenceErrorV0 {
+                switch error {
+                case .commandFailed:
+                    break
+                case .unavailable:
+                    if permitsReplacement { return .replaceGeneration }
+                case .malformedOrTransportError, .replyTimedOut,
+                     .cancelledAfterSend:
+                    if permitsReplacement { return .replaceGeneration }
+                    throw MacCompanionUpdateNetworkReconciliationErrorV0
+                        .exhausted
+                }
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                throw MacCompanionUpdateNetworkReconciliationErrorV0
+                    .effectFailed
+            }
+            guard attempt < 39 else {
+                if permitsReplacement { return .replaceGeneration }
+                throw MacCompanionUpdateNetworkReconciliationErrorV0
+                    .exhausted
+            }
+            do {
+                try await updateReconciliationDelay()
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                throw MacCompanionUpdateNetworkReconciliationErrorV0
+                    .effectFailed
+            }
+        }
+        throw MacCompanionUpdateNetworkReconciliationErrorV0.exhausted
     }
 
     isolated deinit {

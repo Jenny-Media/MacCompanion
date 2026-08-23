@@ -1,6 +1,7 @@
 #if os(macOS)
-@testable import CompanionMacApplicationPlatform
+import CompanionLocalXPCPlatform
 import CompanionMacApp
+@testable import CompanionMacApplicationPlatform
 import Foundation
 import Testing
 
@@ -57,6 +58,9 @@ private final class DashboardApplicationTestProductV1:
     private var suspendFinish = false
     private var starts = 0
     private var retries = 0
+    private var closes = 0
+    private var drains = 0
+    private var reopens = 0
     private var finishes = 0
 
     init(
@@ -85,6 +89,18 @@ private final class DashboardApplicationTestProductV1:
         return .completed
     }
 
+    func closeNetworkAdmissionForUpdate() async throws {
+        lock.withLock { closes += 1 }
+    }
+
+    func drainNetworkConnectionsForUpdate() async throws {
+        lock.withLock { drains += 1 }
+    }
+
+    func reopenNetworkAdmissionAfterUpdateFailure() async throws {
+        lock.withLock { reopens += 1 }
+    }
+
     func finish() async {
         let shouldSuspend = lock.withLock {
             finishes += 1
@@ -109,6 +125,12 @@ private final class DashboardApplicationTestProductV1:
 
     func snapshot() -> (starts: Int, retries: Int, finishes: Int) {
         lock.withLock { (starts, retries, finishes) }
+    }
+
+    func reopenCount() -> Int { lock.withLock { reopens } }
+
+    func updateCommandCounts() -> (closes: Int, drains: Int, reopens: Int) {
+        lock.withLock { (closes, drains, reopens) }
     }
 }
 
@@ -170,6 +192,28 @@ func explicitStartPublishesOnlyOwnerProducedLoadingAndEnablesRetry()
     #expect(await application.source == .unavailable)
     #expect(await application.retryStatus() == .notCompleted)
     #expect(product.snapshot() == (1, 1, 1))
+}
+
+@Test
+@available(macOS 26.0, *)
+func updateCommandsAreForwardedOnlyWhileDashboardIsActive()
+async throws {
+    let (application, product) = await makeDashboardApplicationV1()
+
+    await #expect(throws: MacLocalXPCUpdateQuiescenceErrorV0.unavailable) {
+        try await application.closeNetworkAdmissionForUpdate()
+    }
+    try await application.start()
+    try await application.closeNetworkAdmissionForUpdate()
+    try await application.drainNetworkConnectionsForUpdate()
+    try await application.reopenNetworkAdmissionAfterUpdateFailure()
+    #expect(product.updateCommandCounts() == (1, 1, 1))
+
+    await application.finish()
+    await #expect(throws: MacLocalXPCUpdateQuiescenceErrorV0.unavailable) {
+        try await application.drainNetworkConnectionsForUpdate()
+    }
+    #expect(product.updateCommandCounts() == (1, 1, 1))
 }
 
 @Test

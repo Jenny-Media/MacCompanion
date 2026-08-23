@@ -1,4 +1,4 @@
-# Mac Companion update trust policy v0.16
+# Mac Companion update trust policy v0.17
 
 Status: normative for the first direct-distribution beta.
 
@@ -226,6 +226,18 @@ Failure after Agent stop first completes exact source-Agent recovery and then
 reconstructs an authenticated dashboard generation before reopening. Until the
 separately reviewed prepared-installer adapter is supplied, permanent app
 composition remains inert and the user driver continues to answer `.skip`.
+
+Only one dashboard reconciliation may run at a time. A current active
+generation retries an explicit command failure, but `unavailable`, malformed,
+timed-out, or cancellation-after-send transport state retires that generation
+immediately. At most one replacement generation is permitted, and only while
+the Agent login role still reports enabled. The replacement may retry
+`unavailable` or explicit command failure at most 40 times with 250
+milliseconds between attempts, for a maximum readiness-delay budget below ten
+seconds. Ambiguity on the replacement, exhaustion, registration loss,
+cancellation, lifecycle finish, or an unknown effect remains closed. Setup and
+ordinary route retry cannot replace the dashboard while reconciliation owns
+it. Constructing either the command or recovery closure performs no effect.
 
 The reactivation receipt must use the frozen canonical JSON projection in the
 menu app's private Application Support root. Reads require one no-follow regular

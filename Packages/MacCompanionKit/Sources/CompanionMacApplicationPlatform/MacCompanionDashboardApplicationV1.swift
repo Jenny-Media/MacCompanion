@@ -99,6 +99,9 @@ package protocol MacCompanionDashboardProductV1: AnyObject, Sendable {
     func resolveLocalApproval(
         _ command: LocalPairingDecisionCommandV0
     ) async throws -> LocalPairingDecisionReceiptV0
+    func closeNetworkAdmissionForUpdate() async throws
+    func drainNetworkConnectionsForUpdate() async throws
+    func reopenNetworkAdmissionAfterUpdateFailure() async throws
     func finish() async
 }
 
@@ -123,6 +126,18 @@ extension MacCompanionDashboardProductV1 {
         _: LocalPairingDecisionCommandV0
     ) async throws -> LocalPairingDecisionReceiptV0 {
         throw MacLocalXPCMenuPairingCommandErrorV1.unavailable
+    }
+
+    package func closeNetworkAdmissionForUpdate() async throws {
+        throw MacLocalXPCUpdateQuiescenceErrorV0.unavailable
+    }
+
+    package func drainNetworkConnectionsForUpdate() async throws {
+        throw MacLocalXPCUpdateQuiescenceErrorV0.unavailable
+    }
+
+    package func reopenNetworkAdmissionAfterUpdateFailure() async throws {
+        throw MacLocalXPCUpdateQuiescenceErrorV0.unavailable
     }
 }
 
@@ -454,6 +469,38 @@ public final class MacCompanionDashboardApplicationV1 {
             try? await pairingReviewOwner.decline()
         case .retryDecision:
             try? await pairingReviewOwner.retryDecision()
+        }
+    }
+
+    /// Update-only commands over this exact dashboard generation. Construction
+    /// and ordinary dashboard start never invoke them.
+    public func closeNetworkAdmissionForUpdate() async throws {
+        guard phase == .active else {
+            throw MacLocalXPCUpdateQuiescenceErrorV0.unavailable
+        }
+        try await product.closeNetworkAdmissionForUpdate()
+        guard phase == .active else {
+            throw MacLocalXPCUpdateQuiescenceErrorV0.unavailable
+        }
+    }
+
+    public func drainNetworkConnectionsForUpdate() async throws {
+        guard phase == .active else {
+            throw MacLocalXPCUpdateQuiescenceErrorV0.unavailable
+        }
+        try await product.drainNetworkConnectionsForUpdate()
+        guard phase == .active else {
+            throw MacLocalXPCUpdateQuiescenceErrorV0.unavailable
+        }
+    }
+
+    public func reopenNetworkAdmissionAfterUpdateFailure() async throws {
+        guard phase == .active else {
+            throw MacLocalXPCUpdateQuiescenceErrorV0.unavailable
+        }
+        try await product.reopenNetworkAdmissionAfterUpdateFailure()
+        guard phase == .active else {
+            throw MacLocalXPCUpdateQuiescenceErrorV0.unavailable
         }
     }
 

@@ -15,6 +15,11 @@ public protocol MacUpdatePreparedInstallerStartingV0: Sendable {
 @available(macOS 26.0, *)
 extension MacLocalXPCDashboardProductV1: MacUpdateMenuAgentCommandingV0 {}
 
+@available(macOS 26.0, *)
+extension MacCompanionDashboardApplicationV1:
+    MacUpdateMenuAgentCommandingV0
+{}
+
 public struct MacUpdateMenuRuntimeRecoveryV0: Sendable {
     /// Reuses a known-live authenticated dashboard generation or reconstructs
     /// one after transport ambiguity, then issues the exact idempotent reopen
@@ -71,6 +76,26 @@ public enum MacUpdateMenuRuntimeCompositionV0 {
                     try await recovery.reconcileNetworkAdmission()
                 }
             )
+        )
+    }
+}
+
+@available(macOS 26.0, *)
+@MainActor
+public extension MacCompanionProductApplicationV1 {
+    /// Produces only the update coordinator's network-reconciliation seam.
+    /// Creating it starts no dashboard, Agent, listener, or updater.
+    func makeUpdateNetworkAdmissionRecovery()
+        -> MacUpdateMenuRuntimeRecoveryV0
+    {
+        MacUpdateMenuRuntimeRecoveryV0(
+            reconcileNetworkAdmission: { [weak self] in
+                guard let self else {
+                    throw MacCompanionUpdateNetworkReconciliationErrorV0
+                        .unavailable
+                }
+                try await self.reconcileNetworkAdmissionForUpdate()
+            }
         )
     }
 }

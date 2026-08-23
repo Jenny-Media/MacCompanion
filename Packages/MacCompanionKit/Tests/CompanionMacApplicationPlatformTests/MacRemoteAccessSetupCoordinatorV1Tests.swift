@@ -27,6 +27,27 @@ private final class RemoteAccessSetupBooleanBoxV1: @unchecked Sendable {
     func value() -> Bool { lock.withLock { stored } }
 }
 
+private actor RemoteAccessSetupUpdateDelayGateV1 {
+    private var entered = false
+    private var released = false
+    private var continuations: [CheckedContinuation<Void, Never>] = []
+
+    func wait() async {
+        entered = true
+        guard !released else { return }
+        await withCheckedContinuation { continuations.append($0) }
+    }
+
+    func hasEntered() -> Bool { entered }
+
+    func release() {
+        released = true
+        let continuations = self.continuations
+        self.continuations = []
+        for continuation in continuations { continuation.resume() }
+    }
+}
+
 private actor RemoteAccessSetupRoleV1: AgentBootstrapLoginRoleServiceV1 {
     private let name: String
     private let log: RemoteAccessSetupEventLogV1
@@ -188,6 +209,11 @@ private actor RemoteAccessSetupRawRegistrationV1:
     func statusReadCount() -> Int { statusReads }
 }
 
+private enum RemoteAccessSetupUpdateReopenStepV1 {
+    case success
+    case failure(MacLocalXPCUpdateQuiescenceErrorV0)
+}
+
 @available(macOS 26.0, *)
 private final class RemoteAccessSetupDashboardProductV1:
     MacCompanionDashboardProductV1,
@@ -197,10 +223,18 @@ private final class RemoteAccessSetupDashboardProductV1:
 
     private let lock = NSLock()
     private let fails: Bool
+    private let reopenSteps: [RemoteAccessSetupUpdateReopenStepV1]
     private var starts = 0
     private var finishes = 0
+    private var reopens = 0
 
-    init(fails: Bool) { self.fails = fails }
+    init(
+        fails: Bool,
+        reopenSteps: [RemoteAccessSetupUpdateReopenStepV1] = []
+    ) {
+        self.fails = fails
+        self.reopenSteps = reopenSteps
+    }
 
     func start() async throws {
         lock.withLock { starts += 1 }
@@ -211,27 +245,56 @@ private final class RemoteAccessSetupDashboardProductV1:
         .notCompleted
     }
 
+    func reopenNetworkAdmissionAfterUpdateFailure() async throws {
+        let step: RemoteAccessSetupUpdateReopenStepV1? = lock.withLock {
+            let index = reopens
+            reopens += 1
+            guard !reopenSteps.isEmpty else { return nil }
+            return reopenSteps[min(index, reopenSteps.count - 1)]
+        }
+        switch step {
+        case .success, nil:
+            return
+        case let .failure(error):
+            throw error
+        }
+    }
+
     func finish() async { lock.withLock { finishes += 1 } }
 
     func snapshot() -> (starts: Int, finishes: Int) {
         lock.withLock { (starts, finishes) }
     }
+
+    func reopenCount() -> Int { lock.withLock { reopens } }
 }
 
 @available(macOS 26.0, *)
 private final class RemoteAccessSetupDashboardBoxV1: @unchecked Sendable {
     private let lock = NSLock()
     private let fails: Bool
+    private let reopenPlans: [[RemoteAccessSetupUpdateReopenStepV1]]
     private var values: [RemoteAccessSetupDashboardProductV1] = []
 
-    init(fails: Bool = false) { self.fails = fails }
+    init(
+        fails: Bool = false,
+        reopenPlans: [[RemoteAccessSetupUpdateReopenStepV1]] = []
+    ) {
+        self.fails = fails
+        self.reopenPlans = reopenPlans
+    }
 
     @MainActor
     func makeApplication() -> MacCompanionDashboardApplicationV1 {
         var retained: RemoteAccessSetupDashboardProductV1?
+        let plan = lock.withLock {
+            let index = values.count
+            return index < reopenPlans.count ? reopenPlans[index] : []
+        }
         let application = MacCompanionDashboardApplicationV1 { _ in
             let product = RemoteAccessSetupDashboardProductV1(
-                fails: self.fails
+                fails: self.fails,
+                reopenSteps: plan
             )
             retained = product
             return product
@@ -726,6 +789,221 @@ func productLaunchUsesRegistrationOnlyToAttemptFreshDashboard() async {
     #expect(dashboardBox.products().count == 1)
     #expect(dashboardBox.products().first?.snapshot().starts == 1)
     #expect(await agent.counts() == (0, 0))
+    await product.finish()
+}
+
+@Test
+@available(macOS 26.0, *)
+func updateRecoveryRetriesAStillAuthenticatedDashboardBeforeReplacement()
+async throws {
+    let log = RemoteAccessSetupEventLogV1()
+    let agent = RemoteAccessSetupRoleV1(name: "agent", log: log)
+    let menu = RemoteAccessSetupRoleV1(name: "menu", log: log)
+    let delayLog = RemoteAccessSetupEventLogV1()
+    let dashboardBox = RemoteAccessSetupDashboardBoxV1(
+        reopenPlans: [[
+            .failure(.commandFailed),
+            .failure(.commandFailed),
+            .success,
+        ]]
+    )
+    let registration = RemoteAccessSetupRawRegistrationV1(.enabled)
+    let product = await MainActor.run {
+        MacCompanionProductApplicationV1(
+            agentRegistration: registration,
+            setup: MacRemoteAccessSetupApplicationV1(
+                agent: agent,
+                menuApp: menu,
+                clientFactory: { _ in RemoteAccessSetupClientV1(log: log) }
+            ),
+            dashboardFactory: { dashboardBox.makeApplication() },
+            updateReconciliationDelay: {
+                delayLog.append("delay")
+            }
+        )
+    }
+    await product.start()
+    let recovery = await product.makeUpdateNetworkAdmissionRecovery()
+
+    try await recovery.reconcileNetworkAdmission()
+
+    #expect(dashboardBox.products().count == 1)
+    #expect(dashboardBox.products().first?.reopenCount() == 3)
+    #expect(delayLog.snapshot() == ["delay", "delay"])
+    #expect(await product.route == MacCompanionProductRouteV1.dashboard)
+    await product.finish()
+}
+
+@Test
+@available(macOS 26.0, *)
+func ambiguousUpdateRecoveryReplacesDashboardThenWaitsForReadiness()
+async throws {
+    let log = RemoteAccessSetupEventLogV1()
+    let agent = RemoteAccessSetupRoleV1(name: "agent", log: log)
+    let menu = RemoteAccessSetupRoleV1(name: "menu", log: log)
+    let delayLog = RemoteAccessSetupEventLogV1()
+    let dashboardBox = RemoteAccessSetupDashboardBoxV1(
+        reopenPlans: [
+            [.failure(.malformedOrTransportError)],
+            [.failure(.unavailable), .success],
+        ]
+    )
+    let registration = RemoteAccessSetupRawRegistrationV1(.enabled)
+    let product = await MainActor.run {
+        MacCompanionProductApplicationV1(
+            agentRegistration: registration,
+            setup: MacRemoteAccessSetupApplicationV1(
+                agent: agent,
+                menuApp: menu,
+                clientFactory: { _ in RemoteAccessSetupClientV1(log: log) }
+            ),
+            dashboardFactory: { dashboardBox.makeApplication() },
+            updateReconciliationDelay: {
+                delayLog.append("delay")
+            }
+        )
+    }
+    await product.start()
+
+    try await product.reconcileNetworkAdmissionForUpdate()
+
+    let dashboards = dashboardBox.products()
+    #expect(dashboards.count == 2)
+    #expect(dashboards[0].reopenCount() == 1)
+    #expect(dashboards[0].snapshot().finishes == 1)
+    #expect(dashboards[1].snapshot().starts == 1)
+    #expect(dashboards[1].reopenCount() == 2)
+    #expect(delayLog.snapshot() == ["delay"])
+    #expect(await product.route == MacCompanionProductRouteV1.dashboard)
+    await product.finish()
+}
+
+@Test
+@available(macOS 26.0, *)
+func updateRecoveryCannotRebuildAnUnregisteredAgentDashboard()
+async throws {
+    let log = RemoteAccessSetupEventLogV1()
+    let agent = RemoteAccessSetupRoleV1(name: "agent", log: log)
+    let menu = RemoteAccessSetupRoleV1(name: "menu", log: log)
+    let dashboardBox = RemoteAccessSetupDashboardBoxV1(
+        reopenPlans: [[.failure(.malformedOrTransportError)]]
+    )
+    let registration = RemoteAccessSetupRawRegistrationV1(.enabled)
+    let product = await MainActor.run {
+        MacCompanionProductApplicationV1(
+            agentRegistration: registration,
+            setup: MacRemoteAccessSetupApplicationV1(
+                agent: agent,
+                menuApp: menu,
+                clientFactory: { _ in RemoteAccessSetupClientV1(log: log) }
+            ),
+            dashboardFactory: { dashboardBox.makeApplication() },
+            updateReconciliationDelay: {}
+        )
+    }
+    await product.start()
+    try await registration.unregisterAndWait()
+
+    await #expect(
+        throws: MacCompanionUpdateNetworkReconciliationErrorV0
+            .registrationUnavailable
+    ) {
+        try await product.reconcileNetworkAdmissionForUpdate()
+    }
+
+    #expect(dashboardBox.products().count == 1)
+    #expect(dashboardBox.products().first?.reopenCount() == 1)
+    await product.finish()
+}
+
+@Test
+@available(macOS 26.0, *)
+func updateRecoveryIsSingleFlightAcrossSuspendedRetry() async throws {
+    let log = RemoteAccessSetupEventLogV1()
+    let agent = RemoteAccessSetupRoleV1(name: "agent", log: log)
+    let menu = RemoteAccessSetupRoleV1(name: "menu", log: log)
+    let delayGate = RemoteAccessSetupUpdateDelayGateV1()
+    let dashboardBox = RemoteAccessSetupDashboardBoxV1(
+        reopenPlans: [
+            [.failure(.commandFailed)],
+            [.success],
+        ]
+    )
+    let registration = RemoteAccessSetupRawRegistrationV1(.enabled)
+    let product = await MainActor.run {
+        MacCompanionProductApplicationV1(
+            agentRegistration: registration,
+            setup: MacRemoteAccessSetupApplicationV1(
+                agent: agent,
+                menuApp: menu,
+                clientFactory: { _ in RemoteAccessSetupClientV1(log: log) }
+            ),
+            dashboardFactory: { dashboardBox.makeApplication() },
+            updateReconciliationDelay: {
+                await delayGate.wait()
+            }
+        )
+    }
+    await product.start()
+    let first = Task {
+        try await product.reconcileNetworkAdmissionForUpdate()
+    }
+    #expect(
+        await eventuallyRemoteAccessSetupApplicationV1 {
+            await delayGate.hasEntered()
+        }
+    )
+
+    await #expect(
+        throws: MacCompanionUpdateNetworkReconciliationErrorV0.unavailable
+    ) {
+        try await product.reconcileNetworkAdmissionForUpdate()
+    }
+    await delayGate.release()
+    try await first.value
+
+    #expect(dashboardBox.products().count == 2)
+    await product.finish()
+}
+
+@Test
+@available(macOS 26.0, *)
+func updateRecoveryExhaustionStaysClosedAfterOneReplacement()
+async throws {
+    let log = RemoteAccessSetupEventLogV1()
+    let agent = RemoteAccessSetupRoleV1(name: "agent", log: log)
+    let menu = RemoteAccessSetupRoleV1(name: "menu", log: log)
+    let dashboardBox = RemoteAccessSetupDashboardBoxV1(
+        reopenPlans: [
+            [.failure(.unavailable)],
+            [.failure(.unavailable)],
+        ]
+    )
+    let registration = RemoteAccessSetupRawRegistrationV1(.enabled)
+    let product = await MainActor.run {
+        MacCompanionProductApplicationV1(
+            agentRegistration: registration,
+            setup: MacRemoteAccessSetupApplicationV1(
+                agent: agent,
+                menuApp: menu,
+                clientFactory: { _ in RemoteAccessSetupClientV1(log: log) }
+            ),
+            dashboardFactory: { dashboardBox.makeApplication() },
+            updateReconciliationDelay: {}
+        )
+    }
+    await product.start()
+
+    await #expect(
+        throws: MacCompanionUpdateNetworkReconciliationErrorV0.exhausted
+    ) {
+        try await product.reconcileNetworkAdmissionForUpdate()
+    }
+
+    let dashboards = dashboardBox.products()
+    #expect(dashboards.count == 2)
+    #expect(dashboards[0].reopenCount() == 1)
+    #expect(dashboards[1].reopenCount() == 40)
     await product.finish()
 }
 

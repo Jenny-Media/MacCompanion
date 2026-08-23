@@ -220,6 +220,17 @@ the existing Agent-stop saga and requires Agent recovery before it can rebuild
 an authenticated dashboard and reopen after a post-stop failure. It accepts no
 feed, archive, or general Sparkle authority, so the permanent user driver still
 returns `.skip` and no update can install.
+The subsequent
+[dashboard update reconciliation checkpoint](evidence/2026-08-23-update-dashboard-reconciliation.md)
+binds the active dashboard itself as the typed close/drain command channel and
+the process router as the recovery owner. Recovery is single-flight, retries a
+known authenticated generation only for an explicit command failure, replaces
+an unavailable or transport-ambiguous current generation immediately, and
+permits at most one newly authenticated replacement with a 40-attempt,
+250-millisecond readiness cadence. Agent registration loss, a second ambiguous
+generation, exhaustion, cancellation, or lifecycle loss stays closed. These
+closures remain inert at construction and the app still has no prepared-
+installer adapter, feed, archive, or installation authority.
 
 ### Channels
 
@@ -262,6 +273,14 @@ replacement authenticated generation after transport ambiguity. A failure
 after Agent stop restores and verifies the source Agent before creating a
 replacement authenticated session and reopening admission. Unknown transport
 outcome never skips that recovery boundary.
+
+Dashboard reconciliation is single-flight and owns routing while active. An
+explicit command rejection on the retained authenticated generation is retried;
+an unavailable or ambiguous retained transport is retired immediately. Only
+one replacement generation may be created, only while the login role remains
+enabled, and it gets at most 40 readiness attempts spaced 250 milliseconds
+apart. Replacement ambiguity, exhaustion, registration loss, cancellation, or
+application finish leaves network admission closed.
 
 The update never swaps an individual agent executable in place. Pairing keys and grants remain in Keychain and service-owned data rather than in the replaceable bundle. A rollback must understand the stored schema or refuse with a clear recovery path; silently reading a newer schema is forbidden.
 

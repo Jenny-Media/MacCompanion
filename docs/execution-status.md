@@ -762,6 +762,19 @@ without starting any app, Agent, listener, XPC service, login role, or updater.
 The complete gate passes 1,590 package tests plus 8 platform probes. The
 permanent app still supplies no prepared-installer adapter, so Sparkle's hold
 point remains `.skip`; signed two-version execution remains open.
+The subsequent
+[dashboard update reconciliation](evidence/2026-08-23-update-dashboard-reconciliation.md)
+now binds app-level close/drain forwarding to the exact active dashboard and
+supplies the shutdown coordinator an inert product-router recovery closure.
+Reconciliation is single-flight; explicit current-generation command failure
+is retried, unavailable or ambiguous current transport is replaced immediately,
+and only one registration-gated replacement may receive up to 40 readiness
+attempts at a 250-millisecond cadence. Replacement ambiguity, exhaustion,
+registration loss, cancellation, or lifecycle loss stays closed. Six focused
+tests pass. The permanent app still has no prepared-installer adapter, and no
+app, Agent, login role, XPC service, listener, network connection, or updater
+was started. The complete gate passes 1,596 package tests plus 8 platform
+probes.
 
 ## Blocker handling rule
 
