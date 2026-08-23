@@ -1,4 +1,4 @@
-# Mac Companion update trust policy v0.18
+# Mac Companion update trust policy v0.19
 
 Status: normative for the first direct-distribution beta.
 
@@ -249,6 +249,18 @@ but until the foreground confirmation and runtime coordinator are bound it
 must cancel the correlation and owner. A source policy permits the single
 `install` reply only in the exact typed install-to-install mapping and rejects
 any direct permanent-app invocation of `startPreparedUpdate`.
+
+One main-actor installation application owns the fresh foreground decision for
+an admitted update. The composition constructs it around the same one-shot
+prepared reply passed to the runtime coordinator; supplying two reply owners is
+not an API. Confirmation, cancellation, and foreground loss are serialized.
+Loss before shutdown begins resolves `skip` and cancels the authority; loss
+during shutdown closes the authority so the coordinator performs its minimum
+recorded recovery before the reply owner can be retired. A suspended
+confirmation cannot resume across cancellation or foreground loss. Control
+active and cleanup-uncertain outcomes remain distinct, sanitized terminal
+states. Owner retirement cancels any unresolved reply and authority. Merely
+constructing the application performs no runtime effect.
 
 The reactivation receipt must use the frozen canonical JSON projection in the
 menu app's private Application Support root. Reads require one no-follow regular

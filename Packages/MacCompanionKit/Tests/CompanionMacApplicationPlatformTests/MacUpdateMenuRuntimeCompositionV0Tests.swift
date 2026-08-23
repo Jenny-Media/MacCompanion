@@ -64,6 +64,31 @@ private actor MenuUpdateCompositionHarnessV0:
     }
 }
 
+private actor MenuUpdateObservationGateV0 {
+    private var entered = false
+    private var continuation: CheckedContinuation<Void, Never>?
+
+    func observe() async -> MacUpdateRuntimeGateObservationV0 {
+        entered = true
+        await withCheckedContinuation { continuation in
+            self.continuation = continuation
+        }
+        return MacUpdateRuntimeGateObservationV0(
+            monotonicNowMilliseconds: 10,
+            menuForeground: true,
+            controlState: .inactive
+        )
+    }
+
+    func hasEntered() -> Bool { entered }
+
+    func release() {
+        let continuation = self.continuation
+        self.continuation = nil
+        continuation?.resume()
+    }
+}
+
 @Test @MainActor
 func preparedInstallerReplyOwnerInstallsExactlyOnce() async throws {
     var replies: [MacUpdatePreparedInstallerReplyV0] = []
@@ -213,6 +238,164 @@ private func menuUpdateCoordinatorV0(
             }
         )
     )
+}
+
+@MainActor
+private func menuUpdateInstallationApplicationV0(
+    harness: MenuUpdateCompositionHarnessV0,
+    observation: MacUpdateRuntimeGateObservationV0 = .init(
+        monotonicNowMilliseconds: 10,
+        menuForeground: true,
+        controlState: .inactive
+    ),
+    replies: @escaping @MainActor (
+        MacUpdatePreparedInstallerReplyV0
+    ) -> Void
+) async throws -> MacUpdateInstallationApplicationV0 {
+    let preparedInstaller = MacUpdatePreparedInstallerReplyOwnerV0(
+        reply: replies
+    )
+    return MacUpdateMenuRuntimeCompositionV0.installationApplication(
+        admission: try await menuUpdateAdmissionV0(),
+        agentCommands: harness,
+        agentStopOwner: try menuUpdateStopOwnerV0(harness: harness),
+        observeGate: { observation },
+        preparedInstaller: preparedInstaller,
+        recovery: MacUpdateMenuRuntimeRecoveryV0(
+            reconcileNetworkAdmission: {
+                try await harness.reconcileNetworkAdmission()
+            }
+        )
+    )
+}
+
+@Test @MainActor
+func updateInstallationApplicationConfirmsAndHandsOffExactlyOnce()
+async throws {
+    let harness = MenuUpdateCompositionHarnessV0()
+    var replies: [MacUpdatePreparedInstallerReplyV0] = []
+    let application = try await menuUpdateInstallationApplicationV0(
+        harness: harness,
+        replies: { replies.append($0) }
+    )
+
+    await application.confirmAndInstall()
+    await application.confirmAndInstall()
+    await application.cancel()
+
+    #expect(application.phase == .handedOff)
+    #expect(replies == [.install])
+    #expect(await harness.snapshot() == [
+        "closeNetwork", "drainNetwork", "registrationState",
+    ])
+}
+
+@Test @MainActor
+func updateInstallationApplicationCancelAndForegroundLossStayClosed()
+async throws {
+    let harness = MenuUpdateCompositionHarnessV0()
+    var replies: [MacUpdatePreparedInstallerReplyV0] = []
+    var application: MacUpdateInstallationApplicationV0? = try await
+        menuUpdateInstallationApplicationV0(
+            harness: harness,
+            replies: { replies.append($0) }
+        )
+
+    await application?.menuForegroundDidChange(false)
+    await application?.confirmAndInstall()
+    await application?.cancel()
+    #expect(application?.phase == .cancelled)
+    application = nil
+
+    #expect(replies == [.skip])
+    #expect(await harness.snapshot().isEmpty)
+}
+
+@Test @MainActor
+func updateInstallationApplicationReportsControlAndRuntimeFailure()
+async throws {
+    let activeHarness = MenuUpdateCompositionHarnessV0()
+    var activeReplies: [MacUpdatePreparedInstallerReplyV0] = []
+    let active = try await menuUpdateInstallationApplicationV0(
+        harness: activeHarness,
+        observation: .init(
+            monotonicNowMilliseconds: 10,
+            menuForeground: true,
+            controlState: .active
+        ),
+        replies: { activeReplies.append($0) }
+    )
+
+    await active.confirmAndInstall()
+    #expect(active.phase == .failed(.controlActive))
+    #expect(activeReplies == [.skip])
+    #expect(await activeHarness.snapshot().isEmpty)
+
+    let failingHarness = MenuUpdateCompositionHarnessV0(
+        failingEvent: "drainNetwork"
+    )
+    var failingReplies: [MacUpdatePreparedInstallerReplyV0] = []
+    let failing = try await menuUpdateInstallationApplicationV0(
+        harness: failingHarness,
+        replies: { failingReplies.append($0) }
+    )
+
+    await failing.confirmAndInstall()
+    #expect(failing.phase == .failed(.runtimeEffectFailed))
+    #expect(failingReplies == [.skip])
+    #expect(await failingHarness.snapshot() == [
+        "closeNetwork", "drainNetwork", "reconcileNetworkAdmission",
+    ])
+}
+
+@Test @MainActor
+func foregroundLossFencesSuspendedUpdateConfirmation() async throws {
+    let harness = MenuUpdateCompositionHarnessV0()
+    let observationGate = MenuUpdateObservationGateV0()
+    var replies: [MacUpdatePreparedInstallerReplyV0] = []
+    let preparedInstaller = MacUpdatePreparedInstallerReplyOwnerV0 {
+        replies.append($0)
+    }
+    let application = MacUpdateMenuRuntimeCompositionV0
+        .installationApplication(
+            admission: try await menuUpdateAdmissionV0(),
+            agentCommands: harness,
+            agentStopOwner: try menuUpdateStopOwnerV0(harness: harness),
+            observeGate: { await observationGate.observe() },
+            preparedInstaller: preparedInstaller,
+            recovery: MacUpdateMenuRuntimeRecoveryV0(
+                reconcileNetworkAdmission: {
+                    try await harness.reconcileNetworkAdmission()
+                }
+            )
+        )
+
+    let confirmation = Task { @MainActor in
+        await application.confirmAndInstall()
+    }
+    for _ in 0..<500 {
+        if await observationGate.hasEntered() { break }
+        await Task.yield()
+    }
+    #expect(await observationGate.hasEntered())
+
+    let foregroundLoss = Task { @MainActor in
+        await application.menuForegroundDidChange(false)
+    }
+    for _ in 0..<500 {
+        if application.phase == .cancelled { break }
+        await Task.yield()
+    }
+    #expect(application.phase == .cancelled)
+    #expect(replies == [.skip])
+
+    await observationGate.release()
+    await confirmation.value
+    await foregroundLoss.value
+
+    #expect(application.phase == .cancelled)
+    #expect(replies == [.skip])
+    #expect(await harness.snapshot().isEmpty)
 }
 
 @Test func menuUpdateCompositionRunsExactPreparedInstallOrder()

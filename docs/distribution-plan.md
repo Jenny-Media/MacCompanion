@@ -241,6 +241,16 @@ foreground confirmation and runtime coordination are not yet bound. Source
 validation permits exactly one install token in the closed install/skip mapping
 and rejects any direct app invocation, so full update checks and installation
 remain unreachable.
+The subsequent
+[foreground update-installation owner checkpoint](evidence/2026-08-23-foreground-update-installation-owner.md)
+adds one main-actor lifecycle around the same reply owner and runtime
+coordinator. It serializes fresh confirmation, cancellation, foreground loss,
+shutdown, recovery, and terminal presentation; a suspended confirmation cannot
+cross cancellation or foreground loss. Control-active, cleanup-uncertain,
+runtime-failure, and recovery-failure results remain closed and sanitized.
+Construction is effect-free, and this package owner is not yet installed in
+the permanent Sparkle adapter, so full checks and installation remain
+unreachable.
 
 ### Channels
 

@@ -92,6 +92,32 @@ public struct MacUpdateMenuRuntimeRecoveryV0: Sendable {
 /// or generic Agent authority. Permanent app composition remains inert until
 /// a separately reviewed prepared-installer adapter is supplied.
 public enum MacUpdateMenuRuntimeCompositionV0 {
+    /// Constructs one presentation lifecycle and its coordinator around the
+    /// same one-shot prepared-installer reply. Construction performs no
+    /// listener, Agent, updater, or network effect.
+    @MainActor
+    public static func installationApplication(
+        admission: MacUpdateInstallAdmissionV0,
+        agentCommands: any MacUpdateMenuAgentCommandingV0,
+        agentStopOwner: MacUpdateAgentStopOwnerV0,
+        observeGate: @escaping @Sendable () async
+            -> MacUpdateRuntimeGateObservationV0,
+        preparedInstaller: MacUpdatePreparedInstallerReplyOwnerV0,
+        recovery: MacUpdateMenuRuntimeRecoveryV0
+    ) -> MacUpdateInstallationApplicationV0 {
+        MacUpdateInstallationApplicationV0(
+            coordinator: coordinator(
+                admission: admission,
+                agentCommands: agentCommands,
+                agentStopOwner: agentStopOwner,
+                observeGate: observeGate,
+                installer: preparedInstaller,
+                recovery: recovery
+            ),
+            preparedInstaller: preparedInstaller
+        )
+    }
+
     public static func coordinator(
         admission: MacUpdateInstallAdmissionV0,
         agentCommands: any MacUpdateMenuAgentCommandingV0,

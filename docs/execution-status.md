@@ -785,6 +785,17 @@ only in the exact closed mapping and forbids any permanent-app start call. Four
 focused tests pass. Full update checks, foreground confirmation, coordinator
 construction, listener mutation, Agent stop, and installation remain closed;
 the complete gate passes 1,598 package tests plus 8 platform probes.
+The subsequent
+[foreground update-installation owner](evidence/2026-08-23-foreground-update-installation-owner.md)
+constructs one main-actor lifecycle around the exact same prepared reply and
+runtime coordinator. It serializes confirmation/cancel/install, fences a
+suspended confirmation on foreground loss, forwards loss during shutdown into
+minimum-scope recovery, maps Control and effect failures to closed presentation
+states, and retires unresolved authority on owner loss. Four focused tests
+pass. The package owner is not yet bound into the permanent Sparkle callback,
+so full update checks, UI confirmation, listener mutation, Agent stop, and
+installation remain closed; the complete gate passes 1,602 package tests plus
+8 platform probes.
 
 ## Blocker handling rule
 
