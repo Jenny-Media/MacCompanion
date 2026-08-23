@@ -118,6 +118,24 @@ public struct MacUpdateAgentReactivationPlatformV0: Sendable {
         )
     }
 
+    /// Runtime shutdown must use the build already authenticated by the
+    /// dashboard lifetime. Unlike startup repair, it must not open a competing
+    /// one-shot local-XPC probe.
+    public init(
+        registration: any AgentLoginRoleRawServiceV1,
+        service: any AgentLoginRoleServiceV1,
+        persistence: any MacUpdateAgentReactivationPersistenceV0,
+        activeAgentBuild:
+            MacAuthenticatedAgentBuildLifetimeV0
+    ) {
+        self.init(
+            registration: registration,
+            service: service,
+            persistence: persistence,
+            currentAgentBuild: { activeAgentBuild.currentBuild() }
+        )
+    }
+
     public func dependencies()
         -> MacUpdateAgentReactivationDependenciesV0
     {

@@ -227,6 +227,14 @@ registration-based routing or dashboard creation, performs no login-role/XPC
 effect without a receipt, and closes the product on any uncertain repair. The
 unsigned permanent app compiles, but live registration, Agent launch, and XPC
 readiness remain intentionally unrun.
+The subsequent
+[active-dashboard Agent build lifetime](docs/evidence/2026-08-23-active-dashboard-agent-build-lifetime.md)
+retains the exact authenticated Agent build for only the live dashboard
+connection and clears it on duplicate authentication, ordering failure,
+overflow, invalidation, finish, or retirement. The permanent app passes the
+same unforgeable reader into its update-stop factory, while startup recovery
+continues to use the separate bounded probe. Network close/drain and Sparkle
+handoff remain unbound, so installation is still closed.
 
 The [exact-candidate artifact SBOM](docs/evidence/2026-08-21-exact-candidate-artifact-sbom.md) separately inventories the executable-bearing ZIPs themselves, emits reciprocal `filesAnalyzed: true` SPDX with SHA-1/SHA-256 and package verification codes, and binds release version/build/targets/revision, packaged hashes and sizes, and executable paths/modes. Signed-candidate `--verify-files` rejects source-SBOM substitution, unsafe or noncanonical archives/evidence, metadata substitution, and post-generation archive changes. The [Mac packaging-equivalence receipt](docs/evidence/2026-08-21-mac-packaging-equivalence.md) binds those exact ZIP trees to the sole release DMG through an explicitly authorized read-only APFS inspection, exact device cleanup, and post-inspection rehash. The current [Sparkle nested Developer ID packaging checkpoint](docs/evidence/2026-08-23-sparkle-nested-developer-id-packaging.md) independently verifies all five retained app, Agent, framework, and helper subjects, signs the DMG, and proves one 117-entry application tree across both ZIPs and the DMG while explicitly retaining the unnotarized, unstapled, unsigned-update, non-promotable state. A real signed-candidate claim remains closed until this path runs on the final signed/notarized artifacts under the stable release lane.
 

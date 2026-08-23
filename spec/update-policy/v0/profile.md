@@ -1,4 +1,4 @@
-# Mac Companion update trust policy v0.14
+# Mac Companion update trust policy v0.15
 
 Status: normative for the first direct-distribution beta.
 
@@ -191,6 +191,16 @@ the dashboard starts. Runtime update shutdown must instead consume the build
 observed on its already-authenticated dashboard lifetime, so it cannot replace
 that live connection merely to query version. Malformed, missing, timed-out,
 stale, or mismatched build evidence denies stop, recovery, or receipt clearing.
+
+The active dashboard build lifetime has exactly one package-owned publication
+from the authenticated hello acknowledgement. Production consumers may read
+but cannot mutate it. Duplicate authentication, message-order failure, event
+overflow, transport invalidation, dashboard finish, or object retirement clears
+the build permanently. The containing app must pass that same lifetime to both
+the dashboard product and the update-time Agent-stop dependency; the startup
+probe remains a separate recovery-only mechanism. Merely constructing the stop
+owner does not authorize network closure, Agent unregistration, updater
+handoff, download, or installation.
 
 The reactivation receipt must use the frozen canonical JSON projection in the
 menu app's private Application Support root. Reads require one no-follow regular

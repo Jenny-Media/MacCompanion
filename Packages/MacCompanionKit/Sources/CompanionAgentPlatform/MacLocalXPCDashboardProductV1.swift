@@ -80,6 +80,7 @@ private actor MacLocalXPCDashboardBindingV1 {
 
     private let owner: MacAgentDashboardApplicationOwnerV0
     private let client: any MacLocalXPCDashboardClientV1
+    private let agentBuildLifetime: MacAuthenticatedAgentBuildLifetimeV0
     private let publishesInteractiveAdmission: Bool
     private let menuAppGeneration: UUID
     private let initialSelectedDisplayID: UUID?
@@ -93,12 +94,14 @@ private actor MacLocalXPCDashboardBindingV1 {
     init(
         owner: MacAgentDashboardApplicationOwnerV0,
         client: any MacLocalXPCDashboardClientV1,
+        agentBuildLifetime: MacAuthenticatedAgentBuildLifetimeV0,
         publishesInteractiveAdmission: Bool,
         menuAppGeneration: UUID,
         initialSelectedDisplayID: UUID?
     ) {
         self.owner = owner
         self.client = client
+        self.agentBuildLifetime = agentBuildLifetime
         self.publishesInteractiveAdmission = publishesInteractiveAdmission
         self.menuAppGeneration = menuAppGeneration
         self.initialSelectedDisplayID = initialSelectedDisplayID
@@ -134,8 +137,9 @@ private actor MacLocalXPCDashboardBindingV1 {
         }
         do {
             switch event {
-            case .authenticatedAgent:
+            case let .authenticatedAgent(build):
                 guard phase == .starting else { throw BindingError.order }
+                try agentBuildLifetime.authenticate(build: build)
                 phase = .authenticated
                 client.publishMenuReady()
 
@@ -244,6 +248,7 @@ private actor MacLocalXPCDashboardBindingV1 {
     }
 
     private func retire() {
+        agentBuildLifetime.retire()
         token = nil
         transportGeneration = nil
         statusReadOutstanding = false
@@ -264,6 +269,7 @@ private final class MacLocalXPCDashboardRuntimeV1: @unchecked Sendable {
     private var acceptingEvents = false
     private var client: (any MacLocalXPCDashboardClientV1)?
     private var binding: MacLocalXPCDashboardBindingV1?
+    private var agentBuildLifetime: MacAuthenticatedAgentBuildLifetimeV0?
     private var continuation:
         AsyncStream<MacLocalXPCClientEventV1>.Continuation?
     private var drainTask: Task<Void, Never>?
@@ -273,6 +279,7 @@ private final class MacLocalXPCDashboardRuntimeV1: @unchecked Sendable {
     func install(
         client: any MacLocalXPCDashboardClientV1,
         binding: MacLocalXPCDashboardBindingV1,
+        agentBuildLifetime: MacAuthenticatedAgentBuildLifetimeV0,
         bufferCapacity: Int
     ) {
         let pair = AsyncStream<MacLocalXPCClientEventV1>.makeStream(
@@ -288,6 +295,7 @@ private final class MacLocalXPCDashboardRuntimeV1: @unchecked Sendable {
         precondition(self.client == nil && self.binding == nil)
         self.client = client
         self.binding = binding
+        self.agentBuildLifetime = agentBuildLifetime
         continuation = pair.continuation
         drainTask = task
         lock.unlock()
@@ -397,6 +405,7 @@ private final class MacLocalXPCDashboardRuntimeV1: @unchecked Sendable {
             let continuation = self.continuation
             let client = self.client
             let binding = self.binding
+            agentBuildLifetime?.retire()
             let drainTask = self.drainTask
             startTask?.cancel()
             let task = Task {
@@ -436,10 +445,12 @@ public final class MacLocalXPCDashboardProductV1:
 
     public init(
         owner: MacAgentDashboardApplicationOwnerV0,
+        agentBuildLifetime: MacAuthenticatedAgentBuildLifetimeV0 = .init(),
         bufferCapacity: Int = 32
     ) {
         self.runtime = Self.makeRuntime(
             owner: owner,
+            agentBuildLifetime: agentBuildLifetime,
             bufferCapacity: bufferCapacity,
             clientFactory: { MacLocalXPCClientV1(onEvent: $0) },
             publishesInteractiveAdmission: false
@@ -451,6 +462,7 @@ public final class MacLocalXPCDashboardProductV1:
     /// is called, and finish() awaits exact receiver withdrawal.
     public init(
         owner: MacAgentDashboardApplicationOwnerV0,
+        agentBuildLifetime: MacAuthenticatedAgentBuildLifetimeV0 = .init(),
         pairingReviews: any LocalPairingReviewSurfaceV0,
         hostIdentityRecovery:
             any LocalHostIdentityRecoverySurfaceV0,
@@ -468,6 +480,7 @@ public final class MacLocalXPCDashboardProductV1:
         )
         runtime = Self.makeRuntime(
             owner: owner,
+            agentBuildLifetime: agentBuildLifetime,
             bufferCapacity: bufferCapacity,
             clientFactory: {
                 let client = MacLocalXPCClientV1(
@@ -489,6 +502,7 @@ public final class MacLocalXPCDashboardProductV1:
 
     package init(
         owner: MacAgentDashboardApplicationOwnerV0,
+        agentBuildLifetime: MacAuthenticatedAgentBuildLifetimeV0 = .init(),
         bufferCapacity: Int = 32,
         publishesInteractiveAdmission: Bool = false,
         initialSelectedDisplayID: UUID? = nil,
@@ -496,6 +510,7 @@ public final class MacLocalXPCDashboardProductV1:
     ) {
         runtime = Self.makeRuntime(
             owner: owner,
+            agentBuildLifetime: agentBuildLifetime,
             bufferCapacity: bufferCapacity,
             clientFactory: clientFactory,
             publishesInteractiveAdmission: publishesInteractiveAdmission,
@@ -505,6 +520,7 @@ public final class MacLocalXPCDashboardProductV1:
 
     private static func makeRuntime(
         owner: MacAgentDashboardApplicationOwnerV0,
+        agentBuildLifetime: MacAuthenticatedAgentBuildLifetimeV0,
         bufferCapacity: Int,
         clientFactory: @escaping ClientFactory,
         publishesInteractiveAdmission: Bool,
@@ -517,6 +533,7 @@ public final class MacLocalXPCDashboardProductV1:
         let binding = MacLocalXPCDashboardBindingV1(
             owner: owner,
             client: client,
+            agentBuildLifetime: agentBuildLifetime,
             publishesInteractiveAdmission: publishesInteractiveAdmission,
             menuAppGeneration: UUID(),
             initialSelectedDisplayID: initialSelectedDisplayID
@@ -524,6 +541,7 @@ public final class MacLocalXPCDashboardProductV1:
         runtime.install(
             client: client,
             binding: binding,
+            agentBuildLifetime: agentBuildLifetime,
             bufferCapacity: bufferCapacity
         )
         return runtime

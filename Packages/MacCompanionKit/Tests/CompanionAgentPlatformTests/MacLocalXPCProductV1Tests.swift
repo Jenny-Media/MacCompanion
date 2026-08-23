@@ -730,8 +730,10 @@ private func productDashboardStatusV1(
 func dashboardProductPublishesTypedStatusAndRecoversUnavailable() async throws {
     let owner = MacAgentDashboardApplicationOwnerV0()
     let box = ProductDashboardClientBoxV1()
+    let agentBuildLifetime = MacAuthenticatedAgentBuildLifetimeV0()
     let product = MacLocalXPCDashboardProductV1(
         owner: owner,
+        agentBuildLifetime: agentBuildLifetime,
         clientFactory: { handler in
             let client = ProductDashboardClientV1(handler: handler)
             box.install(client)
@@ -741,8 +743,10 @@ func dashboardProductPublishesTypedStatusAndRecoversUnavailable() async throws {
     try await product.start()
     let client = try #require(box.client())
 
+    #expect(agentBuildLifetime.currentBuild() == nil)
     client.emit(.authenticatedAgent(build: 42))
     #expect(await eventuallyV1 { client.snapshot().ready == 1 })
+    #expect(agentBuildLifetime.currentBuild() == 42)
     client.emit(.menuReadyAcknowledged)
     #expect(await eventuallyV1 { client.snapshot().status == 1 })
     #expect(await product.retryStatus() == .notCompleted)
@@ -764,7 +768,37 @@ func dashboardProductPublishesTypedStatusAndRecoversUnavailable() async throws {
 
     client.emit(.invalidated)
     #expect(await eventuallyV1 { await owner.snapshot() == .unavailable })
+    #expect(agentBuildLifetime.currentBuild() == nil)
     #expect(await product.retryStatus() == .notCompleted)
+    await product.finish()
+}
+
+@Test
+@available(macOS 26.0, *)
+func dashboardProductRejectsDuplicateAuthenticationAndRetiresBuild() async throws {
+    let owner = MacAgentDashboardApplicationOwnerV0()
+    let box = ProductDashboardClientBoxV1()
+    let agentBuildLifetime = MacAuthenticatedAgentBuildLifetimeV0()
+    let product = MacLocalXPCDashboardProductV1(
+        owner: owner,
+        agentBuildLifetime: agentBuildLifetime,
+        clientFactory: { handler in
+            let client = ProductDashboardClientV1(handler: handler)
+            box.install(client)
+            return client
+        }
+    )
+    try await product.start()
+    let client = try #require(box.client())
+
+    client.emit(.authenticatedAgent(build: 42))
+    #expect(await eventuallyV1 { client.snapshot().ready == 1 })
+    #expect(agentBuildLifetime.currentBuild() == 42)
+    client.emit(.authenticatedAgent(build: 42))
+
+    #expect(await eventuallyV1 { client.snapshot().cancels >= 1 })
+    #expect(agentBuildLifetime.currentBuild() == nil)
+    #expect(await owner.snapshot() == .unavailable)
     await product.finish()
 }
 
@@ -1006,16 +1040,25 @@ func dashboardFinishAwaitsMenuReceiverRetirement() async throws {
     let receiverGate = ProductAsyncGateV1()
     receiverGate.arm()
     let completed = ProductFlagV1()
+    let box = ProductDashboardClientBoxV1()
+    let agentBuildLifetime = MacAuthenticatedAgentBuildLifetimeV0()
     let product = MacLocalXPCDashboardProductV1(
         owner: MacAgentDashboardApplicationOwnerV0(),
-        clientFactory: {
-            ProductDashboardClientV1(
+        agentBuildLifetime: agentBuildLifetime,
+        clientFactory: { handler in
+            let client = ProductDashboardClientV1(
                 finishGate: receiverGate,
-                handler: $0
+                handler: handler
             )
+            box.install(client)
+            return client
         }
     )
     try await product.start()
+    let client = try #require(box.client())
+    client.emit(.authenticatedAgent(build: 42))
+    #expect(await eventuallyV1 { client.snapshot().ready == 1 })
+    #expect(agentBuildLifetime.currentBuild() == 42)
 
     let finish = Task {
         await product.finish()
@@ -1023,6 +1066,7 @@ func dashboardFinishAwaitsMenuReceiverRetirement() async throws {
     }
     #expect(await eventuallyV1 { receiverGate.snapshot().entered })
     #expect(!completed.isSet())
+    #expect(agentBuildLifetime.currentBuild() == nil)
     receiverGate.release()
     await finish.value
     #expect(completed.isSet())

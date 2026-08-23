@@ -13,10 +13,14 @@ enum MacCompanionUpdateAgentReactivationCompositionErrorV0: Error {
 /// owns the single authenticated menu lifetime.
 @MainActor
 final class MacCompanionUpdateAgentReactivationCompositionV0 {
+    private let runningBuild: UInt64
     private let reactivator: MacUpdateAgentStartupReactivatorV0
+    private let runtimeDependencies:
+        MacUpdateAgentReactivationDependenciesV0
 
     init(
         loginRoles: MacCompanionLoginRoleComposition,
+        activeAgentBuild: MacAuthenticatedAgentBuildLifetimeV0,
         bundle: Bundle = .main
     ) throws {
         guard let runningBuild = MacLocalXPCProcessBuildV1.current(
@@ -34,6 +38,14 @@ final class MacCompanionUpdateAgentReactivationCompositionV0 {
             persistence: persistence,
             readiness: readiness
         )
+        let runtimePlatform = MacUpdateAgentReactivationPlatformV0(
+            registration: loginRoles.agentRaw,
+            service: loginRoles.agent,
+            persistence: persistence,
+            activeAgentBuild: activeAgentBuild
+        )
+        self.runningBuild = runningBuild
+        runtimeDependencies = runtimePlatform.dependencies()
         reactivator = MacUpdateAgentStartupReactivatorV0(
             runningBuild: runningBuild,
             dependencies: platform.dependencies()
@@ -42,5 +54,15 @@ final class MacCompanionUpdateAgentReactivationCompositionV0 {
 
     func repairAtStartup() async throws {
         _ = try await reactivator.reactivateIfNeeded()
+    }
+
+    func makeStopOwner(
+        candidateBuild: UInt64
+    ) throws -> MacUpdateAgentStopOwnerV0 {
+        try MacUpdateAgentStopOwnerV0(
+            sourceBuild: runningBuild,
+            candidateBuild: candidateBuild,
+            dependencies: runtimeDependencies
+        )
     }
 }

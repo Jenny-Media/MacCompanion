@@ -60,6 +60,27 @@ func updateAgentPlatformForwardsPersistenceBuildAndConvergedEffects() async thro
 
 @Test
 @available(macOS 26.0, *)
+func updateAgentRuntimePlatformUsesOnlyActiveDashboardBuild() async throws {
+    let role = UpdateAgentRoleV0(state: .enabled)
+    let persistence = UpdateAgentPersistenceV0(receipt: nil)
+    let activeAgentBuild = MacAuthenticatedAgentBuildLifetimeV0()
+    let platform = MacUpdateAgentReactivationPlatformV0(
+        registration: role,
+        service: role,
+        persistence: persistence,
+        activeAgentBuild: activeAgentBuild
+    )
+    let dependencies = platform.dependencies()
+
+    #expect(try await dependencies.currentAgentBuild() == nil)
+    try activeAgentBuild.authenticate(build: 42)
+    #expect(try await dependencies.currentAgentBuild() == 42)
+    activeAgentBuild.retire()
+    #expect(try await dependencies.currentAgentBuild() == nil)
+}
+
+@Test
+@available(macOS 26.0, *)
 func updateAgentReadinessRetriesLaunchRacesWithExactDelay() async throws {
     let script = UpdateAgentBuildProbeScriptV0(
         results: [

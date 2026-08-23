@@ -203,7 +203,8 @@ public final class MacCompanionDashboardApplicationV1 {
     /// concrete capture, encoder, media drain, and input poster remain behind
     /// the authenticated local-XPC lifecycle and an Agent-issued lease.
     public convenience init(
-        interactiveIndicator: MacInteractiveActivityIndicatorV1
+        interactiveIndicator: MacInteractiveActivityIndicatorV1,
+        agentBuildLifetime: MacAuthenticatedAgentBuildLifetimeV0 = .init()
     ) {
         let displaySelection = try?
             MacInteractiveOpaqueDisplaySelectionV1()
@@ -216,6 +217,7 @@ public final class MacCompanionDashboardApplicationV1 {
             self.init(
                 interactiveRuntime: composition.runtime,
                 interactiveIndicator: interactiveIndicator,
+                agentBuildLifetime: agentBuildLifetime,
                 interactiveMediaQueue: composition.mediaQueue,
                 interactiveDisplaySelection: displaySelection,
                 interactiveSurfaceTargets: composition.surfaceTargets
@@ -227,6 +229,7 @@ public final class MacCompanionDashboardApplicationV1 {
                         indicator: interactiveIndicator
                     ),
                 interactiveIndicator: interactiveIndicator,
+                agentBuildLifetime: agentBuildLifetime,
                 interactiveMediaQueue: nil,
                 interactiveDisplaySelection: displaySelection
             )
@@ -236,6 +239,7 @@ public final class MacCompanionDashboardApplicationV1 {
     private convenience init(
         interactiveRuntime: InteractiveMenuRuntimeOwnerV0?,
         interactiveIndicator: MacInteractiveActivityIndicatorV1? = nil,
+        agentBuildLifetime: MacAuthenticatedAgentBuildLifetimeV0 = .init(),
         interactiveMediaQueue: BoundedInteractiveMediaQueueV0? = nil,
         interactiveDisplaySelection providedDisplaySelection:
             MacInteractiveOpaqueDisplaySelectionV1? = nil,
@@ -307,6 +311,7 @@ public final class MacCompanionDashboardApplicationV1 {
         )
         let product = MacLocalXPCDashboardProductV1(
             owner: dashboardOwner,
+            agentBuildLifetime: agentBuildLifetime,
             pairingReviews: reviewOwner,
             hostIdentityRecovery: recoveryOwner,
             interactiveLeaseHandler: interactiveLeaseHandler,

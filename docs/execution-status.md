@@ -742,6 +742,16 @@ unsigned permanent-app build pass. The complete gate passes 1,575 package
 tests plus 8 platform probes. No app, Agent, login role, XPC session, or updater
 action ran; active-dashboard build retention and runtime shutdown binding
 remain next.
+The subsequent
+[active-dashboard Agent build lifetime](evidence/2026-08-23-active-dashboard-agent-build-lifetime.md)
+now retains that exact hello build for one dashboard connection, clears it on
+every terminal or ambiguous connection path, and gives production consumers no
+mutation API. The permanent app shares the same lifetime with its dashboard and
+its candidate-bound Agent-stop factory; startup repair still uses the bounded
+one-shot probe. Six focused tests and the unsigned app build pass. The factory
+is not invoked, and the complete gate passes 1,579 package tests plus 8 platform
+probes. Network close, bounded drain, updater handoff, live Agent shutdown, and
+Sparkle installation remain closed.
 
 ## Blocker handling rule
 

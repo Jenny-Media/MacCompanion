@@ -1,5 +1,6 @@
 import AppKit
 import CompanionAgent
+import CompanionAgentPlatform
 import CompanionLifecycle
 import CompanionMacApp
 import CompanionMacApplicationPlatform
@@ -45,6 +46,7 @@ private final class MacCompanionApplicationDelegate:
     let product: MacCompanionProductApplicationV1
     let interactiveIndicator: MacInteractiveActivityIndicatorV1
     let updates: MacCompanionSparkleAdapterV0
+    let authenticatedAgentBuild: MacAuthenticatedAgentBuildLifetimeV0
     let updateAgentReactivation:
         MacCompanionUpdateAgentReactivationCompositionV0?
 
@@ -59,13 +61,17 @@ private final class MacCompanionApplicationDelegate:
         )
         let interactiveIndicator = MacInteractiveActivityIndicatorV1()
         let updates = MacCompanionSparkleAdapterV0()
+        let authenticatedAgentBuild =
+            MacAuthenticatedAgentBuildLifetimeV0()
         let updateAgentReactivation = try?
             MacCompanionUpdateAgentReactivationCompositionV0(
-                loginRoles: loginRoles
+                loginRoles: loginRoles,
+                activeAgentBuild: authenticatedAgentBuild
             )
         self.loginRoles = loginRoles
         self.interactiveIndicator = interactiveIndicator
         self.updates = updates
+        self.authenticatedAgentBuild = authenticatedAgentBuild
         self.updateAgentReactivation = updateAgentReactivation
         product = MacCompanionProductApplicationV1(
             agentRegistration: loginRoles.agentRaw,
@@ -79,7 +85,8 @@ private final class MacCompanionApplicationDelegate:
             },
             dashboardFactory: {
                 MacCompanionDashboardApplicationV1(
-                    interactiveIndicator: interactiveIndicator
+                    interactiveIndicator: interactiveIndicator,
+                    agentBuildLifetime: authenticatedAgentBuild
                 )
             }
         )

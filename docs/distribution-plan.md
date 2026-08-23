@@ -202,6 +202,13 @@ probe. It executes before route reconciliation and dashboard construction and
 keeps both closed on uncertainty. Runtime update shutdown must still consume
 the existing dashboard lifetime's authenticated build; it may not reuse this
 startup probe.
+The subsequent
+[active-dashboard Agent build lifetime](evidence/2026-08-23-active-dashboard-agent-build-lifetime.md)
+binds the reciprocal hello build to exactly one dashboard connection and the
+future update Agent-stop owner. Only the package local-XPC binding can publish
+or retire it; app and updater code can only read it. This removes the last
+temptation to probe a second XPC connection during shutdown, but it does not
+yet supply network-admission close, bounded drain, or updater handoff effects.
 
 ### Channels
 
