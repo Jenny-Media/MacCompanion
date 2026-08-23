@@ -1,4 +1,4 @@
-# Mac Companion update trust policy v0.13
+# Mac Companion update trust policy v0.14
 
 Status: normative for the first direct-distribution beta.
 
@@ -200,6 +200,19 @@ exact expected receipt under one process-shared lock, with file sync before
 atomic rename and directory sync after rename or unlink. Any unknown entry,
 symlink, malformed record, compare-and-swap conflict, or uncertain durability
 retains the recovery gate.
+
+The containing app must construct the system receipt store and concrete
+ServiceManagement bindings before ordinary product routing. Startup repair
+reads the receipt before it registers or probes anything. With no receipt it
+performs no login-role or local-XPC effect. With a receipt, only the exact
+source or candidate containing-app build may converge registration and use the
+startup-only authenticated build probe before dashboard construction. Launch-
+race start, invalidation, and timeout outcomes may retry at most four total
+probes with fixed 250-millisecond spacing; cancellation, protocol-order
+violation, unknown error, exhaustion, build mismatch, persistence conflict, or
+composition failure keeps routing and the dashboard closed. No public
+production initializer may replace authenticated build readiness with a
+caller-supplied build claim.
 
 Neither lifecycle event is Mac Companion's Developer ID identity or
 notarization attestation. Sparkle 2.9.6 permits an Ed25519-valid update to

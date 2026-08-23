@@ -194,6 +194,14 @@ no-follow descriptor inspection, private modes, atomic rename, and file plus
 directory durability barriers. Pre/post-rename and post-clear fault tests prove
 readback convergence. App construction and real platform/readiness bindings
 remain closed.
+The subsequent
+[update Agent startup-repair binding](evidence/2026-08-23-update-agent-startup-repair-binding.md)
+wires the permanent containing app to that exact store, the converging
+ServiceManagement owner, and a bounded startup-only authenticated Agent-build
+probe. It executes before route reconciliation and dashboard construction and
+keeps both closed on uncertainty. Runtime update shutdown must still consume
+the existing dashboard lifetime's authenticated build; it may not reuse this
+startup probe.
 
 ### Channels
 

@@ -219,6 +219,14 @@ JSON, a process-shared lock, no-follow descriptor inspection, 0700/0600 modes,
 fsync-before-rename, directory fsync, exact clear, fault recovery, and
 concurrent-writer tests now pass. The containing-app construction and real
 registration/readiness adapters remain open.
+The subsequent
+[update Agent startup-repair binding](docs/evidence/2026-08-23-update-agent-startup-repair-binding.md)
+constructs that store and the converging ServiceManagement plus authenticated-
+build-readiness adapters in the permanent containing app. Repair runs before
+registration-based routing or dashboard creation, performs no login-role/XPC
+effect without a receipt, and closes the product on any uncertain repair. The
+unsigned permanent app compiles, but live registration, Agent launch, and XPC
+readiness remain intentionally unrun.
 
 The [exact-candidate artifact SBOM](docs/evidence/2026-08-21-exact-candidate-artifact-sbom.md) separately inventories the executable-bearing ZIPs themselves, emits reciprocal `filesAnalyzed: true` SPDX with SHA-1/SHA-256 and package verification codes, and binds release version/build/targets/revision, packaged hashes and sizes, and executable paths/modes. Signed-candidate `--verify-files` rejects source-SBOM substitution, unsafe or noncanonical archives/evidence, metadata substitution, and post-generation archive changes. The [Mac packaging-equivalence receipt](docs/evidence/2026-08-21-mac-packaging-equivalence.md) binds those exact ZIP trees to the sole release DMG through an explicitly authorized read-only APFS inspection, exact device cleanup, and post-inspection rehash. The current [Sparkle nested Developer ID packaging checkpoint](docs/evidence/2026-08-23-sparkle-nested-developer-id-packaging.md) independently verifies all five retained app, Agent, framework, and helper subjects, signs the DMG, and proves one 117-entry application tree across both ZIPs and the DMG while explicitly retaining the unnotarized, unstapled, unsigned-update, non-promotable state. A real signed-candidate claim remains closed until this path runs on the final signed/notarized artifacts under the stable release lane.
 

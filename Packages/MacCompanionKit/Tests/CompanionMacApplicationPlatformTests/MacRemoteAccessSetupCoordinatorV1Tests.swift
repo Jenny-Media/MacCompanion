@@ -19,6 +19,14 @@ private final class RemoteAccessSetupEventLogV1: @unchecked Sendable {
     func snapshot() -> [String] { lock.withLock { values } }
 }
 
+private final class RemoteAccessSetupBooleanBoxV1: @unchecked Sendable {
+    private let lock = NSLock()
+    private var stored = false
+
+    func set() { lock.withLock { stored = true } }
+    func value() -> Bool { lock.withLock { stored } }
+}
+
 private actor RemoteAccessSetupRoleV1: AgentBootstrapLoginRoleServiceV1 {
     private let name: String
     private let log: RemoteAccessSetupEventLogV1
@@ -159,14 +167,25 @@ private actor RemoteAccessSetupRawRegistrationV1:
     AgentLoginRoleRawServiceV1
 {
     private var value: AgentLoginRoleRegistrationStateV1
+    private var statusReads = 0
+    private let log: RemoteAccessSetupEventLogV1?
 
-    init(_ value: AgentLoginRoleRegistrationStateV1) {
+    init(
+        _ value: AgentLoginRoleRegistrationStateV1,
+        log: RemoteAccessSetupEventLogV1? = nil
+    ) {
         self.value = value
+        self.log = log
     }
 
-    func status() -> AgentLoginRoleRegistrationStateV1 { value }
+    func status() -> AgentLoginRoleRegistrationStateV1 {
+        statusReads += 1
+        log?.append("registration.status")
+        return value
+    }
     func register() throws { value = .enabled }
     func unregisterAndWait() throws { value = .notRegistered }
+    func statusReadCount() -> Int { statusReads }
 }
 
 @available(macOS 26.0, *)
@@ -577,7 +596,10 @@ func productLaunchRoutesAbsentRegistrationToInertSetup() async throws {
     let menu = RemoteAccessSetupRoleV1(name: "menu", log: log)
     let clientBox = RemoteAccessSetupClientBoxV1()
     let dashboardBox = RemoteAccessSetupDashboardBoxV1()
-    let registration = RemoteAccessSetupRawRegistrationV1(.notRegistered)
+    let registration = RemoteAccessSetupRawRegistrationV1(
+        .notRegistered,
+        log: log
+    )
     let product = await MainActor.run {
         let setup = MacRemoteAccessSetupApplicationV1(
             agent: agent,
@@ -602,6 +624,75 @@ func productLaunchRoutesAbsentRegistrationToInertSetup() async throws {
 
     #expect(await product.route == .setup)
     #expect(try clientBox.require().snapshot().starts == 0)
+    #expect(dashboardBox.products().isEmpty)
+    await product.finish()
+}
+
+@Test
+@available(macOS 26.0, *)
+func productLaunchRunsStartupRepairBeforeRouteReconciliation() async {
+    let log = RemoteAccessSetupEventLogV1()
+    let agent = RemoteAccessSetupRoleV1(name: "agent", log: log)
+    let menu = RemoteAccessSetupRoleV1(name: "menu", log: log)
+    let registration = RemoteAccessSetupRawRegistrationV1(
+        .notRegistered,
+        log: log
+    )
+    let repairFinished = RemoteAccessSetupBooleanBoxV1()
+    let product = await MainActor.run {
+        let setup = MacRemoteAccessSetupApplicationV1(
+            agent: agent,
+            menuApp: menu,
+            clientFactory: { _ in RemoteAccessSetupClientV1(log: log) }
+        )
+        return MacCompanionProductApplicationV1(
+            agentRegistration: registration,
+            setup: setup,
+            startupRepair: {
+                log.append("startup.repair")
+                repairFinished.set()
+            }
+        )
+    }
+
+    await product.start()
+
+    #expect(repairFinished.value())
+    #expect(await registration.statusReadCount() == 1)
+    #expect(
+        Array(log.snapshot().prefix(2))
+            == ["startup.repair", "registration.status"]
+    )
+    #expect(await product.route == .setup)
+    await product.finish()
+}
+
+@Test
+@available(macOS 26.0, *)
+func failedStartupRepairKeepsRoutingAndDashboardClosed() async {
+    let log = RemoteAccessSetupEventLogV1()
+    let agent = RemoteAccessSetupRoleV1(name: "agent", log: log)
+    let menu = RemoteAccessSetupRoleV1(name: "menu", log: log)
+    let registration = RemoteAccessSetupRawRegistrationV1(.enabled)
+    let dashboardBox = RemoteAccessSetupDashboardBoxV1()
+    let product = await MainActor.run {
+        let setup = MacRemoteAccessSetupApplicationV1(
+            agent: agent,
+            menuApp: menu,
+            clientFactory: { _ in RemoteAccessSetupClientV1(log: log) }
+        )
+        return MacCompanionProductApplicationV1(
+            agentRegistration: registration,
+            setup: setup,
+            startupRepair: { throw RemoteAccessSetupTestErrorV1.start },
+            dashboardFactory: { dashboardBox.makeApplication() }
+        )
+    }
+
+    await product.start()
+
+    #expect(await product.route == .unavailable)
+    #expect(await registration.statusReadCount() == 0)
     #expect(dashboardBox.products().isEmpty)
     await product.finish()
 }

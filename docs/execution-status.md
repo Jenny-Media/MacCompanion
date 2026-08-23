@@ -730,6 +730,18 @@ adds a bounded startup-only probe that always cancels its session. Focused
 local-XPC tests pass without launching an Agent. Registration state and the
 embedded helper file are no longer candidates for running-build evidence; app
 startup repair and active-dashboard observation remain to be wired.
+The subsequent
+[update Agent startup-repair binding](evidence/2026-08-23-update-agent-startup-repair-binding.md)
+closes the first of those two wiring gaps. The permanent containing app now
+constructs the private atomic store, closed registration mapping, converging
+ServiceManagement effects, and bounded authenticated-build readiness, then
+runs retained-receipt repair before route reconciliation or dashboard
+construction. Missing receipt is effect-free; composition or repair uncertainty
+routes unavailable. Seven adapter tests, 49 application-platform tests, and an
+unsigned permanent-app build pass. The complete gate passes 1,575 package
+tests plus 8 platform probes. No app, Agent, login role, XPC session, or updater
+action ran; active-dashboard build retention and runtime shutdown binding
+remain next.
 
 ## Blocker handling rule
 

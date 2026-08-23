@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		0E2DF059ED8CEBC5A7CD8A8E /* MacCompanionUpdateAgentReactivationCompositionV0.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8CBD8D6F13B604C4CBBAFF21 /* MacCompanionUpdateAgentReactivationCompositionV0.swift */; };
 		27DDDA85154EA314BCA29BC3 /* MacCompanionSparkleUserDriverV0.swift in Sources */ = {isa = PBXBuildFile; fileRef = 091FBCCB2C78C6909D0AF377 /* MacCompanionSparkleUserDriverV0.swift */; };
 		281D3C00B605BF825BFCA0F4 /* CompanionLocalXPCPlatform in Frameworks */ = {isa = PBXBuildFile; productRef = D80FDE8AEECB694B58AE4155 /* CompanionLocalXPCPlatform */; };
 		3E9471AA38A0125DFE6B1B3B /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 4CBA2CAE8F6CDF8E39B19AC4 /* PrivacyInfo.xcprivacy */; };
@@ -72,6 +73,7 @@
 		4CBA2CAE8F6CDF8E39B19AC4 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		6D64FA7490F520B548282CD7 /* MacCompanionAgentMain.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacCompanionAgentMain.swift; sourceTree = "<group>"; };
 		6EE5FB02460840012C115D0C /* MacCompanionKit */ = {isa = PBXFileReference; lastKnownFileType = folder; name = MacCompanionKit; path = Packages/MacCompanionKit; sourceTree = SOURCE_ROOT; };
+		8CBD8D6F13B604C4CBBAFF21 /* MacCompanionUpdateAgentReactivationCompositionV0.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacCompanionUpdateAgentReactivationCompositionV0.swift; sourceTree = "<group>"; };
 		9224B6E6FD7914BF9ACCABD3 /* MacCompanionApplication.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacCompanionApplication.swift; sourceTree = "<group>"; };
 		943C9B58FF652CF6598652AE /* MacCompanionIOS.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = MacCompanionIOS.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		A4F604F15E0382A43D678F69 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
@@ -145,6 +147,7 @@
 				177DD5F7DF123EE9E1BD7675 /* MacCompanionLoginRoleComposition.swift */,
 				F2BDA9AE141E2A20CEFA5619 /* MacCompanionSparkleAdapterV0.swift */,
 				091FBCCB2C78C6909D0AF377 /* MacCompanionSparkleUserDriverV0.swift */,
+				8CBD8D6F13B604C4CBBAFF21 /* MacCompanionUpdateAgentReactivationCompositionV0.swift */,
 			);
 			path = MacCompanionMac;
 			sourceTree = "<group>";
@@ -428,6 +431,7 @@
 				D0489C58E30BC9BD3F6E39AC /* MacCompanionLoginRoleComposition.swift in Sources */,
 				F4EA6ED27112E88EB4CB7C96 /* MacCompanionSparkleAdapterV0.swift in Sources */,
 				27DDDA85154EA314BCA29BC3 /* MacCompanionSparkleUserDriverV0.swift in Sources */,
+				0E2DF059ED8CEBC5A7CD8A8E /* MacCompanionUpdateAgentReactivationCompositionV0.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

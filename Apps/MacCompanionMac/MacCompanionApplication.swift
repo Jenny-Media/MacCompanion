@@ -45,6 +45,8 @@ private final class MacCompanionApplicationDelegate:
     let product: MacCompanionProductApplicationV1
     let interactiveIndicator: MacInteractiveActivityIndicatorV1
     let updates: MacCompanionSparkleAdapterV0
+    let updateAgentReactivation:
+        MacCompanionUpdateAgentReactivationCompositionV0?
 
     private var launchTask: Task<Void, Never>?
     private var finishTask: Task<Void, Never>?
@@ -57,12 +59,24 @@ private final class MacCompanionApplicationDelegate:
         )
         let interactiveIndicator = MacInteractiveActivityIndicatorV1()
         let updates = MacCompanionSparkleAdapterV0()
+        let updateAgentReactivation = try?
+            MacCompanionUpdateAgentReactivationCompositionV0(
+                loginRoles: loginRoles
+            )
         self.loginRoles = loginRoles
         self.interactiveIndicator = interactiveIndicator
         self.updates = updates
+        self.updateAgentReactivation = updateAgentReactivation
         product = MacCompanionProductApplicationV1(
             agentRegistration: loginRoles.agentRaw,
             setup: setup,
+            startupRepair: {
+                guard let updateAgentReactivation else {
+                    throw MacCompanionUpdateAgentReactivationCompositionErrorV0
+                        .unavailable
+                }
+                try await updateAgentReactivation.repairAtStartup()
+            },
             dashboardFactory: {
                 MacCompanionDashboardApplicationV1(
                     interactiveIndicator: interactiveIndicator

@@ -23,6 +23,8 @@ public enum MacCompanionProductRouteV1: Equatable, Sendable {
 public final class MacCompanionProductApplicationV1 {
     public typealias DashboardFactory = @MainActor @Sendable ()
         -> MacCompanionDashboardApplicationV1
+    public typealias StartupRepair = @MainActor @Sendable () async throws
+        -> Void
 
     private enum Phase {
         case idle
@@ -38,6 +40,8 @@ public final class MacCompanionProductApplicationV1 {
     @ObservationIgnored
     private let agentRegistration: any AgentLoginRoleRawServiceV1
     @ObservationIgnored
+    private let startupRepair: StartupRepair
+    @ObservationIgnored
     private let dashboardFactory: DashboardFactory
     @ObservationIgnored
     private var phase: Phase = .idle
@@ -49,12 +53,14 @@ public final class MacCompanionProductApplicationV1 {
     public init(
         agentRegistration: any AgentLoginRoleRawServiceV1,
         setup: MacRemoteAccessSetupApplicationV1,
+        startupRepair: @escaping StartupRepair = {},
         dashboardFactory: @escaping DashboardFactory = {
             MacCompanionDashboardApplicationV1()
         }
     ) {
         self.agentRegistration = agentRegistration
         self.setup = setup
+        self.startupRepair = startupRepair
         self.dashboardFactory = dashboardFactory
         setup.installStateObserver { [weak self] state in
             self?.receiveSetupState(state)
@@ -64,6 +70,14 @@ public final class MacCompanionProductApplicationV1 {
     public func start() async {
         guard phase == .idle else { return }
         phase = .active
+        do {
+            try await startupRepair()
+        } catch {
+            guard phase == .active else { return }
+            route = .unavailable
+            return
+        }
+        guard phase == .active else { return }
         await reconcileRoute()
     }
 
