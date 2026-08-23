@@ -161,6 +161,32 @@ private func handlerDescriptor(
     )
 }
 
+private func handlerFocusedDescriptor(
+    focus: SurfaceFocus
+) throws -> AdaptiveSurfaceDescriptor {
+    try AdaptiveSurfaceDescriptor(
+        interactiveSessionID: handlerSessionID,
+        authorizationEpoch: .init(rawValue: 4),
+        surfaceID: handlerTargetSurfaceID,
+        kind: .focusedRegion,
+        surfaceRevision: .init(rawValue: 2),
+        coordinateSpaceRevision: .init(rawValue: 2),
+        applicationToken: UUID(),
+        parentSurfaceID: handlerInitialSurfaceID,
+        fallbackSurfaceID: handlerInitialSurfaceID,
+        encodedWidth: 1_000,
+        encodedHeight: 500,
+        logicalWidthPoints: 1_000,
+        logicalHeightPoints: 500,
+        interactionClasses: [.view, .pointer, .keyboard],
+        privacyProfile: .assistedVisual,
+        metadataFields: [.focusCategory, .focusBounds, .editable, .secure],
+        focus: focus,
+        createdAtMonotonicMilliseconds: 2_000,
+        expiresAtMonotonicMilliseconds: 10_000
+    )
+}
+
 private func handlerContext(
     monotonicNowMilliseconds: UInt64 = 2_000
 ) throws -> InteractiveSessionCommandContextV0 {
@@ -315,6 +341,102 @@ private func makeHandler(initialPending: Bool = false) throws -> (
     #expect(replacementAcknowledged.sequence == 5)
     #expect(await resolver.count == 1)
     #expect(await route.acknowledgementCount == 2)
+}
+
+@Test func agentSurfaceHandlerBindsFocusEventToExactResolvedDescriptor()
+    async throws
+{
+    let initial = try handlerDescriptor(
+        surfaceID: handlerInitialSurfaceID,
+        revision: 1,
+        coordinateRevision: 1
+    )
+    let focus = try SurfaceFocus(
+        token: UUID(),
+        revision: .init(rawValue: 1),
+        category: .text,
+        bounds: NormalizedSurfaceRect(
+            x: 12_000,
+            y: 20_000,
+            width: 30_000,
+            height: 8_000
+        ),
+        editable: true,
+        secure: false
+    )
+    let targetToken = UUID()
+    let route = HandlerRuntimeRoute()
+    let coordinator = try InteractiveSurfaceRuntimeCoordinatorV0(
+        surfaceAuthority: AdaptiveSurfaceAuthority(
+            desktop: initial,
+            monotonicNowMilliseconds: 1_000
+        ),
+        currentLease: handlerLease(),
+        sessionDeadlineMonotonicNanoseconds: 12_000_000_000,
+        runtime: route,
+        initialActivationCommandID: handlerActivationID
+    )
+    let resolver = HandlerResolver(
+        target: try handlerFocusedDescriptor(focus: focus)
+    )
+    let handler = InteractiveSurfaceControlHandlerV0(
+        coordinator: coordinator,
+        resolver: resolver,
+        clock: HandlerClock(value: 2_200_000_000),
+        focusIdentifier: { targetToken }
+    )
+    let described = try await handler.requestInitial(
+        try InteractiveInitialSurfaceRequestBodyV0(
+            interactiveSessionID: WireUUID(handlerSessionID),
+            authorizationEpoch: .init(rawValue: 4),
+            sequence: 1
+        ),
+        context: handlerContext()
+    )
+    _ = try await handler.acknowledgeInitial(
+        try InteractiveInitialSurfaceAcknowledgementBodyV0(
+            interactiveSessionID: described.descriptor.interactiveSessionID,
+            authorizationEpoch: described.descriptor.authorizationEpoch,
+            activationID: described.activationID,
+            surfaceID: described.descriptor.surfaceID,
+            surfaceRevision: described.descriptor.surfaceRevision,
+            coordinateSpaceRevision:
+                described.descriptor.coordinateSpaceRevision,
+            readyMediaSequence: 2,
+            sequence: 2
+        ),
+        context: handlerContext(monotonicNowMilliseconds: 2_100)
+    )
+    let preparedEvent = try await handler.prepareFocusEvent(
+        candidate: try InteractiveFocusEventCandidateV0(
+            recommendedTargetKind: .focusedRegion,
+            focus: focus,
+            inputPaused: false,
+            reason: .verifiedFocus
+        ),
+        context: handlerContext(monotonicNowMilliseconds: 2_150),
+        eventMessageID: WireUUID(UUID())
+    )
+    #expect(preparedEvent.targetToken == WireUUID(targetToken))
+
+    let selected = try await handler.select(
+        try InteractiveSurfaceSelectBodyV0(
+            interactiveSessionID: WireUUID(handlerSessionID),
+            authorizationEpoch: .init(rawValue: 4),
+            currentSurfaceID: WireUUID(handlerInitialSurfaceID),
+            expectedSurfaceRevision: .init(rawValue: 1),
+            expectedCoordinateSpaceRevision: .init(rawValue: 1),
+            targetKind: .focusedRegion,
+            targetToken: WireUUID(targetToken),
+            sequence: 3
+        ),
+        context: handlerContext(monotonicNowMilliseconds: 2_200)
+    )
+    #expect(try selected.descriptor.materialize(
+        clientMonotonicNowMilliseconds: 2_200
+    ).focus == focus)
+    #expect(await resolver.count == 1)
+    #expect(await route.prepareCount == 1)
 }
 
 private func handlerSelection(sequence: Int64 = 1) throws

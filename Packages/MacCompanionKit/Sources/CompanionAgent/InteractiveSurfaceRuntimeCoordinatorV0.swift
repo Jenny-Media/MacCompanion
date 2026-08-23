@@ -174,6 +174,15 @@ public actor InteractiveSurfaceRuntimeCoordinatorV0 {
 
     public func lease() -> InteractiveExecutionLease { currentLease }
 
+    public func currentDescriptor() throws -> AdaptiveSurfaceDescriptor {
+        guard stateStorage == .active,
+              case let .active(descriptor) = surfaceAuthority.phase else {
+            throw InteractiveSurfaceRuntimeCoordinatorErrorV0
+                .invalidState(stateStorage)
+        }
+        return descriptor
+    }
+
     /// Mirrors an already accepted same-surface runtime renewal into the
     /// surface authority. Surface selection remains the only operation that
     /// can change surface or coordinate revisions.

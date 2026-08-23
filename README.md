@@ -320,6 +320,13 @@ for the proven replacement-surface exchange. The host Accessibility producer
 and automatic iOS application remain subsequent work; manual zoom stays the
 fallback.
 
+The subsequent [host focus-event authority](docs/evidence/2026-08-23-host-focus-event-authority.md)
+binds that event's short-lived target to one exact Agent-side surface fence and
+focus projection, revokes superseded targets, and consumes the winner once
+before the existing runtime transition. Accessibility observation, local-XPC
+candidate delivery, live crop construction, and primary-stream emission remain
+the next construction steps.
+
 The [permanent Mac containing-app target](docs/evidence/2026-08-21-permanent-mac-containing-app-target.md)
 now embeds the separately signed, deliberately inert [permanent Agent
 target](docs/evidence/2026-08-21-permanent-embedded-mac-agent-target.md), its

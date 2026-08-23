@@ -58,11 +58,13 @@ public actor InteractiveSurfaceControlHandlerV0:
     private let inventoryProvider:
         (any InteractiveSurfaceTargetInventoryProvidingV0)?
     private let clock: any InteractiveSurfaceMonotonicClockV0
+    private let focusIdentifier: @Sendable () -> UUID
     private var expectedClientSequence: Int64 = 1
     private var nextServerSequence: Int64 = 1
     private var prepared: InteractiveSurfaceRuntimePreparedV0?
     private var initialWasDescribed = false
     private var initialWasAcknowledged = false
+    private var focusEvents: InteractiveFocusEventAuthorityV0?
     private var closed = false
 
     public init(
@@ -70,12 +72,14 @@ public actor InteractiveSurfaceControlHandlerV0:
         resolver: any InteractiveSurfaceTargetResolvingV0,
         inventoryProvider:
             (any InteractiveSurfaceTargetInventoryProvidingV0)? = nil,
-        clock: any InteractiveSurfaceMonotonicClockV0
+        clock: any InteractiveSurfaceMonotonicClockV0,
+        focusIdentifier: @escaping @Sendable () -> UUID = { UUID() }
     ) {
         self.coordinator = coordinator
         self.resolver = resolver
         self.inventoryProvider = inventoryProvider
         self.clock = clock
+        self.focusIdentifier = focusIdentifier
     }
 
     public func requestInitial(
@@ -110,6 +114,13 @@ public actor InteractiveSurfaceControlHandlerV0:
                 sequence: serverSequence
             )
             initialWasDescribed = true
+            focusEvents = try InteractiveFocusEventAuthorityV0(
+                interactiveSessionID:
+                    initial.descriptor.interactiveSessionID,
+                authorizationEpoch:
+                    initial.descriptor.authorizationEpoch,
+                targetIdentifier: focusIdentifier
+            )
             expectedClientSequence += 1
             nextServerSequence += 1
             return body
@@ -256,7 +267,34 @@ public actor InteractiveSurfaceControlHandlerV0:
                 throw InteractiveSurfaceControlHandlerErrorV0
                     .descriptorMismatch
             }
+            let currentDescriptor = try await coordinator
+                .currentDescriptor()
+            let expectedFocus: SurfaceFocus?
+            if request.targetKind == .focusedRegion {
+                guard var focusEvents else {
+                    throw InteractiveSurfaceControlHandlerErrorV0
+                        .descriptorMismatch
+                }
+                expectedFocus = try focusEvents.consume(
+                    request,
+                    current: currentDescriptor,
+                    hostMonotonicNowMilliseconds: Int64(
+                        context.monotonicNowMilliseconds
+                    )
+                )
+                self.focusEvents = focusEvents
+            } else {
+                expectedFocus = nil
+                focusEvents?.revokeCurrent()
+            }
             let target = try await resolver.resolve(request, context: context)
+            if let expectedFocus {
+                guard target.kind == .focusedRegion,
+                      target.focus == expectedFocus else {
+                    throw InteractiveSurfaceControlHandlerErrorV0
+                        .descriptorMismatch
+                }
+            }
             let nowNanoseconds = clock.nowNanoseconds()
             let result = try await coordinator.prepareSelection(
                 target: target,
@@ -365,6 +403,44 @@ public actor InteractiveSurfaceControlHandlerV0:
     public func primarySessionClosed() async {
         closed = true
         prepared = nil
+        focusEvents?.invalidate()
+    }
+
+    public func prepareFocusEvent(
+        candidate: InteractiveFocusEventCandidateV0,
+        context: InteractiveSessionCommandContextV0,
+        eventMessageID: WireUUID
+    ) async throws -> InteractivePreparedFocusEventV0 {
+        do {
+            guard !closed, initialWasAcknowledged, prepared == nil,
+                  var focusEvents else {
+                throw InteractiveSurfaceControlHandlerErrorV0.closed
+            }
+            let lease = await coordinator.lease()
+            try validatePrincipal(
+                sessionID: lease.interactiveSessionID,
+                authorizationEpoch: lease.authorizationEpoch,
+                context: context,
+                lease: lease
+            )
+            let descriptor = try await coordinator.currentDescriptor()
+            let event = try focusEvents.prepare(
+                candidate: candidate,
+                current: descriptor,
+                eventMessageID: eventMessageID,
+                sentAtUnixMilliseconds:
+                    context.wallNowUnixMilliseconds,
+                hostMonotonicNowMilliseconds: Int64(
+                    context.monotonicNowMilliseconds
+                )
+            )
+            self.focusEvents = focusEvents
+            return event
+        } catch {
+            closed = true
+            focusEvents?.invalidate()
+            throw error
+        }
     }
 
     private func admitClientSequence(_ actual: Int64) throws {

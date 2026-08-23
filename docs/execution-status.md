@@ -539,6 +539,19 @@ Accessibility observer/token issuer and automatic iOS application are next;
 signed installation, TCC, real pixels/input, physical-iPhone focus behavior,
 latency, and lock behavior remain open evidence gates.
 
+The following [host focus-event capability authority](evidence/2026-08-23-host-focus-event-authority.md)
+now gives the Agent latest-only, one-use admission for a sanitized focus
+candidate. Every token is bound to the exact event identity/sequence, current
+surface fence, focus projection, and local expiry, cannot be reused within the
+session, and is consumed before the menu resolver must reproduce the exact
+Focused Region descriptor. A current Focused Region cannot change focus unless
+input was first reported paused. The full gate passes 73 fixtures, the
+1,482-test Swift catalog, all cross-builds/unsigned permanent builds, and eight
+platform probes. Accessibility observation, authenticated local candidate
+delivery, primary-stream event sending, live crop construction, and automatic
+iOS application remain the next safe lanes; signed and physical evidence
+remains open.
+
 ## Blocker handling rule
 
 Every blocked item records its affected artifact, evidence needed to unblock it, and parallel work. The project is not globally blocked while any safe in-scope lane remains active or ready. A later-stage capability is complete only with passing exit evidence or an explicit evidence-backed `no-go` or `deferred` disposition.
