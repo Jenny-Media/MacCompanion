@@ -1,4 +1,4 @@
-# Mac Companion update trust policy v0.4
+# Mac Companion update trust policy v0.5
 
 Status: normative for the first direct-distribution beta.
 
@@ -110,6 +110,13 @@ channel, installed build, candidate build, display version, and canonical
 archive URL and carry every required trust fact before it can mint the
 single-use runtime authority. Mismatch, missing trust, cancellation, or reuse
 consumes that candidate and requires a fresh informational observation.
+
+Production consumers cannot directly construct or extract the lower-level
+validated candidate or installation authority. One coordinator owns fresh
+confirmation, resamples the foreground/clock fence at every transition, runs
+only the ordered network-close, bounded-drain, Agent-stop, and updater-handoff
+effects, and completes the authority's exact recorded recovery scope before
+returning a failed installation attempt.
 
 ## Rotation and custody
 

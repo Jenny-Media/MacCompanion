@@ -1,6 +1,6 @@
 import Foundation
 
-public enum MacUpdateInstallCandidateBindingErrorV0:
+enum MacUpdateInstallCandidateBindingErrorV0:
     Error, Equatable, Sendable
 {
     case candidateMismatch
@@ -11,12 +11,12 @@ public enum MacUpdateInstallCandidateBindingErrorV0:
 /// validation result. The two observations are deliberately independent: an
 /// informational item cannot become installation authority merely by being
 /// copied into this value.
-public struct MacUpdateInstallCandidateBindingV0: Equatable, Sendable {
-    public let validatedCandidate: MacUpdateValidatedCandidateV0
-    public let displayVersion: String
-    public let archiveURL: URL
+struct MacUpdateInstallCandidateBindingV0: Equatable, Sendable {
+    let validatedCandidate: MacUpdateValidatedCandidateV0
+    let displayVersion: String
+    let archiveURL: URL
 
-    public init(
+    init(
         feedCandidate: MacUpdateFeedCandidateV0,
         validatedChannel: MacUpdateChannelV0,
         validatedCurrentBuild: UInt64,
@@ -76,7 +76,7 @@ public enum MacUpdateInstallCandidateAdmissionErrorV0:
 public struct MacUpdateInstallAdmissionV0: Sendable {
     public let displayVersion: String
     public let archiveURL: URL
-    public let authority: MacUpdateInstallAuthorityV0
+    let authority: MacUpdateInstallAuthorityV0
 }
 
 /// Single-use owner for one informational candidate. Any post-validation

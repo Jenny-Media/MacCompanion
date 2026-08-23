@@ -7,6 +7,10 @@ installation, relaunch, or Agent lifecycle action occurred.
 
 ## Outcome
 
+The later [runtime shutdown orchestration](2026-08-23-update-runtime-shutdown-orchestration.md)
+seals this admission value into the only public production path to the
+lower-level authority; this file retains the candidate-correlation checkpoint.
+
 `CompanionLifecycle` now owns the missing anti-substitution bridge between an
 informational signed-feed observation and the existing update installation
 authority. An informational `MacUpdateFeedCandidateV0` cannot directly create

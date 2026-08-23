@@ -658,7 +658,12 @@ remain open. The subsequent
 now correlates the reviewed feed item with an independent post-validation
 observation, requires all six trust facts, closes direct production construction
 of the lower-level candidate, and mints at most one runtime authority. Five new
-tests bring the full gate to 1,525; no live updater action ran.
+tests brought that checkpoint to 1,525. The subsequent
+[runtime shutdown orchestration](evidence/2026-08-23-update-runtime-shutdown-orchestration.md)
+seals the lower-level authority from production consumers, rechecks
+foreground/time/Control at every transition, runs the exact four-effect order,
+and completes the minimum recorded recovery scope before returning failure.
+Five further tests bring the full gate to 1,530; no live updater action ran.
 
 ## Blocker handling rule
 

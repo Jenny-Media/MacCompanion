@@ -182,7 +182,10 @@ The [exact update candidate admission](evidence/2026-08-23-exact-update-candidat
 separates the informational feed observation from later updater validation and
 requires exact channel, build, display-version, and archive-URL correlation plus
 every trust fact before issuing one runtime authority. A rejected, cancelled,
-or consumed observation cannot be reused.
+or consumed observation cannot be reused. The subsequent
+[runtime shutdown coordinator](evidence/2026-08-23-update-runtime-shutdown-orchestration.md)
+is the only public production consumer of that authority and completes its
+recorded recovery scope before returning any failed attempt.
 
 Automatic checks and download may be offered later; the initial beta keeps both
 off. Initial beta installs require a fresh
