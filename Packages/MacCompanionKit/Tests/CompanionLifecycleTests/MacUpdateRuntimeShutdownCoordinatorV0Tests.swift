@@ -4,6 +4,8 @@ import Testing
 
 private let coordinatorKeyV0 =
     Data(repeating: 0x71, count: 32).base64EncodedString()
+private let coordinatorArchiveSignatureV0 =
+    Data(repeating: 0x17, count: 64).base64EncodedString()
 
 private func runtimeAdmissionV0() async throws
     -> MacUpdateInstallAdmissionV0
@@ -24,7 +26,10 @@ private func runtimeAdmissionV0() async throws
             "https://updates.example.com/mac/beta/MacCompanion-11.zip",
         informationOnly: false,
         installationType: "application",
-        deltaCount: 0
+        deltaCount: 0,
+        signedFeedValidationSucceeded: true,
+        archiveContentLength: 13_301_944,
+        archiveEd25519Signature: coordinatorArchiveSignatureV0
     )
     let owner = MacUpdateInstallCandidateAdmissionV0(
         feedCandidate: candidate
@@ -35,6 +40,9 @@ private func runtimeAdmissionV0() async throws
         validatedCandidateBuild: candidate.candidateBuild,
         validatedDisplayVersion: candidate.displayVersion,
         validatedArchiveURL: candidate.archiveURL,
+        validatedArchiveContentLength: candidate.archiveContentLength,
+        validatedArchiveEd25519Signature:
+            candidate.archiveEd25519Signature,
         signedFeedVerified: true,
         archiveSignatureVerified: true,
         verifiedBeforeExtraction: true,

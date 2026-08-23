@@ -1,4 +1,4 @@
-# Mac Companion update trust policy v0.5
+# Mac Companion update trust policy v0.6
 
 Status: normative for the first direct-distribution beta.
 
@@ -69,6 +69,11 @@ exact handoff. Even an informational result is discarded unless its item
 matches the configured channel, is a normal application update, advertises no
 deltas, and points to one canonical HTTPS `.zip` URL without credentials,
 port, query, fragment, localhost, `.local`, or encoded-path ambiguity.
+The item must also come from a successfully validated signed appcast and carry
+a nonzero archive length no greater than 4 GiB plus one canonical Base64
+64-byte Ed25519 archive signature. Channel, installed build, candidate build,
+display version, archive URL, archive length, and archive signature remain one
+immutable observation through later admission.
 
 The official build must enable both signed-feed verification and archive
 verification before extraction. Every whole-application ZIP is signed with
@@ -106,10 +111,20 @@ Agent independently.
 
 An informational signed-feed observation is not archive or replacement-bundle
 validation. A later updater-owned validation observation must match its exact
-channel, installed build, candidate build, display version, and canonical
-archive URL and carry every required trust fact before it can mint the
-single-use runtime authority. Mismatch, missing trust, cancellation, or reuse
-consumes that candidate and requires a fresh informational observation.
+channel, installed build, candidate build, display version, canonical archive
+URL, archive length, and archive signature and carry every required trust fact
+before it can mint the single-use runtime authority. Mismatch, missing trust,
+cancellation, or reuse consumes that candidate and requires a fresh
+informational observation.
+
+Sparkle's successful post-extraction validation is not, by itself, Mac
+Companion's Developer ID identity or notarization attestation. Sparkle 2.9.6
+permits an Ed25519-valid update to change Apple code-signing identity, and its
+delegate callback does not report notarization. The eventual production bridge
+must therefore bind the exact downloaded candidate to independently protected
+release evidence for the required Jenny Media Developer ID graph, notarized
+and stapled replacement, and whole-application ZIP. It may not manufacture
+those facts as unconditional callback booleans.
 
 Production consumers cannot directly construct or extract the lower-level
 validated candidate or installation authority. One coordinator owns fresh

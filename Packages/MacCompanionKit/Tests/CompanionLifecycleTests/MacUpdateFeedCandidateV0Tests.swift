@@ -4,6 +4,8 @@ import Testing
 
 private let candidateKeyV0 =
     Data(repeating: 0x5A, count: 32).base64EncodedString()
+private let archiveSignatureV0 =
+    Data(repeating: 0xA5, count: 64).base64EncodedString()
 
 private func candidateAuthority(
     channel: String = "beta"
@@ -25,7 +27,10 @@ private func feedCandidate(
     archiveURL: String = "https://updates.example.com/mac/beta/MacCompanion-11.zip",
     informationOnly: Bool = false,
     installationType: String = "application",
-    deltaCount: Int = 0
+    deltaCount: Int = 0,
+    signedFeedValidationSucceeded: Bool = true,
+    archiveContentLength: UInt64 = 13_301_944,
+    archiveEd25519Signature: String = archiveSignatureV0
 ) throws -> MacUpdateFeedCandidateV0 {
     try MacUpdateFeedCandidateV0(
         authority: authority ?? candidateAuthority(),
@@ -36,7 +41,10 @@ private func feedCandidate(
         archiveURL: archiveURL,
         informationOnly: informationOnly,
         installationType: installationType,
-        deltaCount: deltaCount
+        deltaCount: deltaCount,
+        signedFeedValidationSucceeded: signedFeedValidationSucceeded,
+        archiveContentLength: archiveContentLength,
+        archiveEd25519Signature: archiveEd25519Signature
     )
 }
 
@@ -81,6 +89,37 @@ private func feedCandidate(
     }
     #expect(throws: MacUpdateFeedCandidateErrorV0.unsupportedItem) {
         try feedCandidate(deltaCount: 1)
+    }
+}
+
+@Test func feedCandidateRequiresSignedAppcastValidationAndBoundedArchive() {
+    #expect(throws: MacUpdateFeedCandidateErrorV0.signedFeedRequired) {
+        try feedCandidate(signedFeedValidationSucceeded: false)
+    }
+    #expect(throws: MacUpdateFeedCandidateErrorV0.invalidArchiveLength) {
+        try feedCandidate(archiveContentLength: 0)
+    }
+    #expect(throws: MacUpdateFeedCandidateErrorV0.invalidArchiveLength) {
+        try feedCandidate(
+            archiveContentLength:
+                MacUpdateFeedCandidateV0.maximumArchiveBytes + 1
+        )
+    }
+}
+
+@Test func feedCandidateRequiresCanonicalEd25519ArchiveSignature() {
+    for signature in [
+        "",
+        Data(repeating: 0xA5, count: 63).base64EncodedString(),
+        archiveSignatureV0 + "=",
+        String(repeating: "!", count: 88),
+    ] {
+        #expect(
+            throws: MacUpdateFeedCandidateErrorV0
+                .invalidArchiveSignature
+        ) {
+            try feedCandidate(archiveEd25519Signature: signature)
+        }
     }
 }
 

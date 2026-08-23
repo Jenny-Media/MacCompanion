@@ -664,6 +664,17 @@ seals the lower-level authority from production consumers, rechecks
 foreground/time/Control at every transition, runs the exact four-effect order,
 and completes the minimum recorded recovery scope before returning failure.
 Five further tests bring the full gate to 1,530; no live updater action ran.
+The subsequent
+[signed update publication binding](evidence/2026-08-23-signed-update-publication-binding.md)
+requires a successfully validated signed appcast, a bounded nonzero archive
+length, and one canonical 64-byte Ed25519 signature at informational-candidate
+construction, then matches the length and signature exactly at later
+admission. An exact Sparkle 2.9.6 source audit also closes an unsafe inference:
+`didExtractUpdate` does not attest notarization, and an Ed25519-valid archive
+may carry a changed Apple signing identity. Developer ID and notarization facts
+therefore remain unavailable until a protected release-evidence bridge binds
+them to the same candidate. Two new tests bring the passing full count to
+1,532; no live feed, download, extraction, or install action ran.
 
 ## Blocker handling rule
 

@@ -4,6 +4,8 @@ import Testing
 
 private let bindingKeyV0 =
     Data(repeating: 0x39, count: 32).base64EncodedString()
+private let bindingArchiveSignatureV0 =
+    Data(repeating: 0x93, count: 64).base64EncodedString()
 
 private func bindingFeedCandidate() throws -> MacUpdateFeedCandidateV0 {
     let authority = try MacUpdateReleaseAuthorityV0(
@@ -22,7 +24,10 @@ private func bindingFeedCandidate() throws -> MacUpdateFeedCandidateV0 {
             "https://updates.example.com/mac/beta/MacCompanion-11.zip",
         informationOnly: false,
         installationType: "application",
-        deltaCount: 0
+        deltaCount: 0,
+        signedFeedValidationSucceeded: true,
+        archiveContentLength: 13_301_944,
+        archiveEd25519Signature: bindingArchiveSignatureV0
     )
 }
 
@@ -33,6 +38,9 @@ private func candidateBinding(
     validatedCandidateBuild: UInt64 = 11,
     validatedDisplayVersion: String = "0.2.0",
     validatedArchiveURL: URL? = nil,
+    validatedArchiveContentLength: UInt64 = 13_301_944,
+    validatedArchiveEd25519Signature: String =
+        bindingArchiveSignatureV0,
     signedFeedVerified: Bool = true,
     archiveSignatureVerified: Bool = true,
     verifiedBeforeExtraction: Bool = true,
@@ -49,6 +57,9 @@ private func candidateBinding(
         validatedDisplayVersion: validatedDisplayVersion,
         validatedArchiveURL:
             validatedArchiveURL ?? candidate.archiveURL,
+        validatedArchiveContentLength: validatedArchiveContentLength,
+        validatedArchiveEd25519Signature:
+            validatedArchiveEd25519Signature,
         signedFeedVerified: signedFeedVerified,
         archiveSignatureVerified: archiveSignatureVerified,
         verifiedBeforeExtraction: verifiedBeforeExtraction,
@@ -92,6 +103,15 @@ private func candidateBinding(
             )!
         )
     }
+    #expect(throws: MacUpdateInstallCandidateBindingErrorV0.candidateMismatch) {
+        try candidateBinding(validatedArchiveContentLength: 13_301_945)
+    }
+    #expect(throws: MacUpdateInstallCandidateBindingErrorV0.candidateMismatch) {
+        try candidateBinding(
+            validatedArchiveEd25519Signature:
+                Data(repeating: 0x94, count: 64).base64EncodedString()
+        )
+    }
 }
 
 @Test(
@@ -130,6 +150,9 @@ async throws {
         validatedCandidateBuild: candidate.candidateBuild,
         validatedDisplayVersion: candidate.displayVersion,
         validatedArchiveURL: candidate.archiveURL,
+        validatedArchiveContentLength: candidate.archiveContentLength,
+        validatedArchiveEd25519Signature:
+            candidate.archiveEd25519Signature,
         signedFeedVerified: true,
         archiveSignatureVerified: true,
         verifiedBeforeExtraction: true,
@@ -153,6 +176,9 @@ async throws {
             validatedCandidateBuild: candidate.candidateBuild,
             validatedDisplayVersion: candidate.displayVersion,
             validatedArchiveURL: candidate.archiveURL,
+            validatedArchiveContentLength: candidate.archiveContentLength,
+            validatedArchiveEd25519Signature:
+                candidate.archiveEd25519Signature,
             signedFeedVerified: true,
             archiveSignatureVerified: true,
             verifiedBeforeExtraction: true,
@@ -178,6 +204,9 @@ async throws {
             validatedCandidateBuild: candidate.candidateBuild + 1,
             validatedDisplayVersion: candidate.displayVersion,
             validatedArchiveURL: candidate.archiveURL,
+            validatedArchiveContentLength: candidate.archiveContentLength,
+            validatedArchiveEd25519Signature:
+                candidate.archiveEd25519Signature,
             signedFeedVerified: true,
             archiveSignatureVerified: true,
             verifiedBeforeExtraction: true,
@@ -195,6 +224,9 @@ async throws {
             validatedCandidateBuild: candidate.candidateBuild,
             validatedDisplayVersion: candidate.displayVersion,
             validatedArchiveURL: candidate.archiveURL,
+            validatedArchiveContentLength: candidate.archiveContentLength,
+            validatedArchiveEd25519Signature:
+                candidate.archiveEd25519Signature,
             signedFeedVerified: true,
             archiveSignatureVerified: true,
             verifiedBeforeExtraction: true,
@@ -217,6 +249,9 @@ async throws {
             validatedCandidateBuild: candidate.candidateBuild,
             validatedDisplayVersion: candidate.displayVersion,
             validatedArchiveURL: candidate.archiveURL,
+            validatedArchiveContentLength: candidate.archiveContentLength,
+            validatedArchiveEd25519Signature:
+                candidate.archiveEd25519Signature,
             signedFeedVerified: true,
             archiveSignatureVerified: true,
             verifiedBeforeExtraction: true,

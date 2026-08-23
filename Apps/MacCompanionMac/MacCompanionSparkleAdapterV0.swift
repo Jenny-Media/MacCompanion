@@ -274,6 +274,12 @@ final class MacCompanionSparkleAdapterV0:
         guard let archiveURL = item.fileURL?.absoluteString else {
             return nil
         }
+        guard let enclosure = item.propertiesDictionary["enclosure"]
+                as? [String: Any],
+              let archiveSignature =
+                enclosure["sparkle:edSignature"] as? String else {
+            return nil
+        }
         return try? MacUpdateFeedCandidateV0(
             authority: authority,
             currentBuild: currentBuild,
@@ -283,7 +289,11 @@ final class MacCompanionSparkleAdapterV0:
             archiveURL: archiveURL,
             informationOnly: item.isInformationOnlyUpdate,
             installationType: item.installationType,
-            deltaCount: item.deltaUpdates?.count ?? 0
+            deltaCount: item.deltaUpdates?.count ?? 0,
+            signedFeedValidationSucceeded:
+                item.signingValidationStatus == .succeeded,
+            archiveContentLength: item.contentLength,
+            archiveEd25519Signature: archiveSignature
         )
     }
 

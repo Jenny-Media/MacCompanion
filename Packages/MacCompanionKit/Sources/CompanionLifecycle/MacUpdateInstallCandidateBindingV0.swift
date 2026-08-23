@@ -23,6 +23,8 @@ struct MacUpdateInstallCandidateBindingV0: Equatable, Sendable {
         validatedCandidateBuild: UInt64,
         validatedDisplayVersion: String,
         validatedArchiveURL: URL,
+        validatedArchiveContentLength: UInt64,
+        validatedArchiveEd25519Signature: String,
         signedFeedVerified: Bool,
         archiveSignatureVerified: Bool,
         verifiedBeforeExtraction: Bool,
@@ -34,7 +36,11 @@ struct MacUpdateInstallCandidateBindingV0: Equatable, Sendable {
               validatedCurrentBuild == feedCandidate.currentBuild,
               validatedCandidateBuild == feedCandidate.candidateBuild,
               validatedDisplayVersion == feedCandidate.displayVersion,
-              validatedArchiveURL == feedCandidate.archiveURL else {
+              validatedArchiveURL == feedCandidate.archiveURL,
+              validatedArchiveContentLength
+                == feedCandidate.archiveContentLength,
+              validatedArchiveEd25519Signature
+                == feedCandidate.archiveEd25519Signature else {
             throw MacUpdateInstallCandidateBindingErrorV0
                 .candidateMismatch
         }
@@ -95,6 +101,8 @@ public actor MacUpdateInstallCandidateAdmissionV0 {
         validatedCandidateBuild: UInt64,
         validatedDisplayVersion: String,
         validatedArchiveURL: URL,
+        validatedArchiveContentLength: UInt64,
+        validatedArchiveEd25519Signature: String,
         signedFeedVerified: Bool,
         archiveSignatureVerified: Bool,
         verifiedBeforeExtraction: Bool,
@@ -116,6 +124,10 @@ public actor MacUpdateInstallCandidateAdmissionV0 {
                 validatedCandidateBuild: validatedCandidateBuild,
                 validatedDisplayVersion: validatedDisplayVersion,
                 validatedArchiveURL: validatedArchiveURL,
+                validatedArchiveContentLength:
+                    validatedArchiveContentLength,
+                validatedArchiveEd25519Signature:
+                    validatedArchiveEd25519Signature,
                 signedFeedVerified: signedFeedVerified,
                 archiveSignatureVerified: archiveSignatureVerified,
                 verifiedBeforeExtraction: verifiedBeforeExtraction,

@@ -141,6 +141,13 @@ and `Updater.app`; an outer `codesign --deep` result is not accepted as a
 substitute for those exact per-subject checks. See
 [Sparkle documentation](https://sparkle-project.org/documentation/) and the
 [2.9.6 release](https://github.com/sparkle-project/Sparkle/releases/tag/2.9.6).
+The [signed-publication binding](evidence/2026-08-23-signed-update-publication-binding.md)
+now retains successful signed-appcast validation, archive length, and the exact
+Ed25519 signature in the reviewed candidate and requires exact correlation
+before admission. Sparkle's post-extraction callback cannot independently
+attest the required Jenny Media Developer ID graph or Apple notarization; the
+release lane must publish protected evidence for those facts and the runtime
+bridge must bind it to the same archive before installation authority opens.
 
 ### Channels
 

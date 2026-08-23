@@ -7,7 +7,10 @@ public enum MacUpdateFeedCandidateErrorV0:
     case invalidBuild
     case nonIncreasingBuild
     case unsupportedItem
+    case signedFeedRequired
     case invalidArchiveURL
+    case invalidArchiveLength
+    case invalidArchiveSignature
     case invalidDisplayVersion
 }
 
@@ -17,12 +20,15 @@ public enum MacUpdateFeedCandidateErrorV0:
 public struct MacUpdateFeedCandidateV0: Equatable, Sendable {
     public static let maximumDisplayVersionUTF8Bytes = 64
     public static let maximumArchiveURLUTF8Bytes = 2_048
+    public static let maximumArchiveBytes: UInt64 = 4_294_967_296
 
     public let channel: MacUpdateChannelV0
     public let currentBuild: UInt64
     public let candidateBuild: UInt64
     public let displayVersion: String
     public let archiveURL: URL
+    public let archiveContentLength: UInt64
+    public let archiveEd25519Signature: String
 
     public init(
         authority: MacUpdateReleaseAuthorityV0,
@@ -33,7 +39,10 @@ public struct MacUpdateFeedCandidateV0: Equatable, Sendable {
         archiveURL: String,
         informationOnly: Bool,
         installationType: String,
-        deltaCount: Int
+        deltaCount: Int,
+        signedFeedValidationSucceeded: Bool,
+        archiveContentLength: UInt64,
+        archiveEd25519Signature: String
     ) throws {
         let channelMatches: Bool
         switch authority.channel {
@@ -56,9 +65,23 @@ public struct MacUpdateFeedCandidateV0: Equatable, Sendable {
               deltaCount == 0 else {
             throw MacUpdateFeedCandidateErrorV0.unsupportedItem
         }
+        guard signedFeedValidationSucceeded else {
+            throw MacUpdateFeedCandidateErrorV0.signedFeedRequired
+        }
         guard let parsedArchiveURL = Self.validatedArchiveURL(archiveURL)
         else {
             throw MacUpdateFeedCandidateErrorV0.invalidArchiveURL
+        }
+        guard archiveContentLength > 0,
+              archiveContentLength <= Self.maximumArchiveBytes else {
+            throw MacUpdateFeedCandidateErrorV0.invalidArchiveLength
+        }
+        guard let signature = Data(
+            base64Encoded: archiveEd25519Signature
+        ),
+        signature.count == 64,
+        signature.base64EncodedString() == archiveEd25519Signature else {
+            throw MacUpdateFeedCandidateErrorV0.invalidArchiveSignature
         }
         guard !displayVersion.isEmpty,
               displayVersion.utf8.count
@@ -74,6 +97,8 @@ public struct MacUpdateFeedCandidateV0: Equatable, Sendable {
         self.candidateBuild = build
         self.displayVersion = displayVersion
         self.archiveURL = parsedArchiveURL
+        self.archiveContentLength = archiveContentLength
+        self.archiveEd25519Signature = archiveEd25519Signature
     }
 
     private static func canonicalBuild(_ value: String) -> UInt64? {

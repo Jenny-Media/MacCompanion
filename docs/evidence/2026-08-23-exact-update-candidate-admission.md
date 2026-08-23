@@ -19,10 +19,13 @@ no longer public to production consumers.
 
 `MacUpdateInstallCandidateBindingV0` requires a later, independent
 post-validation observation to match the reviewed candidate's channel, current
-build, candidate build, display version, and canonical archive URL exactly. It
-also requires all six frozen trust facts: signed feed, archive signature,
-verification before extraction, Developer ID validation, notarized
-replacement, and whole-application ZIP.
+build, candidate build, display version, canonical archive URL, archive length,
+and Ed25519 signature exactly. It also requires all six frozen trust facts:
+signed feed, archive signature, verification before extraction, Developer ID
+validation, notarized replacement, and whole-application ZIP. The later
+[signed-publication binding](2026-08-23-signed-update-publication-binding.md)
+added the length and signature fields after auditing the exact Sparkle 2.9.6
+lifecycle.
 
 `MacUpdateInstallCandidateAdmissionV0` owns one feed candidate and can mint at
 most one `MacUpdateInstallAuthorityV0`. Success, mismatch, missing trust,
@@ -45,10 +48,11 @@ cross-platform compile on Xcode 27 beta.
 
 This checkpoint provides a bundle-independent value and authority boundary. It
 does not claim that an informational appcast item proves a downloaded archive
-or replacement bundle. The containing-app adapter must obtain those later
-facts from the exact Sparkle validation/install lifecycle, bind the same item,
-and map the runtime authority's effects to real network, bounded-work, Agent,
-and recovery owners.
+or replacement bundle. The containing-app adapter must obtain the Sparkle-owned
+facts from the exact validation/install lifecycle and bind protected release
+evidence for the Developer ID and notarization facts. It must then map the
+runtime authority's effects to real network, bounded-work, Agent, and recovery
+owners.
 
 No protected feed or Ed25519 key exists in the tracked build. No updater check,
 download, extraction, installation handler, runtime shutdown, Agent action, or
