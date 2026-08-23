@@ -5,13 +5,16 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import plistlib
 import re
+import zipfile
 from datetime import datetime
 from pathlib import Path, PurePosixPath
 from typing import Any
 
 from artifact_sbom import (
     ArtifactSBOMError,
+    digest_file,
     resolve_inside as resolve_artifact_path,
     validate_bundle as validate_artifact_bundle,
     validate_release_binding,
@@ -58,6 +61,11 @@ SHA256 = re.compile(r"^[0-9a-f]{64}$")
 GIT_SHA = re.compile(r"^[0-9a-f]{40}$")
 VERSION = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?$")
 PROFILE_VERSION = re.compile(r"^[0-9]+\.[0-9]+$")
+MAC_USER_INITIATED_UPDATE_CHECK_PROFILE = (
+    "maccompanion.user-initiated-full-update-check.v1"
+)
+MAC_INFO_PLIST_MEMBER = "Mac Companion.app/Contents/Info.plist"
+MAX_MAC_INFO_PLIST_BYTES = 1024 * 1024
 BUILD = re.compile(r"^(?:0|[1-9][0-9]{0,17})$")
 MAC_BUNDLE_ID = re.compile(
     r"^[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+$"
@@ -275,6 +283,7 @@ def validate_compatibility(
             "capabilityProtocol",
             "interactiveControl",
             "localIPC",
+            "macUserInitiatedUpdateCheckProfile",
             "minimumMacOS",
             "minimumIOS",
         },
@@ -286,6 +295,15 @@ def validate_compatibility(
         version = obj.get(key)
         if not isinstance(version, str) or not PROFILE_VERSION.fullmatch(version):
             add(errors, "invalidCompatibility")
+    update_profile = obj.get("macUserInitiatedUpdateCheckProfile")
+    if "macOS" in targets:
+        if (
+            update_profile is not None
+            and update_profile != MAC_USER_INITIATED_UPDATE_CHECK_PROFILE
+        ):
+            add(errors, "invalidCompatibility")
+    elif update_profile is not None:
+        add(errors, "inapplicableCompatibility")
     for target, key in (("macOS", "minimumMacOS"), ("iOS", "minimumIOS")):
         version = obj.get(key)
         if target in targets:
@@ -562,7 +580,7 @@ def validate_manifest(value: Any) -> set[str]:
     if root is None:
         return errors
 
-    if root.get("schemaVersion") != "0.1":
+    if root.get("schemaVersion") != "0.2":
         add(errors, "invalidSchemaVersion")
     level = root.get("evidenceLevel")
     if level not in LEVELS:
@@ -802,6 +820,66 @@ def _reference_matches(root: Path, reference: dict[str, Any]) -> bool:
         return False
 
 
+def _mac_user_initiated_update_check_profile(
+    release_manifest: dict[str, Any],
+    evidence_root: Path,
+) -> str | None:
+    matches = [
+        artifact
+        for artifact in release_manifest.get("artifacts", [])
+        if isinstance(artifact, dict) and artifact.get("kind") == "macApplication"
+    ]
+    if len(matches) != 1:
+        raise ValueError("release must contain exactly one Mac application archive")
+    artifact = matches[0]
+    archive_path = resolve_artifact_path(
+        evidence_root,
+        artifact["path"],
+        must_exist=True,
+    )
+    before_digest, before_size = digest_file(archive_path)
+    if (
+        before_size != artifact.get("bytes")
+        or before_digest != artifact.get("sha256")
+    ):
+        raise ValueError("Mac application archive binding mismatch")
+    try:
+        with zipfile.ZipFile(archive_path, "r") as archive:
+            matches = [
+                member
+                for member in archive.infolist()
+                if member.filename == MAC_INFO_PLIST_MEMBER
+            ]
+            if len(matches) != 1:
+                raise ValueError("Mac application Info.plist is missing or ambiguous")
+            member = matches[0]
+            if not 0 < member.file_size <= MAX_MAC_INFO_PLIST_BYTES:
+                raise ValueError("Mac application Info.plist is outside the size bound")
+            with archive.open(member, "r") as handle:
+                raw = handle.read(MAX_MAC_INFO_PLIST_BYTES + 1)
+    except (OSError, RuntimeError, zipfile.BadZipFile, KeyError) as error:
+        raise ValueError("cannot inspect Mac application Info.plist") from error
+    if len(raw) != member.file_size or len(raw) > MAX_MAC_INFO_PLIST_BYTES:
+        raise ValueError("Mac application Info.plist size changed during inspection")
+    try:
+        info = plistlib.loads(raw)
+    except plistlib.InvalidFileException as error:
+        raise ValueError("Mac application Info.plist is invalid") from error
+    if not isinstance(info, dict):
+        raise ValueError("Mac application Info.plist root is invalid")
+    profile = info.get("MacCompanionUpdateUserInitiatedCheckProfile")
+    if profile is None or profile == "":
+        normalized_profile = None
+    elif profile == MAC_USER_INITIATED_UPDATE_CHECK_PROFILE:
+        normalized_profile = profile
+    else:
+        raise ValueError("Mac application update-check profile is invalid")
+    after_digest, after_size = digest_file(archive_path)
+    if (after_size, after_digest) != (before_size, before_digest):
+        raise ValueError("Mac application archive changed during profile inspection")
+    return normalized_profile
+
+
 def verify_files(
     value: dict[str, Any],
     manifest_path: Path,
@@ -855,6 +933,20 @@ def verify_files(
                 index_path = resolve_artifact_path(root, document["path"], must_exist=True)
                 index, composition = validate_artifact_bundle(index_path, evidence_root=root, verify_archives=True)
                 validate_release_binding(value, index, composition)
+                if "macOS" in value.get("release", {}).get("targets", []):
+                    try:
+                        observed_profile = _mac_user_initiated_update_check_profile(
+                            value,
+                            root,
+                        )
+                    except (OSError, ValueError, KeyError, TypeError):
+                        add(errors, "invalidMacUpdateCheckConfiguration")
+                    else:
+                        expected_profile = value.get("compatibility", {}).get(
+                            "macUserInitiatedUpdateCheckProfile"
+                        )
+                        if observed_profile != expected_profile:
+                            add(errors, "invalidMacUpdateCheckConfiguration")
                 confirmed_digest = hashlib.sha256(index_path.read_bytes()).hexdigest()
                 if index_path.stat().st_size != document["bytes"] or confirmed_digest != document["sha256"]:
                     raise ArtifactSBOMError("artifact SBOM index changed during verification")
@@ -1203,7 +1295,7 @@ def validate_paths(
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Validate Mac Companion release evidence v0.1"
+        description="Validate Mac Companion release evidence v0.2"
     )
     parser.add_argument(
         "manifest",

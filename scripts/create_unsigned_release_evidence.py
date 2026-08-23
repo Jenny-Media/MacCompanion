@@ -123,7 +123,7 @@ def write_atomically(path: Path, value: dict[str, object]) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Create unsigned Mac Companion release evidence v0.1"
+        description="Create unsigned Mac Companion release evidence v0.2"
     )
     parser.add_argument("--evidence-root", required=True, type=Path)
     parser.add_argument("--output", default="release-evidence.json", type=Path)
@@ -162,11 +162,12 @@ def main() -> int:
         "capabilityProtocol": "0.1",
         "interactiveControl": "0.1",
         "localIPC": "0.1",
+        "macUserInitiatedUpdateCheckProfile": None,
         "minimumMacOS": "26.0" if "macOS" in targets else None,
         "minimumIOS": "26.0" if "iOS" in targets else None,
     }
     manifest: dict[str, object] = {
-        "schemaVersion": "0.1",
+        "schemaVersion": "0.2",
         "evidenceLevel": "unsignedConstruction",
         "product": "Mac Companion",
         "release": {

@@ -383,7 +383,7 @@ Encryption, device identity, consent, visibility, safe fallback, suspension, rev
 
 Stage 0 defines the reproducible, non-secret build, verification, packaging, and evidence-manifest command skeleton needed by its own release-shaped experiments. Publication credentials and promotion automation are added only after those commands are proven. The release pipeline must produce and retain:
 
-The normative [release evidence v0.1 profile](../spec/release-evidence/v0/profile.md)
+The normative [release evidence v0.2 profile](../spec/release-evidence/v0/profile.md)
 and its validator make `unsignedConstruction`, `signedCandidate`, and
 `promotionReady` distinct machine-checked claims. A lower claim cannot carry
 promotion evidence, and a higher claim cannot omit or placeholder the evidence
@@ -446,7 +446,9 @@ same foreground action stage an update. Automatic and background checks remain
 disabled. No externally distributed beta may carry the full-check profile
 until signed old-to-new installation, foreground-loss, forced-loss recovery,
 rollback, and clean-machine evidence is retained and the release manifest
-binds that exact profile.
+binds that exact profile. Release-evidence v0.2 now performs that binding by
+reading the exact canonical application archive's bounded `Info.plist`; this
+source gate does not replace the still-required signed physical matrix.
 
 ## 9. Versioning and compatibility policy
 

@@ -1,8 +1,8 @@
 {
-  "schemaVersion": "0.1",
+  "schemaVersion": "0.2",
   "evidenceLevel": "promotionReady",
   "product": "Mac Companion",
-  "compatibility": {"capabilityProtocol": "0.1", "interactiveControl": "0.1", "localIPC": "0.1", "minimumMacOS": "26.0", "minimumIOS": null},
+  "compatibility": {"capabilityProtocol": "0.1", "interactiveControl": "0.1", "localIPC": "0.1", "macUserInitiatedUpdateCheckProfile": null, "minimumMacOS": "26.0", "minimumIOS": null},
   "release": {"version": "1.0.0-beta.2", "buildNumber": "101", "channel": "beta", "targets": ["macOS"]},
   "source": {"revision": "410c25c9a9cf2c18866604919c4298c007114cb8", "dirty": false},
   "toolchain": {"xcodeVersion": "26.6", "swiftVersion": "6.3", "hostOSVersion": "macOS 26.4", "sdkVersions": ["macOS 26.4"]},

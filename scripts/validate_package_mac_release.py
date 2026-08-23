@@ -20,6 +20,8 @@ from package_mac_release import (
     SPARKLE_AUTOUPDATE_IDENTIFIER,
     SPARKLE_FRAMEWORK_IDENTIFIER,
     SPARKLE_UPDATER_IDENTIFIER,
+    UPDATE_CHECK_PROFILE_KEY,
+    USER_INITIATED_FULL_UPDATE_CHECK_PROFILE,
     package_release,
 )
 
@@ -174,6 +176,7 @@ def main() -> int:
             "sparkleArchiveSigned": False,
             "stapled": False,
         }
+        assert summary["macUserInitiatedUpdateCheckProfile"] is None
         assert any(call[:4] == (DISKUTIL, "image", "create", "from") for call in runner.calls)
         assert any(call[:3] == (CODESIGN, "--force", "--sign") and call[3] == IDENTITY for call in runner.calls)
         expect_error(
@@ -202,6 +205,63 @@ def main() -> int:
                     runner=FakeRunner(),
                 ),
                 "version",
+            )
+
+    with tempfile.TemporaryDirectory() as temporary_name:
+        root = Path(temporary_name)
+        archive = make_archive(root)
+        info_path = (
+            archive
+            / "Products"
+            / "Applications"
+            / "Mac Companion.app"
+            / "Contents"
+            / "Info.plist"
+        )
+        info = plistlib.loads(info_path.read_bytes())
+        info[UPDATE_CHECK_PROFILE_KEY] = USER_INITIATED_FULL_UPDATE_CHECK_PROFILE
+        info_path.write_bytes(plistlib.dumps(info))
+        output = package_release(
+            archive,
+            root / "candidate",
+            version="0.1.0-beta.1",
+            build_number="1",
+            dmg_signing_identity=IDENTITY,
+            runner=FakeRunner(),
+        )
+        summary = json.loads(
+            (output / "local-package-summary.json").read_text(encoding="utf-8")
+        )
+        assert (
+            summary["macUserInitiatedUpdateCheckProfile"]
+            == USER_INITIATED_FULL_UPDATE_CHECK_PROFILE
+        )
+
+    for invalid_profile in ("unknown-profile", ["non-string-profile"]):
+        with tempfile.TemporaryDirectory() as temporary_name:
+            root = Path(temporary_name)
+            archive = make_archive(root)
+            info_path = (
+                archive
+                / "Products"
+                / "Applications"
+                / "Mac Companion.app"
+                / "Contents"
+                / "Info.plist"
+            )
+            info = plistlib.loads(info_path.read_bytes())
+            info[UPDATE_CHECK_PROFILE_KEY] = invalid_profile
+            info_path.write_bytes(plistlib.dumps(info))
+            expect_error(
+                lambda: package_release(
+                    archive,
+                    root / "candidate",
+                    version="0.1.0-beta.1",
+                    build_number="1",
+                    dmg_signing_identity=IDENTITY,
+                    runner=FakeRunner(),
+                ),
+                "update-check profile",
             )
 
     with tempfile.TemporaryDirectory() as temporary_name:
@@ -294,7 +354,7 @@ def main() -> int:
             "missing embedded Sparkle Autoupdate executable",
         )
 
-    print("validated 11 local Mac release packaging case(s)")
+    print("validated 14 local Mac release packaging case(s)")
     return 0
 
 

@@ -412,6 +412,19 @@ def validate_release_integration() -> int:
             print("verified release integration: macOS packaging-equivalence gate did not fail closed exactly")
             return 1
 
+        broadened_update_authority = copy.deepcopy(release)
+        broadened_update_authority["compatibility"][
+            "macUserInitiatedUpdateCheckProfile"
+        ] = "maccompanion.user-initiated-full-update-check.v1"
+        broadened_errors = verify_files(
+            broadened_update_authority,
+            manifest_path,
+            expected_signing_policy_sha256=signing_policy_pin,
+        )
+        if "invalidMacUpdateCheckConfiguration" not in broadened_errors:
+            print("verified release integration: unshipped full update-check authority was accepted")
+            return 1
+
         no_pin_errors = verify_files(release, manifest_path)
         if (
             "signingPolicyDigestPinRequired" not in no_pin_errors

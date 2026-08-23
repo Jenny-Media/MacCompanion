@@ -1,4 +1,4 @@
-# Mac Companion release evidence manifest v0.1
+# Mac Companion release evidence manifest v0.2
 
 Status: normative for repository release tooling.
 
@@ -27,12 +27,16 @@ higher-level manifest.
 
 Every root key is required:
 
-- `schemaVersion`: exactly `0.1`.
+- `schemaVersion`: exactly `0.2`.
 - `evidenceLevel`: one claim level above.
 - `product`: exactly `Mac Companion`.
 - `release`: version, build number, channel, and nonempty target list.
 - `compatibility`: exact capability, Interactive Control, and local-IPC profile
-  versions plus target-scoped minimum operating-system versions.
+  versions; the target-scoped Mac user-initiated update-check profile; plus
+  target-scoped minimum operating-system versions. The update-check profile is
+  either `null` (information-only checks) or exactly
+  `maccompanion.user-initiated-full-update-check.v1`; it must be `null` when
+  macOS is not a target.
 - `source`: full lowercase Git commit SHA and dirty-worktree Boolean.
 - `toolchain`: bounded Xcode, Swift, host OS, and unique SDK strings.
 - `validation`: nonempty, uniquely identified passed/failed evidence records
@@ -92,7 +96,7 @@ material remain in protected external systems.
 
 ## Validator
 
-`scripts/validate_release_evidence.py` is the executable v0.1 conformance
+`scripts/validate_release_evidence.py` is the executable v0.2 conformance
 authority. `Tests/System/ReleaseEvidence/manifest.json` indexes valid and
 invalid examples. The public repository gate validates the corpus but does not
 claim a signed candidate or a promotion-ready release.
@@ -105,6 +109,10 @@ available for structural inspection, is incompatible with file/platform flags,
 and labels success `schema-valid only` so it cannot be consumed as acceptance.
 File verification resolves every artifact and evidence reference relative to the manifest,
 rejects symlink/path escape, and compares exact byte count and SHA-256 content.
+For a signed Mac candidate it also parses the bounded canonical application
+archive's `Info.plist`, normalizes an absent or empty
+`MacCompanionUpdateUserInitiatedCheckProfile` to `null`, rejects every unknown
+value or type, and requires the observed value to match the manifest exactly.
 For signed candidates it additionally requires `sbom.document` to be an
 [exact-candidate artifact SBOM](../../artifact-sbom/v0/profile.md), validates
 its two transitively hashed documents and exact ZIP contents, and binds its

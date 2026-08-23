@@ -1,4 +1,4 @@
-# Mac Companion update trust policy v0.23
+# Mac Companion update trust policy v0.24
 
 Status: normative for the first direct-distribution beta.
 
@@ -117,6 +117,13 @@ A later automatic-check preference requires a policy and UX revision; it may
 not silently arise from Sparkle defaults. A beta or stable client never falls
 back to the other channel. Build numbers increase monotonically; downgrade is
 not an updater recovery mechanism.
+
+Release-evidence v0.2 records the Mac execution profile as a target-scoped
+compatibility fact. Signed-candidate file verification reads the bounded
+canonical application archive's `Info.plist` and requires the observed value
+to equal that fact exactly. An absent or empty value is normalized to `null`
+and remains information-only; any unknown value, type, or manifest/archive
+substitution rejects the candidate before platform or promotion gates.
 
 ## Runtime installation gate
 

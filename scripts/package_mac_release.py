@@ -27,6 +27,10 @@ SPARKLE_AUTOUPDATE_IDENTIFIER = (
     "Autoupdate-5555494467dcbc6056da3300b22db5f67fff8b2d"
 )
 SPARKLE_UPDATER_IDENTIFIER = "org.sparkle-project.Sparkle.Updater"
+UPDATE_CHECK_PROFILE_KEY = "MacCompanionUpdateUserInitiatedCheckProfile"
+USER_INITIATED_FULL_UPDATE_CHECK_PROFILE = (
+    "maccompanion.user-initiated-full-update-check.v1"
+)
 VERSION = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?$")
 BUILD = re.compile(r"^(?:0|[1-9][0-9]{0,17})$")
 DITTO = "/usr/bin/ditto"
@@ -195,11 +199,19 @@ def _digest(path: Path) -> dict[str, object]:
     return {"path": path.name, "sha256": hasher.hexdigest(), "bytes": size}
 
 
-def _write_summary(path: Path, *, version: str, build_number: str, artifacts: list[dict[str, object]]) -> None:
+def _write_summary(
+    path: Path,
+    *,
+    version: str,
+    build_number: str,
+    update_check_profile: str | None,
+    artifacts: list[dict[str, object]],
+) -> None:
     value = {
-        "schemaVersion": "maccompanion.local-mac-package.v0.1",
+        "schemaVersion": "maccompanion.local-mac-package.v0.2",
         "product": "Mac Companion",
         "release": {"version": version, "buildNumber": build_number},
+        "macUserInitiatedUpdateCheckProfile": update_check_profile,
         "artifacts": artifacts,
         "claims": {
             "developerIDSigned": True,
@@ -275,6 +287,13 @@ def package_release(
         or str(info.get("CFBundleVersion")) != build_number
     ):
         raise MacReleasePackagingError("archive identity or version does not match packaging inputs")
+    raw_update_check_profile = info.get(UPDATE_CHECK_PROFILE_KEY)
+    if raw_update_check_profile is None or raw_update_check_profile == "":
+        update_check_profile = None
+    elif raw_update_check_profile == USER_INITIATED_FULL_UPDATE_CHECK_PROFILE:
+        update_check_profile = raw_update_check_profile
+    else:
+        raise MacReleasePackagingError("archive has an invalid user-initiated update-check profile")
     expected_team = _verify_app(runner, app)
 
     output_parent = output_directory.parent.resolve(strict=True)
@@ -353,6 +372,7 @@ def package_release(
             temporary / "local-package-summary.json",
             version=version,
             build_number=build_number,
+            update_check_profile=update_check_profile,
             artifacts=artifacts,
         )
         _rename_exclusive(temporary, output_directory)

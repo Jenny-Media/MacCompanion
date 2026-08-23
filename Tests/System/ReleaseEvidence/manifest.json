@@ -13,6 +13,7 @@
     {"path": "invalid-duplicate-validation-id.json", "expect": "invalid", "errors": ["duplicateIdentifier"]},
     {"path": "invalid-dot-segment-path.json", "expect": "invalid", "errors": ["unsafePath"]},
     {"path": "invalid-inapplicable-compatibility.json", "expect": "invalid", "errors": ["inapplicableCompatibility"]},
+    {"path": "invalid-update-check-profile.json", "expect": "invalid", "errors": ["invalidCompatibility"]},
     {"path": "invalid-duplicate-json-key.json", "expect": "invalid", "errors": ["invalidJSON"]},
     {"path": "invalid-role-platform.json", "expect": "invalid", "errors": ["rolePlatformMismatch", "artifactPlatformMismatch", "executableTargetMismatch"]},
     {"path": "invalid-scenario-platform.json", "expect": "invalid", "errors": ["scenarioPlatformMismatch"]},

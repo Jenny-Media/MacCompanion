@@ -1,8 +1,8 @@
 {
-  "schemaVersion": "0.1",
+  "schemaVersion": "0.2",
   "evidenceLevel": "unsignedConstruction",
   "product": "Mac Companion",
-  "compatibility": {"capabilityProtocol": "0.1", "interactiveControl": "0.1", "localIPC": "0.1", "minimumMacOS": "26.0", "minimumIOS": "26.0"},
+  "compatibility": {"capabilityProtocol": "0.1", "interactiveControl": "0.1", "localIPC": "0.1", "macUserInitiatedUpdateCheckProfile": null, "minimumMacOS": "26.0", "minimumIOS": "26.0"},
   "release": {
     "version": "0.0.0-development",
     "buildNumber": "0",
