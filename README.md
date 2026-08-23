@@ -304,7 +304,14 @@ adds a privacy-limited **View** picker for Desktop, Application Focus, and
 Window Focus. It preserves one Control authority and one media/input pipeline:
 input reset precedes selection, the replacement clean frame must be visibly
 rendered, and input resumes only after the exact host acknowledgement. It does
-not yet claim focus-pushed Smart Zoom or semantic Smart Input.
+not claim semantic Smart Input.
+
+The subsequent [manual visual Smart Zoom fallback](docs/evidence/2026-08-23-manual-visual-smart-zoom.md)
+adds an explicit local pinch/pan/Fit mode to every live pixel surface. Remote
+gestures are reset and suppressed while the user adjusts it; direct points and
+trackpad deltas are inverse-mapped when interaction resumes. It transmits no
+new metadata and creates no new authority. Focus-pushed, Accessibility-assisted
+framing still requires a fixture-first ordered event lane.
 
 The [permanent Mac containing-app target](docs/evidence/2026-08-21-permanent-mac-containing-app-target.md)
 now embeds the separately signed, deliberately inert [permanent Agent

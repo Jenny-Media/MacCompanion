@@ -270,6 +270,7 @@ private final class ClientPrimaryLiveControlViewStateV0: ObservableObject {
     @Published var surfaceCandidates:
         [InteractiveSurfaceTargetCandidateV0] = []
     @Published var surfaceRequestInFlight = false
+    @Published var visualZoomEditing = false
 }
 
 @available(iOS 17.0, *)
@@ -344,7 +345,10 @@ public struct ClientPrimaryLiveControlViewV0: View {
                 }
                 .pickerStyle(.menu)
                 .accessibilityIdentifier("Pointer mode")
-                .disabled(coordinator.phase != .active)
+                .disabled(
+                    coordinator.phase != .active
+                        || viewState.visualZoomEditing
+                )
             }
             ToolbarItem(placement: .topBarTrailing) {
                 Button("View", systemImage: "rectangle.stack") {
@@ -353,6 +357,7 @@ public struct ClientPrimaryLiveControlViewV0: View {
                 .disabled(
                     coordinator.phase != .active
                         || viewState.surfaceRequestInFlight
+                        || viewState.visualZoomEditing
                 )
             }
             ToolbarItem(placement: .topBarTrailing) {
@@ -360,6 +365,35 @@ public struct ClientPrimaryLiveControlViewV0: View {
                     coordinator.product?.surface
                         .toggleSoftwareKeyboard()
                 }
+                .disabled(
+                    coordinator.phase != .active
+                        || viewState.visualZoomEditing
+                )
+            }
+            ToolbarItem(placement: .topBarTrailing) {
+                Menu(
+                    "Zoom",
+                    systemImage: viewState.visualZoomEditing
+                        ? "viewfinder.circle.fill" : "viewfinder"
+                ) {
+                    Button(
+                        viewState.visualZoomEditing
+                            ? "Done Zooming" : "Adjust Zoom"
+                    ) {
+                        setVisualZoomEditing(
+                            !viewState.visualZoomEditing
+                        )
+                    }
+                    Button(
+                        "Fit Screen",
+                        systemImage: "arrow.down.right.and.arrow.up.left"
+                    ) {
+                        coordinator.product?.surface.resetVisualZoom()
+                    }
+                }
+                .accessibilityValue(
+                    viewState.visualZoomEditing ? "Adjusting" : "Inactive"
+                )
                 .disabled(coordinator.phase != .active)
             }
             ToolbarItem(placement: .topBarTrailing) {
@@ -381,9 +415,15 @@ public struct ClientPrimaryLiveControlViewV0: View {
         .onChange(of: viewState.mode) { _, value in
             coordinator.updateMode(value)
         }
+        .onChange(of: coordinator.phase) { _, value in
+            if value != .active { setVisualZoomEditing(false) }
+        }
         .onChange(of: revision) { _, _ in
             let controlMode = control.mode
             coordinator.acceptWorkspaceMode(controlMode)
+            if controlMode != .active {
+                setVisualZoomEditing(false)
+            }
             switch controlMode {
             case .ready where viewState.stopSubmitted:
                 viewState.stopSubmitted = false
@@ -407,6 +447,7 @@ public struct ClientPrimaryLiveControlViewV0: View {
             )
             .interactiveDismissDisabled(viewState.surfaceRequestInFlight)
         }
+        .onDisappear { setVisualZoomEditing(false) }
     }
 
     private var canStop: Bool {
@@ -421,6 +462,7 @@ public struct ClientPrimaryLiveControlViewV0: View {
     }
 
     private func stopRemoteControl() {
+        setVisualZoomEditing(false)
         viewState.stopSubmitted = true
         Task {
             do { try await onStop() }
@@ -462,6 +504,11 @@ public struct ClientPrimaryLiveControlViewV0: View {
                 onCommandFailure(error)
             }
         }
+    }
+
+    private func setVisualZoomEditing(_ value: Bool) {
+        coordinator.product?.surface.setVisualZoomEditing(value)
+        viewState.visualZoomEditing = value
     }
 }
 #endif

@@ -54,7 +54,14 @@ public final class UIKitClientLiveSurfaceViewV0:
     private var encodedWidth: UInt16 = 0
     private var encodedHeight: UInt16 = 0
     private var inputEnabled = false
+    private var visualZoomEditing = false
+    private var visualZoomScale = 1.0
+    private var visualZoomTranslation = CGPoint.zero
+    private var visualZoomStartScale = 1.0
+    private var visualZoomViewportSize = CGSize.zero
     private var dragRecognizer: UILongPressGestureRecognizer!
+    private var visualZoomPinchRecognizer: UIPinchGestureRecognizer!
+    private var visualZoomPanRecognizer: UIPanGestureRecognizer!
     private var dragLastLocation: CGPoint?
     private lazy var keyboardProxy = UIKitClientKeyboardProxyV0 {
         [weak self] action in self?.submitKeyboardAction(action)
@@ -85,8 +92,15 @@ public final class UIKitClientLiveSurfaceViewV0:
 
     public override func layoutSubviews() {
         super.layoutSubviews()
-        videoView.frame = bounds
-        rebuildMapperForCurrentGeometry()
+        if visualZoomViewportSize != bounds.size {
+            resetMapper()
+            visualZoomViewportSize = bounds.size
+            resetVisualZoomState()
+        }
+        videoView.bounds = CGRect(origin: .zero, size: bounds.size)
+        videoView.center = CGPoint(x: bounds.midX, y: bounds.midY)
+        applyVisualZoomTransform()
+        if !visualZoomEditing { rebuildMapperForCurrentGeometry() }
     }
 
     public func setMode(_ value: ClientInputInteractionModeV0) {
@@ -101,15 +115,18 @@ public final class UIKitClientLiveSurfaceViewV0:
         resetMapper()
         encodedWidth = width
         encodedHeight = height
+        resetVisualZoomState()
         setNeedsLayout()
     }
 
     public func setInputEnabled(_ value: Bool) {
-        guard inputEnabled != value else { return }
         if !value {
             keyboardProxy.resignFirstResponder()
             resetMapper()
+            visualZoomEditing = false
+            resetVisualZoomState()
         }
+        guard inputEnabled != value else { return }
         inputEnabled = value
         isUserInteractionEnabled = value
         if value { setNeedsLayout() }
@@ -118,6 +135,8 @@ public final class UIKitClientLiveSurfaceViewV0:
     public func resetInputAndBlank() {
         keyboardProxy.resignFirstResponder()
         resetMapper()
+        visualZoomEditing = false
+        resetVisualZoomState()
         inputEnabled = false
         isUserInteractionEnabled = false
         videoView.blank()
@@ -134,6 +153,24 @@ public final class UIKitClientLiveSurfaceViewV0:
 
     public func hideSoftwareKeyboard() {
         keyboardProxy.resignFirstResponder()
+    }
+
+    /// Enters a local visual-editing mode. Remote input is reset before the
+    /// view begins consuming pinch/pan gestures and remains suppressed until
+    /// editing ends; this never changes the selected host surface or fence.
+    public func setVisualZoomEditing(_ value: Bool) {
+        let next = value && inputEnabled
+        guard visualZoomEditing != next else { return }
+        keyboardProxy.resignFirstResponder()
+        resetMapper()
+        visualZoomEditing = next
+        if !next { rebuildMapperForCurrentGeometry() }
+    }
+
+    public func resetVisualZoom() {
+        resetMapper()
+        resetVisualZoomState()
+        if !visualZoomEditing { rebuildMapperForCurrentGeometry() }
     }
 
     private func rebuildMapperForCurrentGeometry() {
@@ -191,14 +228,44 @@ public final class UIKitClientLiveSurfaceViewV0:
             action: #selector(dragged(_:))
         )
         drag.minimumPressDuration = 0.35
+        let zoomPinch = UIPinchGestureRecognizer(
+            target: self,
+            action: #selector(visualZoomPinched(_:))
+        )
+        let zoomPan = UIPanGestureRecognizer(
+            target: self,
+            action: #selector(visualZoomPanned(_:))
+        )
+        zoomPan.minimumNumberOfTouches = 1
+        zoomPan.maximumNumberOfTouches = 2
         drag.delegate = self
         pointerPan.delegate = self
+        scrollPan.delegate = self
+        tap.delegate = self
+        zoomPinch.delegate = self
+        zoomPan.delegate = self
         tap.require(toFail: drag)
         addGestureRecognizer(tap)
         addGestureRecognizer(pointerPan)
         addGestureRecognizer(scrollPan)
         addGestureRecognizer(drag)
+        addGestureRecognizer(zoomPinch)
+        addGestureRecognizer(zoomPan)
         dragRecognizer = drag
+        visualZoomPinchRecognizer = zoomPinch
+        visualZoomPanRecognizer = zoomPan
+    }
+
+    public override func gestureRecognizerShouldBegin(
+        _ gestureRecognizer: UIGestureRecognizer
+    ) -> Bool {
+        let isVisualZoomGesture = gestureRecognizer
+            === visualZoomPinchRecognizer
+            || gestureRecognizer === visualZoomPanRecognizer
+        if isVisualZoomGesture {
+            return inputEnabled && visualZoomEditing
+        }
+        return inputEnabled && !visualZoomEditing
     }
 
     public func gestureRecognizer(
@@ -206,7 +273,13 @@ public final class UIKitClientLiveSurfaceViewV0:
         shouldRecognizeSimultaneouslyWith otherGestureRecognizer:
             UIGestureRecognizer
     ) -> Bool {
-        gestureRecognizer === dragRecognizer
+        let zoomPair = visualZoomEditing
+            && (gestureRecognizer === visualZoomPinchRecognizer
+                || gestureRecognizer === visualZoomPanRecognizer)
+            && (otherGestureRecognizer === visualZoomPinchRecognizer
+                || otherGestureRecognizer === visualZoomPanRecognizer)
+        if zoomPair { return true }
+        return gestureRecognizer === dragRecognizer
             || otherGestureRecognizer === dragRecognizer
     }
 
@@ -214,10 +287,7 @@ public final class UIKitClientLiveSurfaceViewV0:
         withMapper { mapper in
             switch mapper.mode {
             case .directTouch:
-                return try mapper.tap(at: try UIKitClientInputAdapterV0.location(
-                    of: recognizer,
-                    in: self
-                ))
+                return try mapper.tap(at: try mappedDirectLocation(recognizer))
             case .trackpad:
                 return try mapper.tap()
             }
@@ -237,14 +307,11 @@ public final class UIKitClientLiveSurfaceViewV0:
             switch mapper.mode {
             case .directTouch:
                 payload = try mapper.directMove(to:
-                    UIKitClientInputAdapterV0.location(of: recognizer, in: self)
+                    mappedDirectLocation(recognizer)
                 )
             case .trackpad:
                 payload = try mapper.trackpadMove(delta:
-                    UIKitClientInputAdapterV0.consumeTranslation(
-                        of: recognizer,
-                        in: self
-                    )
+                    mappedTrackpadDelta(recognizer)
                 )
             }
             return [payload]
@@ -276,7 +343,7 @@ public final class UIKitClientLiveSurfaceViewV0:
                 switch mapper.mode {
                 case .directTouch:
                     return try mapper.beginDirectDrag(at:
-                        UIKitClientInputAdapterV0.point(location)
+                        mappedDirectLocation(recognizer)
                     )
                 case .trackpad:
                     return try mapper.beginTrackpadDrag()
@@ -286,16 +353,18 @@ public final class UIKitClientLiveSurfaceViewV0:
                 switch mapper.mode {
                 case .directTouch:
                     payload = try mapper.updateDirectDrag(to:
-                        UIKitClientInputAdapterV0.point(location)
+                        mappedDirectLocation(recognizer)
                     )
                 case .trackpad:
                     guard let previous = dragLastLocation else {
                         throw UIKitClientLiveSurfaceFailureV0.invalidGesture
                     }
                     payload = try mapper.updateTrackpadDrag(delta:
-                        ClientInputPointV0(
-                            x: Double(location.x - previous.x),
-                            y: Double(location.y - previous.y)
+                        makeVisualZoomTransform().mappingDeltaToUnzoomed(
+                            ClientInputPointV0(
+                                x: Double(location.x - previous.x),
+                                y: Double(location.y - previous.y)
+                            )
                         )
                     )
                 }
@@ -314,6 +383,128 @@ public final class UIKitClientLiveSurfaceViewV0:
                 return [mapper.reset()]
             }
         }
+    }
+
+    @objc private func visualZoomPinched(
+        _ recognizer: UIPinchGestureRecognizer
+    ) {
+        guard inputEnabled, visualZoomEditing else { return }
+        do {
+            if recognizer.state == .began {
+                visualZoomStartScale = visualZoomScale
+            }
+            guard recognizer.state == .began
+                    || recognizer.state == .changed
+                    || recognizer.state == .ended else { return }
+            let current = try makeVisualZoomTransform()
+            let next = try current.zoomed(
+                to: visualZoomStartScale * Double(recognizer.scale),
+                around: try UIKitClientInputAdapterV0.point(
+                    recognizer.location(in: self)
+                )
+            )
+            acceptVisualZoomTransform(next)
+        } catch {
+            failVisualZoomGeometry()
+        }
+    }
+
+    @objc private func visualZoomPanned(
+        _ recognizer: UIPanGestureRecognizer
+    ) {
+        guard inputEnabled, visualZoomEditing,
+              (recognizer.state == .began
+                || recognizer.state == .changed
+                || recognizer.state == .ended) else { return }
+        do {
+            let delta = try UIKitClientInputAdapterV0.consumeTranslation(
+                of: recognizer,
+                in: self
+            )
+            let current = try makeVisualZoomTransform()
+            acceptVisualZoomTransform(try current.panned(by: delta))
+        } catch {
+            failVisualZoomGeometry()
+        }
+    }
+
+    private func mappedDirectLocation(
+        _ recognizer: UIGestureRecognizer
+    ) throws -> ClientInputPointV0 {
+        let point = try UIKitClientInputAdapterV0.point(
+            recognizer.location(in: self)
+        )
+        return try makeVisualZoomTransform().mappingToUnzoomed(point)
+    }
+
+    private func mappedTrackpadDelta(
+        _ recognizer: UIPanGestureRecognizer
+    ) throws -> ClientInputPointV0 {
+        let delta = try UIKitClientInputAdapterV0.consumeTranslation(
+            of: recognizer,
+            in: self
+        )
+        return try makeVisualZoomTransform()
+            .mappingDeltaToUnzoomed(delta)
+    }
+
+    private func makeVisualZoomTransform() throws
+        -> ClientVisualZoomTransformV0
+    {
+        let viewport = try ClientInputRectV0(
+            x: 0,
+            y: 0,
+            width: Double(bounds.width),
+            height: Double(bounds.height)
+        )
+        let content = try ClientAspectFitGeometryV0.contentRect(
+            viewport: viewport,
+            encodedWidth: encodedWidth,
+            encodedHeight: encodedHeight
+        )
+        return try ClientVisualZoomTransformV0(
+            viewport: viewport,
+            content: content,
+            scale: visualZoomScale,
+            translation: ClientInputPointV0(
+                x: Double(visualZoomTranslation.x),
+                y: Double(visualZoomTranslation.y)
+            )
+        )
+    }
+
+    private func acceptVisualZoomTransform(
+        _ value: ClientVisualZoomTransformV0
+    ) {
+        visualZoomScale = value.scale
+        visualZoomTranslation = CGPoint(
+            x: value.translation.x,
+            y: value.translation.y
+        )
+        applyVisualZoomTransform()
+    }
+
+    private func resetVisualZoomState() {
+        visualZoomScale = 1
+        visualZoomTranslation = .zero
+        visualZoomStartScale = 1
+        applyVisualZoomTransform()
+    }
+
+    private func applyVisualZoomTransform() {
+        videoView.transform = CGAffineTransform(
+            a: visualZoomScale,
+            b: 0,
+            c: 0,
+            d: visualZoomScale,
+            tx: visualZoomTranslation.x,
+            ty: visualZoomTranslation.y
+        )
+    }
+
+    private func failVisualZoomGeometry() {
+        setInputEnabled(false)
+        onFailure(.invalidGeometry)
     }
 
     private func withMapper(

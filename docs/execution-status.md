@@ -512,6 +512,20 @@ and eight platform probes. Focus-pushed Smart Zoom and Smart Input remain
 fixture-first work; signed installation, TCC, real pixels/input, and
 physical-iPhone evidence remain open external gates.
 
+The [manual visual Smart Zoom fallback](evidence/2026-08-23-manual-visual-smart-zoom.md)
+now gives every live pixel surface an explicit local 1x-to-4x pinch, bounded
+pan, and Fit mode without changing the host surface or authority fence. It
+resets and suppresses remote gestures during adjustment, inverse-maps direct
+points and trackpad deltas afterward, and returns to Fit on viewport, encoded
+surface, replacement, or lifecycle changes. The 48-test Interactive Client
+suite passes; the full gate passes 71 fixtures, the 1,471-test Swift catalog,
+macOS/iOS cross-builds, unsigned permanent application builds, and eight
+platform probes. This closes the manual visual fallback, not focus-assisted
+Smart Zoom: the current strict request/reply primary owner cannot accept an
+unsolicited focus event without a separately frozen ordered event lane. Signed
+installation, TCC, real pixels/input, physical-iPhone gestures, focus latency,
+and lock behavior remain open evidence gates.
+
 ## Blocker handling rule
 
 Every blocked item records its affected artifact, evidence needed to unblock it, and parallel work. The project is not globally blocked while any safe in-scope lane remains active or ready. A later-stage capability is complete only with passing exit evidence or an explicit evidence-backed `no-go` or `deferred` disposition.
