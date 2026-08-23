@@ -498,6 +498,20 @@ permanent app build. Signed installation/Agent enablement, TCC consent, live
 two-process pixels/input, physical iPhone, lock/takeover, latency, and reconnect
 evidence remain open; none blocks continued bundle-independent work.
 
+The subsequent [adaptive client surface switching](evidence/2026-08-23-adaptive-client-surface-switching.md)
+binds that host runtime to the permanent iOS live product. **View** requests a
+fresh privacy-limited application/window inventory, keeps Desktop as an escape
+hatch, and drives one reset-before-select replacement exchange. Input remains
+inert across selection and media transition; decoder admission alone is no
+longer sufficient, because the client must prove the exact clean frame was
+rendered before acknowledgement and must validate the host's exact reply
+before resuming input. The 45-test Interactive Client and 46-test Client
+Network Platform suites pass; the full gate passes 71 fixtures, the 1,468-test
+Swift catalog, macOS/iOS cross-builds, unsigned permanent application builds,
+and eight platform probes. Focus-pushed Smart Zoom and Smart Input remain
+fixture-first work; signed installation, TCC, real pixels/input, and
+physical-iPhone evidence remain open external gates.
+
 ## Blocker handling rule
 
 Every blocked item records its affected artifact, evidence needed to unblock it, and parallel work. The project is not globally blocked while any safe in-scope lane remains active or ready. A later-stage capability is complete only with passing exit evidence or an explicit evidence-backed `no-go` or `deferred` disposition.

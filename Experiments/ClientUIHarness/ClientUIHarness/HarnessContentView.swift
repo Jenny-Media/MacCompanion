@@ -153,6 +153,17 @@ private final class HarnessLiveControlProduct:
 
     func activationFailedOrClosed() async -> Bool { false }
 
+    func requestSurfaceTargets() async throws
+        -> [InteractiveSurfaceTargetCandidateV0]
+    {
+        HarnessFixtures.surfaceCandidates
+    }
+
+    func selectSurface(
+        kind: InteractiveSurfaceKind,
+        targetToken: UUID?
+    ) async throws {}
+
     func close() async {
         surface.resetInputAndBlank()
     }

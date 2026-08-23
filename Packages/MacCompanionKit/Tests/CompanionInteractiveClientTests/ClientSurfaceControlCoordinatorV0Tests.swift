@@ -255,15 +255,26 @@ private func targetInventoryResponse(
         ),
         payloadByteCount: 16
     )
+    let cleanHeader = try controlMediaHeader(
+        .videoAccessUnit,
+        descriptor: clientDescriptor,
+        sequence: 3,
+        clean: true
+    )
     _ = try coordinator.admitMedia(
-        header: controlMediaHeader(
-            .videoAccessUnit,
-            descriptor: clientDescriptor,
-            sequence: 3,
-            clean: true
-        ),
+        header: cleanHeader,
         payloadByteCount: 128
     )
+    #expect(try coordinator.confirmRenderedFrame(
+        ClientDecodedFrameReceiptV0(
+            generation: 1,
+            fence: ClientDecoderFenceV0(header: cleanHeader),
+            mediaSequence: cleanHeader.mediaSequence,
+            presentationTimeNanoseconds:
+                cleanHeader.presentationTimeNanoseconds,
+            frameReference: UUID()
+        )
+    ))
 
     let acknowledgementMessageID = WireUUID(UUID())
     let acknowledgementJSON = try coordinator.makeAcknowledgement(
@@ -343,6 +354,60 @@ private func targetInventoryResponse(
     }
     #expect(coordinator.phase == .closed)
     #expect(coordinator.input.phase == .paused)
+
+    var decodedButNotRendered = try ClientSurfaceControlCoordinatorV0(
+        acknowledgedDescriptor: initial,
+        sessionAllowedInteractionClasses: [.view, .pointer, .keyboard]
+    )
+    let decodedRequestID = WireUUID(UUID())
+    _ = try decodedButNotRendered.beginSelection(
+        targetKind: .desktop,
+        targetToken: nil,
+        resetMessageID: WireUUID(UUID()),
+        requestMessageID: decodedRequestID,
+        sentAtUnixMilliseconds: 1_010,
+        clientMonotonicMilliseconds: 110
+    )
+    let decodedDescriptor = try decodedButNotRendered.receiveSelected(
+        selectedResponse(
+            requestMessageID: decodedRequestID,
+            descriptor: replacement,
+            transitionID: WireUUID(UUID())
+        ),
+        clientMonotonicNowMilliseconds: 210
+    )
+    _ = try decodedButNotRendered.admitMedia(
+        header: controlMediaHeader(
+            .discontinuity,
+            descriptor: decodedDescriptor,
+            sequence: 1
+        ),
+        payloadByteCount: 0
+    )
+    _ = try decodedButNotRendered.admitMedia(
+        header: controlMediaHeader(
+            .decoderConfiguration,
+            descriptor: decodedDescriptor,
+            sequence: 2
+        ),
+        payloadByteCount: 16
+    )
+    _ = try decodedButNotRendered.admitMedia(
+        header: controlMediaHeader(
+            .videoAccessUnit,
+            descriptor: decodedDescriptor,
+            sequence: 3,
+            clean: true
+        ),
+        payloadByteCount: 128
+    )
+    #expect(throws: ClientSurfaceControlErrorV0.mediaBoundaryMismatch) {
+        _ = try decodedButNotRendered.makeAcknowledgement(
+            messageID: WireUUID(UUID()),
+            sentAtUnixMilliseconds: 1_011
+        )
+    }
+    #expect(decodedButNotRendered.phase == .closed)
 }
 
 @Test func selectedResponseMustMatchCorrelationSequenceAndMediaBoundary() throws {

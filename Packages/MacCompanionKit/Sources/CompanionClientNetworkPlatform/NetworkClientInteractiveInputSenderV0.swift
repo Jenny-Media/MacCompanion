@@ -49,6 +49,29 @@ package actor NetworkClientInteractiveInputSenderV0 {
         }
     }
 
+    /// Sends the exact reset already sequenced by the replacement-surface
+    /// authority. It must precede the corresponding primary selection frame.
+    package func sendPreparedReset(
+        _ envelope: InteractiveInputEnvelope?
+    ) async throws {
+        guard !closed else {
+            throw NetworkClientInteractiveInputSenderErrorV0.closed
+        }
+        guard let envelope else { return }
+        guard envelope.input == .reset else {
+            await failClosed()
+            throw NetworkClientInteractiveInputSenderErrorV0.sendFailed
+        }
+        do {
+            try await connection.sendRoleBytes(
+                try frame(InteractiveInputCodec.encode(envelope))
+            )
+        } catch {
+            await failClosed()
+            throw NetworkClientInteractiveInputSenderErrorV0.sendFailed
+        }
+    }
+
     package func close() async {
         guard !closed else { return }
         do {

@@ -299,6 +299,13 @@ Actions remain available without entering or keeping the live screen visible.
 Its manual stateless iOS keyboard forwards bounded text/delete actions without
 claiming focus-aware Smart Input or retaining a remote field value.
 
+The later [adaptive client surface-switching checkpoint](docs/evidence/2026-08-23-adaptive-client-surface-switching.md)
+adds a privacy-limited **View** picker for Desktop, Application Focus, and
+Window Focus. It preserves one Control authority and one media/input pipeline:
+input reset precedes selection, the replacement clean frame must be visibly
+rendered, and input resumes only after the exact host acknowledgement. It does
+not yet claim focus-pushed Smart Zoom or semantic Smart Input.
+
 The [permanent Mac containing-app target](docs/evidence/2026-08-21-permanent-mac-containing-app-target.md)
 now embeds the separately signed, deliberately inert [permanent Agent
 target](docs/evidence/2026-08-21-permanent-embedded-mac-agent-target.md), its

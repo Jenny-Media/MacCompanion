@@ -18,6 +18,7 @@ public enum ClientPrimaryLiveControlPhaseV0: Equatable, Sendable {
 
 public enum ClientPrimaryLiveControlErrorV0: Error, Equatable, Sendable {
     case activationDeadlineExceeded
+    case unavailable
 }
 
 @available(iOS 17.0, *)
@@ -27,6 +28,12 @@ public protocol ClientPrimaryLiveControlProductV0: AnyObject {
     var surface: UIKitClientLiveSurfaceViewV0 { get }
     func refreshPrimaryState() async -> Bool
     func activationFailedOrClosed() async -> Bool
+    func requestSurfaceTargets() async throws
+        -> [InteractiveSurfaceTargetCandidateV0]
+    func selectSurface(
+        kind: InteractiveSurfaceKind,
+        targetToken: UUID?
+    ) async throws
     func close() async
 }
 
@@ -101,6 +108,35 @@ public final class ClientPrimaryLiveControlCoordinatorV0: ObservableObject {
 
     public func updateMode(_ mode: ClientInputInteractionModeV0) {
         product?.surface.setMode(mode)
+    }
+
+    public func requestSurfaceTargets() async throws
+        -> [InteractiveSurfaceTargetCandidateV0]
+    {
+        guard phase == .active, let product else {
+            throw ClientPrimaryLiveControlErrorV0.unavailable
+        }
+        return try await product.requestSurfaceTargets()
+    }
+
+    public func selectSurface(_ choice: ClientSurfaceChoiceV0) async throws {
+        guard phase == .active, let product else {
+            throw ClientPrimaryLiveControlErrorV0.unavailable
+        }
+        phase = .awaitingVerifiedFrame
+        do {
+            try await product.selectSurface(
+                kind: choice.kind,
+                targetToken: choice.targetToken
+            )
+            guard self.product === product else {
+                throw ClientPrimaryLiveControlErrorV0.unavailable
+            }
+            phase = .active
+        } catch {
+            fail(error)
+            throw error
+        }
     }
 
     public func acceptWorkspaceMode(
@@ -230,6 +266,10 @@ private struct ClientPrimaryInitialDesktopSurfaceV0: UIViewRepresentable {
 private final class ClientPrimaryLiveControlViewStateV0: ObservableObject {
     @Published var mode = ClientInputInteractionModeV0.directTouch
     @Published var stopSubmitted = false
+    @Published var showingSurfacePicker = false
+    @Published var surfaceCandidates:
+        [InteractiveSurfaceTargetCandidateV0] = []
+    @Published var surfaceRequestInFlight = false
 }
 
 @available(iOS 17.0, *)
@@ -307,6 +347,15 @@ public struct ClientPrimaryLiveControlViewV0: View {
                 .disabled(coordinator.phase != .active)
             }
             ToolbarItem(placement: .topBarTrailing) {
+                Button("View", systemImage: "rectangle.stack") {
+                    requestSurfaceTargets(showPicker: true)
+                }
+                .disabled(
+                    coordinator.phase != .active
+                        || viewState.surfaceRequestInFlight
+                )
+            }
+            ToolbarItem(placement: .topBarTrailing) {
                 Button("Keyboard", systemImage: "keyboard") {
                     coordinator.product?.surface
                         .toggleSoftwareKeyboard()
@@ -345,6 +394,19 @@ public struct ClientPrimaryLiveControlViewV0: View {
                 break
             }
         }
+        .sheet(isPresented: $viewState.showingSurfacePicker) {
+            ClientSurfacePickerViewV0(
+                candidates: viewState.surfaceCandidates,
+                onSelect: selectSurface,
+                onRefresh: {
+                    requestSurfaceTargets(showPicker: false)
+                },
+                onCancel: {
+                    viewState.showingSurfacePicker = false
+                }
+            )
+            .interactiveDismissDisabled(viewState.surfaceRequestInFlight)
+        }
     }
 
     private var canStop: Bool {
@@ -364,6 +426,39 @@ public struct ClientPrimaryLiveControlViewV0: View {
             do { try await onStop() }
             catch {
                 viewState.stopSubmitted = false
+                onCommandFailure(error)
+            }
+        }
+    }
+
+    private func requestSurfaceTargets(showPicker: Bool) {
+        guard !viewState.surfaceRequestInFlight else { return }
+        viewState.surfaceRequestInFlight = true
+        Task {
+            do {
+                viewState.surfaceCandidates = try await coordinator
+                    .requestSurfaceTargets()
+                viewState.surfaceRequestInFlight = false
+                if showPicker { viewState.showingSurfacePicker = true }
+            } catch {
+                viewState.surfaceRequestInFlight = false
+                viewState.showingSurfacePicker = false
+                onCommandFailure(error)
+            }
+        }
+    }
+
+    private func selectSurface(_ choice: ClientSurfaceChoiceV0) {
+        guard !viewState.surfaceRequestInFlight else { return }
+        viewState.surfaceRequestInFlight = true
+        Task {
+            do {
+                try await coordinator.selectSurface(choice)
+                viewState.surfaceRequestInFlight = false
+                viewState.showingSurfacePicker = false
+            } catch {
+                viewState.surfaceRequestInFlight = false
+                viewState.showingSurfacePicker = false
                 onCommandFailure(error)
             }
         }

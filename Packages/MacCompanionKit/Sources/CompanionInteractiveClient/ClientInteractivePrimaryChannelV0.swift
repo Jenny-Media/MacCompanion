@@ -94,6 +94,7 @@ public enum ClientInteractivePrimaryChannelErrorV0:
     case unavailable
     case initialSurfaceUnavailable
     case initialSurfaceDeadlineExceeded
+    case surfaceTransitionDeadlineExceeded
     case cancelled
 }
 
@@ -275,6 +276,31 @@ public actor ClientInteractivePrimaryChannelV0:
                 initialSurface = coordinator
                 return ClientPrimaryPreparedReplyV0 {}
             case .awaitingRequest, .awaitingMedia, .active, .closed:
+                break
+            }
+        }
+        if var coordinator = replacementSurface {
+            defer { replacementSurface = coordinator }
+            switch (coordinator.phase, kind) {
+            case (.active, .interactiveSurfaceTargetsResponse):
+                try coordinator.receiveTargetInventory(
+                    frame,
+                    clientMonotonicNowMilliseconds:
+                        try initialMonotonicMilliseconds()
+                )
+                return ClientPrimaryPreparedReplyV0 {}
+            case (.awaitingSelection, .interactiveSurfaceSelected):
+                try coordinator.receiveSelected(
+                    frame,
+                    clientMonotonicNowMilliseconds:
+                        try initialMonotonicMilliseconds()
+                )
+                return ClientPrimaryPreparedReplyV0 {}
+            case (.awaitingAcknowledgement,
+                  .interactiveSurfaceAcknowledged):
+                try coordinator.receiveAcknowledged(frame)
+                return ClientPrimaryPreparedReplyV0 {}
+            default:
                 break
             }
         }
@@ -468,11 +494,11 @@ public actor ClientInteractivePrimaryChannelV0:
         payloadByteCount: Int
     ) throws -> ClientMediaAdmissionV0 {
         if var replacementSurface {
+            defer { self.replacementSurface = replacementSurface }
             let admission = try replacementSurface.admitMedia(
                 header: header,
                 payloadByteCount: payloadByteCount
             )
-            self.replacementSurface = replacementSurface
             return admission
         }
         guard !invalidated, var coordinator = initialSurface else {
@@ -520,17 +546,134 @@ public actor ClientInteractivePrimaryChannelV0:
         initialSurface = coordinator
     }
 
+    public func requestReplacementSurfaceTargets() async throws {
+        guard !invalidated, var coordinator = replacementSurface else {
+            throw ClientInteractivePrimaryChannelErrorV0
+                .initialSurfaceUnavailable
+        }
+        defer {
+            if replacementSurface != nil { replacementSurface = coordinator }
+        }
+        let frame = try coordinator.makeTargetInventoryRequest(
+            messageID: environment.makeMessageID(),
+            sentAtUnixMilliseconds:
+                environment.wallNowUnixMilliseconds()
+        )
+        do {
+            try await sender.sendAuthenticatedCommand(frame)
+        } catch {
+            replacementSurface = nil
+            await authority.close()
+            throw error
+        }
+    }
+
+    /// `nil` means the requested inventory has not completed. Empty is a
+    /// completed, privacy-limited result.
+    public func replacementSurfaceTargets()
+        -> [InteractiveSurfaceTargetCandidateV0]?
+    {
+        replacementSurface?.availableTargetCandidates
+    }
+
+    public func prepareReplacementSurfaceSelection(
+        targetKind: InteractiveSurfaceKind,
+        targetToken: UUID?
+    ) throws -> ClientSurfaceSelectionRequestV0 {
+        guard !invalidated, var coordinator = replacementSurface else {
+            throw ClientInteractivePrimaryChannelErrorV0
+                .initialSurfaceUnavailable
+        }
+        defer { replacementSurface = coordinator }
+        let request = try coordinator.beginSelection(
+            targetKind: targetKind,
+            targetToken: targetToken.map(WireUUID.init),
+            resetMessageID: environment.makeMessageID(),
+            requestMessageID: environment.makeMessageID(),
+            sentAtUnixMilliseconds:
+                environment.wallNowUnixMilliseconds(),
+            clientMonotonicMilliseconds:
+                environment.monotonicNowMilliseconds()
+        )
+        return request
+    }
+
+    public func sendReplacementSurfaceSelection(
+        _ frame: Data
+    ) async throws {
+        guard !invalidated,
+              replacementSurface?.phase == .awaitingSelection else {
+            throw ClientInteractivePrimaryChannelErrorV0
+                .initialSurfaceUnavailable
+        }
+        do {
+            try await sender.sendAuthenticatedCommand(frame)
+        } catch {
+            replacementSurface = nil
+            await authority.close()
+            throw error
+        }
+    }
+
+    public func replacementSurfacePhase()
+        -> ClientSurfaceControlPhaseV0?
+    {
+        replacementSurface?.phase
+    }
+
+    public func replacementSurfaceDescriptor()
+        -> AdaptiveSurfaceDescriptor?
+    {
+        replacementSurface?.descriptor
+    }
+
+    @discardableResult
+    public func confirmReplacementRenderedFrame(
+        _ receipt: ClientDecodedFrameReceiptV0
+    ) throws -> Bool {
+        guard !invalidated, var coordinator = replacementSurface else {
+            throw ClientInteractivePrimaryChannelErrorV0
+                .initialSurfaceUnavailable
+        }
+        defer { replacementSurface = coordinator }
+        guard coordinator.phase == .awaitingMedia else { return false }
+        let matched = try coordinator.confirmRenderedFrame(receipt)
+        return matched
+    }
+
+    public func acknowledgeReplacementSurface() async throws {
+        guard !invalidated, var coordinator = replacementSurface else {
+            throw ClientInteractivePrimaryChannelErrorV0
+                .initialSurfaceUnavailable
+        }
+        defer {
+            if replacementSurface != nil { replacementSurface = coordinator }
+        }
+        let frame = try coordinator.makeAcknowledgement(
+            messageID: environment.makeMessageID(),
+            sentAtUnixMilliseconds:
+                environment.wallNowUnixMilliseconds()
+        )
+        do {
+            try await sender.sendAuthenticatedCommand(frame)
+        } catch {
+            replacementSurface = nil
+            await authority.close()
+            throw error
+        }
+    }
+
     public func makeInitialInputFrame(
         _ payload: InteractiveInputPayload
     ) throws -> Data {
         if var replacementSurface {
+            defer { self.replacementSurface = replacementSurface }
             let envelope = try replacementSurface.makeInput(
                 messageID: environment.makeMessageID(),
                 clientMonotonicMilliseconds:
                     environment.monotonicNowMilliseconds(),
                 payload: payload
             )
-            self.replacementSurface = replacementSurface
             return try InteractiveInputCodec.encode(envelope)
         }
         guard !invalidated, var coordinator = initialSurface else {
@@ -549,12 +692,12 @@ public actor ClientInteractivePrimaryChannelV0:
 
     public func closeInitialInputFrame() throws -> Data? {
         if var replacementSurface {
+            defer { self.replacementSurface = replacementSurface }
             let envelope = try replacementSurface.closeInput(
                 messageID: environment.makeMessageID(),
                 clientMonotonicMilliseconds:
                     environment.monotonicNowMilliseconds()
             )
-            self.replacementSurface = replacementSurface
             return try envelope.map(InteractiveInputCodec.encode)
         }
         guard !invalidated, var coordinator = initialSurface else {

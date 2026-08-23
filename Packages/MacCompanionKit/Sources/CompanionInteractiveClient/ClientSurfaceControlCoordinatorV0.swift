@@ -78,12 +78,28 @@ public struct ClientSurfaceControlCoordinatorV0: Sendable {
     public private(set) var targetCandidates:
         [InteractiveSurfaceTargetCandidateV0] = []
 
+    /// `nil` means no current inventory has completed. An empty array is a
+    /// valid privacy-limited inventory and must not be confused with a reply
+    /// that is still pending.
+    public var availableTargetCandidates:
+        [InteractiveSurfaceTargetCandidateV0]?
+    {
+        targetInventory?.candidates
+    }
+
+    public var descriptor: AdaptiveSurfaceDescriptor {
+        pendingTransition?.descriptor
+            ?? pendingAcknowledgement?.descriptor
+            ?? currentDescriptor
+    }
+
     private var currentDescriptor: AdaptiveSurfaceDescriptor
     private var pendingSelection: PendingSelection?
     private var pendingTargetInventory: PendingTargetInventory?
     private var targetInventory: TargetInventory?
     private var pendingTransition: PendingTransition?
     private var pendingAcknowledgement: PendingAcknowledgement?
+    private var renderedReadyMediaSequence: UInt64?
     private var nextClientSequence: Int64 = 1
     private var expectedServerSequence: Int64 = 1
     private var replay = ConnectionReplayWindow()
@@ -171,6 +187,8 @@ public struct ClientSurfaceControlCoordinatorV0: Sendable {
             pendingTargetInventory = PendingTargetInventory(
                 requestMessageID: messageID
             )
+            targetInventory = nil
+            targetCandidates = []
             nextClientSequence = sequence + 1
             return data
         } catch {
@@ -354,6 +372,7 @@ public struct ClientSurfaceControlCoordinatorV0: Sendable {
                 throw ClientSurfaceControlErrorV0.mediaBoundaryMismatch
             }
             try media.beginSurfaceTransition(to: descriptor)
+            renderedReadyMediaSequence = nil
             self.pendingSelection = nil
             pendingTransition = PendingTransition(
                 transitionID: response.body.transitionID,
@@ -388,6 +407,44 @@ public struct ClientSurfaceControlCoordinatorV0: Sendable {
         }
     }
 
+    /// Records concrete render proof for the exact clean replacement frame.
+    /// Decoder admission alone never authorizes an acknowledgement.
+    @discardableResult
+    public mutating func confirmRenderedFrame(
+        _ receipt: ClientDecodedFrameReceiptV0
+    ) throws -> Bool {
+        do {
+            try requirePhase(.awaitingMedia)
+            guard let pendingTransition,
+                  receipt.fence.interactiveSessionID
+                    == pendingTransition.descriptor.interactiveSessionID,
+                  receipt.fence.authorizationEpoch
+                    == pendingTransition.descriptor.authorizationEpoch,
+                  receipt.fence.surfaceID
+                    == pendingTransition.descriptor.surfaceID,
+                  receipt.fence.surfaceRevision
+                    == pendingTransition.descriptor.surfaceRevision,
+                  receipt.fence.coordinateSpaceRevision
+                    == pendingTransition.descriptor.coordinateSpaceRevision,
+                  receipt.fence.encodedWidth
+                    == pendingTransition.descriptor.encodedWidth,
+                  receipt.fence.encodedHeight
+                    == pendingTransition.descriptor.encodedHeight,
+                  let required = media.pendingAcknowledgementMediaSequence else {
+                throw ClientSurfaceControlErrorV0.mediaBoundaryMismatch
+            }
+            guard receipt.mediaSequence == required else {
+                if receipt.mediaSequence > required { return false }
+                throw ClientSurfaceControlErrorV0.mediaBoundaryMismatch
+            }
+            renderedReadyMediaSequence = receipt.mediaSequence
+            return true
+        } catch {
+            failClosed()
+            throw error
+        }
+    }
+
     public mutating func makeAcknowledgement(
         messageID: WireUUID,
         sentAtUnixMilliseconds: Int64
@@ -399,7 +456,9 @@ public struct ClientSurfaceControlCoordinatorV0: Sendable {
             }
             let acknowledgement = try media.takeAcknowledgementFence()
             let fence = acknowledgement.surface
-            guard acknowledgement.readyMediaSequence > 0,
+            guard renderedReadyMediaSequence
+                    == acknowledgement.readyMediaSequence,
+                  acknowledgement.readyMediaSequence > 0,
                   acknowledgement.readyMediaSequence
                     <= UInt64(WireLimits.maximumSafeInteger) else {
                 throw ClientSurfaceControlErrorV0.mediaBoundaryMismatch
@@ -431,6 +490,7 @@ public struct ClientSurfaceControlCoordinatorV0: Sendable {
                 descriptor: pendingTransition.descriptor
             )
             self.pendingTransition = nil
+            renderedReadyMediaSequence = nil
             phase = .awaitingAcknowledgement
             return data
         } catch {
@@ -546,6 +606,7 @@ public struct ClientSurfaceControlCoordinatorV0: Sendable {
         targetCandidates = []
         pendingTransition = nil
         pendingAcknowledgement = nil
+        renderedReadyMediaSequence = nil
         media.close()
     }
 }

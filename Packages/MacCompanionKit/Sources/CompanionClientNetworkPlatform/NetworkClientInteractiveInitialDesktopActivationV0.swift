@@ -70,6 +70,21 @@ package protocol NetworkClientInteractiveInitialPrimaryControllingV0:
         _ payload: InteractiveInputPayload
     ) async throws -> Data
     func closeInitialInputFrame() async throws -> Data?
+    func requestReplacementSurfaceTargets() async throws
+    func replacementSurfaceTargets() async
+        -> [InteractiveSurfaceTargetCandidateV0]?
+    func prepareReplacementSurfaceSelection(
+        targetKind: InteractiveSurfaceKind,
+        targetToken: UUID?
+    ) async throws -> ClientSurfaceSelectionRequestV0
+    func sendReplacementSurfaceSelection(_ frame: Data) async throws
+    func replacementSurfacePhase() async -> ClientSurfaceControlPhaseV0?
+    func replacementSurfaceDescriptor() async
+        -> AdaptiveSurfaceDescriptor?
+    func confirmReplacementRenderedFrame(
+        _ receipt: ClientDecodedFrameReceiptV0
+    ) async throws -> Bool
+    func acknowledgeReplacementSurface() async throws
 }
 
 extension ClientInteractivePrimaryChannelV0:
@@ -116,6 +131,7 @@ public actor NetworkClientInteractiveInitialDesktopActivationV0 {
     private let pump: NetworkClientInteractiveMediaRecordPumpV0
     private let input: NetworkClientInteractiveInputSenderV0
     private var pumpTask: Task<Void, Never>?
+    private var surfaceTransitionInFlight = false
 
     package init(
         channel: any NetworkClientInteractiveInitialPrimaryControllingV0,
@@ -178,6 +194,18 @@ public actor NetworkClientInteractiveInitialDesktopActivationV0 {
     public func reportRendered(
         _ receipt: ClientDecodedFrameReceiptV0
     ) async throws {
+        if phase == .active, surfaceTransitionInFlight {
+            do {
+                let matched = try await channel
+                    .confirmReplacementRenderedFrame(receipt)
+                guard matched else { return }
+                try await channel.acknowledgeReplacementSurface()
+                return
+            } catch {
+                await failClosed()
+                throw error
+            }
+        }
         if phase == .awaitingAcknowledgement || phase == .active { return }
         guard phase == .streaming else {
             throw NetworkClientInteractiveInitialDesktopErrorV0.invalidPhase
@@ -212,15 +240,85 @@ public actor NetworkClientInteractiveInitialDesktopActivationV0 {
     public func sendInput(
         _ payloads: [InteractiveInputPayload]
     ) async throws {
-        guard phase == .active else {
+        guard phase == .active, !surfaceTransitionInFlight else {
             throw NetworkClientInteractiveInitialDesktopErrorV0.invalidPhase
         }
         try await input.send(payloads)
     }
 
+    public func requestSurfaceTargets(
+        timeoutMilliseconds: UInt64 = 30_000
+    ) async throws -> [InteractiveSurfaceTargetCandidateV0] {
+        guard phase == .active, !surfaceTransitionInFlight,
+              timeoutMilliseconds > 0 else {
+            throw NetworkClientInteractiveInitialDesktopErrorV0.invalidPhase
+        }
+        do {
+            try await channel.requestReplacementSurfaceTargets()
+            let attempts = max(1, timeoutMilliseconds / 50)
+            for _ in 0..<attempts {
+                if let candidates = await channel.replacementSurfaceTargets() {
+                    return candidates
+                }
+                try await Task.sleep(for: .milliseconds(50))
+            }
+            throw ClientInteractivePrimaryChannelErrorV0
+                .surfaceTransitionDeadlineExceeded
+        } catch {
+            await failClosed()
+            throw error
+        }
+    }
+
+    /// Performs reset-before-select ordering and returns only after the exact
+    /// replacement acknowledgement reply reactivates input.
+    public func selectSurface(
+        targetKind: InteractiveSurfaceKind,
+        targetToken: UUID?,
+        timeoutMilliseconds: UInt64 = 30_000
+    ) async throws -> AdaptiveSurfaceDescriptor {
+        guard phase == .active, !surfaceTransitionInFlight,
+              timeoutMilliseconds > 0 else {
+            throw NetworkClientInteractiveInitialDesktopErrorV0.invalidPhase
+        }
+        surfaceTransitionInFlight = true
+        do {
+            let selection = try await channel
+                .prepareReplacementSurfaceSelection(
+                    targetKind: targetKind,
+                    targetToken: targetToken
+                )
+            try await input.sendPreparedReset(selection.reset)
+            try await channel.sendReplacementSurfaceSelection(
+                selection.requestJSON
+            )
+            let attempts = max(1, timeoutMilliseconds / 50)
+            for _ in 0..<attempts {
+                let surfacePhase = await channel.replacementSurfacePhase()
+                if surfacePhase == .active,
+                   let descriptor = await channel
+                    .replacementSurfaceDescriptor() {
+                    surfaceTransitionInFlight = false
+                    return descriptor
+                }
+                if surfacePhase == .closed || surfacePhase == nil {
+                    throw NetworkClientInteractiveInitialDesktopErrorV0
+                        .unavailable
+                }
+                try await Task.sleep(for: .milliseconds(50))
+            }
+            throw ClientInteractivePrimaryChannelErrorV0
+                .surfaceTransitionDeadlineExceeded
+        } catch {
+            await failClosed()
+            throw error
+        }
+    }
+
     public func close() async {
         guard phase != .closed else { return }
         phase = .closed
+        surfaceTransitionInFlight = false
         pumpTask?.cancel()
         pumpTask = nil
         await pump.close()
@@ -241,6 +339,7 @@ public actor NetworkClientInteractiveInitialDesktopActivationV0 {
     private func failClosed() async {
         guard phase != .closed, phase != .failed else { return }
         phase = .failed
+        surfaceTransitionInFlight = false
         pumpTask?.cancel()
         pumpTask = nil
         await pump.close()

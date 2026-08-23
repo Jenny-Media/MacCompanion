@@ -112,6 +112,35 @@ private actor InitialDesktopTestPrimaryV0:
     func closeInitialInputFrame() throws -> Data? {
         try JSONEncoder().encode(["kind": "reset"])
     }
+
+    func requestReplacementSurfaceTargets() {}
+
+    func replacementSurfaceTargets()
+        -> [InteractiveSurfaceTargetCandidateV0]?
+    { [] }
+
+    func prepareReplacementSurfaceSelection(
+        targetKind: InteractiveSurfaceKind,
+        targetToken: UUID?
+    ) throws -> ClientSurfaceSelectionRequestV0 {
+        throw NetworkClientInteractiveInitialDesktopErrorV0.unavailable
+    }
+
+    func sendReplacementSurfaceSelection(_ frame: Data) {}
+
+    func replacementSurfacePhase() -> ClientSurfaceControlPhaseV0? {
+        .active
+    }
+
+    func replacementSurfaceDescriptor()
+        -> AdaptiveSurfaceDescriptor?
+    { descriptor }
+
+    func confirmReplacementRenderedFrame(
+        _ receipt: ClientDecodedFrameReceiptV0
+    ) -> Bool { false }
+
+    func acknowledgeReplacementSurface() {}
 }
 
 private actor InitialDesktopTestRendererV0:
@@ -166,6 +195,105 @@ private actor InitialDesktopInputIOV0 {
     func cancel() { cancelled = true }
     func count() -> Int { sends.count }
     func value(at index: Int) -> Data { sends[index] }
+}
+
+private actor ReplacementOrderingLogV0 {
+    private var values: [String] = []
+    func append(_ value: String) { values.append(value) }
+    func snapshot() -> [String] { values }
+}
+
+private actor ReplacementTestPrimaryV0:
+    NetworkClientInteractiveInitialPrimaryControllingV0
+{
+    let initial: AdaptiveSurfaceDescriptor
+    let replacement: AdaptiveSurfaceDescriptor
+    let candidate: InteractiveSurfaceTargetCandidateV0
+    let log: ReplacementOrderingLogV0
+    private var initialPhase: ClientInitialSurfacePhaseV0 = .awaitingRequest
+    private var replacementPhase: ClientSurfaceControlPhaseV0 = .active
+
+    init(
+        initial: AdaptiveSurfaceDescriptor,
+        replacement: AdaptiveSurfaceDescriptor,
+        candidate: InteractiveSurfaceTargetCandidateV0,
+        log: ReplacementOrderingLogV0
+    ) {
+        self.initial = initial
+        self.replacement = replacement
+        self.candidate = candidate
+        self.log = log
+    }
+
+    func beginInitialSurface() { initialPhase = .awaitingDescriptor }
+    func waitForInitialDescriptor(
+        timeoutMilliseconds: UInt64
+    ) -> AdaptiveSurfaceDescriptor {
+        initialPhase = .awaitingMedia
+        return initial
+    }
+    func admitInitialMedia(
+        header: MediaRecordHeader,
+        payloadByteCount: Int
+    ) -> ClientMediaAdmissionV0 { .videoAccessUnit(cleanKeyframe: true) }
+    func confirmInitialRenderedFrame(
+        _ receipt: ClientDecodedFrameReceiptV0
+    ) -> Bool { true }
+    func acknowledgeInitialSurface() { initialPhase = .awaitingAcknowledgement }
+    func initialSurfacePhase() -> ClientInitialSurfacePhaseV0? { initialPhase }
+    func acknowledgeInitialFromHost() { initialPhase = .active }
+    func makeInitialInputFrame(
+        _ payload: InteractiveInputPayload
+    ) throws -> Data {
+        try JSONEncoder().encode(["kind": payload.kind.rawValue])
+    }
+    func closeInitialInputFrame() throws -> Data? { nil }
+
+    func requestReplacementSurfaceTargets() {}
+    func replacementSurfaceTargets()
+        -> [InteractiveSurfaceTargetCandidateV0]?
+    { [candidate] }
+    func prepareReplacementSurfaceSelection(
+        targetKind: InteractiveSurfaceKind,
+        targetToken: UUID?
+    ) throws -> ClientSurfaceSelectionRequestV0 {
+        let reset = try InteractiveInputEnvelope(
+            messageID: WireUUID(UUID()),
+            interactiveSessionID: WireUUID(initial.interactiveSessionID),
+            authorizationEpoch: initial.authorizationEpoch,
+            sequence: 1,
+            clientMonotonicMilliseconds: 10,
+            surfaceID: WireUUID(initial.surfaceID),
+            surfaceRevision: initial.surfaceRevision,
+            coordinateSpaceRevision: initial.coordinateSpaceRevision,
+            input: .reset
+        )
+        replacementPhase = .awaitingSelection
+        return ClientSurfaceSelectionRequestV0(
+            reset: reset,
+            requestJSON: Data([0xaa])
+        )
+    }
+    func sendReplacementSurfaceSelection(_ frame: Data) async {
+        await log.append("select")
+        replacementPhase = .awaitingMedia
+    }
+    func replacementSurfacePhase() -> ClientSurfaceControlPhaseV0? {
+        replacementPhase
+    }
+    func replacementSurfaceDescriptor()
+        -> AdaptiveSurfaceDescriptor?
+    { replacement }
+    func confirmReplacementRenderedFrame(
+        _ receipt: ClientDecodedFrameReceiptV0
+    ) -> Bool {
+        replacementPhase == .awaitingMedia
+            && receipt.fence.surfaceID == replacement.surfaceID
+    }
+    func acknowledgeReplacementSurface() async {
+        await log.append("acknowledge")
+        replacementPhase = .active
+    }
 }
 
 private func mediaPumpHeader(
@@ -400,4 +528,165 @@ private func mediaPumpConnection(
     #expect(framedReset.dropFirst(4) == Data(#"{"kind":"reset"}"#.utf8))
     #expect(await inputIO.cancelled)
     #expect(await renderer.closed)
+}
+
+@Test func replacementSurfaceOrdersResetBeforeSelectAndAckBeforeInput()
+    async throws
+{
+    let sessionID = UUID()
+    let applicationToken = UUID()
+    let initial = try AdaptiveSurfaceDescriptor(
+        interactiveSessionID: sessionID,
+        authorizationEpoch: .init(rawValue: 1),
+        surfaceID: UUID(),
+        kind: .desktop,
+        surfaceRevision: .init(rawValue: 1),
+        coordinateSpaceRevision: .init(rawValue: 1),
+        encodedWidth: 640,
+        encodedHeight: 480,
+        logicalWidthPoints: 640,
+        logicalHeightPoints: 480,
+        interactionClasses: [.view, .pointer, .keyboard],
+        privacyProfile: .visualOnly,
+        metadataFields: [],
+        createdAtMonotonicMilliseconds: 1,
+        expiresAtMonotonicMilliseconds: 30_001
+    )
+    let replacement = try AdaptiveSurfaceDescriptor(
+        interactiveSessionID: sessionID,
+        authorizationEpoch: initial.authorizationEpoch,
+        surfaceID: UUID(),
+        kind: .application,
+        surfaceRevision: .init(rawValue: 2),
+        coordinateSpaceRevision: .init(rawValue: 2),
+        applicationToken: applicationToken,
+        fallbackSurfaceID: initial.surfaceID,
+        encodedWidth: 800,
+        encodedHeight: 600,
+        logicalWidthPoints: 800,
+        logicalHeightPoints: 600,
+        interactionClasses: [.view, .pointer, .keyboard],
+        privacyProfile: .visualOnly,
+        metadataFields: [.applicationName],
+        createdAtMonotonicMilliseconds: 2,
+        expiresAtMonotonicMilliseconds: 30_002
+    )
+    let candidate = try InteractiveSurfaceTargetCandidateV0(
+        targetToken: WireUUID(applicationToken),
+        kind: .application,
+        applicationToken: WireUUID(applicationToken),
+        applicationName: "Notes",
+        windowOrdinal: nil,
+        currentWindowAvailable: true
+    )
+    let log = ReplacementOrderingLogV0()
+    let primary = ReplacementTestPrimaryV0(
+        initial: initial,
+        replacement: replacement,
+        candidate: candidate,
+        log: log
+    )
+    let endpoint = try EndpointCandidate(
+        kind: .ipv4,
+        value: "192.0.2.46",
+        port: 48_323
+    )
+    let mediaIO = InitialDesktopSuspendingIOV0(bytes: Data())
+    let inputConnection = NetworkClientInteractiveReadyRoleConnectionV0(
+        endpoint: endpoint,
+        role: .input,
+        channelID: WireUUID(UUID()),
+        send: { value in
+            guard value.count > 4 else { return }
+            if let envelope = try? InteractiveInputCodec.decode(
+                Data(value.dropFirst(4))
+            ), envelope.input == .reset {
+                await log.append("reset")
+            } else {
+                await log.append("input")
+            }
+        },
+        cancel: {}
+    )
+    let mediaConnection = NetworkClientInteractiveReadyRoleConnectionV0(
+        endpoint: endpoint,
+        role: .media,
+        channelID: WireUUID(UUID()),
+        receive: { await mediaIO.receive(maximumLength: $0) },
+        cancel: { await mediaIO.cancel() }
+    )
+    let activation = try NetworkClientInteractiveInitialDesktopActivationV0(
+        channel: primary,
+        inputConnection: inputConnection,
+        mediaConnection: mediaConnection,
+        renderer: InitialDesktopTestRendererV0()
+    )
+
+    #expect(try await activation.start() == initial)
+    try await activation.reportRendered(ClientDecodedFrameReceiptV0(
+        generation: 1,
+        fence: ClientDecoderFenceV0(header: try MediaRecordHeader(
+            type: .videoAccessUnit,
+            flags: [.cleanKeyframe],
+            payloadLength: 1,
+            interactiveSessionID: initial.interactiveSessionID,
+            authorizationEpoch: initial.authorizationEpoch,
+            surfaceID: initial.surfaceID,
+            surfaceRevision: initial.surfaceRevision,
+            coordinateSpaceRevision: initial.coordinateSpaceRevision,
+            mediaSequence: 1,
+            presentationTimeNanoseconds: 1,
+            encodedWidth: initial.encodedWidth,
+            encodedHeight: initial.encodedHeight
+        )),
+        mediaSequence: 1,
+        presentationTimeNanoseconds: 1,
+        frameReference: UUID()
+    ))
+    await primary.acknowledgeInitialFromHost()
+    #expect(await activation.refreshPrimaryState())
+    #expect(try await activation.requestSurfaceTargets() == [candidate])
+
+    let selection = Task {
+        try await activation.selectSurface(
+            targetKind: .application,
+            targetToken: applicationToken,
+            timeoutMilliseconds: 1_000
+        )
+    }
+    for _ in 0..<1_000 {
+        if await primary.replacementSurfacePhase() == .awaitingMedia { break }
+        try await Task.sleep(for: .milliseconds(1))
+    }
+    #expect(await primary.replacementSurfacePhase() == .awaitingMedia)
+    #expect(await log.snapshot() == ["reset", "select"])
+    let replacementHeader = try MediaRecordHeader(
+        type: .videoAccessUnit,
+        flags: [.cleanKeyframe],
+        payloadLength: 1,
+        interactiveSessionID: replacement.interactiveSessionID,
+        authorizationEpoch: replacement.authorizationEpoch,
+        surfaceID: replacement.surfaceID,
+        surfaceRevision: replacement.surfaceRevision,
+        coordinateSpaceRevision: replacement.coordinateSpaceRevision,
+        mediaSequence: 2,
+        presentationTimeNanoseconds: 2,
+        encodedWidth: replacement.encodedWidth,
+        encodedHeight: replacement.encodedHeight
+    )
+    try await activation.reportRendered(ClientDecodedFrameReceiptV0(
+        generation: 2,
+        fence: ClientDecoderFenceV0(header: replacementHeader),
+        mediaSequence: 2,
+        presentationTimeNanoseconds: 2,
+        frameReference: UUID()
+    ))
+    #expect(try await selection.value == replacement)
+    #expect(await log.snapshot() == ["reset", "select", "acknowledge"])
+    try await activation.sendInput([
+        InteractiveInputPayload.pointerMove(x: 1, y: 2),
+    ])
+    #expect(await log.snapshot()
+        == ["reset", "select", "acknowledge", "input"])
+    await activation.close()
 }

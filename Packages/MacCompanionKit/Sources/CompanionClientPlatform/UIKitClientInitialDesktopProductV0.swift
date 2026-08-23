@@ -120,7 +120,7 @@ public final class UIKitClientInitialMediaRendererV0:
 @available(iOS 17.0, *)
 @MainActor
 public final class UIKitClientInitialDesktopProductV0 {
-    public let descriptor: AdaptiveSurfaceDescriptor
+    public private(set) var descriptor: AdaptiveSurfaceDescriptor
     public let activation:
         NetworkClientInteractiveInitialDesktopActivationV0
     public let decoderRenderer: UIKitClientDecodeRenderCoordinatorV0
@@ -163,6 +163,32 @@ public final class UIKitClientInitialDesktopProductV0 {
         _ payloads: [InteractiveInputPayload]
     ) async throws {
         try await activation.sendInput(payloads)
+    }
+
+    public func requestSurfaceTargets() async throws
+        -> [InteractiveSurfaceTargetCandidateV0]
+    {
+        try await activation.requestSurfaceTargets()
+    }
+
+    public func selectSurface(
+        kind: InteractiveSurfaceKind,
+        targetToken: UUID?
+    ) async throws {
+        inputRelay?.setActive(false)
+        surface.setInputEnabled(false)
+        surface.hideSoftwareKeyboard()
+        let next = try await activation.selectSurface(
+            targetKind: kind,
+            targetToken: targetToken
+        )
+        descriptor = next
+        surface.setEncodedDimensions(
+            width: next.encodedWidth,
+            height: next.encodedHeight
+        )
+        inputRelay?.setActive(true)
+        surface.setInputEnabled(true)
     }
 
     public func close() async {
