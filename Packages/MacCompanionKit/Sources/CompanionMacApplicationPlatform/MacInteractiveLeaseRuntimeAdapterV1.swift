@@ -123,6 +123,18 @@ package protocol MacInteractiveMenuRuntimeLeaseOwningV1: Sendable {
         _ command: InteractiveRuntimeRevokeCommandV0
     ) async throws -> InteractiveRuntimeRevokedReceiptV0
 
+    func prepareSurfaceTransition(
+        _ command: InteractiveRuntimeSurfaceTransitionCommandV0,
+        nowMonotonicNanoseconds: UInt64
+    ) async throws -> InteractiveRuntimeSurfaceTransitionReceiptV0
+    func acknowledgeSurface(
+        _ command: InteractiveRuntimeSurfaceAcknowledgementCommandV0,
+        nowMonotonicNanoseconds: UInt64
+    ) async throws -> InteractiveRuntimeSurfaceAcknowledgementReceiptV0
+    func terminateSurfaceFailure(
+        interactiveSessionID: UUID
+    ) async throws -> Bool
+
     func invalidateAgentAuthority() async throws
     func postInputEnvelope(
         _ envelope: InteractiveInputEnvelope,
@@ -142,6 +154,24 @@ extension MacInteractiveMenuRuntimeLeaseOwningV1 {
     ) async throws {
         throw MacLocalXPCInteractiveRoleDataErrorV1.unavailable
     }
+
+    package func prepareSurfaceTransition(
+        _: InteractiveRuntimeSurfaceTransitionCommandV0,
+        nowMonotonicNanoseconds _: UInt64
+    ) async throws -> InteractiveRuntimeSurfaceTransitionReceiptV0 {
+        throw MacLocalXPCInteractiveLeaseErrorV1.unavailable
+    }
+    package func acknowledgeSurface(
+        _: InteractiveRuntimeSurfaceAcknowledgementCommandV0,
+        nowMonotonicNanoseconds _: UInt64
+    ) async throws -> InteractiveRuntimeSurfaceAcknowledgementReceiptV0 {
+        throw MacLocalXPCInteractiveLeaseErrorV1.unavailable
+    }
+    package func terminateSurfaceFailure(
+        interactiveSessionID _: UUID
+    ) async throws -> Bool {
+        throw MacLocalXPCInteractiveLeaseErrorV1.unavailable
+    }
 }
 
 extension InteractiveMenuRuntimeOwnerV0:
@@ -159,6 +189,7 @@ public actor MacInteractiveLeaseRuntimeAdapterV1:
 {
     private let runtime: any MacInteractiveMenuRuntimeLeaseOwningV1
     private let desktop: any MacInteractiveInitialDesktopPreparingV1
+    private let surfaceTargets: MacInteractiveSurfaceTargetOwnerV1?
     private let expiryScheduler:
         any MacInteractiveLeaseExpirySchedulingV1
     private let monotonicClock: any MacInteractiveMonotonicClockV1
@@ -171,6 +202,7 @@ public actor MacInteractiveLeaseRuntimeAdapterV1:
     public init(runtime: InteractiveMenuRuntimeOwnerV0) {
         self.runtime = runtime
         desktop = MacUnavailableInteractiveInitialDesktopPreparerV1()
+        surfaceTargets = nil
         expiryScheduler = MacInteractiveSystemLeaseExpirySchedulerV1()
         monotonicClock = MacInteractiveSystemMonotonicClockV1()
     }
@@ -181,6 +213,19 @@ public actor MacInteractiveLeaseRuntimeAdapterV1:
     ) {
         self.runtime = runtime
         self.desktop = desktop
+        surfaceTargets = nil
+        expiryScheduler = MacInteractiveSystemLeaseExpirySchedulerV1()
+        monotonicClock = MacInteractiveSystemMonotonicClockV1()
+    }
+
+    public init(
+        runtime: InteractiveMenuRuntimeOwnerV0,
+        desktop: any MacInteractiveInitialDesktopPreparingV1,
+        surfaceTargets: MacInteractiveSurfaceTargetOwnerV1
+    ) {
+        self.runtime = runtime
+        self.desktop = desktop
+        self.surfaceTargets = surfaceTargets
         expiryScheduler = MacInteractiveSystemLeaseExpirySchedulerV1()
         monotonicClock = MacInteractiveSystemMonotonicClockV1()
     }
@@ -190,6 +235,7 @@ public actor MacInteractiveLeaseRuntimeAdapterV1:
     ) {
         self.runtime = runtime
         desktop = MacUnavailableInteractiveInitialDesktopPreparerV1()
+        surfaceTargets = nil
         expiryScheduler = MacInteractiveSystemLeaseExpirySchedulerV1()
         monotonicClock = MacInteractiveSystemMonotonicClockV1()
     }
@@ -200,6 +246,7 @@ public actor MacInteractiveLeaseRuntimeAdapterV1:
     ) {
         self.runtime = runtime
         self.desktop = desktop
+        surfaceTargets = nil
         expiryScheduler = MacInteractiveSystemLeaseExpirySchedulerV1()
         monotonicClock = MacInteractiveSystemMonotonicClockV1()
     }
@@ -212,6 +259,7 @@ public actor MacInteractiveLeaseRuntimeAdapterV1:
     ) {
         self.runtime = runtime
         self.desktop = desktop
+        surfaceTargets = nil
         self.expiryScheduler = expiryScheduler
         self.monotonicClock = monotonicClock
     }
@@ -290,6 +338,7 @@ public actor MacInteractiveLeaseRuntimeAdapterV1:
         do {
             let receipt = try await runtime.revoke(command)
             disarmExpiry()
+            await surfaceTargets?.invalidate()
             return receipt
         } catch {
             await latchIfRuntimeRequiresSafetyRecovery()
@@ -297,9 +346,112 @@ public actor MacInteractiveLeaseRuntimeAdapterV1:
         }
     }
 
+    public func interactiveSurfaceTargets(
+        _ command: LocalInteractiveSurfaceTargetsCommandV1,
+        nowMonotonicNanoseconds: UInt64
+    ) async throws -> LocalInteractiveSurfaceTargetsReceiptV1 {
+        try requireAvailable()
+        guard let surfaceTargets,
+              nowMonotonicNanoseconds / 1_000_000 <= UInt64(Int64.max) else {
+            throw MacLocalXPCInteractiveLeaseErrorV1.unavailable
+        }
+        let snapshot = try await surfaceTargets.snapshot(
+            interactiveSessionID: command.interactiveSessionID,
+            authorizationEpoch: command.authorizationEpoch,
+            nowMonotonicMilliseconds: Int64(
+                nowMonotonicNanoseconds / 1_000_000
+            )
+        )
+        let receipt = try LocalInteractiveSurfaceTargetsReceiptV1(
+            correlationID: command.commandID,
+            snapshot: snapshot
+        )
+        try receipt.validate(against: command)
+        return receipt
+    }
+
+    public func resolveInteractiveSurface(
+        _ command: LocalInteractiveSurfaceResolveCommandV1,
+        nowMonotonicNanoseconds: UInt64
+    ) async throws -> LocalInteractiveSurfaceResolvedReceiptV1 {
+        try requireAvailable()
+        guard let surfaceTargets,
+              nowMonotonicNanoseconds / 1_000_000 <= UInt64(Int64.max) else {
+            throw MacLocalXPCInteractiveLeaseErrorV1.unavailable
+        }
+        let descriptor = try await surfaceTargets.resolve(
+            command,
+            nowMonotonicMilliseconds: Int64(
+                nowMonotonicNanoseconds / 1_000_000
+            )
+        )
+        let receipt = try LocalInteractiveSurfaceResolvedReceiptV1(
+            correlationID: command.commandID,
+            descriptor: descriptor
+        )
+        try receipt.validate(against: command)
+        return receipt
+    }
+
+    public func prepareInteractiveSurfaceTransition(
+        _ command: InteractiveRuntimeSurfaceTransitionCommandV0,
+        nowMonotonicNanoseconds: UInt64
+    ) async throws -> InteractiveRuntimeSurfaceTransitionReceiptV0 {
+        try requireAvailable()
+        do {
+            let receipt = try await runtime.prepareSurfaceTransition(
+                command,
+                nowMonotonicNanoseconds: nowMonotonicNanoseconds
+            )
+            try await armExpiry(
+                expectedDeadline:
+                    command.replacement.expiresAtMonotonicNanoseconds
+            )
+            return receipt
+        } catch {
+            await latchIfRuntimeRequiresSafetyRecovery()
+            throw error
+        }
+    }
+
+    public func acknowledgeInteractiveSurface(
+        _ command: InteractiveRuntimeSurfaceAcknowledgementCommandV0,
+        nowMonotonicNanoseconds: UInt64
+    ) async throws -> InteractiveRuntimeSurfaceAcknowledgementReceiptV0 {
+        try requireAvailable()
+        do {
+            return try await runtime.acknowledgeSurface(
+                command,
+                nowMonotonicNanoseconds: nowMonotonicNanoseconds
+            )
+        } catch {
+            await latchIfRuntimeRequiresSafetyRecovery()
+            throw error
+        }
+    }
+
+    public func terminateInteractiveSurfaceFailure(
+        _ command: LocalInteractiveSurfaceFailureCommandV1
+    ) async throws -> LocalInteractiveSurfaceFailureReceiptV1 {
+        try requireAvailable()
+        let terminated = try await runtime.terminateSurfaceFailure(
+            interactiveSessionID: command.interactiveSessionID
+        )
+        if terminated {
+            disarmExpiry()
+            await surfaceTargets?.invalidate()
+        }
+        return try LocalInteractiveSurfaceFailureReceiptV1(
+            correlationID: command.commandID,
+            interactiveSessionID: command.interactiveSessionID,
+            terminated: terminated
+        )
+    }
+
     public func invalidateAgentAuthority() async {
         guard stateStorage == .available else { return }
         disarmExpiry()
+        await surfaceTargets?.invalidate()
         do {
             try await runtime.invalidateAgentAuthority()
             await latchIfRuntimeRequiresSafetyRecovery()
@@ -311,6 +463,7 @@ public actor MacInteractiveLeaseRuntimeAdapterV1:
     public func stopInteractiveControlLocally() async throws {
         try requireAvailable()
         disarmExpiry()
+        await surfaceTargets?.invalidate()
         do {
             try await runtime.invalidateAgentAuthority()
             await latchIfRuntimeRequiresSafetyRecovery()

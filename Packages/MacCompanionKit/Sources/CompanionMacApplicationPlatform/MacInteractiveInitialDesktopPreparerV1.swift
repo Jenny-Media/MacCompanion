@@ -27,9 +27,11 @@ public final class MacInteractiveInitialDesktopPreparerV1:
         @Sendable (CGDirectDisplayID) -> (width: Int, height: Int)
     private let displayRotation: @Sendable (CGDirectDisplayID) -> Double
     private let identifier: @Sendable () -> UUID
+    private let surfaceTargets: MacInteractiveSurfaceTargetOwnerV1?
 
     public convenience init(
         displaySelection: MacInteractiveOpaqueDisplaySelectionV1,
+        surfaceTargets: MacInteractiveSurfaceTargetOwnerV1? = nil,
         identifier: @escaping @Sendable () -> UUID = { UUID() }
     ) {
         self.init(
@@ -43,6 +45,7 @@ public final class MacInteractiveInitialDesktopPreparerV1:
                 (Int(CGDisplayPixelsWide($0)), Int(CGDisplayPixelsHigh($0)))
             },
             displayRotation: { CGDisplayRotation($0) },
+            surfaceTargets: surfaceTargets,
             identifier: identifier
         )
     }
@@ -57,12 +60,14 @@ public final class MacInteractiveInitialDesktopPreparerV1:
                 -> (width: Int, height: Int),
         displayRotation:
             @escaping @Sendable (CGDirectDisplayID) -> Double,
+        surfaceTargets: MacInteractiveSurfaceTargetOwnerV1? = nil,
         identifier: @escaping @Sendable () -> UUID
     ) {
         self.resolveDisplay = resolveDisplay
         self.displayBounds = displayBounds
         self.pixelDimensions = pixelDimensions
         self.displayRotation = displayRotation
+        self.surfaceTargets = surfaceTargets
         self.identifier = identifier
     }
 
@@ -119,6 +124,13 @@ public final class MacInteractiveInitialDesktopPreparerV1:
             descriptor: descriptor
         )
         try receipt.validate(against: command)
+        if let surfaceTargets {
+            try await surfaceTargets.bindInitialDesktop(
+                command: command,
+                descriptor: descriptor,
+                physicalDisplayID: displayID
+            )
+        }
         return receipt
     }
 

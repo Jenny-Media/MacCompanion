@@ -215,7 +215,7 @@
       "path": "local-xpc-interactive-lease-transport-v0.1.json",
       "kind": "localXPC.interactiveLeaseTransport.v0.1",
       "expect": "valid",
-      "canonicalSHA256": "642e77f65471f9bbfb01f4aa08c202734b8e9e2d65926f4ac8f780b9217add43"
+      "canonicalSHA256": "612916daaadbf807d5dd24df777d94b50ae01469c93df727b38f7ef77824a467"
     },
     {
       "path": "local-xpc-interactive-admission-transport-v0.1.json",
@@ -233,7 +233,7 @@
       "path": "mac-interactive-platform-effects-v0.1.json",
       "kind": "mac.interactivePlatformEffects.v0.1",
       "expect": "valid",
-      "canonicalSHA256": "cb24c49a221b489d4b959a963af748a79e74fabc604fefd0785c5349fc238d47"
+      "canonicalSHA256": "ff9e30a1fc4d14a39e7f423848449c8d64dc8fd37fcaa29dc8f5322419af169d"
     },
     {
       "path": "host-interactive-role-ingress-v0.1.json",

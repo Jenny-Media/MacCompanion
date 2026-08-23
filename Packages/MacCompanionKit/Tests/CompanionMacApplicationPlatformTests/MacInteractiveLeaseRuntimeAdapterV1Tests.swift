@@ -14,6 +14,8 @@ private actor AdapterRuntimeV1:
     var installResult: Result<InteractiveRuntimeInstallReceiptV0, Error>?
     var renewalError: Error?
     var revokeResult: Result<InteractiveRuntimeRevokedReceiptV0, Error>?
+    var surfaceTransitionResult:
+        Result<InteractiveRuntimeSurfaceTransitionReceiptV0, Error>?
     var invalidationError: Error?
     var invalidations = 0
     var deadline: UInt64?
@@ -45,6 +47,15 @@ private actor AdapterRuntimeV1:
         let receipt = try revokeResult!.get()
         deadline = nil
         stateStorage = .idle
+        return receipt
+    }
+
+    func prepareSurfaceTransition(
+        _ command: InteractiveRuntimeSurfaceTransitionCommandV0,
+        nowMonotonicNanoseconds _: UInt64
+    ) async throws -> InteractiveRuntimeSurfaceTransitionReceiptV0 {
+        let receipt = try surfaceTransitionResult!.get()
+        deadline = command.replacement.expiresAtMonotonicNanoseconds
         return receipt
     }
 
@@ -82,6 +93,12 @@ private actor AdapterRuntimeV1:
 
     func configureInvalidation(error: Error?) {
         invalidationError = error
+    }
+
+    func configureSurfaceTransition(
+        _ result: Result<InteractiveRuntimeSurfaceTransitionReceiptV0, Error>
+    ) {
+        surfaceTransitionResult = result
     }
 
     func configureDeadlinePublication(_ value: Bool) {
@@ -366,6 +383,102 @@ private struct AdapterUnavailableDesktopPreparerV1:
     #expect(await runtime.recordedExpiryTimes() == [8_000_000_000])
     #expect(await runtime.state() == .idle)
     #expect(await adapter.state() == .available)
+}
+
+@available(macOS 26.0, *)
+@Test func interactiveAdapterReschedulesSurfaceReplacementLeaseExpiry()
+    async throws
+{
+    let fixture = try interactiveAdapterFixtureV1()
+    let runtime = AdapterRuntimeV1()
+    await runtime.configureInstall(
+        .success(fixture.receipt),
+        state: .active(
+            interactiveSessionID:
+                fixture.command.lease.interactiveSessionID,
+            leaseID: fixture.command.lease.leaseID
+        )
+    )
+    let scheduler = AdapterExpirySchedulerV1()
+    let clock = AdapterMonotonicClockV1(2_000_000_000)
+    let adapter = MacInteractiveLeaseRuntimeAdapterV1(
+        runtime: runtime,
+        desktop: AdapterUnavailableDesktopPreparerV1(),
+        expiryScheduler: scheduler,
+        monotonicClock: clock
+    )
+    _ = try await adapter.installInteractiveLease(
+        fixture.command,
+        nowMonotonicNanoseconds: 2_000_000_000
+    )
+
+    let current = fixture.command.lease
+    let nextSurfaceID = UUID()
+    let replacement = try InteractiveExecutionLease(
+        leaseID: UUID(),
+        hostID: current.hostID,
+        deviceID: current.deviceID,
+        interactiveSessionID: current.interactiveSessionID,
+        authorizationEpoch: current.authorizationEpoch,
+        selectedDisplayID: current.selectedDisplayID,
+        surfaceID: nextSurfaceID,
+        surfaceRevision: .init(rawValue: 2),
+        coordinateRevision: .init(rawValue: 2),
+        allowedInteractionClasses: Set(current.allowedInteractionClasses),
+        renewalCounter: 1,
+        issuedAtMonotonicNanoseconds: 3_000_000_000,
+        expiresAtMonotonicNanoseconds: 5_500_000_000
+    )
+    let descriptor = try AdaptiveSurfaceDescriptor(
+        interactiveSessionID: current.interactiveSessionID,
+        authorizationEpoch: current.authorizationEpoch,
+        surfaceID: nextSurfaceID,
+        kind: .desktop,
+        surfaceRevision: .init(rawValue: 2),
+        coordinateSpaceRevision: .init(rawValue: 2),
+        encodedWidth: 100,
+        encodedHeight: 100,
+        logicalWidthPoints: 100,
+        logicalHeightPoints: 100,
+        interactionClasses: Set(current.allowedInteractionClasses),
+        privacyProfile: .visualOnly,
+        metadataFields: [],
+        createdAtMonotonicMilliseconds: 3_000,
+        expiresAtMonotonicMilliseconds: 5_500
+    )
+    let transition = try InteractiveRuntimeSurfaceTransitionCommandV0(
+        commandID: UUID(),
+        previousLeaseID: current.leaseID,
+        replacement: replacement,
+        descriptor: descriptor
+    )
+    let receipt = try InteractiveRuntimeSurfaceTransitionReceiptV0(
+        correlationID: transition.commandID,
+        previousLeaseID: current.leaseID,
+        replacementLeaseID: replacement.leaseID,
+        interactiveSessionID: current.interactiveSessionID,
+        surfaceID: nextSurfaceID,
+        surfaceRevision: .init(rawValue: 2),
+        coordinateRevision: .init(rawValue: 2),
+        mediaSequenceBeforeTransition: 4,
+        inputReleased: true,
+        captureSourcePrepared: true
+    )
+    await runtime.configureSurfaceTransition(.success(receipt))
+    clock.set(3_000_000_000)
+
+    #expect(try await adapter.prepareInteractiveSurfaceTransition(
+        transition,
+        nowMonotonicNanoseconds: 3_000_000_000
+    ) == receipt)
+    #expect(scheduler.delays() == [3_000_000_000, 2_500_000_000])
+    #expect(scheduler.isCancelled(0))
+    await scheduler.fire(0, includingCancelled: true)
+    #expect(await runtime.recordedExpiryTimes().isEmpty)
+
+    clock.set(5_500_000_000)
+    await scheduler.fire(1)
+    #expect(await runtime.recordedExpiryTimes() == [5_500_000_000])
 }
 
 @available(macOS 26.0, *)

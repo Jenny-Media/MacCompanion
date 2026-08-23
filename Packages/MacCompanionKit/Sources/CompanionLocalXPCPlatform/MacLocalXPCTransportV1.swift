@@ -410,6 +410,13 @@ public final class MacLocalXPCServerV1:
         case install(InteractiveRuntimeInstallCommandV0)
         case renew(InteractiveRuntimeLeaseRenewalV0)
         case revoke(InteractiveRuntimeRevokeCommandV0)
+        case surfaceTargets(LocalInteractiveSurfaceTargetsCommandV1)
+        case surfaceResolve(LocalInteractiveSurfaceResolveCommandV1)
+        case surfaceTransition(InteractiveRuntimeSurfaceTransitionCommandV0)
+        case surfaceAcknowledgement(
+            InteractiveRuntimeSurfaceAcknowledgementCommandV0
+        )
+        case surfaceFailure(LocalInteractiveSurfaceFailureCommandV1)
 
         var kind: MacLocalXPCInteractiveLeaseCommandKindV1 {
             switch self {
@@ -417,6 +424,11 @@ public final class MacLocalXPCServerV1:
             case .install: .install
             case .renew: .renew
             case .revoke: .revoke
+            case .surfaceTargets: .surfaceTargets
+            case .surfaceResolve: .surfaceResolve
+            case .surfaceTransition: .surfaceTransition
+            case .surfaceAcknowledgement: .surfaceAcknowledgement
+            case .surfaceFailure: .surfaceFailure
             }
         }
 
@@ -425,6 +437,10 @@ public final class MacLocalXPCServerV1:
             case .prepareInitialDesktop: .applyInteractiveSurface
             case .install, .renew: .installInteractiveLease
             case .revoke: .revokeInteractiveLease
+            case .surfaceTargets, .surfaceResolve,
+                    .surfaceTransition, .surfaceAcknowledgement,
+                    .surfaceFailure:
+                .applyInteractiveSurface
             }
         }
     }
@@ -1460,6 +1476,262 @@ public final class MacLocalXPCServerV1:
         }
     }
 
+    public func interactiveSurfaceTargets(
+        _ command: LocalInteractiveSurfaceTargetsCommandV1
+    ) async throws -> LocalInteractiveSurfaceTargetsReceiptV1 {
+        try await interactiveSurfaceTargets(command, endpointBinding: nil)
+    }
+
+    package func interactiveSurfaceTargets(
+        generation: UInt64,
+        endpointToken: UUID,
+        command: LocalInteractiveSurfaceTargetsCommandV1
+    ) async throws -> LocalInteractiveSurfaceTargetsReceiptV1 {
+        try await interactiveSurfaceTargets(
+            command,
+            endpointBinding: .init(
+                generation: generation,
+                endpointToken: endpointToken
+            )
+        )
+    }
+
+    private func interactiveSurfaceTargets(
+        _ command: LocalInteractiveSurfaceTargetsCommandV1,
+        endpointBinding: MacLocalXPCInteractiveLeaseEndpointBindingV1?
+    ) async throws -> LocalInteractiveSurfaceTargetsReceiptV1 {
+        let payload = try encodeInteractiveLeasePayload {
+            try LocalInteractiveLeaseWireCodecV1
+                .encodeSurfaceTargetsCommand(command)
+        }
+        let reply = try await sendInteractiveLeaseCommand(
+            command: .surfaceTargets(command),
+            payload: payload,
+            endpointBinding: endpointBinding
+        )
+        do {
+            guard let reply else { throw MacLocalXPCInteractiveLeaseErrorV1.malformedOrTransportError }
+            let receipt = try LocalInteractiveLeaseWireCodecV1
+                .decodeSurfaceTargetsReceipt(reply)
+            try receipt.validate(against: command)
+            return receipt
+        } catch {
+            cancelPeerAfterMalformedInteractiveReply(
+                endpointBinding: endpointBinding
+            )
+            throw MacLocalXPCInteractiveLeaseErrorV1
+                .malformedOrTransportError
+        }
+    }
+
+    public func resolveInteractiveSurface(
+        _ command: LocalInteractiveSurfaceResolveCommandV1
+    ) async throws -> LocalInteractiveSurfaceResolvedReceiptV1 {
+        try await resolveInteractiveSurface(command, endpointBinding: nil)
+    }
+
+    package func resolveInteractiveSurface(
+        generation: UInt64,
+        endpointToken: UUID,
+        command: LocalInteractiveSurfaceResolveCommandV1
+    ) async throws -> LocalInteractiveSurfaceResolvedReceiptV1 {
+        try await resolveInteractiveSurface(
+            command,
+            endpointBinding: .init(
+                generation: generation,
+                endpointToken: endpointToken
+            )
+        )
+    }
+
+    private func resolveInteractiveSurface(
+        _ command: LocalInteractiveSurfaceResolveCommandV1,
+        endpointBinding: MacLocalXPCInteractiveLeaseEndpointBindingV1?
+    ) async throws -> LocalInteractiveSurfaceResolvedReceiptV1 {
+        let payload = try encodeInteractiveLeasePayload {
+            try LocalInteractiveLeaseWireCodecV1
+                .encodeSurfaceResolveCommand(command)
+        }
+        let reply = try await sendInteractiveLeaseCommand(
+            command: .surfaceResolve(command),
+            payload: payload,
+            endpointBinding: endpointBinding
+        )
+        do {
+            guard let reply else { throw MacLocalXPCInteractiveLeaseErrorV1.malformedOrTransportError }
+            let receipt = try LocalInteractiveLeaseWireCodecV1
+                .decodeSurfaceResolvedReceipt(reply)
+            try receipt.validate(against: command)
+            return receipt
+        } catch {
+            cancelPeerAfterMalformedInteractiveReply(
+                endpointBinding: endpointBinding
+            )
+            throw MacLocalXPCInteractiveLeaseErrorV1
+                .malformedOrTransportError
+        }
+    }
+
+    public func prepareInteractiveSurfaceTransition(
+        _ command: InteractiveRuntimeSurfaceTransitionCommandV0
+    ) async throws -> InteractiveRuntimeSurfaceTransitionReceiptV0 {
+        try await prepareInteractiveSurfaceTransition(
+            command,
+            endpointBinding: nil
+        )
+    }
+
+    package func prepareInteractiveSurfaceTransition(
+        generation: UInt64,
+        endpointToken: UUID,
+        command: InteractiveRuntimeSurfaceTransitionCommandV0
+    ) async throws -> InteractiveRuntimeSurfaceTransitionReceiptV0 {
+        try await prepareInteractiveSurfaceTransition(
+            command,
+            endpointBinding: .init(
+                generation: generation,
+                endpointToken: endpointToken
+            )
+        )
+    }
+
+    private func prepareInteractiveSurfaceTransition(
+        _ command: InteractiveRuntimeSurfaceTransitionCommandV0,
+        endpointBinding: MacLocalXPCInteractiveLeaseEndpointBindingV1?
+    ) async throws -> InteractiveRuntimeSurfaceTransitionReceiptV0 {
+        let payload = try encodeInteractiveLeasePayload {
+            try LocalInteractiveLeaseWireCodecV1
+                .encodeSurfaceTransitionCommand(command)
+        }
+        let reply = try await sendInteractiveLeaseCommand(
+            command: .surfaceTransition(command),
+            payload: payload,
+            endpointBinding: endpointBinding
+        )
+        do {
+            guard let reply else { throw MacLocalXPCInteractiveLeaseErrorV1.malformedOrTransportError }
+            let receipt = try LocalInteractiveLeaseWireCodecV1
+                .decodeSurfaceTransitionReceipt(reply)
+            try receipt.validate(against: command)
+            return receipt
+        } catch {
+            cancelPeerAfterMalformedInteractiveReply(
+                endpointBinding: endpointBinding
+            )
+            throw MacLocalXPCInteractiveLeaseErrorV1
+                .malformedOrTransportError
+        }
+    }
+
+    public func acknowledgeInteractiveSurface(
+        _ command: InteractiveRuntimeSurfaceAcknowledgementCommandV0
+    ) async throws -> InteractiveRuntimeSurfaceAcknowledgementReceiptV0 {
+        try await acknowledgeInteractiveSurface(command, endpointBinding: nil)
+    }
+
+    package func acknowledgeInteractiveSurface(
+        generation: UInt64,
+        endpointToken: UUID,
+        command: InteractiveRuntimeSurfaceAcknowledgementCommandV0
+    ) async throws -> InteractiveRuntimeSurfaceAcknowledgementReceiptV0 {
+        try await acknowledgeInteractiveSurface(
+            command,
+            endpointBinding: .init(
+                generation: generation,
+                endpointToken: endpointToken
+            )
+        )
+    }
+
+    private func acknowledgeInteractiveSurface(
+        _ command: InteractiveRuntimeSurfaceAcknowledgementCommandV0,
+        endpointBinding: MacLocalXPCInteractiveLeaseEndpointBindingV1?
+    ) async throws -> InteractiveRuntimeSurfaceAcknowledgementReceiptV0 {
+        let payload = try encodeInteractiveLeasePayload {
+            try LocalInteractiveLeaseWireCodecV1
+                .encodeSurfaceAcknowledgementCommand(command)
+        }
+        let reply = try await sendInteractiveLeaseCommand(
+            command: .surfaceAcknowledgement(command),
+            payload: payload,
+            endpointBinding: endpointBinding
+        )
+        do {
+            guard let reply else { throw MacLocalXPCInteractiveLeaseErrorV1.malformedOrTransportError }
+            let receipt = try LocalInteractiveLeaseWireCodecV1
+                .decodeSurfaceAcknowledgementReceipt(reply)
+            try receipt.validate(against: command)
+            return receipt
+        } catch {
+            cancelPeerAfterMalformedInteractiveReply(
+                endpointBinding: endpointBinding
+            )
+            throw MacLocalXPCInteractiveLeaseErrorV1
+                .malformedOrTransportError
+        }
+    }
+
+    public func terminateInteractiveSurfaceFailure(
+        _ command: LocalInteractiveSurfaceFailureCommandV1
+    ) async throws -> LocalInteractiveSurfaceFailureReceiptV1 {
+        try await terminateInteractiveSurfaceFailure(
+            command,
+            endpointBinding: nil
+        )
+    }
+
+    package func terminateInteractiveSurfaceFailure(
+        generation: UInt64,
+        endpointToken: UUID,
+        command: LocalInteractiveSurfaceFailureCommandV1
+    ) async throws -> LocalInteractiveSurfaceFailureReceiptV1 {
+        try await terminateInteractiveSurfaceFailure(
+            command,
+            endpointBinding: .init(
+                generation: generation,
+                endpointToken: endpointToken
+            )
+        )
+    }
+
+    private func terminateInteractiveSurfaceFailure(
+        _ command: LocalInteractiveSurfaceFailureCommandV1,
+        endpointBinding: MacLocalXPCInteractiveLeaseEndpointBindingV1?
+    ) async throws -> LocalInteractiveSurfaceFailureReceiptV1 {
+        let payload = try encodeInteractiveLeasePayload {
+            try LocalInteractiveLeaseWireCodecV1
+                .encodeSurfaceFailureCommand(command)
+        }
+        let reply = try await sendInteractiveLeaseCommand(
+            command: .surfaceFailure(command),
+            payload: payload,
+            endpointBinding: endpointBinding
+        )
+        do {
+            guard let reply else { throw MacLocalXPCInteractiveLeaseErrorV1.malformedOrTransportError }
+            let receipt = try LocalInteractiveLeaseWireCodecV1
+                .decodeSurfaceFailureReceipt(reply)
+            try receipt.validate(against: command)
+            return receipt
+        } catch {
+            cancelPeerAfterMalformedInteractiveReply(
+                endpointBinding: endpointBinding
+            )
+            throw MacLocalXPCInteractiveLeaseErrorV1
+                .malformedOrTransportError
+        }
+    }
+
+    private func encodeInteractiveLeasePayload(
+        _ body: () throws -> Data
+    ) throws -> Data {
+        do { return try body() }
+        catch {
+            throw MacLocalXPCInteractiveLeaseErrorV1
+                .malformedOrTransportError
+        }
+    }
+
     private func sendInteractiveLeaseCommand(
         command: InteractiveLeaseCommand,
         payload: Data,
@@ -1622,7 +1894,9 @@ public final class MacLocalXPCServerV1:
         pending.deadline = nil
 
         let validPayloadShape: Bool = switch transaction.kind {
-        case .prepareInitialDesktop, .install, .revoke:
+        case .prepareInitialDesktop, .install, .revoke,
+                .surfaceTargets, .surfaceResolve, .surfaceTransition,
+                .surfaceAcknowledgement, .surfaceFailure:
             payload.map {
                 !$0.isEmpty
                     && $0.count <= LocalInteractiveLeaseWireCodecV1
@@ -1727,6 +2001,16 @@ public final class MacLocalXPCServerV1:
         case .install: MCLocalXPCInteractiveLeaseCommandInstall
         case .renew: MCLocalXPCInteractiveLeaseCommandRenew
         case .revoke: MCLocalXPCInteractiveLeaseCommandRevoke
+        case .surfaceTargets:
+            MCLocalXPCInteractiveLeaseCommandSurfaceTargets
+        case .surfaceResolve:
+            MCLocalXPCInteractiveLeaseCommandSurfaceResolve
+        case .surfaceTransition:
+            MCLocalXPCInteractiveLeaseCommandSurfaceTransition
+        case .surfaceAcknowledgement:
+            MCLocalXPCInteractiveLeaseCommandSurfaceAcknowledgement
+        case .surfaceFailure:
+            MCLocalXPCInteractiveLeaseCommandSurfaceFailure
         }
     }
 
@@ -3859,6 +4143,13 @@ public final class MacLocalXPCClientV1:
         case install(InteractiveRuntimeInstallCommandV0)
         case renew(InteractiveRuntimeLeaseRenewalV0)
         case revoke(InteractiveRuntimeRevokeCommandV0)
+        case surfaceTargets(LocalInteractiveSurfaceTargetsCommandV1)
+        case surfaceResolve(LocalInteractiveSurfaceResolveCommandV1)
+        case surfaceTransition(InteractiveRuntimeSurfaceTransitionCommandV0)
+        case surfaceAcknowledgement(
+            InteractiveRuntimeSurfaceAcknowledgementCommandV0
+        )
+        case surfaceFailure(LocalInteractiveSurfaceFailureCommandV1)
 
         var kind: MacLocalXPCInteractiveLeaseCommandKindV1 {
             switch self {
@@ -3866,6 +4157,11 @@ public final class MacLocalXPCClientV1:
             case .install: .install
             case .renew: .renew
             case .revoke: .revoke
+            case .surfaceTargets: .surfaceTargets
+            case .surfaceResolve: .surfaceResolve
+            case .surfaceTransition: .surfaceTransition
+            case .surfaceAcknowledgement: .surfaceAcknowledgement
+            case .surfaceFailure: .surfaceFailure
             }
         }
 
@@ -3874,6 +4170,10 @@ public final class MacLocalXPCClientV1:
             case .prepareInitialDesktop: .applyInteractiveSurface
             case .install, .renew: .installInteractiveLease
             case .revoke: .revokeInteractiveLease
+            case .surfaceTargets, .surfaceResolve,
+                    .surfaceTransition, .surfaceAcknowledgement,
+                    .surfaceFailure:
+                .applyInteractiveSurface
             }
         }
     }
@@ -3885,6 +4185,13 @@ public final class MacLocalXPCClientV1:
         case install(InteractiveRuntimeInstallReceiptV0)
         case renewed
         case revoked(InteractiveRuntimeRevokedReceiptV0)
+        case surfaceTargets(LocalInteractiveSurfaceTargetsReceiptV1)
+        case surfaceResolved(LocalInteractiveSurfaceResolvedReceiptV1)
+        case surfaceTransition(InteractiveRuntimeSurfaceTransitionReceiptV0)
+        case surfaceAcknowledged(
+            InteractiveRuntimeSurfaceAcknowledgementReceiptV0
+        )
+        case surfaceFailure(LocalInteractiveSurfaceFailureReceiptV1)
     }
 
     private final class PendingIncomingInteractiveLeaseCommand:
@@ -5364,6 +5671,31 @@ public final class MacLocalXPCClientV1:
                     try LocalInteractiveLeaseWireCodecV1
                         .decodeRevokeCommand(payload)
                 )
+            case MCLocalXPCInteractiveLeaseCommandSurfaceTargets:
+                return .surfaceTargets(
+                    try LocalInteractiveLeaseWireCodecV1
+                        .decodeSurfaceTargetsCommand(payload)
+                )
+            case MCLocalXPCInteractiveLeaseCommandSurfaceResolve:
+                return .surfaceResolve(
+                    try LocalInteractiveLeaseWireCodecV1
+                        .decodeSurfaceResolveCommand(payload)
+                )
+            case MCLocalXPCInteractiveLeaseCommandSurfaceTransition:
+                return .surfaceTransition(
+                    try LocalInteractiveLeaseWireCodecV1
+                        .decodeSurfaceTransitionCommand(payload)
+                )
+            case MCLocalXPCInteractiveLeaseCommandSurfaceAcknowledgement:
+                return .surfaceAcknowledgement(
+                    try LocalInteractiveLeaseWireCodecV1
+                        .decodeSurfaceAcknowledgementCommand(payload)
+                )
+            case MCLocalXPCInteractiveLeaseCommandSurfaceFailure:
+                return .surfaceFailure(
+                    try LocalInteractiveLeaseWireCodecV1
+                        .decodeSurfaceFailureCommand(payload)
+                )
             default:
                 return nil
             }
@@ -5435,6 +5767,47 @@ public final class MacLocalXPCClientV1:
                     result = .revoked(
                         try await interactiveLeaseHandler
                             .revokeInteractiveLease(value)
+                    )
+                case .surfaceTargets(let value):
+                    result = .surfaceTargets(
+                        try await interactiveLeaseHandler
+                            .interactiveSurfaceTargets(
+                                value,
+                                nowMonotonicNanoseconds:
+                                    monotonicNowNanoseconds()
+                            )
+                    )
+                case .surfaceResolve(let value):
+                    result = .surfaceResolved(
+                        try await interactiveLeaseHandler
+                            .resolveInteractiveSurface(
+                                value,
+                                nowMonotonicNanoseconds:
+                                    monotonicNowNanoseconds()
+                            )
+                    )
+                case .surfaceTransition(let value):
+                    result = .surfaceTransition(
+                        try await interactiveLeaseHandler
+                            .prepareInteractiveSurfaceTransition(
+                                value,
+                                nowMonotonicNanoseconds:
+                                    monotonicNowNanoseconds()
+                            )
+                    )
+                case .surfaceAcknowledgement(let value):
+                    result = .surfaceAcknowledged(
+                        try await interactiveLeaseHandler
+                            .acknowledgeInteractiveSurface(
+                                value,
+                                nowMonotonicNanoseconds:
+                                    monotonicNowNanoseconds()
+                            )
+                    )
+                case .surfaceFailure(let value):
+                    result = .surfaceFailure(
+                        try await interactiveLeaseHandler
+                            .terminateInteractiveSurfaceFailure(value)
                     )
                 }
                 queue.async { [weak self] in
@@ -5537,6 +5910,32 @@ public final class MacLocalXPCClientV1:
                 try receipt.validate(against: command)
                 return try LocalInteractiveLeaseWireCodecV1
                     .encodeRevokedReceipt(receipt)
+            case (.surfaceTargets(let command), .surfaceTargets(let receipt)):
+                try receipt.validate(against: command)
+                return try LocalInteractiveLeaseWireCodecV1
+                    .encodeSurfaceTargetsReceipt(receipt)
+            case (.surfaceResolve(let command), .surfaceResolved(let receipt)):
+                try receipt.validate(against: command)
+                return try LocalInteractiveLeaseWireCodecV1
+                    .encodeSurfaceResolvedReceipt(receipt)
+            case (
+                .surfaceTransition(let command),
+                .surfaceTransition(let receipt)
+            ):
+                try receipt.validate(against: command)
+                return try LocalInteractiveLeaseWireCodecV1
+                    .encodeSurfaceTransitionReceipt(receipt)
+            case (
+                .surfaceAcknowledgement(let command),
+                .surfaceAcknowledged(let receipt)
+            ):
+                try receipt.validate(against: command)
+                return try LocalInteractiveLeaseWireCodecV1
+                    .encodeSurfaceAcknowledgementReceipt(receipt)
+            case (.surfaceFailure(let command), .surfaceFailure(let receipt)):
+                try receipt.validate(against: command)
+                return try LocalInteractiveLeaseWireCodecV1
+                    .encodeSurfaceFailureReceipt(receipt)
             default:
                 return nil
             }
@@ -5595,6 +5994,16 @@ public final class MacLocalXPCClientV1:
         case .install: MCLocalXPCInteractiveLeaseCommandInstall
         case .renew: MCLocalXPCInteractiveLeaseCommandRenew
         case .revoke: MCLocalXPCInteractiveLeaseCommandRevoke
+        case .surfaceTargets:
+            MCLocalXPCInteractiveLeaseCommandSurfaceTargets
+        case .surfaceResolve:
+            MCLocalXPCInteractiveLeaseCommandSurfaceResolve
+        case .surfaceTransition:
+            MCLocalXPCInteractiveLeaseCommandSurfaceTransition
+        case .surfaceAcknowledgement:
+            MCLocalXPCInteractiveLeaseCommandSurfaceAcknowledgement
+        case .surfaceFailure:
+            MCLocalXPCInteractiveLeaseCommandSurfaceFailure
         }
     }
 

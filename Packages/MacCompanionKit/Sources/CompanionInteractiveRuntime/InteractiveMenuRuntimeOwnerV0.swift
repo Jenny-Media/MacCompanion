@@ -37,6 +37,14 @@ public protocol InteractiveRuntimeCaptureControllingV0: Sendable {
     func prepareInteractiveCaptureTransition(
         _ command: InteractiveRuntimeSurfaceTransitionCommandV0
     ) async throws -> Set<SurfaceInteractionClass>
+    /// Activates only the exact source prepared by the preceding transition.
+    /// The runtime invokes this after replacing its authoritative lease and
+    /// surface fence, so the first replacement record can never race the old
+    /// admission state. Implementations must reject a missing or mismatched
+    /// preparation and must not retain more than one prepared source.
+    func activatePreparedInteractiveCaptureTransition(
+        _ command: InteractiveRuntimeSurfaceTransitionCommandV0
+    ) async throws
     func stopInteractiveCapture() async throws
 }
 
@@ -442,6 +450,40 @@ public actor InteractiveMenuRuntimeOwnerV0 {
         return try await operation.value
     }
 
+    /// Exact Agent-requested convergence after an ambiguous surface-control
+    /// result. A matching active session is torn down with the same ordered
+    /// safety effects as connection loss; an already-idle owner is an
+    /// authoritative success, while another active session is never touched.
+    public func terminateSurfaceFailure(
+        interactiveSessionID: UUID
+    ) async throws -> Bool {
+        let predecessor = sequencingTail
+        let operation = Task { [self] in
+            await predecessor.value
+            switch storage {
+            case .idle:
+                return true
+            case let .active(active):
+                guard active.command.lease.interactiveSessionID
+                        == interactiveSessionID else { return false }
+                _ = try await performUnacknowledgedTermination(force: true)
+                if case .idle = storage { return true }
+                return false
+            case let .terminating(context),
+                    let .safetyRecoveryRequired(context):
+                guard context.interactiveSessionID
+                        == interactiveSessionID else { return false }
+                _ = try await performUnacknowledgedTermination(force: true)
+                if case .idle = storage { return true }
+                return false
+            case .installing:
+                return false
+            }
+        }
+        sequencingTail = Task { _ = try? await operation.value }
+        return try await operation.value
+    }
+
     /// The platform composition root schedules this at the exact deadline
     /// returned by `nextLeaseDeadlineMonotonicNanoseconds()`.
     @discardableResult
@@ -728,6 +770,8 @@ public actor InteractiveMenuRuntimeOwnerV0 {
             active.lastSurfaceAcknowledgementReceipt = nil
             active.inputReleasedForSurfaceTransition = true
             storage = .active(active)
+            try await capture
+                .activatePreparedInteractiveCaptureTransition(transition)
             return transitionReceipt
         } catch {
             var context = InteractiveCleanupContextV0(

@@ -22,16 +22,21 @@ private actor MenuPresentationSenderProbeV1:
     private var retirements: [(UInt64, UUID)] = []
     private var desktopReceipt:
         LocalInteractiveInitialDesktopPreparedReceiptV1?
+    private var surfaceFailureReceipt:
+        LocalInteractiveSurfaceFailureReceiptV1?
     private var interactiveGenerations: [UInt64] = []
     private var interactiveTokens: [UUID] = []
 
     init(
         _ responses: [Response],
         desktopReceipt:
-            LocalInteractiveInitialDesktopPreparedReceiptV1? = nil
+            LocalInteractiveInitialDesktopPreparedReceiptV1? = nil,
+        surfaceFailureReceipt:
+            LocalInteractiveSurfaceFailureReceiptV1? = nil
     ) {
         self.responses = responses
         self.desktopReceipt = desktopReceipt
+        self.surfaceFailureReceipt = surfaceFailureReceipt
     }
 
     func sendMenuPresentation(
@@ -103,6 +108,19 @@ private actor MenuPresentationSenderProbeV1:
         command _: InteractiveRuntimeRevokeCommandV0
     ) async throws -> InteractiveRuntimeRevokedReceiptV0 {
         throw MacLocalXPCInteractiveLeaseErrorV1.unavailable
+    }
+
+    func terminateInteractiveSurfaceFailure(
+        generation: UInt64,
+        endpointToken: UUID,
+        command _: LocalInteractiveSurfaceFailureCommandV1
+    ) async throws -> LocalInteractiveSurfaceFailureReceiptV1 {
+        interactiveGenerations.append(generation)
+        interactiveTokens.append(endpointToken)
+        guard let surfaceFailureReceipt else {
+            throw MacLocalXPCInteractiveLeaseErrorV1.unavailable
+        }
+        return surfaceFailureReceipt
     }
 
     func recordedInteractiveGenerations() -> [UInt64] {
@@ -305,10 +323,21 @@ func opaqueEndpointEncodesAllFiveClosedRequests() async throws {
 {
     let command = try endpointInitialDesktopCommandV1()
     let receipt = try endpointInitialDesktopReceiptV1(command: command)
+    let surfaceFailureCommand = LocalInteractiveSurfaceFailureCommandV1(
+        commandID: UUID(),
+        interactiveSessionID: command.interactiveSessionID,
+        reason: .protocolViolation
+    )
+    let surfaceFailureReceipt = try LocalInteractiveSurfaceFailureReceiptV1(
+        correlationID: surfaceFailureCommand.commandID,
+        interactiveSessionID: surfaceFailureCommand.interactiveSessionID,
+        terminated: true
+    )
     let token = UUID()
     let sender = MenuPresentationSenderProbeV1(
         [],
-        desktopReceipt: receipt
+        desktopReceipt: receipt,
+        surfaceFailureReceipt: surfaceFailureReceipt
     )
     let endpoint = endpointV1(
         sender: sender,
@@ -325,8 +354,13 @@ func opaqueEndpointEncodesAllFiveClosedRequests() async throws {
         try await surfaces.interactiveRuntime
             .prepareInitialInteractiveDesktop(command) == receipt
     )
-    #expect(await sender.recordedInteractiveGenerations() == [7])
-    #expect(await sender.recordedInteractiveTokens() == [token])
+    #expect(
+        try await surfaces.interactiveRuntime
+            .terminateInteractiveSurfaceFailure(surfaceFailureCommand)
+            == surfaceFailureReceipt
+    )
+    #expect(await sender.recordedInteractiveGenerations() == [7, 7])
+    #expect(await sender.recordedInteractiveTokens() == [token, token])
 
     #expect(await router.invalidate(generation: 7))
     await #expect(
@@ -336,7 +370,7 @@ func opaqueEndpointEncodesAllFiveClosedRequests() async throws {
         try await surfaces.interactiveRuntime
             .prepareInitialInteractiveDesktop(command)
     }
-    #expect(await sender.recordedInteractiveGenerations() == [7])
+    #expect(await sender.recordedInteractiveGenerations() == [7, 7])
 }
 
 @Test

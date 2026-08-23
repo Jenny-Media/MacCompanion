@@ -194,6 +194,240 @@ private func codecDesktopDescriptor()
     try decodedRevoked.validate(against: revoke)
 }
 
+@Test func interactiveLeaseCodecRoundTripsSurfaceRuntimeFamily() throws {
+    let targets = try LocalInteractiveSurfaceTargetsCommandV1(
+        commandID: UUID(),
+        interactiveSessionID: codecSessionID,
+        authorizationEpoch: .init(rawValue: 4)
+    )
+    let targetsData = try LocalInteractiveLeaseWireCodecV1
+        .encodeSurfaceTargetsCommand(targets)
+    #expect(
+        try LocalInteractiveLeaseWireCodecV1
+            .decodeSurfaceTargetsCommand(targetsData) == targets
+    )
+
+    let applicationToken = UUID()
+    let snapshot = try AdaptiveSurfaceTargetInventorySnapshotV0(
+        interactiveSessionID: codecSessionID,
+        authorizationEpoch: .init(rawValue: 4),
+        revision: 1,
+        createdAtMonotonicMilliseconds: 1_000,
+        expiresAtMonotonicMilliseconds: 11_000,
+        candidates: [try AdaptiveSurfaceTargetCandidateV0(
+            targetToken: applicationToken,
+            kind: .application,
+            applicationToken: applicationToken,
+            applicationName: "Notes",
+            windowOrdinal: nil,
+            currentWindowAvailable: true
+        )]
+    )
+    let targetsReceipt = try LocalInteractiveSurfaceTargetsReceiptV1(
+        correlationID: targets.commandID,
+        snapshot: snapshot
+    )
+    let targetsReceiptData = try LocalInteractiveLeaseWireCodecV1
+        .encodeSurfaceTargetsReceipt(targetsReceipt)
+    let decodedTargetsReceipt = try LocalInteractiveLeaseWireCodecV1
+        .decodeSurfaceTargetsReceipt(targetsReceiptData)
+    #expect(decodedTargetsReceipt == targetsReceipt)
+    try decodedTargetsReceipt.validate(against: targets)
+
+    let resolve = try LocalInteractiveSurfaceResolveCommandV1(
+        commandID: UUID(),
+        interactiveSessionID: codecSessionID,
+        authorizationEpoch: .init(rawValue: 4),
+        currentSurfaceID: codecSurfaceID,
+        expectedSurfaceRevision: .init(rawValue: 1),
+        expectedCoordinateSpaceRevision: .init(rawValue: 1),
+        targetKind: .application,
+        targetToken: applicationToken
+    )
+    let resolveData = try LocalInteractiveLeaseWireCodecV1
+        .encodeSurfaceResolveCommand(resolve)
+    #expect(
+        try LocalInteractiveLeaseWireCodecV1
+            .decodeSurfaceResolveCommand(resolveData) == resolve
+    )
+
+    let nextSurfaceID = UUID()
+    let descriptor = try AdaptiveSurfaceDescriptor(
+        interactiveSessionID: codecSessionID,
+        authorizationEpoch: .init(rawValue: 4),
+        surfaceID: nextSurfaceID,
+        kind: .application,
+        surfaceRevision: .init(rawValue: 2),
+        coordinateSpaceRevision: .init(rawValue: 2),
+        applicationToken: applicationToken,
+        parentSurfaceID: codecSurfaceID,
+        fallbackSurfaceID: codecSurfaceID,
+        encodedWidth: 1_440,
+        encodedHeight: 900,
+        logicalWidthPoints: 1_440,
+        logicalHeightPoints: 900,
+        interactionClasses: [.view, .pointer, .keyboard],
+        privacyProfile: .visualOnly,
+        metadataFields: [.applicationName, .currentWindowAvailable],
+        createdAtMonotonicMilliseconds: 1_000,
+        expiresAtMonotonicMilliseconds: 11_000
+    )
+    let resolvedReceipt = try LocalInteractiveSurfaceResolvedReceiptV1(
+        correlationID: resolve.commandID,
+        descriptor: descriptor
+    )
+    let resolvedData = try LocalInteractiveLeaseWireCodecV1
+        .encodeSurfaceResolvedReceipt(resolvedReceipt)
+    let decodedResolved = try LocalInteractiveLeaseWireCodecV1
+        .decodeSurfaceResolvedReceipt(resolvedData)
+    #expect(decodedResolved == resolvedReceipt)
+    try decodedResolved.validate(against: resolve)
+
+    let replacement = try InteractiveExecutionLease(
+        leaseID: UUID(),
+        hostID: codecHostID,
+        deviceID: codecDeviceID,
+        interactiveSessionID: codecSessionID,
+        authorizationEpoch: .init(rawValue: 4),
+        selectedDisplayID: codecDisplayID,
+        surfaceID: nextSurfaceID,
+        surfaceRevision: .init(rawValue: 2),
+        coordinateRevision: .init(rawValue: 2),
+        allowedInteractionClasses: [.view, .pointer, .keyboard],
+        renewalCounter: 1,
+        issuedAtMonotonicNanoseconds: 1_500,
+        expiresAtMonotonicNanoseconds: 2_500
+    )
+    let transition = try InteractiveRuntimeSurfaceTransitionCommandV0(
+        commandID: UUID(),
+        previousLeaseID: try codecLease().leaseID,
+        replacement: replacement,
+        descriptor: descriptor
+    )
+    let transitionData = try LocalInteractiveLeaseWireCodecV1
+        .encodeSurfaceTransitionCommand(transition)
+    #expect(
+        try LocalInteractiveLeaseWireCodecV1
+            .decodeSurfaceTransitionCommand(transitionData) == transition
+    )
+    let transitionReceipt = try InteractiveRuntimeSurfaceTransitionReceiptV0(
+        correlationID: transition.commandID,
+        previousLeaseID: transition.previousLeaseID,
+        replacementLeaseID: replacement.leaseID,
+        interactiveSessionID: codecSessionID,
+        surfaceID: nextSurfaceID,
+        surfaceRevision: .init(rawValue: 2),
+        coordinateRevision: .init(rawValue: 2),
+        mediaSequenceBeforeTransition: 4,
+        inputReleased: true,
+        captureSourcePrepared: true
+    )
+    let transitionReceiptData = try LocalInteractiveLeaseWireCodecV1
+        .encodeSurfaceTransitionReceipt(transitionReceipt)
+    let decodedTransitionReceipt = try LocalInteractiveLeaseWireCodecV1
+        .decodeSurfaceTransitionReceipt(transitionReceiptData)
+    #expect(decodedTransitionReceipt == transitionReceipt)
+    try decodedTransitionReceipt.validate(against: transition)
+
+    let acknowledgement = try InteractiveRuntimeSurfaceAcknowledgementCommandV0(
+        commandID: UUID(),
+        transitionCommandID: transition.commandID,
+        leaseID: replacement.leaseID,
+        interactiveSessionID: codecSessionID,
+        surfaceID: nextSurfaceID,
+        surfaceRevision: .init(rawValue: 2),
+        coordinateRevision: .init(rawValue: 2),
+        readyMediaSequence: 7
+    )
+    let acknowledgementData = try LocalInteractiveLeaseWireCodecV1
+        .encodeSurfaceAcknowledgementCommand(acknowledgement)
+    #expect(
+        try LocalInteractiveLeaseWireCodecV1
+            .decodeSurfaceAcknowledgementCommand(acknowledgementData)
+            == acknowledgement
+    )
+    let acknowledgementReceipt = try
+        InteractiveRuntimeSurfaceAcknowledgementReceiptV0(
+            correlationID: acknowledgement.commandID,
+            transitionCommandID: transition.commandID,
+            leaseID: replacement.leaseID,
+            interactiveSessionID: codecSessionID,
+            surfaceID: nextSurfaceID,
+            surfaceRevision: .init(rawValue: 2),
+            coordinateRevision: .init(rawValue: 2),
+            readyMediaSequence: 7,
+            inputResumed: true
+        )
+    let acknowledgementReceiptData = try LocalInteractiveLeaseWireCodecV1
+        .encodeSurfaceAcknowledgementReceipt(acknowledgementReceipt)
+    let decodedAcknowledgementReceipt = try LocalInteractiveLeaseWireCodecV1
+        .decodeSurfaceAcknowledgementReceipt(acknowledgementReceiptData)
+    #expect(decodedAcknowledgementReceipt == acknowledgementReceipt)
+    try decodedAcknowledgementReceipt.validate(against: acknowledgement)
+
+    let failure = LocalInteractiveSurfaceFailureCommandV1(
+        commandID: UUID(),
+        interactiveSessionID: codecSessionID,
+        reason: .protocolViolation
+    )
+    let failureData = try LocalInteractiveLeaseWireCodecV1
+        .encodeSurfaceFailureCommand(failure)
+    #expect(
+        try LocalInteractiveLeaseWireCodecV1
+            .decodeSurfaceFailureCommand(failureData) == failure
+    )
+    let failureReceipt = try LocalInteractiveSurfaceFailureReceiptV1(
+        correlationID: failure.commandID,
+        interactiveSessionID: codecSessionID,
+        terminated: true
+    )
+    let failureReceiptData = try LocalInteractiveLeaseWireCodecV1
+        .encodeSurfaceFailureReceipt(failureReceipt)
+    let decodedFailureReceipt = try LocalInteractiveLeaseWireCodecV1
+        .decodeSurfaceFailureReceipt(failureReceiptData)
+    #expect(decodedFailureReceipt == failureReceipt)
+    try decodedFailureReceipt.validate(against: failure)
+}
+
+@Test func surfaceTargetReceiptMaximalNamesRemainWithinXPCBound() throws {
+    let command = try LocalInteractiveSurfaceTargetsCommandV1(
+        commandID: UUID(),
+        interactiveSessionID: codecSessionID,
+        authorizationEpoch: .init(rawValue: 4)
+    )
+    let name = String(repeating: "M", count: 128)
+    let candidates = try (0..<9).map { _ in
+        let token = UUID()
+        return try AdaptiveSurfaceTargetCandidateV0(
+            targetToken: token,
+            kind: .application,
+            applicationToken: token,
+            applicationName: name,
+            windowOrdinal: nil,
+            currentWindowAvailable: true
+        )
+    }
+    let snapshot = try AdaptiveSurfaceTargetInventorySnapshotV0(
+        interactiveSessionID: codecSessionID,
+        authorizationEpoch: .init(rawValue: 4),
+        revision: 1,
+        createdAtMonotonicMilliseconds: 1_000,
+        expiresAtMonotonicMilliseconds: 11_000,
+        candidates: candidates
+    )
+    let receipt = try LocalInteractiveSurfaceTargetsReceiptV1(
+        correlationID: command.commandID,
+        snapshot: snapshot
+    )
+    let encoded = try LocalInteractiveLeaseWireCodecV1
+        .encodeSurfaceTargetsReceipt(receipt)
+    #expect(receipt.candidates.count == 8)
+    #expect(encoded.count <= LocalInteractiveLeaseWireCodecV1.maximumEncodedBytes)
+    try LocalInteractiveLeaseWireCodecV1
+        .decodeSurfaceTargetsReceipt(encoded)
+        .validate(against: command)
+}
+
 @Test func interactiveLeaseCodecRejectsNoncanonicalUnknownAndOversizedData()
     throws
 {

@@ -80,6 +80,20 @@ public protocol AgentInteractiveMenuRuntimeRoutingV1: Sendable {
     ) async throws -> InteractiveRuntimeRevokedReceiptV0
 }
 
+public protocol AgentInteractiveSurfaceMenuRoutingV1:
+    InteractiveSurfaceRuntimeRoutingV0,
+    InteractiveSurfaceTargetResolvingV0,
+    InteractiveSurfaceTargetInventoryProvidingV0
+{}
+
+private struct AgentInteractiveSystemMonotonicClockV1:
+    InteractiveSurfaceMonotonicClockV0
+{
+    func nowNanoseconds() -> UInt64 {
+        DispatchTime.now().uptimeNanoseconds
+    }
+}
+
 /// Agent-owned final installation boundary for one Interactive session. It
 /// re-reads the durable-plus-visible admission on both sides of menu-backed
 /// Desktop preparation, then transfers credentials only after the exact menu
@@ -87,7 +101,8 @@ public protocol AgentInteractiveMenuRuntimeRoutingV1: Sendable {
 /// concurrent termination cannot interleave with a suspended install.
 public actor AgentInteractiveRuntimeOwnerV1:
     InteractiveSessionRuntimeOwningV0,
-    HostInteractiveChannelAuthenticatingV0
+    HostInteractiveChannelAuthenticatingV0,
+    InteractiveSurfaceControlDispatchingV0
 {
     private struct Active: Sendable {
         var bootstrap: InteractiveSessionBootstrap
@@ -95,6 +110,8 @@ public actor AgentInteractiveRuntimeOwnerV1:
         let primaryConnectionID: Data
         let requirement: InteractiveSessionRuntimeRequirementV0
         var currentLease: InteractiveExecutionLease
+        let surfaceCoordinator: InteractiveSurfaceRuntimeCoordinatorV0?
+        let surfaceControl: InteractiveSurfaceControlHandlerV0?
     }
 
     private enum Storage: Sendable {
@@ -108,6 +125,8 @@ public actor AgentInteractiveRuntimeOwnerV1:
     private let admission: any InteractiveSessionAdmissionReadingV0
     private let desktop: any AgentInteractiveInitialDesktopPreparingV1
     private let runtime: any AgentInteractiveMenuRuntimeRoutingV1
+    private let surfaceRuntime:
+        (any AgentInteractiveSurfaceMenuRoutingV1)?
     private let monotonicNowNanoseconds: @Sendable () -> UInt64
     private let identifier: @Sendable () -> UUID
     private var storage: Storage = .idle
@@ -117,6 +136,8 @@ public actor AgentInteractiveRuntimeOwnerV1:
         admission: any InteractiveSessionAdmissionReadingV0,
         desktop: any AgentInteractiveInitialDesktopPreparingV1,
         runtime: any AgentInteractiveMenuRuntimeRoutingV1,
+        surfaceRuntime:
+            (any AgentInteractiveSurfaceMenuRoutingV1)? = nil,
         monotonicNowNanoseconds: @escaping @Sendable () -> UInt64 = {
             DispatchTime.now().uptimeNanoseconds
         },
@@ -125,6 +146,7 @@ public actor AgentInteractiveRuntimeOwnerV1:
         self.admission = admission
         self.desktop = desktop
         self.runtime = runtime
+        self.surfaceRuntime = surfaceRuntime
         self.monotonicNowNanoseconds = monotonicNowNanoseconds
         self.identifier = identifier
     }
@@ -320,6 +342,138 @@ public actor AgentInteractiveRuntimeOwnerV1:
         return try await operation.value
     }
 
+    public func requestInitial(
+        _ request: InteractiveInitialSurfaceRequestBodyV0,
+        context: InteractiveSessionCommandContextV0
+    ) async throws -> InteractiveInitialSurfaceDescriptorBodyV0 {
+        let predecessor = sequencingTail
+        let operation = Task { [self] in
+            await predecessor.value
+            guard case let .active(active) = storage,
+                  let control = active.surfaceControl else {
+                throw AgentInteractiveRuntimeOwnerErrorV1.unavailable
+            }
+            return try await control.requestInitial(request, context: context)
+        }
+        sequencingTail = Task { _ = try? await operation.value }
+        return try await operation.value
+    }
+
+    public func acknowledgeInitial(
+        _ request: InteractiveInitialSurfaceAcknowledgementBodyV0,
+        context: InteractiveSessionCommandContextV0
+    ) async throws -> InteractiveInitialSurfaceAcknowledgedBodyV0 {
+        let predecessor = sequencingTail
+        let operation = Task { [self] in
+            await predecessor.value
+            guard case let .active(active) = storage,
+                  let control = active.surfaceControl else {
+                throw AgentInteractiveRuntimeOwnerErrorV1.unavailable
+            }
+            return try await control.acknowledgeInitial(
+                request,
+                context: context
+            )
+        }
+        sequencingTail = Task { _ = try? await operation.value }
+        return try await operation.value
+    }
+
+    public func targets(
+        _ request: InteractiveSurfaceTargetsRequestBodyV0,
+        context: InteractiveSessionCommandContextV0
+    ) async throws -> InteractiveSurfaceTargetsResponseBodyV0 {
+        let predecessor = sequencingTail
+        let operation = Task { [self] in
+            await predecessor.value
+            guard case let .active(active) = storage,
+                  let control = active.surfaceControl else {
+                throw AgentInteractiveRuntimeOwnerErrorV1.unavailable
+            }
+            return try await control.targets(request, context: context)
+        }
+        sequencingTail = Task { _ = try? await operation.value }
+        return try await operation.value
+    }
+
+    public func select(
+        _ request: InteractiveSurfaceSelectBodyV0,
+        context: InteractiveSessionCommandContextV0
+    ) async throws -> InteractiveSurfaceSelectedBodyV0 {
+        let predecessor = sequencingTail
+        let operation = Task { [self] in
+            await predecessor.value
+            guard case let .active(active) = storage,
+                  let control = active.surfaceControl,
+                  let coordinator = active.surfaceCoordinator else {
+                throw AgentInteractiveRuntimeOwnerErrorV1.unavailable
+            }
+            let response = try await control.select(request, context: context)
+            try await synchronizeSurfaceLease(
+                coordinator,
+                interactiveSessionID:
+                    request.interactiveSessionID.rawValue
+            )
+            return response
+        }
+        sequencingTail = Task { _ = try? await operation.value }
+        return try await operation.value
+    }
+
+    public func acknowledge(
+        _ request: InteractiveSurfaceAcknowledgementBodyV0,
+        context: InteractiveSessionCommandContextV0
+    ) async throws -> InteractiveSurfaceAcknowledgedBodyV0 {
+        let predecessor = sequencingTail
+        let operation = Task { [self] in
+            await predecessor.value
+            guard case let .active(active) = storage,
+                  let control = active.surfaceControl,
+                  let coordinator = active.surfaceCoordinator else {
+                throw AgentInteractiveRuntimeOwnerErrorV1.unavailable
+            }
+            let response = try await control.acknowledge(
+                request,
+                context: context
+            )
+            try await synchronizeSurfaceLease(
+                coordinator,
+                interactiveSessionID:
+                    request.interactiveSessionID.rawValue
+            )
+            return response
+        }
+        sequencingTail = Task { _ = try? await operation.value }
+        return try await operation.value
+    }
+
+    public func primarySessionClosed() async {
+        let predecessor = sequencingTail
+        let operation = Task { [self] in
+            await predecessor.value
+            guard case let .active(active) = storage,
+                  let control = active.surfaceControl else { return }
+            await control.primarySessionClosed()
+        }
+        sequencingTail = operation
+        await operation.value
+    }
+
+    private func synchronizeSurfaceLease(
+        _ coordinator: InteractiveSurfaceRuntimeCoordinatorV0,
+        interactiveSessionID: UUID
+    ) async throws {
+        let lease = await coordinator.lease()
+        guard case var .active(active) = storage,
+              active.currentLease.interactiveSessionID
+                == interactiveSessionID,
+              lease.interactiveSessionID == interactiveSessionID else {
+            throw AgentInteractiveRuntimeOwnerErrorV1.unavailable
+        }
+        active.currentLease = lease
+        storage = .active(active)
+    }
+
     private func performInstall(
         _ suppliedBootstrap: InteractiveSessionBootstrap,
         requirement: InteractiveSessionRuntimeRequirementV0
@@ -405,12 +559,63 @@ public actor AgentInteractiveRuntimeOwnerV1:
                 throw AgentInteractiveRuntimeOwnerErrorV1
                     .runtimeReceiptRejected
             }
+            let surfaceCoordinator: InteractiveSurfaceRuntimeCoordinatorV0?
+            let surfaceControl: InteractiveSurfaceControlHandlerV0?
+            if let surfaceRuntime {
+                do {
+                    let surfaceNow = monotonicNowNanoseconds()
+                    guard surfaceNow / 1_000_000 <= UInt64(Int64.max) else {
+                        throw AgentInteractiveRuntimeOwnerErrorV1.unavailable
+                    }
+                    let authority = try AdaptiveSurfaceAuthority(
+                        desktop: descriptor,
+                        monotonicNowMilliseconds: Int64(
+                            surfaceNow / 1_000_000
+                        )
+                    )
+                    let coordinator = try InteractiveSurfaceRuntimeCoordinatorV0(
+                        surfaceAuthority: authority,
+                        currentLease: preparation.command.lease,
+                        sessionDeadlineMonotonicNanoseconds:
+                            preparation.command
+                                .sessionDeadlineMonotonicNanoseconds,
+                        runtime: surfaceRuntime,
+                        initialActivationCommandID:
+                            preparation.command.commandID,
+                        identifier: identifier
+                    )
+                    surfaceCoordinator = coordinator
+                    surfaceControl = InteractiveSurfaceControlHandlerV0(
+                        coordinator: coordinator,
+                        resolver: surfaceRuntime,
+                        inventoryProvider: surfaceRuntime,
+                        clock: AgentInteractiveSystemMonotonicClockV1()
+                    )
+                } catch {
+                    let revoked = await attemptRevoke(
+                        lease: preparation.command.lease,
+                        bootstrap: &bootstrap,
+                        reason: .protocolViolation
+                    )
+                    storage = revoked
+                        ? .idle : .safetyRecoveryRequired(sessionID)
+                    throw revoked
+                        ? AgentInteractiveRuntimeOwnerErrorV1.unavailable
+                        : AgentInteractiveRuntimeOwnerErrorV1
+                            .safetyRecoveryRequired
+                }
+            } else {
+                surfaceCoordinator = nil
+                surfaceControl = nil
+            }
             storage = .active(Active(
                 bootstrap: bootstrap,
                 preparation: preparation,
                 primaryConnectionID: requirement.command.primaryConnectionID,
                 requirement: requirement,
-                currentLease: preparation.command.lease
+                currentLease: preparation.command.lease,
+                surfaceCoordinator: surfaceCoordinator,
+                surfaceControl: surfaceControl
             ))
         } catch let error as AgentInteractiveRuntimeOwnerErrorV1 {
             if case .installing = storage {
@@ -491,6 +696,9 @@ public actor AgentInteractiveRuntimeOwnerV1:
             try renewal.validate(current: current)
             try await runtime.renewInteractiveLease(renewal)
             active.currentLease = replacement
+            if let coordinator = active.surfaceCoordinator {
+                try await coordinator.adoptRenewedLease(replacement)
+            }
             storage = .active(active)
             return replacement
         } catch let error as AgentInteractiveRuntimeOwnerErrorV1 {

@@ -38,17 +38,59 @@
       "successKind": "runtime.interactive.revoke.ack",
       "successPayloadType": "InteractiveRuntimeRevokedReceiptV0",
       "requestAndSuccessFields": ["kind:string", "version:signedInt64=1", "payload:data"]
+    },
+    {
+      "kind": "runtime.interactive.surface.targets",
+      "authorizationMethod": "applyInteractiveSurface",
+      "requestPayloadType": "LocalInteractiveSurfaceTargetsCommandV1",
+      "successKind": "runtime.interactive.surface.targets.ack",
+      "successPayloadType": "LocalInteractiveSurfaceTargetsReceiptV1",
+      "requestAndSuccessFields": ["kind:string", "version:signedInt64=1", "payload:data"]
+    },
+    {
+      "kind": "runtime.interactive.surface.resolve",
+      "authorizationMethod": "applyInteractiveSurface",
+      "requestPayloadType": "LocalInteractiveSurfaceResolveCommandV1",
+      "successKind": "runtime.interactive.surface.resolve.ack",
+      "successPayloadType": "LocalInteractiveSurfaceResolvedReceiptV1",
+      "requestAndSuccessFields": ["kind:string", "version:signedInt64=1", "payload:data"]
+    },
+    {
+      "kind": "runtime.interactive.surface.transition",
+      "authorizationMethod": "applyInteractiveSurface",
+      "requestPayloadType": "InteractiveRuntimeSurfaceTransitionCommandV0",
+      "successKind": "runtime.interactive.surface.transition.ack",
+      "successPayloadType": "InteractiveRuntimeSurfaceTransitionReceiptV0",
+      "requestAndSuccessFields": ["kind:string", "version:signedInt64=1", "payload:data"]
+    },
+    {
+      "kind": "runtime.interactive.surface.acknowledge",
+      "authorizationMethod": "applyInteractiveSurface",
+      "requestPayloadType": "InteractiveRuntimeSurfaceAcknowledgementCommandV0",
+      "successKind": "runtime.interactive.surface.acknowledge.ack",
+      "successPayloadType": "InteractiveRuntimeSurfaceAcknowledgementReceiptV0",
+      "requestAndSuccessFields": ["kind:string", "version:signedInt64=1", "payload:data"]
+    },
+    {
+      "kind": "runtime.interactive.surface.failure",
+      "authorizationMethod": "applyInteractiveSurface",
+      "requestPayloadType": "LocalInteractiveSurfaceFailureCommandV1",
+      "successKind": "runtime.interactive.surface.failure.ack",
+      "successPayloadType": "LocalInteractiveSurfaceFailureReceiptV1",
+      "requestAndSuccessFields": ["kind:string", "version:signedInt64=1", "payload:data"]
     }
   ],
   "rules": [
     "same-team exact-role authentication and menu readiness are required before Interactive lease traffic",
     "the permanent Agent runtime receives only the one cached opaque sender endpoint issued for an exact authenticated-and-ready menu generation",
     "every request rechecks the exact listener run, retained peer, transport generation, and private endpoint token on the server queue; a stale endpoint never redirects traffic to a replacement generation",
-    "the Agent sender and menu receiver share exactly one cross-family command in flight for Desktop preparation, install, renewal, and revoke per authenticated generation",
+    "the Agent sender and menu receiver share exactly one cross-family command in flight for all nine Desktop, lease-lifecycle, inventory, resolution, surface-transition, acknowledgement, and failure-convergence commands per authenticated generation",
     "request and payload-bearing success values are nonempty canonical JSON data no larger than 4096 bytes",
     "Desktop preparation receives the exact session, authorization epoch, opaque selected-display UUID, and canonical interaction classes and returns one exactly correlated Desktop descriptor",
     "install carries the complete current prepared Desktop descriptor and its lease binds the exact session, epoch, surface, revisions, and interaction classes before any platform effect",
     "the menu samples its local monotonic clock, resolves the opaque display only inside the menu process, and returns no physical display identifier, display name, process identifier, window identifier, permission fact, or platform object",
+    "surface inventory returns at most eight privacy-filtered application or window candidates so the maximal canonical reply remains within 4096 bytes; selection tokens are session-scoped and disclose no title, bundle identifier, process identifier, or platform object",
+    "surface resolution retains the exact ScreenCaptureKit source only in the menu process; transition preparation suppresses the old source, runtime commit replaces the lease and fence, and activation then emits discontinuity, configuration, and clean-keyframe media before acknowledgement can resume input",
     "install and revoke receipts are validated against the exact retained command before success",
     "renewal success is the exact payload-free acknowledgement to its one retained request",
     "the receiver revalidates current monotonic time and runtime authority inside the serialized runtime owner",

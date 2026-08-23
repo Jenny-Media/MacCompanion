@@ -83,7 +83,10 @@ private func inputAdapterV1(
     )
 }
 
-private func inputInstallCommandV1() throws
+private func inputInstallCommandV1(
+    logicalWidthPoints: UInt32 = 200,
+    logicalHeightPoints: UInt32 = 100
+) throws
     -> InteractiveRuntimeInstallCommandV0
 {
     let sessionID = UUID(
@@ -126,8 +129,8 @@ private func inputInstallCommandV1() throws
             coordinateSpaceRevision: .init(rawValue: 3),
             encodedWidth: 400,
             encodedHeight: 200,
-            logicalWidthPoints: 200,
-            logicalHeightPoints: 100,
+            logicalWidthPoints: logicalWidthPoints,
+            logicalHeightPoints: logicalHeightPoints,
             interactionClasses: classes,
             privacyProfile: .visualOnly,
             metadataFields: [],
@@ -239,6 +242,48 @@ private func inputEnvelopeV1(
         ))
     }
     #expect(sink.snapshots().count == 1)
+}
+
+@available(macOS 26.0, *)
+@Test func coreGraphicsAdapterUsesMenuRetainedWindowGeometry() throws {
+    let permission = InputPermissionProbeV1(true)
+    let sink = InputEventSinkV1()
+    let adapter = inputAdapterV1(permission: permission, sink: sink)
+    let command = try inputInstallCommandV1(
+        logicalWidthPoints: 75,
+        logicalHeightPoints: 40
+    )
+    let windowBounds = CGRect(x: 500, y: -200, width: 75, height: 40)
+    _ = try adapter.configure(
+        command: command,
+        physicalDisplayID: 7,
+        inputBounds: windowBounds,
+        inputBackingScaleFactor: 2.5
+    )
+
+    try adapter.postInteractiveInput(inputEnvelopeV1(
+        command: command,
+        payload: .pointerMove(x: UInt16.max, y: 0)
+    ))
+    let event = try #require(sink.snapshots().first)
+    #expect(event.location.x < windowBounds.maxX)
+    #expect(event.location.x > windowBounds.maxX - 1)
+    #expect(event.location.y == windowBounds.minY)
+
+    let rejected = inputAdapterV1(
+        permission: permission,
+        sink: InputEventSinkV1()
+    )
+    #expect(
+        throws: MacCoreGraphicsInteractiveInputAdapterErrorV1.bindingMismatch
+    ) {
+        try rejected.configure(
+            command: command,
+            physicalDisplayID: 7,
+            inputBounds: windowBounds,
+            inputBackingScaleFactor: .nan
+        )
+    }
 }
 
 @available(macOS 26.0, *)

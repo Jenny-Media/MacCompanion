@@ -30,6 +30,12 @@ private struct MacInteractiveUnavailableCaptureV1:
         throw MacInteractiveUnavailableRuntimeEffectErrorV1.unavailable
     }
 
+    func activatePreparedInteractiveCaptureTransition(
+        _: InteractiveRuntimeSurfaceTransitionCommandV0
+    ) async throws {
+        throw MacInteractiveUnavailableRuntimeEffectErrorV1.unavailable
+    }
+
     func stopInteractiveCapture() async throws {}
 }
 

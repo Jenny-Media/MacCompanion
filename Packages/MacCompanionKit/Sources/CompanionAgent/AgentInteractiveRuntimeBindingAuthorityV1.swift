@@ -33,13 +33,16 @@ public enum AgentInteractiveRuntimeBindingAuthorityStateV1:
 /// invalidation, and terminal teardown share one serialization chain.
 public actor AgentInteractiveRuntimeBindingAuthorityV1:
     InteractiveSessionRuntimeOwningV0,
-    HostInteractiveChannelAuthenticatingV0
+    HostInteractiveChannelAuthenticatingV0,
+    InteractiveSurfaceControlDispatchingV0
 {
     private struct Bound: Sendable {
         let generation: UInt64
         let runtime: any InteractiveSessionRuntimeOwningV0
         let channelAuthenticator:
             (any HostInteractiveChannelAuthenticatingV0)?
+        let surfaceControl:
+            (any InteractiveSurfaceControlDispatchingV0)?
     }
 
     private struct Active: Sendable {
@@ -75,6 +78,7 @@ public actor AgentInteractiveRuntimeBindingAuthorityV1:
         try await bind(
             runtime: runtime,
             channelAuthenticator: nil,
+            surfaceControl: nil,
             generation: generation
         )
     }
@@ -83,6 +87,8 @@ public actor AgentInteractiveRuntimeBindingAuthorityV1:
         runtime: any InteractiveSessionRuntimeOwningV0,
         channelAuthenticator:
             (any HostInteractiveChannelAuthenticatingV0)?,
+        surfaceControl:
+            (any InteractiveSurfaceControlDispatchingV0)? = nil,
         generation: UInt64
     ) async throws {
         let predecessor = sequencingTail
@@ -91,6 +97,7 @@ public actor AgentInteractiveRuntimeBindingAuthorityV1:
             try performBind(
                 runtime: runtime,
                 channelAuthenticator: channelAuthenticator,
+                surfaceControl: surfaceControl,
                 generation: generation
             )
         }
@@ -164,6 +171,111 @@ public actor AgentInteractiveRuntimeBindingAuthorityV1:
         await operation.value
     }
 
+    public func requestInitial(
+        _ request: InteractiveInitialSurfaceRequestBodyV0,
+        context: InteractiveSessionCommandContextV0
+    ) async throws -> InteractiveInitialSurfaceDescriptorBodyV0 {
+        let predecessor = sequencingTail
+        let operation = Task { [self] in
+            await predecessor.value
+            guard !terminal, active != nil,
+                  let control = bound?.surfaceControl else {
+                throw AgentInteractiveRuntimeBindingAuthorityErrorV1
+                    .unavailable
+            }
+            return try await control.requestInitial(request, context: context)
+        }
+        sequencingTail = Task { _ = try? await operation.value }
+        return try await operation.value
+    }
+
+    public func acknowledgeInitial(
+        _ request: InteractiveInitialSurfaceAcknowledgementBodyV0,
+        context: InteractiveSessionCommandContextV0
+    ) async throws -> InteractiveInitialSurfaceAcknowledgedBodyV0 {
+        let predecessor = sequencingTail
+        let operation = Task { [self] in
+            await predecessor.value
+            guard !terminal, active != nil,
+                  let control = bound?.surfaceControl else {
+                throw AgentInteractiveRuntimeBindingAuthorityErrorV1
+                    .unavailable
+            }
+            return try await control.acknowledgeInitial(
+                request,
+                context: context
+            )
+        }
+        sequencingTail = Task { _ = try? await operation.value }
+        return try await operation.value
+    }
+
+    public func targets(
+        _ request: InteractiveSurfaceTargetsRequestBodyV0,
+        context: InteractiveSessionCommandContextV0
+    ) async throws -> InteractiveSurfaceTargetsResponseBodyV0 {
+        let predecessor = sequencingTail
+        let operation = Task { [self] in
+            await predecessor.value
+            guard !terminal, active != nil,
+                  let control = bound?.surfaceControl else {
+                throw AgentInteractiveRuntimeBindingAuthorityErrorV1
+                    .unavailable
+            }
+            return try await control.targets(request, context: context)
+        }
+        sequencingTail = Task { _ = try? await operation.value }
+        return try await operation.value
+    }
+
+    public func select(
+        _ request: InteractiveSurfaceSelectBodyV0,
+        context: InteractiveSessionCommandContextV0
+    ) async throws -> InteractiveSurfaceSelectedBodyV0 {
+        let predecessor = sequencingTail
+        let operation = Task { [self] in
+            await predecessor.value
+            guard !terminal, active != nil,
+                  let control = bound?.surfaceControl else {
+                throw AgentInteractiveRuntimeBindingAuthorityErrorV1
+                    .unavailable
+            }
+            return try await control.select(request, context: context)
+        }
+        sequencingTail = Task { _ = try? await operation.value }
+        return try await operation.value
+    }
+
+    public func acknowledge(
+        _ request: InteractiveSurfaceAcknowledgementBodyV0,
+        context: InteractiveSessionCommandContextV0
+    ) async throws -> InteractiveSurfaceAcknowledgedBodyV0 {
+        let predecessor = sequencingTail
+        let operation = Task { [self] in
+            await predecessor.value
+            guard !terminal, active != nil,
+                  let control = bound?.surfaceControl else {
+                throw AgentInteractiveRuntimeBindingAuthorityErrorV1
+                    .unavailable
+            }
+            return try await control.acknowledge(request, context: context)
+        }
+        sequencingTail = Task { _ = try? await operation.value }
+        return try await operation.value
+    }
+
+    public func primarySessionClosed() async {
+        let predecessor = sequencingTail
+        let operation = Task { [self] in
+            await predecessor.value
+            guard !terminal, active != nil,
+                  let control = bound?.surfaceControl else { return }
+            await control.primarySessionClosed()
+        }
+        sequencingTail = operation
+        await operation.value
+    }
+
     @discardableResult
     public func invalidate(generation: UInt64) async -> Bool {
         let predecessor = sequencingTail
@@ -220,6 +332,8 @@ public actor AgentInteractiveRuntimeBindingAuthorityV1:
         runtime: any InteractiveSessionRuntimeOwningV0,
         channelAuthenticator:
             (any HostInteractiveChannelAuthenticatingV0)?,
+        surfaceControl:
+            (any InteractiveSurfaceControlDispatchingV0)?,
         generation: UInt64
     ) throws {
         guard !terminal else {
@@ -245,7 +359,8 @@ public actor AgentInteractiveRuntimeBindingAuthorityV1:
         bound = Bound(
             generation: generation,
             runtime: runtime,
-            channelAuthenticator: channelAuthenticator
+            channelAuthenticator: channelAuthenticator,
+            surfaceControl: surfaceControl
         )
     }
 

@@ -31,6 +31,50 @@ public protocol MacLocalXPCInteractiveLeaseSendingV1: Sendable {
     func revokeInteractiveLease(
         _ command: InteractiveRuntimeRevokeCommandV0
     ) async throws -> InteractiveRuntimeRevokedReceiptV0
+
+    func interactiveSurfaceTargets(
+        _ command: LocalInteractiveSurfaceTargetsCommandV1
+    ) async throws -> LocalInteractiveSurfaceTargetsReceiptV1
+    func resolveInteractiveSurface(
+        _ command: LocalInteractiveSurfaceResolveCommandV1
+    ) async throws -> LocalInteractiveSurfaceResolvedReceiptV1
+    func prepareInteractiveSurfaceTransition(
+        _ command: InteractiveRuntimeSurfaceTransitionCommandV0
+    ) async throws -> InteractiveRuntimeSurfaceTransitionReceiptV0
+    func acknowledgeInteractiveSurface(
+        _ command: InteractiveRuntimeSurfaceAcknowledgementCommandV0
+    ) async throws -> InteractiveRuntimeSurfaceAcknowledgementReceiptV0
+    func terminateInteractiveSurfaceFailure(
+        _ command: LocalInteractiveSurfaceFailureCommandV1
+    ) async throws -> LocalInteractiveSurfaceFailureReceiptV1
+}
+
+extension MacLocalXPCInteractiveLeaseSendingV1 {
+    public func interactiveSurfaceTargets(
+        _: LocalInteractiveSurfaceTargetsCommandV1
+    ) async throws -> LocalInteractiveSurfaceTargetsReceiptV1 {
+        throw MacLocalXPCInteractiveLeaseErrorV1.unavailable
+    }
+    public func resolveInteractiveSurface(
+        _: LocalInteractiveSurfaceResolveCommandV1
+    ) async throws -> LocalInteractiveSurfaceResolvedReceiptV1 {
+        throw MacLocalXPCInteractiveLeaseErrorV1.unavailable
+    }
+    public func prepareInteractiveSurfaceTransition(
+        _: InteractiveRuntimeSurfaceTransitionCommandV0
+    ) async throws -> InteractiveRuntimeSurfaceTransitionReceiptV0 {
+        throw MacLocalXPCInteractiveLeaseErrorV1.unavailable
+    }
+    public func acknowledgeInteractiveSurface(
+        _: InteractiveRuntimeSurfaceAcknowledgementCommandV0
+    ) async throws -> InteractiveRuntimeSurfaceAcknowledgementReceiptV0 {
+        throw MacLocalXPCInteractiveLeaseErrorV1.unavailable
+    }
+    public func terminateInteractiveSurfaceFailure(
+        _: LocalInteractiveSurfaceFailureCommandV1
+    ) async throws -> LocalInteractiveSurfaceFailureReceiptV1 {
+        throw MacLocalXPCInteractiveLeaseErrorV1.unavailable
+    }
 }
 
 /// Transport-internal sender used only by the opaque endpoint issued for one
@@ -64,6 +108,70 @@ package protocol MacLocalXPCGenerationBoundInteractiveLeaseSendingV1:
         endpointToken: UUID,
         command: InteractiveRuntimeRevokeCommandV0
     ) async throws -> InteractiveRuntimeRevokedReceiptV0
+
+    func interactiveSurfaceTargets(
+        generation: UInt64,
+        endpointToken: UUID,
+        command: LocalInteractiveSurfaceTargetsCommandV1
+    ) async throws -> LocalInteractiveSurfaceTargetsReceiptV1
+    func resolveInteractiveSurface(
+        generation: UInt64,
+        endpointToken: UUID,
+        command: LocalInteractiveSurfaceResolveCommandV1
+    ) async throws -> LocalInteractiveSurfaceResolvedReceiptV1
+    func prepareInteractiveSurfaceTransition(
+        generation: UInt64,
+        endpointToken: UUID,
+        command: InteractiveRuntimeSurfaceTransitionCommandV0
+    ) async throws -> InteractiveRuntimeSurfaceTransitionReceiptV0
+    func acknowledgeInteractiveSurface(
+        generation: UInt64,
+        endpointToken: UUID,
+        command: InteractiveRuntimeSurfaceAcknowledgementCommandV0
+    ) async throws -> InteractiveRuntimeSurfaceAcknowledgementReceiptV0
+    func terminateInteractiveSurfaceFailure(
+        generation: UInt64,
+        endpointToken: UUID,
+        command: LocalInteractiveSurfaceFailureCommandV1
+    ) async throws -> LocalInteractiveSurfaceFailureReceiptV1
+}
+
+extension MacLocalXPCGenerationBoundInteractiveLeaseSendingV1 {
+    package func interactiveSurfaceTargets(
+        generation _: UInt64,
+        endpointToken _: UUID,
+        command _: LocalInteractiveSurfaceTargetsCommandV1
+    ) async throws -> LocalInteractiveSurfaceTargetsReceiptV1 {
+        throw MacLocalXPCInteractiveLeaseErrorV1.unavailable
+    }
+    package func resolveInteractiveSurface(
+        generation _: UInt64,
+        endpointToken _: UUID,
+        command _: LocalInteractiveSurfaceResolveCommandV1
+    ) async throws -> LocalInteractiveSurfaceResolvedReceiptV1 {
+        throw MacLocalXPCInteractiveLeaseErrorV1.unavailable
+    }
+    package func prepareInteractiveSurfaceTransition(
+        generation _: UInt64,
+        endpointToken _: UUID,
+        command _: InteractiveRuntimeSurfaceTransitionCommandV0
+    ) async throws -> InteractiveRuntimeSurfaceTransitionReceiptV0 {
+        throw MacLocalXPCInteractiveLeaseErrorV1.unavailable
+    }
+    package func acknowledgeInteractiveSurface(
+        generation _: UInt64,
+        endpointToken _: UUID,
+        command _: InteractiveRuntimeSurfaceAcknowledgementCommandV0
+    ) async throws -> InteractiveRuntimeSurfaceAcknowledgementReceiptV0 {
+        throw MacLocalXPCInteractiveLeaseErrorV1.unavailable
+    }
+    package func terminateInteractiveSurfaceFailure(
+        generation _: UInt64,
+        endpointToken _: UUID,
+        command _: LocalInteractiveSurfaceFailureCommandV1
+    ) async throws -> LocalInteractiveSurfaceFailureReceiptV1 {
+        throw MacLocalXPCInteractiveLeaseErrorV1.unavailable
+    }
 }
 
 package enum MacLocalXPCInteractiveLeaseCommandKindV1:
@@ -74,6 +182,11 @@ package enum MacLocalXPCInteractiveLeaseCommandKindV1:
     case install
     case renew
     case revoke
+    case surfaceTargets
+    case surfaceResolve
+    case surfaceTransition
+    case surfaceAcknowledgement
+    case surfaceFailure
 }
 
 /// Pure queue-admission binding copied from the opaque ready-generation
@@ -124,6 +237,26 @@ public protocol MacLocalXPCInteractiveLeaseHandlingV1: Sendable {
         _ command: InteractiveRuntimeRevokeCommandV0
     ) async throws -> InteractiveRuntimeRevokedReceiptV0
 
+    func interactiveSurfaceTargets(
+        _ command: LocalInteractiveSurfaceTargetsCommandV1,
+        nowMonotonicNanoseconds: UInt64
+    ) async throws -> LocalInteractiveSurfaceTargetsReceiptV1
+    func resolveInteractiveSurface(
+        _ command: LocalInteractiveSurfaceResolveCommandV1,
+        nowMonotonicNanoseconds: UInt64
+    ) async throws -> LocalInteractiveSurfaceResolvedReceiptV1
+    func prepareInteractiveSurfaceTransition(
+        _ command: InteractiveRuntimeSurfaceTransitionCommandV0,
+        nowMonotonicNanoseconds: UInt64
+    ) async throws -> InteractiveRuntimeSurfaceTransitionReceiptV0
+    func acknowledgeInteractiveSurface(
+        _ command: InteractiveRuntimeSurfaceAcknowledgementCommandV0,
+        nowMonotonicNanoseconds: UInt64
+    ) async throws -> InteractiveRuntimeSurfaceAcknowledgementReceiptV0
+    func terminateInteractiveSurfaceFailure(
+        _ command: LocalInteractiveSurfaceFailureCommandV1
+    ) async throws -> LocalInteractiveSurfaceFailureReceiptV1
+
     func invalidateAgentAuthority() async
 }
 
@@ -132,6 +265,36 @@ extension MacLocalXPCInteractiveLeaseHandlingV1 {
         _: LocalInteractiveInitialDesktopPreparationCommandV1,
         nowMonotonicNanoseconds _: UInt64
     ) async throws -> LocalInteractiveInitialDesktopPreparedReceiptV1 {
+        throw MacLocalXPCInteractiveLeaseErrorV1.unavailable
+    }
+
+    public func interactiveSurfaceTargets(
+        _: LocalInteractiveSurfaceTargetsCommandV1,
+        nowMonotonicNanoseconds _: UInt64
+    ) async throws -> LocalInteractiveSurfaceTargetsReceiptV1 {
+        throw MacLocalXPCInteractiveLeaseErrorV1.unavailable
+    }
+    public func resolveInteractiveSurface(
+        _: LocalInteractiveSurfaceResolveCommandV1,
+        nowMonotonicNanoseconds _: UInt64
+    ) async throws -> LocalInteractiveSurfaceResolvedReceiptV1 {
+        throw MacLocalXPCInteractiveLeaseErrorV1.unavailable
+    }
+    public func prepareInteractiveSurfaceTransition(
+        _: InteractiveRuntimeSurfaceTransitionCommandV0,
+        nowMonotonicNanoseconds _: UInt64
+    ) async throws -> InteractiveRuntimeSurfaceTransitionReceiptV0 {
+        throw MacLocalXPCInteractiveLeaseErrorV1.unavailable
+    }
+    public func acknowledgeInteractiveSurface(
+        _: InteractiveRuntimeSurfaceAcknowledgementCommandV0,
+        nowMonotonicNanoseconds _: UInt64
+    ) async throws -> InteractiveRuntimeSurfaceAcknowledgementReceiptV0 {
+        throw MacLocalXPCInteractiveLeaseErrorV1.unavailable
+    }
+    public func terminateInteractiveSurfaceFailure(
+        _: LocalInteractiveSurfaceFailureCommandV1
+    ) async throws -> LocalInteractiveSurfaceFailureReceiptV1 {
         throw MacLocalXPCInteractiveLeaseErrorV1.unavailable
     }
 }

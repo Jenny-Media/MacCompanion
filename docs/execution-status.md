@@ -481,6 +481,23 @@ background, and private-route recovery evidence. Identity, Keychain, live
 private-route, lock-session, and latency gates remain external and do not block
 other bundle-independent work.
 
+Latest Adaptive Control construction checkpoint, superseding the
+authenticated-XPC/app-window-transition next-step wording above: the
+[adaptive surface runtime binding](evidence/2026-08-23-adaptive-surface-runtime-binding.md)
+connects the permanent Agent's authenticated primary surface dispatcher to a
+nine-command exact-generation local-XPC family and a menu-only opaque
+ScreenCaptureKit target owner. Desktop, application, window, and Desktop
+escape-hatch transitions now use ordered input release, source preparation,
+runtime fence/lease commit, activation, discontinuity/configuration/clean-frame
+gating, and exact acknowledgement before input resumes. Replacement leases
+rearm their exact expiry deadline, stale sessions cannot trigger recovery for
+another session, and window input uses retained global bounds plus the backing
+scale of the containing display. The full gate passes 71 indexed fixtures,
+1,467 `MacCompanionKit` tests, 8 platform probes, cross-builds, and the unsigned
+permanent app build. Signed installation/Agent enablement, TCC consent, live
+two-process pixels/input, physical iPhone, lock/takeover, latency, and reconnect
+evidence remain open; none blocks continued bundle-independent work.
+
 ## Blocker handling rule
 
 Every blocked item records its affected artifact, evidence needed to unblock it, and parallel work. The project is not globally blocked while any safe in-scope lane remains active or ready. A later-stage capability is complete only with passing exit evidence or an explicit evidence-backed `no-go` or `deferred` disposition.

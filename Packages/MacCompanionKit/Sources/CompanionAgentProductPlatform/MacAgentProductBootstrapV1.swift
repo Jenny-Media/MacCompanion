@@ -999,9 +999,10 @@ public enum MacAgentProductBootstrapV1 {
                                 SQLiteInteractiveSessionAdmissionReaderV0(
                                     store: storage.requiredAudit.securityStore,
                                     visible: interactiveAdmission
-                                ),
+                            ),
                             desktop: route,
-                            runtime: route
+                            runtime: route,
+                            surfaceRuntime: route
                         )
                         try await interactiveRuntime.bind(
                             runtime:
@@ -1009,6 +1010,7 @@ public enum MacAgentProductBootstrapV1 {
                                     runtime: owner
                                 ),
                             channelAuthenticator: owner,
+                            surfaceControl: owner,
                             generation: surfaces.generation
                         )
                         try await localInteractiveRoleData.bind(
@@ -1167,7 +1169,7 @@ private extension AgentNetworkPrimaryStartupInputsV1 {
                 visibleAdmission: admission,
                 materials: interactivePlatform.materials,
                 runtime: runtime,
-                surfaceControl: interactivePlatform.surfaceControl
+                surfaceControl: runtime
             )
         )
     }

@@ -22,15 +22,27 @@ public final class ScreenCaptureKitResolvedSurfaceV0: @unchecked Sendable {
     public let filter: SCContentFilter
     public let descriptor: AdaptiveSurfaceDescriptor
     public let profile: ScreenCaptureKitCaptureProfileV0
+    /// Global Core Graphics point-space bounds used for absolute input. This
+    /// never crosses IPC and is deliberately separate from the sanitized
+    /// descriptor.
+    public let inputBounds: CGRect
+    /// Backing scale for the display containing `inputBounds`. A selected
+    /// window may live on a different physical display than the initial
+    /// Desktop, so this cannot be reconstructed from the lease display ID.
+    public let inputBackingScaleFactor: Double
 
-    init(
+    public init(
         filter: SCContentFilter,
         descriptor: AdaptiveSurfaceDescriptor,
-        profile: ScreenCaptureKitCaptureProfileV0
+        profile: ScreenCaptureKitCaptureProfileV0,
+        inputBounds: CGRect,
+        inputBackingScaleFactor: Double
     ) {
         self.filter = filter
         self.descriptor = descriptor
         self.profile = profile
+        self.inputBounds = inputBounds
+        self.inputBackingScaleFactor = inputBackingScaleFactor
     }
 }
 
@@ -197,7 +209,12 @@ public final class ScreenCaptureKitOpaqueTargetCatalogV0: @unchecked Sendable {
         let filter: SCContentFilter
         let logicalWidth: Int
         let logicalHeight: Int
+        let captureWidth: Int
+        let captureHeight: Int
+        let inputBounds: CGRect
         let metadataFields: Set<SurfaceMetadataField>
+        let rotation: SurfaceRotation
+        let inputBackingScaleFactor: Double
         switch source {
         case let .application(processID, bundleIdentifier):
             guard expectedKind == .application,
@@ -223,11 +240,19 @@ public final class ScreenCaptureKitOpaqueTargetCatalogV0: @unchecked Sendable {
                     display: display,
                     application: application
                 )
-            logicalWidth = display.width
-            logicalHeight = display.height
+            inputBounds = CGDisplayBounds(selectedDisplayID)
+            logicalWidth = Int(inputBounds.width.rounded(.up))
+            logicalHeight = Int(inputBounds.height.rounded(.up))
+            captureWidth = Int(CGDisplayPixelsWide(selectedDisplayID))
+            captureHeight = Int(CGDisplayPixelsHigh(selectedDisplayID))
             metadataFields = [
                 .applicationName, .windowCount, .currentWindowAvailable,
             ]
+            rotation = current.kind == .window
+                ? .degrees0 : current.rotation
+            inputBackingScaleFactor = try Self.backingScaleFactor(
+                for: selectedDisplayID
+            )
         case let .window(windowID, processID, bundleIdentifier):
             guard expectedKind == .window,
                   let window = currentContent.windows.first(where: {
@@ -246,13 +271,47 @@ public final class ScreenCaptureKitOpaqueTargetCatalogV0: @unchecked Sendable {
                 .makeWindowFilter(window: window)
             logicalWidth = Int(window.frame.width.rounded(.up))
             logicalHeight = Int(window.frame.height.rounded(.up))
+            inputBounds = window.frame
+            let inputDisplayID = Self.displayContainingCenter(
+                of: window.frame,
+                fallback: selectedDisplayID
+            )
+            let displayBounds = CGDisplayBounds(inputDisplayID)
+            guard displayBounds.width.isFinite,
+                  displayBounds.height.isFinite,
+                  displayBounds.width > 0,
+                  displayBounds.height > 0 else {
+                throw ScreenCaptureKitOpaqueTargetCatalogErrorV0
+                    .sourceUnavailable
+            }
+            let pointScale = max(
+                Double(CGDisplayPixelsWide(inputDisplayID))
+                    / displayBounds.width,
+                Double(CGDisplayPixelsHigh(inputDisplayID))
+                    / displayBounds.height
+            )
+            inputBackingScaleFactor = pointScale
+            captureWidth = Int(
+                (window.frame.width * pointScale).rounded(.up)
+            )
+            captureHeight = Int(
+                (window.frame.height * pointScale).rounded(.up)
+            )
             metadataFields = [.applicationName, .genericWindowOrdinal]
+            rotation = .degrees0
         }
         let profile = try Self.captureProfile(
-            logicalWidth: logicalWidth,
-            logicalHeight: logicalHeight
+            logicalWidth: captureWidth,
+            logicalHeight: captureHeight
         )
         guard logicalWidth > 0, logicalHeight > 0,
+              captureWidth > 0, captureHeight > 0,
+              inputBounds.origin.x.isFinite,
+              inputBounds.origin.y.isFinite,
+              inputBounds.width.isFinite,
+              inputBounds.height.isFinite,
+              inputBackingScaleFactor.isFinite,
+              inputBackingScaleFactor > 0,
               logicalWidth <= Int(UInt32.max),
               logicalHeight <= Int(UInt32.max),
               nowMonotonicMilliseconds
@@ -278,6 +337,7 @@ public final class ScreenCaptureKitOpaqueTargetCatalogV0: @unchecked Sendable {
             encodedHeight: UInt16(profile.height),
             logicalWidthPoints: UInt32(logicalWidth),
             logicalHeightPoints: UInt32(logicalHeight),
+            rotation: rotation,
             interactionClasses: Set(current.interactionClasses),
             privacyProfile: .visualOnly,
             metadataFields: metadataFields,
@@ -288,8 +348,45 @@ public final class ScreenCaptureKitOpaqueTargetCatalogV0: @unchecked Sendable {
         return ScreenCaptureKitResolvedSurfaceV0(
             filter: filter,
             descriptor: descriptor,
-            profile: profile
+            profile: profile,
+            inputBounds: inputBounds,
+            inputBackingScaleFactor: inputBackingScaleFactor
         )
+    }
+
+    public static func backingScaleFactor(
+        for displayID: CGDirectDisplayID
+    ) throws -> Double {
+        let bounds = CGDisplayBounds(displayID)
+        guard displayID != 0,
+              bounds.width.isFinite, bounds.height.isFinite,
+              bounds.width > 0, bounds.height > 0 else {
+            throw ScreenCaptureKitOpaqueTargetCatalogErrorV0
+                .sourceUnavailable
+        }
+        let scale = max(
+            Double(CGDisplayPixelsWide(displayID)) / bounds.width,
+            Double(CGDisplayPixelsHigh(displayID)) / bounds.height
+        )
+        guard scale.isFinite, scale > 0 else {
+            throw ScreenCaptureKitOpaqueTargetCatalogErrorV0
+                .sourceUnavailable
+        }
+        return scale
+    }
+
+    private static func displayContainingCenter(
+        of frame: CGRect,
+        fallback: CGDirectDisplayID
+    ) -> CGDirectDisplayID {
+        var displayID: CGDirectDisplayID = 0
+        var count: UInt32 = 0
+        let center = CGPoint(x: frame.midX, y: frame.midY)
+        guard center.x.isFinite, center.y.isFinite,
+              CGGetDisplaysWithPoint(center, 1, &displayID, &count)
+                == .success,
+              count == 1, displayID != 0 else { return fallback }
+        return displayID
     }
 
     public func invalidate() {

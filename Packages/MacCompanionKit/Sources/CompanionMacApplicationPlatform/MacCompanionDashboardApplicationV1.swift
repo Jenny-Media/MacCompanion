@@ -217,7 +217,8 @@ public final class MacCompanionDashboardApplicationV1 {
                 interactiveRuntime: composition.runtime,
                 interactiveIndicator: interactiveIndicator,
                 interactiveMediaQueue: composition.mediaQueue,
-                interactiveDisplaySelection: displaySelection
+                interactiveDisplaySelection: displaySelection,
+                interactiveSurfaceTargets: composition.surfaceTargets
             )
         } else {
             self.init(
@@ -237,7 +238,9 @@ public final class MacCompanionDashboardApplicationV1 {
         interactiveIndicator: MacInteractiveActivityIndicatorV1? = nil,
         interactiveMediaQueue: BoundedInteractiveMediaQueueV0? = nil,
         interactiveDisplaySelection providedDisplaySelection:
-            MacInteractiveOpaqueDisplaySelectionV1? = nil
+            MacInteractiveOpaqueDisplaySelectionV1? = nil,
+        interactiveSurfaceTargets:
+            MacInteractiveSurfaceTargetOwnerV1? = nil
     ) {
         let interactiveDisplaySelection = providedDisplaySelection
             ?? (try? MacInteractiveOpaqueDisplaySelectionV1())
@@ -246,12 +249,22 @@ public final class MacCompanionDashboardApplicationV1 {
         let interactiveInputHandler:
             (any MacLocalXPCInteractiveInputHandlingV1)?
         if let interactiveRuntime, let interactiveDisplaySelection {
-            let handler = MacInteractiveLeaseRuntimeAdapterV1(
-                runtime: interactiveRuntime,
-                desktop: MacInteractiveInitialDesktopPreparerV1(
-                    displaySelection: interactiveDisplaySelection
-                )
+            let desktop = MacInteractiveInitialDesktopPreparerV1(
+                displaySelection: interactiveDisplaySelection,
+                surfaceTargets: interactiveSurfaceTargets
             )
+            let handler = if let interactiveSurfaceTargets {
+                MacInteractiveLeaseRuntimeAdapterV1(
+                    runtime: interactiveRuntime,
+                    desktop: desktop,
+                    surfaceTargets: interactiveSurfaceTargets
+                )
+            } else {
+                MacInteractiveLeaseRuntimeAdapterV1(
+                    runtime: interactiveRuntime,
+                    desktop: desktop
+                )
+            }
             interactiveLeaseHandler = handler
             interactiveInputHandler = handler
             interactiveIndicator?.installStopAction { [weak handler] in

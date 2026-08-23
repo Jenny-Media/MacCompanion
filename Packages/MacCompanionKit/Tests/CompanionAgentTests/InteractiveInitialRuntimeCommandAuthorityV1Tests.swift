@@ -547,6 +547,45 @@ private actor RuntimeOwnerMenuRouteV1:
     }
 }
 
+private enum RuntimeOwnerSurfaceRouteErrorV1: Error { case unavailable }
+
+private actor RuntimeOwnerSurfaceRouteV1:
+    AgentInteractiveSurfaceMenuRoutingV1
+{
+    func prepareSurfaceTransition(
+        _: InteractiveRuntimeSurfaceTransitionCommandV0,
+        nowMonotonicNanoseconds _: UInt64
+    ) async throws -> InteractiveRuntimeSurfaceTransitionReceiptV0 {
+        throw RuntimeOwnerSurfaceRouteErrorV1.unavailable
+    }
+
+    func acknowledgeSurface(
+        _: InteractiveRuntimeSurfaceAcknowledgementCommandV0,
+        nowMonotonicNanoseconds _: UInt64
+    ) async throws -> InteractiveRuntimeSurfaceAcknowledgementReceiptV0 {
+        throw RuntimeOwnerSurfaceRouteErrorV1.unavailable
+    }
+
+    func terminateSurfaceFailure(
+        interactiveSessionID _: UUID,
+        reason _: InteractiveSessionEndReason
+    ) async throws -> Bool { true }
+
+    func resolve(
+        _: InteractiveSurfaceSelectBodyV0,
+        context _: InteractiveSessionCommandContextV0
+    ) async throws -> AdaptiveSurfaceDescriptor {
+        throw RuntimeOwnerSurfaceRouteErrorV1.unavailable
+    }
+
+    func snapshot(
+        _: InteractiveSurfaceTargetsRequestBodyV0,
+        context _: InteractiveSessionCommandContextV0
+    ) async throws -> AdaptiveSurfaceTargetInventorySnapshotV0 {
+        throw RuntimeOwnerSurfaceRouteErrorV1.unavailable
+    }
+}
+
 private final class RuntimeOwnerIdentifiersV1: @unchecked Sendable {
     private let lock = NSLock()
     private var values: [UUID]
@@ -783,6 +822,42 @@ private final class RuntimeOwnerClockV1: @unchecked Sendable {
             requirement: requirement
         )
     }
+    #expect(await route.revokes().count == 1)
+    #expect(await owner.state() == .idle)
+}
+
+@Test func agentRuntimeOwnerCompensatesFailedSurfaceCoordinatorConstruction()
+    async throws
+{
+    let requirement = try initialRequirement()
+    let admission = RuntimeOwnerAdmissionV1([
+        requirement.admission, requirement.admission,
+    ])
+    let route = RuntimeOwnerMenuRouteV1()
+    let identifiers = RuntimeOwnerIdentifiersV1([UUID(), UUID(), UUID()])
+    let clock = RuntimeOwnerClockV1([
+        2_000_000_000, 2_100_000_000, 21_000_000_000,
+    ])
+    let owner = AgentInteractiveRuntimeOwnerV1(
+        admission: admission,
+        desktop: RuntimeOwnerDesktopV1(
+            descriptor: try initialDesktop()
+        ),
+        runtime: route,
+        surfaceRuntime: RuntimeOwnerSurfaceRouteV1(),
+        monotonicNowNanoseconds: { clock.now() },
+        identifier: { identifiers.next() }
+    )
+
+    await #expect(
+        throws: AgentInteractiveRuntimeOwnerErrorV1.unavailable
+    ) {
+        try await owner.install(
+            initialBootstrap(),
+            requirement: requirement
+        )
+    }
+    #expect(await route.installs().count == 1)
     #expect(await route.revokes().count == 1)
     #expect(await owner.state() == .idle)
 }

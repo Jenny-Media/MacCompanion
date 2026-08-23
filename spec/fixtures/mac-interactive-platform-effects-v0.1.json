@@ -23,6 +23,20 @@
     "maximumInFlightFrames": 1,
     "maximumWaitingFrames": 1
   },
+  "surfaceTransition": {
+    "preparedSourceLimit": 1,
+    "order": [
+      "releaseAllInput",
+      "prepareReplacementSourceWithoutPublishing",
+      "commitReplacementLeaseAndFence",
+      "activateExactPreparedSource",
+      "emitDiscontinuityConfigurationAndCleanKeyframe",
+      "awaitExactClientAcknowledgement",
+      "resumeInput"
+    ],
+    "activationFailureTerminatesSession": true,
+    "mismatchedPreparedSourceTerminatesSession": true
+  },
   "mediaDrain": {
     "maximumQueuedRecords": 8,
     "maximumQueuedPayloadBytes": 16777216,
@@ -50,6 +64,7 @@
     "the capture profile must exactly match the descriptor dimensions and the selected physical display must still match the opaque menu-owned mapping",
     "ScreenCaptureKit retains at most the newest one unconsumed callback while VideoToolbox owns at most one encoding frame and one newest waiting frame",
     "VideoToolbox output crosses the serialized runtime fence before entering the bounded media queue and the XPC drain awaits one exact acknowledgement before dequeueing another record",
+    "a surface transition prepares at most one replacement source without publishing, commits the replacement lease and fence, and only then activates that exact source",
     "input planning, event construction, and posting are serialized under one local owner and state commits only after the complete planned event batch is constructed",
     "display loss, permission loss, capture or encoder failure, media rejection, queue overflow, input construction failure, or post-lifecycle ambiguity terminates the exact Interactive session",
     "cleanup releases every tracked key, modifier, and pointer button before stopping capture, purges queued media, clears retained frame state, and clears the visible indicator",

@@ -109,6 +109,112 @@ public enum LocalInteractiveLeaseWireCodecV1 {
         try decode(InteractiveRuntimeRevokedReceiptV0.self, from: data)
     }
 
+    public static func encodeSurfaceTargetsCommand(
+        _ command: LocalInteractiveSurfaceTargetsCommandV1
+    ) throws -> Data { try encode(command) }
+
+    public static func decodeSurfaceTargetsCommand(
+        _ data: Data
+    ) throws -> LocalInteractiveSurfaceTargetsCommandV1 {
+        try decode(LocalInteractiveSurfaceTargetsCommandV1.self, from: data)
+    }
+
+    public static func encodeSurfaceTargetsReceipt(
+        _ receipt: LocalInteractiveSurfaceTargetsReceiptV1
+    ) throws -> Data { try encode(receipt) }
+
+    public static func decodeSurfaceTargetsReceipt(
+        _ data: Data
+    ) throws -> LocalInteractiveSurfaceTargetsReceiptV1 {
+        try decode(LocalInteractiveSurfaceTargetsReceiptV1.self, from: data)
+    }
+
+    public static func encodeSurfaceResolveCommand(
+        _ command: LocalInteractiveSurfaceResolveCommandV1
+    ) throws -> Data { try encode(command) }
+
+    public static func decodeSurfaceResolveCommand(
+        _ data: Data
+    ) throws -> LocalInteractiveSurfaceResolveCommandV1 {
+        try decode(LocalInteractiveSurfaceResolveCommandV1.self, from: data)
+    }
+
+    public static func encodeSurfaceResolvedReceipt(
+        _ receipt: LocalInteractiveSurfaceResolvedReceiptV1
+    ) throws -> Data { try encode(receipt) }
+
+    public static func decodeSurfaceResolvedReceipt(
+        _ data: Data
+    ) throws -> LocalInteractiveSurfaceResolvedReceiptV1 {
+        try decode(LocalInteractiveSurfaceResolvedReceiptV1.self, from: data)
+    }
+
+    public static func encodeSurfaceTransitionCommand(
+        _ command: InteractiveRuntimeSurfaceTransitionCommandV0
+    ) throws -> Data { try encode(command) }
+
+    public static func decodeSurfaceTransitionCommand(
+        _ data: Data
+    ) throws -> InteractiveRuntimeSurfaceTransitionCommandV0 {
+        try decode(InteractiveRuntimeSurfaceTransitionCommandV0.self, from: data)
+    }
+
+    public static func encodeSurfaceTransitionReceipt(
+        _ receipt: InteractiveRuntimeSurfaceTransitionReceiptV0
+    ) throws -> Data { try encode(receipt) }
+
+    public static func decodeSurfaceTransitionReceipt(
+        _ data: Data
+    ) throws -> InteractiveRuntimeSurfaceTransitionReceiptV0 {
+        try decode(InteractiveRuntimeSurfaceTransitionReceiptV0.self, from: data)
+    }
+
+    public static func encodeSurfaceAcknowledgementCommand(
+        _ command: InteractiveRuntimeSurfaceAcknowledgementCommandV0
+    ) throws -> Data { try encode(command) }
+
+    public static func decodeSurfaceAcknowledgementCommand(
+        _ data: Data
+    ) throws -> InteractiveRuntimeSurfaceAcknowledgementCommandV0 {
+        try decode(
+            InteractiveRuntimeSurfaceAcknowledgementCommandV0.self,
+            from: data
+        )
+    }
+
+    public static func encodeSurfaceAcknowledgementReceipt(
+        _ receipt: InteractiveRuntimeSurfaceAcknowledgementReceiptV0
+    ) throws -> Data { try encode(receipt) }
+
+    public static func decodeSurfaceAcknowledgementReceipt(
+        _ data: Data
+    ) throws -> InteractiveRuntimeSurfaceAcknowledgementReceiptV0 {
+        try decode(
+            InteractiveRuntimeSurfaceAcknowledgementReceiptV0.self,
+            from: data
+        )
+    }
+
+    public static func encodeSurfaceFailureCommand(
+        _ command: LocalInteractiveSurfaceFailureCommandV1
+    ) throws -> Data { try encode(command) }
+
+    public static func decodeSurfaceFailureCommand(
+        _ data: Data
+    ) throws -> LocalInteractiveSurfaceFailureCommandV1 {
+        try decode(LocalInteractiveSurfaceFailureCommandV1.self, from: data)
+    }
+
+    public static func encodeSurfaceFailureReceipt(
+        _ receipt: LocalInteractiveSurfaceFailureReceiptV1
+    ) throws -> Data { try encode(receipt) }
+
+    public static func decodeSurfaceFailureReceipt(
+        _ data: Data
+    ) throws -> LocalInteractiveSurfaceFailureReceiptV1 {
+        try decode(LocalInteractiveSurfaceFailureReceiptV1.self, from: data)
+    }
+
     private static func encode<Value: Encodable>(
         _ value: Value
     ) throws -> Data {

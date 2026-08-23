@@ -202,6 +202,66 @@ package actor MacLocalXPCAuthenticatedMenuPresentationEndpointV1:
         }
     }
 
+    package func interactiveSurfaceTargets(
+        _ command: LocalInteractiveSurfaceTargetsCommandV1
+    ) async throws -> LocalInteractiveSurfaceTargetsReceiptV1 {
+        try await submitInteractive { sender in
+            try await sender.interactiveSurfaceTargets(
+                generation: generation,
+                endpointToken: endpointToken,
+                command: command
+            )
+        }
+    }
+
+    package func resolveInteractiveSurface(
+        _ command: LocalInteractiveSurfaceResolveCommandV1
+    ) async throws -> LocalInteractiveSurfaceResolvedReceiptV1 {
+        try await submitInteractive { sender in
+            try await sender.resolveInteractiveSurface(
+                generation: generation,
+                endpointToken: endpointToken,
+                command: command
+            )
+        }
+    }
+
+    package func prepareInteractiveSurfaceTransition(
+        _ command: InteractiveRuntimeSurfaceTransitionCommandV0
+    ) async throws -> InteractiveRuntimeSurfaceTransitionReceiptV0 {
+        try await submitInteractive { sender in
+            try await sender.prepareInteractiveSurfaceTransition(
+                generation: generation,
+                endpointToken: endpointToken,
+                command: command
+            )
+        }
+    }
+
+    package func acknowledgeInteractiveSurface(
+        _ command: InteractiveRuntimeSurfaceAcknowledgementCommandV0
+    ) async throws -> InteractiveRuntimeSurfaceAcknowledgementReceiptV0 {
+        try await submitInteractive { sender in
+            try await sender.acknowledgeInteractiveSurface(
+                generation: generation,
+                endpointToken: endpointToken,
+                command: command
+            )
+        }
+    }
+
+    package func terminateInteractiveSurfaceFailure(
+        _ command: LocalInteractiveSurfaceFailureCommandV1
+    ) async throws -> LocalInteractiveSurfaceFailureReceiptV1 {
+        try await submitInteractive { sender in
+            try await sender.terminateInteractiveSurfaceFailure(
+                generation: generation,
+                endpointToken: endpointToken,
+                command: command
+            )
+        }
+    }
+
     package func applyInteractiveInput(
         _ envelope: InteractiveInputEnvelope
     ) async throws {

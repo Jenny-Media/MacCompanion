@@ -11,6 +11,7 @@ private enum RuntimeEffectEvent: Hashable, Sendable {
     case show
     case start
     case prepare
+    case activate
     case release
     case stop
     case blank
@@ -79,6 +80,12 @@ private actor RuntimeEffectsProbe:
     ) async throws -> Set<SurfaceInteractionClass> {
         try await apply(.prepare)
         return readyClasses
+    }
+
+    func activatePreparedInteractiveCaptureTransition(
+        _ command: InteractiveRuntimeSurfaceTransitionCommandV0
+    ) async throws {
+        try await apply(.activate)
     }
 
     func releaseAllInteractiveInput() async throws {
@@ -616,6 +623,13 @@ private func installAndActivateInitial(
         leaseID: lease.leaseID
     ))
 
+    #expect(try await owner.terminateSurfaceFailure(
+        interactiveSessionID: UUID()
+    ) == false)
+    #expect(await probe.events() == [
+        .show, .start, .release, .stop, .blank,
+    ])
+
     _ = try await owner.revoke(revoke)
     #expect(await probe.events() == [
         .show, .start, .release, .stop, .blank, .blank, .clear,
@@ -851,7 +865,7 @@ private func installAndActivateInitial(
         .discontinuity, .decoderConfiguration, .videoAccessUnit,
     ])
     #expect(await effects.events() == [
-        .show, .start, .release, .prepare,
+        .show, .start, .release, .prepare, .activate,
     ])
 }
 
@@ -907,7 +921,7 @@ private func installAndActivateInitial(
     #expect(await owner.state() == .idle)
     let events = await effects.events()
     #expect(events == [
-        .show, .start, .release, .prepare, .stop, .blank, .clear,
+        .show, .start, .release, .prepare, .activate, .stop, .blank, .clear,
     ])
 }
 
@@ -944,6 +958,42 @@ private func installAndActivateInitial(
     #expect(await owner.state() == .idle)
     #expect(await effects.events() == [
         .show, .start, .release, .prepare, .stop, .blank, .clear,
+    ])
+}
+
+@Test func surfaceActivationFailureRunsFullCleanupAfterFenceCommit()
+    async throws
+{
+    let effects = RuntimeEffectsProbe(failOnce: [.activate])
+    let owner = runtimeOwner(probe: effects)
+    let current = try runtimeLease()
+    _ = try await installAndActivateInitial(
+        owner,
+        command: installCommand(lease: current)
+    )
+    let replacement = try runtimeLease(
+        leaseID: UUID(),
+        surfaceID: UUID(),
+        surfaceRevision: 6,
+        coordinateRevision: 9,
+        renewalCounter: 1,
+        issuedAt: 3_000,
+        expiresAt: 7_000
+    )
+    await #expect(
+        throws: InteractiveMenuRuntimeErrorV0.surfaceTransitionFailed
+    ) {
+        try await owner.prepareSurfaceTransition(
+            runtimeSurfaceTransition(
+                current: current,
+                replacement: replacement
+            ),
+            nowMonotonicNanoseconds: 4_000
+        )
+    }
+    #expect(await owner.state() == .idle)
+    #expect(await effects.events() == [
+        .show, .start, .release, .prepare, .activate, .stop, .blank, .clear,
     ])
 }
 

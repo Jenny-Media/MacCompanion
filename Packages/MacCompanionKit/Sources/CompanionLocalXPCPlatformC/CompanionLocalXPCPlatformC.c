@@ -70,6 +70,26 @@ static const char MCLocalXPCInteractiveInitialDesktopPrepareKind[] =
     "runtime.interactive.desktop.prepare";
 static const char MCLocalXPCInteractiveInitialDesktopPrepareAcknowledgementKind[] =
     "runtime.interactive.desktop.prepare.ack";
+static const char MCLocalXPCInteractiveSurfaceTargetsKind[] =
+    "runtime.interactive.surface.targets";
+static const char MCLocalXPCInteractiveSurfaceTargetsAcknowledgementKind[] =
+    "runtime.interactive.surface.targets.ack";
+static const char MCLocalXPCInteractiveSurfaceResolveKind[] =
+    "runtime.interactive.surface.resolve";
+static const char MCLocalXPCInteractiveSurfaceResolveAcknowledgementKind[] =
+    "runtime.interactive.surface.resolve.ack";
+static const char MCLocalXPCInteractiveSurfaceTransitionKind[] =
+    "runtime.interactive.surface.transition";
+static const char MCLocalXPCInteractiveSurfaceTransitionAcknowledgementKind[] =
+    "runtime.interactive.surface.transition.ack";
+static const char MCLocalXPCInteractiveSurfaceAcknowledgementKind[] =
+    "runtime.interactive.surface.acknowledge";
+static const char MCLocalXPCInteractiveSurfaceAcknowledgementAcknowledgementKind[] =
+    "runtime.interactive.surface.acknowledge.ack";
+static const char MCLocalXPCInteractiveSurfaceFailureKind[] =
+    "runtime.interactive.surface.failure";
+static const char MCLocalXPCInteractiveSurfaceFailureAcknowledgementKind[] =
+    "runtime.interactive.surface.failure.ack";
 static const char MCLocalXPCInteractiveAdmissionPublicationKind[] =
     "runtime.interactive.admission.publish";
 static const char MCLocalXPCInteractiveAdmissionAcknowledgementKind[] =
@@ -138,6 +158,16 @@ static const char * _Nullable MCLocalXPCInteractiveLeaseRequestKind(
         return MCLocalXPCInteractiveLeaseRevokeKind;
     case MCLocalXPCInteractiveLeaseCommandPrepareInitialDesktop:
         return MCLocalXPCInteractiveInitialDesktopPrepareKind;
+    case MCLocalXPCInteractiveLeaseCommandSurfaceTargets:
+        return MCLocalXPCInteractiveSurfaceTargetsKind;
+    case MCLocalXPCInteractiveLeaseCommandSurfaceResolve:
+        return MCLocalXPCInteractiveSurfaceResolveKind;
+    case MCLocalXPCInteractiveLeaseCommandSurfaceTransition:
+        return MCLocalXPCInteractiveSurfaceTransitionKind;
+    case MCLocalXPCInteractiveLeaseCommandSurfaceAcknowledgement:
+        return MCLocalXPCInteractiveSurfaceAcknowledgementKind;
+    case MCLocalXPCInteractiveLeaseCommandSurfaceFailure:
+        return MCLocalXPCInteractiveSurfaceFailureKind;
     }
     return NULL;
 }
@@ -154,6 +184,16 @@ static const char * _Nullable MCLocalXPCInteractiveLeaseAcknowledgementKind(
         return MCLocalXPCInteractiveLeaseRevokeAcknowledgementKind;
     case MCLocalXPCInteractiveLeaseCommandPrepareInitialDesktop:
         return MCLocalXPCInteractiveInitialDesktopPrepareAcknowledgementKind;
+    case MCLocalXPCInteractiveLeaseCommandSurfaceTargets:
+        return MCLocalXPCInteractiveSurfaceTargetsAcknowledgementKind;
+    case MCLocalXPCInteractiveLeaseCommandSurfaceResolve:
+        return MCLocalXPCInteractiveSurfaceResolveAcknowledgementKind;
+    case MCLocalXPCInteractiveLeaseCommandSurfaceTransition:
+        return MCLocalXPCInteractiveSurfaceTransitionAcknowledgementKind;
+    case MCLocalXPCInteractiveLeaseCommandSurfaceAcknowledgement:
+        return MCLocalXPCInteractiveSurfaceAcknowledgementAcknowledgementKind;
+    case MCLocalXPCInteractiveLeaseCommandSurfaceFailure:
+        return MCLocalXPCInteractiveSurfaceFailureAcknowledgementKind;
     }
     return NULL;
 }
@@ -163,7 +203,12 @@ static bool MCLocalXPCInteractiveLeaseReplyCarriesPayload(
 ) {
     return kind == MCLocalXPCInteractiveLeaseCommandPrepareInitialDesktop
         || kind == MCLocalXPCInteractiveLeaseCommandInstall
-        || kind == MCLocalXPCInteractiveLeaseCommandRevoke;
+        || kind == MCLocalXPCInteractiveLeaseCommandRevoke
+        || kind == MCLocalXPCInteractiveLeaseCommandSurfaceTargets
+        || kind == MCLocalXPCInteractiveLeaseCommandSurfaceResolve
+        || kind == MCLocalXPCInteractiveLeaseCommandSurfaceTransition
+        || kind == MCLocalXPCInteractiveLeaseCommandSurfaceAcknowledgement
+        || kind == MCLocalXPCInteractiveLeaseCommandSurfaceFailure;
 }
 
 static void MCLocalXPCReleaseError(xpc_rich_error_t error) {
@@ -873,6 +918,11 @@ bool MCLocalXPCMessageGetExactInteractiveLeaseCommand(
         MCLocalXPCInteractiveLeaseCommandInstall,
         MCLocalXPCInteractiveLeaseCommandRenew,
         MCLocalXPCInteractiveLeaseCommandRevoke,
+        MCLocalXPCInteractiveLeaseCommandSurfaceTargets,
+        MCLocalXPCInteractiveLeaseCommandSurfaceResolve,
+        MCLocalXPCInteractiveLeaseCommandSurfaceTransition,
+        MCLocalXPCInteractiveLeaseCommandSurfaceAcknowledgement,
+        MCLocalXPCInteractiveLeaseCommandSurfaceFailure,
     };
     for (size_t index = 0;
          index < sizeof(kinds) / sizeof(kinds[0]);
@@ -1528,6 +1578,11 @@ bool MCLocalXPCExactMessageParserSelfTest(void) {
         MCLocalXPCInteractiveLeaseCommandInstall,
         MCLocalXPCInteractiveLeaseCommandRenew,
         MCLocalXPCInteractiveLeaseCommandRevoke,
+        MCLocalXPCInteractiveLeaseCommandSurfaceTargets,
+        MCLocalXPCInteractiveLeaseCommandSurfaceResolve,
+        MCLocalXPCInteractiveLeaseCommandSurfaceTransition,
+        MCLocalXPCInteractiveLeaseCommandSurfaceAcknowledgement,
+        MCLocalXPCInteractiveLeaseCommandSurfaceFailure,
     };
     for (size_t index = 0;
          index < sizeof(lease_kinds) / sizeof(lease_kinds[0]);

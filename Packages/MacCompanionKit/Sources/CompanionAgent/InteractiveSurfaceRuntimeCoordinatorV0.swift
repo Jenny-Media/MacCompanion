@@ -174,6 +174,41 @@ public actor InteractiveSurfaceRuntimeCoordinatorV0 {
 
     public func lease() -> InteractiveExecutionLease { currentLease }
 
+    /// Mirrors an already accepted same-surface runtime renewal into the
+    /// surface authority. Surface selection remains the only operation that
+    /// can change surface or coordinate revisions.
+    public func adoptRenewedLease(
+        _ replacement: InteractiveExecutionLease
+    ) throws {
+        guard replacement.hostID == currentLease.hostID,
+              replacement.deviceID == currentLease.deviceID,
+              replacement.interactiveSessionID
+                == currentLease.interactiveSessionID,
+              replacement.authorizationEpoch
+                == currentLease.authorizationEpoch,
+              replacement.selectedDisplayID
+                == currentLease.selectedDisplayID,
+              replacement.surfaceID == currentLease.surfaceID,
+              replacement.surfaceRevision == currentLease.surfaceRevision,
+              replacement.coordinateRevision
+                == currentLease.coordinateRevision,
+              replacement.allowedInteractionClasses
+                == currentLease.allowedInteractionClasses,
+              replacement.renewalCounter
+                == currentLease.renewalCounter + 1,
+              replacement.issuedAtMonotonicNanoseconds
+                >= currentLease.issuedAtMonotonicNanoseconds,
+              replacement.expiresAtMonotonicNanoseconds
+                > replacement.issuedAtMonotonicNanoseconds,
+              replacement.expiresAtMonotonicNanoseconds
+                <= sessionDeadlineMonotonicNanoseconds,
+              stateStorage != .ended,
+              stateStorage != .safetyRecoveryRequired else {
+            throw InteractiveSurfaceRuntimeCoordinatorErrorV0.invalidTime
+        }
+        currentLease = replacement
+    }
+
     public func initialActivation() throws -> InteractiveInitialSurfaceRuntimeV0 {
         guard case let .awaitingInitialAcknowledgement(commandID) = stateStorage,
               case let .active(descriptor) = surfaceAuthority.phase else {

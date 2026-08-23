@@ -82,7 +82,9 @@ public final class MacCoreGraphicsInteractiveInputAdapterV1:
 
     package func configure(
         command: InteractiveRuntimeInstallCommandV0,
-        physicalDisplayID: CGDirectDisplayID
+        physicalDisplayID: CGDirectDisplayID,
+        inputBounds: CGRect? = nil,
+        inputBackingScaleFactor: Double? = nil
     ) throws -> Set<SurfaceInteractionClass> {
         try lock.withLock {
             guard configuration == nil,
@@ -102,9 +104,14 @@ public final class MacCoreGraphicsInteractiveInputAdapterV1:
                 throw MacCoreGraphicsInteractiveInputAdapterErrorV1
                     .permissionDenied
             }
-            let bounds = displayBounds(physicalDisplayID)
+            let physicalDisplayBounds = displayBounds(physicalDisplayID)
+            let bounds = inputBounds ?? physicalDisplayBounds
             let pixels = displayPixels(physicalDisplayID)
             guard physicalDisplayID != 0,
+                  bounds.origin.x.isFinite,
+                  bounds.origin.y.isFinite,
+                  bounds.width.isFinite,
+                  bounds.height.isFinite,
                   bounds.width.rounded(.up)
                     == Double(command.surfaceDescriptor.logicalWidthPoints),
                   bounds.height.rounded(.up)
@@ -116,10 +123,24 @@ public final class MacCoreGraphicsInteractiveInputAdapterV1:
                 throw MacCoreGraphicsInteractiveInputAdapterErrorV1
                     .bindingMismatch
             }
-            let scale = max(
-                Double(pixels.wide) / bounds.width,
-                Double(pixels.high) / bounds.height
-            )
+            let scale: Double
+            if let inputBackingScaleFactor {
+                scale = inputBackingScaleFactor
+            } else {
+                guard physicalDisplayBounds.width > 0,
+                      physicalDisplayBounds.height > 0 else {
+                    throw MacCoreGraphicsInteractiveInputAdapterErrorV1
+                        .bindingMismatch
+                }
+                scale = max(
+                    Double(pixels.wide) / physicalDisplayBounds.width,
+                    Double(pixels.high) / physicalDisplayBounds.height
+                )
+            }
+            guard scale.isFinite, scale > 0 else {
+                throw MacCoreGraphicsInteractiveInputAdapterErrorV1
+                    .bindingMismatch
+            }
             let geometry = try MacDisplayGeometrySnapshotV0(
                 selectedDisplayID: command.lease.selectedDisplayID,
                 coordinateRevision: command.lease.coordinateRevision,
