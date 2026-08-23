@@ -552,6 +552,19 @@ delivery, primary-stream event sending, live crop construction, and automatic
 iOS application remain the next safe lanes; signed and physical evidence
 remains open.
 
+The subsequent [host event transport and Accessibility projection](evidence/2026-08-23-host-event-transport-and-ax-projection.md)
+now gives the authenticated primary frame pump one serialized event/reply write
+lane and admits only the frozen null-correlation focus event after readiness.
+The menu-platform Accessibility reader immediately projects the focused element
+to a closed category, editable/secure flags, and bounded normalized geometry;
+it never reads content, labels, titles, descriptions, identifiers, or selected
+text, and unsafe or clipped geometry falls back closed. The full gate passes 73
+fixtures, the 1,485-test Swift catalog, all cross-builds/unsigned permanent
+builds, and eight platform probes. Authenticated local-XPC candidate delivery,
+live observation, Agent product emission, ScreenCaptureKit crop construction,
+and automatic iOS application remain the next safe lanes; signed TCC and
+physical evidence remains open.
+
 ## Blocker handling rule
 
 Every blocked item records its affected artifact, evidence needed to unblock it, and parallel work. The project is not globally blocked while any safe in-scope lane remains active or ready. A later-stage capability is complete only with passing exit evidence or an explicit evidence-backed `no-go` or `deferred` disposition.

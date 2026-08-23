@@ -2,6 +2,8 @@ import CompanionAuthentication
 import CompanionDomain
 import CompanionHost
 import CompanionHostSession
+import CompanionInteractiveShared
+import CompanionInteractiveWire
 @testable import CompanionNetworkPlatform
 import CompanionOperations
 import CompanionPersistence
@@ -323,6 +325,41 @@ private func networkHostClassifiedPrimaryPayloadV0(_ data: Data) throws
         WireEnvelope<SessionDescriptionBody>.self,
         from: networkHostClassifiedPrimaryPayloadV0(descriptionFrame)
     )
+    await #expect(
+        throws: NetworkHostPrimaryFramePumpErrorV0.invalidConfiguration
+    ) {
+        try await pump.sendAuthenticatedEvent(hello)
+    }
+    #expect(io.sent.count == 2)
+
+    let event = try WireEnvelope(
+        messageID: WireUUID(UUID()),
+        correlationID: nil,
+        channel: .events,
+        sentAtUnixMilliseconds: 4_003,
+        body: try InteractiveSurfaceFocusChangedBodyV0(
+            interactiveSessionID: WireUUID(UUID()),
+            authorizationEpoch: .init(rawValue: 1),
+            currentSurfaceID: WireUUID(UUID()),
+            currentSurfaceRevision: .init(rawValue: 1),
+            currentCoordinateSpaceRevision: .init(rawValue: 1),
+            recommendedTargetKind: .desktop,
+            targetToken: nil,
+            focus: nil,
+            inputPaused: false,
+            reason: .noVerifiedFocus,
+            validForMilliseconds: 1_000,
+            eventSequence: 1
+        )
+    )
+    try await pump.sendAuthenticatedEvent(WireCodec.encode(event))
+    let eventFrame = try #require(io.sent.last)
+    let sentEvent = try WireCodec.decode(
+        WireEnvelope<InteractiveSurfaceFocusChangedBodyV0>.self,
+        from: networkHostClassifiedPrimaryPayloadV0(eventFrame)
+    )
+    #expect(sentEvent == event)
+    #expect(io.sent.count == 3)
     await pump.cancel()
     #expect(io.cancelCount == 1)
 }

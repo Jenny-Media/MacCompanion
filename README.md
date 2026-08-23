@@ -327,6 +327,15 @@ before the existing runtime transition. Accessibility observation, local-XPC
 candidate delivery, live crop construction, and primary-stream emission remain
 the next construction steps.
 
+The following [host event transport and Accessibility projection checkpoint](docs/evidence/2026-08-23-host-event-transport-and-ax-projection.md)
+serializes that event with authenticated primary replies and adds a
+content-minimizing macOS focus reader. The menu process reduces Accessibility
+state immediately to a closed category, editable/secure flags, and conservative
+normalized geometry; it never reads field values, selected text, labels,
+titles, descriptions, or identifiers. Authenticated local candidate delivery,
+live focus observation, capture cropping, and automatic client application are
+still subsequent work.
+
 The [permanent Mac containing-app target](docs/evidence/2026-08-21-permanent-mac-containing-app-target.md)
 now embeds the separately signed, deliberately inert [permanent Agent
 target](docs/evidence/2026-08-21-permanent-embedded-mac-agent-target.md), its

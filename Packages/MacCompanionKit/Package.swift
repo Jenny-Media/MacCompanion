@@ -218,6 +218,7 @@ let package = Package(
                 "CompanionSecurity",
             ],
             linkerSettings: [
+                .linkedFramework("ApplicationServices", .when(platforms: [.macOS])),
                 .linkedFramework("CoreGraphics", .when(platforms: [.macOS])),
                 .linkedFramework("CoreMedia", .when(platforms: [.macOS])),
                 .linkedFramework("CoreVideo", .when(platforms: [.macOS])),

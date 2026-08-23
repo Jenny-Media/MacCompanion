@@ -220,6 +220,7 @@ public actor NetworkHostPrimaryFramePumpV0 {
     private var decoder = LengthPrefixedFrameDecoder()
     private var started = false
     private var stopped = false
+    private var sendTail: Task<Void, Error>?
     private var deadlineTask: Task<Void, Never>?
     private var classifiedActivationContinuation:
         CheckedContinuation<Void, Error>?
@@ -361,6 +362,31 @@ public actor NetworkHostPrimaryFramePumpV0 {
         await stop(reason: .localCancel)
     }
 
+    /// Sends one already-authorized host event on the same serialized write
+    /// lane as command replies. The semantic owner must prepare the event;
+    /// this transport accepts only the closed v0.1 event envelope.
+    public func sendAuthenticatedEvent(_ eventJSON: Data) async throws {
+        let metadata: WireRoutingMetadata
+        do {
+            metadata = try WireCodec.routingMetadata(from: eventJSON)
+        } catch {
+            throw NetworkHostPrimaryFramePumpErrorV0.invalidConfiguration
+        }
+        guard metadata.channel == .events,
+              metadata.kind == .interactiveSurfaceFocusChanged,
+              metadata.correlationID == nil,
+              started, !stopped,
+              await session.phase == .ready else {
+            throw NetworkHostPrimaryFramePumpErrorV0.invalidConfiguration
+        }
+        do {
+            try await send(LengthPrefixedFrameDecoder.encode(eventJSON))
+        } catch {
+            await stop(reason: .protocolOrSessionFailure)
+            throw NetworkHostPrimaryFramePumpErrorV0.sendFailed
+        }
+    }
+
     private func connectionStateChanged(
         _ state: NetworkHostPrimaryFrameIOStateV0
     ) async {
@@ -433,7 +459,14 @@ public actor NetworkHostPrimaryFramePumpV0 {
     }
 
     private func send(_ data: Data) async throws {
-        try await io.send(data)
+        let predecessor = sendTail
+        let io = self.io
+        let operation = Task {
+            if let predecessor { try await predecessor.value }
+            try await io.send(data)
+        }
+        sendTail = operation
+        try await operation.value
     }
 
     private func stop(
@@ -442,6 +475,8 @@ public actor NetworkHostPrimaryFramePumpV0 {
     ) async {
         guard !stopped else { return }
         stopped = true
+        sendTail?.cancel()
+        sendTail = nil
         deadlineTask?.cancel()
         deadlineTask = nil
         if cancelIO {
