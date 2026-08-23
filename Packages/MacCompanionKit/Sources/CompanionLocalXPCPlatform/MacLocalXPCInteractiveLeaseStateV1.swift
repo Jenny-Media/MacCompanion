@@ -16,6 +16,10 @@ public enum MacLocalXPCInteractiveLeaseErrorV1:
 /// Agent-side connection-scoped capability. Implementations send only through
 /// the exact current authenticated and ready menu generation.
 public protocol MacLocalXPCInteractiveLeaseSendingV1: Sendable {
+    func prepareInitialInteractiveDesktop(
+        _ command: LocalInteractiveInitialDesktopPreparationCommandV1
+    ) async throws -> LocalInteractiveInitialDesktopPreparedReceiptV1
+
     func installInteractiveLease(
         _ command: InteractiveRuntimeInstallCommandV0
     ) async throws -> InteractiveRuntimeInstallReceiptV0
@@ -33,6 +37,7 @@ package enum MacLocalXPCInteractiveLeaseCommandKindV1:
     Equatable,
     Sendable
 {
+    case prepareInitialDesktop
     case install
     case renew
     case revoke
@@ -43,6 +48,11 @@ package enum MacLocalXPCInteractiveLeaseCommandKindV1:
 /// Generation loss invokes `invalidateAgentAuthority` without waiting for a
 /// network or Agent acknowledgement.
 public protocol MacLocalXPCInteractiveLeaseHandlingV1: Sendable {
+    func prepareInitialInteractiveDesktop(
+        _ command: LocalInteractiveInitialDesktopPreparationCommandV1,
+        nowMonotonicNanoseconds: UInt64
+    ) async throws -> LocalInteractiveInitialDesktopPreparedReceiptV1
+
     func installInteractiveLease(
         _ command: InteractiveRuntimeInstallCommandV0,
         nowMonotonicNanoseconds: UInt64
@@ -58,6 +68,15 @@ public protocol MacLocalXPCInteractiveLeaseHandlingV1: Sendable {
     ) async throws -> InteractiveRuntimeRevokedReceiptV0
 
     func invalidateAgentAuthority() async
+}
+
+extension MacLocalXPCInteractiveLeaseHandlingV1 {
+    public func prepareInitialInteractiveDesktop(
+        _: LocalInteractiveInitialDesktopPreparationCommandV1,
+        nowMonotonicNanoseconds _: UInt64
+    ) async throws -> LocalInteractiveInitialDesktopPreparedReceiptV1 {
+        throw MacLocalXPCInteractiveLeaseErrorV1.unavailable
+    }
 }
 
 /// One cross-family transaction gate per authenticated generation. Interactive

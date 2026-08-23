@@ -529,7 +529,7 @@ a conforming release construction path.
 
 The Agent issues an `InteractiveExecutionLease` for at most 10 seconds. The lease contains a unique lease ID, every binding above, a safe-integer renewal counter, monotonic issue/expiry times, and a canonical sorted unique list of allowed interaction classes. `view` is mandatory. `text` is legal only when `keyboard` is also allowed. Invalid, duplicate, or non-canonical interaction classes and invalid lifetimes fail during decoding; a local caller cannot repair them after decoding.
 
-The Agent sends `InteractiveRuntimeInstallCommandV0` only after final admission. It includes the lease, a locally confirmed presentation-only device name, Desktop as the initial surface, and the enclosing session deadline. The menu app may acknowledge installation only with an exactly correlated receipt, a positive current menu-app revision, a visible status indicator, and readiness for every class granted by the lease. A receipt is not proof that TCC or runtime authority remains available; each operation still revalidates the lease and current platform authority.
+The Agent sends `InteractiveRuntimeInstallCommandV0` only after final admission. It includes the lease, a locally confirmed presentation-only device name, the complete prepared Desktop descriptor, and the enclosing session deadline. The descriptor must be current at the menu's local monotonic install sample and exactly match the lease's session, authorization epoch, surface, surface revision, coordinate revision, and interaction classes. The menu app may acknowledge installation only with an exactly correlated receipt, a positive current menu-app revision, a visible status indicator, and readiness for every class granted by the lease. A receipt is not proof that TCC or runtime authority remains available; each operation still revalidates the lease and current platform authority.
 
 A renewal replaces the lease ID, increments the renewal counter exactly once, preserves every host/device/session/authorization/display/surface/revision/class binding, and is issued before the old lease expires. It cannot widen authority or resurrect an expired lease.
 
@@ -537,9 +537,13 @@ Revocation is exactly correlated to the current lease and session. Success is ac
 
 ### Exact Interactive lease transport
 
-The first Agent-to-menu Interactive transport slice contains exactly three
-request kinds after the authenticated menu-readiness exchange:
+The Agent-to-menu Interactive runtime transport contains exactly four request
+kinds after the authenticated menu-readiness exchange:
 
+- `runtime.interactive.desktop.prepare` carries canonical
+  `LocalInteractiveInitialDesktopPreparationCommandV1` data and succeeds only
+  with `runtime.interactive.desktop.prepare.ack` carrying an exactly
+  correlated canonical `LocalInteractiveInitialDesktopPreparedReceiptV1`;
 - `runtime.interactive.install` carries canonical
   `InteractiveRuntimeInstallCommandV0` data and succeeds only with
   `runtime.interactive.install.ack` carrying an exactly correlated canonical
@@ -560,8 +564,8 @@ and the typed value is validated again at the runtime boundary. The exact
 indexed fixture is `local-xpc-interactive-lease-transport-v0.1.json`.
 
 There is no handled application-error envelope. The Agent sender and menu
-receiver share one cross-family single-flight transaction for install, renew,
-and revoke. A rejected runtime operation, timeout, cancellation after send,
+receiver share one cross-family single-flight transaction for Desktop
+preparation, install, renew, and revoke. A rejected runtime operation, timeout, cancellation after send,
 malformed request or reply, premature message, cross-kind reply, concurrent
 command, or generation replacement terminates the exact authenticated XPC
 generation. The menu receiver finishes each runtime operation within four
@@ -570,7 +574,15 @@ unacknowledged runtime invalidation locally, and the Agent treats every
 ambiguous completion as Control teardown rather than retrying or inferring
 success.
 
-This lease slice carries no input or media. `applyInteractiveInput`,
+Desktop preparation binds the exact Interactive session, authorization epoch,
+opaque selected-display UUID, and canonical requested interaction classes. The
+visible menu process samples its own monotonic clock, resolves the physical
+display only inside its platform module, and returns one Desktop
+`AdaptiveSurfaceDescriptor`. The descriptor is exactly correlated and may not
+contain or be accompanied by physical display IDs, display names, process or
+window IDs, permission facts, or platform objects.
+
+This runtime slice carries no input or media. `applyInteractiveInput`,
 `publishInteractiveMedia`, and surface-transition transport remain closed until
 their independently bounded binary/backpressure and runtime-fence mappings are
 frozen and implemented.

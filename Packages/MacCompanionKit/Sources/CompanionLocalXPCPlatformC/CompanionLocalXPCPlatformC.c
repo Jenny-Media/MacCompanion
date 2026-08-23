@@ -66,6 +66,10 @@ static const char MCLocalXPCInteractiveLeaseRevokeKind[] =
     "runtime.interactive.revoke";
 static const char MCLocalXPCInteractiveLeaseRevokeAcknowledgementKind[] =
     "runtime.interactive.revoke.ack";
+static const char MCLocalXPCInteractiveInitialDesktopPrepareKind[] =
+    "runtime.interactive.desktop.prepare";
+static const char MCLocalXPCInteractiveInitialDesktopPrepareAcknowledgementKind[] =
+    "runtime.interactive.desktop.prepare.ack";
 static const char MCLocalXPCInteractiveAdmissionPublicationKind[] =
     "runtime.interactive.admission.publish";
 static const char MCLocalXPCInteractiveAdmissionAcknowledgementKind[] =
@@ -124,6 +128,8 @@ static const char * _Nullable MCLocalXPCInteractiveLeaseRequestKind(
         return MCLocalXPCInteractiveLeaseRenewKind;
     case MCLocalXPCInteractiveLeaseCommandRevoke:
         return MCLocalXPCInteractiveLeaseRevokeKind;
+    case MCLocalXPCInteractiveLeaseCommandPrepareInitialDesktop:
+        return MCLocalXPCInteractiveInitialDesktopPrepareKind;
     }
     return NULL;
 }
@@ -138,6 +144,8 @@ static const char * _Nullable MCLocalXPCInteractiveLeaseAcknowledgementKind(
         return MCLocalXPCInteractiveLeaseRenewAcknowledgementKind;
     case MCLocalXPCInteractiveLeaseCommandRevoke:
         return MCLocalXPCInteractiveLeaseRevokeAcknowledgementKind;
+    case MCLocalXPCInteractiveLeaseCommandPrepareInitialDesktop:
+        return MCLocalXPCInteractiveInitialDesktopPrepareAcknowledgementKind;
     }
     return NULL;
 }
@@ -145,7 +153,8 @@ static const char * _Nullable MCLocalXPCInteractiveLeaseAcknowledgementKind(
 static bool MCLocalXPCInteractiveLeaseReplyCarriesPayload(
     MCLocalXPCInteractiveLeaseCommandKind kind
 ) {
-    return kind == MCLocalXPCInteractiveLeaseCommandInstall
+    return kind == MCLocalXPCInteractiveLeaseCommandPrepareInitialDesktop
+        || kind == MCLocalXPCInteractiveLeaseCommandInstall
         || kind == MCLocalXPCInteractiveLeaseCommandRevoke;
 }
 
@@ -852,6 +861,7 @@ bool MCLocalXPCMessageGetExactInteractiveLeaseCommand(
     size_t *payload_length_out
 ) {
     const MCLocalXPCInteractiveLeaseCommandKind kinds[] = {
+        MCLocalXPCInteractiveLeaseCommandPrepareInitialDesktop,
         MCLocalXPCInteractiveLeaseCommandInstall,
         MCLocalXPCInteractiveLeaseCommandRenew,
         MCLocalXPCInteractiveLeaseCommandRevoke,
@@ -1419,6 +1429,7 @@ bool MCLocalXPCExactMessageParserSelfTest(void) {
     }
 
     const MCLocalXPCInteractiveLeaseCommandKind lease_kinds[] = {
+        MCLocalXPCInteractiveLeaseCommandPrepareInitialDesktop,
         MCLocalXPCInteractiveLeaseCommandInstall,
         MCLocalXPCInteractiveLeaseCommandRenew,
         MCLocalXPCInteractiveLeaseCommandRevoke,

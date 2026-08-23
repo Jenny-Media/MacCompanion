@@ -112,15 +112,15 @@ request-context composition, permanent-target activation, and signed
 two-process evidence remain gated.
 
 The [Interactive lease local-XPC checkpoint](evidence/2026-08-22-interactive-lease-local-xpc-transport.md)
-now fixes and implements exact install, renewal, and revoke transport between
-one authenticated-and-ready Agent/menu generation. Strict canonical payloads,
-one cross-family transaction, asymmetric bounded deadlines, exact receipt
-correlation, and generation-wide failure on ambiguity preserve fail-closed
-ownership. Connection loss invokes local unacknowledged runtime invalidation.
-This checkpoint carries no input or media and does not activate capture or
-posting. The next independent slice is a separate final-state-revalidating
-Control authority plus concrete menu platform adapters; the existing stable
-pairing/recovery authority remains Control-free.
+fixes and implements exact install, renewal, and revoke transport between one
+authenticated-and-ready Agent/menu generation. The later initial-Desktop
+checkpoint adds preparation as the fourth operation on the same cross-family
+transaction gate. Strict canonical payloads, asymmetric bounded deadlines,
+exact receipt correlation, and generation-wide failure on ambiguity preserve
+fail-closed ownership. Connection loss invokes local unacknowledged runtime
+invalidation. This transport carries no input or media and does not itself
+activate capture or posting; the existing stable pairing/recovery authority
+remains Control-free.
 
 The [Interactive runtime composition boundary](evidence/2026-08-22-interactive-runtime-composition-boundary.md)
 now forwards the exact lease lifecycle into one serialized menu runtime with a
@@ -136,6 +136,19 @@ publishes its opaque UUID, refuses redirection after display loss, and renews
 from exact acknowledged lease deadlines without retrying ambiguity. Concrete
 platform effects and secondary channel handoff remain the next Control
 composition gates.
+
+The [initial Desktop runtime transport checkpoint](evidence/2026-08-22-initial-desktop-runtime-transport.md)
+now adds Desktop preparation as the fourth operation on the authenticated
+runtime transport's shared single-flight gate. The menu resolves the exact
+admission-published opaque display through the same process-local mapper and
+returns only a bounded, exactly correlated descriptor without ScreenCaptureKit
+enumeration or platform effects. Install now carries that complete descriptor,
+binds it to every lease surface dimension during construction and decoding,
+revalidates Desktop kind plus monotonic validity before indicator/capture, and
+passes the full command into the capture seam. The full 1,426-test Swift catalog,
+cross-builds, and eight platform probes pass. Permanent Agent runtime-owner
+composition and concrete menu indicator/capture/media/input adapters remain the
+next independent Control slice.
 
 The [visible Interactive admission checkpoint](evidence/2026-08-22-visible-interactive-admission-contract.md)
 now carries the closed canonical menu-process generation, exact revision, and

@@ -20,6 +20,24 @@ public enum MacInteractiveLeaseRuntimeAdapterStateV1:
     case safetyRecoveryRequired
 }
 
+public protocol MacInteractiveInitialDesktopPreparingV1: Sendable {
+    func prepareInitialInteractiveDesktop(
+        _ command: LocalInteractiveInitialDesktopPreparationCommandV1,
+        nowMonotonicNanoseconds: UInt64
+    ) async throws -> LocalInteractiveInitialDesktopPreparedReceiptV1
+}
+
+private struct MacUnavailableInteractiveInitialDesktopPreparerV1:
+    MacInteractiveInitialDesktopPreparingV1
+{
+    func prepareInitialInteractiveDesktop(
+        _: LocalInteractiveInitialDesktopPreparationCommandV1,
+        nowMonotonicNanoseconds _: UInt64
+    ) async throws -> LocalInteractiveInitialDesktopPreparedReceiptV1 {
+        throw MacLocalXPCInteractiveLeaseErrorV1.unavailable
+    }
+}
+
 package protocol MacInteractiveMenuRuntimeLeaseOwningV1: Sendable {
     func install(
         _ command: InteractiveRuntimeInstallCommandV0,
@@ -52,21 +70,51 @@ public actor MacInteractiveLeaseRuntimeAdapterV1:
     MacLocalXPCInteractiveLeaseHandlingV1
 {
     private let runtime: any MacInteractiveMenuRuntimeLeaseOwningV1
+    private let desktop: any MacInteractiveInitialDesktopPreparingV1
     private var stateStorage:
         MacInteractiveLeaseRuntimeAdapterStateV1 = .available
 
     public init(runtime: InteractiveMenuRuntimeOwnerV0) {
         self.runtime = runtime
+        desktop = MacUnavailableInteractiveInitialDesktopPreparerV1()
+    }
+
+    public init(
+        runtime: InteractiveMenuRuntimeOwnerV0,
+        desktop: any MacInteractiveInitialDesktopPreparingV1
+    ) {
+        self.runtime = runtime
+        self.desktop = desktop
     }
 
     package init(
         runtime: any MacInteractiveMenuRuntimeLeaseOwningV1
     ) {
         self.runtime = runtime
+        desktop = MacUnavailableInteractiveInitialDesktopPreparerV1()
+    }
+
+    package init(
+        runtime: any MacInteractiveMenuRuntimeLeaseOwningV1,
+        desktop: any MacInteractiveInitialDesktopPreparingV1
+    ) {
+        self.runtime = runtime
+        self.desktop = desktop
     }
 
     public func state() -> MacInteractiveLeaseRuntimeAdapterStateV1 {
         stateStorage
+    }
+
+    public func prepareInitialInteractiveDesktop(
+        _ command: LocalInteractiveInitialDesktopPreparationCommandV1,
+        nowMonotonicNanoseconds: UInt64
+    ) async throws -> LocalInteractiveInitialDesktopPreparedReceiptV1 {
+        try requireAvailable()
+        return try await desktop.prepareInitialInteractiveDesktop(
+            command,
+            nowMonotonicNanoseconds: nowMonotonicNanoseconds
+        )
     }
 
     public func installInteractiveLease(

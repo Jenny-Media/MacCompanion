@@ -162,6 +162,7 @@ public struct InteractiveInitialRuntimeCommandAuthorityV1: Sendable {
                 commandID: commandID,
                 lease: lease,
                 deviceDisplayName: requirement.admission.deviceDisplayName,
+                surfaceDescriptor: desktop,
                 sessionDeadlineMonotonicNanoseconds:
                     sessionDeadlineNanoseconds
             ),

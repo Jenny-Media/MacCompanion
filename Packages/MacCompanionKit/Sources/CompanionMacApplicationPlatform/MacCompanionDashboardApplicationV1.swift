@@ -169,7 +169,7 @@ public final class MacCompanionDashboardApplicationV1 {
     private var finishTask: Task<Void, Never>?
 
     public convenience init() {
-        self.init(interactiveLeaseHandler: nil)
+        self.init(interactiveRuntime: nil)
     }
 
     /// Release composition seam for the visible menu runtime. Passing a
@@ -179,20 +179,26 @@ public final class MacCompanionDashboardApplicationV1 {
     public convenience init(
         interactiveRuntime: InteractiveMenuRuntimeOwnerV0
     ) {
-        self.init(
-            interactiveLeaseHandler:
-                MacInteractiveLeaseRuntimeAdapterV1(
-                    runtime: interactiveRuntime
-                )
-        )
+        self.init(interactiveRuntime: Optional(interactiveRuntime))
     }
 
     private convenience init(
-        interactiveLeaseHandler:
-            (any MacLocalXPCInteractiveLeaseHandlingV1)?
+        interactiveRuntime: InteractiveMenuRuntimeOwnerV0?
     ) {
         let interactiveDisplaySelection = try?
             MacInteractiveOpaqueDisplaySelectionV1()
+        let interactiveLeaseHandler:
+            (any MacLocalXPCInteractiveLeaseHandlingV1)?
+        if let interactiveRuntime, let interactiveDisplaySelection {
+            interactiveLeaseHandler = MacInteractiveLeaseRuntimeAdapterV1(
+                runtime: interactiveRuntime,
+                desktop: MacInteractiveInitialDesktopPreparerV1(
+                    displaySelection: interactiveDisplaySelection
+                )
+            )
+        } else {
+            interactiveLeaseHandler = nil
+        }
         let dashboardRelay = MacCompanionDashboardStateRelayV1()
         let dashboardOwner = MacAgentDashboardApplicationOwnerV0 {
             [weak dashboardRelay] source in

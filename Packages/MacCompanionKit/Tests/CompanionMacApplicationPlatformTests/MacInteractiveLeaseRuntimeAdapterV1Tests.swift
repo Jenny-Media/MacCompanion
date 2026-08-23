@@ -1,6 +1,7 @@
 #if os(macOS)
 import CompanionIPC
 import CompanionInteractiveRuntime
+import CompanionInteractiveShared
 @testable import CompanionMacApplicationPlatform
 import Foundation
 import Testing
@@ -63,6 +64,86 @@ private actor AdapterRuntimeV1:
 private enum AdapterRuntimeFailureV1: Error {
     case rejected
     case cleanupFailed
+}
+
+@available(macOS 26.0, *)
+private actor AdapterDesktopPreparerV1:
+    MacInteractiveInitialDesktopPreparingV1
+{
+    let receipt: LocalInteractiveInitialDesktopPreparedReceiptV1
+    private var commandsStorage:
+        [LocalInteractiveInitialDesktopPreparationCommandV1] = []
+    private var timesStorage: [UInt64] = []
+
+    init(receipt: LocalInteractiveInitialDesktopPreparedReceiptV1) {
+        self.receipt = receipt
+    }
+
+    func prepareInitialInteractiveDesktop(
+        _ command: LocalInteractiveInitialDesktopPreparationCommandV1,
+        nowMonotonicNanoseconds: UInt64
+    ) async throws -> LocalInteractiveInitialDesktopPreparedReceiptV1 {
+        commandsStorage.append(command)
+        timesStorage.append(nowMonotonicNanoseconds)
+        return receipt
+    }
+
+    func commands()
+        -> [LocalInteractiveInitialDesktopPreparationCommandV1] {
+        commandsStorage
+    }
+
+    func times() -> [UInt64] { timesStorage }
+}
+
+@available(macOS 26.0, *)
+@Test func interactiveAdapterForwardsInitialDesktopToExactPreparer()
+    async throws
+{
+    let fixture = try interactiveAdapterFixtureV1()
+    let command = try LocalInteractiveInitialDesktopPreparationCommandV1(
+        commandID: UUID(),
+        interactiveSessionID: fixture.command.lease.interactiveSessionID,
+        authorizationEpoch: fixture.command.lease.authorizationEpoch,
+        selectedDisplayID: fixture.command.lease.selectedDisplayID,
+        interactionClasses:
+            Set(fixture.command.lease.allowedInteractionClasses)
+    )
+    let descriptor = try AdaptiveSurfaceDescriptor(
+        interactiveSessionID: command.interactiveSessionID,
+        authorizationEpoch: command.authorizationEpoch,
+        surfaceID: fixture.command.lease.surfaceID,
+        kind: .desktop,
+        surfaceRevision: .init(rawValue: 1),
+        coordinateSpaceRevision: .init(rawValue: 1),
+        encodedWidth: 100,
+        encodedHeight: 100,
+        logicalWidthPoints: 100,
+        logicalHeightPoints: 100,
+        interactionClasses: Set(command.interactionClasses),
+        privacyProfile: .visualOnly,
+        metadataFields: [],
+        createdAtMonotonicMilliseconds: 1_000,
+        expiresAtMonotonicMilliseconds: 11_000
+    )
+    let expected = try LocalInteractiveInitialDesktopPreparedReceiptV1(
+        correlationID: command.commandID,
+        descriptor: descriptor
+    )
+    let desktop = AdapterDesktopPreparerV1(receipt: expected)
+    let adapter = MacInteractiveLeaseRuntimeAdapterV1(
+        runtime: AdapterRuntimeV1(),
+        desktop: desktop
+    )
+
+    let receipt = try await adapter.prepareInitialInteractiveDesktop(
+        command,
+        nowMonotonicNanoseconds: 2_000_000_000
+    )
+
+    #expect(receipt == expected)
+    #expect(await desktop.commands() == [command])
+    #expect(await desktop.times() == [2_000_000_000])
 }
 
 @available(macOS 26.0, *)
@@ -165,6 +246,23 @@ private func interactiveAdapterFixtureV1() throws -> (
         commandID: UUID(),
         lease: lease,
         deviceDisplayName: try .init("Test iPhone"),
+        surfaceDescriptor: AdaptiveSurfaceDescriptor(
+            interactiveSessionID: sessionID,
+            authorizationEpoch: .init(rawValue: 1),
+            surfaceID: lease.surfaceID,
+            kind: .desktop,
+            surfaceRevision: .init(rawValue: 1),
+            coordinateSpaceRevision: .init(rawValue: 1),
+            encodedWidth: 100,
+            encodedHeight: 100,
+            logicalWidthPoints: 100,
+            logicalHeightPoints: 100,
+            interactionClasses: [.view],
+            privacyProfile: .visualOnly,
+            metadataFields: [],
+            createdAtMonotonicMilliseconds: 1_000,
+            expiresAtMonotonicMilliseconds: 5_000
+        ),
         sessionDeadlineMonotonicNanoseconds: 6_000_000_000
     )
     let receipt = try InteractiveRuntimeInstallReceiptV0(

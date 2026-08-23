@@ -19,6 +19,36 @@ public enum LocalInteractiveLeaseWireCodecErrorV1:
 public enum LocalInteractiveLeaseWireCodecV1 {
     public static let maximumEncodedBytes = 4_096
 
+    public static func encodeInitialDesktopCommand(
+        _ command: LocalInteractiveInitialDesktopPreparationCommandV1
+    ) throws -> Data {
+        try encode(command)
+    }
+
+    public static func decodeInitialDesktopCommand(
+        _ data: Data
+    ) throws -> LocalInteractiveInitialDesktopPreparationCommandV1 {
+        try decode(
+            LocalInteractiveInitialDesktopPreparationCommandV1.self,
+            from: data
+        )
+    }
+
+    public static func encodeInitialDesktopReceipt(
+        _ receipt: LocalInteractiveInitialDesktopPreparedReceiptV1
+    ) throws -> Data {
+        try encode(receipt)
+    }
+
+    public static func decodeInitialDesktopReceipt(
+        _ data: Data
+    ) throws -> LocalInteractiveInitialDesktopPreparedReceiptV1 {
+        try decode(
+            LocalInteractiveInitialDesktopPreparedReceiptV1.self,
+            from: data
+        )
+    }
+
     public static func encodeInstallCommand(
         _ command: InteractiveRuntimeInstallCommandV0
     ) throws -> Data {

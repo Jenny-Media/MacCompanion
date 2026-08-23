@@ -29,6 +29,7 @@ typedef enum : int32_t {
     MCLocalXPCInteractiveLeaseCommandInstall = 0,
     MCLocalXPCInteractiveLeaseCommandRenew = 1,
     MCLocalXPCInteractiveLeaseCommandRevoke = 2,
+    MCLocalXPCInteractiveLeaseCommandPrepareInitialDesktop = 3,
 } MCLocalXPCInteractiveLeaseCommandKind;
 typedef struct MCLocalXPCListener *MCLocalXPCListenerRef;
 typedef struct MCLocalXPCSession *MCLocalXPCSessionRef;

@@ -64,12 +64,33 @@ private func runtimeDescriptor(
 }
 
 private func installCommand() throws -> InteractiveRuntimeInstallCommandV0 {
-    try InteractiveRuntimeInstallCommandV0(
+    let lease = try runtimeLease()
+    return try InteractiveRuntimeInstallCommandV0(
         commandID: UUID(),
-        lease: runtimeLease(),
+        lease: lease,
         deviceDisplayName: DeviceDisplayName("Jenny’s iPhone"),
+        surfaceDescriptor: runtimeDescriptor(lease: lease),
         sessionDeadlineMonotonicNanoseconds: 100_000
     )
+}
+
+@Test func decodingCannotBypassInstallDescriptorBinding() throws {
+    let encoded = try JSONEncoder().encode(installCommand())
+    var object = try #require(
+        JSONSerialization.jsonObject(with: encoded) as? [String: Any]
+    )
+    var descriptor = try #require(
+        object["surfaceDescriptor"] as? [String: Any]
+    )
+    descriptor["surfaceID"] = UUID().uuidString.lowercased()
+    object["surfaceDescriptor"] = descriptor
+
+    #expect(throws: DecodingError.self) {
+        try JSONDecoder().decode(
+            InteractiveRuntimeInstallCommandV0.self,
+            from: JSONSerialization.data(withJSONObject: object)
+        )
+    }
 }
 
 @Test func installReceiptRequiresExactLeaseIndicatorAndReadiness() throws {

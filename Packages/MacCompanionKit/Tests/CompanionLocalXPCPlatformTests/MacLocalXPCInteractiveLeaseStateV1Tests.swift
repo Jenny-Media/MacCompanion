@@ -18,16 +18,16 @@ import Testing
         ) == nil
     )
 
-    let install = gate.begin(
+    let preparation = gate.begin(
         generation: 11,
-        kind: .install,
+        kind: .prepareInitialDesktop,
         permitted: true
     )
-    #expect(install?.operation == 1)
+    #expect(preparation?.operation == 1)
     #expect(
         gate.begin(
             generation: 11,
-            kind: .renew,
+            kind: .install,
             permitted: true
         ) == nil
     )
@@ -38,9 +38,9 @@ import Testing
             permitted: true
         ) == nil
     )
-    let finishedInstall = gate.finish(install!)
-    #expect(finishedInstall)
-    let repeatedFinish = gate.finish(install!)
+    let finishedPreparation = gate.finish(preparation!)
+    #expect(finishedPreparation)
+    let repeatedFinish = gate.finish(preparation!)
     #expect(!repeatedFinish)
 
     let renewal = gate.begin(

@@ -18,7 +18,7 @@ public struct InteractiveRuntimeInstallCommandV0: Codable, Equatable, Sendable {
     public let commandID: UUID
     public let lease: InteractiveExecutionLease
     public let deviceDisplayName: DeviceDisplayName
-    public let initialSurface: InteractiveSurfaceKind
+    public let surfaceDescriptor: AdaptiveSurfaceDescriptor
     public let sessionDeadlineMonotonicNanoseconds: UInt64
 
     public init(
@@ -26,14 +26,14 @@ public struct InteractiveRuntimeInstallCommandV0: Codable, Equatable, Sendable {
         commandID: UUID,
         lease: InteractiveExecutionLease,
         deviceDisplayName: DeviceDisplayName,
-        initialSurface: InteractiveSurfaceKind = .desktop,
+        surfaceDescriptor: AdaptiveSurfaceDescriptor,
         sessionDeadlineMonotonicNanoseconds: UInt64
     ) throws {
         self.protocolVersion = protocolVersion
         self.commandID = commandID
         self.lease = lease
         self.deviceDisplayName = deviceDisplayName
-        self.initialSurface = initialSurface
+        self.surfaceDescriptor = surfaceDescriptor
         self.sessionDeadlineMonotonicNanoseconds = sessionDeadlineMonotonicNanoseconds
         try validate()
     }
@@ -42,7 +42,18 @@ public struct InteractiveRuntimeInstallCommandV0: Codable, Equatable, Sendable {
         guard protocolVersion == .init() else {
             throw InteractiveRuntimeMessageErrorV0.invalidVersion
         }
-        guard initialSurface == .desktop else {
+        try surfaceDescriptor.validate()
+        guard lease.interactiveSessionID
+                == surfaceDescriptor.interactiveSessionID,
+              lease.authorizationEpoch
+                == surfaceDescriptor.authorizationEpoch,
+              lease.surfaceID == surfaceDescriptor.surfaceID,
+              lease.surfaceRevision.rawValue
+                == surfaceDescriptor.surfaceRevision.rawValue,
+              lease.coordinateRevision.rawValue
+                == surfaceDescriptor.coordinateSpaceRevision.rawValue,
+              lease.allowedInteractionClasses
+                == surfaceDescriptor.interactionClasses else {
             throw InteractiveRuntimeMessageErrorV0.bindingMismatch
         }
         guard sessionDeadlineMonotonicNanoseconds
@@ -50,6 +61,54 @@ public struct InteractiveRuntimeInstallCommandV0: Codable, Equatable, Sendable {
               lease.expiresAtMonotonicNanoseconds
                 <= sessionDeadlineMonotonicNanoseconds else {
             throw InteractiveRuntimeMessageErrorV0.invalidTime
+        }
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case protocolVersion
+        case commandID
+        case lease
+        case deviceDisplayName
+        case surfaceDescriptor
+        case sessionDeadlineMonotonicNanoseconds
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        do {
+            try self.init(
+                protocolVersion: container.decode(
+                    LocalIPCProtocolVersion.self,
+                    forKey: .protocolVersion
+                ),
+                commandID: container.decode(UUID.self, forKey: .commandID),
+                lease: container.decode(
+                    InteractiveExecutionLease.self,
+                    forKey: .lease
+                ),
+                deviceDisplayName: container.decode(
+                    DeviceDisplayName.self,
+                    forKey: .deviceDisplayName
+                ),
+                surfaceDescriptor: container.decode(
+                    AdaptiveSurfaceDescriptor.self,
+                    forKey: .surfaceDescriptor
+                ),
+                sessionDeadlineMonotonicNanoseconds: container.decode(
+                    UInt64.self,
+                    forKey: .sessionDeadlineMonotonicNanoseconds
+                )
+            )
+        } catch let error as DecodingError {
+            throw error
+        } catch {
+            throw DecodingError.dataCorrupted(
+                .init(
+                    codingPath: decoder.codingPath,
+                    debugDescription: "invalid Interactive runtime install command",
+                    underlyingError: error
+                )
+            )
         }
     }
 }

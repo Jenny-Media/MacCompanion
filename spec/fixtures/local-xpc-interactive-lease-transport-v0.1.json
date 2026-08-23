@@ -7,6 +7,14 @@
   "senderReplyTimeoutMilliseconds": 5000,
   "commands": [
     {
+      "kind": "runtime.interactive.desktop.prepare",
+      "authorizationMethod": "applyInteractiveSurface",
+      "requestPayloadType": "LocalInteractiveInitialDesktopPreparationCommandV1",
+      "successKind": "runtime.interactive.desktop.prepare.ack",
+      "successPayloadType": "LocalInteractiveInitialDesktopPreparedReceiptV1",
+      "requestAndSuccessFields": ["kind:string", "version:signedInt64=1", "payload:data"]
+    },
+    {
       "kind": "runtime.interactive.install",
       "authorizationMethod": "installInteractiveLease",
       "requestPayloadType": "InteractiveRuntimeInstallCommandV0",
@@ -34,14 +42,17 @@
   ],
   "rules": [
     "same-team exact-role authentication and menu readiness are required before Interactive lease traffic",
-    "the Agent sender and menu receiver share exactly one cross-family command in flight per authenticated generation",
+    "the Agent sender and menu receiver share exactly one cross-family command in flight for Desktop preparation, install, renewal, and revoke per authenticated generation",
     "request and payload-bearing success values are nonempty canonical JSON data no larger than 4096 bytes",
+    "Desktop preparation receives the exact session, authorization epoch, opaque selected-display UUID, and canonical interaction classes and returns one exactly correlated Desktop descriptor",
+    "install carries the complete current prepared Desktop descriptor and its lease binds the exact session, epoch, surface, revisions, and interaction classes before any platform effect",
+    "the menu samples its local monotonic clock, resolves the opaque display only inside the menu process, and returns no physical display identifier, display name, process identifier, window identifier, permission fact, or platform object",
     "install and revoke receipts are validated against the exact retained command before success",
     "renewal success is the exact payload-free acknowledgement to its one retained request",
     "the receiver revalidates current monotonic time and runtime authority inside the serialized runtime owner",
     "the receiver completes within four monotonic seconds and the sender waits at most five",
     "there is no handled application-error envelope; rejection, timeout, cancellation after send, malformed traffic, unknown fields, cross-kind replies, premature traffic, and concurrent admission terminate the generation",
     "generation loss invokes menu-runtime authority invalidation and the Agent treats every ambiguous result as Control teardown",
-    "lease traffic contains no media, input, screen, focus, route, credential, private key, or arbitrary diagnostic text"
+    "runtime lifecycle traffic contains no media, input, screen pixels, focus, route, credential, private key, or arbitrary diagnostic text"
   ]
 }

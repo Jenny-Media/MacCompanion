@@ -30,8 +30,7 @@ public protocol InteractiveRuntimeIndicatorControllingV0: Sendable {
 
 public protocol InteractiveRuntimeCaptureControllingV0: Sendable {
     func startInteractiveCapture(
-        selectedDisplayID: UUID,
-        surfaceID: UUID
+        _ command: InteractiveRuntimeInstallCommandV0
     ) async throws -> Set<SurfaceInteractionClass>
     /// Suppresses old-source output and prepares the exact replacement source.
     /// It must not resume capture output or publish media before returning.
@@ -447,10 +446,19 @@ public actor InteractiveMenuRuntimeOwnerV0 {
         nowMonotonicNanoseconds: UInt64
     ) async throws -> InteractiveRuntimeInstallReceiptV0 {
         try command.validate()
+        guard command.surfaceDescriptor.kind == .desktop else {
+            throw InteractiveMenuRuntimeErrorV0.bindingMismatch
+        }
+        let monotonicMilliseconds = nowMonotonicNanoseconds / 1_000_000
         guard nowMonotonicNanoseconds >= command.lease.issuedAtMonotonicNanoseconds,
               nowMonotonicNanoseconds < command.lease.expiresAtMonotonicNanoseconds,
               nowMonotonicNanoseconds
-                < command.sessionDeadlineMonotonicNanoseconds else {
+                < command.sessionDeadlineMonotonicNanoseconds,
+              monotonicMilliseconds <= UInt64(Int64.max),
+              Int64(monotonicMilliseconds)
+                >= command.surfaceDescriptor.createdAtMonotonicMilliseconds,
+              Int64(monotonicMilliseconds)
+                < command.surfaceDescriptor.expiresAtMonotonicMilliseconds else {
             throw InteractiveMenuRuntimeErrorV0.invalidTime
         }
 
@@ -474,8 +482,7 @@ public actor InteractiveMenuRuntimeOwnerV0 {
                 interactiveSessionID: command.lease.interactiveSessionID
             )
             let readyClasses = try await capture.startInteractiveCapture(
-                selectedDisplayID: command.lease.selectedDisplayID,
-                surfaceID: command.lease.surfaceID
+                command
             )
             let receipt = try InteractiveRuntimeInstallReceiptV0(
                 correlationID: command.commandID,
@@ -554,7 +561,7 @@ public actor InteractiveMenuRuntimeOwnerV0 {
             commandID: command.commandID,
             lease: renewal.replacement,
             deviceDisplayName: command.deviceDisplayName,
-            initialSurface: command.initialSurface,
+            surfaceDescriptor: command.surfaceDescriptor,
             sessionDeadlineMonotonicNanoseconds:
                 command.sessionDeadlineMonotonicNanoseconds
         )
@@ -659,7 +666,7 @@ public actor InteractiveMenuRuntimeOwnerV0 {
                 commandID: active.command.commandID,
                 lease: replacement,
                 deviceDisplayName: active.command.deviceDisplayName,
-                initialSurface: active.command.initialSurface,
+                surfaceDescriptor: transition.descriptor,
                 sessionDeadlineMonotonicNanoseconds:
                     active.command.sessionDeadlineMonotonicNanoseconds
             )

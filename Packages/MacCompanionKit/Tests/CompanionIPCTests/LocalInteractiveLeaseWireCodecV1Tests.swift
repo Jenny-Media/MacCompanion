@@ -54,8 +54,60 @@ private func codecInstallCommand()
         )!,
         lease: codecLease(),
         deviceDisplayName: DeviceDisplayName("Jenny’s iPhone"),
+        surfaceDescriptor: codecDesktopDescriptor(),
         sessionDeadlineMonotonicNanoseconds: 10_000
     )
+}
+
+private func codecDesktopDescriptor()
+    throws -> AdaptiveSurfaceDescriptor
+{
+    try AdaptiveSurfaceDescriptor(
+        interactiveSessionID: codecSessionID,
+        authorizationEpoch: .init(rawValue: 4),
+        surfaceID: codecSurfaceID,
+        kind: .desktop,
+        surfaceRevision: .init(rawValue: 1),
+        coordinateSpaceRevision: .init(rawValue: 1),
+        encodedWidth: 1_440,
+        encodedHeight: 900,
+        logicalWidthPoints: 1_440,
+        logicalHeightPoints: 900,
+        interactionClasses: [.view, .pointer, .keyboard],
+        privacyProfile: .visualOnly,
+        metadataFields: [],
+        createdAtMonotonicMilliseconds: 1_000,
+        expiresAtMonotonicMilliseconds: 11_000
+    )
+}
+
+@Test func interactiveLeaseCodecRoundTripsInitialDesktopPreparation()
+    throws
+{
+    let command = try LocalInteractiveInitialDesktopPreparationCommandV1(
+        commandID: UUID(),
+        interactiveSessionID: codecSessionID,
+        authorizationEpoch: .init(rawValue: 4),
+        selectedDisplayID: codecDisplayID,
+        interactionClasses: [.view, .pointer, .keyboard]
+    )
+    let commandData = try LocalInteractiveLeaseWireCodecV1
+        .encodeInitialDesktopCommand(command)
+    #expect(
+        try LocalInteractiveLeaseWireCodecV1
+            .decodeInitialDesktopCommand(commandData) == command
+    )
+
+    let receipt = try LocalInteractiveInitialDesktopPreparedReceiptV1(
+        correlationID: command.commandID,
+        descriptor: codecDesktopDescriptor()
+    )
+    let receiptData = try LocalInteractiveLeaseWireCodecV1
+        .encodeInitialDesktopReceipt(receipt)
+    let decoded = try LocalInteractiveLeaseWireCodecV1
+        .decodeInitialDesktopReceipt(receiptData)
+    #expect(decoded == receipt)
+    try decoded.validate(against: command)
 }
 
 @Test func interactiveLeaseCodecRoundTripsInstallRenewAndRevoke()

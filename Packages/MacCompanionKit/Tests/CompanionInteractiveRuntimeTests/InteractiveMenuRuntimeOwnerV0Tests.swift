@@ -28,6 +28,7 @@ private actor RuntimeEffectsProbe:
     InteractiveRuntimeFrameControllingV0
 {
     private var recorded: [RuntimeEffectEvent] = []
+    private var captureCommands: [InteractiveRuntimeInstallCommandV0] = []
     private var failOnce: Set<RuntimeEffectEvent>
     private let readyClasses: Set<SurfaceInteractionClass>
 
@@ -40,6 +41,9 @@ private actor RuntimeEffectsProbe:
     }
 
     func events() -> [RuntimeEffectEvent] { recorded }
+    func startedCaptureCommands() -> [InteractiveRuntimeInstallCommandV0] {
+        captureCommands
+    }
 
     func showInteractiveIndicator(
         deviceDisplayName: DeviceDisplayName,
@@ -59,9 +63,9 @@ private actor RuntimeEffectsProbe:
     }
 
     func startInteractiveCapture(
-        selectedDisplayID: UUID,
-        surfaceID: UUID
+        _ command: InteractiveRuntimeInstallCommandV0
     ) async throws -> Set<SurfaceInteractionClass> {
+        captureCommands.append(command)
         try await apply(.start)
         return readyClasses
     }
@@ -315,10 +319,12 @@ private func installCommand(
     commandID: UUID = UUID(),
     lease: InteractiveExecutionLease? = nil
 ) throws -> InteractiveRuntimeInstallCommandV0 {
-    try InteractiveRuntimeInstallCommandV0(
+    let lease = try lease ?? runtimeLease()
+    return try InteractiveRuntimeInstallCommandV0(
         commandID: commandID,
-        lease: lease ?? runtimeLease(),
+        lease: lease,
         deviceDisplayName: DeviceDisplayName("Jenny’s iPhone"),
+        surfaceDescriptor: runtimeSurfaceDescriptor(lease: lease),
         sessionDeadlineMonotonicNanoseconds: 10_000
     )
 }
@@ -410,6 +416,7 @@ private func installAndActivateInitial(
     #expect(first == duplicate)
     #expect(first.indicatorVisible)
     #expect(await probe.events() == [.show, .start])
+    #expect(await probe.startedCaptureCommands() == [command])
     #expect(await owner.state() == .active(
         interactiveSessionID: runtimeSessionID,
         leaseID: command.lease.leaseID
@@ -417,6 +424,95 @@ private func installAndActivateInitial(
     #expect(await owner.surfaceAdmissionState() == .requiresConfiguration(
         transitionCommandID: command.commandID
     ))
+}
+
+@Test func installRejectsNonDesktopDescriptorBeforePlatformEffects()
+    async throws
+{
+    let probe = RuntimeEffectsProbe()
+    let owner = runtimeOwner(probe: probe)
+    let lease = try runtimeLease()
+    let descriptor = try AdaptiveSurfaceDescriptor(
+        interactiveSessionID: lease.interactiveSessionID,
+        authorizationEpoch: lease.authorizationEpoch,
+        surfaceID: lease.surfaceID,
+        kind: .application,
+        surfaceRevision: .init(rawValue: lease.surfaceRevision.rawValue),
+        coordinateSpaceRevision: .init(
+            rawValue: lease.coordinateRevision.rawValue
+        ),
+        applicationToken: UUID(),
+        encodedWidth: 100,
+        encodedHeight: 100,
+        logicalWidthPoints: 100,
+        logicalHeightPoints: 100,
+        interactionClasses: Set(lease.allowedInteractionClasses),
+        privacyProfile: .visualOnly,
+        metadataFields: [],
+        createdAtMonotonicMilliseconds: 0,
+        expiresAtMonotonicMilliseconds: 10_000
+    )
+    let command = try InteractiveRuntimeInstallCommandV0(
+        commandID: UUID(),
+        lease: lease,
+        deviceDisplayName: DeviceDisplayName("Jenny’s iPhone"),
+        surfaceDescriptor: descriptor,
+        sessionDeadlineMonotonicNanoseconds: 10_000
+    )
+
+    await #expect(throws: InteractiveMenuRuntimeErrorV0.bindingMismatch) {
+        try await owner.install(command, nowMonotonicNanoseconds: 2_000)
+    }
+    #expect(await probe.events().isEmpty)
+    #expect(await probe.startedCaptureCommands().isEmpty)
+    #expect(await owner.state() == .idle)
+}
+
+@Test func installRejectsExpiredDesktopDescriptorBeforePlatformEffects()
+    async throws
+{
+    let probe = RuntimeEffectsProbe()
+    let owner = runtimeOwner(probe: probe)
+    let lease = try runtimeLease(
+        issuedAt: 1_000_000,
+        expiresAt: 10_000_000
+    )
+    let descriptor = try AdaptiveSurfaceDescriptor(
+        interactiveSessionID: lease.interactiveSessionID,
+        authorizationEpoch: lease.authorizationEpoch,
+        surfaceID: lease.surfaceID,
+        kind: .desktop,
+        surfaceRevision: .init(rawValue: lease.surfaceRevision.rawValue),
+        coordinateSpaceRevision: .init(
+            rawValue: lease.coordinateRevision.rawValue
+        ),
+        encodedWidth: 100,
+        encodedHeight: 100,
+        logicalWidthPoints: 100,
+        logicalHeightPoints: 100,
+        interactionClasses: Set(lease.allowedInteractionClasses),
+        privacyProfile: .visualOnly,
+        metadataFields: [],
+        createdAtMonotonicMilliseconds: 0,
+        expiresAtMonotonicMilliseconds: 2
+    )
+    let command = try InteractiveRuntimeInstallCommandV0(
+        commandID: UUID(),
+        lease: lease,
+        deviceDisplayName: DeviceDisplayName("Jenny’s iPhone"),
+        surfaceDescriptor: descriptor,
+        sessionDeadlineMonotonicNanoseconds: 20_000_000
+    )
+
+    await #expect(throws: InteractiveMenuRuntimeErrorV0.invalidTime) {
+        try await owner.install(
+            command,
+            nowMonotonicNanoseconds: 3_000_000
+        )
+    }
+    #expect(await probe.events().isEmpty)
+    #expect(await probe.startedCaptureCommands().isEmpty)
+    #expect(await owner.state() == .idle)
 }
 
 @Test func failedInstallAttemptsEverySafetyEffectBeforeReturning() async throws {

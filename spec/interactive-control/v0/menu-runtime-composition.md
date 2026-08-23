@@ -1,6 +1,6 @@
 # Interactive Control visible menu-app runtime composition v0.1
 
-Status: normative for the bundle-independent single-owner runtime seam. Concrete authenticated XPC, ScreenCaptureKit, VideoToolbox, Accessibility, Core Graphics event, AppKit indicator, and monotonic-clock adapters remain platform work and require their own evidence.
+Status: normative for the bundle-independent single-owner runtime seam. Authenticated local-XPC lease lifecycle and initial-Desktop preparation are implemented; concrete ScreenCaptureKit, VideoToolbox, Accessibility, Core Graphics event, AppKit indicator, and monotonic-clock adapters remain platform work and require their own evidence.
 
 ## Ownership and admission
 
@@ -17,6 +17,22 @@ configuration and clean keyframe, and remains input-denied until the separate
 initial acknowledgement is accepted. Exact replay of the same installed
 command returns the same receipt without repeating effects. A different install
 while any session is active or terminating fails closed.
+
+The local install command and capture adapter receive the complete validated
+initial Desktop descriptor, including the exact lease binding established before
+install. It may not reconstruct media authority from process state, unrelated
+shared mutable state, or only the display/surface UUIDs. The menu revalidates
+the descriptor's monotonic validity at install before the indicator or capture
+performs any platform effect.
+
+Before install, the Agent asks the same authenticated ready menu generation to
+prepare the initial Desktop descriptor through the runtime transport's shared
+single-flight gate. The request binds the session, authorization epoch, opaque
+selected display, and exact interaction classes. The menu samples its own
+monotonic clock and resolves physical display state only inside the menu
+platform module. The returned descriptor is not an execution lease, starts no
+capture or input, and is accepted only when exactly correlated and bound to the
+request.
 
 Renewal preserves the host, device, session, authorization epoch, selected display, surface, surface and coordinate revisions, and exact interaction classes. It replaces the lease ID, increments the counter exactly once, begins before the prior lease expires, is current at local receipt time, remains bounded to 10 seconds, and cannot outlive the approved-session deadline. Renewal performs no capture or indicator effects.
 

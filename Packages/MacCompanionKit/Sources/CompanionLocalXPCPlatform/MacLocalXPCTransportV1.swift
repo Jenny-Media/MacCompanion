@@ -351,12 +351,16 @@ public final class MacLocalXPCServerV1:
     }
 
     private enum InteractiveLeaseCommand: Sendable {
+        case prepareInitialDesktop(
+            LocalInteractiveInitialDesktopPreparationCommandV1
+        )
         case install(InteractiveRuntimeInstallCommandV0)
         case renew(InteractiveRuntimeLeaseRenewalV0)
         case revoke(InteractiveRuntimeRevokeCommandV0)
 
         var kind: MacLocalXPCInteractiveLeaseCommandKindV1 {
             switch self {
+            case .prepareInitialDesktop: .prepareInitialDesktop
             case .install: .install
             case .renew: .renew
             case .revoke: .revoke
@@ -365,6 +369,7 @@ public final class MacLocalXPCServerV1:
 
         var authorizationMethod: LocalIPCMethod {
             switch self {
+            case .prepareInitialDesktop: .applyInteractiveSurface
             case .install, .renew: .installInteractiveLease
             case .revoke: .revokeInteractiveLease
             }
@@ -902,6 +907,37 @@ public final class MacLocalXPCServerV1:
         }
     }
 
+    public func prepareInitialInteractiveDesktop(
+        _ command: LocalInteractiveInitialDesktopPreparationCommandV1
+    ) async throws -> LocalInteractiveInitialDesktopPreparedReceiptV1 {
+        let payload: Data
+        do {
+            payload = try LocalInteractiveLeaseWireCodecV1
+                .encodeInitialDesktopCommand(command)
+        } catch {
+            throw MacLocalXPCInteractiveLeaseErrorV1
+                .malformedOrTransportError
+        }
+        let reply = try await sendInteractiveLeaseCommand(
+            command: .prepareInitialDesktop(command),
+            payload: payload
+        )
+        do {
+            guard let reply else {
+                throw MacLocalXPCInteractiveLeaseErrorV1
+                    .malformedOrTransportError
+            }
+            let receipt = try LocalInteractiveLeaseWireCodecV1
+                .decodeInitialDesktopReceipt(reply)
+            try receipt.validate(against: command)
+            return receipt
+        } catch {
+            cancelCurrentPeerAfterMalformedInteractiveReply()
+            throw MacLocalXPCInteractiveLeaseErrorV1
+                .malformedOrTransportError
+        }
+    }
+
     public func installInteractiveLease(
         _ command: InteractiveRuntimeInstallCommandV0
     ) async throws -> InteractiveRuntimeInstallReceiptV0 {
@@ -1138,7 +1174,7 @@ public final class MacLocalXPCServerV1:
         pending.deadline = nil
 
         let validPayloadShape: Bool = switch transaction.kind {
-        case .install, .revoke:
+        case .prepareInitialDesktop, .install, .revoke:
             payload.map {
                 !$0.isEmpty
                     && $0.count <= LocalInteractiveLeaseWireCodecV1
@@ -1232,6 +1268,8 @@ public final class MacLocalXPCServerV1:
         _ kind: MacLocalXPCInteractiveLeaseCommandKindV1
     ) -> MCLocalXPCInteractiveLeaseCommandKind {
         switch kind {
+        case .prepareInitialDesktop:
+            MCLocalXPCInteractiveLeaseCommandPrepareInitialDesktop
         case .install: MCLocalXPCInteractiveLeaseCommandInstall
         case .renew: MCLocalXPCInteractiveLeaseCommandRenew
         case .revoke: MCLocalXPCInteractiveLeaseCommandRevoke
@@ -3110,12 +3148,16 @@ public final class MacLocalXPCClientV1:
     }
 
     private enum IncomingInteractiveLeaseCommand: Sendable {
+        case prepareInitialDesktop(
+            LocalInteractiveInitialDesktopPreparationCommandV1
+        )
         case install(InteractiveRuntimeInstallCommandV0)
         case renew(InteractiveRuntimeLeaseRenewalV0)
         case revoke(InteractiveRuntimeRevokeCommandV0)
 
         var kind: MacLocalXPCInteractiveLeaseCommandKindV1 {
             switch self {
+            case .prepareInitialDesktop: .prepareInitialDesktop
             case .install: .install
             case .renew: .renew
             case .revoke: .revoke
@@ -3124,6 +3166,7 @@ public final class MacLocalXPCClientV1:
 
         var authorizationMethod: LocalIPCMethod {
             switch self {
+            case .prepareInitialDesktop: .applyInteractiveSurface
             case .install, .renew: .installInteractiveLease
             case .revoke: .revokeInteractiveLease
             }
@@ -3131,6 +3174,9 @@ public final class MacLocalXPCClientV1:
     }
 
     private enum IncomingInteractiveLeaseResult: Sendable {
+        case preparedInitialDesktop(
+            LocalInteractiveInitialDesktopPreparedReceiptV1
+        )
         case install(InteractiveRuntimeInstallReceiptV0)
         case renewed
         case revoked(InteractiveRuntimeRevokedReceiptV0)
@@ -4220,6 +4266,11 @@ public final class MacLocalXPCClientV1:
     ) -> IncomingInteractiveLeaseCommand? {
         do {
             switch kind {
+            case MCLocalXPCInteractiveLeaseCommandPrepareInitialDesktop:
+                return .prepareInitialDesktop(
+                    try LocalInteractiveLeaseWireCodecV1
+                        .decodeInitialDesktopCommand(payload)
+                )
             case MCLocalXPCInteractiveLeaseCommandInstall:
                 return .install(
                     try LocalInteractiveLeaseWireCodecV1
@@ -4276,6 +4327,15 @@ public final class MacLocalXPCClientV1:
             do {
                 let result: IncomingInteractiveLeaseResult
                 switch command {
+                case .prepareInitialDesktop(let value):
+                    result = .preparedInitialDesktop(
+                        try await interactiveLeaseHandler
+                            .prepareInitialInteractiveDesktop(
+                                value,
+                                nowMonotonicNanoseconds:
+                                    monotonicNowNanoseconds()
+                            )
+                    )
                 case .install(let value):
                     result = .install(
                         try await interactiveLeaseHandler
@@ -4382,6 +4442,13 @@ public final class MacLocalXPCClientV1:
     ) -> Data? {
         do {
             switch (command, result) {
+            case (
+                .prepareInitialDesktop(let command),
+                .preparedInitialDesktop(let receipt)
+            ):
+                try receipt.validate(against: command)
+                return try LocalInteractiveLeaseWireCodecV1
+                    .encodeInitialDesktopReceipt(receipt)
             case (.install(let command), .install(let receipt)):
                 try receipt.validate(against: command)
                 return try LocalInteractiveLeaseWireCodecV1
@@ -4445,6 +4512,8 @@ public final class MacLocalXPCClientV1:
         _ kind: MacLocalXPCInteractiveLeaseCommandKindV1
     ) -> MCLocalXPCInteractiveLeaseCommandKind {
         switch kind {
+        case .prepareInitialDesktop:
+            MCLocalXPCInteractiveLeaseCommandPrepareInitialDesktop
         case .install: MCLocalXPCInteractiveLeaseCommandInstall
         case .renew: MCLocalXPCInteractiveLeaseCommandRenew
         case .revoke: MCLocalXPCInteractiveLeaseCommandRevoke
