@@ -629,6 +629,17 @@ Twenty-one fixtures pass. No dependency, framework, feed, key, appcast,
 download, or update action exists yet; exact dependency/source/license/helper
 review and a testable runtime drain gate are the next unblocked update slice.
 
+The [update installation runtime gate](evidence/2026-08-23-update-install-runtime-gate.md)
+now admits only a same-channel, increasing-build candidate with every frozen
+feed/archive/Developer ID/notarization fact, then serializes five-minute local
+foreground confirmation, inactive Control, network-admission closure,
+bounded-work drain, Agent stop, exact version match, and one updater handoff.
+Every stage rechecks expiry and foreground state; failed partial shutdown
+records network-only or Agent-plus-network reconciliation, and reentrant
+events cannot relabel consumed handoff authority. Twelve focused tests and the
+full 1,511-test gate pass. Real lifecycle adapters, Sparkle integration, feed
+configuration, signed two-version upgrade, and rollback evidence remain open.
+
 ## Blocker handling rule
 
 Every blocked item records its affected artifact, evidence needed to unblock it, and parallel work. The project is not globally blocked while any safe in-scope lane remains active or ready. A later-stage capability is complete only with passing exit evidence or an explicit evidence-backed `no-go` or `deferred` disposition.

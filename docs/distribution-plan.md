@@ -152,7 +152,9 @@ Before installation the menu app:
 
 1. Stops accepting new Interactive Control and semantic operations.
 2. Presents and records the update transition.
-3. Ends active Interactive Control, releases input, stops capture, and asks the agent to drain bounded operations.
+3. Refuses installation while Interactive Control is active or cleanup is
+   uncertain; after the user stops it, verifies input release and capture stop,
+   then asks the Agent to drain bounded operations.
 4. Verifies that durable security state is committed.
 5. Allows Sparkle to replace the complete containing app bundle atomically.
 6. Relaunches, revalidates the embedded agent identity, and reconciles `SMAppService` registration.
