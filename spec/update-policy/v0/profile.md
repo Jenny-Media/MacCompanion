@@ -1,4 +1,4 @@
-# Mac Companion update trust policy v0.20
+# Mac Companion update trust policy v0.21
 
 Status: normative for the first direct-distribution beta.
 
@@ -274,6 +274,16 @@ runtime indicator: inactive, active, or cleanup-uncertain while stopping.
 Construction and retention of this composition perform no effect, and the
 Sparkle ready callback must not invoke it until the confirmation UI and
 termination lifecycle are bound.
+
+Application termination is an ordered barrier. The AppKit delegate must return
+`terminateLater`, cancel and join any informational validation, fence a pending
+confirmation, and await an in-flight installation application until it either
+hands off or completes its required recovery. Only then may it finish the
+product dashboard and answer AppKit's termination request. Best-effort cleanup
+from `applicationWillTerminate` is not sufficient update authority. Process
+kill and power loss remain crash cases handled by the durable Agent-reactivation
+receipt after Agent stop; before Agent stop, signed forced-loss evidence must
+prove listener recovery or document the remaining release gate.
 
 The reactivation receipt must use the frozen canonical JSON projection in the
 menu app's private Application Support root. Reads require one no-follow regular

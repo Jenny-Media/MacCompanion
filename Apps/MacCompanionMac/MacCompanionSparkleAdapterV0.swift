@@ -122,6 +122,23 @@ final class MacCompanionSparkleAdapterV0:
         updater.checkForUpdateInformation()
     }
 
+    /// Termination barrier for informational/validation state. A later runtime
+    /// binding also joins its installation application here before AppKit is
+    /// allowed to terminate the process.
+    func prepareForApplicationTermination() async {
+        probePermit = false
+        let validationLifecycleTask = self.validationLifecycleTask
+        validationLifecycleTask?.cancel()
+        self.validationLifecycleTask = nil
+        if let validationLifecycleTask {
+            await validationLifecycleTask.value
+        }
+        let correlation = activeCorrelation
+        activeCorrelation = nil
+        pendingOffer = nil
+        if let correlation { await correlation.cancel() }
+    }
+
     func feedURLString(for updater: SPUUpdater) -> String? {
         authority?.feedURL.absoluteString
     }

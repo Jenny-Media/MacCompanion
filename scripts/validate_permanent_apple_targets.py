@@ -532,6 +532,10 @@ def validate_inert_update_adapter(
         "let updateRuntime: MacCompanionUpdateRuntimeCompositionV0?",
         "candidateBuild: admission.candidateBuild",
         "controlState: indicator.updateControlState",
+        "func applicationShouldTerminate(",
+        "return .terminateLater",
+        "await updates.prepareForApplicationTermination()",
+        "NSApp.reply(toApplicationShouldTerminate: true)",
     ):
         if needle not in mac_application:
             failures.append(f"macUpdateAdapterMissing:{needle}")

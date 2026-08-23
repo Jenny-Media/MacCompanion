@@ -260,6 +260,14 @@ inference. Stopping Control maps to cleanup-uncertain, and an invalid monotonic
 clock fails with `-1` at the package authority. The permanent app retains this
 composition, but the Sparkle callback does not invoke it; confirmation UI and
 termination deferral remain the next binding gate.
+The subsequent
+[ordered application-termination barrier checkpoint](evidence/2026-08-23-ordered-update-termination-barrier.md)
+replaces best-effort quit cleanup with AppKit's `terminateLater` contract. The
+package owner cancels a pre-shutdown decision or closes foreground authority
+and waits through minimum-scope recovery during shutdown. The permanent app
+cancels and joins any update-validation task, then finishes the product before
+replying to AppKit. The Sparkle callback remains unbound; future installation
+state must join the same barrier before that binding is admitted.
 
 ### Channels
 

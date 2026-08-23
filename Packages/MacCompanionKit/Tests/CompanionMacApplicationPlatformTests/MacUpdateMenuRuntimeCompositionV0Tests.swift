@@ -89,6 +89,35 @@ private actor MenuUpdateObservationGateV0 {
     }
 }
 
+private actor MenuUpdateSecondObservationGateV0 {
+    private var observations = 0
+    private var suspended = false
+    private var continuation: CheckedContinuation<Void, Never>?
+
+    func observe() async -> MacUpdateRuntimeGateObservationV0 {
+        observations += 1
+        if observations == 2 {
+            suspended = true
+            await withCheckedContinuation { continuation in
+                self.continuation = continuation
+            }
+        }
+        return MacUpdateRuntimeGateObservationV0(
+            monotonicNowMilliseconds: 10,
+            menuForeground: true,
+            controlState: .inactive
+        )
+    }
+
+    func isSuspended() -> Bool { suspended }
+
+    func release() {
+        let continuation = self.continuation
+        self.continuation = nil
+        continuation?.resume()
+    }
+}
+
 @Test @MainActor
 func preparedInstallerReplyOwnerInstallsExactlyOnce() async throws {
     var replies: [MacUpdatePreparedInstallerReplyV0] = []
@@ -394,6 +423,54 @@ func foregroundLossFencesSuspendedUpdateConfirmation() async throws {
     await foregroundLoss.value
 
     #expect(application.phase == .cancelled)
+    #expect(replies == [.skip])
+    #expect(await harness.snapshot().isEmpty)
+}
+
+@Test @MainActor
+func applicationTerminationWaitsForInFlightUpdateRecovery() async throws {
+    let harness = MenuUpdateCompositionHarnessV0()
+    let observationGate = MenuUpdateSecondObservationGateV0()
+    var replies: [MacUpdatePreparedInstallerReplyV0] = []
+    let preparedInstaller = MacUpdatePreparedInstallerReplyOwnerV0 {
+        replies.append($0)
+    }
+    let application = MacUpdateMenuRuntimeCompositionV0
+        .installationApplication(
+            admission: try await menuUpdateAdmissionV0(),
+            agentCommands: harness,
+            agentStopOwner: try menuUpdateStopOwnerV0(harness: harness),
+            observeGate: { await observationGate.observe() },
+            preparedInstaller: preparedInstaller,
+            recovery: MacUpdateMenuRuntimeRecoveryV0(
+                reconcileNetworkAdmission: {
+                    try await harness.reconcileNetworkAdmission()
+                }
+            )
+        )
+
+    let installation = Task { @MainActor in
+        await application.confirmAndInstall()
+    }
+    for _ in 0..<500 {
+        if await observationGate.isSuspended() { break }
+        await Task.yield()
+    }
+    #expect(await observationGate.isSuspended())
+    #expect(application.phase == .installing)
+
+    let termination = Task { @MainActor in
+        await application.applicationTerminationRequested()
+    }
+    await Task.yield()
+    #expect(!termination.isCancelled)
+    #expect(replies.isEmpty)
+
+    await observationGate.release()
+    await installation.value
+    await termination.value
+
+    #expect(application.phase == .failed(.authorityDenied))
     #expect(replies == [.skip])
     #expect(await harness.snapshot().isEmpty)
 }

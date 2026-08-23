@@ -807,6 +807,16 @@ permanent source validator pass. The app retains the effect-inert composition,
 but Sparkle cannot invoke it; confirmation presentation and safe application-
 termination deferral remain next. The complete gate passes 1,602 package tests
 plus 8 platform probes.
+The subsequent
+[ordered update termination barrier](evidence/2026-08-23-ordered-update-termination-barrier.md)
+adds a terminal waiter to the foreground owner and proves termination during a
+suspended shutdown closes authority, emits skip, and returns only after the
+coordinator reaches its recovered terminal state. The permanent AppKit delegate
+now returns `terminateLater`, cancels/joins Sparkle validation, awaits product
+finish, and replies explicitly instead of relying on best-effort
+`applicationWillTerminate` cleanup. Five focused owner tests and the permanent
+source validator pass. The ready callback remains unbound; complete-gate counts
+are 1,603 package tests plus 8 platform probes.
 
 ## Blocker handling rule
 

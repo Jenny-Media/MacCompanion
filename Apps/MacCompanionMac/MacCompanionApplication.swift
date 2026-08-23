@@ -110,17 +110,31 @@ private final class MacCompanionApplicationDelegate:
     }
 
     func applicationWillTerminate(_ notification: Notification) {
-        beginBestEffortFinish()
+        beginOrderedFinish(replyToTerminationRequest: false)
     }
 
-    private func beginBestEffortFinish() {
+    func applicationShouldTerminate(
+        _ sender: NSApplication
+    ) -> NSApplication.TerminateReply {
+        beginOrderedFinish(replyToTerminationRequest: true)
+        return .terminateLater
+    }
+
+    private func beginOrderedFinish(
+        replyToTerminationRequest: Bool
+    ) {
         guard finishTask == nil else { return }
         let launchTask = self.launchTask
         let product = self.product
+        let updates = self.updates
         launchTask?.cancel()
         finishTask = Task { @MainActor in
+            await updates.prepareForApplicationTermination()
             if let launchTask { await launchTask.value }
             await product.finish()
+            if replyToTerminationRequest {
+                NSApp.reply(toApplicationShouldTerminate: true)
+            }
         }
     }
 

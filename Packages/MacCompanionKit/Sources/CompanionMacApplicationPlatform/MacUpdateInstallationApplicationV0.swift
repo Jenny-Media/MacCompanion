@@ -40,6 +40,8 @@ public final class MacUpdateInstallationApplicationV0 {
     private let coordinator: MacUpdateRuntimeShutdownCoordinatorV0
     @ObservationIgnored
     private let preparedInstaller: MacUpdatePreparedInstallerReplyOwnerV0
+    @ObservationIgnored
+    private var terminalWaiters: [CheckedContinuation<Void, Never>] = []
 
     init(
         coordinator: MacUpdateRuntimeShutdownCoordinatorV0,
@@ -58,7 +60,7 @@ public final class MacUpdateInstallationApplicationV0 {
         } catch {
             guard phase != .cancelled else { return }
             preparedInstaller.cancel()
-            phase = .failed(Self.map(error))
+            transitionToTerminal(.failed(Self.map(error)))
             return
         }
 
@@ -72,17 +74,17 @@ public final class MacUpdateInstallationApplicationV0 {
         do {
             try await coordinator.install()
             guard phase == .installing else { return }
-            phase = .handedOff
+            transitionToTerminal(.handedOff)
         } catch {
             preparedInstaller.cancel()
-            phase = .failed(Self.map(error))
+            transitionToTerminal(.failed(Self.map(error)))
         }
     }
 
     public func cancel() async {
         switch phase {
         case .awaitingConfirmation, .confirming:
-            phase = .cancelled
+            transitionToTerminal(.cancelled)
             preparedInstaller.cancel()
             await coordinator.cancel()
         case .installing, .handedOff, .cancelled, .failed:
@@ -97,7 +99,7 @@ public final class MacUpdateInstallationApplicationV0 {
         guard !foreground else { return }
         switch phase {
         case .awaitingConfirmation, .confirming:
-            phase = .cancelled
+            transitionToTerminal(.cancelled)
             preparedInstaller.cancel()
             await coordinator.menuForegroundDidChange(false)
         case .installing:
@@ -105,6 +107,39 @@ public final class MacUpdateInstallationApplicationV0 {
         case .handedOff, .cancelled, .failed:
             return
         }
+    }
+
+    /// Application termination is a barrier, not best effort. Before shutdown
+    /// it cancels immediately. During shutdown it closes foreground authority
+    /// and waits until the in-flight coordinator either hands off or completes
+    /// its minimum recorded recovery.
+    public func applicationTerminationRequested() async {
+        switch phase {
+        case .awaitingConfirmation, .confirming:
+            await cancel()
+        case .installing:
+            await coordinator.menuForegroundDidChange(false)
+            await waitForTerminal()
+        case .handedOff, .cancelled, .failed:
+            return
+        }
+    }
+
+    private func waitForTerminal() async {
+        guard !phase.isTerminal else { return }
+        await withCheckedContinuation { continuation in
+            terminalWaiters.append(continuation)
+        }
+    }
+
+    private func transitionToTerminal(
+        _ terminal: MacUpdateInstallationApplicationPhaseV0
+    ) {
+        precondition(terminal.isTerminal)
+        phase = terminal
+        let waiters = terminalWaiters
+        terminalWaiters.removeAll(keepingCapacity: false)
+        for waiter in waiters { waiter.resume() }
     }
 
     private static func map(_ error: Error)
@@ -137,8 +172,20 @@ public final class MacUpdateInstallationApplicationV0 {
 
     isolated deinit {
         preparedInstaller.cancel()
+        for waiter in terminalWaiters { waiter.resume() }
         let coordinator = self.coordinator
         Task { await coordinator.cancel() }
+    }
+}
+
+private extension MacUpdateInstallationApplicationPhaseV0 {
+    var isTerminal: Bool {
+        switch self {
+        case .awaitingConfirmation, .confirming, .installing:
+            return false
+        case .handedOff, .cancelled, .failed:
+            return true
+        }
     }
 }
 #endif
