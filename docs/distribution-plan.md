@@ -116,7 +116,15 @@ Onboarding never asks for an SSH password, administrator password, Tailscale cre
 
 ## 6. Mac update design
 
-Sparkle's current documentation describes an HTTPS appcast, incrementing bundle versions, Ed25519-signed archives, and Developer ID validation; see [Sparkle documentation](https://sparkle-project.org/documentation/).
+The normative [update trust policy](../spec/update-policy/v0/profile.md) admits
+only Sparkle `2.9.6`, pinned to full revision
+`ac2def288cbff5cfc7df3ffef6abdf45b72bcb0a`. Current upstream documentation
+requires HTTPS, incrementing bundle versions, Ed25519-signed archives, and
+Developer ID validation; signed feeds additionally require verification before
+archive extraction. The dependency remains unintegrated until its exact source,
+license, helper topology, privacy impact, and signed-code graph pass review; see
+[Sparkle documentation](https://sparkle-project.org/documentation/) and the
+[2.9.6 release](https://github.com/sparkle-project/Sparkle/releases/tag/2.9.6).
 
 ### Channels
 
@@ -152,7 +160,12 @@ Before installation the menu app:
 
 The update never swaps an individual agent executable in place. Pairing keys and grants remain in Keychain and service-owned data rather than in the replaceable bundle. A rollback must understand the stored schema or refuse with a clear recovery path; silently reading a newer schema is forbidden.
 
-Automatic download may be offered later. Initial beta installs updates only after local confirmation and never while the Mac is locked or an Interactive Control session is active.
+Automatic download may be offered later. Initial beta installs require a fresh
+five-minute local foreground confirmation that is cancelled when the menu app
+loses foreground state. This prevents a locked Mac from retaining installation
+authority without claiming an undocumented exact lock-state API. Installation
+also requires Interactive Control to be inactive and unambiguous, network
+admission closed, bounded work drained, and the Agent stopped.
 
 ## 7. iPhone and iPad distribution
 

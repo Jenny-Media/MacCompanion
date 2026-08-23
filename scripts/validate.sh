@@ -9,6 +9,7 @@ python3 scripts/validate_fixtures.py
 python3 scripts/validate_ci.py
 python3 scripts/validate_repository_material.py
 python3 scripts/validate_dependency_policy.py
+python3 scripts/validate_update_policy.py
 python3 scripts/validate_permanent_apple_targets.py
 python3 scripts/validate_permanent_ios_target.py
 python3 scripts/validate_privacy_manifests.py

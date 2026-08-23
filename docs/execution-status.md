@@ -617,6 +617,18 @@ Explicit Remote Access enablement/Agent registration requires action-time
 confirmation; privacy consent, reciprocal local-XPC readiness, physical
 pairing, Observe, Act, Control, and distribution evidence remain open.
 
+The [direct-update trust policy](evidence/2026-08-23-update-trust-policy.md)
+now freezes Sparkle 2.9.6 at full upstream revision
+`ac2def288cbff5cfc7df3ffef6abdf45b72bcb0a`, distinct release-injected
+beta/stable authorities, signed feeds, pre-extraction verification, Ed25519 and
+Developer ID trust, notarized whole-bundle replacement, and no initial delta or
+installer-package path. A five-minute foreground confirmation is cancelled on
+foreground loss; install remains closed until network admission, Control,
+bounded work, Agent shutdown, and version compatibility all converge safely.
+Twenty-one fixtures pass. No dependency, framework, feed, key, appcast,
+download, or update action exists yet; exact dependency/source/license/helper
+review and a testable runtime drain gate are the next unblocked update slice.
+
 ## Blocker handling rule
 
 Every blocked item records its affected artifact, evidence needed to unblock it, and parallel work. The project is not globally blocked while any safe in-scope lane remains active or ready. A later-stage capability is complete only with passing exit evidence or an explicit evidence-backed `no-go` or `deferred` disposition.

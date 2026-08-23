@@ -1,0 +1,26 @@
+{
+  "profile": "maccompanion.update-policy-fixtures.v0.1",
+  "cases": [
+    {"id": "valid-policy", "mutation": null, "accepted": true},
+    {"id": "invalid-floating-dependency", "mutation": "floatingDependency", "accepted": false},
+    {"id": "invalid-old-sparkle", "mutation": "oldSparkle", "accepted": false},
+    {"id": "invalid-shared-feed", "mutation": "sharedFeed", "accepted": false},
+    {"id": "invalid-feed-url", "mutation": "feedURL", "accepted": false},
+    {"id": "invalid-automatic-download", "mutation": "automaticDownload", "accepted": false},
+    {"id": "invalid-automatic-install", "mutation": "automaticInstall", "accepted": false},
+    {"id": "invalid-unsigned-feed", "mutation": "unsignedFeed", "accepted": false},
+    {"id": "invalid-extract-before-verify", "mutation": "extractBeforeVerify", "accepted": false},
+    {"id": "invalid-delta-update", "mutation": "deltaUpdate", "accepted": false},
+    {"id": "invalid-control-install", "mutation": "controlInstall", "accepted": false},
+    {"id": "invalid-agent-running", "mutation": "agentRunning", "accepted": false},
+    {"id": "invalid-long-confirmation", "mutation": "longConfirmation", "accepted": false},
+    {"id": "invalid-simultaneous-rotation", "mutation": "simultaneousRotation", "accepted": false},
+    {"id": "invalid-feed-fallback", "mutation": "feedFallback", "accepted": false},
+    {"id": "invalid-secret-field", "mutation": "secretField", "accepted": false},
+    {"id": "invalid-noncanonical", "mutation": "noncanonical", "accepted": false},
+    {"id": "invalid-duplicate-key", "mutation": "duplicateKey", "accepted": false},
+    {"id": "invalid-symlink", "mutation": "symlink", "accepted": false},
+    {"id": "invalid-hardlink", "mutation": "hardlink", "accepted": false},
+    {"id": "invalid-oversized", "mutation": "oversized", "accepted": false}
+  ]
+}
