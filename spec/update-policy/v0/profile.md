@@ -1,4 +1,4 @@
-# Mac Companion update trust policy v0.10
+# Mac Companion update trust policy v0.11
 
 Status: normative for the first direct-distribution beta.
 
@@ -173,6 +173,15 @@ intercepts only the later readiness reply. Until the real foreground/runtime
 owner is bound, the proxy must cancel correlation and reply `.skip`; it must
 not reply `.dismiss`, because a dismissed prepared update may still install on
 application termination, and it must never forward `.install` directly.
+
+The Agent's `KeepAlive=true` job must be unregistered through the converging
+ServiceManagement owner before updater handoff; process exit alone is not an
+accepted stop. If the Agent is registered, the app must first persist one
+compare-and-swap receipt bound to the exact source and candidate builds. A
+failed handoff re-registers and verifies the source Agent. After a successful
+replacement, only the exact source or candidate app build may re-register its
+matching Agent and clear the receipt. Missing exact readiness or any receipt
+conflict retains recovery state and keeps installation authority closed.
 
 Neither lifecycle event is Mac Companion's Developer ID identity or
 notarization attestation. Sparkle 2.9.6 permits an Ed25519-valid update to

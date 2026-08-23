@@ -705,6 +705,15 @@ package actor. It intercepts the later readiness reply but cancels with
 all full/background update checks. The real foreground confirmation and
 runtime-effect owner remain open, so no download or installation authority is
 enabled.
+The subsequent
+[update Agent reactivation saga](evidence/2026-08-23-update-agent-reactivation-saga.md)
+addresses the Agent's `KeepAlive=true` replacement constraint. One package
+owner persists exact source/candidate recovery intent before completed Agent
+unregister and advances it only after the process is gone; failure recovery and
+startup repair re-register only the exact source or candidate build and clear
+the receipt after matching authenticated Agent readiness. Eight injected tests
+pass. No live registration or updater action ran; the atomic store and concrete
+platform bindings remain open.
 
 ## Blocker handling rule
 

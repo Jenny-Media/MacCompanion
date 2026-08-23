@@ -177,6 +177,15 @@ reply. Until the real foreground/runtime owner is bound, it closes correlation
 and answers `.skip`, which cancels the prepared installation rather than
 allowing Sparkle's install-on-termination behavior. Full update checks and
 downloads remain source-policy denied.
+The subsequent
+[update Agent reactivation saga](evidence/2026-08-23-update-agent-reactivation-saga.md)
+defines the safe KeepAlive transition. It binds a durable recovery receipt to
+the exact source/candidate builds before completed Agent unregister, retains it
+through updater handoff, repairs the source build after failure, and lets only
+the exact installed source or candidate build re-register and verify its Agent
+before clearing the receipt. All effects remain injected until the private
+atomic store, ServiceManagement adapter, and authenticated readiness observer
+are bound.
 
 ### Channels
 
