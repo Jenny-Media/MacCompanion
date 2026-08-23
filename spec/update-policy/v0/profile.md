@@ -1,4 +1,4 @@
-# Mac Companion update trust policy v0.15
+# Mac Companion update trust policy v0.16
 
 Status: normative for the first direct-distribution beta.
 
@@ -201,6 +201,31 @@ the dashboard product and the update-time Agent-stop dependency; the startup
 probe remains a separate recovery-only mechanism. Merely constructing the stop
 owner does not authorize network closure, Agent unregistration, updater
 handoff, download, or installation.
+
+The active authenticated dashboard is also the only runtime channel for update
+network quiescence. The closed local-XPC family consists of exactly `close`,
+`drain`, and recovery-only `reopen`, authorized only from the menu app to the
+Agent after menu readiness. Commands are content-free, single-flight, bounded,
+and generation-fenced. A command acknowledgement proves only that exact effect;
+transport ambiguity is not success. `close` rejects new and cancels
+pre-established ingress while retaining authenticated active connections;
+`drain` then closes all active primary, pairing, media, and input connections.
+Only a nonterminal closed or drained listener may transition to open; recovery
+reopen is an idempotent no-op when admission is already open. Pairing,
+listener-route, and advertisement readiness remain unavailable while admission
+is closed; independently authenticated route evidence is not rewritten.
+Terminal Agent shutdown is distinct and cannot reopen.
+
+The containing-app composition may bind those commands to the runtime shutdown
+coordinator only alongside one candidate-bound Agent-stop owner, current
+foreground/Control observations, and an adapter that can start only the already
+prepared update. It accepts no feed, archive, release claim, or generic Sparkle
+controller. Failure before Agent stop reconciles through a current known-live
+dashboard or a replacement authenticated generation after transport ambiguity.
+Failure after Agent stop first completes exact source-Agent recovery and then
+reconstructs an authenticated dashboard generation before reopening. Until the
+separately reviewed prepared-installer adapter is supplied, permanent app
+composition remains inert and the user driver continues to answer `.skip`.
 
 The reactivation receipt must use the frozen canonical JSON projection in the
 menu app's private Application Support root. Reads require one no-follow regular

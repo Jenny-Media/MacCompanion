@@ -105,6 +105,7 @@ public actor AgentNetworkListenerHandoffV1 {
         NetworkHostPrimaryTerminationReasonV0
     ) -> Void
     private var cancelled = false
+    private var admissionOpen = true
     private var pending: Pending?
     private var bindingToken: UUID?
     private var active: Active?
@@ -139,7 +140,7 @@ public actor AgentNetworkListenerHandoffV1 {
         _ accepted: any AgentNetworkAcceptedConnectionStartingV1,
         acceptedAtMonotonicMilliseconds: UInt64
     ) throws {
-        guard !cancelled else {
+        guard !cancelled, admissionOpen else {
             accepted.cancel()
             return
         }
@@ -180,6 +181,7 @@ public actor AgentNetworkListenerHandoffV1 {
     public func cancel() async {
         guard !cancelled else { return }
         cancelled = true
+        admissionOpen = false
         let pending = self.pending
         let active = self.active
         self.pending = nil
@@ -187,6 +189,35 @@ public actor AgentNetworkListenerHandoffV1 {
         self.active = nil
         pending?.accepted.cancel()
         if let active { await active.connection.cancel() }
+        notifyStateChanged()
+    }
+
+    /// Stops new transport admission without retiring the active generation.
+    /// Pending and in-flight candidates are invalidated before this returns;
+    /// a suspended bind can only return into a stale token and is cancelled.
+    package func closeAdmission() async {
+        guard !cancelled, admissionOpen else { return }
+        admissionOpen = false
+        let pending = self.pending
+        self.pending = nil
+        bindingToken = nil
+        pending?.accepted.cancel()
+        notifyStateChanged()
+    }
+
+    /// Retires established work after admission has been closed while keeping
+    /// the handoff reusable for an updater recovery path.
+    package func drainConnections() async {
+        guard !cancelled, !admissionOpen else { return }
+        let active = self.active
+        self.active = nil
+        if let active { await active.connection.cancel() }
+        notifyStateChanged()
+    }
+
+    package func reopenAdmission() {
+        guard !cancelled, !admissionOpen else { return }
+        admissionOpen = true
         notifyStateChanged()
     }
 
@@ -203,7 +234,8 @@ public actor AgentNetworkListenerHandoffV1 {
         _ verified: NetworkHostVerifiedReadyConnectionV0,
         token: UUID
     ) async {
-        guard !cancelled, let pending, pending.token == token else {
+        guard !cancelled, admissionOpen,
+              let pending, pending.token == token else {
             verified.cancel()
             return
         }
@@ -236,7 +268,7 @@ public actor AgentNetworkListenerHandoffV1 {
             return
         }
 
-        guard !cancelled, bindingToken == token else {
+        guard !cancelled, admissionOpen, bindingToken == token else {
             await bound.cancel()
             return
         }
@@ -248,7 +280,7 @@ public actor AgentNetworkListenerHandoffV1 {
             notifyStateChanged()
             return
         }
-        guard !cancelled, bindingToken == token else {
+        guard !cancelled, admissionOpen, bindingToken == token else {
             await bound.cancel()
             return
         }

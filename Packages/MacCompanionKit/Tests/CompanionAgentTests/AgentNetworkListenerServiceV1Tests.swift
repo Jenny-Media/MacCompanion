@@ -1027,3 +1027,111 @@ private func agentNetworkServiceHarnessV1(
     #expect(degraded.activeRemoteSessionCount == 0)
     #expect(degraded.warningCodes == [.routeUnavailable])
 }
+
+@Test func listenerUpdateAdmissionClosesDrainsAndReopensWithoutTerminalTeardown()
+    async throws
+{
+    let listener = AgentNetworkListenerFakeV1()
+    let listenerRoutes = AgentNetworkServiceLANRecorderV1()
+    let advertisementRoutes = AgentNetworkServiceLANRecorderV1()
+    let harness = agentNetworkServiceHarnessV1(
+        listener: listener,
+        lanRecorder: listenerRoutes,
+        advertisementRecorder: advertisementRoutes
+    )
+    try await harness.0.start()
+    listener.emitReady()
+    listener.emitAdvertisement(true)
+    #expect(await agentNetworkServiceEventuallyV1 {
+        let admission = await harness.0.snapshot().updateAdmissionState
+        let listenerReady = await listenerRoutes.readiness()
+        let advertisementReady = await advertisementRoutes.readiness()
+        return admission == .open
+            && listenerReady == [true]
+            && advertisementReady == [true]
+    })
+
+    let active = try agentNetworkServiceAcceptedV1()
+    listener.emitAccepted(active.0)
+    #expect(await agentNetworkServiceEventuallyV1 { active.1.startCount == 1 })
+    active.1.emit(.ready)
+    #expect(await agentNetworkServiceEventuallyV1 { harness.3.beginCount == 1 })
+
+    try await harness.0.closeNetworkAdmission()
+    let closed = await harness.0.snapshot()
+    #expect(closed.state == .listening)
+    #expect(closed.updateAdmissionState == .closed)
+    #expect(closed.handoff.hasActivePrimary)
+    #expect(listener.cancelCount == 0)
+
+    let rejected = try agentNetworkServiceAcceptedV1()
+    listener.emitAccepted(rejected.0)
+    #expect(await agentNetworkServiceEventuallyV1 {
+        rejected.1.cancelCount == 1
+    })
+    #expect(rejected.1.startCount == 0)
+
+    try await harness.0.drainNetworkConnections()
+    #expect(harness.3.cancelCount == 1)
+    #expect((await harness.0.snapshot()).updateAdmissionState == .drained)
+    #expect(!(await harness.0.snapshot()).handoff.hasActivePrimary)
+    #expect(listener.cancelCount == 0)
+
+    try await harness.0.reopenNetworkAdmission()
+    #expect((await harness.0.snapshot()).updateAdmissionState == .open)
+    try await harness.0.reopenNetworkAdmission()
+    #expect((await harness.0.snapshot()).updateAdmissionState == .open)
+    #expect(await listenerRoutes.readiness() == [true, false, true])
+    #expect(await advertisementRoutes.readiness() == [true, false, true])
+
+    let replacement = try agentNetworkServiceAcceptedV1()
+    listener.emitAccepted(replacement.0)
+    #expect(await agentNetworkServiceEventuallyV1 {
+        replacement.1.startCount == 1
+    })
+    replacement.1.emit(.ready)
+    #expect(await agentNetworkServiceEventuallyV1 { harness.3.beginCount == 2 })
+    #expect((await harness.0.snapshot()).handoff.hasActivePrimary)
+}
+
+@Test func listenerUpdateAdmissionRejectsInvalidOrderAndTerminalRecovery()
+    async throws
+{
+    let listener = AgentNetworkListenerFakeV1()
+    let harness = agentNetworkServiceHarnessV1(listener: listener)
+
+    await #expect(throws: AgentNetworkUpdateAdmissionErrorV1
+        .listenerUnavailable(.idle)) {
+        try await harness.0.closeNetworkAdmission()
+    }
+    try await harness.0.start()
+    await #expect(throws: AgentNetworkUpdateAdmissionErrorV1
+        .listenerUnavailable(.starting)) {
+        try await harness.0.closeNetworkAdmission()
+    }
+    listener.emitReady()
+    #expect(await agentNetworkServiceEventuallyV1 {
+        (await harness.0.snapshot()).updateAdmissionState == .open
+    })
+    await #expect(throws: AgentNetworkUpdateAdmissionErrorV1
+        .invalidTransition(.open)) {
+        try await harness.0.drainNetworkConnections()
+    }
+    try await harness.0.closeNetworkAdmission()
+    await #expect(throws: AgentNetworkUpdateAdmissionErrorV1
+        .invalidTransition(.closed)) {
+        try await harness.0.closeNetworkAdmission()
+    }
+    try await harness.0.drainNetworkConnections()
+    await #expect(throws: AgentNetworkUpdateAdmissionErrorV1
+        .invalidTransition(.drained)) {
+        try await harness.0.drainNetworkConnections()
+    }
+    try await harness.0.reopenNetworkAdmission()
+    try await harness.0.reopenNetworkAdmission()
+    #expect((await harness.0.snapshot()).updateAdmissionState == .open)
+    await harness.0.cancel()
+    await #expect(throws: AgentNetworkUpdateAdmissionErrorV1.terminal) {
+        try await harness.0.reopenNetworkAdmission()
+    }
+}

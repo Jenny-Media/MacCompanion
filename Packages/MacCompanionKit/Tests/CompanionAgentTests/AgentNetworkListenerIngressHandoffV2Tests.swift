@@ -543,6 +543,136 @@ private func agentNetworkInteractiveReadyChannelV2(
     )
 }
 
+@Test func ingressAdmissionCloseCancelsSuspendedClassificationAndReopens()
+    async throws
+{
+    let staleClassified = try agentNetworkIngressClassifiedV2(
+        role: .applicationPrimary
+    )
+    let staleClassifier = AgentNetworkIngressClassifierFakeV2(
+        .suspended(staleClassified)
+    )
+    let freshBound = AgentNetworkBoundIngressFakeV2()
+    let freshClassifier = AgentNetworkIngressClassifierFakeV2(
+        .immediate(try agentNetworkIngressClassifiedV2(
+            role: .applicationPrimary
+        ))
+    )
+    let binder = AgentNetworkIngressBinderFakeV2(
+        primary: [freshBound],
+        pairing: []
+    )
+    let handoff = agentNetworkIngressHandoffV2(
+        classifiers: [staleClassifier, freshClassifier],
+        binder: binder
+    )
+    let stale = AgentNetworkIngressAcceptedFakeV2()
+    try await handoff.admit(stale, acceptedAtMonotonicMilliseconds: 1)
+    stale.emitReady(try agentNetworkIngressVerifiedV2())
+    #expect(await agentNetworkIngressEventuallyV2 { staleClassifier.started })
+
+    await handoff.closeAdmission()
+    #expect(staleClassifier.cancelCount == 1)
+    #expect(!(await handoff.snapshot()).isCancelled)
+    #expect(!(await handoff.snapshot()).isClassifying)
+
+    let rejected = AgentNetworkIngressAcceptedFakeV2()
+    try await handoff.admit(rejected, acceptedAtMonotonicMilliseconds: 2)
+    #expect(rejected.cancelCount == 1)
+    #expect(!rejected.started)
+
+    await handoff.reopenAdmission()
+    let fresh = AgentNetworkIngressAcceptedFakeV2()
+    try await handoff.admit(fresh, acceptedAtMonotonicMilliseconds: 3)
+    fresh.emitReady(try agentNetworkIngressVerifiedV2())
+    #expect(await agentNetworkIngressEventuallyV2 {
+        let active = await handoff.snapshot().hasActivePrimary
+        return freshBound.beginCount == 1 && active
+    })
+}
+
+@Test func ingressAdmissionDrainRetiresEveryEstablishedRoleWithoutTerminalCancel()
+    async throws
+{
+    let sessionID = UUID()
+    let primary = AgentNetworkBoundIngressFakeV2()
+    let pairing = AgentNetworkBoundIngressFakeV2()
+    let input = AgentNetworkBoundIngressFakeV2(
+        readyChannel: try agentNetworkInteractiveReadyChannelV2(
+            role: .input,
+            sessionID: sessionID
+        )
+    )
+    let media = AgentNetworkBoundIngressFakeV2(
+        readyChannel: try agentNetworkInteractiveReadyChannelV2(
+            role: .media,
+            sessionID: sessionID
+        )
+    )
+    let roles: [NetworkHostIngressRoleV0] = [
+        .applicationPrimary,
+        .pairing,
+        .interactiveInput,
+        .interactiveMedia,
+    ]
+    let classifiers = try roles.map { role in
+        AgentNetworkIngressClassifierFakeV2(
+            .immediate(try agentNetworkIngressClassifiedV2(role: role))
+        )
+    }
+    let binder = AgentNetworkIngressBinderFakeV2(
+        primary: [primary],
+        pairing: [pairing],
+        input: [input],
+        media: [media]
+    )
+    let handoff = agentNetworkIngressHandoffV2(
+        classifiers: classifiers,
+        binder: binder
+    )
+    for index in roles.indices {
+        let accepted = AgentNetworkIngressAcceptedFakeV2()
+        try await handoff.admit(
+            accepted,
+            acceptedAtMonotonicMilliseconds: UInt64(index + 1)
+        )
+        accepted.emitReady(try agentNetworkIngressVerifiedV2())
+        #expect(await agentNetworkIngressEventuallyV2 {
+            let snapshot = await handoff.snapshot()
+            switch roles[index] {
+            case .applicationPrimary: return snapshot.hasActivePrimary
+            case .pairing: return snapshot.hasActivePairing
+            case .interactiveInput:
+                return snapshot.hasActiveInteractiveInput
+            case .interactiveMedia:
+                return snapshot.hasActiveInteractiveMedia
+            }
+        })
+    }
+
+    await handoff.closeAdmission()
+    let closed = await handoff.snapshot()
+    #expect(closed.hasActivePrimary)
+    #expect(closed.hasActivePairing)
+    #expect(closed.hasActiveInteractiveInput)
+    #expect(closed.hasActiveInteractiveMedia)
+
+    await handoff.drainConnections()
+    let drained = await handoff.snapshot()
+    #expect(!drained.isCancelled)
+    #expect(!drained.hasActivePrimary)
+    #expect(!drained.hasActivePairing)
+    #expect(!drained.hasActiveInteractiveInput)
+    #expect(!drained.hasActiveInteractiveMedia)
+    #expect(primary.cancelCount == 1)
+    #expect(pairing.cancelCount == 1)
+    #expect(input.cancelCount == 1)
+    #expect(media.cancelCount == 1)
+
+    await handoff.reopenAdmission()
+    #expect(!(await handoff.snapshot()).isCancelled)
+}
+
 @Test func interactiveIngressPublishesOnlyOneExactRolePair() async throws {
     let sessionID = UUID()
     let input = AgentNetworkBoundIngressFakeV2(

@@ -382,6 +382,7 @@ public actor AgentNetworkListenerIngressHandoffV2 {
         AgentNetworkIngressTerminationV2
     ) -> Void
     private var cancelled = false
+    private var admissionOpen = true
     private var queued: [Pending] = []
     private var pending: Pending?
     private var classifying: Classifying?
@@ -441,7 +442,7 @@ public actor AgentNetworkListenerIngressHandoffV2 {
         _ accepted: any AgentNetworkAcceptedConnectionStartingV1,
         acceptedAtMonotonicMilliseconds: UInt64
     ) async throws {
-        guard !cancelled else {
+        guard !cancelled, admissionOpen else {
             accepted.cancel()
             return
         }
@@ -497,6 +498,7 @@ public actor AgentNetworkListenerIngressHandoffV2 {
     public func cancel() async {
         guard !cancelled else { return }
         cancelled = true
+        admissionOpen = false
         let pending = self.pending
         let queued = self.queued
         let classifying = self.classifying
@@ -527,6 +529,56 @@ public actor AgentNetworkListenerIngressHandoffV2 {
         if let interactiveMedia {
             await interactiveMedia.connection.cancel()
         }
+        notifyStateChanged()
+    }
+
+    /// Closes only ingress admission. Established role generations remain
+    /// usable until `drainConnections()` so updater shutdown can be ordered
+    /// and reversed independently from terminal Agent cancellation.
+    package func closeAdmission() async {
+        guard !cancelled, admissionOpen else { return }
+        admissionOpen = false
+        let pending = self.pending
+        let queued = self.queued
+        let classifying = self.classifying
+        let binding = bindingConnection
+        self.pending = nil
+        self.queued = []
+        self.classifying = nil
+        bindingToken = nil
+        bindingRole = nil
+        bindingConnection = nil
+        pending?.accepted.cancel()
+        for candidate in queued { candidate.accepted.cancel() }
+        if let classifying { await classifying.classifier.cancel() }
+        if let binding { await binding.connection.cancel() }
+        notifyStateChanged()
+    }
+
+    package func drainConnections() async {
+        guard !cancelled, !admissionOpen else { return }
+        let primary = activePrimary
+        let pairing = activePairing
+        let interactiveInput = activeInteractiveInput
+        let interactiveMedia = activeInteractiveMedia
+        activePrimary = nil
+        activePairing = nil
+        activeInteractiveInput = nil
+        activeInteractiveMedia = nil
+        if let primary { await primary.connection.cancel() }
+        if let pairing { await pairing.connection.cancel() }
+        if let interactiveInput {
+            await interactiveInput.connection.cancel()
+        }
+        if let interactiveMedia {
+            await interactiveMedia.connection.cancel()
+        }
+        notifyStateChanged()
+    }
+
+    package func reopenAdmission() {
+        guard !cancelled, !admissionOpen else { return }
+        admissionOpen = true
         notifyStateChanged()
     }
 
@@ -587,7 +639,8 @@ public actor AgentNetworkListenerIngressHandoffV2 {
         _ verified: NetworkHostVerifiedReadyConnectionV0,
         token: UUID
     ) async {
-        guard !cancelled, let pending, pending.token == token else {
+        guard !cancelled, admissionOpen,
+              let pending, pending.token == token else {
             verified.cancel()
             advanceQueue()
             return
@@ -627,7 +680,8 @@ public actor AgentNetworkListenerIngressHandoffV2 {
             }
             return
         }
-        guard !cancelled, classifying?.token == token else {
+        guard !cancelled, admissionOpen,
+              classifying?.token == token else {
             classified.cancel()
             advanceQueue()
             return
@@ -647,6 +701,10 @@ public actor AgentNetworkListenerIngressHandoffV2 {
         token: UUID,
         acceptedAtMonotonicMilliseconds: UInt64
     ) async {
+        guard !cancelled, admissionOpen else {
+            classified.cancel()
+            return
+        }
         if classified.role == .pairing, activePairing != nil {
             classified.cancel()
             advanceQueue()
@@ -740,7 +798,7 @@ public actor AgentNetworkListenerIngressHandoffV2 {
             advanceQueue()
             return
         }
-        guard !cancelled, bindingToken == token else {
+        guard !cancelled, admissionOpen, bindingToken == token else {
             await bound.cancel()
             advanceQueue()
             return
@@ -766,7 +824,7 @@ public actor AgentNetworkListenerIngressHandoffV2 {
             advanceQueue()
             return
         }
-        guard !cancelled, bindingToken == token,
+        guard !cancelled, admissionOpen, bindingToken == token,
               bindingConnection?.token == token else {
             if bindingConnection?.token == token {
                 bindingConnection = nil
@@ -915,7 +973,8 @@ public actor AgentNetworkListenerIngressHandoffV2 {
     }
 
     private func advanceQueue() {
-        guard !cancelled, pending == nil, classifying == nil,
+        guard !cancelled, admissionOpen,
+              pending == nil, classifying == nil,
               bindingToken == nil, !queued.isEmpty else { return }
         let candidate = queued.removeFirst()
         do {

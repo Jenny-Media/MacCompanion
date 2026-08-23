@@ -5,7 +5,9 @@ bootstrapping, leases, status, sanitized diagnostic payloads, and the macOS 26
 peer-identity boundary. The signed peer-requirement mechanism is provisionally
 proven on Xcode 27 beta. The production hello, menu-lifecycle-ready,
 content-free status-read, disabled-Agent bootstrap, and menu pairing-command
-transports are constructed. Interactive Desktop preparation, lease install,
+transports are constructed. The exact update network-quiescence command family
+is also constructed for the authenticated presentation profile. Interactive
+Desktop preparation, lease install,
 renewal, revocation, and visible-admission publication now have exact transport
 profiles and permanent authenticated-generation composition below. Concrete
 capture, media, and input adapters and signed execution evidence remain
@@ -215,6 +217,55 @@ does not invalidate an otherwise current connection, so a later sequential
 read may recover.
 
 
+## Update network quiescence
+
+Only the authenticated `menuApp` to `agent` presentation profile, after the
+exact menu-readiness acknowledgement, admits these three content-free methods:
+
+| XPC request kind | Authorized method | Exact success | Exact failure |
+| --- | --- | --- | --- |
+| `update.network.close` | `closeNetworkAdmissionForUpdate` | `update.network.close.ack` | `update.network.close.failed` |
+| `update.network.drain` | `drainNetworkConnectionsForUpdate` | `update.network.drain.ack` | `update.network.drain.failed` |
+| `update.network.reopen` | `reopenNetworkAdmissionAfterUpdateFailure` | `update.network.reopen.ack` | `update.network.reopen.failed` |
+
+Every message above is an exact XPC dictionary containing only
+`kind:XPC_TYPE_STRING` and `version:XPC_TYPE_INT64` with value `1`. There is no
+payload, identifier, path, route, device, session, capability, updater, archive,
+error text, or caller-supplied state. A missing or additional member, alternate
+scalar type, unknown kind, wrong direction, wrong profile, pre-readiness
+request, or malformed reply cancels the current peer generation.
+
+The client and server each admit at most one update-quiescence command at a
+time. The server deadline is four seconds and the client reply deadline is
+five seconds. Request ownership, completion, cancellation, timeout, peer loss,
+and replacement are bound to the exact authenticated generation; late work
+cannot acknowledge a replacement generation. A `.failed` reply is a closed
+effect failure. A send failure, timeout, cancellation after send, malformed
+reply, or transport loss is ambiguous and invalidates the session. It never
+authorizes the caller to assume that the requested effect did or did not occur.
+
+The command order is owned by the separately admitted update runtime authority:
+
+1. `close` stops new listener admission and cancels pending, queued,
+   classifying, and binding ingress while retaining already authenticated
+   active connections;
+2. `drain` closes every retained active primary, pairing, media, and input
+   connection and reaches a drained state; and
+3. `reopen` is recovery-only after a failed update attempt, restores admission
+   from a nonterminal closed or drained listener, is an idempotent no-op when
+   already open, and never restarts a stopped or terminal listener.
+
+Closing also withholds pairing, listener-route, and Bonjour-advertisement
+readiness until reopen; it does not rewrite independently authenticated route
+evidence. The terminal Agent shutdown path remains separate and irreversible.
+A pre-Agent-stop failure reconciles over the current authenticated dashboard
+generation when it is known-live or a replacement generation after transport
+ambiguity. After the Agent is stopped, recovery must first restore and
+authenticate the exact source-build Agent and only then issue `reopen` over a
+replacement dashboard generation. None of these methods can start Sparkle,
+select an update, stop the Agent, alter durable grants, invoke a capability, or
+create remote network authority.
+
 Client transport callbacks are bound to monotonically increasing session
 generations. A cancelled session's delayed cancel, hello, readiness, or status
 reply is ignored and cannot authenticate, acknowledge,
@@ -242,6 +293,8 @@ may publish `publishMenuReady` and call `createPairingSession`,
 `dismissPairingSession`, `decideGrantExpansion`, and `stopInteractiveSession`,
 may submit `recoverHostIdentity` only from an Agent-issued local review, and may
 read bounded local status, activity history, and sanitized diagnostics.
+Only the broader presentation profile may additionally issue the exact update
+network close, drain, and recovery-only reopen methods defined above.
 `readAgentStatus` returns only the closed content-free
 `LocalAgentStatusSnapshot`; the menu application binds each response to its
 current connection generation before presentation. None of the mutating or

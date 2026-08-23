@@ -160,7 +160,8 @@ let package = Package(
                 "CompanionHostPlatform", "CompanionInteractiveShared",
                 "CompanionInteractiveHost", "CompanionInteractiveRuntime",
                 "CompanionInteractiveWire",
-                "CompanionLocalXPCPlatform", "CompanionMacApp",
+                "CompanionLifecycle", "CompanionLocalXPCPlatform",
+                "CompanionMacApp",
                 "CompanionPresentation",
             ],
             linkerSettings: [
@@ -470,7 +471,8 @@ let package = Package(
                 "CompanionDomain", "CompanionHostPlatform",
                 "CompanionInteractiveRuntime", "CompanionInteractiveShared",
                 "CompanionInteractiveWire",
-                "CompanionLocalXPCPlatform", "CompanionMacApp",
+                "CompanionLifecycle", "CompanionLocalXPCPlatform",
+                "CompanionMacApp",
                 "CompanionMacApplicationPlatform", "CompanionWire",
             ]
         ),

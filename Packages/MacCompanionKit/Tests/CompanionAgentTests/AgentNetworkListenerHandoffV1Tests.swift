@@ -515,3 +515,39 @@ private func agentNetworkEventuallyV1(
         hasActivePrimary: false
     ))
 }
+
+@Test func listenerHandoffAdmissionCloseInvalidatesSuspendedBindWithoutTerminalCancel()
+    async throws
+{
+    let staleBound = AgentNetworkBoundFakeV1()
+    let binder = AgentNetworkSuspendingBinderFakeV1(connection: staleBound)
+    let handoff = AgentNetworkListenerHandoffV1(
+        binder: binder,
+        queue: DispatchQueue(label: "MacCompanionTests.ListenerHandoffUpdateClose"),
+        context: agentNetworkRequestContextV1
+    )
+    let accepted = AgentNetworkAcceptedFakeV1()
+    try await handoff.admit(accepted, acceptedAtMonotonicMilliseconds: 1)
+    accepted.emitReady(try agentNetworkVerifiedConnectionV1())
+    await binder.waitUntilStarted()
+
+    await handoff.closeAdmission()
+    await binder.resume()
+
+    #expect(await agentNetworkEventuallyV1 { staleBound.cancelCount == 1 })
+    #expect(staleBound.beginCount == 0)
+    #expect(await handoff.snapshot() == AgentNetworkListenerHandoffSnapshotV1(
+        isCancelled: false,
+        hasPendingTLS: false,
+        isBinding: false,
+        hasActivePrimary: false
+    ))
+
+    let rejected = AgentNetworkAcceptedFakeV1()
+    try await handoff.admit(rejected, acceptedAtMonotonicMilliseconds: 2)
+    #expect(rejected.cancelCount == 1)
+    #expect(rejected.startCount == 0)
+
+    await handoff.reopenAdmission()
+    #expect(!(await handoff.snapshot()).isCancelled)
+}

@@ -438,6 +438,21 @@ private struct UnavailableInteractiveAdmissionHandlerV1:
     ) async {}
 }
 
+private struct UnavailableUpdateQuiescenceHandlerV0:
+    MacLocalXPCUpdateQuiescenceHandlingV0
+{
+    struct Unavailable: Error {}
+    func closeNetworkAdmissionForUpdate() async throws {
+        throw Unavailable()
+    }
+    func drainNetworkConnectionsForUpdate() async throws {
+        throw Unavailable()
+    }
+    func reopenNetworkAdmissionAfterUpdateFailure() async throws {
+        throw Unavailable()
+    }
+}
+
 @Test
 @available(macOS 26.0, *)
 func injectedAuthoritiesRequireTheirExactExplicitServerProfiles() {
@@ -497,14 +512,35 @@ func injectedAuthoritiesRequireTheirExactExplicitServerProfiles() {
         try admissionHandlerInClosedProfile.start()
     }
 
+    let updateHandlerInClosedProfile = MacLocalXPCServerV1(
+        profile: .authenticationOnly,
+        updateQuiescenceHandler: UnavailableUpdateQuiescenceHandlerV0()
+    ) { _ in }
+    #expect(throws: MacLocalXPCConstructionErrorV1.invalidProfile) {
+        try updateHandlerInClosedProfile.start()
+    }
+
     let missingPresentationAdmissionHandler = MacLocalXPCServerV1(
         profile: .menuLifecycleReadinessStatusAndPresentation,
         statusReader: UnavailableStatusReaderV1(),
         menuPairingCommandHandler:
-            UnavailableMenuPairingCommandHandlerV1()
+            UnavailableMenuPairingCommandHandlerV1(),
+        updateQuiescenceHandler: UnavailableUpdateQuiescenceHandlerV0()
     ) { _ in }
     #expect(throws: MacLocalXPCConstructionErrorV1.invalidProfile) {
         try missingPresentationAdmissionHandler.start()
+    }
+
+    let missingPresentationUpdateHandler = MacLocalXPCServerV1(
+        profile: .menuLifecycleReadinessStatusAndPresentation,
+        statusReader: UnavailableStatusReaderV1(),
+        menuPairingCommandHandler:
+            UnavailableMenuPairingCommandHandlerV1(),
+        interactiveAdmissionHandler:
+            UnavailableInteractiveAdmissionHandlerV1()
+    ) { _ in }
+    #expect(throws: MacLocalXPCConstructionErrorV1.invalidProfile) {
+        try missingPresentationUpdateHandler.start()
     }
 }
 

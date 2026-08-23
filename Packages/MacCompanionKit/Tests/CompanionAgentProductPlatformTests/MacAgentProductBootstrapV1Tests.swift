@@ -38,8 +38,13 @@ private actor ProductBootstrapNetworkListenerV1:
     private let startGate: ProductBootstrapFinishGateV1?
     private let cancelReleasesStart: Bool
     private var state: AgentNetworkListenerServiceStateV1 = .idle
+    private var admissionState: AgentNetworkUpdateAdmissionStateV1 =
+        .unavailable
     private var starts = 0
     private var cancellations = 0
+    private var admissionCloses = 0
+    private var connectionDrains = 0
+    private var admissionReopens = 0
 
     init(
         rejectStart: Bool = false,
@@ -60,11 +65,49 @@ private actor ProductBootstrapNetworkListenerV1:
             throw ProductBootstrapProbeErrorV1.rejectedNetworkListener
         }
         state = .listening
+        admissionState = .open
+    }
+
+    func closeNetworkAdmission() throws {
+        guard state != .terminal else {
+            throw AgentNetworkUpdateAdmissionErrorV1.terminal
+        }
+        guard admissionState == .open else {
+            throw AgentNetworkUpdateAdmissionErrorV1
+                .invalidTransition(admissionState)
+        }
+        admissionCloses += 1
+        admissionState = .closed
+    }
+
+    func drainNetworkConnections() throws {
+        guard state != .terminal else {
+            throw AgentNetworkUpdateAdmissionErrorV1.terminal
+        }
+        guard admissionState == .closed else {
+            throw AgentNetworkUpdateAdmissionErrorV1
+                .invalidTransition(admissionState)
+        }
+        connectionDrains += 1
+        admissionState = .drained
+    }
+
+    func reopenNetworkAdmission() throws {
+        guard state != .terminal else {
+            throw AgentNetworkUpdateAdmissionErrorV1.terminal
+        }
+        guard admissionState == .closed || admissionState == .drained else {
+            throw AgentNetworkUpdateAdmissionErrorV1
+                .invalidTransition(admissionState)
+        }
+        admissionReopens += 1
+        admissionState = .open
     }
 
     func cancel() async {
         cancellations += 1
         state = .terminal
+        admissionState = .terminal
         if cancelReleasesStart {
             await startGate?.release()
         }
@@ -73,6 +116,7 @@ private actor ProductBootstrapNetworkListenerV1:
     func snapshot() -> AgentNetworkListenerServiceSnapshotV1 {
         AgentNetworkListenerServiceSnapshotV1(
             state: state,
+            updateAdmissionState: admissionState,
             handoff: AgentNetworkListenerHandoffSnapshotV1(
                 isCancelled: state == .terminal,
                 hasPendingTLS: false,
@@ -85,8 +129,20 @@ private actor ProductBootstrapNetworkListenerV1:
         )
     }
 
-    func counts() -> (starts: Int, cancellations: Int) {
-        (starts, cancellations)
+    func counts() -> (
+        starts: Int,
+        cancellations: Int,
+        admissionCloses: Int,
+        connectionDrains: Int,
+        admissionReopens: Int
+    ) {
+        (
+            starts,
+            cancellations,
+            admissionCloses,
+            connectionDrains,
+            admissionReopens
+        )
     }
 }
 
@@ -1995,7 +2051,21 @@ private func productApplicationPrepareV1(
     #expect(await listening.counts().starts == 1)
     #expect(await listening.counts().cancellations == 0)
     #expect(await listeningOwner.snapshot().state == .listening)
+    try await listeningOwner.closeNetworkAdmission()
+    #expect(await listeningOwner.snapshot().updateAdmissionState == .closed)
+    try await listeningOwner.drainNetworkConnections()
+    #expect(await listeningOwner.snapshot().updateAdmissionState == .drained)
+    try await listeningOwner.reopenNetworkAdmission()
+    #expect(await listeningOwner.snapshot().updateAdmissionState == .open)
+    #expect(await listening.counts().admissionCloses == 1)
+    #expect(await listening.counts().connectionDrains == 1)
+    #expect(await listening.counts().admissionReopens == 1)
     await listeningOwner.finish()
+    await #expect(
+        throws: MacAgentPreparedProductCompositionErrorV1.terminal
+    ) {
+        try await listeningOwner.reopenNetworkAdmission()
+    }
 
     let concurrentGate = ProductBootstrapFinishGateV1()
     let concurrent = ProductBootstrapNetworkListenerV1(

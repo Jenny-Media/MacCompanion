@@ -45,6 +45,9 @@ protocol AgentNetworkListenerHandoffServingV1: Sendable {
         _ accepted: any AgentNetworkAcceptedConnectionStartingV1,
         acceptedAtMonotonicMilliseconds: UInt64
     ) async throws
+    func closeAdmissionForService() async
+    func drainConnectionsForService() async
+    func reopenAdmissionForService() async
     func cancelForService() async
     func snapshotForService() async -> AgentNetworkListenerHandoffSnapshotV1
     func hasAuthenticatedEventSinkForService(
@@ -57,6 +60,10 @@ protocol AgentNetworkListenerHandoffServingV1: Sendable {
 }
 
 extension AgentNetworkListenerHandoffServingV1 {
+    func closeAdmissionForService() async {}
+    func drainConnectionsForService() async {}
+    func reopenAdmissionForService() async {}
+
     func hasAuthenticatedEventSinkForService(
         primaryConnectionID: Data
     ) async -> Bool { false }
@@ -93,6 +100,18 @@ extension AgentNetworkListenerHandoffV1:
         await cancel()
     }
 
+    func closeAdmissionForService() async {
+        await closeAdmission()
+    }
+
+    func drainConnectionsForService() async {
+        await drainConnections()
+    }
+
+    func reopenAdmissionForService() async {
+        reopenAdmission()
+    }
+
     func snapshotForService() async
         -> AgentNetworkListenerHandoffSnapshotV1
     {
@@ -123,6 +142,18 @@ extension AgentNetworkListenerIngressHandoffV2:
 
     func cancelForService() async {
         await cancel()
+    }
+
+    func closeAdmissionForService() async {
+        await closeAdmission()
+    }
+
+    func drainConnectionsForService() async {
+        await drainConnections()
+    }
+
+    func reopenAdmissionForService() async {
+        reopenAdmission()
     }
 
     func snapshotForService() async
@@ -179,11 +210,36 @@ public enum AgentNetworkListenerServiceStateV1:
     case terminal
 }
 
+public enum AgentNetworkUpdateAdmissionStateV1:
+    Equatable,
+    Sendable
+{
+    case unavailable
+    case open
+    case closing
+    case closed
+    case draining
+    case drained
+    case reopening
+    case terminal
+}
+
+public enum AgentNetworkUpdateAdmissionErrorV1:
+    Error,
+    Equatable,
+    Sendable
+{
+    case invalidTransition(AgentNetworkUpdateAdmissionStateV1)
+    case listenerUnavailable(AgentNetworkListenerServiceStateV1)
+    case terminal
+}
+
 public struct AgentNetworkListenerServiceSnapshotV1:
     Equatable,
     Sendable
 {
     public let state: AgentNetworkListenerServiceStateV1
+    public let updateAdmissionState: AgentNetworkUpdateAdmissionStateV1
     public let handoff: AgentNetworkListenerHandoffSnapshotV1
     public let lastListenerTerminationReason:
         NetworkHostListenerTerminationReasonV0?
@@ -191,12 +247,14 @@ public struct AgentNetworkListenerServiceSnapshotV1:
 
     public init(
         state: AgentNetworkListenerServiceStateV1,
+        updateAdmissionState: AgentNetworkUpdateAdmissionStateV1 = .open,
         handoff: AgentNetworkListenerHandoffSnapshotV1,
         lastListenerTerminationReason:
             NetworkHostListenerTerminationReasonV0?,
         hasAcceptedConnectionStartFailure: Bool
     ) {
         self.state = state
+        self.updateAdmissionState = updateAdmissionState
         self.handoff = handoff
         self.lastListenerTerminationReason = lastListenerTerminationReason
         self.hasAcceptedConnectionStartFailure =
@@ -245,6 +303,9 @@ public actor AgentNetworkListenerServiceV1 {
     ) async throws -> Void)?
     private nonisolated let readiness = AgentNetworkListenerReadinessLatchV1()
     private var state: AgentNetworkListenerServiceStateV1 = .idle
+    private var updateAdmissionState: AgentNetworkUpdateAdmissionStateV1 =
+        .unavailable
+    private var nativeAdvertisementReady = false
     private var lastListenerTerminationReason:
         NetworkHostListenerTerminationReasonV0?
     private var hasAcceptedConnectionStartFailure = false
@@ -545,6 +606,7 @@ public actor AgentNetworkListenerServiceV1 {
         } catch {
             if state != .terminal {
                 state = .terminal
+                updateAdmissionState = .terminal
                 listener.cancel()
                 await handoff.cancelForService()
                 await pairingContextStop?()
@@ -560,6 +622,7 @@ public actor AgentNetworkListenerServiceV1 {
     public func cancel() async {
         guard state != .terminal else { return }
         state = .terminal
+        updateAdmissionState = .terminal
         lastListenerTerminationReason = .localCancel
         listener.cancel()
         await handoff.cancelForService()
@@ -574,11 +637,107 @@ public actor AgentNetworkListenerServiceV1 {
     public func snapshot() async -> AgentNetworkListenerServiceSnapshotV1 {
         AgentNetworkListenerServiceSnapshotV1(
             state: state,
+            updateAdmissionState: updateAdmissionState,
             handoff: await handoff.snapshotForService(),
             lastListenerTerminationReason: lastListenerTerminationReason,
             hasAcceptedConnectionStartFailure:
                 hasAcceptedConnectionStartFailure
         )
+    }
+
+    /// Reversible first phase of updater quiescence. The native listener stays
+    /// owned, but every pending or future accepted connection fails closed.
+    public func closeNetworkAdmission() async throws {
+        guard state != .terminal else {
+            throw AgentNetworkUpdateAdmissionErrorV1.terminal
+        }
+        guard state == .listening else {
+            throw AgentNetworkUpdateAdmissionErrorV1.listenerUnavailable(state)
+        }
+        guard updateAdmissionState == .open else {
+            throw AgentNetworkUpdateAdmissionErrorV1.invalidTransition(
+                updateAdmissionState
+            )
+        }
+        updateAdmissionState = .closing
+        await handoff.closeAdmissionForService()
+        guard state != .terminal else {
+            throw AgentNetworkUpdateAdmissionErrorV1.terminal
+        }
+        guard updateAdmissionState == .closing else {
+            throw AgentNetworkUpdateAdmissionErrorV1.invalidTransition(
+                updateAdmissionState
+            )
+        }
+        updateAdmissionState = .closed
+        await publishListenerRouteReadiness(false)
+        await publishPairingListenerReadiness(false)
+        await publishAdvertisementRouteReadiness(false)
+        await publishPairingAdvertisementReadiness(false)
+        await invalidatePairingSessions(terminal: false)
+        await publishCurrentStatus()
+    }
+
+    /// Retires connections only after admission is closed. The listener and
+    /// its identity remain available for a deterministic recovery reopen.
+    public func drainNetworkConnections() async throws {
+        guard state != .terminal else {
+            throw AgentNetworkUpdateAdmissionErrorV1.terminal
+        }
+        guard state == .listening else {
+            throw AgentNetworkUpdateAdmissionErrorV1.listenerUnavailable(state)
+        }
+        guard updateAdmissionState == .closed else {
+            throw AgentNetworkUpdateAdmissionErrorV1.invalidTransition(
+                updateAdmissionState
+            )
+        }
+        updateAdmissionState = .draining
+        await handoff.drainConnectionsForService()
+        guard state != .terminal else {
+            throw AgentNetworkUpdateAdmissionErrorV1.terminal
+        }
+        guard updateAdmissionState == .draining else {
+            throw AgentNetworkUpdateAdmissionErrorV1.invalidTransition(
+                updateAdmissionState
+            )
+        }
+        updateAdmissionState = .drained
+        await publishCurrentStatus()
+    }
+
+    public func reopenNetworkAdmission() async throws {
+        guard state != .terminal else {
+            throw AgentNetworkUpdateAdmissionErrorV1.terminal
+        }
+        guard state == .listening else {
+            throw AgentNetworkUpdateAdmissionErrorV1.listenerUnavailable(state)
+        }
+        if updateAdmissionState == .open {
+            return
+        }
+        guard updateAdmissionState == .closed
+            || updateAdmissionState == .drained else {
+            throw AgentNetworkUpdateAdmissionErrorV1.invalidTransition(
+                updateAdmissionState
+            )
+        }
+        updateAdmissionState = .reopening
+        await handoff.reopenAdmissionForService()
+        guard state != .terminal else {
+            throw AgentNetworkUpdateAdmissionErrorV1.terminal
+        }
+        guard updateAdmissionState == .reopening else {
+            throw AgentNetworkUpdateAdmissionErrorV1.invalidTransition(
+                updateAdmissionState
+            )
+        }
+        updateAdmissionState = .open
+        await publishListenerRouteReadiness(true)
+        await publishPairingListenerReadiness(true)
+        await publishAdvertisementRouteReadiness(nativeAdvertisementReady)
+        await publishPairingAdvertisementReadiness(nativeAdvertisementReady)
+        await publishCurrentStatus()
     }
 
     public func hasAuthenticatedEventSink(
@@ -603,13 +762,14 @@ public actor AgentNetworkListenerServiceV1 {
         var becameReady = false
         if state == .starting, readiness.isReady() {
             state = .listening
+            updateAdmissionState = .open
             becameReady = true
         }
         if becameReady {
             await publishListenerRouteReadiness(true)
             await publishPairingListenerReadiness(true)
         }
-        guard state == .listening else {
+        guard state == .listening, updateAdmissionState == .open else {
             accepted.cancel()
             return
         }
@@ -632,6 +792,7 @@ public actor AgentNetworkListenerServiceV1 {
     private func listenerReady() async {
         guard state == .starting else { return }
         state = .listening
+        updateAdmissionState = .open
         await publishListenerRouteReadiness(true)
         await publishPairingListenerReadiness(true)
         await publishCurrentStatus()
@@ -642,6 +803,7 @@ public actor AgentNetworkListenerServiceV1 {
     ) async {
         guard state == .starting || state == .listening else { return }
         state = .terminal
+        updateAdmissionState = .terminal
         lastListenerTerminationReason = reason
         await handoff.cancelForService()
         await pairingContextStop?()
@@ -660,8 +822,11 @@ public actor AgentNetworkListenerServiceV1 {
 
     private func advertisementChanged(_ ready: Bool) async {
         guard state == .starting || state == .listening else { return }
-        await publishAdvertisementRouteReadiness(ready)
-        await publishPairingAdvertisementReadiness(ready)
+        nativeAdvertisementReady = ready
+        let effectivelyReady = ready
+            && (state == .starting || updateAdmissionState == .open)
+        await publishAdvertisementRouteReadiness(effectivelyReady)
+        await publishPairingAdvertisementReadiness(effectivelyReady)
         if !ready {
             await invalidatePairingSessions(terminal: false)
         }

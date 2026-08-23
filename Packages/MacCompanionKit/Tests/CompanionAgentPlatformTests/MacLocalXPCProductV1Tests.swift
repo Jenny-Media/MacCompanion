@@ -50,6 +50,15 @@ private struct ProductInteractiveAdmissionHandlerV1:
     ) async {}
 }
 
+@available(macOS 26.0, *)
+private struct ProductUpdateQuiescenceHandlerV0:
+    MacLocalXPCUpdateQuiescenceHandlingV0
+{
+    func closeNetworkAdmissionForUpdate() async throws {}
+    func drainNetworkConnectionsForUpdate() async throws {}
+    func reopenNetworkAdmissionAfterUpdateFailure() async throws {}
+}
+
 private func eventuallyV1(
     _ predicate: @escaping @Sendable () async -> Bool
 ) async -> Bool {
@@ -442,13 +451,14 @@ func agentPresentationProductBindsOnlyAfterAcceptedReadiness() async throws {
         ),
         statusReader: ProductStatusReaderV1(),
         menuPairingCommandHandler: ProductMenuPairingCommandHandlerV1(),
+        updateQuiescenceHandler: ProductUpdateQuiescenceHandlerV0(),
         interactiveAdmissionHandler:
             ProductInteractiveAdmissionHandlerV1(),
         onSurfaces: { await generations.record($0.generation) },
         onSurfaceInvalidated: {
             await invalidatedGenerations.record($0)
         },
-        serverFactory: { profile, _, _, _, _, handler in
+        serverFactory: { profile, _, _, _, _, _, handler in
             factory.record(profile)
             server.install(handler)
             return server
@@ -496,13 +506,14 @@ func authenticatedReplacementRevokesReadyPresentationBeforeNewReadiness()
         ),
         statusReader: ProductStatusReaderV1(),
         menuPairingCommandHandler: ProductMenuPairingCommandHandlerV1(),
+        updateQuiescenceHandler: ProductUpdateQuiescenceHandlerV0(),
         interactiveAdmissionHandler:
             ProductInteractiveAdmissionHandlerV1(),
         onSurfaces: { await generations.record($0.generation) },
         onSurfaceInvalidated: {
             await invalidatedGenerations.record($0)
         },
-        serverFactory: { _, _, _, _, _, handler in
+        serverFactory: { _, _, _, _, _, _, handler in
             server.install(handler)
             return server
         }
@@ -538,10 +549,11 @@ func agentPresentationProductFailsCurrentPeerWhenEndpointIsAbsent() async {
         ),
         statusReader: ProductStatusReaderV1(),
         menuPairingCommandHandler: ProductMenuPairingCommandHandlerV1(),
+        updateQuiescenceHandler: ProductUpdateQuiescenceHandlerV0(),
         interactiveAdmissionHandler:
             ProductInteractiveAdmissionHandlerV1(),
         onSurfaces: { _ in },
-        serverFactory: { _, _, _, _, _, handler in
+        serverFactory: { _, _, _, _, _, _, handler in
             server.install(handler)
             return server
         }
@@ -622,6 +634,7 @@ private final class ProductDashboardClientV1:
     private var statusRequests = 0
     private var admissionPublications:
         [LocalInteractiveAdmissionPublicationV1] = []
+    private var updateCommands: [String] = []
     private var cancels = 0
 
     init(
@@ -662,6 +675,18 @@ private final class ProductDashboardClientV1:
         )
     }
 
+    func closeNetworkAdmissionForUpdate() async throws {
+        lock.withLock { updateCommands.append("close") }
+    }
+
+    func drainNetworkConnectionsForUpdate() async throws {
+        lock.withLock { updateCommands.append("drain") }
+    }
+
+    func reopenNetworkAdmissionAfterUpdateFailure() async throws {
+        lock.withLock { updateCommands.append("reopen") }
+    }
+
     func cancel() { lock.withLock { cancels += 1 } }
     func finishMenuPresentationReceiver() async {
         cancel()
@@ -674,6 +699,7 @@ private final class ProductDashboardClientV1:
         ready: Int,
         status: Int,
         admissions: [LocalInteractiveAdmissionPublicationV1],
+        updateCommands: [String],
         cancels: Int
     ) {
         lock.withLock {
@@ -682,12 +708,43 @@ private final class ProductDashboardClientV1:
                 readyRequests,
                 statusRequests,
                 admissionPublications,
+                updateCommands,
                 cancels
             )
         }
     }
 
     enum StartError: Error { case injected }
+}
+
+@Test
+@available(macOS 26.0, *)
+func dashboardProductForwardsUpdateCommandsOnlyDuringItsLifetime()
+async throws {
+    let box = ProductDashboardClientBoxV1()
+    let product = MacLocalXPCDashboardProductV1(
+        owner: MacAgentDashboardApplicationOwnerV0(),
+        clientFactory: { handler in
+            let client = ProductDashboardClientV1(handler: handler)
+            box.install(client)
+            return client
+        }
+    )
+
+    await #expect(throws: MacLocalXPCUpdateQuiescenceErrorV0.unavailable) {
+        try await product.closeNetworkAdmissionForUpdate()
+    }
+    try await product.start()
+    let client = try #require(box.client())
+    try await product.closeNetworkAdmissionForUpdate()
+    try await product.drainNetworkConnectionsForUpdate()
+    try await product.reopenNetworkAdmissionAfterUpdateFailure()
+    #expect(client.snapshot().updateCommands == ["close", "drain", "reopen"])
+
+    await product.finish()
+    await #expect(throws: MacLocalXPCUpdateQuiescenceErrorV0.unavailable) {
+        try await product.reopenNetworkAdmissionAfterUpdateFailure()
+    }
 }
 
 @available(macOS 26.0, *)

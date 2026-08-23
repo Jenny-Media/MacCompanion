@@ -27,6 +27,9 @@ public enum LocalIPCMethod: String, Codable, CaseIterable, Sendable {
     case applyInteractiveSurface
     case publishInteractiveMedia
     case publishInteractiveState
+    case closeNetworkAdmissionForUpdate
+    case drainNetworkConnectionsForUpdate
+    case reopenNetworkAdmissionAfterUpdateFailure
     case publishHostIdentityRecoveryReview
     case publishHostIdentityRecoveryResume
     case withdrawHostIdentityRecovery
@@ -131,6 +134,9 @@ public enum LocalIPCAuthorizationPolicy {
                 .exportDiagnostics,
                 .publishInteractiveMedia,
                 .publishInteractiveState,
+                .closeNetworkAdmissionForUpdate,
+                .drainNetworkConnectionsForUpdate,
+                .reopenNetworkAdmissionAfterUpdateFailure,
             ]
         case (.diagnosticCLI, .agent):
             [

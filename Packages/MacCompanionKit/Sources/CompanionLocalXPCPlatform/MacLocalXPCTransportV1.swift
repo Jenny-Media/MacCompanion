@@ -81,6 +81,10 @@ public enum MacLocalXPCServerProfileV1: Equatable, Sendable {
     var admitsInteractiveAdmissionPublication: Bool {
         self == .menuLifecycleReadinessStatusAndPresentation
     }
+
+    var admitsUpdateQuiescence: Bool {
+        self == .menuLifecycleReadinessStatusAndPresentation
+    }
 }
 
 public enum MacLocalXPCConstructionErrorV1: Error, Equatable, Sendable {
@@ -342,6 +346,7 @@ public final class MacLocalXPCServerV1:
     package static let presentationReplyTimeoutSeconds = 3
     package static let remoteAccessBootstrapTimeoutSeconds = 5
     package static let menuPairingCommandTimeoutSeconds = 4
+    package static let updateQuiescenceCommandTimeoutSeconds = 4
     package static let interactiveLeaseReplyTimeoutSeconds = 5
     package static let interactiveAdmissionTimeoutSeconds = 3
     package static let interactiveInputReplyTimeoutSeconds = 2
@@ -565,6 +570,34 @@ public final class MacLocalXPCServerV1:
         }
     }
 
+    private final class PendingUpdateQuiescenceCommand:
+        @unchecked Sendable
+    {
+        let transaction:
+            MacLocalXPCUpdateQuiescenceTransactionGateV0.Active
+        var deadline: DispatchWorkItem?
+        var task: Task<Void, Never>?
+        private let requestLease:
+            MacLocalXPCStatusRequestLeaseV1<MCLocalXPCMessageRef>
+
+        init(
+            transaction:
+                MacLocalXPCUpdateQuiescenceTransactionGateV0.Active,
+            request: MCLocalXPCMessageRef
+        ) {
+            self.transaction = transaction
+            requestLease = MacLocalXPCStatusRequestLeaseV1(request: request)
+        }
+
+        func takeOwnedRequest() -> MCLocalXPCMessageRef? {
+            requestLease.takeOwnedRequest()
+        }
+
+        func releaseOwnedRequest() {
+            requestLease.releaseIfOwned()
+        }
+    }
+
     private enum BootstrapRequestKind: Sendable {
         case offer
         case enable(LocalRemoteAccessEnableCommandV0)
@@ -685,6 +718,10 @@ public final class MacLocalXPCServerV1:
         var menuPairingCommandGate =
             MacLocalXPCMenuPairingCommandTransactionGateV1()
         var pendingMenuPairingCommand: PendingMenuPairingCommand?
+        var updateQuiescenceGate =
+            MacLocalXPCUpdateQuiescenceTransactionGateV0()
+        var pendingUpdateQuiescenceCommand:
+            PendingUpdateQuiescenceCommand?
         var interactiveLeaseGate =
             MacLocalXPCInteractiveLeaseTransactionGateV1()
         var pendingInteractiveLeaseCommand:
@@ -727,6 +764,7 @@ public final class MacLocalXPCServerV1:
             precondition(bootstrapGate.bind(generation: generation))
             precondition(statusReadGate.bind(generation: generation))
             precondition(menuPairingCommandGate.bind(generation: generation))
+            precondition(updateQuiescenceGate.bind(generation: generation))
             precondition(interactiveLeaseGate.bind(generation: generation))
             precondition(
                 interactiveAdmissionGate.bind(generation: generation)
@@ -762,6 +800,17 @@ public final class MacLocalXPCServerV1:
             pendingMenuPairingCommand.task?.cancel()
             pendingMenuPairingCommand.task = nil
             pendingMenuPairingCommand.releaseOwnedRequest()
+        }
+
+        func cancelPendingUpdateQuiescenceCommand() {
+            _ = updateQuiescenceGate.invalidate(generation: generation)
+            guard let pendingUpdateQuiescenceCommand else { return }
+            self.pendingUpdateQuiescenceCommand = nil
+            pendingUpdateQuiescenceCommand.deadline?.cancel()
+            pendingUpdateQuiescenceCommand.deadline = nil
+            pendingUpdateQuiescenceCommand.task?.cancel()
+            pendingUpdateQuiescenceCommand.task = nil
+            pendingUpdateQuiescenceCommand.releaseOwnedRequest()
         }
 
         func cancelPendingInteractiveLeaseCommand(
@@ -855,6 +904,8 @@ public final class MacLocalXPCServerV1:
     private let statusReader: (any MacLocalXPCStatusReadingV1)?
     private let menuPairingCommandHandler:
         (any MacLocalXPCMenuPairingCommandHandlingV1)?
+    private let updateQuiescenceHandler:
+        (any MacLocalXPCUpdateQuiescenceHandlingV0)?
     private let interactiveAdmissionHandler:
         (any MacLocalXPCInteractiveAdmissionHandlingV1)?
     private let interactiveMediaHandler:
@@ -878,6 +929,8 @@ public final class MacLocalXPCServerV1:
         statusReader: (any MacLocalXPCStatusReadingV1)? = nil,
         menuPairingCommandHandler:
             (any MacLocalXPCMenuPairingCommandHandlingV1)? = nil,
+        updateQuiescenceHandler:
+            (any MacLocalXPCUpdateQuiescenceHandlingV0)? = nil,
         interactiveAdmissionHandler:
             (any MacLocalXPCInteractiveAdmissionHandlingV1)? = nil,
         interactiveMediaHandler:
@@ -889,6 +942,7 @@ public final class MacLocalXPCServerV1:
             bootstrapHandler: bootstrapHandler,
             statusReader: statusReader,
             menuPairingCommandHandler: menuPairingCommandHandler,
+            updateQuiescenceHandler: updateQuiescenceHandler,
             interactiveAdmissionHandler: interactiveAdmissionHandler,
             interactiveMediaHandler: interactiveMediaHandler,
             agentBuild: MacLocalXPCProcessBuildV1.current(),
@@ -905,6 +959,8 @@ public final class MacLocalXPCServerV1:
         statusReader: (any MacLocalXPCStatusReadingV1)? = nil,
         menuPairingCommandHandler:
             (any MacLocalXPCMenuPairingCommandHandlingV1)? = nil,
+        updateQuiescenceHandler:
+            (any MacLocalXPCUpdateQuiescenceHandlingV0)? = nil,
         interactiveAdmissionHandler:
             (any MacLocalXPCInteractiveAdmissionHandlingV1)? = nil,
         interactiveMediaHandler:
@@ -916,6 +972,7 @@ public final class MacLocalXPCServerV1:
         self.bootstrapHandler = bootstrapHandler
         self.statusReader = statusReader
         self.menuPairingCommandHandler = menuPairingCommandHandler
+        self.updateQuiescenceHandler = updateQuiescenceHandler
         self.interactiveAdmissionHandler = interactiveAdmissionHandler
         self.interactiveMediaHandler = interactiveMediaHandler
         self.agentBuild = agentBuild
@@ -942,6 +999,10 @@ public final class MacLocalXPCServerV1:
             }
             guard profile.admitsMenuPairingCommands
                     == (menuPairingCommandHandler != nil) else {
+                throw MacLocalXPCConstructionErrorV1.invalidProfile
+            }
+            guard profile.admitsUpdateQuiescence
+                    == (updateQuiescenceHandler != nil) else {
                 throw MacLocalXPCConstructionErrorV1.invalidProfile
             }
             guard profile.admitsInteractiveAdmissionPublication
@@ -2653,6 +2714,7 @@ public final class MacLocalXPCServerV1:
         invalidateRemoteAccessBootstrap(state)
         state.cancelPendingStatusRead()
         state.cancelPendingMenuPairingCommand()
+        state.cancelPendingUpdateQuiescenceCommand()
         state.cancelPendingInteractiveLeaseCommand(error: .unavailable)
         state.cancelPendingInteractiveInput(error: .unavailable)
         invalidateInteractiveAdmission(state)
@@ -3015,6 +3077,28 @@ public final class MacLocalXPCServerV1:
                     kind: commandKind,
                     payload: payload
                 ), self.beginMenuPairingCommand(
+                    state: state,
+                    request: message,
+                    command: command
+                ) else {
+                    self.cancelAuthenticatedPeer(
+                        state,
+                        presentationError: .transportFailure
+                    )
+                    return
+                }
+                return
+            }
+
+            var updateCommand =
+                MCLocalXPCUpdateQuiescenceCloseNetworkAdmission
+            if MCLocalXPCMessageGetExactUpdateQuiescenceCommand(
+                message,
+                &updateCommand
+            ) {
+                guard let command = self.updateQuiescenceCommand(
+                    updateCommand
+                ), self.beginUpdateQuiescenceCommand(
                     state: state,
                     request: message,
                     command: command
@@ -3482,6 +3566,204 @@ public final class MacLocalXPCServerV1:
             execute: deadline
         )
         return true
+    }
+
+    private func beginUpdateQuiescenceCommand(
+        state: PeerState,
+        request: MCLocalXPCMessageRef,
+        command: MacLocalXPCUpdateQuiescenceCommandV0
+    ) -> Bool {
+        guard let updateQuiescenceHandler,
+              state.lifetime.menuReadinessPublished,
+              let transaction = state.updateQuiescenceGate.begin(
+                generation: state.generation,
+                command: command,
+                permitted:
+                    profile.admitsUpdateQuiescence
+                    && authorizesMenuMethod(
+                        updateQuiescenceAuthorizationMethod(command)
+                    )
+                    && state.postAuthenticationFence.admitsTraffic
+              ) else {
+            return false
+        }
+
+        let pending = PendingUpdateQuiescenceCommand(
+            transaction: transaction,
+            request: request
+        )
+        state.pendingUpdateQuiescenceCommand = pending
+        let queue = self.queue
+        pending.task = Task {
+            [weak self, weak state, updateQuiescenceHandler] in
+            do {
+                switch command {
+                case .closeNetworkAdmission:
+                    try await updateQuiescenceHandler
+                        .closeNetworkAdmissionForUpdate()
+                case .drainNetworkConnections:
+                    try await updateQuiescenceHandler
+                        .drainNetworkConnectionsForUpdate()
+                case .reopenNetworkAdmission:
+                    try await updateQuiescenceHandler
+                        .reopenNetworkAdmissionAfterUpdateFailure()
+                }
+                queue.async { [weak self, weak state] in
+                    guard let self, let state else { return }
+                    self.completeUpdateQuiescenceCommand(
+                        state: state,
+                        transaction: transaction,
+                        succeeded: true
+                    )
+                }
+            } catch {
+                queue.async { [weak self, weak state] in
+                    guard let self, let state else { return }
+                    self.completeUpdateQuiescenceCommand(
+                        state: state,
+                        transaction: transaction,
+                        succeeded: false
+                    )
+                }
+            }
+        }
+        let deadline = DispatchWorkItem { [weak self, weak state] in
+            guard let self, let state else { return }
+            self.terminateUpdateQuiescenceCommand(
+                state: state,
+                transaction: transaction
+            )
+        }
+        pending.deadline = deadline
+        queue.asyncAfter(
+            deadline: .now()
+                + .seconds(Self.updateQuiescenceCommandTimeoutSeconds),
+            execute: deadline
+        )
+        return true
+    }
+
+    private func completeUpdateQuiescenceCommand(
+        state: PeerState,
+        transaction: MacLocalXPCUpdateQuiescenceTransactionGateV0.Active,
+        succeeded: Bool
+    ) {
+        guard admitsUpdateQuiescenceCompletion(
+                state: state,
+                transaction: transaction
+              ),
+              state.updateQuiescenceGate.finish(transaction),
+              let request = takeUpdateQuiescenceRequest(
+                state: state,
+                transaction: transaction
+              ) else {
+            terminateUpdateQuiescenceCommand(
+                state: state,
+                transaction: transaction
+            )
+            return
+        }
+        defer { MCLocalXPCMessageRelease(request) }
+        let command = cUpdateQuiescenceCommand(transaction.command)
+        let result = succeeded
+            ? MCLocalXPCSessionReplyToUpdateQuiescenceSuccess(
+                state.peer,
+                request,
+                command
+            )
+            : MCLocalXPCSessionReplyToUpdateQuiescenceFailure(
+                state.peer,
+                request,
+                command
+            )
+        guard result == MCLocalXPCResultOK else {
+            cancelAuthenticatedPeer(
+                state,
+                presentationError: .transportFailure
+            )
+            return
+        }
+    }
+
+    private func terminateUpdateQuiescenceCommand(
+        state: PeerState,
+        transaction: MacLocalXPCUpdateQuiescenceTransactionGateV0.Active
+    ) {
+        guard state.updateQuiescenceGate.admits(transaction) else { return }
+        state.cancelPendingUpdateQuiescenceCommand()
+        cancelAuthenticatedPeer(
+            state,
+            presentationError: .transportFailure
+        )
+    }
+
+    private func admitsUpdateQuiescenceCompletion(
+        state: PeerState,
+        transaction: MacLocalXPCUpdateQuiescenceTransactionGateV0.Active
+    ) -> Bool {
+        listenerRunGate.admits(generation: state.listenerGeneration)
+            && peerStates[state.generation] === state
+            && currentPeerState === state
+            && generationGate.admitsPostAuthenticationTraffic(
+                generation: state.generation
+            )
+            && state.lifetime.menuReadinessPublished
+            && state.postAuthenticationFence.admitsTraffic
+            && state.updateQuiescenceGate.admits(transaction)
+    }
+
+    private func takeUpdateQuiescenceRequest(
+        state: PeerState,
+        transaction: MacLocalXPCUpdateQuiescenceTransactionGateV0.Active
+    ) -> MCLocalXPCMessageRef? {
+        guard let pending = state.pendingUpdateQuiescenceCommand,
+              pending.transaction == transaction else { return nil }
+        state.pendingUpdateQuiescenceCommand = nil
+        pending.deadline?.cancel()
+        pending.deadline = nil
+        pending.task = nil
+        return pending.takeOwnedRequest()
+    }
+
+    private func updateQuiescenceCommand(
+        _ command: MCLocalXPCUpdateQuiescenceCommand
+    ) -> MacLocalXPCUpdateQuiescenceCommandV0? {
+        switch command {
+        case MCLocalXPCUpdateQuiescenceCloseNetworkAdmission:
+            .closeNetworkAdmission
+        case MCLocalXPCUpdateQuiescenceDrainNetworkConnections:
+            .drainNetworkConnections
+        case MCLocalXPCUpdateQuiescenceReopenNetworkAdmission:
+            .reopenNetworkAdmission
+        default:
+            nil
+        }
+    }
+
+    private func updateQuiescenceAuthorizationMethod(
+        _ command: MacLocalXPCUpdateQuiescenceCommandV0
+    ) -> LocalIPCMethod {
+        switch command {
+        case .closeNetworkAdmission:
+            .closeNetworkAdmissionForUpdate
+        case .drainNetworkConnections:
+            .drainNetworkConnectionsForUpdate
+        case .reopenNetworkAdmission:
+            .reopenNetworkAdmissionAfterUpdateFailure
+        }
+    }
+
+    private func cUpdateQuiescenceCommand(
+        _ command: MacLocalXPCUpdateQuiescenceCommandV0
+    ) -> MCLocalXPCUpdateQuiescenceCommand {
+        switch command {
+        case .closeNetworkAdmission:
+            MCLocalXPCUpdateQuiescenceCloseNetworkAdmission
+        case .drainNetworkConnections:
+            MCLocalXPCUpdateQuiescenceDrainNetworkConnections
+        case .reopenNetworkAdmission:
+            MCLocalXPCUpdateQuiescenceReopenNetworkAdmission
+        }
     }
 
     private func completeMenuPairingCommand(
@@ -4142,6 +4424,7 @@ public final class MacLocalXPCServerV1:
 @available(macOS 26.0, *)
 public final class MacLocalXPCClientV1:
     @unchecked Sendable,
+    MacLocalXPCUpdateQuiescenceHandlingV0,
     MacLocalXPCInteractiveAdmissionPublishingV1,
     MacLocalXPCInteractiveMediaPublishingV1
 {
@@ -4176,6 +4459,27 @@ public final class MacLocalXPCClientV1:
             requestID: UUID,
             transaction: MacLocalXPCMenuPairingCommandTransactionGateV1.Active,
             continuation: CheckedContinuation<Data, any Error>
+        ) {
+            self.requestID = requestID
+            self.transaction = transaction
+            self.continuation = continuation
+        }
+    }
+
+    private final class PendingUpdateQuiescenceCommand:
+        @unchecked Sendable
+    {
+        let requestID: UUID
+        let transaction:
+            MacLocalXPCUpdateQuiescenceTransactionGateV0.Active
+        let continuation: CheckedContinuation<Void, any Error>
+        var deadline: DispatchWorkItem?
+
+        init(
+            requestID: UUID,
+            transaction:
+                MacLocalXPCUpdateQuiescenceTransactionGateV0.Active,
+            continuation: CheckedContinuation<Void, any Error>
         ) {
             self.requestID = requestID
             self.transaction = transaction
@@ -4372,6 +4676,12 @@ public final class MacLocalXPCClientV1:
     private var pendingMenuPairingCommand: PendingMenuPairingCommand?
     private let menuPairingCommandReplyTimeout: DispatchTimeInterval =
         .seconds(5)
+    private var updateQuiescenceGate =
+        MacLocalXPCUpdateQuiescenceTransactionGateV0()
+    private var pendingUpdateQuiescenceCommand:
+        PendingUpdateQuiescenceCommand?
+    private let updateQuiescenceReplyTimeout: DispatchTimeInterval =
+        .seconds(5)
     private var interactiveAdmissionGate =
         MacLocalXPCInteractiveAdmissionTransactionGateV1()
     private var pendingInteractiveAdmissionPublication:
@@ -4474,6 +4784,10 @@ public final class MacLocalXPCClientV1:
                 generation: menuPairingCommandGate.generation ?? 0
             )
             precondition(menuPairingCommandGate.bind(generation: generation))
+            _ = updateQuiescenceGate.invalidate(
+                generation: updateQuiescenceGate.generation ?? 0
+            )
+            precondition(updateQuiescenceGate.bind(generation: generation))
             _ = interactiveAdmissionGate.invalidate(
                 generation: interactiveAdmissionGate.generation ?? 0
             )
@@ -4580,6 +4894,27 @@ public final class MacLocalXPCClientV1:
         queue.async { [weak self] in
             self?.sendStatusRead()
         }
+    }
+
+    public func closeNetworkAdmissionForUpdate() async throws {
+        try await sendUpdateQuiescenceCommand(
+            .closeNetworkAdmission,
+            authorizationMethod: .closeNetworkAdmissionForUpdate
+        )
+    }
+
+    public func drainNetworkConnectionsForUpdate() async throws {
+        try await sendUpdateQuiescenceCommand(
+            .drainNetworkConnections,
+            authorizationMethod: .drainNetworkConnectionsForUpdate
+        )
+    }
+
+    public func reopenNetworkAdmissionAfterUpdateFailure() async throws {
+        try await sendUpdateQuiescenceCommand(
+            .reopenNetworkAdmission,
+            authorizationMethod: .reopenNetworkAdmissionAfterUpdateFailure
+        )
     }
 
     public func createPairingSession(
@@ -5178,6 +5513,187 @@ public final class MacLocalXPCClientV1:
         }
     }
 
+    private func sendUpdateQuiescenceCommand(
+        _ command: MacLocalXPCUpdateQuiescenceCommandV0,
+        authorizationMethod: LocalIPCMethod
+    ) async throws {
+        let requestID = UUID()
+        let marker = MenuPairingCommandCancellationMarker()
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation {
+                (continuation: CheckedContinuation<Void, any Error>) in
+                queue.async { [weak self] in
+                    guard let self else {
+                        continuation.resume(
+                            throwing:
+                                MacLocalXPCUpdateQuiescenceErrorV0.unavailable
+                        )
+                        return
+                    }
+                    self.admitUpdateQuiescenceCommand(
+                        requestID: requestID,
+                        command: command,
+                        authorizationMethod: authorizationMethod,
+                        cancellationMarker: marker,
+                        continuation: continuation
+                    )
+                }
+            }
+        } onCancel: { [weak self] in
+            marker.markCancelled()
+            self?.queue.async { [weak self] in
+                self?.cancelUpdateQuiescenceCommand(requestID: requestID)
+            }
+        }
+    }
+
+    private func admitUpdateQuiescenceCommand(
+        requestID: UUID,
+        command: MacLocalXPCUpdateQuiescenceCommandV0,
+        authorizationMethod: LocalIPCMethod,
+        cancellationMarker: MenuPairingCommandCancellationMarker,
+        continuation: CheckedContinuation<Void, any Error>
+    ) {
+        guard !cancellationMarker.isCancelled() else {
+            continuation.resume(throwing: CancellationError())
+            return
+        }
+        guard let generation = generationGate.currentGeneration,
+              let session,
+              gate.state == .authenticated,
+              menuReadinessPublished,
+              authorizesMenuCommandMethod(authorizationMethod),
+              let transaction = updateQuiescenceGate.begin(
+                generation: generation,
+                command: command,
+                permitted: true
+              ) else {
+            continuation.resume(
+                throwing: MacLocalXPCUpdateQuiescenceErrorV0.unavailable
+            )
+            return
+        }
+
+        let pending = PendingUpdateQuiescenceCommand(
+            requestID: requestID,
+            transaction: transaction,
+            continuation: continuation
+        )
+        pendingUpdateQuiescenceCommand = pending
+        let sendResult = MCLocalXPCSessionSendUpdateQuiescenceCommand(
+            session,
+            cUpdateQuiescenceCommand(command)
+        ) { [weak self] failed, malformed in
+            self?.queue.async { [weak self] in
+                self?.handleUpdateQuiescenceReply(
+                    generation: generation,
+                    requestID: requestID,
+                    transaction: transaction,
+                    commandFailed: failed,
+                    malformedOrTransportError: malformed
+                )
+            }
+        }
+        guard sendResult == MCLocalXPCResultOK else {
+            _ = updateQuiescenceGate.finish(transaction)
+            pendingUpdateQuiescenceCommand = nil
+            continuation.resume(
+                throwing: MacLocalXPCUpdateQuiescenceErrorV0
+                    .malformedOrTransportError
+            )
+            invalidateOwnedSession(generation: generation)
+            return
+        }
+
+        let deadline = DispatchWorkItem { [weak self] in
+            self?.expireUpdateQuiescenceCommand(
+                generation: generation,
+                requestID: requestID,
+                transaction: transaction
+            )
+        }
+        pending.deadline = deadline
+        queue.asyncAfter(
+            deadline: .now() + updateQuiescenceReplyTimeout,
+            execute: deadline
+        )
+    }
+
+    private func handleUpdateQuiescenceReply(
+        generation: UInt64,
+        requestID: UUID,
+        transaction: MacLocalXPCUpdateQuiescenceTransactionGateV0.Active,
+        commandFailed: Bool,
+        malformedOrTransportError: Bool
+    ) {
+        guard generationGate.admitsCallback(generation: generation),
+              let pending = pendingUpdateQuiescenceCommand,
+              pending.requestID == requestID,
+              pending.transaction == transaction,
+              updateQuiescenceGate.finish(transaction) else { return }
+        pendingUpdateQuiescenceCommand = nil
+        pending.deadline?.cancel()
+        pending.deadline = nil
+        if malformedOrTransportError {
+            pending.continuation.resume(
+                throwing: MacLocalXPCUpdateQuiescenceErrorV0
+                    .malformedOrTransportError
+            )
+            invalidateOwnedSession(generation: generation)
+        } else if commandFailed {
+            pending.continuation.resume(
+                throwing: MacLocalXPCUpdateQuiescenceErrorV0.commandFailed
+            )
+        } else {
+            pending.continuation.resume()
+        }
+    }
+
+    private func expireUpdateQuiescenceCommand(
+        generation: UInt64,
+        requestID: UUID,
+        transaction: MacLocalXPCUpdateQuiescenceTransactionGateV0.Active
+    ) {
+        guard generationGate.admitsCallback(generation: generation),
+              let pending = pendingUpdateQuiescenceCommand,
+              pending.requestID == requestID,
+              pending.transaction == transaction,
+              updateQuiescenceGate.finish(transaction) else { return }
+        pendingUpdateQuiescenceCommand = nil
+        pending.deadline = nil
+        pending.continuation.resume(
+            throwing: MacLocalXPCUpdateQuiescenceErrorV0.replyTimedOut
+        )
+        invalidateOwnedSession(generation: generation)
+    }
+
+    private func cancelUpdateQuiescenceCommand(requestID: UUID) {
+        guard let generation = generationGate.currentGeneration,
+              let pending = pendingUpdateQuiescenceCommand,
+              pending.requestID == requestID,
+              updateQuiescenceGate.finish(pending.transaction) else { return }
+        pendingUpdateQuiescenceCommand = nil
+        pending.deadline?.cancel()
+        pending.deadline = nil
+        pending.continuation.resume(
+            throwing:
+                MacLocalXPCUpdateQuiescenceErrorV0.cancelledAfterSend
+        )
+        invalidateOwnedSession(generation: generation)
+    }
+
+    private func finishPendingUpdateQuiescenceCommand(
+        generation: UInt64,
+        error: MacLocalXPCUpdateQuiescenceErrorV0
+    ) {
+        _ = updateQuiescenceGate.invalidate(generation: generation)
+        guard let pending = pendingUpdateQuiescenceCommand else { return }
+        pendingUpdateQuiescenceCommand = nil
+        pending.deadline?.cancel()
+        pending.deadline = nil
+        pending.continuation.resume(throwing: error)
+    }
+
     private func admitMenuPairingCommand(
         requestID: UUID,
         kind: MacLocalXPCMenuPairingCommandKindV1,
@@ -5376,6 +5892,19 @@ public final class MacLocalXPCClientV1:
             return true
         } catch {
             return false
+        }
+    }
+
+    private func cUpdateQuiescenceCommand(
+        _ command: MacLocalXPCUpdateQuiescenceCommandV0
+    ) -> MCLocalXPCUpdateQuiescenceCommand {
+        switch command {
+        case .closeNetworkAdmission:
+            MCLocalXPCUpdateQuiescenceCloseNetworkAdmission
+        case .drainNetworkConnections:
+            MCLocalXPCUpdateQuiescenceDrainNetworkConnections
+        case .reopenNetworkAdmission:
+            MCLocalXPCUpdateQuiescenceReopenNetworkAdmission
         }
     }
 
@@ -6299,6 +6828,10 @@ public final class MacLocalXPCClientV1:
             generation: generation,
             error: .unavailable
         )
+        finishPendingUpdateQuiescenceCommand(
+            generation: generation,
+            error: .unavailable
+        )
         finishPendingInteractiveAdmissionPublication(
             generation: generation,
             error: .unavailable
@@ -6330,6 +6863,10 @@ public final class MacLocalXPCClientV1:
         statusReadDeadline?.cancel()
         statusReadDeadline = nil
         finishPendingMenuPairingCommand(
+            generation: generation,
+            error: .unavailable
+        )
+        finishPendingUpdateQuiescenceCommand(
             generation: generation,
             error: .unavailable
         )

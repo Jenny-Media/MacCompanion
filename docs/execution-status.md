@@ -752,6 +752,16 @@ one-shot probe. Six focused tests and the unsigned app build pass. The factory
 is not invoked, and the complete gate passes 1,579 package tests plus 8 platform
 probes. Network close, bounded drain, updater handoff, live Agent shutdown, and
 Sparkle installation remain closed.
+The subsequent
+[reversible update network quiescence](evidence/2026-08-23-reversible-update-network-quiescence.md)
+separates reversible listener admission from terminal Agent shutdown, adds
+exact authenticated menu-to-Agent close/drain/reopen commands, and composes
+them around the existing Agent-stop saga. Race, role-drain, exact-envelope,
+authorization, generation, dashboard-lifetime, and minimum-recovery tests pass
+without starting any app, Agent, listener, XPC service, login role, or updater.
+The complete gate passes 1,590 package tests plus 8 platform probes. The
+permanent app still supplies no prepared-installer adapter, so Sparkle's hold
+point remains `.skip`; signed two-version execution remains open.
 
 ## Blocker handling rule
 

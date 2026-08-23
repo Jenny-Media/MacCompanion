@@ -20,6 +20,9 @@ package protocol MacLocalXPCDashboardClientV1: AnyObject, Sendable {
     func resolveLocalApproval(
         _ command: LocalPairingDecisionCommandV0
     ) async throws -> LocalPairingDecisionReceiptV0
+    func closeNetworkAdmissionForUpdate() async throws
+    func drainNetworkConnectionsForUpdate() async throws
+    func reopenNetworkAdmissionAfterUpdateFailure() async throws
     func publishInteractiveAdmission(
         _ publication: LocalInteractiveAdmissionPublicationV1
     ) async throws -> LocalInteractiveAdmissionPublishedReceiptV1
@@ -52,6 +55,18 @@ extension MacLocalXPCDashboardClientV1 {
         _: LocalPairingDecisionCommandV0
     ) async throws -> LocalPairingDecisionReceiptV0 {
         throw MacLocalXPCMenuPairingCommandErrorV1.unavailable
+    }
+
+    package func closeNetworkAdmissionForUpdate() async throws {
+        throw MacLocalXPCUpdateQuiescenceErrorV0.unavailable
+    }
+
+    package func drainNetworkConnectionsForUpdate() async throws {
+        throw MacLocalXPCUpdateQuiescenceErrorV0.unavailable
+    }
+
+    package func reopenNetworkAdmissionAfterUpdateFailure() async throws {
+        throw MacLocalXPCUpdateQuiescenceErrorV0.unavailable
     }
 
     package func publishInteractiveAdmission(
@@ -393,6 +408,35 @@ private final class MacLocalXPCDashboardRuntimeV1: @unchecked Sendable {
         return try await client.resolveLocalApproval(command)
     }
 
+    func closeNetworkAdmissionForUpdate() async throws {
+        guard let client = updateQuiescenceClient() else {
+            throw MacLocalXPCUpdateQuiescenceErrorV0.unavailable
+        }
+        try await client.closeNetworkAdmissionForUpdate()
+    }
+
+    func drainNetworkConnectionsForUpdate() async throws {
+        guard let client = updateQuiescenceClient() else {
+            throw MacLocalXPCUpdateQuiescenceErrorV0.unavailable
+        }
+        try await client.drainNetworkConnectionsForUpdate()
+    }
+
+    func reopenNetworkAdmissionAfterUpdateFailure() async throws {
+        guard let client = updateQuiescenceClient() else {
+            throw MacLocalXPCUpdateQuiescenceErrorV0.unavailable
+        }
+        try await client.reopenNetworkAdmissionAfterUpdateFailure()
+    }
+
+    private func updateQuiescenceClient()
+        -> (any MacLocalXPCDashboardClientV1)?
+    {
+        lock.withLock {
+            acceptingEvents && shutdownTask == nil ? client : nil
+        }
+    }
+
     func finish() async {
         await beginShutdown().value
     }
@@ -571,6 +615,18 @@ public final class MacLocalXPCDashboardProductV1:
         _ command: LocalPairingDecisionCommandV0
     ) async throws -> LocalPairingDecisionReceiptV0 {
         try await runtime.resolveLocalApproval(command)
+    }
+
+    public func closeNetworkAdmissionForUpdate() async throws {
+        try await runtime.closeNetworkAdmissionForUpdate()
+    }
+
+    public func drainNetworkConnectionsForUpdate() async throws {
+        try await runtime.drainNetworkConnectionsForUpdate()
+    }
+
+    public func reopenNetworkAdmissionAfterUpdateFailure() async throws {
+        try await runtime.reopenNetworkAdmissionAfterUpdateFailure()
     }
 
     public func finish() async {

@@ -209,6 +209,17 @@ future update Agent-stop owner. Only the package local-XPC binding can publish
 or retire it; app and updater code can only read it. This removes the last
 temptation to probe a second XPC connection during shutdown, but it does not
 yet supply network-admission close, bounded drain, or updater handoff effects.
+The subsequent
+[reversible update network-quiescence checkpoint](evidence/2026-08-23-reversible-update-network-quiescence.md)
+now binds exact close, drain, and recovery-only reopen effects through the
+existing authenticated dashboard generation. The Agent listener stops new and
+pre-established ingress before draining active primary, pairing, media, and
+input roles; advertisement and route readiness remain withheld until a safe
+nonterminal reopen. The containing-app composition orders those effects around
+the existing Agent-stop saga and requires Agent recovery before it can rebuild
+an authenticated dashboard and reopen after a post-stop failure. It accepts no
+feed, archive, or general Sparkle authority, so the permanent user driver still
+returns `.skip` and no update can install.
 
 ### Channels
 
@@ -243,6 +254,14 @@ Before installation the menu app:
 5. Allows Sparkle to replace the complete containing app bundle atomically.
 6. Relaunches, revalidates the embedded agent identity, and reconciles `SMAppService` registration.
 7. Runs forward-only database migration in a transaction and reports any recoverable failure.
+
+The exact runtime effect order is network admission close, active connection
+drain, converged Agent stop, and one prepared-installer handoff. A failure
+before Agent stop reconciles through the current known-live session or a
+replacement authenticated generation after transport ambiguity. A failure
+after Agent stop restores and verifies the source Agent before creating a
+replacement authenticated session and reopening admission. Unknown transport
+outcome never skips that recovery boundary.
 
 The update never swaps an individual agent executable in place. Pairing keys and grants remain in Keychain and service-owned data rather than in the replaceable bundle. A rollback must understand the stored schema or refuse with a clear recovery path; silently reading a newer schema is forbidden.
 

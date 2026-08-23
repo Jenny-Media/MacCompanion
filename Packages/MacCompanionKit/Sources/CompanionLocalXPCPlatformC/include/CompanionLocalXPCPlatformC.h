@@ -26,6 +26,11 @@ typedef enum : int32_t {
     MCLocalXPCMenuPairingCommandResolveDecision = 2,
 } MCLocalXPCMenuPairingCommandKind;
 typedef enum : int32_t {
+    MCLocalXPCUpdateQuiescenceCloseNetworkAdmission = 0,
+    MCLocalXPCUpdateQuiescenceDrainNetworkConnections = 1,
+    MCLocalXPCUpdateQuiescenceReopenNetworkAdmission = 2,
+} MCLocalXPCUpdateQuiescenceCommand;
+typedef enum : int32_t {
     MCLocalXPCInteractiveLeaseCommandInstall = 0,
     MCLocalXPCInteractiveLeaseCommandRenew = 1,
     MCLocalXPCInteractiveLeaseCommandRevoke = 2,
@@ -66,6 +71,10 @@ typedef void (^MCLocalXPCMenuPresentationReplyHandler)(
 typedef void (^MCLocalXPCMenuPairingCommandReplyHandler)(
     const uint8_t * _Nullable payload,
     size_t payload_length,
+    bool command_failed,
+    bool malformed_or_transport_error
+);
+typedef void (^MCLocalXPCUpdateQuiescenceReplyHandler)(
     bool command_failed,
     bool malformed_or_transport_error
 );
@@ -297,6 +306,33 @@ bool MCLocalXPCMessageGetExactMenuPairingCommand(
     MCLocalXPCMenuPairingCommandKind * _Nullable kind_out,
     const uint8_t * _Nullable * _Nullable payload_out,
     size_t * _Nullable payload_length_out
+);
+
+API_AVAILABLE(macos(26.0))
+bool MCLocalXPCMessageGetExactUpdateQuiescenceCommand(
+    MCLocalXPCMessageRef message,
+    MCLocalXPCUpdateQuiescenceCommand * _Nullable command_out
+);
+
+API_AVAILABLE(macos(26.0))
+MCLocalXPCResult MCLocalXPCSessionReplyToUpdateQuiescenceSuccess(
+    MCLocalXPCSessionRef session,
+    MCLocalXPCMessageRef request,
+    MCLocalXPCUpdateQuiescenceCommand command
+);
+
+API_AVAILABLE(macos(26.0))
+MCLocalXPCResult MCLocalXPCSessionReplyToUpdateQuiescenceFailure(
+    MCLocalXPCSessionRef session,
+    MCLocalXPCMessageRef request,
+    MCLocalXPCUpdateQuiescenceCommand command
+);
+
+API_AVAILABLE(macos(26.0))
+MCLocalXPCResult MCLocalXPCSessionSendUpdateQuiescenceCommand(
+    MCLocalXPCSessionRef session,
+    MCLocalXPCUpdateQuiescenceCommand command,
+    MCLocalXPCUpdateQuiescenceReplyHandler handler
 );
 
 API_AVAILABLE(macos(26.0))

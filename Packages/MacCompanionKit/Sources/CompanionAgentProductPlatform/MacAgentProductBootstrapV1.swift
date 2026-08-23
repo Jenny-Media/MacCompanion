@@ -14,6 +14,9 @@ import Foundation
 @available(macOS 26.0, *)
 package protocol MacAgentNetworkListenerRuntimeV1: AnyObject, Sendable {
     func start() async throws
+    func closeNetworkAdmission() async throws
+    func drainNetworkConnections() async throws
+    func reopenNetworkAdmission() async throws
     func cancel() async
     func snapshot() async -> AgentNetworkListenerServiceSnapshotV1
     func hasAuthenticatedEventSink(
@@ -27,6 +30,21 @@ package protocol MacAgentNetworkListenerRuntimeV1: AnyObject, Sendable {
 
 @available(macOS 26.0, *)
 package extension MacAgentNetworkListenerRuntimeV1 {
+    func closeNetworkAdmission() async throws {
+        throw MacAgentPreparedProductCompositionErrorV1
+            .networkProductUnavailable
+    }
+
+    func drainNetworkConnections() async throws {
+        throw MacAgentPreparedProductCompositionErrorV1
+            .networkProductUnavailable
+    }
+
+    func reopenNetworkAdmission() async throws {
+        throw MacAgentPreparedProductCompositionErrorV1
+            .networkProductUnavailable
+    }
+
     func hasAuthenticatedEventSink(
         primaryConnectionID: Data
     ) async -> Bool { false }
@@ -73,6 +91,42 @@ private actor MacAgentMenuSurfaceLossCoordinatorV1 {
         await product?.authenticatedMenuSurfaceUnavailable(
             generation: generation
         )
+    }
+}
+
+@available(macOS 26.0, *)
+private actor MacAgentUpdateQuiescenceCoordinatorV0:
+    MacLocalXPCUpdateQuiescenceHandlingV0
+{
+    private weak var product: MacAgentPreparedProductV1?
+
+    func install(_ product: MacAgentPreparedProductV1) {
+        precondition(self.product == nil)
+        self.product = product
+    }
+
+    func closeNetworkAdmissionForUpdate() async throws {
+        guard let product else {
+            throw MacAgentPreparedProductCompositionErrorV1
+                .networkProductUnavailable
+        }
+        try await product.closeNetworkAdmissionForUpdate()
+    }
+
+    func drainNetworkConnectionsForUpdate() async throws {
+        guard let product else {
+            throw MacAgentPreparedProductCompositionErrorV1
+                .networkProductUnavailable
+        }
+        try await product.drainNetworkConnectionsForUpdate()
+    }
+
+    func reopenNetworkAdmissionAfterUpdateFailure() async throws {
+        guard let product else {
+            throw MacAgentPreparedProductCompositionErrorV1
+                .networkProductUnavailable
+        }
+        try await product.reopenNetworkAdmissionAfterUpdateFailure()
     }
 }
 
@@ -143,6 +197,36 @@ package actor MacAgentNetworkListenerRuntimeOwnerV1 {
         }
         finishTask = task
         await task.value
+    }
+
+    package func closeNetworkAdmission() async throws {
+        guard finishTask == nil else {
+            throw MacAgentPreparedProductCompositionErrorV1.terminal
+        }
+        try await runtime.closeNetworkAdmission()
+        guard finishTask == nil else {
+            throw MacAgentPreparedProductCompositionErrorV1.terminal
+        }
+    }
+
+    package func drainNetworkConnections() async throws {
+        guard finishTask == nil else {
+            throw MacAgentPreparedProductCompositionErrorV1.terminal
+        }
+        try await runtime.drainNetworkConnections()
+        guard finishTask == nil else {
+            throw MacAgentPreparedProductCompositionErrorV1.terminal
+        }
+    }
+
+    package func reopenNetworkAdmission() async throws {
+        guard finishTask == nil else {
+            throw MacAgentPreparedProductCompositionErrorV1.terminal
+        }
+        try await runtime.reopenNetworkAdmission()
+        guard finishTask == nil else {
+            throw MacAgentPreparedProductCompositionErrorV1.terminal
+        }
     }
 
     package func sendAuthenticatedEvent(
@@ -842,6 +926,39 @@ public actor MacAgentPreparedProductV1 {
         await networkListenerOwner?.snapshot()
     }
 
+    package func closeNetworkAdmissionForUpdate() async throws {
+        guard finishTask == nil, !finished else {
+            throw MacAgentPreparedProductCompositionErrorV1.terminal
+        }
+        guard let networkListenerOwner else {
+            throw MacAgentPreparedProductCompositionErrorV1
+                .networkProductUnavailable
+        }
+        try await networkListenerOwner.closeNetworkAdmission()
+    }
+
+    package func drainNetworkConnectionsForUpdate() async throws {
+        guard finishTask == nil, !finished else {
+            throw MacAgentPreparedProductCompositionErrorV1.terminal
+        }
+        guard let networkListenerOwner else {
+            throw MacAgentPreparedProductCompositionErrorV1
+                .networkProductUnavailable
+        }
+        try await networkListenerOwner.drainNetworkConnections()
+    }
+
+    package func reopenNetworkAdmissionAfterUpdateFailure() async throws {
+        guard finishTask == nil, !finished else {
+            throw MacAgentPreparedProductCompositionErrorV1.terminal
+        }
+        guard let networkListenerOwner else {
+            throw MacAgentPreparedProductCompositionErrorV1
+                .networkProductUnavailable
+        }
+        try await networkListenerOwner.reopenNetworkAdmission()
+    }
+
     /// Returns the exact non-authorizing terminal callback installed on the
     /// listener. Tests can exercise the callback-to-product fence without
     /// opening a live port or receiving the listener/network authority.
@@ -1044,6 +1161,8 @@ public enum MacAgentProductBootstrapV1 {
         let localPairingCommandAuthority =
             MacAgentLocalPairingCommandAuthorityV1()
         let menuLossCoordinator = MacAgentMenuSurfaceLossCoordinatorV1()
+        let updateQuiescenceCoordinator =
+            MacAgentUpdateQuiescenceCoordinatorV0()
         let interactiveRoleData =
             AgentInteractiveRoleDataBindingAuthorityV0(
                 runtime: interactiveRuntime
@@ -1062,6 +1181,7 @@ public enum MacAgentProductBootstrapV1 {
                 services: services,
                 processStarter: processStarter,
                 menuPairingCommandHandler: localPairingCommandAuthority,
+                updateQuiescenceHandler: updateQuiescenceCoordinator,
                 interactiveAdmissionHandler: interactiveAdmission,
                 interactiveMediaHandler: localInteractiveRoleData,
                 onSurfaces: {
@@ -1161,6 +1281,7 @@ public enum MacAgentProductBootstrapV1 {
         }
         if case let .ready(product) = composed {
             await menuLossCoordinator.install(product)
+            await updateQuiescenceCoordinator.install(product)
         }
         return composed
     }

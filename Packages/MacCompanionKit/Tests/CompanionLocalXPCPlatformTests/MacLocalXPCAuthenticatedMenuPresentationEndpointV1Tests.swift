@@ -277,6 +277,10 @@ func presentationProfileIsExplicitAndKeepsPermanentProfileInert() {
             .admitsMenuPairingCommands
     )
     #expect(
+        !MacLocalXPCServerProfileV1.menuLifecycleReadinessAndStatus
+            .admitsUpdateQuiescence
+    )
+    #expect(
         MacLocalXPCServerProfileV1
             .menuLifecycleReadinessStatusAndPresentation
             .admitsMenuLifecycleReadiness
@@ -297,10 +301,16 @@ func presentationProfileIsExplicitAndKeepsPermanentProfileInert() {
             .admitsMenuPairingCommands
     )
     #expect(
+        MacLocalXPCServerProfileV1
+            .menuLifecycleReadinessStatusAndPresentation
+            .admitsUpdateQuiescence
+    )
+    #expect(
         MacLocalXPCServerV1.maximumAdmittedPresentationsPerGeneration == 8
     )
     #expect(MacLocalXPCServerV1.presentationReplyTimeoutSeconds == 3)
     #expect(MacLocalXPCServerV1.menuPairingCommandTimeoutSeconds == 4)
+    #expect(MacLocalXPCServerV1.updateQuiescenceCommandTimeoutSeconds == 4)
 }
 
 @Test

@@ -29,7 +29,13 @@ public enum AgentNetworkListenerDiagnosticProjectionV1 {
         case .starting:
             networkState = .starting
         case .listening:
-            networkState = .listening
+            switch snapshot.updateAdmissionState {
+            case .open:
+                networkState = .listening
+            case .unavailable, .closing, .closed, .draining, .drained,
+                 .reopening, .terminal:
+                networkState = .stopped
+            }
         case .terminal:
             if snapshot.lastListenerTerminationReason == .localCancel {
                 networkState = .stopped

@@ -106,6 +106,67 @@ static const char MCLocalXPCInteractiveMediaPublicationKind[] =
     "runtime.interactive.media.publish";
 static const char MCLocalXPCInteractiveMediaAcknowledgementKind[] =
     "runtime.interactive.media.publish.ack";
+static const char MCLocalXPCUpdateCloseNetworkKind[] =
+    "update.network.close";
+static const char MCLocalXPCUpdateCloseNetworkAcknowledgementKind[] =
+    "update.network.close.ack";
+static const char MCLocalXPCUpdateCloseNetworkFailureKind[] =
+    "update.network.close.failed";
+static const char MCLocalXPCUpdateDrainNetworkKind[] =
+    "update.network.drain";
+static const char MCLocalXPCUpdateDrainNetworkAcknowledgementKind[] =
+    "update.network.drain.ack";
+static const char MCLocalXPCUpdateDrainNetworkFailureKind[] =
+    "update.network.drain.failed";
+static const char MCLocalXPCUpdateReopenNetworkKind[] =
+    "update.network.reopen";
+static const char MCLocalXPCUpdateReopenNetworkAcknowledgementKind[] =
+    "update.network.reopen.ack";
+static const char MCLocalXPCUpdateReopenNetworkFailureKind[] =
+    "update.network.reopen.failed";
+
+static const char * _Nullable MCLocalXPCUpdateQuiescenceRequestKind(
+    MCLocalXPCUpdateQuiescenceCommand command
+) {
+    switch (command) {
+    case MCLocalXPCUpdateQuiescenceCloseNetworkAdmission:
+        return MCLocalXPCUpdateCloseNetworkKind;
+    case MCLocalXPCUpdateQuiescenceDrainNetworkConnections:
+        return MCLocalXPCUpdateDrainNetworkKind;
+    case MCLocalXPCUpdateQuiescenceReopenNetworkAdmission:
+        return MCLocalXPCUpdateReopenNetworkKind;
+    }
+    return NULL;
+}
+
+static const char * _Nullable
+MCLocalXPCUpdateQuiescenceAcknowledgementKind(
+    MCLocalXPCUpdateQuiescenceCommand command
+) {
+    switch (command) {
+    case MCLocalXPCUpdateQuiescenceCloseNetworkAdmission:
+        return MCLocalXPCUpdateCloseNetworkAcknowledgementKind;
+    case MCLocalXPCUpdateQuiescenceDrainNetworkConnections:
+        return MCLocalXPCUpdateDrainNetworkAcknowledgementKind;
+    case MCLocalXPCUpdateQuiescenceReopenNetworkAdmission:
+        return MCLocalXPCUpdateReopenNetworkAcknowledgementKind;
+    }
+    return NULL;
+}
+
+static const char * _Nullable MCLocalXPCUpdateQuiescenceFailureKind(
+    MCLocalXPCUpdateQuiescenceCommand command
+) {
+    switch (command) {
+    case MCLocalXPCUpdateQuiescenceCloseNetworkAdmission:
+        return MCLocalXPCUpdateCloseNetworkFailureKind;
+    case MCLocalXPCUpdateQuiescenceDrainNetworkConnections:
+        return MCLocalXPCUpdateDrainNetworkFailureKind;
+    case MCLocalXPCUpdateQuiescenceReopenNetworkAdmission:
+        return MCLocalXPCUpdateReopenNetworkFailureKind;
+    }
+    return NULL;
+}
 
 static const char * _Nullable MCLocalXPCMenuPairingCommandRequestKind(
     MCLocalXPCMenuPairingCommandKind kind
@@ -961,6 +1022,31 @@ bool MCLocalXPCMessageGetExactMenuPairingCommand(
     return false;
 }
 
+bool MCLocalXPCMessageGetExactUpdateQuiescenceCommand(
+    MCLocalXPCMessageRef message,
+    MCLocalXPCUpdateQuiescenceCommand *command_out
+) {
+    const MCLocalXPCUpdateQuiescenceCommand commands[] = {
+        MCLocalXPCUpdateQuiescenceCloseNetworkAdmission,
+        MCLocalXPCUpdateQuiescenceDrainNetworkConnections,
+        MCLocalXPCUpdateQuiescenceReopenNetworkAdmission,
+    };
+    for (size_t index = 0;
+         index < sizeof(commands) / sizeof(commands[0]);
+         index += 1) {
+        const char *kind =
+            MCLocalXPCUpdateQuiescenceRequestKind(commands[index]);
+        if (kind != NULL
+            && MCLocalXPCMessageIsExact((xpc_object_t)message, kind)) {
+            if (command_out != NULL) {
+                *command_out = commands[index];
+            }
+            return true;
+        }
+    }
+    return false;
+}
+
 bool MCLocalXPCMessageGetExactInteractiveLeaseCommand(
     MCLocalXPCMessageRef message,
     MCLocalXPCInteractiveLeaseCommandKind *kind_out,
@@ -1669,6 +1755,63 @@ bool MCLocalXPCExactMessageParserSelfTest(void) {
         valid = valid && MCLocalXPCMessageIsExact(failure, failure_kind);
         xpc_dictionary_set_string(failure, "detail", "secret");
         valid = valid && !MCLocalXPCMessageIsExact(failure, failure_kind);
+        xpc_release(failure);
+    }
+
+    const MCLocalXPCUpdateQuiescenceCommand update_commands[] = {
+        MCLocalXPCUpdateQuiescenceCloseNetworkAdmission,
+        MCLocalXPCUpdateQuiescenceDrainNetworkConnections,
+        MCLocalXPCUpdateQuiescenceReopenNetworkAdmission,
+    };
+    for (size_t index = 0;
+         index < sizeof(update_commands) / sizeof(update_commands[0]);
+         index += 1) {
+        const MCLocalXPCUpdateQuiescenceCommand expected =
+            update_commands[index];
+        const char *request_kind =
+            MCLocalXPCUpdateQuiescenceRequestKind(expected);
+        const char *acknowledgement_kind =
+            MCLocalXPCUpdateQuiescenceAcknowledgementKind(expected);
+        const char *failure_kind =
+            MCLocalXPCUpdateQuiescenceFailureKind(expected);
+        valid = valid && request_kind != NULL
+            && acknowledgement_kind != NULL && failure_kind != NULL;
+        xpc_object_t request = xpc_dictionary_create_empty();
+        xpc_dictionary_set_string(request, "kind", request_kind);
+        xpc_dictionary_set_int64(request, "version", 1);
+        MCLocalXPCUpdateQuiescenceCommand parsed =
+            MCLocalXPCUpdateQuiescenceCloseNetworkAdmission;
+        valid = valid
+            && MCLocalXPCMessageGetExactUpdateQuiescenceCommand(
+                (MCLocalXPCMessageRef)request,
+                &parsed
+            )
+            && parsed == expected;
+        xpc_dictionary_set_bool(request, "extra", true);
+        valid = valid
+            && !MCLocalXPCMessageGetExactUpdateQuiescenceCommand(
+                (MCLocalXPCMessageRef)request,
+                NULL
+            );
+        xpc_release(request);
+
+        xpc_object_t acknowledgement = xpc_dictionary_create_empty();
+        xpc_dictionary_set_string(
+            acknowledgement,
+            "kind",
+            acknowledgement_kind
+        );
+        xpc_dictionary_set_int64(acknowledgement, "version", 1);
+        valid = valid && MCLocalXPCMessageIsExact(
+            acknowledgement,
+            acknowledgement_kind
+        );
+        xpc_release(acknowledgement);
+
+        xpc_object_t failure = xpc_dictionary_create_empty();
+        xpc_dictionary_set_string(failure, "kind", failure_kind);
+        xpc_dictionary_set_int64(failure, "version", 1);
+        valid = valid && MCLocalXPCMessageIsExact(failure, failure_kind);
         xpc_release(failure);
     }
 
@@ -2860,6 +3003,92 @@ MCLocalXPCResult MCLocalXPCSessionSendMenuPairingCommand(
                 return;
             }
             handler(NULL, 0, false, true);
+        }
+    );
+    xpc_release(request);
+    return MCLocalXPCResultOK;
+}
+
+static bool MCLocalXPCUpdateQuiescenceRequestMatchesCommand(
+    MCLocalXPCMessageRef request,
+    MCLocalXPCUpdateQuiescenceCommand command
+) {
+    const char *kind = MCLocalXPCUpdateQuiescenceRequestKind(command);
+    return kind != NULL
+        && MCLocalXPCMessageIsExact((xpc_object_t)request, kind);
+}
+
+MCLocalXPCResult MCLocalXPCSessionReplyToUpdateQuiescenceSuccess(
+    MCLocalXPCSessionRef session,
+    MCLocalXPCMessageRef request,
+    MCLocalXPCUpdateQuiescenceCommand command
+) {
+    const char *kind =
+        MCLocalXPCUpdateQuiescenceAcknowledgementKind(command);
+    if (kind == NULL
+        || !MCLocalXPCUpdateQuiescenceRequestMatchesCommand(
+            request,
+            command
+        )) {
+        return MCLocalXPCResultConstructionFailed;
+    }
+    return MCLocalXPCSessionReplyExact(session, request, kind);
+}
+
+MCLocalXPCResult MCLocalXPCSessionReplyToUpdateQuiescenceFailure(
+    MCLocalXPCSessionRef session,
+    MCLocalXPCMessageRef request,
+    MCLocalXPCUpdateQuiescenceCommand command
+) {
+    const char *kind = MCLocalXPCUpdateQuiescenceFailureKind(command);
+    if (kind == NULL
+        || !MCLocalXPCUpdateQuiescenceRequestMatchesCommand(
+            request,
+            command
+        )) {
+        return MCLocalXPCResultConstructionFailed;
+    }
+    return MCLocalXPCSessionReplyExact(session, request, kind);
+}
+
+MCLocalXPCResult MCLocalXPCSessionSendUpdateQuiescenceCommand(
+    MCLocalXPCSessionRef session,
+    MCLocalXPCUpdateQuiescenceCommand command,
+    MCLocalXPCUpdateQuiescenceReplyHandler handler
+) {
+    const char *request_kind =
+        MCLocalXPCUpdateQuiescenceRequestKind(command);
+    const char *acknowledgement_kind =
+        MCLocalXPCUpdateQuiescenceAcknowledgementKind(command);
+    const char *failure_kind =
+        MCLocalXPCUpdateQuiescenceFailureKind(command);
+    if (request_kind == NULL || acknowledgement_kind == NULL
+        || failure_kind == NULL || handler == NULL) {
+        return MCLocalXPCResultConstructionFailed;
+    }
+    xpc_object_t request = xpc_dictionary_create_empty();
+    if (request == NULL) {
+        return MCLocalXPCResultConstructionFailed;
+    }
+    xpc_dictionary_set_string(request, "kind", request_kind);
+    xpc_dictionary_set_int64(request, "version", 1);
+    xpc_session_send_message_with_reply_async(
+        (xpc_session_t)session,
+        request,
+        ^(xpc_object_t reply, xpc_rich_error_t error) {
+            if (error != NULL) {
+                handler(false, true);
+                return;
+            }
+            if (MCLocalXPCMessageIsExact(reply, acknowledgement_kind)) {
+                handler(false, false);
+                return;
+            }
+            if (MCLocalXPCMessageIsExact(reply, failure_kind)) {
+                handler(true, false);
+                return;
+            }
+            handler(false, true);
         }
     );
     xpc_release(request);
