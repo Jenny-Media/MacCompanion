@@ -24,6 +24,12 @@
 	<string>public.app-category.utilities</string>
 	<key>LSUIElement</key>
 	<true/>
+	<key>MacCompanionUpdateAuthorityProfile</key>
+	<string>$(MACCOMPANION_UPDATE_AUTHORITY_PROFILE)</string>
+	<key>MacCompanionUpdateChannel</key>
+	<string>$(MACCOMPANION_UPDATE_CHANNEL)</string>
+	<key>MacCompanionUpdateFeedURL</key>
+	<string>$(MACCOMPANION_UPDATE_FEED_URL)</string>
 	<key>NSBonjourServices</key>
 	<array>
 		<string>_maccompanion._tcp</string>
@@ -32,9 +38,21 @@
 	<string>Copyright 2026 Jenny Media LLC</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Let your paired devices find and connect directly to this Mac on your local network. Mac Companion does not use a vendor relay.</string>
+	<key>SUAllowsAutomaticUpdates</key>
+	<false/>
+	<key>SUAutomaticallyUpdate</key>
+	<false/>
+	<key>SUEnableAutomaticChecks</key>
+	<false/>
 	<key>SUEnableSystemProfiling</key>
 	<false/>
+	<key>SUPublicEDKey</key>
+	<string>$(MACCOMPANION_SPARKLE_PUBLIC_ED_KEY)</string>
+	<key>SURequireSignedFeed</key>
+	<true/>
 	<key>SUSendProfileInfo</key>
 	<false/>
+	<key>SUVerifyUpdateBeforeExtraction</key>
+	<true/>
 </dict>
 </plist>

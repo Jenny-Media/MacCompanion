@@ -1,10 +1,11 @@
-# Mac Companion update trust policy v0.2
+# Mac Companion update trust policy v0.3
 
 Status: normative for the first direct-distribution beta.
 
-This profile freezes the trust and runtime gates that must exist before the
-Mac application integrates an updater. It does not add Sparkle, configure a
-feed, create a signing key, check for an update, or install anything.
+This profile freezes the trust and runtime gates around the admitted updater.
+The source tree now embeds exact Sparkle and constructs a privacy-closed
+adapter only when complete protected release authority is present. It does not
+provide a usable feed or key, download an update, or grant installation.
 
 ## Dependency authority
 
@@ -54,6 +55,21 @@ Beta and stable have distinct HTTPS feed authorities supplied by protected
 release configuration. Neither URL nor the public Ed25519 key has a usable
 default in community builds.
 
+The release-injected authority has profile
+`maccompanion.sparkle-release-authority.v1` and exactly one `beta` or `stable`
+channel, one canonical ASCII HTTPS `.xml` feed URL without credentials, port,
+query, fragment, localhost, or `.local` authority, and one canonical Base64
+32-byte Ed25519 public key. The tracked property list contains only unresolved
+build-setting placeholders. Missing placeholders are an inert supported state;
+partial or invalid values construct no updater. The adapter supplies the feed
+through its delegate, sends no custom headers or parameters, and allows only a
+single explicit informational probe. Every ordinary, background, download, or
+installation check remains denied until the runtime installation gate owns an
+exact handoff. Even an informational result is discarded unless its item
+matches the configured channel, is a normal application update, advertises no
+deltas, and points to one canonical HTTPS `.zip` URL without credentials,
+port, query, fragment, localhost, `.local`, or encoded-path ambiguity.
+
 The official build must enable both signed-feed verification and archive
 verification before extraction. Every whole-application ZIP is signed with
 Ed25519, Developer ID validated, and replaced only by a notarized complete
@@ -61,10 +77,12 @@ bundle. Installer packages and delta updates are excluded from the first beta.
 The feed, release notes, archive length, archive signature, version, channel,
 and minimum-system facts are one signed publication unit.
 
-Automatic checks may be enabled. Automatic download and automatic installation
-are disabled. A beta or stable client never falls back to the other channel.
-Build numbers increase monotonically; downgrade is not an updater recovery
-mechanism.
+The first beta keeps automatic checks, automatic download, and automatic
+installation disabled in both the tracked property list and runtime adapter.
+A later automatic-check preference requires a policy and UX revision; it may
+not silently arise from Sparkle defaults. A beta or stable client never falls
+back to the other channel. Build numbers increase monotonically; downgrade is
+not an updater recovery mechanism.
 
 ## Runtime installation gate
 

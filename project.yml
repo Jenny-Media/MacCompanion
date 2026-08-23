@@ -39,8 +39,17 @@ targets:
           - _maccompanion._tcp
         NSHumanReadableCopyright: Copyright 2026 Jenny Media LLC
         NSLocalNetworkUsageDescription: Let your paired devices find and connect directly to this Mac on your local network. Mac Companion does not use a vendor relay.
+        MacCompanionUpdateAuthorityProfile: $(MACCOMPANION_UPDATE_AUTHORITY_PROFILE)
+        MacCompanionUpdateChannel: $(MACCOMPANION_UPDATE_CHANNEL)
+        MacCompanionUpdateFeedURL: $(MACCOMPANION_UPDATE_FEED_URL)
+        SUAllowsAutomaticUpdates: false
+        SUAutomaticallyUpdate: false
+        SUEnableAutomaticChecks: false
         SUEnableSystemProfiling: false
+        SUPublicEDKey: $(MACCOMPANION_SPARKLE_PUBLIC_ED_KEY)
+        SURequireSignedFeed: true
         SUSendProfileInfo: false
+        SUVerifyUpdateBeforeExtraction: true
     sources:
       - path: Apps/MacCompanionMac
         excludes:
@@ -65,6 +74,8 @@ targets:
         product: CompanionAgentPlatform
       - package: MacCompanionKit
         product: CompanionLocalXPCPlatform
+      - package: MacCompanionKit
+        product: CompanionLifecycle
       - package: MacCompanionKit
         product: CompanionMacApp
       - package: MacCompanionKit

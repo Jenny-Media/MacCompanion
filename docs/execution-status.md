@@ -645,8 +645,14 @@ bounded-work drain, Agent stop, exact version match, and one updater handoff.
 Every stage rechecks expiry and foreground state; failed partial shutdown
 records network-only or Agent-plus-network reconciliation, and reentrant
 events cannot relabel consumed handoff authority. Twelve focused tests and the
-full 1,511-test gate pass. A permanent privacy-closed Sparkle adapter, protected
-feed configuration, signed two-version upgrade, and rollback evidence remain
+full 1,511-test gate passed at that checkpoint. The subsequent
+[inert Sparkle runtime adapter](evidence/2026-08-23-inert-sparkle-runtime-adapter.md)
+adds a bounded release-authority value, unresolved protected build placeholders,
+no-authority/no-updater construction, disabled profiling/parameters/headers,
+disabled automatic checks/downloads, an explicit informational-probe-only menu
+surface, and a fail-closed prohibition on download or installation checks. Its
+nine focused tests and the full 1,520-test gate pass. Protected feed values,
+runtime-gate handoff, signed two-version upgrade, and rollback evidence remain
 open.
 
 ## Blocker handling rule

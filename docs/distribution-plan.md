@@ -129,8 +129,12 @@ now pins that version and revision in the shared lockfile, disables static
 profiling, embeds Sparkle only in the containing app, removes both unused XPC
 services from non-sandboxed archives, excludes release tools, and verifies the
 retained unsigned topology. The permanent updater adapter must additionally
-disable runtime profiling and custom feed parameters; signed archive builds
-must re-sign and inspect every retained nested object. See
+disable runtime profiling and custom feed parameters; the
+[inert adapter checkpoint](evidence/2026-08-23-inert-sparkle-runtime-adapter.md)
+now does so while admitting only explicit informational probes behind complete
+release-injected authority. Download and installation remain disconnected from
+the UI until the runtime installation authority controls one exact handoff.
+Signed archive builds must re-sign and inspect every retained nested object. See
 [Sparkle documentation](https://sparkle-project.org/documentation/) and the
 [2.9.6 release](https://github.com/sparkle-project/Sparkle/releases/tag/2.9.6).
 
@@ -170,7 +174,8 @@ Before installation the menu app:
 
 The update never swaps an individual agent executable in place. Pairing keys and grants remain in Keychain and service-owned data rather than in the replaceable bundle. A rollback must understand the stored schema or refuse with a clear recovery path; silently reading a newer schema is forbidden.
 
-Automatic download may be offered later. Initial beta installs require a fresh
+Automatic checks and download may be offered later; the initial beta keeps both
+off. Initial beta installs require a fresh
 five-minute local foreground confirmation that is cancelled when the menu app
 loses foreground state. This prevents a locked Mac from retaining installation
 authority without claiming an undocumented exact lock-state API. Installation

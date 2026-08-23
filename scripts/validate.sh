@@ -40,7 +40,8 @@ swift_arguments=(test --package-path Packages/MacCompanionKit)
 if [[ "${MACCOMPANION_DISABLE_SWIFTPM_SANDBOX:-0}" == "1" ]]; then
   swift_arguments+=(--disable-sandbox --scratch-path /private/tmp/maccompanion-swift-build)
 fi
-maccompanion_test_log="$(mktemp /private/tmp/maccompanion-tests.XXXXXX.log)"
+# BSD mktemp requires the replacement X run at the end of the template.
+maccompanion_test_log="$(mktemp /private/tmp/maccompanion-tests.XXXXXX)"
 trap 'rm -f "$maccompanion_test_log"' EXIT
 swift "${swift_arguments[@]}" 2>&1 | tee "$maccompanion_test_log"
 # Xcode 27 beta's Swift Testing runner can return zero after reporting a target

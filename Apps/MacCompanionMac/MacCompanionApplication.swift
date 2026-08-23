@@ -1,5 +1,6 @@
 import AppKit
 import CompanionAgent
+import CompanionLifecycle
 import CompanionMacApp
 import CompanionMacApplicationPlatform
 import CompanionMacUI
@@ -17,7 +18,8 @@ struct MacCompanionApplication: App {
             MacCompanionProductRoot(
                 application: applicationDelegate.product,
                 interactiveIndicator:
-                    applicationDelegate.interactiveIndicator
+                    applicationDelegate.interactiveIndicator,
+                updates: applicationDelegate.updates
             )
         } label: {
             Label(
@@ -42,6 +44,7 @@ private final class MacCompanionApplicationDelegate:
     let loginRoles: MacCompanionLoginRoleComposition
     let product: MacCompanionProductApplicationV1
     let interactiveIndicator: MacInteractiveActivityIndicatorV1
+    let updates: MacCompanionSparkleAdapterV0
 
     private var launchTask: Task<Void, Never>?
     private var finishTask: Task<Void, Never>?
@@ -53,8 +56,10 @@ private final class MacCompanionApplicationDelegate:
             menuApp: loginRoles.menuApp
         )
         let interactiveIndicator = MacInteractiveActivityIndicatorV1()
+        let updates = MacCompanionSparkleAdapterV0()
         self.loginRoles = loginRoles
         self.interactiveIndicator = interactiveIndicator
+        self.updates = updates
         product = MacCompanionProductApplicationV1(
             agentRegistration: loginRoles.agentRaw,
             setup: setup,
@@ -69,6 +74,7 @@ private final class MacCompanionApplicationDelegate:
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         guard launchTask == nil, finishTask == nil else { return }
+        updates.start()
         let product = self.product
         launchTask = Task { @MainActor in await product.start() }
     }
@@ -99,6 +105,7 @@ private final class MacCompanionApplicationDelegate:
 private struct MacCompanionProductRoot: View {
     let application: MacCompanionProductApplicationV1
     let interactiveIndicator: MacInteractiveActivityIndicatorV1
+    let updates: MacCompanionSparkleAdapterV0
 
     var body: some View {
         VStack(spacing: 0) {
@@ -107,6 +114,8 @@ private struct MacCompanionProductRoot: View {
                 Divider()
             }
             routedContent
+            Divider()
+            MacCompanionUpdateFooter(adapter: updates)
         }
     }
 
@@ -191,6 +200,115 @@ private struct MacCompanionProductRoot: View {
             Task { @MainActor in await application.retryRoute() }
         }
         .buttonStyle(.borderedProminent)
+    }
+}
+
+private struct MacCompanionUpdateFooter: View {
+    @ObservedObject var adapter: MacCompanionSparkleAdapterV0
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: systemImage)
+                .foregroundStyle(iconStyle)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.callout.weight(.medium))
+                Text(detail)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 8)
+            if case .checking = adapter.phase {
+                ProgressView()
+                    .controlSize(.small)
+            } else if showsCheckButton {
+                Button("Check for Updates") {
+                    adapter.probeForUpdates()
+                }
+                .controlSize(.small)
+                .disabled(!adapter.canProbe)
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .accessibilityElement(children: .contain)
+    }
+
+    private var showsCheckButton: Bool {
+        switch adapter.phase {
+        case .ready, .current, .updateAvailable, .failed:
+            true
+        case .notConfigured, .invalidConfiguration, .checking:
+            false
+        }
+    }
+
+    private var title: String {
+        switch adapter.phase {
+        case .notConfigured:
+            "Updates not configured"
+        case .invalidConfiguration:
+            "Update configuration invalid"
+        case let .ready(channel):
+            "\(channelName(channel)) updates ready"
+        case .checking:
+            "Checking for updates…"
+        case .current:
+            "Mac Companion is up to date"
+        case let .updateAvailable(_, displayVersion, _):
+            "Version \(displayVersion) is available"
+        case .failed:
+            "Update check unavailable"
+        }
+    }
+
+    private var detail: String {
+        switch adapter.phase {
+        case .notConfigured:
+            "This development build has no release feed authority."
+        case .invalidConfiguration:
+            "The release channel, feed, or public key failed validation."
+        case let .ready(channel), let .current(channel):
+            "\(channelName(channel)) channel · Automatic checks are off"
+        case let .checking(channel):
+            "Reading the signed \(channelName(channel).lowercased()) feed"
+        case let .updateAvailable(channel, _, build):
+            "\(channelName(channel)) build \(build) · Installation remains locally gated"
+        case let .failed(channel):
+            "The \(channelName(channel).lowercased()) feed was not accepted."
+        }
+    }
+
+    private var systemImage: String {
+        switch adapter.phase {
+        case .invalidConfiguration, .failed:
+            "exclamationmark.triangle"
+        case .updateAvailable:
+            "arrow.down.circle"
+        case .checking:
+            "arrow.trianglehead.2.clockwise.rotate.90"
+        case .notConfigured, .ready, .current:
+            "checkmark.shield"
+        }
+    }
+
+    private var iconStyle: AnyShapeStyle {
+        switch adapter.phase {
+        case .invalidConfiguration, .failed:
+            AnyShapeStyle(.orange)
+        case .updateAvailable:
+            AnyShapeStyle(.blue)
+        case .notConfigured, .ready, .checking, .current:
+            AnyShapeStyle(.secondary)
+        }
+    }
+
+    private func channelName(_ channel: MacUpdateChannelV0) -> String {
+        switch channel {
+        case .beta: "Beta"
+        case .stable: "Stable"
+        }
     }
 }
 

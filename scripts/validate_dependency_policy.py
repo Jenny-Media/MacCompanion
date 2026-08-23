@@ -387,13 +387,24 @@ def expected_xcode_state() -> dict[str, Any]:
     return {
         "consumers": [{"product": "Sparkle", "target": "MacCompanion"}],
         "infoPlist": {
+            "MacCompanionUpdateAuthorityProfile": (
+                "$(MACCOMPANION_UPDATE_AUTHORITY_PROFILE)"
+            ),
+            "MacCompanionUpdateChannel": "$(MACCOMPANION_UPDATE_CHANNEL)",
+            "MacCompanionUpdateFeedURL": "$(MACCOMPANION_UPDATE_FEED_URL)",
             "NSBonjourServices": ["_maccompanion._tcp"],
             "NSLocalNetworkUsageDescription": (
                 "Let your paired devices find and connect directly to this Mac on "
                 "your local network. Mac Companion does not use a vendor relay."
             ),
+            "SUAllowsAutomaticUpdates": False,
+            "SUAutomaticallyUpdate": False,
+            "SUEnableAutomaticChecks": False,
             "SUEnableSystemProfiling": False,
+            "SUPublicEDKey": "$(MACCOMPANION_SPARKLE_PUBLIC_ED_KEY)",
+            "SURequireSignedFeed": True,
             "SUSendProfileInfo": False,
+            "SUVerifyUpdateBeforeExtraction": True,
         },
         "lock": {
             "identity": "sparkle",
@@ -577,12 +588,33 @@ def live_xcode_state() -> dict[str, Any]:
     return {
         "consumers": consumers,
         "infoPlist": {
+            "MacCompanionUpdateAuthorityProfile": info_plist.get(
+                "MacCompanionUpdateAuthorityProfile"
+            ),
+            "MacCompanionUpdateChannel": info_plist.get(
+                "MacCompanionUpdateChannel"
+            ),
+            "MacCompanionUpdateFeedURL": info_plist.get(
+                "MacCompanionUpdateFeedURL"
+            ),
             "NSBonjourServices": info_plist.get("NSBonjourServices"),
             "NSLocalNetworkUsageDescription": info_plist.get(
                 "NSLocalNetworkUsageDescription"
             ),
+            "SUAllowsAutomaticUpdates": info_plist.get(
+                "SUAllowsAutomaticUpdates"
+            ),
+            "SUAutomaticallyUpdate": info_plist.get("SUAutomaticallyUpdate"),
+            "SUEnableAutomaticChecks": info_plist.get(
+                "SUEnableAutomaticChecks"
+            ),
             "SUEnableSystemProfiling": info_plist.get("SUEnableSystemProfiling"),
+            "SUPublicEDKey": info_plist.get("SUPublicEDKey"),
+            "SURequireSignedFeed": info_plist.get("SURequireSignedFeed"),
             "SUSendProfileInfo": info_plist.get("SUSendProfileInfo"),
+            "SUVerifyUpdateBeforeExtraction": info_plist.get(
+                "SUVerifyUpdateBeforeExtraction"
+            ),
         },
         "lock": lock,
         "lockfilePaths": lockfile_paths,

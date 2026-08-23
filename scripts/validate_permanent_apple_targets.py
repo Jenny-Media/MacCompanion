@@ -87,14 +87,25 @@ EXPECTED_MAC_INFO_PLIST = {
     "CFBundleVersion": "$(CURRENT_PROJECT_VERSION)",
     "LSApplicationCategoryType": "public.app-category.utilities",
     "LSUIElement": True,
+    "MacCompanionUpdateAuthorityProfile": (
+        "$(MACCOMPANION_UPDATE_AUTHORITY_PROFILE)"
+    ),
+    "MacCompanionUpdateChannel": "$(MACCOMPANION_UPDATE_CHANNEL)",
+    "MacCompanionUpdateFeedURL": "$(MACCOMPANION_UPDATE_FEED_URL)",
     "NSBonjourServices": ["_maccompanion._tcp"],
     "NSHumanReadableCopyright": "Copyright 2026 Jenny Media LLC",
     "NSLocalNetworkUsageDescription": (
         "Let your paired devices find and connect directly to this Mac on your "
         "local network. Mac Companion does not use a vendor relay."
     ),
+    "SUAllowsAutomaticUpdates": False,
+    "SUAutomaticallyUpdate": False,
+    "SUEnableAutomaticChecks": False,
     "SUEnableSystemProfiling": False,
+    "SUPublicEDKey": "$(MACCOMPANION_SPARKLE_PUBLIC_ED_KEY)",
+    "SURequireSignedFeed": True,
     "SUSendProfileInfo": False,
+    "SUVerifyUpdateBeforeExtraction": True,
 }
 
 
@@ -286,6 +297,7 @@ def require_exact_mac_products(
         "CompanionAgent",
         "CompanionAgentPlatform",
         "CompanionLocalXPCPlatform",
+        "CompanionLifecycle",
         "CompanionMacApp",
         "CompanionMacApplicationPlatform",
         "CompanionMacUI",
@@ -473,6 +485,50 @@ def validate_mac_info_plist(failures: list[str]) -> None:
         return
     if value != EXPECTED_MAC_INFO_PLIST:
         failures.append("macInfoPlistSchemaOrValueMismatch")
+
+
+def validate_inert_update_adapter(
+    mac_application: str,
+    failures: list[str],
+) -> None:
+    for needle in (
+        "final class MacCompanionSparkleAdapterV0",
+        "MacUpdateReleaseAuthorityV0(",
+        "SPUStandardUserDriver(",
+        "SPUUpdater(",
+        "updater.sendsSystemProfile = false",
+        "updater.automaticallyChecksForUpdates = false",
+        "updater.automaticallyDownloadsUpdates = false",
+        "updater.httpHeaders = nil",
+        "updater.checkForUpdateInformation()",
+        "func feedParameters(",
+        "func allowedSystemProfileKeys(",
+        "shouldProceedWithUpdate item: SUAppcastItem",
+        "updateCheck == .updateInformation",
+        "MacUpdateFeedCandidateV0(",
+        "currentBuild: currentBuild",
+        "itemChannel: item.channel",
+        "informationOnly: item.isInformationOnlyUpdate",
+        "installationType: item.installationType",
+        "deltaCount: item.deltaUpdates?.count ?? 0",
+        "private var probePermit = false",
+        "case notConfigured",
+        "updates.start()",
+        "MacCompanionUpdateFooter(adapter: updates)",
+    ):
+        if needle not in mac_application:
+            failures.append(f"macUpdateAdapterMissing:{needle}")
+    for forbidden in (
+        ".checkForUpdates()",
+        ".checkForUpdatesInBackground()",
+        ".setFeedURL(",
+        "URLSession",
+        "updater.sendsSystemProfile = true",
+        "updater.automaticallyChecksForUpdates = true",
+        "updater.automaticallyDownloadsUpdates = true",
+    ):
+        if forbidden in mac_application:
+            failures.append(f"macUpdateAdapterUnexpectedAuthority:{forbidden}")
 
 
 def validate_narrow_agent_source(content: str, failures: list[str]) -> None:
@@ -1111,6 +1167,7 @@ def main() -> int:
     validate_project_spec(project_spec, failures)
     validate_generated_project(generated_project, failures)
     validate_mac_info_plist(failures)
+    validate_inert_update_adapter(mac_application, failures)
     validate_launch_agent(failures)
     validate_narrow_agent_source(agent_source, failures)
     validate_single_owner_agent_service_selection(
@@ -1155,7 +1212,8 @@ def main() -> int:
         "Validated permanent Mac/Agent topology, identities, signing flags, "
         "requirement-bound local handshake, LaunchAgent contract, and "
         "single-owner enabled Agent network activation and package-owned "
-        "menu application launch lifecycle."
+        "menu application launch lifecycle, and inert privacy-closed Sparkle "
+        "adapter."
     )
     return 0
 
