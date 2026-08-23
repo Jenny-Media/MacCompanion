@@ -36,7 +36,7 @@
   "xcodePackages": [
     {
       "archiveBuildSanitizerPath": "scripts/strip_sparkle_xpc_services.sh",
-      "archiveBuildSanitizerSHA256": "e1037af8274debb51fafa5118f6d8563030ba7bb63290fe5994daff71408ce5d",
+      "archiveBuildSanitizerSHA256": "34b057baff1b245f807650b1ab183fd51ce71616e1fae64ef857458f83b01261",
       "archiveSHA256": "8d5fb41d960b43f4a68aa14126bf62b098544ec8d191cdcc73eb14e63a8e7606",
       "binaryTarget": "Sparkle",
       "consumerTarget": "MacCompanion",

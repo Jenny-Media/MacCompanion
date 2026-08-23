@@ -31,7 +31,7 @@ FIXTURE_INDEX = REPOSITORY / "Tests" / "System" / "DependencyPolicy" / "manifest
 XCODE_FIXTURE_INDEX = REPOSITORY / "Tests" / "System" / "DependencyPolicy" / "xcode-manifest.json"
 IGNORED_PARTS = {".build", ".swiftpm", "DerivedData"}
 SANITIZER_PATH = "scripts/strip_sparkle_xpc_services.sh"
-SANITIZER_SHA256 = "e1037af8274debb51fafa5118f6d8563030ba7bb63290fe5994daff71408ce5d"
+SANITIZER_SHA256 = "34b057baff1b245f807650b1ab183fd51ce71616e1fae64ef857458f83b01261"
 LOCKFILE_PATH = "MacCompanion.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved"
 
 

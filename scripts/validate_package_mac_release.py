@@ -17,6 +17,9 @@ from package_mac_release import (
     DISKUTIL,
     DITTO,
     MacReleasePackagingError,
+    SPARKLE_AUTOUPDATE_IDENTIFIER,
+    SPARKLE_FRAMEWORK_IDENTIFIER,
+    SPARKLE_UPDATER_IDENTIFIER,
     package_release,
 )
 
@@ -26,10 +29,19 @@ IDENTITY = "Developer ID Application: Test Company (TESTTEAM01)"
 
 
 class FakeRunner:
-    def __init__(self, *, fail_diskutil: bool = False, race_output: Path | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        fail_diskutil: bool = False,
+        race_output: Path | None = None,
+        ad_hoc_nested: str | None = None,
+        mismatched_nested_team: str | None = None,
+    ) -> None:
         self.calls: list[tuple[str, ...]] = []
         self.fail_diskutil = fail_diskutil
         self.race_output = race_output
+        self.ad_hoc_nested = ad_hoc_nested
+        self.mismatched_nested_team = mismatched_nested_team
         self.app_verification_count = 0
 
     def __call__(self, arguments: Sequence[str]) -> subprocess.CompletedProcess[str]:
@@ -58,10 +70,29 @@ class FakeRunner:
                     f"Authority={IDENTITY}\nTimestamp=Aug 23, 2026\nTeamIdentifier={TEAM}\n"
                 )
             else:
-                identifier = AGENT_IDENTIFIER if path.name == "MacCompanionAgent" else APP_IDENTIFIER
+                identifiers = {
+                    "MacCompanionAgent": AGENT_IDENTIFIER,
+                    "B": SPARKLE_FRAMEWORK_IDENTIFIER,
+                    "Autoupdate": SPARKLE_AUTOUPDATE_IDENTIFIER,
+                    "Updater.app": SPARKLE_UPDATER_IDENTIFIER,
+                }
+                identifier = identifiers.get(path.name, APP_IDENTIFIER)
+                if path.name == self.ad_hoc_nested:
+                    return subprocess.CompletedProcess(
+                        argv,
+                        0,
+                        "",
+                        f"Identifier={identifier}\nSignature=adhoc\n"
+                        "TeamIdentifier=not set\nRuntime Version=26.2.0\n",
+                    )
+                team = (
+                    "OTHERTEAM1"
+                    if path.name == self.mismatched_nested_team
+                    else TEAM
+                )
                 stderr = (
                     f"Identifier={identifier}\nAuthority={IDENTITY}\nTimestamp=Aug 23, 2026\n"
-                    f"TeamIdentifier={TEAM}\nRuntime Version=27.0.0\n"
+                    f"TeamIdentifier={team}\nRuntime Version=27.0.0\n"
                 )
             return subprocess.CompletedProcess(argv, 0, "", stderr)
         return subprocess.CompletedProcess(argv, 0, "", "")
@@ -72,6 +103,16 @@ def make_archive(root: Path) -> Path:
     app = archive / "Products" / "Applications" / "Mac Companion.app"
     (app / "Contents" / "MacOS").mkdir(parents=True)
     (app / "Contents" / "Library" / "LaunchAgents").mkdir(parents=True)
+    sparkle_version = (
+        app
+        / "Contents"
+        / "Frameworks"
+        / "Sparkle.framework"
+        / "Versions"
+        / "B"
+    )
+    updater_macos = sparkle_version / "Updater.app" / "Contents" / "MacOS"
+    updater_macos.mkdir(parents=True)
     info = {
         "CFBundleIdentifier": APP_IDENTIFIER,
         "CFBundleShortVersionString": "0.1.0-beta.1",
@@ -81,6 +122,13 @@ def make_archive(root: Path) -> Path:
         plistlib.dump(info, handle)
     for name in ("Mac Companion", "MacCompanionAgent"):
         executable = app / "Contents" / "MacOS" / name
+        executable.write_bytes(b"binary")
+        executable.chmod(0o755)
+    for executable in (
+        sparkle_version / "Sparkle",
+        sparkle_version / "Autoupdate",
+        updater_macos / "Updater",
+    ):
         executable.write_bytes(b"binary")
         executable.chmod(0o755)
     (app / "Contents" / "Library" / "LaunchAgents" / f"{AGENT_IDENTIFIER}.plist").write_bytes(b"plist")
@@ -206,7 +254,47 @@ def main() -> int:
         assert (raced_output / "owned-by-racer").read_text(encoding="utf-8") == "preserve"
         assert not any(path.name.startswith(".candidate.") for path in root.iterdir())
 
-    print("validated 8 local Mac release packaging case(s)")
+    for runner, phrase in (
+        (FakeRunner(ad_hoc_nested="Autoupdate"), "not Developer ID signed"),
+        (
+            FakeRunner(mismatched_nested_team="Updater.app"),
+            "nested-code signing teams differ",
+        ),
+    ):
+        with tempfile.TemporaryDirectory() as temporary_name:
+            root = Path(temporary_name)
+            archive = make_archive(root)
+            expect_error(
+                lambda selected=runner: package_release(
+                    archive,
+                    root / "candidate",
+                    version="0.1.0-beta.1",
+                    build_number="1",
+                    dmg_signing_identity=IDENTITY,
+                    runner=selected,
+                ),
+                phrase,
+            )
+
+    with tempfile.TemporaryDirectory() as temporary_name:
+        root = Path(temporary_name)
+        archive = make_archive(root)
+        (archive / "Products" / "Applications" / "Mac Companion.app" /
+         "Contents" / "Frameworks" / "Sparkle.framework" / "Versions" /
+         "B" / "Autoupdate").unlink()
+        expect_error(
+            lambda: package_release(
+                archive,
+                root / "candidate",
+                version="0.1.0-beta.1",
+                build_number="1",
+                dmg_signing_identity=IDENTITY,
+                runner=FakeRunner(),
+            ),
+            "missing embedded Sparkle Autoupdate executable",
+        )
+
+    print("validated 11 local Mac release packaging case(s)")
     return 0
 
 

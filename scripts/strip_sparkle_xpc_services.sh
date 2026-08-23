@@ -59,5 +59,28 @@ done
 
 if [[ "${CODE_SIGNING_ALLOWED:-NO}" == "YES" ]]; then
   identity="${EXPANDED_CODE_SIGN_IDENTITY:?EXPANDED_CODE_SIGN_IDENTITY is required for signed install builds}"
-  /usr/bin/codesign --force --sign "${identity}" --options runtime --preserve-metadata=identifier,entitlements "${framework}"
+  retained_nested_code=(
+    "${framework}/Versions/B/Updater.app"
+    "${framework}/Versions/B/Autoupdate"
+  )
+  for subject in "${retained_nested_code[@]}"; do
+    /usr/bin/codesign \
+      --force \
+      --sign "${identity}" \
+      --options runtime \
+      --timestamp \
+      --preserve-metadata=identifier,entitlements \
+      "${subject}"
+  done
+  /usr/bin/codesign \
+    --force \
+    --sign "${identity}" \
+    --options runtime \
+    --timestamp \
+    --preserve-metadata=identifier,entitlements \
+    "${framework}"
+
+  for subject in "${retained_nested_code[@]}" "${framework}"; do
+    /usr/bin/codesign --verify --strict --verbose=4 "${subject}"
+  done
 fi

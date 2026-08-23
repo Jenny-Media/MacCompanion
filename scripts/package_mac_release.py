@@ -22,6 +22,11 @@ from typing import Callable, Sequence
 APP_NAME = "Mac Companion.app"
 APP_IDENTIFIER = "media.jenny.maccompanion"
 AGENT_IDENTIFIER = "media.jenny.maccompanion.agent"
+SPARKLE_FRAMEWORK_IDENTIFIER = "org.sparkle-project.Sparkle"
+SPARKLE_AUTOUPDATE_IDENTIFIER = (
+    "Autoupdate-5555494467dcbc6056da3300b22db5f67fff8b2d"
+)
+SPARKLE_UPDATER_IDENTIFIER = "org.sparkle-project.Sparkle.Updater"
 VERSION = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?$")
 BUILD = re.compile(r"^(?:0|[1-9][0-9]{0,17})$")
 DITTO = "/usr/bin/ditto"
@@ -83,6 +88,17 @@ def _regular_executable(path: Path, label: str) -> None:
         raise MacReleasePackagingError(f"{label} must be a non-symlink executable file")
 
 
+def _real_directory(path: Path, label: str) -> None:
+    try:
+        metadata = path.lstat()
+    except OSError as error:
+        raise MacReleasePackagingError(f"missing {label}") from error
+    if not stat.S_ISDIR(metadata.st_mode) or path.is_symlink():
+        raise MacReleasePackagingError(
+            f"{label} must be a non-symlink directory"
+        )
+
+
 def _signature_facts(runner: Runner, path: Path, expected_identifier: str) -> str:
     result = _run_checked(
         runner,
@@ -112,8 +128,28 @@ def _verify_app(runner: Runner, app: Path) -> str:
     main = app / "Contents" / "MacOS" / "Mac Companion"
     agent = app / "Contents" / "MacOS" / "MacCompanionAgent"
     launch_agent = app / "Contents" / "Library" / "LaunchAgents" / f"{AGENT_IDENTIFIER}.plist"
+    sparkle = app / "Contents" / "Frameworks" / "Sparkle.framework"
+    sparkle_version = sparkle / "Versions" / "B"
+    sparkle_executable = sparkle_version / "Sparkle"
+    autoupdate = sparkle_version / "Autoupdate"
+    updater = sparkle_version / "Updater.app"
+    updater_executable = updater / "Contents" / "MacOS" / "Updater"
     _regular_executable(main, "Mac application executable")
     _regular_executable(agent, "embedded Agent executable")
+    _real_directory(sparkle, "embedded Sparkle framework")
+    _real_directory(sparkle_version, "embedded Sparkle framework version")
+    _real_directory(updater, "embedded Sparkle Updater application")
+    _regular_executable(sparkle_executable, "embedded Sparkle executable")
+    _regular_executable(autoupdate, "embedded Sparkle Autoupdate executable")
+    _regular_executable(updater_executable, "embedded Sparkle Updater executable")
+    for xpc_services in (
+        sparkle / "XPCServices",
+        sparkle_version / "XPCServices",
+    ):
+        if xpc_services.exists() or xpc_services.is_symlink():
+            raise MacReleasePackagingError(
+                "stripped Sparkle XPC services re-entered the archive"
+            )
     if launch_agent.is_symlink() or not launch_agent.is_file():
         raise MacReleasePackagingError("embedded LaunchAgent property list is missing")
     _run_checked(
@@ -122,9 +158,28 @@ def _verify_app(runner: Runner, app: Path) -> str:
         "strict application signature verification",
     )
     app_team = _signature_facts(runner, app, APP_IDENTIFIER)
-    agent_team = _signature_facts(runner, agent, AGENT_IDENTIFIER)
-    if app_team != agent_team:
-        raise MacReleasePackagingError("application and Agent signing teams differ")
+    nested_teams = (
+        _signature_facts(runner, agent, AGENT_IDENTIFIER),
+        _signature_facts(
+            runner,
+            sparkle_version,
+            SPARKLE_FRAMEWORK_IDENTIFIER,
+        ),
+        _signature_facts(
+            runner,
+            autoupdate,
+            SPARKLE_AUTOUPDATE_IDENTIFIER,
+        ),
+        _signature_facts(
+            runner,
+            updater,
+            SPARKLE_UPDATER_IDENTIFIER,
+        ),
+    )
+    if any(team != app_team for team in nested_teams):
+        raise MacReleasePackagingError(
+            "application and nested-code signing teams differ"
+        )
     return app_team
 
 

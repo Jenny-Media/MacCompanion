@@ -52,13 +52,15 @@ parameters before any check is allowed.
 ## Archive sanitizer and measured result
 
 `scripts/strip_sparkle_xpc_services.sh`, SHA-256
-`e1037af8274debb51fafa5118f6d8563030ba7bb63290fe5994daff71408ce5d`,
+`34b057baff1b245f807650b1ab183fd51ce71616e1fae64ef857458f83b01261`,
 runs only for Xcode's `install` action after dependency embedding. It resolves
 one guarded path inside the target build directory, removes both the versioned
 XPC directory and its root alias, proves their absence, proves all three
 required executables remain regular and executable, rejects bundled release
-tools, and re-signs only the outer framework for signed install builds without
-using `--deep`. Normal non-archive builds do not mutate the framework.
+tools, and signs `Updater.app`, `Autoupdate`, and then the outer framework
+deepest-first for signed install builds without using `--deep` for repair. It
+strictly verifies each retained nested subject before the containing app is
+signed. Normal non-archive builds do not mutate the framework.
 
 An unsigned universal Release archive built successfully with Xcode 27 beta.
 Inspection of the resulting app proved:
