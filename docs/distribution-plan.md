@@ -177,6 +177,11 @@ The iOS listing and review notes must state:
 
 Before external TestFlight, record an App Review strategy for Guidelines 4.2.3(i) and 4.2.7 plus the system ScreenCaptureKit picker recommendation. The required Mac companion, Observe/Act APIs beyond streaming, and private-route operation are explicit review risks. The first external review build is LAN-first, keeps full Desktop first-class, demonstrates a generic user-owned host mirror before App or Window Focus, supplies the notarized Mac download and complete reviewer pairing resources, and does not imply that Tailscale satisfies a LAN-only interpretation. Review notes explain how the approved Persistent Content Capture entitlement and local Mac consent support remotely initiated surface changes. Existing third-party approvals are market evidence, not a guarantee that Apple will classify Mac Companion the same way.
 
+The candidate-bound metadata, reviewer instructions, attachments, prerequisite
+checklist, and rejection decision path live in the [external TestFlight review
+package](testflight-review-package.md). It is a prepared draft only; no field is
+copied into App Store Connect while a placeholder or readiness item remains.
+
 App privacy answers are derived from actual data flows. Under Apple's
 developer-access definition, current real-time peer-to-peer traffic and
 on-device records are not developer collection because neither Jenny Media LLC

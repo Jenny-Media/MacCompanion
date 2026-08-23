@@ -47,6 +47,7 @@ Mac Companion is a private control companion for personal Macs, especially alway
 - [Adaptive Remote Surfaces](docs/adaptive-remote-surfaces.md)
 - [MVP plan](docs/mvp-plan.md)
 - [Distribution plan](docs/distribution-plan.md)
+- [External TestFlight review package](docs/testflight-review-package.md)
 - [Implementation orchestration](docs/implementation-orchestration.md)
 - [Execution and blocker ledger](docs/execution-status.md)
 - [Permission and process matrix](docs/permission-matrix.md)
