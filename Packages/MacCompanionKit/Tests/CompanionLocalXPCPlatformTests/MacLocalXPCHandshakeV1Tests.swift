@@ -243,6 +243,42 @@ func menuLifecycleAndStatusAreExplicitServerProfiles() {
         MacLocalXPCServerProfileV1.menuLifecycleReadinessAndStatus
             .admitsAgentStatus
     )
+    #expect(
+        MacLocalXPCServerProfileV1.hostIdentityRecovery
+            .admitsMenuLifecycleReadiness
+    )
+    #expect(
+        MacLocalXPCServerProfileV1.hostIdentityRecovery
+            .admitsAgentStatus
+    )
+    #expect(
+        MacLocalXPCServerProfileV1.hostIdentityRecovery
+            .admitsMenuPresentation
+    )
+    #expect(
+        MacLocalXPCServerProfileV1.hostIdentityRecovery
+            .admitsHostIdentityRecovery
+    )
+    #expect(
+        !MacLocalXPCServerProfileV1.hostIdentityRecovery
+            .admitsRemoteAccessBootstrap
+    )
+    #expect(
+        !MacLocalXPCServerProfileV1.hostIdentityRecovery
+            .admitsMenuPairingCommands
+    )
+    #expect(
+        !MacLocalXPCServerProfileV1.hostIdentityRecovery
+            .admitsInteractiveAdmissionPublication
+    )
+    #expect(
+        !MacLocalXPCServerProfileV1.hostIdentityRecovery
+            .admitsInteractiveLeaseTransport
+    )
+    #expect(
+        !MacLocalXPCServerProfileV1.hostIdentityRecovery
+            .admitsUpdateQuiescence
+    )
 }
 
 @Test
@@ -438,6 +474,18 @@ private struct UnavailableInteractiveAdmissionHandlerV1:
     ) async {}
 }
 
+private struct UnavailableHostIdentityRecoveryHandlerV1:
+    MacLocalXPCHostIdentityRecoveryHandlingV1
+{
+    private struct Unavailable: Error {}
+
+    func recoverHostIdentity(
+        _: LocalHostIdentityRecoveryCommandV0
+    ) async throws -> LocalHostIdentityRecoveredReceiptV0 {
+        throw Unavailable()
+    }
+}
+
 private struct UnavailableUpdateQuiescenceHandlerV0:
     MacLocalXPCUpdateQuiescenceHandlingV0
 {
@@ -477,6 +525,44 @@ func injectedAuthoritiesRequireTheirExactExplicitServerProfiles() {
     ) { _ in }
     #expect(throws: MacLocalXPCConstructionErrorV1.invalidProfile) {
         try bootstrapInRecovery.start()
+    }
+
+    let recoveryInClosedProfile = MacLocalXPCServerV1(
+        profile: .authenticationOnly,
+        hostIdentityRecoveryHandler:
+            UnavailableHostIdentityRecoveryHandlerV1()
+    ) { _ in }
+    #expect(throws: MacLocalXPCConstructionErrorV1.invalidProfile) {
+        try recoveryInClosedProfile.start()
+    }
+
+    let recoveryWithoutStatus = MacLocalXPCServerV1(
+        profile: .hostIdentityRecovery,
+        hostIdentityRecoveryHandler:
+            UnavailableHostIdentityRecoveryHandlerV1()
+    ) { _ in }
+    #expect(throws: MacLocalXPCConstructionErrorV1.invalidProfile) {
+        try recoveryWithoutStatus.start()
+    }
+
+    let recoveryWithoutHandler = MacLocalXPCServerV1(
+        profile: .hostIdentityRecovery,
+        statusReader: UnavailableStatusReaderV1()
+    ) { _ in }
+    #expect(throws: MacLocalXPCConstructionErrorV1.invalidProfile) {
+        try recoveryWithoutHandler.start()
+    }
+
+    let pairingInRecoveryProfile = MacLocalXPCServerV1(
+        profile: .hostIdentityRecovery,
+        statusReader: UnavailableStatusReaderV1(),
+        menuPairingCommandHandler:
+            UnavailableMenuPairingCommandHandlerV1(),
+        hostIdentityRecoveryHandler:
+            UnavailableHostIdentityRecoveryHandlerV1()
+    ) { _ in }
+    #expect(throws: MacLocalXPCConstructionErrorV1.invalidProfile) {
+        try pairingInRecoveryProfile.start()
     }
 
     let missingBootstrapAuthority = MacLocalXPCServerV1(

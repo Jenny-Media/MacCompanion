@@ -638,6 +638,17 @@ private actor ProductApplicationFinishSignalV1 {
     func finishCount() -> Int { count }
 }
 
+@available(macOS 26.0, *)
+private actor ProductApplicationRecoveryModeProbeV1 {
+    private var recorded: [MacAgentHostIdentityRecoveryModeV1] = []
+
+    func record(_ mode: MacAgentHostIdentityRecoveryModeV1) {
+        recorded.append(mode)
+    }
+
+    func values() -> [MacAgentHostIdentityRecoveryModeV1] { recorded }
+}
+
 private func productApplicationIntentV1(
     enabled: Bool
 ) throws -> MacRemoteAccessIntentSnapshotV1 {
@@ -661,7 +672,11 @@ private func productApplicationPrepareV1(
     prepareRoot: @escaping @Sendable (
         MacAgentReleaseStorageV1,
         AgentNetworkPrimaryStartupInputsV1
-    ) async throws -> MacAgentPreparedApplicationRootResultV1
+    ) async throws -> MacAgentPreparedApplicationRootResultV1,
+    makeHostIdentityRecovery: @escaping @Sendable (
+        MacAgentReleaseStorageV1,
+        MacAgentHostIdentityRecoveryModeV1
+    ) async throws -> MacAgentHostIdentityRecoveryProductV1? = { _, _ in nil }
 ) async throws -> MacAgentApplicationPreparationResultV1 {
     let intentStore = ProductApplicationIntentStoreV1(
         value: intent,
@@ -685,7 +700,8 @@ private func productApplicationPrepareV1(
                 lifecycleState: state
             )
         },
-        prepareRoot: prepareRoot
+        prepareRoot: prepareRoot,
+        makeHostIdentityRecovery: makeHostIdentityRecovery
     )
 }
 
@@ -1409,6 +1425,65 @@ private func productApplicationPrepareV1(
             Issue.record("nonready result mapping changed")
         }
         #expect(probe.snapshot().finishes == 0)
+    }
+}
+
+@available(macOS 26.0, *)
+@Test func productionRecoveryFactoryReceivesExactFreshAndResumeModes()
+    async throws
+{
+    let base = FileManager.default.temporaryDirectory.appendingPathComponent(
+        "maccompanion-application-preparation-recovery-\(UUID())",
+        isDirectory: true
+    )
+    try FileManager.default.createDirectory(
+        at: base,
+        withIntermediateDirectories: false,
+        attributes: [.posixPermissions: 0o700]
+    )
+    defer { try? FileManager.default.removeItem(at: base) }
+    let storage = try productBootstrapStorageV1(base: base)
+    let recoveryID = UUID(
+        uuidString: "018f5000-0000-7000-8000-000000000106"
+    )!
+    let configuration = try SecurityHostIdentityKeyCustodyConfigurationV0(
+        applicationTagPrefix: "media.jenny.maccompanion.tests.recovery"
+    )
+    let cases: [(
+        root: MacAgentPreparedApplicationRootResultV1,
+        expected: MacAgentHostIdentityRecoveryModeV1
+    )] = [
+        (
+            .requireLocalRecovery(.invalidEstablishedKey),
+            .fresh(.invalidEstablishedKey)
+        ),
+        (.recoveryFenced(recoveryID), .resume(recoveryID)),
+    ]
+
+    for entry in cases {
+        let recorded = ProductApplicationRecoveryModeProbeV1()
+        let result = try await productApplicationPrepareV1(
+            storage: storage,
+            intent: nil,
+            probe: ProductApplicationPreparationProbeV1(),
+            loader: ProductBootstrapCountingLoaderV1(),
+            prepareRoot: { _, _ in entry.root },
+            makeHostIdentityRecovery: { storage, mode in
+                await recorded.record(mode)
+                return MacAgentHostIdentityRecoveryProductV1(
+                    storage: storage,
+                    hostIdentityConfiguration: configuration,
+                    mode: mode
+                )
+            }
+        )
+        guard case let .hostIdentityRecovery(product) = result else {
+            Issue.record("expected recovery product")
+            continue
+        }
+        #expect(await recorded.values() == [entry.expected])
+        #expect(await product.authenticatedMenuGeneration() == nil)
+        await product.finish()
     }
 }
 

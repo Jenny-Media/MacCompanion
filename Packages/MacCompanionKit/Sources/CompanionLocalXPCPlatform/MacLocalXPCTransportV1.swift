@@ -51,10 +51,17 @@ public enum MacLocalXPCServerProfileV1: Equatable, Sendable {
     /// Permanent product roots must opt in explicitly.
     case menuLifecycleReadinessStatusAndPresentation
 
+    /// Recovery-only profile: readiness, content-free unavailable status,
+    /// recovery presentation, and the exact destructive recovery command.
+    /// It admits no pairing, bootstrap, update, Interactive, or network
+    /// authority.
+    case hostIdentityRecovery
+
     var admitsMenuLifecycleReadiness: Bool {
         self == .menuLifecycleReadiness
             || self == .menuLifecycleReadinessAndStatus
             || self == .menuLifecycleReadinessStatusAndPresentation
+            || self == .hostIdentityRecovery
     }
 
     var admitsRemoteAccessBootstrap: Bool {
@@ -64,14 +71,20 @@ public enum MacLocalXPCServerProfileV1: Equatable, Sendable {
     var admitsAgentStatus: Bool {
         self == .menuLifecycleReadinessAndStatus
             || self == .menuLifecycleReadinessStatusAndPresentation
+            || self == .hostIdentityRecovery
     }
 
     var admitsMenuPresentation: Bool {
         self == .menuLifecycleReadinessStatusAndPresentation
+            || self == .hostIdentityRecovery
     }
 
     var admitsMenuPairingCommands: Bool {
         self == .menuLifecycleReadinessStatusAndPresentation
+    }
+
+    var admitsHostIdentityRecovery: Bool {
+        self == .hostIdentityRecovery
     }
 
     var admitsInteractiveLeaseTransport: Bool {
@@ -538,6 +551,15 @@ public final class MacLocalXPCServerV1:
             case .recoverHostIdentity: .recoverHostIdentity
             }
         }
+
+        var isPairing: Bool {
+            switch self {
+            case .create, .dismiss, .resolveDecision: true
+            case .recoverHostIdentity: false
+            }
+        }
+
+        var isRecovery: Bool { !isPairing }
     }
 
     private enum MenuPairingCommandResult: Sendable {
@@ -1011,6 +1033,10 @@ public final class MacLocalXPCServerV1:
             }
             guard profile.admitsMenuPairingCommands
                     == (menuPairingCommandHandler != nil) else {
+                throw MacLocalXPCConstructionErrorV1.invalidProfile
+            }
+            guard profile.admitsHostIdentityRecovery
+                    == (hostIdentityRecoveryHandler != nil) else {
                 throw MacLocalXPCConstructionErrorV1.invalidProfile
             }
             guard profile.admitsUpdateQuiescence
@@ -3516,6 +3542,9 @@ public final class MacLocalXPCServerV1:
                 kind: command.kind,
                 permitted:
                     profile.admitsMenuPairingCommands
+                        == command.isPairing
+                    && profile.admitsHostIdentityRecovery
+                        == command.isRecovery
                     && authorizesMenuMethod(command.authorizationMethod)
                     && state.postAuthenticationFence.admitsTraffic
               ) else {

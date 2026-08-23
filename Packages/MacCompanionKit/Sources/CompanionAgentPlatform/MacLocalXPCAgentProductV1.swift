@@ -1,5 +1,6 @@
 #if os(macOS)
 import CompanionAgent
+import CompanionIPC
 import CompanionLocalXPCPlatform
 import Foundation
 
@@ -255,6 +256,49 @@ private final class MacLocalXPCAgentRuntimeV1: @unchecked Sendable {
     }
 }
 
+@available(macOS 26.0, *)
+private struct MacLocalXPCHostRecoveryLifecycleConnectionV1:
+    MacLocalXPCMenuLifecycleConnectionV1
+{
+    func publishReady() async -> MacLifecycleProcessObservationReceiptV1 {
+        MacLifecycleProcessObservationReceiptV1(
+            token: nil,
+            disposition: .accepted,
+            transition: nil
+        )
+    }
+
+    func invalidate() async -> MacLifecycleProcessObservationReceiptV1 {
+        MacLifecycleProcessObservationReceiptV1(
+            token: nil,
+            disposition: .accepted,
+            transition: nil
+        )
+    }
+}
+
+@available(macOS 26.0, *)
+private struct MacLocalXPCHostRecoveryLifecycleFactoryV1:
+    MacLocalXPCMenuLifecycleConnectionFactoryV1
+{
+    func makeLocalXPCMenuLifecycleConnection(
+        generation _: UUID
+    ) async throws -> any MacLocalXPCMenuLifecycleConnectionV1 {
+        MacLocalXPCHostRecoveryLifecycleConnectionV1()
+    }
+}
+
+@available(macOS 26.0, *)
+private struct MacLocalXPCHostRecoveryStatusReaderV1:
+    MacLocalXPCStatusReadingV1
+{
+    func readStatus() async
+        -> Result<LocalAgentStatusSnapshot, MacLocalXPCStatusReadErrorV1>
+    {
+        .failure(.sourceUnavailable)
+    }
+}
+
 /// Owns the authenticated menu XPC server, lifecycle event pump, and typed
 /// status reader as one fail-closed product. The public constructor accepts
 /// only the complete startup-reconciled Agent service graph, so a partial
@@ -273,6 +317,12 @@ public final class MacLocalXPCAgentProductV1: @unchecked Sendable {
         any MacLocalXPCUpdateQuiescenceHandlingV0,
         any MacLocalXPCInteractiveAdmissionHandlingV1,
         (any MacLocalXPCInteractiveMediaHandlingV1)?,
+        @escaping MacLocalXPCServerV1.EventHandler
+    ) -> any MacLocalXPCAgentServerV1
+    package typealias HostRecoveryServerFactory = @Sendable (
+        MacLocalXPCServerProfileV1,
+        any MacLocalXPCStatusReadingV1,
+        any MacLocalXPCHostIdentityRecoveryHandlingV1,
         @escaping MacLocalXPCServerV1.EventHandler
     ) -> any MacLocalXPCAgentServerV1
 
@@ -442,6 +492,81 @@ public final class MacLocalXPCAgentProductV1: @unchecked Sendable {
             updateQuiescenceHandler,
             interactiveAdmissionHandler,
             interactiveMediaHandler,
+            { [weak runtime] event in
+                runtime?.consume(event)
+            }
+        )
+        let router = MacLocalXPCAuthenticatedMenuSurfaceRouterV1(
+            onEndpointTerminal: { generation in
+                await presentationBox.endpointTerminated(
+                    generation: generation
+                )
+            }
+        )
+        let presentationBinding = MacLocalXPCAgentPresentationBindingV1(
+            server: server,
+            router: router,
+            onSurfaces: onSurfaces,
+            onInvalidated: onSurfaceInvalidated
+        )
+        presentationBox.install(presentationBinding)
+        runtime.install(
+            server: server,
+            pump: pump,
+            presentationBinding: presentationBinding
+        )
+        return MacLocalXPCAgentProductV1(runtime: runtime)
+    }
+
+    /// Recovery-only product. It uses lifecycle readiness solely as the
+    /// authenticated presentation fence, always reports content-free status
+    /// unavailable, and receives only the destructive recovery handler.
+    package static func composeHostIdentityRecovery(
+        recoveryHandler:
+            any MacLocalXPCHostIdentityRecoveryHandlingV1,
+        onSurfaces: @escaping @Sendable (
+            MacLocalXPCAuthenticatedMenuSurfacesV1
+        ) async throws -> Void,
+        onSurfaceInvalidated: @escaping @Sendable (UInt64) async -> Void = {
+            _ in
+        },
+        lifecycleFactory:
+            any MacLocalXPCMenuLifecycleConnectionFactoryV1 =
+                MacLocalXPCHostRecoveryLifecycleFactoryV1(),
+        statusReader: any MacLocalXPCStatusReadingV1 =
+            MacLocalXPCHostRecoveryStatusReaderV1(),
+        serverFactory: @escaping HostRecoveryServerFactory = {
+            profile, statusReader, recoveryHandler, onEvent in
+            MacLocalXPCServerV1(
+                profile: profile,
+                statusReader: statusReader,
+                hostIdentityRecoveryHandler: recoveryHandler,
+                onEvent: onEvent
+            )
+        }
+    ) -> MacLocalXPCAgentProductV1 {
+        let runtime = MacLocalXPCAgentRuntimeV1()
+        let binding = MacLocalXPCLifecycleBindingV1(
+            factory: lifecycleFactory
+        )
+        let presentationBox =
+            MacLocalXPCAgentPresentationBindingBoxV1()
+        let pump = MacLocalXPCLifecycleEventPumpV1(
+            binding: binding,
+            onFailedClosed: { [weak runtime] generation in
+                runtime?.cancelPeer(generation: generation)
+            },
+            onDisposition: { disposition in
+                await presentationBox.receive(disposition)
+            },
+            onShutdown: { [weak runtime] in
+                runtime?.cancelServer()
+            }
+        )
+        let server = serverFactory(
+            .hostIdentityRecovery,
+            statusReader,
+            recoveryHandler,
             { [weak runtime] event in
                 runtime?.consume(event)
             }

@@ -67,6 +67,7 @@ public actor MacCompanionAgentInertSystemOwnerV1 {
 @available(macOS 26.0, *)
 public enum MacCompanionAgentInertSystemPreparationResultV1: Sendable {
     case ready(MacCompanionAgentInertSystemOwnerV1)
+    case recovery(MacAgentHostIdentityRecoveryProductV1)
     case deferred(MacCompanionAgentInertPreparationDeferralV1)
 }
 
@@ -191,6 +192,8 @@ public enum MacCompanionAgentInertSystemPreparationV1 {
             return .ready(
                 MacCompanionAgentInertSystemOwnerV1(prepared: prepared)
             )
+        case let .hostIdentityRecovery(product):
+            return .recovery(product)
         case .waitForFirstUnlock:
             return .deferred(.firstUnlockRequired)
         case .requireLocalRecovery:
@@ -273,7 +276,7 @@ package actor MacCompanionAgentAuthenticationOnlyRuntimeV1:
 }
 
 /// Disabled startup runtime with exactly one injected durable bootstrap
-/// authority. Recovery keeps using the closed authentication-only runtime.
+/// authority. It cannot receive the distinct host-recovery authority.
 @available(macOS 26.0, *)
 package actor MacCompanionAgentDisabledBootstrapRuntimeV1:
     MacCompanionAgentSelectedServiceRuntimeV1
@@ -361,11 +364,16 @@ extension MacCompanionAgentInertSystemOwnerV1:
     }
 }
 
+@available(macOS 26.0, *)
+extension MacAgentHostIdentityRecoveryProductV1:
+    MacCompanionAgentSelectedServiceRuntimeV1
+{}
+
 /// Prepares first, validates the exact revision-zero canonical lifecycle, and
 /// then constructs and starts exactly one local Mach-service owner:
 /// readiness/status for enabled startup, disabled bootstrap for canonical
-/// disabled startup, closed authentication-only for durable recovery, and no
-/// service before first unlock. A selected-service
+/// disabled startup, the recovery-only presentation/command product for
+/// durable recovery, and no service before first unlock. A selected-service
 /// failure or cancellation retires all retained preparation and never falls
 /// back to the other profile.
 @available(macOS 26.0, *)
@@ -430,10 +438,17 @@ public enum MacCompanionAgentLocalServiceStartupV1 {
                 await owner.finish()
                 throw error
             }
+        case let .recovery(product):
+            return try await startAndRetain(
+                product,
+                restartRequest: restartRequest
+            )
         case .deferred(.firstUnlockRequired):
             try Task.checkCancellation()
             return .retryAfterFirstUnlock
         case .deferred(.localRecoveryRequired), .deferred(.recoveryFenced):
+            // Retained only for package-injected legacy preparation seams.
+            // The production facade maps both cases to `.recovery`.
             return try await startAndRetain(
                 makeAuthenticationOnly(),
                 restartRequest: restartRequest

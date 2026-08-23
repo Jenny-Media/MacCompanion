@@ -87,16 +87,14 @@ launch-routing input and is never readiness, durable-enabled intent, or remote
 authorization.
 
 After exact same-team menu authentication and the closed hello exchange, an
-`authenticationOnly` peer may call only `readRemoteAccessBootstrap` and
-`enableRemoteAccess`. It may not publish menu readiness, read ordinary Agent
-status, pair a device, access diagnostics, present a local authority surface,
-or invoke Observe, Act, or Control. Recovery-mode authentication-only service
-rejects both bootstrap methods without revealing recovery details on the wire.
-The implementation therefore uses a distinct
+`authenticationOnly` peer admits no post-hello method. It may not publish menu
+readiness, read ordinary Agent status, pair a device, access diagnostics,
+present a local authority surface, or invoke Observe, Act, or Control. The
+implementation uses a distinct
 `disabledRemoteAccessBootstrap` construction profile that requires the sealed
-bootstrap authority. The closed `authenticationOnly` recovery profile cannot
-receive that authority or admit either method; the distinction is internal and
-does not add a wire-visible mode or state oracle.
+bootstrap authority and a distinct `hostIdentityRecovery` profile described
+below. Neither profile may receive the other's authority; the distinction is
+internal and does not add an unauthenticated wire-visible mode or state oracle.
 
 `readRemoteAccessBootstrap` returns one
 `LocalRemoteAccessBootstrapOfferV0`: protocol version, random offer UUID,
@@ -176,7 +174,7 @@ publishes readiness only after the acknowledgement is sent successfully. This
 message is the transport mapping of menu-only `publishMenuReady`; hello itself
 never publishes lifecycle readiness or authorizes another method.
 
-Except for the two authentication-only bootstrap methods above, no status,
+Except for the two disabled-bootstrap methods above, no status,
 pairing, diagnostic, recovery, lease, media, input, surface, or other lifecycle
 message may be sent before that readiness exchange. A malformed, premature,
 duplicate, or rejected readiness message cancels the exact peer.
@@ -191,12 +189,16 @@ Agent local-service root. The permanent Agent's sealed application owner
 selects exactly one profile only after durable preparation: canonical enabled
 and starting state selects `menuLifecycleReadinessAndStatus`; canonical disabled
 and stopped state selects `disabledRemoteAccessBootstrap` with the sealed
-bootstrap authority; durable recovery selects the closed `authenticationOnly`
-profile; first-unlock deferral constructs neither service. Selection is not
-caller-configurable, never falls back after start failure, and never selects the
-broader presentation profile. Passing an authority or reader to any mismatched
-profile, or constructing a profile without its required authority, fails before
-listener construction.
+bootstrap authority; durable recovery selects the closed
+`hostIdentityRecovery` profile; first-unlock deferral constructs neither
+service. Selection is not caller-configurable and never falls back after start
+failure. The recovery profile admits menu readiness, returns only the closed
+source-unavailable status reply, publishes only host-recovery review/resume/
+withdrawal, and accepts only the exact `recoverHostIdentity` command. It cannot
+receive pairing, bootstrap, update, Interactive, listener, or provider
+authority. Passing an authority or reader to any mismatched profile, or
+constructing a profile without its required authority, fails before listener
+construction.
 
 A successful response is exactly
 `{"kind":"status.read.ack","version":1,"payload":<data>}`, where `payload`
@@ -288,13 +290,15 @@ The signed probe evidence is recorded in
 
 The menu app may call the pre-readiness Agent methods
 `readRemoteAccessBootstrap` and `enableRemoteAccess` only through the narrow
-authentication-only bootstrap profile. Through a readiness-capable profile it
-may publish `publishMenuReady` and call `createPairingSession`,
+disabled-bootstrap profile. Every readiness-capable profile may publish
+`publishMenuReady`, but authority after readiness remains profile-exact. The
+ordinary presentation profile may call `createPairingSession`,
 `dismissPairingSession`, `decideGrantExpansion`, and `stopInteractiveSession`,
-may submit `recoverHostIdentity` only from an Agent-issued local review, and may
-read bounded local status, activity history, and sanitized diagnostics.
-Only the broader presentation profile may additionally issue the exact update
-network close, drain, and recovery-only reopen methods defined above.
+read bounded local status, activity history, and sanitized diagnostics, and
+issue the exact update network close, drain, and recovery-only reopen methods
+defined above. The recovery profile may read only source-unavailable status
+and submit `recoverHostIdentity` only from its Agent-issued local review or
+durable resume. Neither profile inherits the other's commands or authorities.
 `readAgentStatus` returns only the closed content-free
 `LocalAgentStatusSnapshot`; the menu application binds each response to its
 current connection generation before presentation. None of the mutating or

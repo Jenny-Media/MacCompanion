@@ -31,6 +31,17 @@ private struct ProductMenuPairingCommandHandlerV1:
 }
 
 @available(macOS 26.0, *)
+private struct ProductHostIdentityRecoveryHandlerV1:
+    MacLocalXPCHostIdentityRecoveryHandlingV1
+{
+    func recoverHostIdentity(
+        _: LocalHostIdentityRecoveryCommandV0
+    ) async throws -> LocalHostIdentityRecoveredReceiptV0 {
+        throw MacLocalXPCMenuPairingCommandErrorV1.unavailable
+    }
+}
+
+@available(macOS 26.0, *)
 private struct ProductInteractiveAdmissionHandlerV1:
     MacLocalXPCInteractiveAdmissionHandlingV1
 {
@@ -494,6 +505,49 @@ func agentPresentationProductBindsOnlyAfterAcceptedReadiness() async throws {
 
 @Test
 @available(macOS 26.0, *)
+func agentRecoveryProductSelectsOnlyRecoveryProfileAndReadySurface()
+async throws {
+    let endpoint = ProductMenuPresentationEndpointV1()
+    let server = ProductAgentServerV1(presentationEndpoint: endpoint)
+    let factory = ProductAgentFactoryProbeV1()
+    let generations = ProductPresentedGenerationProbeV1()
+    let invalidatedGenerations = ProductPresentedGenerationProbeV1()
+    let connection = ProductLifecycleConnectionV1()
+    let product = MacLocalXPCAgentProductV1.composeHostIdentityRecovery(
+        recoveryHandler: ProductHostIdentityRecoveryHandlerV1(),
+        onSurfaces: { await generations.record($0.generation) },
+        onSurfaceInvalidated: {
+            await invalidatedGenerations.record($0)
+        },
+        lifecycleFactory: ProductLifecycleFactoryV1(
+            connection: connection
+        ),
+        statusReader: ProductStatusReaderV1(),
+        serverFactory: { profile, _, _, handler in
+            factory.record(profile)
+            server.install(handler)
+            return server
+        }
+    )
+
+    #expect(factory.recordedProfile() == .hostIdentityRecovery)
+    try await product.start()
+    server.emit(.authenticatedMenu(generation: 91))
+    #expect(await generations.values().isEmpty)
+    server.emit(.menuReady(generation: 91))
+    #expect(await eventuallyV1 {
+        await generations.values() == [91]
+    })
+
+    server.emit(.invalidatedMenu(generation: 91))
+    #expect(await eventuallyV1 {
+        await invalidatedGenerations.values() == [91]
+    })
+    await product.finish()
+}
+
+@Test
+@available(macOS 26.0, *)
 func authenticatedReplacementRevokesReadyPresentationBeforeNewReadiness()
     async throws
 {
@@ -927,7 +981,8 @@ func dashboardProductRejectsDuplicateAuthenticationAndRetiresBuild() async throw
 
 @Test
 @available(macOS 26.0, *)
-func presentationDashboardPublishesInitialAdmissionBeforeStatus() async throws {
+func presentationDashboardPublishesAdmissionOnlyAfterUsableStatus()
+async throws {
     let owner = MacAgentDashboardApplicationOwnerV0()
     let box = ProductDashboardClientBoxV1()
     let selectedDisplayID = UUID()
@@ -947,9 +1002,15 @@ func presentationDashboardPublishesInitialAdmissionBeforeStatus() async throws {
     client.emit(.authenticatedAgent(build: 42))
     #expect(await eventuallyV1 { client.snapshot().ready == 1 })
     client.emit(.menuReadyAcknowledged)
+    #expect(await eventuallyV1 { client.snapshot().status == 1 })
+    #expect(client.snapshot().admissions.isEmpty)
+    let status = try productDashboardStatusV1(
+        sequence: 1,
+        generatedAt: 1_724_000_000_000
+    )
+    client.emit(.agentStatus(generation: 20, snapshot: status))
     #expect(await eventuallyV1 {
         client.snapshot().admissions.count == 1
-            && client.snapshot().status == 1
     })
     let publication = try #require(client.snapshot().admissions.first)
     #expect(publication.revision == 1)

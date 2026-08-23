@@ -250,6 +250,7 @@ public actor MacAgentInertApplicationLifecycleV1 {
 @available(macOS 26.0, *)
 public enum MacAgentApplicationPreparationResultV1: Sendable {
     case prepared(MacAgentInertApplicationLifecycleV1)
+    case hostIdentityRecovery(MacAgentHostIdentityRecoveryProductV1)
     case waitForFirstUnlock
     case requireLocalRecovery(HostIdentityRecoveryReason)
     case recoveryFenced(UUID)
@@ -298,6 +299,14 @@ public enum MacAgentApplicationPreparationFacadeV1 {
                 case let .recoveryFenced(recoveryID):
                     return .recoveryFenced(recoveryID)
                 }
+            },
+            makeHostIdentityRecovery: { storage, mode in
+                MacAgentHostIdentityRecoveryProductV1(
+                    storage: storage,
+                    hostIdentityConfiguration:
+                        inputs.hostIdentityConfiguration,
+                    mode: mode
+                )
             }
         )
     }
@@ -312,7 +321,13 @@ public enum MacAgentApplicationPreparationFacadeV1 {
         prepareRoot: @escaping @Sendable (
             MacAgentReleaseStorageV1,
             AgentNetworkPrimaryStartupInputsV1
-        ) async throws -> MacAgentPreparedApplicationRootResultV1
+        ) async throws -> MacAgentPreparedApplicationRootResultV1,
+        makeHostIdentityRecovery: @escaping @Sendable (
+            MacAgentReleaseStorageV1,
+            MacAgentHostIdentityRecoveryModeV1
+        ) async throws -> MacAgentHostIdentityRecoveryProductV1? = { _, _ in
+            nil
+        }
     ) async throws -> MacAgentApplicationPreparationResultV1 {
         try Task.checkCancellation()
         let storage = try makeStorage()
@@ -364,9 +379,33 @@ public enum MacAgentApplicationPreparationFacadeV1 {
             return .waitForFirstUnlock
         case let .requireLocalRecovery(reason):
             try Task.checkCancellation()
+            if let product = try await makeHostIdentityRecovery(
+                storage,
+                .fresh(reason)
+            ) {
+                do {
+                    try Task.checkCancellation()
+                    return .hostIdentityRecovery(product)
+                } catch {
+                    await product.finish()
+                    throw error
+                }
+            }
             return .requireLocalRecovery(reason)
         case let .recoveryFenced(recoveryID):
             try Task.checkCancellation()
+            if let product = try await makeHostIdentityRecovery(
+                storage,
+                .resume(recoveryID)
+            ) {
+                do {
+                    try Task.checkCancellation()
+                    return .hostIdentityRecovery(product)
+                } catch {
+                    await product.finish()
+                    throw error
+                }
+            }
             return .recoveryFenced(recoveryID)
         }
     }

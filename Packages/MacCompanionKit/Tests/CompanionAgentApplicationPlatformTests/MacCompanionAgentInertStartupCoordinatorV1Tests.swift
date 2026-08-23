@@ -206,6 +206,26 @@ private func runningOwnerV1(
     await owner.finish()
     #expect(probe.snapshot() == ["prepared.finish"])
 
+    let recoveryProduct = MacAgentHostIdentityRecoveryProductV1(
+        storage: storage,
+        hostIdentityConfiguration:
+            try MacCompanionAgentInertSystemPreparationV1.makeInputs(
+                registryGeneration: UUID(),
+                wallNowUnixMilliseconds: 1
+            ).hostIdentityConfiguration,
+        mode: .fresh(.invalidEstablishedKey)
+    )
+    guard case let .recovery(mappedRecovery) =
+        MacCompanionAgentInertSystemPreparationV1.map(
+            .hostIdentityRecovery(recoveryProduct)
+        )
+    else {
+        Issue.record("expected recovery service preparation")
+        return
+    }
+    #expect(mappedRecovery === recoveryProduct)
+    await mappedRecovery.finish()
+
     guard case .deferred(.firstUnlockRequired) =
         MacCompanionAgentInertSystemPreparationV1.map(.waitForFirstUnlock)
     else {
@@ -276,7 +296,7 @@ private func runningOwnerV1(
 }
 
 @available(macOS 26.0, *)
-@Test func recoveryUsesAuthenticationOnlyAndFirstUnlockConstructsNothing()
+@Test func injectedLegacyRecoveryDeferralsStayClosedAndFirstUnlockIsInert()
     async throws
 {
     for result in [

@@ -113,6 +113,7 @@ private actor MacLocalXPCDashboardBindingV1 {
     private var statusReadOutstanding = false
     private var statusRefreshInProgress = false
     private var statusRetryPermitted = false
+    private var interactiveAdmissionPublished = false
     private var phase: Phase = .idle
 
     init(
@@ -147,6 +148,7 @@ private actor MacLocalXPCDashboardBindingV1 {
             statusReadOutstanding = false
             statusRefreshInProgress = false
             statusRetryPermitted = false
+            interactiveAdmissionPublished = false
         } catch {
             if phase == .starting { retire() }
             throw error
@@ -171,18 +173,6 @@ private actor MacLocalXPCDashboardBindingV1 {
                 guard phase == .authenticated else {
                     throw BindingError.order
                 }
-                if publishesInteractiveAdmission {
-                    let publication = try
-                        LocalInteractiveAdmissionPublicationV1(
-                            commandID: UUID(),
-                            menuAppGeneration: menuAppGeneration,
-                            revision: 1,
-                            selectedDisplayID: initialSelectedDisplayID
-                        )
-                    _ = try await client.publishInteractiveAdmission(
-                        publication
-                    )
-                }
                 phase = .ready
                 statusReadOutstanding = true
                 client.readAgentStatus()
@@ -192,6 +182,7 @@ private actor MacLocalXPCDashboardBindingV1 {
                 guard statusReadOutstanding else { throw BindingError.order }
                 statusReadOutstanding = false
                 statusRetryPermitted = false
+                try await publishInteractiveAdmissionIfNeeded()
                 try await owner.receive(snapshot, from: token)
 
             case let .agentStatusUnavailable(generation):
@@ -235,6 +226,19 @@ private actor MacLocalXPCDashboardBindingV1 {
             await failClosed(token: token)
             return .notCompleted
         }
+    }
+
+    private func publishInteractiveAdmissionIfNeeded() async throws {
+        guard publishesInteractiveAdmission,
+              !interactiveAdmissionPublished else { return }
+        let publication = try LocalInteractiveAdmissionPublicationV1(
+            commandID: UUID(),
+            menuAppGeneration: menuAppGeneration,
+            revision: 1,
+            selectedDisplayID: initialSelectedDisplayID
+        )
+        _ = try await client.publishInteractiveAdmission(publication)
+        interactiveAdmissionPublished = true
     }
 
     func invalidate() async {
