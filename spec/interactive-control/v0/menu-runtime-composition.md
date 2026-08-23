@@ -1,6 +1,6 @@
 # Interactive Control visible menu-app runtime composition v0.1
 
-Status: normative for the bundle-independent single-owner runtime seam. Authenticated local-XPC lease lifecycle and initial-Desktop preparation are implemented; concrete ScreenCaptureKit, VideoToolbox, Accessibility, Core Graphics event, AppKit indicator, and monotonic-clock adapters remain platform work and require their own evidence.
+Status: normative for the bundle-independent single-owner runtime seam. Authenticated local-XPC lease lifecycle, initial-Desktop preparation, permanent menu-bar indicator, local stop, and monotonic expiry scheduling are implemented. Concrete ScreenCaptureKit, VideoToolbox, Accessibility, Core Graphics event, and media/input adapters remain platform work and require their own evidence.
 
 ## Ownership and admission
 
@@ -60,19 +60,21 @@ The media adapter is a session-bound bounded in-process queue with a synchronous
 
 ## Termination and recovery
 
-All termination paths use this order and attempt every step even when an earlier step fails:
+All termination paths use this order. They attempt input release, capture stop,
+and retained-frame blanking even when an earlier one fails. They clear the
+indicator only after all three preceding safety effects are proven complete:
 
 1. release all remotely held input;
 2. stop capture;
 3. blank the last retained frame;
 4. clear the persistent indicator.
 
-An acknowledged revoke returns success only after all four effects succeed and the receipt exactly matches the command, lease, and session. Exact replay returns the prior receipt without repeating effects. A partially failed cleanup retains content-free completion bits, denies new installs and renewals, and retries only incomplete effects. It never claims idle or successful teardown while a step remains uncertain.
+An acknowledged revoke returns success only after all four effects succeed and the receipt exactly matches the command, lease, and session. Exact replay returns the prior receipt without repeating effects. A partially failed cleanup retains content-free completion bits, denies new installs and renewals, and retries only incomplete effects. The indicator remains visible while input release, capture stop, or frame blanking is uncertain. It never claims idle or successful teardown while a step remains uncertain.
 
-The menu-app composition root schedules expiry at the exact monotonic deadline published by the owner. At expiry it terminates without waiting for Agent acknowledgement. Authenticated Agent-IPC invalidation also enqueues unconditional termination immediately. Neither path depends on receiving another IPC byte, media frame, input event, or wall-clock tick from the Agent.
+The menu-app composition root schedules expiry at the exact monotonic deadline published by the owner. Successful install arms that deadline and successful renewal atomically replaces it. Each scheduled callback is bound to one private token and exact deadline; cancellation or a stale callback cannot expire a replacement lease. An early callback reschedules only the remaining monotonic duration. At or after the exact deadline it terminates without waiting for Agent acknowledgement. Successful revoke, local stop, and authenticated Agent-IPC invalidation disarm the timer before teardown. None of these paths depends on receiving another IPC byte, media frame, input event, or wall-clock tick from the Agent.
 
 Install failure runs the same four-step cleanup because an asynchronous platform call may have partially succeeded before returning an error. If cleanup completes, install returns a closed failure and the owner becomes idle. If cleanup remains uncertain, the owner enters safety-recovery-required denial.
 
 ## Platform adapter rule
 
-The injected indicator, capture, input-posting, input-release, media-queue, and retained-frame interfaces are narrow effects, not authorities. Production cleanup adapters must be idempotent, and no adapter may infer a lease from process presence or return success before the underlying effect is externally true. The input-post and media-enqueue adapters perform one bounded synchronous action so no suspension creates a time-of-check gap. Final signed-target evidence must prove the visible indicator cannot be hidden while capture or input remains usable, expiry fires without traffic, IPC invalidation terminates, every key/button is released, capture stops, queued media is purged, and rendered retained content is blanked.
+The injected indicator, capture, input-posting, input-release, media-queue, and retained-frame interfaces are narrow effects, not authorities. The permanent menu indicator is process-owned and names the locally confirmed device in both its menu-bar state and open menu surface. Its Stop control remains visibly `stopping` until the serialized runtime cleanup clears it; failure restores a visible active state. Production cleanup adapters must be idempotent, and no adapter may infer a lease from process presence or return success before the underlying effect is externally true. The input-post and media-enqueue adapters perform one bounded synchronous action so no suspension creates a time-of-check gap. Final signed-target evidence must prove the visible indicator cannot be hidden while capture or input remains usable, expiry fires without traffic, IPC invalidation terminates, every key/button is released, capture stops, queued media is purged, and rendered retained content is blanked.

@@ -573,7 +573,35 @@ private func installAndActivateInitial(
 
     _ = try await owner.revoke(revoke)
     #expect(await probe.events() == [
-        .show, .start, .release, .stop, .blank, .clear, .blank,
+        .show, .start, .release, .stop, .blank, .blank, .clear,
+    ])
+    #expect(await owner.state() == .idle)
+}
+
+@Test func uncertainCaptureStopKeepsIndicatorVisibleUntilRetrySucceeds()
+    async throws
+{
+    let probe = RuntimeEffectsProbe(failOnce: [.stop])
+    let owner = runtimeOwner(probe: probe)
+    let lease = try runtimeLease()
+    _ = try await owner.install(
+        installCommand(lease: lease),
+        nowMonotonicNanoseconds: 2_000
+    )
+    let revoke = try revokeCommand(lease: lease)
+
+    await #expect(
+        throws: InteractiveMenuRuntimeErrorV0.safetyRecoveryRequired
+    ) {
+        try await owner.revoke(revoke)
+    }
+    #expect(await probe.events() == [
+        .show, .start, .release, .stop, .blank,
+    ])
+
+    _ = try await owner.revoke(revoke)
+    #expect(await probe.events() == [
+        .show, .start, .release, .stop, .blank, .stop, .clear,
     ])
     #expect(await owner.state() == .idle)
 }

@@ -150,10 +150,15 @@ installs one stable fail-closed authority in the dispatcher before XPC and
 binds only the exact authenticated-ready generation through its cached opaque
 endpoint. The server queue rechecks that generation and its private issuance
 token, so stale endpoints cannot redirect work to replacements; menu loss and
-product finish serially retire the bound owner. The full 1,431-test Swift
-catalog, cross-builds, and eight platform probes pass. Concrete menu
-indicator/capture/media/input adapters remain the next independent Control
-slice.
+product finish serially retire the bound owner. The later
+[persistent Control indicator and expiry](evidence/2026-08-22-persistent-control-indicator-and-expiry.md)
+makes the permanent target construct the menu runtime, publishes a named
+menu-bar and open-menu indicator with local Stop, keeps it visible while any
+prior safety effect is uncertain, and schedules exact monotonic expiry with
+renewal replacement, stale-token rejection, and early-wake correction. The
+full 1,438-test Swift catalog, cross-builds, and eight platform probes pass.
+Concrete capture/media/frame/input adapters remain the next independent
+Control slice.
 
 The [visible Interactive admission checkpoint](evidence/2026-08-22-visible-interactive-admission-contract.md)
 now carries the closed canonical menu-process generation, exact revision, and

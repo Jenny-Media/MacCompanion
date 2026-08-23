@@ -179,23 +179,45 @@ public final class MacCompanionDashboardApplicationV1 {
     public convenience init(
         interactiveRuntime: InteractiveMenuRuntimeOwnerV0
     ) {
-        self.init(interactiveRuntime: Optional(interactiveRuntime))
+        self.init(
+            interactiveRuntime: Optional(interactiveRuntime),
+            interactiveIndicator: nil
+        )
+    }
+
+    public convenience init(
+        interactiveRuntime: InteractiveMenuRuntimeOwnerV0,
+        interactiveIndicator: MacInteractiveActivityIndicatorV1
+    ) {
+        self.init(
+            interactiveRuntime: Optional(interactiveRuntime),
+            interactiveIndicator: interactiveIndicator
+        )
     }
 
     private convenience init(
-        interactiveRuntime: InteractiveMenuRuntimeOwnerV0?
+        interactiveRuntime: InteractiveMenuRuntimeOwnerV0?,
+        interactiveIndicator: MacInteractiveActivityIndicatorV1? = nil
     ) {
         let interactiveDisplaySelection = try?
             MacInteractiveOpaqueDisplaySelectionV1()
         let interactiveLeaseHandler:
             (any MacLocalXPCInteractiveLeaseHandlingV1)?
         if let interactiveRuntime, let interactiveDisplaySelection {
-            interactiveLeaseHandler = MacInteractiveLeaseRuntimeAdapterV1(
+            let handler = MacInteractiveLeaseRuntimeAdapterV1(
                 runtime: interactiveRuntime,
                 desktop: MacInteractiveInitialDesktopPreparerV1(
                     displaySelection: interactiveDisplaySelection
                 )
             )
+            interactiveLeaseHandler = handler
+            interactiveIndicator?.installStopAction { [weak handler] in
+                guard let handler else {
+                    throw MacInteractiveActivityIndicatorErrorV1
+                        .stopUnavailable
+                }
+                try await handler.stopInteractiveControlLocally()
+            }
         } else {
             interactiveLeaseHandler = nil
         }

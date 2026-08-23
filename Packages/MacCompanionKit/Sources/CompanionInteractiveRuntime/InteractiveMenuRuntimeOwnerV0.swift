@@ -1089,7 +1089,10 @@ public actor InteractiveMenuRuntimeOwnerV0 {
                 context.progress.lastFrameBlanked = true
             } catch {}
         }
-        if !context.progress.indicatorCleared {
+        if context.progress.inputReleased,
+           context.progress.captureStopped,
+           context.progress.lastFrameBlanked,
+           !context.progress.indicatorCleared {
             do {
                 try await indicator.clearInteractiveIndicator()
                 context.progress.indicatorCleared = true

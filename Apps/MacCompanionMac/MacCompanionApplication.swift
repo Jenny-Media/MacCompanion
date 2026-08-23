@@ -13,12 +13,21 @@ struct MacCompanionApplication: App {
     ) private var applicationDelegate
 
     var body: some Scene {
-        MenuBarExtra(
-            "Mac Companion",
-            systemImage: "macbook.and.iphone"
-        ) {
+        MenuBarExtra {
             MacCompanionProductRoot(
-                application: applicationDelegate.product
+                application: applicationDelegate.product,
+                interactiveIndicator:
+                    applicationDelegate.interactiveIndicator
+            )
+        } label: {
+            Label(
+                applicationDelegate.interactiveIndicator.isVisible
+                    ? "Mac Companion Control Active"
+                    : "Mac Companion",
+                systemImage:
+                    applicationDelegate.interactiveIndicator.isVisible
+                        ? "record.circle.fill"
+                        : "macbook.and.iphone"
             )
         }
         .menuBarExtraStyle(.window)
@@ -32,6 +41,7 @@ private final class MacCompanionApplicationDelegate:
 {
     let loginRoles: MacCompanionLoginRoleComposition
     let product: MacCompanionProductApplicationV1
+    let interactiveIndicator: MacInteractiveActivityIndicatorV1
 
     private var launchTask: Task<Void, Never>?
     private var finishTask: Task<Void, Never>?
@@ -42,10 +52,22 @@ private final class MacCompanionApplicationDelegate:
             agent: loginRoles.agent,
             menuApp: loginRoles.menuApp
         )
+        let interactiveIndicator = MacInteractiveActivityIndicatorV1()
+        let interactiveRuntime =
+            MacInteractiveUnavailableRuntimeCompositionV1.make(
+                indicator: interactiveIndicator
+            )
         self.loginRoles = loginRoles
+        self.interactiveIndicator = interactiveIndicator
         product = MacCompanionProductApplicationV1(
             agentRegistration: loginRoles.agentRaw,
-            setup: setup
+            setup: setup,
+            dashboardFactory: {
+                MacCompanionDashboardApplicationV1(
+                    interactiveRuntime: interactiveRuntime,
+                    interactiveIndicator: interactiveIndicator
+                )
+            }
         )
         super.init()
     }
@@ -81,8 +103,20 @@ private final class MacCompanionApplicationDelegate:
 
 private struct MacCompanionProductRoot: View {
     let application: MacCompanionProductApplicationV1
+    let interactiveIndicator: MacInteractiveActivityIndicatorV1
 
     var body: some View {
+        VStack(spacing: 0) {
+            if interactiveIndicator.isVisible {
+                interactiveActivity
+                Divider()
+            }
+            routedContent
+        }
+    }
+
+    @ViewBuilder
+    private var routedContent: some View {
         switch application.route {
         case .checking:
             ProgressView("Checking Mac Companion…")
@@ -108,6 +142,41 @@ private struct MacCompanionProductRoot: View {
         case .unavailable:
             unavailable
         }
+    }
+
+    private var interactiveActivity: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "record.circle.fill")
+                .font(.title2)
+                .foregroundStyle(.red)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(
+                    interactiveIndicator.phase == .stopping
+                        ? "Stopping Remote Control"
+                        : "Remote Control Active"
+                )
+                .font(.headline)
+                Text(
+                    interactiveIndicator.deviceDisplayName
+                        ?? "Approved device"
+                )
+                .font(.callout)
+                .foregroundStyle(.secondary)
+            }
+            Spacer()
+            Button("Stop", role: .destructive) {
+                Task { @MainActor in
+                    try? await interactiveIndicator.requestStop()
+                }
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(.red)
+            .disabled(interactiveIndicator.phase != .active)
+        }
+        .padding(14)
+        .background(.red.opacity(0.08))
+        .accessibilityElement(children: .contain)
     }
 
     private var unavailable: some View {
