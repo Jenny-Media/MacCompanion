@@ -20,8 +20,16 @@ public enum ScreenCaptureKitOpaqueTargetCatalogErrorV0:
 @available(macOS 13.0, *)
 public final class ScreenCaptureKitResolvedSurfaceV0: @unchecked Sendable {
     public let filter: SCContentFilter
+    /// Display-style filter retained for a later focused-region crop. A
+    /// single-window filter cannot be used because ScreenCaptureKit ignores
+    /// `sourceRect` for single-window capture.
+    public let focusedRegionFilter: SCContentFilter
     public let descriptor: AdaptiveSurfaceDescriptor
     public let profile: ScreenCaptureKitCaptureProfileV0
+    /// Display-logical crop rectangle relative to
+    /// `focusedRegionSourceGlobalBounds`, or nil for the whole filter.
+    public let sourceRect: CGRect?
+    public let focusedRegionSourceGlobalBounds: CGRect
     /// Global Core Graphics point-space bounds used for absolute input. This
     /// never crosses IPC and is deliberately separate from the sanitized
     /// descriptor.
@@ -33,14 +41,21 @@ public final class ScreenCaptureKitResolvedSurfaceV0: @unchecked Sendable {
 
     public init(
         filter: SCContentFilter,
+        focusedRegionFilter: SCContentFilter? = nil,
         descriptor: AdaptiveSurfaceDescriptor,
         profile: ScreenCaptureKitCaptureProfileV0,
+        sourceRect: CGRect? = nil,
+        focusedRegionSourceGlobalBounds: CGRect? = nil,
         inputBounds: CGRect,
         inputBackingScaleFactor: Double
     ) {
         self.filter = filter
+        self.focusedRegionFilter = focusedRegionFilter ?? filter
         self.descriptor = descriptor
         self.profile = profile
+        self.sourceRect = sourceRect
+        self.focusedRegionSourceGlobalBounds =
+            focusedRegionSourceGlobalBounds ?? inputBounds
         self.inputBounds = inputBounds
         self.inputBackingScaleFactor = inputBackingScaleFactor
     }
@@ -207,6 +222,8 @@ public final class ScreenCaptureKitOpaqueTargetCatalogV0: @unchecked Sendable {
         }
 
         let filter: SCContentFilter
+        let focusedRegionFilter: SCContentFilter
+        let focusedRegionSourceGlobalBounds: CGRect
         let logicalWidth: Int
         let logicalHeight: Int
         let captureWidth: Int
@@ -240,7 +257,9 @@ public final class ScreenCaptureKitOpaqueTargetCatalogV0: @unchecked Sendable {
                     display: display,
                     application: application
                 )
+            focusedRegionFilter = filter
             inputBounds = CGDisplayBounds(selectedDisplayID)
+            focusedRegionSourceGlobalBounds = inputBounds
             logicalWidth = Int(inputBounds.width.rounded(.up))
             logicalHeight = Int(inputBounds.height.rounded(.up))
             captureWidth = Int(CGDisplayPixelsWide(selectedDisplayID))
@@ -277,6 +296,18 @@ public final class ScreenCaptureKitOpaqueTargetCatalogV0: @unchecked Sendable {
                 fallback: selectedDisplayID
             )
             let displayBounds = CGDisplayBounds(inputDisplayID)
+            guard let focusDisplay = currentContent.displays.first(where: {
+                $0.displayID == inputDisplayID
+            }) else {
+                throw ScreenCaptureKitOpaqueTargetCatalogErrorV0
+                    .sourceUnavailable
+            }
+            focusedRegionFilter = ScreenCaptureKitCaptureConfigurationV0
+                .makeApplicationFilter(
+                    display: focusDisplay,
+                    application: owner
+                )
+            focusedRegionSourceGlobalBounds = displayBounds
             guard displayBounds.width.isFinite,
                   displayBounds.height.isFinite,
                   displayBounds.width > 0,
@@ -347,8 +378,11 @@ public final class ScreenCaptureKitOpaqueTargetCatalogV0: @unchecked Sendable {
         )
         return ScreenCaptureKitResolvedSurfaceV0(
             filter: filter,
+            focusedRegionFilter: focusedRegionFilter,
             descriptor: descriptor,
             profile: profile,
+            focusedRegionSourceGlobalBounds:
+                focusedRegionSourceGlobalBounds,
             inputBounds: inputBounds,
             inputBackingScaleFactor: inputBackingScaleFactor
         )

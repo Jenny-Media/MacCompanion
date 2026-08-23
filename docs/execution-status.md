@@ -1,6 +1,6 @@
 # Mac Companion Execution and Blocker Ledger
 
-Status date: 2026-08-22
+Status date: 2026-08-23
 
 This is the living execution authority for the staged plan. A blocker applies only to work that names it as a dependency. Work in every other safe lane continues. Evidence links point to repository artifacts or reproducible commands; secrets and Apple-account records remain outside the repository.
 
@@ -588,6 +588,21 @@ fixtures, the 1,493-test Swift catalog, all cross-builds/unsigned permanent
 builds, and eight platform probes. Focused-region ScreenCaptureKit crop
 construction, automatic iOS Smart Zoom application, and signed physical
 evidence remain open.
+
+The [live Focused Region Smart Zoom checkpoint](evidence/2026-08-23-live-focused-region-smart-zoom.md)
+now constructs the bounded ScreenCaptureKit crop and applies the authenticated
+event in the permanent iOS product. The menu re-reads the exact reduced focus,
+uses display-logical `sourceRect` with global input bounds, and retains an
+application-limited display filter for Window-origin Smart Zoom because
+ScreenCaptureKit ignores `sourceRect` on single-window filters. The selected
+client buffers the first-acknowledgement promotion race, disables input across
+the existing two-phase replacement exchange, updates the live descriptor only
+after exact acknowledgement, and makes automatic following explicitly
+reversible; every manual surface selection opts out. The full gate passes 73
+fixtures, the 1,499-test Swift catalog, all cross-builds/unsigned permanent
+builds, and eight platform probes. Signed two-process TCC execution, physical
+crop pixels, physical-iPhone focus latency/usability, multi-display edges, and
+lock behavior remain open without blocking other safe lanes.
 
 ## Blocker handling rule
 

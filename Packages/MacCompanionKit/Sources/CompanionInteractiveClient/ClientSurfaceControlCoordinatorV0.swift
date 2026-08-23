@@ -52,6 +52,27 @@ public struct ClientSurfaceFocusEventV0: Equatable, Sendable {
     public let inputPaused: Bool
     public let reason: InteractiveFocusEventReasonV0
     public let expiresAtMonotonicMilliseconds: Int64
+
+    package init(
+        messageID: WireUUID,
+        eventSequence: Int64,
+        recommendedTargetKind: InteractiveSurfaceKind,
+        targetToken: WireUUID?,
+        focus: SurfaceFocus?,
+        inputPaused: Bool,
+        reason: InteractiveFocusEventReasonV0,
+        expiresAtMonotonicMilliseconds: Int64
+    ) {
+        self.messageID = messageID
+        self.eventSequence = eventSequence
+        self.recommendedTargetKind = recommendedTargetKind
+        self.targetToken = targetToken
+        self.focus = focus
+        self.inputPaused = inputPaused
+        self.reason = reason
+        self.expiresAtMonotonicMilliseconds =
+            expiresAtMonotonicMilliseconds
+    }
 }
 
 /// Owns the replacement-only client path from an already acknowledged surface

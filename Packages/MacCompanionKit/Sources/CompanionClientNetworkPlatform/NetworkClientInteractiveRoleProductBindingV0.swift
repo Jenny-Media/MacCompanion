@@ -43,6 +43,9 @@ public actor NetworkClientInteractiveRoleProductBindingV0 {
     private var connectionID: Data?
     private var activationID: UUID?
     private var connectTask: Task<Void, Never>?
+    private var automaticFocusHandler:
+        (@Sendable (ClientSurfaceFocusEventV0) async throws -> Void)?
+    private var pendingFocusPublication: NetworkClientFocusPublicationV0?
 
     package init(
         hostID: UUID,
@@ -91,6 +94,9 @@ public actor NetworkClientInteractiveRoleProductBindingV0 {
     {
         NetworkClientPrimaryProductEventsV0(
             publishControl: { [weak self] publication in
+                Task { await self?.accept(publication) }
+            },
+            publishFocus: { [weak self] publication in
                 Task { await self?.accept(publication) }
             },
             primarySelected: { [weak self] selection in
@@ -195,6 +201,10 @@ public actor NetworkClientInteractiveRoleProductBindingV0 {
                 connectionID: connectionID,
                 interactiveSessionID: interactiveSessionID
             )
+            if let pendingFocusPublication {
+                self.pendingFocusPublication = nil
+                await accept(pendingFocusPublication)
+            }
             return true
         }
         let phase = await activation.phase
@@ -207,6 +217,20 @@ public actor NetworkClientInteractiveRoleProductBindingV0 {
             )
         }
         return false
+    }
+
+    package func bindAutomaticFocusHandler(
+        activation: NetworkClientInteractiveInitialDesktopActivationV0,
+        handler: @escaping @Sendable (
+            ClientSurfaceFocusEventV0
+        ) async throws -> Void
+    ) throws {
+        guard automaticFocusHandler == nil,
+              initialDesktop === activation,
+              activationID != nil else {
+            throw NetworkClientInteractiveInitialDesktopErrorV0.unavailable
+        }
+        automaticFocusHandler = handler
     }
 
     private func selected(_ session: ClientAuthenticatedSessionV0) async {
@@ -253,6 +277,36 @@ public actor NetworkClientInteractiveRoleProductBindingV0 {
                 await retirePair()
                 state = .inactive
             }
+        }
+    }
+
+    private func accept(
+        _ publication: NetworkClientFocusPublicationV0
+    ) async {
+        if case .initialSurfacePreparing = state,
+           publication.hostID == hostID,
+           publication.connectionID == connectionID {
+            pendingFocusPublication = publication
+            return
+        }
+        guard case let .active(interactiveSessionID) = state,
+              publication.hostID == hostID,
+              publication.connectionID == connectionID,
+              let activation = initialDesktop,
+              let activationID,
+              let automaticFocusHandler else { return }
+        do {
+            try await automaticFocusHandler(publication.event)
+        } catch {
+            guard self.activationID == activationID,
+                  initialDesktop === activation else { return }
+            await activation.close()
+            initialDesktop = nil
+            failInitialSurfaceIfCurrent(
+                activationID: activationID,
+                interactiveSessionID: interactiveSessionID,
+                connectionID: publication.connectionID
+            )
         }
     }
 
@@ -372,6 +426,8 @@ public actor NetworkClientInteractiveRoleProductBindingV0 {
 
     private func retirePair() async {
         activationID = nil
+        automaticFocusHandler = nil
+        pendingFocusPublication = nil
         connectTask?.cancel()
         connectTask = nil
         await initialDesktop?.close()

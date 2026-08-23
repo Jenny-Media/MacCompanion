@@ -83,7 +83,8 @@ public struct ScreenCaptureKitCaptureProfileV0: Equatable, Sendable {
 @available(macOS 13.0, *)
 public enum ScreenCaptureKitCaptureConfigurationV0 {
     public static func makeStreamConfiguration(
-        profile: ScreenCaptureKitCaptureProfileV0
+        profile: ScreenCaptureKitCaptureProfileV0,
+        sourceRect: CGRect? = nil
     ) -> SCStreamConfiguration {
         let configuration = SCStreamConfiguration()
         configuration.width = profile.width
@@ -97,6 +98,7 @@ public enum ScreenCaptureKitCaptureConfigurationV0 {
             kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange
         configuration.showsCursor = true
         configuration.capturesAudio = false
+        if let sourceRect { configuration.sourceRect = sourceRect }
         return configuration
     }
 

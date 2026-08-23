@@ -81,6 +81,7 @@ package protocol NetworkClientInteractiveInitialPrimaryControllingV0:
     func replacementSurfacePhase() async -> ClientSurfaceControlPhaseV0?
     func replacementSurfaceDescriptor() async
         -> AdaptiveSurfaceDescriptor?
+    func latestFocusEvent() async -> ClientSurfaceFocusEventV0?
     func confirmReplacementRenderedFrame(
         _ receipt: ClientDecodedFrameReceiptV0
     ) async throws -> Bool
@@ -89,6 +90,10 @@ package protocol NetworkClientInteractiveInitialPrimaryControllingV0:
 
 extension ClientInteractivePrimaryChannelV0:
     NetworkClientInteractiveInitialPrimaryControllingV0 {}
+
+package extension NetworkClientInteractiveInitialPrimaryControllingV0 {
+    func latestFocusEvent() async -> ClientSurfaceFocusEventV0? { nil }
+}
 
 private actor NetworkClientInteractiveInitialMediaConsumerV0:
     ClientInteractiveMediaRecordConsumingV0
@@ -132,6 +137,7 @@ public actor NetworkClientInteractiveInitialDesktopActivationV0 {
     private let input: NetworkClientInteractiveInputSenderV0
     private var pumpTask: Task<Void, Never>?
     private var surfaceTransitionInFlight = false
+    private var automaticSmartZoomEnabled = true
 
     package init(
         channel: any NetworkClientInteractiveInitialPrimaryControllingV0,
@@ -270,12 +276,86 @@ public actor NetworkClientInteractiveInitialDesktopActivationV0 {
         }
     }
 
+    public func setAutomaticSmartZoomEnabled(_ enabled: Bool) {
+        automaticSmartZoomEnabled = enabled
+    }
+
+    public func isAutomaticSmartZoomEnabled() -> Bool {
+        automaticSmartZoomEnabled
+    }
+
+    public func applyLatestFocusEvent(
+        timeoutMilliseconds: UInt64 = 30_000
+    ) async throws -> AdaptiveSurfaceDescriptor? {
+        guard let event = await channel.latestFocusEvent() else { return nil }
+        return try await applyFocusEvent(
+            event,
+            timeoutMilliseconds: timeoutMilliseconds
+        )
+    }
+
+    /// Applies only an event already admitted by the ordered primary channel.
+    /// The ordinary replacement path remains the sole transition authority.
+    /// Returning `false` means local policy or an in-flight manual transition
+    /// intentionally ignored the recommendation; protocol failures still
+    /// converge through the existing fail-closed path.
+    @discardableResult
+    public func applyFocusEvent(
+        _ event: ClientSurfaceFocusEventV0,
+        timeoutMilliseconds: UInt64 = 30_000
+    ) async throws -> AdaptiveSurfaceDescriptor? {
+        guard phase == .active, automaticSmartZoomEnabled,
+              !surfaceTransitionInFlight,
+              timeoutMilliseconds > 0 else { return nil }
+
+        let targetKind: InteractiveSurfaceKind
+        let targetToken: UUID?
+        switch event.recommendedTargetKind {
+        case .focusedRegion:
+            guard event.reason == .verifiedFocus,
+                  event.focus != nil,
+                  let token = event.targetToken?.rawValue else {
+                return nil
+            }
+            targetKind = .focusedRegion
+            targetToken = token
+        case .desktop:
+            guard event.reason != .verifiedFocus,
+                  event.focus == nil,
+                  event.targetToken == nil,
+                  await channel.replacementSurfaceDescriptor()?.kind
+                    != .desktop else { return nil }
+            targetKind = .desktop
+            targetToken = nil
+        case .application, .window:
+            return nil
+        }
+        return try await transitionSurface(
+            targetKind: targetKind,
+            targetToken: targetToken,
+            timeoutMilliseconds: timeoutMilliseconds
+        )
+    }
+
     /// Performs reset-before-select ordering and returns only after the exact
     /// replacement acknowledgement reply reactivates input.
     public func selectSurface(
         targetKind: InteractiveSurfaceKind,
         targetToken: UUID?,
         timeoutMilliseconds: UInt64 = 30_000
+    ) async throws -> AdaptiveSurfaceDescriptor {
+        automaticSmartZoomEnabled = false
+        return try await transitionSurface(
+            targetKind: targetKind,
+            targetToken: targetToken,
+            timeoutMilliseconds: timeoutMilliseconds
+        )
+    }
+
+    private func transitionSurface(
+        targetKind: InteractiveSurfaceKind,
+        targetToken: UUID?,
+        timeoutMilliseconds: UInt64
     ) async throws -> AdaptiveSurfaceDescriptor {
         guard phase == .active, !surfaceTransitionInFlight,
               timeoutMilliseconds > 0 else {

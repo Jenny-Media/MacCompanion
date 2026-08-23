@@ -30,6 +30,7 @@ public protocol ClientPrimaryLiveControlProductV0: AnyObject {
     func activationFailedOrClosed() async -> Bool
     func requestSurfaceTargets() async throws
         -> [InteractiveSurfaceTargetCandidateV0]
+    func setAutomaticSmartZoomEnabled(_ enabled: Bool) async throws
     func selectSurface(
         kind: InteractiveSurfaceKind,
         targetToken: UUID?
@@ -117,6 +118,10 @@ public final class ClientPrimaryLiveControlCoordinatorV0: ObservableObject {
             throw ClientPrimaryLiveControlErrorV0.unavailable
         }
         return try await product.requestSurfaceTargets()
+    }
+
+    public func setAutomaticSmartZoomEnabled(_ enabled: Bool) async throws {
+        try await product?.setAutomaticSmartZoomEnabled(enabled)
     }
 
     public func selectSurface(_ choice: ClientSurfaceChoiceV0) async throws {
@@ -271,6 +276,7 @@ private final class ClientPrimaryLiveControlViewStateV0: ObservableObject {
         [InteractiveSurfaceTargetCandidateV0] = []
     @Published var surfaceRequestInFlight = false
     @Published var visualZoomEditing = false
+    @Published var automaticSmartZoomEnabled = true
 }
 
 @available(iOS 17.0, *)
@@ -376,6 +382,10 @@ public struct ClientPrimaryLiveControlViewV0: View {
                     systemImage: viewState.visualZoomEditing
                         ? "viewfinder.circle.fill" : "viewfinder"
                 ) {
+                    Toggle(
+                        "Follow Focus Automatically",
+                        isOn: $viewState.automaticSmartZoomEnabled
+                    )
                     Button(
                         viewState.visualZoomEditing
                             ? "Done Zooming" : "Adjust Zoom"
@@ -414,6 +424,16 @@ public struct ClientPrimaryLiveControlViewV0: View {
         }
         .onChange(of: viewState.mode) { _, value in
             coordinator.updateMode(value)
+        }
+        .onChange(of: viewState.automaticSmartZoomEnabled) { _, value in
+            Task {
+                do {
+                    try await coordinator
+                        .setAutomaticSmartZoomEnabled(value)
+                } catch {
+                    onCommandFailure(error)
+                }
+            }
         }
         .onChange(of: coordinator.phase) { _, value in
             if value != .active { setVisualZoomEditing(false) }
@@ -492,6 +512,7 @@ public struct ClientPrimaryLiveControlViewV0: View {
 
     private func selectSurface(_ choice: ClientSurfaceChoiceV0) {
         guard !viewState.surfaceRequestInFlight else { return }
+        viewState.automaticSmartZoomEnabled = false
         viewState.surfaceRequestInFlight = true
         Task {
             do {

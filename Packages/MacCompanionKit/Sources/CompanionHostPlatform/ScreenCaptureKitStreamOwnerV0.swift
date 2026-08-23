@@ -433,6 +433,7 @@ public actor ScreenCaptureKitStreamingSessionAdapterV0:
   public init(
     filter: SCContentFilter,
     profile: ScreenCaptureKitCaptureProfileV0,
+    sourceRect: CGRect? = nil,
     callbackQueue: DispatchQueue = DispatchQueue(
       label: "com.jennymedia.maccompanion.capture.video",
       qos: .userInteractive
@@ -445,7 +446,10 @@ public actor ScreenCaptureKitStreamingSessionAdapterV0:
       filter: filter,
       configuration:
         ScreenCaptureKitCaptureConfigurationV0
-        .makeStreamConfiguration(profile: profile),
+        .makeStreamConfiguration(
+          profile: profile,
+          sourceRect: sourceRect
+        ),
       delegate: bridge
     )
   }

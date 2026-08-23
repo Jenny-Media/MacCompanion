@@ -22,6 +22,12 @@ public struct NetworkClientControlPublicationV0: Sendable {
     public let event: ClientInteractivePrimarySessionEventV0
 }
 
+public struct NetworkClientFocusPublicationV0: Sendable {
+    public let hostID: UUID
+    public let connectionID: Data
+    public let event: ClientSurfaceFocusEventV0
+}
+
 public struct NetworkClientPrimaryProductSelectionV0: Sendable {
     package let endpoint: EndpointCandidate
     public let authenticatedSession: ClientAuthenticatedSessionV0
@@ -39,6 +45,9 @@ public struct NetworkClientPrimaryProductEventsV0: Sendable {
     ) -> Void
     public let publishControl: @Sendable (
         NetworkClientControlPublicationV0
+    ) -> Void
+    public let publishFocus: @Sendable (
+        NetworkClientFocusPublicationV0
     ) -> Void
     public let primarySelected: @Sendable (
         NetworkClientPrimaryProductSelectionV0
@@ -58,6 +67,9 @@ public struct NetworkClientPrimaryProductEventsV0: Sendable {
         publishControl: @escaping @Sendable (
             NetworkClientControlPublicationV0
         ) -> Void = { _ in },
+        publishFocus: @escaping @Sendable (
+            NetworkClientFocusPublicationV0
+        ) -> Void = { _ in },
         primarySelected: @escaping @Sendable (
             NetworkClientPrimaryProductSelectionV0
         ) -> Void = { _ in },
@@ -69,6 +81,7 @@ public struct NetworkClientPrimaryProductEventsV0: Sendable {
         self.publishObserve = publishObserve
         self.publishAct = publishAct
         self.publishControl = publishControl
+        self.publishFocus = publishFocus
         self.primarySelected = primarySelected
         self.primaryTerminated = primaryTerminated
     }
@@ -92,6 +105,10 @@ public struct NetworkClientPrimaryProductEventsV0: Sendable {
             publishControl: { value in
                 publishControl(value)
                 other.publishControl(value)
+            },
+            publishFocus: { value in
+                publishFocus(value)
+                other.publishFocus(value)
             },
             primarySelected: { value in
                 primarySelected(value)
@@ -164,6 +181,16 @@ private final class NetworkClientPrimaryPublicationRelayV0:
         let session = selectedSession()
         guard let session else { return }
         events.publishControl(NetworkClientControlPublicationV0(
+            hostID: session.hostID,
+            connectionID: session.connectionID,
+            event: event
+        ))
+    }
+
+    func publishFocus(_ event: ClientSurfaceFocusEventV0) {
+        let session = selectedSession()
+        guard let session else { return }
+        events.publishFocus(NetworkClientFocusPublicationV0(
             hostID: session.hostID,
             connectionID: session.connectionID,
             event: event
@@ -249,7 +276,8 @@ package actor NetworkClientPrimaryProductCandidateV0 {
             ),
             publishObserve: { relay.publishObserve($0) },
             publishAct: { relay.publishAct($0) },
-            publishControl: { relay.publishControl($0) }
+            publishControl: { relay.publishControl($0) },
+            publishFocus: { relay.publishFocus($0) }
         )
     }
 

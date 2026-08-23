@@ -296,6 +296,79 @@ private actor ReplacementTestPrimaryV0:
     }
 }
 
+private actor AutomaticFocusTestPrimaryV0:
+    NetworkClientInteractiveInitialPrimaryControllingV0
+{
+    let initial: AdaptiveSurfaceDescriptor
+    let replacement: AdaptiveSurfaceDescriptor
+    private var initialPhase: ClientInitialSurfacePhaseV0 = .awaitingRequest
+    private var replacementPhase: ClientSurfaceControlPhaseV0 = .active
+    private var selectedKind: InteractiveSurfaceKind?
+    private var selectedToken: UUID?
+
+    init(
+        initial: AdaptiveSurfaceDescriptor,
+        replacement: AdaptiveSurfaceDescriptor
+    ) {
+        self.initial = initial
+        self.replacement = replacement
+    }
+
+    func beginInitialSurface() { initialPhase = .awaitingDescriptor }
+    func waitForInitialDescriptor(
+        timeoutMilliseconds: UInt64
+    ) -> AdaptiveSurfaceDescriptor {
+        initialPhase = .awaitingMedia
+        return initial
+    }
+    func admitInitialMedia(
+        header: MediaRecordHeader,
+        payloadByteCount: Int
+    ) -> ClientMediaAdmissionV0 { .videoAccessUnit(cleanKeyframe: true) }
+    func confirmInitialRenderedFrame(
+        _ receipt: ClientDecodedFrameReceiptV0
+    ) -> Bool { true }
+    func acknowledgeInitialSurface() { initialPhase = .awaitingAcknowledgement }
+    func initialSurfacePhase() -> ClientInitialSurfacePhaseV0? { initialPhase }
+    func acknowledgeInitialFromHost() { initialPhase = .active }
+    func makeInitialInputFrame(
+        _ payload: InteractiveInputPayload
+    ) throws -> Data { Data([0x01]) }
+    func closeInitialInputFrame() throws -> Data? { nil }
+    func requestReplacementSurfaceTargets() {}
+    func replacementSurfaceTargets()
+        -> [InteractiveSurfaceTargetCandidateV0]?
+    { [] }
+    func prepareReplacementSurfaceSelection(
+        targetKind: InteractiveSurfaceKind,
+        targetToken: UUID?
+    ) throws -> ClientSurfaceSelectionRequestV0 {
+        selectedKind = targetKind
+        selectedToken = targetToken
+        replacementPhase = .awaitingSelection
+        return ClientSurfaceSelectionRequestV0(
+            reset: nil,
+            requestJSON: Data([0xaa])
+        )
+    }
+    func sendReplacementSurfaceSelection(_ frame: Data) {
+        replacementPhase = .active
+    }
+    func replacementSurfacePhase() -> ClientSurfaceControlPhaseV0? {
+        replacementPhase
+    }
+    func replacementSurfaceDescriptor()
+        -> AdaptiveSurfaceDescriptor?
+    { selectedKind == nil ? initial : replacement }
+    func confirmReplacementRenderedFrame(
+        _ receipt: ClientDecodedFrameReceiptV0
+    ) -> Bool { false }
+    func acknowledgeReplacementSurface() {}
+    func selection() -> (InteractiveSurfaceKind?, UUID?) {
+        (selectedKind, selectedToken)
+    }
+}
+
 private func mediaPumpHeader(
     type: MediaRecordType,
     payloadLength: UInt32,
@@ -688,5 +761,152 @@ private func mediaPumpConnection(
     ])
     #expect(await log.snapshot()
         == ["reset", "select", "acknowledge", "input"])
+    await activation.close()
+}
+
+@Test func admittedFocusEventAutomaticallyUsesReplacementPathAndHonorsOptOut()
+    async throws
+{
+    let sessionID = UUID()
+    let focusToken = UUID()
+    let eventTargetToken = UUID()
+    let initial = try AdaptiveSurfaceDescriptor(
+        interactiveSessionID: sessionID,
+        authorizationEpoch: .init(rawValue: 1),
+        surfaceID: UUID(),
+        kind: .desktop,
+        surfaceRevision: .init(rawValue: 1),
+        coordinateSpaceRevision: .init(rawValue: 1),
+        encodedWidth: 640,
+        encodedHeight: 480,
+        logicalWidthPoints: 640,
+        logicalHeightPoints: 480,
+        interactionClasses: [.view, .pointer, .keyboard],
+        privacyProfile: .visualOnly,
+        metadataFields: [],
+        createdAtMonotonicMilliseconds: 1,
+        expiresAtMonotonicMilliseconds: 30_001
+    )
+    let focus = try SurfaceFocus(
+        token: focusToken,
+        revision: .init(rawValue: 1),
+        category: .text,
+        bounds: NormalizedSurfaceRect(
+            x: 10_000,
+            y: 20_000,
+            width: 8_000,
+            height: 3_000
+        ),
+        editable: true,
+        secure: false
+    )
+    let replacement = try AdaptiveSurfaceDescriptor(
+        interactiveSessionID: sessionID,
+        authorizationEpoch: initial.authorizationEpoch,
+        surfaceID: UUID(),
+        kind: .focusedRegion,
+        surfaceRevision: .init(rawValue: 2),
+        coordinateSpaceRevision: .init(rawValue: 2),
+        applicationToken: UUID(),
+        parentSurfaceID: initial.surfaceID,
+        fallbackSurfaceID: initial.surfaceID,
+        encodedWidth: 800,
+        encodedHeight: 600,
+        logicalWidthPoints: 800,
+        logicalHeightPoints: 600,
+        interactionClasses: [.view, .pointer, .keyboard],
+        privacyProfile: .assistedVisual,
+        metadataFields: [
+            .focusCategory, .focusBounds, .editable, .secure,
+        ],
+        focus: focus,
+        createdAtMonotonicMilliseconds: 2,
+        expiresAtMonotonicMilliseconds: 30_002
+    )
+    let primary = AutomaticFocusTestPrimaryV0(
+        initial: initial,
+        replacement: replacement
+    )
+    let endpoint = try EndpointCandidate(
+        kind: .ipv4,
+        value: "192.0.2.47",
+        port: 48_324
+    )
+    let mediaIO = InitialDesktopSuspendingIOV0(bytes: Data())
+    let activation = try NetworkClientInteractiveInitialDesktopActivationV0(
+        channel: primary,
+        inputConnection: NetworkClientInteractiveReadyRoleConnectionV0(
+            endpoint: endpoint,
+            role: .input,
+            channelID: WireUUID(UUID()),
+            send: { _ in },
+            cancel: {}
+        ),
+        mediaConnection: NetworkClientInteractiveReadyRoleConnectionV0(
+            endpoint: endpoint,
+            role: .media,
+            channelID: WireUUID(UUID()),
+            receive: { await mediaIO.receive(maximumLength: $0) },
+            cancel: { await mediaIO.cancel() }
+        ),
+        renderer: InitialDesktopTestRendererV0()
+    )
+    #expect(try await activation.start() == initial)
+    let initialHeader = try MediaRecordHeader(
+        type: .videoAccessUnit,
+        flags: [.cleanKeyframe],
+        payloadLength: 1,
+        interactiveSessionID: initial.interactiveSessionID,
+        authorizationEpoch: initial.authorizationEpoch,
+        surfaceID: initial.surfaceID,
+        surfaceRevision: initial.surfaceRevision,
+        coordinateSpaceRevision: initial.coordinateSpaceRevision,
+        mediaSequence: 1,
+        presentationTimeNanoseconds: 1,
+        encodedWidth: initial.encodedWidth,
+        encodedHeight: initial.encodedHeight
+    )
+    try await activation.reportRendered(ClientDecodedFrameReceiptV0(
+        generation: 1,
+        fence: ClientDecoderFenceV0(header: initialHeader),
+        mediaSequence: 1,
+        presentationTimeNanoseconds: 1,
+        frameReference: UUID()
+    ))
+    await primary.acknowledgeInitialFromHost()
+    #expect(await activation.refreshPrimaryState())
+
+    let event = ClientSurfaceFocusEventV0(
+        messageID: WireUUID(UUID()),
+        eventSequence: 1,
+        recommendedTargetKind: .focusedRegion,
+        targetToken: WireUUID(eventTargetToken),
+        focus: focus,
+        inputPaused: false,
+        reason: .verifiedFocus,
+        expiresAtMonotonicMilliseconds: 1_000
+    )
+    await activation.setAutomaticSmartZoomEnabled(false)
+    let ignored = try await activation.applyFocusEvent(event)
+    #expect(ignored == nil)
+    let ignoredSelection = await primary.selection()
+    #expect(ignoredSelection.0 == nil)
+
+    await activation.setAutomaticSmartZoomEnabled(true)
+    #expect(try await activation.applyFocusEvent(
+        event,
+        timeoutMilliseconds: 100
+    ) == replacement)
+    let automaticSelection = await primary.selection()
+    #expect(automaticSelection.0 == .focusedRegion)
+    #expect(automaticSelection.1 == eventTargetToken)
+
+    _ = try await activation.selectSurface(
+        targetKind: .desktop,
+        targetToken: nil,
+        timeoutMilliseconds: 100
+    )
+    let automaticEnabled = await activation.isAutomaticSmartZoomEnabled()
+    #expect(!automaticEnabled)
     await activation.close()
 }

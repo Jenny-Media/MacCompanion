@@ -214,7 +214,8 @@ private actor MacInteractiveDesktopCaptureAdapterV1:
                 == activeCommand.lease.interactiveSessionID,
               transition.descriptor.kind == .desktop
                 || transition.descriptor.kind == .application
-                || transition.descriptor.kind == .window else {
+                || transition.descriptor.kind == .window
+                || transition.descriptor.kind == .focusedRegion else {
             throw MacInteractiveControlRuntimeCompositionErrorV1
                 .bindingMismatch
         }
@@ -289,6 +290,7 @@ private actor MacInteractiveDesktopCaptureAdapterV1:
         let owner = try Self.makeStreamOwner(
             filter: prepared.resolved.filter,
             profile: prepared.resolved.profile,
+            sourceRect: prepared.resolved.sourceRect,
             publisher: publisher,
             runtime: runtime
         )
@@ -323,6 +325,7 @@ private actor MacInteractiveDesktopCaptureAdapterV1:
     private static func makeStreamOwner(
         filter: sending SCContentFilter,
         profile: ScreenCaptureKitCaptureProfileV0,
+        sourceRect: CGRect? = nil,
         publisher: VideoToolboxInteractiveMediaPublisherV0,
         runtime: InteractiveMenuRuntimeOwnerV0
     ) throws -> ScreenCaptureKitStreamOwnerV0 {
@@ -347,7 +350,8 @@ private actor MacInteractiveDesktopCaptureAdapterV1:
         )
         let session = ScreenCaptureKitStreamingSessionAdapterV0(
             filter: filter,
-            profile: profile
+            profile: profile,
+            sourceRect: sourceRect
         )
         let owner = ScreenCaptureKitStreamOwnerV0(
             session: session,

@@ -129,6 +129,8 @@ public final class UIKitClientInitialDesktopProductV0 {
     private let roles: NetworkClientInteractiveRoleProductBindingV0
     private let relay: UIKitClientInitialRenderRelayV0
     private let inputRelay: UIKitClientInitialInputRelayV0?
+    private var automaticSmartZoomEnabled = true
+    private var surfaceTransitionInFlight = false
 
     fileprivate init(
         descriptor: AdaptiveSurfaceDescriptor,
@@ -171,24 +173,93 @@ public final class UIKitClientInitialDesktopProductV0 {
         try await activation.requestSurfaceTargets()
     }
 
+    public func setAutomaticSmartZoomEnabled(_ enabled: Bool) async throws {
+        automaticSmartZoomEnabled = enabled
+        await activation.setAutomaticSmartZoomEnabled(enabled)
+        if enabled {
+            try await applyLatestAutomaticFocusEvent()
+        }
+    }
+
     public func selectSurface(
         kind: InteractiveSurfaceKind,
         targetToken: UUID?
     ) async throws {
+        guard !surfaceTransitionInFlight else {
+            throw NetworkClientInteractiveInitialDesktopErrorV0.invalidPhase
+        }
+        automaticSmartZoomEnabled = false
+        await activation.setAutomaticSmartZoomEnabled(false)
+        surfaceTransitionInFlight = true
         inputRelay?.setActive(false)
         surface.setInputEnabled(false)
         surface.hideSoftwareKeyboard()
-        let next = try await activation.selectSurface(
-            targetKind: kind,
-            targetToken: targetToken
-        )
+        let next: AdaptiveSurfaceDescriptor
+        do {
+            next = try await activation.selectSurface(
+                targetKind: kind,
+                targetToken: targetToken
+            )
+        } catch {
+            surfaceTransitionInFlight = false
+            throw error
+        }
+        apply(next)
+        surfaceTransitionInFlight = false
+        inputRelay?.setActive(true)
+        surface.setInputEnabled(true)
+    }
+
+    fileprivate func applyAutomaticFocusEvent(
+        _ event: ClientSurfaceFocusEventV0
+    ) async throws {
+        guard automaticSmartZoomEnabled, !surfaceTransitionInFlight else {
+            return
+        }
+        surfaceTransitionInFlight = true
+        inputRelay?.setActive(false)
+        surface.setInputEnabled(false)
+        surface.hideSoftwareKeyboard()
+        do {
+            if let next = try await activation.applyFocusEvent(event) {
+                apply(next)
+            }
+        } catch {
+            surfaceTransitionInFlight = false
+            throw error
+        }
+        surfaceTransitionInFlight = false
+        inputRelay?.setActive(true)
+        surface.setInputEnabled(true)
+    }
+
+    private func applyLatestAutomaticFocusEvent() async throws {
+        guard automaticSmartZoomEnabled, !surfaceTransitionInFlight else {
+            return
+        }
+        surfaceTransitionInFlight = true
+        inputRelay?.setActive(false)
+        surface.setInputEnabled(false)
+        surface.hideSoftwareKeyboard()
+        do {
+            if let next = try await activation.applyLatestFocusEvent() {
+                apply(next)
+            }
+        } catch {
+            surfaceTransitionInFlight = false
+            throw error
+        }
+        surfaceTransitionInFlight = false
+        inputRelay?.setActive(true)
+        surface.setInputEnabled(true)
+    }
+
+    private func apply(_ next: AdaptiveSurfaceDescriptor) {
         descriptor = next
         surface.setEncodedDimensions(
             width: next.encodedWidth,
             height: next.encodedHeight
         )
-        inputRelay?.setActive(true)
-        surface.setInputEnabled(true)
     }
 
     public func close() async {
@@ -264,7 +335,7 @@ public enum UIKitClientInitialDesktopProductFactoryV0 {
             )
             relay.bind(activation)
             inputRelay?.bind(activation)
-            return UIKitClientInitialDesktopProductV0(
+            let product = UIKitClientInitialDesktopProductV0(
                 descriptor: descriptor,
                 roles: roles,
                 activation: activation,
@@ -273,6 +344,17 @@ public enum UIKitClientInitialDesktopProductFactoryV0 {
                 surface: surface,
                 inputRelay: inputRelay
             )
+            try await roles.bindAutomaticFocusHandler(
+                activation: activation,
+                handler: { [weak product] event in
+                    guard let product else {
+                        throw NetworkClientInteractiveInitialDesktopErrorV0
+                            .unavailable
+                    }
+                    try await product.applyAutomaticFocusEvent(event)
+                }
+            )
+            return product
         } catch {
             relay.close()
             coordinator.closeAndBlank()

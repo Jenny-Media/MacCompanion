@@ -44,11 +44,14 @@ public actor MacInteractiveSurfaceTargetOwnerV1 {
         let desktopRotation: SurfaceRotation
         let catalog: ScreenCaptureKitOpaqueTargetCatalogV0
         var inputBounds: CGRect
+        var focusedRegionFilter: SCContentFilter?
+        var focusedRegionSourceGlobalBounds: CGRect?
+        var focusedRegionPointPixelScale: Double?
     }
 
     private struct FocusFingerprint: Equatable {
         let category: FocusElementCategory
-        let bounds: NormalizedSurfaceRect
+        let globalBounds: CGRect
         let editable: Bool
         let secure: Bool
     }
@@ -64,6 +67,8 @@ public actor MacInteractiveSurfaceTargetOwnerV1 {
     private var lastFocusFingerprint: FocusFingerprint?
     private var focusToken: UUID?
     private var focusRevision: UInt64 = 0
+    private var lastFocus: SurfaceFocus?
+    private var lastFocusGlobalBounds: CGRect?
     private var issuedFocusTokens: Set<UUID> = []
 
     public init(
@@ -114,7 +119,10 @@ public actor MacInteractiveSurfaceTargetOwnerV1 {
             physicalDisplayID: physicalDisplayID,
             desktopRotation: descriptor.rotation,
             catalog: catalog,
-            inputBounds: inputBounds
+            inputBounds: inputBounds,
+            focusedRegionFilter: nil,
+            focusedRegionSourceGlobalBounds: nil,
+            focusedRegionPointPixelScale: nil
         )
     }
 
@@ -190,6 +198,16 @@ public actor MacInteractiveSurfaceTargetOwnerV1 {
                 content: content,
                 nowMonotonicMilliseconds: nowMonotonicMilliseconds
             )
+        } else if request.targetKind == .focusedRegion {
+            guard let targetToken = request.targetToken else {
+                throw MacInteractiveSurfaceTargetOwnerErrorV1.bindingMismatch
+            }
+            resolved = try makeFocusedRegionReplacement(
+                active: active,
+                content: content,
+                targetToken: targetToken,
+                nowMonotonicMilliseconds: nowMonotonicMilliseconds
+            )
         } else {
             guard let targetToken = request.targetToken,
                   request.targetKind == .application
@@ -251,10 +269,24 @@ public actor MacInteractiveSurfaceTargetOwnerV1 {
         active.descriptor = transition.descriptor
         active.lease = transition.replacement
         active.inputBounds = taken.inputBounds
+        active.focusedRegionFilter = taken.focusedRegionFilter
+        active.focusedRegionSourceGlobalBounds =
+            taken.focusedRegionSourceGlobalBounds
+        active.focusedRegionPointPixelScale =
+            taken.inputBackingScaleFactor
         self.active = active
         self.taken = nil
-        lastFocusFingerprint = nil
-        focusToken = nil
+        if let focus = transition.descriptor.focus,
+           transition.descriptor.kind == .focusedRegion {
+            focusToken = focus.token
+            focusRevision = focus.revision.rawValue
+            lastFocus = focus
+        } else {
+            lastFocusFingerprint = nil
+            focusToken = nil
+            lastFocus = nil
+            lastFocusGlobalBounds = nil
+        }
     }
 
     public func focusCandidate(
@@ -275,8 +307,20 @@ public actor MacInteractiveSurfaceTargetOwnerV1 {
               Self.valid(active.inputBounds) else {
             throw MacInteractiveSurfaceTargetOwnerErrorV1.bindingMismatch
         }
+        let readResult = focusReader.readCurrentFocus()
+        let observationFingerprint: FocusFingerprint?
+        if case let .verified(observation) = readResult {
+            observationFingerprint = FocusFingerprint(
+                category: observation.category,
+                globalBounds: observation.globalBounds,
+                editable: observation.editable,
+                secure: observation.secure
+            )
+        } else {
+            observationFingerprint = nil
+        }
         let projected = try focusProjector.project(
-            focusReader.readCurrentFocus(),
+            readResult,
             currentSurfaceGlobalBounds: active.inputBounds,
             focusToken: command.commandID,
             focusRevision: FocusRevision(rawValue: 1),
@@ -285,6 +329,8 @@ public actor MacInteractiveSurfaceTargetOwnerV1 {
         guard let projectedFocus = projected.focus else {
             lastFocusFingerprint = nil
             focusToken = nil
+            lastFocus = nil
+            lastFocusGlobalBounds = nil
             return MacInteractiveFocusCandidateProjectionV1(
                 candidate: projected,
                 requiresInputPause:
@@ -292,12 +338,26 @@ public actor MacInteractiveSurfaceTargetOwnerV1 {
                         && active.descriptor.focus != nil
             )
         }
-        let fingerprint = FocusFingerprint(
-            category: projectedFocus.category,
-            bounds: projectedFocus.bounds,
-            editable: projectedFocus.editable,
-            secure: projectedFocus.secure
-        )
+        guard let fingerprint = observationFingerprint else {
+            throw MacInteractiveSurfaceTargetOwnerErrorV1.unavailable
+        }
+        if active.descriptor.kind == .focusedRegion,
+           fingerprint == lastFocusFingerprint,
+           let activeFocus = active.descriptor.focus {
+            let candidate = try InteractiveFocusEventCandidateV0(
+                recommendedTargetKind: .focusedRegion,
+                focus: activeFocus,
+                inputPaused: inputPaused,
+                reason: .verifiedFocus,
+                validForMilliseconds: projected.validForMilliseconds
+            )
+            lastFocus = activeFocus
+            lastFocusGlobalBounds = fingerprint.globalBounds
+            return MacInteractiveFocusCandidateProjectionV1(
+                candidate: candidate,
+                requiresInputPause: false
+            )
+        }
         if fingerprint != lastFocusFingerprint {
             guard focusRevision < FocusRevision.maximumWireValue,
                   issuedFocusTokens.count < 100_000 else {
@@ -331,6 +391,12 @@ public actor MacInteractiveSurfaceTargetOwnerV1 {
             reason: projected.reason,
             validForMilliseconds: projected.validForMilliseconds
         )
+        lastFocus = focus
+        if case let .verified(observation) = readResult {
+            lastFocusGlobalBounds = observation.globalBounds
+        } else {
+            lastFocusGlobalBounds = nil
+        }
         return MacInteractiveFocusCandidateProjectionV1(
             candidate: candidate,
             requiresInputPause:
@@ -347,6 +413,8 @@ public actor MacInteractiveSurfaceTargetOwnerV1 {
         lastFocusFingerprint = nil
         focusToken = nil
         focusRevision = 0
+        lastFocus = nil
+        lastFocusGlobalBounds = nil
         issuedFocusTokens.removeAll(keepingCapacity: false)
     }
 
@@ -401,10 +469,108 @@ public actor MacInteractiveSurfaceTargetOwnerV1 {
                 .makeDesktopFilter(display: display),
             descriptor: descriptor,
             profile: profile,
+            focusedRegionSourceGlobalBounds: bounds,
             inputBounds: bounds,
             inputBackingScaleFactor: try
                 ScreenCaptureKitOpaqueTargetCatalogV0
                     .backingScaleFactor(for: active.physicalDisplayID)
+        )
+    }
+
+    private func makeFocusedRegionReplacement(
+        active: Active,
+        content: SCShareableContent,
+        targetToken _: UUID,
+        nowMonotonicMilliseconds: Int64
+    ) throws -> ScreenCaptureKitResolvedSurfaceV0 {
+        guard let expectedFocus = lastFocus,
+              let expectedGlobalBounds = lastFocusGlobalBounds,
+              case let .verified(observation) = focusReader.readCurrentFocus(),
+              observation.globalBounds == expectedGlobalBounds,
+              nowMonotonicMilliseconds <= Int64.max - 10_000 else {
+            throw MacInteractiveSurfaceTargetOwnerErrorV1.bindingMismatch
+        }
+        let fingerprint = FocusFingerprint(
+            category: observation.category,
+            globalBounds: observation.globalBounds,
+            editable: observation.editable,
+            secure: observation.secure
+        )
+        guard fingerprint == lastFocusFingerprint else {
+            throw MacInteractiveSurfaceTargetOwnerErrorV1.bindingMismatch
+        }
+
+        let filter: SCContentFilter
+        let sourceBounds: CGRect
+        let pointPixelScale: Double
+        if let retainedFilter = active.focusedRegionFilter,
+           let retainedBounds = active.focusedRegionSourceGlobalBounds,
+           let retainedScale = active.focusedRegionPointPixelScale {
+            filter = retainedFilter
+            sourceBounds = retainedBounds
+            pointPixelScale = retainedScale
+        } else {
+            guard active.descriptor.kind == .desktop,
+                  let display = content.displays.first(where: {
+                    $0.displayID == active.physicalDisplayID
+                  }) else {
+                throw MacInteractiveSurfaceTargetOwnerErrorV1.unavailable
+            }
+            filter = ScreenCaptureKitCaptureConfigurationV0
+                .makeDesktopFilter(display: display)
+            sourceBounds = CGDisplayBounds(active.physicalDisplayID)
+            pointPixelScale = try ScreenCaptureKitOpaqueTargetCatalogV0
+                .backingScaleFactor(for: active.physicalDisplayID)
+        }
+        let crop = try ScreenCaptureKitFocusedRegionCropV0(
+            focusGlobalBounds: observation.globalBounds,
+            sourceGlobalBounds: sourceBounds,
+            pointPixelScale: pointPixelScale
+        )
+        let applicationToken = active.descriptor.applicationToken
+            ?? identifier()
+        let fallbackSurfaceID = active.descriptor.kind == .desktop
+            ? active.descriptor.surfaceID
+            : active.descriptor.fallbackSurfaceID
+                ?? active.descriptor.surfaceID
+        let descriptor = try AdaptiveSurfaceDescriptor(
+            interactiveSessionID: active.descriptor.interactiveSessionID,
+            authorizationEpoch: active.descriptor.authorizationEpoch,
+            surfaceID: identifier(),
+            kind: .focusedRegion,
+            surfaceRevision: active.descriptor.surfaceRevision.advanced(),
+            coordinateSpaceRevision:
+                active.descriptor.coordinateSpaceRevision.advanced(),
+            applicationToken: applicationToken,
+            parentSurfaceID: active.descriptor.surfaceID,
+            fallbackSurfaceID: fallbackSurfaceID,
+            encodedWidth: UInt16(crop.profile.width),
+            encodedHeight: UInt16(crop.profile.height),
+            logicalWidthPoints: UInt32(
+                crop.globalBounds.width.rounded(.up)
+            ),
+            logicalHeightPoints: UInt32(
+                crop.globalBounds.height.rounded(.up)
+            ),
+            interactionClasses: Set(active.descriptor.interactionClasses),
+            privacyProfile: .assistedVisual,
+            metadataFields: [
+                .focusCategory, .focusBounds, .editable, .secure,
+            ],
+            focus: expectedFocus,
+            createdAtMonotonicMilliseconds: nowMonotonicMilliseconds,
+            expiresAtMonotonicMilliseconds:
+                nowMonotonicMilliseconds + 10_000
+        )
+        return ScreenCaptureKitResolvedSurfaceV0(
+            filter: filter,
+            focusedRegionFilter: filter,
+            descriptor: descriptor,
+            profile: crop.profile,
+            sourceRect: crop.sourceRect,
+            focusedRegionSourceGlobalBounds: sourceBounds,
+            inputBounds: crop.globalBounds,
+            inputBackingScaleFactor: pointPixelScale
         )
     }
 

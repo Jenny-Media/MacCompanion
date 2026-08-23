@@ -34,6 +34,9 @@ public actor NetworkClientPrimaryRouterBridgeV0:
     private let publishControl: @Sendable (
         ClientInteractivePrimarySessionEventV0
     ) -> Void
+    private let publishFocus: @Sendable (
+        ClientSurfaceFocusEventV0
+    ) -> Void
 
     private var pump: NetworkClientPrimaryFramePumpV0?
     private var router: ClientPrimaryCommandRouterV0?
@@ -60,6 +63,9 @@ public actor NetworkClientPrimaryRouterBridgeV0:
         ) -> Void = { _ in },
         publishControl: @escaping @Sendable (
             ClientInteractivePrimarySessionEventV0
+        ) -> Void = { _ in },
+        publishFocus: @escaping @Sendable (
+            ClientSurfaceFocusEventV0
         ) -> Void = { _ in }
     ) {
         self.pairedHost = pairedHost
@@ -72,6 +78,7 @@ public actor NetworkClientPrimaryRouterBridgeV0:
         self.publishObserve = publishObserve
         self.publishAct = publishAct
         self.publishControl = publishControl
+        self.publishFocus = publishFocus
     }
 
     public func bind(
@@ -125,7 +132,8 @@ public actor NetworkClientPrimaryRouterBridgeV0:
                 signer: signer,
                 sender: router.sender(for: .control),
                 environment: environment,
-                publish: publishControl
+                publish: publishControl,
+                publishFocus: publishFocus
             )
             try await router.installReceiver(channel, for: .control)
             controlChannel = channel

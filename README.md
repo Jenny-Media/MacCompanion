@@ -353,6 +353,18 @@ event per current surface fence, and revokes plus closes on a send race. Live
 focused-region capture cropping and automatic iOS Smart Zoom application are
 the next construction lanes.
 
+The [live Focused Region Smart Zoom checkpoint](docs/evidence/2026-08-23-live-focused-region-smart-zoom.md)
+now closes those two construction lanes. The menu revalidates the exact
+privacy-reduced focus, creates a bounded display-logical ScreenCaptureKit crop,
+and retains separate global bounds for input mapping. The selected iOS product
+applies the admitted event through the same reset/select/clean-render/ack path,
+buffers the acknowledgement-to-promotion race, updates its live descriptor and
+dimensions, and exposes an automatic-follow policy that every manual surface
+choice turns off. Stable global focus identity prevents recursive re-cropping
+after the coordinate space changes. Signed TCC execution, real crop pixels,
+physical-iPhone behavior and latency, multi-display edges, and lock behavior
+remain evidence gates.
+
 The [permanent Mac containing-app target](docs/evidence/2026-08-21-permanent-mac-containing-app-target.md)
 now embeds the separately signed, deliberately inert [permanent Agent
 target](docs/evidence/2026-08-21-permanent-embedded-mac-agent-target.md), its
