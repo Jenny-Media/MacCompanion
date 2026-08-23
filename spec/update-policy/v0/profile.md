@@ -1,4 +1,4 @@
-# Mac Companion update trust policy v0.21
+# Mac Companion update trust policy v0.22
 
 Status: normative for the first direct-distribution beta.
 
@@ -216,7 +216,7 @@ listener-route, and advertisement readiness remain unavailable while admission
 is closed; independently authenticated route evidence is not rewritten.
 Terminal Agent shutdown is distinct and cannot reopen.
 
-The containing-app composition may bind those commands to the runtime shutdown
+The containing-app composition binds those commands to the runtime shutdown
 coordinator only alongside one candidate-bound Agent-stop owner, current
 foreground/Control observations, and an adapter that can start only the already
 prepared update. It accepts no feed, archive, release claim, or generic Sparkle
@@ -224,8 +224,10 @@ controller. Failure before Agent stop reconciles through a current known-live
 dashboard or a replacement authenticated generation after transport ambiguity.
 Failure after Agent stop first completes exact source-Agent recovery and then
 reconstructs an authenticated dashboard generation before reopening. Until the
-separately reviewed prepared-installer adapter is supplied, permanent app
-composition remains inert and the user driver continues to answer `.skip`.
+ready callback supplies one exact admitted candidate and the user confirms in
+the foreground, construction and retention remain effect-inert. Ordinary menu
+checks remain information-only and cannot reach download, extraction, or this
+ready callback.
 
 Only one dashboard reconciliation may run at a time. A current active
 generation retries an explicit command failure, but `unavailable`, malformed,
@@ -244,11 +246,14 @@ The prepared-installer boundary owns exactly one readiness reply. Only its
 owner loss, a second start, and every path that does not complete the runtime
 shutdown authority resolve `skip` or fail closed. The reply owner exposes no
 feed, archive, candidate construction, Sparkle controller, or repeatable
-choice. The containing app may construct that owner at the held ready callback,
-but until the foreground confirmation and runtime coordinator are bound it
-must cancel the correlation and owner. A source policy permits the single
-`install` reply only in the exact typed install-to-install mapping and rejects
-any direct permanent-app invocation of `startPreparedUpdate`.
+choice. The containing app constructs that owner at the held ready callback and
+binds it to the foreground installation application only after the independent
+validation lifecycle reaches the exact readiness phase. Candidate build and
+display version must match the visible admitted offer. Any missing composition,
+phase drift, mismatch, cancellation, or owner conflict resolves skip. A source
+policy permits the single `install` reply only in the exact typed
+install-to-install mapping and rejects any direct permanent-app invocation of
+`startPreparedUpdate`.
 
 One main-actor installation application owns the fresh foreground decision for
 an admitted update. The composition constructs it around the same one-shot
@@ -271,15 +276,19 @@ that dashboard for close/drain, and obtains recovery from the process router.
 Its gate observation uses fail-closed monotonic milliseconds, explicit
 NSApplication active state, and Control state projected from the visible
 runtime indicator: inactive, active, or cleanup-uncertain while stopping.
-Construction and retention of this composition perform no effect, and the
-Sparkle ready callback must not invoke it until the confirmation UI and
-termination lifecycle are bound.
+Construction and retention of this composition perform no effect. The Sparkle
+ready callback may use it only to construct the foreground owner; the owner
+cannot begin shutdown until the user selects `Install and Restart` while the
+app is active. `Not Now`, foreground loss, owner retirement, or application
+termination before shutdown resolves skip. Termination during shutdown is
+joined through the ordered AppKit barrier until handoff or recovery completes.
 
 Application termination is an ordered barrier. The AppKit delegate must return
-`terminateLater`, cancel and join any informational validation, fence a pending
-confirmation, and await an in-flight installation application until it either
-hands off or completes its required recovery. Only then may it finish the
-product dashboard and answer AppKit's termination request. Best-effort cleanup
+`terminateLater`, cancel and join informational validation and the asynchronous
+ready-callback bridge, fence a pending confirmation, and await an in-flight
+installation application until it either hands off or completes its required
+recovery. Only then may it finish the product dashboard and answer AppKit's
+termination request. Best-effort cleanup
 from `applicationWillTerminate` is not sufficient update authority. Process
 kill and power loss remain crash cases handled by the durable Agent-reactivation
 receipt after Agent stop; before Agent stop, signed forced-loss evidence must

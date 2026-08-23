@@ -99,6 +99,9 @@ private final class MacCompanionApplicationDelegate:
                 interactiveIndicator: interactiveIndicator
             )
         }
+        if let updateRuntime {
+            updates.installRuntimeComposition(updateRuntime)
+        }
         super.init()
     }
 
@@ -111,6 +114,10 @@ private final class MacCompanionApplicationDelegate:
 
     func applicationWillTerminate(_ notification: Notification) {
         beginOrderedFinish(replyToTerminationRequest: false)
+    }
+
+    func applicationDidResignActive(_ notification: Notification) {
+        updates.applicationForegroundDidChange(false)
     }
 
     func applicationShouldTerminate(
@@ -266,6 +273,20 @@ private struct MacCompanionUpdateFooter: View {
             if case .checking = adapter.phase {
                 ProgressView()
                     .controlSize(.small)
+            } else if case .preparingInstallation = adapter.phase {
+                ProgressView()
+                    .controlSize(.small)
+            } else if case .awaitingInstallationConfirmation =
+                        adapter.phase {
+                Button("Not Now") {
+                    adapter.cancelPendingInstallation()
+                }
+                .controlSize(.small)
+                Button("Install and Restart") {
+                    adapter.confirmPendingInstallation()
+                }
+                .controlSize(.small)
+                .buttonStyle(.borderedProminent)
             } else if showsCheckButton {
                 Button("Check for Updates") {
                     adapter.probeForUpdates()
@@ -281,9 +302,12 @@ private struct MacCompanionUpdateFooter: View {
 
     private var showsCheckButton: Bool {
         switch adapter.phase {
-        case .ready, .current, .updateAvailable, .failed:
+        case .ready, .current, .updateAvailable, .installationFailed,
+                .failed:
             true
-        case .notConfigured, .invalidConfiguration, .checking:
+        case .notConfigured, .invalidConfiguration, .checking,
+                .awaitingInstallationConfirmation,
+                .preparingInstallation:
             false
         }
     }
@@ -302,6 +326,14 @@ private struct MacCompanionUpdateFooter: View {
             "Mac Companion is up to date"
         case let .updateAvailable(_, displayVersion, _):
             "Version \(displayVersion) is available"
+        case let .awaitingInstallationConfirmation(
+            _, displayVersion, _
+        ):
+            "Install version \(displayVersion)?"
+        case .preparingInstallation:
+            "Preparing a safe restart…"
+        case .installationFailed:
+            "Update installation was stopped"
         case .failed:
             "Update check unavailable"
         }
@@ -319,16 +351,38 @@ private struct MacCompanionUpdateFooter: View {
             "Reading the signed \(channelName(channel).lowercased()) feed"
         case let .updateAvailable(channel, _, build):
             "\(channelName(channel)) build \(build) · Installation remains locally gated"
+        case .awaitingInstallationConfirmation:
+            "This disconnects remote sessions, safely stops the Agent, installs, and restarts Mac Companion."
+        case .preparingInstallation:
+            "Closing remote access and preserving recovery state before handoff"
+        case let .installationFailed(_, _, _, failure):
+            installationFailureDetail(failure)
         case let .failed(channel):
             "The \(channelName(channel).lowercased()) feed was not accepted."
         }
     }
 
+    private func installationFailureDetail(
+        _ failure: MacUpdateInstallationApplicationFailureV0
+    ) -> String {
+        switch failure {
+        case .controlActive:
+            "Stop Remote Control, then check for the update again."
+        case .controlCleanupUncertain:
+            "Remote Control cleanup is uncertain; installation stayed closed."
+        case .recoveryFailed:
+            "Remote access recovery could not be verified; installation stayed closed."
+        case .authorityDenied, .runtimeEffectFailed, .invalidState:
+            "Safety checks did not complete; installation stayed closed."
+        }
+    }
+
     private var systemImage: String {
         switch adapter.phase {
-        case .invalidConfiguration, .failed:
+        case .invalidConfiguration, .installationFailed, .failed:
             "exclamationmark.triangle"
-        case .updateAvailable:
+        case .updateAvailable, .awaitingInstallationConfirmation,
+                .preparingInstallation:
             "arrow.down.circle"
         case .checking:
             "arrow.trianglehead.2.clockwise.rotate.90"
@@ -339,9 +393,10 @@ private struct MacCompanionUpdateFooter: View {
 
     private var iconStyle: AnyShapeStyle {
         switch adapter.phase {
-        case .invalidConfiguration, .failed:
+        case .invalidConfiguration, .installationFailed, .failed:
             AnyShapeStyle(.orange)
-        case .updateAvailable:
+        case .updateAvailable, .awaitingInstallationConfirmation,
+                .preparingInstallation:
             AnyShapeStyle(.blue)
         case .notConfigured, .ready, .checking, .current:
             AnyShapeStyle(.secondary)

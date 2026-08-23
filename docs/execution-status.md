@@ -817,6 +817,20 @@ finish, and replies explicitly instead of relying on best-effort
 `applicationWillTerminate` cleanup. Five focused owner tests and the permanent
 source validator pass. The ready callback remains unbound; complete-gate counts
 are 1,603 package tests plus 8 platform probes.
+The subsequent
+[permanent update confirmation binding](evidence/2026-08-23-permanent-update-confirmation-binding.md)
+binds Sparkle's held ready callback to the exact validation correlation,
+candidate-matching permanent runtime composition, one-shot prepared reply, and
+foreground installation owner. The menu now presents explicit `Not Now` and
+`Install and Restart` decisions, forwards foreground loss, and joins the owner
+and its task during ordered termination. The checked-in Xcode project includes
+the runtime source, the permanent source validator passes, and an unsigned
+Xcode 27 beta app build succeeds. Ordinary checks still call only
+`checkForUpdateInformation`; full/background checks, real download/extraction,
+listener mutation, Agent stop, and updater handoff remain disabled pending the
+signed two-version lane and physical confirmation/recovery evidence.
+The final complete gate passes 1,603 package tests plus 8 platform probes; no
+package-test count changed in this source-only permanent-target binding.
 
 ## Blocker handling rule
 

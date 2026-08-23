@@ -433,6 +433,16 @@ packaging-equivalence generators then inspect those outputs independently.
 Notarization and every later promotion action remain separate, explicitly
 authorized commands.
 
+The permanent menu updater now contains the final foreground decision seam:
+after exact signed-candidate validation reaches Sparkle's held readiness point,
+it can present `Not Now` and `Install and Restart`, and only the latter may ask
+the package-owned shutdown coordinator to close sessions, stop the Agent, and
+resolve the one-shot installer reply. This source binding does not enable a
+shipping update path. The visible check action remains information-only, all
+automatic and background checks remain disabled, and a protected build must
+not enable a full check until signed old-to-new installation, foreground-loss,
+forced-loss recovery, rollback, and clean-machine evidence is retained.
+
 ## 9. Versioning and compatibility policy
 
 - User-visible app releases use semantic product versions.

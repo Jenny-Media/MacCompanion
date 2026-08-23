@@ -1,4 +1,6 @@
+import AppKit
 import CompanionLifecycle
+import CompanionMacApplicationPlatform
 import Combine
 import Foundation
 import Sparkle
@@ -14,14 +16,37 @@ enum MacCompanionUpdatePhaseV0: Equatable {
         displayVersion: String,
         build: UInt64
     )
+    case awaitingInstallationConfirmation(
+        channel: MacUpdateChannelV0,
+        displayVersion: String,
+        build: UInt64
+    )
+    case preparingInstallation(
+        channel: MacUpdateChannelV0,
+        displayVersion: String,
+        build: UInt64
+    )
+    case installationFailed(
+        channel: MacUpdateChannelV0,
+        displayVersion: String,
+        build: UInt64,
+        failure: MacUpdateInstallationApplicationFailureV0
+    )
     case failed(channel: MacUpdateChannelV0)
+}
+
+private struct MacCompanionUpdateCandidateSummaryV0: Equatable {
+    let channel: MacUpdateChannelV0
+    let displayVersion: String
+    let build: UInt64
 }
 
 /// Containing-app-only Sparkle boundary. Missing protected release authority
 /// is an ordinary inert state: no Sparkle object is constructed and no network
 /// work begins. Configured builds permit explicit informational probes only;
-/// every download/install check remains denied until the package-owned runtime
-/// installation gate hands off one exact candidate in a later checkpoint.
+/// every download/install check remains denied. If Sparkle reaches its held
+/// ready callback, only the package-owned runtime gate may hand off the exact
+/// admitted candidate after a second explicit local confirmation.
 @MainActor
 final class MacCompanionSparkleAdapterV0:
     NSObject,
@@ -45,6 +70,14 @@ final class MacCompanionSparkleAdapterV0:
     private var pendingOffer: MacUpdatePublishedCandidateV0?
     private var activeCorrelation: MacUpdateValidationCorrelationV0?
     private var validationLifecycleTask: Task<Void, Never>?
+    private var readinessTask: Task<Void, Never>?
+    private var runtimeComposition:
+        MacCompanionUpdateRuntimeCompositionV0?
+    private var installationApplication:
+        MacUpdateInstallationApplicationV0?
+    private var installationSummary:
+        MacCompanionUpdateCandidateSummaryV0?
+    private var installationTask: Task<Void, Never>?
 
     init(bundle: Bundle = .main) {
         self.bundle = bundle
@@ -70,11 +103,22 @@ final class MacCompanionSparkleAdapterV0:
             return false
         }
         switch phase {
-        case .ready, .current, .updateAvailable, .failed:
+        case .ready, .current, .updateAvailable, .installationFailed,
+                .failed:
             return true
-        case .notConfigured, .invalidConfiguration, .checking:
+        case .notConfigured, .invalidConfiguration, .checking,
+                .awaitingInstallationConfirmation,
+                .preparingInstallation:
             return false
         }
+    }
+
+    func installRuntimeComposition(
+        _ runtimeComposition: MacCompanionUpdateRuntimeCompositionV0
+    ) {
+        precondition(self.runtimeComposition == nil)
+        precondition(updaterInstance == nil)
+        self.runtimeComposition = runtimeComposition
     }
 
     /// Starts only Sparkle's inert scheduler with automatic checks and downloads
@@ -122,6 +166,63 @@ final class MacCompanionSparkleAdapterV0:
         updater.checkForUpdateInformation()
     }
 
+    func confirmPendingInstallation() {
+        guard installationTask == nil,
+              let application = installationApplication,
+              let summary = installationSummary,
+              case .awaitingInstallationConfirmation = phase else {
+            return
+        }
+        phase = .preparingInstallation(
+            channel: summary.channel,
+            displayVersion: summary.displayVersion,
+            build: summary.build
+        )
+        let task = Task { @MainActor [weak self, weak application] in
+            guard let application else { return }
+            await application.confirmAndInstall()
+            guard let self,
+                  self.installationApplication === application else {
+                return
+            }
+            self.installationTask = nil
+            self.reconcileInstallationPresentation(application: application)
+        }
+        installationTask = task
+    }
+
+    func cancelPendingInstallation() {
+        guard installationTask == nil,
+              let application = installationApplication,
+              case .awaitingInstallationConfirmation = phase else {
+            return
+        }
+        installationTask = Task { @MainActor [weak self, weak application] in
+            guard let application else { return }
+            await application.cancel()
+            guard let self,
+                  self.installationApplication === application else {
+                return
+            }
+            self.installationTask = nil
+            self.reconcileInstallationPresentation(application: application)
+        }
+    }
+
+    func applicationForegroundDidChange(_ foreground: Bool) {
+        guard !foreground,
+              let application = installationApplication else { return }
+        Task { @MainActor [weak self, weak application] in
+            guard let application else { return }
+            await application.menuForegroundDidChange(false)
+            guard let self,
+                  self.installationApplication === application else {
+                return
+            }
+            self.reconcileInstallationPresentation(application: application)
+        }
+    }
+
     /// Termination barrier for informational/validation state. A later runtime
     /// binding also joins its installation application here before AppKit is
     /// allowed to terminate the process.
@@ -133,10 +234,22 @@ final class MacCompanionSparkleAdapterV0:
         if let validationLifecycleTask {
             await validationLifecycleTask.value
         }
+        let readinessTask = self.readinessTask
+        readinessTask?.cancel()
+        self.readinessTask = nil
+        if let readinessTask { await readinessTask.value }
         let correlation = activeCorrelation
         activeCorrelation = nil
         pendingOffer = nil
         if let correlation { await correlation.cancel() }
+        if let installationApplication {
+            await installationApplication
+                .applicationTerminationRequested()
+        }
+        if let installationTask { await installationTask.value }
+        installationTask = nil
+        installationApplication = nil
+        installationSummary = nil
     }
 
     func feedURLString(for updater: SPUUpdater) -> String? {
@@ -340,14 +453,23 @@ final class MacCompanionSparkleAdapterV0:
     ) {
         let preparedInstaller = Self.preparedInstaller(reply: reply)
         guard let correlation = activeCorrelation,
-              let validationLifecycleTask else {
+              let validationLifecycleTask,
+              let runtimeComposition,
+              readinessTask == nil,
+              installationApplication == nil,
+              case let .updateAvailable(
+                  channel,
+                  displayVersion,
+                  build
+              ) = phase else {
             preparedInstaller.cancel()
             return
         }
         activeCorrelation = nil
         self.validationLifecycleTask = nil
 
-        Task { @MainActor in
+        let task = Task { @MainActor [weak self] in
+            defer { self?.readinessTask = nil }
             await validationLifecycleTask.value
             guard !Task.isCancelled,
                   await correlation.currentPhase()
@@ -357,11 +479,85 @@ final class MacCompanionSparkleAdapterV0:
                 return
             }
 
-            // The real foreground confirmation and runtime shutdown owner are
-            // not bound yet. Cancelling here proves that this concrete Sparkle
-            // hold point cannot accidentally become installation authority.
-            await correlation.cancel()
-            preparedInstaller.cancel()
+            do {
+                let admission = try await correlation
+                    .reachedReadyToInstall()
+                guard !Task.isCancelled,
+                      admission.candidateBuild == build,
+                      admission.displayVersion == displayVersion,
+                      let self,
+                      self.installationApplication == nil else {
+                    preparedInstaller.cancel()
+                    return
+                }
+                let application = try runtimeComposition
+                    .makeInstallationApplication(
+                        admission: admission,
+                        preparedInstaller: preparedInstaller
+                    )
+                let summary = MacCompanionUpdateCandidateSummaryV0(
+                    channel: channel,
+                    displayVersion: displayVersion,
+                    build: build
+                )
+                installationApplication = application
+                installationSummary = summary
+                phase = .awaitingInstallationConfirmation(
+                    channel: channel,
+                    displayVersion: displayVersion,
+                    build: build
+                )
+                NSApp.requestUserAttention(.informationalRequest)
+            } catch {
+                await correlation.cancel()
+                preparedInstaller.cancel()
+                guard let self else { return }
+                phase = .installationFailed(
+                    channel: channel,
+                    displayVersion: displayVersion,
+                    build: build,
+                    failure: .invalidState
+                )
+            }
+        }
+        readinessTask = task
+    }
+
+    private func reconcileInstallationPresentation(
+        application: MacUpdateInstallationApplicationV0
+    ) {
+        guard installationApplication === application,
+              let summary = installationSummary else { return }
+        switch application.phase {
+        case .awaitingConfirmation:
+            phase = .awaitingInstallationConfirmation(
+                channel: summary.channel,
+                displayVersion: summary.displayVersion,
+                build: summary.build
+            )
+        case .confirming, .installing, .handedOff:
+            phase = .preparingInstallation(
+                channel: summary.channel,
+                displayVersion: summary.displayVersion,
+                build: summary.build
+            )
+        case .cancelled:
+            installationApplication = nil
+            installationSummary = nil
+            phase = .updateAvailable(
+                channel: summary.channel,
+                displayVersion: summary.displayVersion,
+                build: summary.build
+            )
+        case let .failed(failure):
+            installationApplication = nil
+            installationSummary = nil
+            phase = .installationFailed(
+                channel: summary.channel,
+                displayVersion: summary.displayVersion,
+                build: summary.build,
+                failure: failure
+            )
         }
     }
 
@@ -381,6 +577,8 @@ final class MacCompanionSparkleAdapterV0:
     private func retireValidationLifecycle(asFailure: Bool = false) {
         validationLifecycleTask?.cancel()
         validationLifecycleTask = nil
+        readinessTask?.cancel()
+        readinessTask = nil
         let correlation = activeCorrelation
         activeCorrelation = nil
         pendingOffer = nil

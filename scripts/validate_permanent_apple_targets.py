@@ -536,6 +536,17 @@ def validate_inert_update_adapter(
         "return .terminateLater",
         "await updates.prepareForApplicationTermination()",
         "NSApp.reply(toApplicationShouldTerminate: true)",
+        "updates.installRuntimeComposition(updateRuntime)",
+        ".reachedReadyToInstall()",
+        ".makeInstallationApplication(",
+        "func applicationDidResignActive(",
+        "updates.applicationForegroundDidChange(false)",
+        "Button(\"Install and Restart\")",
+        "Button(\"Not Now\")",
+        "await installationApplication",
+        ".applicationTerminationRequested()",
+        "readinessTask?.cancel()",
+        "await readinessTask.value",
     ):
         if needle not in mac_application:
             failures.append(f"macUpdateAdapterMissing:{needle}")
@@ -770,7 +781,7 @@ def validate_login_role_composition(
             "_ = await application.retryStatus()"
         ),
     }.items():
-        expected_count = 2 if label == "menuApplicationPlatformImport" else 1
+        expected_count = 3 if label == "menuApplicationPlatformImport" else 1
         require_count(
             application_code,
             needle,
