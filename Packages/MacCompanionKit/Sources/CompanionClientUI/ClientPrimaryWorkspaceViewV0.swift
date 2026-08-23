@@ -168,6 +168,12 @@ public struct ClientPrimaryWorkspaceViewV0: View {
                 control: model.projection.control,
                 coordinator: liveControl,
                 onStop: { try await model.endInteractiveControl() },
+                onRecordStudyJob: { category, snapshot in
+                    _ = try await model.recordControlStudyJob(
+                        category: category,
+                        snapshot: snapshot
+                    )
+                },
                 onCommandFailure: onCommandFailure
             )
         } label: {

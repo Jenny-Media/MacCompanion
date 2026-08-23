@@ -7,6 +7,57 @@ import CompanionWire
 import Combine
 import Foundation
 
+public enum ClientStage3StudyActJobProjectionV1 {
+    public static let setAudioMutedCapabilityID =
+        "maccompanion.system.setAudioMuted"
+
+    public static func result(
+        capabilityID: String,
+        state: ClientOperationSessionStateV1
+    ) -> Stage3StudyAttemptResultV1? {
+        guard capabilityID == setAudioMutedCapabilityID else { return nil }
+        return switch state {
+        case let .terminal(value):
+            switch value {
+            case .succeeded: .completed
+            case .denied: .denied
+            case .expired, .cancelled: .notCompleted
+            case .failed: .failed
+            case .outcomeUnknown: .outcomeUnknown
+            case .pending: nil
+            }
+        case .remoteRejected:
+            .failed
+        case .idle, .awaitingInvokeReply, .awaitingUserPresence,
+             .awaitingApprovalReply, .observing, .awaitingStatusReply,
+             .awaitingCancelReply, .deliveryUnknown, .invalidated:
+            nil
+        }
+    }
+}
+
+public enum ClientStage3StudyControlJobProjectionV1 {
+    public static func accepts(
+        _ category: Stage3StudyJobCategoryV1
+    ) -> Bool {
+        switch category {
+        case .controlUnexpectedDialog, .controlDevelopmentApp,
+             .controlOtherOwnedApp:
+            true
+        case .observeLongRunningTask, .observeSystemHealth,
+             .observeAvailability, .actSetAudioMuted:
+            false
+        }
+    }
+}
+
+public enum ClientPrimaryWorkspaceStudyCaptureErrorV1:
+    Error, Equatable, Sendable
+{
+    case unavailable
+    case invalidJob
+}
+
 @available(iOS 17.0, macOS 14.0, *)
 @MainActor
 public final class ClientPrimaryWorkspaceModelV0: ObservableObject {
@@ -139,6 +190,47 @@ public final class ClientPrimaryWorkspaceModelV0: ObservableObject {
 
     public func finishOperation() async throws {
         try await primaryState.finishOperation()
+    }
+
+    @discardableResult
+    public func recordSetAudioMutedStudyJob(
+        capabilityID: String
+    ) async throws -> Stage3StudyReportV1 {
+        guard let studyCapture else {
+            throw ClientPrimaryWorkspaceStudyCaptureErrorV1.unavailable
+        }
+        guard let operationState = projection.operationState,
+              let result = ClientStage3StudyActJobProjectionV1.result(
+                capabilityID: capabilityID,
+                state: operationState
+              ) else {
+            throw ClientPrimaryWorkspaceStudyCaptureErrorV1.invalidJob
+        }
+        return try await studyCapture.recordJob(
+            path: .act,
+            category: .actSetAudioMuted,
+            result: result
+        )
+    }
+
+    @discardableResult
+    public func recordControlStudyJob(
+        category: Stage3StudyJobCategoryV1,
+        snapshot: ClientStage3StudyControlSnapshotV1
+    ) async throws -> Stage3StudyReportV1 {
+        guard let studyCapture else {
+            throw ClientPrimaryWorkspaceStudyCaptureErrorV1.unavailable
+        }
+        guard ClientStage3StudyControlJobProjectionV1.accepts(category) else {
+            throw ClientPrimaryWorkspaceStudyCaptureErrorV1.invalidJob
+        }
+        return try await studyCapture.recordJob(
+            path: .control,
+            category: category,
+            result: .completed,
+            controlModesUsed: snapshot.modesUsed,
+            controlDurationDelta: snapshot.durationDelta
+        )
     }
 
     @discardableResult

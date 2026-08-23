@@ -4,6 +4,8 @@ import CompanionClientPlatform
 import CompanionInteractiveClient
 import CompanionInteractiveShared
 import CompanionInteractiveWire
+import CompanionStudy
+import Dispatch
 import SwiftUI
 
 public enum ClientPrimaryLiveControlPhaseV0: Equatable, Sendable {
@@ -277,6 +279,68 @@ private final class ClientPrimaryLiveControlViewStateV0: ObservableObject {
     @Published var surfaceRequestInFlight = false
     @Published var visualZoomEditing = false
     @Published var automaticSmartZoomEnabled = true
+    @Published var showingStudyJob = false
+    @Published var studyJobInFlight = false
+    @Published var studyJobRecorded = false
+    @Published var selectedStudyCategory =
+        Stage3StudyJobCategoryV1.controlUnexpectedDialog
+    var studyControlAccumulator = ClientStage3StudyControlAccumulatorV1()
+    var studyControlSurfaceKind = InteractiveSurfaceKind.desktop
+    var studyControlIsActive = false
+    var surfaceSelectionInFlight = false
+}
+
+@available(iOS 17.0, *)
+private struct ClientPrimaryControlStudyJobViewV1: View {
+    @Binding var category: Stage3StudyJobCategoryV1
+    let inFlight: Bool
+    let recorded: Bool
+    let onRecord: () -> Void
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Completed job") {
+                    Picker("Category", selection: $category) {
+                        Text("Handle an unexpected dialog").tag(
+                            Stage3StudyJobCategoryV1
+                                .controlUnexpectedDialog
+                        )
+                        Text("Use a development app").tag(
+                            Stage3StudyJobCategoryV1.controlDevelopmentApp
+                        )
+                        Text("Use another app you own").tag(
+                            Stage3StudyJobCategoryV1.controlOtherOwnedApp
+                        )
+                    }
+                    .pickerStyle(.inline)
+                }
+                Section {
+                    Button(
+                        recorded ? "Job Added" : "Add Completed Job",
+                        systemImage: recorded
+                            ? "checkmark.circle.fill" : "plus.circle",
+                        action: onRecord
+                    )
+                    .disabled(inFlight || recorded)
+                } footer: {
+                    Text(
+                        "Only confirm a real completed job. The report adds "
+                            + "closed surface kinds and aggregate active "
+                            + "durations; it does not store the screen, input, "
+                            + "window titles, or app identity."
+                    )
+                }
+            }
+            .navigationTitle("Study Job")
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { dismiss() }
+                }
+            }
+        }
+    }
 }
 
 @available(iOS 17.0, *)
@@ -292,6 +356,10 @@ public struct ClientPrimaryLiveControlViewV0: View {
         @MainActor @Sendable (any Error) -> Void
     private let onStop:
         @MainActor @Sendable () async throws -> Void
+    private let onRecordStudyJob: @MainActor @Sendable (
+        Stage3StudyJobCategoryV1,
+        ClientStage3StudyControlSnapshotV1
+    ) async throws -> Void
 
     public init(
         macName: String,
@@ -299,6 +367,10 @@ public struct ClientPrimaryLiveControlViewV0: View {
         control: ClientControlWorkspaceProjectionV0,
         coordinator: ClientPrimaryLiveControlCoordinatorV0,
         onStop: @escaping @MainActor @Sendable () async throws -> Void,
+        onRecordStudyJob: @escaping @MainActor @Sendable (
+            Stage3StudyJobCategoryV1,
+            ClientStage3StudyControlSnapshotV1
+        ) async throws -> Void,
         onCommandFailure: @escaping @MainActor @Sendable
             (any Error) -> Void = { _ in }
     ) {
@@ -310,6 +382,7 @@ public struct ClientPrimaryLiveControlViewV0: View {
             ClientPrimaryLiveControlViewStateV0()
         )
         self.onStop = onStop
+        self.onRecordStudyJob = onRecordStudyJob
         self.onCommandFailure = onCommandFailure
     }
 
@@ -407,6 +480,17 @@ public struct ClientPrimaryLiveControlViewV0: View {
                 .disabled(coordinator.phase != .active)
             }
             ToolbarItem(placement: .topBarTrailing) {
+                Button("Study", systemImage: "checklist") {
+                    viewState.studyJobRecorded = false
+                    viewState.showingStudyJob = true
+                }
+                .disabled(
+                    coordinator.phase != .active
+                        || viewState.studyJobInFlight
+                        || viewState.surfaceSelectionInFlight
+                )
+            }
+            ToolbarItem(placement: .topBarTrailing) {
                 Button(
                     viewState.stopSubmitted ? "Stopping…" : "Stop",
                     systemImage: "stop.circle.fill",
@@ -421,6 +505,7 @@ public struct ClientPrimaryLiveControlViewV0: View {
             coordinator.acceptWorkspaceMode(
                 control.mode
             )
+            synchronizeStudyControlTiming()
         }
         .onChange(of: viewState.mode) { _, value in
             coordinator.updateMode(value)
@@ -437,12 +522,21 @@ public struct ClientPrimaryLiveControlViewV0: View {
         }
         .onChange(of: coordinator.phase) { _, value in
             if value != .active { setVisualZoomEditing(false) }
+            synchronizeStudyControlTiming()
+        }
+        .onChange(of: viewState.showingStudyJob) { _, value in
+            if value {
+                pauseStudyControlTiming()
+            } else {
+                synchronizeStudyControlTiming()
+            }
         }
         .onChange(of: revision) { _, _ in
             let controlMode = control.mode
             coordinator.acceptWorkspaceMode(controlMode)
             if controlMode != .active {
                 setVisualZoomEditing(false)
+                pauseStudyControlTiming()
             }
             switch controlMode {
             case .ready where viewState.stopSubmitted:
@@ -467,7 +561,19 @@ public struct ClientPrimaryLiveControlViewV0: View {
             )
             .interactiveDismissDisabled(viewState.surfaceRequestInFlight)
         }
-        .onDisappear { setVisualZoomEditing(false) }
+        .sheet(isPresented: $viewState.showingStudyJob) {
+            ClientPrimaryControlStudyJobViewV1(
+                category: $viewState.selectedStudyCategory,
+                inFlight: viewState.studyJobInFlight,
+                recorded: viewState.studyJobRecorded,
+                onRecord: recordStudyJob
+            )
+            .interactiveDismissDisabled(viewState.studyJobInFlight)
+        }
+        .onDisappear {
+            setVisualZoomEditing(false)
+            pauseStudyControlTiming()
+        }
     }
 
     private var canStop: Bool {
@@ -483,6 +589,7 @@ public struct ClientPrimaryLiveControlViewV0: View {
 
     private func stopRemoteControl() {
         setVisualZoomEditing(false)
+        pauseStudyControlTiming()
         viewState.stopSubmitted = true
         Task {
             do { try await onStop() }
@@ -512,14 +619,20 @@ public struct ClientPrimaryLiveControlViewV0: View {
 
     private func selectSurface(_ choice: ClientSurfaceChoiceV0) {
         guard !viewState.surfaceRequestInFlight else { return }
+        pauseStudyControlTiming()
+        viewState.surfaceSelectionInFlight = true
         viewState.automaticSmartZoomEnabled = false
         viewState.surfaceRequestInFlight = true
         Task {
             do {
                 try await coordinator.selectSurface(choice)
+                viewState.studyControlSurfaceKind = choice.kind
+                viewState.surfaceSelectionInFlight = false
+                synchronizeStudyControlTiming()
                 viewState.surfaceRequestInFlight = false
                 viewState.showingSurfacePicker = false
             } catch {
+                viewState.surfaceSelectionInFlight = false
                 viewState.surfaceRequestInFlight = false
                 viewState.showingSurfacePicker = false
                 onCommandFailure(error)
@@ -530,6 +643,76 @@ public struct ClientPrimaryLiveControlViewV0: View {
     private func setVisualZoomEditing(_ value: Bool) {
         coordinator.product?.surface.setVisualZoomEditing(value)
         viewState.visualZoomEditing = value
+    }
+
+    private func synchronizeStudyControlTiming() {
+        guard coordinator.phase == .active,
+              !viewState.surfaceSelectionInFlight,
+              !viewState.showingStudyJob else {
+            pauseStudyControlTiming()
+            return
+        }
+        guard !viewState.studyControlIsActive else { return }
+        do {
+            try viewState.studyControlAccumulator.resume(
+                surfaceKind: viewState.studyControlSurfaceKind,
+                at: studyMonotonicMilliseconds()
+            )
+            viewState.studyControlIsActive = true
+        } catch {
+            onCommandFailure(error)
+        }
+    }
+
+    private func pauseStudyControlTiming() {
+        guard viewState.studyControlIsActive else { return }
+        do {
+            try viewState.studyControlAccumulator.pause(
+                at: studyMonotonicMilliseconds()
+            )
+            viewState.studyControlIsActive = false
+        } catch {
+            onCommandFailure(error)
+        }
+    }
+
+    private func recordStudyJob() {
+        guard !viewState.studyJobInFlight,
+              !viewState.studyJobRecorded else { return }
+        let recordedAt = studyMonotonicMilliseconds()
+        let snapshot: ClientStage3StudyControlSnapshotV1
+        do {
+            snapshot = try viewState.studyControlAccumulator.snapshot(
+                at: recordedAt
+            )
+        } catch {
+            onCommandFailure(error)
+            return
+        }
+        viewState.studyJobInFlight = true
+        Task {
+            do {
+                try await onRecordStudyJob(
+                    viewState.selectedStudyCategory,
+                    snapshot
+                )
+                viewState.studyControlAccumulator =
+                    ClientStage3StudyControlAccumulatorV1()
+                viewState.studyControlIsActive = false
+                viewState.studyJobRecorded = true
+                viewState.studyJobInFlight = false
+                synchronizeStudyControlTiming()
+            } catch {
+                viewState.studyJobInFlight = false
+                onCommandFailure(error)
+            }
+        }
+    }
+
+    private func studyMonotonicMilliseconds() -> Int64 {
+        let value = DispatchTime.now().uptimeNanoseconds / 1_000_000
+        guard value <= UInt64(Int64.max) else { return -1 }
+        return Int64(value)
     }
 }
 #endif

@@ -229,7 +229,8 @@ private struct LiveControlHarnessView: View {
             revision: model.revision,
             control: model.control,
             coordinator: model.coordinator,
-            onStop: { try await model.stop() }
+            onStop: { try await model.stop() },
+            onRecordStudyJob: { _, _ in }
         )
         .overlay(alignment: .bottomLeading) {
             Text("Synthetic input payloads: \(model.inputPayloadCount)")

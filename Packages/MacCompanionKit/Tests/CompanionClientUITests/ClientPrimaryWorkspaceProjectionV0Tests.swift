@@ -378,6 +378,56 @@ private func primaryWorkspaceSnapshot(
     )).entry(hasLocalLiveProduct: false) == .stopFailedSession)
 }
 
+@Test func stage3MuteJobProjectionRequiresExactCapabilityAndTerminalOutcome() {
+    let capabilityID = ClientStage3StudyActJobProjectionV1
+        .setAudioMutedCapabilityID
+    #expect(ClientStage3StudyActJobProjectionV1.result(
+        capabilityID: capabilityID,
+        state: .terminal(.succeeded(verifiedResult: nil))
+    ) == .completed)
+    #expect(ClientStage3StudyActJobProjectionV1.result(
+        capabilityID: capabilityID,
+        state: .terminal(.denied)
+    ) == .denied)
+    #expect(ClientStage3StudyActJobProjectionV1.result(
+        capabilityID: capabilityID,
+        state: .terminal(.cancelled)
+    ) == .notCompleted)
+    #expect(ClientStage3StudyActJobProjectionV1.result(
+        capabilityID: capabilityID,
+        state: .terminal(.failed(.providerUnavailable))
+    ) == .failed)
+    #expect(ClientStage3StudyActJobProjectionV1.result(
+        capabilityID: capabilityID,
+        state: .terminal(.outcomeUnknown)
+    ) == .outcomeUnknown)
+    #expect(ClientStage3StudyActJobProjectionV1.result(
+        capabilityID: capabilityID,
+        state: .awaitingInvokeReply
+    ) == nil)
+    #expect(ClientStage3StudyActJobProjectionV1.result(
+        capabilityID: "maccompanion.system.keepAwake",
+        state: .terminal(.succeeded(verifiedResult: nil))
+    ) == nil)
+}
+
+@Test func stage3ControlJobProjectionAcceptsOnlyClosedControlCategories() {
+    for category in Stage3StudyJobCategoryV1.allCases {
+        let expected = switch category {
+        case .controlUnexpectedDialog, .controlDevelopmentApp,
+             .controlOtherOwnedApp:
+            true
+        case .observeLongRunningTask, .observeSystemHealth,
+             .observeAvailability, .actSetAudioMuted:
+            false
+        }
+        #expect(
+            ClientStage3StudyControlJobProjectionV1.accepts(category)
+                == expected
+        )
+    }
+}
+
 @MainActor
 @Test func primaryWorkspaceModelRejectsOutOfOrderProjectionUpdates()
     async throws
@@ -419,7 +469,7 @@ private func primaryWorkspaceSnapshot(
 }
 
 @MainActor
-@Test func primaryWorkspaceModelCapturesConnectionAndFirstFreshObserveOnlyInSession()
+@Test func primaryWorkspaceModelCapturesStudyTransitionsAndExplicitControlJob()
     async throws
 {
     let directory = FileManager.default.temporaryDirectory
@@ -450,7 +500,7 @@ private func primaryWorkspaceSnapshot(
             macOSMajorVersion: 27
         ),
         workaround: .returnOrDefer,
-        adaptiveJobApplicable: false
+        adaptiveJobApplicable: true
     ))
     try await capture.beginSession(dayIndex: 0)
     _ = try await capture.recordSetupAttempted()
@@ -506,7 +556,33 @@ private func primaryWorkspaceSnapshot(
     ])
     #expect(report?.firstFreshObserve == .completed)
     #expect(report?.timings.timeToFirstFreshObserveMilliseconds == 0)
+    #expect(report?.jobs.isEmpty == true)
     #expect(captureFailureCount == 0)
+
+    let controlSnapshot = ClientStage3StudyControlSnapshotV1(
+        modesUsed: [.desktop, .application],
+        durationDelta: try Stage3StudyControlDurationDeltaV1(
+            desktopMilliseconds: 100,
+            applicationMilliseconds: 200
+        )
+    )
+    _ = try await model.recordControlStudyJob(
+        category: .controlDevelopmentApp,
+        snapshot: controlSnapshot
+    )
+    report = try await owner.currentReport()
+    #expect(report?.jobs == [
+        try Stage3StudyJobV1(
+            dayIndex: 0,
+            path: .control,
+            category: .controlDevelopmentApp,
+            result: .completed,
+            controlWasActive: true,
+            controlModesUsed: [.desktop, .application]
+        ),
+    ])
+    #expect(report?.controlDurations.desktopMilliseconds == 100)
+    #expect(report?.controlDurations.applicationMilliseconds == 200)
 
     model.stop()
     pair.continuation.finish()

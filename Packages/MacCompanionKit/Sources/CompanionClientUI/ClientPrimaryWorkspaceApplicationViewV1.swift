@@ -89,6 +89,7 @@ private struct ClientApprovedActionApplicationDetailV1: View {
         @MainActor @Sendable (any Error) -> Void
     @State private var draft: ClientCapabilityParameterDraftV1?
     @State private var explicitEffectReview = false
+    @State private var studyJobRecorded = false
     @Environment(\.dismiss) private var dismiss
 
     init(
@@ -133,6 +134,30 @@ private struct ClientApprovedActionApplicationDetailV1: View {
                         "The granted action schema could not be prepared."
                     )
                 )
+            }
+        }
+        .safeAreaInset(edge: .bottom) {
+            if canRecordStudyJob {
+                VStack(alignment: .leading, spacing: 8) {
+                    Button(
+                        studyJobRecorded
+                            ? "Study Result Added"
+                            : "Add Result to Active Study Session",
+                        systemImage: studyJobRecorded
+                            ? "checkmark.circle" : "checkmark.circle.badge.questionmark"
+                    ) {
+                        recordStudyJob()
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(studyJobRecorded)
+                    Text(
+                        "Use only when this was a real mute/unmute job. The report stores the closed outcome, never the requested or prior audio value."
+                    )
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                }
+                .padding()
+                .background(.bar)
             }
         }
         .toolbar {
@@ -181,6 +206,32 @@ private struct ClientApprovedActionApplicationDetailV1: View {
              .awaitingApprovalReply, .observing, .awaitingStatusReply,
              .awaitingCancelReply, .deliveryUnknown, .invalidated, nil:
             false
+        }
+    }
+
+    private var canRecordStudyJob: Bool {
+        guard descriptor.capabilityID
+                == ClientStage3StudyActJobProjectionV1
+                    .setAudioMutedCapabilityID,
+              let operationState = model.projection.operationState else {
+            return false
+        }
+        return ClientStage3StudyActJobProjectionV1.result(
+            capabilityID: descriptor.capabilityID,
+            state: operationState
+        ) != nil
+    }
+
+    private func recordStudyJob() {
+        Task {
+            do {
+                _ = try await model.recordSetAudioMutedStudyJob(
+                    capabilityID: descriptor.capabilityID
+                )
+                studyJobRecorded = true
+            } catch {
+                onCommandFailure(error)
+            }
         }
     }
 }

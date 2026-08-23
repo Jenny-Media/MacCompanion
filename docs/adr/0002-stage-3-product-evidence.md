@@ -265,9 +265,11 @@ bounded atomic persistence plus exact preview, explicit export, and destructive
 delete in the permanent iOS product. The later
 [local enrollment and initial capture](../evidence/2026-08-23-stage-3-local-enrollment-capture.md)
 adds optional dogfood-only enrollment, explicit day sessions, and initial
-pairing/connection/first-live-Observe bindings. Remaining Act, Control,
-tester-review, disclosure, physical verification, and actual cohorts stay
-open.
+pairing/connection/first-live-Observe bindings. The
+[explicit Act and Control capture](../evidence/2026-08-23-stage-3-act-control-capture.md)
+then adds tester-confirmed mute outcomes and content-free active-mode Control
+duration without inferring real-job intent. Remaining route and tester-reviewed
+facts, disclosure, physical verification, and actual cohorts stay open.
 
 ## Consequences
 
