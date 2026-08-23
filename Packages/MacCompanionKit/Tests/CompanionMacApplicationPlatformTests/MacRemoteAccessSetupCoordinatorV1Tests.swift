@@ -693,6 +693,46 @@ func productLaunchRoutesAbsentRegistrationToInertSetup() async throws {
 
 @Test
 @available(macOS 26.0, *)
+func productLaunchRoutesMissingFirstRunRecordToInertSetup() async throws {
+    let log = RemoteAccessSetupEventLogV1()
+    let agent = RemoteAccessSetupRoleV1(name: "agent", log: log)
+    let menu = RemoteAccessSetupRoleV1(name: "menu", log: log)
+    let clientBox = RemoteAccessSetupClientBoxV1()
+    let dashboardBox = RemoteAccessSetupDashboardBoxV1()
+    let registration = RemoteAccessSetupRawRegistrationV1(
+        .notFound,
+        log: log
+    )
+    let product = await MainActor.run {
+        let setup = MacRemoteAccessSetupApplicationV1(
+            agent: agent,
+            menuApp: menu,
+            clientFactory: { handler in
+                let client = RemoteAccessSetupClientV1(
+                    log: log,
+                    eventHandler: handler
+                )
+                clientBox.install(client)
+                return client
+            }
+        )
+        return MacCompanionProductApplicationV1(
+            agentRegistration: registration,
+            setup: setup,
+            dashboardFactory: { dashboardBox.makeApplication() }
+        )
+    }
+
+    await product.start()
+
+    #expect(await product.route == .setup)
+    #expect(try clientBox.require().snapshot().starts == 0)
+    #expect(dashboardBox.products().isEmpty)
+    await product.finish()
+}
+
+@Test
+@available(macOS 26.0, *)
 func productLaunchRunsStartupRepairBeforeRouteReconciliation() async {
     let log = RemoteAccessSetupEventLogV1()
     let agent = RemoteAccessSetupRoleV1(name: "agent", log: log)

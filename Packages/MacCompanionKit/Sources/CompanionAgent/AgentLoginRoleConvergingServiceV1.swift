@@ -73,11 +73,15 @@ public actor AgentLoginRoleConvergingServiceV1:
             return .alreadyRegistered
         case .requiresApproval:
             throw AgentLoginRoleConvergenceErrorV1.requiresApproval
-        case .notFound:
-            throw AgentLoginRoleConvergenceErrorV1.serviceNotFound
         case .unknown:
             throw AgentLoginRoleConvergenceErrorV1.platformFailure
-        case .notRegistered:
+        case .notRegistered, .notFound:
+            // A never-registered SMAppService LaunchAgent can surface as
+            // `.notFound` when Background Task Management has no record yet.
+            // The explicit foreground bootstrap may make one bounded
+            // registration attempt; a missing or malformed embedded service
+            // still fails closed below unless the verified postcondition is
+            // exactly `.enabled`.
             break
         }
 

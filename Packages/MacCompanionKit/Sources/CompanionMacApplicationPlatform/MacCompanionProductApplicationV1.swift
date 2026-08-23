@@ -140,11 +140,18 @@ public final class MacCompanionProductApplicationV1 {
         switch await agentRegistration.status() {
         case .notRegistered:
             route = .setup
+        case .notFound:
+            // Background Task Management may report `.notFound` before an
+            // embedded LaunchAgent has ever created its first registration
+            // record. Setup is inert until the local user explicitly enables
+            // Mac Companion, and registration still requires an exact
+            // `.enabled` postcondition before any dashboard can start.
+            route = .setup
         case .enabled:
             await startFreshDashboard(failureRoute: .setup)
         case .requiresApproval:
             route = .requiresLoginItemApproval
-        case .notFound, .unknown:
+        case .unknown:
             route = .unavailable
         }
     }

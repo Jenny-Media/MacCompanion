@@ -135,14 +135,39 @@ private actor RawLoginRoleService:
     #expect(await raw.events() == ["status.requiresApproval"])
 }
 
-@Test func convergingLoginRoleRegisterRejectsMissingService() async throws {
+@Test func convergingLoginRoleRegisterAcquiresMissingFirstRunRecord()
+    async throws
+{
     let raw = RawLoginRoleService(state: .notFound)
     let service = AgentLoginRoleConvergingServiceV1(raw: raw)
 
-    await #expect(throws: AgentLoginRoleConvergenceErrorV1.serviceNotFound) {
+    #expect(
+        try await service.acquireForBootstrap() == .newlyRegistered
+    )
+    #expect(await raw.events() == [
+        "status.notFound",
+        "register",
+        "status.enabled",
+    ])
+}
+
+@Test func convergingLoginRoleRegisterRejectsMissingEmbeddedService()
+    async throws
+{
+    let raw = RawLoginRoleService(
+        state: .notFound,
+        registerBehavior: .throwBeforeEffect
+    )
+    let service = AgentLoginRoleConvergingServiceV1(raw: raw)
+
+    await #expect(throws: AgentLoginRoleConvergenceErrorV1.platformFailure) {
         try await service.register()
     }
-    #expect(await raw.events() == ["status.notFound"])
+    #expect(await raw.events() == [
+        "status.notFound",
+        "register",
+        "status.notFound",
+    ])
 }
 
 @Test func convergingLoginRoleRegisterRejectsFutureStatus() async throws {
