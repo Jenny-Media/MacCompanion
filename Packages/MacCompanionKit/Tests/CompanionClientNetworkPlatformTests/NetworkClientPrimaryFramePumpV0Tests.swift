@@ -838,6 +838,51 @@ private func networkClientSPKI() throws -> Data {
     }
 }
 
+@Test func authenticatedRouteClassUsesOnlyExactConfiguredProvenance() throws {
+    func record(
+        _ kind: EndpointKind,
+        _ value: String,
+        _ provenance: ClientConfiguredRouteProvenanceV1,
+        byte: UInt8
+    ) throws -> ClientConfiguredRouteRecordV1 {
+        try ClientConfiguredRouteRecordV1(
+            configuredRouteID: WireBytes16(Data(repeating: byte, count: 16)),
+            endpoint: EndpointCandidate(
+                kind: kind,
+                value: value,
+                port: 443
+            ),
+            provenance: provenance
+        )
+    }
+
+    #expect(NetworkClientAuthenticatedRouteClassV1.project(try record(
+        .bonjour,
+        "mac-test._maccompanion._tcp.local.",
+        .localDiscovery,
+        byte: 1
+    )) == .lan)
+    #expect(NetworkClientAuthenticatedRouteClassV1.project(try record(
+        .ipv4,
+        "192.168.40.10",
+        .directPrivateAddress,
+        byte: 2
+    )) == nil)
+    #expect(NetworkClientAuthenticatedRouteClassV1.project(try record(
+        .dns,
+        "studio.example.net",
+        .privateDNS,
+        byte: 3
+    )) == .privateDNS)
+    #expect(NetworkClientAuthenticatedRouteClassV1.project(try record(
+        .ipv6,
+        "fd00::2",
+        .privateNetwork,
+        byte: 4
+    )) == .privateNetwork)
+    #expect(NetworkClientAuthenticatedRouteClassV1.project(nil) == nil)
+}
+
 private struct NetworkClientOperationApprovalSignerV0:
     ClientOperationApprovalSigningV1
 {
@@ -1057,6 +1102,7 @@ private func networkClientAcceptedControlSession(
     )
     let candidate = NetworkClientPrimaryProductCandidateV0(
         endpoint: selectedEndpoint,
+        authenticatedRouteClass: .lan,
         configuration: NetworkClientPrimaryProductConfigurationV0(
             pairedHost: pairedHost,
             approvalSigner: NetworkClientOperationApprovalSignerV0(),
@@ -1133,9 +1179,11 @@ private func networkClientAcceptedControlSession(
     let session = selection.authenticatedSession
     #expect(session.hostID == base.hostID)
     #expect(selection.endpoint == selectedEndpoint)
+    #expect(selection.authenticatedRouteClass == .lan)
     #expect(session.connectionID == Data(repeating: 0x11, count: 16))
     #expect(applicationState.snapshot().availability == .connected)
     #expect(applicationState.snapshot().connectionID == session.connectionID)
+    #expect(applicationState.snapshot().authenticatedRouteClass == .lan)
     #expect(applicationState.snapshot().revision == 1)
     #expect(applicationState.snapshot().controlChannel != nil)
     #expect(applicationState.snapshot().controlState == .inactive)
@@ -1273,6 +1321,7 @@ private func networkClientAcceptedControlSession(
     applicationState.productEvents.primarySelected(
         NetworkClientPrimaryProductSelectionV0(
             endpoint: selection.endpoint,
+            authenticatedRouteClass: .privateDNS,
             authenticatedSession: replacementSession,
             observeChannel: selection.observeChannel,
             actChannel: selection.actChannel,
@@ -1281,6 +1330,7 @@ private func networkClientAcceptedControlSession(
     )
     #expect(applicationState.snapshot().availability == .connected)
     #expect(applicationState.snapshot().connectionID == replacementConnectionID)
+    #expect(applicationState.snapshot().authenticatedRouteClass == .privateDNS)
     #expect(applicationState.snapshot().observedStatus == nil)
     #expect(applicationState.snapshot().revision == 6)
 
@@ -1491,6 +1541,7 @@ private func networkClientAcceptedControlSession(
         replacementConnectionID
     )
     #expect(applicationState.snapshot().availability == .disconnected)
+    #expect(applicationState.snapshot().authenticatedRouteClass == nil)
     #expect(applicationState.snapshot().revision == 19)
     var updateIterator = applicationState.updates.makeAsyncIterator()
     #expect(await updateIterator.next()?.revision == 19)
@@ -1498,6 +1549,7 @@ private func networkClientAcceptedControlSession(
     let losingEvents = NetworkClientPrimaryProductRecorderV0()
     let losingCandidate = NetworkClientPrimaryProductCandidateV0(
         endpoint: selectedEndpoint,
+        authenticatedRouteClass: nil,
         configuration: NetworkClientPrimaryProductConfigurationV0(
             pairedHost: pairedHost,
             approvalSigner: NetworkClientOperationApprovalSignerV0(),

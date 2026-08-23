@@ -252,7 +252,8 @@ private struct ObserveHarnessView: View {
             projection: HarnessFixtures.observeProjection,
             onRefreshStatus: { refreshCount += 1 },
             onLoadActivity: { activityCount += 1 },
-            onLoadOlderActivity: { activityCount += 1 }
+            onLoadOlderActivity: { activityCount += 1 },
+            onRecordStudyJob: { _ in }
         )
         .safeAreaInset(edge: .bottom) {
             Text("Typed synthetic Observe flow; no socket or Remote Control. Refreshes: \(refreshCount), activity requests: \(activityCount)")

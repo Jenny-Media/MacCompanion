@@ -1,5 +1,58 @@
 #if os(iOS)
+import CompanionStudy
 import SwiftUI
+
+@available(iOS 17.0, *)
+private struct ClientObserveStudyJobViewV1: View {
+    @Binding var category: Stage3StudyJobCategoryV1
+    let inFlight: Bool
+    let recorded: Bool
+    let onRecord: () -> Void
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Completed job") {
+                    Picker("Category", selection: $category) {
+                        Text("Check a long-running task").tag(
+                            Stage3StudyJobCategoryV1.observeLongRunningTask
+                        )
+                        Text("Check Mac health").tag(
+                            Stage3StudyJobCategoryV1.observeSystemHealth
+                        )
+                        Text("Check availability").tag(
+                            Stage3StudyJobCategoryV1.observeAvailability
+                        )
+                    }
+                    .pickerStyle(.inline)
+                }
+                Section {
+                    Button(
+                        recorded ? "Job Added" : "Add Completed Job",
+                        systemImage: recorded
+                            ? "checkmark.circle.fill" : "plus.circle",
+                        action: onRecord
+                    )
+                    .disabled(inFlight || recorded)
+                } footer: {
+                    Text(
+                        "Only confirm a real job completed from the fresh "
+                            + "status above. Opening this screen or reading "
+                            + "cached state does not qualify. Remote Control "
+                            + "is not started or counted."
+                    )
+                }
+            }
+            .navigationTitle("Observe Study Job")
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { dismiss() }
+                }
+            }
+        }
+    }
+}
 
 @available(iOS 17.0, *)
 public struct ClientObserveViewV0: View {
@@ -9,6 +62,16 @@ public struct ClientObserveViewV0: View {
     private let onRefreshStatus: () -> Void
     private let onLoadActivity: () -> Void
     private let onLoadOlderActivity: () -> Void
+    private let onRecordStudyJob: @MainActor @Sendable (
+        Stage3StudyJobCategoryV1
+    ) async throws -> Void
+    private let onCommandFailure:
+        @MainActor @Sendable (any Error) -> Void
+    @State private var showingStudyJob = false
+    @State private var studyJobInFlight = false
+    @State private var studyJobRecorded = false
+    @State private var selectedStudyCategory =
+        Stage3StudyJobCategoryV1.observeLongRunningTask
 
     public init(
         projection: ClientObserveWorkspaceProjectionV0,
@@ -16,7 +79,12 @@ public struct ClientObserveViewV0: View {
         isLoadingActivity: Bool = false,
         onRefreshStatus: @escaping () -> Void,
         onLoadActivity: @escaping () -> Void,
-        onLoadOlderActivity: @escaping () -> Void
+        onLoadOlderActivity: @escaping () -> Void,
+        onRecordStudyJob: @escaping @MainActor @Sendable (
+            Stage3StudyJobCategoryV1
+        ) async throws -> Void,
+        onCommandFailure: @escaping @MainActor @Sendable
+            (any Error) -> Void = { _ in }
     ) {
         self.projection = projection
         self.isRefreshingStatus = isRefreshingStatus
@@ -24,6 +92,8 @@ public struct ClientObserveViewV0: View {
         self.onRefreshStatus = onRefreshStatus
         self.onLoadActivity = onLoadActivity
         self.onLoadOlderActivity = onLoadOlderActivity
+        self.onRecordStudyJob = onRecordStudyJob
+        self.onCommandFailure = onCommandFailure
     }
 
     public var body: some View {
@@ -52,6 +122,15 @@ public struct ClientObserveViewV0: View {
             .frame(maxWidth: .infinity)
         }
         .navigationTitle("Mac Status")
+        .sheet(isPresented: $showingStudyJob) {
+            ClientObserveStudyJobViewV1(
+                category: $selectedStudyCategory,
+                inFlight: studyJobInFlight,
+                recorded: studyJobRecorded,
+                onRecord: recordStudyJob
+            )
+            .interactiveDismissDisabled(studyJobInFlight)
+        }
     }
 
     private var statusCard: some View {
@@ -80,6 +159,14 @@ public struct ClientObserveViewV0: View {
                 )
                 .buttonStyle(.bordered)
                 .disabled(isRefreshingStatus)
+            }
+            if projection.status.state == .live {
+                Button("Add Real Observe Job to Study", systemImage: "checklist") {
+                    studyJobRecorded = false
+                    showingStudyJob = true
+                }
+                .buttonStyle(.bordered)
+                .disabled(studyJobInFlight)
             }
         }
         .padding()
@@ -177,6 +264,21 @@ public struct ClientObserveViewV0: View {
         let whole = basisPoints / 100
         let fraction = basisPoints % 100
         return "\(whole).\(String(format: "%02d", fraction))%"
+    }
+
+    private func recordStudyJob() {
+        guard !studyJobInFlight, !studyJobRecorded else { return }
+        studyJobInFlight = true
+        Task {
+            do {
+                try await onRecordStudyJob(selectedStudyCategory)
+                studyJobRecorded = true
+                studyJobInFlight = false
+            } catch {
+                studyJobInFlight = false
+                onCommandFailure(error)
+            }
+        }
     }
 }
 #endif

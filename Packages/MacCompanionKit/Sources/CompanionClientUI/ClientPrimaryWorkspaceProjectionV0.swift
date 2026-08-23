@@ -160,10 +160,13 @@ public struct ClientControlWorkspaceProjectionV0: Equatable, Sendable {
 }
 
 /// Value-only projection of the selected primary product. It deliberately
-/// omits command channels, connection identifiers, and route facts.
+/// omits command channels, connection identifiers, endpoints, and route
+/// records while retaining one closed authenticated provenance class.
 public struct ClientPrimaryWorkspaceProjectionV0: Sendable {
     public let revision: UInt64
     public let connected: Bool
+    public let authenticatedRouteClass:
+        NetworkClientAuthenticatedRouteClassV1?
     public let observe: ClientObserveWorkspaceProjectionV0
     public let approvedActions: GrantedCapabilityCatalogV1?
     public let operationState: ClientOperationSessionStateV1?
@@ -178,6 +181,8 @@ public struct ClientPrimaryWorkspaceProjectionV0: Sendable {
     ) throws {
         revision = snapshot.revision
         connected = snapshot.availability == .connected
+        authenticatedRouteClass = connected
+            ? snapshot.authenticatedRouteClass : nil
         let observeIssue: ClientObserveIssueProjectionV0?
         switch snapshot.latestObserveErrorRequest {
         case .status:

@@ -144,8 +144,11 @@ public actor Stage3StudyLocalCaptureV1 {
         guard (0..<Stage3StudyRulesV1.studyDayCount).contains(dayIndex) else {
             throw Stage3StudyLocalCaptureErrorV1.invalidDayIndex
         }
-        guard try await reportOwner.currentReport() != nil else {
+        guard let report = try await reportOwner.currentReport() else {
             throw Stage3StudyLocalCaptureErrorV1.noEnrollment
+        }
+        guard !report.safetyReviewCompleted else {
+            throw Stage3StudyLocalCaptureErrorV1.invalidTransition
         }
         let now = monotonicNowMilliseconds()
         guard now >= 0 else {
@@ -366,7 +369,10 @@ public actor Stage3StudyLocalCaptureV1 {
         recoveryConfusions: [Stage3StudyRecoveryConfusionV1]
     ) async throws -> Stage3StudyReportV1 {
         let session = try requireSession()
-        return try await update(session: session) { draft in
+        return try await update(
+            session: session,
+            retireSessionAfterSave: true
+        ) { draft in
             draft.comprehension = comprehension
             draft.safetyReviewCompleted = true
             draft.safetyIncidents = safetyIncidents
@@ -383,6 +389,7 @@ public actor Stage3StudyLocalCaptureV1 {
 
     private func update(
         session: SessionFence,
+        retireSessionAfterSave: Bool = false,
         _ mutation: (inout Stage3StudyReportDraftV1) throws -> Void
     ) async throws -> Stage3StudyReportV1 {
         await acquireMutation()
@@ -404,6 +411,11 @@ public actor Stage3StudyLocalCaptureV1 {
         try mutation(&draft)
         let report = try draft.report()
         _ = try await reportOwner.save(report)
+        if retireSessionAfterSave {
+            activeDayIndex = nil
+            sessionStartedAtMilliseconds = nil
+            activeSessionID = nil
+        }
         return report
     }
 

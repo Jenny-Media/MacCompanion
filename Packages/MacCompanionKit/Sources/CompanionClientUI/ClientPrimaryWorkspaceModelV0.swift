@@ -51,6 +51,33 @@ public enum ClientStage3StudyControlJobProjectionV1 {
     }
 }
 
+public enum ClientStage3StudyObserveJobProjectionV1 {
+    public static func accepts(
+        _ category: Stage3StudyJobCategoryV1
+    ) -> Bool {
+        switch category {
+        case .observeLongRunningTask, .observeSystemHealth,
+             .observeAvailability:
+            true
+        case .actSetAudioMuted, .controlUnexpectedDialog,
+             .controlDevelopmentApp, .controlOtherOwnedApp:
+            false
+        }
+    }
+}
+
+public enum ClientStage3StudyRouteProjectionV1 {
+    public static func routeClass(
+        _ value: NetworkClientAuthenticatedRouteClassV1
+    ) -> Stage3StudyRouteClassV1 {
+        switch value {
+        case .lan: .lan
+        case .privateDNS: .privateDNS
+        case .privateNetwork: .privateNetwork
+        }
+    }
+}
+
 public enum ClientPrimaryWorkspaceStudyCaptureErrorV1:
     Error, Equatable, Sendable
 {
@@ -122,6 +149,7 @@ public final class ClientPrimaryWorkspaceModelV0: ObservableObject {
         captureTransitions(
             previousConnected: false,
             previousObserveState: nil,
+            previousRouteClass: nil,
             current: projection
         )
         let updates = updates
@@ -214,6 +242,24 @@ public final class ClientPrimaryWorkspaceModelV0: ObservableObject {
     }
 
     @discardableResult
+    public func recordObserveStudyJob(
+        category: Stage3StudyJobCategoryV1
+    ) async throws -> Stage3StudyReportV1 {
+        guard let studyCapture else {
+            throw ClientPrimaryWorkspaceStudyCaptureErrorV1.unavailable
+        }
+        guard projection.observe.status.state == .live,
+              ClientStage3StudyObserveJobProjectionV1.accepts(category) else {
+            throw ClientPrimaryWorkspaceStudyCaptureErrorV1.invalidJob
+        }
+        return try await studyCapture.recordJob(
+            path: .observe,
+            category: category,
+            result: .completed
+        )
+    }
+
+    @discardableResult
     public func recordControlStudyJob(
         category: Stage3StudyJobCategoryV1,
         snapshot: ClientStage3StudyControlSnapshotV1
@@ -261,6 +307,7 @@ public final class ClientPrimaryWorkspaceModelV0: ObservableObject {
             captureTransitions(
                 previousConnected: previous.connected,
                 previousObserveState: previous.observe.status.state,
+                previousRouteClass: previous.authenticatedRouteClass,
                 current: next
             )
         } catch {
@@ -271,17 +318,32 @@ public final class ClientPrimaryWorkspaceModelV0: ObservableObject {
     private func captureTransitions(
         previousConnected: Bool,
         previousObserveState: ClientObserveStatusStateV0?,
+        previousRouteClass: NetworkClientAuthenticatedRouteClassV1?,
         current: ClientPrimaryWorkspaceProjectionV0
     ) {
         guard let studyCapture else { return }
-        if !previousConnected, current.connected {
+        let recordsConnection = !previousConnected && current.connected
+        let recordsRoute = current.connected
+            && current.authenticatedRouteClass != nil
+            && current.authenticatedRouteClass != previousRouteClass
+        if recordsConnection || recordsRoute {
             Task { [weak self, studyCapture] in
                 do {
-                    _ = try await studyCapture.recordOperationalEvent(
-                        kind: .connection,
-                        initiator: .system,
-                        result: .completed
-                    )
+                    if recordsConnection {
+                        _ = try await studyCapture.recordOperationalEvent(
+                            kind: .connection,
+                            initiator: .system,
+                            result: .completed
+                        )
+                    }
+                    if recordsRoute,
+                       let value = current.authenticatedRouteClass {
+                        _ = try await studyCapture.recordRouteClass(
+                            ClientStage3StudyRouteProjectionV1.routeClass(
+                                value
+                            )
+                        )
+                    }
                 } catch let error as Stage3StudyLocalCaptureErrorV1
                     where error == .noActiveSession
                         || error == .noEnrollment {

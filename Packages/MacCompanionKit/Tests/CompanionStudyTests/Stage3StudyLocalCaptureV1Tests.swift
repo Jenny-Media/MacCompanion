@@ -154,8 +154,9 @@ async throws {
     #expect(final.safetyReviewCompleted)
     #expect(final.comprehension?.isCorrect == true)
     #expect(try await owner.currentReport() == final)
+    #expect(await capture.currentSessionDayIndex() == nil)
     await #expect(
-        throws: Stage3StudyLocalCaptureErrorV1.invalidTransition
+        throws: Stage3StudyLocalCaptureErrorV1.noActiveSession
     ) {
         try await capture.recordOperationalEvent(
             kind: .recovery,
@@ -164,6 +165,11 @@ async throws {
         )
     }
     #expect(try await owner.currentReport() == final)
+    await #expect(
+        throws: Stage3StudyLocalCaptureErrorV1.invalidTransition
+    ) {
+        try await capture.beginSession(dayIndex: 3)
+    }
 
     let json = String(
         decoding: try Stage3StudyReportCodecV1.encode(final),

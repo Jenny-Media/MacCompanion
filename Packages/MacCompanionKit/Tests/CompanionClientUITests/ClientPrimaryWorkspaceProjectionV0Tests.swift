@@ -54,12 +54,15 @@ private func primaryWorkspaceSnapshot(
     catalogError: ClientOperationRemoteErrorV1? = nil,
     operationError: ClientOperationRemoteErrorV1? = nil,
     latestActErrorRequest: ClientActRequestKindV1? = nil,
+    authenticatedRouteClass:
+        NetworkClientAuthenticatedRouteClassV1? = nil,
     controlState: NetworkClientPrimaryControlStateV0 = .inactive
 ) -> NetworkClientPrimaryApplicationSnapshotV0 {
     NetworkClientPrimaryApplicationSnapshotV0(
         revision: revision,
         hostID: primaryWorkspaceHostID,
         availability: availability,
+        authenticatedRouteClass: authenticatedRouteClass,
         authenticatedSession: nil,
         observeChannel: nil,
         actChannel: nil,
@@ -428,6 +431,31 @@ private func primaryWorkspaceSnapshot(
     }
 }
 
+@Test func stage3ObserveJobProjectionAcceptsOnlyObserveCategories() {
+    for category in Stage3StudyJobCategoryV1.allCases {
+        let expected = switch category {
+        case .observeLongRunningTask, .observeSystemHealth,
+             .observeAvailability:
+            true
+        case .actSetAudioMuted, .controlUnexpectedDialog,
+             .controlDevelopmentApp, .controlOtherOwnedApp:
+            false
+        }
+        #expect(
+            ClientStage3StudyObserveJobProjectionV1.accepts(category)
+                == expected
+        )
+    }
+}
+
+@Test func stage3RouteProjectionMapsOnlyClosedAuthenticatedProvenance() {
+    #expect(ClientStage3StudyRouteProjectionV1.routeClass(.lan) == .lan)
+    #expect(ClientStage3StudyRouteProjectionV1.routeClass(.privateDNS)
+        == .privateDNS)
+    #expect(ClientStage3StudyRouteProjectionV1.routeClass(.privateNetwork)
+        == .privateNetwork)
+}
+
 @MainActor
 @Test func primaryWorkspaceModelRejectsOutOfOrderProjectionUpdates()
     async throws
@@ -531,7 +559,8 @@ private func primaryWorkspaceSnapshot(
     model.start()
     pair.continuation.yield(primaryWorkspaceSnapshot(
         revision: 1,
-        availability: .connected
+        availability: .connected,
+        authenticatedRouteClass: .privateNetwork
     ))
     pair.continuation.yield(primaryWorkspaceSnapshot(
         revision: 2,
@@ -543,7 +572,8 @@ private func primaryWorkspaceSnapshot(
     for _ in 0..<1_000 {
         report = try await owner.currentReport()
         if report?.operationalEvents.count == 1,
-           report?.firstFreshObserve == .completed { break }
+           report?.firstFreshObserve == .completed,
+           report?.routeClassesUsed == [.privateNetwork] { break }
         await Task.yield()
     }
     #expect(report?.operationalEvents == [
@@ -555,10 +585,14 @@ private func primaryWorkspaceSnapshot(
         ),
     ])
     #expect(report?.firstFreshObserve == .completed)
+    #expect(report?.routeClassesUsed == [.privateNetwork])
     #expect(report?.timings.timeToFirstFreshObserveMilliseconds == 0)
     #expect(report?.jobs.isEmpty == true)
     #expect(captureFailureCount == 0)
 
+    _ = try await model.recordObserveStudyJob(
+        category: .observeSystemHealth
+    )
     let controlSnapshot = ClientStage3StudyControlSnapshotV1(
         modesUsed: [.desktop, .application],
         durationDelta: try Stage3StudyControlDurationDeltaV1(
@@ -572,6 +606,13 @@ private func primaryWorkspaceSnapshot(
     )
     report = try await owner.currentReport()
     #expect(report?.jobs == [
+        try Stage3StudyJobV1(
+            dayIndex: 0,
+            path: .observe,
+            category: .observeSystemHealth,
+            result: .completed,
+            controlWasActive: false
+        ),
         try Stage3StudyJobV1(
             dayIndex: 0,
             path: .control,

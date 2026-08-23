@@ -148,6 +148,39 @@ public final class ClientStage3StudyReportModelV1: ObservableObject {
         activeSessionDayIndex = nil
     }
 
+    public func recordPhysicalReturn(
+        _ reason: Stage3StudyPhysicalReturnReasonV1
+    ) async -> Bool {
+        do {
+            let report = try await capture.recordPhysicalReturn(reason)
+            state = .ready(ClientStage3StudyReportSummaryV1(report: report))
+            return true
+        } catch {
+            state = .failed
+            return false
+        }
+    }
+
+    public func completeFinalReview(
+        comprehension: Stage3StudyComprehensionV1,
+        safetyIncidents: Set<Stage3StudySafetyIncidentV1>,
+        recoveryConfusions: Set<Stage3StudyRecoveryConfusionV1>
+    ) async -> Bool {
+        do {
+            let report = try await capture.completeReview(
+                comprehension: comprehension,
+                safetyIncidents: Array(safetyIncidents),
+                recoveryConfusions: Array(recoveryConfusions)
+            )
+            activeSessionDayIndex = nil
+            state = .ready(ClientStage3StudyReportSummaryV1(report: report))
+            return true
+        } catch {
+            state = .failed
+            return false
+        }
+    }
+
     public func preparePreview() async {
         do {
             state = .preview(try await owner.prepareExportPreview())
@@ -214,6 +247,19 @@ public struct ClientStage3StudyReportViewV1: View {
     @State private var adaptiveJobApplicable = false
     @State private var understoodLocalStudy = false
     @State private var selectedDayIndex = 0
+    @State private var showingPhysicalReturn = false
+    @State private var physicalReturnInFlight = false
+    @State private var physicalReturnReason =
+        Stage3StudyPhysicalReturnReasonV1.permission
+    @State private var showingFinalReview = false
+    @State private var finalReviewInFlight = false
+    @State private var distinguishesPairedAndConnected = false
+    @State private var distinguishesViewingAndControlling = false
+    @State private var understandsApprovalRequired = false
+    @State private var understandsSeparateGrants = false
+    @State private var safetyIncidents: Set<Stage3StudySafetyIncidentV1> = []
+    @State private var recoveryConfusions:
+        Set<Stage3StudyRecoveryConfusionV1> = []
     @Environment(\.dismiss) private var dismiss
 
     public init(
@@ -268,6 +314,14 @@ public struct ClientStage3StudyReportViewV1: View {
                 defaultFilename: model.exportFilename
             ) { _ in
                 model.completeExport()
+            }
+            .sheet(isPresented: $showingPhysicalReturn) {
+                physicalReturnSheet
+                    .interactiveDismissDisabled(physicalReturnInFlight)
+            }
+            .sheet(isPresented: $showingFinalReview) {
+                finalReviewSheet
+                    .interactiveDismissDisabled(finalReviewInFlight)
             }
     }
 
@@ -334,7 +388,28 @@ public struct ClientStage3StudyReportViewV1: View {
                 )
             }
             Section {
-                sessionControls
+                if summary.safetyReviewCompleted {
+                    Label(
+                        "Final review complete; this report is locked",
+                        systemImage: "lock.fill"
+                    )
+                } else {
+                    sessionControls
+                    if model.activeSessionDayIndex != nil {
+                        Button(
+                            "Record a Physical Return",
+                            systemImage: "figure.walk.arrival"
+                        ) {
+                            showingPhysicalReturn = true
+                        }
+                        Button(
+                            "Complete Final Review and Lock Report",
+                            systemImage: "checkmark.shield"
+                        ) {
+                            showingFinalReview = true
+                        }
+                    }
+                }
                 Button("Preview Exact Report", systemImage: "doc.text.magnifyingglass") {
                     Task { await model.preparePreview() }
                 }
@@ -347,6 +422,91 @@ public struct ClientStage3StudyReportViewV1: View {
                 )
             }
         }
+    }
+
+    private var physicalReturnSheet: some View {
+        NavigationStack {
+            Form {
+                Section("Why physical access was required") {
+                    Picker("Reason", selection: $physicalReturnReason) {
+                        ForEach(
+                            Stage3StudyPhysicalReturnReasonV1.allCases,
+                            id: \.self
+                        ) { reason in
+                            Text(reason.studyDisplayName).tag(reason)
+                        }
+                    }
+                    .pickerStyle(.inline)
+                }
+                Section {
+                    Button("Add Physical Return", systemImage: "plus.circle") {
+                        guard !physicalReturnInFlight else { return }
+                        physicalReturnInFlight = true
+                        Task {
+                            if await model.recordPhysicalReturn(
+                                physicalReturnReason
+                            ) {
+                                showingPhysicalReturn = false
+                            }
+                            physicalReturnInFlight = false
+                        }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(physicalReturnInFlight)
+                } footer: {
+                    Text(
+                        "Record only when the remote job actually required "
+                            + "returning to the Mac. The report stores this "
+                            + "closed reason and the active study day only."
+                    )
+                }
+            }
+            .navigationTitle("Physical Return")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { showingPhysicalReturn = false }
+                        .disabled(physicalReturnInFlight)
+                }
+            }
+        }
+    }
+
+    private var finalReviewSheet: some View {
+        ClientStage3StudyFinalReviewViewV1(
+            distinguishesPairedAndConnected:
+                $distinguishesPairedAndConnected,
+            distinguishesViewingAndControlling:
+                $distinguishesViewingAndControlling,
+            understandsApprovalRequired: $understandsApprovalRequired,
+            understandsSeparateGrants: $understandsSeparateGrants,
+            safetyIncidents: $safetyIncidents,
+            recoveryConfusions: $recoveryConfusions,
+            inFlight: finalReviewInFlight,
+            onCancel: { showingFinalReview = false },
+            onComplete: {
+                guard !finalReviewInFlight else { return }
+                finalReviewInFlight = true
+                let comprehension = Stage3StudyComprehensionV1(
+                    distinguishesPairedAndConnected:
+                        distinguishesPairedAndConnected,
+                    distinguishesViewingAndControlling:
+                        distinguishesViewingAndControlling,
+                    understandsApprovalRequired:
+                        understandsApprovalRequired,
+                    understandsSeparateGrants: understandsSeparateGrants
+                )
+                Task {
+                    if await model.completeFinalReview(
+                        comprehension: comprehension,
+                        safetyIncidents: safetyIncidents,
+                        recoveryConfusions: recoveryConfusions
+                    ) {
+                        showingFinalReview = false
+                    }
+                    finalReviewInFlight = false
+                }
+            }
+        )
     }
 
     private var enrollmentForm: some View {
@@ -483,6 +643,190 @@ private extension Stage3StudyWorkaroundV1 {
         case .sshScriptShortcutOrUtility: "SSH, script, Shortcut, or utility"
         case .keepPrimaryMacNearby: "Keep the primary Mac nearby"
         case .noWorkableAlternative: "No workable alternative"
+        }
+    }
+}
+
+@available(iOS 17.0, *)
+private struct ClientStage3StudyFinalReviewViewV1: View {
+    @Binding var distinguishesPairedAndConnected: Bool
+    @Binding var distinguishesViewingAndControlling: Bool
+    @Binding var understandsApprovalRequired: Bool
+    @Binding var understandsSeparateGrants: Bool
+    @Binding var safetyIncidents: Set<Stage3StudySafetyIncidentV1>
+    @Binding var recoveryConfusions: Set<Stage3StudyRecoveryConfusionV1>
+    let inFlight: Bool
+    let onCancel: () -> Void
+    let onComplete: () -> Void
+    @State private var reviewedSafety = false
+    @State private var reviewedRecovery = false
+    @State private var understandsLock = false
+    @State private var confirmingCompletion = false
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Understanding check") {
+                    Toggle(
+                        "Paired and connected are different states",
+                        isOn: $distinguishesPairedAndConnected
+                    )
+                    Toggle(
+                        "Viewing and controlling are different states",
+                        isOn: $distinguishesViewingAndControlling
+                    )
+                    Toggle(
+                        "An action can require separate approval",
+                        isOn: $understandsApprovalRequired
+                    )
+                    Toggle(
+                        "Pairing, Act, and Control grants are separate",
+                        isOn: $understandsSeparateGrants
+                    )
+                }
+                Section("Confirmed safety incidents") {
+                    ForEach(
+                        Stage3StudySafetyIncidentV1.allCases,
+                        id: \.self
+                    ) { incident in
+                        Toggle(
+                            incident.studyDisplayName,
+                            isOn: selection(
+                                incident,
+                                in: $safetyIncidents
+                            )
+                        )
+                    }
+                    Toggle(
+                        "I reviewed the full session for safety incidents",
+                        isOn: $reviewedSafety
+                    )
+                }
+                Section("Confirmed recovery confusion") {
+                    ForEach(
+                        Stage3StudyRecoveryConfusionV1.allCases,
+                        id: \.self
+                    ) { confusion in
+                        Toggle(
+                            confusion.studyDisplayName,
+                            isOn: selection(
+                                confusion,
+                                in: $recoveryConfusions
+                            )
+                        )
+                    }
+                    Toggle(
+                        "I reviewed the full session for misleading recovery state",
+                        isOn: $reviewedRecovery
+                    )
+                }
+                Section {
+                    Toggle(
+                        "I understand completion ends the session and permanently locks this report",
+                        isOn: $understandsLock
+                    )
+                    Button(
+                        "Complete Review and Lock Report",
+                        systemImage: "lock.fill"
+                    ) {
+                        confirmingCompletion = true
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(
+                        inFlight
+                            || !reviewedSafety
+                            || !reviewedRecovery
+                            || !understandsLock
+                    )
+                } footer: {
+                    Text(
+                        "Leave incident or confusion items off only when the "
+                            + "review confirmed none occurred. Understanding "
+                            + "answers may remain false and will be scored as "
+                            + "incorrect rather than omitted."
+                    )
+                }
+            }
+            .navigationTitle("Final Study Review")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel", action: onCancel)
+                        .disabled(inFlight)
+                }
+            }
+            .confirmationDialog(
+                "Lock this report permanently?",
+                isPresented: $confirmingCompletion,
+                titleVisibility: .visible
+            ) {
+                Button(
+                    "Complete and Lock",
+                    role: .destructive,
+                    action: onComplete
+                )
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text(
+                    "The active study session will end. No later product or "
+                        + "review facts can be added to this local report."
+                )
+            }
+        }
+    }
+
+    private func selection<Value: Hashable>(
+        _ value: Value,
+        in values: Binding<Set<Value>>
+    ) -> Binding<Bool> {
+        Binding(
+            get: { values.wrappedValue.contains(value) },
+            set: { selected in
+                if selected {
+                    values.wrappedValue.insert(value)
+                } else {
+                    values.wrappedValue.remove(value)
+                }
+            }
+        )
+    }
+}
+
+private extension Stage3StudyPhysicalReturnReasonV1 {
+    var studyDisplayName: String {
+        switch self {
+        case .permission: "Permission"
+        case .pairing: "Pairing"
+        case .network: "Network"
+        case .lock: "Locked Mac"
+        case .sleep: "Sleeping Mac"
+        case .dialog: "Unexpected dialog"
+        case .input: "Input problem"
+        case .unclearState: "Unclear product state"
+        case .other: "Other"
+        }
+    }
+}
+
+private extension Stage3StudySafetyIncidentV1 {
+    var studyDisplayName: String {
+        switch self {
+        case .staleAuthorityInput: "Input after authority became stale"
+        case .unintendedSurfaceOrFieldInput: "Input reached the wrong surface or field"
+        case .behindLockContentDisclosure: "Content was visible behind lock"
+        case .unauthorizedCapabilityElevation: "Capability exceeded its grant"
+        case .localStopOrRevocationFailure: "Local Stop or revocation failed"
+        }
+    }
+}
+
+private extension Stage3StudyRecoveryConfusionV1 {
+    var studyDisplayName: String {
+        switch self {
+        case .unreachablePresentedAsLive: "Unreachable appeared live"
+        case .stalePresentedAsFresh: "Stale status appeared fresh"
+        case .lockedPresentedAsUnlocked: "Locked appeared unlocked"
+        case .sleepingPresentedAsReachable: "Sleeping appeared reachable"
+        case .outcomeUnknownPresentedAsCompleted: "Unknown action outcome appeared complete"
         }
     }
 }

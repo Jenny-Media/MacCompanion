@@ -30,6 +30,8 @@ public struct NetworkClientFocusPublicationV0: Sendable {
 
 public struct NetworkClientPrimaryProductSelectionV0: Sendable {
     package let endpoint: EndpointCandidate
+    public let authenticatedRouteClass:
+        NetworkClientAuthenticatedRouteClassV1?
     public let authenticatedSession: ClientAuthenticatedSessionV0
     public let observeChannel: ClientObserveChannelV0
     public let actChannel: ClientActChannelV1
@@ -218,6 +220,8 @@ private final class NetworkClientPrimaryPublicationRelayV0:
 /// publication until the reconnect owner selects this exact route as primary.
 package actor NetworkClientPrimaryProductCandidateV0 {
     private let endpoint: EndpointCandidate
+    private let authenticatedRouteClass:
+        NetworkClientAuthenticatedRouteClassV1?
     private let configuration: NetworkClientPrimaryProductConfigurationV0
     private let relay: NetworkClientPrimaryPublicationRelayV0
     private let bridge: NetworkClientPrimaryRouterBridgeV0
@@ -227,9 +231,12 @@ package actor NetworkClientPrimaryProductCandidateV0 {
 
     init(
         endpoint: EndpointCandidate,
+        authenticatedRouteClass:
+            NetworkClientAuthenticatedRouteClassV1?,
         configuration: NetworkClientPrimaryProductConfigurationV0
     ) {
         self.endpoint = endpoint
+        self.authenticatedRouteClass = authenticatedRouteClass
         self.configuration = configuration
         let relay = NetworkClientPrimaryPublicationRelayV0(
             events: configuration.events
@@ -310,6 +317,7 @@ package actor NetworkClientPrimaryProductCandidateV0 {
         configuration.events.primarySelected(
             NetworkClientPrimaryProductSelectionV0(
                 endpoint: endpoint,
+                authenticatedRouteClass: authenticatedRouteClass,
                 authenticatedSession: session,
                 observeChannel: observe,
                 actChannel: act,

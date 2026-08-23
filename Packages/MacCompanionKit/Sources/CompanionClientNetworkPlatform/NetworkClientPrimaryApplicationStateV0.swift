@@ -12,6 +12,28 @@ public enum NetworkClientPrimaryAvailabilityV0:
     case connected
 }
 
+/// Content-free provenance retained only for the exact selected authenticated
+/// route. Direct private addresses remain unclassified because an address does
+/// not prove LAN or private-network provenance.
+public enum NetworkClientAuthenticatedRouteClassV1:
+    String, Equatable, Sendable
+{
+    case lan
+    case privateDNS
+    case privateNetwork
+
+    package static func project(
+        _ record: ClientConfiguredRouteRecordV1?
+    ) -> Self? {
+        switch record?.provenance {
+        case .localDiscovery: .lan
+        case .privateDNS: .privateDNS
+        case .privateNetwork: .privateNetwork
+        case .directPrivateAddress, nil: nil
+        }
+    }
+}
+
 public enum NetworkClientPrimaryApplicationCommandErrorV0:
     Error, Equatable, Sendable
 {
@@ -83,6 +105,8 @@ public struct NetworkClientPrimaryApplicationSnapshotV0: Sendable {
     public let revision: UInt64
     public let hostID: UUID
     public let availability: NetworkClientPrimaryAvailabilityV0
+    public let authenticatedRouteClass:
+        NetworkClientAuthenticatedRouteClassV1?
     public let authenticatedSession: ClientAuthenticatedSessionV0?
     public let observeChannel: ClientObserveChannelV0?
     public let actChannel: ClientActChannelV1?
@@ -115,6 +139,8 @@ public final class NetworkClientPrimaryApplicationStateV0:
         var revision: UInt64 = 0
         var session: ClientAuthenticatedSessionV0?
         var selectedEndpoint: EndpointCandidate?
+        var authenticatedRouteClass:
+            NetworkClientAuthenticatedRouteClassV1?
         var observeChannel: ClientObserveChannelV0?
         var actChannel: ClientActChannelV1?
         var controlChannel: ClientInteractivePrimaryChannelV0?
@@ -371,6 +397,7 @@ public final class NetworkClientPrimaryApplicationStateV0:
         guard advanceRevision() else { return }
         storage.session = session
         storage.selectedEndpoint = value.endpoint
+        storage.authenticatedRouteClass = value.authenticatedRouteClass
         storage.observeChannel = value.observeChannel
         storage.actChannel = value.actChannel
         storage.controlChannel = value.controlChannel
@@ -395,6 +422,7 @@ public final class NetworkClientPrimaryApplicationStateV0:
         guard advanceRevision() else { return }
         storage.session = nil
         storage.selectedEndpoint = nil
+        storage.authenticatedRouteClass = nil
         storage.observeChannel = nil
         storage.actChannel = nil
         storage.controlChannel = nil
@@ -797,6 +825,7 @@ public final class NetworkClientPrimaryApplicationStateV0:
             revision: value.revision,
             hostID: hostID,
             availability: value.session == nil ? .disconnected : .connected,
+            authenticatedRouteClass: value.authenticatedRouteClass,
             authenticatedSession: value.session,
             observeChannel: value.observeChannel,
             actChannel: value.actChannel,

@@ -268,8 +268,12 @@ adds optional dogfood-only enrollment, explicit day sessions, and initial
 pairing/connection/first-live-Observe bindings. The
 [explicit Act and Control capture](../evidence/2026-08-23-stage-3-act-control-capture.md)
 then adds tester-confirmed mute outcomes and content-free active-mode Control
-duration without inferring real-job intent. Remaining route and tester-reviewed
-facts, disclosure, physical verification, and actual cohorts stay open.
+duration without inferring real-job intent. The
+[authenticated route and final-review checkpoint](../evidence/2026-08-23-stage-3-route-and-final-review.md)
+completes the local capture loop with exact winning-route provenance, explicit
+Observe jobs, physical returns, comprehension, safety, recovery review, and an
+immutable final lock. Disclosure, physical verification, and actual cohorts
+stay open.
 
 ## Consequences
 

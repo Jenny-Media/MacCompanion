@@ -153,11 +153,17 @@ public struct NetworkClientRouteAttemptV0: DialRouteAttemptingV0, Sendable {
             let handoff: NetworkClientApplicationTLSHandoffV0
             let session: ClientPrimarySessionV0
             let start: NetworkClientHandshakeStartV0
+            let authenticatedRouteClass:
+                NetworkClientAuthenticatedRouteClassV1?
             do {
                 handoff = try context.consumeVerifiedHandoff(for: connection)
                 let configuredRoute = try configuration.configuredRoute(
                     forExactEndpoint: attempt.endpoint
                 )
+                authenticatedRouteClass =
+                    NetworkClientAuthenticatedRouteClassV1.project(
+                        configuredRoute
+                    )
                 session = try ClientPrimarySessionV0(
                     clientID: configuration.clientID,
                     expectedHostID: configuration.expectedHostID,
@@ -185,6 +191,7 @@ public struct NetworkClientRouteAttemptV0: DialRouteAttemptingV0, Sendable {
             let productCandidate = configuration.primaryProduct.map {
                 NetworkClientPrimaryProductCandidateV0(
                     endpoint: attempt.endpoint,
+                    authenticatedRouteClass: authenticatedRouteClass,
                     configuration: $0
                 )
             }

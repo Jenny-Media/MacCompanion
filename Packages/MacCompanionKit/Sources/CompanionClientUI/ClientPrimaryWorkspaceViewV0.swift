@@ -45,7 +45,13 @@ public struct ClientPrimaryWorkspaceViewV0: View {
                             projection: model.projection.observe,
                             onRefreshStatus: refreshStatus,
                             onLoadActivity: loadActivity,
-                            onLoadOlderActivity: loadActivity
+                            onLoadOlderActivity: loadActivity,
+                            onRecordStudyJob: { category in
+                                _ = try await model.recordObserveStudyJob(
+                                    category: category
+                                )
+                            },
+                            onCommandFailure: onCommandFailure
                         )
                     }
                     Label(
