@@ -25,6 +25,11 @@ from mac_packaging_equivalence import (
     load_canonical_receipt_with_bytes,
     validate_receipt,
 )
+from mac_lifecycle_physical_evidence import (
+    MacLifecyclePhysicalEvidenceError,
+    load_canonical_record as load_mac_lifecycle_physical_record,
+    validate_record as validate_mac_lifecycle_physical_record,
+)
 from mac_update_physical_evidence import (
     MacUpdatePhysicalEvidenceError,
     load_canonical_record as load_mac_update_physical_record,
@@ -1108,6 +1113,61 @@ def verify_files(
                 for scenario in value.get("physicalScenarios", [])
                 if isinstance(scenario, dict)
             }
+            lifecycle_scenarios = (
+                "clean-install",
+                "permission-revocation",
+                "complete-uninstall",
+                "quarantine-launch",
+            )
+            lifecycle_references = [
+                scenario_by_id.get(scenario, {}).get("evidence")
+                if isinstance(scenario_by_id.get(scenario), dict)
+                else None
+                for scenario in lifecycle_scenarios
+            ]
+            lifecycle_reference = lifecycle_references[0]
+            if (
+                not isinstance(lifecycle_reference, dict)
+                or any(reference != lifecycle_reference for reference in lifecycle_references[1:])
+                or PurePosixPath(lifecycle_reference.get("path", "")).name
+                != "mac-lifecycle-physical-evidence.json"
+            ):
+                add(errors, "invalidMacLifecyclePhysicalEvidence")
+            else:
+                try:
+                    lifecycle_path = resolve_artifact_path(
+                        root,
+                        lifecycle_reference["path"],
+                        must_exist=True,
+                    )
+                    lifecycle, lifecycle_raw = load_mac_lifecycle_physical_record(
+                        lifecycle_path
+                    )
+                    if (
+                        len(lifecycle_raw) != lifecycle_reference["bytes"]
+                        or hashlib.sha256(lifecycle_raw).hexdigest()
+                        != lifecycle_reference["sha256"]
+                    ):
+                        raise MacLifecyclePhysicalEvidenceError(
+                            "lifecycle matrix reference mismatch"
+                        )
+                    validate_mac_lifecycle_physical_record(
+                        lifecycle,
+                        release_manifest=value,
+                        evidence_root=root,
+                        verify_files=True,
+                    )
+                except (
+                    ArtifactSBOMError,
+                    MacLifecyclePhysicalEvidenceError,
+                    OSError,
+                    KeyError,
+                    TypeError,
+                    ValueError,
+                    json.JSONDecodeError,
+                    DuplicateKeyError,
+                ):
+                    add(errors, "invalidMacLifecyclePhysicalEvidence")
             upgrade = scenario_by_id.get("upgrade")
             rollback = scenario_by_id.get("rollback")
             upgrade_reference = upgrade.get("evidence") if isinstance(upgrade, dict) else None

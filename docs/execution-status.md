@@ -867,6 +867,15 @@ no-background-network cases; all thirteen source/case observations are
 distinct and transitively verified. Sixteen focused cases pass without running
 an app, updater, network, installer, rollback, signing, notarization, or mount.
 Signed physical capture remains open.
+The subsequent
+[closed Mac lifecycle physical-evidence matrix](evidence/2026-08-23-mac-lifecycle-physical-evidence-matrix.md)
+closes the other four promotion scenarios around one exact candidate. Its
+quarantine, clean-install, permission-revocation, and complete-uninstall cases
+fix ordered assertions and exact candidate/removal outcomes, with four
+distinct transitively verified observations. Sixteen focused cases pass
+without launching or mutating an app, Agent, login role, permission, listener,
+pairing, product data, installer, signer, notary service, or publication.
+Physical execution remains open.
 
 ## Blocker handling rule
 

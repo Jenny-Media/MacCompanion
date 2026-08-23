@@ -418,6 +418,10 @@ Its twelve ordered cases bind denial and forced-loss recovery to the exact
 source build, successful/clean-user/no-background-network behavior to the exact
 candidate build, and every observation to distinct retained bytes. This closes
 the evidence shape but does not replace execution on signed physical machines.
+The remaining four Mac promotion scenarios similarly share the canonical
+[Mac lifecycle physical-evidence profile](../spec/mac-lifecycle-physical-evidence/v0/profile.md),
+which fixes quarantine/Gatekeeper, clean enablement/readiness, permission-
+revocation denial, and complete-uninstall assertions plus exact terminal state.
 
 CI is split into three trust lanes:
 

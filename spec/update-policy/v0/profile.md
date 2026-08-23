@@ -1,4 +1,4 @@
-# Mac Companion update trust policy v0.25
+# Mac Companion update trust policy v0.26
 
 Status: normative for the first direct-distribution beta.
 
@@ -133,6 +133,14 @@ Control denial, cleanup uncertainty, forced loss at four transition points,
 successful upgrade, rollback, clean-user upgrade, and absence of background
 network activity. Each case names the exact source or candidate version/build
 that must be running; opaque passed files do not satisfy this matrix.
+
+The same promotion claim binds the four remaining Mac lifecycle scenarios to
+one canonical `maccompanion.mac-lifecycle-physical-evidence.v0.1` record. It
+requires quarantine and Gatekeeper acceptance without bypass; a genuinely
+clean explicit enablement reaching authenticated Agent readiness; local-safe
+capture/input/ingress denial after permission revocation; and complete removal
+of login roles, listener, pairing authority, product data, and any privileged
+helper without silent authority restoration on reinstall.
 
 ## Runtime installation gate
 
