@@ -1,4 +1,4 @@
-# Mac Companion update trust policy v0.11
+# Mac Companion update trust policy v0.12
 
 Status: normative for the first direct-distribution beta.
 
@@ -182,6 +182,15 @@ failed handoff re-registers and verifies the source Agent. After a successful
 replacement, only the exact source or candidate app build may re-register its
 matching Agent and clear the receipt. Missing exact readiness or any receipt
 conflict retains recovery state and keeps installation authority closed.
+
+The reactivation receipt must use the frozen canonical JSON projection in the
+menu app's private Application Support root. Reads require one no-follow regular
+descriptor with mode 0600 and bounded `fstat` size; cached pathname metadata is
+not identity or size authority. Insert, phase advance, and clear require the
+exact expected receipt under one process-shared lock, with file sync before
+atomic rename and directory sync after rename or unlink. Any unknown entry,
+symlink, malformed record, compare-and-swap conflict, or uncertain durability
+retains the recovery gate.
 
 Neither lifecycle event is Mac Companion's Developer ID identity or
 notarization attestation. Sparkle 2.9.6 permits an Ed25519-valid update to

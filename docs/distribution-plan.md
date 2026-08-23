@@ -186,6 +186,14 @@ the exact installed source or candidate build re-register and verify its Agent
 before clearing the receipt. All effects remain injected until the private
 atomic store, ServiceManagement adapter, and authenticated readiness observer
 are bound.
+The subsequent
+[atomic update Agent reactivation store](evidence/2026-08-23-atomic-update-agent-reactivation-store.md)
+implements that receipt under the menu app's private Application Support root.
+It uses canonical bounded JSON, exact compare-and-swap, a process-shared lock,
+no-follow descriptor inspection, private modes, atomic rename, and file plus
+directory durability barriers. Pre/post-rename and post-clear fault tests prove
+readback convergence. App construction and real platform/readiness bindings
+remain closed.
 
 ### Channels
 

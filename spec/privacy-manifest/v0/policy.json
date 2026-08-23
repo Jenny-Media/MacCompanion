@@ -73,6 +73,20 @@
       "platforms": ["macOS"]
     },
     {
+      "api": "fstat",
+      "category": "NSPrivacyAccessedAPICategoryFileTimestamp",
+      "path": "Packages/MacCompanionKit/Sources/CompanionAgentPlatform/MacUpdateAgentReactivationStoreV0.swift",
+      "count": 1,
+      "platforms": ["macOS"]
+    },
+    {
+      "api": "stat",
+      "category": "NSPrivacyAccessedAPICategoryFileTimestamp",
+      "path": "Packages/MacCompanionKit/Sources/CompanionAgentPlatform/MacUpdateAgentReactivationStoreV0.swift",
+      "count": 1,
+      "platforms": ["macOS"]
+    },
+    {
       "api": "systemFreeSize",
       "category": "NSPrivacyAccessedAPICategoryDiskSpace",
       "path": "Packages/MacCompanionKit/Sources/CompanionHost/MacSystemStatusSampler.swift",

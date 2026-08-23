@@ -714,6 +714,14 @@ startup repair re-register only the exact source or candidate build and clear
 the receipt after matching authenticated Agent readiness. Eight injected tests
 pass. No live registration or updater action ran; the atomic store and concrete
 platform bindings remain open.
+The subsequent
+[atomic update Agent reactivation store](evidence/2026-08-23-atomic-update-agent-reactivation-store.md)
+adds canonical closed receipt encoding and a private, lock-serialized,
+no-follow, fsync/rename/directory-fsync compare-and-swap store. Eight tests
+cover reopen, phase advance, clear, faults, unsafe filesystem entries, and
+concurrent writers. A cached-URL-size mismatch found by the tests was removed
+in favor of sole descriptor `fstat` authority. No live Application Support or
+Agent mutation ran.
 
 ## Blocker handling rule
 

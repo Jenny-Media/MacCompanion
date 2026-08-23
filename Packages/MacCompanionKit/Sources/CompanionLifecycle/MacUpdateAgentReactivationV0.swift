@@ -55,6 +55,19 @@ public struct MacUpdateAgentReactivationReceiptV0:
     }
 }
 
+public protocol MacUpdateAgentReactivationPersistenceV0: Sendable {
+    func current() async throws -> MacUpdateAgentReactivationReceiptV0?
+
+    func replace(
+        expected: MacUpdateAgentReactivationReceiptV0?,
+        with replacement: MacUpdateAgentReactivationReceiptV0
+    ) async throws -> Bool
+
+    func clear(
+        expected: MacUpdateAgentReactivationReceiptV0
+    ) async throws -> Bool
+}
+
 public struct MacUpdateAgentReactivationDependenciesV0: Sendable {
     public let registrationState:
         @Sendable () async -> MacUpdateAgentRegistrationStateV0
