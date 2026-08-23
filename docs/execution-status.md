@@ -625,9 +625,14 @@ Developer ID trust, notarized whole-bundle replacement, and no initial delta or
 installer-package path. A five-minute foreground confirmation is cancelled on
 foreground loss; install remains closed until network admission, Control,
 bounded work, Agent shutdown, and version compatibility all converge safely.
-Twenty-one fixtures pass. No dependency, framework, feed, key, appcast,
-download, or update action exists yet; exact dependency/source/license/helper
-review and a testable runtime drain gate are the next unblocked update slice.
+Thirty-five fixtures pass. The [Sparkle provenance and topology audit](evidence/2026-08-23-sparkle-provenance-and-topology-audit.md)
+now binds the clean full revision, upstream manifest, official binary archive,
+shared license, safe ZIP/symlink/Mach-O shape, absent upstream privacy manifest,
+disabled profiling/custom parameters, and the exact three-object retained
+non-sandboxed runtime graph. No dependency, framework, feed, key, appcast,
+download, or update action exists yet; the current closed dependency policy
+remains unchanged until it can admit the exact package and enforce XPC/tool
+stripping atomically.
 
 The [update installation runtime gate](evidence/2026-08-23-update-install-runtime-gate.md)
 now admits only a same-channel, increasing-build candidate with every frozen

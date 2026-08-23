@@ -1,4 +1,4 @@
-# Mac Companion update trust policy v0.1
+# Mac Companion update trust policy v0.2
 
 Status: normative for the first direct-distribution beta.
 
@@ -10,14 +10,43 @@ feed, create a signing key, check for an update, or install anything.
 
 The only admitted updater is Sparkle `2.9.6` from
 `https://github.com/sparkle-project/Sparkle`, pinned to the full revision
-`ac2def288cbff5cfc7df3ffef6abdf45b72bcb0a`. A tag, branch, version range,
-binary download URL, or shorter revision is not an equivalent authority.
+`ac2def288cbff5cfc7df3ffef6abdf45b72bcb0a`. SwiftPM must use an exact
+semantic version and its resolved state must match that full revision. A tag,
+branch, version range, binary download URL alone, or shorter revision is not
+an equivalent authority.
+
+The upstream `Package.swift` digest is
+`076e7810d9a463f3d7f034f9429bd5dcb3ed72203d06e1636f221668ec327962`.
+It declares one binary target named `Sparkle`; that target's official archive
+checksum is
+`8d5fb41d960b43f4a68aa14126bf62b098544ec8d191cdcc73eb14e63a8e7606`.
+The source and archive carry the same reviewed license bytes, digest
+`389a4e4e9a32f059775b13a06e25a591445ba229d2838d26dd3e7c0c45127cfe`.
+All of these facts are required together.
 
 The pin must be re-reviewed before it changes. The review must cover upstream
 security notes, the complete resolved revision, license, signed-code graph,
 privacy manifest impact, helper/XPC topology, archive tools, and the final
 Developer ID/notarization behavior. The repository's default dependency denial
 remains in force until that integration review is complete.
+
+## Privacy and embedded topology
+
+Mac Companion sends no system profile and supplies no custom feed parameters.
+It explicitly keeps `SUEnableSystemProfiling` and `SUSendProfileInfo` false and
+sets the updater's `sendsSystemProfile` state false; it does not rely on an
+absent preference. The audited upstream source and binary archive contain no
+`PrivacyInfo.xcprivacy`. A future upstream manifest changes this recorded fact
+and requires review; Mac Companion's own containing-app privacy manifest
+remains authoritative for its behavior.
+
+Mac Companion is not App Sandbox enabled. The final embedded Sparkle graph is
+therefore minimized to the framework executable, `Autoupdate`, and
+`Updater.app/Contents/MacOS/Updater`. `Installer.xpc` and `Downloader.xpc` are
+removed from the copied framework, and Sparkle's release tools—including
+`generate_appcast`, `sign_update`, `generate_keys`, and `BinaryDelta`—never
+enter the app bundle. Archive/export re-signs every retained nested object with
+the release identity, and the exact final graph is inspected before promotion.
 
 ## Feed and archive trust
 

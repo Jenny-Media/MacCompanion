@@ -10,10 +10,19 @@ from typing import Any
 
 
 MAX_POLICY_BYTES = 16 * 1024
-SCHEMA = "maccompanion.update-policy.v0.1"
+SCHEMA = "maccompanion.update-policy.v0.2"
 SPARKLE_REPOSITORY = "https://github.com/sparkle-project/Sparkle"
 SPARKLE_VERSION = "2.9.6"
 SPARKLE_REVISION = "ac2def288cbff5cfc7df3ffef6abdf45b72bcb0a"
+SPARKLE_ARCHIVE_SHA256 = "8d5fb41d960b43f4a68aa14126bf62b098544ec8d191cdcc73eb14e63a8e7606"
+SPARKLE_MANIFEST_SHA256 = "076e7810d9a463f3d7f034f9429bd5dcb3ed72203d06e1636f221668ec327962"
+SPARKLE_LICENSE_SHA256 = "389a4e4e9a32f059775b13a06e25a591445ba229d2838d26dd3e7c0c45127cfe"
+SPARKLE_RUNTIME_EXECUTABLES = [
+    "Sparkle.framework/Versions/B/Autoupdate",
+    "Sparkle.framework/Versions/B/Sparkle",
+    "Sparkle.framework/Versions/B/Updater.app/Contents/MacOS/Updater",
+]
+SPARKLE_EXCLUDED_XPC_SERVICES = ["Downloader.xpc", "Installer.xpc"]
 FEED_REF = re.compile(r"^[a-z][a-z0-9-]{0,62}$")
 
 
@@ -70,7 +79,17 @@ def _require_false(value: Any, error: str) -> None:
 def validate_policy(value: Any) -> None:
     root = _require_exact_object(
         value,
-        {"channels", "dependency", "product", "rotation", "runtime", "schemaVersion", "security"},
+        {
+            "channels",
+            "dependency",
+            "privacy",
+            "product",
+            "rotation",
+            "runtime",
+            "schemaVersion",
+            "security",
+            "topology",
+        },
         "invalidRoot",
     )
     if root["schemaVersion"] != SCHEMA or root["product"] != "Mac Companion":
@@ -78,10 +97,24 @@ def validate_policy(value: Any) -> None:
 
     dependency = _require_exact_object(
         root["dependency"],
-        {"repository", "revision", "version"},
+        {
+            "archiveSHA256",
+            "binaryTarget",
+            "licenseSHA256",
+            "manifestSHA256",
+            "packageRequirement",
+            "repository",
+            "revision",
+            "version",
+        },
         "invalidDependency",
     )
     if dependency != {
+        "archiveSHA256": SPARKLE_ARCHIVE_SHA256,
+        "binaryTarget": "Sparkle",
+        "licenseSHA256": SPARKLE_LICENSE_SHA256,
+        "manifestSHA256": SPARKLE_MANIFEST_SHA256,
+        "packageRequirement": "exactVersion",
         "repository": SPARKLE_REPOSITORY,
         "revision": SPARKLE_REVISION,
         "version": SPARKLE_VERSION,
@@ -120,6 +153,41 @@ def validate_policy(value: Any) -> None:
         references.add(reference)
     if names != ["beta", "stable"]:
         raise UpdatePolicyError("invalidChannelOrder")
+
+    privacy = _require_exact_object(
+        root["privacy"],
+        {
+            "customFeedParameters",
+            "sendsSystemProfile",
+            "systemProfilingInfoPlist",
+            "upstreamPrivacyManifestPresent",
+        },
+        "invalidPrivacy",
+    )
+    for key in privacy:
+        _require_false(privacy[key], f"{key}Denied")
+
+    topology = _require_exact_object(
+        root["topology"],
+        {
+            "applicationSandboxed",
+            "embeddedRuntimeExecutables",
+            "excludedXPCServices",
+            "releaseToolsEmbedded",
+            "resignNestedCodeDuringArchiveExport",
+        },
+        "invalidTopology",
+    )
+    _require_false(topology["applicationSandboxed"], "sandboxedTopologyDenied")
+    _require_false(topology["releaseToolsEmbedded"], "releaseToolsDenied")
+    _require_true(
+        topology["resignNestedCodeDuringArchiveExport"],
+        "nestedCodeResigningRequired",
+    )
+    if topology["embeddedRuntimeExecutables"] != SPARKLE_RUNTIME_EXECUTABLES:
+        raise UpdatePolicyError("invalidRuntimeTopology")
+    if topology["excludedXPCServices"] != SPARKLE_EXCLUDED_XPC_SERVICES:
+        raise UpdatePolicyError("invalidXPCExclusions")
 
     security = _require_exact_object(
         root["security"],

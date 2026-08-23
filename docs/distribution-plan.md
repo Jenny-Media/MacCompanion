@@ -121,10 +121,15 @@ only Sparkle `2.9.6`, pinned to full revision
 `ac2def288cbff5cfc7df3ffef6abdf45b72bcb0a`. Current upstream documentation
 requires HTTPS, incrementing bundle versions, Ed25519-signed archives, and
 Developer ID validation; signed feeds additionally require verification before
-archive extraction. The dependency remains unintegrated until its exact source,
-license, helper topology, privacy impact, and signed-code graph pass review; see
-[Sparkle documentation](https://sparkle-project.org/documentation/) and the
-[2.9.6 release](https://github.com/sparkle-project/Sparkle/releases/tag/2.9.6).
+archive extraction. The [completed provenance and topology audit](evidence/2026-08-23-sparkle-provenance-and-topology-audit.md)
+binds the exact upstream manifest, binary archive, shared license, archive
+shape, privacy behavior, and signed-code acquisition graph. Integration must
+use the exact version plus resolved full revision, disable system profiling and
+custom feed parameters, remove both unused XPC services from this non-sandboxed
+app, keep release tools outside the bundle, and re-sign and inspect all retained
+nested code. The dependency remains unintegrated until those rules are enforced
+by the real build; see [Sparkle documentation](https://sparkle-project.org/documentation/)
+and the [2.9.6 release](https://github.com/sparkle-project/Sparkle/releases/tag/2.9.6).
 
 ### Channels
 

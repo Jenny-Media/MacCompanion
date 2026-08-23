@@ -11,8 +11,13 @@ from typing import Any
 
 from update_policy import (
     MAX_POLICY_BYTES,
+    SPARKLE_ARCHIVE_SHA256,
+    SPARKLE_EXCLUDED_XPC_SERVICES,
+    SPARKLE_LICENSE_SHA256,
+    SPARKLE_MANIFEST_SHA256,
     SPARKLE_REPOSITORY,
     SPARKLE_REVISION,
+    SPARKLE_RUNTIME_EXECUTABLES,
     SPARKLE_VERSION,
     UpdatePolicyError,
     canonical_bytes,
@@ -45,9 +50,20 @@ def base_policy() -> dict[str, Any]:
             },
         ],
         "dependency": {
+            "archiveSHA256": SPARKLE_ARCHIVE_SHA256,
+            "binaryTarget": "Sparkle",
+            "licenseSHA256": SPARKLE_LICENSE_SHA256,
+            "manifestSHA256": SPARKLE_MANIFEST_SHA256,
+            "packageRequirement": "exactVersion",
             "repository": SPARKLE_REPOSITORY,
             "revision": SPARKLE_REVISION,
             "version": SPARKLE_VERSION,
+        },
+        "privacy": {
+            "customFeedParameters": False,
+            "sendsSystemProfile": False,
+            "systemProfilingInfoPlist": False,
+            "upstreamPrivacyManifestPresent": False,
         },
         "product": "Mac Companion",
         "rotation": {
@@ -66,7 +82,7 @@ def base_policy() -> dict[str, Any]:
             "requireForegroundConfirmation": True,
             "stopAgentBeforeInstall": True,
         },
-        "schemaVersion": "maccompanion.update-policy.v0.1",
+        "schemaVersion": "maccompanion.update-policy.v0.2",
         "security": {
             "archiveSignature": "ed25519",
             "deltaUpdates": False,
@@ -78,6 +94,13 @@ def base_policy() -> dict[str, Any]:
             "verifyBeforeExtraction": True,
             "wholeBundleReplacement": True,
         },
+        "topology": {
+            "applicationSandboxed": False,
+            "embeddedRuntimeExecutables": SPARKLE_RUNTIME_EXECUTABLES,
+            "excludedXPCServices": SPARKLE_EXCLUDED_XPC_SERVICES,
+            "releaseToolsEmbedded": False,
+            "resignNestedCodeDuringArchiveExport": True,
+        },
     }
 
 
@@ -87,6 +110,14 @@ def mutate(value: dict[str, Any], mutation: str) -> None:
         value["dependency"]["requirement"] = "from: 2.9.6"
     elif mutation == "oldSparkle":
         value["dependency"]["version"] = "2.9.5"
+    elif mutation == "archiveDigest":
+        value["dependency"]["archiveSHA256"] = "0" * 64
+    elif mutation == "manifestDigest":
+        value["dependency"]["manifestSHA256"] = "0" * 64
+    elif mutation == "licenseDigest":
+        value["dependency"]["licenseSHA256"] = "0" * 64
+    elif mutation == "versionRange":
+        value["dependency"]["packageRequirement"] = "upToNextMajor"
     elif mutation == "sharedFeed":
         value["channels"][1]["feedAuthorityRef"] = value["channels"][0]["feedAuthorityRef"]
     elif mutation == "feedURL":
@@ -95,6 +126,14 @@ def mutate(value: dict[str, Any], mutation: str) -> None:
         value["channels"][0]["automaticDownloads"] = True
     elif mutation == "automaticInstall":
         value["channels"][0]["automaticInstalls"] = True
+    elif mutation == "systemProfile":
+        value["privacy"]["sendsSystemProfile"] = True
+    elif mutation == "systemProfilingInfoPlist":
+        value["privacy"]["systemProfilingInfoPlist"] = True
+    elif mutation == "customFeedParameters":
+        value["privacy"]["customFeedParameters"] = True
+    elif mutation == "upstreamPrivacyManifest":
+        value["privacy"]["upstreamPrivacyManifestPresent"] = True
     elif mutation == "unsignedFeed":
         value["security"]["signedFeed"] = False
     elif mutation == "extractBeforeVerify":
@@ -105,6 +144,18 @@ def mutate(value: dict[str, Any], mutation: str) -> None:
         value["runtime"]["refuseUnlessControlInactive"] = False
     elif mutation == "agentRunning":
         value["runtime"]["stopAgentBeforeInstall"] = False
+    elif mutation == "sandboxedTopology":
+        value["topology"]["applicationSandboxed"] = True
+    elif mutation == "embeddedXPC":
+        value["topology"]["excludedXPCServices"] = ["Installer.xpc"]
+    elif mutation == "releaseTools":
+        value["topology"]["releaseToolsEmbedded"] = True
+    elif mutation == "missingRuntimeExecutable":
+        value["topology"]["embeddedRuntimeExecutables"].pop()
+    elif mutation == "extraRuntimeExecutable":
+        value["topology"]["embeddedRuntimeExecutables"].append("bin/sign_update")
+    elif mutation == "noNestedResigning":
+        value["topology"]["resignNestedCodeDuringArchiveExport"] = False
     elif mutation == "longConfirmation":
         value["runtime"]["confirmationLifetimeMilliseconds"] = 3_600_000
     elif mutation == "simultaneousRotation":
@@ -149,7 +200,7 @@ def exercise_file_loader(value: dict[str, Any], mutation: str | None) -> bool:
 
 def main() -> int:
     manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
-    if manifest.get("profile") != "maccompanion.update-policy-fixtures.v0.1":
+    if manifest.get("profile") != "maccompanion.update-policy-fixtures.v0.2":
         raise SystemExit("invalid update-policy fixture profile")
     cases = manifest.get("cases")
     if not isinstance(cases, list) or not cases:
@@ -189,4 +240,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
