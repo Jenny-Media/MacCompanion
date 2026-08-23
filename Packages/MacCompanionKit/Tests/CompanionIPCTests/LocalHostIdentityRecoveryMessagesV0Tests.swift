@@ -159,3 +159,50 @@ private func localRecoveryCommandV0()
         try stale.validate(against: command)
     }
 }
+
+@Test func localHostIdentityRecoveryWireCodecIsCanonicalBoundedAndTyped()
+    throws
+{
+    let command = try localRecoveryCommandV0()
+    let receipt = try LocalHostIdentityRecoveredReceiptV0(
+        correlationID: command.commandID,
+        recoveryID: command.recoveryID,
+        replacedHostID: command.review.hostID,
+        newHostID: UUID(uuidString: "55555555-5555-4555-8555-555555555555")!,
+        newHostFingerprint: WireFingerprint(Data(repeating: 0x52, count: 32)),
+        completedAtUnixMilliseconds: command.confirmedAtUnixMilliseconds + 1
+    )
+    let commandBytes = try LocalHostIdentityRecoveryWireCodecV1
+        .encodeCommand(command)
+    let receiptBytes = try LocalHostIdentityRecoveryWireCodecV1
+        .encodeReceipt(receipt)
+
+    #expect(try LocalHostIdentityRecoveryWireCodecV1
+        .decodeCommand(commandBytes) == command)
+    #expect(try LocalHostIdentityRecoveryWireCodecV1
+        .decodeReceipt(receiptBytes) == receipt)
+    #expect(commandBytes.count
+        <= LocalHostIdentityRecoveryWireCodecV1.maximumEncodedBytes)
+    #expect(receiptBytes.count
+        <= LocalHostIdentityRecoveryWireCodecV1.maximumEncodedBytes)
+    #expect(throws: LocalHostIdentityRecoveryWireCodecErrorV1.self) {
+        try LocalHostIdentityRecoveryWireCodecV1.decodeCommand(receiptBytes)
+    }
+
+    var noncanonical = Data([0x7b, 0x20])
+    noncanonical.append(commandBytes.dropFirst())
+    #expect(throws: LocalHostIdentityRecoveryWireCodecErrorV1
+        .nonCanonicalPayload) {
+        try LocalHostIdentityRecoveryWireCodecV1.decodeCommand(noncanonical)
+    }
+    #expect(throws: LocalHostIdentityRecoveryWireCodecErrorV1
+        .payloadTooLarge) {
+        try LocalHostIdentityRecoveryWireCodecV1.decodeCommand(
+            Data(
+                repeating: 0x20,
+                count: LocalHostIdentityRecoveryWireCodecV1
+                    .maximumEncodedBytes + 1
+            )
+        )
+    }
+}

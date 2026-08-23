@@ -20,6 +20,9 @@ package protocol MacLocalXPCDashboardClientV1: AnyObject, Sendable {
     func resolveLocalApproval(
         _ command: LocalPairingDecisionCommandV0
     ) async throws -> LocalPairingDecisionReceiptV0
+    func recoverHostIdentity(
+        _ command: LocalHostIdentityRecoveryCommandV0
+    ) async throws -> LocalHostIdentityRecoveredReceiptV0
     func closeNetworkAdmissionForUpdate() async throws
     func drainNetworkConnectionsForUpdate() async throws
     func reopenNetworkAdmissionAfterUpdateFailure() async throws
@@ -54,6 +57,12 @@ extension MacLocalXPCDashboardClientV1 {
     package func resolveLocalApproval(
         _: LocalPairingDecisionCommandV0
     ) async throws -> LocalPairingDecisionReceiptV0 {
+        throw MacLocalXPCMenuPairingCommandErrorV1.unavailable
+    }
+
+    package func recoverHostIdentity(
+        _: LocalHostIdentityRecoveryCommandV0
+    ) async throws -> LocalHostIdentityRecoveredReceiptV0 {
         throw MacLocalXPCMenuPairingCommandErrorV1.unavailable
     }
 
@@ -408,6 +417,17 @@ private final class MacLocalXPCDashboardRuntimeV1: @unchecked Sendable {
         return try await client.resolveLocalApproval(command)
     }
 
+    func recoverHostIdentity(
+        _ command: LocalHostIdentityRecoveryCommandV0
+    ) async throws -> LocalHostIdentityRecoveredReceiptV0 {
+        guard let client = lock.withLock({
+            acceptingEvents && shutdownTask == nil ? self.client : nil
+        }) else {
+            throw MacLocalXPCMenuPairingCommandErrorV1.unavailable
+        }
+        return try await client.recoverHostIdentity(command)
+    }
+
     func closeNetworkAdmissionForUpdate() async throws {
         guard let client = updateQuiescenceClient() else {
             throw MacLocalXPCUpdateQuiescenceErrorV0.unavailable
@@ -479,6 +499,7 @@ public final class MacLocalXPCDashboardProductV1:
     MacAgentDashboardStatusRetryingV0,
     MacPairingLocalIPCClientV0,
     MacPairingReviewLocalIPCClientV0,
+    MacHostIdentityRecoveryLocalIPCClientV0,
     @unchecked Sendable
 {
     package typealias ClientFactory = @Sendable (
@@ -615,6 +636,12 @@ public final class MacLocalXPCDashboardProductV1:
         _ command: LocalPairingDecisionCommandV0
     ) async throws -> LocalPairingDecisionReceiptV0 {
         try await runtime.resolveLocalApproval(command)
+    }
+
+    public func recoverHostIdentity(
+        _ command: LocalHostIdentityRecoveryCommandV0
+    ) async throws -> LocalHostIdentityRecoveredReceiptV0 {
+        try await runtime.recoverHostIdentity(command)
     }
 
     public func closeNetworkAdmissionForUpdate() async throws {

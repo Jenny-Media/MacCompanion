@@ -519,12 +519,14 @@ public final class MacLocalXPCServerV1:
         case create(LocalPairingSessionCreateCommandV0)
         case dismiss(LocalPairingSessionDismissCommandV0)
         case resolveDecision(LocalPairingDecisionCommandV0)
+        case recoverHostIdentity(LocalHostIdentityRecoveryCommandV0)
 
         var kind: MacLocalXPCMenuPairingCommandKindV1 {
             switch self {
             case .create: .create
             case .dismiss: .dismiss
             case .resolveDecision: .resolveDecision
+            case .recoverHostIdentity: .recoverHostIdentity
             }
         }
 
@@ -533,6 +535,7 @@ public final class MacLocalXPCServerV1:
             case .create: .createPairingSession
             case .dismiss: .dismissPairingSession
             case .resolveDecision: .resolveLocalApproval
+            case .recoverHostIdentity: .recoverHostIdentity
             }
         }
     }
@@ -541,6 +544,7 @@ public final class MacLocalXPCServerV1:
         case created(LocalPairingSessionCreatedReceiptV0)
         case dismissed(LocalPairingSessionDismissedReceiptV0)
         case decision(LocalPairingDecisionReceiptV0)
+        case recovered(LocalHostIdentityRecoveredReceiptV0)
     }
 
     private final class PendingMenuPairingCommand: @unchecked Sendable {
@@ -904,6 +908,8 @@ public final class MacLocalXPCServerV1:
     private let statusReader: (any MacLocalXPCStatusReadingV1)?
     private let menuPairingCommandHandler:
         (any MacLocalXPCMenuPairingCommandHandlingV1)?
+    private let hostIdentityRecoveryHandler:
+        (any MacLocalXPCHostIdentityRecoveryHandlingV1)?
     private let updateQuiescenceHandler:
         (any MacLocalXPCUpdateQuiescenceHandlingV0)?
     private let interactiveAdmissionHandler:
@@ -929,6 +935,8 @@ public final class MacLocalXPCServerV1:
         statusReader: (any MacLocalXPCStatusReadingV1)? = nil,
         menuPairingCommandHandler:
             (any MacLocalXPCMenuPairingCommandHandlingV1)? = nil,
+        hostIdentityRecoveryHandler:
+            (any MacLocalXPCHostIdentityRecoveryHandlingV1)? = nil,
         updateQuiescenceHandler:
             (any MacLocalXPCUpdateQuiescenceHandlingV0)? = nil,
         interactiveAdmissionHandler:
@@ -942,6 +950,7 @@ public final class MacLocalXPCServerV1:
             bootstrapHandler: bootstrapHandler,
             statusReader: statusReader,
             menuPairingCommandHandler: menuPairingCommandHandler,
+            hostIdentityRecoveryHandler: hostIdentityRecoveryHandler,
             updateQuiescenceHandler: updateQuiescenceHandler,
             interactiveAdmissionHandler: interactiveAdmissionHandler,
             interactiveMediaHandler: interactiveMediaHandler,
@@ -959,6 +968,8 @@ public final class MacLocalXPCServerV1:
         statusReader: (any MacLocalXPCStatusReadingV1)? = nil,
         menuPairingCommandHandler:
             (any MacLocalXPCMenuPairingCommandHandlingV1)? = nil,
+        hostIdentityRecoveryHandler:
+            (any MacLocalXPCHostIdentityRecoveryHandlingV1)? = nil,
         updateQuiescenceHandler:
             (any MacLocalXPCUpdateQuiescenceHandlingV0)? = nil,
         interactiveAdmissionHandler:
@@ -972,6 +983,7 @@ public final class MacLocalXPCServerV1:
         self.bootstrapHandler = bootstrapHandler
         self.statusReader = statusReader
         self.menuPairingCommandHandler = menuPairingCommandHandler
+        self.hostIdentityRecoveryHandler = hostIdentityRecoveryHandler
         self.updateQuiescenceHandler = updateQuiescenceHandler
         self.interactiveAdmissionHandler = interactiveAdmissionHandler
         self.interactiveMediaHandler = interactiveMediaHandler
@@ -3480,6 +3492,11 @@ public final class MacLocalXPCServerV1:
                     try LocalMenuPairingCommandWireCodecV1
                         .decodeDecisionCommand(payload)
                 )
+            case MCLocalXPCMenuPairingCommandRecoverHostIdentity:
+                return .recoverHostIdentity(
+                    try LocalHostIdentityRecoveryWireCodecV1
+                        .decodeCommand(payload)
+                )
             default:
                 return nil
             }
@@ -3493,8 +3510,7 @@ public final class MacLocalXPCServerV1:
         request: MCLocalXPCMessageRef,
         command: MenuPairingCommand
     ) -> Bool {
-        guard let menuPairingCommandHandler,
-              state.lifetime.menuReadinessPublished,
+        guard state.lifetime.menuReadinessPublished,
               let transaction = state.menuPairingCommandGate.begin(
                 generation: state.generation,
                 kind: command.kind,
@@ -3514,24 +3530,42 @@ public final class MacLocalXPCServerV1:
         state.pendingMenuPairingCommand = pending
         let queue = self.queue
         pending.task = Task {
-            [weak self, weak state, menuPairingCommandHandler, command, queue] in
+            [weak self, weak state, menuPairingCommandHandler,
+             hostIdentityRecoveryHandler, command, queue] in
             do {
                 let result: MenuPairingCommandResult
                 switch command {
                 case .create(let value):
+                    guard let menuPairingCommandHandler else {
+                        throw MacLocalXPCMenuPairingCommandErrorV1.unavailable
+                    }
                     result = .created(
                         try await menuPairingCommandHandler
                             .createPairingSession(value)
                     )
                 case .dismiss(let value):
+                    guard let menuPairingCommandHandler else {
+                        throw MacLocalXPCMenuPairingCommandErrorV1.unavailable
+                    }
                     result = .dismissed(
                         try await menuPairingCommandHandler
                             .dismissPairingSession(value)
                     )
                 case .resolveDecision(let value):
+                    guard let menuPairingCommandHandler else {
+                        throw MacLocalXPCMenuPairingCommandErrorV1.unavailable
+                    }
                     result = .decision(
                         try await menuPairingCommandHandler
                             .resolveLocalApproval(value)
+                    )
+                case .recoverHostIdentity(let value):
+                    guard let hostIdentityRecoveryHandler else {
+                        throw MacLocalXPCMenuPairingCommandErrorV1.unavailable
+                    }
+                    result = .recovered(
+                        try await hostIdentityRecoveryHandler
+                            .recoverHostIdentity(value)
                     )
                 }
                 queue.async { [weak self, weak state] in
@@ -3928,6 +3962,10 @@ public final class MacLocalXPCServerV1:
                 try receipt.validate(against: command)
                 return try LocalMenuPairingCommandWireCodecV1
                     .encodeDecisionReceipt(receipt)
+            case (.recoverHostIdentity(let command), .recovered(let receipt)):
+                try receipt.validate(against: command)
+                return try LocalHostIdentityRecoveryWireCodecV1
+                    .encodeReceipt(receipt)
             default:
                 return nil
             }
@@ -3943,6 +3981,8 @@ public final class MacLocalXPCServerV1:
         case .create: MCLocalXPCMenuPairingCommandCreate
         case .dismiss: MCLocalXPCMenuPairingCommandDismiss
         case .resolveDecision: MCLocalXPCMenuPairingCommandResolveDecision
+        case .recoverHostIdentity:
+            MCLocalXPCMenuPairingCommandRecoverHostIdentity
         }
     }
 
@@ -5008,6 +5048,34 @@ public final class MacLocalXPCClientV1:
         }
     }
 
+    public func recoverHostIdentity(
+        _ command: LocalHostIdentityRecoveryCommandV0
+    ) async throws -> LocalHostIdentityRecoveredReceiptV0 {
+        let payload: Data
+        do {
+            payload = try LocalHostIdentityRecoveryWireCodecV1
+                .encodeCommand(command)
+        } catch {
+            throw MacLocalXPCMenuPairingCommandErrorV1
+                .malformedOrTransportError
+        }
+        let reply = try await sendMenuPairingCommand(
+            kind: .recoverHostIdentity,
+            authorizationMethod: .recoverHostIdentity,
+            payload: payload
+        )
+        do {
+            let receipt = try LocalHostIdentityRecoveryWireCodecV1
+                .decodeReceipt(reply)
+            try receipt.validate(against: command)
+            return receipt
+        } catch {
+            invalidateCurrentGenerationAfterMalformedCommandReply()
+            throw MacLocalXPCMenuPairingCommandErrorV1
+                .malformedOrTransportError
+        }
+    }
+
     public func publishInteractiveAdmission(
         _ publication: LocalInteractiveAdmissionPublicationV1
     ) async throws -> LocalInteractiveAdmissionPublishedReceiptV1 {
@@ -5915,6 +5983,8 @@ public final class MacLocalXPCClientV1:
         case .create: MCLocalXPCMenuPairingCommandCreate
         case .dismiss: MCLocalXPCMenuPairingCommandDismiss
         case .resolveDecision: MCLocalXPCMenuPairingCommandResolveDecision
+        case .recoverHostIdentity:
+            MCLocalXPCMenuPairingCommandRecoverHostIdentity
         }
     }
 

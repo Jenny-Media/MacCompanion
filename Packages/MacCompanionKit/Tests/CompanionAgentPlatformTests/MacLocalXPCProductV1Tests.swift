@@ -3,6 +3,7 @@
 import CompanionIPC
 import CompanionLocalXPCPlatform
 import CompanionMacApp
+import CompanionWire
 import Foundation
 import Testing
 
@@ -635,6 +636,7 @@ private final class ProductDashboardClientV1:
     private var admissionPublications:
         [LocalInteractiveAdmissionPublicationV1] = []
     private var updateCommands: [String] = []
+    private var recoveryCommands: [LocalHostIdentityRecoveryCommandV0] = []
     private var cancels = 0
 
     init(
@@ -687,6 +689,24 @@ private final class ProductDashboardClientV1:
         lock.withLock { updateCommands.append("reopen") }
     }
 
+    func recoverHostIdentity(
+        _ command: LocalHostIdentityRecoveryCommandV0
+    ) async throws -> LocalHostIdentityRecoveredReceiptV0 {
+        lock.withLock { recoveryCommands.append(command) }
+        return try LocalHostIdentityRecoveredReceiptV0(
+            correlationID: command.commandID,
+            recoveryID: command.recoveryID,
+            replacedHostID: command.review.hostID,
+            newHostID: UUID(uuidString:
+                "55555555-5555-4555-8555-555555555555")!,
+            newHostFingerprint: WireFingerprint(
+                Data(repeating: 0x55, count: 32)
+            ),
+            completedAtUnixMilliseconds:
+                command.confirmedAtUnixMilliseconds + 1
+        )
+    }
+
     func cancel() { lock.withLock { cancels += 1 } }
     func finishMenuPresentationReceiver() async {
         cancel()
@@ -700,6 +720,7 @@ private final class ProductDashboardClientV1:
         status: Int,
         admissions: [LocalInteractiveAdmissionPublicationV1],
         updateCommands: [String],
+        recoveryCommands: [LocalHostIdentityRecoveryCommandV0],
         cancels: Int
     ) {
         lock.withLock {
@@ -709,12 +730,57 @@ private final class ProductDashboardClientV1:
                 statusRequests,
                 admissionPublications,
                 updateCommands,
+                recoveryCommands,
                 cancels
             )
         }
     }
 
     enum StartError: Error { case injected }
+}
+
+@Test
+@available(macOS 26.0, *)
+func dashboardProductForwardsExactRecoveryOnlyDuringItsLifetime()
+async throws {
+    let box = ProductDashboardClientBoxV1()
+    let product = MacLocalXPCDashboardProductV1(
+        owner: MacAgentDashboardApplicationOwnerV0(),
+        clientFactory: { handler in
+            let client = ProductDashboardClientV1(handler: handler)
+            box.install(client)
+            return client
+        }
+    )
+    let review = try LocalHostIdentityRecoveryReviewV0(
+        reviewID: UUID(uuidString:
+            "11111111-1111-4111-8111-111111111111")!,
+        hostID: UUID(uuidString:
+            "22222222-2222-4222-8222-222222222222")!,
+        hostFingerprint: WireFingerprint(Data(repeating: 0x22, count: 32)),
+        cause: .keyUnavailable,
+        createdAtUnixMilliseconds: 1_787_284_800_000,
+        expiresAtUnixMilliseconds: 1_787_285_100_000
+    )
+    let command = try LocalHostIdentityRecoveryCommandV0(
+        commandID: UUID(uuidString:
+            "33333333-3333-4333-8333-333333333333")!,
+        recoveryID: UUID(uuidString:
+            "44444444-4444-4444-8444-444444444444")!,
+        review: review,
+        confirmedAtUnixMilliseconds: 1_787_284_800_001
+    )
+
+    try await product.start()
+    let receipt = try await product.recoverHostIdentity(command)
+    try receipt.validate(against: command)
+    let client = try #require(box.client())
+    #expect(client.snapshot().recoveryCommands == [command])
+
+    await product.finish()
+    await #expect(throws: MacLocalXPCMenuPairingCommandErrorV1.unavailable) {
+        try await product.recoverHostIdentity(command)
+    }
 }
 
 @Test

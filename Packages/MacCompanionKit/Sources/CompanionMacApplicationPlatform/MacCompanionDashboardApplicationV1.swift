@@ -35,6 +35,7 @@ public enum MacCompanionPairingReviewActionV1: Sendable {
 private final class MacCompanionPairingCommandProxyV1:
     MacPairingLocalIPCClientV0,
     MacPairingReviewLocalIPCClientV0,
+    MacHostIdentityRecoveryLocalIPCClientV0,
     @unchecked Sendable
 {
     private let lock = NSLock()
@@ -73,16 +74,14 @@ private final class MacCompanionPairingCommandProxyV1:
         }
         return try await product.resolveLocalApproval(command)
     }
-}
 
-@available(macOS 26.0, *)
-private struct MacCompanionUnavailableRecoveryClientV1:
-    MacHostIdentityRecoveryLocalIPCClientV0
-{
     func recoverHostIdentity(
-        _: LocalHostIdentityRecoveryCommandV0
+        _ command: LocalHostIdentityRecoveryCommandV0
     ) async throws -> LocalHostIdentityRecoveredReceiptV0 {
-        throw MacLocalXPCMenuPairingCommandErrorV1.unavailable
+        guard let product = lock.withLock({ self.product }) else {
+            throw MacLocalXPCMenuPairingCommandErrorV1.unavailable
+        }
+        return try await product.recoverHostIdentity(command)
     }
 }
 
@@ -99,6 +98,9 @@ package protocol MacCompanionDashboardProductV1: AnyObject, Sendable {
     func resolveLocalApproval(
         _ command: LocalPairingDecisionCommandV0
     ) async throws -> LocalPairingDecisionReceiptV0
+    func recoverHostIdentity(
+        _ command: LocalHostIdentityRecoveryCommandV0
+    ) async throws -> LocalHostIdentityRecoveredReceiptV0
     func closeNetworkAdmissionForUpdate() async throws
     func drainNetworkConnectionsForUpdate() async throws
     func reopenNetworkAdmissionAfterUpdateFailure() async throws
@@ -125,6 +127,12 @@ extension MacCompanionDashboardProductV1 {
     package func resolveLocalApproval(
         _: LocalPairingDecisionCommandV0
     ) async throws -> LocalPairingDecisionReceiptV0 {
+        throw MacLocalXPCMenuPairingCommandErrorV1.unavailable
+    }
+
+    package func recoverHostIdentity(
+        _: LocalHostIdentityRecoveryCommandV0
+    ) async throws -> LocalHostIdentityRecoveredReceiptV0 {
         throw MacLocalXPCMenuPairingCommandErrorV1.unavailable
     }
 
@@ -319,7 +327,7 @@ public final class MacCompanionDashboardApplicationV1 {
             }
         )
         let recoveryOwner = MacHostIdentityRecoveryApplicationOwnerV0(
-            client: MacCompanionUnavailableRecoveryClientV1(),
+            client: commandProxy,
             stateChanged: { [weak recoveryRelay] in
                 await recoveryRelay?.receive($0)
             }

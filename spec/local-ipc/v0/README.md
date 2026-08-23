@@ -354,6 +354,21 @@ fails it within four monotonic seconds. The menu client waits at most five
 monotonic seconds, retains the exact typed command in its presentation owner
 for explicit retry, and never treats transport delivery as product success.
 
+The destructive `recoverHostIdentity` method uses the distinct closed
+`command.host-identity.recover` request,
+`command.host-identity.recover.ack` success, and
+`command.host-identity.recover.error` handled-failure kinds. Its request and
+success have the same exact `kind`, signed integer `version = 1`, and one
+nonempty canonical JSON `payload` shape and 4,096-byte bound. The request
+payload is exactly `LocalHostIdentityRecoveryCommandV0`; the success payload
+is exactly `LocalHostIdentityRecoveredReceiptV0` and must validate against the
+complete submitted command before product success. Pairing and recovery share
+one generation-bound single-flight gate, while their injected Agent handlers
+remain distinct. A timeout, cancellation after send, malformed or mismatched
+receipt, endpoint replacement, or transport ambiguity invalidates the exact
+generation and cannot cause an automatic semantic retry. Only the retained
+exact command may later use the separately published durable-resume authority.
+
 The Agent network owner exposes pairing context only while both the exact
 sealed listener and its Bonjour registration are ready. Their callbacks use
 independent increasing generations; stale callbacks cannot restore

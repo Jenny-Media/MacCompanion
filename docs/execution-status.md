@@ -209,6 +209,19 @@ one-time input/media credentials instead of terminating at the inert material
 seam. Signed two-process approval, channel activation, pixels, input, lock, and
 latency remain physical gates.
 
+The [permanent menu host-recovery command checkpoint](evidence/2026-08-23-permanent-menu-host-recovery-command.md)
+removes the release menu application's unconditional unavailable recovery
+client. The reviewed recovery owner now submits its exact retained command
+through the dashboard product and one authenticated-generation single-flight
+XPC envelope, decodes a dedicated canonical bounded receipt, and requires
+complete receipt correlation before success. Pairing and destructive recovery
+share transport serialization but retain separate injected Agent handler
+interfaces. Timeout, cancellation after send, malformed or mismatched reply,
+and endpoint loss invalidate the generation and never trigger an automatic
+semantic retry. The recovery-only permanent Agent service that publishes the
+review/resume and installs this handler remains the next source-safe
+composition item; signed Keychain replacement is not claimed.
+
 The [visible Interactive admission checkpoint](evidence/2026-08-22-visible-interactive-admission-contract.md)
 now carries the closed canonical menu-process generation, exact revision, and
 optional opaque selected-display publication through an independent
