@@ -35,6 +35,7 @@ python3 scripts/validate_package_mac_release.py
 python3 scripts/validate_mac_packaging_equivalence.py
 python3 scripts/validate_mac_update_physical_evidence.py
 python3 scripts/validate_mac_lifecycle_physical_evidence.py
+python3 scripts/validate_ios_physical_evidence.py
 python3 scripts/validate_release_evidence.py
 python3 scripts/validate_native_appearance_boundary.py
 

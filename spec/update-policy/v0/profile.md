@@ -1,4 +1,4 @@
-# Mac Companion update trust policy v0.26
+# Mac Companion update trust policy v0.27
 
 Status: normative for the first direct-distribution beta.
 
@@ -141,6 +141,14 @@ clean explicit enablement reaching authenticated Agent readiness; local-safe
 capture/input/ingress denial after permission revocation; and complete removal
 of login roles, listener, pairing authority, product data, and any privileged
 helper without silent authority restoration on reinstall.
+
+The iOS side of the promotion claim uses one canonical
+`maccompanion.ios-physical-evidence.v0.1` record for pairing, Local Network
+denial/recovery, and background reconnect. It binds the exact candidate and
+requires pinned/SAS-confirmed durable pairing, one Observe plus consented
+`setAudioMuted`, denial without route or authority broadening, post-grant
+recovery under the same pin, and foreground-safe reconnect without operation
+replay or implicit Control restoration.
 
 ## Runtime installation gate
 

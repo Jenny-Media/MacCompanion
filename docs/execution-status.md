@@ -876,6 +876,15 @@ distinct transitively verified observations. Sixteen focused cases pass
 without launching or mutating an app, Agent, login role, permission, listener,
 pairing, product data, installer, signer, notary service, or publication.
 Physical execution remains open.
+The subsequent
+[closed iOS physical-evidence record](evidence/2026-08-23-ios-physical-evidence-record.md)
+replaces the three opaque iOS promotion files with one exact-archive record.
+Pairing binds QR/SAS/pin/key-custody facts plus Observe and consented
+`setAudioMuted`; Local Network denial must publish no route or broader
+authority before same-pin recovery; background reconnect must retire Control,
+avoid operation replay, respect first unlock, and require fresh presence.
+Sixteen focused cases pass without installing, launching, pairing, prompting,
+networking, backgrounding, reconnecting, invoking, or publishing.
 
 ## Blocker handling rule
 

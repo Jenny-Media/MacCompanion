@@ -35,6 +35,11 @@ from mac_update_physical_evidence import (
     load_canonical_record as load_mac_update_physical_record,
     validate_record as validate_mac_update_physical_record,
 )
+from ios_physical_evidence import (
+    IOSPhysicalEvidenceError,
+    load_canonical_record as load_ios_physical_record,
+    validate_record as validate_ios_physical_record,
+)
 from signed_code_verification import (
     SignedCodeVerificationError,
     load_bundle as load_signed_code_bundle,
@@ -1212,6 +1217,66 @@ def verify_files(
                     DuplicateKeyError,
                 ):
                     add(errors, "invalidMacUpdatePhysicalEvidence")
+
+        has_ios = "iOS" in value.get("release", {}).get("targets", [])
+        if value.get("evidenceLevel") == "promotionReady" and has_ios:
+            ios_scenario_by_id = {
+                scenario.get("id"): scenario
+                for scenario in value.get("physicalScenarios", [])
+                if isinstance(scenario, dict)
+            }
+            ios_scenarios = (
+                "physical-pairing",
+                "local-network-denial",
+                "background-reconnect",
+            )
+            ios_references = [
+                ios_scenario_by_id.get(scenario, {}).get("evidence")
+                if isinstance(ios_scenario_by_id.get(scenario), dict)
+                else None
+                for scenario in ios_scenarios
+            ]
+            ios_reference = ios_references[0]
+            if (
+                not isinstance(ios_reference, dict)
+                or any(reference != ios_reference for reference in ios_references[1:])
+                or PurePosixPath(ios_reference.get("path", "")).name
+                != "ios-physical-evidence.json"
+            ):
+                add(errors, "invalidIOSPhysicalEvidence")
+            else:
+                try:
+                    ios_path = resolve_artifact_path(
+                        root,
+                        ios_reference["path"],
+                        must_exist=True,
+                    )
+                    ios_record, ios_raw = load_ios_physical_record(ios_path)
+                    if (
+                        len(ios_raw) != ios_reference["bytes"]
+                        or hashlib.sha256(ios_raw).hexdigest()
+                        != ios_reference["sha256"]
+                    ):
+                        raise IOSPhysicalEvidenceError(
+                            "iOS physical record reference mismatch"
+                        )
+                    validate_ios_physical_record(
+                        ios_record,
+                        release_manifest=value,
+                        evidence_root=root,
+                        verify_files=True,
+                    )
+                except (
+                    ArtifactSBOMError,
+                    IOSPhysicalEvidenceError,
+                    OSError,
+                    KeyError,
+                    TypeError,
+                    ValueError,
+                    json.JSONDecodeError,
+                    DuplicateKeyError,
+                ):
+                    add(errors, "invalidIOSPhysicalEvidence")
 
         packaging_records = [
             record

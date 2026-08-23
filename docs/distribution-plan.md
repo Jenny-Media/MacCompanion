@@ -422,6 +422,11 @@ The remaining four Mac promotion scenarios similarly share the canonical
 [Mac lifecycle physical-evidence profile](../spec/mac-lifecycle-physical-evidence/v0/profile.md),
 which fixes quarantine/Gatekeeper, clean enablement/readiness, permission-
 revocation denial, and complete-uninstall assertions plus exact terminal state.
+The iOS promotion lane shares one canonical
+[iOS physical-evidence profile](../spec/ios-physical-evidence/v0/profile.md)
+across physical pairing, Local Network denial/recovery, and background
+reconnect. It includes one consented `setAudioMuted` operation and proves that
+backgrounding cannot replay work or silently restore Control.
 
 CI is split into three trust lanes:
 

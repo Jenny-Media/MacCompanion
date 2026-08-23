@@ -93,6 +93,10 @@ The other four macOS scenarios must likewise share one canonical
 [Mac lifecycle physical-evidence record](../../mac-lifecycle-physical-evidence/v0/profile.md),
 which binds quarantine, clean-install, permission-revocation, and complete-
 uninstall assertions plus exact terminal candidate or removal state.
+All three iOS scenarios must share one canonical
+[iOS physical-evidence record](../../ios-physical-evidence/v0/profile.md),
+binding physical pairing plus Observe/`setAudioMuted`, Local Network denial and
+recovery, and foreground-safe background reconnect to the exact iOS archive.
 
 ## Secret exclusion
 
