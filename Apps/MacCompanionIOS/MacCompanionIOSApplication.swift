@@ -16,6 +16,7 @@ struct MacCompanionIOSApplication: App {
 
 private enum MacCompanionIOSSheet: String, Identifiable {
     case pairingScanner
+    case studyReport
 
     var id: String { rawValue }
 }
@@ -28,6 +29,15 @@ private struct MacCompanionIOSRootView: View {
     var body: some View {
         content
             .task { await application.start() }
+            .toolbar {
+                if application.studyReportOwner != nil {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button("Study Report", systemImage: "doc.text") {
+                            sheet = .studyReport
+                        }
+                    }
+                }
+            }
             .sheet(item: $sheet) { destination in
                 switch destination {
                 case .pairingScanner:
@@ -41,6 +51,17 @@ private struct MacCompanionIOSRootView: View {
                         onCancel: { sheet = nil }
                     )
                     .ignoresSafeArea()
+                case .studyReport:
+                    if let owner = application.studyReportOwner {
+                        NavigationStack {
+                            ClientStage3StudyReportViewV1(owner: owner)
+                        }
+                    } else {
+                        ContentUnavailableView(
+                            "Report unavailable",
+                            systemImage: "exclamationmark.triangle"
+                        )
+                    }
                 }
             }
     }

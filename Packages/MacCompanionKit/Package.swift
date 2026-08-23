@@ -122,7 +122,7 @@ let package = Package(
                 "CompanionInteractiveClient",
                 "CompanionInteractiveShared", "CompanionInteractiveWire",
                 "CompanionPresentation", "CompanionSecurity",
-                "CompanionWire",
+                "CompanionStudy", "CompanionWire",
             ],
             linkerSettings: [
                 .linkedFramework("AVFoundation", .when(platforms: [.iOS])),
@@ -143,7 +143,7 @@ let package = Package(
                 "CompanionInteractiveClient",
                 "CompanionInteractiveShared", "CompanionInteractiveWire",
                 "CompanionObservation", "CompanionPresentation",
-                "CompanionTransport", "CompanionWire",
+                "CompanionStudy", "CompanionTransport", "CompanionWire",
             ],
             linkerSettings: [
                 .linkedFramework("AVFoundation", .when(platforms: [.iOS])),

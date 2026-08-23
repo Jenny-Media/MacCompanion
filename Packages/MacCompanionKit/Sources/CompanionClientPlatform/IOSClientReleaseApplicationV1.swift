@@ -4,6 +4,7 @@ import CompanionClientApp
 import CompanionClientNetworkPlatform
 import CompanionDiscovery
 import CompanionPresentation
+import CompanionStudy
 import CompanionWire
 import Dispatch
 import Foundation
@@ -105,6 +106,8 @@ public struct IOSClientReleaseApplicationSnapshotV1 {
 public final class IOSClientReleaseApplicationV1 {
     public private(set) var snapshot =
         IOSClientReleaseApplicationSnapshotV1.idle
+    public private(set) var studyReportOwner:
+        Stage3StudyLocalReportOwnerV1?
 
     private var bootstrap: IOSClientReleaseBootstrapV1?
     private var storage: IOSClientReleaseStorageV1?
@@ -140,6 +143,7 @@ public final class IOSClientReleaseApplicationV1 {
             return
         }
         self.storage = storage
+        studyReportOwner = storage.studyReportOwner
 
         switch bootstrapSnapshot.phase {
         case .unpaired:
@@ -273,6 +277,7 @@ public final class IOSClientReleaseApplicationV1 {
         await bootstrap?.finish()
         bootstrap = nil
         storage = nil
+        studyReportOwner = nil
         routePlan = nil
         transitionInProgress = false
         publish(phase: .closed)

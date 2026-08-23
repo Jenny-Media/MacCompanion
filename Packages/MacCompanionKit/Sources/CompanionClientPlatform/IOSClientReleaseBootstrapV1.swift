@@ -1,5 +1,6 @@
 #if os(iOS)
 import CompanionClient
+import CompanionStudy
 import Darwin
 import Foundation
 
@@ -218,6 +219,8 @@ package struct IOSClientReleaseStorageV1: Sendable {
     package let clientID: UUID
     package let pairedHosts: AtomicFileClientPairedHostStoreV0
     package let routes: AtomicFileClientConfiguredRouteStoreV1
+    package let studyReports: AtomicFileStage3StudyReportStoreV1
+    package let studyReportOwner: Stage3StudyLocalReportOwnerV1
     package let custody: SecurityClientIdentityKeyCustodyV0
 
     private let routeDirectory: URL
@@ -258,8 +261,13 @@ package struct IOSClientReleaseStorageV1: Sendable {
             "configured-routes-v1",
             isDirectory: true
         )
+        let studyReports = root.appendingPathComponent(
+            "stage3-study-report-v1",
+            isDirectory: true
+        )
         try Self.prepareDirectory(identities, fileManager: fileManager)
         try Self.prepareDirectory(routes, fileManager: fileManager)
+        try Self.prepareDirectory(studyReports, fileManager: fileManager)
         routeDirectory = routes
         self.fileManager = try IOSClientReleaseFileManagerV1(fileManager)
 
@@ -276,6 +284,12 @@ package struct IOSClientReleaseStorageV1: Sendable {
         )
         self.routes = try AtomicFileClientConfiguredRouteStoreV1(
             directory: routes
+        )
+        self.studyReports = try AtomicFileStage3StudyReportStoreV1(
+            directory: studyReports
+        )
+        studyReportOwner = Stage3StudyLocalReportOwnerV1(
+            persistence: self.studyReports
         )
         custody = SecurityClientIdentityKeyCustodyV0(
             configuration: try SecurityClientKeyCustodyConfigurationV0(

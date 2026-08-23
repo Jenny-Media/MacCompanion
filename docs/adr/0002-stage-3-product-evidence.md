@@ -259,8 +259,12 @@ The existing sanitized Agent diagnostic export and scoped self-audit are
 operational troubleshooting sources, not automatically a valid study report.
 The bundle-independent [study-evidence kernel](../evidence/2026-08-23-stage-3-study-evidence-kernel.md)
 implements a separate versioned schema and deterministic evaluator that admit
-only the facts above and pass a prohibited-field corpus. Local product capture,
-preview, delete, and explicit export remain separate required work.
+only the facts above and pass a prohibited-field corpus. The
+[local report owner](../evidence/2026-08-23-stage-3-local-report-owner.md) adds
+bounded atomic persistence plus exact preview, explicit export, and destructive
+delete in the permanent iOS product. Explicit enrollment, content-free product
+capture, participant disclosure, physical verification, and actual cohorts
+remain separate required work.
 
 ## Consequences
 
@@ -273,9 +277,9 @@ preview, delete, and explicit export remain separate required work.
 - A user-risk incident overrides aggregate engagement.
 - Product comparison remains honest because Mac Companion uses the same
   stopwatch and recovery taxonomy defined in the competitive matrix.
-- A versioned, local, previewable study-report implementation remains required
-  before external testing; this ADR deliberately does not repurpose diagnostic
-  logs or add telemetry.
+- The versioned report is now locally persistent, previewable, explicitly
+  exportable, and deletable without repurposing diagnostic logs or adding
+  telemetry; truthful product capture and physical cohort evidence remain.
 
 ## Rejected alternatives
 
@@ -299,7 +303,8 @@ preview, delete, and explicit export remain separate required work.
 
 - A strict versioned study-report schema and prohibited-field corpus. **Built
   and bundle-independently verified.**
-- Local bounded storage, preview, delete, and explicit export UI.
+- Local bounded storage, preview, delete, and explicit export UI. **Built and
+  Simulator-compile verified; signed physical behavior remains.**
 - Deterministic aggregation that reproduces every denominator and threshold in
   this ADR from fixtures without network access. **Built and
   bundle-independently verified.**

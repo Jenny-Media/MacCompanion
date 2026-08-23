@@ -86,14 +86,17 @@ eligible, that consent was obtained, or that an external cohort occurred.
 
 ## Non-claims and next gate
 
-This checkpoint does not implement product event capture, local bounded
-persistence, preview, delete, share/export UI, participant disclosure,
+This kernel checkpoint does not itself implement product event capture, local
+bounded persistence, preview, delete, share/export UI, participant disclosure,
 retention operations, signed-app integration, physical dogfood, calibration,
-or confirmatory testing. It makes no market-MVP claim.
+or confirmatory testing. The later
+[local report owner](2026-08-23-stage-3-local-report-owner.md) supplies the
+bounded persistence and permanent-iOS preview/delete/export construction. It
+does not change this kernel's evidence or make a market-MVP claim.
 
-The next independent product-evidence slice is a local report owner with
-bounded crash-safe storage and explicit preview/delete/export behavior. Before
-any external cohort, the product must also prove that recorded denial,
-failure, `outcomeUnknown`, fallback, Stop, and revocation facts agree with
-visible product truth and must complete the disclosure/legal and signed
-physical release gates.
+The next independent product-evidence slice is explicit local enrollment and
+content-free capture from already-validated product outcomes. Before any
+external cohort, the product must prove that recorded denial, failure,
+`outcomeUnknown`, fallback, Stop, and revocation facts agree with visible
+product truth and must complete the disclosure/legal and signed physical
+release gates.
