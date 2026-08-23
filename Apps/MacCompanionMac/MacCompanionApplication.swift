@@ -49,6 +49,7 @@ private final class MacCompanionApplicationDelegate:
     let authenticatedAgentBuild: MacAuthenticatedAgentBuildLifetimeV0
     let updateAgentReactivation:
         MacCompanionUpdateAgentReactivationCompositionV0?
+    let updateRuntime: MacCompanionUpdateRuntimeCompositionV0?
 
     private var launchTask: Task<Void, Never>?
     private var finishTask: Task<Void, Never>?
@@ -73,7 +74,7 @@ private final class MacCompanionApplicationDelegate:
         self.updates = updates
         self.authenticatedAgentBuild = authenticatedAgentBuild
         self.updateAgentReactivation = updateAgentReactivation
-        product = MacCompanionProductApplicationV1(
+        let product = MacCompanionProductApplicationV1(
             agentRegistration: loginRoles.agentRaw,
             setup: setup,
             startupRepair: {
@@ -90,6 +91,14 @@ private final class MacCompanionApplicationDelegate:
                 )
             }
         )
+        self.product = product
+        updateRuntime = updateAgentReactivation.map {
+            MacCompanionUpdateRuntimeCompositionV0(
+                product: product,
+                agentReactivation: $0,
+                interactiveIndicator: interactiveIndicator
+            )
+        }
         super.init()
     }
 

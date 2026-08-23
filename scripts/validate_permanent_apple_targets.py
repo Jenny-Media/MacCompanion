@@ -528,6 +528,10 @@ def validate_inert_update_adapter(
         "case notConfigured",
         "updates.start()",
         "MacCompanionUpdateFooter(adapter: updates)",
+        "final class MacCompanionUpdateRuntimeCompositionV0",
+        "let updateRuntime: MacCompanionUpdateRuntimeCompositionV0?",
+        "candidateBuild: admission.candidateBuild",
+        "controlState: indicator.updateControlState",
     ):
         if needle not in mac_application:
             failures.append(f"macUpdateAdapterMissing:{needle}")
@@ -762,7 +766,14 @@ def validate_login_role_composition(
             "_ = await application.retryStatus()"
         ),
     }.items():
-        require_count(application_code, needle, 1, label, failures)
+        expected_count = 2 if label == "menuApplicationPlatformImport" else 1
+        require_count(
+            application_code,
+            needle,
+            expected_count,
+            label,
+            failures,
+        )
     for needle in (
         "MacLocalXPCDashboardProductV1(",
         "MacAgentDashboardApplicationOwnerV0(",

@@ -796,6 +796,17 @@ pass. The package owner is not yet bound into the permanent Sparkle callback,
 so full update checks, UI confirmation, listener mutation, Agent stop, and
 installation remain closed; the complete gate passes 1,602 package tests plus
 8 platform probes.
+The subsequent
+[inert permanent update-runtime composition](evidence/2026-08-23-inert-permanent-update-runtime-composition.md)
+carries the validated candidate build on the single-use admission, constructs
+the exact candidate-bound Agent-stop owner, requires the current authenticated
+dashboard for close/drain, obtains product-router recovery, and samples explicit
+application foreground plus indicator-derived inactive/active/cleanup-
+uncertain Control state. Focused candidate and indicator tests plus the
+permanent source validator pass. The app retains the effect-inert composition,
+but Sparkle cannot invoke it; confirmation presentation and safe application-
+termination deferral remain next. The complete gate passes 1,602 package tests
+plus 8 platform probes.
 
 ## Blocker handling rule
 

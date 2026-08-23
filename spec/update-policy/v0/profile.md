@@ -1,4 +1,4 @@
-# Mac Companion update trust policy v0.19
+# Mac Companion update trust policy v0.20
 
 Status: normative for the first direct-distribution beta.
 
@@ -261,6 +261,19 @@ confirmation cannot resume across cancellation or foreground loss. Control
 active and cleanup-uncertain outcomes remain distinct, sanitized terminal
 states. Owner retirement cancels any unresolved reply and authority. Merely
 constructing the application performs no runtime effect.
+
+The exact candidate build is carried by the single-use install admission and
+is the only build accepted by the containing-app Agent-stop factory. It is not
+reparsed from display text, URL, Sparkle state, or the installed bundle. The
+permanent runtime composition requires the product's current dashboard route
+and exact dashboard object, constructs the candidate-bound stop owner, uses
+that dashboard for close/drain, and obtains recovery from the process router.
+Its gate observation uses fail-closed monotonic milliseconds, explicit
+NSApplication active state, and Control state projected from the visible
+runtime indicator: inactive, active, or cleanup-uncertain while stopping.
+Construction and retention of this composition perform no effect, and the
+Sparkle ready callback must not invoke it until the confirmation UI and
+termination lifecycle are bound.
 
 The reactivation receipt must use the frozen canonical JSON projection in the
 menu app's private Application Support root. Reads require one no-follow regular

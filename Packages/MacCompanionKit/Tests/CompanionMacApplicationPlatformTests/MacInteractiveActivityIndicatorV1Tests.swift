@@ -33,6 +33,7 @@ private enum ActivityIndicatorProbeErrorV1: Error {
     #expect(indicator.phase == .active)
     #expect(indicator.deviceDisplayName == name.rawValue)
     #expect(indicator.interactiveSessionID == sessionID)
+    #expect(indicator.updateControlState == .active)
 
     await #expect(
         throws: MacInteractiveActivityIndicatorErrorV1.alreadyVisible
@@ -48,6 +49,7 @@ private enum ActivityIndicatorProbeErrorV1: Error {
     #expect(indicator.phase == .inactive)
     #expect(indicator.deviceDisplayName == nil)
     #expect(indicator.interactiveSessionID == nil)
+    #expect(indicator.updateControlState == .inactive)
 
     let replacement = try await indicator.showInteractiveIndicator(
         deviceDisplayName: name,
@@ -68,6 +70,7 @@ private enum ActivityIndicatorProbeErrorV1: Error {
     )
     indicator.installStopAction { [weak indicator] in
         #expect(indicator?.phase == .stopping)
+        #expect(indicator?.updateControlState == .cleanupUncertain)
         try await indicator?.clearInteractiveIndicator()
     }
 

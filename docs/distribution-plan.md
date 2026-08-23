@@ -251,6 +251,15 @@ runtime-failure, and recovery-failure results remain closed and sanitized.
 Construction is effect-free, and this package owner is not yet installed in
 the permanent Sparkle adapter, so full checks and installation remain
 unreachable.
+The subsequent
+[inert permanent update-runtime composition checkpoint](evidence/2026-08-23-inert-permanent-update-runtime-composition.md)
+projects the validated candidate build directly through single-use admission,
+binds it to the existing Agent-stop owner, requires the current dashboard for
+close/drain, and observes foreground plus visible Control state without
+inference. Stopping Control maps to cleanup-uncertain, and an invalid monotonic
+clock fails with `-1` at the package authority. The permanent app retains this
+composition, but the Sparkle callback does not invoke it; confirmation UI and
+termination deferral remain the next binding gate.
 
 ### Channels
 

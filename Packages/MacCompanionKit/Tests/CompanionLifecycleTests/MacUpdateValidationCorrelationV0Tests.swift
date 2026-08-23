@@ -56,6 +56,7 @@ async throws {
             == .awaitingInstallationReadiness
     )
     let admission = try await correlation.reachedReadyToInstall()
+    #expect(admission.candidateBuild == 11)
 
     #expect(admission.displayVersion == "0.2.0")
     #expect(

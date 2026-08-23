@@ -1,6 +1,7 @@
 #if os(macOS)
 import CompanionDomain
 import CompanionInteractiveRuntime
+import CompanionLifecycle
 import Foundation
 import Observation
 
@@ -51,6 +52,17 @@ public final class MacInteractiveActivityIndicatorV1:
     }
 
     public var isVisible: Bool { phase != .inactive }
+
+    public var updateControlState: MacUpdateControlStateV0 {
+        switch phase {
+        case .inactive:
+            return .inactive
+        case .active:
+            return .active
+        case .stopping:
+            return .cleanupUncertain
+        }
+    }
 
     public func showInteractiveIndicator(
         deviceDisplayName: DeviceDisplayName,

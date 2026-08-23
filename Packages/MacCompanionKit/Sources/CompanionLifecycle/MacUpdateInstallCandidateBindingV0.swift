@@ -74,6 +74,7 @@ public enum MacUpdateInstallCandidateAdmissionErrorV0:
 }
 
 public struct MacUpdateInstallAdmissionV0: Sendable {
+    public let candidateBuild: UInt64
     public let displayVersion: String
     public let archiveURL: URL
     let authority: MacUpdateInstallAuthorityV0
@@ -129,6 +130,7 @@ actor MacUpdateInstallCandidateAdmissionV0 {
         }
 
         return MacUpdateInstallAdmissionV0(
+            candidateBuild: binding.validatedCandidate.candidateBuild,
             displayVersion: binding.displayVersion,
             archiveURL: binding.archiveURL,
             authority: MacUpdateInstallAuthorityV0(
