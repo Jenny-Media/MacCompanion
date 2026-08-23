@@ -17,14 +17,6 @@ enum MacCompanionUpdatePhaseV0: Equatable {
     case failed(channel: MacUpdateChannelV0)
 }
 
-/// Inert handoff seed for the later post-validation bridge. Taking this value
-/// starts no check, download, shutdown, or installation; it only preserves the
-/// exact reviewed candidate and its signed release-evidence projection.
-struct MacCompanionUpdateAdmissionSeedV0 {
-    let admissionOwner: MacUpdateInstallCandidateAdmissionV0
-    let releaseEvidence: MacUpdateReleaseEvidenceV0
-}
-
 /// Containing-app-only Sparkle boundary. Missing protected release authority
 /// is an ordinary inert state: no Sparkle object is constructed and no network
 /// work begins. Configured builds permit explicit informational probes only;
@@ -50,7 +42,7 @@ final class MacCompanionSparkleAdapterV0:
     private var userDriver: SPUStandardUserDriver?
     private var updaterInstance: SPUUpdater?
     private var probePermit = false
-    private var pendingOffer: CandidateOffer?
+    private var pendingOffer: MacUpdatePublishedCandidateV0?
 
     init(bundle: Bundle = .main) {
         self.bundle = bundle
@@ -126,19 +118,16 @@ final class MacCompanionSparkleAdapterV0:
         updater.checkForUpdateInformation()
     }
 
-    func takePendingAdmissionSeed()
-        -> MacCompanionUpdateAdmissionSeedV0?
+    func takePendingValidationCorrelation()
+        -> MacUpdateValidationCorrelationV0?
     {
         guard case .updateAvailable = phase,
               let offer = pendingOffer else {
             return nil
         }
         pendingOffer = nil
-        return MacCompanionUpdateAdmissionSeedV0(
-            admissionOwner: MacUpdateInstallCandidateAdmissionV0(
-                feedCandidate: offer.candidate
-            ),
-            releaseEvidence: offer.releaseEvidence
+        return MacUpdateValidationCorrelationV0(
+            publication: offer
         )
     }
 
@@ -220,8 +209,8 @@ final class MacCompanionSparkleAdapterV0:
         pendingOffer = offer
         phase = .updateAvailable(
             channel: authority.channel,
-            displayVersion: offer.candidate.displayVersion,
-            build: offer.candidate.candidateBuild
+            displayVersion: offer.feedCandidate.displayVersion,
+            build: offer.feedCandidate.candidateBuild
         )
     }
 
@@ -296,16 +285,11 @@ final class MacCompanionSparkleAdapterV0:
         return build
     }
 
-    private struct CandidateOffer {
-        let candidate: MacUpdateFeedCandidateV0
-        let releaseEvidence: MacUpdateReleaseEvidenceV0
-    }
-
     private static func candidateOffer(
         _ item: SUAppcastItem,
         authority: MacUpdateReleaseAuthorityV0,
         currentBuild: UInt64
-    ) -> CandidateOffer? {
+    ) -> MacUpdatePublishedCandidateV0? {
         guard let archiveURL = item.fileURL?.absoluteString else {
             return nil
         }
@@ -336,8 +320,8 @@ final class MacCompanionSparkleAdapterV0:
         ) else {
             return nil
         }
-        return CandidateOffer(
-            candidate: candidate,
+        return try? MacUpdatePublishedCandidateV0(
+            feedCandidate: candidate,
             releaseEvidence: releaseEvidence
         )
     }

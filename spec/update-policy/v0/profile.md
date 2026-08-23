@@ -1,4 +1,4 @@
-# Mac Companion update trust policy v0.7
+# Mac Companion update trust policy v0.8
 
 Status: normative for the first direct-distribution beta.
 
@@ -147,6 +147,16 @@ protected release lane remains responsible for constructing it only from the
 referenced passing records. Sparkle's archive signature continues to bind the
 downloaded bytes because its delegate does not expose the staged archive for a
 second client-side hash.
+
+The informational publication and release evidence remain one typed value
+through extraction correlation. A package-owned single-use owner accepts only
+one exact `willExtractUpdate` followed by one exact `didExtractUpdate` for that
+same publication. Channel, builds, display version, canonical archive URL,
+length, Ed25519 signature, all release claims, and all five evidence digests
+must remain equal. Mismatch, callback reordering, cancellation, concurrent
+reuse, or repeated callbacks close both correlation and admission permanently.
+The containing-app adapter may translate those events only from the matching
+Sparkle delegate callbacks; an arbitrary Boolean is not extraction evidence.
 
 Sparkle's successful post-extraction validation is not, by itself, Mac
 Companion's Developer ID identity or notarization attestation. Sparkle 2.9.6

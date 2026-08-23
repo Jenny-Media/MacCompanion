@@ -31,23 +31,15 @@ private func runtimeAdmissionV0() async throws
         archiveContentLength: 13_301_944,
         archiveEd25519Signature: coordinatorArchiveSignatureV0
     )
-    let owner = MacUpdateInstallCandidateAdmissionV0(
-        feedCandidate: candidate
-    )
-    return try await owner.admit(
-        validatedChannel: candidate.channel,
-        validatedCurrentBuild: candidate.currentBuild,
-        validatedCandidateBuild: candidate.candidateBuild,
-        validatedDisplayVersion: candidate.displayVersion,
-        validatedArchiveURL: candidate.archiveURL,
-        validatedArchiveContentLength: candidate.archiveContentLength,
-        validatedArchiveEd25519Signature:
-            candidate.archiveEd25519Signature,
-        signedFeedVerified: true,
-        archiveSignatureVerified: true,
-        verifiedBeforeExtraction: true,
+    let publication = try MacUpdatePublishedCandidateV0(
+        feedCandidate: candidate,
         releaseEvidence: admittedReleaseEvidenceV0(for: candidate)
     )
+    let correlation = MacUpdateValidationCorrelationV0(
+        publication: publication
+    )
+    try await correlation.willExtract(publication: publication)
+    return try await correlation.didExtract(publication: publication)
 }
 
 private func runtimeDependenciesV0(

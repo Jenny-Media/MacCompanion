@@ -144,23 +144,13 @@ func everyPostValidationTrustFactIsRequired(_ missing: String) {
 @Test func admissionMintsOneRuntimeAuthorityForTheExactCandidate()
 async throws {
     let candidate = try bindingFeedCandidate()
+    let publication = try publishedUpdateCandidateV0(for: candidate)
     let owner = MacUpdateInstallCandidateAdmissionV0(
-        feedCandidate: candidate
+        publication: publication
     )
 
-    let admission = try await owner.admit(
-        validatedChannel: candidate.channel,
-        validatedCurrentBuild: candidate.currentBuild,
-        validatedCandidateBuild: candidate.candidateBuild,
-        validatedDisplayVersion: candidate.displayVersion,
-        validatedArchiveURL: candidate.archiveURL,
-        validatedArchiveContentLength: candidate.archiveContentLength,
-        validatedArchiveEd25519Signature:
-            candidate.archiveEd25519Signature,
-        signedFeedVerified: true,
-        archiveSignatureVerified: true,
-        verifiedBeforeExtraction: true,
-        releaseEvidence: admittedReleaseEvidenceV0(for: candidate)
+    let admission = try await owner.admitPostExtraction(
+        publication: publication
     )
 
     #expect(admission.displayVersion == candidate.displayVersion)
@@ -172,86 +162,50 @@ async throws {
     await #expect(
         throws: MacUpdateInstallCandidateAdmissionErrorV0.closed
     ) {
-        _ = try await owner.admit(
-            validatedChannel: candidate.channel,
-            validatedCurrentBuild: candidate.currentBuild,
-            validatedCandidateBuild: candidate.candidateBuild,
-            validatedDisplayVersion: candidate.displayVersion,
-            validatedArchiveURL: candidate.archiveURL,
-            validatedArchiveContentLength: candidate.archiveContentLength,
-            validatedArchiveEd25519Signature:
-                candidate.archiveEd25519Signature,
-            signedFeedVerified: true,
-            archiveSignatureVerified: true,
-            verifiedBeforeExtraction: true,
-            releaseEvidence: admittedReleaseEvidenceV0(for: candidate)
+        _ = try await owner.admitPostExtraction(
+            publication: publication
         )
     }
 }
 
 @Test func rejectedOrCancelledObservationCannotBeRetried() async throws {
     let candidate = try bindingFeedCandidate()
+    let publication = try publishedUpdateCandidateV0(for: candidate)
     let mismatch = MacUpdateInstallCandidateAdmissionV0(
-        feedCandidate: candidate
+        publication: publication
+    )
+    let otherCandidate = try updateTestFeedCandidateV0(
+        channel: .beta,
+        currentBuild: candidate.currentBuild,
+        candidateBuild: candidate.candidateBuild + 1
     )
     await #expect(
         throws: MacUpdateInstallCandidateAdmissionErrorV0
             .candidateMismatch
     ) {
-        _ = try await mismatch.admit(
-            validatedChannel: candidate.channel,
-            validatedCurrentBuild: candidate.currentBuild,
-            validatedCandidateBuild: candidate.candidateBuild + 1,
-            validatedDisplayVersion: candidate.displayVersion,
-            validatedArchiveURL: candidate.archiveURL,
-            validatedArchiveContentLength: candidate.archiveContentLength,
-            validatedArchiveEd25519Signature:
-                candidate.archiveEd25519Signature,
-            signedFeedVerified: true,
-            archiveSignatureVerified: true,
-            verifiedBeforeExtraction: true,
-            releaseEvidence: admittedReleaseEvidenceV0(for: candidate)
+        _ = try await mismatch.admitPostExtraction(
+            publication: publishedUpdateCandidateV0(
+                for: otherCandidate
+            )
         )
     }
     await #expect(
         throws: MacUpdateInstallCandidateAdmissionErrorV0.closed
     ) {
-        _ = try await mismatch.admit(
-            validatedChannel: candidate.channel,
-            validatedCurrentBuild: candidate.currentBuild,
-            validatedCandidateBuild: candidate.candidateBuild,
-            validatedDisplayVersion: candidate.displayVersion,
-            validatedArchiveURL: candidate.archiveURL,
-            validatedArchiveContentLength: candidate.archiveContentLength,
-            validatedArchiveEd25519Signature:
-                candidate.archiveEd25519Signature,
-            signedFeedVerified: true,
-            archiveSignatureVerified: true,
-            verifiedBeforeExtraction: true,
-            releaseEvidence: admittedReleaseEvidenceV0(for: candidate)
+        _ = try await mismatch.admitPostExtraction(
+            publication: publication
         )
     }
 
     let cancelled = MacUpdateInstallCandidateAdmissionV0(
-        feedCandidate: candidate
+        publication: publication
     )
     await cancelled.cancel()
     await #expect(
         throws: MacUpdateInstallCandidateAdmissionErrorV0.closed
     ) {
-        _ = try await cancelled.admit(
-            validatedChannel: candidate.channel,
-            validatedCurrentBuild: candidate.currentBuild,
-            validatedCandidateBuild: candidate.candidateBuild,
-            validatedDisplayVersion: candidate.displayVersion,
-            validatedArchiveURL: candidate.archiveURL,
-            validatedArchiveContentLength: candidate.archiveContentLength,
-            validatedArchiveEd25519Signature:
-                candidate.archiveEd25519Signature,
-            signedFeedVerified: true,
-            archiveSignatureVerified: true,
-            verifiedBeforeExtraction: true,
-            releaseEvidence: admittedReleaseEvidenceV0(for: candidate)
+        _ = try await cancelled.admitPostExtraction(
+            publication: publication
         )
     }
 }

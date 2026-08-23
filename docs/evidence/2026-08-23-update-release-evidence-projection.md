@@ -77,3 +77,8 @@ records, generate or sign an appcast, download or hash an update at runtime, or
 invoke Sparkle's post-extraction or installation lifecycle. The protected
 publisher, callback correlation, foreground confirmation UI, and concrete
 runtime-effect bindings remain open.
+
+The later
+[validation-correlation checkpoint](2026-08-23-update-validation-correlation.md)
+closes the package-owned callback state-machine portion of this non-claim.
+The live Sparkle callback bridge and all update actions remain absent.

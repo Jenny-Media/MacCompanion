@@ -79,51 +79,46 @@ public struct MacUpdateInstallAdmissionV0: Sendable {
     let authority: MacUpdateInstallAuthorityV0
 }
 
-/// Single-use owner for one informational candidate. Any post-validation
-/// rejection consumes the observation so a later updater callback cannot be
-/// confused with the item the user reviewed.
-public actor MacUpdateInstallCandidateAdmissionV0 {
-    private var feedCandidate: MacUpdateFeedCandidateV0?
+/// Package-owned, single-use admission primitive. The public extraction
+/// correlation actor is the only production constructor and caller.
+actor MacUpdateInstallCandidateAdmissionV0 {
+    private var publication: MacUpdatePublishedCandidateV0?
 
-    public init(feedCandidate: MacUpdateFeedCandidateV0) {
-        self.feedCandidate = feedCandidate
+    init(publication: MacUpdatePublishedCandidateV0) {
+        self.publication = publication
     }
 
-    public func admit(
-        validatedChannel: MacUpdateChannelV0,
-        validatedCurrentBuild: UInt64,
-        validatedCandidateBuild: UInt64,
-        validatedDisplayVersion: String,
-        validatedArchiveURL: URL,
-        validatedArchiveContentLength: UInt64,
-        validatedArchiveEd25519Signature: String,
-        signedFeedVerified: Bool,
-        archiveSignatureVerified: Bool,
-        verifiedBeforeExtraction: Bool,
-        releaseEvidence: MacUpdateReleaseEvidenceV0
+    func admitPostExtraction(
+        publication observed: MacUpdatePublishedCandidateV0
     ) throws -> MacUpdateInstallAdmissionV0 {
-        guard let feedCandidate else {
+        guard let publication else {
             throw MacUpdateInstallCandidateAdmissionErrorV0.closed
         }
-        self.feedCandidate = nil
+        self.publication = nil
+        guard observed == publication else {
+            throw MacUpdateInstallCandidateAdmissionErrorV0
+                .candidateMismatch
+        }
+
+        let feedCandidate = publication.feedCandidate
 
         let binding: MacUpdateInstallCandidateBindingV0
         do {
             binding = try MacUpdateInstallCandidateBindingV0(
                 feedCandidate: feedCandidate,
-                validatedChannel: validatedChannel,
-                validatedCurrentBuild: validatedCurrentBuild,
-                validatedCandidateBuild: validatedCandidateBuild,
-                validatedDisplayVersion: validatedDisplayVersion,
-                validatedArchiveURL: validatedArchiveURL,
+                validatedChannel: feedCandidate.channel,
+                validatedCurrentBuild: feedCandidate.currentBuild,
+                validatedCandidateBuild: feedCandidate.candidateBuild,
+                validatedDisplayVersion: feedCandidate.displayVersion,
+                validatedArchiveURL: feedCandidate.archiveURL,
                 validatedArchiveContentLength:
-                    validatedArchiveContentLength,
+                    feedCandidate.archiveContentLength,
                 validatedArchiveEd25519Signature:
-                    validatedArchiveEd25519Signature,
-                signedFeedVerified: signedFeedVerified,
-                archiveSignatureVerified: archiveSignatureVerified,
-                verifiedBeforeExtraction: verifiedBeforeExtraction,
-                releaseEvidence: releaseEvidence
+                    feedCandidate.archiveEd25519Signature,
+                signedFeedVerified: true,
+                archiveSignatureVerified: true,
+                verifiedBeforeExtraction: true,
+                releaseEvidence: publication.releaseEvidence
             )
         } catch MacUpdateInstallCandidateBindingErrorV0.candidateMismatch {
             throw MacUpdateInstallCandidateAdmissionErrorV0
@@ -142,7 +137,7 @@ public actor MacUpdateInstallCandidateAdmissionV0 {
         )
     }
 
-    public func cancel() {
-        feedCandidate = nil
+    func cancel() {
+        publication = nil
     }
 }

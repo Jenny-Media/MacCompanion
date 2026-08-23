@@ -10,6 +10,15 @@ func admittedReleaseEvidenceV0(
     )
 }
 
+func publishedUpdateCandidateV0(
+    for candidate: MacUpdateFeedCandidateV0
+) throws -> MacUpdatePublishedCandidateV0 {
+    try MacUpdatePublishedCandidateV0(
+        feedCandidate: candidate,
+        releaseEvidence: admittedReleaseEvidenceV0(for: candidate)
+    )
+}
+
 func releaseEvidenceAttributesV0(
     for candidate: MacUpdateFeedCandidateV0
 ) -> [String: String] {

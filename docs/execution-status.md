@@ -684,6 +684,14 @@ item unless its signed enclosure has exactly the 17 frozen custom attributes;
 unknown, missing, malformed, failed, or substituted fields close the offer.
 Five new tests bring the passing full count to 1,537, while every Sparkle
 download and installation check remains denied.
+The subsequent
+[update validation-correlation checkpoint](evidence/2026-08-23-update-validation-correlation.md)
+wraps the exact candidate and release evidence in one immutable published value
+and makes the lower-level admission owner package-internal. A single-use actor
+now admits only an ordered, exact `willExtract` then `didExtract` sequence;
+mismatch, evidence substitution, reordering, cancellation, concurrency, or
+reuse closes it. Seven new tests bring the passing full count to 1,544. The app
+still implements neither callback and still cannot start a download or install.
 
 ## Blocker handling rule
 

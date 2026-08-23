@@ -157,6 +157,13 @@ release claims. It deliberately binds `signedCandidate`, not `promotionReady`,
 because the final signed appcast is itself publication evidence and may not
 participate in a circular content hash. The protected release job must still
 generate and sign this projection from the real passing records.
+The [extraction-correlation checkpoint](evidence/2026-08-23-update-validation-correlation.md)
+then retains that exact signed publication in a package-owned single-use actor.
+Only one ordered, exact `willExtractUpdate` / `didExtractUpdate` pair can mint
+runtime admission; candidate or evidence substitution, callback reordering,
+cancellation, concurrency, and reuse close it. This is a client-side lifecycle
+boundary only: no protected publication, download, extraction, or installation
+path is enabled yet.
 
 ### Channels
 
