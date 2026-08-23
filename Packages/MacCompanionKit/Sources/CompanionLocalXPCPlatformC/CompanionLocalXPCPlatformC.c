@@ -66,6 +66,10 @@ static const char MCLocalXPCInteractiveLeaseRevokeKind[] =
     "runtime.interactive.revoke";
 static const char MCLocalXPCInteractiveLeaseRevokeAcknowledgementKind[] =
     "runtime.interactive.revoke.ack";
+static const char MCLocalXPCInteractiveAdmissionPublicationKind[] =
+    "runtime.interactive.admission.publish";
+static const char MCLocalXPCInteractiveAdmissionAcknowledgementKind[] =
+    "runtime.interactive.admission.publish.ack";
 
 static const char * _Nullable MCLocalXPCMenuPairingCommandRequestKind(
     MCLocalXPCMenuPairingCommandKind kind
@@ -882,6 +886,20 @@ bool MCLocalXPCMessageGetExactInteractiveLeaseCommand(
     return false;
 }
 
+bool MCLocalXPCMessageGetExactInteractiveAdmissionPublication(
+    MCLocalXPCMessageRef message,
+    const uint8_t **payload_out,
+    size_t *payload_length_out
+) {
+    return MCLocalXPCMessageGetExactData(
+        (xpc_object_t)message,
+        MCLocalXPCInteractiveAdmissionPublicationKind,
+        MCLocalXPCMaximumInteractiveAdmissionPayloadBytes,
+        payload_out,
+        payload_length_out
+    );
+}
+
 MCLocalXPCMessageRef MCLocalXPCMessageCreatePairingReviewPublish(
     const uint8_t *payload,
     size_t payload_length
@@ -1484,6 +1502,65 @@ bool MCLocalXPCExactMessageParserSelfTest(void) {
         }
         xpc_release(acknowledgement);
     }
+
+    const uint8_t admission_payload[] = {0x7b, 0x7d};
+    xpc_object_t admission_request = xpc_dictionary_create_empty();
+    xpc_dictionary_set_string(
+        admission_request,
+        "kind",
+        MCLocalXPCInteractiveAdmissionPublicationKind
+    );
+    xpc_dictionary_set_int64(admission_request, "version", 1);
+    xpc_dictionary_set_data(
+        admission_request,
+        "payload",
+        admission_payload,
+        sizeof(admission_payload)
+    );
+    const uint8_t *parsed_admission_payload = NULL;
+    size_t parsed_admission_length = 0;
+    valid = valid
+        && MCLocalXPCMessageGetExactInteractiveAdmissionPublication(
+            (MCLocalXPCMessageRef)admission_request,
+            &parsed_admission_payload,
+            &parsed_admission_length
+        )
+        && parsed_admission_length == sizeof(admission_payload)
+        && memcmp(
+            parsed_admission_payload,
+            admission_payload,
+            sizeof(admission_payload)
+        ) == 0;
+    xpc_dictionary_set_bool(admission_request, "extra", true);
+    valid = valid
+        && !MCLocalXPCMessageGetExactInteractiveAdmissionPublication(
+            (MCLocalXPCMessageRef)admission_request,
+            NULL,
+            NULL
+        );
+    xpc_release(admission_request);
+
+    xpc_object_t admission_acknowledgement = xpc_dictionary_create_empty();
+    xpc_dictionary_set_string(
+        admission_acknowledgement,
+        "kind",
+        MCLocalXPCInteractiveAdmissionAcknowledgementKind
+    );
+    xpc_dictionary_set_int64(admission_acknowledgement, "version", 1);
+    xpc_dictionary_set_data(
+        admission_acknowledgement,
+        "payload",
+        admission_payload,
+        sizeof(admission_payload)
+    );
+    valid = valid && MCLocalXPCMessageGetExactData(
+        admission_acknowledgement,
+        MCLocalXPCInteractiveAdmissionAcknowledgementKind,
+        MCLocalXPCMaximumInteractiveAdmissionPayloadBytes,
+        NULL,
+        NULL
+    );
+    xpc_release(admission_acknowledgement);
 
     const uint8_t presentation_payload[] = {0x7b, 0x7d};
     const uint8_t review_uuid[16] = {
@@ -2491,6 +2568,46 @@ MCLocalXPCResult MCLocalXPCSessionSendInteractiveLeaseCommand(
     );
     xpc_release(request);
     return MCLocalXPCResultOK;
+}
+
+MCLocalXPCResult MCLocalXPCSessionReplyToInteractiveAdmissionPublication(
+    MCLocalXPCSessionRef session,
+    MCLocalXPCMessageRef request,
+    const uint8_t *payload,
+    size_t payload_length
+) {
+    if (!MCLocalXPCMessageGetExactInteractiveAdmissionPublication(
+            request,
+            NULL,
+            NULL
+        )) {
+        return MCLocalXPCResultConstructionFailed;
+    }
+    return MCLocalXPCSessionReplyData(
+        session,
+        request,
+        MCLocalXPCInteractiveAdmissionAcknowledgementKind,
+        payload,
+        payload_length,
+        MCLocalXPCMaximumInteractiveAdmissionPayloadBytes
+    );
+}
+
+MCLocalXPCResult MCLocalXPCSessionSendInteractiveAdmissionPublication(
+    MCLocalXPCSessionRef session,
+    const uint8_t *payload,
+    size_t payload_length,
+    MCLocalXPCInteractiveAdmissionReplyHandler handler
+) {
+    return MCLocalXPCSessionSendDataExpectingData(
+        session,
+        MCLocalXPCInteractiveAdmissionPublicationKind,
+        MCLocalXPCInteractiveAdmissionAcknowledgementKind,
+        payload,
+        payload_length,
+        MCLocalXPCMaximumInteractiveAdmissionPayloadBytes,
+        handler
+    );
 }
 
 MCLocalXPCResult MCLocalXPCSessionReplyToStatusReadSuccess(

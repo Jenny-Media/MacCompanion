@@ -29,6 +29,27 @@ private struct ProductMenuPairingCommandHandlerV1:
     }
 }
 
+@available(macOS 26.0, *)
+private struct ProductInteractiveAdmissionHandlerV1:
+    MacLocalXPCInteractiveAdmissionHandlingV1
+{
+    func publishInteractiveAdmission(
+        _ publication: LocalInteractiveAdmissionPublicationV1,
+        transportGeneration _: UInt64
+    ) async throws -> LocalInteractiveAdmissionPublishedReceiptV1 {
+        try LocalInteractiveAdmissionPublishedReceiptV1(
+            correlationID: publication.commandID,
+            menuAppGeneration: publication.menuAppGeneration,
+            revision: publication.revision,
+            selectedDisplayID: publication.selectedDisplayID
+        )
+    }
+
+    func invalidateInteractiveAdmission(
+        transportGeneration _: UInt64
+    ) async {}
+}
+
 private func eventuallyV1(
     _ predicate: @escaping @Sendable () async -> Bool
 ) async -> Bool {
@@ -421,11 +442,13 @@ func agentPresentationProductBindsOnlyAfterAcceptedReadiness() async throws {
         ),
         statusReader: ProductStatusReaderV1(),
         menuPairingCommandHandler: ProductMenuPairingCommandHandlerV1(),
+        interactiveAdmissionHandler:
+            ProductInteractiveAdmissionHandlerV1(),
         onSurfaces: { await generations.record($0.generation) },
         onSurfaceInvalidated: {
             await invalidatedGenerations.record($0)
         },
-        serverFactory: { profile, _, _, handler in
+        serverFactory: { profile, _, _, _, handler in
             factory.record(profile)
             server.install(handler)
             return server
@@ -473,11 +496,13 @@ func authenticatedReplacementRevokesReadyPresentationBeforeNewReadiness()
         ),
         statusReader: ProductStatusReaderV1(),
         menuPairingCommandHandler: ProductMenuPairingCommandHandlerV1(),
+        interactiveAdmissionHandler:
+            ProductInteractiveAdmissionHandlerV1(),
         onSurfaces: { await generations.record($0.generation) },
         onSurfaceInvalidated: {
             await invalidatedGenerations.record($0)
         },
-        serverFactory: { _, _, _, handler in
+        serverFactory: { _, _, _, _, handler in
             server.install(handler)
             return server
         }
@@ -513,8 +538,10 @@ func agentPresentationProductFailsCurrentPeerWhenEndpointIsAbsent() async {
         ),
         statusReader: ProductStatusReaderV1(),
         menuPairingCommandHandler: ProductMenuPairingCommandHandlerV1(),
+        interactiveAdmissionHandler:
+            ProductInteractiveAdmissionHandlerV1(),
         onSurfaces: { _ in },
-        serverFactory: { _, _, _, handler in
+        serverFactory: { _, _, _, _, handler in
             server.install(handler)
             return server
         }
@@ -593,6 +620,8 @@ private final class ProductDashboardClientV1:
     private var starts = 0
     private var readyRequests = 0
     private var statusRequests = 0
+    private var admissionPublications:
+        [LocalInteractiveAdmissionPublicationV1] = []
     private var cancels = 0
 
     init(
@@ -621,6 +650,18 @@ private final class ProductDashboardClientV1:
         lock.withLock { statusRequests += 1 }
     }
 
+    func publishInteractiveAdmission(
+        _ publication: LocalInteractiveAdmissionPublicationV1
+    ) async throws -> LocalInteractiveAdmissionPublishedReceiptV1 {
+        lock.withLock { admissionPublications.append(publication) }
+        return try LocalInteractiveAdmissionPublishedReceiptV1(
+            correlationID: publication.commandID,
+            menuAppGeneration: publication.menuAppGeneration,
+            revision: publication.revision,
+            selectedDisplayID: publication.selectedDisplayID
+        )
+    }
+
     func cancel() { lock.withLock { cancels += 1 } }
     func finishMenuPresentationReceiver() async {
         cancel()
@@ -628,8 +669,22 @@ private final class ProductDashboardClientV1:
     }
     func emit(_ event: MacLocalXPCClientEventV1) { handler(event) }
 
-    func snapshot() -> (starts: Int, ready: Int, status: Int, cancels: Int) {
-        lock.withLock { (starts, readyRequests, statusRequests, cancels) }
+    func snapshot() -> (
+        starts: Int,
+        ready: Int,
+        status: Int,
+        admissions: [LocalInteractiveAdmissionPublicationV1],
+        cancels: Int
+    ) {
+        lock.withLock {
+            (
+                starts,
+                readyRequests,
+                statusRequests,
+                admissionPublications,
+                cancels
+            )
+        }
     }
 
     enum StartError: Error { case injected }
@@ -710,6 +765,37 @@ func dashboardProductPublishesTypedStatusAndRecoversUnavailable() async throws {
     client.emit(.invalidated)
     #expect(await eventuallyV1 { await owner.snapshot() == .unavailable })
     #expect(await product.retryStatus() == .notCompleted)
+    await product.finish()
+}
+
+@Test
+@available(macOS 26.0, *)
+func presentationDashboardPublishesInitialAdmissionBeforeStatus() async throws {
+    let owner = MacAgentDashboardApplicationOwnerV0()
+    let box = ProductDashboardClientBoxV1()
+    let product = MacLocalXPCDashboardProductV1(
+        owner: owner,
+        publishesInteractiveAdmission: true,
+        clientFactory: { handler in
+            let client = ProductDashboardClientV1(handler: handler)
+            box.install(client)
+            return client
+        }
+    )
+    try await product.start()
+    let client = try #require(box.client())
+
+    client.emit(.authenticatedAgent)
+    #expect(await eventuallyV1 { client.snapshot().ready == 1 })
+    client.emit(.menuReadyAcknowledged)
+    #expect(await eventuallyV1 {
+        client.snapshot().admissions.count == 1
+            && client.snapshot().status == 1
+    })
+    let publication = try #require(client.snapshot().admissions.first)
+    #expect(publication.revision == 1)
+    #expect(publication.selectedDisplayID == nil)
+
     await product.finish()
 }
 

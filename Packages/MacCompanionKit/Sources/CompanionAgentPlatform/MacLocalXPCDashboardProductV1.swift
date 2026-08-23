@@ -18,6 +18,9 @@ package protocol MacLocalXPCDashboardClientV1: AnyObject, Sendable {
     func resolveLocalApproval(
         _ command: LocalPairingDecisionCommandV0
     ) async throws -> LocalPairingDecisionReceiptV0
+    func publishInteractiveAdmission(
+        _ publication: LocalInteractiveAdmissionPublicationV1
+    ) async throws -> LocalInteractiveAdmissionPublishedReceiptV1
     func cancel()
     func finishMenuPresentationReceiver() async
 }
@@ -44,6 +47,12 @@ extension MacLocalXPCDashboardClientV1 {
     ) async throws -> LocalPairingDecisionReceiptV0 {
         throw MacLocalXPCMenuPairingCommandErrorV1.unavailable
     }
+
+    package func publishInteractiveAdmission(
+        _: LocalInteractiveAdmissionPublicationV1
+    ) async throws -> LocalInteractiveAdmissionPublishedReceiptV1 {
+        throw MacLocalXPCInteractiveAdmissionErrorV1.unavailable
+    }
 }
 
 @available(macOS 26.0, *)
@@ -58,6 +67,8 @@ private actor MacLocalXPCDashboardBindingV1 {
 
     private let owner: MacAgentDashboardApplicationOwnerV0
     private let client: any MacLocalXPCDashboardClientV1
+    private let publishesInteractiveAdmission: Bool
+    private let menuAppGeneration: UUID
     private var token: MacAgentDashboardConnectionTokenV0?
     private var transportGeneration: UInt64?
     private var statusReadOutstanding = false
@@ -67,10 +78,14 @@ private actor MacLocalXPCDashboardBindingV1 {
 
     init(
         owner: MacAgentDashboardApplicationOwnerV0,
-        client: any MacLocalXPCDashboardClientV1
+        client: any MacLocalXPCDashboardClientV1,
+        publishesInteractiveAdmission: Bool,
+        menuAppGeneration: UUID
     ) {
         self.owner = owner
         self.client = client
+        self.publishesInteractiveAdmission = publishesInteractiveAdmission
+        self.menuAppGeneration = menuAppGeneration
     }
 
     func begin() async throws {
@@ -111,6 +126,18 @@ private actor MacLocalXPCDashboardBindingV1 {
             case .menuReadyAcknowledged:
                 guard phase == .authenticated else {
                     throw BindingError.order
+                }
+                if publishesInteractiveAdmission {
+                    let publication = try
+                        LocalInteractiveAdmissionPublicationV1(
+                            commandID: UUID(),
+                            menuAppGeneration: menuAppGeneration,
+                            revision: 1,
+                            selectedDisplayID: nil
+                        )
+                    _ = try await client.publishInteractiveAdmission(
+                        publication
+                    )
                 }
                 phase = .ready
                 statusReadOutstanding = true
@@ -398,7 +425,8 @@ public final class MacLocalXPCDashboardProductV1:
         self.runtime = Self.makeRuntime(
             owner: owner,
             bufferCapacity: bufferCapacity,
-            clientFactory: { MacLocalXPCClientV1(onEvent: $0) }
+            clientFactory: { MacLocalXPCClientV1(onEvent: $0) },
+            publishesInteractiveAdmission: false
         )
     }
 
@@ -427,26 +455,30 @@ public final class MacLocalXPCDashboardProductV1:
                     interactiveLeaseHandler: interactiveLeaseHandler,
                     onEvent: $0
                 )
-            }
+            },
+            publishesInteractiveAdmission: true
         )
     }
 
     package init(
         owner: MacAgentDashboardApplicationOwnerV0,
         bufferCapacity: Int = 32,
+        publishesInteractiveAdmission: Bool = false,
         clientFactory: @escaping ClientFactory
     ) {
         runtime = Self.makeRuntime(
             owner: owner,
             bufferCapacity: bufferCapacity,
-            clientFactory: clientFactory
+            clientFactory: clientFactory,
+            publishesInteractiveAdmission: publishesInteractiveAdmission
         )
     }
 
     private static func makeRuntime(
         owner: MacAgentDashboardApplicationOwnerV0,
         bufferCapacity: Int,
-        clientFactory: @escaping ClientFactory
+        clientFactory: @escaping ClientFactory,
+        publishesInteractiveAdmission: Bool
     ) -> MacLocalXPCDashboardRuntimeV1 {
         let runtime = MacLocalXPCDashboardRuntimeV1()
         let client = clientFactory { [weak runtime] event in
@@ -454,7 +486,9 @@ public final class MacLocalXPCDashboardProductV1:
         }
         let binding = MacLocalXPCDashboardBindingV1(
             owner: owner,
-            client: client
+            client: client,
+            publishesInteractiveAdmission: publishesInteractiveAdmission,
+            menuAppGeneration: UUID()
         )
         runtime.install(
             client: client,

@@ -67,6 +67,11 @@ typedef void (^MCLocalXPCInteractiveLeaseReplyHandler)(
     size_t payload_length,
     bool malformed_or_transport_error
 );
+typedef void (^MCLocalXPCInteractiveAdmissionReplyHandler)(
+    const uint8_t * _Nullable payload,
+    size_t payload_length,
+    bool malformed_or_transport_error
+);
 
 enum {
     MCLocalXPCMaximumStatusPayloadBytes = 4096,
@@ -74,6 +79,7 @@ enum {
     MCLocalXPCMaximumMenuPresentationPayloadBytes = 4096,
     MCLocalXPCMaximumMenuPairingCommandPayloadBytes = 4096,
     MCLocalXPCMaximumInteractiveLeasePayloadBytes = 4096,
+    MCLocalXPCMaximumInteractiveAdmissionPayloadBytes = 4096,
 };
 
 API_AVAILABLE(macos(26.0))
@@ -325,6 +331,29 @@ MCLocalXPCResult MCLocalXPCSessionSendInteractiveLeaseCommand(
     const uint8_t *payload,
     size_t payload_length,
     MCLocalXPCInteractiveLeaseReplyHandler handler
+);
+
+API_AVAILABLE(macos(26.0))
+bool MCLocalXPCMessageGetExactInteractiveAdmissionPublication(
+    MCLocalXPCMessageRef message,
+    const uint8_t * _Nullable * _Nullable payload_out,
+    size_t * _Nullable payload_length_out
+);
+
+API_AVAILABLE(macos(26.0))
+MCLocalXPCResult MCLocalXPCSessionReplyToInteractiveAdmissionPublication(
+    MCLocalXPCSessionRef session,
+    MCLocalXPCMessageRef request,
+    const uint8_t *payload,
+    size_t payload_length
+);
+
+API_AVAILABLE(macos(26.0))
+MCLocalXPCResult MCLocalXPCSessionSendInteractiveAdmissionPublication(
+    MCLocalXPCSessionRef session,
+    const uint8_t *payload,
+    size_t payload_length,
+    MCLocalXPCInteractiveAdmissionReplyHandler handler
 );
 
 /// Returns an owned exact request object. The caller releases it with

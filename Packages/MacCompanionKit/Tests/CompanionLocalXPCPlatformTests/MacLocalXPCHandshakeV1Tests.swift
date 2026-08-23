@@ -421,6 +421,23 @@ private struct UnavailableMenuPairingCommandHandlerV1:
     }
 }
 
+private struct UnavailableInteractiveAdmissionHandlerV1:
+    MacLocalXPCInteractiveAdmissionHandlingV1
+{
+    private struct Unavailable: Error {}
+
+    func publishInteractiveAdmission(
+        _: LocalInteractiveAdmissionPublicationV1,
+        transportGeneration _: UInt64
+    ) async throws -> LocalInteractiveAdmissionPublishedReceiptV1 {
+        throw Unavailable()
+    }
+
+    func invalidateInteractiveAdmission(
+        transportGeneration _: UInt64
+    ) async {}
+}
+
 @Test
 @available(macOS 26.0, *)
 func injectedAuthoritiesRequireTheirExactExplicitServerProfiles() {
@@ -469,6 +486,25 @@ func injectedAuthoritiesRequireTheirExactExplicitServerProfiles() {
     ) { _ in }
     #expect(throws: MacLocalXPCConstructionErrorV1.invalidProfile) {
         try missingPresentationCommandHandler.start()
+    }
+
+    let admissionHandlerInClosedProfile = MacLocalXPCServerV1(
+        profile: .authenticationOnly,
+        interactiveAdmissionHandler:
+            UnavailableInteractiveAdmissionHandlerV1()
+    ) { _ in }
+    #expect(throws: MacLocalXPCConstructionErrorV1.invalidProfile) {
+        try admissionHandlerInClosedProfile.start()
+    }
+
+    let missingPresentationAdmissionHandler = MacLocalXPCServerV1(
+        profile: .menuLifecycleReadinessStatusAndPresentation,
+        statusReader: UnavailableStatusReaderV1(),
+        menuPairingCommandHandler:
+            UnavailableMenuPairingCommandHandlerV1()
+    ) { _ in }
+    #expect(throws: MacLocalXPCConstructionErrorV1.invalidProfile) {
+        try missingPresentationAdmissionHandler.start()
     }
 }
 

@@ -270,6 +270,7 @@ public final class MacLocalXPCAgentProductV1: @unchecked Sendable {
         MacLocalXPCServerProfileV1,
         any MacLocalXPCStatusReadingV1,
         any MacLocalXPCMenuPairingCommandHandlingV1,
+        any MacLocalXPCInteractiveAdmissionHandlingV1,
         @escaping MacLocalXPCServerV1.EventHandler
     ) -> any MacLocalXPCAgentServerV1
 
@@ -308,6 +309,8 @@ public final class MacLocalXPCAgentProductV1: @unchecked Sendable {
         transitionIDSource: @escaping @Sendable () -> UUID = { UUID() },
         menuPairingCommandHandler:
             any MacLocalXPCMenuPairingCommandHandlingV1,
+        interactiveAdmissionHandler:
+            any MacLocalXPCInteractiveAdmissionHandlingV1,
         onSurfaces: @escaping @Sendable (
             MacLocalXPCAuthenticatedMenuSurfacesV1
         ) async throws -> Void,
@@ -327,6 +330,7 @@ public final class MacLocalXPCAgentProductV1: @unchecked Sendable {
                 statusReader: services.localServices.statusReader
             ),
             menuPairingCommandHandler: menuPairingCommandHandler,
+            interactiveAdmissionHandler: interactiveAdmissionHandler,
             onSurfaces: onSurfaces,
             onSurfaceInvalidated: onSurfaceInvalidated
         )
@@ -379,6 +383,8 @@ public final class MacLocalXPCAgentProductV1: @unchecked Sendable {
         statusReader: any MacLocalXPCStatusReadingV1,
         menuPairingCommandHandler:
             any MacLocalXPCMenuPairingCommandHandlingV1,
+        interactiveAdmissionHandler:
+            any MacLocalXPCInteractiveAdmissionHandlingV1,
         onSurfaces: @escaping @Sendable (
             MacLocalXPCAuthenticatedMenuSurfacesV1
         ) async throws -> Void,
@@ -386,11 +392,12 @@ public final class MacLocalXPCAgentProductV1: @unchecked Sendable {
             _ in
         },
         serverFactory: @escaping PresentationServerFactory = {
-            profile, statusReader, commandHandler, onEvent in
+            profile, statusReader, commandHandler, admissionHandler, onEvent in
             MacLocalXPCServerV1(
                 profile: profile,
                 statusReader: statusReader,
                 menuPairingCommandHandler: commandHandler,
+                interactiveAdmissionHandler: admissionHandler,
                 onEvent: onEvent
             )
         }
@@ -417,6 +424,7 @@ public final class MacLocalXPCAgentProductV1: @unchecked Sendable {
             .menuLifecycleReadinessStatusAndPresentation,
             statusReader,
             menuPairingCommandHandler,
+            interactiveAdmissionHandler,
             { [weak runtime] event in
                 runtime?.consume(event)
             }

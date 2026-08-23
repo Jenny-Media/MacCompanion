@@ -799,16 +799,22 @@ public enum MacAgentProductBootstrapV1 {
         inputs: AgentNetworkPrimaryStartupInputsV1,
         processStarter: any MacDashboardLifecycleProcessStartingV1
     ) async throws -> MacAgentProductBootstrapResultV1 {
+        let interactiveAdmission =
+            AgentVisibleInteractiveAdmissionAuthorityV1()
+        let boundInputs = inputs.replacingVisibleInteractiveAdmission(
+            interactiveAdmission
+        )
         let result = try await AgentNetworkPrimaryStartupFactoryV1.prepare(
             requiredAudit: storage.requiredAudit,
             hostIdentityConfiguration: hostIdentityConfiguration,
-            inputs: inputs
+            inputs: boundInputs
         )
         return try await composeProduction(
             storage: storage,
             preparation: result,
             processStarter: processStarter,
-            mode: .immediate
+            mode: .immediate,
+            interactiveAdmission: interactiveAdmission
         )
     }
 
@@ -819,16 +825,22 @@ public enum MacAgentProductBootstrapV1 {
         inputs: AgentNetworkPrimaryStartupInputsV1,
         processStarter: any MacDashboardLifecycleProcessStartingV1
     ) async throws -> MacAgentProductBootstrapResultV1 {
+        let interactiveAdmission =
+            AgentVisibleInteractiveAdmissionAuthorityV1()
+        let boundInputs = inputs.replacingVisibleInteractiveAdmission(
+            interactiveAdmission
+        )
         let result = try await AgentNetworkPrimaryStartupFactoryV1.prepare(
             requiredAudit: storage.requiredAudit,
             hostIdentityConfiguration: hostIdentityConfiguration,
-            inputs: inputs
+            inputs: boundInputs
         )
         return try await composeProduction(
             storage: storage,
             preparation: result,
             processStarter: processStarter,
-            mode: .deferredUntilActivation
+            mode: .deferredUntilActivation,
+            interactiveAdmission: interactiveAdmission
         )
     }
 
@@ -905,7 +917,8 @@ public enum MacAgentProductBootstrapV1 {
         storage: MacAgentReleaseStorageV1,
         preparation: AgentNetworkPrimaryStartupResultV1,
         processStarter: any MacDashboardLifecycleProcessStartingV1,
-        mode: LocalXPCPreparationModeV1
+        mode: LocalXPCPreparationModeV1,
+        interactiveAdmission: AgentVisibleInteractiveAdmissionAuthorityV1
     ) async throws -> MacAgentProductBootstrapResultV1 {
         let menuSurfaceAuthority =
             MacAgentAuthenticatedMenuSurfaceAuthorityV1()
@@ -918,6 +931,7 @@ public enum MacAgentProductBootstrapV1 {
                 services: services,
                 processStarter: processStarter,
                 menuPairingCommandHandler: localPairingCommandAuthority,
+                interactiveAdmissionHandler: interactiveAdmission,
                 onSurfaces: {
                     try await menuSurfaceAuthority.install($0)
                 },
@@ -1014,6 +1028,26 @@ public enum MacAgentProductBootstrapV1 {
                 throw error
             }
         }
+    }
+}
+
+private extension AgentNetworkPrimaryStartupInputsV1 {
+    func replacingVisibleInteractiveAdmission(
+        _ admission: AgentVisibleInteractiveAdmissionAuthorityV1
+    ) -> Self {
+        Self(
+            registry: registry,
+            providerLoader: providerLoader,
+            wallNowUnixMilliseconds: wallNowUnixMilliseconds,
+            lifecycleState: lifecycleState,
+            statusPlatform: statusPlatform,
+            interactivePlatform: AgentInteractivePlatformServicesV1(
+                visibleAdmission: admission,
+                materials: interactivePlatform.materials,
+                runtime: interactivePlatform.runtime,
+                surfaceControl: interactivePlatform.surfaceControl
+            )
+        )
     }
 }
 #endif

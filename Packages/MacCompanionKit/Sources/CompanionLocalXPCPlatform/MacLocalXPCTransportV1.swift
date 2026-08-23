@@ -76,6 +76,10 @@ public enum MacLocalXPCServerProfileV1: Equatable, Sendable {
     var admitsInteractiveLeaseTransport: Bool {
         self == .menuLifecycleReadinessStatusAndPresentation
     }
+
+    var admitsInteractiveAdmissionPublication: Bool {
+        self == .menuLifecycleReadinessStatusAndPresentation
+    }
 }
 
 public enum MacLocalXPCConstructionErrorV1: Error, Equatable, Sendable {
@@ -313,6 +317,38 @@ public final class MacLocalXPCServerV1:
     package static let remoteAccessBootstrapTimeoutSeconds = 5
     package static let menuPairingCommandTimeoutSeconds = 4
     package static let interactiveLeaseReplyTimeoutSeconds = 5
+    package static let interactiveAdmissionTimeoutSeconds = 3
+
+    private final class PendingInteractiveAdmissionPublication:
+        @unchecked Sendable
+    {
+        let transaction:
+            MacLocalXPCInteractiveAdmissionTransactionGateV1.Active
+        let publication: LocalInteractiveAdmissionPublicationV1
+        var deadline: DispatchWorkItem?
+        var task: Task<Void, Never>?
+        private let requestLease:
+            MacLocalXPCStatusRequestLeaseV1<MCLocalXPCMessageRef>
+
+        init(
+            transaction:
+                MacLocalXPCInteractiveAdmissionTransactionGateV1.Active,
+            publication: LocalInteractiveAdmissionPublicationV1,
+            request: MCLocalXPCMessageRef
+        ) {
+            self.transaction = transaction
+            self.publication = publication
+            requestLease = MacLocalXPCStatusRequestLeaseV1(request: request)
+        }
+
+        func takeOwnedRequest() -> MCLocalXPCMessageRef? {
+            requestLease.takeOwnedRequest()
+        }
+
+        func releaseOwnedRequest() {
+            requestLease.releaseIfOwned()
+        }
+    }
 
     private enum InteractiveLeaseCommand: Sendable {
         case install(InteractiveRuntimeInstallCommandV0)
@@ -553,6 +589,10 @@ public final class MacLocalXPCServerV1:
             MacLocalXPCInteractiveLeaseTransactionGateV1()
         var pendingInteractiveLeaseCommand:
             PendingInteractiveLeaseCommand?
+        var interactiveAdmissionGate =
+            MacLocalXPCInteractiveAdmissionTransactionGateV1()
+        var pendingInteractiveAdmissionPublication:
+            PendingInteractiveAdmissionPublication?
         var presentationIssuanceGate:
             MacLocalXPCMenuPresentationEndpointIssuanceGateV1
         var presentationEndpoint:
@@ -581,6 +621,9 @@ public final class MacLocalXPCServerV1:
             precondition(statusReadGate.bind(generation: generation))
             precondition(menuPairingCommandGate.bind(generation: generation))
             precondition(interactiveLeaseGate.bind(generation: generation))
+            precondition(
+                interactiveAdmissionGate.bind(generation: generation)
+            )
             ownedPeer = peer
         }
 
@@ -626,6 +669,23 @@ public final class MacLocalXPCServerV1:
         }
 
         @discardableResult
+        func cancelPendingInteractiveAdmissionPublication() -> Bool {
+            let invalidated = interactiveAdmissionGate.invalidate(
+                generation: generation
+            ) != nil
+            guard let pendingInteractiveAdmissionPublication else {
+                return invalidated
+            }
+            self.pendingInteractiveAdmissionPublication = nil
+            pendingInteractiveAdmissionPublication.deadline?.cancel()
+            pendingInteractiveAdmissionPublication.deadline = nil
+            pendingInteractiveAdmissionPublication.task?.cancel()
+            pendingInteractiveAdmissionPublication.task = nil
+            pendingInteractiveAdmissionPublication.releaseOwnedRequest()
+            return true
+        }
+
+        @discardableResult
         func cancelRemoteAccessBootstrap() -> Bool {
             let invalidated = bootstrapGate.invalidate(
                 generation: generation
@@ -658,6 +718,8 @@ public final class MacLocalXPCServerV1:
     private let statusReader: (any MacLocalXPCStatusReadingV1)?
     private let menuPairingCommandHandler:
         (any MacLocalXPCMenuPairingCommandHandlingV1)?
+    private let interactiveAdmissionHandler:
+        (any MacLocalXPCInteractiveAdmissionHandlingV1)?
     private let profile: MacLocalXPCServerProfileV1
     private let statusReadTimeout: DispatchTimeInterval = .seconds(2)
     private let bootstrapTimeout: DispatchTimeInterval = .seconds(
@@ -676,12 +738,15 @@ public final class MacLocalXPCServerV1:
         statusReader: (any MacLocalXPCStatusReadingV1)? = nil,
         menuPairingCommandHandler:
             (any MacLocalXPCMenuPairingCommandHandlingV1)? = nil,
+        interactiveAdmissionHandler:
+            (any MacLocalXPCInteractiveAdmissionHandlingV1)? = nil,
         onEvent: @escaping EventHandler
     ) {
         self.profile = profile
         self.bootstrapHandler = bootstrapHandler
         self.statusReader = statusReader
         self.menuPairingCommandHandler = menuPairingCommandHandler
+        self.interactiveAdmissionHandler = interactiveAdmissionHandler
         self.onEvent = onEvent
         queue.setSpecific(key: queueKey, value: 1)
     }
@@ -705,6 +770,10 @@ public final class MacLocalXPCServerV1:
             }
             guard profile.admitsMenuPairingCommands
                     == (menuPairingCommandHandler != nil) else {
+                throw MacLocalXPCConstructionErrorV1.invalidProfile
+            }
+            guard profile.admitsInteractiveAdmissionPublication
+                    == (interactiveAdmissionHandler != nil) else {
                 throw MacLocalXPCConstructionErrorV1.invalidProfile
             }
 
@@ -1697,7 +1766,20 @@ public final class MacLocalXPCServerV1:
         state.cancelPendingStatusRead()
         state.cancelPendingMenuPairingCommand()
         state.cancelPendingInteractiveLeaseCommand(error: .unavailable)
+        invalidateInteractiveAdmission(state)
         fencePresentations(state, error: presentationError)
+    }
+
+    private func invalidateInteractiveAdmission(_ state: PeerState) {
+        _ = state.cancelPendingInteractiveAdmissionPublication()
+        guard let interactiveAdmissionHandler else { return }
+        let generation = state.generation
+        Task {
+            await interactiveAdmissionHandler
+                .invalidateInteractiveAdmission(
+                    transportGeneration: generation
+                )
+        }
     }
 
     private func invalidateRemoteAccessBootstrap(_ state: PeerState) {
@@ -1918,6 +2000,45 @@ public final class MacLocalXPCServerV1:
                 return
             }
 
+            var admissionPayload: UnsafePointer<UInt8>?
+            var admissionPayloadLength = 0
+            if MCLocalXPCMessageGetExactInteractiveAdmissionPublication(
+                message,
+                &admissionPayload,
+                &admissionPayloadLength
+            ) {
+                guard let admissionPayload,
+                      admissionPayloadLength > 0,
+                      admissionPayloadLength <=
+                        LocalInteractiveAdmissionWireCodecV1
+                            .maximumEncodedBytes else {
+                    self.cancelAuthenticatedPeer(
+                        state,
+                        presentationError: .transportFailure
+                    )
+                    return
+                }
+                let payload = Data(
+                    bytes: admissionPayload,
+                    count: admissionPayloadLength
+                )
+                guard let publication = try?
+                        LocalInteractiveAdmissionWireCodecV1
+                            .decodePublication(payload),
+                      self.beginInteractiveAdmissionPublication(
+                        state: state,
+                        request: message,
+                        publication: publication
+                      ) else {
+                    self.cancelAuthenticatedPeer(
+                        state,
+                        presentationError: .transportFailure
+                    )
+                    return
+                }
+                return
+            }
+
             var commandKind = MCLocalXPCMenuPairingCommandCreate
             var commandPayload: UnsafePointer<UInt8>?
             var commandPayloadLength = 0
@@ -1994,6 +2115,170 @@ public final class MacLocalXPCServerV1:
         } catch {
             return false
         }
+    }
+
+    private func beginInteractiveAdmissionPublication(
+        state: PeerState,
+        request: MCLocalXPCMessageRef,
+        publication: LocalInteractiveAdmissionPublicationV1
+    ) -> Bool {
+        guard let interactiveAdmissionHandler,
+              state.lifetime.menuReadinessPublished,
+              let transaction = state.interactiveAdmissionGate.begin(
+                generation: state.generation,
+                permitted:
+                    profile.admitsInteractiveAdmissionPublication
+                    && authorizesMenuMethod(.publishInteractiveState)
+                    && state.postAuthenticationFence.admitsTraffic
+              ) else {
+            return false
+        }
+
+        let pending = PendingInteractiveAdmissionPublication(
+            transaction: transaction,
+            publication: publication,
+            request: request
+        )
+        state.pendingInteractiveAdmissionPublication = pending
+        let queue = self.queue
+        let generation = state.generation
+        pending.task = Task {
+            [weak self, weak state, interactiveAdmissionHandler] in
+            do {
+                let receipt = try await interactiveAdmissionHandler
+                    .publishInteractiveAdmission(
+                        publication,
+                        transportGeneration: generation
+                    )
+                queue.async { [weak self, weak state] in
+                    guard let self, let state else { return }
+                    self.completeInteractiveAdmissionPublication(
+                        state: state,
+                        transaction: transaction,
+                        receipt: receipt
+                    )
+                }
+            } catch {
+                queue.async { [weak self, weak state] in
+                    guard let self, let state else { return }
+                    self.terminateInteractiveAdmissionPublication(
+                        state: state,
+                        transaction: transaction
+                    )
+                }
+            }
+        }
+        let deadline = DispatchWorkItem { [weak self, weak state] in
+            guard let self, let state else { return }
+            self.terminateInteractiveAdmissionPublication(
+                state: state,
+                transaction: transaction
+            )
+        }
+        pending.deadline = deadline
+        queue.asyncAfter(
+            deadline: .now()
+                + .seconds(Self.interactiveAdmissionTimeoutSeconds),
+            execute: deadline
+        )
+        return true
+    }
+
+    private func completeInteractiveAdmissionPublication(
+        state: PeerState,
+        transaction:
+            MacLocalXPCInteractiveAdmissionTransactionGateV1.Active,
+        receipt: LocalInteractiveAdmissionPublishedReceiptV1
+    ) {
+        guard admitsInteractiveAdmissionCompletion(
+                state: state,
+                transaction: transaction
+              ),
+              let pending = state.pendingInteractiveAdmissionPublication,
+              pending.transaction == transaction,
+              (try? receipt.validate(against: pending.publication)) != nil,
+              let payload = try? LocalInteractiveAdmissionWireCodecV1
+                .encodeReceipt(receipt) else {
+            terminateInteractiveAdmissionPublication(
+                state: state,
+                transaction: transaction
+            )
+            return
+        }
+        guard state.interactiveAdmissionGate.finish(transaction),
+              let request = takeInteractiveAdmissionRequest(
+                state: state,
+                transaction: transaction
+              ) else {
+            cancelAuthenticatedPeer(
+                state,
+                presentationError: .transportFailure
+            )
+            return
+        }
+        defer { MCLocalXPCMessageRelease(request) }
+        let result = payload.withUnsafeBytes { rawBuffer in
+            guard let bytes = rawBuffer.bindMemory(to: UInt8.self).baseAddress
+            else { return MCLocalXPCResultConstructionFailed }
+            return MCLocalXPCSessionReplyToInteractiveAdmissionPublication(
+                state.peer,
+                request,
+                bytes,
+                payload.count
+            )
+        }
+        guard result == MCLocalXPCResultOK else {
+            cancelAuthenticatedPeer(
+                state,
+                presentationError: .transportFailure
+            )
+            return
+        }
+    }
+
+    private func admitsInteractiveAdmissionCompletion(
+        state: PeerState,
+        transaction:
+            MacLocalXPCInteractiveAdmissionTransactionGateV1.Active
+    ) -> Bool {
+        listenerRunGate.admits(generation: state.listenerGeneration)
+            && peerStates[state.generation] === state
+            && currentPeerState === state
+            && generationGate.admitsPostAuthenticationTraffic(
+                generation: state.generation
+            )
+            && state.lifetime.menuReadinessPublished
+            && state.postAuthenticationFence.admitsTraffic
+            && state.interactiveAdmissionGate.admits(transaction)
+    }
+
+    private func takeInteractiveAdmissionRequest(
+        state: PeerState,
+        transaction:
+            MacLocalXPCInteractiveAdmissionTransactionGateV1.Active
+    ) -> MCLocalXPCMessageRef? {
+        guard let pending = state.pendingInteractiveAdmissionPublication,
+              pending.transaction == transaction else { return nil }
+        state.pendingInteractiveAdmissionPublication = nil
+        pending.deadline?.cancel()
+        pending.deadline = nil
+        pending.task = nil
+        return pending.takeOwnedRequest()
+    }
+
+    private func terminateInteractiveAdmissionPublication(
+        state: PeerState,
+        transaction:
+            MacLocalXPCInteractiveAdmissionTransactionGateV1.Active
+    ) {
+        guard state.interactiveAdmissionGate.admits(transaction) else {
+            return
+        }
+        _ = state.cancelPendingInteractiveAdmissionPublication()
+        cancelAuthenticatedPeer(
+            state,
+            presentationError: .transportFailure
+        )
     }
 
     private func decodeMenuPairingCommand(
@@ -2761,7 +3046,10 @@ public final class MacLocalXPCServerV1:
 }
 
 @available(macOS 26.0, *)
-public final class MacLocalXPCClientV1: @unchecked Sendable {
+public final class MacLocalXPCClientV1:
+    @unchecked Sendable,
+    MacLocalXPCInteractiveAdmissionPublishingV1
+{
     public typealias EventHandler = @Sendable (MacLocalXPCClientEventV1) -> Void
 
     private final class MenuPairingCommandCancellationMarker:
@@ -2792,6 +3080,27 @@ public final class MacLocalXPCClientV1: @unchecked Sendable {
         init(
             requestID: UUID,
             transaction: MacLocalXPCMenuPairingCommandTransactionGateV1.Active,
+            continuation: CheckedContinuation<Data, any Error>
+        ) {
+            self.requestID = requestID
+            self.transaction = transaction
+            self.continuation = continuation
+        }
+    }
+
+    private final class PendingInteractiveAdmissionPublication:
+        @unchecked Sendable
+    {
+        let requestID: UUID
+        let transaction:
+            MacLocalXPCInteractiveAdmissionTransactionGateV1.Active
+        let continuation: CheckedContinuation<Data, any Error>
+        var deadline: DispatchWorkItem?
+
+        init(
+            requestID: UUID,
+            transaction:
+                MacLocalXPCInteractiveAdmissionTransactionGateV1.Active,
             continuation: CheckedContinuation<Data, any Error>
         ) {
             self.requestID = requestID
@@ -2881,6 +3190,12 @@ public final class MacLocalXPCClientV1: @unchecked Sendable {
     private var pendingMenuPairingCommand: PendingMenuPairingCommand?
     private let menuPairingCommandReplyTimeout: DispatchTimeInterval =
         .seconds(5)
+    private var interactiveAdmissionGate =
+        MacLocalXPCInteractiveAdmissionTransactionGateV1()
+    private var pendingInteractiveAdmissionPublication:
+        PendingInteractiveAdmissionPublication?
+    private let interactiveAdmissionReplyTimeout: DispatchTimeInterval =
+        .seconds(4)
     private var interactiveLeaseGate =
         MacLocalXPCInteractiveLeaseTransactionGateV1()
     private var pendingIncomingInteractiveLeaseCommand:
@@ -2961,6 +3276,12 @@ public final class MacLocalXPCClientV1: @unchecked Sendable {
                 generation: menuPairingCommandGate.generation ?? 0
             )
             precondition(menuPairingCommandGate.bind(generation: generation))
+            _ = interactiveAdmissionGate.invalidate(
+                generation: interactiveAdmissionGate.generation ?? 0
+            )
+            precondition(
+                interactiveAdmissionGate.bind(generation: generation)
+            )
             _ = interactiveLeaseGate.invalidate(
                 generation: interactiveLeaseGate.generation ?? 0
             )
@@ -3142,6 +3463,32 @@ public final class MacLocalXPCClientV1: @unchecked Sendable {
         }
     }
 
+    public func publishInteractiveAdmission(
+        _ publication: LocalInteractiveAdmissionPublicationV1
+    ) async throws -> LocalInteractiveAdmissionPublishedReceiptV1 {
+        let payload: Data
+        do {
+            payload = try LocalInteractiveAdmissionWireCodecV1
+                .encodePublication(publication)
+        } catch {
+            throw MacLocalXPCInteractiveAdmissionErrorV1
+                .malformedOrTransportError
+        }
+        let reply = try await sendInteractiveAdmissionPublication(
+            payload: payload
+        )
+        do {
+            let receipt = try LocalInteractiveAdmissionWireCodecV1
+                .decodeReceipt(reply)
+            try receipt.validate(against: publication)
+            return receipt
+        } catch {
+            invalidateCurrentGenerationAfterMalformedAdmissionReply()
+            throw MacLocalXPCInteractiveAdmissionErrorV1
+                .malformedOrTransportError
+        }
+    }
+
     public func cancel() {
         syncOnQueue {
             guard let session,
@@ -3160,6 +3507,10 @@ public final class MacLocalXPCClientV1: @unchecked Sendable {
                 generation: generation,
                 error: .unavailable
             )
+            finishPendingInteractiveAdmissionPublication(
+                generation: generation,
+                error: .unavailable
+            )
             invalidateIncomingInteractiveLease(
                 generation: generation,
                 notifyRuntime: true
@@ -3175,6 +3526,213 @@ public final class MacLocalXPCClientV1: @unchecked Sendable {
         cancel()
         let task = syncOnQueue { presentationRetirement?.task }
         await task?.value
+    }
+
+    private func sendInteractiveAdmissionPublication(
+        payload: Data
+    ) async throws -> Data {
+        let requestID = UUID()
+        let marker = MenuPairingCommandCancellationMarker()
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                queue.async { [weak self] in
+                    guard let self else {
+                        continuation.resume(
+                            throwing:
+                                MacLocalXPCInteractiveAdmissionErrorV1
+                                    .unavailable
+                        )
+                        return
+                    }
+                    self.admitInteractiveAdmissionPublication(
+                        requestID: requestID,
+                        payload: payload,
+                        cancellationMarker: marker,
+                        continuation: continuation
+                    )
+                }
+            }
+        } onCancel: { [weak self] in
+            marker.markCancelled()
+            self?.queue.async { [weak self] in
+                self?.cancelInteractiveAdmissionPublication(
+                    requestID: requestID
+                )
+            }
+        }
+    }
+
+    private func admitInteractiveAdmissionPublication(
+        requestID: UUID,
+        payload: Data,
+        cancellationMarker: MenuPairingCommandCancellationMarker,
+        continuation: CheckedContinuation<Data, any Error>
+    ) {
+        guard !cancellationMarker.isCancelled() else {
+            continuation.resume(throwing: CancellationError())
+            return
+        }
+        guard let generation = generationGate.currentGeneration,
+              let session,
+              gate.state == .authenticated,
+              menuReadinessPublished,
+              payload.count > 0,
+              payload.count <=
+                LocalInteractiveAdmissionWireCodecV1.maximumEncodedBytes,
+              authorizesMenuCommandMethod(.publishInteractiveState),
+              let transaction = interactiveAdmissionGate.begin(
+                generation: generation,
+                permitted: true
+              ) else {
+            continuation.resume(
+                throwing:
+                    MacLocalXPCInteractiveAdmissionErrorV1.unavailable
+            )
+            return
+        }
+
+        let pending = PendingInteractiveAdmissionPublication(
+            requestID: requestID,
+            transaction: transaction,
+            continuation: continuation
+        )
+        pendingInteractiveAdmissionPublication = pending
+        let sendResult = payload.withUnsafeBytes { rawBuffer in
+            guard let bytes = rawBuffer.bindMemory(to: UInt8.self).baseAddress
+            else { return MCLocalXPCResultConstructionFailed }
+            return MCLocalXPCSessionSendInteractiveAdmissionPublication(
+                session,
+                bytes,
+                payload.count
+            ) { [weak self] bytes, length, malformed in
+                let copiedPayload = bytes.map {
+                    Data(bytes: $0, count: length)
+                }
+                self?.queue.async { [weak self] in
+                    self?.handleInteractiveAdmissionReply(
+                        generation: generation,
+                        requestID: requestID,
+                        transaction: transaction,
+                        payload: copiedPayload,
+                        malformedOrTransportError: malformed
+                    )
+                }
+            }
+        }
+        guard sendResult == MCLocalXPCResultOK else {
+            _ = interactiveAdmissionGate.finish(transaction)
+            pendingInteractiveAdmissionPublication = nil
+            continuation.resume(
+                throwing: MacLocalXPCInteractiveAdmissionErrorV1
+                    .malformedOrTransportError
+            )
+            invalidateOwnedSession(generation: generation)
+            return
+        }
+
+        let deadline = DispatchWorkItem { [weak self] in
+            self?.expireInteractiveAdmissionPublication(
+                generation: generation,
+                requestID: requestID,
+                transaction: transaction
+            )
+        }
+        pending.deadline = deadline
+        queue.asyncAfter(
+            deadline: .now() + interactiveAdmissionReplyTimeout,
+            execute: deadline
+        )
+    }
+
+    private func handleInteractiveAdmissionReply(
+        generation: UInt64,
+        requestID: UUID,
+        transaction:
+            MacLocalXPCInteractiveAdmissionTransactionGateV1.Active,
+        payload: Data?,
+        malformedOrTransportError: Bool
+    ) {
+        guard generationGate.admitsCallback(generation: generation),
+              let pending = pendingInteractiveAdmissionPublication,
+              pending.requestID == requestID,
+              pending.transaction == transaction,
+              interactiveAdmissionGate.finish(transaction) else { return }
+        pendingInteractiveAdmissionPublication = nil
+        pending.deadline?.cancel()
+        pending.deadline = nil
+        guard !malformedOrTransportError,
+              let payload,
+              !payload.isEmpty,
+              payload.count <=
+                LocalInteractiveAdmissionWireCodecV1.maximumEncodedBytes else {
+            pending.continuation.resume(
+                throwing: MacLocalXPCInteractiveAdmissionErrorV1
+                    .malformedOrTransportError
+            )
+            invalidateOwnedSession(generation: generation)
+            return
+        }
+        pending.continuation.resume(returning: payload)
+    }
+
+    private func expireInteractiveAdmissionPublication(
+        generation: UInt64,
+        requestID: UUID,
+        transaction:
+            MacLocalXPCInteractiveAdmissionTransactionGateV1.Active
+    ) {
+        guard generationGate.admitsCallback(generation: generation),
+              let pending = pendingInteractiveAdmissionPublication,
+              pending.requestID == requestID,
+              pending.transaction == transaction,
+              interactiveAdmissionGate.finish(transaction) else { return }
+        pendingInteractiveAdmissionPublication = nil
+        pending.deadline = nil
+        pending.continuation.resume(
+            throwing: MacLocalXPCInteractiveAdmissionErrorV1.replyTimedOut
+        )
+        invalidateOwnedSession(generation: generation)
+    }
+
+    private func cancelInteractiveAdmissionPublication(requestID: UUID) {
+        guard let generation = generationGate.currentGeneration,
+              let pending = pendingInteractiveAdmissionPublication,
+              pending.requestID == requestID,
+              interactiveAdmissionGate.finish(pending.transaction) else {
+            return
+        }
+        pendingInteractiveAdmissionPublication = nil
+        pending.deadline?.cancel()
+        pending.deadline = nil
+        pending.continuation.resume(
+            throwing:
+                MacLocalXPCInteractiveAdmissionErrorV1.cancelledAfterSend
+        )
+        invalidateOwnedSession(generation: generation)
+    }
+
+    private func finishPendingInteractiveAdmissionPublication(
+        generation: UInt64,
+        error: MacLocalXPCInteractiveAdmissionErrorV1
+    ) {
+        _ = interactiveAdmissionGate.invalidate(generation: generation)
+        guard let pending = pendingInteractiveAdmissionPublication else {
+            return
+        }
+        pendingInteractiveAdmissionPublication = nil
+        pending.deadline?.cancel()
+        pending.deadline = nil
+        pending.continuation.resume(throwing: error)
+    }
+
+    private func invalidateCurrentGenerationAfterMalformedAdmissionReply() {
+        queue.async { [weak self] in
+            guard let self,
+                  let generation = generationGate.currentGeneration else {
+                return
+            }
+            self.invalidateOwnedSession(generation: generation)
+        }
     }
 
     private func sendMenuPairingCommand(
@@ -4037,6 +4595,10 @@ public final class MacLocalXPCClientV1: @unchecked Sendable {
             generation: generation,
             error: .unavailable
         )
+        finishPendingInteractiveAdmissionPublication(
+            generation: generation,
+            error: .unavailable
+        )
         invalidateIncomingInteractiveLease(
             generation: generation,
             notifyRuntime: true
@@ -4059,6 +4621,10 @@ public final class MacLocalXPCClientV1: @unchecked Sendable {
         statusReadDeadline?.cancel()
         statusReadDeadline = nil
         finishPendingMenuPairingCommand(
+            generation: generation,
+            error: .unavailable
+        )
+        finishPendingInteractiveAdmissionPublication(
             generation: generation,
             error: .unavailable
         )
