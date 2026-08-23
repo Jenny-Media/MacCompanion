@@ -6,8 +6,9 @@ peer-identity boundary. The signed peer-requirement mechanism is provisionally
 proven on Xcode 27 beta. The production hello, menu-lifecycle-ready,
 content-free status-read, disabled-Agent bootstrap, and menu pairing-command
 transports are constructed. Interactive lease install, renewal, and revocation
-now have the exact transport profile below; permanent runtime composition and
-signed execution evidence remain pending.
+and visible-admission publication now have exact transport profiles below;
+their permanent transport composition and signed execution evidence remain
+pending.
 
 Local IPC is never authenticated by a caller-supplied role, PID, path, service
 label, or claimed audit token. The macOS adapter installs an XPC peer
@@ -573,6 +574,39 @@ This lease slice carries no input or media. `applyInteractiveInput`,
 `publishInteractiveMedia`, and surface-transition transport remain closed until
 their independently bounded binary/backpressure and runtime-fence mappings are
 frozen and implemented.
+
+### Exact visible Interactive admission publication
+
+After authenticated menu readiness, the menu may publish exactly one current
+visible-admission value through `runtime.interactive.admission.publish` under
+the already closed `publishInteractiveState` authorization. The canonical
+payload is `LocalInteractiveAdmissionPublicationV1`: local-IPC version,
+command UUID, opaque menu-process UUID, positive safe-integer revision, and an
+optional opaque selected-display UUID. Success is the exact
+`runtime.interactive.admission.publish.ack` carrying a completely correlated
+`LocalInteractiveAdmissionPublishedReceiptV1`.
+
+The first publication for one authenticated transport generation has revision
+1. A replacement increments by exactly one and retains the same menu-process
+UUID. An exact command replay returns the retained receipt; skipped, stale, or
+changed-generation publication fails closed. Transport replacement or loss
+withdraws only the matching generation immediately, and a stale invalidation
+cannot remove its successor.
+
+The selected-display UUID is a menu-process-owned opaque token. It is never a
+`CGDirectDisplayID`, display name, screen geometry, window identifier, process
+identifier, or permission fact. A nil token means the visible menu exists but
+has no selected display, so Control admission remains denied. Publication
+grants no capability and is joined conservatively with the Agent's durable
+device/grant state before every Interactive admission and runtime renewal.
+
+Request and success payloads are closed canonical JSON no larger than 4,096
+bytes. One publication may be in flight per generation. The receiver completes
+within three monotonic seconds and the sender waits at most four. Timeout,
+cancellation after send, malformed or unknown fields, correlation mismatch,
+concurrency, and ambiguous completion terminate the generation. The exact
+indexed profile is
+`local-xpc-interactive-admission-transport-v0.1.json`.
 
 The device display name is confirmed through authenticated local administration and stored by the Agent. It is NFC UTF-8, 1–64 bytes, has no surrounding whitespace, controls, illegal scalars, or directional formatting controls, and is never accepted as remote authority or copied from unauthenticated discovery metadata.
 

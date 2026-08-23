@@ -218,6 +218,12 @@
       "canonicalSHA256": "e2fdaa14069bd2cd9fd95a504b5044dd2e0821b2e89a4a19acd01c30123ddca7"
     },
     {
+      "path": "local-xpc-interactive-admission-transport-v0.1.json",
+      "kind": "localXPC.interactiveAdmissionTransport.v0.1",
+      "expect": "valid",
+      "canonicalSHA256": "9e9950a6f40ad698d3284d17a056f3ddcefc35853c1133ad7f34167ba8b66aca"
+    },
+    {
       "path": "client-configured-routes-v0.1.json",
       "kind": "clientConfiguredRoutes.model.v0.1",
       "expect": "valid",

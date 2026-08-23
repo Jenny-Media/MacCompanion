@@ -133,6 +133,14 @@ constructor. Visible-display publication and mapping, concrete platform
 effects, automatic renewal scheduling, and secondary channel handoff remain
 the next Control composition gates.
 
+The [visible Interactive admission contract](evidence/2026-08-22-visible-interactive-admission-contract.md)
+now fixes a closed canonical menu-process generation, exact revision, and
+optional opaque selected-display publication. A stable Agent authority accepts
+only revision 1 on a newer transport, exact replay, and +1 replacements while
+generation-fencing withdrawal. It grants nothing and remains separate from
+durable SQLite security facts. Production XPC request/ack mapping and the
+menu-owned opaque physical-display mapping remain next.
+
 The [conservative network request-context checkpoint](evidence/2026-08-22-conservative-network-request-contexts.md)
 now supplies live clocks, unique response IDs, and an owned public macOS
 session/lifecycle source for that listener seam. [Primary-source API

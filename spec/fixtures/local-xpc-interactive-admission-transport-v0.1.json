@@ -1,0 +1,33 @@
+{
+  "profile": "Mac Companion local XPC Interactive admission transport v0.1",
+  "maximumPayloadBytes": 4096,
+  "maximumInFlightCommandsPerGeneration": 1,
+  "minimumTransportGeneration": 1,
+  "receiverOperationTimeoutMilliseconds": 3000,
+  "senderReplyTimeoutMilliseconds": 4000,
+  "command": {
+    "kind": "runtime.interactive.admission.publish",
+    "authorizationMethod": "publishInteractiveState",
+    "requestPayloadType": "LocalInteractiveAdmissionPublicationV1",
+    "successKind": "runtime.interactive.admission.publish.ack",
+    "successPayloadType": "LocalInteractiveAdmissionPublishedReceiptV1",
+    "requestAndSuccessFields": ["kind:string", "version:signedInt64=1", "payload:data"]
+  },
+  "publication": {
+    "firstRevision": 1,
+    "revisionStep": 1,
+    "selectedDisplayID": "optional opaque UUID scoped to the visible menu-process generation",
+    "transportLossMeansUnavailable": true
+  },
+  "rules": [
+    "same-team exact-role authentication and accepted menu readiness are required before publication",
+    "the first publication for a transport generation has revision 1 and every replacement increments exactly once",
+    "a replay is accepted only when the complete command exactly matches the retained command",
+    "the menu-process UUID remains constant for one transport generation and must change for a replacement process",
+    "selectedDisplayID is nil when no display is selected and is never a CGDirectDisplayID or other physical identifier",
+    "request and success payloads are nonempty closed canonical JSON no larger than 4096 bytes",
+    "transport replacement or loss immediately withdraws the matching visible admission without accepting stale invalidation",
+    "timeout, cancellation after send, malformed traffic, unknown fields, correlation mismatch, and concurrent publication terminate the generation",
+    "publication grants no Observe, Act, Control, capture, input, media, route, pairing, or credential authority"
+  ]
+}
