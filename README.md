@@ -59,6 +59,7 @@ Mac Companion is a private control companion for personal Macs, especially alway
 - [Permission and process matrix](docs/permission-matrix.md)
 - [ADR-0001: process and trust boundary](docs/adr/0001-process-and-trust-boundary.md)
 - [ADR-0002: Stage 3 product evidence](docs/adr/0002-stage-3-product-evidence.md)
+- [Stage 3 participant disclosure and retention draft](docs/stage-3-participant-disclosure-and-retention.md)
 - [Stage 3 study-evidence kernel](docs/evidence/2026-08-23-stage-3-study-evidence-kernel.md)
 - [Stage 3 local report owner](docs/evidence/2026-08-23-stage-3-local-report-owner.md)
 - [Stage 3 local enrollment and initial capture](docs/evidence/2026-08-23-stage-3-local-enrollment-capture.md)
@@ -348,7 +349,7 @@ The [permanent menu host-recovery command checkpoint](docs/evidence/2026-08-23-p
 
 The [Agent bootstrap durable authority](docs/evidence/2026-08-22-agent-bootstrap-durable-authority.md) owns the revision-zero-or-disabled offer and exact successor enable commit over the existing cross-process-locked intent store. It requires exact post-write read-back, recovers only an exact post-rename commit, replays only the exact command without a second write, and fences every storage suspension by monotonic peer generation and operation ID. XPC injection, process restart, setup registration, the menu transaction, and receipt-gated dashboard construction are now bound; signed launchd execution and reciprocal readiness/status remain the next gate.
 
-The current hardened gate covers 1,223 repository files and includes 4 native-appearance boundary policy self-tests over 378 Swift source files.
+The current hardened gate covers 1,224 repository files and includes 4 native-appearance boundary policy self-tests over 378 Swift source files.
 
 Supply-chain coverage now also includes 26 exact-candidate artifact-SBOM fixtures, 18 artifact-SBOM/release-graph integration cases (including iOS and combined targets), 45 complete signed-code construction-discovery graph fixtures, 17 per-executable signed-code construction-correlation fixtures, 24 Mac packaging-equivalence fixtures, 8 mounted-tree/xattr-policy cases, 5 packaging release-integration cases, 3 partial-attach/recovery cases, 6 fail-closed recovery-refusal cases, 2 interrupted recovery-record update cases, and one concurrent public-path substitution case. The separately authorized packaging lane has 2 full APFS/UDZO reinspection cases; signed-code platform acceptance remains deliberately gated.
 
