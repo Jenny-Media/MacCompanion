@@ -39,7 +39,8 @@ private func runtimeAdmissionV0() async throws
         publication: publication
     )
     try await correlation.willExtract(publication: publication)
-    return try await correlation.didExtract(publication: publication)
+    try await correlation.installerDidStart(publication: publication)
+    return try await correlation.reachedReadyToInstall()
 }
 
 private func runtimeDependenciesV0(

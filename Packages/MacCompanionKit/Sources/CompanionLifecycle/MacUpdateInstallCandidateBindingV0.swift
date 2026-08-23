@@ -79,7 +79,7 @@ public struct MacUpdateInstallAdmissionV0: Sendable {
     let authority: MacUpdateInstallAuthorityV0
 }
 
-/// Package-owned, single-use admission primitive. The public extraction
+/// Package-owned, single-use admission primitive. The public validation
 /// correlation actor is the only production constructor and caller.
 actor MacUpdateInstallCandidateAdmissionV0 {
     private var publication: MacUpdatePublishedCandidateV0?
@@ -88,7 +88,7 @@ actor MacUpdateInstallCandidateAdmissionV0 {
         self.publication = publication
     }
 
-    func admitPostExtraction(
+    func admitPreparedUpdate(
         publication observed: MacUpdatePublishedCandidateV0
     ) throws -> MacUpdateInstallAdmissionV0 {
         guard let publication else {

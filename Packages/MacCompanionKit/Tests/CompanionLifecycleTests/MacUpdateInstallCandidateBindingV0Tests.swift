@@ -149,7 +149,7 @@ async throws {
         publication: publication
     )
 
-    let admission = try await owner.admitPostExtraction(
+    let admission = try await owner.admitPreparedUpdate(
         publication: publication
     )
 
@@ -162,7 +162,7 @@ async throws {
     await #expect(
         throws: MacUpdateInstallCandidateAdmissionErrorV0.closed
     ) {
-        _ = try await owner.admitPostExtraction(
+        _ = try await owner.admitPreparedUpdate(
             publication: publication
         )
     }
@@ -183,7 +183,7 @@ async throws {
         throws: MacUpdateInstallCandidateAdmissionErrorV0
             .candidateMismatch
     ) {
-        _ = try await mismatch.admitPostExtraction(
+        _ = try await mismatch.admitPreparedUpdate(
             publication: publishedUpdateCandidateV0(
                 for: otherCandidate
             )
@@ -192,7 +192,7 @@ async throws {
     await #expect(
         throws: MacUpdateInstallCandidateAdmissionErrorV0.closed
     ) {
-        _ = try await mismatch.admitPostExtraction(
+        _ = try await mismatch.admitPreparedUpdate(
             publication: publication
         )
     }
@@ -204,7 +204,7 @@ async throws {
     await #expect(
         throws: MacUpdateInstallCandidateAdmissionErrorV0.closed
     ) {
-        _ = try await cancelled.admitPostExtraction(
+        _ = try await cancelled.admitPreparedUpdate(
             publication: publication
         )
     }

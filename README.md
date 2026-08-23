@@ -186,12 +186,16 @@ Developer ID, notarization, application-stapling, and whole-ZIP claims to be
 download or installation path; it can only consume the reviewed offer once
 into an inert candidate/evidence seed for the later validation bridge.
 The subsequent
-[extraction-correlation checkpoint](docs/evidence/2026-08-23-update-validation-correlation.md)
+[validation-correlation checkpoint](docs/evidence/2026-08-23-update-validation-correlation.md)
 replaces that exposed seed with a package-owned single-use actor. It requires
 the complete signed publication to match across ordered `willExtract` and
-`didExtract` observations, closes on every mismatch or race, and keeps the
-lower-level admission primitive package-internal. The adapter still does not
-implement those callbacks or enable a full update check.
+installer-start observations, but treats Sparkle 2.9.6's misleadingly named
+`didExtractUpdate` as intermediate only. Runtime admission opens only at the
+later `showReadyToInstallAndRelaunch` user-driver hold point, after Sparkle's
+asynchronous validation and stage-one preparation. Every mismatch or race
+closes the actor, and the lower-level admission primitive remains
+package-internal. The adapter still implements none of these callbacks and
+does not enable a full update check.
 
 The [exact-candidate artifact SBOM](docs/evidence/2026-08-21-exact-candidate-artifact-sbom.md) separately inventories the executable-bearing ZIPs themselves, emits reciprocal `filesAnalyzed: true` SPDX with SHA-1/SHA-256 and package verification codes, and binds release version/build/targets/revision, packaged hashes and sizes, and executable paths/modes. Signed-candidate `--verify-files` rejects source-SBOM substitution, unsafe or noncanonical archives/evidence, metadata substitution, and post-generation archive changes. The [Mac packaging-equivalence receipt](docs/evidence/2026-08-21-mac-packaging-equivalence.md) binds those exact ZIP trees to the sole release DMG through an explicitly authorized read-only APFS inspection, exact device cleanup, and post-inspection rehash. The current [Sparkle nested Developer ID packaging checkpoint](docs/evidence/2026-08-23-sparkle-nested-developer-id-packaging.md) independently verifies all five retained app, Agent, framework, and helper subjects, signs the DMG, and proves one 117-entry application tree across both ZIPs and the DMG while explicitly retaining the unnotarized, unstapled, unsigned-update, non-promotable state. A real signed-candidate claim remains closed until this path runs on the final signed/notarized artifacts under the stable release lane.
 

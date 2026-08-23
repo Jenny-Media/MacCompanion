@@ -38,7 +38,7 @@ throws {
     }
 }
 
-@Test func exactExtractionSequenceMintsOneInstallAdmission()
+@Test func exactValidationSequenceMintsOneInstallAdmission()
 async throws {
     let publication = try correlationPublicationV0()
     let correlation = MacUpdateValidationCorrelationV0(
@@ -48,9 +48,14 @@ async throws {
     #expect(await correlation.currentPhase() == .awaitingExtraction)
     try await correlation.willExtract(publication: publication)
     #expect(await correlation.currentPhase() == .extracting)
-    let admission = try await correlation.didExtract(
+    try await correlation.installerDidStart(
         publication: publication
     )
+    #expect(
+        await correlation.currentPhase()
+            == .awaitingInstallationReadiness
+    )
+    let admission = try await correlation.reachedReadyToInstall()
 
     #expect(admission.displayVersion == "0.2.0")
     #expect(
@@ -59,30 +64,41 @@ async throws {
     )
     #expect(await correlation.currentPhase() == .closed)
     await #expect(throws: MacUpdateValidationCorrelationErrorV0.closed) {
-        _ = try await correlation.didExtract(
-            publication: publication
-        )
+        _ = try await correlation.reachedReadyToInstall()
     }
 }
 
-@Test func didExtractWithoutWillExtractClosesCorrelation()
+@Test func reorderedLifecycleCallbacksCloseCorrelation()
 async throws {
     let publication = try correlationPublicationV0()
-    let correlation = MacUpdateValidationCorrelationV0(
+    let installerFirst = MacUpdateValidationCorrelationV0(
         publication: publication
     )
 
     await #expect(
         throws: MacUpdateValidationCorrelationErrorV0.invalidSequence
     ) {
-        _ = try await correlation.didExtract(
+        try await installerFirst.installerDidStart(
             publication: publication
         )
     }
-    #expect(await correlation.currentPhase() == .closed)
+    #expect(await installerFirst.currentPhase() == .closed)
     await #expect(throws: MacUpdateValidationCorrelationErrorV0.closed) {
-        try await correlation.willExtract(publication: publication)
+        try await installerFirst.willExtract(publication: publication)
     }
+
+    let readyBeforeInstaller = MacUpdateValidationCorrelationV0(
+        publication: publication
+    )
+    try await readyBeforeInstaller.willExtract(
+        publication: publication
+    )
+    await #expect(
+        throws: MacUpdateValidationCorrelationErrorV0.invalidSequence
+    ) {
+        _ = try await readyBeforeInstaller.reachedReadyToInstall()
+    }
+    #expect(await readyBeforeInstaller.currentPhase() == .closed)
 }
 
 @Test func repeatedWillExtractIsTerminal() async throws {
@@ -130,14 +146,14 @@ async throws {
         throws: MacUpdateValidationCorrelationErrorV0
             .candidateMismatch
     ) {
-        _ = try await evidenceMismatch.didExtract(
+        try await evidenceMismatch.installerDidStart(
             publication: differentEvidence
         )
     }
     #expect(await evidenceMismatch.currentPhase() == .closed)
 }
 
-@Test func cancellationBeforeOrDuringExtractionIsTerminal()
+@Test func cancellationAtEveryLifecyclePhaseIsTerminal()
 async throws {
     let publication = try correlationPublicationV0()
     let before = MacUpdateValidationCorrelationV0(
@@ -155,23 +171,34 @@ async throws {
     try await during.willExtract(publication: publication)
     await during.cancel()
     await #expect(throws: MacUpdateValidationCorrelationErrorV0.closed) {
-        _ = try await during.didExtract(publication: publication)
+        try await during.installerDidStart(publication: publication)
+    }
+
+    let awaitingReadiness = MacUpdateValidationCorrelationV0(
+        publication: publication
+    )
+    try await awaitingReadiness.willExtract(publication: publication)
+    try await awaitingReadiness.installerDidStart(
+        publication: publication
+    )
+    await awaitingReadiness.cancel()
+    await #expect(throws: MacUpdateValidationCorrelationErrorV0.closed) {
+        _ = try await awaitingReadiness.reachedReadyToInstall()
     }
 }
 
-@Test func concurrentDidExtractCallbacksMintExactlyOneAdmission()
+@Test func concurrentReadyCallbacksMintExactlyOneAdmission()
 async throws {
     let publication = try correlationPublicationV0()
     let correlation = MacUpdateValidationCorrelationV0(
         publication: publication
     )
     try await correlation.willExtract(publication: publication)
+    try await correlation.installerDidStart(publication: publication)
 
     let first = Task {
         do {
-            _ = try await correlation.didExtract(
-                publication: publication
-            )
+            _ = try await correlation.reachedReadyToInstall()
             return true
         } catch {
             return false
@@ -179,9 +206,7 @@ async throws {
     }
     let second = Task {
         do {
-            _ = try await correlation.didExtract(
-                publication: publication
-            )
+            _ = try await correlation.reachedReadyToInstall()
             return true
         } catch {
             return false

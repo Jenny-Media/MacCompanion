@@ -29,19 +29,23 @@ All download and installation checks remain denied.
 
 The locally resolved source checkout is exact Sparkle `2.9.6`, revision
 `ac2def288cbff5cfc7df3ffef6abdf45b72bcb0a`. Its updater requires
-`SUVerifyUpdateBeforeExtraction` when signed feeds are required. Its validator
-prevalidates the archive signature, then checks the extracted application
-bundle's basic update policy and code-signature integrity before the
-`didExtractUpdate` delegate callback.
+`SUVerifyUpdateBeforeExtraction` when signed feeds are required. The exact
+driver ordering shows that `didExtractUpdate` is misleadingly named: it fires
+after the installer process accepts its data, before that process
+asynchronously prevalidates the archive signature, extracts the application,
+validates it, and completes stage-one preparation. The later
+`showReadyToInstallAndRelaunch` user-driver callback is the available
+post-validation, pre-install hold point.
 
-That callback is not sufficient to mint Mac Companion installation authority.
-The same validator explicitly permits an old-key-valid Ed25519 archive to
-change Apple code-signing identity, and neither the callback nor the appcast
-item attests Apple notarization. Mac Companion therefore must not translate
-`didExtractUpdate` into unconditional `developerIDValidated` or
-`notarizedReplacement` facts. A later protected release-evidence bridge must
-bind the exact archive to the required Jenny Media Developer ID graph,
-notarized and stapled replacement, and whole-application ZIP before admission.
+`didExtractUpdate` cannot mint Mac Companion installation authority at all.
+Even the later readiness callback is not platform-signing evidence: Sparkle's
+validator explicitly permits an old-key-valid Ed25519 archive to change Apple
+code-signing identity, and neither callback nor the appcast item attests Apple
+notarization. Mac Companion therefore must not translate either callback into
+unconditional `developerIDValidated` or `notarizedReplacement` facts. A
+protected release-evidence bridge must bind the exact archive to the required
+Jenny Media Developer ID graph, notarized and stapled replacement, and
+whole-application ZIP before the readiness hold point can open admission.
 
 ## Verification
 

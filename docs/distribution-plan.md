@@ -144,7 +144,7 @@ substitute for those exact per-subject checks. See
 The [signed-publication binding](evidence/2026-08-23-signed-update-publication-binding.md)
 now retains successful signed-appcast validation, archive length, and the exact
 Ed25519 signature in the reviewed candidate and requires exact correlation
-before admission. Sparkle's post-extraction callback cannot independently
+before admission. Sparkle's installer-start callback cannot independently
 attest the required Jenny Media Developer ID graph or Apple notarization; the
 release lane must publish protected evidence for those facts and the runtime
 bridge must bind it to the same archive before installation authority opens.
@@ -157,13 +157,17 @@ release claims. It deliberately binds `signedCandidate`, not `promotionReady`,
 because the final signed appcast is itself publication evidence and may not
 participate in a circular content hash. The protected release job must still
 generate and sign this projection from the real passing records.
-The [extraction-correlation checkpoint](evidence/2026-08-23-update-validation-correlation.md)
+The [validation-correlation checkpoint](evidence/2026-08-23-update-validation-correlation.md)
 then retains that exact signed publication in a package-owned single-use actor.
-Only one ordered, exact `willExtractUpdate` / `didExtractUpdate` pair can mint
-runtime admission; candidate or evidence substitution, callback reordering,
-cancellation, concurrency, and reuse close it. This is a client-side lifecycle
-boundary only: no protected publication, download, extraction, or installation
-path is enabled yet.
+It correlates one exact `willExtractUpdate` and matching `didExtractUpdate`, but
+the latter is only an installer-start acknowledgement in Sparkle 2.9.6. Only
+the later `showReadyToInstallAndRelaunch` user-driver event, after asynchronous
+validation and stage-one preparation, can mint runtime admission. Candidate or
+evidence substitution, callback reordering, cancellation, concurrency, and
+reuse close the actor. The production adapter must subclass or proxy the
+standard user driver and withhold `.install` until the foreground-confirmed
+runtime coordinator succeeds. No protected publication, download, extraction,
+or installation path is enabled yet.
 
 ### Channels
 

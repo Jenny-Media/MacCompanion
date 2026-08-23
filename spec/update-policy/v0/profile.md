@@ -1,4 +1,4 @@
-# Mac Companion update trust policy v0.8
+# Mac Companion update trust policy v0.9
 
 Status: normative for the first direct-distribution beta.
 
@@ -149,23 +149,31 @@ downloaded bytes because its delegate does not expose the staged archive for a
 second client-side hash.
 
 The informational publication and release evidence remain one typed value
-through extraction correlation. A package-owned single-use owner accepts only
-one exact `willExtractUpdate` followed by one exact `didExtractUpdate` for that
+through validation correlation. A package-owned single-use owner accepts only
+one exact `willExtractUpdate`, then the matching `didExtractUpdate`, and then
+one installation-readiness event from `showReadyToInstallAndRelaunch` for that
 same publication. Channel, builds, display version, canonical archive URL,
 length, Ed25519 signature, all release claims, and all five evidence digests
 must remain equal. Mismatch, callback reordering, cancellation, concurrent
 reuse, or repeated callbacks close both correlation and admission permanently.
-The containing-app adapter may translate those events only from the matching
-Sparkle delegate callbacks; an arbitrary Boolean is not extraction evidence.
 
-Sparkle's successful post-extraction validation is not, by itself, Mac
-Companion's Developer ID identity or notarization attestation. Sparkle 2.9.6
-permits an Ed25519-valid update to change Apple code-signing identity, and its
-delegate callback does not report notarization. The eventual production bridge
-must therefore bind the exact downloaded candidate to independently protected
-release evidence for the required Jenny Media Developer ID graph, notarized
-and stapled replacement, and whole-application ZIP. It may not manufacture
-those facts as unconditional callback booleans.
+In Sparkle 2.9.6, `didExtractUpdate` is a misleadingly named intermediate
+event: it fires after the installer process accepts its input, before that
+process asynchronously extracts and validates the archive. It cannot mint
+installation authority. The containing app must subclass or proxy the standard
+user driver and withhold its `.install` reply to
+`showReadyToInstallAndRelaunch` until Mac Companion's foreground-confirmed
+runtime coordinator admits the exact prepared update. An arbitrary Boolean is
+not validation or installation-readiness evidence.
+
+Neither lifecycle event is Mac Companion's Developer ID identity or
+notarization attestation. Sparkle 2.9.6 permits an Ed25519-valid update to
+change Apple code-signing identity, and its callbacks do not report
+notarization. The production bridge must therefore bind the exact downloaded
+candidate to independently protected release evidence for the required Jenny
+Media Developer ID graph, notarized and stapled replacement, and
+whole-application ZIP. It may not manufacture those facts as unconditional
+callback booleans.
 
 Production consumers cannot directly construct or extract the lower-level
 validated candidate or installation authority. One coordinator owns fresh

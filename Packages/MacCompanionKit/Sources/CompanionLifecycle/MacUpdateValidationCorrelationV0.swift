@@ -28,6 +28,7 @@ public enum MacUpdateValidationCorrelationPhaseV0:
 {
     case awaitingExtraction
     case extracting
+    case awaitingInstallationReadiness
     case closed
 }
 
@@ -40,17 +41,19 @@ public enum MacUpdateValidationCorrelationErrorV0:
     case trustRequirementMissing
 }
 
-/// Single-use correlation boundary for Sparkle's extraction callbacks. The
-/// containing-app adapter must construct every observation from the exact
-/// callback item. Only one matching will-extract / did-extract sequence can
-/// reach installation admission; cancellation, mismatch, reordering, and reuse
-/// consume the correlation permanently.
+/// Single-use correlation boundary for Sparkle's update lifecycle. The
+/// containing-app adapter must construct item-bearing observations from the
+/// exact callback item. `didExtractUpdate` is only an installer-start
+/// acknowledgement in Sparkle 2.9.6; admission remains closed until the
+/// standard user driver reports that the validated update is ready to install
+/// and relaunch. Cancellation, mismatch, reordering, and reuse consume the
+/// correlation permanently.
 public actor MacUpdateValidationCorrelationV0 {
     private let expected: MacUpdatePublishedCandidateV0
     private let admissionOwner: MacUpdateInstallCandidateAdmissionV0
     private var phase =
         MacUpdateValidationCorrelationPhaseV0.awaitingExtraction
-    private var extracting: MacUpdatePublishedCandidateV0?
+    private var correlatedPublication: MacUpdatePublishedCandidateV0?
 
     public init(publication: MacUpdatePublishedCandidateV0) {
         expected = publication
@@ -80,34 +83,54 @@ public actor MacUpdateValidationCorrelationV0 {
             throw MacUpdateValidationCorrelationErrorV0
                 .candidateMismatch
         }
-        extracting = publication
+        correlatedPublication = publication
         phase = .extracting
     }
 
-    public func didExtract(
+    public func installerDidStart(
         publication: MacUpdatePublishedCandidateV0
-    ) async throws -> MacUpdateInstallAdmissionV0 {
+    ) async throws {
         guard phase != .closed else {
             throw MacUpdateValidationCorrelationErrorV0.closed
         }
-        guard phase == .extracting, let extracting else {
+        guard phase == .extracting, let correlatedPublication else {
+            await close()
+            throw MacUpdateValidationCorrelationErrorV0.invalidSequence
+        }
+
+        guard publication == expected,
+              publication == correlatedPublication else {
+            await close()
+            throw MacUpdateValidationCorrelationErrorV0
+                .candidateMismatch
+        }
+
+        phase = .awaitingInstallationReadiness
+    }
+
+    /// Called only when the containing app's Sparkle user-driver bridge receives
+    /// `showReadyToInstallAndRelaunch`. At that point Sparkle has completed its
+    /// asynchronous extraction, validation, and stage-one preparation.
+    public func reachedReadyToInstall()
+        async throws -> MacUpdateInstallAdmissionV0
+    {
+        guard phase != .closed else {
+            throw MacUpdateValidationCorrelationErrorV0.closed
+        }
+        guard phase == .awaitingInstallationReadiness,
+              let correlatedPublication else {
             await close()
             throw MacUpdateValidationCorrelationErrorV0.invalidSequence
         }
 
         // Close before the awaited admission call so actor reentrancy cannot
-        // admit the same callback sequence twice.
+        // admit the same prepared update twice.
         phase = .closed
-        self.extracting = nil
-        guard publication == expected, publication == extracting else {
-            await admissionOwner.cancel()
-            throw MacUpdateValidationCorrelationErrorV0
-                .candidateMismatch
-        }
+        self.correlatedPublication = nil
 
         do {
-            return try await admissionOwner.admitPostExtraction(
-                publication: publication
+            return try await admissionOwner.admitPreparedUpdate(
+                publication: correlatedPublication
             )
         } catch MacUpdateInstallCandidateAdmissionErrorV0
             .candidateMismatch {
@@ -126,7 +149,7 @@ public actor MacUpdateValidationCorrelationV0 {
     private func close() async {
         guard phase != .closed else { return }
         phase = .closed
-        extracting = nil
+        correlatedPublication = nil
         await admissionOwner.cancel()
     }
 }

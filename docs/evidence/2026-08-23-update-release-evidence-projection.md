@@ -74,9 +74,9 @@ and supported cross-platform compile on Xcode 27 beta.
 This checkpoint defines and consumes the signed publication projection; it
 does not create the protected release-job generator, inspect real retained
 records, generate or sign an appcast, download or hash an update at runtime, or
-invoke Sparkle's post-extraction or installation lifecycle. The protected
-publisher, callback correlation, foreground confirmation UI, and concrete
-runtime-effect bindings remain open.
+invoke Sparkle's extraction, validation, or installation lifecycle. The
+protected publisher, callback correlation, foreground confirmation UI, and
+concrete runtime-effect bindings remain open.
 
 The later
 [validation-correlation checkpoint](2026-08-23-update-validation-correlation.md)
