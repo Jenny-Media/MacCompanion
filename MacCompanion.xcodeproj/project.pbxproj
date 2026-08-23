@@ -9,6 +9,7 @@
 /* Begin PBXBuildFile section */
 		281D3C00B605BF825BFCA0F4 /* CompanionLocalXPCPlatform in Frameworks */ = {isa = PBXBuildFile; productRef = D80FDE8AEECB694B58AE4155 /* CompanionLocalXPCPlatform */; };
 		3E9471AA38A0125DFE6B1B3B /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 4CBA2CAE8F6CDF8E39B19AC4 /* PrivacyInfo.xcprivacy */; };
+		5502B250FD83925BD69A04E2 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = 2EE76C90497DD44EF169EB74 /* Sparkle */; };
 		59274030DE05C564392006B7 /* MacCompanionIOSApplication.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0D7D684A6CC729FA8ED1E813 /* MacCompanionIOSApplication.swift */; };
 		766C4BE8703736B3332F625B /* CompanionMacApplicationPlatform in Frameworks */ = {isa = PBXBuildFile; productRef = 45997269355B0A95903CEC2D /* CompanionMacApplicationPlatform */; };
 		7C52EF7713040BA0D1AF04BB /* CompanionMacUI in Frameworks */ = {isa = PBXBuildFile; productRef = A41CC69D69523D4B80517C00 /* CompanionMacUI */; };
@@ -63,6 +64,7 @@
 /* Begin PBXFileReference section */
 		0D7D684A6CC729FA8ED1E813 /* MacCompanionIOSApplication.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacCompanionIOSApplication.swift; sourceTree = "<group>"; };
 		177DD5F7DF123EE9E1BD7675 /* MacCompanionLoginRoleComposition.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacCompanionLoginRoleComposition.swift; sourceTree = "<group>"; };
+		2943C5F3784DF1F502859C89 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		4CBA2CAE8F6CDF8E39B19AC4 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		6D64FA7490F520B548282CD7 /* MacCompanionAgentMain.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacCompanionAgentMain.swift; sourceTree = "<group>"; };
 		6EE5FB02460840012C115D0C /* MacCompanionKit */ = {isa = PBXFileReference; lastKnownFileType = folder; name = MacCompanionKit; path = Packages/MacCompanionKit; sourceTree = SOURCE_ROOT; };
@@ -86,6 +88,7 @@
 				846BE6F9115ED668392FBB03 /* CompanionMacApp in Frameworks */,
 				766C4BE8703736B3332F625B /* CompanionMacApplicationPlatform in Frameworks */,
 				7C52EF7713040BA0D1AF04BB /* CompanionMacUI in Frameworks */,
+				5502B250FD83925BD69A04E2 /* Sparkle in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -131,6 +134,7 @@
 			isa = PBXGroup;
 			children = (
 				4E18300EDAD82C05188961B9 /* LaunchAgents */,
+				2943C5F3784DF1F502859C89 /* Info.plist */,
 				9224B6E6FD7914BF9ACCABD3 /* MacCompanionApplication.swift */,
 				177DD5F7DF123EE9E1BD7675 /* MacCompanionLoginRoleComposition.swift */,
 			);
@@ -283,6 +287,7 @@
 				2269A33DCFB2A0E5FB3BEABD /* CopyFiles */,
 				2F1EBB6D3F9D3B75945EBF79 /* Frameworks */,
 				F3D1DB4B78E22D1C31E11F9F /* Embed Dependencies */,
+				8F325C4D3B1275F922BA2DAF /* Strip unused Sparkle XPC services */,
 			);
 			buildRules = (
 			);
@@ -297,6 +302,7 @@
 				4E6E2C3ED3D78E6AD3075740 /* CompanionMacApp */,
 				45997269355B0A95903CEC2D /* CompanionMacApplicationPlatform */,
 				A41CC69D69523D4B80517C00 /* CompanionMacUI */,
+				2EE76C90497DD44EF169EB74 /* Sparkle */,
 			);
 			productName = MacCompanion;
 			productReference = ACDC9CD0AAA32C73DC844846 /* MacCompanion.app */;
@@ -332,6 +338,7 @@
 			mainGroup = 0C0CF6AF0BD83E83C2E99E1A;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
+				85BC5596A6789B3BDCA7CFA0 /* XCRemoteSwiftPackageReference "Sparkle" */,
 				440977C54DFD4E138AF089DF /* XCLocalSwiftPackageReference "Packages/MacCompanionKit" */,
 			);
 			preferredProjectObjectVersion = 77;
@@ -364,6 +371,28 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		8F325C4D3B1275F922BA2DAF /* Strip unused Sparkle XPC services */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Strip unused Sparkle XPC services";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "/bin/zsh \"${SRCROOT}/scripts/strip_sparkle_xpc_services.sh\"\n";
+		};
+/* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		5191508D654936F3A5E96256 /* Sources */ = {
@@ -469,11 +498,8 @@
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
 				ENABLE_APP_SANDBOX = NO;
-				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_CFBundleDisplayName = "Mac Companion";
-				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
-				INFOPLIST_KEY_LSUIElement = YES;
-				INFOPLIST_KEY_NSHumanReadableCopyright = "Copyright 2026 Jenny Media LLC";
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = Apps/MacCompanionMac/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
@@ -618,11 +644,8 @@
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
 				ENABLE_APP_SANDBOX = NO;
-				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_CFBundleDisplayName = "Mac Companion";
-				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
-				INFOPLIST_KEY_LSUIElement = YES;
-				INFOPLIST_KEY_NSHumanReadableCopyright = "Copyright 2026 Jenny Media LLC";
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = Apps/MacCompanionMac/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
@@ -705,7 +728,23 @@
 		};
 /* End XCLocalSwiftPackageReference section */
 
+/* Begin XCRemoteSwiftPackageReference section */
+		85BC5596A6789B3BDCA7CFA0 /* XCRemoteSwiftPackageReference "Sparkle" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/sparkle-project/Sparkle";
+			requirement = {
+				kind = exactVersion;
+				version = 2.9.6;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
 /* Begin XCSwiftPackageProductDependency section */
+		2EE76C90497DD44EF169EB74 /* Sparkle */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 85BC5596A6789B3BDCA7CFA0 /* XCRemoteSwiftPackageReference "Sparkle" */;
+			productName = Sparkle;
+		};
 		384AB5F79EBFE92182F4928C /* CompanionAgent */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = CompanionAgent;

@@ -13,6 +13,15 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
+from update_policy import (
+    SPARKLE_ARCHIVE_SHA256,
+    SPARKLE_LICENSE_SHA256,
+    SPARKLE_MANIFEST_SHA256,
+    SPARKLE_REPOSITORY,
+    SPARKLE_REVISION,
+    SPARKLE_VERSION,
+)
+
 
 REPOSITORY = Path(__file__).resolve().parents[1]
 FIXTURE_INDEX = REPOSITORY / "Tests" / "System" / "SBOM" / "manifest.json"
@@ -83,6 +92,9 @@ def validate_package(
     expected_name: str,
     expected_purpose: str,
     expected_comment: str,
+    expected_supplier: str = "Organization: Jenny Media LLC",
+    expected_download_location: str = "NOASSERTION",
+    expected_version: str | None = None,
 ) -> list[str]:
     failures: list[str] = []
     if not exact_keys(value, PACKAGE_KEYS):
@@ -90,8 +102,8 @@ def validate_package(
     expected_constants = {
         "SPDXID": expected_id,
         "name": expected_name,
-        "supplier": "Organization: Jenny Media LLC",
-        "downloadLocation": "NOASSERTION",
+        "supplier": expected_supplier,
+        "downloadLocation": expected_download_location,
         "filesAnalyzed": False,
         "licenseConcluded": "NOASSERTION",
         "licenseDeclared": "NOASSERTION",
@@ -103,6 +115,8 @@ def validate_package(
         failures.append("packageBoundary")
     version = value["versionInfo"]
     if not isinstance(version, str) or not re.fullmatch(r"[0-9A-Za-z][0-9A-Za-z.+-]{0,63}", version):
+        failures.append("packageVersion")
+    elif expected_version is not None and version != expected_version:
         failures.append("packageVersion")
     return failures
 
@@ -192,7 +206,7 @@ def validate_document(value: Any) -> list[str]:
         if namespace != expected_namespace:
             failures.append("namespaceBinding")
     packages = value["packages"]
-    if not isinstance(packages, list) or len(packages) != 2:
+    if not isinstance(packages, list) or len(packages) != 3:
         failures.append("packageSet")
         packages = []
     if packages:
@@ -203,6 +217,23 @@ def validate_document(value: Any) -> list[str]:
                 "Mac Companion",
                 "APPLICATION",
                 "First-party release source graph; artifact composition is not asserted.",
+            )
+        )
+        failures.extend(
+            validate_package(
+                packages[2],
+                "SPDXRef-Package-Sparkle",
+                "Sparkle",
+                "LIBRARY",
+                (
+                    f"External binary Swift package at revision {SPARKLE_REVISION}; "
+                    f"upstream manifest SHA-256 {SPARKLE_MANIFEST_SHA256}, archive "
+                    f"SHA-256 {SPARKLE_ARCHIVE_SHA256}, and license SHA-256 "
+                    f"{SPARKLE_LICENSE_SHA256}; legal conclusion is not asserted."
+                ),
+                expected_supplier="Organization: Sparkle Project",
+                expected_download_location=SPARKLE_REPOSITORY,
+                expected_version=SPARKLE_VERSION,
             )
         )
         failures.extend(
@@ -236,6 +267,11 @@ def validate_document(value: Any) -> list[str]:
             "spdxElementId": "SPDXRef-Package-MacCompanionKit",
             "relationshipType": "DEPENDS_ON",
             "relatedSpdxElement": "NONE",
+        },
+        {
+            "spdxElementId": "SPDXRef-Package-MacCompanion",
+            "relationshipType": "DEPENDS_ON",
+            "relatedSpdxElement": "SPDXRef-Package-Sparkle",
         },
     ]
     relationships = value["relationships"]

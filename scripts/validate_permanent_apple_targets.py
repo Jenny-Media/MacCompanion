@@ -12,6 +12,7 @@ REPOSITORY = Path(__file__).resolve().parents[1]
 PROJECT_SPEC = REPOSITORY / "project.yml"
 PROJECT_FILE = REPOSITORY / "MacCompanion.xcodeproj" / "project.pbxproj"
 MAC_TARGET_DIRECTORY = REPOSITORY / "Apps" / "MacCompanionMac"
+MAC_INFO_PLIST = MAC_TARGET_DIRECTORY / "Info.plist"
 MAC_APPLICATION_PLATFORM_DIRECTORY = (
     REPOSITORY
     / "Packages"
@@ -73,6 +74,27 @@ EXPECTED_LAUNCH_AGENT = {
     "Label": AGENT_IDENTIFIER,
     "MachServices": {AGENT_IDENTIFIER: True},
     "RunAtLoad": True,
+}
+EXPECTED_MAC_INFO_PLIST = {
+    "CFBundleDevelopmentRegion": "$(DEVELOPMENT_LANGUAGE)",
+    "CFBundleDisplayName": "Mac Companion",
+    "CFBundleExecutable": "$(EXECUTABLE_NAME)",
+    "CFBundleIdentifier": "$(PRODUCT_BUNDLE_IDENTIFIER)",
+    "CFBundleInfoDictionaryVersion": "6.0",
+    "CFBundleName": "$(PRODUCT_NAME)",
+    "CFBundlePackageType": "APPL",
+    "CFBundleShortVersionString": "$(MARKETING_VERSION)",
+    "CFBundleVersion": "$(CURRENT_PROJECT_VERSION)",
+    "LSApplicationCategoryType": "public.app-category.utilities",
+    "LSUIElement": True,
+    "NSBonjourServices": ["_maccompanion._tcp"],
+    "NSHumanReadableCopyright": "Copyright 2026 Jenny Media LLC",
+    "NSLocalNetworkUsageDescription": (
+        "Let your paired devices find and connect directly to this Mac on your "
+        "local network. Mac Companion does not use a vendor relay."
+    ),
+    "SUEnableSystemProfiling": False,
+    "SUSendProfileInfo": False,
 }
 
 
@@ -267,6 +289,7 @@ def require_exact_mac_products(
         "CompanionMacApp",
         "CompanionMacApplicationPlatform",
         "CompanionMacUI",
+        "Sparkle",
     ]
     if generated:
         dependencies, frameworks = generated_target_product_lists(
@@ -439,6 +462,17 @@ def validate_launch_agent(failures: list[str]) -> None:
         return
     if value != EXPECTED_LAUNCH_AGENT:
         failures.append("launchAgentSchemaOrValueMismatch")
+
+
+def validate_mac_info_plist(failures: list[str]) -> None:
+    try:
+        with MAC_INFO_PLIST.open("rb") as handle:
+            value = plistlib.load(handle)
+    except (OSError, plistlib.InvalidFileException, ValueError) as error:
+        failures.append(f"macInfoPlistUnreadable:{type(error).__name__}")
+        return
+    if value != EXPECTED_MAC_INFO_PLIST:
+        failures.append("macInfoPlistSchemaOrValueMismatch")
 
 
 def validate_narrow_agent_source(content: str, failures: list[str]) -> None:
@@ -1076,6 +1110,7 @@ def main() -> int:
     login_composition = read_text(LOGIN_COMPOSITION, failures)
     validate_project_spec(project_spec, failures)
     validate_generated_project(generated_project, failures)
+    validate_mac_info_plist(failures)
     validate_launch_agent(failures)
     validate_narrow_agent_source(agent_source, failures)
     validate_single_owner_agent_service_selection(

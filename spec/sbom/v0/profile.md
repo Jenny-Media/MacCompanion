@@ -7,11 +7,15 @@ release tooling later; this is not a claim that 2.3 is the newest SPDX model.
 
 ## Scope
 
-The document describes `Mac Companion` containing `MacCompanionKit` and asserts
-that `MacCompanionKit` has no package dependency. This assertion is valid only
-after the repository's closed Swift dependency policy passes. Disposable
-experiments are repository packages but are not release components and are not
-included in the release source graph.
+The document describes `Mac Companion` containing `MacCompanionKit`, asserts
+that `MacCompanionKit` has no package dependency, and records the containing
+application's exact Sparkle 2.9.6 binary Swift-package dependency. The Sparkle
+record binds its full resolved revision plus audited upstream-manifest,
+archive, and license digests in the package comment while retaining
+`filesAnalyzed: false`. This assertion is valid only after the repository's
+closed dependency policy passes. Disposable experiments are repository
+packages but are not release components and are not included in the release
+source graph.
 
 The document records product version, build, targets, full Git revision, dirty
 state, generation time, supplier, and tool identity. Generation time is an

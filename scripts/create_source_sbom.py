@@ -14,6 +14,14 @@ from datetime import datetime
 from pathlib import Path, PurePosixPath
 
 from validate_sbom import validate_document
+from update_policy import (
+    SPARKLE_ARCHIVE_SHA256,
+    SPARKLE_LICENSE_SHA256,
+    SPARKLE_MANIFEST_SHA256,
+    SPARKLE_REPOSITORY,
+    SPARKLE_REVISION,
+    SPARKLE_VERSION,
+)
 
 
 REPOSITORY = Path(__file__).resolve().parents[1]
@@ -94,12 +102,15 @@ def main() -> int:
         if any(
             policy.get(key) is not False
             for key in (
-                "remoteDependenciesAllowed",
-                "binaryTargetsAllowed",
+                "unlistedRemoteDependenciesAllowed",
+                "unlistedBinaryTargetsAllowed",
                 "buildToolPluginsAllowed",
             )
         ):
             raise ValueError("dependency policy does not prove a closed source graph")
+        xcode_packages = policy.get("xcodePackages")
+        if not isinstance(xcode_packages, list) or len(xcode_packages) != 1:
+            raise ValueError("dependency policy does not prove one admitted Xcode package")
 
         revision = command_output(["git", "rev-parse", "HEAD"])
         if re.fullmatch(r"[0-9a-f]{40}", revision) is None:
@@ -162,6 +173,24 @@ def main() -> int:
                     "comment": "First-party in-repository Swift package; no external package dependency.",
                     **package_common,
                 },
+                {
+                    "SPDXID": "SPDXRef-Package-Sparkle",
+                    "name": "Sparkle",
+                    "versionInfo": SPARKLE_VERSION,
+                    "supplier": "Organization: Sparkle Project",
+                    "downloadLocation": SPARKLE_REPOSITORY,
+                    "filesAnalyzed": False,
+                    "licenseConcluded": "NOASSERTION",
+                    "licenseDeclared": "NOASSERTION",
+                    "copyrightText": "NOASSERTION",
+                    "primaryPackagePurpose": "LIBRARY",
+                    "comment": (
+                        f"External binary Swift package at revision {SPARKLE_REVISION}; "
+                        f"upstream manifest SHA-256 {SPARKLE_MANIFEST_SHA256}, archive "
+                        f"SHA-256 {SPARKLE_ARCHIVE_SHA256}, and license SHA-256 "
+                        f"{SPARKLE_LICENSE_SHA256}; legal conclusion is not asserted."
+                    ),
+                },
             ],
             "relationships": [
                 {
@@ -178,6 +207,11 @@ def main() -> int:
                     "spdxElementId": "SPDXRef-Package-MacCompanionKit",
                     "relationshipType": "DEPENDS_ON",
                     "relatedSpdxElement": "NONE",
+                },
+                {
+                    "spdxElementId": "SPDXRef-Package-MacCompanion",
+                    "relationshipType": "DEPENDS_ON",
+                    "relatedSpdxElement": "SPDXRef-Package-Sparkle",
                 },
             ],
         }

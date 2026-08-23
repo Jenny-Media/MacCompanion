@@ -11,6 +11,9 @@ options:
 packages:
   MacCompanionKit:
     path: Packages/MacCompanionKit
+  Sparkle:
+    url: https://github.com/sparkle-project/Sparkle
+    exactVersion: 2.9.6
 
 settings:
   base:
@@ -24,6 +27,20 @@ targets:
   MacCompanion:
     type: application
     platform: macOS
+    info:
+      path: Apps/MacCompanionMac/Info.plist
+      properties:
+        CFBundleDisplayName: Mac Companion
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        LSApplicationCategoryType: public.app-category.utilities
+        LSUIElement: true
+        NSBonjourServices:
+          - _maccompanion._tcp
+        NSHumanReadableCopyright: Copyright 2026 Jenny Media LLC
+        NSLocalNetworkUsageDescription: Let your paired devices find and connect directly to this Mac on your local network. Mac Companion does not use a vendor relay.
+        SUEnableSystemProfiling: false
+        SUSendProfileInfo: false
     sources:
       - path: Apps/MacCompanionMac
         excludes:
@@ -54,16 +71,20 @@ targets:
         product: CompanionMacApplicationPlatform
       - package: MacCompanionKit
         product: CompanionMacUI
+      - package: Sparkle
+        product: Sparkle
+    postBuildScripts:
+      - name: Strip unused Sparkle XPC services
+        basedOnDependencyAnalysis: false
+        script: |
+          /bin/zsh "${SRCROOT}/scripts/strip_sparkle_xpc_services.sh"
     settings:
       base:
         CODE_SIGN_INJECT_BASE_ENTITLEMENTS: NO
         CURRENT_PROJECT_VERSION: 1
         ENABLE_APP_SANDBOX: NO
-        GENERATE_INFOPLIST_FILE: YES
-        INFOPLIST_KEY_CFBundleDisplayName: Mac Companion
-        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.utilities
-        INFOPLIST_KEY_LSUIElement: YES
-        INFOPLIST_KEY_NSHumanReadableCopyright: Copyright 2026 Jenny Media LLC
+        GENERATE_INFOPLIST_FILE: NO
+        INFOPLIST_FILE: Apps/MacCompanionMac/Info.plist
         MARKETING_VERSION: 0.1.0
         PRODUCT_BUNDLE_IDENTIFIER: media.jenny.maccompanion
         PRODUCT_NAME: Mac Companion

@@ -3,18 +3,36 @@
 from __future__ import annotations
 
 import argparse
+import copy
+import hashlib
 import json
 import os
+import plistlib
+import re
+import stat
 import subprocess
 import sys
 from pathlib import Path, PurePosixPath
 from typing import Any
 
+from update_policy import (
+    SPARKLE_ARCHIVE_SHA256,
+    SPARKLE_LICENSE_SHA256,
+    SPARKLE_MANIFEST_SHA256,
+    SPARKLE_REPOSITORY,
+    SPARKLE_REVISION,
+    SPARKLE_VERSION,
+)
+
 
 REPOSITORY = Path(__file__).resolve().parents[1]
 POLICY_PATH = REPOSITORY / "spec" / "dependency-policy" / "v0" / "policy.json"
 FIXTURE_INDEX = REPOSITORY / "Tests" / "System" / "DependencyPolicy" / "manifest.json"
+XCODE_FIXTURE_INDEX = REPOSITORY / "Tests" / "System" / "DependencyPolicy" / "xcode-manifest.json"
 IGNORED_PARTS = {".build", ".swiftpm", "DerivedData"}
+SANITIZER_PATH = "scripts/strip_sparkle_xpc_services.sh"
+SANITIZER_SHA256 = "e1037af8274debb51fafa5118f6d8563030ba7bb63290fe5994daff71408ce5d"
+LOCKFILE_PATH = "MacCompanion.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved"
 
 
 class DuplicateKeyError(ValueError):
@@ -54,18 +72,19 @@ def validate_policy(value: Any) -> list[str]:
         value,
         {
             "profile",
-            "remoteDependenciesAllowed",
-            "binaryTargetsAllowed",
+            "unlistedRemoteDependenciesAllowed",
+            "unlistedBinaryTargetsAllowed",
             "buildToolPluginsAllowed",
             "packages",
+            "xcodePackages",
         },
     ):
         return ["policySchema"]
-    if value["profile"] != "maccompanion.swift-dependency-policy.v0":
+    if value["profile"] != "maccompanion.swift-dependency-policy.v1":
         failures.append("policyProfile")
     for key in (
-        "remoteDependenciesAllowed",
-        "binaryTargetsAllowed",
+        "unlistedRemoteDependenciesAllowed",
+        "unlistedBinaryTargetsAllowed",
         "buildToolPluginsAllowed",
     ):
         if value[key] is not False:
@@ -114,6 +133,30 @@ def validate_policy(value: Any) -> list[str]:
             for dependency in package.get("localDependencies", []):
                 if dependency not in seen_paths:
                     failures.append("policyLocalDependencyNotPackage")
+    xcode_packages = value["xcodePackages"]
+    if not isinstance(xcode_packages, list) or len(xcode_packages) != 1:
+        failures.append("policyXcodePackages")
+    else:
+        admitted = xcode_packages[0]
+        expected = {
+            "archiveBuildSanitizerPath": SANITIZER_PATH,
+            "archiveBuildSanitizerSHA256": SANITIZER_SHA256,
+            "archiveSHA256": SPARKLE_ARCHIVE_SHA256,
+            "binaryTarget": "Sparkle",
+            "consumerTarget": "MacCompanion",
+            "identity": "sparkle",
+            "licenseSHA256": SPARKLE_LICENSE_SHA256,
+            "lockfilePath": LOCKFILE_PATH,
+            "manifestSHA256": SPARKLE_MANIFEST_SHA256,
+            "name": "Sparkle",
+            "product": "Sparkle",
+            "repository": SPARKLE_REPOSITORY,
+            "requirement": "exactVersion",
+            "resolvedRevision": SPARKLE_REVISION,
+            "version": SPARKLE_VERSION,
+        }
+        if admitted != expected:
+            failures.append("policyXcodePackageAuthority")
     return sorted(set(failures))
 
 
@@ -332,20 +375,251 @@ def live_snapshot() -> dict[str, Any]:
     }
 
 
-def repository_bypass_failures() -> list[str]:
-    failures: list[str] = []
-    for path in REPOSITORY.rglob("Package.resolved"):
-        if not any(part in IGNORED_PARTS for part in path.relative_to(REPOSITORY).parts):
-            failures.append(f"remoteDependencyLockfileDenied:{path.relative_to(REPOSITORY)}")
-    for project in REPOSITORY.rglob("project.pbxproj"):
-        if not any(part in IGNORED_PARTS for part in project.relative_to(REPOSITORY).parts):
-            if "XCRemoteSwiftPackageReference" in project.read_text(
-                encoding="utf-8", errors="replace"
-            ):
-                failures.append(
-                    f"xcodeRemoteDependencyDenied:{project.relative_to(REPOSITORY)}"
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        while block := handle.read(1024 * 1024):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def expected_xcode_state() -> dict[str, Any]:
+    return {
+        "consumers": [{"product": "Sparkle", "target": "MacCompanion"}],
+        "infoPlist": {
+            "NSBonjourServices": ["_maccompanion._tcp"],
+            "NSLocalNetworkUsageDescription": (
+                "Let your paired devices find and connect directly to this Mac on "
+                "your local network. Mac Companion does not use a vendor relay."
+            ),
+            "SUEnableSystemProfiling": False,
+            "SUSendProfileInfo": False,
+        },
+        "lock": {
+            "identity": "sparkle",
+            "kind": "remoteSourceControl",
+            "location": SPARKLE_REPOSITORY,
+            "originHashValid": True,
+            "revision": SPARKLE_REVISION,
+            "version": SPARKLE_VERSION,
+        },
+        "lockfilePaths": [LOCKFILE_PATH],
+        "packages": {
+            "MacCompanionKit": {"path": "Packages/MacCompanionKit"},
+            "Sparkle": {
+                "exactVersion": SPARKLE_VERSION,
+                "url": SPARKLE_REPOSITORY,
+            },
+        },
+        "postBuildScripts": [
+            {
+                "basedOnDependencyAnalysis": False,
+                "name": "Strip unused Sparkle XPC services",
+                "script": f'/bin/zsh "${{SRCROOT}}/{SANITIZER_PATH}"\n',
+            }
+        ],
+        "projectRemoteReferences": [
+            {
+                "exactRequirementCount": 1,
+                "path": "MacCompanion.xcodeproj/project.pbxproj",
+                "remoteReferenceCount": 1,
+                "repositoryCount": 1,
+                "sparkleProductBindingCount": 1,
+                "versionCount": 1,
+            }
+        ],
+        "sanitizer": {
+            "path": SANITIZER_PATH,
+            "regularSingleLink": True,
+            "sha256": SANITIZER_SHA256,
+        },
+        "settings": {
+            "ENABLE_APP_SANDBOX": False,
+            "GENERATE_INFOPLIST_FILE": False,
+            "INFOPLIST_FILE": "Apps/MacCompanionMac/Info.plist",
+        },
+    }
+
+
+def _xcodegen_spec() -> dict[str, Any]:
+    completed = subprocess.run(
+        [
+            "xcodegen",
+            "dump",
+            "--spec",
+            "project.yml",
+            "--type",
+            "json",
+            "--no-env",
+        ],
+        cwd=REPOSITORY,
+        capture_output=True,
+        check=False,
+        text=True,
+        timeout=30,
+    )
+    if completed.returncode != 0:
+        detail = completed.stderr.strip().splitlines()
+        reason = detail[-1] if detail else f"exit {completed.returncode}"
+        raise ValueError(f"XcodeGen spec evaluation failed: {reason}")
+    return json.loads(completed.stdout, object_pairs_hook=object_without_duplicates)
+
+
+def _lock_state(lockfile: Path) -> dict[str, Any]:
+    value = load_json(lockfile)
+    if not exact_keys(value, {"originHash", "pins", "version"}):
+        return {"schema": "invalid"}
+    pins = value["pins"]
+    if value["version"] != 3 or not isinstance(pins, list) or len(pins) != 1:
+        return {"schema": "invalid"}
+    pin = pins[0]
+    if not exact_keys(pin, {"identity", "kind", "location", "state"}) or not exact_keys(
+        pin.get("state"), {"revision", "version"}
+    ):
+        return {"schema": "invalid"}
+    origin_hash = value["originHash"]
+    return {
+        "identity": pin["identity"],
+        "kind": pin["kind"],
+        "location": pin["location"],
+        "originHashValid": isinstance(origin_hash, str)
+        and re.fullmatch(r"[0-9a-f]{64}", origin_hash) is not None,
+        "revision": pin["state"]["revision"],
+        "version": pin["state"]["version"],
+    }
+
+
+def live_xcode_state() -> dict[str, Any]:
+    spec = _xcodegen_spec()
+    targets = spec.get("targets") if isinstance(spec.get("targets"), dict) else {}
+    consumers: list[dict[str, str]] = []
+    for target_name, target in targets.items():
+        if not isinstance(target_name, str) or not isinstance(target, dict):
+            continue
+        dependencies = target.get("dependencies")
+        if not isinstance(dependencies, list):
+            continue
+        for dependency in dependencies:
+            if isinstance(dependency, dict) and dependency.get("package") == "Sparkle":
+                consumers.append(
+                    {
+                        "product": str(dependency.get("product") or ""),
+                        "target": target_name,
+                    }
                 )
-    return failures
+    consumers.sort(key=lambda item: (item["target"], item["product"]))
+
+    lockfiles = sorted(
+        path
+        for path in REPOSITORY.rglob("Package.resolved")
+        if not any(part in IGNORED_PARTS for part in path.relative_to(REPOSITORY).parts)
+    )
+    lockfile_paths = [path.relative_to(REPOSITORY).as_posix() for path in lockfiles]
+    lock = _lock_state(lockfiles[0]) if len(lockfiles) == 1 else {"schema": "invalid"}
+
+    remote_references: list[dict[str, Any]] = []
+    for project in sorted(REPOSITORY.rglob("project.pbxproj")):
+        if any(part in IGNORED_PARTS for part in project.relative_to(REPOSITORY).parts):
+            continue
+        content = project.read_text(encoding="utf-8", errors="replace")
+        reference_count = content.count("isa = XCRemoteSwiftPackageReference;")
+        if reference_count == 0:
+            continue
+        remote_references.append(
+            {
+                "exactRequirementCount": content.count("kind = exactVersion;"),
+                "path": project.relative_to(REPOSITORY).as_posix(),
+                "remoteReferenceCount": reference_count,
+                "repositoryCount": content.count(
+                    f'repositoryURL = "{SPARKLE_REPOSITORY}";'
+                ),
+                "sparkleProductBindingCount": len(
+                    re.findall(
+                        r"isa = XCSwiftPackageProductDependency;\s+package = .*?"
+                        r"XCRemoteSwiftPackageReference \"Sparkle\".*?;\s+"
+                        r"productName = Sparkle;",
+                        content,
+                        flags=re.DOTALL,
+                    )
+                ),
+                "versionCount": content.count(f"version = {SPARKLE_VERSION};"),
+            }
+        )
+
+    sanitizer = REPOSITORY / SANITIZER_PATH
+    try:
+        metadata = sanitizer.lstat()
+        sanitizer_state = {
+            "path": SANITIZER_PATH,
+            "regularSingleLink": stat.S_ISREG(metadata.st_mode)
+            and not sanitizer.is_symlink()
+            and metadata.st_nlink == 1,
+            "sha256": _sha256(sanitizer),
+        }
+    except OSError:
+        sanitizer_state = {
+            "path": SANITIZER_PATH,
+            "regularSingleLink": False,
+            "sha256": "unavailable",
+        }
+
+    mac_target = targets.get("MacCompanion") if isinstance(targets, dict) else None
+    mac_target = mac_target if isinstance(mac_target, dict) else {}
+    settings_wrapper = mac_target.get("settings")
+    settings_wrapper = settings_wrapper if isinstance(settings_wrapper, dict) else {}
+    settings = settings_wrapper.get("base")
+    settings = settings if isinstance(settings, dict) else {}
+    info_plist_path = REPOSITORY / "Apps" / "MacCompanionMac" / "Info.plist"
+    try:
+        info_plist = plistlib.loads(info_plist_path.read_bytes())
+    except (OSError, plistlib.InvalidFileException, ValueError):
+        info_plist = {}
+    return {
+        "consumers": consumers,
+        "infoPlist": {
+            "NSBonjourServices": info_plist.get("NSBonjourServices"),
+            "NSLocalNetworkUsageDescription": info_plist.get(
+                "NSLocalNetworkUsageDescription"
+            ),
+            "SUEnableSystemProfiling": info_plist.get("SUEnableSystemProfiling"),
+            "SUSendProfileInfo": info_plist.get("SUSendProfileInfo"),
+        },
+        "lock": lock,
+        "lockfilePaths": lockfile_paths,
+        "packages": spec.get("packages"),
+        "postBuildScripts": mac_target.get("postBuildScripts"),
+        "projectRemoteReferences": remote_references,
+        "sanitizer": sanitizer_state,
+        "settings": {
+            "ENABLE_APP_SANDBOX": settings.get("ENABLE_APP_SANDBOX"),
+            "GENERATE_INFOPLIST_FILE": settings.get("GENERATE_INFOPLIST_FILE"),
+            "INFOPLIST_FILE": settings.get("INFOPLIST_FILE"),
+        },
+    }
+
+
+def compare_xcode_state(value: Any) -> list[str]:
+    expected = expected_xcode_state()
+    if not isinstance(value, dict):
+        return ["xcodeStateSchema"]
+    failures: list[str] = []
+    codes = {
+        "consumers": "xcodePackageConsumerMismatch",
+        "infoPlist": "xcodePackageInfoPlistMismatch",
+        "lock": "xcodePackageLockMismatch",
+        "lockfilePaths": "xcodePackageLockfileMismatch",
+        "packages": "xcodePackageDeclarationMismatch",
+        "postBuildScripts": "xcodePackageSanitizerPhaseMismatch",
+        "projectRemoteReferences": "xcodeRemoteReferenceMismatch",
+        "sanitizer": "xcodePackageSanitizerMismatch",
+        "settings": "xcodePackageSettingsMismatch",
+    }
+    if set(value) != set(expected):
+        failures.append("xcodeStateSchema")
+    for key, code in codes.items():
+        if value.get(key) != expected[key]:
+            failures.append(code)
+    return sorted(set(failures))
 
 
 def validate_fixtures(policy: dict[str, Any]) -> tuple[int, list[str]]:
@@ -386,6 +660,73 @@ def validate_fixtures(policy: dict[str, Any]) -> tuple[int, list[str]]:
     return len(seen), failures
 
 
+def mutate_xcode_state(value: dict[str, Any], mutation: str) -> None:
+    if mutation == "versionRange":
+        value["packages"]["Sparkle"].pop("exactVersion")
+        value["packages"]["Sparkle"]["from"] = SPARKLE_VERSION
+    elif mutation == "repository":
+        value["packages"]["Sparkle"]["url"] = "https://example.invalid/Sparkle"
+    elif mutation == "revision":
+        value["lock"]["revision"] = "0" * 40
+    elif mutation == "extraPackage":
+        value["packages"]["Other"] = {
+            "exactVersion": "1.0.0",
+            "url": "https://example.invalid/Other",
+        }
+    elif mutation == "consumer":
+        value["consumers"][0]["target"] = "MacCompanionIOS"
+    elif mutation == "extraLockfile":
+        value["lockfilePaths"].append("Package.resolved")
+    elif mutation == "sanitizerDigest":
+        value["sanitizer"]["sha256"] = "0" * 64
+    elif mutation == "missingSanitizerPhase":
+        value["postBuildScripts"] = []
+    elif mutation == "systemProfile":
+        value["infoPlist"]["SUSendProfileInfo"] = True
+    elif mutation == "sandboxed":
+        value["settings"]["ENABLE_APP_SANDBOX"] = True
+    elif mutation == "extraRemoteReference":
+        value["projectRemoteReferences"][0]["remoteReferenceCount"] = 2
+    else:
+        raise ValueError(f"unknown Xcode dependency mutation: {mutation}")
+
+
+def validate_xcode_fixtures() -> tuple[int, list[str]]:
+    index = load_json(XCODE_FIXTURE_INDEX)
+    if not exact_keys(index, {"profile", "cases"}) or index.get(
+        "profile"
+    ) != "maccompanion.xcode-dependency-policy-fixtures.v1" or not isinstance(
+        index.get("cases"), list
+    ):
+        return 0, ["xcodeFixtureIndexSchema"]
+    failures: list[str] = []
+    seen: set[str] = set()
+    for case in index["cases"]:
+        if not exact_keys(case, {"accepted", "id", "mutation"}):
+            failures.append("xcodeFixtureCaseSchema")
+            continue
+        identifier = case["id"]
+        mutation = case["mutation"]
+        accepted = case["accepted"]
+        if (
+            not isinstance(identifier, str)
+            or not identifier
+            or identifier in seen
+            or (mutation is not None and not isinstance(mutation, str))
+            or not isinstance(accepted, bool)
+        ):
+            failures.append("xcodeFixtureCaseValue")
+            continue
+        seen.add(identifier)
+        value = copy.deepcopy(expected_xcode_state())
+        if mutation is not None:
+            mutate_xcode_state(value, mutation)
+        actual = not compare_xcode_state(value)
+        if actual != accepted:
+            failures.append(f"xcodeFixtureMismatch:{identifier}")
+    return len(seen), failures
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--fixtures-only", action="store_true")
@@ -395,22 +736,29 @@ def main() -> int:
         failures = validate_policy(policy)
         fixture_count, fixture_failures = validate_fixtures(policy)
         failures.extend(fixture_failures)
+        xcode_fixture_count, xcode_fixture_failures = validate_xcode_fixtures()
+        failures.extend(xcode_fixture_failures)
         package_count = 0
         if not arguments.fixtures_only and not failures:
             snapshot = live_snapshot()
             package_count = len(snapshot["packages"])
             failures.extend(compare(policy, snapshot))
-            failures.extend(repository_bypass_failures())
+            failures.extend(compare_xcode_state(live_xcode_state()))
         if failures:
             for failure in sorted(set(failures)):
                 print(failure)
             return 1
         if arguments.fixtures_only:
-            print(f"validated {fixture_count} dependency policy fixture(s)")
+            print(
+                f"validated {fixture_count} package-manifest and "
+                f"{xcode_fixture_count} Xcode dependency policy fixture(s)"
+            )
         else:
             print(
                 f"validated {package_count} Swift package manifest(s) and "
-                f"{fixture_count} dependency policy fixture(s): closed local-only graph"
+                f"{fixture_count} package-manifest plus {xcode_fixture_count} "
+                "Xcode dependency policy fixture(s): closed graph with one exact "
+                "Sparkle binary authority"
             )
         return 0
     except (OSError, ValueError, json.JSONDecodeError, subprocess.SubprocessError) as error:

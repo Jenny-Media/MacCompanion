@@ -1,0 +1,17 @@
+{
+  "profile": "maccompanion.xcode-dependency-policy-fixtures.v1",
+  "cases": [
+    {"id": "valid-exact-sparkle", "mutation": null, "accepted": true},
+    {"id": "invalid-version-range", "mutation": "versionRange", "accepted": false},
+    {"id": "invalid-repository", "mutation": "repository", "accepted": false},
+    {"id": "invalid-revision", "mutation": "revision", "accepted": false},
+    {"id": "invalid-extra-package", "mutation": "extraPackage", "accepted": false},
+    {"id": "invalid-consumer", "mutation": "consumer", "accepted": false},
+    {"id": "invalid-extra-lockfile", "mutation": "extraLockfile", "accepted": false},
+    {"id": "invalid-sanitizer-digest", "mutation": "sanitizerDigest", "accepted": false},
+    {"id": "invalid-missing-sanitizer-phase", "mutation": "missingSanitizerPhase", "accepted": false},
+    {"id": "invalid-system-profile", "mutation": "systemProfile", "accepted": false},
+    {"id": "invalid-sandboxed", "mutation": "sandboxed", "accepted": false},
+    {"id": "invalid-extra-remote-reference", "mutation": "extraRemoteReference", "accepted": false}
+  ]
+}

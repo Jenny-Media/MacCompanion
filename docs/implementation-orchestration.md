@@ -268,7 +268,9 @@ The LaunchAgent links transport, persistence, host policy, security, wire, and I
 - ScreenCaptureKit display/application/window filters and VideoToolbox encoding, AppKit activation, Accessibility observation, and Core Graphics events in the persistent menu app
 - OSLog with privacy annotations and a host-owned redaction allowlist
 - XCTest and Swift Testing where each is strongest; one fixture corpus is consumed by both Mac and iOS targets
-- Sparkle 2 as the only planned non-Apple runtime dependency in the first release
+- Exact Sparkle 2.9.6 as the only admitted non-Apple runtime dependency in the
+  first release; only the Mac containing app consumes it, and its lockfile,
+  provenance, privacy settings, and stripped archive topology are policy-bound
 
 Any additional production dependency needs an ADR covering necessity, maintenance, license, signing/notarization behavior, privacy, update surface, and replacement cost. Security and wire behavior may not be hidden inside an unreviewed convenience package.
 
