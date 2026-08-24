@@ -7,6 +7,10 @@ import CompanionMacApplicationPlatform
 import CompanionMacUI
 import SwiftUI
 
+private enum MacCompanionSceneV1 {
+    static let mainWindowID = "mac-companion-main"
+}
+
 @main
 @MainActor
 struct MacCompanionApplication: App {
@@ -15,12 +19,26 @@ struct MacCompanionApplication: App {
     ) private var applicationDelegate
 
     var body: some Scene {
-        MenuBarExtra {
+        Window(
+            "Mac Companion",
+            id: MacCompanionSceneV1.mainWindowID
+        ) {
             MacCompanionProductRoot(
                 application: applicationDelegate.product,
                 interactiveIndicator:
                     applicationDelegate.interactiveIndicator,
                 updates: applicationDelegate.updates
+            )
+            .frame(minWidth: 520, minHeight: 520)
+        }
+        .defaultSize(width: 560, height: 720)
+        .windowResizability(.contentMinSize)
+
+        MenuBarExtra {
+            MacCompanionMenuBarRoot(
+                application: applicationDelegate.product,
+                interactiveIndicator:
+                    applicationDelegate.interactiveIndicator
             )
         } label: {
             Label(
@@ -34,6 +52,81 @@ struct MacCompanionApplication: App {
             )
         }
         .menuBarExtraStyle(.window)
+    }
+}
+
+private struct MacCompanionMenuBarRoot: View {
+    @Environment(\.openWindow) private var openWindow
+
+    let application: MacCompanionProductApplicationV1
+    let interactiveIndicator: MacInteractiveActivityIndicatorV1
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Label(statusTitle, systemImage: statusSystemImage)
+                .font(.headline)
+
+            Text(
+                "Open the Mac Companion window to view status, pair devices, and manage access."
+            )
+            .font(.callout)
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+
+            if interactiveIndicator.isVisible {
+                Divider()
+                HStack {
+                    Label(
+                        interactiveIndicator.deviceDisplayName
+                            ?? "Remote Control Active",
+                        systemImage: "record.circle.fill"
+                    )
+                    .foregroundStyle(.red)
+                    Spacer()
+                    Button("Stop", role: .destructive) {
+                        Task { @MainActor in
+                            try? await interactiveIndicator.requestStop()
+                        }
+                    }
+                    .disabled(interactiveIndicator.phase != .active)
+                }
+            }
+
+            Divider()
+            Button("Open Mac Companion", systemImage: "macwindow") {
+                openWindow(id: MacCompanionSceneV1.mainWindowID)
+                NSApp.activate(ignoringOtherApps: true)
+            }
+            .buttonStyle(.borderedProminent)
+        }
+        .padding(16)
+        .frame(width: 320)
+    }
+
+    private var statusTitle: String {
+        switch application.route {
+        case .checking:
+            "Checking Mac Companion…"
+        case .setup:
+            "Mac Companion needs setup"
+        case .dashboard:
+            "Mac Companion is running"
+        case .requiresLoginItemApproval:
+            "Login item approval required"
+        case .unavailable:
+            "Mac Companion needs attention"
+        }
+    }
+
+    private var statusSystemImage: String {
+        switch application.route {
+        case .checking:
+            "clock.arrow.circlepath"
+        case .dashboard:
+            "checkmark.shield"
+        case .setup, .requiresLoginItemApproval, .unavailable:
+            "exclamationmark.triangle"
+        }
     }
 }
 

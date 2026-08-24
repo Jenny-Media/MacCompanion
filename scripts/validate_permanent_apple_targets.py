@@ -817,6 +817,14 @@ def validate_login_role_composition(
         "applicationDelegateType": (
             "MacCompanionApplicationDelegate.self"
         ),
+        "standardAdministrationWindow": (
+            'Window(\n            "Mac Companion",\n'
+            "            id: MacCompanionSceneV1.mainWindowID"
+        ),
+        "persistentStatusItem": "MenuBarExtra {",
+        "statusItemWindowReopen": (
+            "openWindow(id: MacCompanionSceneV1.mainWindowID)"
+        ),
         "applicationDelegateProduct": (
             "application: applicationDelegate.product"
         ),
@@ -843,7 +851,10 @@ def validate_login_role_composition(
             "_ = await application.retryStatus()"
         ),
     }.items():
-        expected_count = 3 if label == "menuApplicationPlatformImport" else 1
+        expected_count = {
+            "menuApplicationPlatformImport": 3,
+            "applicationDelegateProduct": 2,
+        }.get(label, 1)
         require_count(
             application_code,
             needle,

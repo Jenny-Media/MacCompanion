@@ -58,8 +58,8 @@ public struct ClientPairingViewV0: View {
 
         case let .preview(preview):
             heading(
-                "Check the Mac identity",
-                detail: "This fingerprint came from the scanned code and is not verified yet."
+                "Ready to verify this Mac",
+                detail: "The pairing code provides the expected fingerprint. Connect securely to verify it against the Mac’s live identity."
             )
             fingerprint(preview.fingerprint, verified: false)
             Label(
@@ -140,10 +140,19 @@ public struct ClientPairingViewV0: View {
     ) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             Label(
-                verified ? "Verified Mac fingerprint" : "Unverified fingerprint",
-                systemImage: verified ? "checkmark.shield" : "questionmark.diamond"
+                verified
+                    ? "Verified Mac fingerprint"
+                    : "Fingerprint from pairing code",
+                systemImage: verified ? "checkmark.shield" : "qrcode"
             )
             .font(.headline)
+            Text(
+                verified
+                    ? "Verified against the Mac’s live TLS identity."
+                    : "Verification is pending until the secure connection succeeds."
+            )
+            .font(.caption)
+            .foregroundStyle(.secondary)
             Text(value)
                 .font(.system(.caption, design: .monospaced))
                 .textSelection(.enabled)
