@@ -108,6 +108,15 @@ EXPECTED_MAC_INFO_PLIST = {
     "CFBundleInfoDictionaryVersion": "6.0",
     "CFBundleName": "$(PRODUCT_NAME)",
     "CFBundlePackageType": "APPL",
+    "CFBundleURLTypes": [
+        {
+            "CFBundleTypeRole": "Viewer",
+            "CFBundleURLName": (
+                "media.jenny.maccompanion.local-command"
+            ),
+            "CFBundleURLSchemes": ["maccompanion"],
+        }
+    ],
     "CFBundleShortVersionString": "$(MARKETING_VERSION)",
     "CFBundleVersion": "$(CURRENT_PROJECT_VERSION)",
     "LSApplicationCategoryType": "public.app-category.utilities",

@@ -43,7 +43,6 @@ private final class MacCompanionPairingCommandProxyV1:
 
     func install(_ product: any MacCompanionDashboardProductV1) {
         lock.withLock {
-            precondition(self.product == nil)
             self.product = product
         }
     }
@@ -157,6 +156,9 @@ extension MacCompanionDashboardProductV1 {
 @MainActor
 @Observable
 public final class MacCompanionDashboardApplicationV1 {
+    private typealias ProductFactory = @MainActor ()
+        -> any MacCompanionDashboardProductV1
+
     private enum Phase {
         case idle
         case starting
@@ -174,7 +176,11 @@ public final class MacCompanionDashboardApplicationV1 {
         MacHostIdentityRecoveryPresentationV0()
 
     @ObservationIgnored
-    private let product: any MacCompanionDashboardProductV1
+    private var product: any MacCompanionDashboardProductV1
+    @ObservationIgnored
+    private let productFactory: ProductFactory
+    @ObservationIgnored
+    private let commandProxy: MacCompanionPairingCommandProxyV1?
     @ObservationIgnored
     private let stateRelay: MacCompanionDashboardStateRelayV1
     @ObservationIgnored
@@ -196,6 +202,10 @@ public final class MacCompanionDashboardApplicationV1 {
     private var phase: Phase = .idle
     @ObservationIgnored
     private var finishTask: Task<Void, Never>?
+    @ObservationIgnored
+    private var unavailableRecoveryTask: Task<Void, Never>?
+    @ObservationIgnored
+    private var unavailableRecoveryInProgress = false
 
     public convenience init() {
         self.init(interactiveRuntime: nil)
@@ -351,6 +361,19 @@ public final class MacCompanionDashboardApplicationV1 {
         )
         self.init(
             product: product,
+            productFactory: {
+                MacLocalXPCDashboardProductV1(
+                    owner: dashboardOwner,
+                    pairingReviews: reviewOwner,
+                    hostIdentityRecovery: recoveryOwner,
+                    interactiveLeaseHandler: interactiveLeaseHandler,
+                    interactiveInputHandler: interactiveInputHandler,
+                    interactiveMediaQueue: interactiveMediaQueue,
+                    selectedDisplayID: interactiveDisplaySelection?
+                        .opaqueSelectedDisplayID()
+                )
+            },
+            commandProxy: commandProxy,
             stateRelay: dashboardRelay,
             pairingOwner: pairingOwner,
             pairingReviewOwner: reviewOwner,
@@ -364,7 +387,7 @@ public final class MacCompanionDashboardApplicationV1 {
     }
 
     package convenience init(
-        productFactory: (
+        productFactory: @escaping (
             MacAgentDashboardApplicationOwnerV0
         ) -> any MacCompanionDashboardProductV1
     ) {
@@ -375,6 +398,8 @@ public final class MacCompanionDashboardApplicationV1 {
         }
         self.init(
             product: productFactory(owner),
+            productFactory: { productFactory(owner) },
+            commandProxy: nil,
             stateRelay: relay,
             pairingOwner: nil,
             pairingReviewOwner: nil,
@@ -391,7 +416,7 @@ public final class MacCompanionDashboardApplicationV1 {
     /// connection.
     package convenience init(
         testingPairingStateRelay: Void,
-        productFactory: (
+        productFactory: @escaping (
             MacAgentDashboardApplicationOwnerV0
         ) -> any MacCompanionDashboardProductV1
     ) {
@@ -411,6 +436,8 @@ public final class MacCompanionDashboardApplicationV1 {
         )
         self.init(
             product: product,
+            productFactory: { productFactory(dashboardOwner) },
+            commandProxy: commandProxy,
             stateRelay: dashboardRelay,
             pairingOwner: pairingOwner,
             pairingReviewOwner: nil,
@@ -425,6 +452,8 @@ public final class MacCompanionDashboardApplicationV1 {
 
     private init(
         product: any MacCompanionDashboardProductV1,
+        productFactory: @escaping ProductFactory,
+        commandProxy: MacCompanionPairingCommandProxyV1?,
         stateRelay: MacCompanionDashboardStateRelayV1,
         pairingOwner: MacPairingApplicationOwnerV0?,
         pairingReviewOwner: MacPairingReviewApplicationOwnerV0?,
@@ -436,6 +465,8 @@ public final class MacCompanionDashboardApplicationV1 {
             MacInteractiveOpaqueDisplaySelectionV1?
     ) {
         self.product = product
+        self.productFactory = productFactory
+        self.commandProxy = commandProxy
         self.stateRelay = stateRelay
         self.pairingRelay = pairingRelay
         self.reviewRelay = reviewRelay
@@ -483,9 +514,15 @@ public final class MacCompanionDashboardApplicationV1 {
     @discardableResult
     public func retryStatus() async -> MacAgentDashboardEffectOutcomeV0 {
         guard phase == .active else { return .notCompleted }
-        let outcome = await product.retryStatus()
-        guard phase == .active else { return .notCompleted }
-        return outcome
+        let current = product
+        let outcome = await current.retryStatus()
+        guard phase == .active, product === current else {
+            return .notCompleted
+        }
+        guard outcome == .notCompleted, source == .unavailable else {
+            return outcome
+        }
+        return await replaceUnavailableProduct(current)
     }
 
     public func beginPairing() async {
@@ -569,6 +606,8 @@ public final class MacCompanionDashboardApplicationV1 {
         }
         guard phase != .finished else { return }
         phase = .finishing
+        unavailableRecoveryTask?.cancel()
+        unavailableRecoveryTask = nil
         let product = self.product
         let pairingOwner = self.pairingOwner
         let pairingReviewOwner = self.pairingReviewOwner
@@ -590,7 +629,11 @@ public final class MacCompanionDashboardApplicationV1 {
         guard phase == .starting || phase == .active || phase == .finishing
         else { return }
         self.source = source
-        guard source == .unavailable else { return }
+        guard source == .unavailable else {
+            unavailableRecoveryTask?.cancel()
+            unavailableRecoveryTask = nil
+            return
+        }
         let pairingOwner = self.pairingOwner
         let pairingReviewOwner = self.pairingReviewOwner
         let recoveryOwner = self.recoveryOwner
@@ -598,6 +641,56 @@ public final class MacCompanionDashboardApplicationV1 {
             await pairingOwner?.agentInvalidated()
             await pairingReviewOwner?.agentInvalidated()
             await recoveryOwner?.agentInvalidated()
+        }
+        scheduleUnavailableRecovery()
+    }
+
+    private func replaceUnavailableProduct(
+        _ unavailableProduct: any MacCompanionDashboardProductV1
+    ) async -> MacAgentDashboardEffectOutcomeV0 {
+        guard !unavailableRecoveryInProgress else { return .notCompleted }
+        unavailableRecoveryInProgress = true
+        defer { unavailableRecoveryInProgress = false }
+
+        await unavailableProduct.finish()
+        guard phase == .active, product === unavailableProduct,
+              source == .unavailable else {
+            return .notCompleted
+        }
+
+        let replacement = productFactory()
+        product = replacement
+        commandProxy?.install(replacement)
+        do {
+            try await replacement.start()
+        } catch {
+            await replacement.finish()
+            if phase == .active, product === replacement {
+                source = .unavailable
+            }
+            return .notCompleted
+        }
+        guard phase == .active, product === replacement else {
+            await replacement.finish()
+            return .notCompleted
+        }
+        return .completed
+    }
+
+    private func scheduleUnavailableRecovery() {
+        guard phase == .active,
+              !unavailableRecoveryInProgress,
+              unavailableRecoveryTask == nil else { return }
+        unavailableRecoveryTask = Task { @MainActor [weak self] in
+            do {
+                try await Task.sleep(for: .milliseconds(250))
+            } catch {
+                return
+            }
+            guard let self, self.phase == .active,
+                  self.source == .unavailable else { return }
+            self.unavailableRecoveryTask = nil
+            _ = await self.retryStatus()
         }
     }
 

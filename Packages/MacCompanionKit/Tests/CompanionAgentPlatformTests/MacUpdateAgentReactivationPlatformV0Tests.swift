@@ -81,6 +81,46 @@ func updateAgentRuntimePlatformUsesOnlyActiveDashboardBuild() async throws {
 
 @Test
 @available(macOS 26.0, *)
+func updateAgentPlatformRepairsOnlyAnEnabledRegistration() async throws {
+    let role = UpdateAgentRoleV0(state: .enabled)
+    let platform = MacUpdateAgentReactivationPlatformV0(
+        registration: role,
+        service: role,
+        persistence: UpdateAgentPersistenceV0(receipt: nil),
+        currentAgentBuild: { nil }
+    )
+
+    try await platform.repairEnabledRegistration()
+
+    #expect(await role.status() == .enabled)
+    #expect(await role.counts() == (register: 1, unregister: 1))
+}
+
+@Test
+@available(macOS 26.0, *)
+func updateAgentPlatformRefusesToEnableAUserDisabledRegistration()
+async throws {
+    let role = UpdateAgentRoleV0(state: .notRegistered)
+    let platform = MacUpdateAgentReactivationPlatformV0(
+        registration: role,
+        service: role,
+        persistence: UpdateAgentPersistenceV0(receipt: nil),
+        currentAgentBuild: { nil }
+    )
+
+    await #expect(
+        throws: MacUpdateAgentRegistrationRepairErrorV0
+            .registrationNotEnabled
+    ) {
+        try await platform.repairEnabledRegistration()
+    }
+
+    #expect(await role.status() == .notRegistered)
+    #expect(await role.counts() == (register: 0, unregister: 0))
+}
+
+@Test
+@available(macOS 26.0, *)
 func updateAgentReadinessRetriesLaunchRacesWithExactDelay() async throws {
     let script = UpdateAgentBuildProbeScriptV0(
         results: [

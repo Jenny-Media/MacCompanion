@@ -10,6 +10,13 @@ public enum MacUpdateAgentBuildReadinessErrorV0:
     case unavailable
 }
 
+public enum MacUpdateAgentRegistrationRepairErrorV0:
+    Error, Equatable, Sendable
+{
+    case registrationNotEnabled
+    case effectFailed
+}
+
 /// Bounded launch-readiness retry for the startup-only authenticated build
 /// probe. A protocol-order violation is terminal; ordinary launch races may
 /// retry without ever widening the signed-peer or exact-message checks.
@@ -161,6 +168,27 @@ public struct MacUpdateAgentReactivationPlatformV0: Sendable {
             unregisterAndWait: { try await service.unregister() },
             registerAndWait: { try await service.register() }
         )
+    }
+
+    /// Rebinds an already-enabled Service Management registration to the
+    /// Agent in the currently installed containing app. It never enables a
+    /// user-disabled registration and verifies the enabled postcondition.
+    public func repairEnabledRegistration() async throws {
+        guard Self.map(await registration.status()) == .enabled else {
+            throw MacUpdateAgentRegistrationRepairErrorV0
+                .registrationNotEnabled
+        }
+        do {
+            try await service.unregister()
+            try await service.register()
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            throw MacUpdateAgentRegistrationRepairErrorV0.effectFailed
+        }
+        guard Self.map(await registration.status()) == .enabled else {
+            throw MacUpdateAgentRegistrationRepairErrorV0.effectFailed
+        }
     }
 
     package static func map(

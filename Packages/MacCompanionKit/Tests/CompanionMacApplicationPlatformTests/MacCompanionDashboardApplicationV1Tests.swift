@@ -40,6 +40,22 @@ private final class DashboardApplicationOneShotGateV1: @unchecked Sendable {
 }
 
 @available(macOS 26.0, *)
+private final class DashboardApplicationProductRegistryV1:
+    @unchecked Sendable
+{
+    private let lock = NSLock()
+    private var products: [DashboardApplicationTestProductV1] = []
+
+    func append(_ product: DashboardApplicationTestProductV1) {
+        lock.withLock { products.append(product) }
+    }
+
+    func snapshot() -> [DashboardApplicationTestProductV1] {
+        lock.withLock { products }
+    }
+}
+
+@available(macOS 26.0, *)
 private final class DashboardApplicationTestProductV1:
     MacCompanionDashboardProductV1,
     @unchecked Sendable
@@ -55,6 +71,7 @@ private final class DashboardApplicationTestProductV1:
     private let lock = NSLock()
     private let owner: MacAgentDashboardApplicationOwnerV0
     private let behavior: StartBehavior
+    private let retryOutcome: MacAgentDashboardEffectOutcomeV0
     private let startGate = DashboardApplicationOneShotGateV1()
     private let finishGate = DashboardApplicationOneShotGateV1()
     private var suspendFinish = false
@@ -69,10 +86,12 @@ private final class DashboardApplicationTestProductV1:
 
     init(
         owner: MacAgentDashboardApplicationOwnerV0,
-        behavior: StartBehavior = .succeeds
+        behavior: StartBehavior = .succeeds,
+        retryOutcome: MacAgentDashboardEffectOutcomeV0 = .completed
     ) {
         self.owner = owner
         self.behavior = behavior
+        self.retryOutcome = retryOutcome
     }
 
     func start() async throws {
@@ -91,7 +110,7 @@ private final class DashboardApplicationTestProductV1:
 
     func retryStatus() async -> MacAgentDashboardEffectOutcomeV0 {
         lock.withLock { retries += 1 }
-        return .completed
+        return retryOutcome
     }
 
     func closeNetworkAdmissionForUpdate() async throws {
@@ -168,6 +187,12 @@ private final class DashboardApplicationTestProductV1:
         )
     }
 
+    func publishConnectionUnavailable() async throws {
+        let token = lock.withLock { connectionToken }
+        guard let token else { throw StartError.injected }
+        try await owner.connectionUnavailable(token)
+    }
+
     func updateCommandCounts() -> (closes: Int, drains: Int, reopens: Int) {
         lock.withLock { (closes, drains, reopens) }
     }
@@ -233,6 +258,45 @@ func explicitStartPublishesOnlyOwnerProducedLoadingAndEnablesRetry()
     #expect(await application.source == .unavailable)
     #expect(await application.retryStatus() == .notCompleted)
     #expect(product.snapshot() == (1, 1, 1))
+}
+
+@Test
+@available(macOS 26.0, *)
+func unavailableAutomaticallyReplacesOneShotProductAndStartsFreshGeneration()
+    async throws
+{
+    let registry = DashboardApplicationProductRegistryV1()
+    let application = await MainActor.run {
+        let application = MacCompanionDashboardApplicationV1(
+            productFactory: { owner in
+                let product = DashboardApplicationTestProductV1(
+                    owner: owner,
+                    retryOutcome: .notCompleted
+                )
+                registry.append(product)
+                return product
+            }
+        )
+        return application
+    }
+    let first = try #require(registry.snapshot().first)
+
+    try await application.start()
+    try await first.publishConnectionUnavailable()
+    #expect(await application.source == .unavailable)
+
+    for _ in 0..<200 where registry.snapshot().count == 1 {
+        try await Task.sleep(for: .milliseconds(5))
+    }
+
+    let replacement = try #require(registry.snapshot().last)
+    #expect(replacement !== first)
+    #expect(first.snapshot() == (1, 1, 1))
+    #expect(replacement.snapshot() == (1, 0, 0))
+    #expect(await application.source == .loading)
+
+    await application.finish()
+    #expect(replacement.snapshot() == (1, 0, 1))
 }
 
 @Test

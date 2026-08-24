@@ -24,6 +24,17 @@ public enum MacCompanionUpdateNetworkReconciliationErrorV0:
     case exhausted
 }
 
+public enum MacCompanionAgentRegistrationRepairErrorV1:
+    Error,
+    Equatable,
+    Sendable
+{
+    case unavailable
+    case registrationNotEnabled
+    case effectFailed
+    case readinessFailed
+}
+
 /// Process-level containing-app router. Login registration is only a routing
 /// input: an enabled registration attempts the authenticated dashboard but is
 /// never published as Agent readiness. An absent registration exposes the
@@ -110,6 +121,56 @@ public final class MacCompanionProductApplicationV1 {
               !updateReconciliationActive else { return }
         route = .checking
         await reconcileRoute()
+    }
+
+    /// Rebinds an already-enabled Agent registration to the currently
+    /// installed containing-app bundle. This is intentionally narrower than a
+    /// generic enable/disable command: it preserves the user's enabled state,
+    /// closes the authenticated dashboard before mutation, and publishes a
+    /// fresh dashboard only after registration converges back to enabled.
+    public func repairEnabledAgentRegistration(
+        _ repair: @MainActor @Sendable () async throws -> Void
+    ) async throws {
+        guard phase == .active,
+              dashboardStartTask == nil,
+              !updateReconciliationActive else {
+            throw MacCompanionAgentRegistrationRepairErrorV1.unavailable
+        }
+        guard await agentRegistration.status() == .enabled else {
+            throw MacCompanionAgentRegistrationRepairErrorV1
+                .registrationNotEnabled
+        }
+
+        updateReconciliationActive = true
+        defer { updateReconciliationActive = false }
+        route = .checking
+
+        let previousDashboard = dashboard
+        dashboard = nil
+        await previousDashboard?.finish()
+        guard phase == .active else {
+            throw MacCompanionAgentRegistrationRepairErrorV1.unavailable
+        }
+
+        do {
+            try await repair()
+        } catch is CancellationError {
+            route = .unavailable
+            throw CancellationError()
+        } catch {
+            route = .unavailable
+            throw MacCompanionAgentRegistrationRepairErrorV1.effectFailed
+        }
+        guard phase == .active else {
+            throw MacCompanionAgentRegistrationRepairErrorV1.unavailable
+        }
+        guard await agentRegistration.status() == .enabled else {
+            route = .unavailable
+            throw MacCompanionAgentRegistrationRepairErrorV1.effectFailed
+        }
+        guard await startFreshDashboard(failureRoute: .unavailable) else {
+            throw MacCompanionAgentRegistrationRepairErrorV1.readinessFailed
+        }
     }
 
     public func finish() async {

@@ -33,6 +33,9 @@ struct MacCompanionApplication: App {
         }
         .defaultSize(width: 560, height: 720)
         .windowResizability(.contentMinSize)
+        .handlesExternalEvents(
+            matching: ["open", "repair-agent-registration"]
+        )
 
         MenuBarExtra {
             MacCompanionMenuBarRoot(
@@ -145,6 +148,7 @@ private final class MacCompanionApplicationDelegate:
     let updateRuntime: MacCompanionUpdateRuntimeCompositionV0?
 
     private var launchTask: Task<Void, Never>?
+    private var localCommandTask: Task<Void, Never>?
     private var finishTask: Task<Void, Never>?
 
     override init() {
@@ -205,6 +209,18 @@ private final class MacCompanionApplicationDelegate:
         launchTask = Task { @MainActor in await product.start() }
     }
 
+    func application(
+        _ application: NSApplication,
+        open urls: [URL]
+    ) {
+        for url in urls {
+            guard let command = MacCompanionLocalCommandV1(url: url) else {
+                continue
+            }
+            enqueue(command)
+        }
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
         beginOrderedFinish(replyToTerminationRequest: false)
     }
@@ -225,17 +241,64 @@ private final class MacCompanionApplicationDelegate:
     ) {
         guard finishTask == nil else { return }
         let launchTask = self.launchTask
+        let localCommandTask = self.localCommandTask
         let product = self.product
         let updates = self.updates
         launchTask?.cancel()
         finishTask = Task { @MainActor in
             await updates.prepareForApplicationTermination()
             if let launchTask { await launchTask.value }
+            if let localCommandTask { await localCommandTask.value }
             await product.finish()
             if replyToTerminationRequest {
                 NSApp.reply(toApplicationShouldTerminate: true)
             }
         }
+    }
+
+    private func enqueue(_ command: MacCompanionLocalCommandV1) {
+        guard finishTask == nil else { return }
+        let previous = localCommandTask
+        localCommandTask = Task { @MainActor [weak self] in
+            if let previous { await previous.value }
+            guard let self, self.finishTask == nil else { return }
+            if let launchTask = self.launchTask {
+                await launchTask.value
+            }
+
+            switch command {
+            case .openWindow:
+                break
+            case .repairAgentRegistration:
+                do {
+                    try await self.product.repairEnabledAgentRegistration {
+                        guard let reactivation = self.updateAgentReactivation
+                        else {
+                            throw
+                                MacCompanionUpdateAgentReactivationCompositionErrorV0
+                                    .unavailable
+                        }
+                        try await reactivation.repairEnabledRegistration()
+                    }
+                } catch {
+                    // Product state remains fail-closed and presents the
+                    // unavailable route. The local command never broadens its
+                    // authority or silently falls back to enable/disable.
+                }
+            }
+            await self.showMainWindow()
+        }
+    }
+
+    private func showMainWindow() async {
+        if let window = NSApp.windows.first(where: {
+            $0.title == "Mac Companion"
+        }) {
+            NSApp.activate(ignoringOtherApps: true)
+            window.makeKeyAndOrderFront(nil)
+            return
+        }
+        NSApp.activate(ignoringOtherApps: true)
     }
 
     isolated deinit {

@@ -17,6 +17,8 @@ final class MacCompanionUpdateAgentReactivationCompositionV0 {
     private let reactivator: MacUpdateAgentStartupReactivatorV0
     private let runtimeDependencies:
         MacUpdateAgentReactivationDependenciesV0
+    private let registrationRepairPlatform:
+        MacUpdateAgentReactivationPlatformV0
 
     init(
         loginRoles: MacCompanionLoginRoleComposition,
@@ -45,6 +47,7 @@ final class MacCompanionUpdateAgentReactivationCompositionV0 {
             activeAgentBuild: activeAgentBuild
         )
         self.runningBuild = runningBuild
+        registrationRepairPlatform = runtimePlatform
         runtimeDependencies = runtimePlatform.dependencies()
         reactivator = MacUpdateAgentStartupReactivatorV0(
             runningBuild: runningBuild,
@@ -54,6 +57,12 @@ final class MacCompanionUpdateAgentReactivationCompositionV0 {
 
     func repairAtStartup() async throws {
         _ = try await reactivator.reactivateIfNeeded()
+    }
+
+    /// Rebinds a registration that the product has already proven enabled to
+    /// the Agent embedded in the currently installed containing app.
+    func repairEnabledRegistration() async throws {
+        try await registrationRepairPlatform.repairEnabledRegistration()
     }
 
     func makeStopOwner(

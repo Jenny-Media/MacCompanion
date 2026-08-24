@@ -834,6 +834,76 @@ func productLaunchUsesRegistrationOnlyToAttemptFreshDashboard() async {
 
 @Test
 @available(macOS 26.0, *)
+func localRegistrationRepairPreservesEnabledStateAndRebuildsDashboard()
+async throws {
+    let log = RemoteAccessSetupEventLogV1()
+    let agent = RemoteAccessSetupRoleV1(name: "agent", log: log)
+    let menu = RemoteAccessSetupRoleV1(name: "menu", log: log)
+    let dashboardBox = RemoteAccessSetupDashboardBoxV1()
+    let registration = RemoteAccessSetupRawRegistrationV1(.enabled)
+    let product = await MainActor.run {
+        MacCompanionProductApplicationV1(
+            agentRegistration: registration,
+            setup: MacRemoteAccessSetupApplicationV1(
+                agent: agent,
+                menuApp: menu,
+                clientFactory: { _ in RemoteAccessSetupClientV1(log: log) }
+            ),
+            dashboardFactory: { dashboardBox.makeApplication() }
+        )
+    }
+    await product.start()
+
+    try await product.repairEnabledAgentRegistration {
+        try await registration.unregisterAndWait()
+        try await registration.register()
+    }
+
+    let dashboards = dashboardBox.products()
+    #expect(dashboards.count == 2)
+    #expect(dashboards[0].snapshot() == (1, 1))
+    #expect(dashboards[1].snapshot() == (1, 0))
+    #expect(await registration.status() == .enabled)
+    #expect(await product.route == .dashboard)
+    await product.finish()
+}
+
+@Test
+@available(macOS 26.0, *)
+func localRegistrationRepairRejectsAUserDisabledAgent() async throws {
+    let log = RemoteAccessSetupEventLogV1()
+    let agent = RemoteAccessSetupRoleV1(name: "agent", log: log)
+    let menu = RemoteAccessSetupRoleV1(name: "menu", log: log)
+    let registration = RemoteAccessSetupRawRegistrationV1(.notRegistered)
+    let effect = RemoteAccessSetupBooleanBoxV1()
+    let product = await MainActor.run {
+        MacCompanionProductApplicationV1(
+            agentRegistration: registration,
+            setup: MacRemoteAccessSetupApplicationV1(
+                agent: agent,
+                menuApp: menu,
+                clientFactory: { _ in RemoteAccessSetupClientV1(log: log) }
+            )
+        )
+    }
+    await product.start()
+
+    await #expect(
+        throws: MacCompanionAgentRegistrationRepairErrorV1
+            .registrationNotEnabled
+    ) {
+        try await product.repairEnabledAgentRegistration {
+            effect.set()
+        }
+    }
+
+    #expect(!effect.value())
+    #expect(await product.route == .setup)
+    await product.finish()
+}
+
+@Test
+@available(macOS 26.0, *)
 func updateRecoveryRetriesAStillAuthenticatedDashboardBeforeReplacement()
 async throws {
     let log = RemoteAccessSetupEventLogV1()
