@@ -642,7 +642,6 @@ def validate_narrow_agent_source(content: str, failures: list[str]) -> None:
     )
     for needle in (
         "import CompanionAgentApplicationPlatform",
-        "import Dispatch",
         "@main",
         "import Darwin",
         "enum MacCompanionAgentMain",
@@ -653,11 +652,13 @@ def validate_narrow_agent_source(content: str, failures: list[str]) -> None:
         "case .running(let owner):",
         "owner.waitForRestartRequest()",
         "owner.finish()",
-        "dispatchMain()",
-        "withExtendedLifetime(outcome)",
     ):
         require_count(code, needle, 1, f"agentSource:{needle}", failures)
     for needle in (
+        "import Dispatch",
+        "dispatchMain()",
+        "withExtendedLifetime",
+        "Task {",
         "SMAppService",
         "NWListener",
         ".register(",

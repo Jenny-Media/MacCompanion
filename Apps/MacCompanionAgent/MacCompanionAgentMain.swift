@@ -1,6 +1,5 @@
 import CompanionAgentApplicationPlatform
 import Darwin
-import Dispatch
 
 /// Permanent per-user LaunchAgent process boundary.
 ///
@@ -28,12 +27,8 @@ enum MacCompanionAgentMain {
         case .retryAfterFirstUnlock:
             exit(EXIT_FAILURE)
         case .running(let owner):
-            Task {
-                await owner.waitForRestartRequest()
-                await owner.finish()
-                exit(EXIT_SUCCESS)
-            }
-            withExtendedLifetime(outcome) { dispatchMain() }
+            await owner.waitForRestartRequest()
+            await owner.finish()
         }
     }
 }

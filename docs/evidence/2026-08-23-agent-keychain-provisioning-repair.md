@@ -74,9 +74,29 @@ recoverably under `/private/tmp`. The repaired app was launched, but no
 command-line Agent bypass was used and no privacy permission or remote grant
 was accepted.
 
+## Post-profile process-lifetime repair
+
+The first visible enable attempt after the provisioning repair proved that
+`SMAppService` registered the new nested executable, launchd spawned it, and
+the earlier `taskgated-helper` and `errSecMissingEntitlement` failures were
+absent. It then exposed a separate process-entry defect: the async Agent main
+called `dispatchMain()` while already executing on the main dispatch queue.
+libdispatch intentionally trapped with
+`BUG IN CLIENT OF LIBDISPATCH: dispatch_main called from a block on the main
+queue`, and launchd repeated the crash until the foreground setup owner timed
+out and unregistered its role.
+
+The Agent entry point now directly awaits the retained running owner's restart
+request and then awaits its terminal cleanup. It creates no unstructured task
+and calls no nested dispatch main loop. Source validation rejects reintroducing
+`Dispatch`, `dispatchMain()`, `withExtendedLifetime`, or an unstructured
+`Task` at this process boundary. The complete repository validation gate passes
+after this correction.
+
 ## Remaining acceptance
 
-1. The user performs a fresh visible **Enable Mac Companion** action.
+1. The user performs another fresh visible **Enable Mac Companion** action
+   using the build containing both repairs.
 2. Logs show no `taskgated-helper` rejection and no `-34018` Keychain error.
 3. The Agent completes the consent-bound disabled-to-enabled transition,
    restarts, and reports reciprocal authenticated readiness.
