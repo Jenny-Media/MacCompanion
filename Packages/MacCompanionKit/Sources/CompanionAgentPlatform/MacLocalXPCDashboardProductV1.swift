@@ -108,11 +108,13 @@ private actor MacLocalXPCDashboardBindingV1 {
     private let publishesInteractiveAdmission: Bool
     private let menuAppGeneration: UUID
     private let initialSelectedDisplayID: UUID?
+    private let automaticStatusRefreshDelay: Duration
     private var token: MacAgentDashboardConnectionTokenV0?
     private var transportGeneration: UInt64?
     private var statusReadOutstanding = false
     private var statusRefreshInProgress = false
     private var statusRetryPermitted = false
+    private var automaticStatusRefreshTask: Task<Void, Never>?
     private var interactiveAdmissionPublished = false
     private var phase: Phase = .idle
 
@@ -122,7 +124,8 @@ private actor MacLocalXPCDashboardBindingV1 {
         agentBuildLifetime: MacAuthenticatedAgentBuildLifetimeV0,
         publishesInteractiveAdmission: Bool,
         menuAppGeneration: UUID,
-        initialSelectedDisplayID: UUID?
+        initialSelectedDisplayID: UUID?,
+        automaticStatusRefreshDelay: Duration
     ) {
         self.owner = owner
         self.client = client
@@ -130,6 +133,7 @@ private actor MacLocalXPCDashboardBindingV1 {
         self.publishesInteractiveAdmission = publishesInteractiveAdmission
         self.menuAppGeneration = menuAppGeneration
         self.initialSelectedDisplayID = initialSelectedDisplayID
+        self.automaticStatusRefreshDelay = automaticStatusRefreshDelay
     }
 
     func begin() async throws {
@@ -184,12 +188,15 @@ private actor MacLocalXPCDashboardBindingV1 {
                 statusRetryPermitted = false
                 try await publishInteractiveAdmissionIfNeeded()
                 try await owner.receive(snapshot, from: token)
+                scheduleAutomaticStatusRefresh(for: token)
 
             case let .agentStatusUnavailable(generation):
                 try requireReadyGeneration(generation)
                 guard statusReadOutstanding else { throw BindingError.order }
                 statusReadOutstanding = false
                 statusRetryPermitted = true
+                automaticStatusRefreshTask?.cancel()
+                automaticStatusRefreshTask = nil
                 try await owner.statusTemporarilyUnavailable(from: token)
 
             case .invalidated:
@@ -241,6 +248,34 @@ private actor MacLocalXPCDashboardBindingV1 {
         interactiveAdmissionPublished = true
     }
 
+    private func scheduleAutomaticStatusRefresh(
+        for token: MacAgentDashboardConnectionTokenV0
+    ) {
+        automaticStatusRefreshTask?.cancel()
+        let delay = automaticStatusRefreshDelay
+        automaticStatusRefreshTask = Task { [weak self] in
+            do {
+                try await Task.sleep(for: delay)
+            } catch {
+                return
+            }
+            await self?.requestAutomaticStatusRefresh(for: token)
+        }
+    }
+
+    private func requestAutomaticStatusRefresh(
+        for token: MacAgentDashboardConnectionTokenV0
+    ) {
+        guard phase == .ready,
+              self.token == token,
+              !statusReadOutstanding,
+              !statusRefreshInProgress,
+              !statusRetryPermitted else { return }
+        automaticStatusRefreshTask = nil
+        statusReadOutstanding = true
+        client.readAgentStatus()
+    }
+
     func invalidate() async {
         guard let token else {
             retire()
@@ -276,6 +311,8 @@ private actor MacLocalXPCDashboardBindingV1 {
     }
 
     private func retire() {
+        automaticStatusRefreshTask?.cancel()
+        automaticStatusRefreshTask = nil
         agentBuildLifetime.retire()
         token = nil
         transportGeneration = nil
@@ -575,6 +612,7 @@ public final class MacLocalXPCDashboardProductV1:
         bufferCapacity: Int = 32,
         publishesInteractiveAdmission: Bool = false,
         initialSelectedDisplayID: UUID? = nil,
+        automaticStatusRefreshDelay: Duration = .seconds(1),
         clientFactory: @escaping ClientFactory
     ) {
         runtime = Self.makeRuntime(
@@ -583,7 +621,8 @@ public final class MacLocalXPCDashboardProductV1:
             bufferCapacity: bufferCapacity,
             clientFactory: clientFactory,
             publishesInteractiveAdmission: publishesInteractiveAdmission,
-            initialSelectedDisplayID: initialSelectedDisplayID
+            initialSelectedDisplayID: initialSelectedDisplayID,
+            automaticStatusRefreshDelay: automaticStatusRefreshDelay
         )
     }
 
@@ -593,7 +632,8 @@ public final class MacLocalXPCDashboardProductV1:
         bufferCapacity: Int,
         clientFactory: @escaping ClientFactory,
         publishesInteractiveAdmission: Bool,
-        initialSelectedDisplayID: UUID? = nil
+        initialSelectedDisplayID: UUID? = nil,
+        automaticStatusRefreshDelay: Duration = .seconds(1)
     ) -> MacLocalXPCDashboardRuntimeV1 {
         let runtime = MacLocalXPCDashboardRuntimeV1()
         let client = clientFactory { [weak runtime] event in
@@ -605,7 +645,8 @@ public final class MacLocalXPCDashboardProductV1:
             agentBuildLifetime: agentBuildLifetime,
             publishesInteractiveAdmission: publishesInteractiveAdmission,
             menuAppGeneration: UUID(),
-            initialSelectedDisplayID: initialSelectedDisplayID
+            initialSelectedDisplayID: initialSelectedDisplayID,
+            automaticStatusRefreshDelay: automaticStatusRefreshDelay
         )
         runtime.install(
             client: client,

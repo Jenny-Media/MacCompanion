@@ -963,6 +963,70 @@ func dashboardProductPublishesTypedStatusAndRecoversUnavailable() async throws {
 
 @Test
 @available(macOS 26.0, *)
+func dashboardProductAutomaticallyRefreshesCurrentStatus() async throws {
+    let owner = MacAgentDashboardApplicationOwnerV0()
+    let box = ProductDashboardClientBoxV1()
+    let product = MacLocalXPCDashboardProductV1(
+        owner: owner,
+        automaticStatusRefreshDelay: .zero,
+        clientFactory: { handler in
+            let client = ProductDashboardClientV1(handler: handler)
+            box.install(client)
+            return client
+        }
+    )
+    try await product.start()
+    let client = try #require(box.client())
+
+    client.emit(.authenticatedAgent(build: 42))
+    #expect(await eventuallyV1 { client.snapshot().ready == 1 })
+    client.emit(.menuReadyAcknowledged)
+    #expect(await eventuallyV1 { client.snapshot().status == 1 })
+
+    let starting = try LocalAgentStatusSnapshot(
+        desiredEnabled: true,
+        consoleSession: .otherConsoleUserActive,
+        agentProcess: .ready,
+        menuAppProcess: .ready,
+        networkState: .stopped,
+        securityPosture: .nominal,
+        routeKinds: [],
+        pairedDeviceCount: 0,
+        activeRemoteSessionCount: 0,
+        providerCount: 1,
+        warningCodes: [],
+        diagnosticSequence: 1,
+        generatedAtUnixMilliseconds: 1_724_000_000_000
+    )
+    client.emit(.agentStatus(generation: 30, snapshot: starting))
+    #expect(await eventuallyV1 { await owner.snapshot() == .status(starting) })
+    #expect(await eventuallyV1 { client.snapshot().status == 2 })
+
+    let listening = try LocalAgentStatusSnapshot(
+        desiredEnabled: true,
+        consoleSession: .otherConsoleUserActive,
+        agentProcess: .ready,
+        menuAppProcess: .ready,
+        networkState: .listening,
+        securityPosture: .nominal,
+        routeKinds: [.lan],
+        pairedDeviceCount: 0,
+        activeRemoteSessionCount: 0,
+        providerCount: 1,
+        warningCodes: [],
+        diagnosticSequence: 2,
+        generatedAtUnixMilliseconds: 1_724_000_000_001
+    )
+    client.emit(.agentStatus(generation: 30, snapshot: listening))
+    #expect(
+        await eventuallyV1 { await owner.snapshot() == .status(listening) }
+    )
+
+    await product.finish()
+}
+
+@Test
+@available(macOS 26.0, *)
 func dashboardProductRejectsDuplicateAuthenticationAndRetiresBuild() async throws {
     let owner = MacAgentDashboardApplicationOwnerV0()
     let box = ProductDashboardClientBoxV1()

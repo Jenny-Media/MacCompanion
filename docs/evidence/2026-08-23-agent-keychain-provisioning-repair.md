@@ -93,10 +93,22 @@ and calls no nested dispatch main loop. Source validation rejects reintroducing
 `Task` at this process boundary. The complete repository validation gate passes
 after this correction.
 
+The next visible attempt reached reciprocal Agent/menu readiness and started
+the fixed TLS listener on port 59653 with a satisfied Wi-Fi path and active
+Bonjour advertisement. The dashboard nevertheless retained its first
+startup-race snapshot (`Stopped`, no routes) because a successful status read
+was one-shot. The authenticated dashboard binding now requests a fresh typed,
+content-free status snapshot every second on the same transport generation.
+Only one read may be outstanding; temporary source failure stops automatic
+refresh and preserves the explicit retry path; invalidation and shutdown
+cancel the refresh task. A focused regression proves convergence from the
+initial closed snapshot to `Listening` plus the LAN route without replacing
+authentication evidence.
+
 ## Remaining acceptance
 
-1. The user performs another fresh visible **Enable Mac Companion** action
-   using the build containing both repairs.
+1. The user launches the build containing all three repairs and confirms that
+   the authenticated dashboard converges to `Listening` plus `Local network`.
 2. Logs show no `taskgated-helper` rejection and no `-34018` Keychain error.
 3. The Agent completes the consent-bound disabled-to-enabled transition,
    restarts, and reports reciprocal authenticated readiness.
