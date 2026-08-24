@@ -489,7 +489,11 @@ public final class MacCompanionDashboardApplicationV1 {
     }
 
     public func beginPairing() async {
-        guard phase == .active else { return }
+        guard phase == .active,
+              MacAgentDashboardActionPolicyV0.isEnabled(
+                  .startPairing,
+                  in: source
+              ) else { return }
         try? await pairingOwner?.begin()
     }
 

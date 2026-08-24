@@ -171,6 +171,9 @@ private actor PairingProductSurfaceV0: LocalPairingReviewSurfaceV0 {
     #expect(receipt.storedDisplayName == displayName)
     #expect(await surface.withdrawn == [reviewID])
     #expect(try await securityStore.device(deviceID)?.clientID == clientID)
+    #expect(
+        try await localServices.statusReader.read().pairedDeviceCount == 1
+    )
 
     let page = try await auditStore.page(
         scope: .localAdministration,

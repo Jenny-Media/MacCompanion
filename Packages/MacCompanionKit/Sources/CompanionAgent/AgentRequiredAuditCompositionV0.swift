@@ -1,4 +1,5 @@
 import CompanionAuthentication
+import CompanionDomain
 import CompanionHostWire
 import CompanionHostSession
 import CompanionInteractiveHost
@@ -17,6 +18,29 @@ public enum AgentRequiredAuditCompositionErrorV1:
 {
     case hostIdentityUnavailable
     case deviceRevocationRecoveryUnavailable
+}
+
+/// Projects a successful durable pairing into the local status inventory.
+/// The pairing commit remains authoritative: a diagnostic refresh failure
+/// must not turn an already-committed device into an ambiguous client result.
+private struct AgentInventoryRefreshingPairingCommitterV1:
+    PairingCommitter
+{
+    let durableCommitter: any PairingCommitter
+    let localServices: AgentLocalServiceRootV1
+
+    func commitPairing(
+        pairingID: UUID,
+        record: StoredDeviceRecord,
+        displayName: DeviceDisplayName
+    ) async throws {
+        try await durableCommitter.commitPairing(
+            pairingID: pairingID,
+            record: record,
+            displayName: displayName
+        )
+        try? await localServices.refreshInventory()
+    }
 }
 
 /// Platform-only Interactive Control seams accepted by the release Agent.
@@ -223,7 +247,10 @@ public struct AgentRequiredAuditCompositionV0: Sendable {
         deviceIDGenerator: @escaping @Sendable () -> UUID = { UUID() }
     ) -> AgentPairingServicesV0 {
         let authority = PairingSessionAuthority(
-            committer: securityStore,
+            committer: AgentInventoryRefreshingPairingCommitterV1(
+                durableCommitter: securityStore,
+                localServices: localServices
+            ),
             auditWriter: pairingAuditWriter
         )
         let sessions = AgentLocalPairingSessionHandlerV0(

@@ -1,5 +1,6 @@
 #if os(macOS)
 import CompanionIPC
+import CompanionLifecycle
 import CompanionLocalXPCPlatform
 import CompanionMacApp
 @testable import CompanionMacApplicationPlatform
@@ -64,6 +65,7 @@ private final class DashboardApplicationTestProductV1:
     private var reopens = 0
     private var finishes = 0
     private var pairingCreations = 0
+    private var connectionToken: MacAgentDashboardConnectionTokenV0?
 
     init(
         owner: MacAgentDashboardApplicationOwnerV0,
@@ -75,7 +77,8 @@ private final class DashboardApplicationTestProductV1:
 
     func start() async throws {
         lock.withLock { starts += 1 }
-        _ = try await owner.beginConnection()
+        let token = try await owner.beginConnection()
+        lock.withLock { connectionToken = token }
         switch behavior {
         case .succeeds:
             return
@@ -140,6 +143,29 @@ private final class DashboardApplicationTestProductV1:
 
     func pairingCreationCount() -> Int {
         lock.withLock { pairingCreations }
+    }
+
+    func publishReadyStatus(pairedDeviceCount: UInt16) async throws {
+        let token = lock.withLock { connectionToken }
+        guard let token else { throw StartError.injected }
+        try await owner.receive(
+            LocalAgentStatusSnapshot(
+                desiredEnabled: true,
+                consoleSession: .active,
+                agentProcess: .ready,
+                menuAppProcess: .ready,
+                networkState: .listening,
+                securityPosture: .nominal,
+                routeKinds: [.lan],
+                pairedDeviceCount: pairedDeviceCount,
+                activeRemoteSessionCount: 0,
+                providerCount: 1,
+                warningCodes: [],
+                diagnosticSequence: 1,
+                generatedAtUnixMilliseconds: 1_787_198_400_000
+            ),
+            from: token
+        )
     }
 
     func updateCommandCounts() -> (closes: Int, drains: Int, reopens: Int) {
@@ -229,6 +255,7 @@ func pairingStateRelayRemainsAliveForApplicationLifetime() async throws {
     }
 
     try await application.start()
+    try await product.publishReadyStatus(pairedDeviceCount: 0)
     await application.beginPairing()
 
     #expect(product.pairingCreationCount() == 1)
@@ -239,6 +266,34 @@ func pairingStateRelayRemainsAliveForApplicationLifetime() async throws {
         false
     }
     #expect(creationFailed)
+    await application.finish()
+}
+
+@Test
+@available(macOS 26.0, *)
+func existingPairedDevicePreventsASecondPairingSession() async throws {
+    let (application, product): (
+        MacCompanionDashboardApplicationV1,
+        DashboardApplicationTestProductV1
+    ) = await MainActor.run {
+        var product: DashboardApplicationTestProductV1?
+        let application = MacCompanionDashboardApplicationV1(
+            testingPairingStateRelay: (),
+            productFactory: { owner in
+                let value = DashboardApplicationTestProductV1(owner: owner)
+                product = value
+                return value
+            }
+        )
+        return (application, product!)
+    }
+
+    try await application.start()
+    try await product.publishReadyStatus(pairedDeviceCount: 1)
+    await application.beginPairing()
+
+    #expect(product.pairingCreationCount() == 0)
+    #expect(await application.pairingSession.phase == .idle)
     await application.finish()
 }
 

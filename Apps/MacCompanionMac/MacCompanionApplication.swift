@@ -673,7 +673,7 @@ private struct MacCompanionDashboardRoot: View {
                     }
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(pairingSheetPresented)
+                .disabled(pairingSheetPresented || !pairingPermitted)
             }
             .padding(16)
         }
@@ -772,4 +772,11 @@ private struct MacCompanionDashboardRoot: View {
     }
 
     private var source: MacAgentDashboardSourceV0 { application.source }
+
+    private var pairingPermitted: Bool {
+        MacAgentDashboardActionPolicyV0.isEnabled(
+            .startPairing,
+            in: source
+        )
+    }
 }
