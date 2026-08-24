@@ -178,6 +178,12 @@ public final class MacCompanionDashboardApplicationV1 {
     @ObservationIgnored
     private let stateRelay: MacCompanionDashboardStateRelayV1
     @ObservationIgnored
+    private let pairingRelay: MacCompanionPairingStateRelayV1?
+    @ObservationIgnored
+    private let reviewRelay: MacCompanionPairingReviewStateRelayV1?
+    @ObservationIgnored
+    private let recoveryRelay: MacCompanionRecoveryStateRelayV1?
+    @ObservationIgnored
     private let pairingOwner: MacPairingApplicationOwnerV0?
     @ObservationIgnored
     private let pairingReviewOwner: MacPairingReviewApplicationOwnerV0?
@@ -380,6 +386,43 @@ public final class MacCompanionDashboardApplicationV1 {
         )
     }
 
+    /// Test composition that exercises the same retained pairing-state relay
+    /// used by the release application without opening a real local-XPC
+    /// connection.
+    package convenience init(
+        testingPairingStateRelay: Void,
+        productFactory: (
+            MacAgentDashboardApplicationOwnerV0
+        ) -> any MacCompanionDashboardProductV1
+    ) {
+        let dashboardRelay = MacCompanionDashboardStateRelayV1()
+        let dashboardOwner = MacAgentDashboardApplicationOwnerV0 {
+            [weak dashboardRelay] source in
+            await dashboardRelay?.receive(source)
+        }
+        let product = productFactory(dashboardOwner)
+        let commandProxy = MacCompanionPairingCommandProxyV1()
+        let pairingRelay = MacCompanionPairingStateRelayV1()
+        let pairingOwner = MacPairingApplicationOwnerV0(
+            client: commandProxy,
+            stateChanged: { [weak pairingRelay] in
+                await pairingRelay?.receive($0)
+            }
+        )
+        self.init(
+            product: product,
+            stateRelay: dashboardRelay,
+            pairingOwner: pairingOwner,
+            pairingReviewOwner: nil,
+            recoveryOwner: nil,
+            pairingRelay: pairingRelay,
+            reviewRelay: nil,
+            recoveryRelay: nil,
+            interactiveDisplaySelection: nil
+        )
+        commandProxy.install(product)
+    }
+
     private init(
         product: any MacCompanionDashboardProductV1,
         stateRelay: MacCompanionDashboardStateRelayV1,
@@ -394,6 +437,9 @@ public final class MacCompanionDashboardApplicationV1 {
     ) {
         self.product = product
         self.stateRelay = stateRelay
+        self.pairingRelay = pairingRelay
+        self.reviewRelay = reviewRelay
+        self.recoveryRelay = recoveryRelay
         self.pairingOwner = pairingOwner
         self.pairingReviewOwner = pairingReviewOwner
         self.recoveryOwner = recoveryOwner

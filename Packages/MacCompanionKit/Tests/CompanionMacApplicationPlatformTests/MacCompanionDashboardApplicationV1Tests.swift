@@ -1,4 +1,5 @@
 #if os(macOS)
+import CompanionIPC
 import CompanionLocalXPCPlatform
 import CompanionMacApp
 @testable import CompanionMacApplicationPlatform
@@ -62,6 +63,7 @@ private final class DashboardApplicationTestProductV1:
     private var drains = 0
     private var reopens = 0
     private var finishes = 0
+    private var pairingCreations = 0
 
     init(
         owner: MacAgentDashboardApplicationOwnerV0,
@@ -101,6 +103,13 @@ private final class DashboardApplicationTestProductV1:
         lock.withLock { reopens += 1 }
     }
 
+    func createPairingSession(
+        _: LocalPairingSessionCreateCommandV0
+    ) async throws -> LocalPairingSessionCreatedReceiptV0 {
+        lock.withLock { pairingCreations += 1 }
+        throw MacLocalXPCMenuPairingCommandErrorV1.unavailable
+    }
+
     func finish() async {
         let shouldSuspend = lock.withLock {
             finishes += 1
@@ -129,6 +138,10 @@ private final class DashboardApplicationTestProductV1:
 
     func reopenCount() -> Int { lock.withLock { reopens } }
 
+    func pairingCreationCount() -> Int {
+        lock.withLock { pairingCreations }
+    }
+
     func updateCommandCounts() -> (closes: Int, drains: Int, reopens: Int) {
         lock.withLock { (closes, drains, reopens) }
     }
@@ -143,14 +156,16 @@ private func makeDashboardApplicationV1(
 ) {
     await MainActor.run {
         var product: DashboardApplicationTestProductV1?
-        let application = MacCompanionDashboardApplicationV1 { owner in
-            let value = DashboardApplicationTestProductV1(
-                owner: owner,
-                behavior: behavior
-            )
-            product = value
-            return value
-        }
+        let application = MacCompanionDashboardApplicationV1(
+            productFactory: { owner in
+                let value = DashboardApplicationTestProductV1(
+                    owner: owner,
+                    behavior: behavior
+                )
+                product = value
+                return value
+            }
+        )
         return (application, product!)
     }
 }
@@ -192,6 +207,39 @@ func explicitStartPublishesOnlyOwnerProducedLoadingAndEnablesRetry()
     #expect(await application.source == .unavailable)
     #expect(await application.retryStatus() == .notCompleted)
     #expect(product.snapshot() == (1, 1, 1))
+}
+
+@Test
+@available(macOS 26.0, *)
+func pairingStateRelayRemainsAliveForApplicationLifetime() async throws {
+    let (application, product): (
+        MacCompanionDashboardApplicationV1,
+        DashboardApplicationTestProductV1
+    ) = await MainActor.run {
+        var product: DashboardApplicationTestProductV1?
+        let application = MacCompanionDashboardApplicationV1(
+            testingPairingStateRelay: (),
+            productFactory: { owner in
+                let value = DashboardApplicationTestProductV1(owner: owner)
+                product = value
+                return value
+            }
+        )
+        return (application, product!)
+    }
+
+    try await application.start()
+    await application.beginPairing()
+
+    #expect(product.pairingCreationCount() == 1)
+    let phase = await application.pairingSession.phase
+    let creationFailed = if case .creationFailed = phase {
+        true
+    } else {
+        false
+    }
+    #expect(creationFailed)
+    await application.finish()
 }
 
 @Test
@@ -317,11 +365,11 @@ func deinitBeginsBestEffortCleanupWithoutStartingTransport() async {
     let product: DashboardApplicationTestProductV1 = await MainActor.run {
         var retained: DashboardApplicationTestProductV1?
         var application: MacCompanionDashboardApplicationV1? =
-            MacCompanionDashboardApplicationV1 { owner in
+            MacCompanionDashboardApplicationV1(productFactory: { owner in
                 let value = DashboardApplicationTestProductV1(owner: owner)
                 retained = value
                 return value
-            }
+            })
         #expect(application?.source == .unavailable)
         application = nil
         return retained!
