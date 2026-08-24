@@ -98,6 +98,26 @@ let secretProof = Data(HMAC<SHA256>.authenticationCode(
 let pairingSignatureInput = ascii("MacCompanion/PairingSignature/v0.1") + transcriptDigest
 let pairingSignature = try sessionKey.signature(for: pairingSignatureInput)
 
+let pairingRecoveryTranscriptInput = ascii("MacCompanion/PairingRecovery/v0.1")
+    + lp(uuidBytes(pairingID))
+    + lp(hostFingerprint)
+    + lp(uuidBytes(clientID))
+    + lp(sessionPublicKey)
+    + lp(approvalPublicKey)
+    + lp(clientNonce)
+    + lp(serverNonce)
+    + u16be(0)
+    + u16be(1)
+let pairingRecoveryTranscriptDigest = Data(
+    SHA256.hash(data: pairingRecoveryTranscriptInput)
+)
+let pairingRecoverySignatureInput = ascii(
+    "MacCompanion/PairingRecoverySignature/v0.1"
+) + pairingRecoveryTranscriptDigest
+let pairingRecoverySignature = try sessionKey.signature(
+    for: pairingRecoverySignatureInput
+)
+
 let sasInput = ascii("MacCompanion/SAS/v0.1") + transcriptDigest
 let sasBytes = Data(HMAC<SHA256>.authenticationCode(
     for: sasInput,
@@ -125,6 +145,8 @@ let vector: [String: Any] = [
     "derived": [
         "sessionPublicKeyX963Base64URL": sessionPublicKey.base64URL,
         "approvalPublicKeyX963Base64URL": approvalPublicKey.base64URL,
+        "sessionPublicKeyFingerprintHex": Data(SHA256.hash(data: sessionPublicKey)).hex,
+        "approvalPublicKeyFingerprintHex": Data(SHA256.hash(data: approvalPublicKey)).hex,
         "authSigningInputHex": authSigningInput.hex,
         "authSigningInputSHA256Hex": Data(SHA256.hash(data: authSigningInput)).hex,
         "authSignatureRawBase64URL": authSignature.rawRepresentation.base64URL,
@@ -136,6 +158,11 @@ let vector: [String: Any] = [
         "pairingSignatureInputHex": pairingSignatureInput.hex,
         "pairingSignatureRawBase64URL": pairingSignature.rawRepresentation.base64URL,
         "pairingSignatureVerifies": sessionKey.publicKey.isValidSignature(pairingSignature, for: pairingSignatureInput),
+        "pairingRecoveryTranscriptInputHex": pairingRecoveryTranscriptInput.hex,
+        "pairingRecoveryTranscriptDigestHex": pairingRecoveryTranscriptDigest.hex,
+        "pairingRecoverySignatureInputHex": pairingRecoverySignatureInput.hex,
+        "pairingRecoverySignatureRawBase64URL": pairingRecoverySignature.rawRepresentation.base64URL,
+        "pairingRecoverySignatureVerifies": sessionKey.publicKey.isValidSignature(pairingRecoverySignature, for: pairingRecoverySignatureInput),
         "sasInputHex": sasInput.hex,
         "sasBytesHex": sasBytes.hex,
         "authenticationString": authenticationString,

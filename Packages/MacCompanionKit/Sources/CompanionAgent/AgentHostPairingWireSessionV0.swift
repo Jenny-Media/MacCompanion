@@ -8,7 +8,9 @@ import Foundation
 public enum AgentHostPairingWirePhaseV0: String, Equatable, Sendable {
     case awaitingBegin
     case processingBegin
+    case processingResume
     case awaitingProve
+    case awaitingResumeProve
     case publishingReview
     case awaitingLocalDecision
     case resolvingLocalDecision
@@ -159,6 +161,7 @@ public actor AgentHostPairingWireSessionV0 {
     public private(set) var phase: AgentHostPairingWirePhaseV0 = .awaitingBegin
 
     private let authority: any AgentHostPairingAuthorityV0
+    private let recovery: any AgentHostPairingRecoveryAuthorityV0
     private let decisions: any AgentHostPairingDecisionHandlingV0
     private let reviewPublisher: any AgentHostPairingReviewPublishingV0
     private let makeReviewID: @Sendable () -> UUID
@@ -171,12 +174,18 @@ public actor AgentHostPairingWireSessionV0 {
     private var proofMessageID: WireUUID?
     private var reviewID: UUID?
     private var pairingDeadlineMonotonicMilliseconds: UInt64?
+    private var recoveryRequest: PairingResumeBody?
+    private var recoveryHostNonce: Data?
+    private var recoverySelectedVersion: WireVersion?
+    private var isRecovery = false
 
     public init(
         hostID: UUID,
         tlsBinding: HostApplicationTLSBinding,
         acceptedAtMonotonicMilliseconds: UInt64,
         authority: any AgentHostPairingAuthorityV0,
+        recovery: any AgentHostPairingRecoveryAuthorityV0 =
+            UnavailableAgentHostPairingRecoveryAuthorityV0(),
         decisions: any AgentHostPairingDecisionHandlingV0,
         reviewPublisher: any AgentHostPairingReviewPublishingV0,
         makeReviewID: @escaping @Sendable () -> UUID = { UUID() }
@@ -192,6 +201,7 @@ public actor AgentHostPairingWireSessionV0 {
         self.hostID = hostID
         self.tlsBinding = tlsBinding
         self.authority = authority
+        self.recovery = recovery
         self.decisions = decisions
         self.reviewPublisher = reviewPublisher
         self.makeReviewID = makeReviewID
@@ -213,22 +223,40 @@ public actor AgentHostPairingWireSessionV0 {
             let kind = try WireCodec.messageKind(from: requestJSON)
             switch phase {
             case .awaitingBegin:
-                guard kind == .pairingBegin else {
-                    throw AgentHostPairingWireErrorV0
-                        .unexpectedMessage(kind)
+                switch kind {
+                case .pairingBegin:
+                    return try await receiveBegin(
+                        requestJSON,
+                        wallNowUnixMilliseconds: wallNowUnixMilliseconds,
+                        monotonicNowMilliseconds: monotonicNowMilliseconds,
+                        responseMessageID: responseMessageID
+                    )
+                case .pairingResume:
+                    return try await receiveResume(
+                        requestJSON,
+                        wallNowUnixMilliseconds: wallNowUnixMilliseconds,
+                        monotonicNowMilliseconds: monotonicNowMilliseconds,
+                        responseMessageID: responseMessageID
+                    )
+                default:
+                    throw AgentHostPairingWireErrorV0.unexpectedMessage(kind)
                 }
-                return try await receiveBegin(
-                    requestJSON,
-                    wallNowUnixMilliseconds: wallNowUnixMilliseconds,
-                    monotonicNowMilliseconds: monotonicNowMilliseconds,
-                    responseMessageID: responseMessageID
-                )
             case .awaitingProve:
                 guard kind == .pairingProve else {
                     throw AgentHostPairingWireErrorV0
                         .unexpectedMessage(kind)
                 }
                 return try await receiveProve(
+                    requestJSON,
+                    wallNowUnixMilliseconds: wallNowUnixMilliseconds,
+                    monotonicNowMilliseconds: monotonicNowMilliseconds,
+                    responseMessageID: responseMessageID
+                )
+            case .awaitingResumeProve:
+                guard kind == .pairingResumeProve else {
+                    throw AgentHostPairingWireErrorV0.unexpectedMessage(kind)
+                }
+                return try await receiveResumeProve(
                     requestJSON,
                     wallNowUnixMilliseconds: wallNowUnixMilliseconds,
                     monotonicNowMilliseconds: monotonicNowMilliseconds,
@@ -343,7 +371,8 @@ public actor AgentHostPairingWireSessionV0 {
 
     public func nextDeadlineMonotonicMilliseconds() -> UInt64? {
         switch phase {
-        case .awaitingBegin, .processingBegin, .awaitingProve,
+        case .awaitingBegin, .processingBegin, .processingResume,
+             .awaitingProve, .awaitingResumeProve,
              .publishingReview:
             return pairingDeadlineMonotonicMilliseconds
                 ?? connectionDeadlineMonotonicMilliseconds
@@ -523,6 +552,126 @@ public actor AgentHostPairingWireSessionV0 {
         ))
     }
 
+    private func receiveResume(
+        _ requestJSON: Data,
+        wallNowUnixMilliseconds: Int64,
+        monotonicNowMilliseconds: UInt64,
+        responseMessageID: WireUUID
+    ) async throws -> Data {
+        let request = try WireCodec.decode(
+            WireEnvelope<PairingResumeBody>.self,
+            from: requestJSON
+        )
+        try admitReplay(request.messageID)
+        try admitReplay(responseMessageID)
+        pairingID = request.body.pairingID.rawValue
+        clientID = request.body.clientID.rawValue
+        isRecovery = true
+        phase = .processingResume
+        do {
+            let challenge = try await recovery.beginPairingRecovery(
+                pairingID: request.body.pairingID.rawValue,
+                clientID: request.body.clientID.rawValue,
+                sessionPublicKeyX963: request.body.sessionPublicKey.rawValue,
+                approvalPublicKeyX963: request.body.approvalPublicKey.rawValue
+            )
+            guard phase == .processingResume else {
+                throw AgentHostPairingWireErrorV0.invalidPhase(phase)
+            }
+            let version = WireVersion(
+                major: challenge.selectedMajor,
+                minor: challenge.selectedMinor
+            )
+            recoveryRequest = request.body
+            recoveryHostNonce = challenge.hostNonce
+            recoverySelectedVersion = version
+            challengeMessageID = responseMessageID
+            phase = .awaitingResumeProve
+            return try WireCodec.encode(WireEnvelope(
+                messageID: responseMessageID,
+                correlationID: request.messageID,
+                sentAtUnixMilliseconds: wallNowUnixMilliseconds,
+                body: PairingResumeChallengeBody(
+                    hostNonce: try WireBytes32(challenge.hostNonce),
+                    selectedVersion: version,
+                    hostFingerprint: WireFingerprint(
+                        tlsBinding.hostFingerprint
+                    )
+                )
+            ))
+        } catch {
+            phase = .closed
+            clearTransientState()
+            return try errorResponse(
+                code: "pairing.alreadyConsumed",
+                retry: .afterUserAction,
+                correlationID: request.messageID,
+                messageID: responseMessageID,
+                sentAtUnixMilliseconds: wallNowUnixMilliseconds
+            )
+        }
+    }
+
+    private func receiveResumeProve(
+        _ requestJSON: Data,
+        wallNowUnixMilliseconds: Int64,
+        monotonicNowMilliseconds: UInt64,
+        responseMessageID: WireUUID
+    ) async throws -> Data {
+        let request = try WireCodec.decode(
+            WireEnvelope<PairingResumeProveBody>.self,
+            from: requestJSON
+        )
+        guard request.correlationID == challengeMessageID,
+              let resume = recoveryRequest,
+              let hostNonce = recoveryHostNonce,
+              let version = recoverySelectedVersion else {
+            throw AgentHostPairingWireErrorV0.invalidCorrelation
+        }
+        try admitReplay(request.messageID)
+        try admitReplay(responseMessageID)
+        do {
+            let completed = try await recovery.provePairingRecovery(
+                pairingID: resume.pairingID.rawValue,
+                clientID: resume.clientID.rawValue,
+                sessionPublicKeyX963: resume.sessionPublicKey.rawValue,
+                approvalPublicKeyX963: resume.approvalPublicKey.rawValue,
+                clientNonce: resume.clientNonce.rawValue,
+                hostNonce: hostNonce,
+                hostFingerprint: tlsBinding.hostFingerprint,
+                selectedMajor: version.major,
+                selectedMinor: version.minor,
+                signature: request.body.signature.rawValue
+            )
+            let response = try WireEnvelope(
+                messageID: responseMessageID,
+                correlationID: request.messageID,
+                sentAtUnixMilliseconds: wallNowUnixMilliseconds,
+                body: PairingCompleteBody(
+                    hostID: WireUUID(hostID),
+                    deviceID: WireUUID(completed.deviceID),
+                    policyRevision: completed.policyRevision,
+                    hostFingerprint: WireFingerprint(
+                        tlsBinding.hostFingerprint
+                    )
+                )
+            )
+            phase = .completed
+            clearTransientState()
+            return try WireCodec.encode(response)
+        } catch {
+            phase = .closed
+            clearTransientState()
+            return try errorResponse(
+                code: "pairing.invalidProof",
+                retry: .never,
+                correlationID: request.messageID,
+                messageID: responseMessageID,
+                sentAtUnixMilliseconds: wallNowUnixMilliseconds
+            )
+        }
+    }
+
     private func observe(
         wallNowUnixMilliseconds: Int64,
         monotonicNowMilliseconds: UInt64
@@ -635,7 +784,7 @@ public actor AgentHostPairingWireSessionV0 {
                     min(monotonicNowMilliseconds, UInt64(Int64.max))
                 )
             )
-        } else if let pairingID {
+        } else if let pairingID, !isRecovery {
             try? await authority.cancelHostPairing(
                 pairingID: pairingID,
                 monotonicNowMilliseconds: Int64(
@@ -653,6 +802,10 @@ public actor AgentHostPairingWireSessionV0 {
         proofMessageID = nil
         reviewID = nil
         pairingDeadlineMonotonicMilliseconds = nil
+        recoveryRequest = nil
+        recoveryHostNonce = nil
+        recoverySelectedVersion = nil
+        isRecovery = false
     }
 
 }

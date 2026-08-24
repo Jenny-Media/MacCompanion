@@ -49,6 +49,8 @@ public enum CompanionSecurityV0 {
     private static let pairingDomain = Data("MacCompanion/Pairing/v0.1".utf8)
     private static let pairingProofDomain = Data("MacCompanion/PairingProof/v0.1".utf8)
     private static let pairingSignatureDomain = Data("MacCompanion/PairingSignature/v0.1".utf8)
+    private static let pairingRecoveryDomain = Data("MacCompanion/PairingRecovery/v0.1".utf8)
+    private static let pairingRecoverySignatureDomain = Data("MacCompanion/PairingRecoverySignature/v0.1".utf8)
     private static let sasDomain = Data("MacCompanion/SAS/v0.1".utf8)
     private static let interactiveApprovalDomain = Data("MacCompanion/InteractiveApproval/v0.1".utf8)
     private static let interactiveChannelDomain = Data("MacCompanion/InteractiveChannel/v0.1".utf8)
@@ -153,6 +155,54 @@ public enum CompanionSecurityV0 {
     public static func pairingSignatureInput(transcriptDigest: Data) throws -> Data {
         try requireLength(transcriptDigest, field: "transcriptDigest", expected: 32)
         return pairingSignatureDomain + transcriptDigest
+    }
+
+    public static func pairingRecoveryTranscriptInput(
+        pairingID: UUID,
+        hostFingerprint: Data,
+        clientID: UUID,
+        sessionPublicKeyX963: Data,
+        approvalPublicKeyX963: Data,
+        clientNonce: Data,
+        hostNonce: Data,
+        selectedMajor: UInt16,
+        selectedMinor: UInt16
+    ) throws -> Data {
+        try requireVersion(major: selectedMajor, minor: selectedMinor)
+        try requireLength(hostFingerprint, field: "hostFingerprint", expected: 32)
+        try validatePublicKey(sessionPublicKeyX963)
+        try validatePublicKey(approvalPublicKeyX963)
+        try requireLength(clientNonce, field: "clientNonce", expected: 32)
+        try requireLength(hostNonce, field: "hostNonce", expected: 32)
+
+        var result = pairingRecoveryDomain
+        result.append(lengthPrefixed(uuidBytes(pairingID)))
+        result.append(lengthPrefixed(hostFingerprint))
+        result.append(lengthPrefixed(uuidBytes(clientID)))
+        result.append(lengthPrefixed(sessionPublicKeyX963))
+        result.append(lengthPrefixed(approvalPublicKeyX963))
+        result.append(lengthPrefixed(clientNonce))
+        result.append(lengthPrefixed(hostNonce))
+        result.append(u16BE(selectedMajor))
+        result.append(u16BE(selectedMinor))
+        return result
+    }
+
+    public static func pairingRecoveryTranscriptDigest(
+        _ transcriptInput: Data
+    ) -> Data {
+        Data(SHA256.hash(data: transcriptInput))
+    }
+
+    public static func pairingRecoverySignatureInput(
+        transcriptDigest: Data
+    ) throws -> Data {
+        try requireLength(
+            transcriptDigest,
+            field: "recoveryTranscriptDigest",
+            expected: 32
+        )
+        return pairingRecoverySignatureDomain + transcriptDigest
     }
 
     public static func verifySignature(

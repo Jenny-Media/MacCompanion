@@ -134,20 +134,39 @@ If no outcome exists, polling mutates no replay or completion state. A delayed
 poll may still deliver an already-durable approval; it may not resurrect an
 uncommitted expired review.
 
-v0.1 does not claim cross-connection completion recovery. If the durable Mac
-commit succeeds but the completion frame is lost, the Mac may retain one
-locally visible Monitor Only device while the phone remains unpaired. The
-service grants no Act or Control authority, does not silently merge a later
-pairing, and requires the Mac user to remove that orphaned device before a
-fresh pairing. A later minor version may add a fixture-backed exact-key
-completion-resume flow; it must not infer success from a reused QR or client
-ID alone.
+### Lost-completion recovery
+
+v0.1 supports a narrowly bounded, cross-connection recovery path for the one
+case where the Mac durably committed pairing but the client did not receive or
+publish `pairing.complete`. Recovery does not create a device, repeat local
+approval, change grants, or consume a new QR invitation.
+
+The client retains the original prepared session and approval keys plus the
+original pairing and client IDs until either paired-host publication succeeds
+or the user explicitly forgets the pending attempt. On a fresh pinned-TLS
+pairing connection it sends `pairing.resume` containing those four exact
+identity facts and a fresh client nonce. The Mac returns
+`pairing.resumeChallenge` with a fresh host nonce, its pinned fingerprint, and
+the selected version. The client signs the normative recovery transcript with
+the original session key and sends `pairing.resumeProve`, correlated to the
+challenge. A valid response is the original `pairing.complete`, correlated to
+that proof.
+
+The Mac returns completion only when `pairing_consumptions` durably links the
+pairing ID to a device whose client ID, session public key, and approval public
+key exactly match the resume request, and the fresh recovery signature
+verifies with that stored session key. A missing, revoked, mismatched, or
+partially committed record fails closed. The Mac must not infer success from a
+QR, pairing ID, client ID, network address, prior TLS connection, or any subset
+of the two keys. Recovery is idempotent and returns the same host ID, device
+ID, fingerprint, authorization epoch, grant revision, and policy revision; it
+never expands Monitor Only authority.
 
 The live socket boundary is defined by `host-listener-ingress.md`. In
-particular, a `pairing.begin` first frame selects the pairing role but grants
-nothing, and a pairing candidate cannot replace an active authenticated
-application-primary connection.
+particular, a `pairing.begin` or `pairing.resume` first frame selects the
+pairing role but grants nothing, and a pairing candidate cannot replace an
+active authenticated application-primary connection.
 
 ## Acceptance boundary
 
-Bundle-independent acceptance requires proof/signature verification, SAS and final monitor-only convergence, no pre-pin bytes, challenge pin mismatch, transcript/SAS/expiry mismatch, completion correlation/fingerprint mismatch, remote denial, exact connection/deadline propagation, cancellation fencing, atomic device/name commit convergence, silent exact-deadline tests, immutable-pin route racing, fragmented and malformed framing, late-winner cleanup, inert network-factory construction, strict local review/decision payloads, stale/mismatched/replayed local-decision rejection, trusted-local review publication before pending, server-initiated durable completion, decline/expiry error closure, and disconnect/publication-race cancellation. Release acceptance additionally requires QR capture/presentation, Keychain-backed keys, atomic client record persistence, live pinned transport, authenticated local approval IPC/UI, restart recovery, and physical-device exchange.
+Bundle-independent acceptance requires proof/signature verification, SAS and final monitor-only convergence, no pre-pin bytes, challenge pin mismatch, transcript/SAS/expiry mismatch, completion correlation/fingerprint mismatch, remote denial, exact connection/deadline propagation, cancellation fencing, atomic device/name commit convergence, silent exact-deadline tests, immutable-pin route racing, fragmented and malformed framing, late-winner cleanup, inert network-factory construction, strict local review/decision payloads, stale/mismatched/replayed local-decision rejection, trusted-local review publication before pending, server-initiated durable completion, decline/expiry error closure, disconnect/publication-race cancellation, and exact-key lost-completion recovery through authenticated reconnect. Release acceptance additionally requires QR capture/presentation, Keychain-backed keys, durable pending-attempt persistence, atomic client record persistence, live pinned transport, authenticated local approval IPC/UI, restart recovery, and physical-device exchange.

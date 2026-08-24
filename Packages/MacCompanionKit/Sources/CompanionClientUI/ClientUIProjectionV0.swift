@@ -8,6 +8,7 @@ public enum ClientPairingSurfaceV0: Equatable, Sendable {
     case preview(PairingScanPreview)
     case securing(PairingSecurityProgress)
     case compareOnMac(PairingAuthenticationPresentation)
+    case recovering(PairingAuthenticationPresentation)
     case saving
     case paired(PairedHostPresentation)
     case failed(PairingClientPresentationFailure)
@@ -27,6 +28,9 @@ public enum ClientPairingSurfaceV0: Equatable, Sendable {
             )
         case .compareOnMac:
             self = presentation.authentication.map(Self.compareOnMac)
+                ?? .failed(.unknown)
+        case .recovering:
+            self = presentation.authentication.map(Self.recovering)
                 ?? .failed(.unknown)
         case .saving:
             self = .saving

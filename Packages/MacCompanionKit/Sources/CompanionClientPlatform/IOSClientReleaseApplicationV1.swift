@@ -358,7 +358,7 @@ public final class IOSClientReleaseApplicationV1 {
                 )
             }
         case .scanning, .preview, .starting, .securing, .compareOnMac,
-             .saving:
+             .recovering, .saving:
             break
         }
     }

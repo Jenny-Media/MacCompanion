@@ -197,6 +197,107 @@ public struct PairingProveBody: WireBody {
     public func validate() throws {}
 }
 
+public struct PairingResumeBody: WireBody {
+    public static let kind = WireMessageKind.pairingResume
+    private enum CodingKeys: String, CodingKey {
+        case pairingID, clientID, sessionPublicKey, approvalPublicKey, clientNonce
+    }
+
+    public let pairingID: WireUUID
+    public let clientID: WireUUID
+    public let sessionPublicKey: WireBytes65
+    public let approvalPublicKey: WireBytes65
+    public let clientNonce: WireBytes32
+
+    public init(
+        pairingID: WireUUID,
+        clientID: WireUUID,
+        sessionPublicKey: WireBytes65,
+        approvalPublicKey: WireBytes65,
+        clientNonce: WireBytes32
+    ) {
+        self.pairingID = pairingID
+        self.clientID = clientID
+        self.sessionPublicKey = sessionPublicKey
+        self.approvalPublicKey = approvalPublicKey
+        self.clientNonce = clientNonce
+    }
+
+    public init(from decoder: Decoder) throws {
+        try requireExactKeys(decoder, [
+            "pairingID", "clientID", "sessionPublicKey",
+            "approvalPublicKey", "clientNonce",
+        ])
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        pairingID = try container.decode(WireUUID.self, forKey: .pairingID)
+        clientID = try container.decode(WireUUID.self, forKey: .clientID)
+        sessionPublicKey = try container.decode(WireBytes65.self, forKey: .sessionPublicKey)
+        approvalPublicKey = try container.decode(WireBytes65.self, forKey: .approvalPublicKey)
+        clientNonce = try container.decode(WireBytes32.self, forKey: .clientNonce)
+    }
+
+    public func validate() throws {}
+}
+
+public struct PairingResumeChallengeBody: WireBody {
+    public static let kind = WireMessageKind.pairingResumeChallenge
+    private enum CodingKeys: String, CodingKey {
+        case hostNonce, selectedVersion, hostFingerprint
+    }
+
+    public let hostNonce: WireBytes32
+    public let selectedVersion: WireVersion
+    public let hostFingerprint: WireFingerprint
+
+    public init(
+        hostNonce: WireBytes32,
+        selectedVersion: WireVersion = .init(),
+        hostFingerprint: WireFingerprint
+    ) throws {
+        self.hostNonce = hostNonce
+        self.selectedVersion = selectedVersion
+        self.hostFingerprint = hostFingerprint
+        try validate()
+    }
+
+    public init(from decoder: Decoder) throws {
+        try requireExactKeys(decoder, [
+            "hostNonce", "selectedVersion", "hostFingerprint",
+        ])
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        hostNonce = try container.decode(WireBytes32.self, forKey: .hostNonce)
+        selectedVersion = try container.decode(WireVersion.self, forKey: .selectedVersion)
+        hostFingerprint = try container.decode(WireFingerprint.self, forKey: .hostFingerprint)
+        try validate()
+    }
+
+    public func validate() throws {
+        guard selectedVersion == WireVersion() else {
+            throw WireError.unsupportedVersion(
+                major: selectedVersion.major,
+                minor: selectedVersion.minor
+            )
+        }
+    }
+}
+
+public struct PairingResumeProveBody: WireBody {
+    public static let kind = WireMessageKind.pairingResumeProve
+    public let signature: WireBytes64
+
+    public init(signature: WireBytes64) {
+        self.signature = signature
+    }
+
+    public init(from decoder: Decoder) throws {
+        try requireExactKeys(decoder, ["signature"])
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        signature = try container.decode(WireBytes64.self, forKey: .signature)
+    }
+
+    public func validate() throws {}
+}
+
 public struct PairingPendingApprovalBody: WireBody {
     public static let kind = WireMessageKind.pairingPendingApproval
     private enum CodingKeys: String, CodingKey {

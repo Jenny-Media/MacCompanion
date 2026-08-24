@@ -95,6 +95,21 @@ public struct ClientPairingViewV0: View {
                 .accessibilityValue(authentication.authenticationString)
             Button("Cancel", role: .cancel, action: onCancel)
 
+        case let .recovering(authentication):
+            ProgressView()
+                .controlSize(.large)
+                .accessibilityLabel("Recovering secure pairing")
+            heading(
+                "Finishing secure pairing…",
+                detail: "The Mac saved your approval. Mac Companion is reconnecting with the same verified keys; no new code or approval is needed."
+            )
+            Text(authentication.authenticationString)
+                .font(.system(.title2, design: .monospaced).weight(.semibold))
+                .foregroundStyle(.secondary)
+                .accessibilityLabel("Previously verified authentication code")
+                .accessibilityValue(authentication.authenticationString)
+            Button("Cancel", role: .cancel, action: onCancel)
+
         case .saving:
             ProgressView("Saving this Mac securely…")
                 .controlSize(.large)

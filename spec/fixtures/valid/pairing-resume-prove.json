@@ -1,0 +1,11 @@
+{
+  "version": { "major": 0, "minor": 1 },
+  "messageID": "018f0000-0000-7000-8000-000000002103",
+  "correlationID": "018f0000-0000-7000-8000-000000002102",
+  "channel": "command",
+  "kind": "pairing.resumeProve",
+  "sentAtUnixMilliseconds": 1787198402020,
+  "body": {
+    "signature": "3hxbqJ_ek-kAYjZWkr96hYjqBfEkWdYERkslQsEzPNF08nF3eesf7sLXVUqLCPg09YbIEkYMmLHjyywqnMre3w"
+  }
+}

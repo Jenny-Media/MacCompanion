@@ -74,6 +74,9 @@ public enum WireMessageKind: String, Codable, CaseIterable, Sendable {
     case pairingProve = "pairing.prove"
     case pairingPendingApproval = "pairing.pendingApproval"
     case pairingComplete = "pairing.complete"
+    case pairingResume = "pairing.resume"
+    case pairingResumeChallenge = "pairing.resumeChallenge"
+    case pairingResumeProve = "pairing.resumeProve"
     case statusSnapshotRequest = "status.snapshot.request"
     case statusSnapshotResponse = "status.snapshot.response"
     case capabilityRegistryRequest = "capability.registry.request"
@@ -211,7 +214,7 @@ public struct WireEnvelope<Body: WireBody>: Codable, Equatable, Sendable {
                 throw WireError.invalidFrame(reason: "event on command channel")
             }
             switch kind {
-            case .authHello, .pairingBegin, .routeObservation,
+            case .authHello, .pairingBegin, .pairingResume, .routeObservation,
                  .statusSnapshotRequest,
                  .capabilityRegistryRequest, .auditListRequest, .keepalivePing,
                  .interactiveSessionRequest, .interactiveSessionEnd,
@@ -352,7 +355,7 @@ public struct WireRoutingMetadata: Equatable, Sendable {
                 )
             }
             switch parsedKind {
-            case .authHello, .pairingBegin, .routeObservation,
+            case .authHello, .pairingBegin, .pairingResume, .routeObservation,
                  .statusSnapshotRequest, .capabilityRegistryRequest,
                  .auditListRequest, .keepalivePing,
                  .interactiveSessionRequest, .interactiveSessionEnd,

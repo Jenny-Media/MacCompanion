@@ -75,6 +75,34 @@ The client session identity key signs `pairingSignatureInput` directly with ECDS
 
 The authentication string is the first three bytes of `sasBytes`, rendered as six uppercase hexadecimal characters grouped `XXX-XXX`. Both devices compare the same value; it is display-only and is never accepted as a protocol proof.
 
+## Pairing completion recovery
+
+`pairingRecoveryTranscriptInput` is:
+
+```text
+ASCII("MacCompanion/PairingRecovery/v0.1") ||
+LP(pairingID.uuidBytes) ||
+LP(hostFingerprint.32Bytes) ||
+LP(clientID.uuidBytes) ||
+LP(sessionPublicKey.x963Bytes) ||
+LP(approvalPublicKey.x963Bytes) ||
+LP(clientNonce.32Bytes) ||
+LP(hostNonce.32Bytes) ||
+U16BE(selectedMajor) || U16BE(selectedMinor)
+```
+
+`recoveryTranscriptDigest = SHA256(pairingRecoveryTranscriptInput)`.
+
+`pairingRecoverySignatureInput = ASCII("MacCompanion/PairingRecoverySignature/v0.1") || recoveryTranscriptDigest`.
+
+The original client session identity key signs
+`pairingRecoverySignatureInput` directly with ECDSA-P256-SHA256.
+`pairing.resumeProve.signature` is the raw 64-byte signature. Both nonces are
+fresh for every recovery connection. The Mac verifies the signature only
+after locating the pairing consumption and comparing the complete stored
+client/key tuple; a cryptographically valid signature for any different tuple
+does not authorize recovery.
+
 ## Golden vectors
 
-`spec/fixtures/crypto/v0.1.json` supplies fixed private keys, public keys, inputs, digests, proofs, and example signatures. Fixed private keys exist only as public conformance data and must never be used by a product build. Cross-implementation conformance requires exact input/digest/HMAC parity and successful verification of the supplied signatures; ECDSA signers need not reproduce identical randomized signature bytes.
+`spec/fixtures/crypto/v0.1.json` supplies fixed private keys, public keys, inputs, digests, proofs, recovery inputs, and example signatures. Fixed private keys exist only as public conformance data and must never be used by a product build. Cross-implementation conformance requires exact input/digest/HMAC parity and successful verification of the supplied signatures; ECDSA signers need not reproduce identical randomized signature bytes.

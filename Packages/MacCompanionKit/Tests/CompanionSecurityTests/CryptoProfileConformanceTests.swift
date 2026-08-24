@@ -30,6 +30,10 @@ private struct CryptoVector: Decodable {
         let pairingSignatureRawBase64URL: String
         let pairingTranscriptDigestHex: String
         let pairingTranscriptInputHex: String
+        let pairingRecoverySignatureInputHex: String
+        let pairingRecoverySignatureRawBase64URL: String
+        let pairingRecoveryTranscriptDigestHex: String
+        let pairingRecoveryTranscriptInputHex: String
         let sasBytesHex: String
         let sasInputHex: String
         let secretProofHex: String
@@ -132,6 +136,32 @@ private struct CryptoVector: Decodable {
     #expect(try CompanionSecurityV0.verifySignature(
         rawSignature: Data(base64URL: vector.derived.pairingSignatureRawBase64URL),
         signingInput: pairingSignatureInput,
+        publicKeyX963: sessionPublicKey
+    ))
+
+    let recoveryTranscript = try CompanionSecurityV0.pairingRecoveryTranscriptInput(
+        pairingID: vector.inputs.pairingID,
+        hostFingerprint: hostFingerprint,
+        clientID: vector.inputs.clientID,
+        sessionPublicKeyX963: sessionPublicKey,
+        approvalPublicKeyX963: approvalPublicKey,
+        clientNonce: clientNonce,
+        hostNonce: serverNonce,
+        selectedMajor: vector.inputs.selectedMajor,
+        selectedMinor: vector.inputs.selectedMinor
+    )
+    #expect(recoveryTranscript == Data(hex: vector.derived.pairingRecoveryTranscriptInputHex))
+    let recoveryDigest = CompanionSecurityV0.pairingRecoveryTranscriptDigest(
+        recoveryTranscript
+    )
+    #expect(recoveryDigest == Data(hex: vector.derived.pairingRecoveryTranscriptDigestHex))
+    let recoverySigningInput = try CompanionSecurityV0.pairingRecoverySignatureInput(
+        transcriptDigest: recoveryDigest
+    )
+    #expect(recoverySigningInput == Data(hex: vector.derived.pairingRecoverySignatureInputHex))
+    #expect(try CompanionSecurityV0.verifySignature(
+        rawSignature: Data(base64URL: vector.derived.pairingRecoverySignatureRawBase64URL),
+        signingInput: recoverySigningInput,
         publicKeyX963: sessionPublicKey
     ))
 

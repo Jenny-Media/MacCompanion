@@ -23,6 +23,7 @@ public enum PairingClientPresentationPhase: String, Codable, CaseIterable, Senda
     case starting
     case securing
     case compareOnMac
+    case recovering
     case saving
     case paired
     case failed
@@ -262,11 +263,15 @@ public struct PairingClientPresentation: Equatable, Sendable {
         host: ClientPairedHostV0,
         commitID: UUID
     ) throws -> PairedHostCommitIntent {
-        try requireAttempt(
-            phase: .compareOnMac,
-            requestID: requestID,
-            pairingID: host.pairingID
-        )
+        guard phase == .compareOnMac || phase == .recovering else {
+            throw PairingClientPresentationError.invalidPhase
+        }
+        guard self.requestID == requestID else {
+            throw PairingClientPresentationError.staleRequest
+        }
+        guard preview?.pairingID == host.pairingID else {
+            throw PairingClientPresentationError.pairingMismatch
+        }
         guard verifiedApproval?.pairingID == host.pairingID,
               host.deviceState == .activeMonitorOnly,
               host.authorizationEpoch.rawValue == 1,
@@ -282,6 +287,18 @@ public struct PairingClientPresentation: Equatable, Sendable {
             commitID: commitID,
             host: host
         )
+    }
+
+    public mutating func completionRecoveryStarted(
+        requestID: UUID,
+        pairingID: UUID
+    ) throws {
+        try requireAttempt(
+            phase: .compareOnMac,
+            requestID: requestID,
+            pairingID: pairingID
+        )
+        phase = .recovering
     }
 
     public mutating func durableCommitSucceeded(

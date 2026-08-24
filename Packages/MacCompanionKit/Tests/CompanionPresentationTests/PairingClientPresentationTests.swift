@@ -248,6 +248,30 @@ private func verifiedPairingPresentation() throws -> PairingClientPresentation {
     #expect(value.preview == nil)
 }
 
+@Test func lostCompletionRecoveryRemainsVisibleAndAcceptsOnlyExactAttempt() throws {
+    var value = try verifiedPairingPresentation()
+    try value.completionRecoveryStarted(
+        requestID: presentationRequestID,
+        pairingID: presentationPairingID
+    )
+    #expect(value.phase == .recovering)
+    #expect(value.authentication?.authenticationString == "12A-4BC")
+
+    #expect(throws: PairingClientPresentationError.invalidPhase) {
+        try value.completionRecoveryStarted(
+            requestID: presentationRequestID,
+            pairingID: presentationPairingID
+        )
+    }
+    let host = pairingPresentationHost()
+    _ = try value.receiveVerifiedCompletion(
+        requestID: presentationRequestID,
+        host: host,
+        commitID: UUID()
+    )
+    #expect(value.phase == .saving)
+}
+
 @Test func failureClearsSASAndAllAttemptPresentation() throws {
     var value = try verifiedPairingPresentation()
     try value.fail(.hostRejected)

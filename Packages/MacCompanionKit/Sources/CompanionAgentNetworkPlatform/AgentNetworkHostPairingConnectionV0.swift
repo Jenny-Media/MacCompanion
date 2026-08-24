@@ -28,13 +28,14 @@ public actor AgentNetworkHostPairingSessionAdapterV0:
         let phase = await owner.phase
         let disposition: NetworkHostPairingResponseDispositionV0
         switch phase {
-        case .awaitingProve:
+        case .awaitingProve, .awaitingResumeProve:
             disposition = .awaitPeer
         case .awaitingLocalDecision:
             disposition = .awaitLocalDecision
         case .completed, .closed:
             disposition = .terminal
-        case .awaitingBegin, .processingBegin, .publishingReview,
+        case .awaitingBegin, .processingBegin, .processingResume,
+             .publishingReview,
              .resolvingLocalDecision:
             throw AgentHostPairingWireErrorV0.invalidPhase(phase)
         }
@@ -92,6 +93,7 @@ public struct AgentNetworkHostPairingConnectionV0: Sendable {
 public struct AgentNetworkHostPairingConnectionFactoryV0: Sendable {
     private let hostID: UUID
     private let authority: any AgentHostPairingAuthorityV0
+    private let recovery: any AgentHostPairingRecoveryAuthorityV0
     private let decisions: any AgentHostPairingDecisionHandlingV0
     private let reviewPublisher: any AgentHostPairingReviewPublishingV0
     private let makeReviewID: @Sendable () -> UUID
@@ -99,12 +101,15 @@ public struct AgentNetworkHostPairingConnectionFactoryV0: Sendable {
     package init(
         hostID: UUID,
         authority: any AgentHostPairingAuthorityV0,
+        recovery: any AgentHostPairingRecoveryAuthorityV0 =
+            UnavailableAgentHostPairingRecoveryAuthorityV0(),
         decisions: any AgentHostPairingDecisionHandlingV0,
         reviewPublisher: any AgentHostPairingReviewPublishingV0,
         makeReviewID: @escaping @Sendable () -> UUID = { UUID() }
     ) {
         self.hostID = hostID
         self.authority = authority
+        self.recovery = recovery
         self.decisions = decisions
         self.reviewPublisher = reviewPublisher
         self.makeReviewID = makeReviewID
@@ -121,6 +126,7 @@ public struct AgentNetworkHostPairingConnectionFactoryV0: Sendable {
         self.init(
             hostID: hostID,
             authority: pairingServices.authority,
+            recovery: pairingServices.recovery,
             decisions: pairingServices.decisions,
             reviewPublisher: pairingServices.reviews,
             makeReviewID: makeReviewID
@@ -142,6 +148,7 @@ public struct AgentNetworkHostPairingConnectionFactoryV0: Sendable {
             acceptedAtMonotonicMilliseconds:
                 acceptedAtMonotonicMilliseconds,
             authority: authority,
+            recovery: recovery,
             decisions: decisions,
             reviewPublisher: reviewPublisher,
             makeReviewID: makeReviewID

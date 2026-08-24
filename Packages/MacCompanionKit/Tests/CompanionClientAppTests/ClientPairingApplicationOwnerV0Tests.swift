@@ -231,9 +231,13 @@ private actor ClientAppConnectionProbe: ClientPairingConnectionV0 {
     private let mismatchedPin: Bool
     private let failConnect: Bool
     private let suspendCompletion: Bool
+    private let dropCompletion: Bool
+    private let recoveryMode: Bool
     private var closed = false
     private var responses: [Data] = []
     private var begin: WireEnvelope<PairingBeginBody>?
+    private var resume: WireEnvelope<PairingResumeBody>?
+    private var resumeChallengeID: WireUUID?
     private var receiveCount = 0
     private var completionWaiter: CheckedContinuation<Data, any Error>?
     private var completionStarted = false
@@ -243,11 +247,15 @@ private actor ClientAppConnectionProbe: ClientPairingConnectionV0 {
     init(
         mismatchedPin: Bool = false,
         failConnect: Bool = false,
-        suspendCompletion: Bool = false
+        suspendCompletion: Bool = false,
+        dropCompletion: Bool = false,
+        recoveryMode: Bool = false
     ) {
         self.mismatchedPin = mismatchedPin
         self.failConnect = failConnect
         self.suspendCompletion = suspendCompletion
+        self.dropCompletion = dropCompletion
+        self.recoveryMode = recoveryMode
     }
 
     func isClosed() -> Bool { closed }
@@ -356,6 +364,79 @@ private actor ClientAppConnectionProbe: ClientPairingConnectionV0 {
                     )
                 ))
             )
+        case .pairingResume:
+            guard recoveryMode else { throw ClientAppProbeError.invalidFlow }
+            let request = try WireCodec.decode(
+                WireEnvelope<PairingResumeBody>.self,
+                from: frame
+            )
+            guard request.body.pairingID.rawValue == clientAppPairingID,
+                  request.body.clientID.rawValue == clientAppClientID else {
+                throw ClientAppProbeError.invalidFlow
+            }
+            resume = request
+            let challengeID = WireUUID(UUID())
+            resumeChallengeID = challengeID
+            responses.append(
+                try WireCodec.encode(WireEnvelope(
+                    messageID: challengeID,
+                    correlationID: request.messageID,
+                    sentAtUnixMilliseconds: clientAppWall,
+                    body: try PairingResumeChallengeBody(
+                        hostNonce: WireBytes32(clientAppHostNonce),
+                        hostFingerprint: WireFingerprint(clientAppFingerprint())
+                    )
+                ))
+            )
+        case .pairingResumeProve:
+            guard recoveryMode,
+                  let resume,
+                  let resumeChallengeID else {
+                throw ClientAppProbeError.invalidFlow
+            }
+            let proof = try WireCodec.decode(
+                WireEnvelope<PairingResumeProveBody>.self,
+                from: frame
+            )
+            guard proof.correlationID == resumeChallengeID else {
+                throw ClientAppProbeError.invalidFlow
+            }
+            let transcript = try CompanionSecurityV0.pairingRecoveryTranscriptInput(
+                pairingID: clientAppPairingID,
+                hostFingerprint: clientAppFingerprint(),
+                clientID: clientAppClientID,
+                sessionPublicKeyX963: resume.body.sessionPublicKey.rawValue,
+                approvalPublicKeyX963: resume.body.approvalPublicKey.rawValue,
+                clientNonce: resume.body.clientNonce.rawValue,
+                hostNonce: clientAppHostNonce,
+                selectedMajor: 0,
+                selectedMinor: 1
+            )
+            let signingInput = try CompanionSecurityV0.pairingRecoverySignatureInput(
+                transcriptDigest: CompanionSecurityV0.pairingRecoveryTranscriptDigest(
+                    transcript
+                )
+            )
+            guard try CompanionSecurityV0.verifySignature(
+                rawSignature: proof.body.signature.rawValue,
+                signingInput: signingInput,
+                publicKeyX963: resume.body.sessionPublicKey.rawValue
+            ) else {
+                throw ClientAppProbeError.invalidFlow
+            }
+            responses.append(
+                try WireCodec.encode(WireEnvelope(
+                    messageID: WireUUID(UUID()),
+                    correlationID: proof.messageID,
+                    sentAtUnixMilliseconds: clientAppWall,
+                    body: try PairingCompleteBody(
+                        hostID: WireUUID(clientAppHostID),
+                        deviceID: WireUUID(clientAppDeviceID),
+                        policyRevision: .init(rawValue: 1),
+                        hostFingerprint: WireFingerprint(clientAppFingerprint())
+                    )
+                ))
+            )
         default:
             throw ClientAppProbeError.invalidFlow
         }
@@ -378,6 +459,9 @@ private actor ClientAppConnectionProbe: ClientPairingConnectionV0 {
                 completionWaiter = continuation
             }
         }
+        if dropCompletion, receiveCount == 3 {
+            throw ClientAppProbeError.injected
+        }
         return responses.removeFirst()
     }
 
@@ -387,6 +471,29 @@ private actor ClientAppConnectionProbe: ClientPairingConnectionV0 {
         completionWaiter?.resume(throwing: ClientAppProbeError.injected)
         completionWaiter = nil
     }
+}
+
+private actor ClientAppSequencedConnectionFactoryProbe:
+    ClientPairingConnectionCreatingV0
+{
+    private var connections: [ClientAppConnectionProbe]
+    private var requests: [ClientPairingConnectionRequestV0] = []
+
+    init(_ connections: [ClientAppConnectionProbe]) {
+        self.connections = connections
+    }
+
+    func makeConnection(
+        _ request: ClientPairingConnectionRequestV0
+    ) async throws -> any ClientPairingConnectionV0 {
+        guard !connections.isEmpty else {
+            throw ClientAppProbeError.invalidFlow
+        }
+        requests.append(request)
+        return connections.removeFirst()
+    }
+
+    func values() -> [ClientPairingConnectionRequestV0] { requests }
 }
 
 private actor ClientAppConnectionFactoryProbe:
@@ -551,4 +658,31 @@ private func clientAppScan(_ owner: ClientPairingApplicationOwnerV0) async throw
     #expect(await fixture.owner.snapshot().phase == .paired)
     #expect(await fixture.persistence.record()?.hostID == clientAppHostID)
     #expect(await fixture.custody.discardedCount() == 0)
+}
+
+@Test func clientPairingApplicationOwnerRecoversDroppedCompletionWithoutRescan() async throws {
+    let custody = try ClientAppCustodyProbe()
+    let persistence = ClientAppPersistenceProbe()
+    let initial = ClientAppConnectionProbe(dropCompletion: true)
+    let recovery = ClientAppConnectionProbe(recoveryMode: true)
+    let factory = ClientAppSequencedConnectionFactoryProbe([initial, recovery])
+    let owner = try ClientPairingApplicationOwnerV0(
+        clientID: clientAppClientID,
+        custody: custody,
+        persistence: persistence,
+        connections: factory,
+        clock: ClientAppClockProbe(),
+        randomness: ClientAppRandomnessProbe()
+    )
+
+    try await clientAppScan(owner)
+    try await owner.acceptPreview()
+
+    #expect(await owner.snapshot().phase == .paired)
+    #expect(await owner.snapshot().pairedHost?.deviceID == clientAppDeviceID)
+    #expect(await persistence.record()?.deviceID == clientAppDeviceID)
+    #expect(await custody.discardedCount() == 0)
+    #expect(await initial.isClosed())
+    #expect(await recovery.isClosed())
+    #expect(await factory.values().count == 2)
 }

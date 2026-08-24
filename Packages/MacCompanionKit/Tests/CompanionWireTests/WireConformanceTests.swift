@@ -227,6 +227,25 @@ private func decodeCanonicalFixture<Body: WireBody>(
     )
     #expect(pending.body.authenticationString.rawValue == "23F-6F5")
     #expect(complete.body.deviceState == .activeMonitorOnly)
+
+    let resume = try decodeCanonicalFixture(
+        "valid/pairing-resume.json",
+        as: PairingResumeBody.self,
+        expectedSHA256: "219fe14a4922e61ac550b756f65ff33faafa8f6247044a2805395999a3694910"
+    )
+    let resumeChallenge = try decodeCanonicalFixture(
+        "valid/pairing-resume-challenge.json",
+        as: PairingResumeChallengeBody.self,
+        expectedSHA256: "603094c9dbf77484e61b00539f366e3bfe88e4d4e1132b65f382e0e098cd259a"
+    )
+    let resumeProve = try decodeCanonicalFixture(
+        "valid/pairing-resume-prove.json",
+        as: PairingResumeProveBody.self,
+        expectedSHA256: "2e2791abf260d2a3fccf8dce79ef03d87017d0ac36fd5005cab089842736bbdc"
+    )
+    #expect(resume.correlationID == nil)
+    #expect(resumeChallenge.correlationID == resume.messageID)
+    #expect(resumeProve.correlationID == resumeChallenge.messageID)
 }
 
 @Test func authenticationAndPairingEncodingRejectsInvalidCanonicalForms() throws {

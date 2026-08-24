@@ -1,0 +1,13 @@
+{
+  "version": { "major": 0, "minor": 1 },
+  "messageID": "018f0000-0000-7000-8000-000000002102",
+  "correlationID": "018f0000-0000-7000-8000-000000002101",
+  "channel": "command",
+  "kind": "pairing.resumeChallenge",
+  "sentAtUnixMilliseconds": 1787198402010,
+  "body": {
+    "hostNonce": "MDEyMzQ1Njc4OTo7PD0-P0BBQkNERUZHSElKS0xNTk8",
+    "selectedVersion": { "major": 0, "minor": 1 },
+    "hostFingerprint": "808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9f"
+  }
+}

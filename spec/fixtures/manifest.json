@@ -50,6 +50,24 @@
       "canonicalSHA256": "4e218672c33dd24064ade731f8762ab83271e8f72106d2ca2da2f7270d823cc7"
     },
     {
+      "path": "valid/pairing-resume.json",
+      "kind": "pairing.resume",
+      "expect": "valid",
+      "canonicalSHA256": "219fe14a4922e61ac550b756f65ff33faafa8f6247044a2805395999a3694910"
+    },
+    {
+      "path": "valid/pairing-resume-challenge.json",
+      "kind": "pairing.resumeChallenge",
+      "expect": "valid",
+      "canonicalSHA256": "603094c9dbf77484e61b00539f366e3bfe88e4d4e1132b65f382e0e098cd259a"
+    },
+    {
+      "path": "valid/pairing-resume-prove.json",
+      "kind": "pairing.resumeProve",
+      "expect": "valid",
+      "canonicalSHA256": "2e2791abf260d2a3fccf8dce79ef03d87017d0ac36fd5005cab089842736bbdc"
+    },
+    {
       "path": "valid/pairing-qr-payload.json",
       "kind": "pairing.qr",
       "expect": "valid",
@@ -161,7 +179,7 @@
       "path": "crypto/v0.1.json",
       "kind": "crypto.v0.1",
       "expect": "valid",
-      "canonicalSHA256": "34d2a0517f8e1d5e2a711dae5e869bbfd438c0e516adee84f2067996862f0e59"
+      "canonicalSHA256": "ff9a847accd460c285225c00ab41a6b0a242784a8ff10cdef196734c33c059b2"
     },
     {
       "path": "crypto/interactive-v0.1.json",

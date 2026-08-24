@@ -132,6 +132,7 @@ public actor ClientPairingApplicationOwnerV0 {
 
     private struct AttemptResources: Sendable {
         let session: ClientPairingSessionV0?
+        let recoverySession: ClientPairingRecoverySessionV0?
         let connection: (any ClientPairingConnectionV0)?
         let publication: ClientIdentityPublicationAuthorityV0?
     }
@@ -150,6 +151,7 @@ public actor ClientPairingApplicationOwnerV0 {
     private var issuedIdentifiers: Set<UUID> = []
     private var publicationCommitRevision: UInt64?
     private var session: ClientPairingSessionV0?
+    private var recoverySession: ClientPairingRecoverySessionV0?
     private var connection: (any ClientPairingConnectionV0)?
     private var publication: ClientIdentityPublicationAuthorityV0?
 
@@ -445,16 +447,42 @@ public actor ClientPairingApplicationOwnerV0 {
         await publish()
         guard isCurrent(attemptRevision) else { return }
 
-        let completion = try await receive(
-            on: exactConnection,
-            session: pairingSession
-        )
-        guard isCurrent(attemptRevision) else { return }
-        let host = try await performPairing {
-            let time = try self.clock.sample()
-            return try await pairingSession.receiveCompletion(
-                completion,
-                monotonicNowMilliseconds: time.monotonicMilliseconds
+        let host: ClientPairedHostV0
+        do {
+            let completion = try await receive(
+                on: exactConnection,
+                session: pairingSession
+            )
+            guard isCurrent(attemptRevision) else { return }
+            host = try await performPairing {
+                let time = try self.clock.sample()
+                return try await pairingSession.receiveCompletion(
+                    completion,
+                    monotonicNowMilliseconds: time.monotonicMilliseconds
+                )
+            }
+        } catch let failure as ClientPairingApplicationFlowFailureV0
+            where failure.presentation == .connectionFailed
+        {
+            await exactConnection.close()
+            guard isCurrent(attemptRevision) else { return }
+            do {
+                try presentation.completionRecoveryStarted(
+                    requestID: requestID,
+                    pairingID: pairingID
+                )
+            } catch {
+                throw ClientPairingApplicationFlowFailureV0(
+                    presentation: .unknown
+                )
+            }
+            await publish()
+            guard isCurrent(attemptRevision) else { return }
+            host = try await recoverCompletion(
+                identity: identity,
+                signer: signer,
+                request: request,
+                attemptRevision: attemptRevision
             )
         }
         let commitID = try issueIdentifier()
@@ -499,6 +527,7 @@ public actor ClientPairingApplicationOwnerV0 {
             )
         }
         session = nil
+        recoverySession = nil
         publication = nil
         publicationCommitRevision = nil
         activeRevision = nil
@@ -534,6 +563,155 @@ public actor ClientPairingApplicationOwnerV0 {
     ) async throws -> Data {
         guard let deadline = await session
             .nextDeadlineMonotonicMilliseconds() else {
+            throw ClientPairingApplicationFlowFailureV0(
+                presentation: .unknown
+            )
+        }
+        do {
+            return try await connection.receive(
+                deadlineMonotonicMilliseconds: deadline
+            )
+        } catch {
+            throw ClientPairingApplicationFlowFailureV0(
+                presentation: .connectionFailed
+            )
+        }
+    }
+
+    private func recoverCompletion(
+        identity: ClientPreparedIdentityV0,
+        signer: ClientCustodiedSessionSignerV0,
+        request: ClientPairingConnectionRequestV0,
+        attemptRevision: UInt64
+    ) async throws -> ClientPairedHostV0 {
+        let recovery: ClientPairingRecoverySessionV0
+        do {
+            recovery = try ClientPairingRecoverySessionV0(
+                identity: identity,
+                hostFingerprint: request.requiredHostFingerprint,
+                endpoints: request.endpoints,
+                signer: signer
+            )
+        } catch {
+            throw ClientPairingApplicationFlowFailureV0(
+                presentation: .identityVerificationFailed
+            )
+        }
+        recoverySession = recovery
+
+        let replacement: any ClientPairingConnectionV0
+        do {
+            replacement = try await connections.makeConnection(request)
+        } catch {
+            throw ClientPairingApplicationFlowFailureV0(
+                presentation: .connectionFailed
+            )
+        }
+        guard isCurrent(attemptRevision) else {
+            await replacement.close()
+            throw ClientPairingApplicationFlowFailureV0(
+                presentation: .connectionFailed
+            )
+        }
+        connection = replacement
+
+        do {
+            try await replacement.connectTCP()
+            let connected = try clock.sample()
+            try await recovery.didConnectTCP(
+                monotonicNowMilliseconds: connected.monotonicMilliseconds
+            )
+            let evidence = try await replacement.acceptPinnedTLS()
+            let pinned = try clock.sample()
+            try await recovery.acceptPinnedPeer(
+                evidence,
+                at: pinned.monotonicMilliseconds
+            )
+            let resumeTime = try clock.sample()
+            let resume = try await recovery.resume(
+                clientNonce: WireBytes32(try randomBytes32()),
+                messageID: WireUUID(try issueIdentifier()),
+                sentAtUnixMilliseconds: resumeTime.wallUnixMilliseconds,
+                monotonicNowMilliseconds: resumeTime.monotonicMilliseconds
+            )
+            try await sendRecovery(resume, on: replacement, session: recovery)
+            let challenge = try await receiveRecovery(
+                on: replacement,
+                session: recovery
+            )
+            let proveTime = try clock.sample()
+            let proof = try await recovery.receiveChallenge(
+                challenge,
+                proofMessageID: WireUUID(try issueIdentifier()),
+                sentAtUnixMilliseconds: proveTime.wallUnixMilliseconds,
+                monotonicNowMilliseconds: proveTime.monotonicMilliseconds
+            )
+            try await sendRecovery(proof, on: replacement, session: recovery)
+            let completion = try await receiveRecovery(
+                on: replacement,
+                session: recovery
+            )
+            let completionTime = try clock.sample()
+            let host = try await recovery.receiveCompletion(
+                completion,
+                monotonicNowMilliseconds:
+                    completionTime.monotonicMilliseconds
+            )
+            await replacement.close()
+            if isCurrent(attemptRevision) {
+                connection = nil
+            }
+            return host
+        } catch let error as ClientPairingRecoveryErrorV0 {
+            let presentation: PairingClientPresentationFailure = switch error {
+            case .remoteError:
+                .hostRejected
+            case .hostFingerprintMismatch, .invalidSignatureLength,
+                 .invalidCorrelation, .duplicateMessage,
+                 .unexpectedMessage, .invalidConfiguration:
+                .identityVerificationFailed
+            case .invalidClock, .invalidPhase:
+                .unknown
+            }
+            throw ClientPairingApplicationFlowFailureV0(
+                presentation: presentation
+            )
+        } catch let failure as ClientPairingApplicationFlowFailureV0 {
+            throw failure
+        } catch {
+            throw ClientPairingApplicationFlowFailureV0(
+                presentation: .connectionFailed
+            )
+        }
+    }
+
+    private func sendRecovery(
+        _ frame: Data,
+        on connection: any ClientPairingConnectionV0,
+        session: ClientPairingRecoverySessionV0
+    ) async throws {
+        guard let deadline = await session.nextDeadlineMonotonicMilliseconds() else {
+            throw ClientPairingApplicationFlowFailureV0(
+                presentation: .unknown
+            )
+        }
+        do {
+            try await connection.send(
+                frame,
+                deadlineMonotonicMilliseconds: deadline
+            )
+        } catch {
+            throw ClientPairingApplicationFlowFailureV0(
+                presentation: .connectionFailed
+            )
+        }
+    }
+
+    private func receiveRecovery(
+        on connection: any ClientPairingConnectionV0,
+        session: ClientPairingRecoverySessionV0
+    ) async throws -> Data {
+        guard let deadline = await session.nextDeadlineMonotonicMilliseconds() else {
             throw ClientPairingApplicationFlowFailureV0(
                 presentation: .unknown
             )
@@ -611,10 +789,12 @@ public actor ClientPairingApplicationOwnerV0 {
     private func detachAttempt() -> AttemptResources {
         let resources = AttemptResources(
             session: session,
+            recoverySession: recoverySession,
             connection: connection,
             publication: publication
         )
         session = nil
+        recoverySession = nil
         connection = nil
         publication = nil
         activeRevision = nil
@@ -623,6 +803,7 @@ public actor ClientPairingApplicationOwnerV0 {
 
     private func cleanUp(_ resources: AttemptResources) async {
         await resources.session?.close()
+        await resources.recoverySession?.cancel()
         await resources.connection?.close()
         if let publication = resources.publication,
            await publication.phase == .ready {

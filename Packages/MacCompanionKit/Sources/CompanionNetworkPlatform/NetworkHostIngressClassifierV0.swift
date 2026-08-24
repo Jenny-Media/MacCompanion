@@ -257,7 +257,7 @@ public actor NetworkHostIngressClassifierV0 {
                 switch kind {
                 case .authHello:
                     role = .applicationPrimary
-                case .pairingBegin:
+                case .pairingBegin, .pairingResume:
                     role = .pairing
                 default:
                     throw NetworkHostIngressClassifierErrorV0

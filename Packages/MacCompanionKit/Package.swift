@@ -559,7 +559,7 @@ let package = Package(
         .testTarget(
             name: "CompanionAgentTests",
             dependencies: [
-                "CompanionAgent", "CompanionAgentNetworkPlatform", "CompanionAuthentication", "CompanionDiscovery", "CompanionDomain", "CompanionHost", "CompanionIPC",
+                "CompanionAgent", "CompanionAgentNetworkPlatform", "CompanionAuthentication", "CompanionClient", "CompanionDiscovery", "CompanionDomain", "CompanionHost", "CompanionIPC",
                 "CompanionHostSession", "CompanionInteractiveHost", "CompanionInteractiveShared",
                 "CompanionInteractiveWire", "CompanionLifecycle", "CompanionPersistence",
                 "CompanionNativeProviders", "CompanionNetworkPlatform", "CompanionOperations", "CompanionPairing", "CompanionSecurity", "CompanionTransport", "CompanionWire",

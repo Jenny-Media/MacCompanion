@@ -267,6 +267,9 @@ public struct AgentRequiredAuditCompositionV0: Sendable {
         )
         return AgentPairingServicesV0(
             authority: authority,
+            recovery: SQLiteAgentHostPairingRecoveryAuthorityV0(
+                store: securityStore
+            ),
             sessions: sessions,
             decisions: decisions,
             reviews: localServices.makePairingReviewService(
@@ -476,17 +479,20 @@ public struct AgentRequiredAuditCompositionV0: Sendable {
 /// decision owner, or review publisher.
 public struct AgentPairingServicesV0: Sendable {
     package let authority: PairingSessionAuthority
+    package let recovery: any AgentHostPairingRecoveryAuthorityV0
     package let sessions: AgentLocalPairingSessionHandlerV0
     package let decisions: AgentLocalPairingDecisionHandlerV0
     package let reviews: AgentLocalPairingReviewServiceV0
 
     package init(
         authority: PairingSessionAuthority,
+        recovery: any AgentHostPairingRecoveryAuthorityV0,
         sessions: AgentLocalPairingSessionHandlerV0,
         decisions: AgentLocalPairingDecisionHandlerV0,
         reviews: AgentLocalPairingReviewServiceV0
     ) {
         self.authority = authority
+        self.recovery = recovery
         self.sessions = sessions
         self.decisions = decisions
         self.reviews = reviews

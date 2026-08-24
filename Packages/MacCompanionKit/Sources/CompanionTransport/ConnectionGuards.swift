@@ -143,6 +143,8 @@ public struct InFlightCommandTracker: Sendable {
         .authProof: [.sessionDescribeResponse, .error],
         .pairingBegin: [.pairingChallenge, .error],
         .pairingProve: [.pairingPendingApproval, .error],
+        .pairingResume: [.pairingResumeChallenge, .error],
+        .pairingResumeProve: [.pairingComplete, .error],
         .statusSnapshotRequest: [.statusSnapshotResponse, .error],
         .capabilityRegistryRequest: [.capabilityRegistryResponse, .error],
         .auditListRequest: [.auditListResponse, .error],
