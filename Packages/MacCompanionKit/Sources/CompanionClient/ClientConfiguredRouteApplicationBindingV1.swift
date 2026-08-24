@@ -41,6 +41,7 @@ public struct ClientConfiguredRouteApplicationBindingSnapshotV1:
 public actor ClientConfiguredRouteApplicationBindingV1 {
     public typealias MonotonicNow = @Sendable () -> Int64
     public typealias RoundID = @Sendable () -> UUID
+    package typealias RetryWait = @Sendable (Int64) async -> Void
 
     public nonisolated let reconnectStateChanges: AsyncStream<Void>
 
@@ -48,6 +49,7 @@ public actor ClientConfiguredRouteApplicationBindingV1 {
         case start
         case setForeground(Bool)
         case setNetworkReachable(Bool)
+        case primaryConnectionLost
         case close
     }
 
@@ -59,17 +61,39 @@ public actor ClientConfiguredRouteApplicationBindingV1 {
     private let lifecycle: ClientConfiguredRouteLifecycleV1
     private let monotonicNow: MonotonicNow
     private let roundID: RoundID
+    private let retryWait: RetryWait
     private var phase = ClientConfiguredRouteApplicationBindingPhaseV1.pending
     private var foreground: Bool
     private var networkReachable: Bool
     private var hasStartedEligibleRound = false
     private var queue: [QueuedEvent] = []
     private var isDraining = false
+    private var retryTask: Task<Void, Never>?
+    private var scheduledRetryDeadline: Int64?
 
     public init(
         lifecycle: ClientConfiguredRouteLifecycleV1,
         monotonicNow: @escaping MonotonicNow,
         roundID: @escaping RoundID = { UUID() }
+    ) async throws {
+        try await self.init(
+            lifecycle: lifecycle,
+            monotonicNow: monotonicNow,
+            roundID: roundID,
+            retryWait: { milliseconds in
+                guard milliseconds > 0 else { return }
+                try? await Task.sleep(
+                    nanoseconds: UInt64(milliseconds) * 1_000_000
+                )
+            }
+        )
+    }
+
+    package init(
+        lifecycle: ClientConfiguredRouteLifecycleV1,
+        monotonicNow: @escaping MonotonicNow,
+        roundID: @escaping RoundID,
+        retryWait: @escaping RetryWait
     ) async throws {
         let snapshot = await lifecycle.snapshot()
         guard snapshot.phase != .closed,
@@ -81,6 +105,7 @@ public actor ClientConfiguredRouteApplicationBindingV1 {
         self.lifecycle = lifecycle
         self.monotonicNow = monotonicNow
         self.roundID = roundID
+        self.retryWait = retryWait
         reconnectStateChanges = lifecycle.reconnectStateChanges
         foreground = snapshot.reconnect.foreground
         networkReachable = snapshot.reconnect.networkReachable
@@ -110,6 +135,19 @@ public actor ClientConfiguredRouteApplicationBindingV1 {
 
     public func setNetworkReachable(_ value: Bool) async throws {
         try await submit(.setNetworkReachable(value))
+    }
+
+    /// Called only after the exact selected primary product reports that its
+    /// authenticated transport terminated. The durable identity and route
+    /// catalog remain authoritative; this event only rearms an eligible dial.
+    package func primaryConnectionLost() async throws {
+        try await submit(.primaryConnectionLost)
+    }
+
+    /// Consumes content-free reconnect state wakeups and owns the one delayed
+    /// backoff task. A deadline never carries route or trust authority.
+    package func reconnectStateDidChange() async {
+        await synchronizeRetryTask()
     }
 
     public func close() async {
@@ -186,6 +224,22 @@ public actor ClientConfiguredRouteApplicationBindingV1 {
                 throw error
             }
 
+        case .primaryConnectionLost:
+            guard phase == .running else { return }
+            let reconnect = await lifecycle.snapshot().reconnect.reconnect
+            guard case .connected = reconnect.phase else { return }
+            do {
+                try await lifecycle.primaryConnectionLost(
+                    monotonicNowMilliseconds: try now()
+                )
+                hasStartedEligibleRound = false
+                cancelRetryTask()
+                try await startEligibleRoundIfNeeded()
+            } catch {
+                await failClosed()
+                throw error
+            }
+
         case .close:
             await failClosed()
         }
@@ -229,6 +283,62 @@ public actor ClientConfiguredRouteApplicationBindingV1 {
         guard phase != .closed else { return }
         phase = .closed
         hasStartedEligibleRound = false
+        cancelRetryTask()
         await lifecycle.close()
+    }
+
+    private func synchronizeRetryTask() async {
+        guard phase == .running else {
+            cancelRetryTask()
+            return
+        }
+        let reconnect = await lifecycle.snapshot().reconnect.reconnect
+        guard case let .backoff(deadline) = reconnect.phase else {
+            cancelRetryTask()
+            return
+        }
+        guard scheduledRetryDeadline != deadline else { return }
+        scheduleRetry(deadline: deadline)
+    }
+
+    private func scheduleRetry(deadline: Int64) {
+        retryTask?.cancel()
+        scheduledRetryDeadline = deadline
+        let delay = max(0, deadline - monotonicNow())
+        retryTask = Task { [weak self, retryWait] in
+            await retryWait(delay)
+            guard !Task.isCancelled else { return }
+            await self?.retryDeadlineReached(deadline)
+        }
+    }
+
+    private func retryDeadlineReached(_ deadline: Int64) async {
+        guard phase == .running,
+              scheduledRetryDeadline == deadline else { return }
+        let current = await lifecycle.snapshot().reconnect.reconnect
+        guard case let .backoff(currentDeadline) = current.phase,
+              currentDeadline == deadline else {
+            cancelRetryTask()
+            return
+        }
+        let currentTime = monotonicNow()
+        guard currentTime >= deadline else {
+            scheduleRetry(deadline: deadline)
+            return
+        }
+        retryTask = nil
+        scheduledRetryDeadline = nil
+        hasStartedEligibleRound = false
+        do {
+            try await startEligibleRoundIfNeeded()
+        } catch {
+            await failClosed()
+        }
+    }
+
+    private func cancelRetryTask() {
+        retryTask?.cancel()
+        retryTask = nil
+        scheduledRetryDeadline = nil
     }
 }

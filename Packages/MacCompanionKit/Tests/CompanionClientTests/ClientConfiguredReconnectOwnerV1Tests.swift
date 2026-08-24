@@ -52,6 +52,39 @@ private actor ConfiguredReconnectAttemptRecorderV1: DialRouteAttemptingV0 {
     }
 }
 
+private actor ConfiguredReconnectFailOnceAttemptV1:
+    DialRouteAttemptingV0
+{
+    private(set) var attempts: [EndpointCandidate] = []
+
+    func attempt(
+        _ attempt: DialAttempt,
+        roundID: UUID,
+        requiredHostFingerprint: Data
+    ) async -> DialRouteAttemptOutcomeV0 {
+        attempts.append(attempt.endpoint)
+        if attempts.count == 1 { return .transientFailure }
+        return .authenticated(AuthenticatedDialRouteV0(
+            endpoint: attempt.endpoint,
+            close: {}
+        ))
+    }
+}
+
+private actor ConfiguredRouteRetryWaitV1 {
+    private let clock: ConfiguredRouteBindingClockV1
+    private(set) var delays: [Int64] = []
+
+    init(clock: ConfiguredRouteBindingClockV1) {
+        self.clock = clock
+    }
+
+    func wait(_ milliseconds: Int64) {
+        delays.append(milliseconds)
+        clock.value += milliseconds
+    }
+}
+
 private enum ConfiguredRouteIdentityInventoryErrorV1: Error, Equatable {
     case unreadable
 }
@@ -1174,6 +1207,9 @@ private func configuredReconnectControllerFactoryV1(
     try await binding.setForeground(false)
     #expect(await lifecycle.snapshot().phase == .background)
     #expect(await attempts.closes == [route])
+    try await binding.primaryConnectionLost()
+    #expect(await binding.snapshot().phase == .running)
+    #expect(await lifecycle.snapshot().phase == .background)
     clock.value = 103
     try await binding.setForeground(true)
     for _ in 0..<2_000 {
@@ -1188,6 +1224,163 @@ private func configuredReconnectControllerFactoryV1(
     #expect(closedBinding.lifecycle.phase == .closed)
     #expect(closedBinding.lifecycle.reconnect.isClosed)
     #expect(closedBinding.lifecycle.reconnect.reconnect.isShutdown)
+}
+
+@Test func applicationBindingRedialsAfterSelectedPrimaryTerminates()
+    async throws
+{
+    let route = try EndpointCandidate(
+        kind: .ipv4,
+        value: "10.0.0.31",
+        port: 47_474
+    )
+    let pairedHost = try configuredReconnectPairedHostV1(
+        hostID: UUID(),
+        endpoint: route
+    )
+    let configuration = try configuredReconnectConfigurationV1(
+        pairedHost: pairedHost,
+        revision: 1,
+        endpoint: route,
+        provenance: .directPrivateAddress
+    )
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+        "maccompanion-primary-loss-redial-\(UUID())",
+        isDirectory: true
+    )
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = try AtomicFileClientConfiguredRouteStoreV1(directory: root)
+    _ = try await store.replaceAtomically(
+        configuration.routeSnapshot,
+        expectedRevision: nil
+    )
+    let attempts = ConfiguredReconnectAttemptRecorderV1()
+    let lifecycle = try await ClientConfiguredRouteLifecycleV1(
+        hostID: pairedHost.hostID,
+        pairedHosts: ConfiguredRouteIdentityInventoryV1(pairedHost),
+        routes: store,
+        foreground: true,
+        networkReachable: true,
+        makeController: configuredReconnectControllerFactoryV1(
+            attempts: attempts
+        ),
+        newRouteID: {
+            try WireBytes16(Data(repeating: 0xc1, count: 16))
+        }
+    )
+    let clock = ConfiguredRouteBindingClockV1(400)
+    let binding = try await ClientConfiguredRouteApplicationBindingV1(
+        lifecycle: lifecycle,
+        monotonicNow: { clock.value },
+        roundID: { UUID() }
+    )
+
+    try await binding.start()
+    for _ in 0..<2_000 {
+        if await lifecycle.snapshot().reconnect.reconnect.phase
+            == .connected(route) { break }
+        await Task.yield()
+    }
+    #expect(await attempts.attempts == [route])
+
+    clock.value = 401
+    try await binding.primaryConnectionLost()
+    for _ in 0..<2_000 {
+        if await attempts.attempts.count == 2,
+           await lifecycle.snapshot().reconnect.reconnect.phase
+            == .connected(route) { break }
+        await Task.yield()
+    }
+
+    #expect(await attempts.attempts == [route, route])
+    #expect(await attempts.closes == [route])
+    #expect(await lifecycle.snapshot().reconnect.reconnect.phase
+        == .connected(route))
+    await binding.close()
+}
+
+@Test func applicationBindingExecutesScheduledBackoffRetry()
+    async throws
+{
+    let route = try EndpointCandidate(
+        kind: .ipv4,
+        value: "10.0.0.32",
+        port: 47_474
+    )
+    let pairedHost = try configuredReconnectPairedHostV1(
+        hostID: UUID(),
+        endpoint: route
+    )
+    let configuration = try configuredReconnectConfigurationV1(
+        pairedHost: pairedHost,
+        revision: 1,
+        endpoint: route,
+        provenance: .directPrivateAddress
+    )
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+        "maccompanion-backoff-retry-\(UUID())",
+        isDirectory: true
+    )
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = try AtomicFileClientConfiguredRouteStoreV1(directory: root)
+    _ = try await store.replaceAtomically(
+        configuration.routeSnapshot,
+        expectedRevision: nil
+    )
+    let attempts = ConfiguredReconnectFailOnceAttemptV1()
+    let clock = ConfiguredRouteBindingClockV1(500)
+    let lifecycle = try await ClientConfiguredRouteLifecycleV1(
+        hostID: pairedHost.hostID,
+        pairedHosts: ConfiguredRouteIdentityInventoryV1(pairedHost),
+        routes: store,
+        foreground: true,
+        networkReachable: true,
+        makeController: { configuration, foreground, reachable in
+            ReconnectControllerV0(
+                state: try configuration.makeReconnectState(
+                    foreground: foreground,
+                    networkReachable: reachable
+                ),
+                executor: DialRoundExecutorV0(
+                    attempter: attempts,
+                    wait: { _ in }
+                ),
+                monotonicNow: { clock.value },
+                jitterBasisPoints: { 10_000 }
+            )
+        },
+        newRouteID: {
+            try WireBytes16(Data(repeating: 0xc2, count: 16))
+        }
+    )
+    let retryWait = ConfiguredRouteRetryWaitV1(clock: clock)
+    let binding = try await ClientConfiguredRouteApplicationBindingV1(
+        lifecycle: lifecycle,
+        monotonicNow: { clock.value },
+        roundID: { UUID() },
+        retryWait: { await retryWait.wait($0) }
+    )
+
+    try await binding.start()
+    for _ in 0..<2_000 {
+        if case .backoff = await lifecycle.snapshot().reconnect.reconnect.phase {
+            break
+        }
+        await Task.yield()
+    }
+    await binding.reconnectStateDidChange()
+    for _ in 0..<2_000 {
+        if await attempts.attempts.count == 2,
+           await lifecycle.snapshot().reconnect.reconnect.phase
+            == .connected(route) { break }
+        await Task.yield()
+    }
+
+    #expect(await retryWait.delays == [500])
+    #expect(await attempts.attempts == [route, route])
+    #expect(await lifecycle.snapshot().reconnect.reconnect.phase
+        == .connected(route))
+    await binding.close()
 }
 
 @Test func applicationBindingStartReconcilesExternalRevisionBeforeFirstDial()

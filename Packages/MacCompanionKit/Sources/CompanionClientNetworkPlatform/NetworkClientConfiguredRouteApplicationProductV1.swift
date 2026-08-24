@@ -2,6 +2,34 @@ import CompanionClient
 import CompanionWire
 import Foundation
 
+private final class NetworkClientPrimaryTerminationRelayV1:
+    @unchecked Sendable
+{
+    private let lock = NSLock()
+    private var handler: (@Sendable () -> Void)?
+    private var pending = false
+
+    func emit() {
+        lock.lock()
+        guard let handler else {
+            pending = true
+            lock.unlock()
+            return
+        }
+        lock.unlock()
+        handler()
+    }
+
+    func bind(_ handler: @escaping @Sendable () -> Void) {
+        lock.lock()
+        self.handler = handler
+        let shouldEmit = pending
+        pending = false
+        lock.unlock()
+        if shouldEmit { handler() }
+    }
+}
+
 public struct NetworkClientConfiguredRouteApplicationProductV1: Sendable {
     public let lifecycle: ClientConfiguredRouteLifecycleV1
     public let binding: ClientConfiguredRouteApplicationBindingV1
@@ -57,8 +85,10 @@ public enum NetworkClientConfiguredRouteApplicationProductFactoryV1 {
         newRouteID: @escaping ClientConfiguredRouteEditorV1.RouteID,
         roundID: @escaping ClientConfiguredRouteApplicationBindingV1.RoundID
     ) async throws -> NetworkClientConfiguredRouteApplicationProductV1 {
+        let terminationRelay = NetworkClientPrimaryTerminationRelayV1()
         let primaryState = NetworkClientPrimaryApplicationStateV0(
-            hostID: hostID
+            hostID: hostID,
+            selectedPrimaryTerminated: { terminationRelay.emit() }
         )
         let interactiveRoles = NetworkClientInteractiveRoleProductBindingV0(
             hostID: hostID,
@@ -94,6 +124,11 @@ public enum NetworkClientConfiguredRouteApplicationProductFactoryV1 {
                     monotonicNow: runtime.monotonicNow,
                     roundID: roundID
                 )
+            terminationRelay.bind { [weak binding] in
+                Task {
+                    try? await binding?.primaryConnectionLost()
+                }
+            }
             return NetworkClientConfiguredRouteApplicationProductV1(
                 lifecycle: lifecycle,
                 binding: binding,

@@ -167,10 +167,15 @@ public final class NetworkClientPrimaryApplicationStateV0:
     private let continuation: AsyncStream<
         NetworkClientPrimaryApplicationSnapshotV0
     >.Continuation
+    private let selectedPrimaryTerminated: @Sendable () -> Void
     private var storage = Storage()
 
-    public init(hostID: UUID) {
+    public init(
+        hostID: UUID,
+        selectedPrimaryTerminated: @escaping @Sendable () -> Void = {}
+    ) {
         self.hostID = hostID
+        self.selectedPrimaryTerminated = selectedPrimaryTerminated
         let pair = AsyncStream<NetworkClientPrimaryApplicationSnapshotV0>
             .makeStream(bufferingPolicy: .bufferingNewest(1))
         updates = pair.stream
@@ -413,13 +418,16 @@ public final class NetworkClientPrimaryApplicationStateV0:
 
     private func terminate(hostID: UUID, connectionID: Data) {
         lock.lock()
-        defer { lock.unlock() }
         guard hostID == self.hostID,
               storage.session?.connectionID == connectionID else {
             incrementDroppedStaleEventCount()
+            lock.unlock()
             return
         }
-        guard advanceRevision() else { return }
+        guard advanceRevision() else {
+            lock.unlock()
+            return
+        }
         storage.session = nil
         storage.selectedEndpoint = nil
         storage.authenticatedRouteClass = nil
@@ -432,6 +440,8 @@ public final class NetworkClientPrimaryApplicationStateV0:
         clearActState()
         clearControlState()
         continuation.yield(makeSnapshot(storage))
+        lock.unlock()
+        selectedPrimaryTerminated()
     }
 
     private func accept(_ publication: NetworkClientObservePublicationV0) {

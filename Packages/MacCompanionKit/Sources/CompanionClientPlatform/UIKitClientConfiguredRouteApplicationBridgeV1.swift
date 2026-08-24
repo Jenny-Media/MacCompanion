@@ -112,7 +112,9 @@ public final class UIKitClientConfiguredRouteApplicationBridgeV1: NSObject {
 
     private func enqueueReconnectStateRefresh() {
         guard started else { return }
-        enqueue { _ in }
+        enqueue { binding in
+            await binding.reconnectStateDidChange()
+        }
     }
 
     private func enqueue(

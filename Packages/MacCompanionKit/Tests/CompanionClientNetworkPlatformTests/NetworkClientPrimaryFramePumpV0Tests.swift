@@ -1085,9 +1085,16 @@ private func networkClientAcceptedControlSession(
 {
     let base = try makeNetworkClientPumpHarness()
     let productEvents = NetworkClientPrimaryProductRecorderV0()
+    let selectedTerminations = NetworkClientPrimaryProductRecorderV0()
     let observePublications = NetworkClientObservePublicationRecorderV0()
     let applicationState = NetworkClientPrimaryApplicationStateV0(
-        hostID: base.hostID
+        hostID: base.hostID,
+        selectedPrimaryTerminated: {
+            selectedTerminations.terminated(
+                hostID: base.hostID,
+                connectionID: Data()
+            )
+        }
     )
     let pairedHost = try networkClientPairedHost(
         clientID: await base.session.clientID,
@@ -1298,6 +1305,7 @@ private func networkClientAcceptedControlSession(
     #expect(applicationState.snapshot().controlChannel == nil)
     #expect(applicationState.snapshot().controlState == .inactive)
     #expect(applicationState.snapshot().revision == 5)
+    #expect(selectedTerminations.terminations.count == 1)
     await #expect(
         throws: NetworkClientPrimaryApplicationCommandErrorV0.unavailable
     ) {
@@ -1535,6 +1543,7 @@ private func networkClientAcceptedControlSession(
     #expect(applicationState.snapshot().observedStatus == nil)
     #expect(applicationState.snapshot().revision == 18)
     #expect(applicationState.droppedStaleEventCount() == 7)
+    #expect(selectedTerminations.terminations.count == 1)
 
     applicationState.productEvents.primaryTerminated(
         base.hostID,
@@ -1543,6 +1552,7 @@ private func networkClientAcceptedControlSession(
     #expect(applicationState.snapshot().availability == .disconnected)
     #expect(applicationState.snapshot().authenticatedRouteClass == nil)
     #expect(applicationState.snapshot().revision == 19)
+    #expect(selectedTerminations.terminations.count == 2)
     var updateIterator = applicationState.updates.makeAsyncIterator()
     #expect(await updateIterator.next()?.revision == 19)
 

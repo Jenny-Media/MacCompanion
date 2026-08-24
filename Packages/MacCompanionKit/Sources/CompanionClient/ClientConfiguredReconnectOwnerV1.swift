@@ -213,6 +213,16 @@ public actor ClientConfiguredReconnectOwnerV1 {
         )
     }
 
+    public func connectionLost(
+        monotonicNowMilliseconds: Int64
+    ) async throws {
+        try beginTransition()
+        defer { transitionInProgress = false }
+        try await controller.connectionLost(
+            monotonicNowMilliseconds: monotonicNowMilliseconds
+        )
+    }
+
     public func close() async throws {
         if closed { return }
         try beginTransition()

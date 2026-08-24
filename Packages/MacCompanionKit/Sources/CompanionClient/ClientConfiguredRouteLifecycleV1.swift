@@ -219,6 +219,22 @@ public actor ClientConfiguredRouteLifecycleV1 {
         }
     }
 
+    public func primaryConnectionLost(
+        monotonicNowMilliseconds: Int64
+    ) async throws {
+        try beginTransition()
+        defer { transitionInProgress = false }
+        do {
+            try await requireCurrentIdentity()
+            try await reconnectOwner.connectionLost(
+                monotonicNowMilliseconds: monotonicNowMilliseconds
+            )
+        } catch {
+            await failClosed()
+            throw error
+        }
+    }
+
     public func identityLost() async {
         await failClosed()
     }
