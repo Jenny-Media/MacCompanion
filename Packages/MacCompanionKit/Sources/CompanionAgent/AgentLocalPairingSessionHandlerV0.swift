@@ -147,7 +147,8 @@ extension PairingSessionAuthority: AgentLocalPairingSessionManagingV0 {
 
 /// Agent-owned composition for the two secret-bearing local pairing methods.
 /// It permits one visible QR at a time, makes create/dismiss retries exact,
-/// and tombstones a session before reporting successful dismissal.
+/// and reports successful dismissal only after the session is tombstoned or
+/// the pairing authority proves that it is already terminal.
 public actor AgentLocalPairingSessionHandlerV0 {
     public static let maximumCommandHistory = 32
 
@@ -344,8 +345,13 @@ public actor AgentLocalPairingSessionHandlerV0 {
         } catch let error as PairingSessionError {
             switch error {
             case .expired, .alreadyConsumed, .notFound:
+                let receipt = try makeDismissedReceipt(
+                    command: command,
+                    time: time
+                )
                 active = nil
-                throw AgentLocalPairingSessionErrorV0.notActive
+                retainDismiss(command: command, receipt: receipt)
+                return receipt
             default:
                 throw AgentLocalPairingSessionErrorV0.authorityUnavailable
             }
@@ -353,14 +359,24 @@ public actor AgentLocalPairingSessionHandlerV0 {
             throw AgentLocalPairingSessionErrorV0.authorityUnavailable
         }
 
-        let receipt = try LocalPairingSessionDismissedReceiptV0(
-            correlationID: command.commandID,
-            pairingID: command.pairingID,
-            completedAtUnixMilliseconds: time.wallNowUnixMilliseconds
+        let receipt = try makeDismissedReceipt(
+            command: command,
+            time: time
         )
         active = nil
         retainDismiss(command: command, receipt: receipt)
         return receipt
+    }
+
+    private func makeDismissedReceipt(
+        command: LocalPairingSessionDismissCommandV0,
+        time: AgentLocalPairingTimeSampleV0
+    ) throws -> LocalPairingSessionDismissedReceiptV0 {
+        try LocalPairingSessionDismissedReceiptV0(
+            correlationID: command.commandID,
+            pairingID: command.pairingID,
+            completedAtUnixMilliseconds: time.wallNowUnixMilliseconds
+        )
     }
 
     private func readTime() throws -> AgentLocalPairingTimeSampleV0 {

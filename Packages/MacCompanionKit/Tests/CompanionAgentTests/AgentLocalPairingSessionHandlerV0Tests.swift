@@ -253,7 +253,7 @@ private func pairingHandler(
     #expect(try await handler.dismiss(correct).pairingID == created.pairingID)
 }
 
-@Test func remotelyConsumedPairingClearsPresentationWithoutFalseDismissal() async throws {
+@Test func remotelyConsumedPairingConfirmsCodeIsAlreadyInactive() async throws {
     let authority = PairingSessionAuthority(committer: NoopPairingCommitterV0())
     let handler = AgentLocalPairingSessionHandlerV0(
         authority: authority,
@@ -271,18 +271,69 @@ private func pairingHandler(
         pairingID: first.pairingID,
         monotonicNowMilliseconds: pairingHandlerMonotonic + 1
     )
-    await #expect(throws: AgentLocalPairingSessionErrorV0.notActive) {
-        _ = try await handler.dismiss(
-            LocalPairingSessionDismissCommandV0(
-                commandID: UUID(),
-                pairingID: first.pairingID
-            )
-        )
-    }
+    let dismiss = try LocalPairingSessionDismissCommandV0(
+        commandID: UUID(),
+        pairingID: first.pairingID
+    )
+    let receipt = try await handler.dismiss(dismiss)
+    let replay = try await handler.dismiss(dismiss)
+
+    #expect(receipt == replay)
+    #expect(receipt.correlationID == dismiss.commandID)
+    #expect(receipt.pairingID == first.pairingID)
     let replacement = try await handler.create(
         LocalPairingSessionCreateCommandV0(commandID: UUID())
     )
     #expect(replacement.pairingID != first.pairingID)
+}
+
+@Test func unknownDismissalWithoutLocalPresentationRemainsRejected() async throws {
+    let (handler, _) = try pairingHandler()
+
+    await #expect(throws: AgentLocalPairingSessionErrorV0.notActive) {
+        _ = try await handler.dismiss(
+            LocalPairingSessionDismissCommandV0(
+                commandID: UUID(),
+                pairingID: UUID()
+            )
+        )
+    }
+}
+
+@Test func expiredVisiblePairingConfirmsCodeIsAlreadyInactive() async throws {
+    let expiryWall = pairingHandlerCreatedAt
+        + PairingSessionAuthority.lifetimeMilliseconds
+    let source = SequencedPairingTimeSourceV0([
+        try pairingHandlerTime(),
+        try pairingHandlerTime(
+            wall: expiryWall,
+            monotonic: pairingHandlerMonotonic
+                + PairingSessionAuthority.lifetimeMilliseconds
+        ),
+    ])
+    let handler = AgentLocalPairingSessionHandlerV0(
+        authority: PairingSessionAuthority(
+            committer: NoopPairingCommitterV0()
+        ),
+        contextSource: StaticAgentLocalPairingContextSourceV0(
+            try pairingHandlerContext()
+        ),
+        timeSource: source,
+        pairingIDGenerator: { pairingHandlerID }
+    )
+    let created = try await handler.create(
+        LocalPairingSessionCreateCommandV0(commandID: UUID())
+    )
+    let dismiss = try LocalPairingSessionDismissCommandV0(
+        commandID: UUID(),
+        pairingID: created.pairingID
+    )
+
+    let receipt = try await handler.dismiss(dismiss)
+
+    #expect(receipt.correlationID == dismiss.commandID)
+    #expect(receipt.pairingID == created.pairingID)
+    #expect(receipt.completedAtUnixMilliseconds == expiryWall)
 }
 
 @Test func expiredPresentationIsClearedBeforeCreatingReplacement() async throws {
