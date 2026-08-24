@@ -5,6 +5,15 @@ Date: 2026-08-21
 Status: provisional packaging and signing proof on Xcode 27 beta; Agent remains
 deliberately inert and this is not lifecycle or release-candidate evidence
 
+> Superseded topology note (2026-08-23): once the permanent Agent began
+> persisting its Secure Enclave host key, this extensionless-tool topology
+> failed with `errSecMissingEntitlement` because it had nowhere to embed the
+> provisioning profile that authorizes its Keychain identity. The
+> [Agent Keychain provisioning repair](2026-08-23-agent-keychain-provisioning-repair.md)
+> replaces it with an app-like daemon wrapper under `Contents/Helpers`. The
+> material below records the earlier checkpoint and is not the current target
+> topology.
+
 ## Scope
 
 The checked-in Mac project now contains the permanent

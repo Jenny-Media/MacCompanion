@@ -27,6 +27,10 @@ LOGIN_COMPOSITION = (
     / "MacCompanionLoginRoleComposition.swift"
 )
 AGENT_TARGET_DIRECTORY = REPOSITORY / "Apps" / "MacCompanionAgent"
+AGENT_INFO_PLIST = AGENT_TARGET_DIRECTORY / "Info.plist"
+AGENT_ENTITLEMENTS = (
+    AGENT_TARGET_DIRECTORY / "MacCompanionAgent.entitlements"
+)
 AGENT_APPLICATION_PLATFORM = (
     REPOSITORY
     / "Packages"
@@ -69,11 +73,32 @@ LAUNCH_AGENT = (
 
 AGENT_IDENTIFIER = "media.jenny.maccompanion.agent"
 EXPECTED_LAUNCH_AGENT = {
-    "BundleProgram": "Contents/MacOS/MacCompanionAgent",
+    "BundleProgram": (
+        "Contents/Helpers/MacCompanionAgent.app/Contents/MacOS/"
+        "MacCompanionAgent"
+    ),
     "KeepAlive": True,
     "Label": AGENT_IDENTIFIER,
     "MachServices": {AGENT_IDENTIFIER: True},
     "RunAtLoad": True,
+}
+EXPECTED_AGENT_INFO_PLIST = {
+    "CFBundleDevelopmentRegion": "$(DEVELOPMENT_LANGUAGE)",
+    "CFBundleDisplayName": "Mac Companion Agent",
+    "CFBundleExecutable": "$(EXECUTABLE_NAME)",
+    "CFBundleIdentifier": "$(PRODUCT_BUNDLE_IDENTIFIER)",
+    "CFBundleInfoDictionaryVersion": "6.0",
+    "CFBundleName": "$(PRODUCT_NAME)",
+    "CFBundlePackageType": "APPL",
+    "CFBundleShortVersionString": "$(MARKETING_VERSION)",
+    "CFBundleVersion": "$(CURRENT_PROJECT_VERSION)",
+    "LSBackgroundOnly": True,
+    "NSHumanReadableCopyright": "Copyright 2026 Jenny Media LLC",
+}
+EXPECTED_AGENT_ENTITLEMENTS = {
+    "keychain-access-groups": [
+        "$(AppIdentifierPrefix)$(PRODUCT_BUNDLE_IDENTIFIER)"
+    ]
 }
 EXPECTED_MAC_INFO_PLIST = {
     "CFBundleDevelopmentRegion": "$(DEVELOPMENT_LANGUAGE)",
@@ -336,7 +361,12 @@ def require_exact_mac_products(
 
 def validate_project_spec(content: str, failures: list[str]) -> None:
     required = {
-        "agentTarget": "  MacCompanionAgent:\n    type: tool\n    platform: macOS",
+        "agentTarget": (
+            "  MacCompanionAgent:\n"
+            "    type: application\n"
+            "    platform: macOS"
+        ),
+        "agentInfo": "      path: Apps/MacCompanionAgent/Info.plist",
         "agentSource": "      - path: Apps/MacCompanionAgent",
         "agentApplicationPlatform": (
             "      - package: MacCompanionKit\n"
@@ -348,7 +378,8 @@ def validate_project_spec(content: str, failures: list[str]) -> None:
             "        link: false\n"
             "        codeSign: true\n"
             "        copy:\n"
-            "          destination: executables"
+            "          destination: wrapper\n"
+            "          subpath: Contents/Helpers"
         ),
         "lifecycleProducts": (
             "      - package: MacCompanionKit\n"
@@ -366,8 +397,9 @@ def validate_project_spec(content: str, failures: list[str]) -> None:
         "agentIdentifier": (
             f"        PRODUCT_BUNDLE_IDENTIFIER: {AGENT_IDENTIFIER}"
         ),
-        "agentSigningIdentifier": (
-            '        OTHER_CODE_SIGN_FLAGS: "-i $(PRODUCT_BUNDLE_IDENTIFIER)"'
+        "agentEntitlements": (
+            "        CODE_SIGN_ENTITLEMENTS: "
+            "Apps/MacCompanionAgent/MacCompanionAgent.entitlements"
         ),
         "agentSkipInstall": "        SKIP_INSTALL: YES",
     }
@@ -392,7 +424,6 @@ def validate_project_spec(content: str, failures: list[str]) -> None:
     for forbidden in (
         "DEVELOPMENT_TEAM:",
         "PROVISIONING_PROFILE",
-        "CODE_SIGN_ENTITLEMENTS:",
     ):
         if forbidden in content:
             failures.append(f"trackedSigningAuthority:{forbidden.rstrip(':')}")
@@ -417,11 +448,12 @@ def validate_generated_project(content: str, failures: list[str]) -> None:
     )
     require_exact_agent_products(content, generated=True, failures=failures)
     require_exact_mac_products(content, generated=True, failures=failures)
+    agent_target = generated_native_target_block(content, "MacCompanionAgent")
     require_count(
-        content,
-        'productType = "com.apple.product-type.tool";',
+        agent_target,
+        'productType = "com.apple.product-type.application";',
         1,
-        "agentToolProduct",
+        "agentApplicationProduct",
         failures,
     )
     require_count(
@@ -433,9 +465,9 @@ def validate_generated_project(content: str, failures: list[str]) -> None:
     )
     require_count(
         content,
-        "dstPath = Contents/Library/LaunchAgents;",
+        "dstPath = Contents/Helpers;",
         1,
-        "launchAgentDestination",
+        "agentEmbedDestination",
         failures,
     )
     require_count(
@@ -447,22 +479,20 @@ def validate_generated_project(content: str, failures: list[str]) -> None:
     )
     require_count(
         content,
-        'OTHER_CODE_SIGN_FLAGS = "-i $(PRODUCT_BUNDLE_IDENTIFIER)";',
+        "CODE_SIGN_ENTITLEMENTS = "
+        "Apps/MacCompanionAgent/MacCompanionAgent.entitlements;",
         2,
-        "generatedAgentSigningIdentifier",
+        "generatedAgentEntitlements",
         failures,
     )
     require_count(
         content,
-        "MacCompanionAgent in Embed Dependencies",
+        "MacCompanionAgent.app in Embed Dependencies",
         2,
         "generatedAgentEmbed",
         failures,
     )
-    if re.search(
-        r"\b(?:DEVELOPMENT_TEAM|PROVISIONING_PROFILE|CODE_SIGN_ENTITLEMENTS) =",
-        content,
-    ):
+    if re.search(r"\b(?:DEVELOPMENT_TEAM|PROVISIONING_PROFILE) =", content):
         failures.append("generatedProjectContainsSigningAuthority")
     if "CompanionAgentProductPlatform" in content:
         failures.append("generatedProjectLinksAgentProductPlatform")
@@ -488,6 +518,21 @@ def validate_mac_info_plist(failures: list[str]) -> None:
         return
     if value != EXPECTED_MAC_INFO_PLIST:
         failures.append("macInfoPlistSchemaOrValueMismatch")
+
+
+def validate_agent_bundle_metadata(failures: list[str]) -> None:
+    for path, expected, label in (
+        (AGENT_INFO_PLIST, EXPECTED_AGENT_INFO_PLIST, "agentInfoPlist"),
+        (AGENT_ENTITLEMENTS, EXPECTED_AGENT_ENTITLEMENTS, "agentEntitlements"),
+    ):
+        try:
+            with path.open("rb") as handle:
+                value = plistlib.load(handle)
+        except (OSError, plistlib.InvalidFileException, ValueError) as error:
+            failures.append(f"{label}Unreadable:{type(error).__name__}")
+            continue
+        if value != expected:
+            failures.append(f"{label}SchemaOrValueMismatch")
 
 
 def validate_inert_update_adapter(
@@ -1234,6 +1279,7 @@ def main() -> int:
     validate_project_spec(project_spec, failures)
     validate_generated_project(generated_project, failures)
     validate_mac_info_plist(failures)
+    validate_agent_bundle_metadata(failures)
     validate_inert_update_adapter(mac_application, failures)
     update_reply_failures: list[str] = []
     validate_inert_update_adapter(

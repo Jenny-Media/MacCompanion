@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
     <key>BundleProgram</key>
-    <string>Contents/MacOS/MacCompanionAgent</string>
+    <string>Contents/Helpers/MacCompanionAgent.app/Contents/MacOS/MacCompanionAgent</string>
     <key>KeepAlive</key>
     <true/>
     <key>Label</key>

@@ -239,10 +239,10 @@ def validate_generated_project(content: str, failures: list[str]) -> None:
         failures.append("generatedIOSIdentifierMismatch")
     if content.count("IPHONEOS_DEPLOYMENT_TARGET = 26.0;") != 4:
         failures.append("generatedIOSDeploymentMismatch")
-    if re.search(
-        r"\b(?:DEVELOPMENT_TEAM|PROVISIONING_PROFILE|CODE_SIGN_ENTITLEMENTS) =",
-        content,
-    ):
+    # The separately provisioned macOS Agent owns its one tracked
+    # CODE_SIGN_ENTITLEMENTS path. Keep global private signing authority out of
+    # the generated project while the iOS target block above remains closed.
+    if re.search(r"\b(?:DEVELOPMENT_TEAM|PROVISIONING_PROFILE) =", content):
         failures.append("generatedProjectContainsSigningAuthority")
 
 

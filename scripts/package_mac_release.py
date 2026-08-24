@@ -103,6 +103,17 @@ def _real_directory(path: Path, label: str) -> None:
         )
 
 
+def _regular_file(path: Path, label: str) -> None:
+    try:
+        metadata = path.lstat()
+    except OSError as error:
+        raise MacReleasePackagingError(f"missing {label}") from error
+    if not stat.S_ISREG(metadata.st_mode) or path.is_symlink():
+        raise MacReleasePackagingError(
+            f"{label} must be a non-symlink regular file"
+        )
+
+
 def _signature_facts(runner: Runner, path: Path, expected_identifier: str) -> str:
     result = _run_checked(
         runner,
@@ -130,7 +141,9 @@ def _signature_facts(runner: Runner, path: Path, expected_identifier: str) -> st
 
 def _verify_app(runner: Runner, app: Path) -> str:
     main = app / "Contents" / "MacOS" / "Mac Companion"
-    agent = app / "Contents" / "MacOS" / "MacCompanionAgent"
+    agent_bundle = app / "Contents" / "Helpers" / "MacCompanionAgent.app"
+    agent = agent_bundle / "Contents" / "MacOS" / "MacCompanionAgent"
+    agent_profile = agent_bundle / "Contents" / "embedded.provisionprofile"
     launch_agent = app / "Contents" / "Library" / "LaunchAgents" / f"{AGENT_IDENTIFIER}.plist"
     sparkle = app / "Contents" / "Frameworks" / "Sparkle.framework"
     sparkle_version = sparkle / "Versions" / "B"
@@ -139,7 +152,9 @@ def _verify_app(runner: Runner, app: Path) -> str:
     updater = sparkle_version / "Updater.app"
     updater_executable = updater / "Contents" / "MacOS" / "Updater"
     _regular_executable(main, "Mac application executable")
+    _real_directory(agent_bundle, "embedded Agent application wrapper")
     _regular_executable(agent, "embedded Agent executable")
+    _regular_file(agent_profile, "embedded Agent provisioning profile")
     _real_directory(sparkle, "embedded Sparkle framework")
     _real_directory(sparkle_version, "embedded Sparkle framework version")
     _real_directory(updater, "embedded Sparkle Updater application")
@@ -163,7 +178,7 @@ def _verify_app(runner: Runner, app: Path) -> str:
     )
     app_team = _signature_facts(runner, app, APP_IDENTIFIER)
     nested_teams = (
-        _signature_facts(runner, agent, AGENT_IDENTIFIER),
+        _signature_facts(runner, agent_bundle, AGENT_IDENTIFIER),
         _signature_facts(
             runner,
             sparkle_version,

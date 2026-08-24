@@ -292,7 +292,7 @@ Concurrency design is part of the feature review. A detached task, unchecked sen
 
 ### Workstream A — release and lifecycle foundation
 
-1. Use the privately confirmed Team ID and registered `media.jenny.maccompanion` App ID; keep the standalone Agent's build-proven code identity distinct, register remaining bundle IDs only when their permanent targets require them, resolve Apple's prerelease App Store URL/Apple ID path, and submit the prepared entitlement request.
+1. Use the privately confirmed Team ID and registered `media.jenny.maccompanion` App ID; keep the app-wrapped Agent's profile-authorized `media.jenny.maccompanion.agent` identity distinct, create its explicit Developer ID App ID/profile before external distribution, register the remaining iOS/XPC bundle IDs when their permanent targets require them, resolve Apple's prerelease App Store URL/Apple ID path, and complete the prepared entitlement request.
 2. Initialize version control, ownership rules, ADR template, and CI.
 3. Keep the checked-in containing app, embedded inert Agent, and exact side-effect-free `SMAppService` identities regression-bound; next wire durable explicit enable/disable to authenticated Agent lifecycle state, then add the iOS app and CLI as their identifiers and signed boundaries become ready.
 4. Prove Developer ID archive, hardened runtime, notarization, DMG, clean install, login-item registration, and complete uninstall.
@@ -461,7 +461,7 @@ A work item is ready for implementation only when it has:
 - Physical-device evidence required
 - Explicit non-goals and dependencies
 
-Stage 0 coding proceeds in independent lanes. Accepted specifications, pure Swift packages, conformance tests, CI, permanent non-entitled target composition, and disposable platform harnesses do not wait for the managed-entitlement request. The Team ID is confirmed privately, the containing-app App ID is registered, and the separately signed Agent identity and LaunchAgent topology are build-proven; remaining iOS/XPC App IDs, authenticated designated requirements, Keychain groups, live `SMAppService` registration, and release-shaped stable-toolchain signing still require proof. The prepared entitlement request is blocked by Apple's required App Store URL and numeric Apple ID for the unreleased product, not by the Mac App ID. Entitlement approval, locked-session success, formal interviews, and completed market validation are not required for independent work or the Observe foundation.
+Stage 0 coding proceeds in independent lanes. Accepted specifications, pure Swift packages, conformance tests, CI, permanent non-entitled target composition, and disposable platform harnesses do not wait for the managed-entitlement request. The Team ID is confirmed privately, the containing-app App ID is registered, and the separately signed app-wrapped Agent identity, private Keychain group, embedded development profile, and LaunchAgent topology are build-proven; a fresh live `SMAppService` enable/readiness attempt plus explicit Agent distribution and iOS/XPC App IDs still require proof. The prepared entitlement request is blocked by Apple's required App Store URL and numeric Apple ID for the unreleased product, not by the Mac App ID. Entitlement approval, locked-session success, formal interviews, and completed market validation are not required for independent work or the Observe foundation.
 
 ## 12. Definition of Done
 

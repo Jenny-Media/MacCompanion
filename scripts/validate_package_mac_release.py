@@ -73,7 +73,7 @@ class FakeRunner:
                 )
             else:
                 identifiers = {
-                    "MacCompanionAgent": AGENT_IDENTIFIER,
+                    "MacCompanionAgent.app": AGENT_IDENTIFIER,
                     "B": SPARKLE_FRAMEWORK_IDENTIFIER,
                     "Autoupdate": SPARKLE_AUTOUPDATE_IDENTIFIER,
                     "Updater.app": SPARKLE_UPDATER_IDENTIFIER,
@@ -105,6 +105,9 @@ def make_archive(root: Path) -> Path:
     app = archive / "Products" / "Applications" / "Mac Companion.app"
     (app / "Contents" / "MacOS").mkdir(parents=True)
     (app / "Contents" / "Library" / "LaunchAgents").mkdir(parents=True)
+    agent_bundle = app / "Contents" / "Helpers" / "MacCompanionAgent.app"
+    agent_macos = agent_bundle / "Contents" / "MacOS"
+    agent_macos.mkdir(parents=True)
     sparkle_version = (
         app
         / "Contents"
@@ -122,8 +125,22 @@ def make_archive(root: Path) -> Path:
     }
     with (app / "Contents" / "Info.plist").open("wb") as handle:
         plistlib.dump(info, handle)
-    for name in ("Mac Companion", "MacCompanionAgent"):
-        executable = app / "Contents" / "MacOS" / name
+    with (agent_bundle / "Contents" / "Info.plist").open("wb") as handle:
+        plistlib.dump(
+            {
+                "CFBundleExecutable": "MacCompanionAgent",
+                "CFBundleIdentifier": AGENT_IDENTIFIER,
+                "CFBundlePackageType": "APPL",
+            },
+            handle,
+        )
+    (agent_bundle / "Contents" / "embedded.provisionprofile").write_bytes(
+        b"synthetic profile"
+    )
+    for executable in (
+        app / "Contents" / "MacOS" / "Mac Companion",
+        agent_macos / "MacCompanionAgent",
+    ):
         executable.write_bytes(b"binary")
         executable.chmod(0o755)
     for executable in (

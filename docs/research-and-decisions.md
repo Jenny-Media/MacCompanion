@@ -243,7 +243,7 @@ Jenny Media controls the `media.jenny` reverse-DNS namespace, so official role-b
 ## Open decisions
 
 - Formal Mac Companion trademark review and App Store name reservation
-- Remaining Agent/iOS/XPC App ID registration and signed identity binding; the Jenny Media LLC Team ID is confirmed privately, the company-controlled prefix is fixed as `media.jenny`, and `media.jenny.maccompanion` is registered
+- Remaining explicit Agent distribution plus iOS/XPC App ID registration; the Jenny Media LLC Team ID is confirmed privately, the company-controlled prefix is fixed as `media.jenny`, `media.jenny.maccompanion` is registered, and the app-wrapped `media.jenny.maccompanion.agent` identity plus private Keychain group are development-profile-authorized
 - Persistent Content Capture request submission after resolving Apple's required App Store URL/Apple ID path, then managed-entitlement approval
 - Exact transport framing and serialization
 - Local IPC primitive and code-identity verification method

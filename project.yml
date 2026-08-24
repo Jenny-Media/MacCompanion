@@ -68,7 +68,8 @@ targets:
         link: false
         codeSign: true
         copy:
-          destination: executables
+          destination: wrapper
+          subpath: Contents/Helpers
       - package: MacCompanionKit
         product: CompanionAgent
       - package: MacCompanionKit
@@ -102,18 +103,32 @@ targets:
         PRODUCT_NAME: Mac Companion
 
   MacCompanionAgent:
-    type: tool
+    type: application
     platform: macOS
+    info:
+      path: Apps/MacCompanionAgent/Info.plist
+      properties:
+        CFBundleDisplayName: Mac Companion Agent
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        LSBackgroundOnly: true
+        NSHumanReadableCopyright: Copyright 2026 Jenny Media LLC
     sources:
       - path: Apps/MacCompanionAgent
+        excludes:
+          - MacCompanionAgent.entitlements
     dependencies:
       - package: MacCompanionKit
         product: CompanionAgentApplicationPlatform
     settings:
       base:
         CODE_SIGN_INJECT_BASE_ENTITLEMENTS: NO
+        CODE_SIGN_ENTITLEMENTS: Apps/MacCompanionAgent/MacCompanionAgent.entitlements
+        CURRENT_PROJECT_VERSION: 1
         ENABLE_APP_SANDBOX: NO
-        OTHER_CODE_SIGN_FLAGS: "-i $(PRODUCT_BUNDLE_IDENTIFIER)"
+        GENERATE_INFOPLIST_FILE: NO
+        INFOPLIST_FILE: Apps/MacCompanionAgent/Info.plist
+        MARKETING_VERSION: 0.1.0
         PRODUCT_BUNDLE_IDENTIFIER: media.jenny.maccompanion.agent
         PRODUCT_NAME: MacCompanionAgent
         SKIP_INSTALL: YES
