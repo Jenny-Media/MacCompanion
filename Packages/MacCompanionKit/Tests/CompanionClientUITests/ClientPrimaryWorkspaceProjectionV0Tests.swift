@@ -1,6 +1,7 @@
-import CompanionClient
+@testable import CompanionClient
 @testable import CompanionClientNetworkPlatform
 @testable import CompanionClientUI
+import CompanionDomain
 import CompanionInteractiveClient
 import CompanionObservation
 import CompanionStudy
@@ -56,14 +57,29 @@ private func primaryWorkspaceSnapshot(
     latestActErrorRequest: ClientActRequestKindV1? = nil,
     authenticatedRouteClass:
         NetworkClientAuthenticatedRouteClassV1? = nil,
+    deviceState: DeviceAuthorizationState = .activeGranted,
     controlState: NetworkClientPrimaryControlStateV0 = .inactive
 ) -> NetworkClientPrimaryApplicationSnapshotV0 {
-    NetworkClientPrimaryApplicationSnapshotV0(
+    let authenticatedSession = availability == .connected
+        ? ClientAuthenticatedSessionV0(
+            clientID: UUID(),
+            hostID: primaryWorkspaceHostID,
+            deviceID: UUID(),
+            connectionID: Data(repeating: 0x44, count: 16),
+            deviceState: deviceState,
+            authorizationEpoch: .init(rawValue: 1),
+            grantRevision: .init(rawValue: 1),
+            policyRevision: .init(rawValue: 1),
+            hostState: .userSessionActive,
+            features: [],
+            serverTimeUnixMilliseconds: 10_000
+        ) : nil
+    return NetworkClientPrimaryApplicationSnapshotV0(
         revision: revision,
         hostID: primaryWorkspaceHostID,
         availability: availability,
         authenticatedRouteClass: authenticatedRouteClass,
-        authenticatedSession: nil,
+        authenticatedSession: authenticatedSession,
         observeChannel: nil,
         actChannel: nil,
         controlChannel: nil,
@@ -80,6 +96,24 @@ private func primaryWorkspaceSnapshot(
         latestActErrorRequest: latestActErrorRequest,
         controlState: controlState
     )
+}
+
+@Test func primaryWorkspaceRequiresMacGrantForMonitorOnlyDevice() throws {
+    let projection = try ClientPrimaryWorkspaceProjectionV0(
+        macName: "Studio Mac",
+        snapshot: primaryWorkspaceSnapshot(
+            revision: 1,
+            availability: .connected,
+            deviceState: .activeMonitorOnly
+        ),
+        monotonicNowMilliseconds: 1_201
+    )
+
+    #expect(projection.control.mode == .grantRequired)
+    #expect(projection.control.entry(hasLocalLiveProduct: false)
+        == .grantRequired)
+    #expect(projection.control.detail.contains("Observe only"))
+    #expect(projection.control.diagnosticCode == "interactive.grantRequired")
 }
 
 @Test func primaryWorkspaceStartsWaitingWithoutReusingPriorStatus() throws {

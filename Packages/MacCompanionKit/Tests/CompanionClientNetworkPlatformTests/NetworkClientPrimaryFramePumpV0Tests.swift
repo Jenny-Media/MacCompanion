@@ -155,6 +155,24 @@ private final class NetworkClientPumpReadyRecorderV0: @unchecked Sendable {
     }
 }
 
+private final class NetworkClientImmediateThenBlockingSleepV0:
+    @unchecked Sendable
+{
+    private let lock = NSLock()
+    private var callCountStorage = 0
+
+    var callCount: Int { lock.withLock { callCountStorage } }
+
+    func sleep() async throws {
+        let call = lock.withLock {
+            callCountStorage += 1
+            return callCountStorage
+        }
+        if call == 1 { return }
+        try await Task.sleep(nanoseconds: 3_600_000_000_000)
+    }
+}
+
 private final class NetworkClientPumpMessageIDSourceV0: @unchecked Sendable {
     private let queue = DispatchQueue(
         label: "MacCompanionTests.ClientRouteMessageIDs"
@@ -1590,6 +1608,126 @@ private func networkClientAcceptedControlSession(
     #expect(losingEvents.selections.isEmpty)
     #expect(losingEvents.terminations.isEmpty)
 
+    await pump.cancel()
+}
+
+@Test func selectedLANPrimaryRefreshesStatusBeforeHostLivenessExpires()
+    async throws
+{
+    let base = try makeNetworkClientPumpHarness()
+    let pairedHost = try networkClientPairedHost(
+        clientID: await base.session.clientID,
+        hostID: base.hostID,
+        deviceID: base.deviceID,
+        fingerprint: base.fingerprint
+    )
+    let sleep = NetworkClientImmediateThenBlockingSleepV0()
+    let candidate = NetworkClientPrimaryProductCandidateV0(
+        endpoint: try EndpointCandidate(
+            kind: .ipv4,
+            value: "192.168.1.20",
+            port: 47_474
+        ),
+        authenticatedRouteClass: .lan,
+        configuration: NetworkClientPrimaryProductConfigurationV0(
+            pairedHost: pairedHost,
+            approvalSigner: NetworkClientOperationApprovalSignerV0(),
+            interactiveApprovalSigner:
+                NetworkClientInteractiveApprovalSignerV0(),
+            clock: {
+                NetworkClientClockSnapshotV0(
+                    wallNowUnixMilliseconds: 2_004,
+                    monotonicNowMilliseconds: 1_003
+                )
+            },
+            messageID: { WireUUID(UUID()) },
+            events: .discarding,
+            livenessRefreshSleep: { try await sleep.sleep() }
+        )
+    )
+    let pump = NetworkClientPrimaryFramePumpV0(
+        io: base.io,
+        tlsHandoff: await base.pump.tlsHandoff,
+        session: base.session,
+        clock: {
+            NetworkClientClockSnapshotV0(
+                wallNowUnixMilliseconds: 2_004,
+                monotonicNowMilliseconds: 1_003
+            )
+        },
+        authenticated: { try await candidate.authenticated($0) },
+        readyForAuthenticatedTraffic: { base.ready.record() },
+        receivedCommand: { try await candidate.receive($0) },
+        terminal: { reason in
+            Task { await base.terminals.record(reason) }
+        }
+    )
+    try await candidate.bind(pump)
+    let harness = NetworkClientPumpHarnessV0(
+        io: base.io,
+        pump: pump,
+        session: base.session,
+        start: base.start,
+        helloMessageID: base.helloMessageID,
+        hostID: base.hostID,
+        deviceID: base.deviceID,
+        fingerprint: base.fingerprint,
+        authenticated: base.authenticated,
+        ready: base.ready,
+        commands: base.commands,
+        terminals: base.terminals
+    )
+    try await authenticateNetworkClientPump(harness)
+    for _ in 0..<1_000 where base.ready.count == 0 {
+        try? await Task.sleep(nanoseconds: 1_000_000)
+    }
+    let authenticatedSends = await waitForNetworkClientSentCount(base.io, 2)
+    #expect(authenticatedSends.count == 2)
+    #expect(base.ready.count == 1)
+    #expect(sleep.callCount == 0)
+
+    await candidate.selectedAsPrimary()
+    let sent = await waitForNetworkClientSentCount(base.io, 3)
+    #expect(sleep.callCount >= 1)
+    #expect(sent.count == 3)
+    let request = try decodeNetworkClientSentFrame(
+        try #require(sent.count > 2 ? sent[2] : nil),
+        as: StatusSnapshotRequestBody.self
+    )
+    let response = try WireEnvelope(
+        messageID: WireUUID(UUID()),
+        correlationID: request.messageID,
+        sentAtUnixMilliseconds: 2_005,
+        body: try StatusSnapshotBody(
+            hostID: WireUUID(base.hostID),
+            generation: WireUUID(UUID()),
+            revision: 1,
+            observedAtUnixMilliseconds: 2_004,
+            validForMilliseconds: 1_000,
+            hostState: .userSessionActive,
+            system: SystemOverview(
+                osName: "macOS",
+                osVersion: "26.0",
+                osBuild: "25A100",
+                uptimeSeconds: 500,
+                cpuUtilizationBasisPoints: 1_250,
+                memoryTotalBytes: 16_000,
+                memoryUsedBytes: 8_000,
+                storageTotalBytes: 100_000,
+                storageAvailableBytes: 40_000,
+                powerSource: .ac,
+                batteryLevelPercent: nil
+            )
+        )
+    )
+    #expect(await waitForNetworkClientPendingReceive(base.io))
+    base.io.deliver(
+        try LengthPrefixedFrameDecoder.encode(WireCodec.encode(response))
+    )
+    try? await Task.sleep(nanoseconds: 10_000_000)
+    #expect(await base.terminals.values.isEmpty)
+
+    await candidate.primaryTerminated()
     await pump.cancel()
 }
 

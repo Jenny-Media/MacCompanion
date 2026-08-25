@@ -110,6 +110,7 @@ public actor ClientObserveChannelV0: ClientPrimaryReplyReceivingV0 {
     private let environment: ClientObserveChannelEnvironmentV0
     private let publish: @Sendable (ClientObserveChannelEventV0) -> Void
     private var pendingStatus: PendingStatus?
+    private var pendingLivenessMessageID: WireUUID?
     private var pendingAuditMessageID: WireUUID?
     private var generation: UInt64 = 0
     private var issuedMessageIDs: [WireUUID] = []
@@ -136,7 +137,7 @@ public actor ClientObserveChannelV0: ClientPrimaryReplyReceivingV0 {
 
     public func requestStatus() async throws {
         try requireReady()
-        guard pendingStatus == nil else {
+        guard pendingStatus == nil, pendingLivenessMessageID == nil else {
             throw ClientObserveChannelErrorV0.statusRequestPending
         }
         let messageID = try nextMessageID()
@@ -159,6 +160,40 @@ public actor ClientObserveChannelV0: ClientPrimaryReplyReceivingV0 {
                 throw ClientObserveChannelErrorV0.invalidState(state)
             }
             pendingStatus = nil
+            throw ClientObserveChannelErrorV0.sendFailed
+        }
+        guard state == .ready, generation == expectedGeneration else {
+            throw ClientObserveChannelErrorV0.invalidState(state)
+        }
+    }
+
+    /// Sends a correlated, content-free status exchange solely to refresh the
+    /// selected primary connection's authenticated liveness. Unlike an
+    /// explicit Observe refresh, the reply is not retained or published and
+    /// therefore cannot replace newer user-visible status with a heartbeat
+    /// sample. The primary router still enforces exact request correlation,
+    /// reply kind, replay, and connection-generation fences.
+    public func requestLivenessStatus() async throws {
+        try requireReady()
+        guard pendingStatus == nil, pendingLivenessMessageID == nil else {
+            throw ClientObserveChannelErrorV0.statusRequestPending
+        }
+        let messageID = try nextMessageID()
+        let frame = try WireCodec.encode(WireEnvelope(
+            messageID: messageID,
+            correlationID: nil,
+            sentAtUnixMilliseconds: try wallNow(),
+            body: StatusSnapshotRequestBody()
+        ))
+        let expectedGeneration = generation
+        pendingLivenessMessageID = messageID
+        do {
+            try await sender.sendAuthenticatedCommand(frame)
+        } catch {
+            guard state == .ready, generation == expectedGeneration else {
+                throw ClientObserveChannelErrorV0.invalidState(state)
+            }
+            pendingLivenessMessageID = nil
             throw ClientObserveChannelErrorV0.sendFailed
         }
         guard state == .ready, generation == expectedGeneration else {
@@ -241,6 +276,7 @@ public actor ClientObserveChannelV0: ClientPrimaryReplyReceivingV0 {
         generation &+= 1
         state = .invalidated
         pendingStatus = nil
+        pendingLivenessMessageID = nil
         pendingAuditMessageID = nil
         auditPager.invalidate()
     }
@@ -248,6 +284,26 @@ public actor ClientObserveChannelV0: ClientPrimaryReplyReceivingV0 {
     private func prepareStatus(
         _ frame: Data
     ) throws -> ClientPrimaryPreparedReplyV0 {
+        if let pendingLivenessMessageID {
+            let response: WireEnvelope<StatusSnapshotBody>
+            do {
+                response = try WireCodec.decode(
+                    WireEnvelope<StatusSnapshotBody>.self,
+                    from: frame
+                )
+            } catch {
+                throw ClientObserveChannelErrorV0.invalidFrame
+            }
+            guard response.correlationID == pendingLivenessMessageID else {
+                throw ClientObserveChannelErrorV0.invalidCorrelation
+            }
+            guard response.body.hostID.rawValue
+                    == authenticatedSession.hostID else {
+                throw ClientObserveChannelErrorV0.hostMismatch
+            }
+            self.pendingLivenessMessageID = nil
+            return ClientPrimaryPreparedReplyV0()
+        }
         guard let pendingStatus else {
             throw ClientObserveChannelErrorV0.invalidCorrelation
         }
@@ -330,7 +386,10 @@ public actor ClientObserveChannelV0: ClientPrimaryReplyReceivingV0 {
             throw ClientObserveChannelErrorV0.invalidCorrelation
         }
         let request: ClientObserveRequestKindV0
-        if response.correlationID == pendingStatus?.messageID {
+        if response.correlationID == pendingLivenessMessageID {
+            pendingLivenessMessageID = nil
+            return ClientPrimaryPreparedReplyV0()
+        } else if response.correlationID == pendingStatus?.messageID {
             pendingStatus = nil
             request = .status
         } else if response.correlationID == pendingAuditMessageID {

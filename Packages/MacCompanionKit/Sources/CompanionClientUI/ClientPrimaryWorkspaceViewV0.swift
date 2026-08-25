@@ -154,6 +154,12 @@ public struct ClientPrimaryWorkspaceViewV0: View {
         case .unavailable:
             Label("Remote Control unavailable", systemImage: "display.slash")
                 .foregroundStyle(.secondary)
+        case .grantRequired:
+            Label(
+                "Allow Remote Control on Mac",
+                systemImage: "lock.shield"
+            )
+            .foregroundStyle(.secondary)
         case .wait:
             Label(
                 model.projection.control.mode == .ending

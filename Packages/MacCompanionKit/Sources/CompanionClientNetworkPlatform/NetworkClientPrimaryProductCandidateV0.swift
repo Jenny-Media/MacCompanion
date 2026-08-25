@@ -131,6 +131,28 @@ package struct NetworkClientPrimaryProductConfigurationV0: Sendable {
     let clock: @Sendable () -> NetworkClientClockSnapshotV0
     let messageID: @Sendable () -> WireUUID
     let events: NetworkClientPrimaryProductEventsV0
+    let livenessRefreshSleep: @Sendable () async throws -> Void
+
+    init(
+        pairedHost: ClientDurablePairedHostV0,
+        approvalSigner: any ClientOperationApprovalSigningV1,
+        interactiveApprovalSigner:
+            any ClientInteractiveApprovalSigningV0,
+        clock: @escaping @Sendable () -> NetworkClientClockSnapshotV0,
+        messageID: @escaping @Sendable () -> WireUUID,
+        events: NetworkClientPrimaryProductEventsV0,
+        livenessRefreshSleep: @escaping @Sendable () async throws -> Void = {
+            try await Task.sleep(nanoseconds: 15_000_000_000)
+        }
+    ) {
+        self.pairedHost = pairedHost
+        self.approvalSigner = approvalSigner
+        self.interactiveApprovalSigner = interactiveApprovalSigner
+        self.clock = clock
+        self.messageID = messageID
+        self.events = events
+        self.livenessRefreshSleep = livenessRefreshSleep
+    }
 }
 
 private final class NetworkClientPrimaryPublicationRelayV0:
@@ -228,6 +250,7 @@ package actor NetworkClientPrimaryProductCandidateV0 {
     private var session: ClientAuthenticatedSessionV0?
     private var selected = false
     private var terminated = false
+    private var livenessRefreshTask: Task<Void, Never>?
 
     init(
         endpoint: EndpointCandidate,
@@ -324,11 +347,14 @@ package actor NetworkClientPrimaryProductCandidateV0 {
                 controlChannel: control
             )
         )
+        scheduleLivenessRefresh(observe: observe)
     }
 
     func primaryTerminated() async {
         guard !terminated else { return }
         terminated = true
+        livenessRefreshTask?.cancel()
+        livenessRefreshTask = nil
         await bridge.primaryTerminated()
         if let session = relay.terminate() {
             configuration.events.primaryTerminated(
@@ -337,5 +363,35 @@ package actor NetworkClientPrimaryProductCandidateV0 {
             )
         }
         self.session = nil
+    }
+
+    /// Refreshes the content-free host status on every selected route. Private
+    /// configured routes also publish their own provenance heartbeat, but LAN
+    /// discovery intentionally has no route-observation frame; without this
+    /// selected-primary traffic the host's strict liveness deadline would
+    /// retire an otherwise healthy Bonjour connection after 45 seconds.
+    private func scheduleLivenessRefresh(
+        observe: ClientObserveChannelV0
+    ) {
+        livenessRefreshTask?.cancel()
+        let sleep = configuration.livenessRefreshSleep
+        livenessRefreshTask = Task { [weak self, observe] in
+            while !Task.isCancelled {
+                do { try await sleep() } catch { return }
+                guard let self,
+                      await self.mayRefreshLiveness() else { return }
+                do {
+                    try await observe.requestLivenessStatus()
+                } catch ClientObserveChannelErrorV0.statusRequestPending {
+                    continue
+                } catch {
+                    return
+                }
+            }
+        }
+    }
+
+    private func mayRefreshLiveness() -> Bool {
+        selected && !terminated
     }
 }

@@ -1,5 +1,6 @@
 import CompanionClient
 import CompanionClientNetworkPlatform
+import CompanionDomain
 import CompanionInteractiveClient
 import CompanionObservation
 import Foundation
@@ -24,6 +25,7 @@ public struct ClientActIssueProjectionV0: Equatable, Sendable {
 
 public enum ClientControlWorkspaceModeV0: Equatable, Sendable {
     case unavailable
+    case grantRequired
     case ready
     case requesting
     case awaitingAcceptance
@@ -39,6 +41,7 @@ public enum ClientControlWorkspaceModeV0: Equatable, Sendable {
 
 public enum ClientControlWorkspaceEntryV0: Equatable, Sendable {
     case unavailable
+    case grantRequired
     case requestFullControl
     case wait
     case openLiveControl
@@ -53,12 +56,22 @@ public struct ClientControlWorkspaceProjectionV0: Equatable, Sendable {
 
     public init(
         connected: Bool,
+        deviceState: DeviceAuthorizationState?,
         state: NetworkClientPrimaryControlStateV0
     ) {
         guard connected else {
             mode = .unavailable
             detail = "Reconnect before starting Remote Control."
             diagnosticCode = nil
+            return
+        }
+        guard deviceState == .activeGranted else {
+            mode = deviceState == .activeMonitorOnly
+                ? .grantRequired : .unavailable
+            detail = deviceState == .activeMonitorOnly
+                ? "This iPhone is paired for Observe only. Remote Control must first be allowed on the Mac."
+                : "The current device authorization cannot start Remote Control."
+            diagnosticCode = "interactive.grantRequired"
             return
         }
         switch state {
@@ -152,6 +165,8 @@ public struct ClientControlWorkspaceProjectionV0: Equatable, Sendable {
             .stopFailedSession
         case .unavailable:
             .unavailable
+        case .grantRequired:
+            .grantRequired
         case .requesting, .awaitingAcceptance,
              .acceptedPreparingChannels, .preparingInitialSurface, .ending:
             .wait
@@ -220,6 +235,7 @@ public struct ClientPrimaryWorkspaceProjectionV0: Sendable {
         }
         control = ClientControlWorkspaceProjectionV0(
             connected: connected,
+            deviceState: snapshot.authenticatedSession?.deviceState,
             state: snapshot.controlState
         )
     }

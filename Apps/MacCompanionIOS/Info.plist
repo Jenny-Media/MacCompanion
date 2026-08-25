@@ -28,6 +28,8 @@
     </array>
     <key>NSCameraUsageDescription</key>
     <string>Scan a temporary Mac Companion pairing code that you chose to display on your Mac.</string>
+    <key>NSFaceIDUsageDescription</key>
+    <string>Confirm that you want to approve Remote Control or another protected action for your Mac.</string>
     <key>NSLocalNetworkUsageDescription</key>
     <string>Find and connect directly to your Mac on your local network. Mac Companion does not use a vendor relay.</string>
     <key>UILaunchScreen</key>

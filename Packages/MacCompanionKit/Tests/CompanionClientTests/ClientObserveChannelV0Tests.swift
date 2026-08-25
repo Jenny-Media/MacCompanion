@@ -277,6 +277,27 @@ private func observeError(
     #expect(await harness.channel.retainedStatus?.snapshot.revision == 1)
 }
 
+@Test func observeLivenessStatusIsCorrelatedWithoutPublishingOrRetaining()
+    async throws
+{
+    let harness = try await makeObserveHarness()
+    try await harness.channel.requestLivenessStatus()
+    let request = try requestEnvelope(
+        try #require(await harness.transport.capturedFrames().last),
+        as: StatusSnapshotRequestBody.self
+    )
+    try await harness.router.receive(statusResponse(
+        correlationID: request.messageID
+    ))
+
+    #expect(await harness.router.state == .ready)
+    #expect(await harness.channel.retainedStatus == nil)
+    #expect(harness.events.events.isEmpty)
+
+    try await harness.channel.requestLivenessStatus()
+    #expect(await harness.transport.capturedFrames().count == 2)
+}
+
 @Test func observeStatusRejectsGenerationOrRevisionRegression()
     async throws
 {

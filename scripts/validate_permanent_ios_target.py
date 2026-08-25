@@ -268,6 +268,10 @@ def validate_info_plist(data: bytes, failures: list[str]) -> None:
             "Scan a temporary Mac Companion pairing code that you chose "
             "to display on your Mac."
         ),
+        "NSFaceIDUsageDescription": (
+            "Confirm that you want to approve Remote Control or another "
+            "protected action for your Mac."
+        ),
         "NSLocalNetworkUsageDescription": (
             "Find and connect directly to your Mac on your local network. "
             "Mac Companion does not use a vendor relay."
@@ -472,6 +476,17 @@ def validate_self_tests(
     validate_info_plist(mutated_info, injected)
     if "infoPlistUnexpectedAuthority:UIBackgroundModes" not in injected:
         failures.append("backgroundModeMutationAccepted")
+
+    try:
+        plist_value = plistlib.loads(info_data)
+        plist_value.pop("NSFaceIDUsageDescription", None)
+        mutated_info = plistlib.dumps(plist_value)
+    except (plistlib.InvalidFileException, ValueError):
+        mutated_info = info_data
+    injected = []
+    validate_info_plist(mutated_info, injected)
+    if "infoPlistSchemaOrValueMismatch" not in injected:
+        failures.append("faceIDUsageDescriptionRemovalAccepted")
 
     injected = []
     validate_app_source(app_source + "\nlet _ = NWBrowser.self\n", injected)

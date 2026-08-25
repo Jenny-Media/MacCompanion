@@ -157,7 +157,8 @@ public final class ClientPrimaryLiveControlCoordinatorV0: ObservableObject {
             activationTask = nil
             product?.surface.setInputEnabled(false)
             phase = .ending
-        case .endFailed, .preparationFailed, .rejected, .unavailable:
+        case .endFailed, .preparationFailed, .rejected, .unavailable,
+             .grantRequired:
             activationTask?.cancel()
             activationTask = nil
             retireLocalProduct(as: .failed)
@@ -581,7 +582,8 @@ public struct ClientPrimaryLiveControlViewV0: View {
         case .acceptedPreparingChannels, .channelsReady,
              .preparingInitialSurface, .active, .endFailed:
             true
-        case .unavailable, .ready, .requesting, .awaitingAcceptance,
+        case .unavailable, .grantRequired, .ready, .requesting,
+             .awaitingAcceptance,
              .ending, .preparationFailed, .rejected:
             false
         }
