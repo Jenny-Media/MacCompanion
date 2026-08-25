@@ -20,6 +20,12 @@ package protocol MacLocalXPCDashboardClientV1: AnyObject, Sendable {
     func resolveLocalApproval(
         _ command: LocalPairingDecisionCommandV0
     ) async throws -> LocalPairingDecisionReceiptV0
+    func makeInteractiveControlGrantReview(
+        _ request: LocalInteractiveControlGrantReviewRequestV0
+    ) async throws -> LocalInteractiveControlGrantReviewV0
+    func decideInteractiveControlGrant(
+        _ command: LocalGrantDecisionCommandV0
+    ) async throws -> LocalGrantDecisionReceiptV0
     func recoverHostIdentity(
         _ command: LocalHostIdentityRecoveryCommandV0
     ) async throws -> LocalHostIdentityRecoveredReceiptV0
@@ -63,6 +69,18 @@ extension MacLocalXPCDashboardClientV1 {
     package func recoverHostIdentity(
         _: LocalHostIdentityRecoveryCommandV0
     ) async throws -> LocalHostIdentityRecoveredReceiptV0 {
+        throw MacLocalXPCMenuPairingCommandErrorV1.unavailable
+    }
+
+    package func makeInteractiveControlGrantReview(
+        _: LocalInteractiveControlGrantReviewRequestV0
+    ) async throws -> LocalInteractiveControlGrantReviewV0 {
+        throw MacLocalXPCMenuPairingCommandErrorV1.unavailable
+    }
+
+    package func decideInteractiveControlGrant(
+        _: LocalGrantDecisionCommandV0
+    ) async throws -> LocalGrantDecisionReceiptV0 {
         throw MacLocalXPCMenuPairingCommandErrorV1.unavailable
     }
 
@@ -469,6 +487,28 @@ private final class MacLocalXPCDashboardRuntimeV1: @unchecked Sendable {
         return try await client.recoverHostIdentity(command)
     }
 
+    func makeInteractiveControlGrantReview(
+        _ request: LocalInteractiveControlGrantReviewRequestV0
+    ) async throws -> LocalInteractiveControlGrantReviewV0 {
+        guard let client = lock.withLock({
+            acceptingEvents && shutdownTask == nil ? self.client : nil
+        }) else {
+            throw MacLocalXPCMenuPairingCommandErrorV1.unavailable
+        }
+        return try await client.makeInteractiveControlGrantReview(request)
+    }
+
+    func decideInteractiveControlGrant(
+        _ command: LocalGrantDecisionCommandV0
+    ) async throws -> LocalGrantDecisionReceiptV0 {
+        guard let client = lock.withLock({
+            acceptingEvents && shutdownTask == nil ? self.client : nil
+        }) else {
+            throw MacLocalXPCMenuPairingCommandErrorV1.unavailable
+        }
+        return try await client.decideInteractiveControlGrant(command)
+    }
+
     func closeNetworkAdmissionForUpdate() async throws {
         guard let client = updateQuiescenceClient() else {
             throw MacLocalXPCUpdateQuiescenceErrorV0.unavailable
@@ -687,6 +727,18 @@ public final class MacLocalXPCDashboardProductV1:
         _ command: LocalHostIdentityRecoveryCommandV0
     ) async throws -> LocalHostIdentityRecoveredReceiptV0 {
         try await runtime.recoverHostIdentity(command)
+    }
+
+    public func makeInteractiveControlGrantReview(
+        _ request: LocalInteractiveControlGrantReviewRequestV0
+    ) async throws -> LocalInteractiveControlGrantReviewV0 {
+        try await runtime.makeInteractiveControlGrantReview(request)
+    }
+
+    public func decideInteractiveControlGrant(
+        _ command: LocalGrantDecisionCommandV0
+    ) async throws -> LocalGrantDecisionReceiptV0 {
+        try await runtime.decideInteractiveControlGrant(command)
     }
 
     public func closeNetworkAdmissionForUpdate() async throws {

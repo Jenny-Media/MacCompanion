@@ -1176,7 +1176,11 @@ public enum MacAgentProductBootstrapV1 {
             control: interactiveRuntime
         )
         let makeLocalXPC: LocalXPCFactory = { services in
-            try await MacLocalXPCAgentProductV1
+            try await localPairingCommandAuthority
+                .installInteractiveControlGrantHandler(
+                    try services.makeLocalInteractiveControlGrantHandler()
+                )
+            return try await MacLocalXPCAgentProductV1
                 .afterAgentBootstrapWithMenuPresentation(
                 services: services,
                 processStarter: processStarter,

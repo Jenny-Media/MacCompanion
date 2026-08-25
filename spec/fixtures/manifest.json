@@ -290,6 +290,12 @@
       "canonicalSHA256": "90eda6dba1821fd8d568566e06d033293d29598311354d6b1c28100f12c3cdc1"
     },
     {
+      "path": "valid/local-interactive-control-grant-review.json",
+      "kind": "localIPC.interactiveControlGrantReview",
+      "expect": "valid",
+      "canonicalSHA256": "79227a230f5c34ab6fc128ee0175cc6fbe943ff17f9359d77d75eb50573b8e42"
+    },
+    {
       "path": "valid/interactive-media-header.json",
       "kind": "interactive.media.header.v1",
       "expect": "valid",

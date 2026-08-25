@@ -469,6 +469,17 @@ public struct AgentRequiredAuditCompositionV0: Sendable {
             wallNowUnixMilliseconds: wallNowUnixMilliseconds
         )
     }
+
+    fileprivate func makeLocalInteractiveControlGrantHandler(
+        primary: AgentPrimarySessionAuthorityV1,
+        wallNowUnixMilliseconds: @escaping @Sendable () -> Int64
+    ) throws -> LocalInteractiveControlGrantHandlerV0 {
+        try LocalInteractiveControlGrantHandlerV0(
+            store: securityStore,
+            primary: primary,
+            wallNowUnixMilliseconds: wallNowUnixMilliseconds
+        )
+    }
 #endif
 
 }
@@ -598,6 +609,18 @@ public struct AgentPrimaryServicesV1: Sendable {
         pairingComposition.makeLocalDeviceRevocationHandler(
             primary: primarySessions,
             status: localServices,
+            wallNowUnixMilliseconds: wallNowUnixMilliseconds
+        )
+    }
+
+
+    package func makeLocalInteractiveControlGrantHandler(
+        wallNowUnixMilliseconds: @escaping @Sendable () -> Int64 = {
+            Int64((Date().timeIntervalSince1970 * 1_000).rounded(.down))
+        }
+    ) throws -> LocalInteractiveControlGrantHandlerV0 {
+        try pairingComposition.makeLocalInteractiveControlGrantHandler(
+            primary: primarySessions,
             wallNowUnixMilliseconds: wallNowUnixMilliseconds
         )
     }

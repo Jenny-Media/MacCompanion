@@ -34,7 +34,11 @@ struct MacCompanionApplication: App {
         .defaultSize(width: 560, height: 720)
         .windowResizability(.contentMinSize)
         .handlesExternalEvents(
-            matching: ["open", "repair-agent-registration"]
+            matching: [
+                "open",
+                "repair-agent-registration",
+                "allow-remote-control",
+            ]
         )
 
         MenuBarExtra {
@@ -284,6 +288,10 @@ private final class MacCompanionApplicationDelegate:
                     // Product state remains fail-closed and presents the
                     // unavailable route. The local command never broadens its
                     // authority or silently falls back to enable/disable.
+                }
+            case .reviewInteractiveControlGrant:
+                if let dashboard = self.product.dashboard {
+                    await dashboard.beginInteractiveControlGrantReview()
                 }
             }
             await self.showMainWindow()
@@ -729,6 +737,29 @@ private struct MacCompanionDashboardRoot: View {
             dashboard
             Divider()
             HStack {
+                if hasPairedDevice {
+                    if application.interactiveControlGrantApproved {
+                        Label(
+                            "Remote Control Allowed",
+                            systemImage: "checkmark.shield.fill"
+                        )
+                        .foregroundStyle(.green)
+                    } else {
+                        Button(
+                            "Allow Remote Control",
+                            systemImage: "display.badge.checkmark"
+                        ) {
+                            Task { @MainActor in
+                                await application
+                                    .beginInteractiveControlGrantReview()
+                            }
+                        }
+                        .disabled(
+                            pairingSheetPresented
+                                || grantSheetPresented
+                        )
+                    }
+                }
                 Spacer()
                 Button("Pair New Device") {
                     Task { @MainActor in
@@ -742,6 +773,9 @@ private struct MacCompanionDashboardRoot: View {
         }
         .sheet(isPresented: pairingSheetBinding) {
             pairingSheet
+        }
+        .sheet(isPresented: grantSheetBinding) {
+            grantSheet
         }
     }
 
@@ -835,6 +869,80 @@ private struct MacCompanionDashboardRoot: View {
     }
 
     private var source: MacAgentDashboardSourceV0 { application.source }
+
+    @ViewBuilder
+    private var grantSheet: some View {
+        if let review = application.interactiveControlGrantReview {
+            MacGrantExpansionViewV0(
+                presentation: review,
+                onApprove: {
+                    Task { @MainActor in
+                        await application.performInteractiveControlGrantAction(
+                            .approve
+                        )
+                    }
+                },
+                onDecline: {
+                    Task { @MainActor in
+                        await application.performInteractiveControlGrantAction(
+                            .decline
+                        )
+                    }
+                }
+            )
+        } else if application.interactiveControlGrantReviewFailed {
+            VStack(spacing: 18) {
+                ContentUnavailableView(
+                    "Remote Control review unavailable",
+                    systemImage: "exclamationmark.triangle",
+                    description: Text(
+                        "The Agent could not produce or apply an exact grant review. No Control access was added."
+                    )
+                )
+                if let reason = application
+                    .interactiveControlGrantReviewFailureReason {
+                    Text("Diagnostic: \(reason)")
+                        .font(.caption.monospaced())
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                }
+                HStack {
+                    Button("Close") {
+                        application.dismissInteractiveControlGrantFailure()
+                    }
+                    Button("Try Again") {
+                        application.dismissInteractiveControlGrantFailure()
+                        Task { @MainActor in
+                            await application
+                                .beginInteractiveControlGrantReview()
+                        }
+                    }
+                    .buttonStyle(.borderedProminent)
+                }
+            }
+            .padding(32)
+            .frame(width: 540, height: 420)
+        } else {
+            ProgressView("Preparing exact Remote Control review…")
+                .padding(48)
+                .frame(width: 520, height: 360)
+        }
+    }
+
+    private var grantSheetBinding: Binding<Bool> {
+        Binding(get: { grantSheetPresented }, set: { _ in })
+    }
+
+    private var grantSheetPresented: Bool {
+        application.interactiveControlGrantReviewLoading
+            || application.interactiveControlGrantReview != nil
+            || application.interactiveControlGrantReviewFailed
+    }
+
+    private var hasPairedDevice: Bool {
+        guard case let .status(status) = source else { return false }
+        return status.pairedDeviceCount == 1
+    }
 
     private var pairingPermitted: Bool {
         MacAgentDashboardActionPolicyV0.isEnabled(

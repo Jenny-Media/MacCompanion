@@ -67,6 +67,12 @@ static const char
         "command.host-identity.recovery-complete.acknowledge.ack";
 static const char MCLocalXPCHostIdentityRecoveryAcknowledgeFailureKind[] =
     "command.host-identity.recovery-complete.acknowledge.error";
+static const char MCLocalXPCDeviceAdministrationKind[] =
+    "command.device-administration";
+static const char MCLocalXPCDeviceAdministrationAcknowledgementKind[] =
+    "command.device-administration.ack";
+static const char MCLocalXPCDeviceAdministrationFailureKind[] =
+    "command.device-administration.error";
 static const char MCLocalXPCInteractiveLeaseInstallKind[] =
     "runtime.interactive.install";
 static const char MCLocalXPCInteractiveLeaseInstallAcknowledgementKind[] =
@@ -195,6 +201,8 @@ static const char * _Nullable MCLocalXPCMenuPairingCommandRequestKind(
         return MCLocalXPCHostIdentityRecoverKind;
     case MCLocalXPCMenuPairingCommandAcknowledgeHostIdentityRecovery:
         return MCLocalXPCHostIdentityRecoveryAcknowledgeKind;
+    case MCLocalXPCMenuPairingCommandDeviceAdministration:
+        return MCLocalXPCDeviceAdministrationKind;
     }
     return NULL;
 }
@@ -214,6 +222,8 @@ MCLocalXPCMenuPairingCommandAcknowledgementKind(
         return MCLocalXPCHostIdentityRecoverAcknowledgementKind;
     case MCLocalXPCMenuPairingCommandAcknowledgeHostIdentityRecovery:
         return MCLocalXPCHostIdentityRecoveryAcknowledgeAcknowledgementKind;
+    case MCLocalXPCMenuPairingCommandDeviceAdministration:
+        return MCLocalXPCDeviceAdministrationAcknowledgementKind;
     }
     return NULL;
 }
@@ -232,6 +242,8 @@ static const char * _Nullable MCLocalXPCMenuPairingCommandFailureKind(
         return MCLocalXPCHostIdentityRecoverFailureKind;
     case MCLocalXPCMenuPairingCommandAcknowledgeHostIdentityRecovery:
         return MCLocalXPCHostIdentityRecoveryAcknowledgeFailureKind;
+    case MCLocalXPCMenuPairingCommandDeviceAdministration:
+        return MCLocalXPCDeviceAdministrationFailureKind;
     }
     return NULL;
 }
@@ -1018,6 +1030,7 @@ bool MCLocalXPCMessageGetExactMenuPairingCommand(
         MCLocalXPCMenuPairingCommandResolveDecision,
         MCLocalXPCMenuPairingCommandRecoverHostIdentity,
         MCLocalXPCMenuPairingCommandAcknowledgeHostIdentityRecovery,
+        MCLocalXPCMenuPairingCommandDeviceAdministration,
     };
     for (size_t index = 0;
          index < sizeof(kinds) / sizeof(kinds[0]);
@@ -1704,6 +1717,7 @@ bool MCLocalXPCExactMessageParserSelfTest(void) {
         MCLocalXPCMenuPairingCommandResolveDecision,
         MCLocalXPCMenuPairingCommandRecoverHostIdentity,
         MCLocalXPCMenuPairingCommandAcknowledgeHostIdentityRecovery,
+        MCLocalXPCMenuPairingCommandDeviceAdministration,
     };
     for (size_t index = 0;
          index < sizeof(menu_command_kinds) / sizeof(menu_command_kinds[0]);

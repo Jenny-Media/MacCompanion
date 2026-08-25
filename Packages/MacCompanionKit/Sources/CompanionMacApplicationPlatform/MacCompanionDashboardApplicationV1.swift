@@ -7,6 +7,12 @@ import CompanionLocalXPCPlatform
 import CompanionMacApp
 import CompanionPresentation
 import Observation
+import OSLog
+
+private let interactiveControlGrantLoggerV1 = Logger(
+    subsystem: "media.jenny.maccompanion",
+    category: "interactive-control-grant"
+)
 
 @available(macOS 26.0, *)
 public enum MacCompanionDashboardApplicationErrorV1:
@@ -29,6 +35,15 @@ public enum MacCompanionPairingReviewActionV1: Sendable {
     case approve
     case decline
     case retryDecision
+}
+
+@available(macOS 26.0, *)
+public enum MacCompanionInteractiveControlGrantActionV1:
+    Equatable,
+    Sendable
+{
+    case approve
+    case decline
 }
 
 @available(macOS 26.0, *)
@@ -100,6 +115,12 @@ package protocol MacCompanionDashboardProductV1: AnyObject, Sendable {
     func recoverHostIdentity(
         _ command: LocalHostIdentityRecoveryCommandV0
     ) async throws -> LocalHostIdentityRecoveredReceiptV0
+    func makeInteractiveControlGrantReview(
+        _ request: LocalInteractiveControlGrantReviewRequestV0
+    ) async throws -> LocalInteractiveControlGrantReviewV0
+    func decideInteractiveControlGrant(
+        _ command: LocalGrantDecisionCommandV0
+    ) async throws -> LocalGrantDecisionReceiptV0
     func closeNetworkAdmissionForUpdate() async throws
     func drainNetworkConnectionsForUpdate() async throws
     func reopenNetworkAdmissionAfterUpdateFailure() async throws
@@ -132,6 +153,18 @@ extension MacCompanionDashboardProductV1 {
     package func recoverHostIdentity(
         _: LocalHostIdentityRecoveryCommandV0
     ) async throws -> LocalHostIdentityRecoveredReceiptV0 {
+        throw MacLocalXPCMenuPairingCommandErrorV1.unavailable
+    }
+
+    package func makeInteractiveControlGrantReview(
+        _: LocalInteractiveControlGrantReviewRequestV0
+    ) async throws -> LocalInteractiveControlGrantReviewV0 {
+        throw MacLocalXPCMenuPairingCommandErrorV1.unavailable
+    }
+
+    package func decideInteractiveControlGrant(
+        _: LocalGrantDecisionCommandV0
+    ) async throws -> LocalGrantDecisionReceiptV0 {
         throw MacLocalXPCMenuPairingCommandErrorV1.unavailable
     }
 
@@ -174,6 +207,12 @@ public final class MacCompanionDashboardApplicationV1 {
         MacPairingReviewPresentationV0()
     public private(set) var hostIdentityRecovery =
         MacHostIdentityRecoveryPresentationV0()
+    public private(set) var interactiveControlGrantReview:
+        LocalGrantExpansionPresentation?
+    public private(set) var interactiveControlGrantReviewLoading = false
+    public private(set) var interactiveControlGrantReviewFailed = false
+    public private(set) var interactiveControlGrantReviewFailureReason: String?
+    public private(set) var interactiveControlGrantApproved = false
 
     @ObservationIgnored
     private var product: any MacCompanionDashboardProductV1
@@ -567,6 +606,105 @@ public final class MacCompanionDashboardApplicationV1 {
         }
     }
 
+    public func beginInteractiveControlGrantReview() async {
+        guard phase == .active,
+              !interactiveControlGrantReviewLoading,
+              interactiveControlGrantReview == nil,
+              case let .status(status) = source,
+              status.pairedDeviceCount == 1 else { return }
+        interactiveControlGrantReviewLoading = true
+        interactiveControlGrantReviewFailed = false
+        interactiveControlGrantReviewFailureReason = nil
+        let now = Int64((Date().timeIntervalSince1970 * 1_000).rounded(.down))
+        do {
+            let request = try LocalInteractiveControlGrantReviewRequestV0(
+                commandID: UUID(),
+                requestedAtUnixMilliseconds: now
+            )
+            let review = try await product
+                .makeInteractiveControlGrantReview(request)
+            try review.validate(against: request)
+            interactiveControlGrantReview = try
+                LocalGrantExpansionPresentation(
+                    reviewID: review.reviewID,
+                    deviceID: review.deviceID,
+                    deviceDisplayName: review.deviceDisplayName,
+                    expectedAuthorizationEpoch: review.authorizationEpoch,
+                    expectedGrantRevision: review.grantRevision,
+                    expectedPolicyRevision: review.policyRevision,
+                    currentGrants: review.currentGrantSet(),
+                    requestedDescriptors: [
+                        try InteractiveControlDurableGrantV0.descriptor(),
+                    ]
+                )
+        } catch {
+            interactiveControlGrantReviewFailed = true
+            interactiveControlGrantReviewFailureReason = String(
+                describing: error
+            )
+            interactiveControlGrantLoggerV1.error(
+                "Review failed: \(String(describing: error), privacy: .public)"
+            )
+        }
+        interactiveControlGrantReviewLoading = false
+    }
+
+    public func performInteractiveControlGrantAction(
+        _ action: MacCompanionInteractiveControlGrantActionV1
+    ) async {
+        guard phase == .active,
+              var presentation = interactiveControlGrantReview else { return }
+        let commandID = UUID()
+        let now = Int64((Date().timeIntervalSince1970 * 1_000).rounded(.down))
+        do {
+            let intent: LocalGrantExpansionIntent
+            switch action {
+            case .approve:
+                intent = try presentation.approve(decisionID: commandID)
+            case .decline:
+                intent = try presentation.decline(decisionID: commandID)
+            }
+            interactiveControlGrantReview = presentation
+            let command = try intent.makeIPCCommand(
+                decidedAtUnixMilliseconds: now
+            )
+            let receipt = try await product
+                .decideInteractiveControlGrant(command)
+            if action == .approve {
+                try presentation.applicationSucceeded(
+                    receipt: receipt,
+                    command: command
+                )
+                interactiveControlGrantReview = presentation
+                interactiveControlGrantApproved = true
+                try? await Task.sleep(for: .milliseconds(650))
+            }
+            interactiveControlGrantReview = nil
+            interactiveControlGrantReviewFailed = false
+            interactiveControlGrantReviewFailureReason = nil
+        } catch {
+            interactiveControlGrantLoggerV1.error(
+                "Decision failed: \(String(describing: error), privacy: .public)"
+            )
+            if action == .approve,
+               case .applying(let decisionID) = presentation.phase {
+                try? presentation.applicationFailed(decisionID: decisionID)
+                interactiveControlGrantReview = presentation
+            } else {
+                interactiveControlGrantReview = nil
+                interactiveControlGrantReviewFailed = true
+                interactiveControlGrantReviewFailureReason = String(
+                    describing: error
+                )
+            }
+        }
+    }
+
+    public func dismissInteractiveControlGrantFailure() {
+        interactiveControlGrantReviewFailed = false
+        interactiveControlGrantReviewFailureReason = nil
+    }
+
     /// Update-only commands over this exact dashboard generation. Construction
     /// and ordinary dashboard start never invoke them.
     public func closeNetworkAdmissionForUpdate() async throws {
@@ -619,6 +757,11 @@ public final class MacCompanionDashboardApplicationV1 {
             await product.finish()
             guard let self else { return }
             self.source = .unavailable
+            self.interactiveControlGrantReview = nil
+            self.interactiveControlGrantReviewLoading = false
+            self.interactiveControlGrantReviewFailed = false
+            self.interactiveControlGrantReviewFailureReason = nil
+            self.interactiveControlGrantApproved = false
             self.phase = .finished
         }
         finishTask = task

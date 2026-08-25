@@ -89,6 +89,24 @@ The UI must render host-generated labels for these facts. A provider title or su
 
 Reviewing or merely opening the UI creates no intent. Explicit local approval produces one decision-ID-correlated intent containing the review, exact device and shown name, expected revisions, requested capability facts, complete current set, and complete proposed canonical grant set. That intent maps without loss to `LocalGrantDecisionCommandV0`. Success is shown only when its exact receipt advances authorization epoch and grant revision once and stores the proposed set. Decline emits the same exact review binding with a closed decline decision and cannot later become approval; a stale or mismatched receipt cannot claim success.
 
+Interactive Control uses the same durable expansion semantics through a
+dedicated, non-provider review contract. The visible menu app may request a
+review only for the sole active paired device. The Agent selects that device,
+reads its locally confirmed name and complete current grant set in one storage
+turn, and returns a five-minute `LocalInteractiveControlGrantReviewV0` bound to
+the exact Control capability identifier, authorization epoch, grant revision,
+and policy revision. The Control descriptor is fixed product authority and is
+never published in the Act provider registry.
+
+The menu app cannot choose a device identifier, author the review, change the
+Control effects, or approve by requesting the review. It may only present the
+Agent-issued review and send the existing exact `LocalGrantDecisionCommandV0`.
+Approval stores `maccompanion.interactive.control`, advances both
+authorization and grant revisions, and closes current primary-session ingress
+until durable convergence is complete. A newly granted phone must reconnect
+and still complete the separate fresh-presence, one-session Interactive
+approval before capture or input can start.
+
 ## Interactive Control warning
 
 The visible Mac warning is separately bound to the locally named device, request ID, approval ID, selected display, approval expiry, and exact closed effects: view screen, move pointer, press keyboard keys, and insert eligible text. View is mandatory and text requires keyboard.

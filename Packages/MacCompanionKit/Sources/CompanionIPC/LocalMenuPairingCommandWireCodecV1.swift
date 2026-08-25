@@ -91,6 +91,54 @@ public enum LocalMenuPairingCommandWireCodecV1 {
         try decode(LocalPairingDecisionReceiptV0.self, from: data)
     }
 
+    public static func encodeInteractiveControlGrantReviewRequest(
+        _ request: LocalInteractiveControlGrantReviewRequestV0
+    ) throws -> Data {
+        try encode(request)
+    }
+
+    public static func decodeInteractiveControlGrantReviewRequest(
+        _ data: Data
+    ) throws -> LocalInteractiveControlGrantReviewRequestV0 {
+        try decode(LocalInteractiveControlGrantReviewRequestV0.self, from: data)
+    }
+
+    public static func encodeInteractiveControlGrantReview(
+        _ review: LocalInteractiveControlGrantReviewV0
+    ) throws -> Data {
+        try encode(review)
+    }
+
+    public static func decodeInteractiveControlGrantReview(
+        _ data: Data
+    ) throws -> LocalInteractiveControlGrantReviewV0 {
+        try decode(LocalInteractiveControlGrantReviewV0.self, from: data)
+    }
+
+    public static func encodeGrantDecisionCommand(
+        _ command: LocalGrantDecisionCommandV0
+    ) throws -> Data {
+        try encode(command)
+    }
+
+    public static func decodeGrantDecisionCommand(
+        _ data: Data
+    ) throws -> LocalGrantDecisionCommandV0 {
+        try decode(LocalGrantDecisionCommandV0.self, from: data)
+    }
+
+    public static func encodeGrantDecisionReceipt(
+        _ receipt: LocalGrantDecisionReceiptV0
+    ) throws -> Data {
+        try encode(receipt)
+    }
+
+    public static func decodeGrantDecisionReceipt(
+        _ data: Data
+    ) throws -> LocalGrantDecisionReceiptV0 {
+        try decode(LocalGrantDecisionReceiptV0.self, from: data)
+    }
+
     private static func encode<Value: Encodable>(
         _ value: Value
     ) throws -> Data {

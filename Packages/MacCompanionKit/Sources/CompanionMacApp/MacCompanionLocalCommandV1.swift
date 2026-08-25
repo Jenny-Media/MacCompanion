@@ -3,14 +3,17 @@ import Foundation
 /// A deliberately narrow local command surface for macOS automation.
 ///
 /// The URL scheme does not expose arbitrary Agent lifecycle or remote-control
-/// operations. Registration repair is idempotent: the containing app accepts
-/// it only while Mac Companion is already configured as enabled and restores
-/// that same state against the currently installed signed bundle.
+/// operations. It may open the Agent-authored Remote Control grant review, but
+/// it cannot approve that review. Registration repair is idempotent: the
+/// containing app accepts it only while Mac Companion is already configured as
+/// enabled and restores that same state against the currently installed signed
+/// bundle.
 public enum MacCompanionLocalCommandV1: Equatable, Sendable {
     public static let scheme = "maccompanion"
 
     case openWindow
     case repairAgentRegistration
+    case reviewInteractiveControlGrant
 
     public init?(url: URL) {
         guard let components = URLComponents(
@@ -31,6 +34,8 @@ public enum MacCompanionLocalCommandV1: Equatable, Sendable {
             self = .openWindow
         case "repair-agent-registration":
             self = .repairAgentRegistration
+        case "allow-remote-control":
+            self = .reviewInteractiveControlGrant
         default:
             return nil
         }

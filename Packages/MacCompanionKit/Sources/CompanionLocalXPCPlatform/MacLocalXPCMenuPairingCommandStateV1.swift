@@ -23,6 +23,8 @@ package enum MacLocalXPCMenuPairingCommandKindV1:
     case resolveDecision
     case recoverHostIdentity
     case acknowledgeHostIdentityRecoveryCompletion
+    case requestInteractiveControlGrantReview
+    case decideInteractiveControlGrant
 }
 
 /// Destructive recovery authority is injected separately from pairing. The
@@ -59,6 +61,28 @@ public protocol MacLocalXPCMenuPairingCommandHandlingV1: Sendable {
     func resolveLocalApproval(
         _ command: LocalPairingDecisionCommandV0
     ) async throws -> LocalPairingDecisionReceiptV0
+
+    func makeInteractiveControlGrantReview(
+        _ request: LocalInteractiveControlGrantReviewRequestV0
+    ) async throws -> LocalInteractiveControlGrantReviewV0
+
+    func decideInteractiveControlGrant(
+        _ command: LocalGrantDecisionCommandV0
+    ) async throws -> LocalGrantDecisionReceiptV0
+}
+
+public extension MacLocalXPCMenuPairingCommandHandlingV1 {
+    func makeInteractiveControlGrantReview(
+        _: LocalInteractiveControlGrantReviewRequestV0
+    ) async throws -> LocalInteractiveControlGrantReviewV0 {
+        throw MacLocalXPCMenuPairingCommandErrorV1.unavailable
+    }
+
+    func decideInteractiveControlGrant(
+        _: LocalGrantDecisionCommandV0
+    ) async throws -> LocalGrantDecisionReceiptV0 {
+        throw MacLocalXPCMenuPairingCommandErrorV1.unavailable
+    }
 }
 
 /// One cross-family transaction gate per authenticated XPC generation. A

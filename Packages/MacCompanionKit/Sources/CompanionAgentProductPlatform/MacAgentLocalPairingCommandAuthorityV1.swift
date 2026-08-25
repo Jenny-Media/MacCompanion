@@ -1,4 +1,5 @@
 #if os(macOS)
+import CompanionAgent
 import CompanionAgentNetworkPlatform
 import CompanionIPC
 import CompanionLocalXPCPlatform
@@ -12,6 +13,8 @@ package actor MacAgentLocalPairingCommandAuthorityV1:
     MacLocalXPCMenuPairingCommandHandlingV1
 {
     private var product: AgentNetworkPairingProductCompositionV0?
+    private var interactiveControlGrants:
+        LocalInteractiveControlGrantHandlerV0?
     private var terminal = false
 
     package init() {}
@@ -25,9 +28,21 @@ package actor MacAgentLocalPairingCommandAuthorityV1:
         self.product = product
     }
 
+    package func installInteractiveControlGrantHandler(
+        _ handler: LocalInteractiveControlGrantHandlerV0
+    ) throws {
+        guard !terminal, interactiveControlGrants == nil else {
+            throw MacAgentPreparedProductCompositionErrorV1.terminal
+        }
+        interactiveControlGrants = handler
+    }
+
     package func finish() {
         terminal = true
         product = nil
+        let interactiveControlGrants = self.interactiveControlGrants
+        self.interactiveControlGrants = nil
+        Task { await interactiveControlGrants?.invalidateReview() }
     }
 
     public func createPairingSession(
@@ -56,6 +71,24 @@ package actor MacAgentLocalPairingCommandAuthorityV1:
         }
         return try await product.localPairingReviews
             .resolveLocalApproval(command)
+    }
+
+    public func makeInteractiveControlGrantReview(
+        _ request: LocalInteractiveControlGrantReviewRequestV0
+    ) async throws -> LocalInteractiveControlGrantReviewV0 {
+        guard !terminal, let interactiveControlGrants else {
+            throw MacLocalXPCMenuPairingCommandErrorV1.unavailable
+        }
+        return try await interactiveControlGrants.makeReview(request)
+    }
+
+    public func decideInteractiveControlGrant(
+        _ command: LocalGrantDecisionCommandV0
+    ) async throws -> LocalGrantDecisionReceiptV0 {
+        guard !terminal, let interactiveControlGrants else {
+            throw MacLocalXPCMenuPairingCommandErrorV1.unavailable
+        }
+        return try await interactiveControlGrants.decide(command)
     }
 }
 #endif

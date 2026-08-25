@@ -633,6 +633,19 @@ public actor SQLiteSecurityStore {
         try activeDeviceIDs().count
     }
 
+    /// Returns the complete locally named grant identity only when exactly one
+    /// active device exists. This is the one-phone MVP administration seam;
+    /// callers cannot select or synthesize a remote device identifier.
+    public func soleActiveDeviceGrantIdentitySnapshot()
+        throws -> StoredDeviceGrantIdentitySnapshot?
+    {
+        let deviceIDs = try activeDeviceIDs()
+        guard deviceIDs.count == 1, let deviceID = deviceIDs.first else {
+            return nil
+        }
+        return try deviceGrantIdentitySnapshot(deviceID)
+    }
+
     public func establishHostIdentity(_ record: StoredHostIdentityRecord) throws {
         guard record.state == .ready, record.recoveryID == nil else {
             throw SecurityStoreError.invalidRecord

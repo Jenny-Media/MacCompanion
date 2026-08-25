@@ -16,6 +16,13 @@ func localCommandAcceptsOnlyExactNarrowURLs() throws {
             )
         ) == .repairAgentRegistration
     )
+    #expect(
+        MacCompanionLocalCommandV1(
+            url: try #require(
+                URL(string: "maccompanion://allow-remote-control")
+            )
+        ) == .reviewInteractiveControlGrant
+    )
 
     for value in [
         "https://open",
@@ -24,6 +31,8 @@ func localCommandAcceptsOnlyExactNarrowURLs() throws {
         "maccompanion://open/path",
         "maccompanion://open?command=disable",
         "maccompanion://repair-agent-registration#again",
+        "maccompanion://allow-remote-control?approve=true",
+        "maccompanion://allow-remote-control/approve",
         "maccompanion://user@open",
     ] {
         let url = try #require(URL(string: value))

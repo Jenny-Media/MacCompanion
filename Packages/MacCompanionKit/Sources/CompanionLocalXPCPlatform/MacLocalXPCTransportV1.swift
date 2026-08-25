@@ -536,6 +536,10 @@ public final class MacLocalXPCServerV1:
         case acknowledgeHostIdentityRecoveryCompletion(
             LocalHostIdentityRecoveredReceiptV0
         )
+        case requestInteractiveControlGrantReview(
+            LocalInteractiveControlGrantReviewRequestV0
+        )
+        case decideInteractiveControlGrant(LocalGrantDecisionCommandV0)
 
         var kind: MacLocalXPCMenuPairingCommandKindV1 {
             switch self {
@@ -545,6 +549,10 @@ public final class MacLocalXPCServerV1:
             case .recoverHostIdentity: .recoverHostIdentity
             case .acknowledgeHostIdentityRecoveryCompletion:
                 .acknowledgeHostIdentityRecoveryCompletion
+            case .requestInteractiveControlGrantReview:
+                .requestInteractiveControlGrantReview
+            case .decideInteractiveControlGrant:
+                .decideInteractiveControlGrant
             }
         }
 
@@ -556,12 +564,19 @@ public final class MacLocalXPCServerV1:
             case .recoverHostIdentity: .recoverHostIdentity
             case .acknowledgeHostIdentityRecoveryCompletion:
                 .acknowledgeHostIdentityRecoveryCompletion
+            case .requestInteractiveControlGrantReview:
+                .administerDevices
+            case .decideInteractiveControlGrant:
+                .decideGrantExpansion
             }
         }
 
         var isPairing: Bool {
             switch self {
-            case .create, .dismiss, .resolveDecision: true
+            case .create, .dismiss, .resolveDecision,
+                    .requestInteractiveControlGrantReview,
+                    .decideInteractiveControlGrant:
+                true
             case .recoverHostIdentity,
                     .acknowledgeHostIdentityRecoveryCompletion:
                 false
@@ -579,6 +594,10 @@ public final class MacLocalXPCServerV1:
         case recoveryCompletionAcknowledged(
             LocalHostIdentityRecoveredReceiptV0
         )
+        case interactiveControlGrantReview(
+            LocalInteractiveControlGrantReviewV0
+        )
+        case interactiveControlGrantDecision(LocalGrantDecisionReceiptV0)
     }
 
     private final class PendingMenuPairingCommand: @unchecked Sendable {
@@ -3540,6 +3559,15 @@ public final class MacLocalXPCServerV1:
                     try LocalHostIdentityRecoveryWireCodecV1
                         .decodeReceipt(payload)
                 )
+            case MCLocalXPCMenuPairingCommandDeviceAdministration:
+                if let request = try? LocalMenuPairingCommandWireCodecV1
+                    .decodeInteractiveControlGrantReviewRequest(payload) {
+                    return .requestInteractiveControlGrantReview(request)
+                }
+                return .decideInteractiveControlGrant(
+                    try LocalMenuPairingCommandWireCodecV1
+                        .decodeGrantDecisionCommand(payload)
+                )
             default:
                 return nil
             }
@@ -3620,6 +3648,22 @@ public final class MacLocalXPCServerV1:
                     result = .recoveryCompletionAcknowledged(
                         try await hostIdentityRecoveryHandler
                             .acknowledgeHostIdentityRecoveryCompletion(value)
+                    )
+                case .requestInteractiveControlGrantReview(let value):
+                    guard let menuPairingCommandHandler else {
+                        throw MacLocalXPCMenuPairingCommandErrorV1.unavailable
+                    }
+                    result = .interactiveControlGrantReview(
+                        try await menuPairingCommandHandler
+                            .makeInteractiveControlGrantReview(value)
+                    )
+                case .decideInteractiveControlGrant(let value):
+                    guard let menuPairingCommandHandler else {
+                        throw MacLocalXPCMenuPairingCommandErrorV1.unavailable
+                    }
+                    result = .interactiveControlGrantDecision(
+                        try await menuPairingCommandHandler
+                            .decideInteractiveControlGrant(value)
                     )
                 }
                 queue.async {
@@ -4081,6 +4125,20 @@ public final class MacLocalXPCServerV1:
                 guard receipt == expected else { return nil }
                 return try LocalHostIdentityRecoveryWireCodecV1
                     .encodeReceipt(receipt)
+            case (
+                .requestInteractiveControlGrantReview(let request),
+                .interactiveControlGrantReview(let review)
+            ):
+                try review.validate(against: request)
+                return try LocalMenuPairingCommandWireCodecV1
+                    .encodeInteractiveControlGrantReview(review)
+            case (
+                .decideInteractiveControlGrant(let command),
+                .interactiveControlGrantDecision(let receipt)
+            ):
+                try receipt.validate(against: command)
+                return try LocalMenuPairingCommandWireCodecV1
+                    .encodeGrantDecisionReceipt(receipt)
             default:
                 return nil
             }
@@ -4100,6 +4158,9 @@ public final class MacLocalXPCServerV1:
             MCLocalXPCMenuPairingCommandRecoverHostIdentity
         case .acknowledgeHostIdentityRecoveryCompletion:
             MCLocalXPCMenuPairingCommandAcknowledgeHostIdentityRecovery
+        case .requestInteractiveControlGrantReview,
+                .decideInteractiveControlGrant:
+            MCLocalXPCMenuPairingCommandDeviceAdministration
         }
     }
 
@@ -5165,6 +5226,62 @@ public final class MacLocalXPCClientV1:
         }
     }
 
+    public func makeInteractiveControlGrantReview(
+        _ request: LocalInteractiveControlGrantReviewRequestV0
+    ) async throws -> LocalInteractiveControlGrantReviewV0 {
+        let payload: Data
+        do {
+            payload = try LocalMenuPairingCommandWireCodecV1
+                .encodeInteractiveControlGrantReviewRequest(request)
+        } catch {
+            throw MacLocalXPCMenuPairingCommandErrorV1
+                .malformedOrTransportError
+        }
+        let reply = try await sendMenuPairingCommand(
+            kind: .requestInteractiveControlGrantReview,
+            authorizationMethod: .administerDevices,
+            payload: payload
+        )
+        do {
+            let review = try LocalMenuPairingCommandWireCodecV1
+                .decodeInteractiveControlGrantReview(reply)
+            try review.validate(against: request)
+            return review
+        } catch {
+            invalidateCurrentGenerationAfterMalformedCommandReply()
+            throw MacLocalXPCMenuPairingCommandErrorV1
+                .malformedOrTransportError
+        }
+    }
+
+    public func decideInteractiveControlGrant(
+        _ command: LocalGrantDecisionCommandV0
+    ) async throws -> LocalGrantDecisionReceiptV0 {
+        let payload: Data
+        do {
+            payload = try LocalMenuPairingCommandWireCodecV1
+                .encodeGrantDecisionCommand(command)
+        } catch {
+            throw MacLocalXPCMenuPairingCommandErrorV1
+                .malformedOrTransportError
+        }
+        let reply = try await sendMenuPairingCommand(
+            kind: .decideInteractiveControlGrant,
+            authorizationMethod: .decideGrantExpansion,
+            payload: payload
+        )
+        do {
+            let receipt = try LocalMenuPairingCommandWireCodecV1
+                .decodeGrantDecisionReceipt(reply)
+            try receipt.validate(against: command)
+            return receipt
+        } catch {
+            invalidateCurrentGenerationAfterMalformedCommandReply()
+            throw MacLocalXPCMenuPairingCommandErrorV1
+                .malformedOrTransportError
+        }
+    }
+
     public func recoverHostIdentity(
         _ command: LocalHostIdentityRecoveryCommandV0
     ) async throws -> LocalHostIdentityRecoveredReceiptV0 {
@@ -6118,6 +6235,9 @@ public final class MacLocalXPCClientV1:
             MCLocalXPCMenuPairingCommandRecoverHostIdentity
         case .acknowledgeHostIdentityRecoveryCompletion:
             MCLocalXPCMenuPairingCommandAcknowledgeHostIdentityRecovery
+        case .requestInteractiveControlGrantReview,
+                .decideInteractiveControlGrant:
+            MCLocalXPCMenuPairingCommandDeviceAdministration
         }
     }
 

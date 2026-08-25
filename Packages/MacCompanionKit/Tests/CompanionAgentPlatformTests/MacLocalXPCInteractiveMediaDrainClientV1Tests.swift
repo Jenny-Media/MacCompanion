@@ -1,5 +1,6 @@
 #if os(macOS)
 @testable import CompanionAgentPlatform
+import CompanionDomain
 import CompanionInteractiveRuntime
 import CompanionInteractiveWire
 import CompanionIPC
@@ -68,6 +69,18 @@ private final class MediaDrainClientProbeV1:
         await gate.publish(header)
     }
 
+    func makeInteractiveControlGrantReview(
+        _: LocalInteractiveControlGrantReviewRequestV0
+    ) async throws -> LocalInteractiveControlGrantReviewV0 {
+        throw Failure.injected
+    }
+
+    func decideInteractiveControlGrant(
+        _: LocalGrantDecisionCommandV0
+    ) async throws -> LocalGrantDecisionReceiptV0 {
+        throw Failure.injected
+    }
+
     func cancel() {
         lock.withLock { cancelsStorage += 1 }
         Task { await gate.releaseAll() }
@@ -80,6 +93,43 @@ private final class MediaDrainClientProbeV1:
     func snapshot() -> (starts: Int, cancels: Int) {
         lock.withLock { (startsStorage, cancelsStorage) }
     }
+}
+
+@available(macOS 26.0, *)
+@Test func mediaDrainForwardsInteractiveControlAdministration() async throws {
+    let client = MediaDrainClientProbeV1()
+    let drain = MacLocalXPCInteractiveMediaDrainClientV1(
+        client: client,
+        mediaQueue: try BoundedInteractiveMediaQueueV0()
+    )
+    let request = try LocalInteractiveControlGrantReviewRequestV0(
+        commandID: UUID(),
+        requestedAtUnixMilliseconds: 1
+    )
+    do {
+        _ = try await drain.makeInteractiveControlGrantReview(request)
+        Issue.record("Expected wrapped review authority failure")
+    } catch MediaDrainClientProbeV1.Failure.injected {}
+
+    let command = try LocalGrantDecisionCommandV0(
+        commandID: UUID(),
+        reviewID: UUID(),
+        deviceID: UUID(),
+        deviceDisplayName: try DeviceDisplayName("iPhone"),
+        decision: .decline,
+        expectedAuthorizationEpoch: .init(rawValue: 1),
+        expectedGrantRevision: .init(rawValue: 1),
+        expectedPolicyRevision: .init(rawValue: 1),
+        expectedCurrentGrants: CapabilityGrantSet([]),
+        proposedGrants: CapabilityGrantSet([
+            InteractiveControlDurableGrantV0.identifier,
+        ]),
+        decidedAtUnixMilliseconds: 1
+    )
+    do {
+        _ = try await drain.decideInteractiveControlGrant(command)
+        Issue.record("Expected wrapped decision authority failure")
+    } catch MediaDrainClientProbeV1.Failure.injected {}
 }
 
 private func mediaDrainHeaderV1(

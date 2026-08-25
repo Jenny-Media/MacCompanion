@@ -102,6 +102,36 @@ package final class MacLocalXPCInteractiveMediaDrainClientV1:
         try await client.resolveLocalApproval(command)
     }
 
+    package func makeInteractiveControlGrantReview(
+        _ request: LocalInteractiveControlGrantReviewRequestV0
+    ) async throws -> LocalInteractiveControlGrantReviewV0 {
+        try await client.makeInteractiveControlGrantReview(request)
+    }
+
+    package func decideInteractiveControlGrant(
+        _ command: LocalGrantDecisionCommandV0
+    ) async throws -> LocalGrantDecisionReceiptV0 {
+        try await client.decideInteractiveControlGrant(command)
+    }
+
+    package func recoverHostIdentity(
+        _ command: LocalHostIdentityRecoveryCommandV0
+    ) async throws -> LocalHostIdentityRecoveredReceiptV0 {
+        try await client.recoverHostIdentity(command)
+    }
+
+    package func closeNetworkAdmissionForUpdate() async throws {
+        try await client.closeNetworkAdmissionForUpdate()
+    }
+
+    package func drainNetworkConnectionsForUpdate() async throws {
+        try await client.drainNetworkConnectionsForUpdate()
+    }
+
+    package func reopenNetworkAdmissionAfterUpdateFailure() async throws {
+        try await client.reopenNetworkAdmissionAfterUpdateFailure()
+    }
+
     package func publishInteractiveAdmission(
         _ publication: LocalInteractiveAdmissionPublicationV1
     ) async throws -> LocalInteractiveAdmissionPublishedReceiptV1 {
