@@ -100,9 +100,33 @@ private final class MacCompanionPairingCommandProxyV1:
 }
 
 @available(macOS 26.0, *)
+private final class MacCompanionDisplayAdmissionProxyV1:
+    @unchecked Sendable
+{
+    private let lock = NSLock()
+    private weak var product: (any MacCompanionDashboardProductV1)?
+
+    func install(_ product: any MacCompanionDashboardProductV1) {
+        lock.withLock { self.product = product }
+    }
+
+    func update(_ selectedDisplayID: UUID?) async throws {
+        guard let product = lock.withLock({ self.product }) else {
+            throw MacLocalXPCInteractiveAdmissionErrorV1.unavailable
+        }
+        try await product.updateInteractiveAdmissionSelectedDisplay(
+            selectedDisplayID
+        )
+    }
+}
+
+@available(macOS 26.0, *)
 package protocol MacCompanionDashboardProductV1: AnyObject, Sendable {
     func start() async throws
     func retryStatus() async -> MacAgentDashboardEffectOutcomeV0
+    func updateInteractiveAdmissionSelectedDisplay(
+        _ selectedDisplayID: UUID?
+    ) async throws
     func createPairingSession(
         _ command: LocalPairingSessionCreateCommandV0
     ) async throws -> LocalPairingSessionCreatedReceiptV0
@@ -132,6 +156,12 @@ extension MacLocalXPCDashboardProductV1: MacCompanionDashboardProductV1 {}
 
 @available(macOS 26.0, *)
 extension MacCompanionDashboardProductV1 {
+    package func updateInteractiveAdmissionSelectedDisplay(
+        _: UUID?
+    ) async throws {
+        throw MacLocalXPCInteractiveAdmissionErrorV1.unavailable
+    }
+
     package func createPairingSession(
         _: LocalPairingSessionCreateCommandV0
     ) async throws -> LocalPairingSessionCreatedReceiptV0 {
@@ -213,6 +243,10 @@ public final class MacCompanionDashboardApplicationV1 {
     public private(set) var interactiveControlGrantReviewFailed = false
     public private(set) var interactiveControlGrantReviewFailureReason: String?
     public private(set) var interactiveControlGrantApproved = false
+    public private(set) var interactiveDisplayChoices:
+        [MacInteractiveDisplayChoiceV1] = []
+    public private(set) var selectedInteractiveDisplayID: UUID?
+    public private(set) var interactiveDisplaySelectionFailed = false
 
     @ObservationIgnored
     private var product: any MacCompanionDashboardProductV1
@@ -245,6 +279,10 @@ public final class MacCompanionDashboardApplicationV1 {
     private var unavailableRecoveryTask: Task<Void, Never>?
     @ObservationIgnored
     private var unavailableRecoveryInProgress = false
+    @ObservationIgnored
+    private var interactiveControlGrantReviewExpiresAtUnixMilliseconds: Int64?
+    @ObservationIgnored
+    private let wallNowUnixMilliseconds: @Sendable () -> Int64
 
     public convenience init() {
         self.init(interactiveRuntime: nil)
@@ -326,6 +364,7 @@ public final class MacCompanionDashboardApplicationV1 {
     ) {
         let interactiveDisplaySelection = providedDisplaySelection
             ?? (try? MacInteractiveOpaqueDisplaySelectionV1())
+        let displayAdmissionProxy = MacCompanionDisplayAdmissionProxyV1()
         let interactiveLeaseHandler:
             (any MacLocalXPCInteractiveLeaseHandlingV1)?
         let interactiveInputHandler:
@@ -335,18 +374,15 @@ public final class MacCompanionDashboardApplicationV1 {
                 displaySelection: interactiveDisplaySelection,
                 surfaceTargets: interactiveSurfaceTargets
             )
-            let handler = if let interactiveSurfaceTargets {
-                MacInteractiveLeaseRuntimeAdapterV1(
-                    runtime: interactiveRuntime,
-                    desktop: desktop,
-                    surfaceTargets: interactiveSurfaceTargets
-                )
-            } else {
-                MacInteractiveLeaseRuntimeAdapterV1(
-                    runtime: interactiveRuntime,
-                    desktop: desktop
-                )
-            }
+            let handler = MacInteractiveLeaseRuntimeAdapterV1(
+                runtime: interactiveRuntime,
+                desktop: desktop,
+                surfaceTargets: interactiveSurfaceTargets,
+                displaySelection: interactiveDisplaySelection,
+                updateSelectedDisplay: { selectedDisplayID in
+                    try await displayAdmissionProxy.update(selectedDisplayID)
+                }
+            )
             interactiveLeaseHandler = handler
             interactiveInputHandler = handler
             interactiveIndicator?.installStopAction { [weak handler] in
@@ -361,6 +397,8 @@ public final class MacCompanionDashboardApplicationV1 {
             interactiveInputHandler = nil
         }
         let dashboardRelay = MacCompanionDashboardStateRelayV1()
+        let menuAppGeneration = interactiveIndicator?
+            .admissionMenuAppGeneration ?? UUID()
         let dashboardOwner = MacAgentDashboardApplicationOwnerV0 {
             [weak dashboardRelay] source in
             await dashboardRelay?.receive(source)
@@ -379,6 +417,11 @@ public final class MacCompanionDashboardApplicationV1 {
             client: commandProxy,
             stateChanged: { [weak reviewRelay] in
                 await reviewRelay?.receive($0)
+            },
+            decisionCompleted: { receipt in
+                _ = await pairingOwner.pairingDecisionCompleted(
+                    pairingID: receipt.pairingID
+                )
             }
         )
         let recoveryOwner = MacHostIdentityRecoveryApplicationOwnerV0(
@@ -395,22 +438,27 @@ public final class MacCompanionDashboardApplicationV1 {
             interactiveLeaseHandler: interactiveLeaseHandler,
             interactiveInputHandler: interactiveInputHandler,
             interactiveMediaQueue: interactiveMediaQueue,
+            menuAppGeneration: menuAppGeneration,
             selectedDisplayID: interactiveDisplaySelection?
                 .opaqueSelectedDisplayID()
         )
+        displayAdmissionProxy.install(product)
         self.init(
             product: product,
             productFactory: {
-                MacLocalXPCDashboardProductV1(
+                let replacement = MacLocalXPCDashboardProductV1(
                     owner: dashboardOwner,
                     pairingReviews: reviewOwner,
                     hostIdentityRecovery: recoveryOwner,
                     interactiveLeaseHandler: interactiveLeaseHandler,
                     interactiveInputHandler: interactiveInputHandler,
                     interactiveMediaQueue: interactiveMediaQueue,
+                    menuAppGeneration: menuAppGeneration,
                     selectedDisplayID: interactiveDisplaySelection?
                         .opaqueSelectedDisplayID()
                 )
+                displayAdmissionProxy.install(replacement)
+                return replacement
             },
             commandProxy: commandProxy,
             stateRelay: dashboardRelay,
@@ -428,7 +476,10 @@ public final class MacCompanionDashboardApplicationV1 {
     package convenience init(
         productFactory: @escaping (
             MacAgentDashboardApplicationOwnerV0
-        ) -> any MacCompanionDashboardProductV1
+        ) -> any MacCompanionDashboardProductV1,
+        wallNowUnixMilliseconds: @escaping @Sendable () -> Int64 = {
+            Int64((Date().timeIntervalSince1970 * 1_000).rounded(.down))
+        }
     ) {
         let relay = MacCompanionDashboardStateRelayV1()
         let owner = MacAgentDashboardApplicationOwnerV0 {
@@ -446,7 +497,8 @@ public final class MacCompanionDashboardApplicationV1 {
             pairingRelay: nil,
             reviewRelay: nil,
             recoveryRelay: nil,
-            interactiveDisplaySelection: nil
+            interactiveDisplaySelection: nil,
+            wallNowUnixMilliseconds: wallNowUnixMilliseconds
         )
     }
 
@@ -501,7 +553,10 @@ public final class MacCompanionDashboardApplicationV1 {
         reviewRelay: MacCompanionPairingReviewStateRelayV1?,
         recoveryRelay: MacCompanionRecoveryStateRelayV1?,
         interactiveDisplaySelection:
-            MacInteractiveOpaqueDisplaySelectionV1?
+            MacInteractiveOpaqueDisplaySelectionV1?,
+        wallNowUnixMilliseconds: @escaping @Sendable () -> Int64 = {
+            Int64((Date().timeIntervalSince1970 * 1_000).rounded(.down))
+        }
     ) {
         self.product = product
         self.productFactory = productFactory
@@ -514,6 +569,11 @@ public final class MacCompanionDashboardApplicationV1 {
         self.pairingReviewOwner = pairingReviewOwner
         self.recoveryOwner = recoveryOwner
         self.interactiveDisplaySelection = interactiveDisplaySelection
+        interactiveDisplayChoices =
+            interactiveDisplaySelection?.availableDisplays() ?? []
+        selectedInteractiveDisplayID =
+            interactiveDisplaySelection?.opaqueSelectedDisplayID()
+        self.wallNowUnixMilliseconds = wallNowUnixMilliseconds
         stateRelay.application = self
         pairingRelay?.application = self
         reviewRelay?.application = self
@@ -611,11 +671,17 @@ public final class MacCompanionDashboardApplicationV1 {
               !interactiveControlGrantReviewLoading,
               interactiveControlGrantReview == nil,
               case let .status(status) = source,
-              status.pairedDeviceCount == 1 else { return }
+              status.pairedDeviceCount > 0 else { return }
+        guard !status.interactiveControlGranted else {
+            interactiveControlGrantApproved = true
+            interactiveControlGrantReviewFailed = false
+            interactiveControlGrantReviewFailureReason = nil
+            return
+        }
         interactiveControlGrantReviewLoading = true
         interactiveControlGrantReviewFailed = false
         interactiveControlGrantReviewFailureReason = nil
-        let now = Int64((Date().timeIntervalSince1970 * 1_000).rounded(.down))
+        let now = wallNowUnixMilliseconds()
         do {
             let request = try LocalInteractiveControlGrantReviewRequestV0(
                 commandID: UUID(),
@@ -624,6 +690,8 @@ public final class MacCompanionDashboardApplicationV1 {
             let review = try await product
                 .makeInteractiveControlGrantReview(request)
             try review.validate(against: request)
+            interactiveControlGrantReviewExpiresAtUnixMilliseconds =
+                review.expiresAtUnixMilliseconds
             interactiveControlGrantReview = try
                 LocalGrantExpansionPresentation(
                     reviewID: review.reviewID,
@@ -638,6 +706,7 @@ public final class MacCompanionDashboardApplicationV1 {
                     ]
                 )
         } catch {
+            interactiveControlGrantReviewExpiresAtUnixMilliseconds = nil
             interactiveControlGrantReviewFailed = true
             interactiveControlGrantReviewFailureReason = String(
                 describing: error
@@ -655,7 +724,16 @@ public final class MacCompanionDashboardApplicationV1 {
         guard phase == .active,
               var presentation = interactiveControlGrantReview else { return }
         let commandID = UUID()
-        let now = Int64((Date().timeIntervalSince1970 * 1_000).rounded(.down))
+        let now = wallNowUnixMilliseconds()
+        guard let expiresAt =
+                interactiveControlGrantReviewExpiresAtUnixMilliseconds,
+              now >= 0,
+              now < expiresAt else {
+            interactiveControlGrantReview = nil
+            interactiveControlGrantReviewExpiresAtUnixMilliseconds = nil
+            await beginInteractiveControlGrantReview()
+            return
+        }
         do {
             let intent: LocalGrantExpansionIntent
             switch action {
@@ -676,33 +754,92 @@ public final class MacCompanionDashboardApplicationV1 {
                     command: command
                 )
                 interactiveControlGrantReview = presentation
-                interactiveControlGrantApproved = true
                 try? await Task.sleep(for: .milliseconds(650))
+                // A successful device-specific grant does not imply every
+                // paired device now has Control. Re-read the Agent's aggregate
+                // fact before suppressing the next eligible review.
+                _ = await product.retryStatus()
+                if case let .status(status) = source {
+                    interactiveControlGrantApproved =
+                        status.interactiveControlGranted
+                } else {
+                    interactiveControlGrantApproved = false
+                }
             }
             interactiveControlGrantReview = nil
+            interactiveControlGrantReviewExpiresAtUnixMilliseconds = nil
             interactiveControlGrantReviewFailed = false
             interactiveControlGrantReviewFailureReason = nil
         } catch {
             interactiveControlGrantLoggerV1.error(
                 "Decision failed: \(String(describing: error), privacy: .public)"
             )
-            if action == .approve,
-               case .applying(let decisionID) = presentation.phase {
-                try? presentation.applicationFailed(decisionID: decisionID)
-                interactiveControlGrantReview = presentation
-            } else {
-                interactiveControlGrantReview = nil
-                interactiveControlGrantReviewFailed = true
-                interactiveControlGrantReviewFailureReason = String(
-                    describing: error
-                )
-            }
+            // The Agent consumes the exact review before attempting durable
+            // persistence. A failed decision therefore cannot safely retry the
+            // same review identifier. Close it and make the next user retry
+            // obtain a fresh, revision-fenced review from the Agent.
+            interactiveControlGrantReview = nil
+            interactiveControlGrantReviewExpiresAtUnixMilliseconds = nil
+            interactiveControlGrantReviewFailed = true
+            interactiveControlGrantReviewFailureReason = String(
+                describing: error
+            )
         }
     }
 
     public func dismissInteractiveControlGrantFailure() {
         interactiveControlGrantReviewFailed = false
         interactiveControlGrantReviewFailureReason = nil
+    }
+
+    public var interactiveDisplaySelectionEnabled: Bool {
+        guard phase == .active,
+              interactiveDisplayChoices.count > 1,
+              case let .status(status) = source else { return false }
+        return status.activeRemoteSessionCount == 0
+    }
+
+    public func refreshInteractiveDisplays() async {
+        guard let interactiveDisplaySelection else { return }
+        let previous = selectedInteractiveDisplayID
+        let choices = interactiveDisplaySelection.availableDisplays()
+        let selected = interactiveDisplaySelection.opaqueSelectedDisplayID()
+        interactiveDisplayChoices = choices
+        selectedInteractiveDisplayID = selected
+        guard phase == .active, previous != selected else { return }
+        do {
+            try await product.updateInteractiveAdmissionSelectedDisplay(
+                selected
+            )
+            interactiveDisplaySelectionFailed = false
+        } catch {
+            interactiveDisplaySelectionFailed = true
+        }
+    }
+
+    public func selectInteractiveDisplay(_ id: UUID) async {
+        guard interactiveDisplaySelectionEnabled,
+              let interactiveDisplaySelection else { return }
+        let previous = interactiveDisplaySelection.opaqueSelectedDisplayID()
+        guard previous != id else { return }
+        do {
+            try interactiveDisplaySelection.selectDisplay(id: id)
+            let selected = interactiveDisplaySelection
+                .opaqueSelectedDisplayID()
+            try await product.updateInteractiveAdmissionSelectedDisplay(
+                selected
+            )
+            interactiveDisplaySelectionFailed = false
+        } catch {
+            if let previous {
+                try? interactiveDisplaySelection.selectDisplay(id: previous)
+            }
+            interactiveDisplaySelectionFailed = true
+        }
+        interactiveDisplayChoices =
+            interactiveDisplaySelection.availableDisplays()
+        selectedInteractiveDisplayID =
+            interactiveDisplaySelection.opaqueSelectedDisplayID()
     }
 
     /// Update-only commands over this exact dashboard generation. Construction
@@ -758,6 +895,7 @@ public final class MacCompanionDashboardApplicationV1 {
             guard let self else { return }
             self.source = .unavailable
             self.interactiveControlGrantReview = nil
+            self.interactiveControlGrantReviewExpiresAtUnixMilliseconds = nil
             self.interactiveControlGrantReviewLoading = false
             self.interactiveControlGrantReviewFailed = false
             self.interactiveControlGrantReviewFailureReason = nil
@@ -772,6 +910,17 @@ public final class MacCompanionDashboardApplicationV1 {
         guard phase == .starting || phase == .active || phase == .finishing
         else { return }
         self.source = source
+        if case let .status(status) = source {
+            interactiveControlGrantApproved =
+                status.interactiveControlGranted
+            if status.interactiveControlGranted {
+                interactiveControlGrantReview = nil
+                interactiveControlGrantReviewExpiresAtUnixMilliseconds = nil
+                interactiveControlGrantReviewLoading = false
+                interactiveControlGrantReviewFailed = false
+                interactiveControlGrantReviewFailureReason = nil
+            }
+        }
         guard source == .unavailable else {
             unavailableRecoveryTask?.cancel()
             unavailableRecoveryTask = nil

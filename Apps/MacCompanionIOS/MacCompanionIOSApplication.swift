@@ -22,7 +22,7 @@ private enum MacCompanionIOSSheet: String, Identifiable {
 }
 
 private struct MacCompanionIOSRootView: View {
-    let application: IOSClientReleaseApplicationV1
+    @Bindable var application: IOSClientReleaseApplicationV1
 
     @State private var sheet: MacCompanionIOSSheet?
 
@@ -160,7 +160,10 @@ private struct MacCompanionIOSRootView: View {
 
         case .workspace:
             if let workspace = application.snapshot.workspace {
-                MacCompanionIOSWorkspaceRoot(workspace: workspace)
+                MacCompanionIOSWorkspaceRoot(
+                    workspace: workspace,
+                    onReconnect: { await application.reconnect() }
+                )
             } else {
                 unavailable(
                     title: "Workspace unavailable",
@@ -209,12 +212,17 @@ private struct MacCompanionIOSRootView: View {
 
 private struct MacCompanionIOSWorkspaceRoot: View {
     let workspace: IOSClientReleaseWorkspaceV1
+    let onReconnect: @MainActor @Sendable () async -> Void
 
     @State private var model: ClientPrimaryWorkspaceModelV0?
     @State private var commandFailureShown = false
 
-    init(workspace: IOSClientReleaseWorkspaceV1) {
+    init(
+        workspace: IOSClientReleaseWorkspaceV1,
+        onReconnect: @escaping @MainActor @Sendable () async -> Void
+    ) {
         self.workspace = workspace
+        self.onReconnect = onReconnect
         _model = State(initialValue: try? ClientPrimaryWorkspaceModelV0(
             macName: workspace.macName,
             primaryState: workspace.primaryState,
@@ -233,6 +241,7 @@ private struct MacCompanionIOSWorkspaceRoot: View {
                     macName: workspace.macName,
                     model: model,
                     interactiveRoles: workspace.interactiveRoles,
+                    onReconnect: onReconnect,
                     onCommandFailure: { _ in
                         commandFailureShown = true
                     }

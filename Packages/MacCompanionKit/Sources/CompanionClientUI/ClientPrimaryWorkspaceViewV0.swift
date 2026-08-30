@@ -1,7 +1,9 @@
 #if os(iOS)
 import CompanionClient
 import CompanionClientNetworkPlatform
+import CompanionInteractiveWire
 import CompanionWire
+import Combine
 import SwiftUI
 
 @available(iOS 17.0, *)
@@ -10,9 +12,11 @@ public struct ClientPrimaryWorkspaceViewV0: View {
     @ObservedObject private var model: ClientPrimaryWorkspaceModelV0
     @StateObject private var liveControl:
         ClientPrimaryLiveControlCoordinatorV0
+    @State private var liveControlPresented = false
     private let onSelectAction: (CapabilityDiscoveryDescriptorV1) -> Void
     private let onCommandFailure:
         @MainActor @Sendable (any Error) -> Void
+    private let onReconnect: @MainActor @Sendable () async -> Void
 
     public init(
         macName: String,
@@ -21,6 +25,7 @@ public struct ClientPrimaryWorkspaceViewV0: View {
         onSelectAction: @escaping (
             CapabilityDiscoveryDescriptorV1
         ) -> Void,
+        onReconnect: @escaping @MainActor @Sendable () async -> Void = {},
         onCommandFailure: @escaping @MainActor @Sendable
             (any Error) -> Void = { _ in }
     ) {
@@ -33,6 +38,7 @@ public struct ClientPrimaryWorkspaceViewV0: View {
             )
         )
         self.onSelectAction = onSelectAction
+        self.onReconnect = onReconnect
         self.onCommandFailure = onCommandFailure
     }
 
@@ -63,6 +69,11 @@ public struct ClientPrimaryWorkspaceViewV0: View {
                             : "wifi.exclamationmark"
                     )
                     .foregroundStyle(.secondary)
+                    if !model.projection.connected {
+                        Button("Reconnect", systemImage: "arrow.clockwise") {
+                            Task { await onReconnect() }
+                        }
+                    }
                 }
 
                 Section("Act") {
@@ -82,8 +93,28 @@ public struct ClientPrimaryWorkspaceViewV0: View {
                 }
             }
             .navigationTitle(macName)
+            .navigationDestination(isPresented: $liveControlPresented) {
+                liveControlDestination
+            }
         }
         .task { model.start() }
+        // Readiness is a lifecycle event, not just a rendered-value change.
+        // SwiftUI may coalesce rapid publication/render passes after a pop or
+        // foreground return. Observe the model stream so a selected primary's
+        // channels-ready transition always reaches the navigation owner.
+        .onReceive(model.$projection.map { $0.control.mode }.removeDuplicates()) { mode in
+            liveControl.acceptWorkspaceMode(mode)
+            if mode == .channelsReady {
+                // The host begins its bounded capture runtime as soon as both
+                // role channels are authenticated. Present the destination
+                // immediately so the client starts consuming and verifying
+                // the initial stream before bounded media backpressure can
+                // fail the session closed.
+                liveControlPresented = true
+            } else if shouldDismissLiveControl(for: mode) {
+                liveControlPresented = false
+            }
+        }
     }
 
     @ViewBuilder
@@ -173,23 +204,40 @@ public struct ClientPrimaryWorkspaceViewV0: View {
     }
 
     private var liveControlLink: some View {
-        NavigationLink {
-            ClientPrimaryLiveControlViewV0(
-                macName: macName,
-                revision: model.projection.revision,
-                control: model.projection.control,
-                coordinator: liveControl,
-                onStop: { try await model.endInteractiveControl() },
-                onRecordStudyJob: { category, snapshot in
-                    _ = try await model.recordControlStudyJob(
-                        category: category,
-                        snapshot: snapshot
-                    )
-                },
-                onCommandFailure: onCommandFailure
-            )
+        Button {
+            liveControlPresented = true
         } label: {
             Label("Open Remote Control", systemImage: "display")
+        }
+    }
+
+    private var liveControlDestination: some View {
+        ClientPrimaryLiveControlViewV0(
+            macName: macName,
+            revision: model.projection.revision,
+            control: model.projection.control,
+            coordinator: liveControl,
+            onStop: { try await model.endInteractiveControl() },
+            onRecordStudyJob: { category, snapshot in
+                _ = try await model.recordControlStudyJob(
+                    category: category,
+                    snapshot: snapshot
+                )
+            },
+            onCommandFailure: onCommandFailure
+        )
+    }
+
+    private func shouldDismissLiveControl(
+        for mode: ClientControlWorkspaceModeV0
+    ) -> Bool {
+        switch mode {
+        case .ready, .rejected, .preparationFailed, .endFailed,
+             .unavailable, .grantRequired:
+            true
+        case .requesting, .awaitingAcceptance, .acceptedPreparingChannels,
+             .channelsReady, .preparingInitialSurface, .active, .ending:
+            false
         }
     }
 

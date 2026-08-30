@@ -50,10 +50,15 @@ private final class UIKitClientInitialRenderRelayV0 {
             NetworkClientInteractiveInitialDesktopActivationV0
     ) {
         Task { [weak self] in
+            guard let self, !self.closed, self.activation === activation else { return }
             do {
                 try await activation.reportRendered(receipt)
             } catch {
-                self?.failure(error)
+                guard !self.closed, self.activation === activation else { return }
+                print(
+                    "[MacCompanion live-control] render receipt failed error=\(String(describing: error))"
+                )
+                self.failure(error)
             }
         }
     }
@@ -79,9 +84,28 @@ private final class UIKitClientInitialInputRelayV0 {
 
     func submit(_ payloads: [InteractiveInputPayload]) {
         guard active, let activation, !payloads.isEmpty else { return }
+        let kinds = payloads.map { $0.kind.rawValue }.joined(separator: ",")
+        print(
+            "[MacCompanion live-control] input relay submitted "
+                + "count=\(payloads.count) kinds=\(kinds)"
+        )
         Task { [weak self] in
+            guard let self, self.active, self.activation === activation else { return }
             do { try await activation.sendInput(payloads) }
-            catch { self?.failure(error) }
+            catch {
+                guard self.active, self.activation === activation else { return }
+                print(
+                    "[MacCompanion live-control] input submission error=\(String(describing: error)) disposition=\(String(describing: ClientInputSubmissionErrorPolicyV0.disposition(for: error)))"
+                )
+                switch ClientInputSubmissionErrorPolicyV0.disposition(
+                    for: error
+                ) {
+                case .ignoreLocally:
+                    return
+                case .failClosed:
+                    self.failure(error)
+                }
+            }
         }
     }
 
@@ -129,8 +153,17 @@ public final class UIKitClientInitialDesktopProductV0 {
     private let roles: NetworkClientInteractiveRoleProductBindingV0
     private let relay: UIKitClientInitialRenderRelayV0
     private let inputRelay: UIKitClientInitialInputRelayV0?
-    private var automaticSmartZoomEnabled = true
+    private let failure: @MainActor (any Error) -> Void
+    private var automaticZoomPolicy =
+        UIKitClientAutomaticZoomSessionPolicyV0()
     private var surfaceTransitionInFlight = false
+    private var latestAutomaticFocusEvent: ClientSurfaceFocusEventV0?
+    private var pendingAutomaticFocusEvent: ClientSurfaceFocusEventV0?
+    private var pendingAutomaticFocusIntent:
+        UIKitClientAutomaticFocusIntentV0?
+    private var automaticFocusTask: Task<Void, Never>?
+    private var automaticFocusGeneration: UInt64 = 0
+    private var visualSmartZoomFocus: SurfaceFocus?
 
     fileprivate init(
         descriptor: AdaptiveSurfaceDescriptor,
@@ -140,7 +173,8 @@ public final class UIKitClientInitialDesktopProductV0 {
         decoderRenderer: UIKitClientDecodeRenderCoordinatorV0,
         relay: UIKitClientInitialRenderRelayV0,
         surface: UIKitClientLiveSurfaceViewV0,
-        inputRelay: UIKitClientInitialInputRelayV0?
+        inputRelay: UIKitClientInitialInputRelayV0?,
+        failure: @escaping @MainActor (any Error) -> Void
     ) {
         self.descriptor = descriptor
         self.roles = roles
@@ -149,6 +183,7 @@ public final class UIKitClientInitialDesktopProductV0 {
         self.relay = relay
         self.surface = surface
         self.inputRelay = inputRelay
+        self.failure = failure
     }
 
     @discardableResult
@@ -173,11 +208,55 @@ public final class UIKitClientInitialDesktopProductV0 {
         try await activation.requestSurfaceTargets()
     }
 
+    public func requestDisplayCatalog() async throws
+        -> InteractiveDisplayCatalogResponseBodyV1
+    {
+        try await activation.requestDisplayCatalog()
+    }
+
+    public func selectDisplay(_ displayID: UUID) async throws {
+        visualSmartZoomFocus = nil
+        cancelPendingAutomaticFocusEvent()
+        guard !surfaceTransitionInFlight else {
+            throw NetworkClientInteractiveInitialDesktopErrorV0.invalidPhase
+        }
+        surfaceTransitionInFlight = true
+        inputRelay?.setActive(false)
+        surface.setInputEnabled(false)
+        surface.hideSoftwareKeyboard()
+        do {
+            let next = try await activation.selectDisplay(displayID)
+            apply(next)
+        } catch {
+            surfaceTransitionInFlight = false
+            throw error
+        }
+        surfaceTransitionInFlight = false
+        inputRelay?.setActive(true)
+        surface.setInputEnabled(true)
+    }
+
     public func setAutomaticSmartZoomEnabled(_ enabled: Bool) async throws {
-        automaticSmartZoomEnabled = enabled
+        automaticZoomPolicy.setPreferenceEnabled(enabled)
         await activation.setAutomaticSmartZoomEnabled(enabled)
-        if enabled {
+        cancelPendingAutomaticFocusEvent()
+        if !enabled {
+            visualSmartZoomFocus = nil
+            surface.resetVisualZoom(animated: true)
+            // A disabled preference still has to release an authenticated host
+            // focus pause. The activation applies only that safety recovery
+            // while disabled and otherwise leaves presentation unchanged.
             try await applyLatestAutomaticFocusEvent()
+        }
+    }
+
+    public func resumeAutomaticSmartZoom() async throws {
+        automaticZoomPolicy.resume()
+        await activation.setAutomaticSmartZoomEnabled(true)
+        cancelPendingAutomaticFocusEvent()
+        if let latestAutomaticFocusEvent,
+           !latestAutomaticFocusEvent.inputPaused {
+            queueAutomaticFocusEvent(latestAutomaticFocusEvent)
         }
     }
 
@@ -185,11 +264,25 @@ public final class UIKitClientInitialDesktopProductV0 {
         kind: InteractiveSurfaceKind,
         targetToken: UUID?
     ) async throws {
+        visualSmartZoomFocus = nil
+        try await performSurfaceSelection(
+            kind: kind,
+            targetToken: targetToken
+        )
+    }
+
+    private func performSurfaceSelection(
+        kind: InteractiveSurfaceKind,
+        targetToken: UUID?
+    ) async throws {
         guard !surfaceTransitionInFlight else {
             throw NetworkClientInteractiveInitialDesktopErrorV0.invalidPhase
         }
-        automaticSmartZoomEnabled = false
-        await activation.setAutomaticSmartZoomEnabled(false)
+        // A manual App/Window/Desktop choice changes the visual base surface,
+        // not the user's independent Smart Zoom preference. Pending focus for
+        // the old surface is discarded; fresh focus on the acknowledged
+        // replacement may still drive an automatic focused-region crop.
+        cancelPendingAutomaticFocusEvent()
         surfaceTransitionInFlight = true
         inputRelay?.setActive(false)
         surface.setInputEnabled(false)
@@ -201,6 +294,9 @@ public final class UIKitClientInitialDesktopProductV0 {
                 targetToken: targetToken
             )
         } catch {
+            print(
+                "[MacCompanion live-control] automatic focus transition failed error=\(String(describing: error))"
+            )
             surfaceTransitionInFlight = false
             throw error
         }
@@ -210,10 +306,141 @@ public final class UIKitClientInitialDesktopProductV0 {
         surface.setInputEnabled(true)
     }
 
-    fileprivate func applyAutomaticFocusEvent(
+    /// Returns `false` only when the acknowledged surface lacks Keyboard/Text
+    /// authority or positively identifies a secure focus. Missing or
+    /// ambiguous Accessibility focus does not disable the remote keyboard.
+    public func prepareTextInput() async throws -> Bool {
+        guard !surfaceTransitionInFlight else { return false }
+        guard let current = try await activation.prepareTextInput() else {
+            return false
+        }
+        apply(current)
+        return Self.authorizesText(descriptor)
+    }
+
+    /// Prefers a verified focused-region composer. If the latest admitted
+    /// focus has not yet been applied, one automatic transition attempt is
+    /// made before falling back to ordinary direct key input.
+    public func prepareNativeTextComposer() async throws
+        -> SurfaceInputFence?
+    {
+        guard !surfaceTransitionInFlight else { return nil }
+        if let binding = try await activation.prepareNativeTextComposer() {
+            return binding
+        }
+        guard automaticZoomPolicy.presentsAutomatically else { return nil }
+        try await applyLatestAutomaticFocusEvent()
+        return try await activation.prepareNativeTextComposer()
+    }
+
+    public func sendComposedText(
+        _ text: String,
+        boundTo binding: SurfaceInputFence
+    ) async throws {
+        guard !surfaceTransitionInFlight else {
+            throw NetworkClientInteractiveInitialDesktopErrorV0.invalidPhase
+        }
+        try await activation.sendComposedText(text, boundTo: binding)
+    }
+
+    /// Coalesces advisory focus churn before changing the capture surface.
+    /// The primary channel has already applied any input pause carried by the
+    /// event, so delaying only the visual transition does not retain input
+    /// authority. A transition already sent to the host is never cancelled.
+    fileprivate func queueAutomaticFocusEvent(
+        _ event: ClientSurfaceFocusEventV0
+    ) {
+        latestAutomaticFocusEvent = event
+        guard automaticZoomPolicy.admitsFocusEvent(
+            inputPaused: event.inputPaused
+        ) else { return }
+        let intent = UIKitClientAutomaticFocusIntentV0(event)
+        let preservesScheduledDeadline = automaticFocusTask != nil
+            && pendingAutomaticFocusIntent == intent
+        pendingAutomaticFocusEvent = event
+        pendingAutomaticFocusIntent = intent
+        guard !surfaceTransitionInFlight else { return }
+        guard !preservesScheduledDeadline else { return }
+        schedulePendingAutomaticFocusEvent()
+    }
+
+    private func schedulePendingAutomaticFocusEvent() {
+        guard automaticZoomPolicy.presentsAutomatically
+                || pendingAutomaticFocusEvent?.inputPaused == true,
+              !surfaceTransitionInFlight,
+              let event = pendingAutomaticFocusEvent else { return }
+        automaticFocusTask?.cancel()
+        automaticFocusGeneration &+= 1
+        let generation = automaticFocusGeneration
+        let delay = automaticZoomPolicy.presentsAutomatically
+            ? Self.automaticFocusDelay(for: event)
+            : .zero
+        automaticFocusTask = Task { [weak self] in
+            do {
+                try await Task.sleep(for: delay)
+            } catch {
+                return
+            }
+            guard !Task.isCancelled else { return }
+            await self?.beginPendingAutomaticFocusEvent(
+                generation: generation
+            )
+        }
+    }
+
+    private func beginPendingAutomaticFocusEvent(
+        generation: UInt64
+    ) async {
+        guard generation == automaticFocusGeneration,
+              automaticZoomPolicy.presentsAutomatically
+                || pendingAutomaticFocusEvent?.inputPaused == true,
+              !surfaceTransitionInFlight,
+              let event = pendingAutomaticFocusEvent else { return }
+        pendingAutomaticFocusEvent = nil
+        pendingAutomaticFocusIntent = nil
+        automaticFocusTask = nil
+        do {
+            try await performAutomaticFocusEvent(event)
+        } catch {
+            pendingAutomaticFocusEvent = nil
+            pendingAutomaticFocusIntent = nil
+            failure(error)
+            return
+        }
+        schedulePendingAutomaticFocusEvent()
+    }
+
+    private func performAutomaticFocusEvent(
         _ event: ClientSurfaceFocusEventV0
     ) async throws {
-        guard automaticSmartZoomEnabled, !surfaceTransitionInFlight else {
+        guard automaticZoomPolicy.admitsFocusEvent(
+            inputPaused: event.inputPaused
+        ),
+              !surfaceTransitionInFlight else {
+            return
+        }
+        // Ordinary Smart Zoom is a local, animated viewport operation. It
+        // preserves the surrounding Desktop/App stream, avoids a capture
+        // transition, and keeps input mapped through the inverse transform.
+        // A paused focused-region authority still uses the exact host
+        // transition below so input can be safely resumed.
+        if automaticZoomPolicy.presentsAutomatically,
+           !event.inputPaused,
+           descriptor.kind != .focusedRegion {
+            switch event.recommendedTargetKind {
+            case .focusedRegion:
+                guard event.reason == .verifiedFocus,
+                      let focus = event.focus else { return }
+                try surface.focusVisualZoom(on: focus.bounds)
+                visualSmartZoomFocus = focus
+            case .desktop:
+                guard event.reason != .verifiedFocus,
+                      event.focus == nil else { return }
+                visualSmartZoomFocus = nil
+                surface.resetVisualZoom(animated: true)
+            case .application, .window:
+                break
+            }
             return
         }
         surfaceTransitionInFlight = true
@@ -233,8 +460,29 @@ public final class UIKitClientInitialDesktopProductV0 {
         surface.setInputEnabled(true)
     }
 
+    private func cancelPendingAutomaticFocusEvent() {
+        automaticFocusGeneration &+= 1
+        automaticFocusTask?.cancel()
+        automaticFocusTask = nil
+        pendingAutomaticFocusEvent = nil
+        pendingAutomaticFocusIntent = nil
+    }
+
+    private static func automaticFocusDelay(
+        for event: ClientSurfaceFocusEventV0
+    ) -> Duration {
+        // Input pause is already enforced when the authenticated event is
+        // admitted. Waiting longer before zooming back to Desktop preserves
+        // context through transient Accessibility hierarchy replacement.
+        switch event.recommendedTargetKind {
+        case .desktop: .milliseconds(750)
+        case .focusedRegion: .milliseconds(250)
+        case .application, .window: .zero
+        }
+    }
+
     private func applyLatestAutomaticFocusEvent() async throws {
-        guard automaticSmartZoomEnabled, !surfaceTransitionInFlight else {
+        guard !surfaceTransitionInFlight else {
             return
         }
         surfaceTransitionInFlight = true
@@ -262,7 +510,49 @@ public final class UIKitClientInitialDesktopProductV0 {
         )
     }
 
+    private static func authorizesText(
+        _ descriptor: AdaptiveSurfaceDescriptor
+    ) -> Bool {
+        guard descriptor.interactionClasses.contains(.keyboard),
+              descriptor.interactionClasses.contains(.text) else {
+            return false
+        }
+        return descriptor.focus?.secure != true
+    }
+
+    public func showWiderContext() async {
+        guard !surfaceTransitionInFlight else { return }
+        let hadVisualSmartZoom = visualSmartZoomFocus != nil
+        userChangedViewport()
+        if hadVisualSmartZoom {
+            surface.resetVisualZoom(animated: true)
+            return
+        }
+        guard descriptor.kind == .focusedRegion else {
+            surface.resetVisualZoom(animated: true)
+            return
+        }
+        do {
+            try await performSurfaceSelection(
+                kind: .desktop,
+                targetToken: nil
+            )
+        } catch {
+            failure(error)
+        }
+    }
+
+    fileprivate func userChangedViewport() {
+        guard automaticZoomPolicy.presentsAutomatically else { return }
+        automaticZoomPolicy.userChangedViewport()
+        cancelPendingAutomaticFocusEvent()
+        visualSmartZoomFocus = nil
+    }
+
     public func close() async {
+        cancelPendingAutomaticFocusEvent()
+        surface.setZoomOutPastFitHandler(nil)
+        surface.setManualViewportChangeHandler(nil)
         relay.close()
         inputRelay?.close()
         surface.resetInputAndBlank()
@@ -342,8 +632,17 @@ public enum UIKitClientInitialDesktopProductFactoryV0 {
                 decoderRenderer: coordinator,
                 relay: relay,
                 surface: surface,
-                inputRelay: inputRelay
+                inputRelay: inputRelay,
+                failure: failure
             )
+            surface.setZoomOutPastFitHandler { [weak product] in
+                Task { @MainActor [weak product] in
+                    await product?.showWiderContext()
+                }
+            }
+            surface.setManualViewportChangeHandler { [weak product] in
+                product?.userChangedViewport()
+            }
             try await roles.bindAutomaticFocusHandler(
                 activation: activation,
                 handler: { [weak product] event in
@@ -351,7 +650,7 @@ public enum UIKitClientInitialDesktopProductFactoryV0 {
                         throw NetworkClientInteractiveInitialDesktopErrorV0
                             .unavailable
                     }
-                    try await product.applyAutomaticFocusEvent(event)
+                    await product.queueAutomaticFocusEvent(event)
                 }
             )
             return product

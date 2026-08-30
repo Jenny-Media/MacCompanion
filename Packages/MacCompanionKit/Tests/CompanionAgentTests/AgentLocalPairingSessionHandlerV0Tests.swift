@@ -205,6 +205,30 @@ private func pairingHandler(
     }
 }
 
+@Test func agentRejectsPairingCreationAtPairedDeviceCapacity() async throws {
+    let authority = PairingSessionAuthority(
+        committer: NoopPairingCommitterV0()
+    )
+    let handler = AgentLocalPairingSessionHandlerV0(
+        authority: authority,
+        contextSource: StaticAgentLocalPairingContextSourceV0(
+            try pairingHandlerContext()
+        ),
+        timeSource: StaticAgentLocalPairingTimeSourceV0(
+            try pairingHandlerTime()
+        ),
+        capacitySource: StaticAgentLocalPairingCapacitySourceV0(
+            Int(LocalAgentStatusSnapshot.maximumPairedDeviceCount)
+        )
+    )
+
+    await #expect(throws: AgentLocalPairingSessionErrorV0.capacityReached) {
+        _ = try await handler.create(
+            LocalPairingSessionCreateCommandV0(commandID: UUID())
+        )
+    }
+}
+
 @Test func dismissalTombstonesSecretAndReplaysExactReceipt() async throws {
     let (handler, authority) = try pairingHandler()
     let create = try LocalPairingSessionCreateCommandV0(commandID: UUID())
@@ -516,4 +540,87 @@ private func pairingHandler(
             LocalPairingSessionCreateCommandV0(commandID: UUID())
         )
     }
+}
+
+@Test func menuLossTombstonesVisibleQRAndPermitsFreshPresentation() async throws {
+    let authority = PairingSessionAuthority(committer: NoopPairingCommitterV0())
+    let handler = AgentLocalPairingSessionHandlerV0(authority: authority,
+        contextSource: StaticAgentLocalPairingContextSourceV0(try pairingHandlerContext()),
+        timeSource: StaticAgentLocalPairingTimeSourceV0(try pairingHandlerTime()))
+    let command = try LocalPairingSessionCreateCommandV0(commandID: UUID())
+    let first = try await handler.create(command)
+    try await handler.invalidateForPresentationLoss()
+    await #expect(throws: AgentLocalPairingSessionErrorV0.staleCommand) {
+        _ = try await handler.create(command)
+    }
+    await #expect(throws: PairingSessionError.alreadyConsumed) {
+        _ = try await authority.begin(pairingID: first.pairingID, clientID: UUID(),
+            sessionPublicKeyX963: Data(), approvalPublicKeyX963: Data(), clientNonce: Data(),
+            monotonicNowMilliseconds: pairingHandlerMonotonic + 1)
+    }
+    let replacement = try await handler.create(.init(commandID: UUID()))
+    #expect(replacement.pairingID != first.pairingID)
+    #expect(replacement.encodedQRCode != first.encodedQRCode)
+}
+
+@Test(arguments: [true, false])
+func nonterminalLossFencesSuspendedQRCreation(menuLoss: Bool) async throws {
+    let authority = PairingSessionAuthority(committer: NoopPairingCommitterV0())
+    let manager = SuspendingPairingManagerV0(authority: authority)
+    let handler = AgentLocalPairingSessionHandlerV0(authority: manager,
+        contextSource: StaticAgentLocalPairingContextSourceV0(try pairingHandlerContext()),
+        timeSource: StaticAgentLocalPairingTimeSourceV0(try pairingHandlerTime()),
+        pairingIDGenerator: { pairingHandlerID })
+    let create = Task { try await handler.create(.init(commandID: UUID())) }
+    await manager.waitUntilStarted()
+    if menuLoss { try await handler.invalidateForPresentationLoss() }
+    else {
+        try await handler.invalidateForNetworkLoss(
+            monotonicNowMilliseconds: UInt64(pairingHandlerMonotonic), terminal: false)
+    }
+    await manager.resume()
+    await #expect(throws: AgentLocalPairingSessionErrorV0.invalidContext) { _ = try await create.value }
+    await #expect(throws: PairingSessionError.alreadyConsumed) {
+        _ = try await authority.begin(pairingID: pairingHandlerID, clientID: UUID(),
+            sessionPublicKeyX963: Data(), approvalPublicKeyX963: Data(), clientNonce: Data(),
+            monotonicNowMilliseconds: pairingHandlerMonotonic + 1)
+    }
+}
+
+private actor RetirementFailurePairingManagerV0: AgentLocalPairingSessionManagingV0 {
+    let authority = PairingSessionAuthority(committer: NoopPairingCommitterV0())
+    func createLocalPairingSession(pairingID: UUID, hostFingerprint: Data,
+        wallNowUnixMilliseconds: Int64, monotonicNowMilliseconds: Int64) async throws -> PairingAdvertisement {
+        try await authority.createSession(pairingID: pairingID, hostFingerprint: hostFingerprint,
+            wallNowUnixMilliseconds: wallNowUnixMilliseconds, monotonicNowMilliseconds: monotonicNowMilliseconds)
+    }
+    func cancelLocalPairingSession(pairingID: UUID, monotonicNowMilliseconds: Int64) throws {
+        throw AgentLocalPairingSessionErrorV0.authorityUnavailable
+    }
+}
+
+@Test func unexpectedMenuRetirementFailureDisablesQRCreation() async throws {
+    let handler = AgentLocalPairingSessionHandlerV0(authority: RetirementFailurePairingManagerV0(),
+        contextSource: StaticAgentLocalPairingContextSourceV0(try pairingHandlerContext()),
+        timeSource: StaticAgentLocalPairingTimeSourceV0(try pairingHandlerTime()))
+    let command = try LocalPairingSessionCreateCommandV0(commandID: UUID())
+    _ = try await handler.create(command)
+    await #expect(throws: AgentLocalPairingSessionErrorV0.authorityUnavailable) {
+        try await handler.invalidateForPresentationLoss()
+    }
+    await #expect(throws: AgentLocalPairingSessionErrorV0.invalidContext) { _ = try await handler.create(command) }
+    await #expect(throws: AgentLocalPairingSessionErrorV0.invalidContext) {
+        _ = try await handler.create(.init(commandID: UUID()))
+    }
+}
+
+@Test func invalidClockDuringMenuLossDisablesQRCreation() async throws {
+    let handler = AgentLocalPairingSessionHandlerV0(
+        authority: PairingSessionAuthority(committer: NoopPairingCommitterV0()),
+        contextSource: StaticAgentLocalPairingContextSourceV0(try pairingHandlerContext()),
+        timeSource: SequencedPairingTimeSourceV0([try pairingHandlerTime()]))
+    let command = try LocalPairingSessionCreateCommandV0(commandID: UUID())
+    _ = try await handler.create(command)
+    await #expect(throws: AgentLocalPairingSessionErrorV0.invalidClock) { try await handler.invalidateForPresentationLoss() }
+    await #expect(throws: AgentLocalPairingSessionErrorV0.invalidContext) { _ = try await handler.create(command) }
 }

@@ -394,6 +394,9 @@ public actor NetworkClientPrimaryFramePumpV0 {
                 receiveNext()
             }
         } catch {
+            #if DEBUG
+            NSLog("[MacCompanion primary] receive rejected type=%@", String(reflecting: type(of: error)))
+            #endif
             await stop(reason: Self.terminationReason(for: error))
         }
     }
@@ -481,6 +484,9 @@ public actor NetworkClientPrimaryFramePumpV0 {
     ) async {
         guard !stopped else { return }
         stopped = true
+        #if DEBUG
+        NSLog("[MacCompanion primary] terminated reason=%@", reason.rawValue)
+        #endif
         deadlineTask?.cancel()
         deadlineTask = nil
         routeHeartbeatTask?.cancel()

@@ -648,7 +648,8 @@ public actor MacAgentPreparedProductV1 {
         timeSource: any AgentLocalPairingTimeSamplingV0,
         policySource: any AgentLocalPairingPolicyReadingV0,
         pairingIDGenerator: @escaping @Sendable () -> UUID = { UUID() },
-        deviceIDGenerator: @escaping @Sendable () -> UUID = { UUID() }
+        deviceIDGenerator: @escaping @Sendable () -> UUID = { UUID() },
+        binding: AgentNetworkListenerBindingV1 = .bonjour
     ) async throws {
         try await startLocalAuthorization()
         _ = try await menuSurfaceAuthority.waitForAvailableGeneration()
@@ -661,7 +662,8 @@ public actor MacAgentPreparedProductV1 {
             timeSource: timeSource,
             policySource: policySource,
             pairingIDGenerator: pairingIDGenerator,
-            deviceIDGenerator: deviceIDGenerator
+            deviceIDGenerator: deviceIDGenerator,
+            binding: binding
         )
     }
 
@@ -676,7 +678,8 @@ public actor MacAgentPreparedProductV1 {
         timeSource: any AgentLocalPairingTimeSamplingV0,
         policySource: any AgentLocalPairingPolicyReadingV0,
         pairingIDGenerator: @escaping @Sendable () -> UUID = { UUID() },
-        deviceIDGenerator: @escaping @Sendable () -> UUID = { UUID() }
+        deviceIDGenerator: @escaping @Sendable () -> UUID = { UUID() },
+        binding: AgentNetworkListenerBindingV1 = .bonjour
     ) async throws {
         guard finishTask == nil, !finished else {
             throw MacAgentPreparedProductCompositionErrorV1.terminal
@@ -707,7 +710,8 @@ public actor MacAgentPreparedProductV1 {
                 policySource: policySource,
                 alreadyAuthorizedSurface: menuSurfaceAuthority,
                 pairingIDGenerator: pairingIDGenerator,
-                deviceIDGenerator: deviceIDGenerator
+                deviceIDGenerator: deviceIDGenerator,
+                binding: binding
             )
         }
         networkCompositionTask = task
@@ -737,6 +741,15 @@ public actor MacAgentPreparedProductV1 {
     {
         await networkProduct?.snapshot()
     }
+
+    #if DEBUG
+    package func confirmIsolatedLoopbackEndpoint() async throws -> Bool {
+        guard finishTask == nil, !finished, let networkProduct else {
+            throw MacAgentPreparedProductCompositionErrorV1.terminal
+        }
+        return try await networkProduct.confirmIsolatedLoopbackEndpoint()
+    }
+    #endif
 
     /// Exact nonterminal presentation loss. The authority is fenced before
     /// any in-flight composition is awaited, then pending local review state
@@ -910,6 +923,10 @@ public actor MacAgentPreparedProductV1 {
                 throw MacAgentPreparedProductCompositionErrorV1.terminal
             }
             try await networkListenerOwner.start()
+            // Text preparation consumes the same privacy-filtered focus events
+            // as optional Smart Zoom. The observer itself additionally
+            // requires an authenticated primary sink and an active descriptor
+            // carrying Keyboard + Text authority before it samples AX.
             try await focusEventObserver?.start()
             try Task.checkCancellation()
         } catch let error as MacAgentPreparedProductCompositionErrorV1 {
@@ -1148,13 +1165,42 @@ public enum MacAgentProductBootstrapV1 {
         )
     }
 
+    #if DEBUG
+    /// Uses the shipping graph with test custody and a UUID-only XPC address.
+    /// This prepares no listener and grants no remote capability.
+    package static func prepareIsolatedPresentation(
+        storage: MacAgentReleaseStorageV1,
+        hostIdentityStartup: @escaping @Sendable () async throws -> SecurityHostIdentityStartupResultV0,
+        inputs: AgentNetworkPrimaryStartupInputsV1,
+        testID: UUID,
+        onEvent: @escaping MacLocalXPCServerV1.EventHandler
+    ) async throws -> MacAgentProductBootstrapResultV1 {
+        let admission = AgentVisibleInteractiveAdmissionAuthorityV1()
+        let runtime = AgentInteractiveRuntimeBindingAuthorityV1()
+        let result = try await AgentNetworkPrimaryStartupFactoryV1.prepare(
+            hostIdentityStartup: hostIdentityStartup, requiredAudit: storage.requiredAudit,
+            inputs: inputs.replacingInteractiveAuthorities(admission: admission, runtime: runtime))
+        return try await composeProduction(storage: storage, preparation: result,
+            processStarter: InertMacDashboardLifecycleProcessStarterV1(),
+            mode: .deferredUntilActivation, interactiveAdmission: admission, interactiveRuntime: runtime,
+            serverFactory: { profile, reader, commands, update, admission, media, consume in
+                MacLocalXPCServerV1(isolatedTestID: testID, profile: profile, statusReader: reader,
+                    menuPairingCommandHandler: commands, updateQuiescenceHandler: update,
+                    interactiveAdmissionHandler: admission, interactiveMediaHandler: media,
+                    onEvent: { event in consume(event); onEvent(event) })
+            })
+    }
+    #endif
+
     private static func composeProduction(
         storage: MacAgentReleaseStorageV1,
         preparation: AgentNetworkPrimaryStartupResultV1,
         processStarter: any MacDashboardLifecycleProcessStartingV1,
         mode: LocalXPCPreparationModeV1,
         interactiveAdmission: AgentVisibleInteractiveAdmissionAuthorityV1,
-        interactiveRuntime: AgentInteractiveRuntimeBindingAuthorityV1
+        interactiveRuntime: AgentInteractiveRuntimeBindingAuthorityV1,
+        serverFactory: @escaping MacLocalXPCAgentProductV1.PresentationServerFactory =
+            MacLocalXPCAgentProductV1.productionPresentationServerFactory
     ) async throws -> MacAgentProductBootstrapResultV1 {
         let menuSurfaceAuthority =
             MacAgentAuthenticatedMenuSurfaceAuthorityV1()
@@ -1176,6 +1222,9 @@ public enum MacAgentProductBootstrapV1 {
             control: interactiveRuntime
         )
         let makeLocalXPC: LocalXPCFactory = { services in
+            try await localPairingCommandAuthority.installDeviceAdministrationFactory({
+                services.makeLocalDeviceRevocationHandler()
+            }, capabilityGrants: { services.makeLocalCapabilityGrantHandler() })
             try await localPairingCommandAuthority
                 .installInteractiveControlGrantHandler(
                     try services.makeLocalInteractiveControlGrantHandler()
@@ -1192,6 +1241,7 @@ public enum MacAgentProductBootstrapV1 {
                     let surfaces = $0
                     do {
                         try await menuSurfaceAuthority.install(surfaces)
+                        try await localPairingCommandAuthority.bindDeviceAdministration(generation: surfaces.generation)
                         let route =
                             MacLocalXPCInteractiveMenuRuntimeRouteV1(
                                 sender: surfaces.interactiveRuntime
@@ -1208,7 +1258,8 @@ public enum MacAgentProductBootstrapV1 {
                             ),
                             desktop: route,
                             runtime: route,
-                            surfaceRuntime: route
+                            surfaceRuntime: route,
+                            displayRuntime: route
                         )
                         try await interactiveRuntime.bind(
                             runtime:
@@ -1217,6 +1268,7 @@ public enum MacAgentProductBootstrapV1 {
                                 ),
                             channelAuthenticator: owner,
                             surfaceControl: owner,
+                            displayControl: owner,
                             generation: surfaces.generation
                         )
                         try await localInteractiveRoleData.bind(
@@ -1228,6 +1280,7 @@ public enum MacAgentProductBootstrapV1 {
                             generation: surfaces.generation
                         )
                     } catch {
+                        await localPairingCommandAuthority.invalidateDeviceAdministration(generation: surfaces.generation)
                         await localInteractiveRoleData.invalidate(
                             generation: surfaces.generation
                         )
@@ -1247,13 +1300,15 @@ public enum MacAgentProductBootstrapV1 {
                     }
                 },
                 onSurfaceInvalidated: {
+                    await localPairingCommandAuthority.invalidateDeviceAdministration(generation: $0)
                     _ = await interactiveRoleData.invalidate(generation: $0)
                     await localInteractiveRoleData.invalidate(generation: $0)
                     _ = await focusCandidateSource.invalidate(generation: $0)
                     _ = await interactiveRuntime.invalidate(generation: $0)
                     await menuLossCoordinator
                         .authenticatedMenuSurfaceUnavailable(generation: $0)
-                }
+                },
+                serverFactory: serverFactory
             )
         }
         let composed: MacAgentProductBootstrapResultV1
@@ -1396,7 +1451,8 @@ private extension AgentNetworkPrimaryStartupInputsV1 {
                 visibleAdmission: admission,
                 materials: interactivePlatform.materials,
                 runtime: runtime,
-                surfaceControl: runtime
+                surfaceControl: runtime,
+                displaySelection: runtime
             )
         )
     }

@@ -216,7 +216,6 @@ public actor VideoToolboxH264EncoderOwnerV0 {
     _ result: VideoToolboxH264SessionCompletionV0
   ) async {
     guard !stopped, inFlight else { return }
-    inFlight = false
     switch result {
     case .failure:
       terminate(.encodeCallbackFailed)
@@ -233,6 +232,11 @@ public actor VideoToolboxH264EncoderOwnerV0 {
         return
       }
     }
+    // Publication is part of the one-frame in-flight boundary. Keep
+    // `inFlight` set while awaiting the downstream media rendezvous so capture
+    // callbacks can retain only the newest waiter instead of starting another
+    // encode and overflowing the bounded publication path.
+    inFlight = false
     inFlightRequiresCleanKeyframe = false
     guard let next = pending else { return }
     pending = nil

@@ -226,6 +226,69 @@ private func localRevokeHandlerV0(
     }
 }
 
+@Test func revokingOnePairedDevicePreservesTheOtherDeviceAuthority()
+    async throws
+{
+    let temporary = try LocalRevokeTemporaryDatabaseV0()
+    defer { temporary.remove() }
+    let store = try await makeLocalRevokeStore(at: temporary.database)
+    let otherDeviceID = UUID(
+        uuidString: "019c8000-0000-7000-8000-000000000011"
+    )!
+    let otherRecord = try StoredDeviceRecord(
+        deviceID: otherDeviceID,
+        clientID: UUID(
+            uuidString: "019c8000-0000-7000-8000-000000000012"
+        )!,
+        sessionPublicKeyX963:
+            P256.Signing.PrivateKey().publicKey.x963Representation,
+        approvalPublicKeyX963:
+            P256.Signing.PrivateKey().publicKey.x963Representation,
+        authorization: DeviceAuthorization(
+            state: .activeMonitorOnly,
+            authorizationEpoch: .init(rawValue: 1),
+            grantRevision: .init(rawValue: 1)
+        ),
+        policyRevision: .init(rawValue: 1),
+        createdAtUnixMilliseconds: 1_100,
+        updatedAtUnixMilliseconds: 1_100
+    )
+    try await store.commitPairing(
+        pairingID: UUID(
+            uuidString: "019c8000-0000-7000-8000-000000000013"
+        )!,
+        record: otherRecord,
+        displayName: DeviceDisplayName("iPad Pro")
+    )
+    let events = LocalRevokeEventProbeV0()
+    let clock = LocalRevokeClockV0(2_000)
+    let handler = localRevokeHandlerV0(
+        store: store,
+        latch: try EmergencyDenyLatch(url: temporary.latch),
+        primary: LocalRevokePrimaryProbeV0(events: events),
+        status: LocalRevokeStatusProbeV0(events: events),
+        clock: clock
+    )
+    let review = try await handler.makeReview(
+        reviewID: UUID(),
+        deviceID: localRevokeDeviceID
+    )
+    clock.set(2_001)
+    _ = try await handler.revoke(
+        LocalDeviceRevocationCommandV0(
+            commandID: UUID(),
+            review: review,
+            confirmedAtUnixMilliseconds: 2_001
+        )
+    )
+
+    #expect(try await store.device(localRevokeDeviceID)?.authorization.state
+        == .revoked)
+    #expect(try await store.device(otherDeviceID)?.authorization.state
+        == .activeMonitorOnly)
+    #expect(try await store.activePairedDeviceCount() == 1)
+}
+
 @Test func staleLocalDeviceRevokeReleasesOnlyAfterNominalLatchRefresh()
     async throws
 {

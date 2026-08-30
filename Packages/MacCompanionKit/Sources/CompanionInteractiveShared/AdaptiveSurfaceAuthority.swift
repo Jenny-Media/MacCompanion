@@ -348,7 +348,11 @@ public struct AdaptiveSurfaceAuthority: Equatable, Sendable {
             surface: expectedSurfaceRevision,
             coordinate: expectedCoordinateSpaceRevision
         )
-        try Self.validateLifetime(current, monotonicNowMilliseconds: monotonicNowMilliseconds)
+        // Once acknowledged, the active descriptor is a fence while the
+        // independently renewed execution lease is the current lifetime
+        // authority. The composition owning this state machine validates that
+        // lease before requesting a replacement. The new target descriptor
+        // must still be fresh at preparation.
         try validateSuccessor(current: current, target: target)
         try Self.validateLifetime(target, monotonicNowMilliseconds: monotonicNowMilliseconds)
         phase = .switching(from: current, target: target)

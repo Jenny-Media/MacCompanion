@@ -54,6 +54,24 @@ public final class MacLocalXPCRemoteAccessBootstrapClientV1:
         queue.setSpecific(key: queueKey, value: 1)
     }
 
+    #if DEBUG
+    private var isolatedTestID: UUID?
+
+    public convenience init(isolatedTestID: UUID, onEvent: @escaping EventHandler) {
+        self.init(onEvent: onEvent)
+        self.isolatedTestID = isolatedTestID
+    }
+    #endif
+
+    private var serviceName: String {
+        #if DEBUG
+        if let isolatedTestID {
+            return MacLocalXPCIsolatedTestAddressV1.serviceName(isolatedTestID)
+        }
+        #endif
+        return MacLocalXPCIdentityV1.serviceName
+    }
+
     deinit {
         cancel()
     }
@@ -84,7 +102,7 @@ public final class MacLocalXPCRemoteAccessBootstrapClientV1:
             cancelDeadlines()
 
             guard let candidate = MCLocalXPCSessionCreateInactive(
-                MacLocalXPCIdentityV1.serviceName,
+                serviceName,
                 queue,
                 &result
             ), result == MCLocalXPCResultOK else {

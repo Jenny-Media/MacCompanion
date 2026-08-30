@@ -61,6 +61,9 @@ public struct ClientInputRectV0: Equatable, Sendable {
 
 public enum ClientKeyboardActionV0: Equatable, Sendable {
     case text(String)
+    /// A USB HID Keyboard/Keypad usage. Unlike `text`, this models a physical
+    /// key and therefore requires Keyboard authority but no editable focus.
+    case physicalKey(usage: UInt16)
     case deleteBackward
     case returnKey
     case tab
@@ -79,6 +82,10 @@ public enum ClientKeyboardActionV0: Equatable, Sendable {
             let payload = InteractiveInputPayload.text(value)
             try payload.validate()
             return [payload]
+        case let .physicalKey(usage):
+            let payloads = Self.stroke(usage: usage, modifiers: modifiers)
+            try payloads.forEach { try $0.validate() }
+            return payloads
         case let .modifiers(mask):
             return [.modifiers(mask)]
         case .deleteBackward:
@@ -104,7 +111,7 @@ public enum ClientKeyboardActionV0: Equatable, Sendable {
         usage: UInt16,
         modifiers: InteractiveModifierMask
     ) -> [InteractiveInputPayload] {
-        [
+        var payloads: [InteractiveInputPayload] = [
             .physicalKey(
                 usage: usage,
                 transition: .down,
@@ -116,6 +123,10 @@ public enum ClientKeyboardActionV0: Equatable, Sendable {
                 modifiers: modifiers
             ),
         ]
+        // A toolbar key is a one-shot chord. Never leave a remote modifier
+        // held after the key-up; later pointer or key input must start clean.
+        if !modifiers.isEmpty { payloads.append(.modifiers([])) }
+        return payloads
     }
 }
 
@@ -217,6 +228,35 @@ public struct ClientViewportInputMapperV0: Sendable {
                 throw ClientViewportInputMapperErrorV0.modeMismatch
             }
         }
+        payloads.append(.button(button: button, transition: .down))
+        payloads.append(.button(button: button, transition: .up))
+        return payloads
+    }
+
+    /// Emits one balanced primary-button double click at a single pointer
+    /// location. An explicit recognizer avoids UIKit resolving a two-tap
+    /// gesture as one delayed single click.
+    public mutating func doubleTap(
+        at point: ClientInputPointV0? = nil,
+        button: InteractivePointerButton = .primary
+    ) throws -> [InteractiveInputPayload] {
+        guard heldDragButton == nil else {
+            throw ClientViewportInputMapperErrorV0.dragAlreadyActive
+        }
+        var payloads: [InteractiveInputPayload] = []
+        switch mode {
+        case .directTouch:
+            guard let point else {
+                throw ClientViewportInputMapperErrorV0.pointOutsideContent
+            }
+            payloads.append(try directMove(to: point))
+        case .trackpad:
+            guard point == nil else {
+                throw ClientViewportInputMapperErrorV0.modeMismatch
+            }
+        }
+        payloads.append(.button(button: button, transition: .down))
+        payloads.append(.button(button: button, transition: .up))
         payloads.append(.button(button: button, transition: .down))
         payloads.append(.button(button: button, transition: .up))
         return payloads

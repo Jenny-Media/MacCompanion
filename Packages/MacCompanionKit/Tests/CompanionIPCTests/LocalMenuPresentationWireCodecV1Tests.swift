@@ -246,6 +246,10 @@ func authoritativeMenuPresentationFixtureMatchesTheClosedCodeContract()
     #expect(object["maximumAdmittedRequestsPerGeneration"] as? Int == 8)
     #expect(object["receiverOperationTimeoutMilliseconds"] as? Int == 2_000)
     #expect(object["senderReplyTimeoutMilliseconds"] as? Int == 3_000)
+    let recovery = try #require(object["endpointFailureRecovery"] as? [String: Any])
+    #expect(recovery["scope"] as? String == "exactAuthenticatedGeneration")
+    #expect(recovery["freshGenerationWaitsForRetirementAndProductLoss"] as? Bool == true)
+    #expect(recovery["explicitRouterShutdownIsPermanent"] as? Bool == true)
     #expect(
         object["recoverablePublishRejectionProof"] as? String
             == "rejectedWithoutRetainedState"

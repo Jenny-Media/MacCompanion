@@ -283,6 +283,26 @@ public final class IOSClientReleaseApplicationV1 {
         await start()
     }
 
+    /// Rebuilds the network product from the existing protected paired-host
+    /// and configured-route stores. This neither repairs nor replaces trust,
+    /// pairing, grants, routes, or approval keys; it is only an explicit retry
+    /// of the same durable configured connection.
+    public func reconnect() async {
+        guard snapshot.phase == .workspace,
+              !transitionInProgress,
+              let storage,
+              let workspace = snapshot.workspace else { return }
+        transitionInProgress = true
+        let hostID = workspace.hostID
+        await retireOwnedProducts()
+        publish(phase: .connecting)
+        await prepareWorkspace(
+            expectedHostID: hostID,
+            storage: storage
+        )
+        transitionInProgress = false
+    }
+
     public func finish() async {
         guard snapshot.phase != .closed else { return }
         transitionInProgress = true
@@ -444,7 +464,7 @@ public final class IOSClientReleaseApplicationV1 {
                     failure: { [weak self] _ in
                         self?.networkDidFail()
                     }
-                )
+            )
             do {
                 try await product.applicationOwner.start()
             } catch {

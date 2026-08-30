@@ -24,6 +24,12 @@ private struct MacInteractiveUnavailableCaptureV1:
         throw MacInteractiveUnavailableRuntimeEffectErrorV1.unavailable
     }
 
+    func adoptInteractiveLeaseRenewal(
+        _: InteractiveRuntimeLeaseRenewalV0
+    ) async throws {
+        throw MacInteractiveUnavailableRuntimeEffectErrorV1.unavailable
+    }
+
     func prepareInteractiveCaptureTransition(
         _: InteractiveRuntimeSurfaceTransitionCommandV0
     ) async throws -> Set<SurfaceInteractionClass> {
@@ -31,7 +37,8 @@ private struct MacInteractiveUnavailableCaptureV1:
     }
 
     func activatePreparedInteractiveCaptureTransition(
-        _: InteractiveRuntimeSurfaceTransitionCommandV0
+        _: InteractiveRuntimeSurfaceTransitionCommandV0,
+        mediaSequenceBeforeTransition _: UInt64
     ) async throws {
         throw MacInteractiveUnavailableRuntimeEffectErrorV1.unavailable
     }
@@ -46,7 +53,7 @@ private struct MacInteractiveUnavailableInputV1:
 {
     func releaseAllInteractiveInput() async throws {}
 
-    func postInteractiveInput(_: InteractiveInputEnvelope) throws {
+    func postInteractiveInput(_: InteractiveInputEnvelope) async throws {
         throw MacInteractiveUnavailableRuntimeEffectErrorV1.unavailable
     }
 }

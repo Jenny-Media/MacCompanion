@@ -60,6 +60,77 @@ func opaqueDisplaySelectionRejectsUnavailableConstructionAndInvalidation()
     #expect(selection.opaqueSelectedDisplayID() == nil)
 }
 
+@Test
+@available(macOS 14.0, *)
+func opaqueDisplaySelectionEnumeratesSwitchesAndNeverRedirectsOnLoss()
+    throws
+{
+    let mainOpaqueID = UUID()
+    let secondaryOpaqueID = UUID()
+    let displays = DisplayListProbeV1([
+        .init(
+            id: 22,
+            pixelWidth: 2_560,
+            pixelHeight: 1_440,
+            isMain: false
+        ),
+        .init(
+            id: 11,
+            pixelWidth: 3_024,
+            pixelHeight: 1_964,
+            isMain: true
+        ),
+    ])
+    let selection = try MacInteractiveOpaqueDisplaySelectionV1(
+        initialOpaqueIDs: [
+            11: mainOpaqueID,
+            22: secondaryOpaqueID,
+        ],
+        onlineDisplays: { displays.value() }
+    )
+
+    #expect(selection.opaqueSelectedDisplayID() == mainOpaqueID)
+    #expect(selection.availableDisplays() == [
+        .init(
+            id: mainOpaqueID,
+            name: "Main Display",
+            pixelWidth: 3_024,
+            pixelHeight: 1_964,
+            isMain: true
+        ),
+        .init(
+            id: secondaryOpaqueID,
+            name: "Display 2",
+            pixelWidth: 2_560,
+            pixelHeight: 1_440,
+            isMain: false
+        ),
+    ])
+
+    try selection.selectDisplay(id: secondaryOpaqueID)
+    #expect(
+        try selection.resolvePhysicalDisplayID(
+            selectedDisplayID: secondaryOpaqueID
+        ) == 22
+    )
+
+    displays.set([
+        .init(
+            id: 11,
+            pixelWidth: 3_024,
+            pixelHeight: 1_964,
+            isMain: true
+        ),
+    ])
+    #expect(selection.opaqueSelectedDisplayID() == nil)
+    #expect(selection.availableDisplays().map(\.id) == [mainOpaqueID])
+    #expect(throws: MacInteractiveOpaqueDisplaySelectionErrorV1.self) {
+        _ = try selection.resolvePhysicalDisplayID(
+            selectedDisplayID: secondaryOpaqueID
+        )
+    }
+}
+
 private final class DisplayOnlineProbeV1: @unchecked Sendable {
     private let lock = NSLock()
     private var online: Bool
@@ -68,5 +139,31 @@ private final class DisplayOnlineProbeV1: @unchecked Sendable {
 
     func value() -> Bool { lock.withLock { online } }
     func set(_ value: Bool) { lock.withLock { online = value } }
+}
+
+private final class DisplayListProbeV1: @unchecked Sendable {
+    private let lock = NSLock()
+    private var displays:
+        [MacInteractiveOpaqueDisplaySelectionV1.PhysicalDisplay]
+
+    init(
+        _ displays:
+            [MacInteractiveOpaqueDisplaySelectionV1.PhysicalDisplay]
+    ) {
+        self.displays = displays
+    }
+
+    func value()
+        -> [MacInteractiveOpaqueDisplaySelectionV1.PhysicalDisplay]
+    {
+        lock.withLock { displays }
+    }
+
+    func set(
+        _ value:
+            [MacInteractiveOpaqueDisplaySelectionV1.PhysicalDisplay]
+    ) {
+        lock.withLock { displays = value }
+    }
 }
 #endif

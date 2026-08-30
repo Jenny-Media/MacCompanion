@@ -21,15 +21,22 @@ public struct ScreenCaptureKitFocusedRegionCropV0: Equatable, Sendable {
         focusGlobalBounds: CGRect,
         sourceGlobalBounds: CGRect,
         pointPixelScale: Double,
-        minimumWidthPoints: Double = 320,
-        minimumHeightPoints: Double = 180
+        minimumWidthPoints: Double = 640,
+        minimumHeightPoints: Double = 480,
+        minimumSourceFraction: Double = 0.5,
+        minimumAspectRatio: Double = 4.0 / 3.0
     ) throws {
         guard Self.valid(focusGlobalBounds),
               Self.valid(sourceGlobalBounds),
               sourceGlobalBounds.contains(focusGlobalBounds),
               pointPixelScale.isFinite, pointPixelScale > 0,
               minimumWidthPoints.isFinite, minimumWidthPoints > 0,
-              minimumHeightPoints.isFinite, minimumHeightPoints > 0 else {
+              minimumHeightPoints.isFinite, minimumHeightPoints > 0,
+              minimumSourceFraction.isFinite,
+              minimumSourceFraction > 0,
+              minimumSourceFraction <= 1,
+              minimumAspectRatio.isFinite,
+              minimumAspectRatio > 0 else {
             if Self.valid(focusGlobalBounds),
                Self.valid(sourceGlobalBounds),
                !sourceGlobalBounds.contains(focusGlobalBounds) {
@@ -39,14 +46,33 @@ public struct ScreenCaptureKitFocusedRegionCropV0: Equatable, Sendable {
             throw ScreenCaptureKitFocusedRegionCropErrorV0.invalidGeometry
         }
 
-        let desiredWidth = min(
+        var desiredWidth = min(
             sourceGlobalBounds.width,
-            max(minimumWidthPoints, focusGlobalBounds.width * 1.7)
+            max(
+                minimumWidthPoints,
+                sourceGlobalBounds.width * minimumSourceFraction,
+                focusGlobalBounds.width * 2.5
+            )
         )
-        let desiredHeight = min(
+        var desiredHeight = min(
             sourceGlobalBounds.height,
-            max(minimumHeightPoints, focusGlobalBounds.height * 4)
+            max(
+                minimumHeightPoints,
+                sourceGlobalBounds.height * minimumSourceFraction,
+                focusGlobalBounds.height * 12
+            )
         )
+        // Keep recognizable surrounding UI instead of turning a text field
+        // into a shallow strip. Expand only; never crop away context merely to
+        // force the target aspect ratio.
+        if desiredWidth / desiredHeight < minimumAspectRatio {
+            desiredWidth = min(
+                sourceGlobalBounds.width,
+                desiredHeight * minimumAspectRatio
+            )
+        }
+        desiredWidth = min(sourceGlobalBounds.width, ceil(desiredWidth))
+        desiredHeight = min(sourceGlobalBounds.height, ceil(desiredHeight))
         let centeredX = focusGlobalBounds.midX - desiredWidth / 2
         let centeredY = focusGlobalBounds.midY - desiredHeight / 2
         let minimumX = sourceGlobalBounds.minX

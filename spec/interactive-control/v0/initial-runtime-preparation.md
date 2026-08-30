@@ -16,7 +16,28 @@ visible-menu-app generation/revision plus selected display.
 The Desktop descriptor must be current at the local monotonic preparation
 sample, use revision 1 for both surface and coordinate space, contain no
 Desktop-forbidden metadata, and expose exactly—not a subset or superset—the
-approved interaction classes.
+approved interaction classes. The Agent takes this preparation sample only
+after the correlated menu-prepared descriptor returns and final admission is
+revalidated. It MUST NOT reuse a sample taken before the cross-process
+descriptor request, because the menu creates the descriptor against a later
+host-monotonic sample.
+
+A failed attempt before first-lease installation may leave only a prepared
+menu-side Desktop descriptor. A later fresh session may replace that unleased,
+non-authorizing descriptor; it may never replace an installed lease or an
+in-progress surface transition.
+
+Termination of the exact session and primary connection must fence a pending
+install immediately, before waiting for serialized cleanup or surface-control
+work. Runtime binding and scheduling wrappers must forward this fence without
+queuing it behind the install it cancels. Every awaited preparation/admission
+result must recheck the retained install token before issuing the first lease.
+A stale session/connection termination cannot fence a replacement. If install
+was already sent when termination arrives, its late receipt requires normal
+four-effect revocation and must not publish active authority or role credentials.
+The renewal owner also retains this exact install token across its awaited
+active-lease lookup. A lookup returning after termination cannot start a timer
+or renew an ended session, even if its returned lease was previously valid.
 
 ## First lease and command
 

@@ -4,6 +4,12 @@ import CompanionInteractiveWire
 import CompanionSecurity
 import CompanionWire
 import Foundation
+import OSLog
+
+private let interactiveSessionLoggerV0 = Logger(
+    subsystem: "media.jenny.maccompanion.agent",
+    category: "interactive-session"
+)
 
 public enum InteractiveControlCapabilityV0 {
     public static let identifier = "maccompanion.interactive.control"
@@ -253,7 +259,8 @@ public protocol InteractiveSessionRuntimeOwningV0: Sendable {
         requirement: InteractiveSessionRuntimeRequirementV0
     ) async throws
 
-    /// Idempotently ends the runtime and destroys unused role credentials.
+    /// Fences the exact pending install before awaiting serialized cleanup,
+    /// then idempotently ends runtime effects and unused role credentials.
     func terminate(
         interactiveSessionID: UUID,
         primaryConnectionID: Data,
@@ -321,6 +328,20 @@ public extension InteractiveSurfaceControlDispatchingV0 {
     func revokePreparedFocusEvent() async {}
 }
 
+/// Authenticated display authority. Catalog discovery is available before and
+/// during Control. A live selection is carried by the sequenced surface
+/// replacement protocol; the standalone select command remains pre-session.
+public protocol InteractiveDisplaySelectionDispatchingV1: Sendable {
+    func displayCatalog(
+        context: InteractiveSessionCommandContextV0
+    ) async throws -> InteractiveDisplayCatalogResponseBodyV1
+
+    func selectDisplay(
+        _ request: InteractiveDisplaySelectBodyV1,
+        context: InteractiveSessionCommandContextV0
+    ) async throws -> InteractiveDisplaySelectedBodyV1
+}
+
 public actor InteractiveSessionWireDispatcherV0 {
     public static let approvalLifetimeMilliseconds: Int64 = 60_000
 
@@ -349,6 +370,8 @@ public actor InteractiveSessionWireDispatcherV0 {
     private let auditWallClock: any InteractiveAuditWallClockV0
     private let surfaceControl:
         (any InteractiveSurfaceControlDispatchingV0)?
+    private let displaySelection:
+        (any InteractiveDisplaySelectionDispatchingV1)?
     private var pending: Pending?
     private var active: Active?
     private var transitionMessageID: WireUUID?
@@ -361,6 +384,8 @@ public actor InteractiveSessionWireDispatcherV0 {
         runtime: any InteractiveSessionRuntimeOwningV0,
         surfaceControl:
             (any InteractiveSurfaceControlDispatchingV0)? = nil,
+        displaySelection:
+            (any InteractiveDisplaySelectionDispatchingV1)? = nil,
         auditWriter: (any InteractiveAuditWritingV0)? = nil,
         auditWallClock: any InteractiveAuditWallClockV0 =
             SystemInteractiveAuditWallClockV0()
@@ -369,6 +394,7 @@ public actor InteractiveSessionWireDispatcherV0 {
         self.materials = materials
         self.runtime = runtime
         self.surfaceControl = surfaceControl
+        self.displaySelection = displaySelection
         self.auditWriter = auditWriter
         self.auditWallClock = auditWallClock
     }
@@ -382,6 +408,18 @@ public actor InteractiveSessionWireDispatcherV0 {
         responseMessageID: WireUUID
     ) async throws -> Data {
         switch try WireCodec.messageKind(from: requestJSON) {
+        case .interactiveDisplayCatalogRequest:
+            return try await requestDisplayCatalog(
+                requestJSON,
+                context: context,
+                responseMessageID: responseMessageID
+            )
+        case .interactiveDisplaySelect:
+            return try await selectDisplay(
+                requestJSON,
+                context: context,
+                responseMessageID: responseMessageID
+            )
         case .interactiveSessionRequest:
             return try await requestSession(
                 requestJSON,
@@ -432,6 +470,167 @@ public actor InteractiveSessionWireDispatcherV0 {
             )
         case let kind:
             throw InteractiveSessionWireDispatcherErrorV0.unsupportedMessage(kind)
+        }
+    }
+
+    private func requestDisplayCatalog(
+        _ requestJSON: Data,
+        context: InteractiveSessionCommandContextV0,
+        responseMessageID: WireUUID
+    ) async throws -> Data {
+        let request = try WireCodec.decode(
+            WireEnvelope<InteractiveDisplayCatalogRequestBodyV1>.self,
+            from: requestJSON
+        )
+        guard request.body.authorizationEpoch == context.authorizationEpoch,
+              pending == nil,
+              transitionMessageID == nil,
+              (active == nil || activeMatches(context)),
+              let displaySelection else {
+            return try denied(
+                correlationID: request.messageID,
+                responseMessageID: responseMessageID,
+                sentAtUnixMilliseconds: context.wallNowUnixMilliseconds
+            )
+        }
+        transitionMessageID = request.messageID
+        defer {
+            if transitionMessageID == request.messageID {
+                transitionMessageID = nil
+            }
+        }
+        guard let admissionSnapshot = try await admission.snapshot(
+                deviceID: context.deviceID
+              ),
+              transitionMessageID == request.messageID,
+              isEligible(admissionSnapshot, for: context),
+              let selectedDisplayID = admissionSnapshot.selectedDisplayID,
+              let admissionRevision = Int64(
+                exactly: admissionSnapshot.visibleMenuAppRevision
+              )
+        else {
+            return try denied(
+                correlationID: request.messageID,
+                responseMessageID: responseMessageID,
+                sentAtUnixMilliseconds: context.wallNowUnixMilliseconds
+            )
+        }
+        do {
+            let catalog = try await displaySelection.displayCatalog(
+                context: context
+            )
+            guard transitionMessageID == request.messageID,
+                  catalog.authorizationEpoch == context.authorizationEpoch,
+                  catalog.admissionRevision
+                    == admissionRevision,
+                  catalog.selectedDisplayID.rawValue == selectedDisplayID
+            else {
+                throw InteractiveSessionWireDispatcherErrorV0
+                    .admissionChanged
+            }
+            return try WireCodec.encode(WireEnvelope(
+                version: request.version,
+                messageID: responseMessageID,
+                correlationID: request.messageID,
+                sentAtUnixMilliseconds: context.wallNowUnixMilliseconds,
+                body: catalog
+            ))
+        } catch {
+            return try errorResponse(
+                correlationID: request.messageID,
+                responseMessageID: responseMessageID,
+                sentAtUnixMilliseconds: context.wallNowUnixMilliseconds,
+                code: "provider.unavailable",
+                retry: .backoff
+            )
+        }
+    }
+
+    private func selectDisplay(
+        _ requestJSON: Data,
+        context: InteractiveSessionCommandContextV0,
+        responseMessageID: WireUUID
+    ) async throws -> Data {
+        let request = try WireCodec.decode(
+            WireEnvelope<InteractiveDisplaySelectBodyV1>.self,
+            from: requestJSON
+        )
+        guard request.body.authorizationEpoch == context.authorizationEpoch,
+              pending == nil,
+              active == nil,
+              transitionMessageID == nil,
+              let displaySelection else {
+            return try denied(
+                correlationID: request.messageID,
+                responseMessageID: responseMessageID,
+                sentAtUnixMilliseconds: context.wallNowUnixMilliseconds
+            )
+        }
+        transitionMessageID = request.messageID
+        defer {
+            if transitionMessageID == request.messageID {
+                transitionMessageID = nil
+            }
+        }
+        guard let before = try await admission.snapshot(
+                deviceID: context.deviceID
+              ),
+              transitionMessageID == request.messageID,
+              isEligible(before, for: context),
+              let beforeRevision = Int64(
+                exactly: before.visibleMenuAppRevision
+              ),
+              request.body.expectedAdmissionRevision
+                == beforeRevision else {
+            return try denied(
+                correlationID: request.messageID,
+                responseMessageID: responseMessageID,
+                sentAtUnixMilliseconds: context.wallNowUnixMilliseconds
+            )
+        }
+        do {
+            let selected = try await displaySelection.selectDisplay(
+                request.body,
+                context: context
+            )
+            guard transitionMessageID == request.messageID,
+                  let after = try await admission.snapshot(
+                    deviceID: context.deviceID
+                  ),
+                  transitionMessageID == request.messageID,
+                  isEligible(after, for: context),
+                  after.visibleMenuAppGeneration
+                    == before.visibleMenuAppGeneration,
+                  selected.authorizationEpoch == context.authorizationEpoch,
+                  selected.selectedDisplayID == request.body.displayID,
+                  after.selectedDisplayID
+                    == selected.selectedDisplayID.rawValue,
+                  let afterRevision = Int64(
+                    exactly: after.visibleMenuAppRevision
+                  ),
+                  selected.admissionRevision
+                    == afterRevision,
+                  before.visibleMenuAppRevision < UInt64.max,
+                  after.visibleMenuAppRevision
+                    == before.visibleMenuAppRevision + 1 else {
+                throw InteractiveSessionWireDispatcherErrorV0
+                    .admissionChanged
+            }
+            return try WireCodec.encode(WireEnvelope(
+                version: request.version,
+                messageID: responseMessageID,
+                correlationID: request.messageID,
+                sentAtUnixMilliseconds: context.wallNowUnixMilliseconds,
+                body: selected
+            ))
+        } catch {
+            return try errorResponse(
+                correlationID: request.messageID,
+                responseMessageID: responseMessageID,
+                sentAtUnixMilliseconds: context.wallNowUnixMilliseconds,
+                code: "provider.unavailable",
+                retry: .backoff
+            )
         }
     }
 
@@ -530,12 +729,14 @@ public actor InteractiveSessionWireDispatcherV0 {
         pending = nil
         guard let active else { return }
         self.active = nil
-        await surfaceControl?.primarySessionClosed()
         await runtime.terminate(
             interactiveSessionID: active.interactiveSessionID,
             primaryConnectionID: active.primaryConnectionID,
             reason: .clientDisconnected
         )
+        // Surface cleanup may queue behind install. Deliver its exact fence
+        // first so a suspended descriptor cannot start capture during closure.
+        await surfaceControl?.primarySessionClosed()
         await auditWriter?.recordTerminal(
             requestID: active.requestID,
             interactiveSessionID: active.interactiveSessionID,
@@ -574,12 +775,12 @@ public actor InteractiveSessionWireDispatcherV0 {
         pending = nil
         transitionMessageID = nil
         transitionLocalBinding = nil
-        await surfaceControl?.primarySessionClosed()
         await runtime.terminate(
             interactiveSessionID: active.interactiveSessionID,
             primaryConnectionID: active.primaryConnectionID,
             reason: .clientRequested
         )
+        await surfaceControl?.primarySessionClosed()
         await auditWriter?.recordTerminal(
             requestID: active.requestID,
             interactiveSessionID: active.interactiveSessionID,
@@ -922,6 +1123,7 @@ public actor InteractiveSessionWireDispatcherV0 {
                 approvalAuthority: approval
             )
         )
+        interactiveSessionLoggerV0.notice("approval challenge issued")
         return try WireCodec.encode(challenge)
     }
 
@@ -934,6 +1136,7 @@ public actor InteractiveSessionWireDispatcherV0 {
             WireEnvelope<InteractiveApprovalProofBody>.self,
             from: requestJSON
         )
+        interactiveSessionLoggerV0.notice("approval proof received")
         guard transitionMessageID == nil else {
             return try errorResponse(
                 correlationID: request.messageID,
@@ -951,6 +1154,9 @@ public actor InteractiveSessionWireDispatcherV0 {
               request.body.approvalID == pending.approvalID,
               samePrimary(context, pending.binding) else {
             self.pending = nil
+            interactiveSessionLoggerV0.error(
+                "approval proof rejected: pending binding mismatch"
+            )
             return try authenticationFailure(
                 correlationID: request.messageID,
                 responseMessageID: responseMessageID,
@@ -978,6 +1184,9 @@ public actor InteractiveSessionWireDispatcherV0 {
                 admission: snapshot
               ).isEligibleForInteractiveControl,
               snapshot.selectedDisplayID == pending.selectedDisplayID else {
+            interactiveSessionLoggerV0.error(
+                "approval proof rejected: admission changed"
+            )
             return try denied(
                 correlationID: request.messageID,
                 responseMessageID: responseMessageID,
@@ -1007,6 +1216,7 @@ public actor InteractiveSessionWireDispatcherV0 {
                 wallNowUnixMilliseconds: context.wallNowUnixMilliseconds,
                 monotonicNowMilliseconds: context.monotonicNowMilliseconds
             )
+            interactiveSessionLoggerV0.notice("approval proof verified")
             let acceptedData = try WireCodec.encode(WireEnvelope(
                 version: request.version,
                 messageID: responseMessageID,
@@ -1023,6 +1233,9 @@ public actor InteractiveSessionWireDispatcherV0 {
                     context: context
                 )
             } catch {
+                interactiveSessionLoggerV0.error(
+                    "approval proof rejected: required audit unavailable"
+                )
                 return try errorResponse(
                     correlationID: request.messageID,
                     responseMessageID: responseMessageID,
@@ -1056,6 +1269,7 @@ public actor InteractiveSessionWireDispatcherV0 {
                     admission: snapshot
                 )
             )
+            interactiveSessionLoggerV0.notice("interactive runtime installed")
             await auditWriter?.recordStarted(
                 requestID: pending.requestID.rawValue,
                 interactiveSessionID: sessionID,
@@ -1079,6 +1293,9 @@ public actor InteractiveSessionWireDispatcherV0 {
             }
             return acceptedData
         } catch let error as InteractiveSecurityAuthorityError {
+            interactiveSessionLoggerV0.error(
+                "approval proof rejected by security authority: \(String(describing: error), privacy: .public)"
+            )
             switch error {
             case .currentStateChanged:
                 return try denied(
@@ -1094,6 +1311,9 @@ public actor InteractiveSessionWireDispatcherV0 {
                 )
             }
         } catch {
+            interactiveSessionLoggerV0.error(
+                "approval proof failed during runtime preparation: \(String(describing: error), privacy: .public)"
+            )
             if let failed = active,
                failed.primaryConnectionID == context.primaryConnectionID {
                 active = nil
@@ -1130,6 +1350,15 @@ public actor InteractiveSessionWireDispatcherV0 {
             && lhs.primaryConnectionID == rhs.primaryConnectionID
             && lhs.hostID == rhs.hostID
             && lhs.hostFingerprint == rhs.hostFingerprint
+    }
+
+    private func activeMatches(
+        _ context: InteractiveSessionCommandContextV0
+    ) -> Bool {
+        guard let active else { return false }
+        return active.deviceID == context.deviceID
+            && active.primaryConnectionID == context.primaryConnectionID
+            && samePrimary(active.auditContext, context)
     }
 
     private func isEligible(

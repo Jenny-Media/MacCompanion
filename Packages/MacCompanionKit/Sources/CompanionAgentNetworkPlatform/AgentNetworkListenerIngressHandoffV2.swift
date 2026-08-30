@@ -3,6 +3,12 @@ import CompanionInteractiveHost
 import CompanionInteractiveWire
 import Dispatch
 import Foundation
+import OSLog
+
+private let agentNetworkIngressLoggerV2 = Logger(
+    subsystem: "media.jenny.maccompanion.agent",
+    category: "network-ingress"
+)
 
 public enum AgentNetworkIngressTerminationV2: Equatable, Sendable {
     case classificationFailed
@@ -672,6 +678,9 @@ public actor AgentNetworkListenerIngressHandoffV2 {
         do {
             classified = try await classifier.classify()
         } catch {
+            agentNetworkIngressLoggerV2.error(
+                "connection classification failed: \(String(describing: error), privacy: .public)"
+            )
             if classifying?.token == token {
                 classifying = nil
                 notifyStateChanged()
@@ -687,6 +696,9 @@ public actor AgentNetworkListenerIngressHandoffV2 {
             return
         }
         classifying = nil
+        agentNetworkIngressLoggerV2.notice(
+            "connection classified role=\(classified.role.rawValue, privacy: .public)"
+        )
         notifyStateChanged()
         await bind(
             classified,
@@ -789,6 +801,9 @@ public actor AgentNetworkListenerIngressHandoffV2 {
                 )
             }
         } catch {
+            agentNetworkIngressLoggerV2.error(
+                "connection bind failed role=\(classified.role.rawValue, privacy: .public) error=\(String(describing: error), privacy: .public)"
+            )
             if bindingToken == token {
                 bindingToken = nil
                 bindingRole = nil
@@ -812,6 +827,9 @@ public actor AgentNetworkListenerIngressHandoffV2 {
         do {
             try await bound.begin()
         } catch {
+            agentNetworkIngressLoggerV2.error(
+                "connection begin failed role=\(classified.role.rawValue, privacy: .public) error=\(String(describing: error), privacy: .public)"
+            )
             let stillOwned = bindingToken == token
                 || bindingConnection?.token == token
             if stillOwned {
@@ -896,6 +914,9 @@ public actor AgentNetworkListenerIngressHandoffV2 {
         case .interactiveMedia:
             activeInteractiveMedia = active
         }
+        agentNetworkIngressLoggerV2.notice(
+            "connection active role=\(classified.role.rawValue, privacy: .public)"
+        )
         notifyStateChanged()
         if classified.role == .interactiveInput
             || classified.role == .interactiveMedia {
@@ -922,6 +943,9 @@ public actor AgentNetworkListenerIngressHandoffV2 {
         role: NetworkHostIngressRoleV0,
         token: UUID
     ) async {
+        agentNetworkIngressLoggerV2.notice(
+            "connection ended role=\(role.rawValue, privacy: .public) reason=\(String(describing: reason), privacy: .public)"
+        )
         if bindingToken == token {
             bindingToken = nil
             bindingRole = nil

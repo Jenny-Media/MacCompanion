@@ -88,6 +88,9 @@ public final class NetworkClientCoarseReachabilitySourceV1:
             throw NetworkClientCoarseReachabilityErrorV1.invalidPhase
         }
         phase = .running
+#if DEBUG
+        print("[Mac Companion reconnect] reachability monitor started")
+#endif
         startMonitor { [weak self] status in
             Task { @MainActor [weak self] in
                 self?.publish(status)
@@ -104,6 +107,11 @@ public final class NetworkClientCoarseReachabilitySourceV1:
 
     private func publish(_ status: NetworkClientPathStatusV1) {
         guard phase == .running else { return }
+#if DEBUG
+        print(
+            "[Mac Companion reconnect] reachability=\(status == .satisfied)"
+        )
+#endif
         continuation.yield(status == .satisfied)
     }
 

@@ -3,6 +3,78 @@ import CompanionIPC
 import Foundation
 import Testing
 
+@Test func deviceRevocationReviewTransportRoundTripsExactBindings() throws {
+    let request = try LocalDeviceRevocationReviewRequestV1(commandID: UUID(), deviceID: UUID(), requestedAtUnixMilliseconds: 1_000)
+    let review = try LocalDeviceRevocationReviewV0(reviewID: UUID(), deviceID: request.deviceID,
+        deviceDisplayName: .init("Disposable device"), state: .activeGranted,
+        authorizationEpoch: .init(rawValue: 2), grantRevision: .init(rawValue: 3),
+        createdAtUnixMilliseconds: 1_001, expiresAtUnixMilliseconds: 301_001)
+    let reply = try LocalDeviceRevocationReviewReplyV1(correlationID: request.commandID, review: review)
+    try reply.validate(against: request)
+    #expect(try LocalMenuPairingCommandWireCodecV1.decodeDeviceRevocationReviewRequest(
+        LocalMenuPairingCommandWireCodecV1.encodeDeviceRevocationReviewRequest(request)) == request)
+    #expect(try LocalMenuPairingCommandWireCodecV1.decodeDeviceRevocationReviewReply(
+        LocalMenuPairingCommandWireCodecV1.encodeDeviceRevocationReviewReply(reply)) == reply)
+    let command = try LocalDeviceRevocationCommandV0(commandID: UUID(), review: review, confirmedAtUnixMilliseconds: 1_002)
+    let receipt = try LocalDeviceRevokedReceiptV0(correlationID: command.commandID, reviewID: review.reviewID,
+        deviceID: request.deviceID, authorizationEpoch: .init(rawValue: 3), grantRevision: .init(rawValue: 4),
+        completedAtUnixMilliseconds: 1_003)
+    try receipt.validate(against: command)
+    #expect(try LocalMenuPairingCommandWireCodecV1.decodeDeviceRevocationCommand(
+        LocalMenuPairingCommandWireCodecV1.encodeDeviceRevocationCommand(command)) == command)
+    #expect(try LocalMenuPairingCommandWireCodecV1.decodeDeviceRevokedReceipt(
+        LocalMenuPairingCommandWireCodecV1.encodeDeviceRevokedReceipt(receipt)) == receipt)
+    #expect(throws: DeviceAdministrationMessageErrorV0.bindingMismatch) {
+        try LocalDeviceRevocationReviewReplyV1(correlationID: UUID(), review: review).validate(against: request)
+    }
+    #expect(throws: DeviceAdministrationMessageErrorV0.bindingMismatch) {
+        try reply.validate(against: .init(commandID: request.commandID, deviceID: UUID(), requestedAtUnixMilliseconds: 1_000))
+    }
+    #expect(throws: DeviceAdministrationMessageErrorV0.bindingMismatch) {
+        try reply.validate(against: .init(commandID: request.commandID, deviceID: request.deviceID, requestedAtUnixMilliseconds: 1_002))
+    }
+}
+
+@Test func deviceRevocationReviewTransportRejectsMalformedAndCrossKindPayloads() throws {
+    let request = try LocalDeviceRevocationReviewRequestV1(commandID: UUID(), deviceID: UUID(), requestedAtUnixMilliseconds: 1_000)
+    let encoded = try LocalMenuPairingCommandWireCodecV1.encodeDeviceRevocationReviewRequest(request)
+    #expect(throws: LocalMenuPairingCommandWireCodecErrorV1.invalidPayload) {
+        try LocalMenuPairingCommandWireCodecV1.decodeInteractiveControlGrantReviewRequest(encoded)
+    }
+    for key in ["unexpected", "deviceID"] {
+        var value = try #require(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+        if key == "unexpected" { value[key] = true } else { value.removeValue(forKey: key) }
+        let malformed = try JSONSerialization.data(withJSONObject: value, options: [.sortedKeys, .withoutEscapingSlashes])
+        #expect(throws: LocalMenuPairingCommandWireCodecErrorV1.invalidPayload) {
+            try LocalMenuPairingCommandWireCodecV1.decodeDeviceRevocationReviewRequest(malformed)
+        }
+    }
+    #expect(throws: DeviceAdministrationMessageErrorV0.invalidTime) {
+        try LocalDeviceRevocationReviewRequestV1(commandID: UUID(), deviceID: UUID(), requestedAtUnixMilliseconds: -1)
+    }
+    #expect(throws: DeviceAdministrationMessageErrorV0.invalidIdentifier) {
+        try LocalDeviceRevocationReviewRequestV1(commandID: request.deviceID, deviceID: request.deviceID, requestedAtUnixMilliseconds: 1)
+    }
+    #expect(throws: DeviceAdministrationMessageErrorV0.invalidVersion) {
+        try LocalDeviceRevocationReviewRequestV1(protocolVersion: .init(major: 1, minor: 0), commandID: UUID(), deviceID: UUID(), requestedAtUnixMilliseconds: 1)
+    }
+}
+
+@Test func deviceRevocationReviewTransportMatchesIndexedProfile() throws {
+    var repository = URL(fileURLWithPath: #filePath)
+    for _ in 0..<5 { repository.deleteLastPathComponent() }
+    let fixture = try #require(JSONSerialization.jsonObject(with: Data(contentsOf:
+        repository.appendingPathComponent("spec/fixtures/local-xpc-menu-pairing-commands-v0.1.json"))) as? [String: Any])
+    let profile = try #require(fixture["reviewedDeviceRevocation"] as? [String: Any])
+    #expect(profile["authorizationMethod"] as? String == "administerDevices")
+    #expect(profile["reviewLifetimeMilliseconds"] as? Int == 300_000)
+    #expect(profile["generationLossWithdrawsUnconfirmedReview"] as? Bool == true)
+    let request = try LocalDeviceRevocationReviewRequestV1(commandID: UUID(), deviceID: UUID(), requestedAtUnixMilliseconds: 1)
+    let encoded = try LocalMenuPairingCommandWireCodecV1.encodeDeviceRevocationReviewRequest(request)
+    let object = try #require(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+    #expect(Set(object.keys) == Set(try #require(profile["reviewRequestKeys"] as? [String])))
+}
+
 @Test func localDeviceNameCommandAndReceiptAreExactlyCorrelated() throws {
     let command = try SetDeviceDisplayNameCommandV0(
         commandID: UUID(),

@@ -31,6 +31,20 @@ public struct MacInteractiveFocusCandidateProjectionV1: Sendable {
     }
 }
 
+enum MacInteractiveFocusReuseGuardV1 {
+    static func shouldReuseActiveFocus(
+        activeKind: InteractiveSurfaceKind,
+        activeFocus: SurfaceFocus?,
+        lastFocus: SurfaceFocus?,
+        fingerprintMatches: Bool
+    ) -> Bool {
+        activeKind == .focusedRegion
+            && fingerprintMatches
+            && activeFocus != nil
+            && lastFocus == activeFocus
+    }
+}
+
 /// The menu-process-only bridge between privacy-filtered opaque picker tokens
 /// and live ScreenCaptureKit objects. The Agent can receive only sanitized
 /// inventory and descriptors; the selected filter and global input geometry
@@ -40,13 +54,15 @@ public actor MacInteractiveSurfaceTargetOwnerV1 {
     private struct Active {
         var descriptor: AdaptiveSurfaceDescriptor
         var lease: InteractiveExecutionLease?
-        let physicalDisplayID: CGDirectDisplayID
-        let desktopRotation: SurfaceRotation
+        var physicalDisplayID: CGDirectDisplayID
+        var desktopRotation: SurfaceRotation
         let catalog: ScreenCaptureKitOpaqueTargetCatalogV0
         var inputBounds: CGRect
         var focusedRegionFilter: SCContentFilter?
         var focusedRegionSourceGlobalBounds: CGRect?
         var focusedRegionPointPixelScale: Double?
+        var localActivationTarget:
+            ScreenCaptureKitLocalActivationTargetV0?
     }
 
     private struct FocusFingerprint: Equatable {
@@ -94,7 +110,7 @@ public actor MacInteractiveSurfaceTargetOwnerV1 {
         physicalDisplayID: CGDirectDisplayID
     ) throws {
         let inputBounds = CGDisplayBounds(physicalDisplayID)
-        guard active == nil, pending == nil, taken == nil,
+        guard active?.lease == nil, pending == nil, taken == nil,
               physicalDisplayID != 0,
               Self.valid(inputBounds),
               descriptor.interactiveSessionID
@@ -105,6 +121,10 @@ public actor MacInteractiveSurfaceTargetOwnerV1 {
                 == Set(command.interactionClasses) else {
             throw MacInteractiveSurfaceTargetOwnerErrorV1.bindingMismatch
         }
+        // Preparing a descriptor starts no capture and grants no execution
+        // authority. If the Agent fails before installing the first lease, a
+        // later fresh session must be able to replace that unleased residue.
+        // An installed lease remains non-replaceable until explicit teardown.
         let catalog = try ScreenCaptureKitOpaqueTargetCatalogV0(
             interactiveSessionID: command.interactiveSessionID,
             authorizationEpoch: command.authorizationEpoch,
@@ -122,7 +142,8 @@ public actor MacInteractiveSurfaceTargetOwnerV1 {
             inputBounds: inputBounds,
             focusedRegionFilter: nil,
             focusedRegionSourceGlobalBounds: nil,
-            focusedRegionPointPixelScale: nil
+            focusedRegionPointPixelScale: nil,
+            localActivationTarget: nil
         )
     }
 
@@ -144,6 +165,45 @@ public actor MacInteractiveSurfaceTargetOwnerV1 {
             throw MacInteractiveSurfaceTargetOwnerErrorV1.bindingMismatch
         }
         active.lease = command.lease
+        self.active = active
+    }
+
+    package func retargetDesktop(
+        physicalDisplayID: CGDirectDisplayID
+    ) throws {
+        guard var active, active.lease != nil,
+              pending == nil, taken == nil,
+              physicalDisplayID != 0,
+              let rotation = Self.rotation(
+                CGDisplayRotation(physicalDisplayID)
+              ),
+              Self.valid(CGDisplayBounds(physicalDisplayID)) else {
+            throw MacInteractiveSurfaceTargetOwnerErrorV1.unavailable
+        }
+        active.physicalDisplayID = physicalDisplayID
+        active.desktopRotation = rotation
+        self.active = active
+        lastFocusFingerprint = nil
+        focusToken = nil
+        lastFocus = nil
+        lastFocusGlobalBounds = nil
+    }
+
+    /// Mirrors a validated same-surface renewal so later target resolution is
+    /// correlated to the lease currently owned by the menu runtime.
+    public func adoptRenewedLease(
+        _ renewal: InteractiveRuntimeLeaseRenewalV0
+    ) throws {
+        guard var active, pending == nil, taken == nil,
+              let current = active.lease else {
+            throw MacInteractiveSurfaceTargetOwnerErrorV1.bindingMismatch
+        }
+        do {
+            try renewal.validate(current: current)
+        } catch {
+            throw MacInteractiveSurfaceTargetOwnerErrorV1.bindingMismatch
+        }
+        active.lease = renewal.replacement
         self.active = active
     }
 
@@ -274,6 +334,7 @@ public actor MacInteractiveSurfaceTargetOwnerV1 {
             taken.focusedRegionSourceGlobalBounds
         active.focusedRegionPointPixelScale =
             taken.inputBackingScaleFactor
+        active.localActivationTarget = taken.localActivationTarget
         self.active = active
         self.taken = nil
         if let focus = transition.descriptor.focus,
@@ -341,9 +402,12 @@ public actor MacInteractiveSurfaceTargetOwnerV1 {
         guard let fingerprint = observationFingerprint else {
             throw MacInteractiveSurfaceTargetOwnerErrorV1.unavailable
         }
-        if active.descriptor.kind == .focusedRegion,
-           fingerprint == lastFocusFingerprint,
-           let activeFocus = active.descriptor.focus {
+        if MacInteractiveFocusReuseGuardV1.shouldReuseActiveFocus(
+            activeKind: active.descriptor.kind,
+            activeFocus: active.descriptor.focus,
+            lastFocus: lastFocus,
+            fingerprintMatches: fingerprint == lastFocusFingerprint
+        ), let activeFocus = active.descriptor.focus {
             let candidate = try InteractiveFocusEventCandidateV0(
                 recommendedTargetKind: .focusedRegion,
                 focus: activeFocus,
@@ -477,6 +541,17 @@ public actor MacInteractiveSurfaceTargetOwnerV1 {
         )
     }
 
+    private static func rotation(_ value: Double) -> SurfaceRotation? {
+        guard value.isFinite else { return nil }
+        return switch Int(value.rounded()) {
+        case 0, 360, -360: .degrees0
+        case 90, -270: .degrees90
+        case 180, -180: .degrees180
+        case 270, -90: .degrees270
+        default: nil
+        }
+    }
+
     private func makeFocusedRegionReplacement(
         active: Active,
         content: SCShareableContent,
@@ -570,7 +645,8 @@ public actor MacInteractiveSurfaceTargetOwnerV1 {
             sourceRect: crop.sourceRect,
             focusedRegionSourceGlobalBounds: sourceBounds,
             inputBounds: crop.globalBounds,
-            inputBackingScaleFactor: pointPixelScale
+            inputBackingScaleFactor: pointPixelScale,
+            localActivationTarget: active.localActivationTarget
         )
     }
 

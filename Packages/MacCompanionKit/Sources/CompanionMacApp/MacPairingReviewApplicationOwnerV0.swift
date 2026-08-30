@@ -30,12 +30,16 @@ public actor MacPairingReviewApplicationOwnerV0:
     public typealias StateChanged = @Sendable (
         MacPairingReviewPresentationV0
     ) async -> Void
+    public typealias DecisionCompleted = @Sendable (
+        LocalPairingDecisionReceiptV0
+    ) async -> Void
 
     private let client: any MacPairingReviewLocalIPCClientV0
     private let clock: any MacPairingWallClockV0
     private let expiryScheduler: any MacPairingExpirySchedulingV0
     private let commandIDSource: CommandIDSource
     private let stateChanged: StateChanged
+    private let decisionCompleted: DecisionCompleted
 
     private var presentation = MacPairingReviewPresentationV0()
     private var revision: UInt64 = 0
@@ -49,13 +53,15 @@ public actor MacPairingReviewApplicationOwnerV0:
         expiryScheduler: any MacPairingExpirySchedulingV0 =
             SystemMacPairingExpirySchedulerV0(),
         commandIDSource: @escaping CommandIDSource = { UUID() },
-        stateChanged: @escaping StateChanged = { _ in }
+        stateChanged: @escaping StateChanged = { _ in },
+        decisionCompleted: @escaping DecisionCompleted = { _ in }
     ) {
         self.client = client
         self.clock = clock
         self.expiryScheduler = expiryScheduler
         self.commandIDSource = commandIDSource
         self.stateChanged = stateChanged
+        self.decisionCompleted = decisionCompleted
     }
 
     public func snapshot() -> MacPairingReviewPresentationV0 {
@@ -186,6 +192,7 @@ public actor MacPairingReviewApplicationOwnerV0:
             do {
                 try presentation.receiveDecisionReceipt(receipt)
                 cancelExpiry()
+                await decisionCompleted(receipt)
             } catch {
                 try? presentation.decisionFailed()
             }

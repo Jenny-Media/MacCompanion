@@ -1,4 +1,5 @@
 import CompanionClient
+import CompanionTransport
 import CompanionWire
 import Foundation
 
@@ -85,6 +86,39 @@ public enum NetworkClientConfiguredRouteApplicationProductFactoryV1 {
         newRouteID: @escaping ClientConfiguredRouteEditorV1.RouteID,
         roundID: @escaping ClientConfiguredRouteApplicationBindingV1.RoundID
     ) async throws -> NetworkClientConfiguredRouteApplicationProductV1 {
+        try await make(
+            hostID: hostID, pairedHosts: pairedHosts, routes: routes,
+            connector: runtime.makeInteractiveRoleConnector(),
+            monotonicNow: runtime.monotonicNow,
+            newRouteID: newRouteID, roundID: roundID,
+            makeController: { configuration, foreground, reachable, events in
+                try NetworkClientConfiguredReconnectCompositionV1.makeController(
+                    configuration: configuration, foreground: foreground,
+                    networkReachable: reachable,
+                    runtime: runtime.replacingProductEvents(
+                        events.combined(with: runtime.productEvents)
+                    )
+                )
+            }
+        )
+    }
+
+    /// Shared composition, with transport construction injected at package
+    /// scope. Both release and integration tests use these exact publication,
+    /// termination, role ownership, and reconnect bindings.
+    package static func make(
+        hostID: UUID,
+        pairedHosts: any ClientPairedHostInventoryV1,
+        routes: any ClientConfiguredRoutePersistenceV1,
+        connector: any NetworkClientInteractiveRoleConnectingV0,
+        monotonicNow: @escaping ClientConfiguredRouteApplicationBindingV1.MonotonicNow,
+        newRouteID: @escaping ClientConfiguredRouteEditorV1.RouteID,
+        roundID: @escaping ClientConfiguredRouteApplicationBindingV1.RoundID,
+        makeController: @escaping @Sendable (
+            ClientReconnectConfigurationV1, Bool, Bool,
+            NetworkClientPrimaryProductEventsV0
+        ) throws -> ReconnectControllerV0
+    ) async throws -> NetworkClientConfiguredRouteApplicationProductV1 {
         let terminationRelay = NetworkClientPrimaryTerminationRelayV1()
         let primaryState = NetworkClientPrimaryApplicationStateV0(
             hostID: hostID,
@@ -93,13 +127,10 @@ public enum NetworkClientConfiguredRouteApplicationProductFactoryV1 {
         let interactiveRoles = NetworkClientInteractiveRoleProductBindingV0(
             hostID: hostID,
             primaryState: primaryState,
-            connector: runtime.makeInteractiveRoleConnector()
+            connector: connector
         )
-        let productRuntime = runtime.replacingProductEvents(
-            primaryState.productEvents
-                .combined(with: interactiveRoles.productEvents)
-                .combined(with: runtime.productEvents)
-        )
+        let events = primaryState.productEvents
+            .combined(with: interactiveRoles.productEvents)
         let lifecycle = try await ClientConfiguredRouteLifecycleV1(
             hostID: hostID,
             pairedHosts: pairedHosts,
@@ -107,13 +138,7 @@ public enum NetworkClientConfiguredRouteApplicationProductFactoryV1 {
             foreground: false,
             networkReachable: false,
             makeController: { configuration, foreground, reachable in
-                try NetworkClientConfiguredReconnectCompositionV1
-                    .makeController(
-                        configuration: configuration,
-                        foreground: foreground,
-                        networkReachable: reachable,
-                        runtime: productRuntime
-                    )
+                try makeController(configuration, foreground, reachable, events)
             },
             newRouteID: newRouteID
         )
@@ -121,7 +146,7 @@ public enum NetworkClientConfiguredRouteApplicationProductFactoryV1 {
             let binding = try await
                 ClientConfiguredRouteApplicationBindingV1(
                     lifecycle: lifecycle,
-                    monotonicNow: runtime.monotonicNow,
+                    monotonicNow: monotonicNow,
                     roundID: roundID
                 )
             terminationRelay.bind { [weak binding] in

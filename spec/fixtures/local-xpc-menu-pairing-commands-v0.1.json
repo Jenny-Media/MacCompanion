@@ -37,6 +37,38 @@
       "failureFields": ["kind:string", "version:signedInt64=1"]
     }
   ],
+  "reviewedDeviceRevocation": {
+    "kind": "command.device-administration",
+    "authorizationMethod": "administerDevices",
+    "requestTypes": ["LocalDeviceRevocationReviewRequestV1", "LocalDeviceRevocationCommandV0"],
+    "replyTypes": ["LocalDeviceRevocationReviewReplyV1", "LocalDeviceRevokedReceiptV0"],
+    "reviewRequestKeys": ["protocolVersion", "commandID", "deviceID", "requestedAtUnixMilliseconds"],
+    "reviewReplyKeys": ["correlationID", "review"],
+    "reviewLifetimeMilliseconds": 300000,
+    "exactRequestRetryReturnsRetainedReview": true,
+    "generationLossWithdrawsUnconfirmedReview": true,
+    "durableCommandReplaySurvivesRestart": true
+  },
+  "publishedActGrant": {
+    "kind": "command.device-administration",
+    "reviewAuthorizationMethod": "administerDevices",
+    "decisionAuthorizationMethod": "decideGrantExpansion",
+    "requestType": "LocalCapabilityGrantReviewRequestV1",
+    "reviewType": "LocalCapabilityGrantReviewV1",
+    "requestKeys": ["protocolVersion", "commandID", "deviceID", "capabilityID", "requestedAtUnixMilliseconds"],
+    "reviewKeys": ["protocolVersion", "correlationID", "reviewID", "deviceID", "deviceDisplayName", "authorizationEpoch", "grantRevision", "policyRevision", "currentGrantIDs", "registryGeneration", "descriptor", "createdAtUnixMilliseconds", "expiresAtUnixMilliseconds"],
+    "decisionType": "LocalCapabilityGrantDecisionCommandV1",
+    "decisionKeys": ["kind", "decision"],
+    "decisionKind": "capabilityGrantDecision",
+    "reviewLifetimeMilliseconds": 300000,
+    "exactRequestRetryReturnsRetainedReview": true,
+    "generationLossWithdrawsUnconfirmedReview": true,
+    "exactDecisionReplayWithinHandler": true,
+    "restartDecisionReplay": false,
+    "reservedControlGrantRejected": true,
+    "unpublishedCapabilityRejected": true,
+    "approvalFencesPrimaryBeforeDurableMutation": true
+  },
   "rules": [
     "same-team exact-role authentication and menu readiness are required before command traffic",
     "the menu client and Agent server each admit exactly one command at a time per authenticated generation",
@@ -47,6 +79,9 @@
     "the server times out after four monotonic seconds and the client after five",
     "timeout, cancellation after send, malformed reply, unknown field, cross-kind payload, premature traffic, and concurrent admission terminate the generation",
     "presentation owners retain exact commands for explicit retry and delivery alone is never success",
+    "exact authenticated menu loss tombstones the uncommitted QR and clears its receipt without stopping Observe or the listener",
+    "menu loss fences and compensates an in-flight QR create; a replacement menu may create a fresh code but cannot replay the old secret",
+    "menu loss does not cancel an in-flight durable approval commit; unexpected QR retirement failure disables further creation",
     "QR payloads, review decisions, receipts, and errors never enter diagnostics, logs, crash metadata, or the diagnostic CLI"
   ]
 }

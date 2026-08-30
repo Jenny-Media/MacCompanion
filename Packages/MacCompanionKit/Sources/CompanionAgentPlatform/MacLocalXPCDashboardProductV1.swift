@@ -134,6 +134,8 @@ private actor MacLocalXPCDashboardBindingV1 {
     private var statusRetryPermitted = false
     private var automaticStatusRefreshTask: Task<Void, Never>?
     private var interactiveAdmissionPublished = false
+    private var interactiveAdmissionRevision: UInt64 = 0
+    private var selectedDisplayID: UUID?
     private var phase: Phase = .idle
 
     init(
@@ -151,6 +153,7 @@ private actor MacLocalXPCDashboardBindingV1 {
         self.publishesInteractiveAdmission = publishesInteractiveAdmission
         self.menuAppGeneration = menuAppGeneration
         self.initialSelectedDisplayID = initialSelectedDisplayID
+        selectedDisplayID = initialSelectedDisplayID
         self.automaticStatusRefreshDelay = automaticStatusRefreshDelay
     }
 
@@ -171,6 +174,7 @@ private actor MacLocalXPCDashboardBindingV1 {
             statusRefreshInProgress = false
             statusRetryPermitted = false
             interactiveAdmissionPublished = false
+            interactiveAdmissionRevision = 0
         } catch {
             if phase == .starting { retire() }
             throw error
@@ -260,10 +264,33 @@ private actor MacLocalXPCDashboardBindingV1 {
             commandID: UUID(),
             menuAppGeneration: menuAppGeneration,
             revision: 1,
-            selectedDisplayID: initialSelectedDisplayID
+            selectedDisplayID: selectedDisplayID
         )
         _ = try await client.publishInteractiveAdmission(publication)
         interactiveAdmissionPublished = true
+        interactiveAdmissionRevision = 1
+    }
+
+    func updateInteractiveAdmissionSelectedDisplay(
+        _ selectedDisplayID: UUID?
+    ) async throws {
+        guard phase == .ready,
+              publishesInteractiveAdmission,
+              interactiveAdmissionPublished,
+              interactiveAdmissionRevision < UInt64.max else {
+            throw MacLocalXPCInteractiveAdmissionErrorV1.unavailable
+        }
+        guard self.selectedDisplayID != selectedDisplayID else { return }
+        let revision = interactiveAdmissionRevision + 1
+        let publication = try LocalInteractiveAdmissionPublicationV1(
+            commandID: UUID(),
+            menuAppGeneration: menuAppGeneration,
+            revision: revision,
+            selectedDisplayID: selectedDisplayID
+        )
+        _ = try await client.publishInteractiveAdmission(publication)
+        self.selectedDisplayID = selectedDisplayID
+        interactiveAdmissionRevision = revision
     }
 
     private func scheduleAutomaticStatusRefresh(
@@ -443,6 +470,19 @@ private final class MacLocalXPCDashboardRuntimeV1: @unchecked Sendable {
         return await binding?.retryStatus() ?? .notCompleted
     }
 
+    func updateInteractiveAdmissionSelectedDisplay(
+        _ selectedDisplayID: UUID?
+    ) async throws {
+        guard let binding = lock.withLock({
+            acceptingEvents && shutdownTask == nil ? self.binding : nil
+        }) else {
+            throw MacLocalXPCInteractiveAdmissionErrorV1.unavailable
+        }
+        try await binding.updateInteractiveAdmissionSelectedDisplay(
+            selectedDisplayID
+        )
+    }
+
     func createPairingSession(
         _ command: LocalPairingSessionCreateCommandV0
     ) async throws -> LocalPairingSessionCreatedReceiptV0 {
@@ -617,6 +657,7 @@ public final class MacLocalXPCDashboardProductV1:
         interactiveInputHandler:
             (any MacLocalXPCInteractiveInputHandlingV1)? = nil,
         interactiveMediaQueue: BoundedInteractiveMediaQueueV0? = nil,
+        menuAppGeneration: UUID = UUID(),
         selectedDisplayID: UUID? = nil,
         bufferCapacity: Int = 32
     ) {
@@ -642,6 +683,7 @@ public final class MacLocalXPCDashboardProductV1:
                 )
             },
             publishesInteractiveAdmission: true,
+            menuAppGeneration: menuAppGeneration,
             initialSelectedDisplayID: selectedDisplayID
         )
     }
@@ -651,6 +693,7 @@ public final class MacLocalXPCDashboardProductV1:
         agentBuildLifetime: MacAuthenticatedAgentBuildLifetimeV0 = .init(),
         bufferCapacity: Int = 32,
         publishesInteractiveAdmission: Bool = false,
+        menuAppGeneration: UUID = UUID(),
         initialSelectedDisplayID: UUID? = nil,
         automaticStatusRefreshDelay: Duration = .seconds(1),
         clientFactory: @escaping ClientFactory
@@ -661,6 +704,7 @@ public final class MacLocalXPCDashboardProductV1:
             bufferCapacity: bufferCapacity,
             clientFactory: clientFactory,
             publishesInteractiveAdmission: publishesInteractiveAdmission,
+            menuAppGeneration: menuAppGeneration,
             initialSelectedDisplayID: initialSelectedDisplayID,
             automaticStatusRefreshDelay: automaticStatusRefreshDelay
         )
@@ -672,6 +716,7 @@ public final class MacLocalXPCDashboardProductV1:
         bufferCapacity: Int,
         clientFactory: @escaping ClientFactory,
         publishesInteractiveAdmission: Bool,
+        menuAppGeneration: UUID = UUID(),
         initialSelectedDisplayID: UUID? = nil,
         automaticStatusRefreshDelay: Duration = .seconds(1)
     ) -> MacLocalXPCDashboardRuntimeV1 {
@@ -684,7 +729,7 @@ public final class MacLocalXPCDashboardProductV1:
             client: client,
             agentBuildLifetime: agentBuildLifetime,
             publishesInteractiveAdmission: publishesInteractiveAdmission,
-            menuAppGeneration: UUID(),
+            menuAppGeneration: menuAppGeneration,
             initialSelectedDisplayID: initialSelectedDisplayID,
             automaticStatusRefreshDelay: automaticStatusRefreshDelay
         )
@@ -703,6 +748,14 @@ public final class MacLocalXPCDashboardProductV1:
 
     public func retryStatus() async -> MacAgentDashboardEffectOutcomeV0 {
         await runtime.retryStatus()
+    }
+
+    public func updateInteractiveAdmissionSelectedDisplay(
+        _ selectedDisplayID: UUID?
+    ) async throws {
+        try await runtime.updateInteractiveAdmissionSelectedDisplay(
+            selectedDisplayID
+        )
     }
 
     public func createPairingSession(

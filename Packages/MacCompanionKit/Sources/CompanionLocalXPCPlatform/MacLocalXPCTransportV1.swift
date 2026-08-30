@@ -4,6 +4,35 @@ import CompanionInteractiveWire
 import CompanionLocalXPCPlatformC
 import Dispatch
 import Foundation
+import OSLog
+
+private let macLocalXPCInteractiveInputLoggerV1 = Logger(
+    subsystem: "media.jenny.maccompanion",
+    category: "interactive-input-xpc"
+)
+
+private let macLocalXPCInteractiveLeaseLoggerV1 = Logger(
+    subsystem: "media.jenny.maccompanion",
+    category: "interactive-lease-xpc"
+)
+
+/// Preserves the XPC wire distinction between a payload-bearing reply and an
+/// exact payload-free acknowledgement. Foundation may expose a non-null
+/// sentinel base address for empty `Data`; that sentinel must never cross the
+/// C boundary for a message whose closed shape forbids a payload field.
+package enum MacLocalXPCReplyPayloadBytesV1 {
+    package static func withBytes<Result>(
+        _ payload: Data,
+        _ body: (UnsafePointer<UInt8>?, Int) -> Result
+    ) -> Result {
+        payload.withUnsafeBytes { rawBuffer in
+            let bytes: UnsafePointer<UInt8>? = payload.isEmpty
+                ? nil
+                : rawBuffer.bindMemory(to: UInt8.self).baseAddress
+            return body(bytes, payload.count)
+        }
+    }
+}
 
 public enum MacLocalXPCIdentityV1 {
     public static let serviceName = "media.jenny.maccompanion.agent"
@@ -11,6 +40,16 @@ public enum MacLocalXPCIdentityV1 {
     public static let agentSigningIdentifier =
         "media.jenny.maccompanion.agent"
 }
+
+#if DEBUG
+/// A disposable Mach service address, never a substitute signing identity.
+/// UUID-only input cannot name the installed service. Absent from Release.
+public enum MacLocalXPCIsolatedTestAddressV1 {
+    public static func serviceName(_ testID: UUID) -> String {
+        "media.jenny.maccompanion.xpc-test.\(testID.uuidString.lowercased())"
+    }
+}
+#endif
 
 public enum MacLocalXPCServerEventV1: Equatable, Sendable {
     case authenticatedMenu(generation: UInt64)
@@ -458,6 +497,8 @@ public final class MacLocalXPCServerV1:
         )
         case surfaceFailure(LocalInteractiveSurfaceFailureCommandV1)
         case focusSnapshot(LocalInteractiveFocusSnapshotCommandV1)
+        case displayCatalog(LocalInteractiveDisplayCatalogCommandV1)
+        case displaySelect(LocalInteractiveDisplaySelectCommandV1)
 
         var kind: MacLocalXPCInteractiveLeaseCommandKindV1 {
             switch self {
@@ -471,6 +512,8 @@ public final class MacLocalXPCServerV1:
             case .surfaceAcknowledgement: .surfaceAcknowledgement
             case .surfaceFailure: .surfaceFailure
             case .focusSnapshot: .focusSnapshot
+            case .displayCatalog: .displayCatalog
+            case .displaySelect: .displaySelect
             }
         }
 
@@ -484,6 +527,8 @@ public final class MacLocalXPCServerV1:
                     .surfaceFailure:
                 .applyInteractiveSurface
             case .focusSnapshot:
+                .applyInteractiveSurface
+            case .displayCatalog, .displaySelect:
                 .applyInteractiveSurface
             }
         }
@@ -540,6 +585,10 @@ public final class MacLocalXPCServerV1:
             LocalInteractiveControlGrantReviewRequestV0
         )
         case decideInteractiveControlGrant(LocalGrantDecisionCommandV0)
+        case requestDeviceRevocationReview(LocalDeviceRevocationReviewRequestV1)
+        case revokeDevice(LocalDeviceRevocationCommandV0)
+        case requestCapabilityGrantReview(LocalCapabilityGrantReviewRequestV1)
+        case decideCapabilityGrant(LocalGrantDecisionCommandV0)
 
         var kind: MacLocalXPCMenuPairingCommandKindV1 {
             switch self {
@@ -553,6 +602,10 @@ public final class MacLocalXPCServerV1:
                 .requestInteractiveControlGrantReview
             case .decideInteractiveControlGrant:
                 .decideInteractiveControlGrant
+            case .requestDeviceRevocationReview: .requestDeviceRevocationReview
+            case .revokeDevice: .revokeDevice
+            case .requestCapabilityGrantReview: .requestCapabilityGrantReview
+            case .decideCapabilityGrant: .decideCapabilityGrant
             }
         }
 
@@ -568,6 +621,9 @@ public final class MacLocalXPCServerV1:
                 .administerDevices
             case .decideInteractiveControlGrant:
                 .decideGrantExpansion
+            case .requestDeviceRevocationReview, .revokeDevice: .administerDevices
+            case .requestCapabilityGrantReview: .administerDevices
+            case .decideCapabilityGrant: .decideGrantExpansion
             }
         }
 
@@ -575,7 +631,8 @@ public final class MacLocalXPCServerV1:
             switch self {
             case .create, .dismiss, .resolveDecision,
                     .requestInteractiveControlGrantReview,
-                    .decideInteractiveControlGrant:
+                    .decideInteractiveControlGrant, .requestDeviceRevocationReview, .revokeDevice,
+                    .requestCapabilityGrantReview, .decideCapabilityGrant:
                 true
             case .recoverHostIdentity,
                     .acknowledgeHostIdentityRecoveryCompletion:
@@ -598,6 +655,10 @@ public final class MacLocalXPCServerV1:
             LocalInteractiveControlGrantReviewV0
         )
         case interactiveControlGrantDecision(LocalGrantDecisionReceiptV0)
+        case deviceRevocationReview(LocalDeviceRevocationReviewReplyV1)
+        case deviceRevoked(LocalDeviceRevokedReceiptV0)
+        case capabilityGrantReview(LocalCapabilityGrantReviewV1)
+        case capabilityGrantDecision(LocalGrantDecisionReceiptV0)
     }
 
     private final class PendingMenuPairingCommand: @unchecked Sendable {
@@ -971,6 +1032,39 @@ public final class MacLocalXPCServerV1:
         (any MacLocalXPCInteractiveMediaHandlingV1)?
     private let profile: MacLocalXPCServerProfileV1
     private let agentBuild: UInt64?
+    #if DEBUG
+    private var isolatedTestID: UUID?
+
+    public convenience init(
+        isolatedTestID: UUID,
+        profile: MacLocalXPCServerProfileV1,
+        bootstrapHandler: (any MacLocalXPCRemoteAccessBootstrapHandlingV1)? = nil,
+        statusReader: (any MacLocalXPCStatusReadingV1)? = nil,
+        menuPairingCommandHandler: (any MacLocalXPCMenuPairingCommandHandlingV1)? = nil,
+        updateQuiescenceHandler: (any MacLocalXPCUpdateQuiescenceHandlingV0)? = nil,
+        interactiveAdmissionHandler: (any MacLocalXPCInteractiveAdmissionHandlingV1)? = nil,
+        interactiveMediaHandler: (any MacLocalXPCInteractiveMediaHandlingV1)? = nil,
+        agentBuild: UInt64? = 1,
+        onEvent: @escaping EventHandler
+    ) {
+        self.init(profile: profile, bootstrapHandler: bootstrapHandler,
+                  statusReader: statusReader, menuPairingCommandHandler: menuPairingCommandHandler,
+                  updateQuiescenceHandler: updateQuiescenceHandler,
+                  interactiveAdmissionHandler: interactiveAdmissionHandler,
+                  interactiveMediaHandler: interactiveMediaHandler,
+                  agentBuild: agentBuild, onEvent: onEvent)
+        self.isolatedTestID = isolatedTestID
+    }
+    #endif
+
+    private var serviceName: String {
+        #if DEBUG
+        if let isolatedTestID {
+            return MacLocalXPCIsolatedTestAddressV1.serviceName(isolatedTestID)
+        }
+        #endif
+        return MacLocalXPCIdentityV1.serviceName
+    }
     private let statusReadTimeout: DispatchTimeInterval = .seconds(2)
     private let bootstrapTimeout: DispatchTimeInterval = .seconds(
         remoteAccessBootstrapTimeoutSeconds
@@ -1096,7 +1190,7 @@ public final class MacLocalXPCServerV1:
                 throw MacLocalXPCConstructionErrorV1.generationExhausted
             }
             guard let candidate = MCLocalXPCListenerCreateInactive(
-                MacLocalXPCIdentityV1.serviceName,
+                serviceName,
                 queue,
                 { [weak self] peer in
                     guard let self else {
@@ -1962,6 +2056,108 @@ public final class MacLocalXPCServerV1:
         }
     }
 
+    public func interactiveDisplayCatalog(
+        _ command: LocalInteractiveDisplayCatalogCommandV1
+    ) async throws -> LocalInteractiveDisplayCatalogReceiptV1 {
+        try await interactiveDisplayCatalog(command, endpointBinding: nil)
+    }
+
+    package func interactiveDisplayCatalog(
+        generation: UInt64,
+        endpointToken: UUID,
+        command: LocalInteractiveDisplayCatalogCommandV1
+    ) async throws -> LocalInteractiveDisplayCatalogReceiptV1 {
+        try await interactiveDisplayCatalog(
+            command,
+            endpointBinding: .init(
+                generation: generation,
+                endpointToken: endpointToken
+            )
+        )
+    }
+
+    private func interactiveDisplayCatalog(
+        _ command: LocalInteractiveDisplayCatalogCommandV1,
+        endpointBinding: MacLocalXPCInteractiveLeaseEndpointBindingV1?
+    ) async throws -> LocalInteractiveDisplayCatalogReceiptV1 {
+        let payload = try encodeInteractiveLeasePayload {
+            try LocalInteractiveLeaseWireCodecV1
+                .encodeDisplayCatalogCommand(command)
+        }
+        let reply = try await sendInteractiveLeaseCommand(
+            command: .displayCatalog(command),
+            payload: payload,
+            endpointBinding: endpointBinding
+        )
+        do {
+            guard let reply else {
+                throw MacLocalXPCInteractiveLeaseErrorV1
+                    .malformedOrTransportError
+            }
+            let receipt = try LocalInteractiveLeaseWireCodecV1
+                .decodeDisplayCatalogReceipt(reply)
+            try receipt.validate(against: command)
+            return receipt
+        } catch {
+            cancelPeerAfterMalformedInteractiveReply(
+                endpointBinding: endpointBinding
+            )
+            throw MacLocalXPCInteractiveLeaseErrorV1
+                .malformedOrTransportError
+        }
+    }
+
+    public func selectInteractiveDisplay(
+        _ command: LocalInteractiveDisplaySelectCommandV1
+    ) async throws -> LocalInteractiveDisplaySelectedReceiptV1 {
+        try await selectInteractiveDisplay(command, endpointBinding: nil)
+    }
+
+    package func selectInteractiveDisplay(
+        generation: UInt64,
+        endpointToken: UUID,
+        command: LocalInteractiveDisplaySelectCommandV1
+    ) async throws -> LocalInteractiveDisplaySelectedReceiptV1 {
+        try await selectInteractiveDisplay(
+            command,
+            endpointBinding: .init(
+                generation: generation,
+                endpointToken: endpointToken
+            )
+        )
+    }
+
+    private func selectInteractiveDisplay(
+        _ command: LocalInteractiveDisplaySelectCommandV1,
+        endpointBinding: MacLocalXPCInteractiveLeaseEndpointBindingV1?
+    ) async throws -> LocalInteractiveDisplaySelectedReceiptV1 {
+        let payload = try encodeInteractiveLeasePayload {
+            try LocalInteractiveLeaseWireCodecV1
+                .encodeDisplaySelectCommand(command)
+        }
+        let reply = try await sendInteractiveLeaseCommand(
+            command: .displaySelect(command),
+            payload: payload,
+            endpointBinding: endpointBinding
+        )
+        do {
+            guard let reply else {
+                throw MacLocalXPCInteractiveLeaseErrorV1
+                    .malformedOrTransportError
+            }
+            let receipt = try LocalInteractiveLeaseWireCodecV1
+                .decodeDisplaySelectedReceipt(reply)
+            try receipt.validate(against: command)
+            return receipt
+        } catch {
+            cancelPeerAfterMalformedInteractiveReply(
+                endpointBinding: endpointBinding
+            )
+            throw MacLocalXPCInteractiveLeaseErrorV1
+                .malformedOrTransportError
+        }
+    }
+
     private func encodeInteractiveLeasePayload(
         _ body: () throws -> Data
     ) throws -> Data {
@@ -2136,7 +2332,8 @@ public final class MacLocalXPCServerV1:
         let validPayloadShape: Bool = switch transaction.kind {
         case .prepareInitialDesktop, .install, .revoke,
                 .surfaceTargets, .surfaceResolve, .surfaceTransition,
-                .surfaceAcknowledgement, .surfaceFailure, .focusSnapshot:
+                .surfaceAcknowledgement, .surfaceFailure, .focusSnapshot,
+                .displayCatalog, .displaySelect:
             payload.map {
                 !$0.isEmpty
                     && $0.count <= LocalInteractiveLeaseWireCodecV1
@@ -2146,6 +2343,9 @@ public final class MacLocalXPCServerV1:
             payload == nil
         }
         guard !malformedOrTransportError, validPayloadShape else {
+            macLocalXPCInteractiveLeaseLoggerV1.error(
+                "agent rejected interactive reply kind=\(String(describing: transaction.kind), privacy: .public) malformed=\(malformedOrTransportError, privacy: .public) payloadBytes=\(payload?.count ?? -1, privacy: .public)"
+            )
             pending.continuation.resume(
                 throwing: MacLocalXPCInteractiveLeaseErrorV1
                     .malformedOrTransportError
@@ -2156,6 +2356,9 @@ public final class MacLocalXPCServerV1:
             )
             return
         }
+        macLocalXPCInteractiveLeaseLoggerV1.notice(
+            "agent accepted interactive reply kind=\(String(describing: transaction.kind), privacy: .public) operation=\(transaction.operation, privacy: .public)"
+        )
         pending.continuation.resume(returning: payload)
     }
 
@@ -2253,6 +2456,10 @@ public final class MacLocalXPCServerV1:
             MCLocalXPCInteractiveLeaseCommandSurfaceFailure
         case .focusSnapshot:
             MCLocalXPCInteractiveLeaseCommandFocusSnapshot
+        case .displayCatalog:
+            MCLocalXPCInteractiveLeaseCommandDisplayCatalog
+        case .displaySelect:
+            MCLocalXPCInteractiveLeaseCommandDisplaySelect
         }
     }
 
@@ -3560,6 +3767,18 @@ public final class MacLocalXPCServerV1:
                         .decodeReceipt(payload)
                 )
             case MCLocalXPCMenuPairingCommandDeviceAdministration:
+                if let request = try? LocalMenuPairingCommandWireCodecV1.decodeCapabilityGrantReviewRequest(payload) {
+                    return .requestCapabilityGrantReview(request)
+                }
+                if let command = try? LocalMenuPairingCommandWireCodecV1.decodeCapabilityGrantDecision(payload) {
+                    return .decideCapabilityGrant(command.decision)
+                }
+                if let request = try? LocalMenuPairingCommandWireCodecV1.decodeDeviceRevocationReviewRequest(payload) {
+                    return .requestDeviceRevocationReview(request)
+                }
+                if let command = try? LocalMenuPairingCommandWireCodecV1.decodeDeviceRevocationCommand(payload) {
+                    return .revokeDevice(command)
+                }
                 if let request = try? LocalMenuPairingCommandWireCodecV1
                     .decodeInteractiveControlGrantReviewRequest(payload) {
                     return .requestInteractiveControlGrantReview(request)
@@ -3665,6 +3884,18 @@ public final class MacLocalXPCServerV1:
                         try await menuPairingCommandHandler
                             .decideInteractiveControlGrant(value)
                     )
+                case .requestDeviceRevocationReview(let value):
+                    guard let menuPairingCommandHandler else { throw MacLocalXPCMenuPairingCommandErrorV1.unavailable }
+                    result = .deviceRevocationReview(try await menuPairingCommandHandler.makeDeviceRevocationReview(value))
+                case .revokeDevice(let value):
+                    guard let menuPairingCommandHandler else { throw MacLocalXPCMenuPairingCommandErrorV1.unavailable }
+                    result = .deviceRevoked(try await menuPairingCommandHandler.revokeDevice(value))
+                case .requestCapabilityGrantReview(let value):
+                    guard let menuPairingCommandHandler else { throw MacLocalXPCMenuPairingCommandErrorV1.unavailable }
+                    result = .capabilityGrantReview(try await menuPairingCommandHandler.makeCapabilityGrantReview(value))
+                case .decideCapabilityGrant(let value):
+                    guard let menuPairingCommandHandler else { throw MacLocalXPCMenuPairingCommandErrorV1.unavailable }
+                    result = .capabilityGrantDecision(try await menuPairingCommandHandler.decideCapabilityGrant(value))
                 }
                 queue.async {
                     [weak self, weak state, hostIdentityRecoveryHandler] in
@@ -4139,6 +4370,18 @@ public final class MacLocalXPCServerV1:
                 try receipt.validate(against: command)
                 return try LocalMenuPairingCommandWireCodecV1
                     .encodeGrantDecisionReceipt(receipt)
+            case (.requestDeviceRevocationReview(let request), .deviceRevocationReview(let reply)):
+                try reply.validate(against: request)
+                return try LocalMenuPairingCommandWireCodecV1.encodeDeviceRevocationReviewReply(reply)
+            case (.revokeDevice(let command), .deviceRevoked(let receipt)):
+                try receipt.validate(against: command)
+                return try LocalMenuPairingCommandWireCodecV1.encodeDeviceRevokedReceipt(receipt)
+            case (.requestCapabilityGrantReview(let request), .capabilityGrantReview(let review)):
+                try review.validate(against: request)
+                return try LocalMenuPairingCommandWireCodecV1.encodeCapabilityGrantReview(review)
+            case (.decideCapabilityGrant(let command), .capabilityGrantDecision(let receipt)):
+                try receipt.validate(against: command)
+                return try LocalMenuPairingCommandWireCodecV1.encodeGrantDecisionReceipt(receipt)
             default:
                 return nil
             }
@@ -4159,7 +4402,8 @@ public final class MacLocalXPCServerV1:
         case .acknowledgeHostIdentityRecoveryCompletion:
             MCLocalXPCMenuPairingCommandAcknowledgeHostIdentityRecovery
         case .requestInteractiveControlGrantReview,
-                .decideInteractiveControlGrant:
+                .decideInteractiveControlGrant, .requestDeviceRevocationReview, .revokeDevice,
+                .requestCapabilityGrantReview, .decideCapabilityGrant:
             MCLocalXPCMenuPairingCommandDeviceAdministration
         }
     }
@@ -4790,6 +5034,8 @@ public final class MacLocalXPCClientV1:
         )
         case surfaceFailure(LocalInteractiveSurfaceFailureCommandV1)
         case focusSnapshot(LocalInteractiveFocusSnapshotCommandV1)
+        case displayCatalog(LocalInteractiveDisplayCatalogCommandV1)
+        case displaySelect(LocalInteractiveDisplaySelectCommandV1)
 
         var kind: MacLocalXPCInteractiveLeaseCommandKindV1 {
             switch self {
@@ -4803,6 +5049,8 @@ public final class MacLocalXPCClientV1:
             case .surfaceAcknowledgement: .surfaceAcknowledgement
             case .surfaceFailure: .surfaceFailure
             case .focusSnapshot: .focusSnapshot
+            case .displayCatalog: .displayCatalog
+            case .displaySelect: .displaySelect
             }
         }
 
@@ -4816,6 +5064,8 @@ public final class MacLocalXPCClientV1:
                     .surfaceFailure:
                 .applyInteractiveSurface
             case .focusSnapshot:
+                .applyInteractiveSurface
+            case .displayCatalog, .displaySelect:
                 .applyInteractiveSurface
             }
         }
@@ -4836,6 +5086,8 @@ public final class MacLocalXPCClientV1:
         )
         case surfaceFailure(LocalInteractiveSurfaceFailureReceiptV1)
         case focusSnapshot(LocalInteractiveFocusSnapshotReceiptV1)
+        case displayCatalog(LocalInteractiveDisplayCatalogReceiptV1)
+        case displaySelected(LocalInteractiveDisplaySelectedReceiptV1)
     }
 
     private final class PendingIncomingInteractiveLeaseCommand:
@@ -4948,6 +5200,39 @@ public final class MacLocalXPCClientV1:
         queue.setSpecific(key: queueKey, value: 1)
     }
 
+    #if DEBUG
+    private var isolatedTestID: UUID?
+
+    public convenience init(isolatedTestID: UUID, onEvent: @escaping EventHandler) {
+        self.init(onEvent: onEvent)
+        self.isolatedTestID = isolatedTestID
+    }
+
+    public convenience init(
+        isolatedTestID: UUID,
+        pairingReviews: any LocalPairingReviewSurfaceV0,
+        hostIdentityRecovery: any LocalHostIdentityRecoverySurfaceV0,
+        interactiveLeaseHandler: (any MacLocalXPCInteractiveLeaseHandlingV1)? = nil,
+        interactiveInputHandler: (any MacLocalXPCInteractiveInputHandlingV1)? = nil,
+        onEvent: @escaping EventHandler
+    ) {
+        self.init(presentationSurfaces: .init(pairingReviews: pairingReviews,
+            hostIdentityRecovery: hostIdentityRecovery),
+            interactiveLeaseHandler: interactiveLeaseHandler,
+            interactiveInputHandler: interactiveInputHandler, onEvent: onEvent)
+        self.isolatedTestID = isolatedTestID
+    }
+    #endif
+
+    private var serviceName: String {
+        #if DEBUG
+        if let isolatedTestID {
+            return MacLocalXPCIsolatedTestAddressV1.serviceName(isolatedTestID)
+        }
+        #endif
+        return MacLocalXPCIdentityV1.serviceName
+    }
+
     package init(
         presentationSurfaces:
             MacLocalXPCMenuPresentationReceiverSurfacesV1,
@@ -5031,7 +5316,7 @@ public final class MacLocalXPCClientV1:
             }
 
             guard let candidate = MCLocalXPCSessionCreateInactive(
-                MacLocalXPCIdentityV1.serviceName,
+                serviceName,
                 queue,
                 &result
             ), result == MCLocalXPCResultOK else {
@@ -5223,6 +5508,70 @@ public final class MacLocalXPCClientV1:
             invalidateCurrentGenerationAfterMalformedCommandReply()
             throw MacLocalXPCMenuPairingCommandErrorV1
                 .malformedOrTransportError
+        }
+    }
+
+    public func makeCapabilityGrantReview(_ request: LocalCapabilityGrantReviewRequestV1) async throws -> LocalCapabilityGrantReviewV1 {
+        let payload: Data
+        do { payload = try LocalMenuPairingCommandWireCodecV1.encodeCapabilityGrantReviewRequest(request) }
+        catch { throw MacLocalXPCMenuPairingCommandErrorV1.malformedOrTransportError }
+        let data = try await sendMenuPairingCommand(kind: .requestCapabilityGrantReview,
+            authorizationMethod: .administerDevices, payload: payload)
+        do {
+            let review = try LocalMenuPairingCommandWireCodecV1.decodeCapabilityGrantReview(data)
+            try review.validate(against: request)
+            return review
+        } catch {
+            invalidateCurrentGenerationAfterMalformedCommandReply()
+            throw MacLocalXPCMenuPairingCommandErrorV1.malformedOrTransportError
+        }
+    }
+
+    public func decideCapabilityGrant(_ command: LocalGrantDecisionCommandV0) async throws -> LocalGrantDecisionReceiptV0 {
+        let payload: Data
+        do { payload = try LocalMenuPairingCommandWireCodecV1.encodeCapabilityGrantDecision(.init(decision: command)) }
+        catch { throw MacLocalXPCMenuPairingCommandErrorV1.malformedOrTransportError }
+        let data = try await sendMenuPairingCommand(kind: .decideCapabilityGrant,
+            authorizationMethod: .decideGrantExpansion, payload: payload)
+        do {
+            let receipt = try LocalMenuPairingCommandWireCodecV1.decodeGrantDecisionReceipt(data)
+            try receipt.validate(against: command)
+            return receipt
+        } catch {
+            invalidateCurrentGenerationAfterMalformedCommandReply()
+            throw MacLocalXPCMenuPairingCommandErrorV1.malformedOrTransportError
+        }
+    }
+
+    public func makeDeviceRevocationReview(_ request: LocalDeviceRevocationReviewRequestV1) async throws -> LocalDeviceRevocationReviewReplyV1 {
+        let payload: Data
+        do { payload = try LocalMenuPairingCommandWireCodecV1.encodeDeviceRevocationReviewRequest(request) }
+        catch { throw MacLocalXPCMenuPairingCommandErrorV1.malformedOrTransportError }
+        let data = try await sendMenuPairingCommand(kind: .requestDeviceRevocationReview,
+            authorizationMethod: .administerDevices, payload: payload)
+        do {
+            let reply = try LocalMenuPairingCommandWireCodecV1.decodeDeviceRevocationReviewReply(data)
+            try reply.validate(against: request)
+            return reply
+        } catch {
+            invalidateCurrentGenerationAfterMalformedCommandReply()
+            throw MacLocalXPCMenuPairingCommandErrorV1.malformedOrTransportError
+        }
+    }
+
+    public func revokeDevice(_ command: LocalDeviceRevocationCommandV0) async throws -> LocalDeviceRevokedReceiptV0 {
+        let payload: Data
+        do { payload = try LocalMenuPairingCommandWireCodecV1.encodeDeviceRevocationCommand(command) }
+        catch { throw MacLocalXPCMenuPairingCommandErrorV1.malformedOrTransportError }
+        let data = try await sendMenuPairingCommand(kind: .revokeDevice,
+            authorizationMethod: .administerDevices, payload: payload)
+        do {
+            let receipt = try LocalMenuPairingCommandWireCodecV1.decodeDeviceRevokedReceipt(data)
+            try receipt.validate(against: command)
+            return receipt
+        } catch {
+            invalidateCurrentGenerationAfterMalformedCommandReply()
+            throw MacLocalXPCMenuPairingCommandErrorV1.malformedOrTransportError
         }
     }
 
@@ -6236,7 +6585,8 @@ public final class MacLocalXPCClientV1:
         case .acknowledgeHostIdentityRecoveryCompletion:
             MCLocalXPCMenuPairingCommandAcknowledgeHostIdentityRecovery
         case .requestInteractiveControlGrantReview,
-                .decideInteractiveControlGrant:
+                .decideInteractiveControlGrant, .requestDeviceRevocationReview, .revokeDevice,
+                .requestCapabilityGrantReview, .decideCapabilityGrant:
             MCLocalXPCMenuPairingCommandDeviceAdministration
         }
     }
@@ -6537,6 +6887,9 @@ public final class MacLocalXPCClientV1:
                     )
                 }
             } catch {
+                macLocalXPCInteractiveInputLoggerV1.error(
+                    "menu input rejected sequence=\(envelope.sequence, privacy: .public) error=\(String(describing: error), privacy: .public)"
+                )
                 queue.async { [weak self] in
                     self?.terminateIncomingInteractiveInput(
                         generation: generation,
@@ -6681,6 +7034,16 @@ public final class MacLocalXPCClientV1:
                     try LocalInteractiveLeaseWireCodecV1
                         .decodeFocusSnapshotCommand(payload)
                 )
+            case MCLocalXPCInteractiveLeaseCommandDisplayCatalog:
+                return .displayCatalog(
+                    try LocalInteractiveLeaseWireCodecV1
+                        .decodeDisplayCatalogCommand(payload)
+                )
+            case MCLocalXPCInteractiveLeaseCommandDisplaySelect:
+                return .displaySelect(
+                    try LocalInteractiveLeaseWireCodecV1
+                        .decodeDisplaySelectCommand(payload)
+                )
             default:
                 return nil
             }
@@ -6803,6 +7166,24 @@ public final class MacLocalXPCClientV1:
                                     monotonicNowNanoseconds()
                             )
                     )
+                case .displayCatalog(let value):
+                    result = .displayCatalog(
+                        try await interactiveLeaseHandler
+                            .interactiveDisplayCatalog(
+                                value,
+                                nowMonotonicNanoseconds:
+                                    monotonicNowNanoseconds()
+                            )
+                    )
+                case .displaySelect(let value):
+                    result = .displaySelected(
+                        try await interactiveLeaseHandler
+                            .selectInteractiveDisplay(
+                                value,
+                                nowMonotonicNanoseconds:
+                                    monotonicNowNanoseconds()
+                            )
+                    )
                 }
                 queue.async { [weak self] in
                     self?.completeIncomingInteractiveLeaseCommand(
@@ -6812,6 +7193,9 @@ public final class MacLocalXPCClientV1:
                     )
                 }
             } catch {
+                macLocalXPCInteractiveLeaseLoggerV1.error(
+                    "menu interactive command failed kind=\(String(describing: command.kind), privacy: .public) operation=\(transaction.operation, privacy: .public) error=\(String(describing: error), privacy: .public)"
+                )
                 queue.async { [weak self] in
                     self?.terminateIncomingInteractiveLeaseCommand(
                         generation: generation,
@@ -6850,6 +7234,9 @@ public final class MacLocalXPCClientV1:
                 command: pending.command,
                 result: result
               ) else {
+            macLocalXPCInteractiveLeaseLoggerV1.error(
+                "menu could not complete interactive command kind=\(String(describing: transaction.kind), privacy: .public) operation=\(transaction.operation, privacy: .public)"
+            )
             terminateIncomingInteractiveLeaseCommand(
                 generation: generation,
                 transaction: transaction
@@ -6864,20 +7251,26 @@ public final class MacLocalXPCClientV1:
             return
         }
         defer { MCLocalXPCMessageRelease(request) }
-        let reply = payload.withUnsafeBytes { rawBuffer in
-            let bytes = rawBuffer.bindMemory(to: UInt8.self).baseAddress
+        let reply = MacLocalXPCReplyPayloadBytesV1.withBytes(payload) {
+            bytes, length in
             return MCLocalXPCSessionReplyToInteractiveLeaseCommandSuccess(
                 session,
                 request,
                 cInteractiveLeaseCommandKind(transaction.kind),
                 bytes,
-                payload.count
+                length
             )
         }
         guard reply == MCLocalXPCResultOK else {
+            macLocalXPCInteractiveLeaseLoggerV1.error(
+                "menu interactive reply send failed kind=\(String(describing: transaction.kind), privacy: .public) operation=\(transaction.operation, privacy: .public) result=\(reply.rawValue, privacy: .public)"
+            )
             invalidateOwnedSession(generation: generation)
             return
         }
+        macLocalXPCInteractiveLeaseLoggerV1.notice(
+            "menu sent interactive reply kind=\(String(describing: transaction.kind), privacy: .public) operation=\(transaction.operation, privacy: .public)"
+        )
     }
 
     /// An empty value is the exact payload-free renewal acknowledgement.
@@ -6934,6 +7327,14 @@ public final class MacLocalXPCClientV1:
                 try receipt.validate(against: command)
                 return try LocalInteractiveLeaseWireCodecV1
                     .encodeFocusSnapshotReceipt(receipt)
+            case (.displayCatalog(let command), .displayCatalog(let receipt)):
+                try receipt.validate(against: command)
+                return try LocalInteractiveLeaseWireCodecV1
+                    .encodeDisplayCatalogReceipt(receipt)
+            case (.displaySelect(let command), .displaySelected(let receipt)):
+                try receipt.validate(against: command)
+                return try LocalInteractiveLeaseWireCodecV1
+                    .encodeDisplaySelectedReceipt(receipt)
             default:
                 return nil
             }
@@ -7004,6 +7405,10 @@ public final class MacLocalXPCClientV1:
             MCLocalXPCInteractiveLeaseCommandSurfaceFailure
         case .focusSnapshot:
             MCLocalXPCInteractiveLeaseCommandFocusSnapshot
+        case .displayCatalog:
+            MCLocalXPCInteractiveLeaseCommandDisplayCatalog
+        case .displaySelect:
+            MCLocalXPCInteractiveLeaseCommandDisplaySelect
         }
     }
 

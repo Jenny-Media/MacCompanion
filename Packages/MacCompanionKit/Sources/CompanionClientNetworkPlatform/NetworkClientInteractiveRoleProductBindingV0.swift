@@ -144,7 +144,12 @@ public actor NetworkClientInteractiveRoleProductBindingV0 {
                 channel: channel,
                 inputConnection: readyPair.input,
                 mediaConnection: readyPair.media,
-                renderer: renderer
+                renderer: renderer,
+                failure: { [weak self] in
+                    await self?.initialDesktopFailed(activationID: activationID,
+                        interactiveSessionID: interactiveSessionID,
+                        connectionID: connectionID)
+                }
             )
         } catch {
             failInitialSurfaceIfCurrent(
@@ -186,8 +191,12 @@ public actor NetworkClientInteractiveRoleProductBindingV0 {
     /// never reported as an active Remote Control surface.
     @discardableResult
     public func refreshInitialDesktopState() async -> Bool {
-        if case .active = state { return true }
-        guard case let .initialSurfacePreparing(interactiveSessionID) = state,
+        let interactiveSessionID: UUID
+        switch state {
+        case .active(let id), .initialSurfacePreparing(let id): interactiveSessionID = id
+        default: return false
+        }
+        guard
               let activation = initialDesktop,
               let connectionID,
               let activationID else { return false }
@@ -195,6 +204,7 @@ public actor NetworkClientInteractiveRoleProductBindingV0 {
         guard self.activationID == activationID,
               initialDesktop === activation else { return false }
         if active {
+            if case .active = state { return true }
             setState(
                 .active(interactiveSessionID: interactiveSessionID),
                 progress: .active,
@@ -412,6 +422,23 @@ public actor NetworkClientInteractiveRoleProductBindingV0 {
             connectionID: connectionID,
             interactiveSessionID: interactiveSessionID
         )
+    }
+
+    private func initialDesktopFailed(
+        activationID: UUID, interactiveSessionID: UUID, connectionID: Data
+    ) async {
+        guard self.activationID == activationID,
+              self.connectionID == connectionID else { return }
+        failInitialSurfaceIfCurrent(activationID: activationID,
+            interactiveSessionID: interactiveSessionID, connectionID: connectionID)
+        self.activationID = nil
+        initialDesktop = nil
+        automaticFocusHandler = nil
+        pendingFocusPublication = nil
+        readyPair = nil
+        let retiring = pair
+        pair = nil
+        await retiring?.close()
     }
 
     private func setState(

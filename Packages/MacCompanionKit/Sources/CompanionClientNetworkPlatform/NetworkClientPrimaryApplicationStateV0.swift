@@ -123,6 +123,8 @@ public struct NetworkClientPrimaryApplicationSnapshotV0: Sendable {
     public let operationRemoteError: ClientOperationRemoteErrorV1?
     public let latestActErrorRequest: ClientActRequestKindV1?
     public let controlState: NetworkClientPrimaryControlStateV0
+    public let interactiveDisplayCatalog:
+        InteractiveDisplayCatalogResponseBodyV1?
 
     public var connectionID: Data? {
         authenticatedSession?.connectionID
@@ -156,6 +158,8 @@ public final class NetworkClientPrimaryApplicationStateV0:
         var operationRemoteError: ClientOperationRemoteErrorV1?
         var latestActErrorRequest: ClientActRequestKindV1?
         var controlState: NetworkClientPrimaryControlStateV0 = .inactive
+        var interactiveDisplayCatalog:
+            InteractiveDisplayCatalogResponseBodyV1?
         var acceptedControlSession: ClientInteractiveAcceptedSessionV0?
         var droppedStaleEventCount: UInt64 = 0
     }
@@ -364,6 +368,37 @@ public final class NetworkClientPrimaryApplicationStateV0:
     ) async throws -> ClientInteractivePrimarySessionEventV0 {
         let channel = try currentControlChannel().channel
         return try await channel.beginSession(effects: effects)
+    }
+
+    @discardableResult
+    public func loadInteractiveDisplays()
+        async throws -> InteractiveDisplayCatalogResponseBodyV1
+    {
+        let current = try currentControlChannel()
+        let catalog = try await current.channel.requestDisplayCatalog()
+        publishInteractiveDisplayCatalog(
+            catalog,
+            connectionID: current.connectionID
+        )
+        return catalog
+    }
+
+    @discardableResult
+    public func selectInteractiveDisplay(
+        _ displayID: UUID,
+        expectedAdmissionRevision: Int64
+    ) async throws -> InteractiveDisplayCatalogResponseBodyV1 {
+        let current = try currentControlChannel()
+        _ = try await current.channel.selectDisplay(
+            displayID,
+            expectedAdmissionRevision: expectedAdmissionRevision
+        )
+        let catalog = try await current.channel.requestDisplayCatalog()
+        publishInteractiveDisplayCatalog(
+            catalog,
+            connectionID: current.connectionID
+        )
+        return catalog
     }
 
     @discardableResult
@@ -644,6 +679,20 @@ public final class NetworkClientPrimaryApplicationStateV0:
     private func clearControlState() {
         storage.controlState = .inactive
         storage.acceptedControlSession = nil
+        storage.interactiveDisplayCatalog = nil
+    }
+
+    private func publishInteractiveDisplayCatalog(
+        _ catalog: InteractiveDisplayCatalogResponseBodyV1,
+        connectionID: Data
+    ) {
+        lock.lock()
+        defer { lock.unlock() }
+        guard isCurrent(hostID: hostID, connectionID: connectionID),
+              storage.controlState == .inactive,
+              advanceRevision() else { return }
+        storage.interactiveDisplayCatalog = catalog
+        continuation.yield(makeSnapshot(storage))
     }
 
     private func controlEventIsAdmissible(
@@ -786,6 +835,8 @@ public final class NetworkClientPrimaryApplicationStateV0:
                     context.expiresAtUnixMilliseconds,
                 effects: context.effects
             )
+        case (.active, .failed(.initialSurface)):
+            return failed(.initialSurface)
         case (.active, .active),
              (.preparationFailed, .failed):
             return nil
@@ -851,7 +902,8 @@ public final class NetworkClientPrimaryApplicationStateV0:
             catalogRemoteError: value.catalogRemoteError,
             operationRemoteError: value.operationRemoteError,
             latestActErrorRequest: value.latestActErrorRequest,
-            controlState: value.controlState
+            controlState: value.controlState,
+            interactiveDisplayCatalog: value.interactiveDisplayCatalog
         )
     }
 

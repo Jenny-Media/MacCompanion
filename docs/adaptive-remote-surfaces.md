@@ -170,17 +170,26 @@ The MVP Smart Zoom profile transmits only:
 
 Focus changes advance the focus token. Input with a stale focus token or coordinate revision is rejected. If Accessibility is unavailable, slow, incomplete, or inconsistent with the visual source, Smart Zoom becomes manual visual zoom.
 
+Automatic Smart Zoom treats Accessibility focus as an advisory, noisy signal.
+The Agent requires a stable non-secure candidate across consecutive samples
+before publishing it. The iPhone coalesces newer recommendations before
+changing the capture surface and uses longer hysteresis before returning to
+Desktop. An authenticated input-pause or secure-focus observation still
+reduces input authority immediately; only its visual transition is delayed.
+Once a surface transition has been sent, it is never cancelled locally.
+
 ## 8. Smart Input experiment
 
-Smart Input presents a native iOS keyboard and editing controls when the host verifies that the current focused element is editable. It is not required for the first external Interactive Control alpha.
+Smart Input presents native iOS keyboard and editing controls when the host verifies that the current focused element is editable.
 
 ### Initial input profiles
 
 1. **Keystroke-only:** the iPhone provides a native keyboard and editing toolbar, but the Mac sends no field value. Text, delete, return, tab, escape, arrows, and bounded shortcuts become ordered input events. A live visual crop shows the destination.
-2. **Selection-aware:** the host may report bounded selection location and text length without reporting the value, when the application exposes consistent information.
-3. **Mirrored editor:** full text and selection synchronize with a native editor. This profile is deferred until app-specific compatibility, conflict, privacy, and commit behavior are proven.
+2. **Local composer:** for a verified editable, non-secure text focus, the iPhone holds only a new uncommitted draft and sends it once under the exact captured focus fence. It neither reads nor displays the Mac field's existing value.
+3. **Selection-aware:** the host may report bounded selection location and text length without reporting the value, when the application exposes consistent information.
+4. **Mirrored editor:** full text and selection synchronize with a native editor. This profile is deferred until app-specific compatibility, conflict, privacy, and commit behavior are proven.
 
-The first experiment implements only keystroke-only behavior. It does not use the clipboard or replace a whole Accessibility value.
+The current experiment implements keystroke-only behavior plus the local composer. It does not use the clipboard, read a Mac field value, or replace a whole Accessibility value. Direct keystroke input remains the fallback for terminals, shortcuts, unsupported elements, and workflows that need immediate key-by-key behavior.
 
 ### Text session binding
 
@@ -200,7 +209,7 @@ Focus loss, element invalidation, app switch, lock, surface change, permission l
 A field identified as a secure text field is `secureOpaque`:
 
 - The host never reads or transmits its value, selection, length, label, placeholder, or Accessibility description.
-- Mirrored and selection-aware profiles are unavailable.
+- Local composer, mirrored, and selection-aware profiles are unavailable.
 - If credential typing is permitted by the current Interactive Control state, only ordered key/text events are forwarded and the visual surface remains authoritative.
 - The iPhone uses an appropriate private input presentation and does not add predictive, logging, or diagnostic capture behavior.
 
@@ -290,6 +299,26 @@ The persistent menu app:
 - Creates visual crops and performs verified element actions
 - Owns all protected content capture and input execution
 - Applies host privacy filtering before returning metadata
+
+Selecting Desktop, App Focus, or Window Focus does not silently disable the
+independent **Zoom to Focus Automatically** preference. The client discards
+focus advice bound to the retired surface, then admits only fresh advice for
+the acknowledged replacement.
+
+An App Focus or Window Focus transition is not input-ready merely because its
+ScreenCaptureKit filter and geometry resolved. While old input is paused, the
+menu app must activate the exact locally retained application identity and, for
+a window, raise and verify the unique matching Accessibility window. It then
+revalidates the original process, bundle, window, and bounds before the
+replacement can be acknowledged. Failure or ambiguity terminates the
+transition; input is never redirected to whichever window happens to be
+frontmost. These local identifiers and Accessibility objects never cross IPC.
+
+After acknowledgement, pointer movement remains visual-only. Every click,
+scroll, key, modifier, or text effect re-activates and re-verifies the retained
+target before posting the event. If the selected window moved, disappeared, or
+can no longer be uniquely verified, the effect fails closed instead of landing
+on whichever window happens to be frontmost.
 
 The iOS client:
 

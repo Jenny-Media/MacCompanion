@@ -25,6 +25,10 @@ package enum MacLocalXPCMenuPairingCommandKindV1:
     case acknowledgeHostIdentityRecoveryCompletion
     case requestInteractiveControlGrantReview
     case decideInteractiveControlGrant
+    case requestDeviceRevocationReview
+    case revokeDevice
+    case requestCapabilityGrantReview
+    case decideCapabilityGrant
 }
 
 /// Destructive recovery authority is injected separately from pairing. The
@@ -50,6 +54,9 @@ public protocol MacLocalXPCHostIdentityRecoveryHandlingV1: Sendable {
 /// local-XPC profile. The transport authenticates and authorizes the peer,
 /// decodes the closed payload, and fences the generation before invoking it.
 public protocol MacLocalXPCMenuPairingCommandHandlingV1: Sendable {
+    func makeCapabilityGrantReview(_ request: LocalCapabilityGrantReviewRequestV1) async throws -> LocalCapabilityGrantReviewV1
+    func decideCapabilityGrant(_ command: LocalGrantDecisionCommandV0) async throws -> LocalGrantDecisionReceiptV0
+
     func createPairingSession(
         _ command: LocalPairingSessionCreateCommandV0
     ) async throws -> LocalPairingSessionCreatedReceiptV0
@@ -69,9 +76,26 @@ public protocol MacLocalXPCMenuPairingCommandHandlingV1: Sendable {
     func decideInteractiveControlGrant(
         _ command: LocalGrantDecisionCommandV0
     ) async throws -> LocalGrantDecisionReceiptV0
+
+    func makeDeviceRevocationReview(_ request: LocalDeviceRevocationReviewRequestV1) async throws -> LocalDeviceRevocationReviewReplyV1
+    func revokeDevice(_ command: LocalDeviceRevocationCommandV0) async throws -> LocalDeviceRevokedReceiptV0
 }
 
 public extension MacLocalXPCMenuPairingCommandHandlingV1 {
+    func makeCapabilityGrantReview(_: LocalCapabilityGrantReviewRequestV1) async throws -> LocalCapabilityGrantReviewV1 {
+        throw MacLocalXPCMenuPairingCommandErrorV1.unavailable
+    }
+    func decideCapabilityGrant(_: LocalGrantDecisionCommandV0) async throws -> LocalGrantDecisionReceiptV0 {
+        throw MacLocalXPCMenuPairingCommandErrorV1.unavailable
+    }
+
+    func makeDeviceRevocationReview(_: LocalDeviceRevocationReviewRequestV1) async throws -> LocalDeviceRevocationReviewReplyV1 {
+        throw MacLocalXPCMenuPairingCommandErrorV1.unavailable
+    }
+    func revokeDevice(_: LocalDeviceRevocationCommandV0) async throws -> LocalDeviceRevokedReceiptV0 {
+        throw MacLocalXPCMenuPairingCommandErrorV1.unavailable
+    }
+
     func makeInteractiveControlGrantReview(
         _: LocalInteractiveControlGrantReviewRequestV0
     ) async throws -> LocalInteractiveControlGrantReviewV0 {

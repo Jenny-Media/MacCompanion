@@ -96,14 +96,14 @@ private func dashboardActionV0(
         == "Local network, Private network")
 }
 
-@Test func pairedDashboardDisablesSecondPairingButKeepsDeviceAdministration()
+@Test func pairedDashboardAllowsAnotherPairingAndKeepsDeviceAdministration()
     throws
 {
     let projection = try MacAgentDashboardProjectionV0(source: .status(
         dashboardStatusV0(pairedDevices: 1)
     ))
 
-    #expect(try !dashboardActionV0(.startPairing, in: projection).enabled)
+    #expect(try dashboardActionV0(.startPairing, in: projection).enabled)
     #expect(try dashboardActionV0(.openDevices, in: projection).enabled)
     #expect(projection.facts.first { $0.id == "devices" }?.value == "1")
 }

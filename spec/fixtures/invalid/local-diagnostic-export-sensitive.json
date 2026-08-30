@@ -9,6 +9,7 @@
     "desiredEnabled": true,
     "diagnosticSequence": 0,
     "generatedAtUnixMilliseconds": 1724000001000,
+    "interactiveControlGranted": false,
     "menuAppProcess": "ready",
     "networkState": "listening",
     "pairedDeviceCount": 1,

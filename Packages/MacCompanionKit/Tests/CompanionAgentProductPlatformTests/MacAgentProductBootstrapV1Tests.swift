@@ -715,6 +715,13 @@ private func productApplicationPrepareV1(
             agent: .starting,
             menuApp: .starting
         ),
+        ProductLifecycleState(consoleSession: .active),
+        ProductLifecycleState(
+            desiredEnabled: true,
+            consoleSession: .active,
+            agent: .starting,
+            menuApp: .starting
+        ),
     ]
     for state in valid {
         #expect(throws: Never.self) {
@@ -724,12 +731,6 @@ private func productApplicationPrepareV1(
     }
 
     let invalid = [
-        ProductLifecycleState(
-            desiredEnabled: true,
-            consoleSession: .active,
-            agent: .starting,
-            menuApp: .starting
-        ),
         ProductLifecycleState(
             desiredEnabled: true,
             consoleSession: .locked,
@@ -899,8 +900,14 @@ private func productApplicationPrepareV1(
     await #expect(throws: CancellationError.self) {
         try await cancelledJoin.value
     }
-    await #expect(throws: CancellationError.self) {
-        try await firstStart.value
+    // The first caller may finish before the newly scheduled join installs
+    // its cancellation handler. Cancellation cannot retroactively fail that
+    // completed caller. If it loses the race, only cancellation/terminal is
+    // valid. In every order the cancelled caller fails and cleanup below
+    // proves the shared product is retired exactly once.
+    if case let .failure(error) = await firstStart.result {
+        #expect(error is CancellationError ||
+            error as? MacAgentPreparedProductCompositionErrorV1 == .terminal)
     }
     #expect(await joinedFactory.count() == 1)
     #expect(joinedServer.counts().starts == 1)

@@ -75,6 +75,72 @@ private actor InteractiveMenuRouteSenderV1:
     }
 }
 
+private actor SerializingInteractiveMenuRouteSenderV1:
+    MacLocalXPCInteractiveLeaseSendingV1
+{
+    private var focusStarted = false
+    private var focusStartWaiters: [CheckedContinuation<Void, Never>] = []
+    private var focusRelease: CheckedContinuation<Void, Never>?
+    private var renewalStarted = false
+
+    func prepareInitialInteractiveDesktop(
+        _: LocalInteractiveInitialDesktopPreparationCommandV1
+    ) async throws -> LocalInteractiveInitialDesktopPreparedReceiptV1 {
+        throw InteractiveMenuRouteProbeErrorV1.unavailable
+    }
+
+    func installInteractiveLease(
+        _: InteractiveRuntimeInstallCommandV0
+    ) async throws -> InteractiveRuntimeInstallReceiptV0 {
+        throw InteractiveMenuRouteProbeErrorV1.unavailable
+    }
+
+    func renewInteractiveLease(
+        _: InteractiveRuntimeLeaseRenewalV0
+    ) async throws {
+        renewalStarted = true
+    }
+
+    func revokeInteractiveLease(
+        _: InteractiveRuntimeRevokeCommandV0
+    ) async throws -> InteractiveRuntimeRevokedReceiptV0 {
+        throw InteractiveMenuRouteProbeErrorV1.unavailable
+    }
+
+    func interactiveFocusSnapshot(
+        _ command: LocalInteractiveFocusSnapshotCommandV1
+    ) async throws -> LocalInteractiveFocusSnapshotReceiptV1 {
+        focusStarted = true
+        let waiters = focusStartWaiters
+        focusStartWaiters.removeAll()
+        for waiter in waiters { waiter.resume() }
+        await withCheckedContinuation { focusRelease = $0 }
+        return LocalInteractiveFocusSnapshotReceiptV1(
+            correlationID: command.commandID,
+            command: command,
+            candidate: try LocalInteractiveFocusCandidateV1(
+                recommendedTargetKind: .desktop,
+                focus: nil,
+                inputPaused: false,
+                reason: .accessibilityUnavailable,
+                validForMilliseconds: 1_000
+            )
+        )
+    }
+
+    func waitUntilFocusStarted() async {
+        if focusStarted { return }
+        await withCheckedContinuation { focusStartWaiters.append($0) }
+    }
+
+    func releaseFocus() {
+        focusRelease?.resume()
+        focusRelease = nil
+    }
+
+    func didStartRenewal() -> Bool { renewalStarted }
+}
+
 @available(macOS 26.0, *)
 @Test func interactiveMenuRouteBindsInitialDesktopCommandAndReceipt()
     async throws
@@ -191,5 +257,82 @@ private actor InteractiveMenuRouteSenderV1:
     #expect(candidate.reason == .accessibilityUnavailable)
     #expect(candidate.inputPaused == false)
     #expect(await sender.focusCommands() == [localCommand])
+}
+
+@available(macOS 26.0, *)
+@Test func interactiveMenuRouteSerializesRenewalBehindFocusSnapshot()
+    async throws
+{
+    let sessionID = UUID()
+    let surfaceID = UUID()
+    let hostID = UUID()
+    let deviceID = UUID()
+    let displayID = UUID()
+    let descriptor = try AdaptiveSurfaceDescriptor(
+        interactiveSessionID: sessionID,
+        authorizationEpoch: .init(rawValue: 4),
+        surfaceID: surfaceID,
+        kind: .desktop,
+        surfaceRevision: .init(rawValue: 1),
+        coordinateSpaceRevision: .init(rawValue: 1),
+        encodedWidth: 1_440,
+        encodedHeight: 900,
+        logicalWidthPoints: 1_440,
+        logicalHeightPoints: 900,
+        interactionClasses: [.view, .pointer],
+        privacyProfile: .visualOnly,
+        metadataFields: [],
+        createdAtMonotonicMilliseconds: 2_000,
+        expiresAtMonotonicMilliseconds: 12_000
+    )
+    let previousLeaseID = UUID()
+    let current = try InteractiveExecutionLease(
+        leaseID: previousLeaseID,
+        hostID: hostID,
+        deviceID: deviceID,
+        interactiveSessionID: sessionID,
+        authorizationEpoch: descriptor.authorizationEpoch,
+        selectedDisplayID: displayID,
+        surfaceID: surfaceID,
+        surfaceRevision: .init(rawValue: 1),
+        coordinateRevision: .init(rawValue: 1),
+        allowedInteractionClasses: [.view, .pointer],
+        renewalCounter: 0,
+        issuedAtMonotonicNanoseconds: 2_000_000_000,
+        expiresAtMonotonicNanoseconds: 12_000_000_000
+    )
+    let replacement = try InteractiveExecutionLease(
+        leaseID: UUID(),
+        hostID: hostID,
+        deviceID: deviceID,
+        interactiveSessionID: sessionID,
+        authorizationEpoch: descriptor.authorizationEpoch,
+        selectedDisplayID: displayID,
+        surfaceID: surfaceID,
+        surfaceRevision: .init(rawValue: 1),
+        coordinateRevision: .init(rawValue: 1),
+        allowedInteractionClasses: [.view, .pointer],
+        renewalCounter: 1,
+        issuedAtMonotonicNanoseconds: 10_000_000_000,
+        expiresAtMonotonicNanoseconds: 20_000_000_000
+    )
+    let renewal = try InteractiveRuntimeLeaseRenewalV0(
+        commandID: UUID(),
+        previousLeaseID: current.leaseID,
+        replacement: replacement
+    )
+    let sender = SerializingInteractiveMenuRouteSenderV1()
+    let route = MacLocalXPCInteractiveMenuRuntimeRouteV1(sender: sender)
+
+    let focus = Task { try await route.focusCandidate(current: descriptor) }
+    await sender.waitUntilFocusStarted()
+    let renew = Task { try await route.renewInteractiveLease(renewal) }
+    for _ in 0..<20 { await Task.yield() }
+    #expect(!(await sender.didStartRenewal()))
+
+    await sender.releaseFocus()
+    _ = try await focus.value
+    try await renew.value
+    #expect(await sender.didStartRenewal())
 }
 #endif

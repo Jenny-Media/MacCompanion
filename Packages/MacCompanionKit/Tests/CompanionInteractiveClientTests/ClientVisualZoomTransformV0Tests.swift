@@ -66,6 +66,95 @@ private func zoomRect(
     #expect(mapped.y == 325)
 }
 
+@Test func visualZoomFocusCentersTargetAndPreservesSurroundingContext()
+    throws
+{
+    let viewport = try zoomRect(x: 0, y: 0, width: 400, height: 800)
+    let initial = try ClientVisualZoomTransformV0(
+        viewport: viewport,
+        content: viewport
+    )
+    let focused = try initial.focused(
+        on: zoomRect(x: 230, y: 300, width: 40, height: 40)
+    )
+
+    #expect(focused.scale == 2.25)
+    let expectedTranslation = try ClientInputPointV0(
+        x: -112.5,
+        y: 180
+    )
+    #expect(focused.translation == expectedTranslation)
+    #expect(try focused.mappingToUnzoomed(
+        ClientInputPointV0(x: 200, y: 400)
+    ) == ClientInputPointV0(x: 250, y: 320))
+}
+
+@Test func visualZoomEdgePanTracksEveryViewportEdgeWithBoundedSteps() throws {
+    let viewport = try zoomRect(x: 0, y: 0, width: 400, height: 800)
+
+    #expect(try ClientVisualZoomEdgePanV0.delta(
+        for: ClientInputPointV0(x: 200, y: 400),
+        in: viewport
+    ) == ClientInputPointV0(x: 0, y: 0))
+    #expect(try ClientVisualZoomEdgePanV0.delta(
+        for: ClientInputPointV0(x: 20, y: 24),
+        in: viewport
+    ) == ClientInputPointV0(x: 28, y: 24))
+    #expect(try ClientVisualZoomEdgePanV0.delta(
+        for: ClientInputPointV0(x: 380, y: 776),
+        in: viewport
+    ) == ClientInputPointV0(x: -28, y: -24))
+    #expect(try ClientVisualZoomEdgePanV0.delta(
+        for: ClientInputPointV0(x: -100, y: 900),
+        in: viewport
+    ) == ClientInputPointV0(x: 32, y: -32))
+}
+
+@Test func visualZoomEdgePanRevealsOnlyAxesWithHiddenContent() throws {
+    let viewport = try zoomRect(x: 0, y: 0, width: 400, height: 800)
+    let content = try zoomRect(
+        x: 0,
+        y: 287.5,
+        width: 400,
+        height: 225
+    )
+    let zoomed = try ClientVisualZoomTransformV0(
+        viewport: viewport,
+        content: content,
+        scale: 2
+    )
+    let edgeDelta = try ClientVisualZoomEdgePanV0.delta(
+        for: ClientInputPointV0(x: 399, y: 799),
+        in: viewport
+    )
+    let panned = try zoomed.panned(by: edgeDelta)
+
+    #expect(panned.translation.x == -32)
+    // At 2x the letterboxed desktop is still fully visible vertically, so the
+    // transform clamps vertical edge tracking instead of moving into blanking.
+    #expect(panned.translation.y == 0)
+}
+
+@Test func visualZoomEdgePanRejectsInvalidTuning() throws {
+    let viewport = try zoomRect(x: 0, y: 0, width: 400, height: 800)
+    let point = try ClientInputPointV0(x: 0, y: 0)
+
+    #expect(throws: ClientVisualZoomTransformErrorV0.invalidGeometry) {
+        _ = try ClientVisualZoomEdgePanV0.delta(
+            for: point,
+            in: viewport,
+            activationInset: .infinity
+        )
+    }
+    #expect(throws: ClientVisualZoomTransformErrorV0.invalidGeometry) {
+        _ = try ClientVisualZoomEdgePanV0.delta(
+            for: point,
+            in: viewport,
+            maximumStep: 0
+        )
+    }
+}
+
 @Test func visualZoomRejectsInvalidScaleAndNoncontainedContent() throws {
     let viewport = try zoomRect(x: 0, y: 0, width: 400, height: 800)
     let content = try zoomRect(x: 0, y: 0, width: 400, height: 800)

@@ -2,6 +2,12 @@
   "version": 1,
   "fixtures": [
     {
+      "path": "host-primary-act-concurrency-v0.1.json",
+      "kind": "hostNetwork.primaryActConcurrency.v0.1",
+      "expect": "valid",
+      "canonicalSHA256": "5477fefc3ea271790dbcc4ffed42389aaad55cb39f714ef931ffd8bd58d648e4"
+    },
+    {
       "path": "valid/auth-hello.json",
       "kind": "auth.hello",
       "expect": "valid",
@@ -221,25 +227,25 @@
       "path": "local-xpc-menu-presentation-v0.1.json",
       "kind": "localXPC.menuPresentation.v0.1",
       "expect": "valid",
-      "canonicalSHA256": "72febb0c5f027a1bdf6251c0dc910b02f333b8a15413100add198e65ff8c4dd9"
+      "canonicalSHA256": "6ed10ccb09e97cec6c55f48366a43edf42ad46adab9fbfe4313cfdacb24aee5e"
     },
     {
       "path": "local-xpc-menu-pairing-commands-v0.1.json",
       "kind": "localXPC.menuPairingCommands.v0.1",
       "expect": "valid",
-      "canonicalSHA256": "4714d211a9d7da07c4d4ba3526b1756a3f1214b6bb57ec2ed18b861dd7981383"
+      "canonicalSHA256": "9ea719083653735e7f91305565ec68d5c0261606139336266aebe7de3e33abc5"
     },
     {
       "path": "local-xpc-interactive-lease-transport-v0.1.json",
       "kind": "localXPC.interactiveLeaseTransport.v0.1",
       "expect": "valid",
-      "canonicalSHA256": "612916daaadbf807d5dd24df777d94b50ae01469c93df727b38f7ef77824a467"
+      "canonicalSHA256": "1c94a8df96552e18b7072366541ea37b83661aefabbcc8b7e581919e0170fddb"
     },
     {
       "path": "local-xpc-interactive-admission-transport-v0.1.json",
       "kind": "localXPC.interactiveAdmissionTransport.v0.1",
       "expect": "valid",
-      "canonicalSHA256": "9e9950a6f40ad698d3284d17a056f3ddcefc35853c1133ad7f34167ba8b66aca"
+      "canonicalSHA256": "53c586eaff8c2055dfdb3b72be08636278ee10fc3054555db32eb7ef33f70b35"
     },
     {
       "path": "local-xpc-interactive-role-data-transport-v0.1.json",
@@ -287,7 +293,7 @@
       "path": "valid/local-diagnostic-export.json",
       "kind": "localIPC.diagnosticExport",
       "expect": "valid",
-      "canonicalSHA256": "90eda6dba1821fd8d568566e06d033293d29598311354d6b1c28100f12c3cdc1"
+      "canonicalSHA256": "a2688eb6f7b8c738814d9078092d910a32b6a881180db6dd1ace07157e702cf6"
     },
     {
       "path": "valid/local-interactive-control-grant-review.json",
@@ -462,10 +468,9 @@
       "canonicalSHA256": "cb8e0bdf35b4466a11a65fe83ae2af8f48a40b6090ddb1f3c5566cad4e989bd2"
     },
     {
-      "path": "invalid/interactive-input-text-without-focus.json",
+      "path": "valid/interactive-input-text-without-focus.json",
       "kind": "interactive.input",
-      "expect": "interactive.input.focusRequired",
-      "fault": "text input omits its focus token and revision",
+      "expect": "valid",
       "canonicalSHA256": "8aad771d0523209ec5eabe93caa867124eacb06e8cad5ee5932fe64973f6f1ca"
     }
   ]

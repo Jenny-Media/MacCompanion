@@ -16,6 +16,7 @@ private func wireStatusSnapshotV1(
         securityPosture: .nominal,
         routeKinds: [.privateNetwork, .lan],
         pairedDeviceCount: 2,
+        interactiveControlGranted: true,
         activeRemoteSessionCount: 1,
         providerCount: 3,
         warningCodes: [.menuAppUnavailable],
@@ -33,6 +34,7 @@ func localAgentStatusWireCodecPreservesAmbiguousConsoleState() throws {
     let text = try #require(String(data: payload, encoding: .utf8))
 
     #expect(try CanonicalJSON.canonicalize(payload) == payload)
+    #expect(text.contains("\"interactiveControlGranted\":true"))
     #expect(text.contains(
         "\"consoleSession\":\"otherConsoleUserActive\""
     ))

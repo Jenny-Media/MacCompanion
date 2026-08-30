@@ -849,6 +849,89 @@ func activeEndpointTerminalFenceRequestsAndOwnerAwaitsOneRetirement()
 }
 
 @Test
+func endpointFailureUnwindsBeforeProductCleanupJoinsItsOperation() async throws {
+    let notification = MenuSurfaceSuspensionV1()
+    let notifications = MenuSurfaceInvalidationCountProbeV1()
+    let router = MacLocalXPCAuthenticatedMenuSurfaceRouterV1(onEndpointTerminal: { _ in
+        await notifications.record()
+        await notification.suspend()
+    })
+    let endpoint = AuthenticatedMenuSurfaceEndpointProbeV1()
+    _ = try await router.bindAuthenticated(generation: 111, endpoint: endpoint)
+    let requestCompletion = MenuSurfaceCompletionProbeV1()
+    let request = Task {
+        await endpoint.requestInstalledTerminalFinish()
+        await requestCompletion.markComplete()
+    }
+    await notification.waitUntilEntered()
+    for _ in 0..<100 {
+        if await requestCompletion.isComplete() { break }
+        try await Task.sleep(for: .milliseconds(1))
+    }
+    #expect(await requestCompletion.isComplete())
+    #expect(await router.currentGeneration() == nil)
+    await #expect(throws: MacLocalXPCAuthenticatedMenuSurfaceRouterErrorV1.staleGeneration(111)) {
+        _ = try await router.bindAuthenticated(generation: 111,
+            endpoint: AuthenticatedMenuSurfaceEndpointProbeV1())
+    }
+    let finishCompletion = MenuSurfaceCompletionProbeV1()
+    let finish = Task {
+        await router.finish()
+        await finishCompletion.markComplete()
+    }
+    for _ in 0..<100 { await Task.yield() }
+    #expect(!(await finishCompletion.isComplete()))
+    await notification.release()
+    await request.value
+    await finish.value
+    await endpoint.requestInstalledTerminalFinish()
+    #expect(await notifications.recordedCount() == 1)
+    #expect(await endpoint.recordedEvents() == [.invalidated])
+    #expect(await finishCompletion.isComplete())
+}
+
+@Test
+func failedEndpointAllowsFreshGenerationOnlyAfterCleanup() async throws {
+    let notification = MenuSurfaceSuspensionV1()
+    let notifications = MenuSurfaceInvalidationCountProbeV1()
+    let router = MacLocalXPCAuthenticatedMenuSurfaceRouterV1(onEndpointTerminal: { _ in
+        await notifications.record()
+        await notification.suspend()
+    })
+    let failed = AuthenticatedMenuSurfaceEndpointProbeV1()
+    _ = try await router.bindAuthenticated(generation: 130, endpoint: failed)
+    await failed.requestInstalledTerminalFinish()
+    await notification.waitUntilEntered()
+    let replacement = AuthenticatedMenuSurfaceEndpointProbeV1()
+    let completion = MenuSurfaceCompletionProbeV1()
+    let bind = Task {
+        let surfaces = try await router.bindAuthenticated(generation: 131, endpoint: replacement)
+        await completion.markComplete()
+        return surfaces
+    }
+    for _ in 0..<100 { await Task.yield() }
+    #expect(!(await completion.isComplete()))
+    await notification.release()
+    let surfaces = try await bind.value
+    #expect(surfaces.generation == 131)
+    await failed.requestInstalledTerminalFinish()
+    #expect(await router.currentGeneration() == 131)
+    #expect(await notifications.recordedCount() == 1)
+    #expect(await failed.recordedEvents() == [.invalidated])
+    #expect(await replacement.recordedEvents().isEmpty)
+    await replacement.requestInstalledTerminalFinish()
+    let third = AuthenticatedMenuSurfaceEndpointProbeV1()
+    _ = try await router.bindAuthenticated(generation: 132, endpoint: third)
+    await failed.requestInstalledTerminalFinish()
+    await replacement.requestInstalledTerminalFinish()
+    #expect(await router.currentGeneration() == 132)
+    #expect(await notifications.recordedCount() == 2)
+    #expect(await replacement.recordedEvents() == [.invalidated])
+    await router.finish()
+    #expect(await third.recordedEvents() == [.invalidated])
+}
+
+@Test
 func oneEndpointObjectCannotRepresentTwoTransportGenerations()
     async throws
 {

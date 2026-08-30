@@ -4,6 +4,14 @@ import CompanionInteractiveWire
 import CompanionWire
 import Foundation
 
+private func clientInteractiveDebugTraceV0(_ message: String) {
+#if DEBUG
+    FileHandle.standardError.write(
+        Data("[MacCompanion interactive] \(message)\n".utf8)
+    )
+#endif
+}
+
 public struct ClientCustodiedInteractiveApprovalSignerV0:
     ClientInteractiveApprovalSigningV0,
     Sendable
@@ -95,6 +103,7 @@ public enum ClientInteractivePrimaryChannelErrorV0:
     case initialSurfaceUnavailable
     case initialSurfaceDeadlineExceeded
     case surfaceTransitionDeadlineExceeded
+    case displayCommandDeadlineExceeded
     case cancelled
 }
 
@@ -124,6 +133,16 @@ public actor ClientInteractivePrimaryChannelV0:
     private var descriptorDeadlineTask: Task<Void, Never>?
     private var endRequestMessageID: WireUUID?
     private var endingInteractiveSessionID: UUID?
+    private var displayCatalogRequestMessageID: WireUUID?
+    private var displayCatalogWaiter: CheckedContinuation<
+        InteractiveDisplayCatalogResponseBodyV1, any Error
+    >?
+    private var displayCatalogDeadlineTask: Task<Void, Never>?
+    private var displaySelectRequestMessageID: WireUUID?
+    private var displaySelectWaiter: CheckedContinuation<
+        InteractiveDisplaySelectedBodyV1, any Error
+    >?
+    private var displaySelectDeadlineTask: Task<Void, Never>?
     private var invalidated = false
 
     public init(
@@ -203,13 +222,187 @@ public actor ClientInteractivePrimaryChannelV0:
         return event
     }
 
+    public func requestDisplayCatalog(
+        timeoutMilliseconds: UInt64
+    ) async throws -> InteractiveDisplayCatalogResponseBodyV1 {
+        let phase = await authority.phase
+        guard !invalidated,
+              displayCatalogRequestMessageID == nil,
+              displaySelectRequestMessageID == nil,
+              timeoutMilliseconds > 0,
+              phase == .readyToRequest || phase == .closed
+                || phase == .accepted else {
+            throw ClientInteractivePrimaryChannelErrorV0.unavailable
+        }
+        let messageID = environment.makeMessageID()
+        let frame = try WireCodec.encode(WireEnvelope(
+            messageID: messageID,
+            correlationID: nil,
+            sentAtUnixMilliseconds: environment.wallNowUnixMilliseconds(),
+            body: try InteractiveDisplayCatalogRequestBodyV1(
+                authorizationEpoch: primary.authorizationEpoch
+            )
+        ))
+        displayCatalogRequestMessageID = messageID
+        do {
+            try await sender.sendAuthenticatedCommand(frame)
+        } catch {
+            displayCatalogRequestMessageID = nil
+            throw error
+        }
+        let requestID = messageID.rawValue
+        displayCatalogDeadlineTask = Task { [weak self] in
+            do {
+                try await Task.sleep(
+                    nanoseconds: min(
+                        timeoutMilliseconds,
+                        UInt64.max / 1_000_000
+                    ) * 1_000_000
+                )
+            } catch { return }
+            await self?.displayCatalogDeadlineReached(requestID)
+        }
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                displayCatalogWaiter = continuation
+            }
+        } onCancel: { [weak self] in
+            Task { await self?.cancelDisplayCatalog(requestID) }
+        }
+    }
+
+    public func requestDisplayCatalog() async throws
+        -> InteractiveDisplayCatalogResponseBodyV1
+    {
+        try await requestDisplayCatalog(timeoutMilliseconds: 10_000)
+    }
+
+    public func selectDisplay(
+        _ displayID: UUID,
+        expectedAdmissionRevision: Int64,
+        timeoutMilliseconds: UInt64 = 10_000
+    ) async throws -> InteractiveDisplaySelectedBodyV1 {
+        let phase = await authority.phase
+        guard !invalidated,
+              displayCatalogRequestMessageID == nil,
+              displaySelectRequestMessageID == nil,
+              timeoutMilliseconds > 0,
+              phase == .readyToRequest || phase == .closed else {
+            throw ClientInteractivePrimaryChannelErrorV0.unavailable
+        }
+        let messageID = environment.makeMessageID()
+        let frame = try WireCodec.encode(WireEnvelope(
+            messageID: messageID,
+            correlationID: nil,
+            sentAtUnixMilliseconds: environment.wallNowUnixMilliseconds(),
+            body: try InteractiveDisplaySelectBodyV1(
+                authorizationEpoch: primary.authorizationEpoch,
+                expectedAdmissionRevision: expectedAdmissionRevision,
+                displayID: WireUUID(displayID)
+            )
+        ))
+        displaySelectRequestMessageID = messageID
+        do {
+            try await sender.sendAuthenticatedCommand(frame)
+        } catch {
+            displaySelectRequestMessageID = nil
+            throw error
+        }
+        let requestID = messageID.rawValue
+        displaySelectDeadlineTask = Task { [weak self] in
+            do {
+                try await Task.sleep(
+                    nanoseconds: min(
+                        timeoutMilliseconds,
+                        UInt64.max / 1_000_000
+                    ) * 1_000_000
+                )
+            } catch { return }
+            await self?.displaySelectDeadlineReached(requestID)
+        }
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                displaySelectWaiter = continuation
+            }
+        } onCancel: { [weak self] in
+            Task { await self?.cancelDisplaySelect(requestID) }
+        }
+    }
+
     public func preparePrimaryReply(
         _ frame: Data
     ) async throws -> ClientPrimaryPreparedReplyV0 {
-        guard !invalidated, let effects = requestedEffects else {
+        guard !invalidated else {
             throw ClientInteractivePrimaryChannelErrorV0.unavailable
         }
         let kind = try WireCodec.messageKind(from: frame)
+        if let requestID = displayCatalogRequestMessageID {
+            if kind == .error {
+                let response = try WireCodec.decode(
+                    WireEnvelope<ProtocolErrorResponseBody>.self,
+                    from: frame
+                )
+                guard response.correlationID == requestID else {
+                    throw ClientInteractivePrimaryChannelErrorV0.unavailable
+                }
+                finishDisplayCatalog(.failure(
+                    ClientInteractiveSessionErrorV0.remoteError(
+                        code: response.body.code,
+                        retry: response.body.retry
+                    )
+                ))
+                return ClientPrimaryPreparedReplyV0 {}
+            }
+            guard kind == .interactiveDisplayCatalogResponse else {
+                throw ClientInteractivePrimaryChannelErrorV0.unavailable
+            }
+            let response = try WireCodec.decode(
+                WireEnvelope<InteractiveDisplayCatalogResponseBodyV1>.self,
+                from: frame
+            )
+            guard response.correlationID == requestID,
+                  response.body.authorizationEpoch
+                    == primary.authorizationEpoch else {
+                throw ClientInteractivePrimaryChannelErrorV0.unavailable
+            }
+            finishDisplayCatalog(.success(response.body))
+            return ClientPrimaryPreparedReplyV0 {}
+        }
+        if let requestID = displaySelectRequestMessageID {
+            if kind == .error {
+                let response = try WireCodec.decode(
+                    WireEnvelope<ProtocolErrorResponseBody>.self,
+                    from: frame
+                )
+                guard response.correlationID == requestID else {
+                    throw ClientInteractivePrimaryChannelErrorV0.unavailable
+                }
+                finishDisplaySelect(.failure(
+                    ClientInteractiveSessionErrorV0.remoteError(
+                        code: response.body.code,
+                        retry: response.body.retry
+                    )
+                ))
+                return ClientPrimaryPreparedReplyV0 {}
+            }
+            guard kind == .interactiveDisplaySelected else {
+                throw ClientInteractivePrimaryChannelErrorV0.unavailable
+            }
+            let response = try WireCodec.decode(
+                WireEnvelope<InteractiveDisplaySelectedBodyV1>.self,
+                from: frame
+            )
+            guard response.correlationID == requestID,
+                  response.body.authorizationEpoch
+                    == primary.authorizationEpoch else {
+                throw ClientInteractivePrimaryChannelErrorV0.unavailable
+            }
+            finishDisplaySelect(.success(response.body))
+            return ClientPrimaryPreparedReplyV0 {}
+        }
+        guard let effects = requestedEffects else {
+            throw ClientInteractivePrimaryChannelErrorV0.unavailable
+        }
         if let endRequestMessageID,
            let interactiveSessionID = endingInteractiveSessionID {
             if kind == .error {
@@ -284,6 +477,31 @@ public actor ClientInteractivePrimaryChannelV0:
                 break
             }
         }
+        if kind == .interactiveSurfaceSelected,
+           replacementSurface?.phase == .awaitingSelection {
+            let response = try WireCodec.decode(
+                WireEnvelope<InteractiveSurfaceSelectedBodyV0>.self,
+                from: frame
+            )
+            guard let boundary = UInt64(exactly: response.body.mediaSequenceBeforeTransition) else {
+                throw ClientInteractivePrimaryChannelErrorV0.invalidConfiguration
+            }
+            let deadline = ContinuousClock.now.advanced(by: .seconds(2))
+            while let coordinator = replacementSurface,
+                  coordinator.phase == .awaitingSelection,
+                  coordinator.media.lastMediaSequence < boundary {
+                guard !invalidated, ContinuousClock.now < deadline else {
+                    throw ClientInteractivePrimaryChannelErrorV0
+                        .surfaceTransitionDeadlineExceeded
+                }
+                try await Task.sleep(for: .milliseconds(10))
+            }
+            guard !invalidated else {
+                throw ClientInteractivePrimaryChannelErrorV0.unavailable
+            }
+        }
+        // Re-read after suspension: media admission may have advanced the
+        // old-surface boundary while the primary response was waiting.
         if var coordinator = replacementSurface {
             defer { replacementSurface = coordinator }
             switch (coordinator.phase, kind) {
@@ -320,7 +538,18 @@ public actor ClientInteractivePrimaryChannelV0:
                     monotonicNowMilliseconds:
                         environment.monotonicNowMilliseconds()
                 )
-                try await sender.sendAuthenticatedCommand(proof)
+                clientInteractiveDebugTraceV0("approval proof send started")
+                do {
+                    try await sender.sendAuthenticatedCommand(proof)
+                    clientInteractiveDebugTraceV0(
+                        "approval proof send completed"
+                    )
+                } catch {
+                    clientInteractiveDebugTraceV0(
+                        "approval proof send failed type=\(String(reflecting: type(of: error)))"
+                    )
+                    throw error
+                }
                 guard !invalidated else {
                     throw ClientInteractivePrimaryChannelErrorV0.unavailable
                 }
@@ -389,6 +618,12 @@ public actor ClientInteractivePrimaryChannelV0:
         endingInteractiveSessionID = nil
         initialSurface = nil
         replacementSurface = nil
+        finishDisplayCatalog(.failure(
+            ClientInteractivePrimaryChannelErrorV0.cancelled
+        ))
+        finishDisplaySelect(.failure(
+            ClientInteractivePrimaryChannelErrorV0.cancelled
+        ))
         finishDescriptorWaiter(.failure(
             ClientInteractivePrimaryChannelErrorV0.cancelled
         ))
@@ -514,7 +749,24 @@ public actor ClientInteractivePrimaryChannelV0:
     public func admitInitialMedia(
         header: MediaRecordHeader,
         payloadByteCount: Int
-    ) throws -> ClientMediaAdmissionV0 {
+    ) async throws -> ClientMediaAdmissionV0 {
+        let deadline = ContinuousClock.now.advanced(by: .seconds(2))
+        while let coordinator = replacementSurface,
+              coordinator.phase == .awaitingSelection,
+              header.surfaceID != coordinator.media.currentDescriptor.surfaceID
+                || header.surfaceRevision
+                    != coordinator.media.currentDescriptor.surfaceRevision
+                || header.coordinateSpaceRevision
+                    != coordinator.media.currentDescriptor.coordinateSpaceRevision {
+            guard !invalidated, ContinuousClock.now < deadline else {
+                throw ClientInteractivePrimaryChannelErrorV0
+                    .surfaceTransitionDeadlineExceeded
+            }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        guard !invalidated else {
+            throw ClientInteractivePrimaryChannelErrorV0.unavailable
+        }
         if var replacementSurface {
             defer { self.replacementSurface = replacementSurface }
             let admission = try replacementSurface.admitMedia(
@@ -602,6 +854,18 @@ public actor ClientInteractivePrimaryChannelV0:
         targetKind: InteractiveSurfaceKind,
         targetToken: UUID?
     ) throws -> ClientSurfaceSelectionRequestV0 {
+        try prepareReplacementSurfaceSelection(
+            targetKind: targetKind,
+            targetToken: targetToken,
+            targetDisplayID: nil
+        )
+    }
+
+    public func prepareReplacementSurfaceSelection(
+        targetKind: InteractiveSurfaceKind,
+        targetToken: UUID?,
+        targetDisplayID: UUID?
+    ) throws -> ClientSurfaceSelectionRequestV0 {
         guard !invalidated, var coordinator = replacementSurface else {
             throw ClientInteractivePrimaryChannelErrorV0
                 .initialSurfaceUnavailable
@@ -610,6 +874,7 @@ public actor ClientInteractivePrimaryChannelV0:
         let request = try coordinator.beginSelection(
             targetKind: targetKind,
             targetToken: targetToken.map(WireUUID.init),
+            targetDisplayID: targetDisplayID.map(WireUUID.init),
             resetMessageID: environment.makeMessageID(),
             requestMessageID: environment.makeMessageID(),
             sentAtUnixMilliseconds:
@@ -793,6 +1058,69 @@ public actor ClientInteractivePrimaryChannelV0:
         descriptorWaiterID = nil
         let waiter = descriptorWaiter
         descriptorWaiter = nil
+        waiter?.resume(with: result)
+    }
+
+    private func displayCatalogDeadlineReached(_ requestID: UUID) {
+        guard displayCatalogRequestMessageID?.rawValue == requestID else {
+            return
+        }
+        finishDisplayCatalog(.failure(
+            ClientInteractivePrimaryChannelErrorV0
+                .displayCommandDeadlineExceeded
+        ))
+    }
+
+    private func cancelDisplayCatalog(_ requestID: UUID) {
+        guard displayCatalogRequestMessageID?.rawValue == requestID else {
+            return
+        }
+        finishDisplayCatalog(.failure(
+            ClientInteractivePrimaryChannelErrorV0.cancelled
+        ))
+    }
+
+    private func finishDisplayCatalog(
+        _ result: Result<
+            InteractiveDisplayCatalogResponseBodyV1,
+            any Error
+        >
+    ) {
+        displayCatalogDeadlineTask?.cancel()
+        displayCatalogDeadlineTask = nil
+        displayCatalogRequestMessageID = nil
+        let waiter = displayCatalogWaiter
+        displayCatalogWaiter = nil
+        waiter?.resume(with: result)
+    }
+
+    private func displaySelectDeadlineReached(_ requestID: UUID) {
+        guard displaySelectRequestMessageID?.rawValue == requestID else {
+            return
+        }
+        finishDisplaySelect(.failure(
+            ClientInteractivePrimaryChannelErrorV0
+                .displayCommandDeadlineExceeded
+        ))
+    }
+
+    private func cancelDisplaySelect(_ requestID: UUID) {
+        guard displaySelectRequestMessageID?.rawValue == requestID else {
+            return
+        }
+        finishDisplaySelect(.failure(
+            ClientInteractivePrimaryChannelErrorV0.cancelled
+        ))
+    }
+
+    private func finishDisplaySelect(
+        _ result: Result<InteractiveDisplaySelectedBodyV1, any Error>
+    ) {
+        displaySelectDeadlineTask?.cancel()
+        displaySelectDeadlineTask = nil
+        displaySelectRequestMessageID = nil
+        let waiter = displaySelectWaiter
+        displaySelectWaiter = nil
         waiter?.resume(with: result)
     }
 }

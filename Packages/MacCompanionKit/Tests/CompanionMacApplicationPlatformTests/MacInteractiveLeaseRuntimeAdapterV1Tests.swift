@@ -386,6 +386,95 @@ private struct AdapterUnavailableDesktopPreparerV1:
 }
 
 @available(macOS 26.0, *)
+@Test func interactiveAdapterAcceptsTwoConsecutiveLeaseRenewals()
+    async throws
+{
+    let fixture = try interactiveAdapterFixtureV1()
+    let runtime = AdapterRuntimeV1()
+    await runtime.configureInstall(
+        .success(fixture.receipt),
+        state: .active(
+            interactiveSessionID:
+                fixture.command.lease.interactiveSessionID,
+            leaseID: fixture.command.lease.leaseID
+        )
+    )
+    let scheduler = AdapterExpirySchedulerV1()
+    let clock = AdapterMonotonicClockV1(2_000_000_000)
+    let adapter = MacInteractiveLeaseRuntimeAdapterV1(
+        runtime: runtime,
+        desktop: AdapterUnavailableDesktopPreparerV1(),
+        expiryScheduler: scheduler,
+        monotonicClock: clock
+    )
+    _ = try await adapter.installInteractiveLease(
+        fixture.command,
+        nowMonotonicNanoseconds: 2_000_000_000
+    )
+
+    let initial = fixture.command.lease
+    let first = try InteractiveExecutionLease(
+        leaseID: UUID(),
+        hostID: initial.hostID,
+        deviceID: initial.deviceID,
+        interactiveSessionID: initial.interactiveSessionID,
+        authorizationEpoch: initial.authorizationEpoch,
+        selectedDisplayID: initial.selectedDisplayID,
+        surfaceID: initial.surfaceID,
+        surfaceRevision: initial.surfaceRevision,
+        coordinateRevision: initial.coordinateRevision,
+        allowedInteractionClasses: Set(initial.allowedInteractionClasses),
+        renewalCounter: 1,
+        issuedAtMonotonicNanoseconds: 3_000_000_000,
+        expiresAtMonotonicNanoseconds: 9_000_000_000
+    )
+    clock.set(3_000_000_000)
+    try await adapter.renewInteractiveLease(
+        InteractiveRuntimeLeaseRenewalV0(
+            commandID: UUID(),
+            previousLeaseID: initial.leaseID,
+            replacement: first
+        ),
+        nowMonotonicNanoseconds: 3_000_000_000
+    )
+
+    let second = try InteractiveExecutionLease(
+        leaseID: UUID(),
+        hostID: first.hostID,
+        deviceID: first.deviceID,
+        interactiveSessionID: first.interactiveSessionID,
+        authorizationEpoch: first.authorizationEpoch,
+        selectedDisplayID: first.selectedDisplayID,
+        surfaceID: first.surfaceID,
+        surfaceRevision: first.surfaceRevision,
+        coordinateRevision: first.coordinateRevision,
+        allowedInteractionClasses: Set(first.allowedInteractionClasses),
+        renewalCounter: 2,
+        issuedAtMonotonicNanoseconds: 7_000_000_000,
+        expiresAtMonotonicNanoseconds: 15_000_000_000
+    )
+    clock.set(7_000_000_000)
+    try await adapter.renewInteractiveLease(
+        InteractiveRuntimeLeaseRenewalV0(
+            commandID: UUID(),
+            previousLeaseID: first.leaseID,
+            replacement: second
+        ),
+        nowMonotonicNanoseconds: 7_000_000_000
+    )
+
+    #expect(scheduler.delays() == [
+        3_000_000_000, 6_000_000_000, 8_000_000_000,
+    ])
+    #expect(scheduler.isCancelled(0))
+    #expect(scheduler.isCancelled(1))
+    #expect(await runtime.recordedExpiryTimes().isEmpty)
+    #expect(await runtime.nextLeaseDeadlineMonotonicNanoseconds()
+        == 15_000_000_000)
+    #expect(await adapter.state() == .available)
+}
+
+@available(macOS 26.0, *)
 @Test func interactiveAdapterReschedulesSurfaceReplacementLeaseExpiry()
     async throws
 {

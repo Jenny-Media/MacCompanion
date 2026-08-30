@@ -95,9 +95,10 @@ private actor MacLocalXPCAgentPresentationBindingV1 {
     func endpointTerminated(generation: UInt64) async {
         guard !terminal, boundGeneration == generation else { return }
         boundGeneration = nil
-        // The router has already become terminal. Cancel only the exact peer
-        // that owned the endpoint, then synchronously remove the downstream
-        // authority before the endpoint's terminal-fence request returns.
+        // The router has already fenced this generation and retains this notification
+        // in its external finish barrier. Cancel only the exact peer, then
+        // retire downstream authority without blocking the failed operation
+        // whose completion may itself be required by that retirement.
         server.cancelPeer(generation: generation)
         await onInvalidated(generation)
     }
@@ -328,6 +329,14 @@ public final class MacLocalXPCAgentProductV1: @unchecked Sendable {
 
     private let runtime: MacLocalXPCAgentRuntimeV1
 
+    package static let productionPresentationServerFactory: PresentationServerFactory = {
+        profile, statusReader, commandHandler, updateHandler, admissionHandler, mediaHandler, onEvent in
+        MacLocalXPCServerV1(profile: profile, statusReader: statusReader,
+            menuPairingCommandHandler: commandHandler, updateQuiescenceHandler: updateHandler,
+            interactiveAdmissionHandler: admissionHandler, interactiveMediaHandler: mediaHandler,
+            onEvent: onEvent)
+    }
+
     public static func afterAgentBootstrap(
         services: AgentPrimaryServicesV1,
         processStarter: any MacDashboardLifecycleProcessStartingV1,
@@ -370,7 +379,8 @@ public final class MacLocalXPCAgentProductV1: @unchecked Sendable {
         onSurfaces: @escaping @Sendable (
             MacLocalXPCAuthenticatedMenuSurfacesV1
         ) async throws -> Void,
-        onSurfaceInvalidated: @escaping @Sendable (UInt64) async -> Void
+        onSurfaceInvalidated: @escaping @Sendable (UInt64) async -> Void,
+        serverFactory: @escaping PresentationServerFactory = productionPresentationServerFactory
     ) async throws -> MacLocalXPCAgentProductV1 {
         let observations = try await MacAgentLifecycleObservationRootV1
             .afterAgentBootstrap(
@@ -390,7 +400,8 @@ public final class MacLocalXPCAgentProductV1: @unchecked Sendable {
             interactiveAdmissionHandler: interactiveAdmissionHandler,
             interactiveMediaHandler: interactiveMediaHandler,
             onSurfaces: onSurfaces,
-            onSurfaceInvalidated: onSurfaceInvalidated
+            onSurfaceInvalidated: onSurfaceInvalidated,
+            serverFactory: serverFactory
         )
     }
 
@@ -453,19 +464,7 @@ public final class MacLocalXPCAgentProductV1: @unchecked Sendable {
         onSurfaceInvalidated: @escaping @Sendable (UInt64) async -> Void = {
             _ in
         },
-        serverFactory: @escaping PresentationServerFactory = {
-            profile, statusReader, commandHandler, updateHandler,
-            admissionHandler, mediaHandler, onEvent in
-            MacLocalXPCServerV1(
-                profile: profile,
-                statusReader: statusReader,
-                menuPairingCommandHandler: commandHandler,
-                updateQuiescenceHandler: updateHandler,
-                interactiveAdmissionHandler: admissionHandler,
-                interactiveMediaHandler: mediaHandler,
-                onEvent: onEvent
-            )
-        }
+        serverFactory: @escaping PresentationServerFactory = productionPresentationServerFactory
     ) -> MacLocalXPCAgentProductV1 {
         let runtime = MacLocalXPCAgentRuntimeV1()
         let binding = MacLocalXPCLifecycleBindingV1(

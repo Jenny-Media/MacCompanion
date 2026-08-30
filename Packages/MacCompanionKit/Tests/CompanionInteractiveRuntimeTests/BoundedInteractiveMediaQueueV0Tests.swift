@@ -130,6 +130,40 @@ private final class QueueWakeupProbeV0: @unchecked Sendable {
     #expect(probe.calls() == 2)
 }
 
+@Test func productionSizedQueueRetainsDelayedMediaRoleStartupBurst() throws {
+    let queue = try BoundedInteractiveMediaQueueV0(
+        maximumRecords: 64,
+        maximumBytes: 16 * 1_024 * 1_024
+    )
+    let sessionID = UUID()
+
+    // Decoder configuration plus two seconds of 30 fps access units may be
+    // produced before the separately authenticated media role finishes its
+    // network handshake. None may be silently dropped or rejected.
+    for sequence in 1...61 {
+        #expect(queue.enqueueInteractiveMedia(
+            header: try queueHeader(
+                sessionID: sessionID,
+                sequence: UInt64(sequence),
+                payloadLength: 1
+            ),
+            payload: Data([UInt8(sequence)])
+        ))
+    }
+    #expect(queue.status().recordCount == 61)
+
+    let probe = QueueWakeupProbeV0()
+    #expect(queue.installEnqueuedHandler(token: UUID()) {
+        probe.call()
+    })
+    #expect(probe.calls() == 1)
+
+    for sequence in 1...61 {
+        #expect(queue.dequeue()?.header.mediaSequence == UInt64(sequence))
+    }
+    #expect(queue.dequeue() == nil)
+}
+
 @Test func compositeBlankPurgesQueueEvenWhenRendererFails() async throws {
     let queue = try BoundedInteractiveMediaQueueV0()
     #expect(queue.enqueueInteractiveMedia(

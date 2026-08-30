@@ -25,9 +25,11 @@ public struct MacSystemStatusSampler: HostSystemSampling {
     }
 
     public func sample() async throws -> HostSystemMeasurement {
-        let firstTicks = try Self.readCPUTicks()
-        try await Task<Never, Never>.sleep(nanoseconds: cpuSampleIntervalNanoseconds)
-        let secondTicks = try Self.readCPUTicks()
+        let cpu = try await Self.sampleCPUUtilization(
+            initialIntervalNanoseconds: cpuSampleIntervalNanoseconds,
+            readTicks: Self.readCPUTicks,
+            sleep: { try await Task<Never, Never>.sleep(nanoseconds: $0) }
+        )
         let memory = try Self.readMemory()
         let storage = try Self.readStorage()
         let power = Self.readPower()
@@ -43,10 +45,7 @@ public struct MacSystemStatusSampler: HostSystemSampling {
             osVersion: versionString.isEmpty ? "0" : versionString,
             osBuild: try Self.readSysctlString("kern.osversion"),
             uptimeSeconds: UInt64(ProcessInfo.processInfo.systemUptime.rounded(.down)),
-            cpuUtilizationBasisPoints: try Self.utilizationBasisPoints(
-                from: firstTicks,
-                to: secondTicks
-            ),
+            cpuUtilizationBasisPoints: cpu,
             memoryTotalBytes: memory.total,
             memoryUsedBytes: memory.used,
             storageTotalBytes: storage.total,
@@ -56,11 +55,35 @@ public struct MacSystemStatusSampler: HostSystemSampling {
         )
     }
 
-    struct CPUTicks: Equatable {
+    struct CPUTicks: Equatable, Sendable {
         let user: UInt32
         let system: UInt32
         let idle: UInt32
         let nice: UInt32
+    }
+
+    static func sampleCPUUtilization(
+        initialIntervalNanoseconds: UInt64,
+        readTicks: @Sendable () throws -> CPUTicks,
+        sleep: @Sendable (UInt64) async throws -> Void
+    ) async throws -> UInt16 {
+        try Task.checkCancellation()
+        let first = try readTicks()
+        try await sleep(initialIntervalNanoseconds)
+        try Task.checkCancellation()
+        var last = try readTicks()
+        if last == first {
+            // XNU rate-limits host_statistics with a shared one-second cache.
+            // Identical counters are not a measured idle CPU. Extend this
+            // sample once beyond that window instead of failing a healthy
+            // Observe request or hammering the same cached counters.
+            try await sleep(1_100_000_000)
+            try Task.checkCancellation()
+            last = try readTicks()
+        }
+        // Still unchanged: return the existing provider error, never invent
+        // a utilization value or retry indefinitely.
+        return try utilizationBasisPoints(from: first, to: last)
     }
 
     static func utilizationBasisPoints(

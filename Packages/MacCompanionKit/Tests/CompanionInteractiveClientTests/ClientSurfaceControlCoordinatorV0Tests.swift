@@ -140,10 +140,11 @@ private func controlFocusEvent(
     targetToken: WireUUID,
     focus: SurfaceFocus,
     eventSequence: Int64,
-    inputPaused: Bool = false
+    inputPaused: Bool = false,
+    messageID: WireUUID = WireUUID(UUID())
 ) throws -> Data {
     try WireCodec.encode(WireEnvelope(
-        messageID: WireUUID(UUID()),
+        messageID: messageID,
         correlationID: nil,
         channel: .events,
         sentAtUnixMilliseconds: 1_001,
@@ -191,6 +192,197 @@ private func focusedControlDescriptor(
         createdAtMonotonicMilliseconds: 0,
         expiresAtMonotonicMilliseconds: 10_000
     )
+}
+
+@Test func focusRefreshDuringSelectionDoesNotCloseTransition() throws {
+    let initial = try controlDescriptor(
+        surfaceID: controlInitialSurfaceID,
+        revision: 1,
+        coordinateRevision: 1
+    )
+    var coordinator = try ClientSurfaceControlCoordinatorV0(
+        acknowledgedDescriptor: initial,
+        sessionAllowedInteractionClasses: [.view, .pointer, .keyboard]
+    )
+    let focus = try controlFocus()
+    let firstTargetToken = WireUUID(UUID())
+    _ = try coordinator.receiveFocusEvent(
+        controlFocusEvent(
+            current: initial,
+            targetToken: firstTargetToken,
+            focus: focus,
+            eventSequence: 1
+        ),
+        clientMonotonicNowMilliseconds: 100
+    )
+
+    let requestID = WireUUID(UUID())
+    _ = try coordinator.beginSelection(
+        targetKind: .focusedRegion,
+        targetToken: firstTargetToken,
+        resetMessageID: WireUUID(UUID()),
+        requestMessageID: requestID,
+        sentAtUnixMilliseconds: 1_002,
+        clientMonotonicMilliseconds: 101
+    )
+
+    let refresh = try coordinator.receiveFocusEvent(
+        controlFocusEvent(
+            current: initial,
+            targetToken: WireUUID(UUID()),
+            focus: focus,
+            eventSequence: 2
+        ),
+        clientMonotonicNowMilliseconds: 102
+    )
+    #expect(refresh.eventSequence == 2)
+    #expect(coordinator.phase == .awaitingSelection)
+
+    _ = try coordinator.receiveSelected(
+        selectedResponse(
+            requestMessageID: requestID,
+            descriptor: focusedControlDescriptor(focus: focus),
+            transitionID: WireUUID(UUID())
+        ),
+        clientMonotonicNowMilliseconds: 200
+    )
+    #expect(coordinator.phase == .awaitingMedia)
+}
+
+@Test func focusedSelectionAcceptsSafeDesktopFallbackAfterHostFocusChurn()
+    throws
+{
+    let initial = try controlDescriptor(
+        surfaceID: controlInitialSurfaceID,
+        revision: 1,
+        coordinateRevision: 1
+    )
+    var coordinator = try ClientSurfaceControlCoordinatorV0(
+        acknowledgedDescriptor: initial,
+        sessionAllowedInteractionClasses: [.view, .pointer, .keyboard]
+    )
+    let targetToken = WireUUID(UUID())
+    _ = try coordinator.receiveFocusEvent(
+        controlFocusEvent(
+            current: initial,
+            targetToken: targetToken,
+            focus: controlFocus(),
+            eventSequence: 1
+        ),
+        clientMonotonicNowMilliseconds: 100
+    )
+    let requestID = WireUUID(UUID())
+    _ = try coordinator.beginSelection(
+        targetKind: .focusedRegion,
+        targetToken: targetToken,
+        resetMessageID: WireUUID(UUID()),
+        requestMessageID: requestID,
+        sentAtUnixMilliseconds: 1_002,
+        clientMonotonicMilliseconds: 101
+    )
+    let fallback = try controlDescriptor(
+        surfaceID: controlReplacementSurfaceID,
+        revision: 2,
+        coordinateRevision: 2
+    )
+    let selected = try coordinator.receiveSelected(
+        selectedResponse(
+            requestMessageID: requestID,
+            descriptor: fallback,
+            transitionID: WireUUID(UUID())
+        ),
+        clientMonotonicNowMilliseconds: 200
+    )
+    #expect(selected.kind == .desktop)
+    #expect(selected.focus == nil)
+    #expect(coordinator.phase == .awaitingMedia)
+}
+
+@Test func supersededFocusTokenIsRecoverableBeforeSelection() throws {
+    let initial = try controlDescriptor(
+        surfaceID: controlInitialSurfaceID,
+        revision: 1,
+        coordinateRevision: 1
+    )
+    var coordinator = try ClientSurfaceControlCoordinatorV0(
+        acknowledgedDescriptor: initial,
+        sessionAllowedInteractionClasses: [.view, .pointer, .keyboard]
+    )
+    let focus = try controlFocus()
+    let supersededTargetToken = WireUUID(UUID())
+    _ = try coordinator.receiveFocusEvent(
+        controlFocusEvent(
+            current: initial,
+            targetToken: supersededTargetToken,
+            focus: focus,
+            eventSequence: 1
+        ),
+        clientMonotonicNowMilliseconds: 100
+    )
+    let currentTargetToken = WireUUID(UUID())
+    _ = try coordinator.receiveFocusEvent(
+        controlFocusEvent(
+            current: initial,
+            targetToken: currentTargetToken,
+            focus: focus,
+            eventSequence: 2
+        ),
+        clientMonotonicNowMilliseconds: 101
+    )
+
+    #expect(throws: ClientSurfaceControlErrorV0.targetInventoryRequired) {
+        _ = try coordinator.beginSelection(
+            targetKind: .focusedRegion,
+            targetToken: supersededTargetToken,
+            resetMessageID: WireUUID(UUID()),
+            requestMessageID: WireUUID(UUID()),
+            sentAtUnixMilliseconds: 1_002,
+            clientMonotonicMilliseconds: 102
+        )
+    }
+    #expect(coordinator.phase == .active)
+
+    _ = try coordinator.beginSelection(
+        targetKind: .focusedRegion,
+        targetToken: currentTargetToken,
+        resetMessageID: WireUUID(UUID()),
+        requestMessageID: WireUUID(UUID()),
+        sentAtUnixMilliseconds: 1_003,
+        clientMonotonicMilliseconds: 103
+    )
+    #expect(coordinator.phase == .awaitingSelection)
+}
+
+@Test func duplicateFocusEventClosesTheCoordinator() throws {
+    let initial = try controlDescriptor(
+        surfaceID: controlInitialSurfaceID,
+        revision: 1,
+        coordinateRevision: 1
+    )
+    var coordinator = try ClientSurfaceControlCoordinatorV0(
+        acknowledgedDescriptor: initial,
+        sessionAllowedInteractionClasses: [.view, .pointer, .keyboard]
+    )
+    let messageID = WireUUID(UUID())
+    let eventJSON = try controlFocusEvent(
+        current: initial,
+        targetToken: WireUUID(UUID()),
+        focus: controlFocus(),
+        eventSequence: 1,
+        messageID: messageID
+    )
+    _ = try coordinator.receiveFocusEvent(
+        eventJSON,
+        clientMonotonicNowMilliseconds: 100
+    )
+
+    #expect(throws: ClientSurfaceControlErrorV0.duplicateMessage) {
+        _ = try coordinator.receiveFocusEvent(
+            eventJSON,
+            clientMonotonicNowMilliseconds: 101
+        )
+    }
+    #expect(coordinator.phase == .closed)
 }
 
 @Test func clientFocusEventUsesOneCurrentTokenAndProvenTransitionPath()

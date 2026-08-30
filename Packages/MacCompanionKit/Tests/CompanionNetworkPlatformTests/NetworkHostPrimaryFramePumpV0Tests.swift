@@ -6,6 +6,7 @@ import CompanionHostSession
 import CompanionOperations
 import CompanionPersistence
 import CompanionSecurity
+import CompanionTestSupport
 import CompanionTransport
 import CompanionWire
 import CryptoKit
@@ -172,7 +173,10 @@ private struct NetworkHostPumpHarnessV0 {
     }
 }
 
-private func makeNetworkHostPumpHarness() async throws
+private func makeNetworkHostPumpHarness(
+    operations: any AuthenticatedOperationWireDispatchingV0 = NetworkHostUnusedOperationDispatcher(),
+    authenticated: Bool = false
+) async throws
     -> NetworkHostPumpHarnessV0
 {
     let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
@@ -211,10 +215,35 @@ private func makeNetworkHostPumpHarness() async throws
             deviceReader: store
         ),
         status: NetworkHostUnusedStatusProvider(),
-        operations: NetworkHostUnusedOperationDispatcher(),
+        operations: operations,
         capabilities: NetworkHostUnusedCapabilityDispatcher(),
         interactive: interactive
     )
+    if authenticated {
+        let clientKey = P256.Signing.PrivateKey()
+        let clientID = UUID()
+        try await store.commitPairing(pairingID: UUID(), record: StoredDeviceRecord(
+            deviceID: UUID(), clientID: clientID,
+            sessionPublicKeyX963: clientKey.publicKey.x963Representation,
+            approvalPublicKeyX963: P256.Signing.PrivateKey().publicKey.x963Representation,
+            authorization: DeviceAuthorization(state: .activeMonitorOnly,
+                authorizationEpoch: .init(rawValue: 1), grantRevision: .init(rawValue: 1)),
+            policyRevision: .init(rawValue: 1), createdAtUnixMilliseconds: 1_000, updatedAtUnixMilliseconds: 1_000))
+        let nonce = Data(repeating: 9, count: 32)
+        let hello = try WireCodec.encode(WireEnvelope(messageID: WireUUID(UUID()), correlationID: nil,
+            sentAtUnixMilliseconds: 2_000, body: AuthHelloBody(clientID: WireUUID(clientID), clientNonce: WireBytes32(nonce))))
+        let challenge = try WireCodec.decode(WireEnvelope<AuthChallengeBody>.self,
+            from: await session.receive(requestJSON: hello, hostState: .userSessionActive,
+                wallNowUnixMilliseconds: 2_001, monotonicNowMilliseconds: 100, responseMessageID: WireUUID(UUID())))
+        let input = try CompanionSecurityV0.authenticationSigningInput(clientID: clientID,
+            connectionID: challenge.body.connectionID.rawValue, clientNonce: nonce,
+            serverNonce: challenge.body.serverNonce.rawValue, hostFingerprint: binding.hostFingerprint,
+            selectedMajor: challenge.body.selectedVersion.major, selectedMinor: challenge.body.selectedVersion.minor)
+        let proof = try WireCodec.encode(WireEnvelope(messageID: WireUUID(UUID()), correlationID: challenge.messageID,
+            sentAtUnixMilliseconds: 2_001, body: AuthProofBody(signature: WireBytes64(clientKey.signature(for: input).rawRepresentation))))
+        _ = try await session.receive(requestJSON: proof, hostState: .userSessionActive,
+            wallNowUnixMilliseconds: 2_001, monotonicNowMilliseconds: 101, responseMessageID: WireUUID(UUID()))
+    }
     let io = NetworkHostFakeFrameIOV0()
     let terminals = NetworkHostPumpTerminalRecorderV0()
     let pump = NetworkHostPrimaryFramePumpV0(
@@ -226,12 +255,7 @@ private func makeNetworkHostPumpHarness() async throws
                 hostState: .userSessionActive,
                 wallNowUnixMilliseconds: 2_001,
                 monotonicNowMilliseconds: 101,
-                responseMessageID: WireUUID(
-                    UUID(
-                        uuidString:
-                            "018f9000-0000-7000-8000-000000000002"
-                    )!
-                )
+                responseMessageID: WireUUID(UUID())
             )
         },
         terminal: { reason in
@@ -436,6 +460,126 @@ private func waitForNetworkHostSend(
     #expect(harness.io.sent.isEmpty)
     #expect(harness.io.cancelCount == 1)
     #expect(await harness.session.phase == .closed)
+}
+
+/// A non-cooperative provider-result delivery stand-in. Explicit release lets
+/// teardown tests prove that late replies are dropped even if work ignores cancel.
+private actor PausedHostOperationDispatcher: AuthenticatedOperationWireDispatchingV0 {
+    private var waiting: [CheckedContinuation<Void, Never>] = []
+    private(set) var kinds: [WireMessageKind] = []
+    private(set) var finishedCount = 0
+    func dispatch(requestJSON: Data, context: AuthenticatedOperationCommandContextV0,
+                  responseMessageID: WireUUID) async throws -> Data {
+        let metadata = try WireCodec.routingMetadata(from: requestJSON)
+        kinds.append(metadata.kind)
+        let operationID: WireUUID
+        let state: OperationState
+        if metadata.kind == .operationInvoke {
+            operationID = try WireCodec.decode(WireEnvelope<OperationInvokeRequestBody>.self, from: requestJSON).body.operationID
+            await withCheckedContinuation { waiting.append($0) }
+            state = .succeeded
+        } else if metadata.kind == .operationCancel {
+            operationID = try WireCodec.decode(WireEnvelope<OperationCancelRequestBody>.self, from: requestJSON).body.operationID
+            state = .cancelRequested
+        } else {
+            operationID = try WireCodec.decode(WireEnvelope<OperationStatusRequestBody>.self, from: requestJSON).body.operationID
+            state = .running
+        }
+        finishedCount += 1
+        return try WireCodec.encode(WireEnvelope(messageID: responseMessageID, correlationID: metadata.messageID,
+            sentAtUnixMilliseconds: context.wallNowUnixMilliseconds,
+            body: OperationStatusResponseBody(operationID: operationID, state: state, terminalCode: nil, result: nil)))
+    }
+    func release() {
+        let pending = waiting
+        waiting.removeAll()
+        for waiter in pending { waiter.resume() }
+    }
+}
+
+private func hostOperationFrame<B: WireBody>(_ body: B, messageID: WireUUID = WireUUID(UUID())) throws -> Data {
+    try LengthPrefixedFrameDecoder.encode(WireCodec.encode(WireEnvelope(messageID: messageID,
+        correlationID: nil, sentAtUnixMilliseconds: 2_001, body: body)))
+}
+
+private func eventuallyHostPump(_ predicate: () async -> Bool) async -> Bool {
+    for _ in 0..<1_000 {
+        if await predicate() { return true }
+        try? await Task.sleep(for: .milliseconds(1))
+    }
+    return await predicate()
+}
+
+@Test func hostPumpActContractMatchesIndexedFixture() throws {
+    let url = FixturePaths.authoritativeFixtures().appendingPathComponent("host-primary-act-concurrency-v0.1.json")
+    let fixture = try #require(JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])
+    #expect(fixture["maximumConcurrentExecutions"] as? Int == NetworkHostPrimaryFramePumpV0.maximumConcurrentExecutions)
+    #expect(fixture["maximumOrdinaryHandlers"] as? Int == 1)
+    #expect(fixture["concurrentKinds"] as? [String] == ["operation.invoke", "operation.approve"])
+}
+
+@Test func hostPumpPendingActAllowsSameConnectionStatusAndCancel() async throws {
+    let operations = PausedHostOperationDispatcher()
+    let harness = try await makeNetworkHostPumpHarness(operations: operations, authenticated: true)
+    defer { harness.remove() }
+    try await harness.pump.beginOnVerifiedReadyConnection()
+    let operationID = WireUUID(UUID())
+    let invokeID = WireUUID(UUID())
+    harness.io.deliver(try hostOperationFrame(OperationInvokeRequestBody(operationID: operationID,
+        capabilityID: "test.action", parameters: .object([])), messageID: invokeID))
+    let entered = await eventuallyHostPump { await operations.kinds == [.operationInvoke] }
+    let reading = await waitForNetworkHostReceive(harness.io)
+    #expect(entered && reading)
+    guard entered && reading else { await harness.pump.cancel(); await operations.release(); return }
+    let statusID = WireUUID(UUID()), cancelID = WireUUID(UUID())
+    var frames = try hostOperationFrame(OperationStatusRequestBody(operationID: operationID), messageID: statusID)
+    frames.append(try hostOperationFrame(OperationCancelRequestBody(operationID: operationID), messageID: cancelID))
+    harness.io.deliver(frames)
+    #expect(await eventuallyHostPump { harness.io.sent.count == 2 })
+    var decoder = LengthPrefixedFrameDecoder()
+    let beforeRelease = try decoder.append(harness.io.sent.reduce(into: Data()) { $0.append($1) })
+    let replies = try beforeRelease.map { try WireCodec.decode(WireEnvelope<OperationStatusResponseBody>.self, from: $0) }
+    #expect(replies.map(\.correlationID) == [statusID, cancelID])
+    #expect(replies.map(\.body.state) == [.running, .cancelRequested])
+    await operations.release()
+    #expect(await eventuallyHostPump { harness.io.sent.count == 3 })
+    if let last = harness.io.sent.last {
+        var lastDecoder = LengthPrefixedFrameDecoder()
+        let frame = try #require(lastDecoder.append(last).first)
+        #expect(try WireCodec.decode(WireEnvelope<OperationStatusResponseBody>.self, from: frame).correlationID == invokeID)
+    }
+    await harness.pump.cancel()
+}
+
+@Test(arguments: [false, true])
+func hostPumpPendingActDropsLateCompletionAndClosesOnce(overflow: Bool) async throws {
+    let operations = PausedHostOperationDispatcher()
+    let harness = try await makeNetworkHostPumpHarness(operations: operations, authenticated: true)
+    defer { harness.remove() }
+    try await harness.pump.beginOnVerifiedReadyConnection()
+    let count = overflow ? NetworkHostPrimaryFramePumpV0.maximumConcurrentExecutions : 1
+    for index in 1...count {
+        guard await waitForNetworkHostReceive(harness.io) else { Issue.record("missing read"); break }
+        harness.io.deliver(try hostOperationFrame(OperationInvokeRequestBody(operationID: WireUUID(UUID()),
+            capabilityID: "test.action", parameters: .object([]))))
+        #expect(await eventuallyHostPump { await operations.kinds.count == index })
+    }
+    if overflow {
+        let reading = await waitForNetworkHostReceive(harness.io)
+        #expect(reading)
+        if reading { harness.io.deliver(try hostOperationFrame(OperationInvokeRequestBody(operationID: WireUUID(UUID()),
+            capabilityID: "test.action", parameters: .object([])))) }
+        #expect(await waitForNetworkHostTerminal(harness.terminals) == [.protocolOrSessionFailure])
+    } else {
+        await harness.pump.cancel()
+    }
+    await operations.release()
+    #expect(await eventuallyHostPump { await operations.finishedCount == count })
+    await harness.pump.cancel()
+    #expect(harness.io.sent.isEmpty)
+    #expect(harness.io.cancelCount == 1)
+    #expect(await harness.interactive.closeCount == 1)
+    #expect(await operations.kinds.count == count)
 }
 
 @Test func hostPumpInjectedIORejectsMalformedFrame() async throws {

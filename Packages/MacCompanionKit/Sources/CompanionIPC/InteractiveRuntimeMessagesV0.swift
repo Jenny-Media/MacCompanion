@@ -274,7 +274,8 @@ public struct InteractiveRuntimeSurfaceTransitionCommandV0:
               replacement.interactiveSessionID
                 == current.interactiveSessionID,
               replacement.authorizationEpoch == current.authorizationEpoch,
-              replacement.selectedDisplayID == current.selectedDisplayID,
+              (replacement.selectedDisplayID == current.selectedDisplayID
+                || descriptor.kind == .desktop),
               replacement.surfaceRevision == expectedSurfaceRevision,
               replacement.coordinateRevision == expectedCoordinateRevision,
               current.renewalCounter

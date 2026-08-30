@@ -5,6 +5,12 @@ import CompanionWire
 import Dispatch
 import Foundation
 import Network
+import OSLog
+
+private let networkHostPrimaryFramePumpLoggerV0 = Logger(
+    subsystem: "media.jenny.maccompanion.agent",
+    category: "primary-frame-pump"
+)
 
 public enum NetworkHostPrimaryFramePumpErrorV0: Error, Equatable, Sendable {
     case invalidConfiguration
@@ -203,12 +209,12 @@ private final class NetworkHostPrimaryClassifiedFrameIOV0:
 /// one-shot authority produced by `NetworkHostAcceptedConnectionV0`, so a
 /// caller cannot pair an unrelated connection with reconstructed TLS facts.
 ///
-/// Receives are serialized: another read is scheduled only after every frame
-/// in the current chunk has produced and sent its response. This gives the
-/// session owner bounded backpressure and prevents accidental parallel command
-/// admission in the first adapter.
+/// Authentication and ordinary requests are serialized. Authenticated Act
+/// execution has a bounded separate response lane so a pending provider does
+/// not prevent receiving status, cancellation, or liveness traffic.
 public actor NetworkHostPrimaryFramePumpV0 {
     public static let maximumReceiveChunkBytes = 16_384
+    public static let maximumConcurrentExecutions = InFlightCommandTracker.v0Limit - 1
 
     public let tlsBinding: HostApplicationTLSBinding
 
@@ -220,6 +226,9 @@ public actor NetworkHostPrimaryFramePumpV0 {
     private var decoder = LengthPrefixedFrameDecoder()
     private var started = false
     private var stopped = false
+    private var receivePending = false
+    private var admittingChunk = false
+    private var executionResponses: [UUID: Task<Void, Never>] = [:]
     private var sendTail: Task<Void, Error>?
     private var deadlineTask: Task<Void, Never>?
     private var classifiedActivationContinuation:
@@ -406,7 +415,8 @@ public actor NetworkHostPrimaryFramePumpV0 {
     }
 
     private func receiveNext() {
-        guard started, !stopped else { return }
+        guard started, !stopped, !receivePending, !admittingChunk else { return }
+        receivePending = true
         io.receive(maximumLength: Self.maximumReceiveChunkBytes) {
             [weak self] data, isComplete, failed in
             Task {
@@ -424,7 +434,14 @@ public actor NetworkHostPrimaryFramePumpV0 {
         isComplete: Bool,
         failed: Bool
     ) async {
+        receivePending = false
         guard !stopped else { return }
+        guard !admittingChunk else {
+            await stop(reason: .protocolOrSessionFailure)
+            return
+        }
+        admittingChunk = true
+        defer { admittingChunk = false }
         if failed {
             await stop(reason: .receiveFailed)
             return
@@ -433,17 +450,21 @@ public actor NetworkHostPrimaryFramePumpV0 {
             if let data, !data.isEmpty {
                 let frames = try decoder.append(data)
                 for frame in frames {
-                    let current = context()
-                    let response = try await session.receive(
-                        requestJSON: frame,
-                        hostState: current.hostState,
-                        wallNowUnixMilliseconds: current.wallNowUnixMilliseconds,
-                        monotonicNowMilliseconds: current.monotonicNowMilliseconds,
-                        responseMessageID: current.responseMessageID
-                    )
-                    try await send(LengthPrefixedFrameDecoder.encode(response))
-                    if await session.phase == .ready {
-                        completeClassifiedActivation()
+                    guard !stopped else { return }
+                    let kind = try WireCodec.messageKind(from: frame)
+                    if (kind == .operationInvoke || kind == .operationApprove), await session.phase == .ready {
+                        guard executionResponses.count < Self.maximumConcurrentExecutions else {
+                            throw TransportGuardError.inFlightLimitReached(Self.maximumConcurrentExecutions)
+                        }
+                        let token = UUID()
+                        executionResponses[token] = Task { [weak self] in
+                            guard let self else { return }
+                            do { try await self.respond(to: frame) }
+                            catch { await self.stop(reason: .protocolOrSessionFailure) }
+                            await self.finishedExecution(token)
+                        }
+                    } else {
+                        try await respond(to: frame)
                     }
                 }
                 awaitDeadline()
@@ -451,18 +472,44 @@ public actor NetworkHostPrimaryFramePumpV0 {
             if isComplete {
                 await stop(reason: .remoteClosed)
             } else {
+                admittingChunk = false
                 receiveNext()
             }
         } catch {
+            networkHostPrimaryFramePumpLoggerV0.error(
+                "primary pump failed error=\(String(describing: error), privacy: .public)"
+            )
             await stop(reason: .protocolOrSessionFailure)
         }
     }
 
+    private func respond(to frame: Data) async throws {
+        guard !stopped else { return }
+        try Task.checkCancellation()
+        let current = context()
+        let response = try await session.receive(
+            requestJSON: frame, hostState: current.hostState,
+            wallNowUnixMilliseconds: current.wallNowUnixMilliseconds,
+            monotonicNowMilliseconds: current.monotonicNowMilliseconds,
+            responseMessageID: current.responseMessageID)
+        guard !stopped, await session.phase != .closed else { return }
+        try Task.checkCancellation()
+        try await send(LengthPrefixedFrameDecoder.encode(response))
+        if await session.phase == .ready { completeClassifiedActivation() }
+        awaitDeadline()
+    }
+
+    private func finishedExecution(_ token: UUID) {
+        executionResponses.removeValue(forKey: token)
+    }
+
     private func send(_ data: Data) async throws {
+        guard !stopped else { throw NetworkHostPrimaryFramePumpErrorV0.connectionClosed }
         let predecessor = sendTail
         let io = self.io
         let operation = Task {
             if let predecessor { try await predecessor.value }
+            try Task.checkCancellation()
             try await io.send(data)
         }
         sendTail = operation
@@ -475,6 +522,8 @@ public actor NetworkHostPrimaryFramePumpV0 {
     ) async {
         guard !stopped else { return }
         stopped = true
+        for task in executionResponses.values { task.cancel() }
+        executionResponses.removeAll()
         sendTail?.cancel()
         sendTail = nil
         deadlineTask?.cancel()

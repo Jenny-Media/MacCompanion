@@ -71,6 +71,8 @@ public enum LocalDiagnosticsValidationError: Error, Equatable, Sendable {
 /// A content-free status payload suitable for the menu app and diagnostic CLI.
 /// It intentionally has no arbitrary string, address, path, title, or message field.
 public struct LocalAgentStatusSnapshot: Codable, Equatable, Sendable {
+    public static let maximumPairedDeviceCount: UInt16 = 8
+
     public let protocolVersion: LocalIPCProtocolVersion
     public let desiredEnabled: Bool
     public let consoleSession: ConsoleSessionState
@@ -80,6 +82,7 @@ public struct LocalAgentStatusSnapshot: Codable, Equatable, Sendable {
     public let securityPosture: LocalSecurityPosture
     public let routeKinds: [LocalRouteKind]
     public let pairedDeviceCount: UInt16
+    public let interactiveControlGranted: Bool
     public let activeRemoteSessionCount: UInt16
     public let providerCount: UInt16
     public let warningCodes: [SanitizedDiagnosticCode]
@@ -96,6 +99,7 @@ public struct LocalAgentStatusSnapshot: Codable, Equatable, Sendable {
         securityPosture: LocalSecurityPosture,
         routeKinds: Set<LocalRouteKind>,
         pairedDeviceCount: UInt16,
+        interactiveControlGranted: Bool = false,
         activeRemoteSessionCount: UInt16,
         providerCount: UInt16,
         warningCodes: Set<SanitizedDiagnosticCode>,
@@ -111,6 +115,7 @@ public struct LocalAgentStatusSnapshot: Codable, Equatable, Sendable {
         self.securityPosture = securityPosture
         self.routeKinds = routeKinds.sorted()
         self.pairedDeviceCount = pairedDeviceCount
+        self.interactiveControlGranted = interactiveControlGranted
         self.activeRemoteSessionCount = activeRemoteSessionCount
         self.providerCount = providerCount
         self.warningCodes = warningCodes.sorted()
@@ -128,7 +133,8 @@ public struct LocalAgentStatusSnapshot: Codable, Equatable, Sendable {
         guard diagnosticSequence <= MonotonicRevision<AuthorizationEpochTag>.maximumWireValue else {
             throw LocalDiagnosticsValidationError.invalidSequence
         }
-        guard providerCount <= 128, activeRemoteSessionCount <= 64,
+        guard pairedDeviceCount <= Self.maximumPairedDeviceCount,
+              providerCount <= 128, activeRemoteSessionCount <= 64,
               routeKinds.count <= LocalRouteKind.allCases.count,
               warningCodes.count <= SanitizedDiagnosticCode.allCases.count else {
             throw LocalDiagnosticsValidationError.boundsExceeded

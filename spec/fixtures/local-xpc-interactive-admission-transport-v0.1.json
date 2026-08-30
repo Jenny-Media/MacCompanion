@@ -16,8 +16,12 @@
   "publication": {
     "firstRevision": 1,
     "revisionStep": 1,
-    "selectedDisplayID": "optional opaque UUID scoped to the visible menu-process generation",
+    "selectedDisplayID": "required JSON key with null or opaque UUID scoped to the visible menu-process generation",
     "transportLossMeansUnavailable": true
+  },
+  "nullDisplayCodecVectors": {
+    "publication": "{\"commandID\":\"018F6800-0000-7000-8000-000000000001\",\"menuAppGeneration\":\"018F6800-0000-7000-8000-000000000002\",\"protocolVersion\":{\"major\":0,\"minor\":1},\"revision\":2,\"selectedDisplayID\":null}",
+    "receipt": "{\"correlationID\":\"018F6800-0000-7000-8000-000000000001\",\"menuAppGeneration\":\"018F6800-0000-7000-8000-000000000002\",\"protocolVersion\":{\"major\":0,\"minor\":1},\"revision\":2,\"selectedDisplayID\":null}"
   },
   "rules": [
     "same-team exact-role authentication and accepted menu readiness are required before publication",
@@ -25,6 +29,8 @@
     "a replay is accepted only when the complete command exactly matches the retained command",
     "the menu-process UUID remains constant for one transport generation and must change for a replacement process",
     "selectedDisplayID is nil when no display is selected and is never a CGDirectDisplayID or other physical identifier",
+    "selectedDisplayID is always encoded in publication and receipt; nil is explicit null and a missing key is rejected",
+    "valid null publication during desktop preparation prevents lease installation without retiring signed XPC or Observe",
     "request and success payloads are nonempty closed canonical JSON no larger than 4096 bytes",
     "transport replacement or loss immediately withdraws the matching visible admission without accepting stale invalidation",
     "timeout, cancellation after send, malformed traffic, unknown fields, correlation mismatch, and concurrent publication terminate the generation",

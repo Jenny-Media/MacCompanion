@@ -274,6 +274,30 @@ package actor MacLocalXPCAuthenticatedMenuPresentationEndpointV1:
         }
     }
 
+    package func interactiveDisplayCatalog(
+        _ command: LocalInteractiveDisplayCatalogCommandV1
+    ) async throws -> LocalInteractiveDisplayCatalogReceiptV1 {
+        try await submitInteractive { sender in
+            try await sender.interactiveDisplayCatalog(
+                generation: generation,
+                endpointToken: endpointToken,
+                command: command
+            )
+        }
+    }
+
+    package func selectInteractiveDisplay(
+        _ command: LocalInteractiveDisplaySelectCommandV1
+    ) async throws -> LocalInteractiveDisplaySelectedReceiptV1 {
+        try await submitInteractive { sender in
+            try await sender.selectInteractiveDisplay(
+                generation: generation,
+                endpointToken: endpointToken,
+                command: command
+            )
+        }
+    }
+
     package func applyInteractiveInput(
         _ envelope: InteractiveInputEnvelope
     ) async throws {

@@ -44,6 +44,134 @@ private actor InteractiveMediaPublisherRuntimeProbeV0:
   func entries() -> [Entry] { entriesStorage }
 }
 
+private actor RacingRenewalRuntimeProbe: InteractiveMediaRuntimePublishingV0 {
+  private var actions: [InteractiveRuntimeMediaActionV0] = []
+  private var blocked: CheckedContinuation<Void, Never>?
+  let rejectRetry: Bool
+  let firstError: InteractiveLeaseError
+  init(rejectRetry: Bool, firstError: InteractiveLeaseError = .staleLease) {
+    self.rejectRetry = rejectRetry; self.firstError = firstError
+  }
+  func publishMedia(_ action: InteractiveRuntimeMediaActionV0, nowMonotonicNanoseconds: UInt64) async throws {
+    actions.append(action)
+    if actions.count == 1 {
+      await withCheckedContinuation { blocked = $0 }
+      throw firstError
+    }
+    if rejectRetry { throw InteractiveLeaseError.staleLease }
+  }
+  func isBlocked() -> Bool { blocked != nil }
+  func resume() { blocked?.resume(); blocked = nil }
+  func entries() -> [InteractiveRuntimeMediaActionV0] { actions }
+}
+
+@Test(arguments: [false, true], [false, true])
+func mediaPublisherRetriesOnlyAnAdoptedRenewalOnce(adoptRenewal: Bool, rejectRetry: Bool) async throws {
+  let runtime = RacingRenewalRuntimeProbe(rejectRetry: rejectRetry)
+  let publisher = VideoToolboxInteractiveMediaPublisherV0(binding: try mediaPublisherBinding(), runtime: runtime, clock: { 1_000 })
+  let attempt = Task { await publisher.publishDiscontinuity(presentationTimeNanoseconds: 100) }
+  for _ in 0..<1_000 {
+    if await runtime.isBlocked() { break }
+    try await Task.sleep(for: .milliseconds(1))
+  }
+  try #require(await runtime.isBlocked())
+  let replacement = try InteractiveMediaPublicationBindingV0(fence: mediaPublisherFence(leaseID: UUID()), descriptor: mediaPublisherDescriptor())
+  if adoptRenewal { #expect(await publisher.adoptLeaseRenewal(to: replacement)) }
+  await runtime.resume()
+  #expect(await attempt.value == (adoptRenewal && !rejectRetry))
+  let entries = await runtime.entries()
+  #expect(entries.count == (adoptRenewal ? 2 : 1))
+  if adoptRenewal {
+    #expect(entries[1].fence == replacement.fence)
+    #expect(entries[0].header == entries[1].header)
+    #expect(entries[0].payload == entries[1].payload)
+  }
+}
+
+@Test func mediaPublisherDoesNotRetryOtherRejectionsAfterRenewal() async throws {
+  let runtime = RacingRenewalRuntimeProbe(rejectRetry: false, firstError: .expired)
+  let publisher = VideoToolboxInteractiveMediaPublisherV0(binding: try mediaPublisherBinding(), runtime: runtime, clock: { 1_000 })
+  let attempt = Task { await publisher.publishDiscontinuity(presentationTimeNanoseconds: 100) }
+  for _ in 0..<1_000 {
+    if await runtime.isBlocked() { break }
+    try await Task.sleep(for: .milliseconds(1))
+  }
+  try #require(await runtime.isBlocked())
+  let replacement = try InteractiveMediaPublicationBindingV0(fence: mediaPublisherFence(leaseID: UUID()), descriptor: mediaPublisherDescriptor())
+  #expect(await publisher.adoptLeaseRenewal(to: replacement))
+  await runtime.resume()
+  #expect(await attempt.value == false)
+  #expect(await runtime.entries().count == 1)
+}
+
+/// Exercises the real serialized runtime and publisher together. The simulated
+/// encoder callback starts during activation but is never awaited by it.
+private actor PublisherTransitionEffectsV0:
+  InteractiveRuntimeIndicatorControllingV0,
+  InteractiveRuntimeCaptureControllingV0,
+  InteractiveRuntimeInputControllingV0,
+  InteractiveRuntimeFrameControllingV0
+{
+  var runtime: InteractiveMenuRuntimeOwnerV0?
+  var firstFrame: Task<Bool, Never>?
+  var replacementPublisher: VideoToolboxInteractiveMediaPublisherV0?
+
+  func bind(_ runtime: InteractiveMenuRuntimeOwnerV0) { self.runtime = runtime }
+  func showInteractiveIndicator(
+    deviceDisplayName: DeviceDisplayName, interactiveSessionID: UUID
+  ) async throws -> InteractiveRuntimeIndicatorSnapshotV0 {
+    try .init(menuAppGeneration: UUID(), menuAppRevision: 1)
+  }
+  func clearInteractiveIndicator() async throws {}
+  func releaseAllInteractiveInput() async throws {}
+  func blankLastInteractiveFrame() async throws {}
+  func stopInteractiveCapture() async throws {}
+  func startInteractiveCapture(
+    _ command: InteractiveRuntimeInstallCommandV0
+  ) async throws -> Set<SurfaceInteractionClass> { [.view] }
+  func adoptInteractiveLeaseRenewal(
+    _ renewal: InteractiveRuntimeLeaseRenewalV0
+  ) async throws {}
+  func prepareInteractiveCaptureTransition(
+    _ command: InteractiveRuntimeSurfaceTransitionCommandV0
+  ) async throws -> Set<SurfaceInteractionClass> { [.view] }
+  func activatePreparedInteractiveCaptureTransition(
+    _ command: InteractiveRuntimeSurfaceTransitionCommandV0,
+    mediaSequenceBeforeTransition: UInt64
+  ) async throws {
+    let runtime = try #require(runtime)
+    let lease = command.replacement
+    let publisher = VideoToolboxInteractiveMediaPublisherV0(
+      binding: try .init(
+        fence: mediaPublisherFence(
+          leaseID: lease.leaseID, surfaceID: lease.surfaceID,
+          surfaceRevision: lease.surfaceRevision.rawValue,
+          coordinateRevision: lease.coordinateRevision.rawValue
+        ),
+        descriptor: command.descriptor
+      ),
+      runtime: runtime,
+      resumingAfterMediaSequence: mediaSequenceBeforeTransition,
+      clock: { 3_000_000 }
+    )
+    replacementPublisher = publisher
+    let sample = try mediaPublisherSample(
+      cleanKeyframe: true, presentationTimeNanoseconds: 200
+    )
+    firstFrame = Task { await publisher.publish(sample) }
+    await Task.yield()
+  }
+}
+
+private struct PublisherTransitionOutputsV0:
+  InteractiveRuntimeInputPostingV0, InteractiveRuntimeMediaEnqueuingV0
+{
+  func postInteractiveInput(_ envelope: InteractiveInputEnvelope) async throws {}
+  func enqueueInteractiveMedia(header: MediaRecordHeader, payload: Data) -> Bool {
+    true
+  }
+}
+
 private let mediaPublisherSessionID = UUID(
   uuidString: "018f7000-0000-7000-8000-000000000001"
 )!
@@ -77,14 +205,15 @@ private func mediaPublisherDescriptor(
 }
 
 private func mediaPublisherFence(
+  leaseID: UUID = UUID(
+    uuidString: "018f7000-0000-7000-8000-000000000003"
+  )!,
   surfaceID: UUID = mediaPublisherSurfaceID,
   surfaceRevision: UInt64 = 5,
   coordinateRevision: UInt64 = 8
 ) -> InteractiveCommandFence {
   InteractiveCommandFence(
-    leaseID: UUID(
-      uuidString: "018f7000-0000-7000-8000-000000000003"
-    )!,
+    leaseID: leaseID,
     hostID: UUID(
       uuidString: "018f7000-0000-7000-8000-000000000004"
     )!,
@@ -100,6 +229,43 @@ private func mediaPublisherFence(
     surfaceRevision: .init(rawValue: surfaceRevision),
     coordinateRevision: .init(rawValue: coordinateRevision)
   )
+}
+
+@Test func mediaPublisherLeaseRenewalAdvancesFenceWithoutDiscontinuity()
+  async throws
+{
+  let runtime = InteractiveMediaPublisherRuntimeProbeV0()
+  let publisher = try makeMediaPublisher(runtime: runtime)
+  #expect(
+    await publisher.publish(
+      try mediaPublisherSample(
+        cleanKeyframe: true,
+        presentationTimeNanoseconds: 100
+      )))
+
+  let renewedLeaseID = UUID(
+    uuidString: "018f7000-0000-7000-8000-000000000009"
+  )!
+  let renewed = try InteractiveMediaPublicationBindingV0(
+    fence: mediaPublisherFence(leaseID: renewedLeaseID),
+    descriptor: mediaPublisherDescriptor()
+  )
+  #expect(await publisher.adoptLeaseRenewal(to: renewed))
+  #expect(
+    await publisher.publish(
+      try mediaPublisherSample(
+        cleanKeyframe: false,
+        presentationTimeNanoseconds: 200
+      )))
+
+  let entries = await runtime.entries()
+  #expect(entries.map(\.action.header.mediaSequence) == [1, 2, 3])
+  #expect(entries.map(\.action.header.type) == [
+    .decoderConfiguration, .videoAccessUnit, .videoAccessUnit,
+  ])
+  #expect(entries[0].action.fence.leaseID != renewedLeaseID)
+  #expect(entries[1].action.fence.leaseID != renewedLeaseID)
+  #expect(entries[2].action.fence.leaseID == renewedLeaseID)
 }
 
 private func mediaPublisherBinding() throws
@@ -204,6 +370,133 @@ private func makeMediaPublisher(
         && $0.action.header.encodedHeight == 4
         && $0.nowMonotonicNanoseconds == 2_000
     })
+}
+
+@Test(arguments: [UInt64(0), 2, 100])
+func mediaPublisherReplacementDefersDiscontinuityUntilFirstCleanSample(
+  boundary: UInt64
+) async throws {
+  let runtime = InteractiveMediaPublisherRuntimeProbeV0()
+  let publisher = VideoToolboxInteractiveMediaPublisherV0(
+    binding: try mediaPublisherBinding(),
+    runtime: runtime,
+    resumingAfterMediaSequence: boundary,
+    clock: { 2_000 }
+  )
+  #expect(await runtime.entries().isEmpty)
+  #expect(await publisher.publish(try mediaPublisherSample(
+    cleanKeyframe: true, presentationTimeNanoseconds: 100
+  )))
+  #expect(await publisher.publish(try mediaPublisherSample(
+    cleanKeyframe: false, presentationTimeNanoseconds: 200
+  )))
+  let entries = await runtime.entries()
+  #expect(entries.map(\.action.header.mediaSequence)
+    == [boundary + 1, boundary + 2, boundary + 3, boundary + 4])
+  #expect(entries.map(\.action.header.type) == [
+    .discontinuity, .decoderConfiguration, .videoAccessUnit, .videoAccessUnit,
+  ])
+  #expect(entries.allSatisfy { $0.action.fence == mediaPublisherFence() })
+}
+
+@Test(.timeLimit(.minutes(1)))
+func mediaPublisherReplacementCompletesSerializedRuntimeAndRejectsLateOldFrame()
+  async throws
+{
+  let effects = PublisherTransitionEffectsV0()
+  let outputs = PublisherTransitionOutputsV0()
+  let runtime = InteractiveMenuRuntimeOwnerV0(
+    indicator: effects, capture: effects, input: effects, frame: effects,
+    inputPoster: outputs, mediaQueue: outputs
+  )
+  await effects.bind(runtime)
+  func lease(
+    fence: InteractiveCommandFence, renewalCounter: UInt64
+  ) throws -> InteractiveExecutionLease {
+    try .init(
+      leaseID: fence.leaseID, hostID: fence.hostID, deviceID: fence.deviceID,
+      interactiveSessionID: fence.interactiveSessionID,
+      authorizationEpoch: fence.authorizationEpoch,
+      selectedDisplayID: fence.selectedDisplayID, surfaceID: fence.surfaceID,
+      surfaceRevision: fence.surfaceRevision,
+      coordinateRevision: fence.coordinateRevision,
+      allowedInteractionClasses: [.view], renewalCounter: renewalCounter,
+      issuedAtMonotonicNanoseconds: 1_000_000 + renewalCounter * 1_000_000,
+      expiresAtMonotonicNanoseconds: 8_000_000 + renewalCounter * 1_000_000
+    )
+  }
+  func acknowledge(
+    commandID: UUID, fence: InteractiveCommandFence, sequence: UInt64
+  ) async throws {
+    _ = try await runtime.acknowledgeSurface(
+      .init(
+        commandID: UUID(), transitionCommandID: commandID,
+        leaseID: fence.leaseID, interactiveSessionID: fence.interactiveSessionID,
+        surfaceID: fence.surfaceID, surfaceRevision: fence.surfaceRevision,
+        coordinateRevision: fence.coordinateRevision, readyMediaSequence: sequence
+      ),
+      nowMonotonicNanoseconds: 3_000_000
+    )
+  }
+  let initialFence = mediaPublisherFence()
+  let install = try InteractiveRuntimeInstallCommandV0(
+    commandID: UUID(), lease: lease(fence: initialFence, renewalCounter: 0),
+    deviceDisplayName: DeviceDisplayName("Test phone"),
+    surfaceDescriptor: mediaPublisherDescriptor(),
+    sessionDeadlineMonotonicNanoseconds: 10_000_000
+  )
+  _ = try await runtime.install(install, nowMonotonicNanoseconds: 3_000_000)
+  let oldPublisher = VideoToolboxInteractiveMediaPublisherV0(
+    binding: try mediaPublisherBinding(), runtime: runtime, clock: { 3_000_000 }
+  )
+  #expect(await oldPublisher.publish(try mediaPublisherSample(
+    cleanKeyframe: true, presentationTimeNanoseconds: 100
+  )))
+  try await acknowledge(commandID: install.commandID, fence: initialFence, sequence: 2)
+  let replacementFence = mediaPublisherFence(
+    leaseID: UUID(), surfaceID: UUID(), surfaceRevision: 6, coordinateRevision: 9
+  )
+  let transition = try InteractiveRuntimeSurfaceTransitionCommandV0(
+    commandID: UUID(), previousLeaseID: initialFence.leaseID,
+    replacement: lease(fence: replacementFence, renewalCounter: 1),
+    descriptor: mediaPublisherDescriptor(
+      surfaceID: replacementFence.surfaceID, surfaceRevision: 6, coordinateRevision: 9
+    )
+  )
+  let receipt = try await runtime.prepareSurfaceTransition(
+    transition, nowMonotonicNanoseconds: 3_000_000
+  )
+  #expect(receipt.mediaSequenceBeforeTransition == 2)
+  let firstFrame = try #require(await effects.firstFrame)
+  #expect(await firstFrame.value)
+  // A completion from the stopped encoder cannot corrupt the new publisher or
+  // force teardown of a valid replacement session.
+  #expect(!(await oldPublisher.publish(try mediaPublisherSample(
+    cleanKeyframe: false, presentationTimeNanoseconds: 250
+  ))))
+  try await acknowledge(
+    commandID: transition.commandID, fence: replacementFence, sequence: 5
+  )
+  #expect(await runtime.surfaceAdmissionState() == .ready)
+  let replacementPublisher = try #require(await effects.replacementPublisher)
+  #expect(await replacementPublisher.publish(try mediaPublisherSample(
+    cleanKeyframe: false, presentationTimeNanoseconds: 300
+  )))
+}
+
+@Test func mediaPublisherReplacementRejectsDeltaBeforeAnyPublication()
+  async throws
+{
+  let runtime = InteractiveMediaPublisherRuntimeProbeV0()
+  let publisher = VideoToolboxInteractiveMediaPublisherV0(
+    binding: try mediaPublisherBinding(), runtime: runtime,
+    resumingAfterMediaSequence: 2, clock: { 2_000 }
+  )
+  #expect(!(await publisher.publish(try mediaPublisherSample(
+    cleanKeyframe: false, presentationTimeNanoseconds: 100
+  ))))
+  #expect(await runtime.entries().isEmpty)
+  #expect(await publisher.phase() == .failed)
 }
 
 @Test func mediaPublisherOmitsUnchangedConfigurationForDeltaFrames()

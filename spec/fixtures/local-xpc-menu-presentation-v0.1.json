@@ -6,6 +6,11 @@
   "receiverOperationTimeoutMilliseconds": 2000,
   "recoverablePublishRejectionProof": "rejectedWithoutRetainedState",
   "senderReplyTimeoutMilliseconds": 3000,
+  "endpointFailureRecovery": {
+    "scope": "exactAuthenticatedGeneration",
+    "freshGenerationWaitsForRetirementAndProductLoss": true,
+    "explicitRouterShutdownIsPermanent": true
+  },
   "requests": [
     {
       "kind": "presentation.pairing-review.publish",

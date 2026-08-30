@@ -286,6 +286,20 @@ public final class ClientPrimaryWorkspaceModelV0: ObservableObject {
         try await primaryState.beginInteractiveControl(effects: effects)
     }
 
+    public func loadInteractiveDisplays() async throws {
+        _ = try await primaryState.loadInteractiveDisplays()
+    }
+
+    public func selectInteractiveDisplay(
+        _ displayID: UUID,
+        expectedAdmissionRevision: Int64
+    ) async throws {
+        _ = try await primaryState.selectInteractiveDisplay(
+            displayID,
+            expectedAdmissionRevision: expectedAdmissionRevision
+        )
+    }
+
     @discardableResult
     public func endInteractiveControl()
         async throws -> ClientInteractivePrimarySessionEventV0

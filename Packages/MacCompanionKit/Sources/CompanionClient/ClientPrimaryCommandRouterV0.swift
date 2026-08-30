@@ -205,9 +205,15 @@ public actor ClientPrimaryCommandRouterV0 {
             }
             prepared.publish()
         } catch let error as ClientPrimaryCommandRouterErrorV0 {
+            #if DEBUG
+            NSLog("[MacCompanion router] reply rejected kind=%@ type=%@", metadata.kind.rawValue, String(reflecting: type(of: error)))
+            #endif
             await invalidate()
             throw error
         } catch {
+            #if DEBUG
+            NSLog("[MacCompanion router] receiver rejected kind=%@ type=%@", metadata.kind.rawValue, String(reflecting: type(of: error)))
+            #endif
             await invalidate()
             throw ClientPrimaryCommandRouterErrorV0.routingRejected
         }
@@ -304,6 +310,8 @@ public actor ClientPrimaryCommandRouterV0 {
             .operationStatusRequest, .operationCancel,
         ],
         .control: [
+            .interactiveDisplayCatalogRequest,
+            .interactiveDisplaySelect,
             .interactiveSessionRequest, .interactiveSessionApprove,
             .interactiveSessionEnd,
             .interactiveInitialSurfaceRequest,

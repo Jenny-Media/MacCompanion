@@ -2,6 +2,7 @@ import CompanionClient
 import CompanionClientNetworkPlatform
 import CompanionDomain
 import CompanionInteractiveClient
+import CompanionInteractiveWire
 import CompanionObservation
 import Foundation
 
@@ -98,7 +99,7 @@ public struct ClientControlWorkspaceProjectionV0: Equatable, Sendable {
                 detail = "Session approved; connecting secure screen and input channels."
             case .roleChannelsReady:
                 mode = .channelsReady
-                detail = "Secure channels are ready; open Remote Control to start the live surface."
+                detail = "Secure channels are ready; opening Remote Control to verify the live surface."
             case .initialSurface:
                 mode = .preparingInitialSurface
                 detail = "Waiting for the first verified frame before enabling input."
@@ -133,7 +134,7 @@ public struct ClientControlWorkspaceProjectionV0: Equatable, Sendable {
             case .roleChannelsConnecting:
                 "Secure screen and input channels could not be connected."
             case .roleChannelsReady, .initialSurface:
-                "The live surface could not be verified; input remains disabled."
+                "The live surface is unavailable; input remains disabled."
             }
             diagnosticCode = "interactive.preparationFailed"
         case let .remoteRejected(error):
@@ -188,6 +189,8 @@ public struct ClientPrimaryWorkspaceProjectionV0: Sendable {
     public let approvalPrompt: ClientOperationApprovalPromptV1?
     public let actIssue: ClientActIssueProjectionV0?
     public let control: ClientControlWorkspaceProjectionV0
+    public let interactiveDisplayCatalog:
+        InteractiveDisplayCatalogResponseBodyV1?
 
     public init(
         macName: String,
@@ -238,5 +241,7 @@ public struct ClientPrimaryWorkspaceProjectionV0: Sendable {
             deviceState: snapshot.authenticatedSession?.deviceState,
             state: snapshot.controlState
         )
+        interactiveDisplayCatalog = connected
+            ? snapshot.interactiveDisplayCatalog : nil
     }
 }

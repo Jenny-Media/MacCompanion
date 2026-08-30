@@ -32,6 +32,12 @@ public protocol InteractiveRuntimeCaptureControllingV0: Sendable {
     func startInteractiveCapture(
         _ command: InteractiveRuntimeInstallCommandV0
     ) async throws -> Set<SurfaceInteractionClass>
+    /// Advances only the execution-lease fence used by already-running media
+    /// publication. It must not restart capture, change source, or emit a
+    /// discontinuity.
+    func adoptInteractiveLeaseRenewal(
+        _ renewal: InteractiveRuntimeLeaseRenewalV0
+    ) async throws
     /// Suppresses old-source output and prepares the exact replacement source.
     /// It must not resume capture output or publish media before returning.
     func prepareInteractiveCaptureTransition(
@@ -42,8 +48,11 @@ public protocol InteractiveRuntimeCaptureControllingV0: Sendable {
     /// surface fence, so the first replacement record can never race the old
     /// admission state. Implementations must reject a missing or mismatched
     /// preparation and must not retain more than one prepared source.
+    /// Seed the replacement publisher from this authoritative sequence. Do not
+    /// await publication here: media is serialized behind this transition.
     func activatePreparedInteractiveCaptureTransition(
-        _ command: InteractiveRuntimeSurfaceTransitionCommandV0
+        _ command: InteractiveRuntimeSurfaceTransitionCommandV0,
+        mediaSequenceBeforeTransition: UInt64
     ) async throws
     func stopInteractiveCapture() async throws
 }
@@ -60,7 +69,9 @@ public protocol InteractiveRuntimeFrameControllingV0: Sendable {
 /// post. Keeping it synchronous lets the runtime owner validate and invoke in
 /// one actor turn, with no revocation interleaving between those two steps.
 public protocol InteractiveRuntimeInputPostingV0: Sendable {
-    func postInteractiveInput(_ envelope: InteractiveInputEnvelope) throws
+    func postInteractiveInput(
+        _ envelope: InteractiveInputEnvelope
+    ) async throws
 }
 
 /// A session-bound bounded queue. `true` means the complete record is owned by
@@ -232,6 +243,7 @@ private struct ActiveInteractiveRuntimeV0: Sendable {
     var lastMediaSequence: UInt64
     var lastMediaCommandID: UUID?
     var lastMediaDigest: Data?
+    var retiredResetCommand: InteractiveRuntimeInstallCommandV0? = nil
 }
 
 /// The bundle-independent, single-owner execution seam for the visible menu
@@ -409,7 +421,7 @@ public actor InteractiveMenuRuntimeOwnerV0 {
         let predecessor = sequencingTail
         let operation = Task { [self] in
             await predecessor.value
-            try performInput(
+            try await performInput(
                 action,
                 nowMonotonicNanoseconds: nowMonotonicNanoseconds
             )
@@ -428,7 +440,7 @@ public actor InteractiveMenuRuntimeOwnerV0 {
         let predecessor = sequencingTail
         let operation = Task { [self] in
             await predecessor.value
-            try performInputEnvelope(
+            try await performInputEnvelope(
                 envelope,
                 nowMonotonicNanoseconds: nowMonotonicNanoseconds
             )
@@ -653,6 +665,11 @@ public actor InteractiveMenuRuntimeOwnerV0 {
             indicatorVisible: receipt.indicatorVisible
         )
         try replacementReceipt.validate(against: replacement)
+        // Capture callbacks construct their local media action from a retained
+        // lease fence. Advance that fence before publishing the renewal reply;
+        // otherwise the first post-renewal frame is rejected as stale and can
+        // terminate the encoder despite a valid same-surface renewal.
+        try await capture.adoptInteractiveLeaseRenewal(renewal)
         storage = .active(.init(
             command: replacement,
             receipt: replacementReceipt,
@@ -672,7 +689,8 @@ public actor InteractiveMenuRuntimeOwnerV0 {
             lastInputAction: active.lastInputAction,
             lastMediaSequence: active.lastMediaSequence,
             lastMediaCommandID: active.lastMediaCommandID,
-            lastMediaDigest: active.lastMediaDigest
+            lastMediaDigest: active.lastMediaDigest,
+            retiredResetCommand: active.retiredResetCommand
         ))
     }
 
@@ -779,6 +797,7 @@ public actor InteractiveMenuRuntimeOwnerV0 {
                     captureSourcePrepared: true
                 )
             try transitionReceipt.validate(against: transition)
+            active.retiredResetCommand = active.command
             active.command = replacementCommand
             active.receipt = replacementReceipt
             active.surfaceAdmission = .requiresDiscontinuity(
@@ -791,7 +810,11 @@ public actor InteractiveMenuRuntimeOwnerV0 {
             active.inputReleasedForSurfaceTransition = true
             storage = .active(active)
             try await capture
-                .activatePreparedInteractiveCaptureTransition(transition)
+                .activatePreparedInteractiveCaptureTransition(
+                    transition,
+                    mediaSequenceBeforeTransition:
+                        transitionReceipt.mediaSequenceBeforeTransition
+                )
             return transitionReceipt
         } catch {
             var context = InteractiveCleanupContextV0(
@@ -939,7 +962,7 @@ public actor InteractiveMenuRuntimeOwnerV0 {
     private func performInput(
         _ action: InteractiveRuntimeInputActionV0,
         nowMonotonicNanoseconds: UInt64
-    ) throws {
+    ) async throws {
         guard case var .active(active) = storage else {
             if case .safetyRecoveryRequired = storage {
                 throw InteractiveMenuRuntimeErrorV0.safetyRecoveryRequired
@@ -947,7 +970,9 @@ public actor InteractiveMenuRuntimeOwnerV0 {
             throw InteractiveMenuRuntimeErrorV0.noActiveSession
         }
         let command = active.command
-        guard active.surfaceAdmission == .ready else {
+        let drainingFocusPause = active.surfaceAdmission == .focusPaused
+            && active.inputReleasedForSurfaceTransition
+        guard active.surfaceAdmission == .ready || drainingFocusPause else {
             throw InteractiveMenuRuntimeErrorV0.surfaceNotAcknowledged
         }
         try command.lease.validate(
@@ -971,12 +996,25 @@ public actor InteractiveMenuRuntimeOwnerV0 {
            !command.lease.admits(required) {
             throw InteractiveMenuRuntimeErrorV0.interactionClassDenied
         }
+        if drainingFocusPause {
+            guard action.envelope.focusToken?.rawValue == command.surfaceDescriptor.focus?.token,
+                  action.envelope.focusRevision == command.surfaceDescriptor.focus?.revision else {
+                throw InteractiveMenuRuntimeErrorV0.bindingMismatch
+            }
+            // The phone cannot observe a host focus pause synchronously across
+            // sockets. Consume reliability state only; no old-target input is
+            // posted or buffered for replay, and the surface remains paused.
+            active.lastInputAction = action
+            storage = .active(active)
+            return
+        }
         do {
-            try inputPoster.postInteractiveInput(action.envelope)
+            try await inputPoster.postInteractiveInput(action.envelope)
         } catch {
             throw InteractiveMenuRuntimeErrorV0.platformActionFailed
         }
         active.lastInputAction = action
+        active.retiredResetCommand = nil
         storage = .active(active)
     }
 
@@ -1016,14 +1054,49 @@ public actor InteractiveMenuRuntimeOwnerV0 {
     private func performInputEnvelope(
         _ envelope: InteractiveInputEnvelope,
         nowMonotonicNanoseconds: UInt64
-    ) throws {
-        guard case let .active(active) = storage else {
+    ) async throws {
+        guard case var .active(active) = storage else {
             if case .safetyRecoveryRequired = storage {
                 throw InteractiveMenuRuntimeErrorV0.safetyRecoveryRequired
             }
             throw InteractiveMenuRuntimeErrorV0.noActiveSession
         }
         let lease = active.command.lease
+        if envelope.input == .reset,
+           let retired = active.retiredResetCommand,
+           envelope.interactiveSessionID.rawValue == retired.lease.interactiveSessionID,
+           envelope.authorizationEpoch == retired.lease.authorizationEpoch,
+           envelope.surfaceID.rawValue == retired.lease.surfaceID,
+           envelope.surfaceRevision.rawValue == retired.lease.surfaceRevision.rawValue,
+           envelope.coordinateSpaceRevision.rawValue == retired.lease.coordinateRevision.rawValue,
+           envelope.focusToken?.rawValue == retired.surfaceDescriptor.focus?.token,
+           envelope.focusRevision == retired.surfaceDescriptor.focus?.revision {
+            // Preparation already released all old input. Drain reliability
+            // bookkeeping only; never post or release replacement input here.
+            guard nowMonotonicNanoseconds >= retired.lease.issuedAtMonotonicNanoseconds,
+                  nowMonotonicNanoseconds < lease.expiresAtMonotonicNanoseconds,
+                  nowMonotonicNanoseconds < active.command.sessionDeadlineMonotonicNanoseconds else {
+                throw InteractiveMenuRuntimeErrorV0.invalidTime
+            }
+            let expected = (active.lastInputAction?.envelope.sequence ?? 0) + 1
+            guard active.lastInputAction?.commandID != envelope.messageID.rawValue else {
+                throw InteractiveMenuRuntimeErrorV0.bindingMismatch
+            }
+            guard envelope.sequence == expected else {
+                throw InteractiveMenuRuntimeErrorV0.inputSequenceMismatch(expected: expected, actual: envelope.sequence)
+            }
+            let old = retired.lease
+            active.lastInputAction = try InteractiveRuntimeInputActionV0(
+                commandID: envelope.messageID.rawValue,
+                fence: .init(leaseID: old.leaseID, hostID: old.hostID, deviceID: old.deviceID,
+                    interactiveSessionID: old.interactiveSessionID, authorizationEpoch: old.authorizationEpoch,
+                    selectedDisplayID: old.selectedDisplayID, surfaceID: old.surfaceID,
+                    surfaceRevision: old.surfaceRevision, coordinateRevision: old.coordinateRevision),
+                envelope: envelope)
+            active.retiredResetCommand = nil
+            storage = .active(active)
+            return
+        }
         let action = try InteractiveRuntimeInputActionV0(
             commandID: envelope.messageID.rawValue,
             fence: .init(
@@ -1039,7 +1112,7 @@ public actor InteractiveMenuRuntimeOwnerV0 {
             ),
             envelope: envelope
         )
-        try performInput(
+        try await performInput(
             action,
             nowMonotonicNanoseconds: nowMonotonicNanoseconds
         )

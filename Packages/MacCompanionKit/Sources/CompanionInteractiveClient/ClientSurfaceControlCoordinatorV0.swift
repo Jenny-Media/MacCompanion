@@ -82,6 +82,7 @@ public struct ClientSurfaceControlCoordinatorV0: Sendable {
     private struct PendingSelection: Sendable {
         let requestMessageID: WireUUID
         let requestedKind: InteractiveSurfaceKind
+        let requestedDisplayID: WireUUID?
         let requestedFocus: SurfaceFocus?
     }
 
@@ -243,11 +244,14 @@ public struct ClientSurfaceControlCoordinatorV0: Sendable {
         clientMonotonicNowMilliseconds: Int64
     ) throws -> ClientSurfaceFocusEventV0 {
         do {
-            try requirePhase(.active)
+            guard phase != .closed else {
+                throw ClientSurfaceControlErrorV0.invalidPhase(phase)
+            }
             let envelope = try WireCodec.decode(
                 WireEnvelope<InteractiveSurfaceFocusChangedBodyV0>.self,
                 from: eventJSON
             )
+            try admitReplay(envelope.messageID)
             let body = envelope.body
             guard body.eventSequence == expectedFocusEventSequence else {
                 throw ClientSurfaceControlErrorV0
@@ -256,22 +260,17 @@ public struct ClientSurfaceControlCoordinatorV0: Sendable {
                         actual: body.eventSequence
                     )
             }
-            guard body.interactiveSessionID.rawValue
-                    == interactiveSessionID,
+            guard body.interactiveSessionID.rawValue == interactiveSessionID,
                   body.authorizationEpoch == authorizationEpoch,
-                  body.currentSurfaceID.rawValue
-                    == currentDescriptor.surfaceID,
-                  body.currentSurfaceRevision
-                    == currentDescriptor.surfaceRevision,
-                  body.currentCoordinateSpaceRevision
-                    == currentDescriptor.coordinateSpaceRevision else {
+                  let eventSurface = eventSurfaceDescriptor(matching: body)
+            else {
                 throw ClientSurfaceControlErrorV0.focusEventFenceMismatch
             }
-            if currentDescriptor.kind == .focusedRegion {
+            if eventSurface.kind == .focusedRegion {
                 guard body.inputPaused,
-                      body.focus?.revision != currentDescriptor.focus?.revision
+                      body.focus?.revision != eventSurface.focus?.revision
                         || body.focus?.token.rawValue
-                            != currentDescriptor.focus?.token else {
+                            != eventSurface.focus?.token else {
                     throw ClientSurfaceControlErrorV0.focusEventFenceMismatch
                 }
             }
@@ -294,8 +293,14 @@ public struct ClientSurfaceControlCoordinatorV0: Sendable {
                 throw ClientSurfaceControlErrorV0.sequenceExhausted
             }
             expectedFocusEventSequence += 1
-            latestFocusEvent = event
-            if event.inputPaused { inputPausedByFocusEvent = true }
+            // Events and command replies share the ordered primary channel.
+            // During a replacement, admit and sequence a correctly fenced
+            // event but do not let it mutate the transition selected from the
+            // previous active event.
+            if phase == .active {
+                latestFocusEvent = event
+                if event.inputPaused { inputPausedByFocusEvent = true }
+            }
             return event
         } catch {
             failClosed()
@@ -359,6 +364,7 @@ public struct ClientSurfaceControlCoordinatorV0: Sendable {
     public mutating func beginSelection(
         targetKind: InteractiveSurfaceKind,
         targetToken: WireUUID?,
+        targetDisplayID: WireUUID? = nil,
         resetMessageID: WireUUID,
         requestMessageID: WireUUID,
         sentAtUnixMilliseconds: Int64,
@@ -398,6 +404,9 @@ public struct ClientSurfaceControlCoordinatorV0: Sendable {
                     throw ClientSurfaceControlErrorV0.targetUnavailable
                 }
             }
+            guard targetDisplayID == nil || targetKind == .desktop else {
+                throw ClientSurfaceControlErrorV0.invalidConfiguration
+            }
             let sequence = try consumeClientSequenceCandidate()
             let body = try InteractiveSurfaceSelectBodyV0(
                 interactiveSessionID: WireUUID(interactiveSessionID),
@@ -408,6 +417,7 @@ public struct ClientSurfaceControlCoordinatorV0: Sendable {
                     currentDescriptor.coordinateSpaceRevision,
                 targetKind: targetKind,
                 targetToken: targetToken,
+                targetDisplayID: targetDisplayID,
                 sequence: sequence
             )
             let envelope = try WireEnvelope(
@@ -431,6 +441,7 @@ public struct ClientSurfaceControlCoordinatorV0: Sendable {
             pendingSelection = PendingSelection(
                 requestMessageID: requestMessageID,
                 requestedKind: targetKind,
+                requestedDisplayID: targetDisplayID,
                 requestedFocus: requestedFocus
             )
             phase = .awaitingSelection
@@ -438,6 +449,18 @@ public struct ClientSurfaceControlCoordinatorV0: Sendable {
                 reset: reset,
                 requestJSON: requestJSON
             )
+        } catch let error as ClientSurfaceControlErrorV0 {
+            switch error {
+            case .targetInventoryRequired, .targetUnavailable,
+                 .focusEventExpired:
+                // A target can legitimately expire or be superseded before
+                // local selection begins. No input reset or request has been
+                // emitted yet, so this is a recoverable local refusal.
+                throw error
+            default:
+                failClosed()
+                throw error
+            }
         } catch {
             failClosed()
             throw error
@@ -481,8 +504,14 @@ public struct ClientSurfaceControlCoordinatorV0: Sendable {
                 currentDescriptor.surfaceRevision.advanced()
             let expectedCoordinateRevision = try
                 currentDescriptor.coordinateSpaceRevision.advanced()
-            guard descriptor.kind == pendingSelection.requestedKind,
-                  descriptor.focus == pendingSelection.requestedFocus,
+            let exactRequestedTarget =
+                descriptor.kind == pendingSelection.requestedKind
+                && descriptor.focus == pendingSelection.requestedFocus
+            let safeDesktopFocusFallback =
+                pendingSelection.requestedKind == .focusedRegion
+                && descriptor.kind == .desktop
+                && descriptor.focus == nil
+            guard (exactRequestedTarget || safeDesktopFocusFallback),
                   descriptor.surfaceRevision == expectedSurfaceRevision,
                   descriptor.coordinateSpaceRevision
                     == expectedCoordinateRevision,
@@ -517,6 +546,7 @@ public struct ClientSurfaceControlCoordinatorV0: Sendable {
     ) throws -> ClientMediaAdmissionV0 {
         do {
             guard phase == .active
+                    || phase == .awaitingSelection
                     || phase == .awaitingMedia
                     || phase == .awaitingAcknowledgement else {
                 throw ClientSurfaceControlErrorV0.invalidPhase(phase)
@@ -539,6 +569,20 @@ public struct ClientSurfaceControlCoordinatorV0: Sendable {
     ) throws -> Bool {
         do {
             try requirePhase(.awaitingMedia)
+            // The old decoder may complete after the selected response but
+            // before the new discontinuity resets its generation. It proves
+            // nothing about the replacement and must not cancel that handoff.
+            if pendingTransition != nil,
+               receipt.fence.interactiveSessionID == currentDescriptor.interactiveSessionID,
+               receipt.fence.authorizationEpoch == currentDescriptor.authorizationEpoch,
+               receipt.fence.surfaceID == currentDescriptor.surfaceID,
+               receipt.fence.surfaceRevision == currentDescriptor.surfaceRevision,
+               receipt.fence.coordinateSpaceRevision == currentDescriptor.coordinateSpaceRevision,
+               receipt.fence.encodedWidth == currentDescriptor.encodedWidth,
+               receipt.fence.encodedHeight == currentDescriptor.encodedHeight,
+               receipt.mediaSequence <= media.lastMediaSequence {
+                return false
+            }
             guard let pendingTransition,
                   receipt.fence.interactiveSessionID
                     == pendingTransition.descriptor.interactiveSessionID,
@@ -716,6 +760,22 @@ public struct ClientSurfaceControlCoordinatorV0: Sendable {
             try replay.admit(messageID)
         } catch TransportGuardError.duplicateMessage {
             throw ClientSurfaceControlErrorV0.duplicateMessage
+        }
+    }
+
+    private func eventSurfaceDescriptor(
+        matching body: InteractiveSurfaceFocusChangedBodyV0
+    ) -> AdaptiveSurfaceDescriptor? {
+        let candidates = [
+            currentDescriptor,
+            pendingTransition?.descriptor,
+            pendingAcknowledgement?.descriptor,
+        ].compactMap { $0 }
+        return candidates.first {
+            body.currentSurfaceID.rawValue == $0.surfaceID
+                && body.currentSurfaceRevision == $0.surfaceRevision
+                && body.currentCoordinateSpaceRevision
+                    == $0.coordinateSpaceRevision
         }
     }
 

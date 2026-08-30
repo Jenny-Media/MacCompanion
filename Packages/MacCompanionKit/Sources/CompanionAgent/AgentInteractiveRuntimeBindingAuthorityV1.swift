@@ -30,11 +30,13 @@ public enum AgentInteractiveRuntimeBindingAuthorityStateV1:
 /// Stable fail-closed runtime authority installed in the primary dispatcher
 /// before local XPC exists. One exact authenticated-and-ready menu generation
 /// later binds the sole concrete runtime. Binding, session operations,
-/// invalidation, and terminal teardown share one serialization chain.
+/// invalidation, and terminal teardown share one serialization chain. Exact
+/// pending-install fences are forwarded before joining that chain.
 public actor AgentInteractiveRuntimeBindingAuthorityV1:
     InteractiveSessionRuntimeOwningV0,
     HostInteractiveChannelAuthenticatingV0,
-    InteractiveSurfaceControlDispatchingV0
+    InteractiveSurfaceControlDispatchingV0,
+    InteractiveDisplaySelectionDispatchingV1
 {
     private struct Bound: Sendable {
         let generation: UInt64
@@ -43,6 +45,8 @@ public actor AgentInteractiveRuntimeBindingAuthorityV1:
             (any HostInteractiveChannelAuthenticatingV0)?
         let surfaceControl:
             (any InteractiveSurfaceControlDispatchingV0)?
+        let displayControl:
+            (any InteractiveDisplaySelectionDispatchingV1)?
     }
 
     private struct Active: Sendable {
@@ -53,6 +57,13 @@ public actor AgentInteractiveRuntimeBindingAuthorityV1:
 
     private var bound: Bound?
     private var active: Active?
+    private struct PendingInstall {
+        let token: UUID
+        let binding: Active
+        let runtime: any InteractiveSessionRuntimeOwningV0
+        var fenceTask: Task<Void, Never>?
+    }
+    private var pendingInstall: PendingInstall?
     private var highestGeneration: UInt64 = 0
     private var terminal = false
     private var sequencingTail = Task<Void, Never> {}
@@ -79,6 +90,7 @@ public actor AgentInteractiveRuntimeBindingAuthorityV1:
             runtime: runtime,
             channelAuthenticator: nil,
             surfaceControl: nil,
+            displayControl: nil,
             generation: generation
         )
     }
@@ -89,6 +101,8 @@ public actor AgentInteractiveRuntimeBindingAuthorityV1:
             (any HostInteractiveChannelAuthenticatingV0)?,
         surfaceControl:
             (any InteractiveSurfaceControlDispatchingV0)? = nil,
+        displayControl:
+            (any InteractiveDisplaySelectionDispatchingV1)? = nil,
         generation: UInt64
     ) async throws {
         let predecessor = sequencingTail
@@ -98,11 +112,47 @@ public actor AgentInteractiveRuntimeBindingAuthorityV1:
                 runtime: runtime,
                 channelAuthenticator: channelAuthenticator,
                 surfaceControl: surfaceControl,
+                displayControl: displayControl,
                 generation: generation
             )
         }
         sequencingTail = Task { _ = try? await operation.value }
         try await operation.value
+    }
+
+    public func displayCatalog(
+        context: InteractiveSessionCommandContextV0
+    ) async throws -> InteractiveDisplayCatalogResponseBodyV1 {
+        let predecessor = sequencingTail
+        let operation = Task { [self] in
+            await predecessor.value
+            guard !terminal, active == nil,
+                  let display = bound?.displayControl else {
+                throw AgentInteractiveRuntimeBindingAuthorityErrorV1
+                    .unavailable
+            }
+            return try await display.displayCatalog(context: context)
+        }
+        sequencingTail = Task { _ = try? await operation.value }
+        return try await operation.value
+    }
+
+    public func selectDisplay(
+        _ request: InteractiveDisplaySelectBodyV1,
+        context: InteractiveSessionCommandContextV0
+    ) async throws -> InteractiveDisplaySelectedBodyV1 {
+        let predecessor = sequencingTail
+        let operation = Task { [self] in
+            await predecessor.value
+            guard !terminal, active == nil,
+                  let display = bound?.displayControl else {
+                throw AgentInteractiveRuntimeBindingAuthorityErrorV1
+                    .unavailable
+            }
+            return try await display.selectDisplay(request, context: context)
+        }
+        sequencingTail = Task { _ = try? await operation.value }
+        return try await operation.value
     }
 
     public func beginInteractiveChannel(
@@ -327,9 +377,12 @@ public actor AgentInteractiveRuntimeBindingAuthorityV1:
 
     @discardableResult
     public func invalidate(generation: UInt64) async -> Bool {
+        let fence = pendingInstall?.binding.generation == generation
+            ? fencePendingInstall(reason: .menuAppUnavailable) : nil
         let predecessor = sequencingTail
         let operation = Task { [self] in
             await predecessor.value
+            await fence?.value
             return await performInvalidate(generation: generation)
         }
         sequencingTail = Task { _ = await operation.value }
@@ -337,9 +390,11 @@ public actor AgentInteractiveRuntimeBindingAuthorityV1:
     }
 
     public func finish() async {
+        let fence = fencePendingInstall(reason: .menuAppUnavailable)
         let predecessor = sequencingTail
         let operation = Task { [self] in
             await predecessor.value
+            await fence?.value
             await performFinish()
         }
         sequencingTail = operation
@@ -350,10 +405,24 @@ public actor AgentInteractiveRuntimeBindingAuthorityV1:
         _ bootstrap: InteractiveSessionBootstrap,
         requirement: InteractiveSessionRuntimeRequirementV0
     ) async throws {
+        guard !terminal, let selected = bound else {
+            throw AgentInteractiveRuntimeBindingAuthorityErrorV1.unavailable
+        }
+        guard active == nil, pendingInstall == nil else {
+            throw AgentInteractiveRuntimeBindingAuthorityErrorV1.sessionAlreadyActive
+        }
+        let pending = PendingInstall(token: UUID(), binding: Active(
+            generation: selected.generation,
+            interactiveSessionID: bootstrap.acceptedBody.interactiveSessionID.rawValue,
+            primaryConnectionID: requirement.command.primaryConnectionID), runtime: selected.runtime)
+        pendingInstall = pending
+        defer {
+            if pendingInstall?.token == pending.token { pendingInstall = nil }
+        }
         let predecessor = sequencingTail
         let operation = Task { [self] in
             await predecessor.value
-            try await performInstall(bootstrap, requirement: requirement)
+            try await performInstall(bootstrap, requirement: requirement, pending: pending)
         }
         sequencingTail = Task { _ = try? await operation.value }
         try await operation.value
@@ -364,9 +433,13 @@ public actor AgentInteractiveRuntimeBindingAuthorityV1:
         primaryConnectionID: Data,
         reason: InteractiveSessionEndReason
     ) async {
+        let matchesPending = pendingInstall?.binding.interactiveSessionID == interactiveSessionID
+            && pendingInstall?.binding.primaryConnectionID == primaryConnectionID
+        let fence = matchesPending ? fencePendingInstall(reason: reason) : nil
         let predecessor = sequencingTail
         let operation = Task { [self] in
             await predecessor.value
+            await fence?.value
             await performTerminate(
                 interactiveSessionID: interactiveSessionID,
                 primaryConnectionID: primaryConnectionID,
@@ -383,6 +456,8 @@ public actor AgentInteractiveRuntimeBindingAuthorityV1:
             (any HostInteractiveChannelAuthenticatingV0)?,
         surfaceControl:
             (any InteractiveSurfaceControlDispatchingV0)?,
+        displayControl:
+            (any InteractiveDisplaySelectionDispatchingV1)?,
         generation: UInt64
     ) throws {
         guard !terminal else {
@@ -409,15 +484,20 @@ public actor AgentInteractiveRuntimeBindingAuthorityV1:
             generation: generation,
             runtime: runtime,
             channelAuthenticator: channelAuthenticator,
-            surfaceControl: surfaceControl
+            surfaceControl: surfaceControl,
+            displayControl: displayControl
         )
     }
 
     private func performInstall(
         _ bootstrap: InteractiveSessionBootstrap,
-        requirement: InteractiveSessionRuntimeRequirementV0
+        requirement: InteractiveSessionRuntimeRequirementV0,
+        pending: PendingInstall
     ) async throws {
-        guard !terminal, let selected = bound else {
+        guard !terminal, let selected = bound,
+              selected.generation == pending.binding.generation,
+              pendingInstall?.token == pending.token,
+              pendingInstall?.fenceTask == nil else {
             throw AgentInteractiveRuntimeBindingAuthorityErrorV1.unavailable
         }
         guard active == nil else {
@@ -429,11 +509,33 @@ public actor AgentInteractiveRuntimeBindingAuthorityV1:
             bootstrap,
             requirement: requirement
         )
+        if let fence = pendingInstall?.fenceTask {
+            await fence.value
+            throw AgentInteractiveRuntimeBindingAuthorityErrorV1.unavailable
+        }
         active = Active(
             generation: selected.generation,
             interactiveSessionID: sessionID,
             primaryConnectionID: requirement.command.primaryConnectionID
         )
+    }
+
+    /// Starts exact pending termination outside the serialization tail. The
+    /// lower runtime fences synchronously before it waits for that install;
+    /// putting this call behind the install would defeat the fence.
+    private func fencePendingInstall(
+        reason: InteractiveSessionEndReason
+    ) -> Task<Void, Never>? {
+        guard let pending = pendingInstall else { return nil }
+        if let task = pending.fenceTask { return task }
+        let task = Task {
+            await pending.runtime.terminate(
+                interactiveSessionID: pending.binding.interactiveSessionID,
+                primaryConnectionID: pending.binding.primaryConnectionID,
+                reason: reason)
+        }
+        pendingInstall?.fenceTask = task
+        return task
     }
 
     private func performTerminate(

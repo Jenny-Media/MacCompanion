@@ -315,6 +315,14 @@ package actor NetworkClientPrimaryProductCandidateV0 {
         try await bridge.bind(pump: pump)
     }
 
+    #if DEBUG
+    package func bindAuthenticatedTransport(
+        _ sender: any ClientAuthenticatedCommandSendingV1
+    ) async throws {
+        try await bridge.bindAuthenticatedTransport(sender)
+    }
+    #endif
+
     func authenticated(_ session: ClientAuthenticatedSessionV0) async throws {
         guard !terminated, self.session == nil else {
             throw NetworkClientPrimaryRouterBridgeErrorV0.invalidState

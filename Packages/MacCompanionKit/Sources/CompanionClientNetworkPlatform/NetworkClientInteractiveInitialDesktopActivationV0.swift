@@ -1,6 +1,7 @@
 import CompanionInteractiveClient
 import CompanionInteractiveShared
 import CompanionInteractiveWire
+import Dispatch
 import Foundation
 
 public enum NetworkClientInteractiveInitialDesktopPhaseV0:
@@ -77,6 +78,9 @@ package protocol NetworkClientInteractiveInitialPrimaryControllingV0:
         targetKind: InteractiveSurfaceKind,
         targetToken: UUID?
     ) async throws -> ClientSurfaceSelectionRequestV0
+    func prepareReplacementDisplaySelection(
+        displayID: UUID
+    ) async throws -> ClientSurfaceSelectionRequestV0
     func sendReplacementSurfaceSelection(_ frame: Data) async throws
     func replacementSurfacePhase() async -> ClientSurfaceControlPhaseV0?
     func replacementSurfaceDescriptor() async
@@ -86,6 +90,8 @@ package protocol NetworkClientInteractiveInitialPrimaryControllingV0:
         _ receipt: ClientDecodedFrameReceiptV0
     ) async throws -> Bool
     func acknowledgeReplacementSurface() async throws
+    func requestDisplayCatalog() async throws
+        -> InteractiveDisplayCatalogResponseBodyV1
 }
 
 extension ClientInteractivePrimaryChannelV0:
@@ -93,6 +99,28 @@ extension ClientInteractivePrimaryChannelV0:
 
 package extension NetworkClientInteractiveInitialPrimaryControllingV0 {
     func latestFocusEvent() async -> ClientSurfaceFocusEventV0? { nil }
+    func requestDisplayCatalog() async throws
+        -> InteractiveDisplayCatalogResponseBodyV1
+    {
+        throw NetworkClientInteractiveInitialDesktopErrorV0.unavailable
+    }
+    func prepareReplacementDisplaySelection(
+        displayID _: UUID
+    ) async throws -> ClientSurfaceSelectionRequestV0 {
+        throw NetworkClientInteractiveInitialDesktopErrorV0.unavailable
+    }
+}
+
+package extension ClientInteractivePrimaryChannelV0 {
+    func prepareReplacementDisplaySelection(
+        displayID: UUID
+    ) throws -> ClientSurfaceSelectionRequestV0 {
+        try prepareReplacementSurfaceSelection(
+            targetKind: .desktop,
+            targetToken: nil,
+            targetDisplayID: displayID
+        )
+    }
 }
 
 private actor NetworkClientInteractiveInitialMediaConsumerV0:
@@ -111,15 +139,22 @@ private actor NetworkClientInteractiveInitialMediaConsumerV0:
     }
 
     func consume(header: MediaRecordHeader, payload: Data) async throws {
-        let admission = try await channel.admitInitialMedia(
-            header: header,
-            payloadByteCount: payload.count
-        )
-        try await renderer.process(
-            header: header,
-            payload: payload,
-            admission: admission
-        )
+        do {
+            let admission = try await channel.admitInitialMedia(
+                header: header,
+                payloadByteCount: payload.count
+            )
+            try await renderer.process(
+                header: header,
+                payload: payload,
+                admission: admission
+            )
+        } catch {
+#if DEBUG
+            print("[MacCompanion live-control] media consumer rejected type=\(header.type) sequence=\(header.mediaSequence) error=\(String(describing: error))")
+#endif
+            throw error
+        }
     }
 }
 
@@ -135,6 +170,7 @@ public actor NetworkClientInteractiveInitialDesktopActivationV0 {
     private let renderer: any ClientInteractiveInitialMediaRenderingV0
     private let pump: NetworkClientInteractiveMediaRecordPumpV0
     private let input: NetworkClientInteractiveInputSenderV0
+    private let failure: @Sendable () async -> Void
     private var pumpTask: Task<Void, Never>?
     private var surfaceTransitionInFlight = false
     private var automaticSmartZoomEnabled = true
@@ -145,10 +181,12 @@ public actor NetworkClientInteractiveInitialDesktopActivationV0 {
             NetworkClientInteractiveReadyRoleConnectionV0,
         mediaConnection:
             NetworkClientInteractiveReadyRoleConnectionV0,
-        renderer: any ClientInteractiveInitialMediaRenderingV0
+        renderer: any ClientInteractiveInitialMediaRenderingV0,
+        failure: @escaping @Sendable () async -> Void = {}
     ) throws {
         self.channel = channel
         self.renderer = renderer
+        self.failure = failure
         input = try NetworkClientInteractiveInputSenderV0(
             connection: inputConnection,
             primary: channel
@@ -184,6 +222,9 @@ public actor NetworkClientInteractiveInitialDesktopActivationV0 {
                     try await pump.run()
                     await self?.mediaEnded()
                 } catch {
+                    print(
+                        "[MacCompanion live-control] media pump failed error=\(String(describing: error))"
+                    )
                     await self?.mediaFailed()
                 }
             }
@@ -200,6 +241,12 @@ public actor NetworkClientInteractiveInitialDesktopActivationV0 {
     public func reportRendered(
         _ receipt: ClientDecodedFrameReceiptV0
     ) async throws {
+        // Rendering is asynchronous to transport teardown. A frame accepted
+        // before the media/lease path failed may reach the main actor after
+        // this activation has already failed or closed. It carries no new
+        // authority and must not turn a completed fail-closed transition into
+        // a second user-visible command failure.
+        if phase == .failed || phase == .closed { return }
         if phase == .active, surfaceTransitionInFlight {
             do {
                 let matched = try await channel
@@ -294,6 +341,83 @@ public actor NetworkClientInteractiveInitialDesktopActivationV0 {
         )
     }
 
+    /// Confirms that the current acknowledged surface has Keyboard and Text
+    /// authority. Accessibility focus is an optional Smart Zoom signal, not a
+    /// prerequisite for ordinary remote keyboard entry. A positively known
+    /// secure focus remains a local refusal.
+    public func prepareTextInput(
+        focusAcquisitionTimeoutMilliseconds: UInt64 = 2_000,
+        surfaceTransitionTimeoutMilliseconds: UInt64 = 30_000
+    ) async throws -> AdaptiveSurfaceDescriptor? {
+        guard phase == .active, !surfaceTransitionInFlight,
+              focusAcquisitionTimeoutMilliseconds > 0,
+              surfaceTransitionTimeoutMilliseconds > 0 else {
+            throw NetworkClientInteractiveInitialDesktopErrorV0.invalidPhase
+        }
+        if let event = await channel.latestFocusEvent(),
+           Self.monotonicMilliseconds()
+                < event.expiresAtMonotonicMilliseconds,
+           event.focus?.secure == true {
+            return nil
+        }
+        guard let current = await channel.replacementSurfaceDescriptor(),
+              Self.authorizesText(current) else { return nil }
+        return current
+    }
+
+    /// Returns an exact, content-free binding only for a currently
+    /// acknowledged, verified, editable, non-secure focused surface. The
+    /// caller may keep an uncommitted draft locally, but must present this
+    /// binding again before any composed text is admitted.
+    public func prepareNativeTextComposer() async throws
+        -> SurfaceInputFence?
+    {
+        guard phase == .active, !surfaceTransitionInFlight,
+              await channel.latestFocusEvent() == nil,
+              let current = await channel.replacementSurfaceDescriptor(),
+              Self.authorizesNativeComposer(current),
+              Self.monotonicMilliseconds()
+                < current.expiresAtMonotonicMilliseconds else {
+            return nil
+        }
+        return SurfaceInputFence(
+            interactiveSessionID: current.interactiveSessionID,
+            authorizationEpoch: current.authorizationEpoch,
+            surfaceID: current.surfaceID,
+            surfaceRevision: current.surfaceRevision,
+            coordinateSpaceRevision: current.coordinateSpaceRevision,
+            focusToken: current.focus?.token,
+            focusRevision: current.focus?.revision
+        )
+    }
+
+    /// Sends one bounded local draft only while its original verified focus
+    /// remains the exact acknowledged input authority. Focus or surface
+    /// changes reject the draft locally before it reaches the transport.
+    public func sendComposedText(
+        _ text: String,
+        boundTo binding: SurfaceInputFence
+    ) async throws {
+        guard phase == .active, !surfaceTransitionInFlight,
+              await channel.latestFocusEvent() == nil,
+              let current = await channel.replacementSurfaceDescriptor(),
+              Self.authorizesNativeComposer(current),
+              binding == SurfaceInputFence(
+                interactiveSessionID: current.interactiveSessionID,
+                authorizationEpoch: current.authorizationEpoch,
+                surfaceID: current.surfaceID,
+                surfaceRevision: current.surfaceRevision,
+                coordinateSpaceRevision: current.coordinateSpaceRevision,
+                focusToken: current.focus?.token,
+                focusRevision: current.focus?.revision
+              ) else {
+            throw NetworkClientInteractiveInitialDesktopErrorV0.unavailable
+        }
+        let payload = InteractiveInputPayload.text(text)
+        try payload.validate()
+        try await input.send([payload])
+    }
+
     /// Applies only an event already admitted by the ordered primary channel.
     /// The ordinary replacement path remains the sole transition authority.
     /// Returning `false` means local policy or an in-flight manual transition
@@ -304,9 +428,21 @@ public actor NetworkClientInteractiveInitialDesktopActivationV0 {
         _ event: ClientSurfaceFocusEventV0,
         timeoutMilliseconds: UInt64 = 30_000
     ) async throws -> AdaptiveSurfaceDescriptor? {
-        guard phase == .active, automaticSmartZoomEnabled,
-              !surfaceTransitionInFlight,
+        guard phase == .active, !surfaceTransitionInFlight,
               timeoutMilliseconds > 0 else { return nil }
+
+        // Turning Smart Zoom off changes presentation policy; it cannot
+        // retain a host-enforced focus pause indefinitely. Resolve any paused
+        // event to the safe Desktop surface so ordinary input authority is
+        // acknowledged again without opting the user back into Smart Zoom.
+        if !automaticSmartZoomEnabled {
+            guard event.inputPaused else { return nil }
+            return try await transitionSurface(
+                targetKind: .desktop,
+                targetToken: nil,
+                timeoutMilliseconds: timeoutMilliseconds
+            )
+        }
 
         let targetKind: InteractiveSurfaceKind
         let targetToken: UUID?
@@ -330,11 +466,28 @@ public actor NetworkClientInteractiveInitialDesktopActivationV0 {
         case .application, .window:
             return nil
         }
-        return try await transitionSurface(
-            targetKind: targetKind,
-            targetToken: targetToken,
-            timeoutMilliseconds: timeoutMilliseconds
-        )
+        do {
+            return try await transitionSurface(
+                targetKind: targetKind,
+                targetToken: targetToken,
+                timeoutMilliseconds: timeoutMilliseconds,
+                recoverSupersededFocus: targetKind == .focusedRegion
+            )
+        } catch {
+            guard targetKind == .focusedRegion,
+                  Self.isRecoverableFocusSelectionError(error) else {
+                throw error
+            }
+            // No reset or selection request was emitted for these errors.
+            // Select a fresh Desktop descriptor to clear the host's paused
+            // focus fence without terminating an otherwise healthy Control
+            // session.
+            return try await transitionSurface(
+                targetKind: .desktop,
+                targetToken: nil,
+                timeoutMilliseconds: timeoutMilliseconds
+            )
+        }
     }
 
     /// Performs reset-before-select ordering and returns only after the exact
@@ -344,10 +497,31 @@ public actor NetworkClientInteractiveInitialDesktopActivationV0 {
         targetToken: UUID?,
         timeoutMilliseconds: UInt64 = 30_000
     ) async throws -> AdaptiveSurfaceDescriptor {
-        automaticSmartZoomEnabled = false
         return try await transitionSurface(
             targetKind: targetKind,
             targetToken: targetToken,
+            targetDisplayID: nil,
+            timeoutMilliseconds: timeoutMilliseconds
+        )
+    }
+
+    public func requestDisplayCatalog() async throws
+        -> InteractiveDisplayCatalogResponseBodyV1
+    {
+        guard phase == .active, !surfaceTransitionInFlight else {
+            throw NetworkClientInteractiveInitialDesktopErrorV0.invalidPhase
+        }
+        return try await channel.requestDisplayCatalog()
+    }
+
+    public func selectDisplay(
+        _ displayID: UUID,
+        timeoutMilliseconds: UInt64 = 30_000
+    ) async throws -> AdaptiveSurfaceDescriptor {
+        try await transitionSurface(
+            targetKind: .desktop,
+            targetToken: nil,
+            targetDisplayID: displayID,
             timeoutMilliseconds: timeoutMilliseconds
         )
     }
@@ -355,7 +529,9 @@ public actor NetworkClientInteractiveInitialDesktopActivationV0 {
     private func transitionSurface(
         targetKind: InteractiveSurfaceKind,
         targetToken: UUID?,
-        timeoutMilliseconds: UInt64
+        targetDisplayID: UUID? = nil,
+        timeoutMilliseconds: UInt64,
+        recoverSupersededFocus: Bool = false
     ) async throws -> AdaptiveSurfaceDescriptor {
         guard phase == .active, !surfaceTransitionInFlight,
               timeoutMilliseconds > 0 else {
@@ -363,11 +539,19 @@ public actor NetworkClientInteractiveInitialDesktopActivationV0 {
         }
         surfaceTransitionInFlight = true
         do {
-            let selection = try await channel
-                .prepareReplacementSurfaceSelection(
-                    targetKind: targetKind,
-                    targetToken: targetToken
-                )
+            let selection: ClientSurfaceSelectionRequestV0
+            if let targetDisplayID {
+                selection = try await channel
+                    .prepareReplacementDisplaySelection(
+                        displayID: targetDisplayID
+                    )
+            } else {
+                selection = try await channel
+                    .prepareReplacementSurfaceSelection(
+                        targetKind: targetKind,
+                        targetToken: targetToken
+                    )
+            }
             try await input.sendPreparedReset(selection.reset)
             try await channel.sendReplacementSurfaceSelection(
                 selection.requestJSON
@@ -390,6 +574,11 @@ public actor NetworkClientInteractiveInitialDesktopActivationV0 {
             throw ClientInteractivePrimaryChannelErrorV0
                 .surfaceTransitionDeadlineExceeded
         } catch {
+            if recoverSupersededFocus,
+               Self.isRecoverableFocusSelectionError(error) {
+                surfaceTransitionInFlight = false
+                throw error
+            }
             await failClosed()
             throw error
         }
@@ -425,5 +614,48 @@ public actor NetworkClientInteractiveInitialDesktopActivationV0 {
         await pump.close()
         await input.close()
         await renderer.close()
+        // A media EOF does not necessarily produce another renderer callback.
+        // Report terminal progress even after the initial surface was active.
+        await failure()
+    }
+
+    private static func authorizesText(
+        _ descriptor: AdaptiveSurfaceDescriptor
+    ) -> Bool {
+        guard descriptor.interactionClasses.contains(.keyboard),
+              descriptor.interactionClasses.contains(.text) else {
+            return false
+        }
+        return descriptor.focus?.secure != true
+    }
+
+    private static func authorizesNativeComposer(
+        _ descriptor: AdaptiveSurfaceDescriptor
+    ) -> Bool {
+        guard authorizesText(descriptor),
+              descriptor.kind == .focusedRegion,
+              descriptor.privacyProfile == .assistedVisual,
+              let focus = descriptor.focus else { return false }
+        return focus.category == .text && focus.editable && !focus.secure
+    }
+
+    private static func isRecoverableFocusSelectionError(
+        _ error: any Error
+    ) -> Bool {
+        guard let value = error as? ClientSurfaceControlErrorV0 else {
+            return false
+        }
+        switch value {
+        case .targetInventoryRequired, .focusEventExpired:
+            return true
+        default:
+            return false
+        }
+    }
+
+    private static func monotonicMilliseconds() -> Int64 {
+        let value = DispatchTime.now().uptimeNanoseconds / 1_000_000
+        guard value <= UInt64(Int64.max) else { return Int64.max }
+        return Int64(value)
     }
 }

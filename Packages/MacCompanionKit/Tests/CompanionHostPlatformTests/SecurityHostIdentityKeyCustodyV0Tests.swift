@@ -120,4 +120,32 @@ import Testing
         ) == errSecSuccess
     )
     #expect(copiedPrivateKey != nil)
+
+    let loaded = try SecurityHostIdentityKeyCustodyV0.assembleLoadedIdentity(
+        privateKey: privateKey, applicationTag: issued.key.applicationTag,
+        certificateDER: issued.certificateDER, wallNowUnixMilliseconds: issuanceTime)
+    #expect(loaded.key == issued.key)
+    #expect(loaded.certificateDER == issued.certificateDER)
+    #expect(loaded.validity == issued.validity)
+    #expect(throws: SecurityHostIdentityKeyCustodyErrorV0.certificateInvalid) {
+        _ = try SecurityHostIdentityKeyCustodyV0.assembleLoadedIdentity(
+            privateKey: privateKey, applicationTag: issued.key.applicationTag,
+            certificateDER: Data([0]), wallNowUnixMilliseconds: issuanceTime)
+    }
+    #expect(throws: SecurityHostIdentityKeyCustodyErrorV0.certificateInvalid) {
+        _ = try SecurityHostIdentityKeyCustodyV0.assembleLoadedIdentity(
+            privateKey: privateKey, applicationTag: issued.key.applicationTag,
+            certificateDER: issued.certificateDER,
+            wallNowUnixMilliseconds: issued.validity.notAfterUnixMilliseconds + 1)
+    }
+    let wrongSoftwareKey = P256.Signing.PrivateKey()
+    let wrongKey = try #require(SecKeyCreateWithData(
+        wrongSoftwareKey.x963Representation as CFData,
+        [kSecAttrKeyType: kSecAttrKeyTypeECSECPrimeRandom, kSecAttrKeyClass: kSecAttrKeyClassPrivate,
+         kSecAttrKeySizeInBits: 256] as CFDictionary, nil))
+    #expect(throws: SecurityHostIdentityKeyCustodyErrorV0.keyMismatch) {
+        _ = try SecurityHostIdentityKeyCustodyV0.assembleLoadedIdentity(
+            privateKey: wrongKey, applicationTag: issued.key.applicationTag,
+            certificateDER: issued.certificateDER, wallNowUnixMilliseconds: issuanceTime)
+    }
 }

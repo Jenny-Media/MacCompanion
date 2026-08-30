@@ -10,6 +10,45 @@ private enum VideoToolboxEncoderOwnerTestError: Error {
   case pixelBufferCreationFailed
 }
 
+// Explicit opt-in: exercises this host's real encoder, using only synthetic
+// pixel buffers. No screen capture, permissions, network, or input posting.
+@Test(.enabled(if: ProcessInfo.processInfo.environment["MACCOMPANION_TEST_REAL_ENCODER"] == "1"), .timeLimit(.minutes(1)),
+      arguments: [640, 641, 854, 855], [360, 361])
+func realEncoderPreservesRequestedDimensions(width: Int, height: Int) async throws {
+  let capture = try ScreenCaptureKitOpaqueTargetCatalogV0.captureProfile(logicalWidth: width, logicalHeight: height)
+  let profile = try VideoToolboxH264EncoderProfileV0(
+    capture: capture,
+    targetBitrateBitsPerSecond: 1_000_000, keyframeIntervalMilliseconds: 2_000)
+  let session = try VideoToolboxH264CompressionSessionV0(profile: profile)
+  defer { session.invalidate() }
+  var buffer: CVPixelBuffer?
+  try #require(CVPixelBufferCreate(kCFAllocatorDefault, capture.width, capture.height,
+    kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange,
+    [kCVPixelBufferIOSurfacePropertiesKey: [:]] as CFDictionary, &buffer) == kCVReturnSuccess)
+  let pixels = try #require(buffer)
+  CVPixelBufferLockBaseAddress(pixels, [])
+  for plane in 0..<CVPixelBufferGetPlaneCount(pixels) {
+    if let base = CVPixelBufferGetBaseAddressOfPlane(pixels, plane) {
+      memset(base, plane == 0 ? 16 : 128,
+        CVPixelBufferGetBytesPerRowOfPlane(pixels, plane) * CVPixelBufferGetHeightOfPlane(pixels, plane))
+    }
+  }
+  CVPixelBufferUnlockBaseAddress(pixels, [])
+  let result = try await withCheckedThrowingContinuation { continuation in
+    do {
+      try session.encode(frame: .init(sourceSequence: 1, pixelBuffer: pixels,
+        presentationTime: CMTime(value: 1, timescale: 30), duration: CMTime(value: 1, timescale: 30)),
+        forceCleanKeyframe: true, completion: { continuation.resume(returning: $0) })
+    } catch { continuation.resume(throwing: error) }
+  }
+  guard case .success(let sample) = result else {
+    Issue.record("Real encoder failed to produce a sample")
+    return
+  }
+  #expect(Int(sample.width) == capture.width)
+  #expect(Int(sample.height) == capture.height)
+}
+
 private final class VideoToolboxEncoderOwnerFakeSessionV0:
   VideoToolboxH264EncodingSessionV0,
   @unchecked Sendable
@@ -327,6 +366,45 @@ private func waitForEncoderOwner(
   await gate.release()
   #expect(await waitForEncoderOwner { session.requests.count == 2 })
   #expect(session.requests[1].sequence == 2)
+}
+
+@Test func encoderOwnerRetainsBackpressureAcrossSuspendedPublication()
+  async throws
+{
+  let session = VideoToolboxEncoderOwnerFakeSessionV0()
+  let gate = VideoToolboxEncoderOutputGateV0()
+  let owner = VideoToolboxH264EncoderOwnerV0(
+    profile: try videoToolboxEncoderOwnerProfile(),
+    session: session,
+    output: gate.accept
+  )
+  _ = try await owner.submit(videoToolboxEncoderOwnerFrame(sequence: 1))
+  session.complete(
+    request: 0,
+    with: .success(
+      videoToolboxEncoderOwnerSample(
+        cleanKeyframe: true,
+        marker: 1
+      ))
+  )
+  #expect(await waitForEncoderOwner { await gate.entered() })
+
+  #expect(
+    try await owner.submit(
+      videoToolboxEncoderOwnerFrame(sequence: 2)
+    ) == .queued
+  )
+  #expect(
+    try await owner.submit(
+      videoToolboxEncoderOwnerFrame(sequence: 3)
+    ) == .replacedStaleWaitingFrame
+  )
+  #expect(session.requests.count == 1)
+
+  await gate.release()
+  #expect(await waitForEncoderOwner { session.requests.count == 2 })
+  #expect(session.requests[1].sequence == 3)
+  #expect(session.requests[1].forceCleanKeyframe)
 }
 
 @Test func encoderOwnerFailsClosedWhenForcedFrameIsNotClean()

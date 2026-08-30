@@ -83,7 +83,8 @@ private struct SessionFixture {
 }
 
 private struct FixedStatusClock: HostStatusClock {
-    func nowUnixMilliseconds() -> Int64 { 5_000 }
+    var value: Int64 = 5_000
+    func nowUnixMilliseconds() -> Int64 { value }
 }
 
 private struct FixedSessionAuditClock: PrimarySessionAuditWallClockV0 {
@@ -137,6 +138,27 @@ private actor FixedStatusProvider: HostStatusSnapshotProvidingV0 {
     func snapshot(hostState: HostState) async throws -> HostStatusSnapshot {
         requestCount += 1
         return try await authority.snapshot(hostState: hostState)
+    }
+}
+
+private enum FailingStatusProviderError: Error {
+    case unavailable
+}
+
+private actor FailOnceStatusProvider: HostStatusSnapshotProvidingV0 {
+    private let fallback: FixedStatusProvider
+    private var shouldFail = true
+
+    init() throws {
+        fallback = try FixedStatusProvider()
+    }
+
+    func snapshot(hostState: HostState) async throws -> HostStatusSnapshot {
+        if shouldFail {
+            shouldFail = false
+            throw FailingStatusProviderError.unavailable
+        }
+        return try await fallback.snapshot(hostState: hostState)
     }
 }
 
@@ -358,7 +380,8 @@ private actor RecordingRouteObservationPublisher:
 
 private func makeSession(
     fixture: SessionFixture,
-    status: FixedStatusProvider? = nil,
+    authenticationReader: (any AuthenticationDeviceReader)? = nil,
+    status: (any HostStatusSnapshotProvidingV0)? = nil,
     operations: RecordingOperationDispatcher = RecordingOperationDispatcher(),
     capabilities: any AuthenticatedCapabilityRegistryDispatchingV1 = EmptyCapabilityDispatcher(),
     audit: (any AuthenticatedAuditWireDispatchingV1)? = nil,
@@ -367,21 +390,29 @@ private func makeSession(
         (any AuthenticatedRouteObservationPublishingV1)? = nil,
     detailedAudit: (any PrimarySessionAuditWritingV0)? = nil,
     detailedAuditClock: any PrimarySessionAuditWallClockV0 =
-        FixedSessionAuditClock(value: 5_000)
+        FixedSessionAuditClock(value: 5_000),
+    statusResponseClock: any HostStatusClock = FixedStatusClock()
 ) throws -> AuthenticatedPrimarySessionV0 {
-    try AuthenticatedPrimarySessionV0(
+    let statusProvider: any HostStatusSnapshotProvidingV0
+    if let status {
+        statusProvider = status
+    } else {
+        statusProvider = try FixedStatusProvider()
+    }
+    return try AuthenticatedPrimarySessionV0(
         hostID: sessionHostID,
         tlsBinding: fixture.tlsBinding,
         acceptedAtMonotonicMilliseconds: 0,
-        authentication: ApplicationAuthenticationAuthority(deviceReader: fixture.store),
-        status: try status ?? FixedStatusProvider(),
+        authentication: ApplicationAuthenticationAuthority(deviceReader: authenticationReader ?? fixture.store),
+        status: statusProvider,
         operations: operations,
         capabilities: capabilities,
         audit: audit,
         interactive: interactive,
         routeObservationPublisher: routeObservationPublisher,
         detailedAudit: detailedAudit,
-        detailedAuditWallClock: detailedAuditClock
+        detailedAuditWallClock: detailedAuditClock,
+        statusResponseClock: statusResponseClock
     )
 }
 
@@ -455,6 +486,32 @@ private func completeAuthentication(
     return prepared.connectionID
 }
 
+@Test(arguments: [Int64(5_007), 4_999, -1, WireLimits.maximumSafeInteger + 1])
+func statusReplyUsesPostSamplingClockWithoutWeakeningFreshness(responseTime: Int64) async throws {
+    let fixture = try await SessionFixture.create()
+    defer { fixture.remove() }
+    let session = try makeSession(fixture: fixture,
+        statusResponseClock: FixedStatusClock(value: responseTime))
+    _ = try await completeAuthentication(session, fixture: fixture)
+    let request = try WireEnvelope(messageID: WireUUID(UUID()), correlationID: nil,
+        sentAtUnixMilliseconds: 4_900, body: StatusSnapshotRequestBody())
+    let data = try await session.receive(requestJSON: WireCodec.encode(request),
+        hostState: .userSessionActive, wallNowUnixMilliseconds: 4_901,
+        monotonicNowMilliseconds: 200, responseMessageID: WireUUID(UUID()))
+    if responseTime == 5_007 {
+        let response = try WireCodec.decode(WireEnvelope<StatusSnapshotBody>.self, from: data)
+        #expect(response.correlationID == request.messageID)
+        #expect(response.body.observedAtUnixMilliseconds == 5_000)
+        #expect(response.sentAtUnixMilliseconds == 5_007)
+    } else {
+        let response = try WireCodec.decode(WireEnvelope<ProtocolErrorResponseBody>.self, from: data)
+        #expect(response.correlationID == request.messageID)
+        #expect(response.body.code == "provider.unavailable")
+        #expect(response.body.retry == .backoff)
+    }
+    #expect(await session.phase == .ready)
+}
+
 @Test func authenticatedSessionAloneRoutesStatusAndActWithHostOwnedContext() async throws {
     let fixture = try await SessionFixture.create()
     defer { fixture.remove() }
@@ -511,6 +568,65 @@ private func completeAuthentication(
     #expect(contexts.count == 1)
     #expect(contexts[0].principal.deviceID == sessionDeviceID)
     #expect(contexts[0].primaryConnectionID == connectionID)
+}
+
+@Test func statusProviderFailureIsCorrelatedAndDoesNotCloseControlAuthority() async throws {
+    let fixture = try await SessionFixture.create()
+    defer { fixture.remove() }
+    let status = try FailOnceStatusProvider()
+    let interactive = RecordingInteractiveDispatcher()
+    let session = try makeSession(
+        fixture: fixture,
+        status: status,
+        interactive: interactive
+    )
+    _ = try await completeAuthentication(session, fixture: fixture)
+
+    let failedRequest = try WireEnvelope(
+        messageID: WireUUID(UUID()),
+        correlationID: nil,
+        sentAtUnixMilliseconds: 5_000,
+        body: StatusSnapshotRequestBody()
+    )
+    let failedData = try await session.receive(
+        requestJSON: WireCodec.encode(failedRequest),
+        hostState: .userSessionActive,
+        wallNowUnixMilliseconds: 5_001,
+        monotonicNowMilliseconds: 200,
+        responseMessageID: WireUUID(UUID())
+    )
+    let failedResponse = try WireCodec.decode(
+        WireEnvelope<ProtocolErrorResponseBody>.self,
+        from: failedData
+    )
+
+    #expect(failedResponse.correlationID == failedRequest.messageID)
+    #expect(failedResponse.body.code == "provider.unavailable")
+    #expect(failedResponse.body.retry == .backoff)
+    #expect(await session.phase == .ready)
+    #expect(await interactive.closeCount == 0)
+
+    let retryRequest = try WireEnvelope(
+        messageID: WireUUID(UUID()),
+        correlationID: nil,
+        sentAtUnixMilliseconds: 5_002,
+        body: StatusSnapshotRequestBody()
+    )
+    let retryData = try await session.receive(
+        requestJSON: WireCodec.encode(retryRequest),
+        hostState: .userSessionActive,
+        wallNowUnixMilliseconds: 5_003,
+        monotonicNowMilliseconds: 201,
+        responseMessageID: WireUUID(UUID())
+    )
+    let retryResponse = try WireCodec.decode(
+        WireEnvelope<StatusSnapshotBody>.self,
+        from: retryData
+    )
+
+    #expect(retryResponse.correlationID == retryRequest.messageID)
+    #expect(await session.phase == .ready)
+    #expect(await interactive.closeCount == 0)
 }
 
 @Test func authenticatedSessionRoutesAndExpiresConfiguredRouteObservation() async throws {
@@ -802,6 +918,67 @@ private func completeAuthentication(
 
     #expect(await session.phase == .closed)
     #expect(await interactive.closeCount == 1)
+}
+
+private actor PausingSessionAuthenticationReader: AuthenticationDeviceReader {
+    let store: SQLiteSecurityStore
+    private var pauseNext = false
+    private var waiter: CheckedContinuation<Void, Never>?
+    var paused: Bool { waiter != nil }
+    init(store: SQLiteSecurityStore) { self.store = store }
+    func arm() { pauseNext = true }
+    func release() { let pending = waiter; waiter = nil; pending?.resume() }
+    func device(clientID: UUID) async throws -> StoredDeviceRecord? {
+        let record = try await store.device(clientID: clientID)
+        if pauseNext {
+            pauseNext = false
+            await withCheckedContinuation { waiter = $0 }
+        }
+        return record
+    }
+}
+
+@Test(arguments: [false, true])
+func primaryConcurrentRevalidationCannotRegressLivenessOrReviveClosedSession(close: Bool) async throws {
+    let fixture = try await SessionFixture.create()
+    defer { fixture.remove() }
+    let reader = PausingSessionAuthenticationReader(store: fixture.store)
+    let operations = RecordingOperationDispatcher()
+    let session = try makeSession(fixture: fixture, authenticationReader: reader, operations: operations)
+    _ = try await completeAuthentication(session, fixture: fixture)
+    func request() throws -> Data {
+        try WireCodec.encode(WireEnvelope(messageID: WireUUID(UUID()), correlationID: nil,
+            sentAtUnixMilliseconds: 5_000, body: OperationStatusRequestBody(operationID: WireUUID(UUID()))))
+    }
+    let early = try request()
+    await reader.arm()
+    let pending = Task {
+        try await session.receive(requestJSON: early, hostState: .userSessionActive,
+            wallNowUnixMilliseconds: 5_000, monotonicNowMilliseconds: 200, responseMessageID: WireUUID(UUID()))
+    }
+    for _ in 0..<1_000 {
+        if await reader.paused { break }
+        try await Task.sleep(for: .milliseconds(1))
+    }
+    let paused = await reader.paused
+    #expect(paused)
+    guard paused else { await session.close(); await reader.release(); _ = await pending.result; return }
+    if close {
+        await session.close()
+        await reader.release()
+        await #expect(throws: AuthenticatedPrimarySessionErrorV0.unauthenticated) { _ = try await pending.value }
+        #expect(await operations.contexts.isEmpty)
+        #expect(await session.phase == .closed)
+    } else {
+        _ = try await session.receive(requestJSON: request(), hostState: .userSessionActive,
+            wallNowUnixMilliseconds: 5_000, monotonicNowMilliseconds: 400, responseMessageID: WireUUID(UUID()))
+        let laterDeadline = await session.nextDeadlineMonotonicMilliseconds()
+        await reader.release()
+        _ = try await pending.value
+        #expect(await session.nextDeadlineMonotonicMilliseconds() == laterDeadline)
+        #expect(await operations.contexts.count == 2)
+        await session.close()
+    }
 }
 
 @Test func durableAuthorizationChangeClosesBeforeAnyFurtherDisclosure() async throws {

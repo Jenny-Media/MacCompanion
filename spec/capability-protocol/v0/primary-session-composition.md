@@ -289,9 +289,44 @@ messages in this owner does not advertise or grant any capability by itself.
 
 ## Server failures
 
+### Bounded Act execution without blocking the primary
+
+The platform frame pump serializes authentication and ordinary command handling.
+After authentication, `operation.invoke` and `operation.approve` response work
+may overlap, because their provider execution can remain pending. At most 31
+such handlers are retained; one additional ordinary handler can process status,
+cancellation, heartbeat, or other traffic. A further execution request closes
+the connection rather than allocating an unbounded queue. Each handler still
+passes the same semantic authentication, replay, admission, and durable claim
+checks. This scheduling rule changes no wire or cryptographic inputs.
+
+Responses correlate to requests and need not complete in request order. A client
+must observe an operation as admitted/running before relying on a later cancel
+to target it; transport send order alone does not prove durable admission.
+Concurrent exact invokes still use the single durable execution claim. Repeated
+cancellation does not run the provider cancellation hook again.
+
+Only one socket read or frame-chunk admission loop is active at a time. Writes
+remain serialized. A closed pump cancels its retained response tasks and drops
+late results; it never writes a success response after teardown. Task cancellation
+is not proof of provider cancellation or of absence of an effect. Semantic
+revalidation must recheck the current ready phase/connection after suspension,
+and liveness observations must not regress when handlers finish revalidation
+out of order. Authentication remains sequential and wrong-phase traffic closes.
+
+The indexed `host-primary-act-concurrency-v0.1.json` fixture records this contract.
+
+Status response timestamps are sampled after asynchronous status collection and
+sequence commit finish, not from the request-arrival context. The response must
+not predate its observation. A backwards or invalid response clock follows the
+same provider-unavailable path below; client freshness checks remain unchanged.
+This preserves the existing status-snapshot fixture and freshness contract.
+
 A host status sampling or durable sequence-commit failure emits no fabricated
 snapshot and does not classify the authenticated peer as a protocol violator.
-The socket adapter may retry or close according to its bounded server-failure
-policy. Operation domain failures are converted by the operation dispatcher to
-the closed safe error body. Protocol, authentication, authorization, timing,
-and replay failures are terminal for this primary session.
+It returns the correlated registered `provider.unavailable` error with
+`retry: backoff`; the primary session stays ready and any independently active
+Act or Control authority remains intact. Operation domain failures are converted
+by the operation dispatcher to the closed safe error body. Protocol,
+authentication, authorization, timing, and replay failures are terminal for
+this primary session.

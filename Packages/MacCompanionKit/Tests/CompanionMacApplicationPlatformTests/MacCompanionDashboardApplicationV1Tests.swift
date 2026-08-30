@@ -1,4 +1,5 @@
 #if os(macOS)
+import CompanionDomain
 import CompanionIPC
 import CompanionLifecycle
 import CompanionLocalXPCPlatform
@@ -37,6 +38,19 @@ private final class DashboardApplicationOneShotGateV1: @unchecked Sendable {
     }
 
     func hasEntered() -> Bool { lock.withLock { entered } }
+}
+
+private final class DashboardApplicationWallClockV1: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value: Int64
+
+    init(_ value: Int64) { self.value = value }
+
+    func now() -> Int64 { lock.withLock { value } }
+
+    func set(_ replacement: Int64) {
+        lock.withLock { value = replacement }
+    }
 }
 
 @available(macOS 26.0, *)
@@ -82,6 +96,8 @@ private final class DashboardApplicationTestProductV1:
     private var reopens = 0
     private var finishes = 0
     private var pairingCreations = 0
+    private var interactiveControlGrantReviews = 0
+    private var interactiveControlGrantDecisions = 0
     private var connectionToken: MacAgentDashboardConnectionTokenV0?
 
     init(
@@ -132,6 +148,36 @@ private final class DashboardApplicationTestProductV1:
         throw MacLocalXPCMenuPairingCommandErrorV1.unavailable
     }
 
+    func makeInteractiveControlGrantReview(
+        _ request: LocalInteractiveControlGrantReviewRequestV0
+    ) async throws -> LocalInteractiveControlGrantReviewV0 {
+        lock.withLock { interactiveControlGrantReviews += 1 }
+        return try LocalInteractiveControlGrantReviewV0(
+            correlationID: request.commandID,
+            reviewID: UUID(),
+            deviceID: UUID(
+                uuidString: "018f9900-0000-7000-8000-000000000051"
+            )!,
+            deviceDisplayName: DeviceDisplayName("iPhone"),
+            authorizationEpoch: .init(rawValue: 1),
+            grantRevision: .init(rawValue: 1),
+            policyRevision: .init(rawValue: 1),
+            currentGrants: try CapabilityGrantSet([]),
+            createdAtUnixMilliseconds: request.requestedAtUnixMilliseconds,
+            expiresAtUnixMilliseconds:
+                request.requestedAtUnixMilliseconds
+                    + InteractiveControlDurableGrantV0
+                        .reviewLifetimeMilliseconds
+        )
+    }
+
+    func decideInteractiveControlGrant(
+        _: LocalGrantDecisionCommandV0
+    ) async throws -> LocalGrantDecisionReceiptV0 {
+        lock.withLock { interactiveControlGrantDecisions += 1 }
+        throw StartError.injected
+    }
+
     func finish() async {
         let shouldSuspend = lock.withLock {
             finishes += 1
@@ -164,7 +210,19 @@ private final class DashboardApplicationTestProductV1:
         lock.withLock { pairingCreations }
     }
 
-    func publishReadyStatus(pairedDeviceCount: UInt16) async throws {
+    func interactiveControlGrantCommandCounts() -> (
+        reviews: Int,
+        decisions: Int
+    ) {
+        lock.withLock {
+            (interactiveControlGrantReviews, interactiveControlGrantDecisions)
+        }
+    }
+
+    func publishReadyStatus(
+        pairedDeviceCount: UInt16,
+        interactiveControlGranted: Bool = false
+    ) async throws {
         let token = lock.withLock { connectionToken }
         guard let token else { throw StartError.injected }
         try await owner.receive(
@@ -177,6 +235,7 @@ private final class DashboardApplicationTestProductV1:
                 securityPosture: .nominal,
                 routeKinds: [.lan],
                 pairedDeviceCount: pairedDeviceCount,
+                interactiveControlGranted: interactiveControlGranted,
                 activeRemoteSessionCount: 0,
                 providerCount: 1,
                 warningCodes: [],
@@ -335,7 +394,7 @@ func pairingStateRelayRemainsAliveForApplicationLifetime() async throws {
 
 @Test
 @available(macOS 26.0, *)
-func existingPairedDevicePreventsASecondPairingSession() async throws {
+func existingPairedDeviceAllowsAnAdditionalPairingSession() async throws {
     let (application, product): (
         MacCompanionDashboardApplicationV1,
         DashboardApplicationTestProductV1
@@ -356,8 +415,104 @@ func existingPairedDevicePreventsASecondPairingSession() async throws {
     try await product.publishReadyStatus(pairedDeviceCount: 1)
     await application.beginPairing()
 
-    #expect(product.pairingCreationCount() == 0)
-    #expect(await application.pairingSession.phase == .idle)
+    #expect(product.pairingCreationCount() == 1)
+    let phase = await application.pairingSession.phase
+    let creationFailed = if case .creationFailed = phase {
+        true
+    } else {
+        false
+    }
+    #expect(creationFailed)
+    await application.finish()
+}
+
+@Test
+@available(macOS 26.0, *)
+func failedControlGrantDecisionClosesConsumedReviewAndRetriesFresh()
+    async throws
+{
+    let (application, product) = await makeDashboardApplicationV1()
+    try await application.start()
+    try await product.publishReadyStatus(pairedDeviceCount: 1)
+
+    await application.beginInteractiveControlGrantReview()
+    let firstReviewID = try #require(
+        await application.interactiveControlGrantReview?.reviewID
+    )
+    await application.performInteractiveControlGrantAction(.approve)
+
+    #expect(await application.interactiveControlGrantReview == nil)
+    #expect(await application.interactiveControlGrantReviewFailed)
+    #expect(product.interactiveControlGrantCommandCounts() == (1, 1))
+
+    await application.dismissInteractiveControlGrantFailure()
+    await application.beginInteractiveControlGrantReview()
+    let secondReviewID = try #require(
+        await application.interactiveControlGrantReview?.reviewID
+    )
+    #expect(secondReviewID != firstReviewID)
+    #expect(product.interactiveControlGrantCommandCounts() == (2, 1))
+
+    await application.finish()
+}
+
+@Test
+@available(macOS 26.0, *)
+func expiredControlGrantReviewIsReplacedBeforeDecision() async throws {
+    let clock = DashboardApplicationWallClockV1(2_000)
+    let (application, product): (
+        MacCompanionDashboardApplicationV1,
+        DashboardApplicationTestProductV1
+    ) = await MainActor.run {
+        var product: DashboardApplicationTestProductV1?
+        let application = MacCompanionDashboardApplicationV1(
+            productFactory: { owner in
+                let value = DashboardApplicationTestProductV1(owner: owner)
+                product = value
+                return value
+            },
+            wallNowUnixMilliseconds: { clock.now() }
+        )
+        return (application, product!)
+    }
+    try await application.start()
+    try await product.publishReadyStatus(pairedDeviceCount: 1)
+
+    await application.beginInteractiveControlGrantReview()
+    let expiredReviewID = try #require(
+        await application.interactiveControlGrantReview?.reviewID
+    )
+    clock.set(
+        2_000
+            + InteractiveControlDurableGrantV0.reviewLifetimeMilliseconds
+    )
+    await application.performInteractiveControlGrantAction(.approve)
+
+    let freshReviewID = try #require(
+        await application.interactiveControlGrantReview?.reviewID
+    )
+    #expect(freshReviewID != expiredReviewID)
+    #expect(product.interactiveControlGrantCommandCounts() == (2, 0))
+    #expect(await !application.interactiveControlGrantReviewFailed)
+
+    await application.finish()
+}
+
+@Test
+@available(macOS 26.0, *)
+func durableControlGrantStatusSuppressesRedundantReview() async throws {
+    let (application, product) = await makeDashboardApplicationV1()
+    try await application.start()
+    try await product.publishReadyStatus(
+        pairedDeviceCount: 1,
+        interactiveControlGranted: true
+    )
+
+    #expect(await application.interactiveControlGrantApproved)
+    await application.beginInteractiveControlGrantReview()
+    #expect(await application.interactiveControlGrantReview == nil)
+    #expect(product.interactiveControlGrantCommandCounts() == (0, 0))
+
     await application.finish()
 }
 

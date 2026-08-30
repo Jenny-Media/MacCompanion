@@ -117,3 +117,24 @@ private func localIPCFixture(_ relativePath: String) throws -> Data {
     #expect(value.routeKinds == [.lan, .privateNetwork])
     #expect(value.warningCodes == [.localNetworkDenied, .menuAppUnavailable])
 }
+
+@Test func statusRejectsPairedDeviceCountAboveProductCapacity() throws {
+    #expect(throws: LocalDiagnosticsValidationError.boundsExceeded) {
+        try LocalAgentStatusSnapshot(
+            desiredEnabled: true,
+            consoleSession: .active,
+            agentProcess: .ready,
+            menuAppProcess: .ready,
+            networkState: .listening,
+            securityPosture: .nominal,
+            routeKinds: [.lan],
+            pairedDeviceCount:
+                LocalAgentStatusSnapshot.maximumPairedDeviceCount + 1,
+            activeRemoteSessionCount: 0,
+            providerCount: 1,
+            warningCodes: [],
+            diagnosticSequence: 1,
+            generatedAtUnixMilliseconds: 1
+        )
+    }
+}

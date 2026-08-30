@@ -6,23 +6,27 @@ import CompanionWire
 import CoreGraphics
 import Dispatch
 import Foundation
+import SystemConfiguration
 
 package struct MacAgentPublicConsoleSessionFactsV1: Equatable, Sendable {
     package let processUserID: UInt32
     package let windowSessionUserID: UInt32?
     package let onConsole: Bool?
     package let loginDone: Bool?
+    package let primaryConsoleUserID: UInt32?
 
     package init(
         processUserID: UInt32,
         windowSessionUserID: UInt32?,
         onConsole: Bool?,
-        loginDone: Bool?
+        loginDone: Bool?,
+        primaryConsoleUserID: UInt32?
     ) {
         self.processUserID = processUserID
         self.windowSessionUserID = windowSessionUserID
         self.onConsole = onConsole
         self.loginDone = loginDone
+        self.primaryConsoleUserID = primaryConsoleUserID
     }
 }
 
@@ -57,10 +61,11 @@ public enum MacAgentConservativeRequestContextProductErrorV1:
     case terminal
 }
 
-/// Owns live request clocks and the deliberately conservative host-state view
-/// available from public macOS APIs. Public console/session facts do not prove
-/// that the current user's screen is unlocked, so this product never publishes
-/// `userSessionActive` or `userSessionLocked`.
+/// Owns live request clocks and the public macOS console-session view. Exact
+/// same-UID, on-console, completed-login facts admit the logged-in MVP as
+/// `userSessionActive`; incomplete, switched-user, sleep, and logout evidence
+/// remains closed. Public facts do not distinguish screen lock, so this owner
+/// never publishes `userSessionLocked`.
 public final class MacAgentConservativeRequestContextProductV1:
     @unchecked Sendable
 {
@@ -69,6 +74,7 @@ public final class MacAgentConservativeRequestContextProductV1:
         case didWake
         case willPowerOff
         case ambiguousSessionChange
+        case sessionResignedActive
     }
 
     private let lock = NSLock()
@@ -224,12 +230,24 @@ public final class MacAgentConservativeRequestContextProductV1:
     package static func conservativeHostState(
         for facts: MacAgentPublicConsoleSessionFactsV1
     ) -> HostState {
-        // Even the strongest public combination (same UID, on-console, login
-        // complete) does not distinguish unlocked from screen locked. The
-        // weaker and partially known combinations are equally inconclusive.
-        // The architecture therefore requires the ambiguous state.
-        _ = facts
-        return .otherConsoleUserActive
+        if facts.windowSessionUserID == facts.processUserID,
+           facts.onConsole == true,
+           facts.loginDone == true {
+            return .userSessionActive
+        }
+
+        // CGSessionCopyCurrentDictionary may return nil outside a Quartz GUI
+        // session, including for the per-user background Agent. Fall back only
+        // to SystemConfiguration's primary logged-in console identity, and
+        // never use it to override contradictory Quartz facts.
+        guard facts.primaryConsoleUserID == facts.processUserID,
+              facts.windowSessionUserID.map({ $0 == facts.processUserID })
+                ?? true,
+              facts.onConsole != false,
+              facts.loginDone != false else {
+            return .otherConsoleUserActive
+        }
+        return .userSessionActive
     }
 
     private func currentHostState() -> HostState {
@@ -244,7 +262,7 @@ public final class MacAgentConservativeRequestContextProductV1:
         switch event {
         case .didWake, .ambiguousSessionChange:
             sampledState = Self.conservativeHostState(for: facts())
-        case .willSleep, .willPowerOff:
+        case .willSleep, .willPowerOff, .sessionResignedActive:
             sampledState = nil
         }
 
@@ -263,6 +281,8 @@ public final class MacAgentConservativeRequestContextProductV1:
         case .ambiguousSessionChange:
             guard hostState != .hostPreparingForSleep else { return }
             publishLocked(sampledState ?? .otherConsoleUserActive)
+        case .sessionResignedActive:
+            publishLocked(.otherConsoleUserActive)
         }
     }
 
@@ -286,16 +306,17 @@ public final class MacAgentConservativeRequestContextProductV1:
         case NSWorkspace.willPowerOffNotification:
             return .willPowerOff
         case NSWorkspace.sessionDidBecomeActiveNotification,
-             NSWorkspace.sessionDidResignActiveNotification,
              NSWorkspace.screensDidSleepNotification,
              NSWorkspace.screensDidWakeNotification:
             return .ambiguousSessionChange
+        case NSWorkspace.sessionDidResignActiveNotification:
+            return .sessionResignedActive
         default:
             return nil
         }
     }
 
-    private static func currentPublicFacts()
+    package static func currentPublicFacts()
         -> MacAgentPublicConsoleSessionFactsV1
     {
         let dictionary = CGSessionCopyCurrentDictionary() as? [String: Any]
@@ -305,11 +326,21 @@ public final class MacAgentConservativeRequestContextProductV1:
             as? NSNumber)?.boolValue
         let loginDone = (dictionary?[kCGSessionLoginDoneKey as String]
             as? NSNumber)?.boolValue
+        var primaryConsoleUserID: uid_t = 0
+        var primaryConsoleGroupID: gid_t = 0
+        let primaryConsoleUser = SCDynamicStoreCopyConsoleUser(
+            nil,
+            &primaryConsoleUserID,
+            &primaryConsoleGroupID
+        )
         return MacAgentPublicConsoleSessionFactsV1(
             processUserID: getuid(),
             windowSessionUserID: userID,
             onConsole: onConsole,
-            loginDone: loginDone
+            loginDone: loginDone,
+            primaryConsoleUserID: primaryConsoleUser == nil
+                ? nil
+                : primaryConsoleUserID
         )
     }
 }

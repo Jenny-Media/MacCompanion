@@ -12,6 +12,12 @@ import CompanionTransport
 import CompanionWire
 import CompanionLifecycle
 import Foundation
+import OSLog
+
+private let agentPrimarySessionAuthorityLoggerV1 = Logger(
+    subsystem: "media.jenny.maccompanion.agent",
+    category: "primary-session-authority"
+)
 
 public enum AgentRequiredAuditCompositionErrorV1:
     Error, Equatable, Sendable
@@ -53,18 +59,23 @@ public struct AgentInteractivePlatformServicesV1: Sendable {
     package let runtime: any InteractiveSessionRuntimeOwningV0
     package let surfaceControl:
         (any InteractiveSurfaceControlDispatchingV0)?
+    package let displaySelection:
+        (any InteractiveDisplaySelectionDispatchingV1)?
 
     public init(
         visibleAdmission: any VisibleInteractiveAdmissionReadingV0,
         materials: any InteractiveSessionMaterialGeneratingV0,
         runtime: any InteractiveSessionRuntimeOwningV0,
         surfaceControl:
-            (any InteractiveSurfaceControlDispatchingV0)? = nil
+            (any InteractiveSurfaceControlDispatchingV0)? = nil,
+        displaySelection:
+            (any InteractiveDisplaySelectionDispatchingV1)? = nil
     ) {
         self.visibleAdmission = visibleAdmission
         self.materials = materials
         self.runtime = runtime
         self.surfaceControl = surfaceControl
+        self.displaySelection = displaySelection
     }
 
     /// Explicit construction-only platform for a permanent Agent that has not
@@ -257,6 +268,7 @@ public struct AgentRequiredAuditCompositionV0: Sendable {
             authority: authority,
             contextSource: contextSource,
             timeSource: timeSource,
+            capacitySource: securityStore,
             pairingIDGenerator: pairingIDGenerator
         )
         let decisions = AgentLocalPairingDecisionHandlerV0(
@@ -312,6 +324,7 @@ public struct AgentRequiredAuditCompositionV0: Sendable {
             materials: interactivePlatform.materials,
             runtime: interactivePlatform.runtime,
             surfaceControl: interactivePlatform.surfaceControl,
+            displaySelection: interactivePlatform.displaySelection,
             auditWriter: interactiveAuditWriter
         )
         return try await bootstrapPrimaryServices(
@@ -472,11 +485,13 @@ public struct AgentRequiredAuditCompositionV0: Sendable {
 
     fileprivate func makeLocalInteractiveControlGrantHandler(
         primary: AgentPrimarySessionAuthorityV1,
+        status: AgentLocalServiceRootV1,
         wallNowUnixMilliseconds: @escaping @Sendable () -> Int64
     ) throws -> LocalInteractiveControlGrantHandlerV0 {
         try LocalInteractiveControlGrantHandlerV0(
             store: securityStore,
             primary: primary,
+            refreshInventory: { try? await status.refreshInventory() },
             wallNowUnixMilliseconds: wallNowUnixMilliseconds
         )
     }
@@ -599,6 +614,12 @@ public struct AgentPrimaryServicesV1: Sendable {
     }
 
 #if os(macOS)
+    package func makeLocalCapabilityGrantHandler() -> LocalCapabilityGrantHandlerV1 {
+        LocalCapabilityGrantHandlerV1(store: pairingComposition.securityStore,
+            capabilities: capabilityAuthority, primary: primarySessions,
+            refreshInventory: { try? await localServices.refreshInventory() })
+    }
+
     /// Issued only to the final platform adapter after it authenticates the
     /// visible menu-app endpoint for `administerDevices`.
     package func makeLocalDeviceRevocationHandler(
@@ -621,6 +642,7 @@ public struct AgentPrimaryServicesV1: Sendable {
     ) throws -> LocalInteractiveControlGrantHandlerV0 {
         try pairingComposition.makeLocalInteractiveControlGrantHandler(
             primary: primarySessions,
+            status: localServices,
             wallNowUnixMilliseconds: wallNowUnixMilliseconds
         )
     }
@@ -821,16 +843,30 @@ public actor AgentPrimarySessionAuthorityV1 {
         transitionInProgress = true
         let previous = current
         let previousTransport = currentTransport
+        agentPrimarySessionAuthorityLoggerV1.notice(
+            "primary replacement started hasPrevious=\(previous != nil, privacy: .public) hasTransport=\(previousTransport != nil, privacy: .public)"
+        )
         current = nil
         currentTransport = nil
         if let previousTransport {
             await previousTransport.closeTransport()
+            agentPrimarySessionAuthorityLoggerV1.debug(
+                "previous primary transport closed"
+            )
         }
-        if let previous { await previous.close() }
+        if let previous {
+            await previous.close()
+            agentPrimarySessionAuthorityLoggerV1.debug(
+                "previous primary session closed"
+            )
+        }
         let session: AuthenticatedPrimarySessionV0
         do {
             let routeObservationPublisher = try await
                 routeObservationPublishers.makePublisher()
+            agentPrimarySessionAuthorityLoggerV1.debug(
+                "route observation publisher issued"
+            )
             session = try ingress.makeAuthenticatedPrimarySession(
                 hostID: hostID,
                 tlsBinding: tlsBinding,
@@ -857,6 +893,9 @@ public actor AgentPrimarySessionAuthorityV1 {
         }
         current = session
         finishTransition()
+        agentPrimarySessionAuthorityLoggerV1.notice(
+            "primary replacement completed"
+        )
         return session
     }
 
@@ -902,6 +941,9 @@ public actor AgentPrimarySessionAuthorityV1 {
         closeRequestedDuringTransition = false
         guard let current else { return }
         transitionInProgress = true
+        agentPrimarySessionAuthorityLoggerV1.notice(
+            "primary close started"
+        )
         let transport = currentTransport
         self.current = nil
         currentTransport = nil
@@ -909,6 +951,9 @@ public actor AgentPrimarySessionAuthorityV1 {
         await current.close()
         closeRequestedDuringTransition = false
         finishTransition()
+        agentPrimarySessionAuthorityLoggerV1.notice(
+            "primary close completed"
+        )
     }
 
     /// Failure cleanup for a connection being composed outside this actor.
@@ -924,11 +969,25 @@ public actor AgentPrimarySessionAuthorityV1 {
         }
         transitionInProgress = true
         let transport = currentTransport
+        agentPrimarySessionAuthorityLoggerV1.notice(
+            "current primary cleanup started hasTransport=\(transport != nil, privacy: .public)"
+        )
         current = nil
         currentTransport = nil
-        if let transport { await transport.closeTransport() }
+        if let transport {
+            await transport.closeTransport()
+            agentPrimarySessionAuthorityLoggerV1.debug(
+                "current primary cleanup transport closed"
+            )
+        }
         await session.close()
+        agentPrimarySessionAuthorityLoggerV1.debug(
+            "current primary cleanup session closed"
+        )
         finishTransition()
+        agentPrimarySessionAuthorityLoggerV1.notice(
+            "current primary cleanup completed"
+        )
     }
 
     /// Ends only Interactive authority while leaving an eligible Observe/Act
@@ -936,8 +995,14 @@ public actor AgentPrimarySessionAuthorityV1 {
     public func endInteractiveControl() async {
         while transitionInProgress { await waitForTransition() }
         transitionInProgress = true
+        agentPrimarySessionAuthorityLoggerV1.notice(
+            "interactive-only primary transition started"
+        )
         await interactive.primarySessionClosed()
         finishTransition()
+        agentPrimarySessionAuthorityLoggerV1.notice(
+            "interactive-only primary transition completed"
+        )
     }
 
     private func waitForTransition() async {

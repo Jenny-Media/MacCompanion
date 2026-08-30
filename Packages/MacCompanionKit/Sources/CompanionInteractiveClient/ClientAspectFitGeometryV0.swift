@@ -16,11 +16,32 @@ public enum ClientAspectFitGeometryV0 {
         guard scale.isFinite, scale > 0 else {
             throw ClientViewportInputMapperErrorV0.invalidGeometry
         }
-        let width = Double(encodedWidth) * scale
-        let height = Double(encodedHeight) * scale
+        // Multiplication can round a fitted edge a fraction of a point past
+        // the viewport (for example 852.0000000000001). Canonicalize the
+        // result before handing it to the strict input-authority mapper: this
+        // is presentation arithmetic, not permission to accept genuinely
+        // out-of-bounds input geometry.
+        let width = min(
+            viewport.width,
+            Double(encodedWidth) * scale
+        )
+        let height = min(
+            viewport.height,
+            Double(encodedHeight) * scale
+        )
+        let maximumX = viewport.x + viewport.width - width
+        let maximumY = viewport.y + viewport.height - height
+        let x = min(
+            maximumX,
+            max(viewport.x, viewport.x + (viewport.width - width) / 2)
+        )
+        let y = min(
+            maximumY,
+            max(viewport.y, viewport.y + (viewport.height - height) / 2)
+        )
         return try ClientInputRectV0(
-            x: viewport.x + (viewport.width - width) / 2,
-            y: viewport.y + (viewport.height - height) / 2,
+            x: x,
+            y: y,
             width: width,
             height: height
         )

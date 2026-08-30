@@ -14,6 +14,12 @@ name, provider identity, or content-bearing field.
 The status projection preserves enabled intent, console lock/logout, Agent and
 visible-menu process state, listener state, closed route kinds, security
 posture, bounded device/session/provider counts, and every sanitized warning.
+It also carries one closed `interactiveControlGranted` fact which is true only
+when at least one device is paired and every active paired device has the
+durable Interactive Control grant. This aggregate fact may suppress redundant
+grant review and show that Remote Control is allowed for all paired devices,
+but it never authorizes a live session or substitutes for fresh device
+approval and visible Mac admission.
 It must not claim ready until both processes and the listener report ready. A
 locked session states that Observe may remain available while Control is
 limited to the genuine lock surface when supported; it never implies desktop
@@ -23,15 +29,16 @@ Enable, disable, pair, administer devices, view local activity, export
 diagnostics, and retry are separate typed intents. Rendering a button or
 receiving status does not authorize or complete any of them. Pairing is
 available only when the Agent, visible menu app, listener, and security storage
-are ready and the one-device MVP has no paired device. Pairing remains distinct
-from opening device administration, activity history, or diagnostics.
+are ready and fewer than eight active devices are paired. Only one QR
+presentation and one pairing decision may be active at a time. Pairing remains
+distinct from opening device administration, activity history, or diagnostics.
 
 One closed action-admission policy is normative for both projection and
 execution. Loading admits no action; unavailable admits only status retry. A
 validated status admits enable only while disabled and logged in, disable only
-while enabled, pairing only at the complete readiness/empty-device boundary,
-device administration only with one paired device, local activity only while
-administration is ready, and sanitized diagnostics only while the Agent is
+while enabled, pairing only at the complete readiness/below-capacity boundary,
+device administration with one or more paired devices, local activity only
+while administration is ready, and sanitized diagnostics only while the Agent is
 ready. SwiftUI and the application owner must consume this same policy so a
 rendered disabled state cannot drift from execution admission.
 This policy is presentation/application admission, not security authority. Each
@@ -91,19 +98,26 @@ Reviewing or merely opening the UI creates no intent. Explicit local approval pr
 
 Interactive Control uses the same durable expansion semantics through a
 dedicated, non-provider review contract. The visible menu app may request a
-review only for the sole active paired device. The Agent selects that device,
-reads its locally confirmed name and complete current grant set in one storage
-turn, and returns a five-minute `LocalInteractiveControlGrantReviewV0` bound to
+review only while at least one active paired device lacks Control. The Agent
+selects the newest active device that lacks Control, reads its locally
+confirmed name and complete current grant set in one storage turn, and returns
+a five-minute `LocalInteractiveControlGrantReviewV0` bound to
 the exact Control capability identifier, authorization epoch, grant revision,
 and policy revision. The Control descriptor is fixed product authority and is
 never published in the Act provider registry.
 
-The menu app cannot choose a device identifier, author the review, change the
-Control effects, or approve by requesting the review. It may only present the
+The deterministic newest-eligible selection lets a newly paired device receive
+its independent grant without allowing remote input to select a target. If the
+local user skipped earlier reviews, repeated locally initiated reviews advance
+through the remaining eligible devices one at a time. The menu app cannot
+choose a device identifier, author the review, change the Control effects, or
+approve by requesting the review. It may only present the
 Agent-issued review and send the existing exact `LocalGrantDecisionCommandV0`.
 Approval stores `maccompanion.interactive.control`, advances both
 authorization and grant revisions, and closes current primary-session ingress
-until durable convergence is complete. A newly granted phone must reconnect
+until durable convergence and the closed local status fact are complete. An
+all-granted status must not be represented as review failure. A newly granted
+device must reconnect
 and still complete the separate fresh-presence, one-session Interactive
 approval before capture or input can start.
 

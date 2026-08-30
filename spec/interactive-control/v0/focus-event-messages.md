@@ -58,6 +58,14 @@ surface descriptor's closed projection. Labels, values, roles beyond the
 closed category, selections, lengths, placeholders, descriptions, application
 or window titles, paths, URLs, thumbnails, and OS identifiers are forbidden.
 
+The host focus observer runs only while the locally approved Control descriptor
+contains both `keyboard` and `text` and the exact authenticated primary event
+sink remains active. Automatic Smart Zoom preference does not gate observation:
+Type Text consumes the same privacy-filtered candidate while automatic surface
+selection remains off. Removing Text authority, losing the primary sink, or
+ending Control stops sampling and invalidates every unpublished or unconsumed
+focus token.
+
 `focusedRegion` requires a non-null token and focus plus
 `reason: "verifiedFocus"`. Desktop requires both to be null and a non-verified
 reason. Relative validity is materialized against the receiving client's
@@ -66,13 +74,32 @@ monotonic clock; host wall or monotonic focus timestamps never cross devices.
 ## Selection correlation and authority
 
 An event does not select, acknowledge, or activate a surface. A focused-region
-`targetToken` is random, session-scoped, bound server-side to the exact event
-message ID, event sequence, current surface fence, focus token/revision, and
-local expiry. Publishing a later focus event revokes every older unconsumed
-focus-event target. The token is consumed at most once by the ordinary
-`interactive.surface.select` request and can select only `focusedRegion`.
-This capability-token lookup is the exact event-to-command correlation; the
-client cannot supply or modify focus metadata in the selection request.
+`targetToken` is random, session-scoped, bound server-side to the current
+surface fence, focus token/revision, one or more consecutive refresh event
+message IDs and sequences for that unchanged binding, and local expiry. The
+token is consumed at most once by the ordinary `interactive.surface.select`
+request and can select only `focusedRegion`. This capability-token lookup is
+the exact event-to-command correlation; the client cannot supply or modify
+focus metadata in the selection request.
+
+Because focus targets are deliberately short-lived, the host may publish a
+new event for an unchanged privacy-filtered focus before the previous event's
+relative validity expires. It must use the next event message ID and sequence,
+but it preserves the same still-unconsumed one-use target token and atomically
+extends that binding's local expiry. This prevents a refresh from invalidating
+a selection already being prepared from the same surface and focus fence.
+A changed sanitized focus projection or changed current-surface fence revokes
+the prior unconsumed binding and issues a fresh target token. If a previously
+published focus returns to the already acknowledged Desktop, one Desktop
+recommendation clears that stale focused candidate even though no surface
+replacement is otherwise required.
+
+The active surface descriptor's relative wire validity is an admission-
+freshness bound, not the continuing execution authority. After the surface has
+been acknowledged, focus publication validates the exact active surface fence
+and the current renewed execution lease. It must not end an otherwise current
+Control session merely because the descriptor's original transport-freshness
+interval elapsed.
 
 Selection continues through the one proven replacement exchange: client input
 reset, correlated `interactive.surface.select/selected`, discontinuity,
@@ -87,11 +114,25 @@ select Desktop, or end Control; silence never resumes input. The host must have
 closed admission and released held state before it can publish `inputPaused:
 true`.
 
+The primary event and reliable input sockets have no cross-socket ordering.
+After the host has successfully released input for a focus pause, already-sent
+input may still arrive before the client receives `inputPaused`. The menu may
+consume its exact next reliable sequence without any OS effect, under the
+still-current unexpired lease and exact session/epoch/surface/coordinate/focus
+fence and allowed interaction class. This is delivery bookkeeping, not input
+execution or resumption. Wrong fences, expired leases, disallowed classes,
+duplicate conflicts and sequence gaps remain errors. Only the normal new
+surface acknowledgement can reopen input; no drained action is replayed later.
+
 ## Failure and fallback
 
 An expired or superseded target, stale current fence, mismatched focus binding,
-unavailable Accessibility result, or unsafe geometry cannot create a crop. If
-the event is advisory, the client retains its current non-focus visual surface.
-If input is paused, Desktop is the universal recovery request until a separate
-host-initiated fallback profile is frozen. Media bytes alone never prove that
-a focus event was applied or that input resumed.
+unavailable Accessibility result, or unsafe geometry cannot create a crop. A
+focus sample or publication prepared from a surface/primary snapshot that
+became stale while an asynchronous local operation was in flight is discarded
+without ending the newer current session. Failure to publish on the still-
+current authenticated primary event sink remains terminal because delivery is
+then ambiguous. If the event is advisory, the client retains its current non-
+focus visual surface. If input is paused, Desktop is the universal recovery
+request until a separate host-initiated fallback profile is frozen. Media bytes
+alone never prove that a focus event was applied or that input resumed.

@@ -6,6 +6,12 @@ import CompanionInteractiveWire
 import CompanionLocalXPCPlatform
 import Dispatch
 import Foundation
+import OSLog
+
+private let macInteractiveLeaseRuntimeLoggerV1 = Logger(
+    subsystem: "media.jenny.maccompanion",
+    category: "interactive-lease-runtime"
+)
 
 public enum MacInteractiveLeaseRuntimeAdapterErrorV1:
     Error,
@@ -199,6 +205,9 @@ public actor MacInteractiveLeaseRuntimeAdapterV1:
     private let runtime: any MacInteractiveMenuRuntimeLeaseOwningV1
     private let desktop: any MacInteractiveInitialDesktopPreparingV1
     private let surfaceTargets: MacInteractiveSurfaceTargetOwnerV1?
+    private let displaySelection: MacInteractiveOpaqueDisplaySelectionV1?
+    private let updateSelectedDisplay:
+        (@Sendable (UUID?) async throws -> Void)?
     private let expiryScheduler:
         any MacInteractiveLeaseExpirySchedulingV1
     private let monotonicClock: any MacInteractiveMonotonicClockV1
@@ -212,6 +221,8 @@ public actor MacInteractiveLeaseRuntimeAdapterV1:
         self.runtime = runtime
         desktop = MacUnavailableInteractiveInitialDesktopPreparerV1()
         surfaceTargets = nil
+        displaySelection = nil
+        updateSelectedDisplay = nil
         expiryScheduler = MacInteractiveSystemLeaseExpirySchedulerV1()
         monotonicClock = MacInteractiveSystemMonotonicClockV1()
     }
@@ -223,6 +234,8 @@ public actor MacInteractiveLeaseRuntimeAdapterV1:
         self.runtime = runtime
         self.desktop = desktop
         surfaceTargets = nil
+        displaySelection = nil
+        updateSelectedDisplay = nil
         expiryScheduler = MacInteractiveSystemLeaseExpirySchedulerV1()
         monotonicClock = MacInteractiveSystemMonotonicClockV1()
     }
@@ -235,6 +248,8 @@ public actor MacInteractiveLeaseRuntimeAdapterV1:
         self.runtime = runtime
         self.desktop = desktop
         self.surfaceTargets = surfaceTargets
+        displaySelection = nil
+        updateSelectedDisplay = nil
         expiryScheduler = MacInteractiveSystemLeaseExpirySchedulerV1()
         monotonicClock = MacInteractiveSystemMonotonicClockV1()
     }
@@ -245,6 +260,8 @@ public actor MacInteractiveLeaseRuntimeAdapterV1:
         self.runtime = runtime
         desktop = MacUnavailableInteractiveInitialDesktopPreparerV1()
         surfaceTargets = nil
+        displaySelection = nil
+        updateSelectedDisplay = nil
         expiryScheduler = MacInteractiveSystemLeaseExpirySchedulerV1()
         monotonicClock = MacInteractiveSystemMonotonicClockV1()
     }
@@ -256,6 +273,8 @@ public actor MacInteractiveLeaseRuntimeAdapterV1:
         self.runtime = runtime
         self.desktop = desktop
         surfaceTargets = nil
+        displaySelection = nil
+        updateSelectedDisplay = nil
         expiryScheduler = MacInteractiveSystemLeaseExpirySchedulerV1()
         monotonicClock = MacInteractiveSystemMonotonicClockV1()
     }
@@ -269,8 +288,27 @@ public actor MacInteractiveLeaseRuntimeAdapterV1:
         self.runtime = runtime
         self.desktop = desktop
         surfaceTargets = nil
+        displaySelection = nil
+        updateSelectedDisplay = nil
         self.expiryScheduler = expiryScheduler
         self.monotonicClock = monotonicClock
+    }
+
+    public init(
+        runtime: InteractiveMenuRuntimeOwnerV0,
+        desktop: any MacInteractiveInitialDesktopPreparingV1,
+        surfaceTargets: MacInteractiveSurfaceTargetOwnerV1?,
+        displaySelection: MacInteractiveOpaqueDisplaySelectionV1,
+        updateSelectedDisplay:
+            @escaping @Sendable (UUID?) async throws -> Void
+    ) {
+        self.runtime = runtime
+        self.desktop = desktop
+        self.surfaceTargets = surfaceTargets
+        self.displaySelection = displaySelection
+        self.updateSelectedDisplay = updateSelectedDisplay
+        expiryScheduler = MacInteractiveSystemLeaseExpirySchedulerV1()
+        monotonicClock = MacInteractiveSystemMonotonicClockV1()
     }
 
     public func state() -> MacInteractiveLeaseRuntimeAdapterStateV1 {
@@ -286,6 +324,105 @@ public actor MacInteractiveLeaseRuntimeAdapterV1:
             envelope,
             nowMonotonicNanoseconds: nowMonotonicNanoseconds
         )
+    }
+
+    public func interactiveDisplayCatalog(
+        _ command: LocalInteractiveDisplayCatalogCommandV1,
+        nowMonotonicNanoseconds _: UInt64
+    ) async throws -> LocalInteractiveDisplayCatalogReceiptV1 {
+        try requireAvailable()
+        let runtimeState = await runtime.state()
+        guard Self.allowsDisplayCatalog(runtimeState),
+              let displaySelection,
+              let selectedDisplayID =
+                displaySelection.opaqueSelectedDisplayID() else {
+            throw MacLocalXPCInteractiveLeaseErrorV1.unavailable
+        }
+        let choices = displaySelection.availableDisplays()
+        let candidates = try choices.enumerated().map { index, choice in
+            guard index < Int(UInt8.max),
+                  choice.pixelWidth <= Int(UInt16.max),
+                  choice.pixelHeight <= Int(UInt16.max) else {
+                throw MacLocalXPCInteractiveLeaseErrorV1.unavailable
+            }
+            return try LocalInteractiveDisplayCandidateV1(
+                displayID: choice.id,
+                ordinal: UInt8(index + 1),
+                pixelWidth: UInt16(choice.pixelWidth),
+                pixelHeight: UInt16(choice.pixelHeight),
+                isMain: choice.isMain
+            )
+        }
+        return try LocalInteractiveDisplayCatalogReceiptV1(
+            correlationID: command.commandID,
+            selectedDisplayID: selectedDisplayID,
+            candidates: candidates
+        )
+    }
+
+    public func selectInteractiveDisplay(
+        _ command: LocalInteractiveDisplaySelectCommandV1,
+        nowMonotonicNanoseconds _: UInt64
+    ) async throws -> LocalInteractiveDisplaySelectedReceiptV1 {
+        try requireAvailable()
+        let runtimeState = await runtime.state()
+        guard Self.allowsDisplaySelection(runtimeState),
+              let displaySelection,
+              let updateSelectedDisplay,
+              let previous = displaySelection.opaqueSelectedDisplayID()
+        else {
+            throw MacLocalXPCInteractiveLeaseErrorV1.unavailable
+        }
+        if previous != command.displayID {
+            do {
+                try displaySelection.selectDisplay(id: command.displayID)
+                if case .active = runtimeState, let surfaceTargets {
+                    try await surfaceTargets.retargetDesktop(
+                        physicalDisplayID: displaySelection
+                            .resolvePhysicalDisplayID(
+                                selectedDisplayID: command.displayID
+                            )
+                    )
+                }
+                try await updateSelectedDisplay(command.displayID)
+            } catch {
+                try? displaySelection.selectDisplay(id: previous)
+                if case .active = runtimeState, let surfaceTargets,
+                   let previousPhysical = try? displaySelection
+                    .resolvePhysicalDisplayID(selectedDisplayID: previous) {
+                    try? await surfaceTargets.retargetDesktop(
+                        physicalDisplayID: previousPhysical
+                    )
+                }
+                throw MacLocalXPCInteractiveLeaseErrorV1.unavailable
+            }
+        }
+        guard displaySelection.opaqueSelectedDisplayID()
+                == command.displayID else {
+            throw MacLocalXPCInteractiveLeaseErrorV1.unavailable
+        }
+        return LocalInteractiveDisplaySelectedReceiptV1(
+            correlationID: command.commandID,
+            selectedDisplayID: command.displayID
+        )
+    }
+
+    private static func allowsDisplayCatalog(
+        _ state: InteractiveMenuRuntimeStateV0
+    ) -> Bool {
+        switch state {
+        case .idle, .active: true
+        case .installing, .terminating, .safetyRecoveryRequired: false
+        }
+    }
+
+    private static func allowsDisplaySelection(
+        _ state: InteractiveMenuRuntimeStateV0
+    ) -> Bool {
+        switch state {
+        case .idle, .active: true
+        case .installing, .terminating, .safetyRecoveryRequired: false
+        }
     }
 
     public func prepareInitialInteractiveDesktop(
@@ -326,6 +463,9 @@ public actor MacInteractiveLeaseRuntimeAdapterV1:
     ) async throws {
         try requireAvailable()
         do {
+            macInteractiveLeaseRuntimeLoggerV1.notice(
+                "menu renewal runtime started counter=\(renewal.replacement.renewalCounter, privacy: .public)"
+            )
             try await runtime.renew(
                 renewal,
                 nowMonotonicNanoseconds: nowMonotonicNanoseconds
@@ -334,7 +474,13 @@ public actor MacInteractiveLeaseRuntimeAdapterV1:
                 expectedDeadline:
                     renewal.replacement.expiresAtMonotonicNanoseconds
             )
+            macInteractiveLeaseRuntimeLoggerV1.notice(
+                "menu renewal expiry armed counter=\(renewal.replacement.renewalCounter, privacy: .public)"
+            )
         } catch {
+            macInteractiveLeaseRuntimeLoggerV1.error(
+                "menu renewal failed counter=\(renewal.replacement.renewalCounter, privacy: .public) error=\(String(describing: error), privacy: .public)"
+            )
             await latchIfRuntimeRequiresSafetyRecovery()
             throw error
         }

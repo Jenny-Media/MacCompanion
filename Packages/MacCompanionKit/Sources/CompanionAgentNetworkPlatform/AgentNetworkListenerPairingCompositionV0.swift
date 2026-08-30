@@ -6,6 +6,13 @@ import CompanionNetworkPlatform
 import Foundation
 import Network
 
+package enum AgentNetworkListenerBindingV1: Sendable {
+    case bonjour
+    #if DEBUG
+    case isolatedLoopback
+    #endif
+}
+
 public enum AgentNetworkListenerPairingCompositionErrorV0:
     Error,
     Equatable,
@@ -36,11 +43,24 @@ public enum AgentNetworkListenerPairingCompositionFactoryV0 {
     package static func make(
         configuration: NetworkHostTLSListenerConfigurationV0,
         port: UInt16,
-        additionalEndpoints: [EndpointCandidate] = []
+        additionalEndpoints: [EndpointCandidate] = [],
+        binding: AgentNetworkListenerBindingV1 = .bonjour
     ) throws -> AgentNetworkListenerPairingCompositionV0 {
         guard port > 0, let networkPort = NWEndpoint.Port(rawValue: port) else {
             throw AgentNetworkListenerPairingCompositionErrorV0.invalidPort
         }
+        #if DEBUG
+        if case .isolatedLoopback = binding {
+            guard additionalEndpoints.isEmpty else {
+                throw AgentNetworkListenerPairingCompositionErrorV0.invalidAdditionalEndpoint
+            }
+            let (listener, _) = try configuration.makeUnstartedLoopbackListener(port: networkPort)
+            return AgentNetworkListenerPairingCompositionV0(listener: listener,
+                pairingContext: AgentNetworkPairingContextAuthorityV0(context: try .init(
+                    hostFingerprint: configuration.hostFingerprint,
+                    endpoints: [.init(kind: .ipv4, value: "127.0.0.1", port: port)])))
+        }
+        #endif
         guard additionalEndpoints.count <= 7,
               additionalEndpoints.allSatisfy({ endpoint in
                   endpoint.kind != .bonjour && endpoint.port == port
@@ -110,18 +130,40 @@ public actor AgentNetworkPairingProductCompositionV0 {
     package nonisolated let primaryServices: AgentPrimaryServicesV1
     private var listenerService: AgentNetworkListenerServiceV1?
     private var terminal = false
+    private let binding: AgentNetworkListenerBindingV1
 
     package init(
         listener: NetworkHostListenerOwnerV0,
         pairingContext: AgentNetworkPairingContextAuthorityV0,
         pairingServices: AgentPairingServicesV0,
-        primaryServices: AgentPrimaryServicesV1
+        primaryServices: AgentPrimaryServicesV1,
+        binding: AgentNetworkListenerBindingV1 = .bonjour
     ) {
         self.listener = listener
         self.pairingContext = pairingContext
         self.pairingServices = pairingServices
         self.primaryServices = primaryServices
+        self.binding = binding
     }
+
+    #if DEBUG
+    /// Explicit test substitute for Bonjour: confirm only the already-bound
+    /// private loopback endpoint, never publish LAN route/advertisement facts.
+    /// Real listener readiness is mandatory and teardown still fences it.
+    package func confirmIsolatedLoopbackEndpoint() async throws -> Bool {
+        guard case .isolatedLoopback = binding, !terminal, let listenerService else {
+            throw AgentNetworkPairingProductCompositionErrorV0.terminal
+        }
+        guard await listenerService.snapshot().state == .listening else { return false }
+        let context = await pairingContext.snapshot()
+        guard context.listenerReady, !context.terminal else { return false }
+        if !context.advertisementReady {
+            try await pairingContext.publishAdvertisementReadiness(ready: true,
+                generation: context.advertisementGeneration + 1)
+        }
+        return true
+    }
+    #endif
 
     public nonisolated var localPairingSessions:
         AgentLocalPairingSessionHandlerV0
@@ -223,11 +265,15 @@ public actor AgentNetworkPairingProductCompositionV0 {
     /// Nonterminal loss of the replaceable authenticated menu generation.
     /// Pairing review delivery converges immediately, including cancellation of
     /// any still-pending visible review, while the listener, primary ingress,
-    /// QR context, and Observe services remain owned by this product. A later
+    /// QR context, and Observe services remain owned by this product. The old
+    /// QR presentation is retired too, including an in-flight creation. A later
     /// authenticated menu generation may publish a fresh review through the
     /// stable presentation authority retained by the review service.
     public func authenticatedMenuSurfaceUnavailable() async {
         guard !terminal else { return }
+        // Failure leaves only QR creation fail-closed inside the handler;
+        // it must not tear down unrelated authenticated Observe sessions.
+        try? await pairingServices.localPairingSessions.invalidateForPresentationLoss()
         await pairingServices.reviews.authenticatedMenuSurfaceUnavailable()
     }
 
@@ -278,6 +324,24 @@ public enum AgentNetworkPairingProductCompositionFactoryV0 {
         pairingIDGenerator: @escaping @Sendable () -> UUID = { UUID() },
         deviceIDGenerator: @escaping @Sendable () -> UUID = { UUID() }
     ) throws -> AgentNetworkPairingProductCompositionV0 {
+        try make(configuration: configuration, port: port, additionalEndpoints: additionalEndpoints,
+            primaryServices: primaryServices, timeSource: timeSource, policySource: policySource,
+            alreadyAuthorizedSurface: alreadyAuthorizedSurface, pairingIDGenerator: pairingIDGenerator,
+            deviceIDGenerator: deviceIDGenerator, binding: .bonjour)
+    }
+
+    package static func make(
+        configuration: NetworkHostTLSListenerConfigurationV0,
+        port: UInt16,
+        additionalEndpoints: [EndpointCandidate] = [],
+        primaryServices: AgentPrimaryServicesV1,
+        timeSource: any AgentLocalPairingTimeSamplingV0,
+        policySource: any AgentLocalPairingPolicyReadingV0,
+        alreadyAuthorizedSurface: any LocalPairingReviewSurfaceV0,
+        pairingIDGenerator: @escaping @Sendable () -> UUID = { UUID() },
+        deviceIDGenerator: @escaping @Sendable () -> UUID = { UUID() },
+        binding: AgentNetworkListenerBindingV1
+    ) throws -> AgentNetworkPairingProductCompositionV0 {
         guard configuration.hostFingerprint
                 == primaryServices.hostIdentity.hostFingerprint,
               configuration.certificateDER
@@ -289,7 +353,8 @@ public enum AgentNetworkPairingProductCompositionFactoryV0 {
             AgentNetworkListenerPairingCompositionFactoryV0.make(
                 configuration: configuration,
                 port: port,
-                additionalEndpoints: additionalEndpoints
+                additionalEndpoints: additionalEndpoints,
+                binding: binding
             )
         let pairingServices = primaryServices.makePairingServices(
             contextSource: listenerComposition.pairingContext,
@@ -303,7 +368,8 @@ public enum AgentNetworkPairingProductCompositionFactoryV0 {
             listener: listenerComposition.listener,
             pairingContext: listenerComposition.pairingContext,
             pairingServices: pairingServices,
-            primaryServices: primaryServices
+            primaryServices: primaryServices,
+            binding: binding
         )
     }
 }

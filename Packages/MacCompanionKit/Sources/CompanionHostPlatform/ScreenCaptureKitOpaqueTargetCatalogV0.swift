@@ -1,6 +1,7 @@
 import CompanionDomain
 import CompanionInteractiveShared
 import CoreGraphics
+import Darwin
 import Foundation
 import ScreenCaptureKit
 
@@ -13,6 +14,23 @@ public enum ScreenCaptureKitOpaqueTargetCatalogErrorV0:
     case selectedDisplayUnavailable
     case sourceUnavailable
     case descriptorMismatch
+}
+
+/// Menu-process-only identity for the app/window that must become the local
+/// input destination before a selected visual surface is acknowledged. These
+/// process and window identifiers are never encoded, persisted, or returned
+/// through IPC.
+public enum ScreenCaptureKitLocalActivationTargetV0: Equatable, Sendable {
+    case application(
+        processID: pid_t,
+        bundleIdentifier: String
+    )
+    case window(
+        windowID: CGWindowID,
+        processID: pid_t,
+        bundleIdentifier: String,
+        globalBounds: CGRect
+    )
 }
 
 /// A menu-process-only capture result. ScreenCaptureKit objects and physical
@@ -38,6 +56,10 @@ public final class ScreenCaptureKitResolvedSurfaceV0: @unchecked Sendable {
     /// window may live on a different physical display than the initial
     /// Desktop, so this cannot be reconstructed from the lease display ID.
     public let inputBackingScaleFactor: Double
+    /// Ephemeral local activation identity. Desktop and focused crops do not
+    /// create a new activation effect; app/window selections must carry one.
+    public let localActivationTarget:
+        ScreenCaptureKitLocalActivationTargetV0?
 
     public init(
         filter: SCContentFilter,
@@ -47,7 +69,9 @@ public final class ScreenCaptureKitResolvedSurfaceV0: @unchecked Sendable {
         sourceRect: CGRect? = nil,
         focusedRegionSourceGlobalBounds: CGRect? = nil,
         inputBounds: CGRect,
-        inputBackingScaleFactor: Double
+        inputBackingScaleFactor: Double,
+        localActivationTarget:
+            ScreenCaptureKitLocalActivationTargetV0? = nil
     ) {
         self.filter = filter
         self.focusedRegionFilter = focusedRegionFilter ?? filter
@@ -58,6 +82,7 @@ public final class ScreenCaptureKitResolvedSurfaceV0: @unchecked Sendable {
             focusedRegionSourceGlobalBounds ?? inputBounds
         self.inputBounds = inputBounds
         self.inputBackingScaleFactor = inputBackingScaleFactor
+        self.localActivationTarget = localActivationTarget
     }
 }
 
@@ -228,10 +253,13 @@ public final class ScreenCaptureKitOpaqueTargetCatalogV0: @unchecked Sendable {
         let logicalHeight: Int
         let captureWidth: Int
         let captureHeight: Int
+        let sourceRect: CGRect?
         let inputBounds: CGRect
         let metadataFields: Set<SurfaceMetadataField>
         let rotation: SurfaceRotation
         let inputBackingScaleFactor: Double
+        let localActivationTarget:
+            ScreenCaptureKitLocalActivationTargetV0
         switch source {
         case let .application(processID, bundleIdentifier):
             guard expectedKind == .application,
@@ -242,13 +270,23 @@ public final class ScreenCaptureKitOpaqueTargetCatalogV0: @unchecked Sendable {
                 throw ScreenCaptureKitOpaqueTargetCatalogErrorV0
                     .sourceUnavailable
             }
-            let hasWindow = currentContent.windows.contains { window in
+            let visibleWindowBounds = currentContent.windows.compactMap {
+                window -> CGRect? in
                 window.isOnScreen
                     && window.frame.width > 0
                     && window.frame.height > 0
                     && window.owningApplication?.processID == processID
+                    ? window.frame : nil
             }
-            guard hasWindow else {
+            let displayBounds = CGDisplayBounds(selectedDisplayID)
+            guard displayBounds.width.isFinite,
+                  displayBounds.height.isFinite,
+                  displayBounds.width > 0,
+                  displayBounds.height > 0,
+                  let crop = try? ScreenCaptureKitApplicationCropV0(
+                      windowGlobalBounds: visibleWindowBounds,
+                      sourceGlobalBounds: displayBounds
+                  ) else {
                 throw ScreenCaptureKitOpaqueTargetCatalogErrorV0
                     .sourceUnavailable
             }
@@ -258,19 +296,28 @@ public final class ScreenCaptureKitOpaqueTargetCatalogV0: @unchecked Sendable {
                     application: application
                 )
             focusedRegionFilter = filter
-            inputBounds = CGDisplayBounds(selectedDisplayID)
-            focusedRegionSourceGlobalBounds = inputBounds
+            sourceRect = crop.sourceRect
+            inputBounds = crop.globalBounds
+            focusedRegionSourceGlobalBounds = displayBounds
             logicalWidth = Int(inputBounds.width.rounded(.up))
             logicalHeight = Int(inputBounds.height.rounded(.up))
-            captureWidth = Int(CGDisplayPixelsWide(selectedDisplayID))
-            captureHeight = Int(CGDisplayPixelsHigh(selectedDisplayID))
+            inputBackingScaleFactor = try Self.backingScaleFactor(
+                for: selectedDisplayID
+            )
+            captureWidth = Int(
+                (inputBounds.width * inputBackingScaleFactor).rounded(.up)
+            )
+            captureHeight = Int(
+                (inputBounds.height * inputBackingScaleFactor).rounded(.up)
+            )
             metadataFields = [
                 .applicationName, .windowCount, .currentWindowAvailable,
             ]
             rotation = current.kind == .window
                 ? .degrees0 : current.rotation
-            inputBackingScaleFactor = try Self.backingScaleFactor(
-                for: selectedDisplayID
+            localActivationTarget = .application(
+                processID: processID,
+                bundleIdentifier: bundleIdentifier
             )
         case let .window(windowID, processID, bundleIdentifier):
             guard expectedKind == .window,
@@ -288,6 +335,7 @@ public final class ScreenCaptureKitOpaqueTargetCatalogV0: @unchecked Sendable {
             }
             filter = ScreenCaptureKitCaptureConfigurationV0
                 .makeWindowFilter(window: window)
+            sourceRect = nil
             logicalWidth = Int(window.frame.width.rounded(.up))
             logicalHeight = Int(window.frame.height.rounded(.up))
             inputBounds = window.frame
@@ -330,6 +378,12 @@ public final class ScreenCaptureKitOpaqueTargetCatalogV0: @unchecked Sendable {
             )
             metadataFields = [.applicationName, .genericWindowOrdinal]
             rotation = .degrees0
+            localActivationTarget = .window(
+                windowID: windowID,
+                processID: processID,
+                bundleIdentifier: bundleIdentifier,
+                globalBounds: window.frame
+            )
         }
         let profile = try Self.captureProfile(
             logicalWidth: captureWidth,
@@ -381,10 +435,12 @@ public final class ScreenCaptureKitOpaqueTargetCatalogV0: @unchecked Sendable {
             focusedRegionFilter: focusedRegionFilter,
             descriptor: descriptor,
             profile: profile,
+            sourceRect: sourceRect,
             focusedRegionSourceGlobalBounds:
                 focusedRegionSourceGlobalBounds,
             inputBounds: inputBounds,
-            inputBackingScaleFactor: inputBackingScaleFactor
+            inputBackingScaleFactor: inputBackingScaleFactor,
+            localActivationTarget: localActivationTarget
         )
     }
 
@@ -457,8 +513,11 @@ public final class ScreenCaptureKitOpaqueTargetCatalogV0: @unchecked Sendable {
                 / Double(logicalHeight),
             1
         )
-        let width = max(1, Int((Double(logicalWidth) * scale).rounded(.down)))
-        let height = max(1, Int((Double(logicalHeight) * scale).rounded(.down)))
+        // H.264/NV12 output is chroma-aligned. VideoToolbox can silently round
+        // an odd requested size down; establish the exact encoded geometry
+        // here, before the descriptor, capture, and encoder bind to it.
+        let width = max(2, Int((Double(logicalWidth) * scale).rounded(.down)) / 2 * 2)
+        let height = max(2, Int((Double(logicalHeight) * scale).rounded(.down)) / 2 * 2)
         return try ScreenCaptureKitCaptureProfileV0(
             width: width,
             height: height,

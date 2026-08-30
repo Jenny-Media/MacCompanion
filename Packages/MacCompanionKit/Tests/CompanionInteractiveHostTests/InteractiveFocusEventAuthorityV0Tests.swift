@@ -46,7 +46,9 @@ private func focusAuthorityFocus(
 private func focusAuthorityDesktop(
     surfaceID: UUID = UUID(),
     surfaceRevision: UInt64 = 1,
-    coordinateRevision: UInt64 = 1
+    coordinateRevision: UInt64 = 1,
+    createdAtMonotonicMilliseconds: Int64 = 100,
+    expiresAtMonotonicMilliseconds: Int64 = 10_000
 ) throws -> AdaptiveSurfaceDescriptor {
     try AdaptiveSurfaceDescriptor(
         interactiveSessionID: focusAuthoritySessionID,
@@ -62,9 +64,89 @@ private func focusAuthorityDesktop(
         interactionClasses: [.view, .pointer, .keyboard],
         privacyProfile: .visualOnly,
         metadataFields: [],
-        createdAtMonotonicMilliseconds: 100,
-        expiresAtMonotonicMilliseconds: 10_000
+        createdAtMonotonicMilliseconds: createdAtMonotonicMilliseconds,
+        expiresAtMonotonicMilliseconds: expiresAtMonotonicMilliseconds
     )
+}
+
+@Test func unchangedFocusRefreshRetainsUnconsumedTargetAndExtendsExpiry()
+    throws
+{
+    let descriptor = try focusAuthorityDesktop()
+    let focus = try focusAuthorityFocus()
+    let targetToken = UUID()
+    let unusedReplacementToken = UUID()
+    let identifiers = FocusAuthorityIdentifierSequenceV0([
+        targetToken, unusedReplacementToken,
+    ])
+    var authority = try InteractiveFocusEventAuthorityV0(
+        interactiveSessionID: focusAuthoritySessionID,
+        authorizationEpoch: focusAuthorityEpoch,
+        targetIdentifier: { identifiers.next() }
+    )
+    let candidate = try InteractiveFocusEventCandidateV0(
+        recommendedTargetKind: .focusedRegion,
+        focus: focus,
+        inputPaused: false,
+        reason: .verifiedFocus,
+        validForMilliseconds: 1_000
+    )
+    let first = try authority.prepare(
+        candidate: candidate,
+        current: descriptor,
+        eventMessageID: WireUUID(UUID()),
+        sentAtUnixMilliseconds: 1_000,
+        hostMonotonicNowMilliseconds: 500
+    )
+    let refreshed = try authority.prepare(
+        candidate: candidate,
+        current: descriptor,
+        eventMessageID: WireUUID(UUID()),
+        sentAtUnixMilliseconds: 1_400,
+        hostMonotonicNowMilliseconds: 900
+    )
+
+    #expect(first.eventSequence == 1)
+    #expect(refreshed.eventSequence == 2)
+    #expect(first.targetToken == WireUUID(targetToken))
+    #expect(refreshed.targetToken == first.targetToken)
+    #expect(try authority.consume(
+        focusAuthoritySelection(
+            descriptor: descriptor,
+            targetToken: WireUUID(targetToken)
+        ),
+        current: descriptor,
+        hostMonotonicNowMilliseconds: 1_899
+    ) == focus)
+}
+
+@Test func focusPreparationUsesRenewedLeaseRatherThanDescriptorFreshness()
+    throws
+{
+    let descriptor = try focusAuthorityDesktop(
+        createdAtMonotonicMilliseconds: 100,
+        expiresAtMonotonicMilliseconds: 600
+    )
+    var authority = try InteractiveFocusEventAuthorityV0(
+        interactiveSessionID: focusAuthoritySessionID,
+        authorizationEpoch: focusAuthorityEpoch
+    )
+
+    let prepared = try authority.prepare(
+        candidate: try InteractiveFocusEventCandidateV0(
+            recommendedTargetKind: .focusedRegion,
+            focus: try focusAuthorityFocus(),
+            inputPaused: false,
+            reason: .verifiedFocus
+        ),
+        current: descriptor,
+        eventMessageID: WireUUID(UUID()),
+        sentAtUnixMilliseconds: 2_000,
+        hostMonotonicNowMilliseconds: 1_500
+    )
+
+    #expect(prepared.eventSequence == 1)
+    #expect(prepared.targetToken != nil)
 }
 
 private func focusAuthorityFocused(

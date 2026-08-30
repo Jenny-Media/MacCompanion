@@ -232,8 +232,7 @@ public struct ClientInputProducerV0: Sendable {
             throw ClientInputProducerErrorV0.interactionClassDenied
         }
         if case .text = payload {
-            guard let focus = descriptor.focus,
-                  focus.editable, !focus.secure else {
+            guard descriptor.focus?.secure != true else {
                 throw ClientInputProducerErrorV0.textFocusDenied
             }
         }

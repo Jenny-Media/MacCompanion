@@ -50,6 +50,12 @@ public protocol MacLocalXPCInteractiveLeaseSendingV1: Sendable {
     func interactiveFocusSnapshot(
         _ command: LocalInteractiveFocusSnapshotCommandV1
     ) async throws -> LocalInteractiveFocusSnapshotReceiptV1
+    func interactiveDisplayCatalog(
+        _ command: LocalInteractiveDisplayCatalogCommandV1
+    ) async throws -> LocalInteractiveDisplayCatalogReceiptV1
+    func selectInteractiveDisplay(
+        _ command: LocalInteractiveDisplaySelectCommandV1
+    ) async throws -> LocalInteractiveDisplaySelectedReceiptV1
 }
 
 extension MacLocalXPCInteractiveLeaseSendingV1 {
@@ -81,6 +87,16 @@ extension MacLocalXPCInteractiveLeaseSendingV1 {
     public func interactiveFocusSnapshot(
         _: LocalInteractiveFocusSnapshotCommandV1
     ) async throws -> LocalInteractiveFocusSnapshotReceiptV1 {
+        throw MacLocalXPCInteractiveLeaseErrorV1.unavailable
+    }
+    public func interactiveDisplayCatalog(
+        _: LocalInteractiveDisplayCatalogCommandV1
+    ) async throws -> LocalInteractiveDisplayCatalogReceiptV1 {
+        throw MacLocalXPCInteractiveLeaseErrorV1.unavailable
+    }
+    public func selectInteractiveDisplay(
+        _: LocalInteractiveDisplaySelectCommandV1
+    ) async throws -> LocalInteractiveDisplaySelectedReceiptV1 {
         throw MacLocalXPCInteractiveLeaseErrorV1.unavailable
     }
 }
@@ -147,6 +163,16 @@ package protocol MacLocalXPCGenerationBoundInteractiveLeaseSendingV1:
         endpointToken: UUID,
         command: LocalInteractiveFocusSnapshotCommandV1
     ) async throws -> LocalInteractiveFocusSnapshotReceiptV1
+    func interactiveDisplayCatalog(
+        generation: UInt64,
+        endpointToken: UUID,
+        command: LocalInteractiveDisplayCatalogCommandV1
+    ) async throws -> LocalInteractiveDisplayCatalogReceiptV1
+    func selectInteractiveDisplay(
+        generation: UInt64,
+        endpointToken: UUID,
+        command: LocalInteractiveDisplaySelectCommandV1
+    ) async throws -> LocalInteractiveDisplaySelectedReceiptV1
 }
 
 extension MacLocalXPCGenerationBoundInteractiveLeaseSendingV1 {
@@ -192,6 +218,20 @@ extension MacLocalXPCGenerationBoundInteractiveLeaseSendingV1 {
     ) async throws -> LocalInteractiveFocusSnapshotReceiptV1 {
         throw MacLocalXPCInteractiveLeaseErrorV1.unavailable
     }
+    package func interactiveDisplayCatalog(
+        generation _: UInt64,
+        endpointToken _: UUID,
+        command _: LocalInteractiveDisplayCatalogCommandV1
+    ) async throws -> LocalInteractiveDisplayCatalogReceiptV1 {
+        throw MacLocalXPCInteractiveLeaseErrorV1.unavailable
+    }
+    package func selectInteractiveDisplay(
+        generation _: UInt64,
+        endpointToken _: UUID,
+        command _: LocalInteractiveDisplaySelectCommandV1
+    ) async throws -> LocalInteractiveDisplaySelectedReceiptV1 {
+        throw MacLocalXPCInteractiveLeaseErrorV1.unavailable
+    }
 }
 
 package enum MacLocalXPCInteractiveLeaseCommandKindV1:
@@ -208,6 +248,8 @@ package enum MacLocalXPCInteractiveLeaseCommandKindV1:
     case surfaceAcknowledgement
     case surfaceFailure
     case focusSnapshot
+    case displayCatalog
+    case displaySelect
 }
 
 /// Pure queue-admission binding copied from the opaque ready-generation
@@ -281,6 +323,14 @@ public protocol MacLocalXPCInteractiveLeaseHandlingV1: Sendable {
         _ command: LocalInteractiveFocusSnapshotCommandV1,
         nowMonotonicNanoseconds: UInt64
     ) async throws -> LocalInteractiveFocusSnapshotReceiptV1
+    func interactiveDisplayCatalog(
+        _ command: LocalInteractiveDisplayCatalogCommandV1,
+        nowMonotonicNanoseconds: UInt64
+    ) async throws -> LocalInteractiveDisplayCatalogReceiptV1
+    func selectInteractiveDisplay(
+        _ command: LocalInteractiveDisplaySelectCommandV1,
+        nowMonotonicNanoseconds: UInt64
+    ) async throws -> LocalInteractiveDisplaySelectedReceiptV1
 
     func invalidateAgentAuthority() async
 }
@@ -326,6 +376,18 @@ extension MacLocalXPCInteractiveLeaseHandlingV1 {
         _: LocalInteractiveFocusSnapshotCommandV1,
         nowMonotonicNanoseconds _: UInt64
     ) async throws -> LocalInteractiveFocusSnapshotReceiptV1 {
+        throw MacLocalXPCInteractiveLeaseErrorV1.unavailable
+    }
+    public func interactiveDisplayCatalog(
+        _: LocalInteractiveDisplayCatalogCommandV1,
+        nowMonotonicNanoseconds _: UInt64
+    ) async throws -> LocalInteractiveDisplayCatalogReceiptV1 {
+        throw MacLocalXPCInteractiveLeaseErrorV1.unavailable
+    }
+    public func selectInteractiveDisplay(
+        _: LocalInteractiveDisplaySelectCommandV1,
+        nowMonotonicNanoseconds _: UInt64
+    ) async throws -> LocalInteractiveDisplaySelectedReceiptV1 {
         throw MacLocalXPCInteractiveLeaseErrorV1.unavailable
     }
 }

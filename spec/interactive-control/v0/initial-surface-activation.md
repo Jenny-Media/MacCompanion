@@ -72,6 +72,32 @@ correlation field only and does not turn initial activation into a replacement.
 Expiry, revoke, Agent IPC loss, malformed media, or acknowledgement mismatch
 still invokes the complete release/stop/blank/indicator-clear safety path.
 
+After both secondary role channels authenticate, the iOS client immediately
+presents its live-control destination and begins the initial Desktop request;
+it does not require a second user action after device-presence approval. This
+ordering makes the verified renderer the prompt consumer of the host's bounded
+capture stream. A manually delayed navigation step must not leave authenticated
+media unread until transport backpressure terminates the safety runtime.
+The host encoder keeps one frame in flight through the complete downstream
+publication acknowledgement, not merely through the VideoToolbox callback.
+While publication is suspended it retains at most the newest waiting source
+frame and requires that replacement to be clean. A capture callback cannot
+start another encode until publication completes, so role-channel startup
+latency cannot bypass this bounded backpressure or overflow the menu queue.
+
+A system-stopped Desktop capture, including the stop ScreenCaptureKit emits
+when the console locks, retires the platform input configuration immediately.
+It does not by itself discard the approved Interactive session or prevent an
+otherwise exact lease renewal. While the same session, authorization epoch,
+display, surface, and revisions remain current, the menu may retry that capture
+after a bounded delay. Every retry first publishes a gap-free discontinuity
+under the current lease fence, resets decoder configuration state, and uses a
+new encoder whose first accepted access unit is clean. Input remains unusable
+until the platform capture and input configuration have both been rebuilt.
+Any non-system capture termination, failed discontinuity publication, changed
+surface, revoke, expiry, or IPC authority loss performs the normal fail-closed
+session teardown instead of recovery.
+
 The media stream does not pause while the client waits for the exact
 `interactive.surface.initial.acknowledged` reply. After the clean-frame fence
 has been taken, the initial owner continues to admit gap-free media for the

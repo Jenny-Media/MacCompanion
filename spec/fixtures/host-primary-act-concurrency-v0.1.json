@@ -1,0 +1,21 @@
+{
+  "profile": "Mac Companion primary Act concurrency v0.1",
+  "maximumConcurrentExecutions": 31,
+  "maximumOrdinaryHandlers": 1,
+  "concurrentKinds": ["operation.invoke", "operation.approve"],
+  "rules": [
+    "authentication remains sequential",
+    "same-primary status and cancellation complete while provider execution is pending",
+    "responses correlate to requests and may complete out of order",
+    "a cancel target must already be durably admitted rather than inferred from send order",
+    "execution overflow closes without unbounded allocation",
+    "one read and one chunk admission loop at a time",
+    "all response writes are serialized",
+    "late execution results cannot write after connection teardown",
+    "task cancellation never proves provider cancellation",
+    "post-suspension revalidation requires the same ready connection",
+    "authenticated liveness timestamps never regress",
+    "repeated cancellation calls the provider hook at most once",
+    "startup reconciles interrupted running work to outcomeUnknown without retry"
+  ]
+}

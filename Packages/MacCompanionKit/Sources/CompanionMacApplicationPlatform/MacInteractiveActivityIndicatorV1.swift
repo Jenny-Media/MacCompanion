@@ -51,6 +51,10 @@ public final class MacInteractiveActivityIndicatorV1:
         self.menuAppGeneration = menuAppGeneration
     }
 
+    /// The authenticated admission publication and the later visible-runtime
+    /// receipt must identify the same process-lifetime menu generation.
+    package var admissionMenuAppGeneration: UUID { menuAppGeneration }
+
     public var isVisible: Bool { phase != .inactive }
 
     public var updateControlState: MacUpdateControlStateV0 {

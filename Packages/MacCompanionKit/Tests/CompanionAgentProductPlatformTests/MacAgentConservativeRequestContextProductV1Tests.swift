@@ -25,34 +25,67 @@ private func publicFactsV1(
     processUserID: UInt32 = 501,
     windowSessionUserID: UInt32? = 501,
     onConsole: Bool? = true,
-    loginDone: Bool? = true
+    loginDone: Bool? = true,
+    primaryConsoleUserID: UInt32? = 501
 ) -> MacAgentPublicConsoleSessionFactsV1 {
     MacAgentPublicConsoleSessionFactsV1(
         processUserID: processUserID,
         windowSessionUserID: windowSessionUserID,
         onConsole: onConsole,
-        loginDone: loginDone
+        loginDone: loginDone,
+        primaryConsoleUserID: primaryConsoleUserID
     )
 }
 
 @Test
-func publicConsoleFactsNeverPromoteAnAmbiguousSessionToUnlocked() {
-    let variants = [
-        publicFactsV1(),
+func exactLoggedInConsoleFactsAdmitOnlyTheCurrentProcessUser() {
+    #expect(
+        MacAgentConservativeRequestContextProductV1
+            .conservativeHostState(for: publicFactsV1())
+            == .userSessionActive
+    )
+    let ambiguousVariants = [
         publicFactsV1(windowSessionUserID: 502),
         publicFactsV1(onConsole: false),
-        publicFactsV1(windowSessionUserID: nil, onConsole: nil),
-        publicFactsV1(loginDone: nil),
+        publicFactsV1(
+            windowSessionUserID: nil,
+            onConsole: nil,
+            loginDone: nil,
+            primaryConsoleUserID: nil
+        ),
+        publicFactsV1(loginDone: nil, primaryConsoleUserID: 502),
         publicFactsV1(loginDone: false),
     ]
 
-    for facts in variants {
+    for facts in ambiguousVariants {
         #expect(
             MacAgentConservativeRequestContextProductV1
                 .conservativeHostState(for: facts)
                 == .otherConsoleUserActive
         )
     }
+}
+
+@Test
+func primaryLoggedInConsoleIdentityAdmitsAQuartzInvisibleAgent() {
+    #expect(
+        MacAgentConservativeRequestContextProductV1
+            .conservativeHostState(for: publicFactsV1(
+                windowSessionUserID: nil,
+                onConsole: nil,
+                loginDone: nil
+            ))
+            == .userSessionActive
+    )
+    #expect(
+        MacAgentConservativeRequestContextProductV1
+            .conservativeHostState(for: publicFactsV1(
+                windowSessionUserID: nil,
+                onConsole: false,
+                loginDone: nil
+            ))
+            == .otherConsoleUserActive
+    )
 }
 
 @Test
@@ -76,8 +109,8 @@ func conservativeContextProductOwnsClocksIDsAndTerminalLifecycle() throws {
     #expect(
         product.snapshot()
             == MacAgentConservativeRequestContextSnapshotV1(
-                hostState: .otherConsoleUserActive,
-                revision: 0,
+                hostState: .userSessionActive,
+                revision: 1,
                 started: true,
                 finished: false
             )
@@ -90,7 +123,7 @@ func conservativeContextProductOwnsClocksIDsAndTerminalLifecycle() throws {
     }
 
     let primary = product.primaryContext()
-    #expect(primary.hostState == .otherConsoleUserActive)
+    #expect(primary.hostState == .userSessionActive)
     #expect(primary.wallNowUnixMilliseconds == 1_787_299_200_123)
     #expect(primary.monotonicNowMilliseconds == 45_678)
     #expect(
@@ -114,7 +147,15 @@ func conservativeContextProductOwnsClocksIDsAndTerminalLifecycle() throws {
     center.post(name: NSWorkspace.screensDidWakeNotification, object: nil)
     #expect(product.snapshot().hostState == .hostPreparingForSleep)
     center.post(name: NSWorkspace.didWakeNotification, object: nil)
+    #expect(product.snapshot().hostState == .userSessionActive)
+
+    center.post(
+        name: NSWorkspace.sessionDidResignActiveNotification,
+        object: nil
+    )
     #expect(product.snapshot().hostState == .otherConsoleUserActive)
+    center.post(name: NSWorkspace.didWakeNotification, object: nil)
+    #expect(product.snapshot().hostState == .userSessionActive)
 
     center.post(name: NSWorkspace.willPowerOffNotification, object: nil)
     let terminal = product.snapshot()

@@ -1,4 +1,4 @@
-import CompanionAgent
+@testable import CompanionAgent
 import CompanionDomain
 import CompanionInteractiveHost
 import CompanionInteractiveShared
@@ -305,6 +305,7 @@ private actor RuntimeBindingProbeV1: InteractiveSessionRuntimeOwningV0 {
 
 private func initialDesktop(
     classes: Set<SurfaceInteractionClass> = [.view, .pointer],
+    createdAtMilliseconds: Int64 = 2_000,
     expiresAtMilliseconds: Int64 = 20_000
 ) throws -> AdaptiveSurfaceDescriptor {
     try AdaptiveSurfaceDescriptor(
@@ -321,7 +322,7 @@ private func initialDesktop(
         interactionClasses: classes,
         privacyProfile: .visualOnly,
         metadataFields: [],
-        createdAtMonotonicMilliseconds: 2_000,
+        createdAtMonotonicMilliseconds: createdAtMilliseconds,
         expiresAtMonotonicMilliseconds: expiresAtMilliseconds
     )
 }
@@ -465,16 +466,19 @@ private actor RuntimeOwnerDesktopV1:
     AgentInteractiveInitialDesktopPreparingV1
 {
     let descriptor: AdaptiveSurfaceDescriptor
+    let suspension: RuntimeInstallSuspensionV1?
     private var requestsStorage: [AgentInteractiveInitialDesktopRequestV1] = []
 
-    init(descriptor: AdaptiveSurfaceDescriptor) {
+    init(descriptor: AdaptiveSurfaceDescriptor, suspension: RuntimeInstallSuspensionV1? = nil) {
         self.descriptor = descriptor
+        self.suspension = suspension
     }
 
     func prepareInitialDesktop(
         _ request: AgentInteractiveInitialDesktopRequestV1
     ) async throws -> AdaptiveSurfaceDescriptor {
         requestsStorage.append(request)
+        await suspension?.suspend()
         return descriptor
     }
 
@@ -487,18 +491,21 @@ private actor RuntimeOwnerMenuRouteV1:
     AgentInteractiveMenuRuntimeRoutingV1
 {
     let wrongGeneration: Bool
+    let suspension: RuntimeInstallSuspensionV1?
     private var installsStorage: [InteractiveRuntimeInstallCommandV0] = []
     private var renewalsStorage: [InteractiveRuntimeLeaseRenewalV0] = []
     private var revokesStorage: [InteractiveRuntimeRevokeCommandV0] = []
 
-    init(wrongGeneration: Bool = false) {
+    init(wrongGeneration: Bool = false, suspension: RuntimeInstallSuspensionV1? = nil) {
         self.wrongGeneration = wrongGeneration
+        self.suspension = suspension
     }
 
     func installInteractiveLease(
         _ command: InteractiveRuntimeInstallCommandV0
     ) async throws -> InteractiveRuntimeInstallReceiptV0 {
         installsStorage.append(command)
+        await suspension?.suspend()
         return try InteractiveRuntimeInstallReceiptV0(
             correlationID: command.commandID,
             leaseID: command.lease.leaseID,
@@ -545,6 +552,120 @@ private actor RuntimeOwnerMenuRouteV1:
     func renewals() -> [InteractiveRuntimeLeaseRenewalV0] {
         renewalsStorage
     }
+}
+
+private actor RuntimeInstallSuspensionV1 {
+    private(set) var entered = false
+    private var released = false
+    private var continuation: CheckedContinuation<Void, Never>?
+    func suspend() async {
+        entered = true
+        guard !released else { return }
+        await withCheckedContinuation { continuation = $0 }
+    }
+    func release() {
+        released = true
+        continuation?.resume()
+        continuation = nil
+    }
+}
+
+@Test(arguments: [false, true], [false, true])
+func pendingRuntimeTerminationFencesDesktopAndLateReceipt(wrapped: Bool, receiptSent: Bool) async throws {
+    let requirement = try initialRequirement()
+    let suspension = RuntimeInstallSuspensionV1()
+    let route = RuntimeOwnerMenuRouteV1(suspension: receiptSent ? suspension : nil)
+    let owner = AgentInteractiveRuntimeOwnerV1(
+        admission: RuntimeOwnerAdmissionV1([requirement.admission, requirement.admission]),
+        desktop: RuntimeOwnerDesktopV1(descriptor: try initialDesktop(), suspension: receiptSent ? nil : suspension),
+        runtime: route, monotonicNowNanoseconds: { 2_000_000_000 })
+    let runtime: any InteractiveSessionRuntimeOwningV0
+    let binding = AgentInteractiveRuntimeBindingAuthorityV1()
+    if wrapped {
+        try await binding.bind(runtime: AgentInteractiveLeaseRenewalOwnerV1(runtime: owner), generation: 1)
+        runtime = binding
+    } else { runtime = owner }
+    let install = Task { try await runtime.install(initialBootstrap(), requirement: requirement) }
+    let deadline = ContinuousClock.now + .seconds(2)
+    while !(await suspension.entered), ContinuousClock.now < deadline { await Task.yield() }
+    #expect(await suspension.entered)
+    let termination = Task {
+        await runtime.terminate(interactiveSessionID: initialSessionID,
+            primaryConnectionID: initialConnectionID, reason: .clientDisconnected)
+    }
+    // Give the independent termination actor work a chance to reach its fence;
+    // cleanup must remain pending until the suspended operation is released.
+    for _ in 0..<100 { await Task.yield() }
+    await suspension.release()
+    let result = await install.result
+    if case .success = result { Issue.record("A terminated pending install succeeded") }
+    await termination.value
+    #expect(await route.installs().count == (receiptSent ? 1 : 0))
+    #expect(await route.revokes().count == (receiptSent ? 1 : 0))
+    #expect(await owner.state() == .idle)
+    #expect(await owner.activeLeaseForScheduling() == nil)
+    if wrapped { #expect(await binding.state() == .bound(generation: 1)) }
+}
+
+@Test
+func stalePendingRuntimeTerminationCannotCancelAnotherConnection() async throws {
+    let requirement = try initialRequirement()
+    let suspension = RuntimeInstallSuspensionV1()
+    let route = RuntimeOwnerMenuRouteV1()
+    let owner = AgentInteractiveRuntimeOwnerV1(
+        admission: RuntimeOwnerAdmissionV1([requirement.admission, requirement.admission]),
+        desktop: RuntimeOwnerDesktopV1(descriptor: try initialDesktop(), suspension: suspension),
+        runtime: route, monotonicNowNanoseconds: { 2_000_000_000 })
+    let binding = AgentInteractiveRuntimeBindingAuthorityV1()
+    try await binding.bind(runtime: owner, generation: 1)
+    let install = Task { try await binding.install(initialBootstrap(), requirement: requirement) }
+    let deadline = ContinuousClock.now + .seconds(2)
+    while !(await suspension.entered), ContinuousClock.now < deadline { await Task.yield() }
+    #expect(await suspension.entered)
+    let stale = Task {
+        await binding.terminate(interactiveSessionID: initialSessionID,
+            primaryConnectionID: Data(repeating: 255, count: 16), reason: .clientDisconnected)
+    }
+    let wrongGeneration = Task { await binding.invalidate(generation: 2) }
+    for _ in 0..<100 { await Task.yield() }
+    await suspension.release()
+    try await install.value
+    await stale.value
+    #expect(!(await wrongGeneration.value))
+    #expect(await route.installs().count == 1)
+    #expect(await route.revokes().isEmpty)
+    #expect(await binding.state() == .active(generation: 1, interactiveSessionID: initialSessionID))
+    await binding.finish()
+    #expect(await owner.state() == .idle)
+}
+
+@Test(arguments: [false, true])
+func pendingBindingLifecycleLossFencesPreparation(shutdown: Bool) async throws {
+    let requirement = try initialRequirement()
+    let suspension = RuntimeInstallSuspensionV1()
+    let route = RuntimeOwnerMenuRouteV1()
+    let owner = AgentInteractiveRuntimeOwnerV1(
+        admission: RuntimeOwnerAdmissionV1([requirement.admission, requirement.admission]),
+        desktop: RuntimeOwnerDesktopV1(descriptor: try initialDesktop(), suspension: suspension),
+        runtime: route, monotonicNowNanoseconds: { 2_000_000_000 })
+    let binding = AgentInteractiveRuntimeBindingAuthorityV1()
+    try await binding.bind(runtime: AgentInteractiveLeaseRenewalOwnerV1(runtime: owner), generation: 1)
+    let install = Task { try await binding.install(initialBootstrap(), requirement: requirement) }
+    let deadline = ContinuousClock.now + .seconds(2)
+    while !(await suspension.entered), ContinuousClock.now < deadline { await Task.yield() }
+    #expect(await suspension.entered)
+    let retire = Task {
+        if shutdown { await binding.finish() }
+        else { #expect(await binding.invalidate(generation: 1)) }
+    }
+    for _ in 0..<100 { await Task.yield() }
+    await suspension.release()
+    if case .success = await install.result { Issue.record("Retired binding installed a pending session") }
+    await retire.value
+    #expect(await route.installs().isEmpty)
+    #expect(await route.revokes().isEmpty)
+    #expect(await owner.state() == .idle)
+    #expect(await binding.state() == (shutdown ? .terminal : .unavailable))
 }
 
 private enum RuntimeOwnerSurfaceRouteErrorV1: Error { case unavailable }
@@ -628,7 +749,8 @@ private final class RuntimeOwnerClockV1: @unchecked Sendable {
         revokeID,
     ])
     let clock = RuntimeOwnerClockV1([
-        2_000_000_000, 2_100_000_000,
+        2_000_000_000, 2_001_000_000, 2_100_000_000,
+        6_000_000_000,
     ])
     let owner = AgentInteractiveRuntimeOwnerV1(
         admission: admission,
@@ -651,10 +773,13 @@ private final class RuntimeOwnerClockV1: @unchecked Sendable {
         leaseID: leaseID
     ))
 
-    _ = try await owner.renewActiveLease(
+    let renewalResult = try await owner.renewActiveLease(
         nowMonotonicNanoseconds: 5_000_000_000
     )
     let renewals = await route.renewals()
+    #expect(renewalResult.previous == installs.first?.lease)
+    #expect(renewalResult.renewal == renewals.first)
+    #expect(renewalResult.renewal.replacement.issuedAtMonotonicNanoseconds == 6_000_000_000)
     #expect(renewals.count == 1)
     #expect(renewals.first?.commandID == renewalCommandID)
     #expect(renewals.first?.previousLeaseID == leaseID)
@@ -678,6 +803,38 @@ private final class RuntimeOwnerClockV1: @unchecked Sendable {
     #expect(await owner.state() == .idle)
 }
 
+@Test func agentRuntimeOwnerSamplesLeaseTimeAfterMenuCreatesDescriptor()
+    async throws
+{
+    let requirement = try initialRequirement()
+    let admission = RuntimeOwnerAdmissionV1([
+        requirement.admission, requirement.admission,
+    ])
+    let desktop = RuntimeOwnerDesktopV1(descriptor: try initialDesktop(
+        createdAtMilliseconds: 2_001
+    ))
+    let route = RuntimeOwnerMenuRouteV1()
+    let clock = RuntimeOwnerClockV1([
+        // The menu creates the descriptor after the Agent's request sample.
+        2_000_000_000, 2_002_000_000, 2_100_000_000,
+    ])
+    let owner = AgentInteractiveRuntimeOwnerV1(
+        admission: admission,
+        desktop: desktop,
+        runtime: route,
+        monotonicNowNanoseconds: { clock.now() }
+    )
+
+    try await owner.install(initialBootstrap(), requirement: requirement)
+
+    let install = try #require(await route.installs().first)
+    #expect(install.lease.issuedAtMonotonicNanoseconds == 2_002_000_000)
+    #expect(await owner.state() == .active(
+        interactiveSessionID: initialSessionID,
+        leaseID: install.lease.leaseID
+    ))
+}
+
 @Test func agentRuntimeOwnerConsumesExactRoleCredentialWithoutTransfer()
     async throws
 {
@@ -688,7 +845,7 @@ private final class RuntimeOwnerClockV1: @unchecked Sendable {
         requirement.admission, requirement.admission,
     ])
     let clock = RuntimeOwnerClockV1([
-        2_000_000_000, 2_100_000_000,
+        2_000_000_000, 2_001_000_000, 2_100_000_000,
     ])
     let identifiers = RuntimeOwnerIdentifiersV1([UUID(), UUID()])
     let owner = AgentInteractiveRuntimeOwnerV1(
@@ -804,7 +961,7 @@ private final class RuntimeOwnerClockV1: @unchecked Sendable {
     let route = RuntimeOwnerMenuRouteV1(wrongGeneration: true)
     let identifiers = RuntimeOwnerIdentifiersV1([UUID(), UUID(), UUID()])
     let clock = RuntimeOwnerClockV1([
-        2_000_000_000, 2_100_000_000,
+        2_000_000_000, 2_001_000_000, 2_100_000_000,
     ])
     let owner = AgentInteractiveRuntimeOwnerV1(
         admission: admission,
@@ -836,7 +993,8 @@ private final class RuntimeOwnerClockV1: @unchecked Sendable {
     let route = RuntimeOwnerMenuRouteV1()
     let identifiers = RuntimeOwnerIdentifiersV1([UUID(), UUID(), UUID()])
     let clock = RuntimeOwnerClockV1([
-        2_000_000_000, 2_100_000_000, 21_000_000_000,
+        2_000_000_000, 2_001_000_000, 2_100_000_000,
+        21_000_000_000,
     ])
     let owner = AgentInteractiveRuntimeOwnerV1(
         admission: admission,
@@ -867,6 +1025,46 @@ private enum RenewalSchedulerProbeErrorV1: Error {
     case renewalFailed
 }
 
+#if DEBUG
+@Test func interactiveLeaseSchedulerTestEntryUsesInstalledLeaseWithoutInstalling() async throws {
+    let initial = try schedulerLease(renewalCounter: 0, issuedAt: 2_000_000_000, expiresAt: 12_000_000_000)
+    let replacement = try schedulerLease(renewalCounter: 1, issuedAt: 10_000_000_000, expiresAt: 20_000_000_000)
+    let runtime = RenewalSchedulerRuntimeV1(initialLease: initial, renewalResult: .replacement(replacement))
+    let clock = RuntimeOwnerClockV1([2_000_000_000, 10_000_000_000, 10_000_000_000])
+    let sleeper = RenewalSchedulerSleeperV1(successfulCalls: 1)
+    let owner = AgentInteractiveLeaseRenewalOwnerV1(runtime: runtime,
+        monotonicNowNanoseconds: { clock.now() }, sleep: { try await sleeper.sleep(nanoseconds: $0) })
+    try await owner.startForInstalledTestRuntime(interactiveSessionID: initialSessionID,
+        primaryConnectionID: initialConnectionID)
+    let deadline = ContinuousClock.now.advanced(by: .seconds(2))
+    while await sleeper.delays().count < 2, ContinuousClock.now < deadline {
+        try await Task.sleep(for: .milliseconds(1))
+    }
+    #expect(await runtime.installCount() == 0)
+    #expect(await runtime.renewalSamples() == [10_000_000_000])
+    #expect(await sleeper.delays() == [8_000_000_000, 8_000_000_000])
+    await owner.terminate(interactiveSessionID: initialSessionID,
+        primaryConnectionID: initialConnectionID, reason: .clientDisconnected)
+    #expect(await runtime.terminations() == [.clientDisconnected])
+}
+
+@Test(arguments: ["foreignSession", "invalidPrimary"])
+func interactiveLeaseSchedulerTestEntryRejectsInvalidBinding(fault: String) async throws {
+    let initial = try schedulerLease(renewalCounter: 0, issuedAt: 2_000_000_000, expiresAt: 12_000_000_000)
+    let runtime = RenewalSchedulerRuntimeV1(initialLease: initial, renewalResult: .failure)
+    let owner = AgentInteractiveLeaseRenewalOwnerV1(runtime: runtime)
+    let expected: AgentInteractiveLeaseRenewalOwnerErrorV1 = fault == "foreignSession" ? .invalidLease : .unavailable
+    await #expect(throws: expected) {
+        try await owner.startForInstalledTestRuntime(
+            interactiveSessionID: fault == "foreignSession" ? UUID() : initialSessionID,
+            primaryConnectionID: fault == "invalidPrimary" ? Data() : initialConnectionID)
+    }
+    #expect(await runtime.installCount() == 0)
+    #expect(await runtime.renewalSamples().isEmpty)
+    #expect(await runtime.terminations() == (fault == "foreignSession" ? [.protocolViolation] : []))
+}
+#endif
+
 private actor RenewalSchedulerRuntimeV1:
     AgentInteractiveLeaseRenewingRuntimeV1
 {
@@ -876,17 +1074,23 @@ private actor RenewalSchedulerRuntimeV1:
     }
 
     private let initialLease: InteractiveExecutionLease
+    private let leaseAtRenewal: InteractiveExecutionLease
     private let renewalResult: RenewalResult
+    private let leaseSnapshotSuspension: RuntimeInstallSuspensionV1?
     private var installCountStorage = 0
     private var renewalSamplesStorage: [UInt64] = []
     private var terminationsStorage: [InteractiveSessionEndReason] = []
 
     init(
         initialLease: InteractiveExecutionLease,
-        renewalResult: RenewalResult
+        leaseAtRenewal: InteractiveExecutionLease? = nil,
+        renewalResult: RenewalResult,
+        leaseSnapshotSuspension: RuntimeInstallSuspensionV1? = nil
     ) {
         self.initialLease = initialLease
+        self.leaseAtRenewal = leaseAtRenewal ?? initialLease
         self.renewalResult = renewalResult
+        self.leaseSnapshotSuspension = leaseSnapshotSuspension
     }
 
     func install(
@@ -896,17 +1100,19 @@ private actor RenewalSchedulerRuntimeV1:
         installCountStorage += 1
     }
 
-    func activeLeaseForScheduling() -> InteractiveExecutionLease? {
-        initialLease
+    func activeLeaseForScheduling() async -> InteractiveExecutionLease? {
+        await leaseSnapshotSuspension?.suspend()
+        return initialLease
     }
 
     func renewActiveLease(
         nowMonotonicNanoseconds: UInt64
-    ) async throws -> InteractiveExecutionLease {
+    ) async throws -> AgentInteractiveLeaseRenewalResultV1 {
         renewalSamplesStorage.append(nowMonotonicNanoseconds)
         switch renewalResult {
         case .replacement(let replacement):
-            return replacement
+            return try .init(previous: leaseAtRenewal, renewal: .init(commandID: UUID(),
+                previousLeaseID: leaseAtRenewal.leaseID, replacement: replacement))
         case .failure:
             throw RenewalSchedulerProbeErrorV1.renewalFailed
         }
@@ -948,6 +1154,8 @@ private actor RenewalSchedulerSleeperV1 {
 private func schedulerLease(
     leaseID: UUID = UUID(),
     selectedDisplayID: UUID = initialDisplayID,
+    surfaceID: UUID = initialSurfaceID,
+    revision: UInt64 = 1,
     renewalCounter: UInt64,
     issuedAt: UInt64,
     expiresAt: UInt64
@@ -959,14 +1167,38 @@ private func schedulerLease(
         interactiveSessionID: initialSessionID,
         authorizationEpoch: .init(rawValue: 4),
         selectedDisplayID: selectedDisplayID,
-        surfaceID: initialSurfaceID,
-        surfaceRevision: .init(rawValue: 1),
-        coordinateRevision: .init(rawValue: 1),
+        surfaceID: surfaceID,
+        surfaceRevision: .init(rawValue: revision),
+        coordinateRevision: .init(rawValue: revision),
         allowedInteractionClasses: [.view, .pointer],
         renewalCounter: renewalCounter,
         issuedAtMonotonicNanoseconds: issuedAt,
         expiresAtMonotonicNanoseconds: expiresAt
     )
+}
+
+@Test
+func leaseSchedulerCannotStartFromSnapshotReturnedAfterTermination() async throws {
+    let pause = RuntimeInstallSuspensionV1()
+    let runtime = RenewalSchedulerRuntimeV1(initialLease: try schedulerLease(
+        renewalCounter: 0, issuedAt: 2_000_000_000, expiresAt: 12_000_000_000),
+        renewalResult: .failure, leaseSnapshotSuspension: pause)
+    let sleeper = RenewalSchedulerSleeperV1(successfulCalls: 0)
+    let owner = AgentInteractiveLeaseRenewalOwnerV1(runtime: runtime,
+        monotonicNowNanoseconds: { 2_000_000_000 },
+        sleep: { try await sleeper.sleep(nanoseconds: $0) })
+    let install = Task { try await owner.install(initialBootstrap(), requirement: initialRequirement()) }
+    let deadline = ContinuousClock.now + .seconds(2)
+    while !(await pause.entered), ContinuousClock.now < deadline { await Task.yield() }
+    #expect(await pause.entered)
+    await owner.terminate(interactiveSessionID: initialSessionID,
+        primaryConnectionID: initialConnectionID, reason: .clientDisconnected)
+    await pause.release()
+    if case .success = await install.result { Issue.record("A terminated install started lease renewal") }
+    for _ in 0..<100 { await Task.yield() }
+    #expect(await sleeper.delays().isEmpty)
+    #expect(await runtime.renewalSamples().isEmpty)
+    #expect(await runtime.terminations() == [.clientDisconnected])
 }
 
 @Test func interactiveLeaseSchedulerRenewsOnceFromReturnedDeadline()
@@ -1014,6 +1246,61 @@ private func schedulerLease(
         reason: .clientDisconnected
     )
     #expect(await runtime.terminations() == [.clientDisconnected])
+}
+
+@Test(arguments: [1, 3], [0, 500_000_000])
+func interactiveLeaseSchedulerAcceptsSerializedSurfaceChangeBeforeRenewal(transitions: UInt64, issuanceDelay: UInt64) async throws {
+    let initial = try schedulerLease(renewalCounter: 0, issuedAt: 2_000_000_000, expiresAt: 12_000_000_000)
+    let surface = UUID()
+    let changed = try schedulerLease(surfaceID: surface, revision: transitions + 1,
+        renewalCounter: transitions, issuedAt: 3_000_000_000, expiresAt: 13_000_000_000)
+    let replacement = try schedulerLease(surfaceID: surface, revision: transitions + 1,
+        renewalCounter: transitions + 1, issuedAt: 10_000_000_000 + issuanceDelay,
+        expiresAt: 20_000_000_000 + issuanceDelay)
+    let runtime = RenewalSchedulerRuntimeV1(initialLease: initial, leaseAtRenewal: changed,
+        renewalResult: .replacement(replacement))
+    let clock = RuntimeOwnerClockV1([2_000_000_000, 10_000_000_000, 10_000_000_000])
+    let sleeper = RenewalSchedulerSleeperV1(successfulCalls: 1)
+    let owner = AgentInteractiveLeaseRenewalOwnerV1(runtime: runtime,
+        monotonicNowNanoseconds: { clock.now() }, sleep: { try await sleeper.sleep(nanoseconds: $0) })
+    try await owner.install(initialBootstrap(), requirement: initialRequirement())
+    for _ in 0..<1_000 {
+        let delays = await sleeper.delays()
+        let terminations = await runtime.terminations()
+        if delays.count > 1 || !terminations.isEmpty { break }
+        try await Task.sleep(for: .milliseconds(1))
+    }
+    #expect(await runtime.terminations().isEmpty)
+    #expect(await sleeper.delays() == [8_000_000_000, 8_000_000_000 + issuanceDelay])
+    await owner.terminate(interactiveSessionID: initialSessionID,
+        primaryConnectionID: initialConnectionID, reason: .clientDisconnected)
+}
+
+@Test(arguments: ["display", "counterGap", "sameRevision", "wrongIssueTime", "wrongSurface"])
+func interactiveLeaseSchedulerRejectsInvalidPostTransitionRenewal(fault: String) async throws {
+    let initial = try schedulerLease(renewalCounter: 0, issuedAt: 2_000_000_000, expiresAt: 12_000_000_000)
+    let surface = UUID()
+    let display = fault == "display" ? UUID() : initialDisplayID
+    let revision: UInt64 = fault == "sameRevision" ? 1 : 2
+    let previous = try schedulerLease(selectedDisplayID: display, surfaceID: surface, revision: revision,
+        renewalCounter: 1, issuedAt: 3_000_000_000, expiresAt: 13_000_000_000)
+    let replacement = try schedulerLease(selectedDisplayID: display,
+        surfaceID: fault == "wrongSurface" ? UUID() : surface, revision: revision,
+        renewalCounter: fault == "counterGap" ? 3 : 2,
+        issuedAt: fault == "wrongIssueTime" ? 9_000_000_000 : 10_000_000_000, expiresAt: 19_000_000_000)
+    let runtime = RenewalSchedulerRuntimeV1(initialLease: initial, leaseAtRenewal: previous,
+        renewalResult: .replacement(replacement))
+    let clock = RuntimeOwnerClockV1([2_000_000_000, 10_000_000_000])
+    let sleeper = RenewalSchedulerSleeperV1(successfulCalls: 1)
+    let owner = AgentInteractiveLeaseRenewalOwnerV1(runtime: runtime,
+        monotonicNowNanoseconds: { clock.now() }, sleep: { try await sleeper.sleep(nanoseconds: $0) })
+    try await owner.install(initialBootstrap(), requirement: initialRequirement())
+    for _ in 0..<1_000 {
+        if await !runtime.terminations().isEmpty { break }
+        try await Task.sleep(for: .milliseconds(1))
+    }
+    #expect(await runtime.terminations() == [.protocolViolation])
+    #expect(await runtime.renewalSamples().count == 1)
 }
 
 @Test func interactiveLeaseSchedulerNeverRetriesAmbiguousRenewal()

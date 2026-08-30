@@ -235,6 +235,46 @@ public enum LocalInteractiveLeaseWireCodecV1 {
         try decode(LocalInteractiveFocusSnapshotReceiptV1.self, from: data)
     }
 
+    public static func encodeDisplayCatalogCommand(
+        _ command: LocalInteractiveDisplayCatalogCommandV1
+    ) throws -> Data { try encode(command) }
+
+    public static func decodeDisplayCatalogCommand(
+        _ data: Data
+    ) throws -> LocalInteractiveDisplayCatalogCommandV1 {
+        try decode(LocalInteractiveDisplayCatalogCommandV1.self, from: data)
+    }
+
+    public static func encodeDisplayCatalogReceipt(
+        _ receipt: LocalInteractiveDisplayCatalogReceiptV1
+    ) throws -> Data { try encode(receipt) }
+
+    public static func decodeDisplayCatalogReceipt(
+        _ data: Data
+    ) throws -> LocalInteractiveDisplayCatalogReceiptV1 {
+        try decode(LocalInteractiveDisplayCatalogReceiptV1.self, from: data)
+    }
+
+    public static func encodeDisplaySelectCommand(
+        _ command: LocalInteractiveDisplaySelectCommandV1
+    ) throws -> Data { try encode(command) }
+
+    public static func decodeDisplaySelectCommand(
+        _ data: Data
+    ) throws -> LocalInteractiveDisplaySelectCommandV1 {
+        try decode(LocalInteractiveDisplaySelectCommandV1.self, from: data)
+    }
+
+    public static func encodeDisplaySelectedReceipt(
+        _ receipt: LocalInteractiveDisplaySelectedReceiptV1
+    ) throws -> Data { try encode(receipt) }
+
+    public static func decodeDisplaySelectedReceipt(
+        _ data: Data
+    ) throws -> LocalInteractiveDisplaySelectedReceiptV1 {
+        try decode(LocalInteractiveDisplaySelectedReceiptV1.self, from: data)
+    }
+
     private static func encode<Value: Encodable>(
         _ value: Value
     ) throws -> Data {

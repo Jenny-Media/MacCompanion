@@ -1,6 +1,9 @@
 import CompanionAgentNetworkPlatform
 import CompanionAgent
 import CompanionDomain
+import CompanionHostPlatform
+import CompanionIPC
+import CompanionInteractiveClient
 import CompanionInteractiveHost
 import CompanionInteractiveShared
 import CompanionInteractiveWire
@@ -8,6 +11,7 @@ import CompanionInteractiveWire
 import CompanionSecurity
 import CompanionTransport
 import CompanionWire
+import CoreGraphics
 import CryptoKit
 import Foundation
 import Testing
@@ -341,6 +345,281 @@ private func agentRoleDataInputFrameV0(
     #expect(await route.inputs.isEmpty)
     #expect(mediaIO.sent.isEmpty)
     #expect(await terminal.reasons == [.inputFenceMismatch])
+}
+
+private struct HermeticInputPipelineObservationV0: Equatable, Sendable {
+    let admittedInputCount: Int
+    let admittedSequence: UInt64
+    let constructedEventCount: Int
+    let unicodeEventCount: Int
+    let exactConstructedSequenceMatched: Bool
+}
+
+private final class HermeticInputPipelineSinkV0:
+    CoreGraphicsConstructedEventSinkV0, @unchecked Sendable
+{
+    private let lock = NSLock()
+    private var unicodeValues: [String] = []
+    private var eventCount = 0
+
+    func receiveConstructedEvent(_ event: CGEvent) throws {
+        var units = [UniChar](repeating: 0, count: 64)
+        var actualLength = 0
+        units.withUnsafeMutableBufferPointer { buffer in
+            event.keyboardGetUnicodeString(
+                maxStringLength: buffer.count,
+                actualStringLength: &actualLength,
+                unicodeString: buffer.baseAddress!
+            )
+        }
+        let value = String(utf16CodeUnits: units, count: actualLength)
+        lock.withLock {
+            eventCount += 1
+            if !value.isEmpty { unicodeValues.append(value) }
+        }
+    }
+
+    func observation(
+        admittedInputCount: Int,
+        admittedSequence: UInt64,
+        expectedTextEvents: [String]
+    ) -> HermeticInputPipelineObservationV0 {
+        let expectedConstructedValues = expectedTextEvents.flatMap {
+            [$0, $0]
+        }
+        return lock.withLock {
+            HermeticInputPipelineObservationV0(
+                admittedInputCount: admittedInputCount,
+                admittedSequence: admittedSequence,
+                constructedEventCount: eventCount,
+                unicodeEventCount: unicodeValues.count,
+                exactConstructedSequenceMatched:
+                    unicodeValues == expectedConstructedValues
+            )
+        }
+    }
+}
+
+private actor HermeticInputPipelineRouteV0:
+    AgentInteractiveMenuRoleDataRoutingV0
+{
+    private var admission = InteractiveInputAdmissionAuthority()
+    private var planner = MacInteractiveInputPlannerV0()
+    private let session: InteractiveSessionStateMachine
+    private let surfaces: AdaptiveSurfaceAuthority
+    private let fence: InteractiveCommandFence
+    private let geometry: MacDisplayGeometrySnapshotV0
+    private let sink = HermeticInputPipelineSinkV0()
+    private let expectedTextEvents: [String]
+    private var admittedInputCount = 0
+
+    init(
+        session: InteractiveSessionStateMachine,
+        surface: AdaptiveSurfaceDescriptor,
+        displayID: UUID,
+        expectedTextEvents: [String]
+    ) throws {
+        self.session = session
+        surfaces = try AdaptiveSurfaceAuthority(
+            desktop: surface,
+            monotonicNowMilliseconds: 2_000
+        )
+        fence = InteractiveCommandFence(
+            leaseID: UUID(),
+            hostID: UUID(),
+            deviceID: UUID(),
+            interactiveSessionID: surface.interactiveSessionID,
+            authorizationEpoch: surface.authorizationEpoch,
+            selectedDisplayID: displayID,
+            surfaceID: surface.surfaceID,
+            surfaceRevision: .init(rawValue: surface.surfaceRevision.rawValue),
+            coordinateRevision: .init(
+                rawValue: surface.coordinateSpaceRevision.rawValue
+            )
+        )
+        geometry = try MacDisplayGeometrySnapshotV0(
+            selectedDisplayID: displayID,
+            coordinateRevision: fence.coordinateRevision,
+            logicalBounds: CGRect(x: 0, y: 0, width: 1_440, height: 900),
+            backingScaleFactor: 2,
+            rotation: .degrees0
+        )
+        self.expectedTextEvents = expectedTextEvents
+    }
+
+    func applyInteractiveInput(
+        _ envelope: InteractiveInputEnvelope,
+        pair: AgentInteractiveReadyRolePairV0,
+        nowMonotonicNanoseconds: UInt64
+    ) throws {
+        try admission.admit(
+            envelope,
+            session: session,
+            surfaces: surfaces,
+            hostMonotonicMilliseconds: nowMonotonicNanoseconds / 1_000_000
+        )
+        let descriptions = try planner.plan(envelope.input)
+        _ = try CoreGraphicsNoPostInputConstructorV0().construct(
+            descriptions,
+            fence: fence,
+            geometry: geometry,
+            currentCursorPosition: CGPoint(x: 100, y: 100),
+            sink: sink
+        )
+        admittedInputCount += 1
+    }
+
+    func nextInteractiveMediaRecord(
+        pair: AgentInteractiveReadyRolePairV0
+    ) async throws -> AgentInteractiveOutboundMediaRecordV0? {
+        while admittedInputCount < expectedTextEvents.count {
+            try Task.checkCancellation()
+            await Task.yield()
+        }
+        return nil
+    }
+
+    func observation() -> HermeticInputPipelineObservationV0 {
+        sink.observation(
+            admittedInputCount: admittedInputCount,
+            admittedSequence: admission.stream.lastSequence,
+            expectedTextEvents: expectedTextEvents
+        )
+    }
+}
+
+private func hermeticInputPipelineSessionV0(
+    sessionID: UUID,
+    epoch: AuthorizationEpoch
+) throws -> InteractiveSessionStateMachine {
+    var session = InteractiveSessionStateMachine()
+    _ = try session.apply(.request(
+        sessionID: sessionID,
+        authorizationEpoch: epoch,
+        approvalDeadlineMonotonicMilliseconds: 60_000
+    ))
+    _ = try session.apply(
+        .approvalConsumed(monotonicNowMilliseconds: 1_000)
+    )
+    _ = try session.apply(
+        .executorReadyUnlocked(monotonicNowMilliseconds: 2_000)
+    )
+    return session
+}
+
+private func hermeticInputPipelineSurfaceV0(
+    sessionID: UUID,
+    epoch: AuthorizationEpoch,
+    surfaceID: UUID
+) throws -> AdaptiveSurfaceDescriptor {
+    try AdaptiveSurfaceDescriptor(
+        interactiveSessionID: sessionID,
+        authorizationEpoch: epoch,
+        surfaceID: surfaceID,
+        kind: .desktop,
+        surfaceRevision: .init(rawValue: 1),
+        coordinateSpaceRevision: .init(rawValue: 1),
+        encodedWidth: 1_920,
+        encodedHeight: 1_080,
+        logicalWidthPoints: 1_440,
+        logicalHeightPoints: 900,
+        interactionClasses: [.view, .pointer, .keyboard, .text],
+        privacyProfile: .visualOnly,
+        metadataFields: [],
+        createdAtMonotonicMilliseconds: 1_000,
+        expiresAtMonotonicMilliseconds: 10_000
+    )
+}
+
+private func hermeticInputPipelineFrameV0(
+    _ envelope: InteractiveInputEnvelope
+) throws -> Data {
+    let body = try InteractiveInputCodec.encode(envelope)
+    let length = UInt32(body.count)
+    return Data([
+        UInt8(length >> 24),
+        UInt8((length >> 16) & 0xff),
+        UInt8((length >> 8) & 0xff),
+        UInt8(length & 0xff),
+    ]) + body
+}
+
+@Test func clientTextInputTraversesFramingAdmissionPlanningAndConstruction()
+    async throws
+{
+    let sessionID = UUID()
+    let surfaceID = UUID()
+    let displayID = UUID()
+    let epoch = AuthorizationEpoch(rawValue: 4)
+    let expectedTextEvents = ["h", "e", "l", "l", "o", " "]
+    let surface = try hermeticInputPipelineSurfaceV0(
+        sessionID: sessionID,
+        epoch: epoch,
+        surfaceID: surfaceID
+    )
+    var producer = try ClientInputProducerV0(
+        interactiveSessionID: sessionID,
+        authorizationEpoch: epoch
+    )
+    try producer.activate(acknowledged: surface)
+    var framedInput = Data()
+    for (offset, value) in expectedTextEvents.enumerated() {
+        let envelope = try producer.makeInput(
+            messageID: WireUUID(UUID()),
+            clientMonotonicMilliseconds: UInt64(1_000 + offset),
+            payload: .text(value)
+        )
+        framedInput += try hermeticInputPipelineFrameV0(envelope)
+    }
+
+    let inputIO = AgentRoleDataConnectionIOV0(receiveBuffer: framedInput)
+    let mediaIO = AgentRoleDataConnectionIOV0()
+    let pair = try AgentInteractiveReadyRolePairV0(
+        input: agentRoleDataChannelV0(
+            role: .input,
+            sessionID: sessionID,
+            epoch: epoch,
+            io: inputIO
+        ),
+        media: agentRoleDataChannelV0(
+            role: .media,
+            sessionID: sessionID,
+            epoch: epoch,
+            io: mediaIO
+        )
+    )
+    let route = try HermeticInputPipelineRouteV0(
+        session: hermeticInputPipelineSessionV0(
+            sessionID: sessionID,
+            epoch: epoch
+        ),
+        surface: surface,
+        displayID: displayID,
+        expectedTextEvents: expectedTextEvents
+    )
+    let terminal = AgentRoleDataTerminalRecorderV0()
+    let pump = AgentInteractiveRoleDataPumpV0(
+        pair: pair,
+        route: route,
+        monotonicNowNanoseconds: { 2_000_000_000 },
+        terminal: { _, reason in await terminal.record(reason) }
+    )
+
+    do {
+        try await pump.run()
+        Issue.record("role pump unexpectedly returned")
+    } catch let reason as AgentInteractiveRoleDataPumpErrorV0 {
+        #expect(reason == .mediaSourceClosed)
+    }
+
+    let observation = await route.observation()
+    #expect(producer.lastSequence == 6)
+    #expect(observation.admittedInputCount == 6)
+    #expect(observation.admittedSequence == 6)
+    #expect(observation.constructedEventCount == 12)
+    #expect(observation.unicodeEventCount == 12)
+    #expect(observation.exactConstructedSequenceMatched)
+    #expect(await terminal.reasons == [.mediaSourceClosed])
 }
 
 @Test func agentRoleDataBindingAuthorityRequiresRuntimeGenerationAndOwnsTeardown()

@@ -7,6 +7,114 @@ import CompanionInteractiveWire
 import CompanionLocalXPCPlatform
 import Foundation
 
+/// The local-XPC transport admits one Interactive lease/surface command at a
+/// time. Runtime renewal, focus observation, and client-driven surface work
+/// originate from independent actors, so they must converge through one FIFO
+/// before reaching that single-flight transport gate. A valid renewal must not
+/// fail merely because an advisory focus snapshot is already in flight.
+@available(macOS 26.0, *)
+private actor MacLocalXPCSerializedInteractiveLeaseSenderV1:
+    MacLocalXPCInteractiveLeaseSendingV1
+{
+    private let base: any MacLocalXPCInteractiveLeaseSendingV1
+    private var tail = Task<Void, Never> {}
+
+    init(_ base: any MacLocalXPCInteractiveLeaseSendingV1) {
+        self.base = base
+    }
+
+    private func enqueue<Result: Sendable>(
+        _ operation: @escaping @Sendable (
+            any MacLocalXPCInteractiveLeaseSendingV1
+        ) async throws -> Result
+    ) async throws -> Result {
+        let predecessor = tail
+        let base = self.base
+        let task = Task {
+            await predecessor.value
+            return try await operation(base)
+        }
+        tail = Task { _ = try? await task.value }
+        return try await task.value
+    }
+
+    func prepareInitialInteractiveDesktop(
+        _ command: LocalInteractiveInitialDesktopPreparationCommandV1
+    ) async throws -> LocalInteractiveInitialDesktopPreparedReceiptV1 {
+        try await enqueue { try await $0.prepareInitialInteractiveDesktop(command) }
+    }
+
+    func installInteractiveLease(
+        _ command: InteractiveRuntimeInstallCommandV0
+    ) async throws -> InteractiveRuntimeInstallReceiptV0 {
+        try await enqueue { try await $0.installInteractiveLease(command) }
+    }
+
+    func renewInteractiveLease(
+        _ renewal: InteractiveRuntimeLeaseRenewalV0
+    ) async throws {
+        try await enqueue { try await $0.renewInteractiveLease(renewal) }
+    }
+
+    func revokeInteractiveLease(
+        _ command: InteractiveRuntimeRevokeCommandV0
+    ) async throws -> InteractiveRuntimeRevokedReceiptV0 {
+        try await enqueue { try await $0.revokeInteractiveLease(command) }
+    }
+
+    func interactiveSurfaceTargets(
+        _ command: LocalInteractiveSurfaceTargetsCommandV1
+    ) async throws -> LocalInteractiveSurfaceTargetsReceiptV1 {
+        try await enqueue { try await $0.interactiveSurfaceTargets(command) }
+    }
+
+    func resolveInteractiveSurface(
+        _ command: LocalInteractiveSurfaceResolveCommandV1
+    ) async throws -> LocalInteractiveSurfaceResolvedReceiptV1 {
+        try await enqueue { try await $0.resolveInteractiveSurface(command) }
+    }
+
+    func prepareInteractiveSurfaceTransition(
+        _ command: InteractiveRuntimeSurfaceTransitionCommandV0
+    ) async throws -> InteractiveRuntimeSurfaceTransitionReceiptV0 {
+        try await enqueue {
+            try await $0.prepareInteractiveSurfaceTransition(command)
+        }
+    }
+
+    func acknowledgeInteractiveSurface(
+        _ command: InteractiveRuntimeSurfaceAcknowledgementCommandV0
+    ) async throws -> InteractiveRuntimeSurfaceAcknowledgementReceiptV0 {
+        try await enqueue { try await $0.acknowledgeInteractiveSurface(command) }
+    }
+
+    func terminateInteractiveSurfaceFailure(
+        _ command: LocalInteractiveSurfaceFailureCommandV1
+    ) async throws -> LocalInteractiveSurfaceFailureReceiptV1 {
+        try await enqueue {
+            try await $0.terminateInteractiveSurfaceFailure(command)
+        }
+    }
+
+    func interactiveFocusSnapshot(
+        _ command: LocalInteractiveFocusSnapshotCommandV1
+    ) async throws -> LocalInteractiveFocusSnapshotReceiptV1 {
+        try await enqueue { try await $0.interactiveFocusSnapshot(command) }
+    }
+
+    func interactiveDisplayCatalog(
+        _ command: LocalInteractiveDisplayCatalogCommandV1
+    ) async throws -> LocalInteractiveDisplayCatalogReceiptV1 {
+        try await enqueue { try await $0.interactiveDisplayCatalog(command) }
+    }
+
+    func selectInteractiveDisplay(
+        _ command: LocalInteractiveDisplaySelectCommandV1
+    ) async throws -> LocalInteractiveDisplaySelectedReceiptV1 {
+        try await enqueue { try await $0.selectInteractiveDisplay(command) }
+    }
+}
+
 /// Product-layer type adapter that gives the pure Agent runtime owner only the
 /// initial Desktop preparation plus the three lease lifecycle operations. It does not expose the local-XPC server,
 /// peer generation, presentation surfaces, or status authority.
@@ -15,6 +123,7 @@ package struct MacLocalXPCInteractiveMenuRuntimeRouteV1:
     AgentInteractiveInitialDesktopPreparingV1,
     AgentInteractiveMenuRuntimeRoutingV1,
     AgentInteractiveSurfaceMenuRoutingV1,
+    AgentInteractiveDisplayMenuRoutingV1,
     InteractiveSurfaceRuntimeRoutingV0,
     InteractiveSurfaceTargetResolvingV0,
     InteractiveSurfaceTargetInventoryProvidingV0
@@ -26,7 +135,7 @@ package struct MacLocalXPCInteractiveMenuRuntimeRouteV1:
         sender: any MacLocalXPCInteractiveLeaseSendingV1,
         identifier: @escaping @Sendable () -> UUID = { UUID() }
     ) {
-        self.sender = sender
+        self.sender = MacLocalXPCSerializedInteractiveLeaseSenderV1(sender)
         self.identifier = identifier
     }
 
@@ -46,6 +155,29 @@ package struct MacLocalXPCInteractiveMenuRuntimeRouteV1:
         )
         try receipt.validate(against: command)
         return receipt.descriptor
+    }
+
+    package func interactiveDisplayCatalog()
+        async throws -> LocalInteractiveDisplayCatalogReceiptV1
+    {
+        let command = LocalInteractiveDisplayCatalogCommandV1(
+            commandID: identifier()
+        )
+        let receipt = try await sender.interactiveDisplayCatalog(command)
+        try receipt.validate(against: command)
+        return receipt
+    }
+
+    package func selectInteractiveDisplay(_ displayID: UUID)
+        async throws -> LocalInteractiveDisplaySelectedReceiptV1
+    {
+        let command = LocalInteractiveDisplaySelectCommandV1(
+            commandID: identifier(),
+            displayID: displayID
+        )
+        let receipt = try await sender.selectInteractiveDisplay(command)
+        try receipt.validate(against: command)
+        return receipt
     }
 
     package func installInteractiveLease(

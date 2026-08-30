@@ -268,7 +268,8 @@ private func interactivePrimaryAccepted(
     )
 }
 
-@Test func interactivePrimaryChannelCompletesSelectedSessionApprovalFlow()
+@Test(arguments: [0, 1, 2])
+func interactivePrimaryChannelCompletesSelectedSessionApprovalFlow(deliveryOrder: Int)
     async throws
 {
     let harness = try await interactivePrimaryHarness()
@@ -510,6 +511,108 @@ private func interactivePrimaryAccepted(
         header: steadyDelta,
         payloadByteCount: 128
     ) == .videoAccessUnit(cleanKeyframe: false))
+    if deliveryOrder != 0 {
+        let selection = try await harness.channel.prepareReplacementSurfaceSelection(
+            targetKind: .desktop, targetToken: nil
+        )
+        let request = try WireCodec.decode(
+            WireEnvelope<InteractiveSurfaceSelectBodyV0>.self,
+            from: selection.requestJSON
+        )
+        try await harness.channel.sendReplacementSurfaceSelection(selection.requestJSON)
+        let replacement = try AdaptiveSurfaceDescriptor(
+            interactiveSessionID: descriptor.interactiveSessionID,
+            authorizationEpoch: descriptor.authorizationEpoch,
+            surfaceID: UUID(), kind: .desktop,
+            surfaceRevision: .init(rawValue: 2),
+            coordinateSpaceRevision: .init(rawValue: 2),
+            encodedWidth: 1_280, encodedHeight: 720,
+            logicalWidthPoints: 1_280, logicalHeightPoints: 720,
+            interactionClasses: [.view, .pointer, .keyboard],
+            privacyProfile: .visualOnly, metadataFields: [],
+            createdAtMonotonicMilliseconds: 10_000,
+            expiresAtMonotonicMilliseconds: 20_000
+        )
+        func mediaHeader(
+            _ type: MediaRecordType, _ descriptor: AdaptiveSurfaceDescriptor,
+            sequence: UInt64, clean: Bool = false
+        ) throws -> MediaRecordHeader {
+            try .init(
+                type: type, flags: clean ? [.cleanKeyframe] : [],
+                payloadLength: type == .discontinuity ? 0 : 128,
+                interactiveSessionID: descriptor.interactiveSessionID,
+                authorizationEpoch: descriptor.authorizationEpoch,
+                surfaceID: descriptor.surfaceID,
+                surfaceRevision: descriptor.surfaceRevision,
+                coordinateSpaceRevision: descriptor.coordinateSpaceRevision,
+                mediaSequence: sequence, presentationTimeNanoseconds: sequence * 1_000,
+                encodedWidth: type == .discontinuity ? 0 : descriptor.encodedWidth,
+                encodedHeight: type == .discontinuity ? 0 : descriptor.encodedHeight
+            )
+        }
+        let oldTail = try mediaHeader(.videoAccessUnit, descriptor, sequence: 5)
+        let discontinuity = try mediaHeader(.discontinuity, replacement, sequence: 6)
+        let selected = try WireCodec.encode(WireEnvelope(
+            messageID: WireUUID(UUID()), correlationID: request.messageID,
+            sentAtUnixMilliseconds: 2_003,
+            body: try InteractiveSurfaceSelectedBodyV0(
+                transitionID: WireUUID(UUID()),
+                descriptor: InteractiveSurfaceWireDescriptorV0(
+                    descriptor: replacement, validForMilliseconds: 5_000
+                ),
+                mediaSequenceBeforeTransition: 5, sequence: 3
+            )
+        ))
+        if deliveryOrder == 1 {
+            // Primary response overtakes the final old-source media record.
+            let response = Task { try await harness.router.receive(selected) }
+            try await Task.sleep(for: .milliseconds(20))
+            #expect(await harness.channel.replacementSurfacePhase() == .awaitingSelection)
+            _ = try await harness.channel.admitInitialMedia(header: oldTail, payloadByteCount: 128)
+            try await response.value
+            #expect(try await harness.channel.admitInitialMedia(
+                header: discontinuity, payloadByteCount: 0
+            ) == .discontinuity)
+        } else {
+            // Media socket reaches the replacement before the primary reply.
+            _ = try await harness.channel.admitInitialMedia(header: oldTail, payloadByteCount: 128)
+            let media = Task {
+                try await harness.channel.admitInitialMedia(header: discontinuity, payloadByteCount: 0)
+            }
+            try await Task.sleep(for: .milliseconds(20))
+            #expect(await harness.channel.replacementSurfacePhase() == .awaitingSelection)
+            try await harness.router.receive(selected)
+            #expect(try await media.value == .discontinuity)
+        }
+        #expect(await harness.channel.replacementSurfacePhase() == .awaitingMedia)
+        #expect(try await !harness.channel.confirmReplacementRenderedFrame(.init(
+            generation: 1, fence: ClientDecoderFenceV0(header: oldTail),
+            mediaSequence: 5, presentationTimeNanoseconds: 5_000, frameReference: UUID()
+        )))
+        _ = try await harness.channel.admitInitialMedia(
+            header: mediaHeader(.decoderConfiguration, replacement, sequence: 7),
+            payloadByteCount: 128
+        )
+        let replacementClean = try mediaHeader(.videoAccessUnit, replacement, sequence: 8, clean: true)
+        _ = try await harness.channel.admitInitialMedia(header: replacementClean, payloadByteCount: 128)
+        #expect(try await harness.channel.confirmReplacementRenderedFrame(.init(
+            generation: 2, fence: ClientDecoderFenceV0(header: replacementClean),
+            mediaSequence: 8, presentationTimeNanoseconds: 8_000, frameReference: UUID()
+        )))
+        try await harness.channel.acknowledgeReplacementSurface()
+        let ackFrame = try #require(await harness.transport.frames.last)
+        let ack = try WireCodec.decode(WireEnvelope<InteractiveSurfaceAcknowledgementBodyV0>.self, from: ackFrame)
+        try await harness.router.receive(WireCodec.encode(WireEnvelope(
+            messageID: WireUUID(UUID()), correlationID: ack.messageID,
+            sentAtUnixMilliseconds: 2_004,
+            body: try InteractiveSurfaceAcknowledgedBodyV0(
+                acknowledgement: ack.body, inputResumed: true, sequence: 4
+            )
+        )))
+        #expect(await harness.channel.replacementSurfacePhase() == .active)
+        #expect(await harness.router.state == .ready)
+        return
+    }
     let inputFrame = try await harness.channel.makeInitialInputFrame(
         .pointerMove(x: 10, y: 20)
     )

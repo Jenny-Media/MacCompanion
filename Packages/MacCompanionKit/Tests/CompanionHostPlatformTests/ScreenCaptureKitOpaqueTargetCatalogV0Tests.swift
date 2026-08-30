@@ -3,6 +3,14 @@ import CompanionHostPlatform
 import Foundation
 import Testing
 
+@Test(arguments: [1, 3, 641, 855, 1_919, 3_841], [1, 3, 361, 1_199, 2_161])
+func opaqueCatalogUsesEvenEncodedDimensionsBeforeDescriptor(width: Int, height: Int) throws {
+    let profile = try ScreenCaptureKitOpaqueTargetCatalogV0.captureProfile(
+        logicalWidth: width, logicalHeight: height)
+    #expect(profile.width >= 2 && profile.width <= 1_920 && profile.width.isMultiple(of: 2))
+    #expect(profile.height >= 2 && profile.height <= 1_200 && profile.height.isMultiple(of: 2))
+}
+
 @available(macOS 13.0, *)
 @Test func opaqueCatalogRequiresAnExplicitSelfExclusion() throws {
     #expect(

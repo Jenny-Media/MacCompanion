@@ -333,7 +333,7 @@ private func clientMediaHeader(
     ) == up)
 }
 
-@Test func clientInputDeniesUnadvertisedClassesAndSecureOrMissingFocusText() throws {
+@Test func clientInputAllowsMissingFocusTextAndDeniesSecureFocus() throws {
     let desktop = try clientDesktopDescriptor(interactionClasses: [.view])
     var input = try ClientInputProducerV0(
         interactiveSessionID: interactiveClientSessionID,
@@ -348,6 +348,22 @@ private func clientMediaHeader(
         )
     }
     #expect(input.lastSequence == 0)
+
+    var ordinary = try ClientInputProducerV0(
+        interactiveSessionID: interactiveClientSessionID,
+        authorizationEpoch: .init(rawValue: 4)
+    )
+    try ordinary.activate(acknowledged: clientDesktopDescriptor(
+        interactionClasses: [.view, .keyboard, .text]
+    ))
+    let text = try ordinary.makeInput(
+        messageID: WireUUID(UUID()),
+        clientMonotonicMilliseconds: 100,
+        payload: .text("hello")
+    )
+    #expect(text.focusToken == nil)
+    #expect(text.focusRevision == nil)
+    #expect(text.input == .text("hello"))
 
     var secure = try ClientInputProducerV0(
         interactiveSessionID: interactiveClientSessionID,

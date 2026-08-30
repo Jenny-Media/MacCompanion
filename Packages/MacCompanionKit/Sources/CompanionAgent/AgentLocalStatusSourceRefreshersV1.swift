@@ -15,13 +15,27 @@ public enum AgentLocalStatusSourceRefreshErrorV1:
 /// provider identities when only bounded counts are required.
 public protocol AgentActivePairedDeviceCountReadingV1: Sendable {
     func activePairedDeviceCount() async throws -> Int
+    func interactiveControlGranted() async throws -> Bool
+}
+
+public extension AgentActivePairedDeviceCountReadingV1 {
+    func interactiveControlGranted() async throws -> Bool { false }
 }
 
 public protocol AgentActiveProviderCountReadingV1: Sendable {
     func activeProviderCount() async -> Int
 }
 
-extension SQLiteSecurityStore: AgentActivePairedDeviceCountReadingV1 {}
+extension SQLiteSecurityStore: AgentActivePairedDeviceCountReadingV1 {
+    public func interactiveControlGranted() async throws -> Bool {
+        let snapshots = try activeDeviceGrantIdentitySnapshots()
+        return !snapshots.isEmpty && snapshots.allSatisfy {
+            $0.grants.capabilityIDs.contains(
+                InteractiveControlDurableGrantV0.identifier
+            )
+        }
+    }
+}
 extension AgentCapabilityAuthorityV1: AgentActiveProviderCountReadingV1 {}
 
 /// Reads the product's durable paired-device authority and immutable live
@@ -45,8 +59,11 @@ public struct AgentLocalStatusInventoryRefresherV1: Sendable {
 
     public func refresh() async throws {
         let pairedCount: Int
+        let interactiveControlGranted: Bool
         do {
             pairedCount = try await pairedDevices.activePairedDeviceCount()
+            interactiveControlGranted = try await pairedDevices
+                .interactiveControlGranted()
         } catch {
             await localStatus.updateSecurityPosture(.storageUnavailable)
             throw AgentLocalStatusSourceRefreshErrorV1.storageUnavailable
@@ -61,7 +78,8 @@ public struct AgentLocalStatusInventoryRefresherV1: Sendable {
         do {
             try await localStatus.updateInventory(
                 pairedDeviceCount: paired,
-                providerCount: providers
+                providerCount: providers,
+                interactiveControlGranted: interactiveControlGranted
             )
         } catch {
             throw AgentLocalStatusSourceRefreshErrorV1.boundsExceeded

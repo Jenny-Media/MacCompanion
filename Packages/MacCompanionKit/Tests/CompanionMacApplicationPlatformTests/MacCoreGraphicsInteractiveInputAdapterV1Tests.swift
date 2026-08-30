@@ -76,20 +76,24 @@ private let inputDisplayBoundsV1 = CGRect(
 
 private func inputAdapterV1(
     permission: InputPermissionProbeV1,
-    sink: InputEventSinkV1
+    sink: InputEventSinkV1,
+    surfaceActivator: MacInteractiveSelectedSurfaceActivatorV1 =
+        MacInteractiveSelectedSurfaceActivatorV1()
 ) -> MacCoreGraphicsInteractiveInputAdapterV1 {
     MacCoreGraphicsInteractiveInputAdapterV1(
         preflightPostEventAccess: { permission.read() },
         displayBounds: { _ in inputDisplayBoundsV1 },
         displayPixels: { _ in (wide: 400, high: 200) },
         cursorPosition: { CGPoint(x: 0, y: 75) },
-        sink: sink
+        sink: sink,
+        surfaceActivator: surfaceActivator
     )
 }
 
 private func inputInstallCommandV1(
     logicalWidthPoints: UInt32 = 200,
-    logicalHeightPoints: UInt32 = 100
+    logicalHeightPoints: UInt32 = 100,
+    kind: InteractiveSurfaceKind = .desktop
 ) throws
     -> InteractiveRuntimeInstallCommandV0
 {
@@ -128,9 +132,10 @@ private func inputInstallCommandV1(
             interactiveSessionID: sessionID,
             authorizationEpoch: lease.authorizationEpoch,
             surfaceID: surfaceID,
-            kind: .desktop,
+            kind: kind,
             surfaceRevision: .init(rawValue: 2),
             coordinateSpaceRevision: .init(rawValue: 3),
+            applicationToken: kind == .application ? UUID() : nil,
             encodedWidth: 400,
             encodedHeight: 200,
             logicalWidthPoints: logicalWidthPoints,
@@ -148,6 +153,7 @@ private func inputInstallCommandV1(
 private func inputEnvelopeV1(
     command: InteractiveRuntimeInstallCommandV0,
     authorizationEpoch: UInt64? = nil,
+    sequence: UInt64 = 1,
     clientMonotonicMilliseconds: UInt64 = 1,
     payload: InteractiveInputPayload
 ) throws -> InteractiveInputEnvelope {
@@ -160,7 +166,7 @@ private func inputEnvelopeV1(
             rawValue: authorizationEpoch
                 ?? command.lease.authorizationEpoch.rawValue
         ),
-        sequence: 1,
+        sequence: sequence,
         clientMonotonicMilliseconds: clientMonotonicMilliseconds,
         surfaceID: WireUUID(command.lease.surfaceID),
         surfaceRevision: .init(
@@ -174,22 +180,23 @@ private func inputEnvelopeV1(
 }
 
 @available(macOS 26.0, *)
-@Test func coreGraphicsAdapterPostsARealDoubleClickState() throws {
+@Test func coreGraphicsAdapterPostsARealDoubleClickState() async throws {
     let permission = InputPermissionProbeV1(true)
     let sink = InputEventSinkV1()
     let adapter = inputAdapterV1(permission: permission, sink: sink)
     let command = try inputInstallCommandV1()
     _ = try adapter.configure(command: command, physicalDisplayID: 7)
 
-    let transitions: [(UInt64, InteractiveInputTransition)] = [
-        (1_000, .down),
-        (1_001, .up),
-        (1_100, .down),
-        (1_101, .up),
+    let transitions: [(UInt64, UInt64, InteractiveInputTransition)] = [
+        (1, 1_000, .down),
+        (2, 1_001, .up),
+        (3, 1_100, .down),
+        (4, 1_101, .up),
     ]
-    for (timestamp, transition) in transitions {
-        try adapter.postInteractiveInput(inputEnvelopeV1(
+    for (sequence, timestamp, transition) in transitions {
+        try await adapter.postInteractiveInput(inputEnvelopeV1(
             command: command,
+            sequence: sequence,
             clientMonotonicMilliseconds: timestamp,
             payload: .button(button: .primary, transition: transition)
         ))
@@ -199,6 +206,23 @@ private func inputEnvelopeV1(
         .leftMouseDown, .leftMouseUp, .leftMouseDown, .leftMouseUp,
     ])
     #expect(sink.snapshots().map(\.clickState) == [1, 1, 2, 2])
+}
+
+@MainActor
+private final class InputActivationProbeV1 {
+    var performed: [ScreenCaptureKitLocalActivationTargetV0] = []
+    var verified: [ScreenCaptureKitLocalActivationTargetV0] = []
+    var performResult = true
+
+    func perform(_ target: ScreenCaptureKitLocalActivationTargetV0) -> Bool {
+        performed.append(target)
+        return performResult
+    }
+
+    func verify(_ target: ScreenCaptureKitLocalActivationTargetV0) -> Bool {
+        verified.append(target)
+        return true
+    }
 }
 
 @available(macOS 26.0, *)
@@ -245,7 +269,7 @@ private func inputEnvelopeV1(
 }
 
 @available(macOS 26.0, *)
-@Test func coreGraphicsAdapterPostsOnlyAnExactlyBoundEnvelope() throws {
+@Test func coreGraphicsAdapterPostsOnlyAnExactlyBoundEnvelope() async throws {
     let permission = InputPermissionProbeV1(true)
     let sink = InputEventSinkV1()
     let adapter = inputAdapterV1(permission: permission, sink: sink)
@@ -255,7 +279,7 @@ private func inputEnvelopeV1(
         physicalDisplayID: 7
     ) == Set(command.lease.allowedInteractionClasses))
 
-    try adapter.postInteractiveInput(inputEnvelopeV1(
+    try await adapter.postInteractiveInput(inputEnvelopeV1(
         command: command,
         payload: .pointerMove(x: 0, y: UInt16.max)
     ))
@@ -264,11 +288,11 @@ private func inputEnvelopeV1(
     #expect(first.location.x == inputDisplayBoundsV1.minX)
     #expect(first.location.y < inputDisplayBoundsV1.maxY)
 
-    #expect(
+    await #expect(
         throws: MacCoreGraphicsInteractiveInputAdapterErrorV1
             .bindingMismatch
     ) {
-        try adapter.postInteractiveInput(inputEnvelopeV1(
+        try await adapter.postInteractiveInput(inputEnvelopeV1(
             command: command,
             authorizationEpoch: 5,
             payload: .pointerMove(x: 1, y: 1)
@@ -278,7 +302,99 @@ private func inputEnvelopeV1(
 }
 
 @available(macOS 26.0, *)
-@Test func coreGraphicsAdapterUsesMenuRetainedWindowGeometry() throws {
+@MainActor
+@Test func selectedApplicationIsVerifiedBeforeClickButNotPointerMovement()
+    async throws
+{
+    let permission = InputPermissionProbeV1(true)
+    let sink = InputEventSinkV1()
+    let probe = InputActivationProbeV1()
+    let target = ScreenCaptureKitLocalActivationTargetV0.application(
+        processID: 42,
+        bundleIdentifier: "example.target"
+    )
+    let activator = MacInteractiveSelectedSurfaceActivatorV1(
+        performActivation: { probe.perform($0) },
+        verifyActivation: { probe.verify($0) },
+        wait: {}
+    )
+    let adapter = inputAdapterV1(
+        permission: permission,
+        sink: sink,
+        surfaceActivator: activator
+    )
+    let command = try inputInstallCommandV1(kind: .application)
+    _ = try adapter.configure(
+        command: command,
+        physicalDisplayID: 7,
+        activationTarget: target
+    )
+
+    try await adapter.postInteractiveInput(inputEnvelopeV1(
+        command: command,
+        payload: .pointerMove(x: 100, y: 100)
+    ))
+    #expect(probe.performed.isEmpty)
+    #expect(probe.verified.isEmpty)
+
+    try await adapter.postInteractiveInput(inputEnvelopeV1(
+        command: command,
+        sequence: 2,
+        payload: .button(button: .primary, transition: .down)
+    ))
+    #expect(probe.performed == [target])
+    #expect(probe.verified == [target])
+
+    try await adapter.releaseAllInteractiveInput()
+    #expect(sink.snapshots().map(\.type) == [
+        .mouseMoved, .leftMouseDown, .leftMouseUp,
+    ])
+    #expect(probe.performed == [target])
+}
+
+@available(macOS 26.0, *)
+@MainActor
+@Test func failedSelectedApplicationVerificationPostsNoClick() async throws {
+    let permission = InputPermissionProbeV1(true)
+    let sink = InputEventSinkV1()
+    let probe = InputActivationProbeV1()
+    probe.performResult = false
+    let target = ScreenCaptureKitLocalActivationTargetV0.application(
+        processID: 42,
+        bundleIdentifier: "example.target"
+    )
+    let activator = MacInteractiveSelectedSurfaceActivatorV1(
+        performActivation: { probe.perform($0) },
+        verifyActivation: { probe.verify($0) },
+        wait: {}
+    )
+    let adapter = inputAdapterV1(
+        permission: permission,
+        sink: sink,
+        surfaceActivator: activator
+    )
+    let command = try inputInstallCommandV1(kind: .application)
+    _ = try adapter.configure(
+        command: command,
+        physicalDisplayID: 7,
+        activationTarget: target
+    )
+
+    await #expect(
+        throws: MacCoreGraphicsInteractiveInputAdapterErrorV1.bindingMismatch
+    ) {
+        try await adapter.postInteractiveInput(inputEnvelopeV1(
+            command: command,
+            payload: .button(button: .primary, transition: .down)
+        ))
+    }
+    #expect(probe.performed == [target])
+    #expect(probe.verified.isEmpty)
+    #expect(sink.snapshots().isEmpty)
+}
+
+@available(macOS 26.0, *)
+@Test func coreGraphicsAdapterUsesMenuRetainedWindowGeometry() async throws {
     let permission = InputPermissionProbeV1(true)
     let sink = InputEventSinkV1()
     let adapter = inputAdapterV1(permission: permission, sink: sink)
@@ -294,7 +410,7 @@ private func inputEnvelopeV1(
         inputBackingScaleFactor: 2.5
     )
 
-    try adapter.postInteractiveInput(inputEnvelopeV1(
+    try await adapter.postInteractiveInput(inputEnvelopeV1(
         command: command,
         payload: .pointerMove(x: UInt16.max, y: 0)
     ))
@@ -332,20 +448,20 @@ private func inputEnvelopeV1(
     )
 
     sink.setRejects(true)
-    #expect(
+    await #expect(
         throws: MacCoreGraphicsInteractiveInputAdapterErrorV1
             .eventConstructionFailed
     ) {
-        try adapter.postInteractiveInput(buttonDown)
+        try await adapter.postInteractiveInput(buttonDown)
     }
     sink.setRejects(false)
-    try adapter.postInteractiveInput(buttonDown)
+    try await adapter.postInteractiveInput(buttonDown)
     try await adapter.releaseAllInteractiveInput()
     #expect(sink.snapshots().map(\.type) == [.leftMouseDown, .leftMouseUp])
 
     adapter.retireConfiguration()
-    #expect(throws: MacCoreGraphicsInteractiveInputAdapterErrorV1.unavailable) {
-        try adapter.postInteractiveInput(buttonDown)
+    await #expect(throws: MacCoreGraphicsInteractiveInputAdapterErrorV1.unavailable) {
+        try await adapter.postInteractiveInput(buttonDown)
     }
 }
 

@@ -119,6 +119,44 @@ private actor SuspendedRouterTestReceiver: ClientPrimaryReplyReceivingV0 {
     }
 }
 
+private struct RouterInteractiveRequestBody: WireBody {
+    static let kind = WireMessageKind.interactiveSessionRequest
+    func validate() throws {}
+}
+
+private struct RouterInteractiveApprovalRequiredBody: WireBody {
+    static let kind = WireMessageKind.interactiveSessionApprovalRequired
+    func validate() throws {}
+}
+
+private struct RouterInteractiveApprovalProofBody: WireBody {
+    static let kind = WireMessageKind.interactiveSessionApprove
+    func validate() throws {}
+}
+
+private actor RouterFollowupSendingReceiver:
+    ClientPrimaryReplyReceivingV0
+{
+    private let sender: ClientPrimaryLaneCommandSenderV0
+    private let followup: Data
+    private(set) var sendCompleted = false
+
+    init(sender: ClientPrimaryLaneCommandSenderV0, followup: Data) {
+        self.sender = sender
+        self.followup = followup
+    }
+
+    func preparePrimaryReply(
+        _ frame: Data
+    ) async throws -> ClientPrimaryPreparedReplyV0 {
+        try await sender.sendAuthenticatedCommand(followup)
+        sendCompleted = true
+        return ClientPrimaryPreparedReplyV0()
+    }
+
+    func invalidatePrimaryReplyReceiver() async {}
+}
+
 private func routerSession() -> ClientAuthenticatedSessionV0 {
     ClientAuthenticatedSessionV0(
         clientID: routerClientID,
@@ -209,6 +247,43 @@ private func routerFocusEvent() throws -> Data {
     #expect(observe.published.isEmpty)
     try await router.receive(routerError(correlationID: observeID))
     #expect(observe.published.count == 1)
+    #expect(await router.state == .ready)
+}
+
+@Test func primaryRouterPermitsCorrelatedControlFollowupFromReplyPreparation()
+    async throws
+{
+    let transport = RouterTestTransport()
+    let router = try makeRouter(transport: transport)
+    let requestID = WireUUID(UUID())
+    let challengeID = WireUUID(UUID())
+    let proofID = WireUUID(UUID())
+    let proof = try WireCodec.encode(WireEnvelope(
+        messageID: proofID,
+        correlationID: challengeID,
+        sentAtUnixMilliseconds: 30_002,
+        body: RouterInteractiveApprovalProofBody()
+    ))
+    let receiver = RouterFollowupSendingReceiver(
+        sender: router.sender(for: .control),
+        followup: proof
+    )
+    try await router.installReceiver(receiver, for: .control)
+    try await router.activate()
+    try await router.sender(for: .control).sendAuthenticatedCommand(
+        routerRequest(id: requestID, body: RouterInteractiveRequestBody())
+    )
+    let challenge = try WireCodec.encode(WireEnvelope(
+        messageID: challengeID,
+        correlationID: requestID,
+        sentAtUnixMilliseconds: 30_001,
+        body: RouterInteractiveApprovalRequiredBody()
+    ))
+
+    try await router.receive(challenge)
+
+    #expect(await receiver.sendCompleted)
+    #expect(await transport.capturedFrames().count == 2)
     #expect(await router.state == .ready)
 }
 

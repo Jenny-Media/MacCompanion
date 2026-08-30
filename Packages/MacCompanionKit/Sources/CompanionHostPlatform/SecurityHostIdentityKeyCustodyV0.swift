@@ -192,6 +192,23 @@ public actor SecurityHostIdentityKeyCustodyV0 {
         else {
             throw SecurityHostIdentityKeyCustodyErrorV0.keyNotFound
         }
+        return try Self.assembleLoadedIdentity(
+            privateKey: privateKey,
+            applicationTag: applicationTag,
+            certificateDER: certificateDER,
+            wallNowUnixMilliseconds: wallNowUnixMilliseconds
+        )
+    }
+
+    /// Shared validation after custody has resolved the exact key. Internal so
+    /// disposable @testable processes can exercise certificate reload without
+    /// introducing an alternate public custody or authentication path.
+    static func assembleLoadedIdentity(
+        privateKey: SecKey,
+        applicationTag: Data,
+        certificateDER: Data,
+        wallNowUnixMilliseconds: Int64
+    ) throws -> SecurityHostIssuedIdentityV0 {
         let prepared = try Self.preparedKey(
             privateKey,
             applicationTag: applicationTag

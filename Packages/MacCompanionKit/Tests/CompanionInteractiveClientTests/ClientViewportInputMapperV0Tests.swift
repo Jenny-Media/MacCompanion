@@ -57,6 +57,27 @@ private func viewportMapper(
     ])
 }
 
+@Test func explicitDoubleTapEmitsTwoBalancedClicksAtOneLocation() throws {
+    var trackpad = try viewportMapper(mode: .trackpad)
+    #expect(try trackpad.doubleTap() == [
+        .button(button: .primary, transition: .down),
+        .button(button: .primary, transition: .up),
+        .button(button: .primary, transition: .down),
+        .button(button: .primary, transition: .up),
+    ])
+
+    var direct = try viewportMapper(mode: .directTouch)
+    #expect(try direct.doubleTap(
+        at: ClientInputPointV0(x: 200, y: 150)
+    ) == [
+        .pointerMove(x: 32_768, y: 32_768),
+        .button(button: .primary, transition: .down),
+        .button(button: .primary, transition: .up),
+        .button(button: .primary, transition: .down),
+        .button(button: .primary, transition: .up),
+    ])
+}
+
 @Test func dragIsBalancedAndModeSwitchResetsHeldState() throws {
     var mapper = try viewportMapper(mode: .directTouch)
     #expect(try mapper.beginDirectDrag(
@@ -106,7 +127,26 @@ private func viewportMapper(
             transition: .up,
             modifiers: [.leftCommand]
         ),
+        .modifiers([]),
     ])
+    #expect(try ClientKeyboardActionV0.physicalKey(usage: 0x04).payloads(
+        modifiers: [.leftCommand, .leftShift]
+    ) == [
+        .physicalKey(
+            usage: 0x04,
+            transition: .down,
+            modifiers: [.leftCommand, .leftShift]
+        ),
+        .physicalKey(
+            usage: 0x04,
+            transition: .up,
+            modifiers: [.leftCommand, .leftShift]
+        ),
+        .modifiers([]),
+    ])
+    #expect(throws: (any Error).self) {
+        _ = try ClientKeyboardActionV0.physicalKey(usage: 0x03).payloads()
+    }
     #expect(try ClientKeyboardActionV0.text("hello").payloads()
         == [.text("hello")])
 }

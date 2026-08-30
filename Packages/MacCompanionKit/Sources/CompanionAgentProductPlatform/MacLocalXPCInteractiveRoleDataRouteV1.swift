@@ -3,6 +3,12 @@ import CompanionAgentNetworkPlatform
 import CompanionInteractiveWire
 import CompanionLocalXPCPlatform
 import Foundation
+import OSLog
+
+private let macLocalXPCInteractiveRoleDataRouteLoggerV1 = Logger(
+    subsystem: "media.jenny.maccompanion.agent",
+    category: "interactive-role-data-route"
+)
 
 package enum MacLocalXPCInteractiveRoleDataRouteErrorV1:
     Error, Equatable, Sendable
@@ -82,10 +88,16 @@ package actor MacLocalXPCInteractiveRoleDataRouteV1:
             payload: payload
         )
         guard generation == transportGeneration else {
+            macLocalXPCInteractiveRoleDataRouteLoggerV1.error(
+                "media publication rejected: stale menu generation"
+            )
             throw MacLocalXPCInteractiveRoleDataRouteErrorV1.staleGeneration
         }
         if let consumer {
             guard pair(consumer.pair, admits: record) else {
+                macLocalXPCInteractiveRoleDataRouteLoggerV1.error(
+                    "media publication rejected: role-pair fence mismatch"
+                )
                 throw MacLocalXPCInteractiveRoleDataRouteErrorV1.pairMismatch
             }
             self.consumer = nil
@@ -93,6 +105,9 @@ package actor MacLocalXPCInteractiveRoleDataRouteV1:
             return
         }
         guard publication == nil else {
+            macLocalXPCInteractiveRoleDataRouteLoggerV1.error(
+                "media publication rejected: duplicate publication"
+            )
             throw MacLocalXPCInteractiveRoleDataRouteErrorV1
                 .duplicateOperation
         }
@@ -148,6 +163,9 @@ package actor MacLocalXPCInteractiveRoleDataRouteV1:
         }
         if let publication {
             guard self.pair(pair, admits: publication.record) else {
+                macLocalXPCInteractiveRoleDataRouteLoggerV1.error(
+                    "media consumer rejected: publication fence mismatch"
+                )
                 throw MacLocalXPCInteractiveRoleDataRouteErrorV1.pairMismatch
             }
             self.publication = nil
@@ -155,6 +173,9 @@ package actor MacLocalXPCInteractiveRoleDataRouteV1:
             return publication.record
         }
         guard consumer == nil else {
+            macLocalXPCInteractiveRoleDataRouteLoggerV1.error(
+                "media consumer rejected: duplicate consumer"
+            )
             throw MacLocalXPCInteractiveRoleDataRouteErrorV1
                 .duplicateOperation
         }

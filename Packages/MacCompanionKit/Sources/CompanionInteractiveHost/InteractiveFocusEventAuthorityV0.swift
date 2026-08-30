@@ -76,7 +76,9 @@ public struct InteractivePreparedFocusEventV0: Equatable, Sendable {
 
 /// Agent-side capability authority for one accepted Interactive session. It
 /// knows no Accessibility object or capture source; it binds the sanitized
-/// focus projection to one exact event and one ordinary surface selection.
+/// focus projection to one current surface fence and one ordinary surface
+/// selection. Consecutive refresh events for the same projection may carry the
+/// same still-unconsumed one-use target.
 public struct InteractiveFocusEventAuthorityV0: Sendable {
     public static let maximumEventsPerSession = 100_000
 
@@ -125,11 +127,7 @@ public struct InteractiveFocusEventAuthorityV0: Sendable {
         guard !invalidated,
               descriptor.interactiveSessionID == interactiveSessionID,
               descriptor.authorizationEpoch == authorizationEpoch,
-              hostMonotonicNowMilliseconds >= 0,
-              descriptor.createdAtMonotonicMilliseconds
-                <= hostMonotonicNowMilliseconds,
-              descriptor.expiresAtMonotonicMilliseconds
-                > hostMonotonicNowMilliseconds else {
+              hostMonotonicNowMilliseconds >= 0 else {
             throw InteractiveFocusEventAuthorityErrorV0.fenceMismatch
         }
         if descriptor.kind == .focusedRegion {
@@ -140,19 +138,43 @@ public struct InteractiveFocusEventAuthorityV0: Sendable {
         }
         guard nextEventSequence >= 1,
               nextEventSequence <= WireLimits.maximumSafeInteger,
+              nextEventSequence
+                <= Int64(Self.maximumEventsPerSession),
               issuedTargetTokens.count < Self.maximumEventsPerSession else {
             throw InteractiveFocusEventAuthorityErrorV0.sequenceExhausted
         }
         let targetToken: WireUUID?
         let nextBinding: Binding?
+        var newlyIssuedTargetToken: WireUUID?
         if let focus = candidate.focus {
-            let rawTargetToken = targetIdentifier()
-            guard !issuedTargetTokens.contains(rawTargetToken),
-                  rawTargetToken != focus.token else {
-                throw InteractiveFocusEventAuthorityErrorV0
-                    .invalidConfiguration
+            let retainedTargetToken: WireUUID?
+            if let current,
+               current.surfaceID == descriptor.surfaceID,
+               current.surfaceRevision == descriptor.surfaceRevision,
+               current.coordinateSpaceRevision
+                == descriptor.coordinateSpaceRevision,
+               current.focus == focus,
+               hostMonotonicNowMilliseconds
+                < current.expiresAtMonotonicMilliseconds {
+                retainedTargetToken = current.targetToken
+            } else {
+                retainedTargetToken = nil
             }
-            targetToken = WireUUID(rawTargetToken)
+            let bindingTargetToken: WireUUID
+            if let retainedTargetToken {
+                bindingTargetToken = retainedTargetToken
+            } else {
+                let rawTargetToken = targetIdentifier()
+                guard !issuedTargetTokens.contains(rawTargetToken),
+                      rawTargetToken != focus.token else {
+                    throw InteractiveFocusEventAuthorityErrorV0
+                        .invalidConfiguration
+                }
+                let issued = WireUUID(rawTargetToken)
+                bindingTargetToken = issued
+                newlyIssuedTargetToken = issued
+            }
+            targetToken = bindingTargetToken
             guard hostMonotonicNowMilliseconds
                     <= Int64.max - candidate.validForMilliseconds else {
                 throw InteractiveFocusEventAuthorityErrorV0
@@ -161,7 +183,7 @@ public struct InteractiveFocusEventAuthorityV0: Sendable {
             nextBinding = Binding(
                 eventMessageID: eventMessageID,
                 eventSequence: nextEventSequence,
-                targetToken: WireUUID(rawTargetToken),
+                targetToken: bindingTargetToken,
                 surfaceID: descriptor.surfaceID,
                 surfaceRevision: descriptor.surfaceRevision,
                 coordinateSpaceRevision:
@@ -203,16 +225,16 @@ public struct InteractiveFocusEventAuthorityV0: Sendable {
             eventSequence: nextEventSequence,
             targetToken: targetToken
         )
-        if let targetToken {
-            issuedTargetTokens.insert(targetToken.rawValue)
+        if let newlyIssuedTargetToken {
+            issuedTargetTokens.insert(newlyIssuedTargetToken.rawValue)
         }
         current = nextBinding
         nextEventSequence += 1
         return prepared
     }
 
-    /// Consumes only the latest event's one-use target. The returned focus is
-    /// the exact projection that the resolver's descriptor must reproduce.
+    /// Consumes only the current binding's one-use target. The returned focus
+    /// is the exact projection that the resolver's descriptor must reproduce.
     public mutating func consume(
         _ request: InteractiveSurfaceSelectBodyV0,
         current descriptor: AdaptiveSurfaceDescriptor,

@@ -21,7 +21,8 @@ public enum AgentLocalStatusAuthorityErrorV1:
 /// only closed facts after their source transition completes; readers never
 /// assemble a payload by racing mutable authorities independently.
 public actor AgentLocalStatusAuthorityV1 {
-    public static let maximumPairedDeviceCount: UInt16 = 1
+    public static let maximumPairedDeviceCount =
+        LocalAgentStatusSnapshot.maximumPairedDeviceCount
     public static let maximumActiveRemoteSessionCount: UInt16 = 1
     public static let maximumProviderCount: UInt16 = 128
 
@@ -39,6 +40,7 @@ public actor AgentLocalStatusAuthorityV1 {
     private var routeUnavailable: Bool
     private var routeGeneration: UInt64 = 0
     private var pairedDeviceCount: UInt16
+    private var interactiveControlGranted: Bool
     private var activeRemoteSessionCount: UInt16
     private var providerCount: UInt16
     private var auditHistoryDegraded: Bool
@@ -52,6 +54,7 @@ public actor AgentLocalStatusAuthorityV1 {
         routeKinds: Set<LocalRouteKind>,
         routeUnavailable: Bool = false,
         pairedDeviceCount: UInt16,
+        interactiveControlGranted: Bool = false,
         activeRemoteSessionCount: UInt16,
         providerCount: UInt16,
         auditHistoryDegraded: Bool = false
@@ -69,6 +72,7 @@ public actor AgentLocalStatusAuthorityV1 {
         self.routeKinds = routeKinds
         self.routeUnavailable = routeUnavailable
         self.pairedDeviceCount = pairedDeviceCount
+        self.interactiveControlGranted = interactiveControlGranted
         self.activeRemoteSessionCount = activeRemoteSessionCount
         self.providerCount = providerCount
         self.auditHistoryDegraded = auditHistoryDegraded
@@ -123,7 +127,8 @@ public actor AgentLocalStatusAuthorityV1 {
 
     package func updateInventory(
         pairedDeviceCount: UInt16,
-        providerCount: UInt16
+        providerCount: UInt16,
+        interactiveControlGranted: Bool = false
     ) throws {
         try Self.validateCounts(
             pairedDeviceCount: pairedDeviceCount,
@@ -132,6 +137,7 @@ public actor AgentLocalStatusAuthorityV1 {
         )
         self.pairedDeviceCount = pairedDeviceCount
         self.providerCount = providerCount
+        self.interactiveControlGranted = interactiveControlGranted
     }
 
     package func updateAuditHistoryDegraded(_ degraded: Bool) {
@@ -161,6 +167,7 @@ public actor AgentLocalStatusAuthorityV1 {
             securityPosture: securityPosture,
             routeKinds: routeKinds,
             pairedDeviceCount: pairedDeviceCount,
+            interactiveControlGranted: interactiveControlGranted,
             activeRemoteSessionCount: activeRemoteSessionCount,
             providerCount: providerCount,
             warningCodes: derivedWarnings(),

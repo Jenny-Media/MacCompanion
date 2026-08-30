@@ -54,7 +54,7 @@ private func inputEnvelope(
     for (index, value) in values.enumerated() {
         let envelope = try inputEnvelope(
             sequence: UInt64(index + 1),
-            focus: value.kind == .text,
+            focus: false,
             input: value
         )
         #expect(try InteractiveInputCodec.decode(
@@ -63,12 +63,13 @@ private func inputEnvelope(
     }
 }
 
-@Test func invalidTextFixtureRequiresFocusFence() throws {
+@Test func textFixtureWithoutAccessibilityFocusIsValid() throws {
     let url = FixturePaths.authoritativeFixtures()
-        .appendingPathComponent("invalid/interactive-input-text-without-focus.json")
-    #expect(throws: WireError.invalidFrame(reason: "text input requires exact focus fence")) {
-        try InteractiveInputCodec.decode(Data(contentsOf: url))
-    }
+        .appendingPathComponent("valid/interactive-input-text-without-focus.json")
+    let envelope = try InteractiveInputCodec.decode(Data(contentsOf: url))
+    #expect(envelope.input == .text("secret"))
+    #expect(envelope.focusToken == nil)
+    #expect(envelope.focusRevision == nil)
 }
 
 @Test func balancedButtonKeyAndResetStateIsExplicit() throws {
@@ -119,7 +120,7 @@ private func inputEnvelope(
     #expect(state.lastSequence == 1)
     #expect(throws: InteractiveInputStreamError.textDeniedWhileLocked) {
         try state.admit(
-            inputEnvelope(sequence: 2, time: 11, focus: true, input: .text("secret")),
+            inputEnvelope(sequence: 2, time: 11, input: .text("secret")),
             hostUnlocked: false,
             hostMonotonicMilliseconds: 11
         )

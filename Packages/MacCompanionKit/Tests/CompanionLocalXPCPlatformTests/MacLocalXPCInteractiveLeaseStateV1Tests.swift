@@ -3,6 +3,24 @@
 import Foundation
 import Testing
 
+@Test func payloadFreeInteractiveLeaseReplyUsesLiteralNullPointer() {
+    let emptyShape = MacLocalXPCReplyPayloadBytesV1.withBytes(Data()) {
+        bytes, length in
+        (bytes == nil, length)
+    }
+    #expect(emptyShape.0)
+    #expect(emptyShape.1 == 0)
+
+    let payloadShape = MacLocalXPCReplyPayloadBytesV1.withBytes(
+        Data([0x7b, 0x7d])
+    ) { bytes, length in
+        (bytes != nil, length, bytes?.pointee)
+    }
+    #expect(payloadShape.0)
+    #expect(payloadShape.1 == 2)
+    #expect(payloadShape.2 == 0x7b)
+}
+
 @Test func interactiveLeaseEndpointRequiresExactGenerationAndPrivateToken() {
     let token = UUID()
     let binding = MacLocalXPCInteractiveLeaseEndpointBindingV1(

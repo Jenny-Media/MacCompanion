@@ -85,9 +85,13 @@ private struct ProductUpdateQuiescenceHandlerV0:
 private func eventuallyV1(
     _ predicate: @escaping @Sendable () async -> Bool
 ) async -> Bool {
-    for _ in 0..<500 {
+    // A yield-count budget can expire before another executor is scheduled,
+    // particularly while the end-to-end Simulator lane runs concurrently.
+    let deadline = ContinuousClock.now.advanced(by: .seconds(2))
+    while ContinuousClock.now < deadline {
         if await predicate() { return true }
-        await Task.yield()
+        do { try await Task.sleep(for: .milliseconds(1)) }
+        catch { return false }
     }
     return false
 }
@@ -503,8 +507,8 @@ func agentPresentationProductBindsOnlyAfterAcceptedReadiness() async throws {
 
     await endpoint.requestTerminalFinish()
     #expect(await eventuallyV1 { await endpoint.invalidationCount() == 1 })
-    #expect(await invalidatedGenerations.values() == [71])
-    #expect(server.snapshot().peers == [71])
+    #expect(await eventuallyV1 { await invalidatedGenerations.values() == [71] })
+    #expect(await eventuallyV1 { server.snapshot().peers == [71] })
 
     // The transport's later invalidation is a replay of the same exact loss.
     server.emit(.invalidatedMenu(generation: 71))
@@ -1061,9 +1065,11 @@ async throws {
     let owner = MacAgentDashboardApplicationOwnerV0()
     let box = ProductDashboardClientBoxV1()
     let selectedDisplayID = UUID()
+    let menuAppGeneration = UUID()
     let product = MacLocalXPCDashboardProductV1(
         owner: owner,
         publishesInteractiveAdmission: true,
+        menuAppGeneration: menuAppGeneration,
         initialSelectedDisplayID: selectedDisplayID,
         clientFactory: { handler in
             let client = ProductDashboardClientV1(handler: handler)
@@ -1089,7 +1095,23 @@ async throws {
     })
     let publication = try #require(client.snapshot().admissions.first)
     #expect(publication.revision == 1)
+    #expect(publication.menuAppGeneration == menuAppGeneration)
     #expect(publication.selectedDisplayID == selectedDisplayID)
+
+    let secondaryDisplayID = UUID()
+    try await product.updateInteractiveAdmissionSelectedDisplay(
+        secondaryDisplayID
+    )
+    #expect(client.snapshot().admissions.count == 2)
+    let replacement = try #require(client.snapshot().admissions.last)
+    #expect(replacement.revision == 2)
+    #expect(replacement.menuAppGeneration == menuAppGeneration)
+    #expect(replacement.selectedDisplayID == secondaryDisplayID)
+
+    try await product.updateInteractiveAdmissionSelectedDisplay(
+        secondaryDisplayID
+    )
+    #expect(client.snapshot().admissions.count == 2)
 
     await product.finish()
 }

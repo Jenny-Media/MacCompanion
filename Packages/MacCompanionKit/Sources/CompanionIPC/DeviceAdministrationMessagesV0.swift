@@ -37,6 +37,63 @@ private let deviceAdministrationZeroUUIDV0 = UUID(
     uuid: (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
 )
 
+public struct LocalDeviceRevocationReviewRequestV1: Codable, Equatable, Sendable {
+    private enum CodingKeys: String, CodingKey, CaseIterable {
+        case protocolVersion, commandID, deviceID, requestedAtUnixMilliseconds
+    }
+    public let protocolVersion: LocalIPCProtocolVersion
+    public let commandID: UUID
+    public let deviceID: UUID
+    public let requestedAtUnixMilliseconds: Int64
+
+    public init(protocolVersion: LocalIPCProtocolVersion = .init(), commandID: UUID,
+                deviceID: UUID, requestedAtUnixMilliseconds: Int64) throws {
+        guard protocolVersion == .init() else { throw DeviceAdministrationMessageErrorV0.invalidVersion }
+        guard commandID != deviceAdministrationZeroUUIDV0, deviceID != deviceAdministrationZeroUUIDV0,
+              commandID != deviceID else { throw DeviceAdministrationMessageErrorV0.invalidIdentifier }
+        guard requestedAtUnixMilliseconds >= 0,
+              requestedAtUnixMilliseconds <= deviceAdministrationMaximumTimeV0 - deviceRevocationReviewLifetimeV0
+        else { throw DeviceAdministrationMessageErrorV0.invalidTime }
+        self.protocolVersion = protocolVersion
+        self.commandID = commandID
+        self.deviceID = deviceID
+        self.requestedAtUnixMilliseconds = requestedAtUnixMilliseconds
+    }
+    public init(from decoder: Decoder) throws {
+        try requireDeviceAdministrationKeysV0(decoder, expected: Set(CodingKeys.allCases.map(\.stringValue)))
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        try self.init(protocolVersion: values.decode(LocalIPCProtocolVersion.self, forKey: .protocolVersion),
+            commandID: values.decode(UUID.self, forKey: .commandID), deviceID: values.decode(UUID.self, forKey: .deviceID),
+            requestedAtUnixMilliseconds: values.decode(Int64.self, forKey: .requestedAtUnixMilliseconds))
+    }
+}
+
+public struct LocalDeviceRevocationReviewReplyV1: Codable, Equatable, Sendable {
+    private enum CodingKeys: String, CodingKey, CaseIterable { case correlationID, review }
+    public let correlationID: UUID
+    public let review: LocalDeviceRevocationReviewV0
+
+    public init(correlationID: UUID, review: LocalDeviceRevocationReviewV0) throws {
+        guard correlationID != deviceAdministrationZeroUUIDV0,
+              correlationID != review.reviewID, correlationID != review.deviceID
+        else { throw DeviceAdministrationMessageErrorV0.invalidIdentifier }
+        self.correlationID = correlationID
+        self.review = review
+    }
+    public init(from decoder: Decoder) throws {
+        try requireDeviceAdministrationKeysV0(decoder, expected: Set(CodingKeys.allCases.map(\.stringValue)))
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        try self.init(correlationID: values.decode(UUID.self, forKey: .correlationID),
+            review: values.decode(LocalDeviceRevocationReviewV0.self, forKey: .review))
+    }
+    public func validate(against request: LocalDeviceRevocationReviewRequestV1) throws {
+        guard correlationID == request.commandID, review.deviceID == request.deviceID,
+              review.createdAtUnixMilliseconds >= request.requestedAtUnixMilliseconds else {
+            throw DeviceAdministrationMessageErrorV0.bindingMismatch
+        }
+    }
+}
+
 public struct SetDeviceDisplayNameCommandV0: Codable, Equatable, Sendable {
     private enum CodingKeys: String, CodingKey, CaseIterable {
         case protocolVersion, commandID, deviceID, displayName

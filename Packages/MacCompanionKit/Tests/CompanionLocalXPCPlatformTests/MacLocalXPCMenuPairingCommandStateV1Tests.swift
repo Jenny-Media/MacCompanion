@@ -2,6 +2,28 @@
 @testable import CompanionLocalXPCPlatform
 import Testing
 
+@Test func reviewedDeviceRevocationUsesTheExistingSingleFlightGate() throws {
+    var gate = MacLocalXPCMenuPairingCommandTransactionGateV1()
+    let bound = gate.bind(generation: 1)
+    #expect(bound)
+    let denied = gate.begin(generation: 1, kind: .requestDeviceRevocationReview, permitted: false)
+    #expect(denied == nil)
+    let pendingReview = gate.begin(generation: 1, kind: .requestDeviceRevocationReview, permitted: true)
+    let review = try #require(pendingReview)
+    let concurrent = gate.begin(generation: 1, kind: .revokeDevice, permitted: true)
+    #expect(concurrent == nil)
+    let finished = gate.finish(review)
+    #expect(finished)
+    let pendingRevoke = gate.begin(generation: 1, kind: .revokeDevice, permitted: true)
+    let revoke = try #require(pendingRevoke)
+    let pairing = gate.begin(generation: 1, kind: .create, permitted: true)
+    #expect(pairing == nil)
+    let invalidated = gate.invalidate(generation: 1)
+    #expect(invalidated == revoke)
+    let stale = gate.finish(revoke)
+    #expect(!stale)
+}
+
 @Test func menuPairingCommandGateIsSingleFlightAndGenerationFenced() {
     var gate = MacLocalXPCMenuPairingCommandTransactionGateV1()
     let rejectedZero = gate.bind(generation: 0)

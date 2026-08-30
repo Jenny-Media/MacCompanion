@@ -294,6 +294,30 @@ package actor MacCompanionAgentDisabledBootstrapRuntimeV1:
     private var startTask: Task<Void, Error>?
     private var finishTask: Task<Void, Never>?
 
+    #if DEBUG
+    package init(
+        isolatedTestID: UUID,
+        intentStore: any MacRemoteAccessIntentPersistenceV1,
+        restartRequest: MacCompanionAgentRestartRequestV1
+    ) {
+        let onRestartRequired: @Sendable () -> Void = {
+            Task { await restartRequest.request() }
+        }
+        let authority = MacRemoteAccessBootstrapAuthorityV1(
+            intentStore: intentStore,
+            onUnacknowledgedDurableChange: onRestartRequired
+        )
+        server = MacLocalXPCServerV1(
+            isolatedTestID: isolatedTestID,
+            profile: .disabledRemoteAccessBootstrap,
+            bootstrapHandler: authority
+        ) { event in
+            guard case .remoteAccessEnabled = event else { return }
+            onRestartRequired()
+        }
+    }
+    #endif
+
     package init(
         intentStore: any MacRemoteAccessIntentPersistenceV1,
         restartRequest: MacCompanionAgentRestartRequestV1

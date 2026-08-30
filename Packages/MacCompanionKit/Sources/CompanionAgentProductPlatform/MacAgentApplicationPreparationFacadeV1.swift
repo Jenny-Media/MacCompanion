@@ -264,6 +264,14 @@ public enum MacAgentApplicationPreparationFacadeV1 {
         inputs: MacAgentApplicationPreparationInputsV1
     ) async throws -> MacAgentApplicationPreparationResultV1 {
         try await prepare(
+            initialConsoleSession:
+                MacAgentConservativeRequestContextProductV1
+                    .conservativeHostState(
+                        for: MacAgentConservativeRequestContextProductV1
+                            .currentPublicFacts()
+                    ) == .userSessionActive
+                    ? .active
+                    : .otherConsoleUserActive,
             makeStorage: { try MacAgentReleaseStorageV1.systemDefault() },
             makeIntentStore: {
                 try AtomicFileMacRemoteAccessIntentStoreV1(directory: $0)
@@ -312,6 +320,7 @@ public enum MacAgentApplicationPreparationFacadeV1 {
     }
 
     package static func prepare(
+        initialConsoleSession: ConsoleSessionState = .otherConsoleUserActive,
         makeStorage: @escaping @Sendable () throws ->
             MacAgentReleaseStorageV1,
         makeIntentStore: @escaping @Sendable (URL) throws ->
@@ -338,7 +347,7 @@ public enum MacAgentApplicationPreparationFacadeV1 {
         try Task.checkCancellation()
         let initialState = try await MacDashboardLifecycleStartupStateLoaderV1(
             intentStore: intentStore
-        ).loadInitialState(consoleSession: .otherConsoleUserActive)
+        ).loadInitialState(consoleSession: initialConsoleSession)
         try Task.checkCancellation()
         try validateInitialLifecycleState(initialState)
         let requestContexts = MacAgentConservativeRequestContextProductV1()
@@ -416,7 +425,8 @@ public enum MacAgentApplicationPreparationFacadeV1 {
         let expected: ManagedProcessState = state.desiredEnabled
             ? .starting
             : .stopped
-        guard state.consoleSession == .otherConsoleUserActive,
+        guard state.consoleSession == .active
+                || state.consoleSession == .otherConsoleUserActive,
               state.agent == expected,
               state.menuApp == expected,
               !state.observeAvailable,

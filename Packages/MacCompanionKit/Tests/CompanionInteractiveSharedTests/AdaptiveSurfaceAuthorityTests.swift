@@ -22,7 +22,9 @@ private func descriptor(
     focus: SurfaceFocus? = nil,
     parent: UUID? = nil,
     fallback: UUID? = nil,
-    windowToken: UUID? = nil
+    windowToken: UUID? = nil,
+    createdAtMonotonicMilliseconds: Int64 = 1_000,
+    expiresAtMonotonicMilliseconds: Int64 = 11_000
 ) throws -> AdaptiveSurfaceDescriptor {
     try AdaptiveSurfaceDescriptor(
         interactiveSessionID: surfaceSessionID,
@@ -43,9 +45,39 @@ private func descriptor(
         privacyProfile: privacy,
         metadataFields: metadata,
         focus: focus,
-        createdAtMonotonicMilliseconds: 1_000,
-        expiresAtMonotonicMilliseconds: 11_000
+        createdAtMonotonicMilliseconds: createdAtMonotonicMilliseconds,
+        expiresAtMonotonicMilliseconds: expiresAtMonotonicMilliseconds
     )
+}
+
+@Test func selectionUsesAcknowledgedCurrentFenceAndFreshTargetLifetime()
+    throws
+{
+    let current = try descriptor(
+        kind: .desktop,
+        surfaceID: desktopSurfaceID,
+        surfaceRevision: 1,
+        coordinateRevision: 1,
+        expiresAtMonotonicMilliseconds: 2_100
+    )
+    let target = try descriptor(
+        kind: .application,
+        surfaceID: appSurfaceID,
+        surfaceRevision: 2,
+        coordinateRevision: 2,
+        expiresAtMonotonicMilliseconds: 4_000
+    )
+    var authority = try AdaptiveSurfaceAuthority(
+        desktop: current,
+        monotonicNowMilliseconds: surfaceNow
+    )
+
+    #expect(try authority.requestSelection(
+        target: target,
+        expectedSurfaceRevision: current.surfaceRevision,
+        expectedCoordinateSpaceRevision: current.coordinateSpaceRevision,
+        monotonicNowMilliseconds: 2_200
+    ) == [.pauseInput, .releaseAllInput, .applyCaptureSource])
 }
 
 private func desktop(

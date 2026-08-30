@@ -19,7 +19,7 @@ Every message contains exactly:
 | `surfaceID` | Exact current session-scoped surface UUID |
 | `surfaceRevision` | Exact current revision, at least 1 |
 | `coordinateSpaceRevision` | Exact current revision, at least 1 |
-| `focusToken`, `focusRevision` | Both null or both current; text requires both nonnull |
+| `focusToken`, `focusRevision` | Both null or both current. They fence an already selected focused-region surface when present; ordinary keyboard text does not require Accessibility focus discovery. |
 | `input` | One closed tagged payload below |
 
 The host revalidates the session, epoch, descriptor half-open lifetime, and complete surface/coordinate/focus fence immediately before execution. A valid JSON message alone never authorizes input.
@@ -33,7 +33,7 @@ The host revalidates the session, epoch, descriptor half-open lifetime, and comp
 - `scroll`: `unit` is `pixel` or `line`; signed integer `deltaX` and `deltaY` are each -4,096–4,096 and not both zero.
 - `physicalKey`: USB HID keyboard-page `usage` 0x04–0xE7, `transition`, and an eight-bit `modifierMask` snapshot.
 - `modifiers`: one eight-bit `modifierMask` ordered left Control, Shift, Option, Command, then the right variants from least to most significant bit.
-- `text`: nonempty UTF-8 `text` of at most 4,096 bytes, without NUL. The host must be unlocked and the exact current ordinary editable focus must be bound. This never uses the clipboard.
+- `text`: nonempty UTF-8 `text` of at most 4,096 bytes, without NUL. The host must be unlocked and the active descriptor must advertise both Keyboard and Text authority. Missing or ambiguous Accessibility focus does not disable ordinary keyboard entry; a positively identified secure focus still denies text. This never uses the clipboard.
 - `reset`: no other payload keys; releases all remotely held buttons, keys, and modifiers.
 
 Pointer motion may be coalesced before sequence assignment. Once assigned, reliable transport preserves every message. Button and key transitions are never coalesced. Repeated down, unmatched up, backward client time, a gap/duplicate sequence, invalid body, or stale fence is a protocol violation: no partial state is applied and the input channel closes after all held input is released.

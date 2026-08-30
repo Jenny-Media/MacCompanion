@@ -1,0 +1,168 @@
+{
+  "schemaVersion": 1,
+  "profileID": "maccompanion.performance-acceptance.v0.1",
+  "status": "prePhysicalFrozen",
+  "measurementMethod": {
+    "candidateBindingRequired": true,
+    "cleanStableToolchainRequiredForPromotion": true,
+    "healthyLANDefinition": "one uncongested private local route with no relay, fixed endpoints, fixed display profile, and recorded link conditions",
+    "minimumLatencySamplesPerPercentile": 40,
+    "rawMonotonicTimestampsRequired": true,
+    "simulatorEvidenceClassification": "diagnosticOnly",
+    "physicalInstruments": [
+      "Xcode performance tests",
+      "Instruments Time Profiler",
+      "Instruments Allocations and Leaks",
+      "Instruments Power Profiler",
+      "Instruments Network",
+      "Instruments File Activity"
+    ]
+  },
+  "latencyGates": [
+    {
+      "id": "observe.revocationClosure.maximum",
+      "metric": "local revocation to authenticated-session closure",
+      "percentile": "maximum",
+      "maximumInclusiveMilliseconds": 1000,
+      "minimumSamples": 20
+    },
+    {
+      "id": "observe.reconnectCurrentSnapshot.p95",
+      "metric": "reconnect request to current Observe snapshot",
+      "percentile": "p95",
+      "maximumInclusiveMilliseconds": 3000,
+      "minimumSamples": 40
+    },
+    {
+      "id": "control.firstCurrentFrame.p95",
+      "metric": "Control request to first current frame",
+      "percentile": "p95",
+      "maximumInclusiveMilliseconds": 2500,
+      "minimumSamples": 40
+    },
+    {
+      "id": "control.glassLatency.p50",
+      "metric": "display change to client presentation",
+      "percentile": "p50",
+      "maximumInclusiveMilliseconds": 150,
+      "minimumSamples": 40
+    },
+    {
+      "id": "control.glassLatency.p95",
+      "metric": "display change to client presentation",
+      "percentile": "p95",
+      "maximumInclusiveMilliseconds": 300,
+      "minimumSamples": 40
+    },
+    {
+      "id": "control.pointerVisibleResponse.p50",
+      "metric": "pointer input to visible response",
+      "percentile": "p50",
+      "maximumInclusiveMilliseconds": 180,
+      "minimumSamples": 40
+    },
+    {
+      "id": "control.pointerVisibleResponse.p95",
+      "metric": "pointer input to visible response",
+      "percentile": "p95",
+      "maximumInclusiveMilliseconds": 350,
+      "minimumSamples": 40
+    },
+    {
+      "id": "surface.selectionKeyframe.p95",
+      "metric": "app or window selection to first current keyframe",
+      "percentile": "p95",
+      "maximumInclusiveMilliseconds": 1000,
+      "minimumSamples": 40
+    },
+    {
+      "id": "surface.focusSmartZoom.p95",
+      "metric": "verified focus change to stable Smart Zoom crop",
+      "percentile": "p95",
+      "maximumInclusiveMilliseconds": 300,
+      "minimumSamples": 40
+    },
+    {
+      "id": "surface.fallback.p95",
+      "metric": "surface invalidation to stable fallback",
+      "percentile": "p95",
+      "maximumInclusiveMilliseconds": 500,
+      "minimumSamples": 40
+    }
+  ],
+  "mediaCaps": {
+    "maximumEncodedWidthPixels": 1920,
+    "maximumEncodedHeightPixels": 1200,
+    "maximumEncodedPixelCount": 2304000,
+    "maximumFramesPerSecond": 30,
+    "targetBitrateBitsPerSecond": 8000000,
+    "maximumInitialKeyframeIntervalMilliseconds": 2000,
+    "maximumWaitingUnencodedFrames": 1
+  },
+  "boundedGrowthGates": {
+    "controlSessionDurationSeconds": 3600,
+    "controlWarmupSeconds": 600,
+    "rssComparisonWindowSeconds": 600,
+    "maximumMedianRSSGrowthMiB": 32,
+    "maximumRSSSlopeMiBPerMinute": 1,
+    "adaptiveMetadataCacheMustRemainBounded": true,
+    "sevenDayObserveDistinctUTCDates": 7,
+    "sevenDayObserveMinimumSpanSeconds": 518400,
+    "minimumDailySoakRunSeconds": 180,
+    "sourceBindingRequired": true
+  },
+  "durableCaps": {
+    "auditLogicalBytes": 16777216,
+    "auditRows": 50000,
+    "auditRetentionMilliseconds": 2592000000,
+    "auditAppendAttemptsPerMinutePerBucket": 120,
+    "operationTerminalRetentionMilliseconds": 2592000000,
+    "sanitizedDiagnosticEvents": 256
+  },
+  "prePhysicalBaseline": {
+    "path": "docs/evidence/prephysical-performance-baseline.json",
+    "testedSourceSHA256": "2c19bbba9659d510a4ceab5eda57b4812ce05955c2d9948b034387fd4807f0c0",
+    "budgetsEvaluated": false,
+    "classification": "diagnosticOnly"
+  },
+  "physicalOnlyDecisions": [
+    {
+      "id": "mac.absoluteIdleAndActiveCPU",
+      "status": "requiresPhysicalMeasurementAndApproval"
+    },
+    {
+      "id": "mac.absoluteServiceAndUIResidentMemory",
+      "status": "requiresPhysicalMeasurementAndApproval"
+    },
+    {
+      "id": "ios.absoluteClientCPUAndResidentMemory",
+      "status": "requiresPhysicalMeasurementAndApproval"
+    },
+    {
+      "id": "macAndIOS.energyAndBatteryImpact",
+      "status": "requiresPhysicalMeasurementAndApproval"
+    },
+    {
+      "id": "idleAndObserve.networkBytes",
+      "status": "requiresPhysicalMeasurementAndApproval"
+    },
+    {
+      "id": "installedLogsSecurityStoreAndOperationStore.diskGrowth",
+      "status": "requiresPhysicalMeasurementAndApproval"
+    },
+    {
+      "id": "pairing.timeToReady",
+      "status": "requiresPhysicalMeasurementAndApproval"
+    },
+    {
+      "id": "textSession.terminationLatency",
+      "status": "requiresPhysicalMeasurementAndApproval"
+    }
+  ],
+  "officialMeasurementSources": [
+    "https://developer.apple.com/documentation/technologyoverviews/testing-and-performance",
+    "https://developer.apple.com/documentation/xcode/improving-your-app-s-performance",
+    "https://developer.apple.com/documentation/xcode/analyzing-your-app-s-battery-use",
+    "https://developer.apple.com/documentation/xcode/performance-and-metrics"
+  ]
+}

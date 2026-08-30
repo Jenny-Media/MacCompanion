@@ -4,7 +4,7 @@ Status: coding-baseline draft for Stage 0A and Stage 0B. Platform spikes may cha
 
 ## 1. Purpose and product boundary
 
-Interactive Control implements Mac Companion's first-class **Control** path. It lets the owner of a paired iPhone or iPad view one display and send mouse and keyboard input to a logged-in personal Mac. Its Adaptive Remote Surfaces can focus the desktop stream onto an application, window, or current region so the iPhone is more useful than a scaled monitor. Users may enter Control directly for visual work; they do not need to attempt an Observe or Act task first.
+Interactive Control implements Mac Companion's first-class **Control** path. It lets the owner of a paired iPhone or iPad view one locally selected display and send mouse and keyboard input to a logged-in personal Mac. Its Adaptive Remote Surfaces can focus the desktop stream onto an application, window, or current region so the iPhone is more useful than a scaled monitor. Users may enter Control directly for visual work; they do not need to attempt an Observe or Act task first.
 
 Interactive Control is not:
 
@@ -21,9 +21,11 @@ One device grant cannot imply any future administrator capability such as shell,
 The first implementation supports:
 
 - One configured macOS account that is already logged in
-- One paired iPhone or iPad controlling one Mac at a time
+- Up to eight retained paired iPhone or iPad clients per Mac, with one active
+  Interactive Control session admitted at a time
 - One active Interactive Control session per Mac
-- One selected physical display per session
+- One selected physical display streamed at a time, with fail-closed switching
+  inside the active session
 - One authoritative visual surface at a time: Desktop, App Focus, Window Focus, or a focused-region crop
 - H.264 video without audio
 - Absolute pointer movement, primary and secondary click, drag, bounded scrolling, physical-key input, modifiers, and bounded text input
@@ -246,6 +248,19 @@ A display disconnect, resolution, scale, rotation, or selected-display change:
 5. Resumes with a fresh keyframe.
 
 Input carrying an old surface or coordinate revision is rejected. The initial product ends or pauses the session if the selected display disappears; it does not silently redirect control to another display.
+
+While Control is active, its persistent toolbar exposes a `Display` selector.
+Its periodically refreshed catalog contains only an
+opaque display ID, stable session ordinal, bounded pixel dimensions, and the
+main-display flag; it never exposes a macOS display name or platform display
+identifier. Newly connected displays can appear without ending Control. A live
+display change is carried as an ordinary authenticated Desktop surface
+replacement: the client pauses and resets input, the menu app applies the
+opaque selection and publishes a successor admission revision, the replacement
+execution lease binds that display, and the Agent returns success only after a
+discontinuity and clean frame are acknowledged under advanced surface and
+coordinate revisions. A disconnected selected display fails closed; the MVP
+does not silently redirect or compose multiple displays.
 
 ### Adaptive Remote Surface integration
 

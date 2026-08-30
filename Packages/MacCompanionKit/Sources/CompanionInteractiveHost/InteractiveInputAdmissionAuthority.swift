@@ -7,6 +7,7 @@ public enum InteractiveInputAdmissionError: Error, Equatable, Sendable {
     case sessionExpired
     case wrongSession
     case authorizationChanged
+    case secureTextFocusDenied
 }
 
 /// Composes independent authorities in fail-closed order. Platform input
@@ -54,9 +55,14 @@ public struct InteractiveInputAdmissionAuthority: Equatable, Sendable {
             focusToken: envelope.focusToken?.rawValue,
             focusRevision: envelope.focusRevision
         )
+        if envelope.input.kind == .text,
+           case let .active(descriptor) = surfaces.phase,
+           descriptor.focus?.secure == true {
+            throw InteractiveInputAdmissionError.secureTextFocusDenied
+        }
         try surfaces.validateInput(
             fence,
-            requiresFocusBinding: envelope.input.kind == .text,
+            requiresFocusBinding: false,
             monotonicNowMilliseconds: Int64(hostMonotonicMilliseconds)
         )
         try stream.admit(

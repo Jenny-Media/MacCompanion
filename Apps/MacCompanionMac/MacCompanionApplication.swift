@@ -5,6 +5,8 @@ import CompanionLifecycle
 import CompanionMacApp
 import CompanionMacApplicationPlatform
 import CompanionMacUI
+import Combine
+import CoreGraphics
 import SwiftUI
 
 private enum MacCompanionSceneV1 {
@@ -290,7 +292,9 @@ private final class MacCompanionApplicationDelegate:
                     // authority or silently falls back to enable/disable.
                 }
             case .reviewInteractiveControlGrant:
-                if let dashboard = self.product.dashboard {
+                if CGPreflightScreenCaptureAccess(),
+                   CGPreflightPostEventAccess(),
+                   let dashboard = self.product.dashboard {
                     await dashboard.beginInteractiveControlGrantReview()
                 }
             }
@@ -731,10 +735,16 @@ private struct MacCompanionRemoteAccessSetupView: View {
 
 private struct MacCompanionDashboardRoot: View {
     let application: MacCompanionDashboardApplicationV1
+    @State private var screenRecordingReady = false
+    @State private var accessibilityReady = false
 
     var body: some View {
         VStack(spacing: 0) {
             dashboard
+            Divider()
+            remoteControlPermissions
+            Divider()
+            interactiveDisplaySelection
             Divider()
             HStack {
                 if hasPairedDevice {
@@ -743,15 +753,24 @@ private struct MacCompanionDashboardRoot: View {
                             "Remote Control Allowed",
                             systemImage: "checkmark.shield.fill"
                         )
-                        .foregroundStyle(.green)
+                        .foregroundStyle(
+                            remoteControlPermissionsReady
+                                ? .green : .orange
+                        )
                     } else {
                         Button(
-                            "Allow Remote Control",
+                            remoteControlPermissionsReady
+                                ? "Allow Remote Control"
+                                : "Set Up Remote Control",
                             systemImage: "display.badge.checkmark"
                         ) {
-                            Task { @MainActor in
-                                await application
-                                    .beginInteractiveControlGrantReview()
+                            if remoteControlPermissionsReady {
+                                Task { @MainActor in
+                                    await application
+                                        .beginInteractiveControlGrantReview()
+                                }
+                            } else {
+                                requestNextRemoteControlPermission()
                             }
                         }
                         .disabled(
@@ -777,6 +796,181 @@ private struct MacCompanionDashboardRoot: View {
         .sheet(isPresented: grantSheetBinding) {
             grantSheet
         }
+        .onReceive(
+            Timer.publish(every: 1, on: .main, in: .common)
+                .autoconnect()
+        ) { _ in
+            refreshRemoteControlPermissions()
+            Task { @MainActor in
+                await application.refreshInteractiveDisplays()
+            }
+        }
+        .onReceive(
+            NotificationCenter.default.publisher(
+                for: NSApplication.didBecomeActiveNotification
+            )
+        ) { _ in
+            refreshRemoteControlPermissions()
+            Task { @MainActor in
+                await application.refreshInteractiveDisplays()
+            }
+        }
+    }
+
+    private var remoteControlPermissionsReady: Bool {
+        screenRecordingReady && accessibilityReady
+    }
+
+    private var interactiveDisplaySelection: some View {
+        HStack(spacing: 16) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Shared display")
+                    .font(.headline)
+                Text(displaySelectionDetail)
+                    .font(.callout)
+                    .foregroundStyle(
+                        application.interactiveDisplaySelectionFailed
+                            ? .red : .secondary
+                    )
+            }
+            Spacer()
+            Picker(
+                "Shared display",
+                selection: Binding(
+                    get: { application.selectedInteractiveDisplayID },
+                    set: { id in
+                        guard let id else { return }
+                        Task { @MainActor in
+                            await application.selectInteractiveDisplay(id)
+                        }
+                    }
+                )
+            ) {
+                ForEach(application.interactiveDisplayChoices) { choice in
+                    Text(
+                        "\(choice.name) (\(choice.pixelWidth)×\(choice.pixelHeight))"
+                    )
+                    .tag(Optional(choice.id))
+                }
+            }
+            .labelsHidden()
+            .frame(maxWidth: 280)
+            .disabled(!application.interactiveDisplaySelectionEnabled)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+    }
+
+    private var displaySelectionDetail: String {
+        if application.interactiveDisplaySelectionFailed {
+            return "The display change could not be verified. Try again."
+        }
+        if application.interactiveDisplayChoices.count <= 1 {
+            return "Connect another display to choose what Remote Control shares."
+        }
+        if !application.interactiveDisplaySelectionEnabled {
+            return "Stop the active remote session before changing displays."
+        }
+        return "A new Control session will be bound to this display."
+    }
+
+    private var remoteControlPermissions: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Remote Control permissions")
+                        .font(.headline)
+                    Text(
+                        remoteControlPermissionsReady
+                            ? "This Mac is ready for viewing and input."
+                            : "Allow these on the Mac before requesting Control from a phone."
+                    )
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button("Refresh") {
+                    refreshRemoteControlPermissions()
+                }
+            }
+
+            permissionRow(
+                title: "Screen Recording",
+                detail: "Shares the selected Mac display or app surface.",
+                ready: screenRecordingReady,
+                actionTitle: "Allow Screen Recording",
+                action: requestScreenRecordingPermission
+            )
+            permissionRow(
+                title: "Accessibility",
+                detail: "Sends approved pointer and keyboard input.",
+                ready: accessibilityReady,
+                actionTitle: "Allow Accessibility",
+                action: requestAccessibilityPermission
+            )
+
+            if !remoteControlPermissionsReady {
+                Text(
+                    "Mac Companion checks automatically. If macOS still reports a permission as pending after approval, quit and reopen Mac Companion."
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
+        }
+        .padding(16)
+    }
+
+    private func permissionRow(
+        title: String,
+        detail: String,
+        ready: Bool,
+        actionTitle: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: ready
+                ? "checkmark.circle.fill" : "circle.dashed")
+                .foregroundStyle(ready ? .green : .orange)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(title).font(.callout.weight(.semibold))
+                Text(detail)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+            if ready {
+                Text("Ready")
+                    .font(.callout.weight(.medium))
+                    .foregroundStyle(.green)
+            } else {
+                Button(actionTitle, action: action)
+                    .buttonStyle(.bordered)
+            }
+        }
+    }
+
+    private func refreshRemoteControlPermissions() {
+        screenRecordingReady = CGPreflightScreenCaptureAccess()
+        accessibilityReady = CGPreflightPostEventAccess()
+    }
+
+    private func requestNextRemoteControlPermission() {
+        if !screenRecordingReady {
+            requestScreenRecordingPermission()
+        } else if !accessibilityReady {
+            requestAccessibilityPermission()
+        }
+    }
+
+    private func requestScreenRecordingPermission() {
+        _ = CGRequestScreenCaptureAccess()
+        refreshRemoteControlPermissions()
+    }
+
+    private func requestAccessibilityPermission() {
+        _ = CGRequestPostEventAccess()
+        refreshRemoteControlPermissions()
     }
 
     @ViewBuilder
@@ -941,7 +1135,7 @@ private struct MacCompanionDashboardRoot: View {
 
     private var hasPairedDevice: Bool {
         guard case let .status(status) = source else { return false }
-        return status.pairedDeviceCount == 1
+        return status.pairedDeviceCount > 0
     }
 
     private var pairingPermitted: Bool {

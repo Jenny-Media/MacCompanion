@@ -39,6 +39,32 @@ import Testing
     #expect(content.height == 300)
 }
 
+@Test func aspectFitCanonicalizesFloatingPointEdgeOvershoot() throws {
+    let viewport = try ClientInputRectV0(
+        x: 0,
+        y: 0,
+        width: 393,
+        height: 852
+    )
+    let content = try ClientAspectFitGeometryV0.contentRect(
+        viewport: viewport,
+        encodedWidth: 100,
+        encodedHeight: 295
+    )
+
+    #expect(content.y == viewport.y)
+    #expect(content.height == viewport.height)
+    #expect(content.x >= viewport.x)
+    #expect(content.x + content.width <= viewport.x + viewport.width)
+    #expect(throws: Never.self) {
+        _ = try ClientViewportInputMapperV0(
+            viewport: viewport,
+            content: content,
+            mode: .directTouch
+        )
+    }
+}
+
 @Test func aspectFitRejectsMissingEncodedDimensions() throws {
     #expect(throws: ClientViewportInputMapperErrorV0.invalidGeometry) {
         _ = try ClientAspectFitGeometryV0.contentRect(

@@ -174,4 +174,23 @@ public final class NetworkHostTLSListenerConfigurationV0:
             metadataEvaluator: NetworkHostTLSMetadataExtractorV0.extract
         )
     }
+
+#if DEBUG
+    /// Test-only binding restriction. Uses the identical TLS configuration and
+    /// accepted-connection authority, but cannot advertise or accept LAN peers.
+    package func makeUnstartedLoopbackListener(port: NWEndpoint.Port = .any) throws -> (NetworkHostListenerOwnerV0, @Sendable () -> UInt16?) {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !listenerCreated else {
+            throw NetworkHostTLSListenerConfigurationErrorV0.listenerAlreadyCreated
+        }
+        parameters.requiredLocalEndpoint = .hostPort(host: "127.0.0.1", port: port)
+        let listener = try NWListener(using: parameters)
+        listenerCreated = true
+        return (NetworkHostListenerOwnerV0(listener: listener,
+            servedSubjectPublicKeyInfoDER: servedSubjectPublicKeyInfoDER,
+            requiredHostFingerprint: hostFingerprint,
+            metadataEvaluator: NetworkHostTLSMetadataExtractorV0.extract), { listener.port?.rawValue })
+    }
+#endif
 }

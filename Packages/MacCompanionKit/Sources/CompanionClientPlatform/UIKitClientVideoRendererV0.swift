@@ -92,17 +92,30 @@ public final class UIKitClientVideoSurfaceViewV0:
             throw UIKitClientVideoRendererErrorV0
                 .sampleBufferCreationFailed
         }
-        CMSetAttachment(
-            sample,
-            key: kCMSampleAttachmentKey_DisplayImmediately,
-            value: kCFBooleanTrue,
-            attachmentMode: kCMAttachmentMode_ShouldNotPropagate
+        // DisplayImmediately is a per-sample attachment, not a buffer-level
+        // CMAttachmentBearer attachment. The latter is ignored by the display
+        // layer and can leave decoded frames waiting on the remote Mac clock.
+        guard let attachments = CMSampleBufferGetSampleAttachmentsArray(
+            sample, createIfNecessary: true
+        ), CFArrayGetCount(attachments) == 1 else {
+            blank()
+            throw UIKitClientVideoRendererErrorV0.sampleBufferCreationFailed
+        }
+        let attachment = unsafeBitCast(
+            CFArrayGetValueAtIndex(attachments, 0),
+            to: CFMutableDictionary.self
+        )
+        CFDictionarySetValue(
+            attachment,
+            Unmanaged.passUnretained(kCMSampleAttachmentKey_DisplayImmediately).toOpaque(),
+            Unmanaged.passUnretained(kCFBooleanTrue).toOpaque()
         )
         guard displayLayer.status != .failed else {
             blank()
             throw UIKitClientVideoRendererErrorV0.displayLayerFailed
         }
-        displayLayer.flush()
+        // Immediate samples replace pending images; flushing every frame can
+        // repeatedly discard work before the display pipeline presents it.
         displayLayer.enqueue(sample)
         if displayLayer.status == .failed {
             blank()

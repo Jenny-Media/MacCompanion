@@ -39,6 +39,7 @@ public actor NetworkClientPrimaryRouterBridgeV0:
     ) -> Void
 
     private var pump: NetworkClientPrimaryFramePumpV0?
+    private var sendFrame: (@Sendable (Data) async throws -> Void)?
     private var router: ClientPrimaryCommandRouterV0?
     private var observeChannel: ClientObserveChannelV0?
     private var actChannel: ClientActChannelV1?
@@ -84,16 +85,30 @@ public actor NetworkClientPrimaryRouterBridgeV0:
     public func bind(
         pump: NetworkClientPrimaryFramePumpV0
     ) throws {
-        guard !invalidated, self.pump == nil, router == nil else {
+        guard !invalidated, sendFrame == nil, router == nil else {
             throw NetworkClientPrimaryRouterBridgeErrorV0.invalidState
         }
         self.pump = pump
+        sendFrame = { try await pump.sendAuthenticatedCommand($0) }
     }
+
+    #if DEBUG
+    /// Package-only transport seam for composed runtime tests. Authentication
+    /// remains supplied by the caller; release construction binds the real pump.
+    package func bindAuthenticatedTransport(
+        _ sender: any ClientAuthenticatedCommandSendingV1
+    ) throws {
+        guard !invalidated, sendFrame == nil, router == nil else {
+            throw NetworkClientPrimaryRouterBridgeErrorV0.invalidState
+        }
+        sendFrame = { try await sender.sendAuthenticatedCommand($0) }
+    }
+    #endif
 
     public func authenticated(
         _ session: ClientAuthenticatedSessionV0
     ) async throws {
-        guard !invalidated, pump != nil, router == nil,
+        guard !invalidated, sendFrame != nil, router == nil,
               session.clientID == pairedHost.clientID,
               session.hostID == pairedHost.hostID,
               session.deviceID == pairedHost.deviceID else {
@@ -164,10 +179,10 @@ public actor NetworkClientPrimaryRouterBridgeV0:
     }
 
     public func sendAuthenticatedCommand(_ frame: Data) async throws {
-        guard !invalidated, let pump else {
+        guard !invalidated, let sendFrame else {
             throw NetworkClientPrimaryRouterBridgeErrorV0.unavailable
         }
-        try await pump.sendAuthenticatedCommand(frame)
+        try await sendFrame(frame)
     }
 
     public func currentRouter() -> ClientPrimaryCommandRouterV0? { router }
@@ -189,6 +204,7 @@ public actor NetworkClientPrimaryRouterBridgeV0:
         actChannel = nil
         controlChannel = nil
         pump = nil
+        sendFrame = nil
         await router?.invalidate()
     }
 
@@ -203,6 +219,7 @@ public actor NetworkClientPrimaryRouterBridgeV0:
         actChannel = nil
         controlChannel = nil
         self.pump = nil
+        sendFrame = nil
         await router?.invalidate()
         await pump?.cancel()
     }

@@ -76,14 +76,21 @@ public final class UIKitClientConfiguredRouteNetworkApplicationOwnerV1 {
             throw UIKitClientConfiguredRouteNetworkApplicationOwnerErrorV1
                 .invalidPhase
         }
+        // Install the binding and its reachability-stream consumer before the
+        // monitor can emit its one initial path snapshot. NWPathMonitor is
+        // allowed to deliver that snapshot immediately from start(); starting
+        // it first can leave the reconnect owner permanently pessimistic even
+        // though the network is already satisfied.
+        phase = .running
+        await bridge.start(initialNetworkReachable: false)
+        if let terminalFailure { throw terminalFailure }
         do {
             try source.start()
         } catch {
             handleFailure(error)
+            await bridge.stop()
             throw error
         }
-        phase = .running
-        await bridge.start(initialNetworkReachable: false)
         if let terminalFailure { throw terminalFailure }
     }
 

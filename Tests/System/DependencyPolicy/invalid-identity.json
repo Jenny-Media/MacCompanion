@@ -1,4 +1,5 @@
 {"profile":"maccompanion.swift-dependency-observation.v0","packages":[
+  {"path":"Experiments/LiveControlLab","name":"LiveControlLab","toolsVersion":"6.0.0","dependencies":[{"kind":"local","identity":"maccompanionkit","path":"../../Packages/MacCompanionKit"}],"externalArtifacts":[]},
   {"path":"Experiments/NetworkDiscoveryProbe","name":"NetworkDiscoveryProbe","toolsVersion":"6.0.0","dependencies":[{"kind":"local","identity":"substituted","path":"../../Packages/MacCompanionKit"}],"externalArtifacts":[]},
   {"path":"Experiments/NetworkTLSProbe","name":"NetworkTLSProbe","toolsVersion":"6.0.0","dependencies":[{"kind":"local","identity":"maccompanionkit","path":"../../Packages/MacCompanionKit"}],"externalArtifacts":[]},
   {"path":"Experiments/PlatformAuthorityProbe","name":"PlatformAuthorityProbe","toolsVersion":"6.0.0","dependencies":[{"kind":"local","identity":"maccompanionkit","path":"../../Packages/MacCompanionKit"}],"externalArtifacts":[]},

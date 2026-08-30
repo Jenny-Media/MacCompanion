@@ -10,7 +10,11 @@ import CompanionWire
 import Foundation
 import Testing
 
-private enum FocusObserverProbeErrorV1: Error { case unused, sendFailed }
+private enum FocusObserverProbeErrorV1: Error {
+    case unused
+    case prepareFailed
+    case sendFailed
+}
 private let focusObserverPrimaryIDV1 = Data(repeating: 0x51, count: 16)
 
 @available(macOS 26.0, *)
@@ -64,7 +68,7 @@ private actor FocusObserverListenerV1: MacAgentNetworkListenerRuntimeV1 {
 }
 
 private actor FocusObserverSourceV1: MacAgentFocusCandidateProvidingV1 {
-    let value: InteractiveFocusEventCandidateV0
+    private var value: InteractiveFocusEventCandidateV0
     private var reads = 0
 
     init(_ value: InteractiveFocusEventCandidateV0) { self.value = value }
@@ -76,6 +80,28 @@ private actor FocusObserverSourceV1: MacAgentFocusCandidateProvidingV1 {
         return value
     }
     func readCount() -> Int { reads }
+    func setValue(_ value: InteractiveFocusEventCandidateV0) {
+        self.value = value
+    }
+}
+
+private final class FocusObserverClockV1: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value: UInt64
+
+    init(_ value: UInt64) { self.value = value }
+
+    func now() -> UInt64 {
+        lock.lock()
+        defer { lock.unlock() }
+        return value
+    }
+
+    func set(_ value: UInt64) {
+        lock.lock()
+        self.value = value
+        lock.unlock()
+    }
 }
 
 private actor FocusObserverControlV1:
@@ -83,6 +109,7 @@ private actor FocusObserverControlV1:
 {
     let descriptor: AdaptiveSurfaceDescriptor
     let eventJSON: Data
+    private var rejectPreparation = false
     private var preparations = 0
     private var revocations = 0
     private var closes = 0
@@ -106,6 +133,9 @@ private actor FocusObserverControlV1:
         hostContext: InteractiveFocusEventHostContextV0
     ) throws -> InteractivePreparedFocusEventV0 {
         preparations += 1
+        if rejectPreparation {
+            throw FocusObserverProbeErrorV1.prepareFailed
+        }
         return InteractivePreparedFocusEventV0(
             eventJSON: eventJSON,
             eventSequence: Int64(preparations),
@@ -114,6 +144,9 @@ private actor FocusObserverControlV1:
     }
     func revokePreparedFocusEvent() { revocations += 1 }
     func primarySessionClosed() { closes += 1 }
+    func setRejectPreparation(_ value: Bool) {
+        rejectPreparation = value
+    }
 
     func requestInitial(
         _ request: InteractiveInitialSurfaceRequestBodyV0,
@@ -151,6 +184,34 @@ private actor FocusObserverControlV1:
     }
 }
 
+@available(macOS 26.0, *)
+@Test func focusObserverRecoversFromNonterminalPreparationFailure()
+    async throws
+{
+    let listener = FocusObserverListenerV1(hasPrimary: true)
+    let source = FocusObserverSourceV1(try focusObserverCandidateV1())
+    let control = FocusObserverControlV1(
+        descriptor: try focusObserverDescriptorV1(),
+        eventJSON: Data([8])
+    )
+    await control.setRejectPreparation(true)
+    let observer = try await focusObserverV1(
+        listener: listener, source: source, control: control
+    )
+    await observer.sampleOnce()
+    #expect(await control.counts() == (0, 0, 0))
+    await observer.sampleOnce()
+    #expect(await control.counts() == (1, 0, 0))
+    #expect(await listener.sentEvents().isEmpty)
+
+    await control.setRejectPreparation(false)
+    await observer.sampleOnce()
+    #expect(await control.counts() == (1, 0, 0))
+    await observer.sampleOnce()
+    #expect(await control.counts() == (2, 0, 0))
+    #expect(await listener.sentEvents() == [Data([8])])
+}
+
 private func focusObserverDescriptorV1() throws -> AdaptiveSurfaceDescriptor {
     try AdaptiveSurfaceDescriptor(
         interactiveSessionID: UUID(),
@@ -163,12 +224,45 @@ private func focusObserverDescriptorV1() throws -> AdaptiveSurfaceDescriptor {
         encodedHeight: 900,
         logicalWidthPoints: 1_440,
         logicalHeightPoints: 900,
-        interactionClasses: [.view, .pointer],
+        interactionClasses: [.view, .pointer, .keyboard, .text],
         privacyProfile: .visualOnly,
         metadataFields: [],
         createdAtMonotonicMilliseconds: 1_000,
         expiresAtMonotonicMilliseconds: 11_000
     )
+}
+
+@available(macOS 26.0, *)
+@Test func focusObserverDoesNotSampleWithoutTextAuthority() async throws {
+    let listener = FocusObserverListenerV1(hasPrimary: true)
+    let source = FocusObserverSourceV1(try focusObserverCandidateV1())
+    let descriptor = try AdaptiveSurfaceDescriptor(
+        interactiveSessionID: UUID(),
+        authorizationEpoch: .init(rawValue: 2),
+        surfaceID: UUID(),
+        kind: .desktop,
+        surfaceRevision: .init(rawValue: 3),
+        coordinateSpaceRevision: .init(rawValue: 4),
+        encodedWidth: 1_440,
+        encodedHeight: 900,
+        logicalWidthPoints: 1_440,
+        logicalHeightPoints: 900,
+        interactionClasses: [.view, .pointer, .keyboard],
+        privacyProfile: .visualOnly,
+        metadataFields: [],
+        createdAtMonotonicMilliseconds: 1_000,
+        expiresAtMonotonicMilliseconds: 11_000
+    )
+    let control = FocusObserverControlV1(
+        descriptor: descriptor,
+        eventJSON: Data([1])
+    )
+    let observer = try await focusObserverV1(
+        listener: listener, source: source, control: control
+    )
+    await observer.sampleOnce()
+    #expect(await source.readCount() == 0)
+    #expect(await control.counts().0 == 0)
 }
 
 private func focusObserverCandidateV1()
@@ -195,7 +289,8 @@ private func focusObserverCandidateV1()
 private func focusObserverV1(
     listener: FocusObserverListenerV1,
     source: FocusObserverSourceV1,
-    control: FocusObserverControlV1
+    control: FocusObserverControlV1,
+    monotonicNow: @escaping @Sendable () -> UInt64 = { 2_000 }
 ) async throws -> MacAgentFocusEventObserverV1 {
     let authority = MacAgentFocusCandidateSourceAuthorityV1()
     try await authority.bind(source, generation: 1)
@@ -209,7 +304,7 @@ private func focusObserverV1(
             NetworkHostRequestContextV0(
                 hostState: .userSessionActive,
                 wallNowUnixMilliseconds: 1_724_100_000_000,
-                monotonicNowMilliseconds: 2_000,
+                monotonicNowMilliseconds: monotonicNow(),
                 responseMessageID: WireUUID(UUID())
             )
         }
@@ -255,7 +350,7 @@ private func focusObserverV1(
 }
 
 @available(macOS 26.0, *)
-@Test func focusObserverPublishesOncePerExactSurfaceFence() async throws {
+@Test func focusObserverCoalescesUnchangedFreshCandidate() async throws {
     let listener = FocusObserverListenerV1(hasPrimary: true)
     let source = FocusObserverSourceV1(try focusObserverCandidateV1())
     let control = FocusObserverControlV1(
@@ -267,9 +362,68 @@ private func focusObserverV1(
     )
     await observer.sampleOnce()
     await observer.sampleOnce()
-    #expect(await source.readCount() == 1)
+    #expect(await source.readCount() == 2)
     #expect(await control.counts() == (1, 0, 0))
     #expect(await listener.sentEvents() == [Data([1, 2, 3])])
+}
+
+@available(macOS 26.0, *)
+@Test func focusObserverRefreshesExpiringCandidate() async throws {
+    let listener = FocusObserverListenerV1(hasPrimary: true)
+    let source = FocusObserverSourceV1(try focusObserverCandidateV1())
+    let control = FocusObserverControlV1(
+        descriptor: try focusObserverDescriptorV1(),
+        eventJSON: Data([4])
+    )
+    let clock = FocusObserverClockV1(2_000)
+    let observer = try await focusObserverV1(
+        listener: listener,
+        source: source,
+        control: control,
+        monotonicNow: { clock.now() }
+    )
+    await observer.sampleOnce()
+    await observer.sampleOnce()
+    clock.set(2_500)
+    await observer.sampleOnce()
+    #expect(await control.counts() == (2, 0, 0))
+    #expect(await listener.sentEvents() == [Data([4]), Data([4])])
+}
+
+@available(macOS 26.0, *)
+@Test func focusObserverReplacesChangedCandidateOnSameSurface() async throws {
+    let listener = FocusObserverListenerV1(hasPrimary: true)
+    let source = FocusObserverSourceV1(try focusObserverCandidateV1())
+    let control = FocusObserverControlV1(
+        descriptor: try focusObserverDescriptorV1(),
+        eventJSON: Data([5])
+    )
+    let observer = try await focusObserverV1(
+        listener: listener, source: source, control: control
+    )
+    await observer.sampleOnce()
+    await observer.sampleOnce()
+    let changed = try InteractiveFocusEventCandidateV0(
+        recommendedTargetKind: .focusedRegion,
+        focus: try SurfaceFocus(
+            token: UUID(),
+            revision: .init(rawValue: 2),
+            category: .text,
+            bounds: try NormalizedSurfaceRect(
+                x: 2_000, y: 3_000, width: 18_000, height: 4_000
+            ),
+            editable: true,
+            secure: false
+        ),
+        inputPaused: false,
+        reason: .verifiedFocus
+    )
+    await source.setValue(changed)
+    await observer.sampleOnce()
+    #expect(await control.counts() == (1, 0, 0))
+    await observer.sampleOnce()
+    #expect(await control.counts() == (2, 0, 0))
+    #expect(await listener.sentEvents() == [Data([5]), Data([5])])
 }
 
 @available(macOS 26.0, *)
@@ -287,7 +441,43 @@ private func focusObserverV1(
         listener: listener, source: source, control: control
     )
     await observer.sampleOnce()
+    #expect(await control.counts() == (0, 0, 0))
+    await observer.sampleOnce()
     #expect(await control.counts() == (1, 1, 1))
     #expect(await listener.sentEvents().isEmpty)
+}
+
+@available(macOS 26.0, *)
+@Test func focusObserverCoalescesRapidCandidateChurnBeforePublication()
+    async throws
+{
+    let first = try focusObserverCandidateV1()
+    let transientDesktop = try InteractiveFocusEventCandidateV0(
+        recommendedTargetKind: .desktop,
+        focus: nil,
+        inputPaused: false,
+        reason: .ambiguousGeometry
+    )
+    let listener = FocusObserverListenerV1(hasPrimary: true)
+    let source = FocusObserverSourceV1(first)
+    let control = FocusObserverControlV1(
+        descriptor: try focusObserverDescriptorV1(),
+        eventJSON: Data([0x0a])
+    )
+    let observer = try await focusObserverV1(
+        listener: listener, source: source, control: control
+    )
+
+    await observer.sampleOnce()
+    await source.setValue(transientDesktop)
+    await observer.sampleOnce()
+    await source.setValue(first)
+    await observer.sampleOnce()
+    #expect(await control.counts() == (0, 0, 0))
+    #expect(await listener.sentEvents().isEmpty)
+
+    await observer.sampleOnce()
+    #expect(await control.counts() == (1, 0, 0))
+    #expect(await listener.sentEvents() == [Data([0x0a])])
 }
 #endif

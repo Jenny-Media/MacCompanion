@@ -110,7 +110,7 @@ All JSON integers must be within the interoperable safe-integer range `-9_007_19
 
 Foreground reconnect treats the QR or saved endpoint order as preference, never identity. A dial round starts candidate 0 immediately and each of the remaining at 250-millisecond intervals, up to the eight-candidate schema limit. Every attempt independently applies the 10-second TCP and 10-second TLS/application-authentication deadlines and the same required host fingerprint. The first candidate to complete fingerprint verification and application authentication wins; all other attempts are cancelled. A route that connects but fails the pin is not successful and cannot influence authorization.
 
-After a round is exhausted, retry uses base delays of 0.5, 1, 2, 4, 8, 15, and 30 seconds, capped at 30 seconds, with independently injected 0.8–1.2 jitter. Foreground entry, restored network reachability, or a changed candidate set resets the failed-round counter and permits an immediate round. Background entry or network loss cancels pending dials and closes the foreground connection. Explicit Disconnect never auto-reconnects until explicit Resume. Suspension, revocation, stale credentials, or another terminal authentication denial waits for user action rather than retrying as a route failure.
+After a round is exhausted, retry uses base delays of 0.5, 1, 2, 4, 8, 15, and 30 seconds, capped at 30 seconds, with independently injected 0.8–1.2 jitter. Foreground entry, restored network reachability, or a changed candidate set resets the failed-round counter and permits an immediate round. The iOS application reconciles foreground truth at both `willEnterForeground` and `didBecomeActive`, because release composition may start after the earlier notification. Actual application background entry or network loss cancels pending dials and closes the foreground connection. A temporary UIKit `inactive` state caused by LocalAuthentication or other system UI is still foreground for this policy and MUST NOT close the connection carrying its approval challenge. Explicit Disconnect never auto-reconnects until explicit Resume. A user-selected Reconnect may rebuild the network owner only from the same protected paired-host and configured-route stores; it cannot add, repair, or replace trust or grants. Suspension, revocation, stale credentials, or another terminal authentication denial waits for user action rather than retrying as a route failure.
 
 The bundle-independent dial-round executor passes the round's same immutable 32-byte fingerprint to every route attempt. An adapter may report success only after pin verification and application authentication on that connection. The executor cancels remaining attempts after the first authenticated winner or terminal authentication denial, closes every authenticated result that arrives after cancellation, and closes and rejects an authenticated result whose endpoint does not exactly match its planned attempt. Adapter-result mismatch is fail-closed and is never converted into a transient route retry.
 
@@ -249,7 +249,14 @@ Wire host states are:
 - `serviceStoppingForLogout`
 - `hostPreparingForSleep`
 
-`unreachable` is client-derived and is never sent by the host. Ambiguous lock/switch state maps to `otherConsoleUserActive`.
+`unreachable` is client-derived and is never sent by the host. Exact same-UID,
+on-console, completed-login Quartz facts map to `userSessionActive` for the
+logged-in MVP. When those Quartz facts are unavailable to the background Agent,
+an exact same-UID primary logged-in console identity from SystemConfiguration
+provides the fallback; any contradiction, switched user, missing fallback, or
+explicit incomplete login maps to `otherConsoleUserActive`. Public APIs do not
+distinguish screen lock, so v0.1 does not claim a separate
+`userSessionLocked` signal.
 
 ## 13. Stable v0 errors
 

@@ -138,7 +138,11 @@ private func rootTemporaryDirectoryV1(_ suffix: String) throws -> URL {
     ) {
         _ = try await AgentLocalServiceRootV1.bootstrap(
             lifecycle: rootReadyLifecycleV1(),
-            pairedDevices: MutableRootPairedCountV1(2),
+            pairedDevices: MutableRootPairedCountV1(
+                Int(
+                    AgentLocalStatusAuthorityV1.maximumPairedDeviceCount
+                ) + 1
+            ),
             capabilities: MutableRootProviderCountV1(0),
             denyLatch: boundedLatch,
             auditHistoryDegraded: false

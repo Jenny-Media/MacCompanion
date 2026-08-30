@@ -4,6 +4,12 @@ import CompanionIPC
 import CompanionPersistence
 import CompanionWire
 import Foundation
+import OSLog
+
+private let interactiveControlGrantAgentLoggerV0 = Logger(
+    subsystem: "media.jenny.maccompanion.agent",
+    category: "interactive-control-grant"
+)
 
 public enum LocalInteractiveControlGrantHandlerErrorV0:
     Error,
@@ -19,19 +25,22 @@ public enum LocalInteractiveControlGrantHandlerErrorV0:
 }
 
 /// Agent-owned authority for the fixed durable Control grant. It selects the
-/// sole active paired device and reuses the exact revision-fenced expansion
-/// persistence without publishing Control as an Act provider.
+/// newest active paired device that still lacks Control and reuses the exact
+/// revision-fenced expansion persistence without publishing Control as an Act
+/// provider. The menu and remote peer never supply a target device identifier.
 public actor LocalInteractiveControlGrantHandlerV0 {
     private let store: SQLiteSecurityStore
     private let decisions: LocalGrantDecisionHandlerV0
     private let registry: CapabilityRegistrySnapshotV1
     private let primary: any AgentDeviceRevocationPrimaryFencingV0
+    private let refreshInventory: @Sendable () async -> Void
     private let wallNowUnixMilliseconds: @Sendable () -> Int64
     private var activeReview: LocalInteractiveControlGrantReviewV0?
 
     package init(
         store: SQLiteSecurityStore,
         primary: any AgentDeviceRevocationPrimaryFencingV0,
+        refreshInventory: @escaping @Sendable () async -> Void = {},
         wallNowUnixMilliseconds: @escaping @Sendable () -> Int64 = {
             Int64((Date().timeIntervalSince1970 * 1_000).rounded(.down))
         }
@@ -40,6 +49,7 @@ public actor LocalInteractiveControlGrantHandlerV0 {
         self.store = store
         self.registry = registry
         self.primary = primary
+        self.refreshInventory = refreshInventory
         self.wallNowUnixMilliseconds = wallNowUnixMilliseconds
         decisions = LocalGrantDecisionHandlerV0(
             persistence: SQLiteLocalGrantDecisionPersistenceV0(store: store),
@@ -56,22 +66,30 @@ public actor LocalInteractiveControlGrantHandlerV0 {
               now <= 9_007_199_254_440_991 else {
             throw LocalInteractiveControlGrantHandlerErrorV0.invalidTime
         }
-        guard let snapshot = try await store
-                .soleActiveDeviceGrantIdentitySnapshot(),
-              snapshot.device.authorization.state == .activeMonitorOnly
-                || snapshot.device.authorization.state == .activeGranted else {
+        let candidates = try await store.activeDeviceGrantIdentitySnapshots()
+            .filter {
+                ($0.device.authorization.state == .activeMonitorOnly
+                    || $0.device.authorization.state == .activeGranted)
+                    && !$0.grants.capabilityIDs.contains(
+                        InteractiveControlDurableGrantV0.identifier
+                    )
+            }
+            .sorted {
+                if $0.device.createdAtUnixMilliseconds
+                    != $1.device.createdAtUnixMilliseconds {
+                    return $0.device.createdAtUnixMilliseconds
+                        > $1.device.createdAtUnixMilliseconds
+                }
+                return $0.device.deviceID.uuidString
+                    > $1.device.deviceID.uuidString
+            }
+        guard let snapshot = candidates.first else {
             throw LocalInteractiveControlGrantHandlerErrorV0.deviceUnavailable
         }
         guard let displayName = snapshot.displayName else {
             throw LocalInteractiveControlGrantHandlerErrorV0
                 .displayNameUnavailable
         }
-        guard !snapshot.grants.capabilityIDs.contains(
-            InteractiveControlDurableGrantV0.identifier
-        ) else {
-            throw LocalInteractiveControlGrantHandlerErrorV0.alreadyGranted
-        }
-
         if let activeReview {
             await decisions.cancel(reviewID: activeReview.reviewID)
         }
@@ -112,6 +130,19 @@ public actor LocalInteractiveControlGrantHandlerV0 {
     public func decide(
         _ command: LocalGrantDecisionCommandV0
     ) async throws -> LocalGrantDecisionReceiptV0 {
+        do {
+            return try await decideWithoutLogging(command)
+        } catch {
+            interactiveControlGrantAgentLoggerV0.error(
+                "Decision failed: \(String(describing: error), privacy: .public)"
+            )
+            throw error
+        }
+    }
+
+    private func decideWithoutLogging(
+        _ command: LocalGrantDecisionCommandV0
+    ) async throws -> LocalGrantDecisionReceiptV0 {
         guard let review = activeReview,
               review.reviewID == command.reviewID else {
             throw LocalInteractiveControlGrantHandlerErrorV0.reviewUnavailable
@@ -134,6 +165,7 @@ public actor LocalInteractiveControlGrantHandlerV0 {
             let receipt = try await decisions.handle(command)
             activeReview = nil
             if command.decision == .approve {
+                await refreshInventory()
                 await primary.releaseSecurityAdministrationFence()
             }
             return receipt

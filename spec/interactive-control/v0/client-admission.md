@@ -1,5 +1,14 @@
 # Interactive Control client admission v0.1
 
+After activation, media EOF, a terminal end record, or media admission failure
+must retire local input/rendering and publish terminal Control progress for
+the exact activation, primary connection, and interactive session. An already
+active workspace is not exempt from that publication. Late callbacks from a
+retired activation cannot affect a replacement. Explicit local close must not
+produce a new failure publication. Observe remains independently usable; the
+existing authenticated Stop exchange resolves the old session before another
+explicit Control request. No wire message or grant is added by this rule.
+
 Status: normative bundle-independent client composition for media admission and reliable input production. Client gesture-to-payload rules are defined separately in `client-input-mapping.md`; this document does not define channel sockets, VideoToolbox decoding, UIKit recognizer lifecycle, rendering, user-presence UI, or host authority.
 
 ## Media before decoding
@@ -36,7 +45,7 @@ Before assigning the next sequence number it verifies:
 
 - nondecreasing client monotonic time and available safe-integer sequence space;
 - the descriptor advertises pointer, keyboard, or text interaction for that payload;
-- text has the exact ordinary editable, non-secure focus token and revision;
+- text has both Keyboard and Text interaction authority and is not bound to a positively identified secure focus; missing or ambiguous Accessibility focus remains usable as ordinary remote keyboard input;
 - button and physical-key transitions are locally balanced; and
 - the payload itself satisfies the closed reliable-input schema.
 
@@ -44,6 +53,11 @@ Rejected local input consumes no sequence number and changes no pressed state. O
 
 Before a surface revision change or ordinary close, the producer emits one sequenced `reset` under the old acknowledged fence and enters paused/closed state. The socket owner sends that reset before activating a new descriptor; transport loss still causes the host to release all held input independently.
 
+Sending on the input socket does not prove host receipt before the primary
+selection request. A reset overtaken by successful host preparation is drained
+without effects under the exact retired-fence rule in `menu-runtime-composition.md`.
+This exception neither admits stale input nor resumes replacement input early.
+
 ## Acceptance boundary
 
-Bundle-independent acceptance covers configuration/keyframe gating, stale fences, payload length and dimensions, sequence/timeline rollback, discontinuity transitions, acknowledgement fences, interaction classes, secure/missing focus denial, balanced transitions, monotonic client time, and reset-before-revision advancement. Release acceptance additionally requires bounded binary socket allocation, VideoToolbox format/decoder reset, render queue and blanking behavior, UIKit gesture/keyboard mapping, physical lock transitions, latency budgets, and content-free diagnostics.
+Bundle-independent acceptance covers configuration/keyframe gating, stale fences, payload length and dimensions, sequence/timeline rollback, discontinuity transitions, acknowledgement fences, interaction classes, positive secure-focus denial without missing-focus denial, balanced transitions, monotonic client time, and reset-before-revision advancement. Release acceptance additionally requires bounded binary socket allocation, VideoToolbox format/decoder reset, render queue and blanking behavior, UIKit gesture/keyboard mapping, physical lock transitions, latency budgets, and content-free diagnostics.

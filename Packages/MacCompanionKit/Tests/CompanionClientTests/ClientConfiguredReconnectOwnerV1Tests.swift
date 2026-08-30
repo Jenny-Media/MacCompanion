@@ -1362,18 +1362,20 @@ private func configuredReconnectControllerFactoryV1(
     )
 
     try await binding.start()
-    for _ in 0..<2_000 {
+    let backoffDeadline = ContinuousClock.now.advanced(by: .seconds(2))
+    while ContinuousClock.now < backoffDeadline {
         if case .backoff = await lifecycle.snapshot().reconnect.reconnect.phase {
             break
         }
-        await Task.yield()
+        try await Task.sleep(for: .milliseconds(1))
     }
     await binding.reconnectStateDidChange()
-    for _ in 0..<2_000 {
+    let reconnectDeadline = ContinuousClock.now.advanced(by: .seconds(2))
+    while ContinuousClock.now < reconnectDeadline {
         if await attempts.attempts.count == 2,
            await lifecycle.snapshot().reconnect.reconnect.phase
             == .connected(route) { break }
-        await Task.yield()
+        try await Task.sleep(for: .milliseconds(1))
     }
 
     #expect(await retryWait.delays == [500])

@@ -12,6 +12,7 @@ private let dispatcherHostID = UUID(uuidString: "018f1000-0000-7000-8000-0000000
 private let dispatcherDeviceID = UUID(uuidString: "018f2100-0000-7000-8000-000000000001")!
 private let dispatcherClientID = UUID(uuidString: "018f2000-0000-7000-8000-000000000001")!
 private let dispatcherDisplayID = UUID(uuidString: "018f6700-0000-7000-8000-000000000001")!
+private let dispatcherSecondDisplayID = UUID(uuidString: "018f6700-0000-7000-8000-000000000002")!
 private let dispatcherApprovalID = UUID(uuidString: "018f6600-0000-7000-8000-000000000001")!
 private let dispatcherSessionID = UUID(uuidString: "018f6000-0000-7000-8000-000000000001")!
 private let dispatcherInputChannelID = UUID(uuidString: "018f6800-0000-7000-8000-000000000001")!
@@ -61,7 +62,8 @@ private func dispatcherSnapshot(
     grants: [String] = [InteractiveControlCapabilityV0.identifier],
     visible: Bool = true,
     displayID: UUID? = dispatcherDisplayID,
-    grantRevision: UInt64 = 5
+    grantRevision: UInt64 = 5,
+    visibleRevision: UInt64 = 1
 ) throws -> InteractiveSessionAdmissionSnapshotV0 {
     try InteractiveSessionAdmissionSnapshotV0(
         deviceID: dispatcherDeviceID,
@@ -77,9 +79,56 @@ private func dispatcherSnapshot(
         visibleMenuAppGeneration: UUID(
             uuidString: "019b7300-0000-7000-8000-000000000001"
         )!,
-        visibleMenuAppRevision: 1,
+        visibleMenuAppRevision: visibleRevision,
         selectedDisplayID: displayID
     )
+}
+
+private actor DispatcherDisplaySelection:
+    InteractiveDisplaySelectionDispatchingV1
+{
+    private(set) var catalogCount = 0
+    private(set) var selectedIDs: [UUID] = []
+
+    func displayCatalog(
+        context: InteractiveSessionCommandContextV0
+    ) async throws -> InteractiveDisplayCatalogResponseBodyV1 {
+        catalogCount += 1
+        return try InteractiveDisplayCatalogResponseBodyV1(
+            authorizationEpoch: context.authorizationEpoch,
+            admissionRevision: 1,
+            selectedDisplayID: WireUUID(dispatcherDisplayID),
+            validForMilliseconds: 10_000,
+            displays: [
+                try .init(
+                    displayID: WireUUID(dispatcherDisplayID),
+                    ordinal: 1,
+                    pixelWidth: 3_024,
+                    pixelHeight: 1_964,
+                    isMain: true
+                ),
+                try .init(
+                    displayID: WireUUID(dispatcherSecondDisplayID),
+                    ordinal: 2,
+                    pixelWidth: 2_560,
+                    pixelHeight: 1_440,
+                    isMain: false
+                ),
+            ]
+        )
+    }
+
+    func selectDisplay(
+        _ request: InteractiveDisplaySelectBodyV1,
+        context: InteractiveSessionCommandContextV0
+    ) async throws -> InteractiveDisplaySelectedBodyV1 {
+        selectedIDs.append(request.displayID.rawValue)
+        return try InteractiveDisplaySelectedBodyV1(
+            authorizationEpoch: context.authorizationEpoch,
+            admissionRevision: request.expectedAdmissionRevision + 1,
+            selectedDisplayID: request.displayID
+        )
+    }
 }
 
 private actor DispatcherAdmission: InteractiveSessionAdmissionReadingV0 {
@@ -161,6 +210,10 @@ private actor DispatcherRuntime: InteractiveSessionRuntimeOwningV0 {
 private actor DispatcherSurfaceControl:
     InteractiveSurfaceControlDispatchingV0
 {
+    private let onClosed: @Sendable () async -> Void
+    init(onClosed: @escaping @Sendable () async -> Void = {}) {
+        self.onClosed = onClosed
+    }
     private(set) var initialRequests:
         [InteractiveInitialSurfaceRequestBodyV0] = []
     private(set) var initialAcknowledgements:
@@ -280,6 +333,7 @@ private actor DispatcherSurfaceControl:
     }
 
     func primarySessionClosed() async {
+        await onClosed()
         closeCount += 1
     }
 }
@@ -578,6 +632,87 @@ private func dispatcherProof(
     )
 }
 
+@Test func dispatcherSelectsSecondDisplayBeforeBindingNextSession()
+    async throws
+{
+    let before = try dispatcherSnapshot()
+    let after = try dispatcherSnapshot(
+        displayID: dispatcherSecondDisplayID,
+        visibleRevision: 2
+    )
+    let admission = DispatcherAdmission([before, before, after, after])
+    let displays = DispatcherDisplaySelection()
+    let dispatcher = InteractiveSessionWireDispatcherV0(
+        admission: admission,
+        materials: DispatcherMaterials(),
+        runtime: DispatcherRuntime(),
+        displaySelection: displays
+    )
+    let context = try dispatcherContext()
+
+    let catalogRequest = try WireEnvelope(
+        messageID: WireUUID(UUID()),
+        correlationID: nil,
+        sentAtUnixMilliseconds: context.wallNowUnixMilliseconds,
+        body: try InteractiveDisplayCatalogRequestBodyV1(
+            authorizationEpoch: context.authorizationEpoch
+        )
+    )
+    let catalogData = try await dispatcher.dispatch(
+        requestJSON: WireCodec.encode(catalogRequest),
+        context: context,
+        responseMessageID: WireUUID(UUID())
+    )
+    let catalog = try WireCodec.decode(
+        WireEnvelope<InteractiveDisplayCatalogResponseBodyV1>.self,
+        from: catalogData
+    )
+    #expect(catalog.correlationID == catalogRequest.messageID)
+    #expect(catalog.body.displays.count == 2)
+    #expect(catalog.body.selectedDisplayID.rawValue == dispatcherDisplayID)
+
+    let selectRequest = try WireEnvelope(
+        messageID: WireUUID(UUID()),
+        correlationID: nil,
+        sentAtUnixMilliseconds: context.wallNowUnixMilliseconds + 1,
+        body: try InteractiveDisplaySelectBodyV1(
+            authorizationEpoch: context.authorizationEpoch,
+            expectedAdmissionRevision: catalog.body.admissionRevision,
+            displayID: WireUUID(dispatcherSecondDisplayID)
+        )
+    )
+    let selectedData = try await dispatcher.dispatch(
+        requestJSON: WireCodec.encode(selectRequest),
+        context: try dispatcherContext(wallNow: context.wallNowUnixMilliseconds + 1),
+        responseMessageID: WireUUID(UUID())
+    )
+    let selected = try WireCodec.decode(
+        WireEnvelope<InteractiveDisplaySelectedBodyV1>.self,
+        from: selectedData
+    )
+    #expect(selected.correlationID == selectRequest.messageID)
+    #expect(selected.body.admissionRevision == 2)
+    #expect(selected.body.selectedDisplayID.rawValue == dispatcherSecondDisplayID)
+    #expect(await displays.selectedIDs == [dispatcherSecondDisplayID])
+
+    let sessionRequest = try WireEnvelope(
+        messageID: WireUUID(UUID()),
+        correlationID: nil,
+        sentAtUnixMilliseconds: context.wallNowUnixMilliseconds + 2,
+        body: try InteractiveSessionRequestBody(effects: [.view])
+    )
+    let challengeData = try await dispatcher.dispatch(
+        requestJSON: WireCodec.encode(sessionRequest),
+        context: try dispatcherContext(wallNow: context.wallNowUnixMilliseconds + 2),
+        responseMessageID: WireUUID(UUID())
+    )
+    let challenge = try WireCodec.decode(
+        WireEnvelope<InteractiveApprovalChallengeBody>.self,
+        from: challengeData
+    )
+    #expect(challenge.body.selectedDisplayID.rawValue == dispatcherSecondDisplayID)
+}
+
 @Test func dispatcherCreatesChallengeAndInstallsBootstrapBeforeAcceptance() async throws {
     let flow = try await pendingDispatcherFlow()
     #expect(flow.challenge.correlationID == flow.request.messageID)
@@ -612,8 +747,12 @@ private func dispatcherProof(
 @Test func remoteEndClearsAdmissionBeforeCompleteSafetyTeardown()
     async throws
 {
-    let surfaceControl = DispatcherSurfaceControl()
+    let runtime = DispatcherRuntime()
+    let surfaceControl = DispatcherSurfaceControl(onClosed: {
+        #expect(await runtime.terminations.count == 1)
+    })
     let flow = try await pendingDispatcherFlow(
+        runtime: runtime,
         surfaceControl: surfaceControl
     )
     let proof = try dispatcherProof(for: flow.challenge)

@@ -94,7 +94,8 @@ private func primaryWorkspaceSnapshot(
         catalogRemoteError: catalogError,
         operationRemoteError: operationError,
         latestActErrorRequest: latestActErrorRequest,
-        controlState: controlState
+        controlState: controlState,
+        interactiveDisplayCatalog: nil
     )
 }
 
@@ -244,7 +245,7 @@ private func primaryWorkspaceSnapshot(
         monotonicNowMilliseconds: 1_201
     )
     #expect(channelsReady.control.mode == .channelsReady)
-    #expect(channelsReady.control.detail.contains("open Remote Control"))
+    #expect(channelsReady.control.detail.contains("opening Remote Control"))
 
     let preparingSurface = try ClientPrimaryWorkspaceProjectionV0(
         macName: "Studio Mac",

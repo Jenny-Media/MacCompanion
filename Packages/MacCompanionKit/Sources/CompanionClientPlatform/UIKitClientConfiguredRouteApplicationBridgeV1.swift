@@ -3,8 +3,10 @@ import CompanionClient
 import Foundation
 import UIKit
 
-/// UIKit boundary for the configured-route application binding. App-active
-/// notifications are treated only as scheduling facts. Reachability is an
+/// UIKit boundary for the configured-route application binding. True
+/// foreground/background transitions are scheduling facts; temporary
+/// `inactive` states caused by LocalAuthentication, Control Center, or other
+/// system UI do not tear down an authenticated route. Reachability is an
 /// injected Boolean stream so this type has no DNS, interface, route, VPN, or
 /// installed-app classification authority.
 @available(iOS 17.0, *)
@@ -42,18 +44,24 @@ public final class UIKitClientConfiguredRouteApplicationBridgeV1: NSObject {
         started = true
         NotificationCenter.default.addObserver(
             self,
+            selector: #selector(willEnterForeground),
+            name: UIApplication.willEnterForegroundNotification,
+            object: nil
+        )
+        NotificationCenter.default.addObserver(
+            self,
             selector: #selector(didBecomeActive),
             name: UIApplication.didBecomeActiveNotification,
             object: nil
         )
         NotificationCenter.default.addObserver(
             self,
-            selector: #selector(willResignActive),
-            name: UIApplication.willResignActiveNotification,
+            selector: #selector(didEnterBackground),
+            name: UIApplication.didEnterBackgroundNotification,
             object: nil
         )
 
-        let foreground = UIApplication.shared.applicationState == .active
+        let foreground = UIApplication.shared.applicationState != .background
         enqueue { binding in
             try await binding.setForeground(foreground)
         }
@@ -95,11 +103,20 @@ public final class UIKitClientConfiguredRouteApplicationBridgeV1: NSObject {
         eventTail = nil
     }
 
+    @objc private func willEnterForeground() {
+        enqueue { binding in try await binding.setForeground(true) }
+    }
+
+    /// SwiftUI can construct and start the release application after
+    /// `willEnterForeground` has already fired. Reconcile again at the later
+    /// active notification so a launch-time lifecycle race cannot leave an
+    /// onscreen workspace permanently classified as background. Temporary
+    /// inactive states still do not publish a false transition.
     @objc private func didBecomeActive() {
         enqueue { binding in try await binding.setForeground(true) }
     }
 
-    @objc private func willResignActive() {
+    @objc private func didEnterBackground() {
         enqueue { binding in try await binding.setForeground(false) }
     }
 
@@ -130,7 +147,13 @@ public final class UIKitClientConfiguredRouteApplicationBridgeV1: NSObject {
                   self.started else { return }
             do {
                 try await operation(self.binding)
-                self.stateChanged(await self.binding.snapshot())
+                let snapshot = await self.binding.snapshot()
+#if DEBUG
+                print(
+                    "[Mac Companion reconnect] binding phase=\(snapshot.phase.rawValue) foreground=\(snapshot.foreground) reachable=\(snapshot.networkReachable) roundStarted=\(snapshot.hasStartedEligibleRound) reconnect=\(String(describing: snapshot.lifecycle.reconnect.reconnect.phase))"
+                )
+#endif
+                self.stateChanged(snapshot)
             } catch {
                 self.fail(error)
             }
@@ -139,6 +162,11 @@ public final class UIKitClientConfiguredRouteApplicationBridgeV1: NSObject {
 
     private func fail(_ error: any Error) {
         guard started else { return }
+#if DEBUG
+        print(
+            "[Mac Companion reconnect] bridge failed: \(String(describing: error))"
+        )
+#endif
         started = false
         NotificationCenter.default.removeObserver(self)
         reachabilityTask?.cancel()

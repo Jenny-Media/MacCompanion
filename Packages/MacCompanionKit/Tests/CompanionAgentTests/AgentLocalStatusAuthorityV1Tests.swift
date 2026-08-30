@@ -121,7 +121,8 @@ private func makeLocalStatusAuthorityV1() throws
     }
     await #expect(throws: AgentLocalStatusAuthorityErrorV1.invalidCount) {
         try await authority.updateInventory(
-            pairedDeviceCount: 2,
+            pairedDeviceCount:
+                AgentLocalStatusAuthorityV1.maximumPairedDeviceCount + 1,
             providerCount: 1
         )
     }
@@ -255,7 +256,11 @@ private func makeLocalStatusAuthorityV1() throws
     #expect(afterStorageFailure.warningCodes == [.storageUnavailable])
 
     let outOfBounds = AgentLocalStatusInventoryRefresherV1(
-        pairedDevices: FixedPairedDeviceCountV1(value: 2),
+        pairedDevices: FixedPairedDeviceCountV1(
+            value: Int(
+                AgentLocalStatusAuthorityV1.maximumPairedDeviceCount
+            ) + 1
+        ),
         capabilities: FixedProviderCountV1(value: 0),
         localStatus: authority
     )

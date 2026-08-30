@@ -132,12 +132,22 @@ public struct NetworkClientRouteAttemptV0: DialRouteAttemptingV0, Sendable {
             )
             connection = try context.makeUnstartedConnection()
         } catch {
+#if DEBUG
+            print(
+                "[Mac Companion reconnect] attempt construction failed endpoint=\(attempt.endpoint.kind.rawValue):\(attempt.endpoint.value):\(attempt.endpoint.port) error=\(String(describing: error))"
+            )
+#endif
             return .authenticationDenied
         }
 
         return await withTaskCancellationHandler {
             let readiness = NetworkClientConnectionReadinessLatchV0()
             connection.stateUpdateHandler = { state in
+#if DEBUG
+                print(
+                    "[Mac Companion reconnect] connection endpoint=\(attempt.endpoint.kind.rawValue):\(attempt.endpoint.value):\(attempt.endpoint.port) state=\(String(describing: state))"
+                )
+#endif
                 readiness.observe(state)
             }
             connection.start(queue: configuration.connectionQueue)
@@ -183,6 +193,11 @@ public struct NetworkClientRouteAttemptV0: DialRouteAttemptingV0, Sendable {
                     monotonicNowMilliseconds: now.monotonicNowMilliseconds
                 )
             } catch {
+#if DEBUG
+                print(
+                    "[Mac Companion reconnect] verified handoff preparation failed: \(String(describing: error))"
+                )
+#endif
                 connection.cancel()
                 return .authenticationDenied
             }
@@ -219,6 +234,11 @@ public struct NetworkClientRouteAttemptV0: DialRouteAttemptingV0, Sendable {
                 },
                 routeMessageID: configuration.messageID,
                 terminal: { reason in
+#if DEBUG
+                    print(
+                        "[Mac Companion reconnect] primary pump terminated reason=\(reason.rawValue)"
+                    )
+#endif
                     completion.finish(
                         reason == .authenticationDenied
                             ? .authenticationDenied
@@ -235,6 +255,11 @@ public struct NetworkClientRouteAttemptV0: DialRouteAttemptingV0, Sendable {
                 }
                 try await pump.beginOnVerifiedReadyConnection(start)
             } catch {
+#if DEBUG
+                print(
+                    "[Mac Companion reconnect] primary pump start failed: \(String(describing: error))"
+                )
+#endif
                 await pump.cancel()
                 return productCandidate == nil
                     ? .transientFailure

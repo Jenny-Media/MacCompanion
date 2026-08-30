@@ -12,11 +12,13 @@ import Testing
         pointPixelScale: 2
     )
     #expect(crop.globalBounds == CGRect(
-        x: 1_130, y: 190, width: 340, height: 180
+        x: 1_000, y: 100, width: 720, height: 480
     ))
-    #expect(crop.sourceRect == CGRect(x: 130, y: 90, width: 340, height: 180))
-    #expect(crop.profile.width == 680)
-    #expect(crop.profile.height == 360)
+    #expect(crop.sourceRect == CGRect(x: 0, y: 0, width: 720, height: 480))
+    #expect(crop.profile.width == 1_440)
+    #expect(crop.profile.height == 960)
+    #expect(crop.globalBounds.width >= 1_440 * 0.5)
+    #expect(crop.globalBounds.height >= 900 * 0.5)
 }
 
 @Test func focusedRegionCropClampsAtSourceEdgeWithoutClippingFocus()
@@ -28,7 +30,7 @@ import Testing
         sourceGlobalBounds: CGRect(x: 0, y: 0, width: 1_000, height: 700),
         pointPixelScale: 1
     )
-    #expect(crop.globalBounds == CGRect(x: 0, y: 0, width: 320, height: 180))
+    #expect(crop.globalBounds == CGRect(x: 0, y: 0, width: 640, height: 480))
     #expect(crop.globalBounds.contains(focus))
     #expect(crop.sourceRect == crop.globalBounds)
 }

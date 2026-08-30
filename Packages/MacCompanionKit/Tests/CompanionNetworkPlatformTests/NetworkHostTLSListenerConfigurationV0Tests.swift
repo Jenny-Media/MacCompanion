@@ -1,5 +1,5 @@
 @testable import CompanionHostPlatform
-import CompanionNetworkPlatform
+@testable import CompanionNetworkPlatform
 import CompanionSecurity
 import CryptoKit
 import Foundation
@@ -106,3 +106,23 @@ private func networkHostTestIssuedIdentity() throws
         )
     }
 }
+
+#if DEBUG
+@Test func loopbackTLSListenerKeepsProfileAndOneShotOwnership() throws {
+    let issued = try networkHostTestIssuedIdentity()
+    let configuration = try NetworkHostTLSListenerConfigurationV0(
+        issuedIdentity: issued, requiredHostFingerprint: issued.key.hostFingerprint,
+        wallNowUnixMilliseconds: networkHostTLSIssuanceTime)
+    let (owner, port) = try configuration.makeUnstartedLoopbackListener()
+    #expect((port() ?? 0) == 0, "Unstarted ephemeral listener must not have an assigned port")
+    #expect(configuration.facts == .required)
+    #expect(configuration.hostFingerprint == issued.key.hostFingerprint)
+    #expect(throws: NetworkHostTLSListenerConfigurationErrorV0.listenerAlreadyCreated) {
+        _ = try configuration.makeUnstartedListenerOwner(port: 47_474)
+    }
+    #expect(throws: NetworkHostTLSListenerConfigurationErrorV0.listenerAlreadyCreated) {
+        _ = try configuration.makeUnstartedLoopbackListener()
+    }
+    owner.cancel()
+}
+#endif

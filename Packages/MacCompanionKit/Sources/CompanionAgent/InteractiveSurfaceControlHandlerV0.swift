@@ -57,6 +57,8 @@ public actor InteractiveSurfaceControlHandlerV0:
     private let resolver: any InteractiveSurfaceTargetResolvingV0
     private let inventoryProvider:
         (any InteractiveSurfaceTargetInventoryProvidingV0)?
+    private let displaySelector:
+        (any AgentInteractiveDisplayMenuRoutingV1)?
     private let clock: any InteractiveSurfaceMonotonicClockV0
     private let focusIdentifier: @Sendable () -> UUID
     private var expectedClientSequence: Int64 = 1
@@ -73,12 +75,15 @@ public actor InteractiveSurfaceControlHandlerV0:
         resolver: any InteractiveSurfaceTargetResolvingV0,
         inventoryProvider:
             (any InteractiveSurfaceTargetInventoryProvidingV0)? = nil,
+        displaySelector:
+            (any AgentInteractiveDisplayMenuRoutingV1)? = nil,
         clock: any InteractiveSurfaceMonotonicClockV0,
         focusIdentifier: @escaping @Sendable () -> UUID = { UUID() }
     ) {
         self.coordinator = coordinator
         self.resolver = resolver
         self.inventoryProvider = inventoryProvider
+        self.displaySelector = displaySelector
         self.clock = clock
         self.focusIdentifier = focusIdentifier
     }
@@ -202,7 +207,9 @@ public actor InteractiveSurfaceControlHandlerV0:
                 request,
                 context: context
             )
-            let now = Int64(context.monotonicNowMilliseconds)
+            let now = Int64(try currentTime(
+                notBeforeMilliseconds: context.monotonicNowMilliseconds
+            ).milliseconds)
             guard snapshot.interactiveSessionID
                     == request.interactiveSessionID.rawValue,
                   snapshot.authorizationEpoch == request.authorizationEpoch,
@@ -271,43 +278,114 @@ public actor InteractiveSurfaceControlHandlerV0:
             }
             let currentDescriptor = try await coordinator
                 .currentDescriptor()
-            let expectedFocus: SurfaceFocus?
+            var expectedFocus: SurfaceFocus?
+            var selectedTargetKind = request.targetKind
             if request.targetKind == .focusedRegion {
                 guard var focusEvents else {
                     throw InteractiveSurfaceControlHandlerErrorV0
                         .descriptorMismatch
                 }
-                expectedFocus = try focusEvents.consume(
-                    request,
-                    current: currentDescriptor,
-                    hostMonotonicNowMilliseconds: Int64(
-                        context.monotonicNowMilliseconds
+                do {
+                    expectedFocus = try focusEvents.consume(
+                        request,
+                        current: currentDescriptor,
+                        hostMonotonicNowMilliseconds: Int64(
+                            context.monotonicNowMilliseconds
+                        )
                     )
-                )
-                self.focusEvents = focusEvents
+                    self.focusEvents = focusEvents
+                } catch let error as
+                    InteractiveFocusEventAuthorityErrorV0
+                {
+                    switch error {
+                    case .unavailable, .expired, .tokenMismatch:
+                        // Accessibility focus is advisory and can legitimately
+                        // be superseded while this authenticated request is in
+                        // flight. Fall back to the already-authorized Desktop
+                        // surface instead of treating normal app switching as
+                        // a fatal primary-session protocol violation.
+                        expectedFocus = nil
+                        selectedTargetKind = .desktop
+                        self.focusEvents?.revokeCurrent()
+                    case .invalidConfiguration, .invalidCandidate,
+                         .sequenceExhausted, .fenceMismatch:
+                        throw error
+                    }
+                }
             } else {
                 expectedFocus = nil
                 focusEvents?.revokeCurrent()
             }
-            let target = try await resolver.resolve(request, context: context)
-            if let expectedFocus {
-                guard target.kind == .focusedRegion,
-                      target.focus == expectedFocus else {
+            var target: AdaptiveSurfaceDescriptor
+            var selectedDisplayID: UUID?
+            if let requestedDisplayID = request.targetDisplayID?.rawValue {
+                guard selectedTargetKind == .desktop,
+                      let displaySelector else {
                     throw InteractiveSurfaceControlHandlerErrorV0
                         .descriptorMismatch
                 }
+                let selected = try await displaySelector
+                    .selectInteractiveDisplay(requestedDisplayID)
+                guard selected.selectedDisplayID == requestedDisplayID else {
+                    throw InteractiveSurfaceControlHandlerErrorV0
+                        .descriptorMismatch
+                }
+                selectedDisplayID = requestedDisplayID
             }
-            let nowNanoseconds = clock.nowNanoseconds()
+            if selectedTargetKind == .desktop {
+                target = try await resolver.resolve(
+                    try desktopFallbackRequest(for: request),
+                    context: context
+                )
+            } else {
+                do {
+                    target = try await resolver.resolve(
+                        request,
+                        context: context
+                    )
+                } catch {
+                    guard request.targetKind == .focusedRegion else {
+                        throw error
+                    }
+                    target = try await resolver.resolve(
+                        try desktopFallbackRequest(for: request),
+                        context: context
+                    )
+                    expectedFocus = nil
+                    selectedTargetKind = .desktop
+                    focusEvents?.revokeCurrent()
+                }
+                if let resolvedFocus = expectedFocus,
+                   (target.kind != .focusedRegion
+                    || target.focus != resolvedFocus) {
+                    target = try await resolver.resolve(
+                        try desktopFallbackRequest(for: request),
+                        context: context
+                    )
+                    self.focusEvents?.revokeCurrent()
+                    expectedFocus = nil
+                    selectedTargetKind = .desktop
+                }
+            }
+            guard target.kind == selectedTargetKind else {
+                throw InteractiveSurfaceControlHandlerErrorV0
+                    .descriptorMismatch
+            }
+            // Resolution crosses local IPC and may create the descriptor
+            // after the network request arrived. Validate it at completion,
+            // using one host-clock sample for both time units.
+            let resolvedAt = try currentTime(
+                notBeforeMilliseconds: context.monotonicNowMilliseconds
+            )
             let result = try await coordinator.prepareSelection(
                 target: target,
                 expectedSurfaceRevision:
                     request.expectedSurfaceRevision,
                 expectedCoordinateSpaceRevision:
                     request.expectedCoordinateSpaceRevision,
-                monotonicNowMilliseconds: Int64(
-                    context.monotonicNowMilliseconds
-                ),
-                monotonicNowNanoseconds: nowNanoseconds
+                selectedDisplayID: selectedDisplayID,
+                monotonicNowMilliseconds: Int64(resolvedAt.milliseconds),
+                monotonicNowNanoseconds: resolvedAt.nanoseconds
             )
             guard result.receipt.mediaSequenceBeforeTransition
                     <= UInt64(WireLimits.maximumSafeInteger) else {
@@ -316,7 +394,9 @@ public actor InteractiveSurfaceControlHandlerV0:
             }
             let validity = try wireValidity(
                 descriptor: result.descriptor,
-                nowMilliseconds: context.monotonicNowMilliseconds
+                nowMilliseconds: try currentTime(
+                    notBeforeMilliseconds: resolvedAt.milliseconds
+                ).milliseconds
             )
             let serverSequence = try consumeServerSequence()
             let body = try InteractiveSurfaceSelectedBodyV0(
@@ -475,6 +555,13 @@ public actor InteractiveSurfaceControlHandlerV0:
                 throw InteractiveSurfaceControlHandlerErrorV0.closed
             }
             let lease = await coordinator.lease()
+            let nowNanoseconds = clock.nowNanoseconds()
+            guard nowNanoseconds
+                    >= lease.issuedAtMonotonicNanoseconds,
+                  nowNanoseconds
+                    < lease.expiresAtMonotonicNanoseconds else {
+                throw InteractiveSurfaceControlHandlerErrorV0.invalidTime
+            }
             try validatePrincipal(
                 sessionID: lease.interactiveSessionID,
                 authorizationEpoch: lease.authorizationEpoch,
@@ -495,8 +582,11 @@ public actor InteractiveSurfaceControlHandlerV0:
             self.focusEvents = focusEvents
             return event
         } catch {
-            closed = true
-            focusEvents?.invalidate()
+            // Focus publication is advisory. No event bytes or wider authority
+            // escaped when preparation failed, so a stale async snapshot or
+            // transient local preparation failure must not tear down the
+            // otherwise current Control session. Delivery failure after a
+            // successful preparation is handled separately by the observer.
             throw error
         }
     }
@@ -512,6 +602,23 @@ public actor InteractiveSurfaceControlHandlerV0:
                 actual: actual
             )
         }
+    }
+
+    private func desktopFallbackRequest(
+        for request: InteractiveSurfaceSelectBodyV0
+    ) throws -> InteractiveSurfaceSelectBodyV0 {
+        try InteractiveSurfaceSelectBodyV0(
+            interactiveSessionID: request.interactiveSessionID,
+            authorizationEpoch: request.authorizationEpoch,
+            currentSurfaceID: request.currentSurfaceID,
+            expectedSurfaceRevision: request.expectedSurfaceRevision,
+            expectedCoordinateSpaceRevision:
+                request.expectedCoordinateSpaceRevision,
+            targetKind: .desktop,
+            targetToken: nil,
+            targetDisplayID: request.targetDisplayID,
+            sequence: request.sequence
+        )
     }
 
     private func consumeServerSequence() throws -> Int64 {
@@ -537,6 +644,18 @@ public actor InteractiveSurfaceControlHandlerV0:
             throw InteractiveSurfaceControlHandlerErrorV0
                 .principalMismatch
         }
+    }
+
+    private func currentTime(
+        notBeforeMilliseconds lowerBound: UInt64
+    ) throws -> (milliseconds: UInt64, nanoseconds: UInt64) {
+        let nanoseconds = clock.nowNanoseconds()
+        let milliseconds = nanoseconds / 1_000_000
+        guard milliseconds >= lowerBound,
+              milliseconds <= UInt64(Int64.max) else {
+            throw InteractiveSurfaceControlHandlerErrorV0.invalidTime
+        }
+        return (milliseconds, nanoseconds)
     }
 
     private func wireValidity(

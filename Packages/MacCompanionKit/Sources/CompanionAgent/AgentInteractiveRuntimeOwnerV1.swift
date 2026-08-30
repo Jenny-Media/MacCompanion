@@ -5,6 +5,12 @@ import CompanionInteractiveWire
 import CompanionIPC
 import CompanionWire
 import Foundation
+import OSLog
+
+private let agentInteractiveRuntimeLoggerV1 = Logger(
+    subsystem: "media.jenny.maccompanion.agent",
+    category: "interactive-runtime"
+)
 
 public enum AgentInteractiveRuntimeOwnerErrorV1:
     Error,
@@ -86,6 +92,13 @@ public protocol AgentInteractiveSurfaceMenuRoutingV1:
     InteractiveSurfaceTargetInventoryProvidingV0
 {}
 
+public protocol AgentInteractiveDisplayMenuRoutingV1: Sendable {
+    func interactiveDisplayCatalog()
+        async throws -> LocalInteractiveDisplayCatalogReceiptV1
+    func selectInteractiveDisplay(_ displayID: UUID)
+        async throws -> LocalInteractiveDisplaySelectedReceiptV1
+}
+
 private struct AgentInteractiveSystemMonotonicClockV1:
     InteractiveSurfaceMonotonicClockV0
 {
@@ -102,13 +115,14 @@ private struct AgentInteractiveSystemMonotonicClockV1:
 public actor AgentInteractiveRuntimeOwnerV1:
     InteractiveSessionRuntimeOwningV0,
     HostInteractiveChannelAuthenticatingV0,
-    InteractiveSurfaceControlDispatchingV0
+    InteractiveSurfaceControlDispatchingV0,
+    InteractiveDisplaySelectionDispatchingV1
 {
     private struct Active: Sendable {
         var bootstrap: InteractiveSessionBootstrap
         let preparation: InteractiveInitialRuntimePreparationV1
         let primaryConnectionID: Data
-        let requirement: InteractiveSessionRuntimeRequirementV0
+        var requirement: InteractiveSessionRuntimeRequirementV0
         var currentLease: InteractiveExecutionLease
         let surfaceCoordinator: InteractiveSurfaceRuntimeCoordinatorV0?
         let surfaceControl: InteractiveSurfaceControlHandlerV0?
@@ -127,9 +141,18 @@ public actor AgentInteractiveRuntimeOwnerV1:
     private let runtime: any AgentInteractiveMenuRuntimeRoutingV1
     private let surfaceRuntime:
         (any AgentInteractiveSurfaceMenuRoutingV1)?
+    private let displayRuntime:
+        (any AgentInteractiveDisplayMenuRoutingV1)?
     private let monotonicNowNanoseconds: @Sendable () -> UInt64
     private let identifier: @Sendable () -> UUID
     private var storage: Storage = .idle
+    private struct PendingInstall {
+        let token: UUID
+        let sessionID: UUID
+        let primaryConnectionID: Data
+        var terminationReason: InteractiveSessionEndReason?
+    }
+    private var pendingInstall: PendingInstall?
     private var sequencingTail = Task<Void, Never> {}
 
     public init(
@@ -138,6 +161,8 @@ public actor AgentInteractiveRuntimeOwnerV1:
         runtime: any AgentInteractiveMenuRuntimeRoutingV1,
         surfaceRuntime:
             (any AgentInteractiveSurfaceMenuRoutingV1)? = nil,
+        displayRuntime:
+            (any AgentInteractiveDisplayMenuRoutingV1)? = nil,
         monotonicNowNanoseconds: @escaping @Sendable () -> UInt64 = {
             DispatchTime.now().uptimeNanoseconds
         },
@@ -147,8 +172,91 @@ public actor AgentInteractiveRuntimeOwnerV1:
         self.desktop = desktop
         self.runtime = runtime
         self.surfaceRuntime = surfaceRuntime
+        self.displayRuntime = displayRuntime
         self.monotonicNowNanoseconds = monotonicNowNanoseconds
         self.identifier = identifier
+    }
+
+    public func displayCatalog(
+        context: InteractiveSessionCommandContextV0
+    ) async throws -> InteractiveDisplayCatalogResponseBodyV1 {
+        guard let displayRuntime,
+              displayCatalogIsAvailable(context: context),
+              let current = try await admission.snapshot(
+                deviceID: context.deviceID
+              ),
+              current.authorizationEpoch == context.authorizationEpoch,
+              let selectedDisplayID = current.selectedDisplayID,
+              let admissionRevision = Int64(
+                exactly: current.visibleMenuAppRevision
+              ) else {
+            throw AgentInteractiveRuntimeOwnerErrorV1.unavailable
+        }
+        let local = try await displayRuntime.interactiveDisplayCatalog()
+        guard local.selectedDisplayID == selectedDisplayID else {
+            throw AgentInteractiveRuntimeOwnerErrorV1.finalAdmissionChanged
+        }
+        return try InteractiveDisplayCatalogResponseBodyV1(
+            authorizationEpoch: context.authorizationEpoch,
+            admissionRevision: admissionRevision,
+            selectedDisplayID: WireUUID(selectedDisplayID),
+            validForMilliseconds: 5_000,
+            displays: try local.candidates.map {
+                try InteractiveDisplayCandidateV1(
+                    displayID: WireUUID($0.displayID),
+                    ordinal: $0.ordinal,
+                    pixelWidth: $0.pixelWidth,
+                    pixelHeight: $0.pixelHeight,
+                    isMain: $0.isMain
+                )
+            }
+        )
+    }
+
+    private func displayCatalogIsAvailable(
+        context: InteractiveSessionCommandContextV0
+    ) -> Bool {
+        switch storage {
+        case .idle:
+            true
+        case let .active(active):
+            active.currentLease.deviceID == context.deviceID
+                && active.currentLease.hostID == context.hostID
+                && active.currentLease.authorizationEpoch
+                    == context.authorizationEpoch
+        case .installing, .terminating, .safetyRecoveryRequired:
+            false
+        }
+    }
+
+    public func selectDisplay(
+        _ request: InteractiveDisplaySelectBodyV1,
+        context: InteractiveSessionCommandContextV0
+    ) async throws -> InteractiveDisplaySelectedBodyV1 {
+        guard case .idle = storage,
+              request.authorizationEpoch == context.authorizationEpoch,
+              let displayRuntime else {
+            throw AgentInteractiveRuntimeOwnerErrorV1.unavailable
+        }
+        let receipt = try await displayRuntime.selectInteractiveDisplay(
+            request.displayID.rawValue
+        )
+        guard receipt.selectedDisplayID == request.displayID.rawValue,
+              let current = try await admission.snapshot(
+                deviceID: context.deviceID
+              ),
+              current.authorizationEpoch == context.authorizationEpoch,
+              current.selectedDisplayID == request.displayID.rawValue,
+              let admissionRevision = Int64(
+                exactly: current.visibleMenuAppRevision
+              ) else {
+            throw AgentInteractiveRuntimeOwnerErrorV1.finalAdmissionChanged
+        }
+        return try InteractiveDisplaySelectedBodyV1(
+            authorizationEpoch: context.authorizationEpoch,
+            admissionRevision: admissionRevision,
+            selectedDisplayID: request.displayID
+        )
     }
 
     public func state() -> AgentInteractiveRuntimeOwnerStateV1 {
@@ -294,12 +402,23 @@ public actor AgentInteractiveRuntimeOwnerV1:
         _ bootstrap: InteractiveSessionBootstrap,
         requirement: InteractiveSessionRuntimeRequirementV0
     ) async throws {
+        guard pendingInstall == nil else {
+            throw AgentInteractiveRuntimeOwnerErrorV1.unavailable
+        }
+        let token = UUID()
+        pendingInstall = PendingInstall(token: token,
+            sessionID: bootstrap.acceptedBody.interactiveSessionID.rawValue,
+            primaryConnectionID: requirement.command.primaryConnectionID)
+        defer {
+            if pendingInstall?.token == token { pendingInstall = nil }
+        }
         let predecessor = sequencingTail
         let operation = Task { [self] in
             await predecessor.value
             try await performInstall(
                 bootstrap,
-                requirement: requirement
+                requirement: requirement,
+                token: token
             )
         }
         sequencingTail = Task { _ = try? await operation.value }
@@ -311,6 +430,10 @@ public actor AgentInteractiveRuntimeOwnerV1:
         primaryConnectionID: Data,
         reason: InteractiveSessionEndReason
     ) async {
+        if pendingInstall?.sessionID == interactiveSessionID,
+           pendingInstall?.primaryConnectionID == primaryConnectionID {
+            pendingInstall?.terminationReason = reason
+        }
         let predecessor = sequencingTail
         let operation = Task { [self] in
             await predecessor.value
@@ -330,7 +453,7 @@ public actor AgentInteractiveRuntimeOwnerV1:
     /// ambiguous acknowledgement.
     public func renewActiveLease(
         nowMonotonicNanoseconds: UInt64
-    ) async throws -> InteractiveExecutionLease {
+    ) async throws -> AgentInteractiveLeaseRenewalResultV1 {
         let predecessor = sequencingTail
         let operation = Task { [self] in
             await predecessor.value
@@ -414,6 +537,13 @@ public actor AgentInteractiveRuntimeOwnerV1:
                 interactiveSessionID:
                     request.interactiveSessionID.rawValue
             )
+            if let selectedDisplayID = request.targetDisplayID?.rawValue {
+                try await refreshDisplayAdmission(
+                    selectedDisplayID: selectedDisplayID,
+                    interactiveSessionID:
+                        request.interactiveSessionID.rawValue
+                )
+            }
             return response
         }
         sequencingTail = Task { _ = try? await operation.value }
@@ -522,9 +652,54 @@ public actor AgentInteractiveRuntimeOwnerV1:
         storage = .active(active)
     }
 
+    private func refreshDisplayAdmission(
+        selectedDisplayID: UUID,
+        interactiveSessionID: UUID
+    ) async throws {
+        guard case var .active(active) = storage,
+              active.currentLease.interactiveSessionID
+                == interactiveSessionID,
+              active.currentLease.selectedDisplayID
+                == selectedDisplayID,
+              let current = try await admission.snapshot(
+                deviceID: active.requirement.command.deviceID
+              ),
+              current.selectedDisplayID == selectedDisplayID else {
+            throw AgentInteractiveRuntimeOwnerErrorV1
+                .finalAdmissionChanged
+        }
+        let refreshed = InteractiveSessionRuntimeRequirementV0(
+            command: active.requirement.command,
+            admission: current
+        )
+        guard refreshed.isEligibleForInteractiveControl,
+              current.deviceID == active.requirement.admission.deviceID,
+              current.clientID == active.requirement.admission.clientID,
+              current.deviceState
+                == active.requirement.admission.deviceState,
+              current.authorizationEpoch
+                == active.requirement.admission.authorizationEpoch,
+              current.grantRevision
+                == active.requirement.admission.grantRevision,
+              current.approvalPublicKeyX963
+                == active.requirement.admission.approvalPublicKeyX963,
+              current.grants == active.requirement.admission.grants,
+              current.deviceDisplayName
+                == active.requirement.admission.deviceDisplayName,
+              current.visibleMenuAppAvailable,
+              current.visibleMenuAppGeneration
+                == active.requirement.admission.visibleMenuAppGeneration else {
+            throw AgentInteractiveRuntimeOwnerErrorV1
+                .finalAdmissionChanged
+        }
+        active.requirement = refreshed
+        storage = .active(active)
+    }
+
     private func performInstall(
         _ suppliedBootstrap: InteractiveSessionBootstrap,
-        requirement: InteractiveSessionRuntimeRequirementV0
+        requirement: InteractiveSessionRuntimeRequirementV0,
+        token: UUID
     ) async throws {
         guard case .idle = storage,
               requirement.isEligibleForInteractiveControl,
@@ -539,18 +714,29 @@ public actor AgentInteractiveRuntimeOwnerV1:
         var bootstrap = suppliedBootstrap
 
         do {
+            agentInteractiveRuntimeLoggerV1.notice(
+                "runtime install final admission started"
+            )
             try await requireExactFinalAdmission(requirement)
-            let now = monotonicNowNanoseconds()
+            try requireUnfencedInstall(token)
+            let desktopRequestNow = monotonicNowNanoseconds()
+            agentInteractiveRuntimeLoggerV1.notice(
+                "initial desktop preparation started"
+            )
             let descriptor = try await desktop.prepareInitialDesktop(
                 AgentInteractiveInitialDesktopRequestV1(
                     interactiveSessionID: sessionID,
                     authorizationEpoch: requirement.command.authorizationEpoch,
                     selectedDisplayID: selectedDisplayID,
                     interactionClasses: bootstrap.approvedInteractionClasses,
-                    nowMonotonicNanoseconds: now
+                    nowMonotonicNanoseconds: desktopRequestNow
                 )
             )
+            agentInteractiveRuntimeLoggerV1.notice(
+                "initial desktop preparation completed"
+            )
             try await requireExactFinalAdmission(requirement)
+            try requireUnfencedInstall(token)
             guard descriptor.interactiveSessionID == sessionID,
                   descriptor.authorizationEpoch
                     == requirement.command.authorizationEpoch,
@@ -565,18 +751,36 @@ public actor AgentInteractiveRuntimeOwnerV1:
                 requirement: requirement,
                 desktop: descriptor
             )
+            // The visible menu process creates the descriptor after receiving
+            // the request and samples its own monotonic clock. Reusing the
+            // Agent's pre-request sample can therefore make a valid descriptor
+            // appear to have been created in the future. Sample again only
+            // after the correlated descriptor and final admission return.
+            let preparationNow = monotonicNowNanoseconds()
             let preparation = try authority.prepare(
                 commandID: identifier(),
                 leaseID: identifier(),
-                nowMonotonicNanoseconds: now
+                nowMonotonicNanoseconds: preparationNow
+            )
+            agentInteractiveRuntimeLoggerV1.notice(
+                "first execution lease prepared"
             )
 
             let receipt: InteractiveRuntimeInstallReceiptV0
             do {
+                agentInteractiveRuntimeLoggerV1.notice(
+                    "menu runtime install started"
+                )
                 receipt = try await runtime.installInteractiveLease(
                     preparation.command
                 )
+                agentInteractiveRuntimeLoggerV1.notice(
+                    "menu runtime install completed"
+                )
             } catch {
+                agentInteractiveRuntimeLoggerV1.error(
+                    "menu runtime install failed: \(String(describing: error), privacy: .public)"
+                )
                 let revoked = await attemptRevoke(
                     lease: preparation.command.lease,
                     bootstrap: &bootstrap,
@@ -591,12 +795,19 @@ public actor AgentInteractiveRuntimeOwnerV1:
             }
 
             do {
+                try requireUnfencedInstall(token)
                 try authority.accept(
                     receipt,
                     nowMonotonicNanoseconds: monotonicNowNanoseconds()
                 )
                 bootstrap = try authority.takeInstalledBootstrap()
+                agentInteractiveRuntimeLoggerV1.notice(
+                    "menu runtime receipt accepted"
+                )
             } catch {
+                agentInteractiveRuntimeLoggerV1.error(
+                    "menu runtime receipt rejected: \(String(describing: error), privacy: .public)"
+                )
                 let revoked = await attemptRevoke(
                     lease: preparation.command.lease,
                     bootstrap: &bootstrap,
@@ -637,6 +848,7 @@ public actor AgentInteractiveRuntimeOwnerV1:
                         coordinator: coordinator,
                         resolver: surfaceRuntime,
                         inventoryProvider: surfaceRuntime,
+                        displaySelector: displayRuntime,
                         clock: AgentInteractiveSystemMonotonicClockV1()
                     )
                 } catch {
@@ -665,13 +877,22 @@ public actor AgentInteractiveRuntimeOwnerV1:
                 surfaceCoordinator: surfaceCoordinator,
                 surfaceControl: surfaceControl
             ))
+            agentInteractiveRuntimeLoggerV1.notice(
+                "runtime install became active"
+            )
         } catch let error as AgentInteractiveRuntimeOwnerErrorV1 {
+            agentInteractiveRuntimeLoggerV1.error(
+                "runtime install failed: \(String(describing: error), privacy: .public)"
+            )
             if case .installing = storage {
                 invalidateCredentials(&bootstrap)
                 storage = .idle
             }
             throw error
         } catch {
+            agentInteractiveRuntimeLoggerV1.error(
+                "runtime install failed: \(String(describing: error), privacy: .public)"
+            )
             if case .installing = storage {
                 invalidateCredentials(&bootstrap)
                 storage = .idle
@@ -681,8 +902,8 @@ public actor AgentInteractiveRuntimeOwnerV1:
     }
 
     private func performRenewal(
-        nowMonotonicNanoseconds: UInt64
-    ) async throws -> InteractiveExecutionLease {
+        nowMonotonicNanoseconds requestSample: UInt64
+    ) async throws -> AgentInteractiveLeaseRenewalResultV1 {
         guard case var .active(active) = storage else {
             if case .safetyRecoveryRequired = storage {
                 throw AgentInteractiveRuntimeOwnerErrorV1
@@ -691,7 +912,20 @@ public actor AgentInteractiveRuntimeOwnerV1:
             throw AgentInteractiveRuntimeOwnerErrorV1.unavailable
         }
         do {
+            agentInteractiveRuntimeLoggerV1.notice(
+                "runtime renewal final admission started counter=\(active.currentLease.renewalCounter, privacy: .public)"
+            )
             try await requireExactFinalAdmission(active.requirement)
+            agentInteractiveRuntimeLoggerV1.notice(
+                "runtime renewal final admission completed"
+            )
+            // A surface transition/final admission may have awaited work since
+            // the scheduler woke. Issue against the current serialized state,
+            // not a timestamp captured before that transition's new lease.
+            let nowMonotonicNanoseconds = monotonicNowNanoseconds()
+            guard nowMonotonicNanoseconds >= requestSample else {
+                throw AgentInteractiveRuntimeOwnerErrorV1.unavailable
+            }
             let current = active.currentLease
             guard nowMonotonicNanoseconds
                     >= current.issuedAtMonotonicNanoseconds,
@@ -742,14 +976,23 @@ public actor AgentInteractiveRuntimeOwnerV1:
                 replacement: replacement
             )
             try renewal.validate(current: current)
+            agentInteractiveRuntimeLoggerV1.notice(
+                "menu runtime renewal started counter=\(replacement.renewalCounter, privacy: .public)"
+            )
             try await runtime.renewInteractiveLease(renewal)
+            agentInteractiveRuntimeLoggerV1.notice(
+                "menu runtime renewal completed counter=\(replacement.renewalCounter, privacy: .public)"
+            )
             active.currentLease = replacement
             if let coordinator = active.surfaceCoordinator {
                 try await coordinator.adoptRenewedLease(replacement)
             }
             storage = .active(active)
-            return replacement
+            return AgentInteractiveLeaseRenewalResultV1(previous: current, renewal: renewal)
         } catch let error as AgentInteractiveRuntimeOwnerErrorV1 {
+            agentInteractiveRuntimeLoggerV1.error(
+                "runtime renewal rejected before revoke error=\(String(describing: error), privacy: .public)"
+            )
             let revoked = await attemptRevoke(
                 lease: active.currentLease,
                 bootstrap: &active.bootstrap,
@@ -760,6 +1003,9 @@ public actor AgentInteractiveRuntimeOwnerV1:
             )
             throw error
         } catch {
+            agentInteractiveRuntimeLoggerV1.error(
+                "runtime renewal failed before revoke error=\(String(describing: error), privacy: .public)"
+            )
             let revoked = await attemptRevoke(
                 lease: active.currentLease,
                 bootstrap: &active.bootstrap,
@@ -830,6 +1076,13 @@ public actor AgentInteractiveRuntimeOwnerV1:
         ).isEligibleForInteractiveControl else {
             throw AgentInteractiveRuntimeOwnerErrorV1
                 .finalAdmissionChanged
+        }
+    }
+
+    private func requireUnfencedInstall(_ token: UUID) throws {
+        guard pendingInstall?.token == token,
+              pendingInstall?.terminationReason == nil else {
+            throw AgentInteractiveRuntimeOwnerErrorV1.unavailable
         }
     }
 

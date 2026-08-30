@@ -164,6 +164,14 @@ private final class MacReviewCommandIDsV0: @unchecked Sendable {
     func next() -> UUID { lock.withLock { values.removeFirst() } }
 }
 
+private actor MacReviewCompletionProbeV0 {
+    private var receipts: [LocalPairingDecisionReceiptV0] = []
+    func append(_ receipt: LocalPairingDecisionReceiptV0) {
+        receipts.append(receipt)
+    }
+    func values() -> [LocalPairingDecisionReceiptV0] { receipts }
+}
+
 @Test func macReviewPresentationStartsEmptyAndBindsLocalName() throws {
     let review = try macReviewV0()
     var presentation = MacPairingReviewPresentationV0()
@@ -223,12 +231,16 @@ private final class MacReviewCommandIDsV0: @unchecked Sendable {
 
 @Test func macReviewOwnerApprovalPublishesOnlyCorrelatedSuccess() async throws {
     let client = MacReviewClientProbeV0()
+    let completions = MacReviewCompletionProbeV0()
     let commandID = UUID()
     let IDs = MacReviewCommandIDsV0([commandID])
     let owner = MacPairingReviewApplicationOwnerV0(
         client: client,
         clock: FixedMacReviewClockV0(value: macReviewWall),
-        commandIDSource: { IDs.next() }
+        commandIDSource: { IDs.next() },
+        decisionCompleted: { receipt in
+            await completions.append(receipt)
+        }
     )
     try await owner.presentLocalPairingReview(macReviewV0())
     await #expect(throws: MacPairingReviewPresentationErrorV0.self) {
@@ -242,6 +254,10 @@ private final class MacReviewCommandIDsV0: @unchecked Sendable {
     #expect(command.commandID == commandID)
     #expect(command.deviceDisplayName == expectedName)
     #expect(await owner.snapshot().review == nil)
+    let completion = try #require(await completions.values().first)
+    #expect(completion.correlationID == commandID)
+    #expect(completion.pairingID == macReviewPairingID)
+    #expect(completion.decision == .approve)
 }
 
 @Test func macReviewOwnerRetriesTheExactFailedCommand() async throws {

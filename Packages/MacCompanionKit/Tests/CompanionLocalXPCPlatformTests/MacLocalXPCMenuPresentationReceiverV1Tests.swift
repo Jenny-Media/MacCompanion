@@ -123,6 +123,7 @@ private final class ReceiverGenerationSurfaceProbe: @unchecked Sendable,
     private let pairingBehavior: PairingBehavior
     private let deadlineWasInstalled: @Sendable () -> Bool
     private var pairingContinuation: CheckedContinuation<Void, Never>?
+    private var pairingResumePending = false
     private var pairingIDs: Set<UUID> = []
     private var recoveryIDs: Set<UUID> = []
     private var events: [ReceiverSurfaceProbe.Event] = []
@@ -149,9 +150,15 @@ private final class ReceiverGenerationSurfaceProbe: @unchecked Sendable,
             return
         case .suspendAfterRetention:
             await withCheckedContinuation { continuation in
-                lock.withLock {
+                let resumeNow = lock.withLock {
+                    if pairingResumePending {
+                        pairingResumePending = false
+                        return true
+                    }
                     pairingContinuation = continuation
+                    return false
                 }
+                if resumeNow { continuation.resume() }
             }
         case .failAfterRetention:
             struct AmbiguousFailure: Error {}
@@ -195,6 +202,7 @@ private final class ReceiverGenerationSurfaceProbe: @unchecked Sendable,
         lock.lock()
         let continuation = pairingContinuation
         pairingContinuation = nil
+        if continuation == nil { pairingResumePending = true }
         lock.unlock()
         continuation?.resume()
     }
@@ -791,6 +799,31 @@ func productionReceiverRetainsPresentsThenAcknowledgesAndReleases()
     #expect(receiver.pendingCount == 0)
     #expect(receiver.retainedPairingReviewID == receiverPairingReviewID)
     #expect(surface.snapshot().deadlineInstalledAtPairingStart)
+}
+
+@Test
+@available(macOS 26.0, *)
+func receiverTestSurfaceRetainsResumeBeforeContinuationRegistration() async throws {
+    let queue = DispatchQueue(label: "receiver-early-resume")
+    let transport = ReceiverGenerationTransportProbe()
+    let scheduler = ReceiverManualDeadlineScheduler(queue: queue)
+    let surface = ReceiverGenerationSurfaceProbe(pairingBehavior: .suspendAfterRetention)
+    let receiver = makeReceiverGeneration(queue: queue, surface: surface,
+        transport: transport, scheduler: scheduler)
+    let payload = try LocalMenuPresentationWireCodecV1.encodePairingReview(receiverPairingReview())
+    surface.resumePairingPresentation()
+    queue.sync {
+        receiver.receive(copiedRequest: .pairingReview(payload), borrowedRequest: 61,
+            authenticatedAndReady: true, authorized: true)
+    }
+    let completed = await waitForReceiverCondition { transport.snapshot().replied == [61] }
+    if !completed {
+        // Reap the deliberately stranded old helper before reporting failure.
+        surface.resumePairingPresentation()
+        _ = await waitForReceiverCondition { transport.snapshot().replied == [61] }
+    }
+    #expect(completed)
+    #expect(transport.snapshot().released == [61])
 }
 
 @Test

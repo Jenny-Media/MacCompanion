@@ -229,6 +229,47 @@ private func listenerPairingConfigurationV0() throws
     }
 }
 
+#if DEBUG
+@Test func isolatedPairingFactoryRestrictsRoutesAndDoesNotInventReadiness() async throws {
+    let configuration = try listenerPairingConfigurationV0()
+    let composition = try AgentNetworkListenerPairingCompositionFactoryV0.make(
+        configuration: configuration, port: 59_655, binding: .isolatedLoopback)
+    defer { composition.listener.cancel() }
+    await #expect(throws: AgentNetworkPairingContextErrorV0.unavailable) {
+        _ = try await composition.pairingContext.currentPairingContext()
+    }
+    try await composition.pairingContext.publishListenerReadiness(ready: true, generation: 1)
+    await #expect(throws: AgentNetworkPairingContextErrorV0.unavailable) {
+        _ = try await composition.pairingContext.currentPairingContext()
+    }
+    try await composition.pairingContext.publishAdvertisementReadiness(ready: true, generation: 1)
+    let context = try await composition.pairingContext.currentPairingContext()
+    #expect(context.hostFingerprint == configuration.hostFingerprint)
+    #expect(context.endpoints == [try EndpointCandidate(kind: .ipv4, value: "127.0.0.1", port: 59_655)])
+    #expect(throws: NetworkHostTLSListenerConfigurationErrorV0.listenerAlreadyCreated) {
+        _ = try AgentNetworkListenerPairingCompositionFactoryV0.make(
+            configuration: configuration, port: 59_655, binding: .isolatedLoopback)
+    }
+    await composition.pairingContext.stop()
+    await #expect(throws: AgentNetworkPairingContextErrorV0.staleAdvertisementGeneration) {
+        try await composition.pairingContext.publishAdvertisementReadiness(ready: true, generation: 2)
+    }
+}
+
+@Test func isolatedPairingRejectsAdditionalRoutesBeforeConsumingConfiguration() throws {
+    let configuration = try listenerPairingConfigurationV0()
+    #expect(throws: AgentNetworkListenerPairingCompositionErrorV0.invalidAdditionalEndpoint) {
+        _ = try AgentNetworkListenerPairingCompositionFactoryV0.make(
+            configuration: configuration, port: 59_655,
+            additionalEndpoints: [.init(kind: .ipv4, value: "192.168.1.2", port: 59_655)],
+            binding: .isolatedLoopback)
+    }
+    let valid = try AgentNetworkListenerPairingCompositionFactoryV0.make(
+        configuration: configuration, port: 59_655, binding: .isolatedLoopback)
+    valid.listener.cancel()
+}
+#endif
+
 @Test func pairingProductFactoryUsesOneListenerContextAndAuditedAuthority() async throws {
     let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
         "maccompanion-network-pairing-product-\(UUID())",
@@ -288,6 +329,12 @@ private func listenerPairingConfigurationV0() throws
         alreadyAuthorizedSurface: ListenerPairingSurfaceV0(),
         pairingIDGenerator: { pairingID }
     )
+
+    #if DEBUG
+    await #expect(throws: AgentNetworkPairingProductCompositionErrorV0.terminal) {
+        _ = try await product.confirmIsolatedLoopbackEndpoint()
+    }
+    #endif
 
     await #expect(throws: AgentLocalPairingSessionErrorV0.invalidContext) {
         _ = try await product.localPairingSessions.create(
@@ -433,8 +480,7 @@ private func listenerPairingConfigurationV0() throws
         policySource: StaticAgentLocalPairingPolicySourceV0(
             .init(rawValue: 1)
         ),
-        alreadyAuthorizedSurface: ListenerPairingSurfaceV0(),
-        pairingIDGenerator: { pairingID }
+        alreadyAuthorizedSurface: ListenerPairingSurfaceV0()
     )
     let listenerService = try await product.makeListenerService(
         queue: DispatchQueue(label: "maccompanion.pairing-product-loss"),
@@ -463,11 +509,15 @@ private func listenerPairingConfigurationV0() throws
         ready: true,
         generation: 1
     )
-    _ = try await product.localPairingSessions.create(
-        LocalPairingSessionCreateCommandV0(commandID: UUID())
-    )
+    let createCommand = try LocalPairingSessionCreateCommandV0(commandID: UUID())
+    let firstQR = try await product.localPairingSessions.create(createCommand)
 
     await product.authenticatedMenuSurfaceUnavailable()
+    await #expect(throws: AgentLocalPairingSessionErrorV0.staleCommand) {
+        _ = try await product.localPairingSessions.create(createCommand)
+    }
+    let nextQR = try await product.localPairingSessions.create(.init(commandID: UUID()))
+    #expect(nextQR.pairingID != firstQR.pairingID)
     #expect(await product.snapshot()
         == AgentNetworkPairingProductCompositionSnapshotV0(
             listenerServiceConstructed: true,
@@ -515,7 +565,7 @@ private func listenerPairingConfigurationV0() throws
     }
     await #expect(throws: PairingSessionError.alreadyConsumed) {
         _ = try await product.pairingServices.authority.begin(
-            pairingID: pairingID,
+            pairingID: nextQR.pairingID,
             clientID: UUID(),
             sessionPublicKeyX963:
                 P256.Signing.PrivateKey().publicKey.x963Representation,

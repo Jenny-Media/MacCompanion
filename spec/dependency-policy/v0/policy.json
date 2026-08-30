@@ -5,6 +5,13 @@
   "buildToolPluginsAllowed": false,
   "packages": [
     {
+      "path": "Experiments/LiveControlLab",
+      "name": "LiveControlLab",
+      "identity": "livecontrollab",
+      "toolsVersion": "6.0.0",
+      "localDependencies": ["Packages/MacCompanionKit"]
+    },
+    {
       "path": "Experiments/NetworkDiscoveryProbe",
       "name": "NetworkDiscoveryProbe",
       "identity": "networkdiscoveryprobe",

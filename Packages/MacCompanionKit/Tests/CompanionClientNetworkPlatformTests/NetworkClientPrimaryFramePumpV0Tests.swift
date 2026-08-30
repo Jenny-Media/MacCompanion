@@ -19,6 +19,46 @@ private struct NetworkClientTestSigner: ClientSessionAuthenticationSigningV0 {
     }
 }
 
+#if DEBUG
+private actor NetworkClientInjectedSender: ClientAuthenticatedCommandSendingV1 {
+    var frames: [Data] = []
+    func sendAuthenticatedCommand(_ frame: Data) { frames.append(frame) }
+}
+
+@Test func injectedPrimaryBridgePreservesBindingAndTerminalGuards() async throws {
+    for cancellation in [false, true] {
+        let base = try makeNetworkClientPumpHarness()
+        let bridge = NetworkClientPrimaryRouterBridgeV0(
+            pairedHost: try networkClientPairedHost(clientID: await base.session.clientID,
+                hostID: base.hostID, deviceID: base.deviceID, fingerprint: base.fingerprint),
+            approvalSigner: NetworkClientOperationApprovalSignerV0(),
+            monotonicNowNanoseconds: { 1_003_000_000 })
+        let sender = NetworkClientInjectedSender()
+        await #expect(throws: NetworkClientPrimaryRouterBridgeErrorV0.unavailable) {
+            try await bridge.sendAuthenticatedCommand(Data([1]))
+        }
+        try await bridge.bindAuthenticatedTransport(sender)
+        await #expect(throws: NetworkClientPrimaryRouterBridgeErrorV0.invalidState) {
+            try await bridge.bindAuthenticatedTransport(sender)
+        }
+        await #expect(throws: NetworkClientPrimaryRouterBridgeErrorV0.invalidState) {
+            try await bridge.bind(pump: base.pump)
+        }
+        try await bridge.sendAuthenticatedCommand(Data([2]))
+        #expect(await sender.frames == [Data([2])])
+        if cancellation { await bridge.cancel() } else { await bridge.primaryTerminated() }
+        await #expect(throws: NetworkClientPrimaryRouterBridgeErrorV0.unavailable) {
+            try await bridge.sendAuthenticatedCommand(Data([3]))
+        }
+        await #expect(throws: NetworkClientPrimaryRouterBridgeErrorV0.invalidState) {
+            try await bridge.bindAuthenticatedTransport(sender)
+        }
+        #expect(await sender.frames == [Data([2])])
+        #expect(await bridge.currentRouter() == nil)
+    }
+}
+#endif
+
 private enum NetworkClientFakeFrameIOError: Error {
     case sendFailed
 }
@@ -1607,6 +1647,36 @@ private func networkClientAcceptedControlSession(
     await losingCandidate.selectedAsPrimary()
     #expect(losingEvents.selections.isEmpty)
     #expect(losingEvents.terminations.isEmpty)
+
+    // Media failure after initial activation must not leave the workspace
+    // active. Wrong-primary/session callbacks remain unable to retire it.
+    applicationState.productEvents.primarySelected(selection)
+    let liveControl = try networkClientAcceptedControlSession(primary: session)
+    applicationState.productEvents.publishControl(.init(hostID: base.hostID,
+        connectionID: session.connectionID,
+        event: .accepted(session: liveControl, effects: [.view, .pointer])))
+    for progress: NetworkClientInteractiveProductProgressV0 in [
+        .roleChannelsConnecting, .roleChannelsReady, .initialSurfacePreparing, .active
+    ] {
+        applicationState.acceptInteractiveProductProgress(connectionID: session.connectionID,
+            interactiveSessionID: liveControl.interactiveSessionID, progress: progress)
+    }
+    let liveRevision = applicationState.snapshot().revision
+    for (connection, interactive) in [(replacementConnectionID, liveControl.interactiveSessionID),
+                                       (session.connectionID, UUID())] {
+        applicationState.acceptInteractiveProductProgress(connectionID: connection,
+            interactiveSessionID: interactive, progress: .failed(.initialSurface))
+        #expect(applicationState.snapshot().revision == liveRevision)
+    }
+    applicationState.acceptInteractiveProductProgress(connectionID: session.connectionID,
+        interactiveSessionID: liveControl.interactiveSessionID, progress: .failed(.initialSurface))
+    #expect(applicationState.snapshot().controlState == .preparationFailed(
+        interactiveSessionID: liveControl.interactiveSessionID, effects: [.view, .pointer], phase: .initialSurface))
+    #expect(applicationState.snapshot().revision == liveRevision + 1)
+    #expect(applicationState.snapshot().availability == .connected)
+    applicationState.acceptInteractiveProductProgress(connectionID: session.connectionID,
+        interactiveSessionID: liveControl.interactiveSessionID, progress: .failed(.initialSurface))
+    #expect(applicationState.snapshot().revision == liveRevision + 1)
 
     await pump.cancel()
 }

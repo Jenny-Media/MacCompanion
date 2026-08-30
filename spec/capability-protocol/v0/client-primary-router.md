@@ -192,3 +192,9 @@ background teardown, or router invalidation closes the session-command owner,
 clears accepted offers from application state, and suppresses late approval or
 acceptance publication. A replacement primary never reuses a pending request,
 approval, accepted session, or role credential from its predecessor.
+
+On iOS, application background teardown begins only from the actual
+`didEnterBackground` lifecycle boundary. Temporary `inactive` transitions such
+as Face ID, Touch ID, the device passcode sheet, Control Center, or other system
+UI remain foreground scheduling state and MUST NOT invalidate the primary that
+owns the in-flight approval challenge.

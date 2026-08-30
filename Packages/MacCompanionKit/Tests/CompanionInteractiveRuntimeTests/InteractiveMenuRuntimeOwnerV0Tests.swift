@@ -30,6 +30,8 @@ private actor RuntimeEffectsProbe:
 {
     private var recorded: [RuntimeEffectEvent] = []
     private var captureCommands: [InteractiveRuntimeInstallCommandV0] = []
+    private var renewalCommands: [InteractiveRuntimeLeaseRenewalV0] = []
+    private var activationSequences: [UInt64] = []
     private var failOnce: Set<RuntimeEffectEvent>
     private let readyClasses: Set<SurfaceInteractionClass>
 
@@ -42,8 +44,12 @@ private actor RuntimeEffectsProbe:
     }
 
     func events() -> [RuntimeEffectEvent] { recorded }
+    func activatedAfterSequences() -> [UInt64] { activationSequences }
     func startedCaptureCommands() -> [InteractiveRuntimeInstallCommandV0] {
         captureCommands
+    }
+    func adoptedRenewals() -> [InteractiveRuntimeLeaseRenewalV0] {
+        renewalCommands
     }
 
     func showInteractiveIndicator(
@@ -75,6 +81,12 @@ private actor RuntimeEffectsProbe:
         try await apply(.stop)
     }
 
+    func adoptInteractiveLeaseRenewal(
+        _ renewal: InteractiveRuntimeLeaseRenewalV0
+    ) async throws {
+        renewalCommands.append(renewal)
+    }
+
     func prepareInteractiveCaptureTransition(
         _ command: InteractiveRuntimeSurfaceTransitionCommandV0
     ) async throws -> Set<SurfaceInteractionClass> {
@@ -83,8 +95,10 @@ private actor RuntimeEffectsProbe:
     }
 
     func activatePreparedInteractiveCaptureTransition(
-        _ command: InteractiveRuntimeSurfaceTransitionCommandV0
+        _ command: InteractiveRuntimeSurfaceTransitionCommandV0,
+        mediaSequenceBeforeTransition: UInt64
     ) async throws {
+        activationSequences.append(mediaSequenceBeforeTransition)
         try await apply(.activate)
     }
 
@@ -120,7 +134,9 @@ private final class RuntimeInputPosterProbe:
         lock.withLock { posted }
     }
 
-    func postInteractiveInput(_ envelope: InteractiveInputEnvelope) throws {
+    func postInteractiveInput(
+        _ envelope: InteractiveInputEnvelope
+    ) async throws {
         try lock.withLock {
             if shouldFail { throw RuntimeProbeError.injected(.start) }
             posted.append(envelope)
@@ -209,19 +225,23 @@ private func runtimeFence(
 
 private func runtimeInput(
     lease: InteractiveExecutionLease,
-    payload: InteractiveInputPayload = .pointerMove(x: 1, y: 1)
+    payload: InteractiveInputPayload = .pointerMove(x: 1, y: 1),
+    sequence: UInt64 = 1,
+    focus: SurfaceFocus? = nil
 ) throws -> InteractiveInputEnvelope {
     try InteractiveInputEnvelope(
         messageID: WireUUID(UUID()),
         interactiveSessionID: WireUUID(lease.interactiveSessionID),
         authorizationEpoch: lease.authorizationEpoch,
-        sequence: 1,
+        sequence: sequence,
         clientMonotonicMilliseconds: 1,
         surfaceID: WireUUID(lease.surfaceID),
         surfaceRevision: .init(rawValue: lease.surfaceRevision.rawValue),
         coordinateSpaceRevision: .init(
             rawValue: lease.coordinateRevision.rawValue
         ),
+        focusToken: focus.map { WireUUID($0.token) },
+        focusRevision: focus?.revision,
         input: payload
     )
 }
@@ -680,12 +700,13 @@ private func installAndActivateInitial(
         issuedAt: 4_000,
         expiresAt: 8_000
     )
+    let renewal = try InteractiveRuntimeLeaseRenewalV0(
+        commandID: UUID(),
+        previousLeaseID: current.leaseID,
+        replacement: replacement
+    )
     try await owner.renew(
-        InteractiveRuntimeLeaseRenewalV0(
-            commandID: UUID(),
-            previousLeaseID: current.leaseID,
-            replacement: replacement
-        ),
+        renewal,
         nowMonotonicNanoseconds: 4_000
     )
     #expect(await owner.state() == .active(
@@ -693,6 +714,7 @@ private func installAndActivateInitial(
         leaseID: replacement.leaseID
     ))
     #expect(await probe.events() == [.show, .start])
+    #expect(await probe.adoptedRenewals() == [renewal])
 
     let tooLate = try runtimeLease(
         leaseID: UUID(),
@@ -712,7 +734,7 @@ private func installAndActivateInitial(
     }
 }
 
-@Test func surfaceTransitionPausesInputUntilOrderedMediaAndExactAck()
+@Test(arguments: [0, 1, 2, 3]) func surfaceTransitionPausesInputUntilOrderedMediaAndExactAck(lateResetAt: Int)
     async throws
 {
     let effects = RuntimeEffectsProbe(
@@ -757,6 +779,26 @@ private func installAndActivateInitial(
     )
     #expect(prepared == replayedPrepared)
     #expect(prepared.mediaSequenceBeforeTransition == 2)
+    if lateResetAt == 1 {
+        // The primary selection overtook the input socket's old-fence reset.
+        // Preparation already released input, so draining must post nothing.
+        let reset = try runtimeInput(lease: current, payload: .reset)
+        await #expect(throws: InteractiveMenuRuntimeErrorV0.invalidTime) {
+            try await owner.postInputEnvelope(reset, nowMonotonicNanoseconds: 7_001)
+        }
+        await #expect(throws: InteractiveMenuRuntimeErrorV0.inputSequenceMismatch(expected: 1, actual: 2)) {
+            try await owner.postInputEnvelope(runtimeInput(lease: current, payload: .reset, sequence: 2), nowMonotonicNanoseconds: 4_030)
+        }
+        await #expect(throws: InteractiveMenuRuntimeErrorV0.bindingMismatch) {
+            try await owner.postInputEnvelope(runtimeInput(lease: current), nowMonotonicNanoseconds: 4_040)
+        }
+        try await owner.postInputEnvelope(reset, nowMonotonicNanoseconds: 4_050)
+        #expect(poster.postedInputs().isEmpty)
+        await #expect(throws: InteractiveMenuRuntimeErrorV0.bindingMismatch) {
+            try await owner.postInputEnvelope(reset, nowMonotonicNanoseconds: 4_060)
+        }
+    }
+    #expect(await effects.activatedAfterSequences() == [2])
     #expect(await owner.surfaceAdmissionState()
         == .requiresDiscontinuity(
             transitionCommandID: transition.commandID
@@ -850,16 +892,32 @@ private func installAndActivateInitial(
     #expect(acknowledged == replayedAcknowledgement)
     #expect(await owner.surfaceAdmissionState() == .ready)
 
-    let input = try runtimeInput(lease: replacement)
+    var inputLease = replacement
+    if lateResetAt == 3 {
+        inputLease = try runtimeLease(leaseID: UUID(), allowedClasses: [.view, .pointer, .keyboard],
+            surfaceID: replacement.surfaceID, surfaceRevision: 6, coordinateRevision: 9,
+            renewalCounter: 2, issuedAt: 4_600, expiresAt: 7_500)
+        try await owner.renew(.init(commandID: UUID(), previousLeaseID: replacement.leaseID, replacement: inputLease),
+            nowMonotonicNanoseconds: 4_620)
+    }
+    if lateResetAt >= 2 {
+        try await owner.postInputEnvelope(runtimeInput(lease: current, payload: .reset), nowMonotonicNanoseconds: 4_650)
+        #expect(poster.postedInputs().isEmpty)
+    }
+    let input = try runtimeInput(lease: inputLease, sequence: lateResetAt > 0 ? 2 : 1)
     try await owner.postInput(
         InteractiveRuntimeInputActionV0(
             commandID: UUID(),
-            fence: runtimeFence(lease: replacement),
+            fence: runtimeFence(lease: inputLease),
             envelope: input
         ),
         nowMonotonicNanoseconds: 4_700
     )
     #expect(poster.postedInputs() == [input])
+    await #expect(throws: InteractiveMenuRuntimeErrorV0.bindingMismatch) {
+        try await owner.postInputEnvelope(runtimeInput(lease: current, payload: .reset, sequence: input.sequence + 1),
+            nowMonotonicNanoseconds: 4_750)
+    }
     #expect(queue.headers().map(\.type) == [
         .decoderConfiguration, .videoAccessUnit,
         .discontinuity, .decoderConfiguration, .videoAccessUnit,
@@ -875,7 +933,8 @@ private func installAndActivateInitial(
     let effects = RuntimeEffectsProbe(
         readyClasses: [.view, .pointer, .keyboard]
     )
-    let owner = runtimeOwner(probe: effects)
+    let poster = RuntimeInputPosterProbe()
+    let owner = runtimeOwner(probe: effects, poster: poster)
     let desktop = try runtimeLease(
         allowedClasses: [.view, .pointer, .keyboard]
     )
@@ -1010,7 +1069,7 @@ private func installAndActivateInitial(
     #expect(try await owner.pauseInputForFocusChange(snapshot))
     #expect(try await owner.pauseInputForFocusChange(snapshot))
     #expect(await owner.surfaceAdmissionState() == .focusPaused)
-    await #expect(throws: InteractiveMenuRuntimeErrorV0.surfaceNotAcknowledged) {
+    await #expect(throws: InteractiveMenuRuntimeErrorV0.bindingMismatch) {
         try await owner.postInput(
             InteractiveRuntimeInputActionV0(
                 commandID: UUID(),
@@ -1019,6 +1078,33 @@ private func installAndActivateInitial(
             ),
             nowMonotonicNanoseconds: 4_500
         )
+    }
+
+    // Cross-socket latency permits input already sent before the client learns
+    // of the host's focus pause. Drain exact reliable ordering without posting.
+    for (index, payload) in [InteractiveInputPayload.pointerMove(x: 1, y: 1),
+                            .physicalKey(usage: 0x28, transition: .down, modifiers: []),
+                            .reset].enumerated() {
+        try await owner.postInputEnvelope(runtimeInput(lease: current, payload: payload,
+            sequence: UInt64(index + 1), focus: focus), nowMonotonicNanoseconds: 4_600)
+    }
+    #expect(poster.postedInputs().isEmpty)
+    #expect(await owner.surfaceAdmissionState() == .focusPaused)
+    await #expect(throws: InteractiveMenuRuntimeErrorV0.inputSequenceMismatch(expected: 4, actual: 5)) {
+        try await owner.postInputEnvelope(runtimeInput(lease: current, sequence: 5, focus: focus),
+            nowMonotonicNanoseconds: 4_600)
+    }
+    await #expect(throws: InteractiveLeaseError.staleLease) {
+        try await owner.postInput(.init(commandID: UUID(), fence: runtimeFence(lease: current, leaseID: UUID()),
+            envelope: runtimeInput(lease: current, sequence: 4, focus: focus)), nowMonotonicNanoseconds: 4_600)
+    }
+    await #expect(throws: InteractiveLeaseError.expired) {
+        try await owner.postInputEnvelope(runtimeInput(lease: current, sequence: 4, focus: focus),
+            nowMonotonicNanoseconds: 7_000)
+    }
+    await #expect(throws: InteractiveMenuRuntimeErrorV0.interactionClassDenied) {
+        try await owner.postInputEnvelope(runtimeInput(lease: current, payload: .text("fixture"), sequence: 4, focus: focus),
+            nowMonotonicNanoseconds: 4_600)
     }
 
     let replacement = try runtimeLease(
@@ -1044,6 +1130,26 @@ private func installAndActivateInitial(
         .release, .prepare, .activate,
         .release, .prepare, .activate,
     ])
+    let records: [(MediaRecordType, Data)] = [
+        (.discontinuity, Data()), (.decoderConfiguration, runtimeDecoderConfiguration),
+        (.videoAccessUnit, Data([0, 0, 0, 2, 0x65, 0])),
+    ]
+    for (offset, record) in records.enumerated() {
+        try await owner.publishMedia(.init(commandID: UUID(), fence: runtimeFence(lease: replacement),
+            header: runtimeMediaHeader(lease: replacement, sequence: UInt64(6 + offset),
+                payloadLength: UInt32(record.1.count), type: record.0,
+                cleanKeyframe: record.0 == .videoAccessUnit), payload: record.1),
+            nowMonotonicNanoseconds: 5_200)
+    }
+    #expect(poster.postedInputs().isEmpty)
+    _ = try await owner.acknowledgeSurface(.init(commandID: UUID(), transitionCommandID: transition.commandID,
+        leaseID: replacement.leaseID, interactiveSessionID: replacement.interactiveSessionID,
+        surfaceID: replacement.surfaceID, surfaceRevision: replacement.surfaceRevision,
+        coordinateRevision: replacement.coordinateRevision, readyMediaSequence: 8),
+        nowMonotonicNanoseconds: 5_300)
+    let resumed = try runtimeInput(lease: replacement, sequence: 4)
+    try await owner.postInputEnvelope(resumed, nowMonotonicNanoseconds: 5_400)
+    #expect(poster.postedInputs() == [resumed]) // no drained input replayed
 }
 
 @Test func surfaceTransitionMediaOrderFailureTerminatesRuntime()

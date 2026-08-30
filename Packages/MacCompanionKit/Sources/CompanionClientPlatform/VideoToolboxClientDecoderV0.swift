@@ -151,6 +151,9 @@ public final class VideoToolboxClientDecoderV0: @unchecked Sendable {
                 .formatDescriptionCreationFailed
         }
         let destinationAttributes = [
+            // Display layers require IOSurface-backed buffers. Software
+            // decoding in Simulator must request these explicitly, too.
+            kCVPixelBufferIOSurfacePropertiesKey as String: [:],
             kCVPixelBufferPixelFormatTypeKey as String:
                 kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange,
             kCVPixelBufferWidthKey as String:

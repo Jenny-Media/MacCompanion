@@ -170,7 +170,8 @@ public actor AgentPreparedPrimaryStartupV1 {
         policySource: any AgentLocalPairingPolicyReadingV0,
         alreadyAuthorizedSurface: any LocalPairingReviewSurfaceV0,
         pairingIDGenerator: @escaping @Sendable () -> UUID = { UUID() },
-        deviceIDGenerator: @escaping @Sendable () -> UUID = { UUID() }
+        deviceIDGenerator: @escaping @Sendable () -> UUID = { UUID() },
+        binding: AgentNetworkListenerBindingV1 = .bonjour
     ) throws -> AgentNetworkPairingProductCompositionV0 {
         guard !consumed else {
             throw AgentNetworkPairingProductCompositionErrorV0.terminal
@@ -185,7 +186,8 @@ public actor AgentPreparedPrimaryStartupV1 {
             policySource: policySource,
             alreadyAuthorizedSurface: alreadyAuthorizedSurface,
             pairingIDGenerator: pairingIDGenerator,
-            deviceIDGenerator: deviceIDGenerator
+            deviceIDGenerator: deviceIDGenerator,
+            binding: binding
         )
     }
 

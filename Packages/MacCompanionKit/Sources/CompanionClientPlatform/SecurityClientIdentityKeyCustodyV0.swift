@@ -2,7 +2,21 @@ import CompanionClient
 import CryptoKit
 import Foundation
 import LocalAuthentication
+import OSLog
 import Security
+
+private let clientKeyCustodyLoggerV0 = Logger(
+    subsystem: "media.jenny.maccompanion.ios",
+    category: "approval-signing"
+)
+
+private func clientApprovalDebugTraceV0(_ message: String) {
+#if DEBUG
+    FileHandle.standardError.write(
+        Data("[MacCompanion approval] \(message)\n".utf8)
+    )
+#endif
+}
 
 public enum SecurityClientKeyCustodyErrorV0: Error, Equatable, Sendable {
     case invalidConfiguration
@@ -323,10 +337,26 @@ public actor SecurityClientIdentityKeyCustodyV0:
         role: ClientSigningKeyRoleV0,
         prompt: String?
     ) throws -> Data {
+        if role == .approval {
+            clientKeyCustodyLoggerV0.info("approval key lookup started")
+            clientApprovalDebugTraceV0("key lookup started")
+        }
         guard let binding = bindings[reference], binding.role == role,
               let privateKey = try findKey(tag: binding.tag, prompt: prompt),
               try publicKeyBytes(privateKey) == binding.publicKeyX963 else {
+            if role == .approval {
+                clientKeyCustodyLoggerV0.error(
+                    "approval key lookup or public-key check failed"
+                )
+                clientApprovalDebugTraceV0(
+                    "key lookup or public-key check failed"
+                )
+            }
             throw SecurityClientKeyCustodyErrorV0.keyNotFound
+        }
+        if role == .approval {
+            clientKeyCustodyLoggerV0.info("approval user presence satisfied")
+            clientApprovalDebugTraceV0("user presence satisfied")
         }
         var error: Unmanaged<CFError>?
         guard let der = SecKeyCreateSignature(
@@ -335,10 +365,23 @@ public actor SecurityClientIdentityKeyCustodyV0:
             input as CFData,
             &error
         ) as Data? else {
-            _ = error?.takeRetainedValue()
+            let retainedError = error?.takeRetainedValue()
+            if role == .approval {
+                clientKeyCustodyLoggerV0.error(
+                    "approval signature creation failed: \(retainedError.map(CFErrorGetCode) ?? 0, privacy: .public)"
+                )
+                clientApprovalDebugTraceV0(
+                    "signature creation failed code=\(retainedError.map(CFErrorGetCode) ?? 0)"
+                )
+            }
             throw SecurityClientKeyCustodyErrorV0.signingFailed
         }
-        return try Self.rawP256Signature(fromDER: der)
+        let signature = try Self.rawP256Signature(fromDER: der)
+        if role == .approval {
+            clientKeyCustodyLoggerV0.info("approval signature created")
+            clientApprovalDebugTraceV0("signature created")
+        }
+        return signature
     }
 
     private func findKey(tag: Data, prompt: String?) throws -> SecKey? {
@@ -360,6 +403,12 @@ public actor SecurityClientIdentityKeyCustodyV0:
         guard status == errSecSuccess,
               let result,
               CFGetTypeID(result) == SecKeyGetTypeID() else {
+            if prompt != nil {
+                clientKeyCustodyLoggerV0.error(
+                    "approval key query failed: \(status, privacy: .public)"
+                )
+                clientApprovalDebugTraceV0("key query failed status=\(status)")
+            }
             throw SecurityClientKeyCustodyErrorV0.keyNotFound
         }
         return (result as! SecKey)

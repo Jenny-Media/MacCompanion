@@ -1,6 +1,7 @@
 import CompanionDiscovery
 import CompanionIPC
 import CompanionPairing
+import CompanionPersistence
 import CompanionWire
 import Foundation
 
@@ -14,6 +15,7 @@ public enum AgentLocalPairingSessionErrorV0: Error, Equatable, Sendable {
     case bindingMismatch
     case qrConstructionFailed
     case authorityUnavailable
+    case capacityReached
 }
 
 /// The exact listener-owned facts advertised in a pairing QR code. A menu app
@@ -44,6 +46,23 @@ public struct AgentLocalPairingContextV0: Equatable, Sendable {
 
 public protocol AgentLocalPairingContextReadingV0: Sendable {
     func currentPairingContext() async throws -> AgentLocalPairingContextV0
+}
+
+public protocol AgentLocalPairingCapacityReadingV0: Sendable {
+    func activePairedDeviceCount() async throws -> Int
+}
+
+extension SQLiteSecurityStore: AgentLocalPairingCapacityReadingV0 {}
+
+public struct StaticAgentLocalPairingCapacitySourceV0:
+    AgentLocalPairingCapacityReadingV0,
+    Sendable
+{
+    private let count: Int
+
+    public init(_ count: Int) { self.count = count }
+
+    public func activePairedDeviceCount() async throws -> Int { count }
 }
 
 public struct StaticAgentLocalPairingContextSourceV0:
@@ -165,11 +184,14 @@ public actor AgentLocalPairingSessionHandlerV0 {
 
     private let authority: any AgentLocalPairingSessionManagingV0
     private let contextSource: any AgentLocalPairingContextReadingV0
+    private let capacitySource: any AgentLocalPairingCapacityReadingV0
     private let timeSource: any AgentLocalPairingTimeSamplingV0
     private let pairingIDGenerator: @Sendable () -> UUID
     private var active: ActivePresentation?
     private var mutationInProgress = false
     private var sourceTerminal = false
+    private var presentationGeneration: UInt64 = 0
+    private var presentationInvalidations = 0
     private var createHistory: [UUID: LocalPairingSessionCreatedReceiptV0] = [:]
     private var createOrder: [UUID] = []
     private var dismissHistory: [UUID: DismissCompletion] = [:]
@@ -179,11 +201,14 @@ public actor AgentLocalPairingSessionHandlerV0 {
         authority: any AgentLocalPairingSessionManagingV0,
         contextSource: any AgentLocalPairingContextReadingV0,
         timeSource: any AgentLocalPairingTimeSamplingV0,
+        capacitySource: any AgentLocalPairingCapacityReadingV0 =
+            StaticAgentLocalPairingCapacitySourceV0(0),
         pairingIDGenerator: @escaping @Sendable () -> UUID = { UUID() }
     ) {
         self.authority = authority
         self.contextSource = contextSource
         self.timeSource = timeSource
+        self.capacitySource = capacitySource
         self.pairingIDGenerator = pairingIDGenerator
     }
 
@@ -192,6 +217,9 @@ public actor AgentLocalPairingSessionHandlerV0 {
     ) async throws -> LocalPairingSessionCreatedReceiptV0 {
         guard !sourceTerminal else {
             throw AgentLocalPairingSessionErrorV0.invalidContext
+        }
+        guard presentationInvalidations == 0 else {
+            throw AgentLocalPairingSessionErrorV0.busy
         }
         if let prior = createHistory[command.commandID] {
             guard active?.createCommand == command,
@@ -205,13 +233,29 @@ public actor AgentLocalPairingSessionHandlerV0 {
         }
         mutationInProgress = true
         defer { mutationInProgress = false }
+        let expectedGeneration = presentationGeneration
 
         let time = try readTime()
         try await clearExpiredPresentation(at: time)
         guard active == nil else {
             throw AgentLocalPairingSessionErrorV0.presentationAlreadyActive
         }
+        let pairedDeviceCount: Int
+        do {
+            pairedDeviceCount = try await capacitySource
+                .activePairedDeviceCount()
+        } catch {
+            throw AgentLocalPairingSessionErrorV0.authorityUnavailable
+        }
+        guard pairedDeviceCount >= 0,
+              pairedDeviceCount
+                < Int(LocalAgentStatusSnapshot.maximumPairedDeviceCount) else {
+            throw AgentLocalPairingSessionErrorV0.capacityReached
+        }
         let context = try await readContext()
+        guard !sourceTerminal, presentationGeneration == expectedGeneration else {
+            throw AgentLocalPairingSessionErrorV0.invalidContext
+        }
         let pairingID = pairingIDGenerator()
         let advertisement: PairingAdvertisement
         do {
@@ -225,7 +269,7 @@ public actor AgentLocalPairingSessionHandlerV0 {
             throw AgentLocalPairingSessionErrorV0.authorityUnavailable
         }
 
-        guard !sourceTerminal else {
+        guard !sourceTerminal, presentationGeneration == expectedGeneration else {
             try await compensateCreatedSession(
                 pairingID: pairingID,
                 monotonicNowMilliseconds: time.monotonicNowMilliseconds
@@ -293,14 +337,50 @@ public actor AgentLocalPairingSessionHandlerV0 {
         terminal: Bool
     ) async throws {
         if terminal { sourceTerminal = true }
+        try fencePresentation()
+        presentationInvalidations += 1
+        defer { presentationInvalidations -= 1 }
         guard monotonicNowMilliseconds <= UInt64(Int64.max) else {
+            sourceTerminal = true
             throw AgentLocalPairingSessionErrorV0.invalidClock
         }
+        do {
+            try await retirePresentation(monotonicNowMilliseconds: Int64(monotonicNowMilliseconds))
+        } catch {
+            sourceTerminal = true
+            throw error
+        }
+    }
+
+    /// The authenticated menu generation disappeared, but the listener and
+    /// existing Observe sessions remain valid. Fence pending creation before
+    /// awaiting cancellation; a durable approval commit is never interrupted.
+    public func invalidateForPresentationLoss() async throws {
+        try fencePresentation()
+        presentationInvalidations += 1
+        defer { presentationInvalidations -= 1 }
+        do {
+            try await retirePresentation(monotonicNowMilliseconds: readTime().monotonicNowMilliseconds)
+        } catch {
+            sourceTerminal = true
+            throw error
+        }
+    }
+
+    private func fencePresentation() throws {
+        guard presentationGeneration < UInt64.max else {
+            sourceTerminal = true
+            throw AgentLocalPairingSessionErrorV0.invalidContext
+        }
+        presentationGeneration += 1
+    }
+
+    private func retirePresentation(monotonicNowMilliseconds: Int64) async throws {
         guard let current = active else { return }
         do {
             try await authority.cancelLocalPairingSession(
                 pairingID: current.receipt.pairingID,
-                monotonicNowMilliseconds: Int64(monotonicNowMilliseconds)
+                monotonicNowMilliseconds: monotonicNowMilliseconds
             )
             active = nil
         } catch let error as PairingSessionError {
@@ -318,6 +398,9 @@ public actor AgentLocalPairingSessionHandlerV0 {
     public func dismiss(
         _ command: LocalPairingSessionDismissCommandV0
     ) async throws -> LocalPairingSessionDismissedReceiptV0 {
+        guard presentationInvalidations == 0 else {
+            throw AgentLocalPairingSessionErrorV0.busy
+        }
         if let prior = dismissHistory[command.commandID] {
             guard prior.command == command else {
                 throw AgentLocalPairingSessionErrorV0.bindingMismatch
@@ -423,6 +506,7 @@ public actor AgentLocalPairingSessionHandlerV0 {
                 monotonicNowMilliseconds: monotonicNowMilliseconds
             )
         } catch {
+            sourceTerminal = true
             throw AgentLocalPairingSessionErrorV0.authorityUnavailable
         }
     }

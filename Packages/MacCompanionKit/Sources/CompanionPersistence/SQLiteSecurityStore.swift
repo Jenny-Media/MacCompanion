@@ -629,21 +629,17 @@ public actor SQLiteSecurityStore {
 
     /// Content-free inventory fact for local status. Revoked devices are not
     /// paired authorities and therefore are excluded from the count.
-    public func activePairedDeviceCount() throws -> Int {
+public func activePairedDeviceCount() throws -> Int {
         try activeDeviceIDs().count
     }
 
-    /// Returns the complete locally named grant identity only when exactly one
-    /// active device exists. This is the one-phone MVP administration seam;
-    /// callers cannot select or synthesize a remote device identifier.
-    public func soleActiveDeviceGrantIdentitySnapshot()
-        throws -> StoredDeviceGrantIdentitySnapshot?
+    /// Returns the complete locally named grant identities for active devices.
+    /// The store remains the source of device identifiers; callers may filter
+    /// these snapshots only for an explicitly local administration policy.
+    public func activeDeviceGrantIdentitySnapshots()
+        throws -> [StoredDeviceGrantIdentitySnapshot]
     {
-        let deviceIDs = try activeDeviceIDs()
-        guard deviceIDs.count == 1, let deviceID = deviceIDs.first else {
-            return nil
-        }
-        return try deviceGrantIdentitySnapshot(deviceID)
+        try activeDeviceIDs().map(deviceGrantIdentitySnapshot)
     }
 
     public func establishHostIdentity(_ record: StoredHostIdentityRecord) throws {

@@ -20,7 +20,8 @@ private final class FacadeProbeV1: @unchecked Sendable {
             processUserID: 501,
             windowSessionUserID: 501,
             onConsole: true,
-            loginDone: true
+            loginDone: true,
+            primaryConsoleUserID: 501
         )
     }
 
@@ -87,7 +88,7 @@ func applicationLifecycleFacadeConstructionIsSafeDisabledAndInert() {
 }
 
 @Test
-func applicationLifecycleFacadeStartsOnlyOnceAndNeverPromotesSession() throws {
+func applicationLifecycleFacadeStartsOnceAndPublishesVerifiedSession() throws {
     let center = NotificationCenter()
     let probe = FacadeProbeV1()
     let facade = makeFacadeV1(center: center, probe: probe)
@@ -110,7 +111,7 @@ func applicationLifecycleFacadeStartsOnlyOnceAndNeverPromotesSession() throws {
     #expect(probe.factReadCount == 3)
     #expect(
         facade.snapshot().requestContexts.hostState
-            == .otherConsoleUserActive
+            == .userSessionActive
     )
     #expect(
         facade.initialLifecycleState.consoleSession
@@ -190,7 +191,7 @@ func escapedContextClosuresFailClosedWhenFacadeOwnerIsReleased() throws {
     let primary = facade!.primaryContext
     let pairing = facade!.pairingContext
 
-    #expect(primary().hostState == .otherConsoleUserActive)
+    #expect(primary().hostState == .userSessionActive)
     facade = nil
     #expect(weakFacade == nil)
     #expect(primary().hostState == .serviceStoppingForLogout)

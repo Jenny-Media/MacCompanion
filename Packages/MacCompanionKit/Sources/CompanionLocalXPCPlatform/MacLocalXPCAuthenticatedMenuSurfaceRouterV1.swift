@@ -9,7 +9,7 @@ import Foundation
 /// presentation retained by the menu process. Invalidation is idempotent
 /// because fail-closed transport races may request it more than once.
 ///
-/// An invalidation callback that must fence the router terminally uses only
+/// An invalidation callback that must fence its generation terminally uses only
 /// its MacLocalXPCMenuSurfaceTerminalFenceV1 capability. Endpoint code must
 /// not retain the owner router, because the router's finish() is the external
 /// completion barrier that necessarily includes this endpoint's invalidation.
@@ -207,6 +207,7 @@ package actor MacLocalXPCAuthenticatedMenuSurfaceRouterV1 {
     private var activationBarrier:
         (token: UUID, task: Task<Void, Never>)?
     private var finishTask: Task<Void, Never>?
+    private var endpointTerminalNotification: Task<Void, Never>?
     private var acceptedEndpointIdentities: [EndpointIdentityRecord] = []
     private let onEndpointTerminal: EndpointTerminalHandler
 
@@ -395,18 +396,37 @@ package actor MacLocalXPCAuthenticatedMenuSurfaceRouterV1 {
               current?.token == token else {
             return
         }
-        _ = beginFinish()
-        // Do not await the endpoint cleanup task here: the endpoint is waiting
-        // for this callback and cleanup calls back into that same endpoint.
-        // The product-level revocation callback is independent of the endpoint
-        // actor and must complete before terminal-fence admission returns.
-        await onEndpointTerminal(generation)
+        let active = current!
+        current = nil
+        activationBarrier = nil
+        let priorCleanup = cleanupBarrier?.task
+        let priorNotification = endpointTerminalNotification
+        // Both endpoint retirement and product loss can join the operation
+        // reporting this failure (including an in-flight lease renewal).
+        // This generation's admission is terminal. Let the failed operation unwind;
+        // only an external finish caller may join the retained cleanup work.
+        let notify = onEndpointTerminal
+        let notification = Task {
+            await priorNotification?.value
+            await notify(generation)
+        }
+        endpointTerminalNotification = notification
+        let retirement = Task {
+            await priorCleanup?.value
+            await active.endpoint.invalidateAuthenticatedMenuSurface()
+            await notification.value
+        }
+        // A replacement may reserve a fresh generation, but cannot receive its
+        // facets until both old endpoint and product authority have retired.
+        // Only explicit owner finish permanently closes the reusable router.
+        cleanupBarrier = (UUID(), retirement)
     }
 
     /// Marks the router terminal and waits for all endpoint retirement.
     /// Only an external lifecycle owner may await this completion barrier.
     package func finish() async {
         await beginFinish().value
+        await endpointTerminalNotification?.value
     }
 
     private func beginFinish() -> Task<Void, Never> {

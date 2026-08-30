@@ -202,6 +202,23 @@ public actor MacPairingApplicationOwnerV0 {
         await performDismiss(command, operationRevision: operationRevision)
     }
 
+    /// A successfully validated local pairing decision consumes the exact QR
+    /// authority in the Agent. Mirror that terminal fact into the menu
+    /// presentation without sending a redundant dismissal command. The exact
+    /// pairing identifier prevents a delayed decision for an older session
+    /// from removing a newer code.
+    @discardableResult
+    public func pairingDecisionCompleted(pairingID: UUID) async -> Bool {
+        guard presentation.visibleReceipt?.pairingID == pairingID else {
+            return false
+        }
+        cancelExpiry()
+        invalidateCurrentRevision()
+        presentation.invalidate()
+        await publish()
+        return true
+    }
+
     /// Listener loss, Agent invalidation, logout, or app teardown is terminal
     /// for every currently displayed or in-flight pairing result.
     public func agentInvalidated() async {

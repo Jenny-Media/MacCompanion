@@ -159,6 +159,10 @@ public struct InFlightCommandTracker: Sendable {
         ],
         .interactiveSessionApprove: [.interactiveSessionAccepted, .error],
         .interactiveSessionEnd: [.interactiveSessionEnded, .error],
+        .interactiveDisplayCatalogRequest: [
+            .interactiveDisplayCatalogResponse, .error,
+        ],
+        .interactiveDisplaySelect: [.interactiveDisplaySelected, .error],
         .interactiveInitialSurfaceRequest: [
             .interactiveInitialSurfaceDescriptor, .error,
         ],

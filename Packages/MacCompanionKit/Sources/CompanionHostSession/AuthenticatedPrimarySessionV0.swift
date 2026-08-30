@@ -143,6 +143,7 @@ public actor AuthenticatedPrimarySessionV0 {
         (any AuthenticatedRouteObservationPublishingV1)?
     private let detailedAudit: (any PrimarySessionAuditWritingV0)?
     private let detailedAuditWallClock: any PrimarySessionAuditWallClockV0
+    private let statusResponseClock: any HostStatusClock
     private var replay = ConnectionReplayWindow()
     private let authenticationDeadlineMonotonicMilliseconds: UInt64
     private var lastAuthenticatedTrafficMonotonicMilliseconds: UInt64?
@@ -175,7 +176,8 @@ public actor AuthenticatedPrimarySessionV0 {
             (any AuthenticatedRouteObservationPublishingV1)? = nil,
         detailedAudit: (any PrimarySessionAuditWritingV0)? = nil,
         detailedAuditWallClock: any PrimarySessionAuditWallClockV0 =
-            SystemPrimarySessionAuditWallClockV0()
+            SystemPrimarySessionAuditWallClockV0(),
+        statusResponseClock: any HostStatusClock = SystemHostStatusClock()
     ) throws {
         let authenticationLifetime = UInt64(
             V0ConnectionTiming.authenticationNanoseconds / 1_000_000
@@ -197,6 +199,7 @@ public actor AuthenticatedPrimarySessionV0 {
         self.routeObservationPublisher = routeObservationPublisher
         self.detailedAudit = detailedAudit
         self.detailedAuditWallClock = detailedAuditWallClock
+        self.statusResponseClock = statusResponseClock
     }
 
     public func receive(
@@ -464,6 +467,11 @@ public actor AuthenticatedPrimarySessionV0 {
             throw AuthenticatedPrimarySessionErrorV0.unauthenticated
         }
         _ = try await authentication.revalidate(principal)
+        // Revalidation suspends. A concurrent close must not allow this
+        // already captured principal to admit work on a retired connection.
+        guard phase == .ready, self.connectionID == connectionID else {
+            throw AuthenticatedPrimarySessionErrorV0.unauthenticated
+        }
 
         switch kind {
         case .routeObservation:
@@ -472,8 +480,7 @@ public actor AuthenticatedPrimarySessionV0 {
                 from: requestJSON
             )
             try replay.admit(request.messageID)
-            lastAuthenticatedTrafficMonotonicMilliseconds =
-                monotonicNowMilliseconds
+            recordAuthenticatedTraffic(at: monotonicNowMilliseconds)
             guard let routeObservationSession,
                   let routeObservationPublisher else {
                 throw unexpected(kind)
@@ -507,21 +514,44 @@ public actor AuthenticatedPrimarySessionV0 {
                 from: requestJSON
             )
             try replay.admit(request.messageID)
-            lastAuthenticatedTrafficMonotonicMilliseconds = monotonicNowMilliseconds
-            let snapshot = try await status.snapshot(hostState: hostState)
-            return try WireCodec.encode(HostStatusWireMapper.response(
-                for: request,
-                snapshot: snapshot,
-                responseMessageID: responseMessageID.rawValue,
-                sentAtUnixMilliseconds: wallNowUnixMilliseconds
-            ))
+            recordAuthenticatedTraffic(at: monotonicNowMilliseconds)
+            do {
+                let snapshot = try await status.snapshot(hostState: hostState)
+                // Sampling can suspend (for example, CPU counter deltas).
+                // Request-arrival time predates the completed observation and
+                // is not a valid response-send timestamp.
+                let responseTime = statusResponseClock.nowUnixMilliseconds()
+                guard responseTime >= snapshot.observedAtUnixMilliseconds,
+                      responseTime <= WireLimits.maximumSafeInteger else {
+                    throw AuthenticatedPrimarySessionErrorV0.invalidConfiguration
+                }
+                return try WireCodec.encode(HostStatusWireMapper.response(
+                    for: request,
+                    snapshot: snapshot,
+                    responseMessageID: responseMessageID.rawValue,
+                    sentAtUnixMilliseconds: responseTime
+                ))
+            } catch {
+                // A status provider is local, fallible infrastructure. Its
+                // failure must not classify an authenticated peer as a
+                // protocol violator or tear down unrelated Act/Control roles.
+                return try WireCodec.encode(WireEnvelope(
+                    messageID: responseMessageID,
+                    correlationID: request.messageID,
+                    sentAtUnixMilliseconds: wallNowUnixMilliseconds,
+                    body: ProtocolErrorResponseBody(
+                        code: "provider.unavailable",
+                        retry: .backoff
+                    )
+                ))
+            }
         case .capabilityRegistryRequest:
             let request = try WireCodec.decode(
                 WireEnvelope<CapabilityRegistryRequestBody>.self,
                 from: requestJSON
             )
             try replay.admit(request.messageID)
-            lastAuthenticatedTrafficMonotonicMilliseconds = monotonicNowMilliseconds
+            recordAuthenticatedTraffic(at: monotonicNowMilliseconds)
             return try await capabilities.dispatch(
                 requestJSON: requestJSON,
                 principal: principal,
@@ -534,7 +564,7 @@ public actor AuthenticatedPrimarySessionV0 {
                 from: requestJSON
             )
             try replay.admit(request.messageID)
-            lastAuthenticatedTrafficMonotonicMilliseconds = monotonicNowMilliseconds
+            recordAuthenticatedTraffic(at: monotonicNowMilliseconds)
             guard let audit else { throw unexpected(kind) }
             return try await audit.dispatch(
                 requestJSON: requestJSON,
@@ -546,7 +576,7 @@ public actor AuthenticatedPrimarySessionV0 {
              .operationCancel:
             let messageID = try messageID(from: requestJSON)
             try replay.admit(messageID)
-            lastAuthenticatedTrafficMonotonicMilliseconds = monotonicNowMilliseconds
+            recordAuthenticatedTraffic(at: monotonicNowMilliseconds)
             let context = try AuthenticatedOperationCommandContextV0(
                 principal: principal,
                 primaryConnectionID: connectionID,
@@ -559,7 +589,8 @@ public actor AuthenticatedPrimarySessionV0 {
                 context: context,
                 responseMessageID: responseMessageID
             )
-        case .interactiveSessionRequest, .interactiveSessionApprove,
+        case .interactiveDisplayCatalogRequest, .interactiveDisplaySelect,
+             .interactiveSessionRequest, .interactiveSessionApprove,
              .interactiveSessionEnd,
              .interactiveInitialSurfaceRequest,
              .interactiveInitialSurfaceAcknowledgement,
@@ -568,7 +599,7 @@ public actor AuthenticatedPrimarySessionV0 {
              .interactiveSurfaceAcknowledgement:
             let messageID = try messageID(from: requestJSON)
             try replay.admit(messageID)
-            lastAuthenticatedTrafficMonotonicMilliseconds = monotonicNowMilliseconds
+            recordAuthenticatedTraffic(at: monotonicNowMilliseconds)
             let context = try AuthenticatedInteractiveCommandContextV0(
                 principal: principal,
                 primaryConnectionID: connectionID,
@@ -599,6 +630,11 @@ public actor AuthenticatedPrimarySessionV0 {
             throw WireError.invalidFrame(reason: "invalid message ID")
         }
         return WireUUID(value)
+    }
+
+    private func recordAuthenticatedTraffic(at time: UInt64) {
+        lastAuthenticatedTrafficMonotonicMilliseconds = max(
+            lastAuthenticatedTrafficMonotonicMilliseconds ?? time, time)
     }
 
     private func unexpected(

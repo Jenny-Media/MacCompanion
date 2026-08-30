@@ -139,6 +139,22 @@ public enum LocalMenuPairingCommandWireCodecV1 {
         try decode(LocalGrantDecisionReceiptV0.self, from: data)
     }
 
+    public static func encodeDeviceRevocationReviewRequest(_ value: LocalDeviceRevocationReviewRequestV1) throws -> Data { try encode(value) }
+    public static func decodeDeviceRevocationReviewRequest(_ data: Data) throws -> LocalDeviceRevocationReviewRequestV1 { try decode(LocalDeviceRevocationReviewRequestV1.self, from: data) }
+    public static func encodeDeviceRevocationReviewReply(_ value: LocalDeviceRevocationReviewReplyV1) throws -> Data { try encode(value) }
+    public static func decodeDeviceRevocationReviewReply(_ data: Data) throws -> LocalDeviceRevocationReviewReplyV1 { try decode(LocalDeviceRevocationReviewReplyV1.self, from: data) }
+    public static func encodeDeviceRevocationCommand(_ value: LocalDeviceRevocationCommandV0) throws -> Data { try encode(value) }
+    public static func decodeDeviceRevocationCommand(_ data: Data) throws -> LocalDeviceRevocationCommandV0 { try decode(LocalDeviceRevocationCommandV0.self, from: data) }
+    public static func encodeDeviceRevokedReceipt(_ value: LocalDeviceRevokedReceiptV0) throws -> Data { try encode(value) }
+    public static func decodeDeviceRevokedReceipt(_ data: Data) throws -> LocalDeviceRevokedReceiptV0 { try decode(LocalDeviceRevokedReceiptV0.self, from: data) }
+
+    public static func encodeCapabilityGrantReviewRequest(_ value: LocalCapabilityGrantReviewRequestV1) throws -> Data { try encode(value) }
+    public static func decodeCapabilityGrantReviewRequest(_ data: Data) throws -> LocalCapabilityGrantReviewRequestV1 { try decode(LocalCapabilityGrantReviewRequestV1.self, from: data) }
+    public static func encodeCapabilityGrantReview(_ value: LocalCapabilityGrantReviewV1) throws -> Data { try encode(value) }
+    public static func decodeCapabilityGrantReview(_ data: Data) throws -> LocalCapabilityGrantReviewV1 { try decode(LocalCapabilityGrantReviewV1.self, from: data) }
+    public static func encodeCapabilityGrantDecision(_ value: LocalCapabilityGrantDecisionCommandV1) throws -> Data { try encode(value) }
+    public static func decodeCapabilityGrantDecision(_ data: Data) throws -> LocalCapabilityGrantDecisionCommandV1 { try decode(LocalCapabilityGrantDecisionCommandV1.self, from: data) }
+
     private static func encode<Value: Encodable>(
         _ value: Value
     ) throws -> Data {

@@ -5,13 +5,20 @@ import CompanionInteractiveRuntime
 import CompanionInteractiveShared
 import CoreGraphics
 import Foundation
+import OSLog
 import ScreenCaptureKit
+
+private let macInteractiveCaptureLoggerV1 = Logger(
+    subsystem: "media.jenny.maccompanion",
+    category: "interactive-capture"
+)
 
 public enum MacInteractiveControlRuntimeCompositionErrorV1:
     Error, Equatable, Sendable
 {
     case unavailable
     case bindingMismatch
+    case screenRecordingPermissionDenied
     case surfaceTransitionUnavailable
 }
 
@@ -26,7 +33,12 @@ public struct MacInteractiveControlRuntimeCompositionV1: Sendable {
         displaySelection: MacInteractiveOpaqueDisplaySelectionV1
     ) throws -> Self {
         let queue = try BoundedInteractiveMediaQueueV0(
-            maximumRecords: 8,
+            // Capture necessarily starts before the client can open its
+            // authenticated media role. Retain two seconds of 30 fps startup
+            // output (plus configuration/keyframe records) so an ordinary
+            // role handshake cannot be mistaken for terminal backpressure.
+            // The independent byte bound remains the hard memory ceiling.
+            maximumRecords: 64,
             maximumBytes: 16 * 1_024 * 1_024
         )
         let input = MacCoreGraphicsInteractiveInputAdapterV1()
@@ -116,7 +128,10 @@ private actor MacInteractiveDesktopCaptureAdapterV1:
     private let input: MacCoreGraphicsInteractiveInputAdapterV1
     private let runtimeReference: MacInteractiveRuntimeReferenceV1
     private let surfaceTargets: MacInteractiveSurfaceTargetOwnerV1
+    private let surfaceActivator =
+        MacInteractiveSelectedSurfaceActivatorV1()
     private var streamOwner: ScreenCaptureKitStreamOwnerV0?
+    private var streamGeneration: UUID?
     private var publisher: VideoToolboxInteractiveMediaPublisherV0?
     private var activeCommand: InteractiveRuntimeInstallCommandV0?
     private var preparedTransition: PreparedTransition?
@@ -136,6 +151,7 @@ private actor MacInteractiveDesktopCaptureAdapterV1:
     func startInteractiveCapture(
         _ command: InteractiveRuntimeInstallCommandV0
     ) async throws -> Set<SurfaceInteractionClass> {
+        macInteractiveCaptureLoggerV1.notice("capture preparation started")
         guard streamOwner == nil, publisher == nil,
               activeCommand == nil, preparedTransition == nil,
               command.surfaceDescriptor.kind == .desktop,
@@ -145,11 +161,32 @@ private actor MacInteractiveDesktopCaptureAdapterV1:
             throw MacInteractiveControlRuntimeCompositionErrorV1.unavailable
         }
         try command.validate()
+        guard CGPreflightScreenCaptureAccess() else {
+            macInteractiveCaptureLoggerV1.error(
+                "screen recording permission is unavailable"
+            )
+            // Control was already granted locally for this named device and
+            // freshly approved on the phone. Ask macOS for its independent
+            // capture consent, but never treat displaying that prompt as a
+            // grant or continue into capture in this attempt.
+            _ = CGRequestScreenCaptureAccess()
+            throw MacInteractiveControlRuntimeCompositionErrorV1
+                .screenRecordingPermissionDenied
+        }
+        macInteractiveCaptureLoggerV1.notice(
+            "screen recording permission is available"
+        )
         let physicalDisplayID = try displaySelection
             .resolvePhysicalDisplayID(
                 selectedDisplayID: command.lease.selectedDisplayID
             )
+        macInteractiveCaptureLoggerV1.notice(
+            "shareable content request started"
+        )
         let content = try await SCShareableContent.current
+        macInteractiveCaptureLoggerV1.notice(
+            "shareable content request completed"
+        )
         let revalidatedDisplayID = try displaySelection
             .resolvePhysicalDisplayID(
                 selectedDisplayID: command.lease.selectedDisplayID
@@ -174,6 +211,9 @@ private actor MacInteractiveDesktopCaptureAdapterV1:
             command: command,
             physicalDisplayID: physicalDisplayID
         )
+        macInteractiveCaptureLoggerV1.notice(
+            "interactive input configuration completed"
+        )
         do {
             try await surfaceTargets.bindInstalledLease(command)
             let binding = try InteractiveMediaPublicationBindingV0(
@@ -184,30 +224,84 @@ private actor MacInteractiveDesktopCaptureAdapterV1:
                 binding: binding,
                 runtime: runtime
             )
+            let generation = UUID()
             let owner = try Self.makeStreamOwner(
                 filter: ScreenCaptureKitCaptureConfigurationV0
                     .makeDesktopFilter(display: display),
                 profile: captureProfile,
                 publisher: publisher,
-                runtime: runtime
+                terminated: { [weak self] reason in
+                    Task {
+                        await self?.streamTerminated(
+                            reason,
+                            generation: generation
+                        )
+                    }
+                }
+            )
+            streamGeneration = generation
+            macInteractiveCaptureLoggerV1.notice(
+                "screen capture stream start requested"
             )
             try await owner.start()
+            macInteractiveCaptureLoggerV1.notice(
+                "screen capture stream started"
+            )
             streamOwner = owner
             self.publisher = publisher
             activeCommand = command
             return ready
         } catch {
+            streamGeneration = nil
+            macInteractiveCaptureLoggerV1.error(
+                "capture preparation failed: \(String(describing: error), privacy: .public)"
+            )
             input.retireConfiguration()
             await surfaceTargets.invalidate()
             throw error
         }
     }
 
+    func adoptInteractiveLeaseRenewal(
+        _ renewal: InteractiveRuntimeLeaseRenewalV0
+    ) async throws {
+        guard let activeCommand, let publisher,
+              preparedTransition == nil else {
+            throw MacInteractiveControlRuntimeCompositionErrorV1
+                .bindingMismatch
+        }
+        try renewal.validate(current: activeCommand.lease)
+        let replacementCommand = try InteractiveRuntimeInstallCommandV0(
+            protocolVersion: activeCommand.protocolVersion,
+            commandID: activeCommand.commandID,
+            lease: renewal.replacement,
+            deviceDisplayName: activeCommand.deviceDisplayName,
+            surfaceDescriptor: activeCommand.surfaceDescriptor,
+            sessionDeadlineMonotonicNanoseconds:
+                activeCommand.sessionDeadlineMonotonicNanoseconds
+        )
+        let replacementBinding = try InteractiveMediaPublicationBindingV0(
+            fence: Self.fence(renewal.replacement),
+            descriptor: activeCommand.surfaceDescriptor
+        )
+        guard await publisher.adoptLeaseRenewal(
+            to: replacementBinding
+        ) else {
+            throw MacInteractiveControlRuntimeCompositionErrorV1
+                .bindingMismatch
+        }
+        try await surfaceTargets.adoptRenewedLease(renewal)
+        self.activeCommand = replacementCommand
+        macInteractiveCaptureLoggerV1.notice(
+            "capture lease fence adopted counter=\(renewal.replacement.renewalCounter, privacy: .public)"
+        )
+    }
+
     func prepareInteractiveCaptureTransition(
         _ transition: InteractiveRuntimeSurfaceTransitionCommandV0
     ) async throws -> Set<SurfaceInteractionClass> {
         guard let activeCommand, let owner = streamOwner,
-              let publisher, preparedTransition == nil,
+              publisher != nil, preparedTransition == nil,
               transition.previousLeaseID
                 == activeCommand.lease.leaseID,
               transition.replacement.interactiveSessionID
@@ -219,7 +313,6 @@ private actor MacInteractiveDesktopCaptureAdapterV1:
             throw MacInteractiveControlRuntimeCompositionErrorV1
                 .bindingMismatch
         }
-        _ = publisher
         let physicalDisplayID = try displaySelection
             .resolvePhysicalDisplayID(
                 selectedDisplayID: transition.replacement.selectedDisplayID
@@ -235,8 +328,12 @@ private actor MacInteractiveDesktopCaptureAdapterV1:
             throw MacInteractiveControlRuntimeCompositionErrorV1
                 .bindingMismatch
         }
+        streamGeneration = nil
         try await owner.stop()
         streamOwner = nil
+        // In-flight old-source output keeps only its old publisher/fence.
+        // Never let a delayed completion mutate replacement media state.
+        publisher = nil
         input.retireConfiguration()
         let replacementCommand = try InteractiveRuntimeInstallCommandV0(
             protocolVersion: activeCommand.protocolVersion,
@@ -252,7 +349,8 @@ private actor MacInteractiveDesktopCaptureAdapterV1:
             physicalDisplayID: physicalDisplayID,
             inputBounds: resolved.inputBounds,
             inputBackingScaleFactor:
-                resolved.inputBackingScaleFactor
+                resolved.inputBackingScaleFactor,
+            activationTarget: resolved.localActivationTarget
         )
         let binding = try InteractiveMediaPublicationBindingV0(
             fence: Self.fence(transition.replacement),
@@ -269,39 +367,65 @@ private actor MacInteractiveDesktopCaptureAdapterV1:
     }
 
     func activatePreparedInteractiveCaptureTransition(
-        _ transition: InteractiveRuntimeSurfaceTransitionCommandV0
+        _ transition: InteractiveRuntimeSurfaceTransitionCommandV0,
+        mediaSequenceBeforeTransition: UInt64
     ) async throws {
         guard let prepared = preparedTransition,
               prepared.command == transition,
               streamOwner == nil,
-              let publisher,
+              publisher == nil,
               let runtime = runtimeReference.value() else {
             throw MacInteractiveControlRuntimeCompositionErrorV1
                 .bindingMismatch
         }
-        guard await publisher.transition(
-            to: prepared.binding,
-            presentationTimeNanoseconds:
-                DispatchTime.now().uptimeNanoseconds
-        ) else {
-            throw MacInteractiveControlRuntimeCompositionErrorV1
-                .unavailable
+        switch prepared.resolved.descriptor.kind {
+        case .application, .window:
+            guard prepared.resolved.localActivationTarget != nil else {
+                throw MacInteractiveControlRuntimeCompositionErrorV1
+                    .bindingMismatch
+            }
+        case .desktop:
+            guard prepared.resolved.localActivationTarget == nil else {
+                throw MacInteractiveControlRuntimeCompositionErrorV1
+                    .bindingMismatch
+            }
+        case .focusedRegion:
+            break
         }
+        try await surfaceActivator.activate(
+            prepared.resolved.localActivationTarget
+        )
+        let publisher = VideoToolboxInteractiveMediaPublisherV0(
+            binding: prepared.binding,
+            runtime: runtime,
+            resumingAfterMediaSequence: mediaSequenceBeforeTransition
+        )
+        let generation = UUID()
         let owner = try Self.makeStreamOwner(
             filter: prepared.resolved.filter,
             profile: prepared.resolved.profile,
             sourceRect: prepared.resolved.sourceRect,
             publisher: publisher,
-            runtime: runtime
+            terminated: { [weak self] reason in
+                Task {
+                    await self?.streamTerminated(
+                        reason,
+                        generation: generation
+                    )
+                }
+            }
         )
+        streamGeneration = generation
         try await owner.start()
         try await surfaceTargets.commit(transition)
         streamOwner = owner
+        self.publisher = publisher
         activeCommand = prepared.replacementCommand
         preparedTransition = nil
     }
 
     func stopInteractiveCapture() async throws {
+        streamGeneration = nil
         if let owner = streamOwner {
             let phase = await owner.phase()
             switch phase {
@@ -322,12 +446,120 @@ private actor MacInteractiveDesktopCaptureAdapterV1:
         await surfaceTargets.invalidate()
     }
 
+    /// ScreenCaptureKit stops an otherwise healthy display stream when the
+    /// console locks. Keep the approved session and its renewing lease, but
+    /// retire input immediately and rebuild capture only after the platform
+    /// can produce a new stream. Every attempt inserts a decoder
+    /// discontinuity; the replacement encoder must then publish fresh
+    /// configuration and a clean keyframe before the client renders again.
+    private func streamTerminated(
+        _ reason: ScreenCaptureKitStreamTerminationReasonV0,
+        generation: UUID
+    ) async {
+        guard streamGeneration == generation else { return }
+        streamGeneration = nil
+        streamOwner = nil
+        input.retireConfiguration()
+
+        guard reason == .captureStoppedBySystem,
+              activeCommand != nil, publisher != nil,
+              preparedTransition == nil else {
+            if let runtime = runtimeReference.value() {
+                try? await runtime.invalidateAgentAuthority()
+            }
+            return
+        }
+        macInteractiveCaptureLoggerV1.notice(
+            "system-stopped capture scheduled for recovery"
+        )
+        scheduleCaptureRecovery()
+    }
+
+    private nonisolated func scheduleCaptureRecovery() {
+        Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(500))
+            await self?.recoverSystemStoppedCapture()
+        }
+    }
+
+    private func recoverSystemStoppedCapture() async {
+        guard streamOwner == nil, streamGeneration == nil,
+              let activeCommand, let publisher,
+              preparedTransition == nil else { return }
+        do {
+            let physicalDisplayID = try displaySelection
+                .resolvePhysicalDisplayID(
+                    selectedDisplayID:
+                        activeCommand.lease.selectedDisplayID
+                )
+            let content = try await SCShareableContent.current
+            guard let display = content.displays.first(where: {
+                $0.displayID == physicalDisplayID
+            }) else {
+                throw MacInteractiveControlRuntimeCompositionErrorV1
+                    .unavailable
+            }
+            let profile = try ScreenCaptureKitCaptureProfileV0(
+                width: Int(activeCommand.surfaceDescriptor.encodedWidth),
+                height: Int(activeCommand.surfaceDescriptor.encodedHeight),
+                framesPerSecond: 30,
+                queueDepth: 3
+            )
+            _ = try input.configure(
+                command: activeCommand,
+                physicalDisplayID: physicalDisplayID
+            )
+            guard await publisher.publishDiscontinuity(
+                presentationTimeNanoseconds:
+                    DispatchTime.now().uptimeNanoseconds
+            ) else {
+                throw MacInteractiveControlRuntimeCompositionErrorV1
+                    .unavailable
+            }
+            let generation = UUID()
+            let owner = try Self.makeStreamOwner(
+                filter: ScreenCaptureKitCaptureConfigurationV0
+                    .makeDesktopFilter(display: display),
+                profile: profile,
+                publisher: publisher,
+                terminated: { [weak self] reason in
+                    Task {
+                        await self?.streamTerminated(
+                            reason,
+                            generation: generation
+                        )
+                    }
+                }
+            )
+            streamGeneration = generation
+            try await owner.start()
+            guard streamGeneration == generation,
+                  await owner.phase() == .active else { return }
+            streamOwner = owner
+            macInteractiveCaptureLoggerV1.notice(
+                "system-stopped capture recovered"
+            )
+        } catch {
+            streamGeneration = nil
+            streamOwner = nil
+            input.retireConfiguration()
+            macInteractiveCaptureLoggerV1.notice(
+                "system-stopped capture retry pending error=\(String(describing: error), privacy: .public)"
+            )
+            guard self.activeCommand != nil, self.publisher != nil,
+                  preparedTransition == nil else { return }
+            scheduleCaptureRecovery()
+        }
+    }
+
     private static func makeStreamOwner(
         filter: sending SCContentFilter,
         profile: ScreenCaptureKitCaptureProfileV0,
         sourceRect: CGRect? = nil,
         publisher: VideoToolboxInteractiveMediaPublisherV0,
-        runtime: InteractiveMenuRuntimeOwnerV0
+        terminated: @escaping @Sendable (
+            ScreenCaptureKitStreamTerminationReasonV0
+        ) -> Void
     ) throws -> ScreenCaptureKitStreamOwnerV0 {
         let encoderProfile = try VideoToolboxH264EncoderProfileV0(
             capture: profile,
@@ -342,7 +574,10 @@ private actor MacInteractiveDesktopCaptureAdapterV1:
             profile: encoderProfile,
             session: compression,
             output: { sample in await publisher.publish(sample) },
-            terminal: { _ in
+            terminal: { reason in
+                macInteractiveCaptureLoggerV1.error(
+                    "interactive encoder terminated reason=\(reason.rawValue, privacy: .public)"
+                )
                 Task {
                     await streamReference.value()?.encoderTerminated()
                 }
@@ -356,8 +591,11 @@ private actor MacInteractiveDesktopCaptureAdapterV1:
         let owner = ScreenCaptureKitStreamOwnerV0(
             session: session,
             encoder: encoder,
-            terminal: { [weak runtime] _ in
-                Task { try? await runtime?.invalidateAgentAuthority() }
+            terminal: { reason in
+                macInteractiveCaptureLoggerV1.error(
+                    "interactive capture terminated reason=\(reason.rawValue, privacy: .public)"
+                )
+                terminated(reason)
             }
         )
         streamReference.install(owner)

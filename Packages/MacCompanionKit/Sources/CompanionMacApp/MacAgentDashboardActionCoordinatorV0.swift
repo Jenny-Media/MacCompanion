@@ -152,7 +152,8 @@ public enum MacAgentDashboardActionPolicyV0 {
         case .startPairing:
             administrationReady
                 && status.networkState == .listening
-                && status.pairedDeviceCount == 0
+                && status.pairedDeviceCount
+                    < LocalAgentStatusSnapshot.maximumPairedDeviceCount
         case .openDevices:
             administrationReady && status.pairedDeviceCount > 0
         case .openActivityHistory:

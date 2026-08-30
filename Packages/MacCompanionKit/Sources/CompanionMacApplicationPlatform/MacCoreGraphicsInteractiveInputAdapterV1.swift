@@ -38,6 +38,8 @@ public final class MacCoreGraphicsInteractiveInputAdapterV1:
     private struct Configuration {
         let fence: InteractiveCommandFence
         let geometry: MacDisplayGeometrySnapshotV0
+        let activationTarget:
+            ScreenCaptureKitLocalActivationTargetV0?
     }
 
     private let lock = NSLock()
@@ -48,6 +50,8 @@ public final class MacCoreGraphicsInteractiveInputAdapterV1:
     private let cursorPosition: @Sendable () -> CGPoint?
     private let constructor = CoreGraphicsNoPostInputConstructorV0()
     private let sink: any CoreGraphicsConstructedEventSinkV0
+    private let surfaceActivator:
+        MacInteractiveSelectedSurfaceActivatorV1
     private var planner = MacInteractiveInputPlannerV0()
     private var clickStateTracker = MacInteractiveClickStateTrackerV0()
     private var configuration: Configuration?
@@ -60,7 +64,8 @@ public final class MacCoreGraphicsInteractiveInputAdapterV1:
                 (Int(CGDisplayPixelsWide($0)), Int(CGDisplayPixelsHigh($0)))
             },
             cursorPosition: { CGEvent(source: nil)?.location },
-            sink: MacCoreGraphicsPostingSinkV1()
+            sink: MacCoreGraphicsPostingSinkV1(),
+            surfaceActivator: MacInteractiveSelectedSurfaceActivatorV1()
         )
     }
 
@@ -72,20 +77,26 @@ public final class MacCoreGraphicsInteractiveInputAdapterV1:
             @escaping @Sendable (CGDirectDisplayID)
                 -> (wide: Int, high: Int),
         cursorPosition: @escaping @Sendable () -> CGPoint?,
-        sink: any CoreGraphicsConstructedEventSinkV0
+        sink: any CoreGraphicsConstructedEventSinkV0,
+        surfaceActivator:
+            MacInteractiveSelectedSurfaceActivatorV1 =
+                MacInteractiveSelectedSurfaceActivatorV1()
     ) {
         self.preflightPostEventAccess = preflightPostEventAccess
         self.displayBounds = displayBounds
         self.displayPixels = displayPixels
         self.cursorPosition = cursorPosition
         self.sink = sink
+        self.surfaceActivator = surfaceActivator
     }
 
     package func configure(
         command: InteractiveRuntimeInstallCommandV0,
         physicalDisplayID: CGDirectDisplayID,
         inputBounds: CGRect? = nil,
-        inputBackingScaleFactor: Double? = nil
+        inputBackingScaleFactor: Double? = nil,
+        activationTarget:
+            ScreenCaptureKitLocalActivationTargetV0? = nil
     ) throws -> Set<SurfaceInteractionClass> {
         try lock.withLock {
             guard configuration == nil,
@@ -150,9 +161,17 @@ public final class MacCoreGraphicsInteractiveInputAdapterV1:
                 rotation: command.surfaceDescriptor.rotation
             )
             let fence = Self.fence(command.lease)
+            guard Self.validActivationBinding(
+                activationTarget,
+                descriptorKind: command.surfaceDescriptor.kind
+            ) else {
+                throw MacCoreGraphicsInteractiveInputAdapterErrorV1
+                    .bindingMismatch
+            }
             configuration = Configuration(
                 fence: fence,
-                geometry: geometry
+                geometry: geometry,
+                activationTarget: activationTarget
             )
             return requested
         }
@@ -160,7 +179,35 @@ public final class MacCoreGraphicsInteractiveInputAdapterV1:
 
     public func postInteractiveInput(
         _ envelope: InteractiveInputEnvelope
-    ) throws {
+    ) async throws {
+        let activationTarget = try lock.withLock {
+            guard let configuration else {
+                throw MacCoreGraphicsInteractiveInputAdapterErrorV1
+                    .unavailable
+            }
+            try envelope.validate()
+            guard envelope.interactiveSessionID.rawValue
+                    == configuration.fence.interactiveSessionID,
+                  envelope.authorizationEpoch
+                    == configuration.fence.authorizationEpoch,
+                  envelope.surfaceID.rawValue
+                    == configuration.fence.surfaceID,
+                  envelope.surfaceRevision.rawValue
+                    == configuration.fence.surfaceRevision.rawValue,
+                  envelope.coordinateSpaceRevision.rawValue
+                    == configuration.fence.coordinateRevision.rawValue else {
+                throw MacCoreGraphicsInteractiveInputAdapterErrorV1
+                    .bindingMismatch
+            }
+            return Self.requiresSelectedSurfaceActivation(envelope.input)
+                ? configuration.activationTarget : nil
+        }
+        do {
+            try await surfaceActivator.activate(activationTarget)
+        } catch {
+            throw MacCoreGraphicsInteractiveInputAdapterErrorV1
+                .bindingMismatch
+        }
         try lock.withLock {
             guard let configuration else {
                 throw MacCoreGraphicsInteractiveInputAdapterErrorV1
@@ -275,6 +322,33 @@ public final class MacCoreGraphicsInteractiveInputAdapterV1:
             surfaceRevision: lease.surfaceRevision,
             coordinateRevision: lease.coordinateRevision
         )
+    }
+
+    private static func requiresSelectedSurfaceActivation(
+        _ input: InteractiveInputPayload
+    ) -> Bool {
+        switch input {
+        case .pointerMove, .reset:
+            false
+        case .button, .scroll, .physicalKey, .modifiers, .text:
+            true
+        }
+    }
+
+    private static func validActivationBinding(
+        _ target: ScreenCaptureKitLocalActivationTargetV0?,
+        descriptorKind: InteractiveSurfaceKind
+    ) -> Bool {
+        switch descriptorKind {
+        case .desktop:
+            target == nil
+        case .application:
+            if case .application = target { true } else { false }
+        case .window:
+            if case .window = target { true } else { false }
+        case .focusedRegion:
+            true
+        }
     }
 }
 #endif

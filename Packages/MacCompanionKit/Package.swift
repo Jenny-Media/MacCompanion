@@ -460,7 +460,8 @@ let package = Package(
             name: "CompanionClientUITests",
             dependencies: [
                 "CompanionClient", "CompanionClientNetworkPlatform",
-                "CompanionClientUI", "CompanionDiscovery",
+                "CompanionClientPlatform", "CompanionClientUI",
+                "CompanionDiscovery",
                 "CompanionDomain", "CompanionInteractiveClient",
                 "CompanionInteractiveShared",
                 "CompanionInteractiveWire", "CompanionPresentation",
@@ -498,7 +499,7 @@ let package = Package(
             name: "CompanionClientPlatformTests",
             dependencies: [
                 "CompanionClient", "CompanionClientPlatform",
-                "CompanionSecurity",
+                "CompanionInteractiveClient", "CompanionSecurity",
             ]
         ),
         .testTarget(
@@ -560,7 +561,7 @@ let package = Package(
             name: "CompanionAgentTests",
             dependencies: [
                 "CompanionAgent", "CompanionAgentNetworkPlatform", "CompanionAuthentication", "CompanionClient", "CompanionDiscovery", "CompanionDomain", "CompanionHost", "CompanionIPC",
-                "CompanionHostSession", "CompanionInteractiveHost", "CompanionInteractiveShared",
+                "CompanionHostPlatform", "CompanionHostSession", "CompanionInteractiveClient", "CompanionInteractiveHost", "CompanionInteractiveShared",
                 "CompanionInteractiveWire", "CompanionLifecycle", "CompanionPersistence",
                 "CompanionNativeProviders", "CompanionNetworkPlatform", "CompanionOperations", "CompanionPairing", "CompanionSecurity", "CompanionTransport", "CompanionWire",
             ]

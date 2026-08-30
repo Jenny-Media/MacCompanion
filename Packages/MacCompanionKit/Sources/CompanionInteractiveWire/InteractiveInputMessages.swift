@@ -276,9 +276,6 @@ public struct InteractiveInputEnvelope: Codable, Equatable, Sendable {
               focusRevision.map({ $0.rawValue >= 1 }) ?? true else {
             throw WireError.invalidFrame(reason: "partial or zero focus fence")
         }
-        if input.kind == .text, focusToken == nil {
-            throw WireError.invalidFrame(reason: "text input requires exact focus fence")
-        }
         try input.validate()
     }
 }

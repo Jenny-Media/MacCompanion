@@ -97,4 +97,48 @@ private func desktopPreparationCommandV1(
         )
     }
 }
+
+@available(macOS 14.0, *)
+@Test func initialDesktopPreparerReplacesUnleasedRetryDescriptor()
+    async throws
+{
+    let selectedDisplayID = UUID()
+    let first = try desktopPreparationCommandV1(
+        selectedDisplayID: selectedDisplayID
+    )
+    let retry = try desktopPreparationCommandV1(
+        selectedDisplayID: selectedDisplayID
+    )
+    let surfaceTargets = MacInteractiveSurfaceTargetOwnerV1(
+        excludedProcessIdentifiers: [],
+        identifier: { UUID() }
+    )
+    let preparer = MacInteractiveInitialDesktopPreparerV1(
+        resolveDisplay: { selected in
+            #expect(selected == selectedDisplayID)
+            return CGMainDisplayID()
+        },
+        displayBounds: { _ in
+            CGRect(x: 0, y: 0, width: 1_440, height: 900)
+        },
+        pixelDimensions: { _ in (2_880, 1_800) },
+        displayRotation: { _ in 0 },
+        surfaceTargets: surfaceTargets,
+        identifier: { UUID() }
+    )
+
+    _ = try await preparer.prepareInitialInteractiveDesktop(
+        first,
+        nowMonotonicNanoseconds: 2_000_000_000
+    )
+    let replacement = try await preparer.prepareInitialInteractiveDesktop(
+        retry,
+        nowMonotonicNanoseconds: 2_001_000_000
+    )
+
+    #expect(replacement.correlationID == retry.commandID)
+    #expect(replacement.descriptor.interactiveSessionID
+        == retry.interactiveSessionID)
+    #expect(replacement.descriptor.createdAtMonotonicMilliseconds == 2_001)
+}
 #endif

@@ -345,6 +345,17 @@ verification, invalidate the connection on role/version failure, and discard
 the QR response when the local presentation closes. It must never make the
 encoded QR available to diagnostic or crash-reporting surfaces.
 
+Loss of the exact authenticated menu generation also invalidates its Agent-side
+QR presentation, not just a pending approval review. Tombstone an uncommitted
+session and erase its receipt; a replacement authenticated menu can create a
+fresh QR, while an old create command cannot redisplay the previous secret.
+Fence an in-flight create before awaiting cleanup and compensate any session
+created by its late completion. Do not cancel a durable approval commit already
+in progress, change existing paired-device grants, or stop the shared listener
+and Observe service. If clock sampling or cancellation fails unexpectedly,
+disable further QR creation in that handler rather than claiming retirement.
+These are local lifecycle rules, not new wire fields or signing inputs.
+
 The permanent XPC transport carries the three pairing mutations in the closed
 `command.pairing-session.create`, `command.pairing-session.dismiss`, and
 `command.pairing-decision.resolve` envelopes. Each request and successful
@@ -462,6 +473,13 @@ approved decision; decline requires both fields to be JSON `null`. Missing
 fields, false approval, partial commit, absent menu UI, expired review, or a
 response that predates the decision fail closed. Review and decision payloads
 are excluded from diagnostic/CLI/log/crash-report surfaces.
+
+After validating that exact decision receipt, the menu presentation must erase
+the QR receipt bound to the same pairing ID and close its sheet without sending
+a redundant dismissal command. A mismatched or delayed receipt cannot close a
+different QR presentation. This local presentation convergence changes no
+durable pairing state; the Agent decision remains the sole authority that
+consumes the pairing session.
 
 The bundle-independent delivery boundary is connection-scoped and receives no
 caller-supplied role, audit token, endpoint name, or authorization flag. A
@@ -588,6 +606,22 @@ fence. Transport-driven terminal failure latches a finish request even if the
 router has not installed its terminal fence yet. Owner-driven endpoint
 retirement is idempotent and does not recursively request that fence.
 
+An endpoint-originated terminal request must fence the exact router generation
+before returning an operation failure, but must not await product teardown.
+Teardown can join the very renewal/input operation reporting that failure.
+The router therefore retains one asynchronous product-loss notification after
+installing its terminal fence; its external finish barrier joins both endpoint
+retirement and that notification. Stale generation requests cannot notify or
+retire a replacement. Returning from the terminal request proves admission is
+closed, not that teardown is complete; no retry, grant, or success is implied.
+
+Endpoint failure retires only that authenticated connection generation, not
+the Agent's reusable presentation router. A fresh, higher authenticated
+generation may bind only after prior endpoint retirement and its product-loss
+notification finish. Failed or stale facets never regain authority, and late
+failure callbacks cannot retire the replacement. Explicit Agent/router shutdown
+remains permanently terminal and joins all retained cleanup notifications.
+
 The menu client installs its incoming receiver before session activation, but
 admits no presentation until the exact Agent authentication and menu-readiness
 exchange complete. It synchronously copies borrowed XPC data or UUID bytes,
@@ -677,6 +711,11 @@ and signed integer `version = 1`. The payload bytes are closed canonical JSON
 and the typed value is validated again at the runtime boundary. The exact
 indexed fixture is `local-xpc-interactive-lease-transport-v0.1.json`.
 
+At the Swift/C transport boundary, the payload-free renewal acknowledgement is
+represented by a literal null payload pointer and zero length. An empty
+Foundation `Data` base-address sentinel is not equivalent: passing a non-null
+pointer would imply a forbidden payload field and must fail closed.
+
 The permanent Agent installs one stable fail-closed runtime authority in its
 primary dispatcher before local XPC exists. Only an exact authenticated,
 menu-ready generation may bind that authority to its cached opaque Interactive
@@ -754,6 +793,14 @@ optional opaque selected-display UUID. Success is the exact
 `runtime.interactive.admission.publish.ack` carrying a completely correlated
 `LocalInteractiveAdmissionPublishedReceiptV1`.
 
+In both publication and receipt, `selectedDisplayID` is a required JSON key:
+its value is an opaque UUID string or explicit `null`. Encoders must include
+the key when there is no selected display; omission remains malformed. A
+valid `null` publication and correlated receipt must round-trip without
+retiring the authenticated local connection. It withdraws display admission,
+not the independent Observe channel. Final runtime preparation must reread
+this value and reject a lease if admission changed while preparing.
+
 The first publication for one authenticated transport generation has revision
 1. A replacement increments by exactly one and retains the same menu-process
 UUID. An exact command replay returns the retained receipt; skipped, stale, or
@@ -789,6 +836,23 @@ window. It contains no client key, grant list, route, address, remote name,
 screen/input content, or arbitrary consequence text. Receiving a review does
 not revoke or suspend anything.
 
+The signed `command.device-administration` transport also accepts the closed
+`LocalDeviceRevocationReviewRequestV1` (local-IPC version, command UUID, exact
+device UUID and requested-at wall time), returning
+`LocalDeviceRevocationReviewReplyV1` (correlation UUID and the Agent-issued
+review). Both review request and `LocalDeviceRevocationCommandV0` require
+`administerDevices`, accepted menu readiness and the existing shared
+single-flight command gate. The reply must correlate the request and device;
+the review starts no earlier than the request. Requests must be less than five
+minutes old and not in the future. Exact request retry within its review window
+returns the retained reply; changed reuse of the retained request ID is rejected. A
+fresh request replaces only the same menu generation's unconfirmed review.
+Menu replacement/loss withdraws that generation's unconfirmed review without
+affecting a successor; accepted durable revocation remains reconcilable and
+its exact command retry can obtain the stored receipt after reconnect/restart.
+The existing four-second Agent/five-second client deadlines, handled failure,
+malformed-response invalidation and no-secret diagnostics rules apply.
+
 Explicit confirmation creates `LocalDeviceRevocationCommandV0` with a distinct
 random command ID, the complete immutable review, and a confirmation time in
 the half-open review window. Before awaiting any teardown or storage work, the
@@ -796,6 +860,12 @@ Agent installs an independent security-administration ingress fence. It closes
 the live primary transport and semantic session, which withdraws route
 observation and ends all pending approvals, role channels, and Interactive
 authority. A lifecycle-ready callback cannot clear this fence.
+
+Pending Control installation is fenced before awaiting its cleanup: primary
+closure must reach the exact runtime termination fence before any serialized
+surface cleanup that could wait behind Desktop preparation. A late prepared
+descriptor cannot start capture after that fence. Already-sent installs require
+four-effect cleanup instead of being accepted as active.
 
 With ingress still denied, the Agent first persists the complete accepted
 command as one schema-v8 pending intent, without changing authorization. It
@@ -927,6 +997,43 @@ exact durable resume. Successful recovery may leave the completed local result
 visible, but the connection-scoped admission returns to idle.
 
 ## Local grant decision
+
+### Published Act capability review over signed XPC
+
+`LocalCapabilityGrantReviewRequestV1` requests review of one named published
+capability for one retained device. It carries protocol version, command ID,
+device ID, capability ID and request time; it cannot supply descriptors, effects,
+grants or revisions. The Agent returns `LocalCapabilityGrantReviewV1` with the
+correlation/review/device IDs, confirmed local name, all three current revisions,
+complete canonical current grants, current registry generation, exact published
+descriptor and a five-minute created/expiry window. Control's reserved grant is
+not an Act capability and is rejected by this path.
+The descriptor is a closed object with `capability` (the existing complete
+`CapabilityDiscoveryDescriptorV1`), `providerID`, `providerVersion`,
+`providerGeneration`, and `executionRevision`; reconstructing it must pass the
+same domain descriptor/schema/effect validation as publication.
+
+This uses the existing bounded `command.device-administration` transport:
+review requires `administerDevices`; decision requires `decideGrantExpansion`.
+An Act decision is the closed `LocalCapabilityGrantDecisionCommandV1` envelope
+(`kind = capabilityGrantDecision`, `decision = LocalGrantDecisionCommandV0`),
+distinct from the existing Control decision payload. All existing signature,
+readiness, single-flight, exact-key, canonical, size and timeout rules apply.
+No cryptographic transcript changes. Merely requesting a review grants nothing.
+
+One handler belongs to one authenticated menu generation. Exact request retry
+returns its unexpired retained review; changed retries, stale device/registry
+facts, expiry, unknown capabilities and unavailable providers fail closed.
+Generation loss withdraws pending reviews. Before approval, the handler fences
+primary ingress; the shared capability publication/decision owner revalidates
+the registry and commits the existing exact SQLite grant transaction. It refreshes
+inventory before releasing ingress. Decline does not fence primary or mutate
+grants. Pending decisions are consumed even on failure. A bounded exact-command
+receipt cache permits a lost-response retry within that handler, but never turns
+a decline into approval or re-executes a completed mutation. Restart replay is
+not promised by this in-memory cache; reconnect/review must inspect durable state.
+Observe, Act and Control remain independent; granting Act adds only the reviewed
+published capability, retaining every existing grant unchanged.
 
 `LocalGrantDecisionCommandV0` is emitted only from an explicit local decision on an Agent-issued review. It binds command and review IDs, retained device ID, the locally confirmed device name shown during review, approve/decline, current authorization/grant/policy revisions, the exact canonical current and proposed grant sets, and a non-negative safe-integer decision time. The proposed set must be a strict superset of the current set even for decline, so the Agent can match the exact review that was rejected rather than accepting an unbound denial.
 

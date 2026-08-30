@@ -4,6 +4,12 @@ import CompanionInteractiveWire
 import CompanionNetworkPlatform
 import Dispatch
 import Foundation
+import OSLog
+
+private let agentInteractiveRoleDataPumpLoggerV0 = Logger(
+    subsystem: "media.jenny.maccompanion.agent",
+    category: "interactive-role-data-pump"
+)
 
 public enum AgentInteractiveRoleDataPumpErrorV0:
     Error, Equatable, Sendable
@@ -192,7 +198,13 @@ public actor AgentInteractiveRoleDataPumpV0 {
                     pair: pair,
                     nowMonotonicNanoseconds: try sampleClock()
                 )
+                agentInteractiveRoleDataPumpLoggerV0.debug(
+                    "input route accepted sequence=\(envelope.sequence, privacy: .public) kind=\(envelope.input.kind.rawValue, privacy: .public)"
+                )
             } catch {
+                agentInteractiveRoleDataPumpLoggerV0.error(
+                    "input route rejected sequence=\(envelope.sequence, privacy: .public) kind=\(String(describing: envelope.input), privacy: .private(mask: .hash)) error=\(String(describing: error), privacy: .public)"
+                )
                 throw AgentInteractiveRoleDataPumpErrorV0.routeFailed
             }
         }

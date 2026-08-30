@@ -80,6 +80,31 @@ Mac Companion is a private control companion for personal Macs, especially alway
 
 ## Current status
 
+For unattended local feature checks, run `bash scripts/verify_simulator_features.sh`
+with an iOS Simulator booted. The [Simulator test guide](Experiments/ClientUIHarness/README.md)
+covers the isolated loopback video/input lane and closed Observe/Act UI checks.
+It does not replace real-device pairing, privacy-permission, or release acceptance.
+An [opt-in real Mac test lane](Experiments/LiveControlLab/README.md) also captures
+only a disposable test window and verifies OS-delivered input in its editor;
+it does not control other apps or automatically grant privacy permissions.
+The [real-Mac automation evidence](docs/evidence/2026-08-28-real-mac-simulator-lab.md)
+records coverage, race repairs, repeatability, and remaining physical checks.
+The [authenticated journey](docs/evidence/2026-08-28-authenticated-simulator-journey.md)
+adds actual pinned TLS, pairing, saved-state restarts, verified Observe, and
+Control recovery. Run `MACCOMPANION_LAB_SUITE=journey bash scripts/verify_simulator_features.sh`
+for that focused checkpoint; every run writes a content-free `report.json`.
+The [Agent-renewal checkpoint](docs/evidence/2026-08-28-agent-renewal-simulator.md)
+extends authenticated testing to the shipping renewal scheduler, lost-receipt
+and expiry recovery, and active-stream failure propagation. Select
+`MACCOMPANION_LAB_SUITE=journey-renewal` for that regression.
+
+For signed, disposable Agent startup and local-XPC checks, run
+`python3 scripts/verify_agent_xpc.py`. The
+[Agent/XPC checkpoint](docs/evidence/2026-08-28-isolated-agent-xpc.md) records
+24 checks passed three times, cleanup verification, and the remaining full
+enabled-Agent and Interactive-XPC integration gaps. This lane does not touch
+the installed app/Agent or physical iPhone.
+
 The reconciled design baseline and bundle-independent trust kernel are present. `MacCompanionKit` now includes strict protocol/security/persistence authorities; host and QR-pinned client pairing; host and client application authentication; a single replay-, liveness-, and durable-principal-fenced host primary session; a paired-identity-fenced client primary handshake; separate compile-checked Network.framework host and client byte pumps behind independently verified TLS handoffs; host status; bounded Act admission/execution; privacy-limited granted-capability discovery; schema-verified client catalog/result models; the conservative native audio-mute candidate; transport/discovery/lifecycle/presentation models; and both host and client Interactive Control session, surface, media, input, approval, and channel authorities.
 
 The macOS lifecycle path also includes a [two-role login-effect executor](docs/evidence/2026-08-20-login-role-effect-executor-construction.md) that registers Agent before menu, compensates partial enablement in reverse, attempts both disable unregistrations, converges idempotent and effect-then-error platform states through exact postconditions, and uses a label-free `SMAppService` adapter without treating registration as process readiness.
@@ -531,3 +556,8 @@ DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer \
 MACCOMPANION_DISABLE_SWIFTPM_SANDBOX=1 \
 bash scripts/validate.sh
 ```
+
+Use `python3 scripts/verify_agent_startup_stress.py --iterations 25` after the
+full matrix for the bounded current-source launch/menu-handshake reliability
+gate. It registers only a UUID-scoped disposable service and never selects the
+installed Agent.

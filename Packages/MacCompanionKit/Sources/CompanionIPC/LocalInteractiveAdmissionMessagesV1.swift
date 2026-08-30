@@ -69,6 +69,17 @@ public struct LocalInteractiveAdmissionPublicationV1:
         self.selectedDisplayID = selectedDisplayID
     }
 
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(protocolVersion, forKey: .protocolVersion)
+        try container.encode(commandID, forKey: .commandID)
+        try container.encode(menuAppGeneration, forKey: .menuAppGeneration)
+        try container.encode(revision, forKey: .revision)
+        // The closed wire shape requires this key even when Control has no
+        // selected display. Synthesized Optional encoding omits nil keys.
+        try container.encode(selectedDisplayID, forKey: .selectedDisplayID)
+    }
+
     public init(from decoder: Decoder) throws {
         try requireLocalInteractiveAdmissionKeysV1(
             decoder,
@@ -129,6 +140,15 @@ public struct LocalInteractiveAdmissionPublishedReceiptV1:
         self.menuAppGeneration = menuAppGeneration
         self.revision = revision
         self.selectedDisplayID = selectedDisplayID
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(protocolVersion, forKey: .protocolVersion)
+        try container.encode(correlationID, forKey: .correlationID)
+        try container.encode(menuAppGeneration, forKey: .menuAppGeneration)
+        try container.encode(revision, forKey: .revision)
+        try container.encode(selectedDisplayID, forKey: .selectedDisplayID)
     }
 
     public init(from decoder: Decoder) throws {

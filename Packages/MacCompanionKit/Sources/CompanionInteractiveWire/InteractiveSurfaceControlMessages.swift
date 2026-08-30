@@ -292,7 +292,7 @@ public struct InteractiveSurfaceSelectBodyV0: WireBody {
     private enum CodingKeys: String, CodingKey {
         case interactiveSessionID, authorizationEpoch, currentSurfaceID
         case expectedSurfaceRevision, expectedCoordinateSpaceRevision
-        case targetKind, targetToken, sequence
+        case targetKind, targetToken, targetDisplayID, sequence
     }
 
     public static let kind = WireMessageKind.interactiveSurfaceSelect
@@ -303,6 +303,7 @@ public struct InteractiveSurfaceSelectBodyV0: WireBody {
     public let expectedCoordinateSpaceRevision: CoordinateSpaceRevision
     public let targetKind: InteractiveSurfaceKind
     public let targetToken: WireUUID?
+    public let targetDisplayID: WireUUID?
     public let sequence: Int64
 
     public init(
@@ -313,6 +314,7 @@ public struct InteractiveSurfaceSelectBodyV0: WireBody {
         expectedCoordinateSpaceRevision: CoordinateSpaceRevision,
         targetKind: InteractiveSurfaceKind,
         targetToken: WireUUID?,
+        targetDisplayID: WireUUID? = nil,
         sequence: Int64
     ) throws {
         self.interactiveSessionID = interactiveSessionID
@@ -322,6 +324,7 @@ public struct InteractiveSurfaceSelectBodyV0: WireBody {
         self.expectedCoordinateSpaceRevision = expectedCoordinateSpaceRevision
         self.targetKind = targetKind
         self.targetToken = targetToken
+        self.targetDisplayID = targetDisplayID
         self.sequence = sequence
         try validate()
     }
@@ -330,7 +333,7 @@ public struct InteractiveSurfaceSelectBodyV0: WireBody {
         try requireExactKeys(decoder, [
             "interactiveSessionID", "authorizationEpoch", "currentSurfaceID",
             "expectedSurfaceRevision", "expectedCoordinateSpaceRevision",
-            "targetKind", "targetToken", "sequence",
+            "targetKind", "targetToken", "targetDisplayID", "sequence",
         ])
         let container = try decoder.container(keyedBy: CodingKeys.self)
         interactiveSessionID = try container.decode(WireUUID.self, forKey: .interactiveSessionID)
@@ -346,6 +349,10 @@ public struct InteractiveSurfaceSelectBodyV0: WireBody {
         )
         targetKind = try container.decode(InteractiveSurfaceKind.self, forKey: .targetKind)
         targetToken = try container.decodeIfPresent(WireUUID.self, forKey: .targetToken)
+        targetDisplayID = try container.decodeIfPresent(
+            WireUUID.self,
+            forKey: .targetDisplayID
+        )
         sequence = try container.decode(Int64.self, forKey: .sequence)
         try validate()
     }
@@ -359,6 +366,7 @@ public struct InteractiveSurfaceSelectBodyV0: WireBody {
         try container.encode(expectedCoordinateSpaceRevision, forKey: .expectedCoordinateSpaceRevision)
         try container.encode(targetKind, forKey: .targetKind)
         try container.encode(targetToken, forKey: .targetToken)
+        try container.encode(targetDisplayID, forKey: .targetDisplayID)
         try container.encode(sequence, forKey: .sequence)
     }
 
@@ -370,7 +378,8 @@ public struct InteractiveSurfaceSelectBodyV0: WireBody {
               expectedCoordinateSpaceRevision.rawValue >= 1,
               expectedCoordinateSpaceRevision.rawValue <= UInt64(WireLimits.maximumSafeInteger),
               sequence >= 1, sequence <= WireLimits.maximumSafeInteger,
-              (targetKind == .desktop) == (targetToken == nil) else {
+              (targetKind == .desktop) == (targetToken == nil),
+              targetDisplayID == nil || targetKind == .desktop else {
             throw InteractiveSurfaceWireErrorV0.invalidSelection
         }
     }

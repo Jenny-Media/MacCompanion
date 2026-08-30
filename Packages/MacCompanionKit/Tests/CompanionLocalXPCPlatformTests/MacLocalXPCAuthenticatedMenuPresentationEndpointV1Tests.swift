@@ -26,6 +26,10 @@ private actor MenuPresentationSenderProbeV1:
         LocalInteractiveSurfaceFailureReceiptV1?
     private var focusSnapshotReceipt:
         LocalInteractiveFocusSnapshotReceiptV1?
+    private var displayCatalogReceipt:
+        LocalInteractiveDisplayCatalogReceiptV1?
+    private var displaySelectedReceipt:
+        LocalInteractiveDisplaySelectedReceiptV1?
     private var interactiveGenerations: [UInt64] = []
     private var interactiveTokens: [UUID] = []
 
@@ -36,12 +40,18 @@ private actor MenuPresentationSenderProbeV1:
         surfaceFailureReceipt:
             LocalInteractiveSurfaceFailureReceiptV1? = nil,
         focusSnapshotReceipt:
-            LocalInteractiveFocusSnapshotReceiptV1? = nil
+            LocalInteractiveFocusSnapshotReceiptV1? = nil,
+        displayCatalogReceipt:
+            LocalInteractiveDisplayCatalogReceiptV1? = nil,
+        displaySelectedReceipt:
+            LocalInteractiveDisplaySelectedReceiptV1? = nil
     ) {
         self.responses = responses
         self.desktopReceipt = desktopReceipt
         self.surfaceFailureReceipt = surfaceFailureReceipt
         self.focusSnapshotReceipt = focusSnapshotReceipt
+        self.displayCatalogReceipt = displayCatalogReceipt
+        self.displaySelectedReceipt = displaySelectedReceipt
     }
 
     func sendMenuPresentation(
@@ -139,6 +149,32 @@ private actor MenuPresentationSenderProbeV1:
             throw MacLocalXPCInteractiveLeaseErrorV1.unavailable
         }
         return focusSnapshotReceipt
+    }
+
+    func interactiveDisplayCatalog(
+        generation: UInt64,
+        endpointToken: UUID,
+        command _: LocalInteractiveDisplayCatalogCommandV1
+    ) async throws -> LocalInteractiveDisplayCatalogReceiptV1 {
+        interactiveGenerations.append(generation)
+        interactiveTokens.append(endpointToken)
+        guard let displayCatalogReceipt else {
+            throw MacLocalXPCInteractiveLeaseErrorV1.unavailable
+        }
+        return displayCatalogReceipt
+    }
+
+    func selectInteractiveDisplay(
+        generation: UInt64,
+        endpointToken: UUID,
+        command _: LocalInteractiveDisplaySelectCommandV1
+    ) async throws -> LocalInteractiveDisplaySelectedReceiptV1 {
+        interactiveGenerations.append(generation)
+        interactiveTokens.append(endpointToken)
+        guard let displaySelectedReceipt else {
+            throw MacLocalXPCInteractiveLeaseErrorV1.unavailable
+        }
+        return displaySelectedReceipt
     }
 
     func recordedInteractiveGenerations() -> [UInt64] {
@@ -381,12 +417,46 @@ func opaqueEndpointEncodesAllFiveClosedRequests() async throws {
             validForMilliseconds: 1_000
         )
     )
+    let displayCatalogCommand = LocalInteractiveDisplayCatalogCommandV1(
+        commandID: UUID()
+    )
+    let secondaryDisplayID = UUID()
+    let displayCatalogReceipt = try LocalInteractiveDisplayCatalogReceiptV1(
+        correlationID: displayCatalogCommand.commandID,
+        selectedDisplayID: command.selectedDisplayID,
+        candidates: [
+            LocalInteractiveDisplayCandidateV1(
+                displayID: command.selectedDisplayID,
+                ordinal: 1,
+                pixelWidth: 1_440,
+                pixelHeight: 900,
+                isMain: true
+            ),
+            LocalInteractiveDisplayCandidateV1(
+                displayID: secondaryDisplayID,
+                ordinal: 2,
+                pixelWidth: 1_920,
+                pixelHeight: 1_080,
+                isMain: false
+            ),
+        ]
+    )
+    let displaySelectCommand = LocalInteractiveDisplaySelectCommandV1(
+        commandID: UUID(),
+        displayID: secondaryDisplayID
+    )
+    let displaySelectedReceipt = LocalInteractiveDisplaySelectedReceiptV1(
+        correlationID: displaySelectCommand.commandID,
+        selectedDisplayID: secondaryDisplayID
+    )
     let token = UUID()
     let sender = MenuPresentationSenderProbeV1(
         [],
         desktopReceipt: receipt,
         surfaceFailureReceipt: surfaceFailureReceipt,
-        focusSnapshotReceipt: focusSnapshotReceipt
+        focusSnapshotReceipt: focusSnapshotReceipt,
+        displayCatalogReceipt: displayCatalogReceipt,
+        displaySelectedReceipt: displaySelectedReceipt
     )
     let endpoint = endpointV1(
         sender: sender,
@@ -413,8 +483,23 @@ func opaqueEndpointEncodesAllFiveClosedRequests() async throws {
             .interactiveFocusSnapshot(focusSnapshotCommand)
             == focusSnapshotReceipt
     )
-    #expect(await sender.recordedInteractiveGenerations() == [7, 7, 7])
-    #expect(await sender.recordedInteractiveTokens() == [token, token, token])
+    #expect(
+        try await surfaces.interactiveRuntime
+            .interactiveDisplayCatalog(displayCatalogCommand)
+            == displayCatalogReceipt
+    )
+    #expect(
+        try await surfaces.interactiveRuntime
+            .selectInteractiveDisplay(displaySelectCommand)
+            == displaySelectedReceipt
+    )
+    #expect(
+        await sender.recordedInteractiveGenerations() == [7, 7, 7, 7, 7]
+    )
+    #expect(
+        await sender.recordedInteractiveTokens()
+            == [token, token, token, token, token]
+    )
 
     #expect(await router.invalidate(generation: 7))
     await #expect(
@@ -424,7 +509,9 @@ func opaqueEndpointEncodesAllFiveClosedRequests() async throws {
         try await surfaces.interactiveRuntime
             .prepareInitialInteractiveDesktop(command)
     }
-    #expect(await sender.recordedInteractiveGenerations() == [7, 7, 7])
+    #expect(
+        await sender.recordedInteractiveGenerations() == [7, 7, 7, 7, 7]
+    )
 }
 
 @Test

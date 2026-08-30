@@ -209,8 +209,17 @@ private func dashboardActionCoordinatorV0(
     let paired = MacAgentDashboardSourceV0.status(
         try dashboardActionStatusV0(pairedDeviceCount: 1)
     )
-    #expect(!MacAgentDashboardActionPolicyV0.isEnabled(.startPairing, in: paired))
+    #expect(MacAgentDashboardActionPolicyV0.isEnabled(.startPairing, in: paired))
     #expect(MacAgentDashboardActionPolicyV0.isEnabled(.openDevices, in: paired))
+
+    let full = MacAgentDashboardSourceV0.status(
+        try dashboardActionStatusV0(
+            pairedDeviceCount:
+                LocalAgentStatusSnapshot.maximumPairedDeviceCount
+        )
+    )
+    #expect(!MacAgentDashboardActionPolicyV0.isEnabled(.startPairing, in: full))
+    #expect(MacAgentDashboardActionPolicyV0.isEnabled(.openDevices, in: full))
 
     let locked = MacAgentDashboardSourceV0.status(
         try dashboardActionStatusV0(consoleSession: .locked)

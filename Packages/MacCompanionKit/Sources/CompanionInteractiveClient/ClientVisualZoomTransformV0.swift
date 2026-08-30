@@ -7,6 +7,63 @@ public enum ClientVisualZoomTransformErrorV0:
     case invalidGeometry
 }
 
+/// Produces a bounded local viewport movement when an active pointer gesture
+/// reaches the edge of a magnified iOS surface. The caller still owns the
+/// remote pointer gesture; this delta only reveals content hidden by the local
+/// visual zoom.
+public enum ClientVisualZoomEdgePanV0 {
+    public static let activationInset = 48.0
+    public static let maximumStep = 32.0
+
+    public static func delta(
+        for point: ClientInputPointV0,
+        in viewport: ClientInputRectV0,
+        activationInset requestedInset: Double = activationInset,
+        maximumStep requestedMaximumStep: Double = maximumStep
+    ) throws -> ClientInputPointV0 {
+        guard requestedInset.isFinite, requestedInset >= 0,
+              requestedMaximumStep.isFinite,
+              requestedMaximumStep > 0 else {
+            throw ClientVisualZoomTransformErrorV0.invalidGeometry
+        }
+        return try ClientInputPointV0(
+            x: axisDelta(
+                coordinate: point.x,
+                minimum: viewport.x,
+                length: viewport.width,
+                activationInset: requestedInset,
+                maximumStep: requestedMaximumStep
+            ),
+            y: axisDelta(
+                coordinate: point.y,
+                minimum: viewport.y,
+                length: viewport.height,
+                activationInset: requestedInset,
+                maximumStep: requestedMaximumStep
+            )
+        )
+    }
+
+    private static func axisDelta(
+        coordinate: Double,
+        minimum: Double,
+        length: Double,
+        activationInset: Double,
+        maximumStep: Double
+    ) -> Double {
+        let inset = min(activationInset, length / 2)
+        let leadingBoundary = minimum + inset
+        let trailingBoundary = minimum + length - inset
+        if coordinate < leadingBoundary {
+            return min(maximumStep, leadingBoundary - coordinate)
+        }
+        if coordinate > trailingBoundary {
+            return -min(maximumStep, coordinate - trailingBoundary)
+        }
+        return 0
+    }
+}
+
 /// A local-only visual transform. It changes neither the host surface nor its
 /// authority fence; direct-touch input is mapped through the inverse transform
 /// before the ordinary viewport mapper produces normalized host coordinates.
@@ -81,6 +138,53 @@ public struct ClientVisualZoomTransformV0: Equatable, Sendable {
             translation: ClientInputPointV0(
                 x: translation.x + delta.x,
                 y: translation.y + delta.y
+            )
+        )
+    }
+
+    /// Centers a verified focus rect while deliberately retaining surrounding
+    /// context. This is presentation-only: the host surface and input fence
+    /// remain unchanged.
+    public func focused(
+        on target: ClientInputRectV0,
+        maximumScale requestedMaximumScale: Double = 2.25,
+        horizontalContext: Double = 1.6,
+        verticalContext: Double = 4.0
+    ) throws -> Self {
+        guard requestedMaximumScale.isFinite,
+              (1...Self.maximumScale).contains(requestedMaximumScale),
+              horizontalContext.isFinite,
+              horizontalContext >= 1,
+              verticalContext.isFinite,
+              verticalContext >= 1,
+              target.x >= content.x,
+              target.y >= content.y,
+              target.x + target.width <= content.x + content.width,
+              target.y + target.height <= content.y + content.height else {
+            throw ClientVisualZoomTransformErrorV0.invalidGeometry
+        }
+        let scale = min(
+            requestedMaximumScale,
+            max(
+                1,
+                min(
+                    viewport.width / (target.width * horizontalContext),
+                    viewport.height / (target.height * verticalContext)
+                )
+            )
+        )
+        let center = viewportCenter
+        let targetCenter = (
+            x: target.x + target.width / 2,
+            y: target.y + target.height / 2
+        )
+        return try Self(
+            viewport: viewport,
+            content: content,
+            scale: scale,
+            translation: ClientInputPointV0(
+                x: -scale * (targetCenter.x - center.x),
+                y: -scale * (targetCenter.y - center.y)
             )
         )
     }

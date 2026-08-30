@@ -1,6 +1,12 @@
 import CompanionAgent
 import CompanionInteractiveShared
 import Foundation
+import OSLog
+
+private let agentInteractiveRoleBindingLoggerV0 = Logger(
+    subsystem: "media.jenny.maccompanion.agent",
+    category: "interactive-role-binding"
+)
 
 public enum AgentInteractiveRoleDataBindingAuthorityErrorV0:
     Error, Equatable, Sendable
@@ -227,6 +233,9 @@ public actor AgentInteractiveRoleDataBindingAuthorityV0 {
         reason: AgentInteractiveRoleDataPumpErrorV0
     ) async {
         guard let active, active.token == token else { return }
+        agentInteractiveRoleBindingLoggerV0.error(
+            "interactive role pair ended reason=\(String(describing: reason), privacy: .public)"
+        )
         self.active = nil
         await runtime.terminate(
             interactiveSessionID: active.pair.interactiveSessionID,

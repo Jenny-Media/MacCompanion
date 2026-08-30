@@ -305,6 +305,9 @@ private actor AutomaticFocusTestPrimaryV0:
     private var replacementPhase: ClientSurfaceControlPhaseV0 = .active
     private var selectedKind: InteractiveSurfaceKind?
     private var selectedToken: UUID?
+    private var focusEvent: ClientSurfaceFocusEventV0?
+    private var selectionDelayMilliseconds: UInt64 = 0
+    private var nextSelectionError: ClientSurfaceControlErrorV0?
 
     init(
         initial: AdaptiveSurfaceDescriptor,
@@ -343,15 +346,25 @@ private actor AutomaticFocusTestPrimaryV0:
         targetKind: InteractiveSurfaceKind,
         targetToken: UUID?
     ) throws -> ClientSurfaceSelectionRequestV0 {
+        if let nextSelectionError {
+            self.nextSelectionError = nil
+            throw nextSelectionError
+        }
         selectedKind = targetKind
         selectedToken = targetToken
+        focusEvent = nil
         replacementPhase = .awaitingSelection
         return ClientSurfaceSelectionRequestV0(
             reset: nil,
             requestJSON: Data([0xaa])
         )
     }
-    func sendReplacementSurfaceSelection(_ frame: Data) {
+    func sendReplacementSurfaceSelection(_ frame: Data) async throws {
+        if selectionDelayMilliseconds > 0 {
+            try await Task.sleep(
+                for: .milliseconds(selectionDelayMilliseconds)
+            )
+        }
         replacementPhase = .active
     }
     func replacementSurfacePhase() -> ClientSurfaceControlPhaseV0? {
@@ -359,13 +372,30 @@ private actor AutomaticFocusTestPrimaryV0:
     }
     func replacementSurfaceDescriptor()
         -> AdaptiveSurfaceDescriptor?
-    { selectedKind == nil ? initial : replacement }
+    {
+        selectedKind == .focusedRegion ? replacement : initial
+    }
+    func latestFocusEvent() -> ClientSurfaceFocusEventV0? { focusEvent }
     func confirmReplacementRenderedFrame(
         _ receipt: ClientDecodedFrameReceiptV0
     ) -> Bool { false }
     func acknowledgeReplacementSurface() {}
     func selection() -> (InteractiveSurfaceKind?, UUID?) {
         (selectedKind, selectedToken)
+    }
+    func setFocusEvent(_ event: ClientSurfaceFocusEventV0?) {
+        focusEvent = event
+    }
+    func setSelectionDelayMilliseconds(_ value: UInt64) {
+        selectionDelayMilliseconds = value
+    }
+    func failNextSelection(with error: ClientSurfaceControlErrorV0) {
+        nextSelectionError = error
+    }
+    func resetSelection() {
+        selectedKind = nil
+        selectedToken = nil
+        replacementPhase = .active
     }
 }
 
@@ -487,7 +517,13 @@ private func mediaPumpConnection(
     #expect(await io.cancelled)
 }
 
-@Test func initialDesktopOwnerAcknowledgesOnlyRendererProof() async throws {
+private actor InitialDesktopFailureRecorderV0 {
+    private(set) var count = 0
+    func record() { count += 1 }
+}
+
+@Test(arguments: [false, true])
+func initialDesktopOwnerAcknowledgesOnlyRendererProof(remoteLoss: Bool) async throws {
     let sessionID = UUID()
     let surfaceID = UUID()
     let descriptor = try AdaptiveSurfaceDescriptor(
@@ -560,12 +596,18 @@ private func mediaPumpConnection(
     )
     let primary = InitialDesktopTestPrimaryV0(descriptor: descriptor)
     let renderer = InitialDesktopTestRendererV0()
+    let failure = InitialDesktopFailureRecorderV0()
     let activation = try
         NetworkClientInteractiveInitialDesktopActivationV0(
             channel: primary,
             inputConnection: inputConnection,
             mediaConnection: connection,
-            renderer: renderer
+            renderer: renderer,
+            failure: {
+                #expect(await renderer.closed)
+                #expect(await inputIO.cancelled)
+                await failure.record()
+            }
         )
 
     #expect(try await activation.start() == descriptor)
@@ -594,7 +636,28 @@ private func mediaPumpConnection(
     #expect(framedInput.prefix(4) == Data([0, 0, 0, 22]))
     #expect(framedInput.dropFirst(4)
         == Data(#"{"kind":"pointerMove"}"#.utf8))
+    if remoteLoss {
+        await io.cancel()
+        let deadline = ContinuousClock.now.advanced(by: .seconds(2))
+        while await failure.count == 0, ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(1))
+        }
+        #expect(await failure.count == 1)
+        #expect(await activation.phase == .failed)
+        #expect(await activation.refreshPrimaryState() == false)
+        // The renderer may already have queued this receipt before transport
+        // loss. A late terminal callback is inert, not an invalid new command.
+        try await activation.reportRendered(ClientDecodedFrameReceiptV0(
+            generation: 1,
+            fence: ClientDecoderFenceV0(header: clean),
+            mediaSequence: 2,
+            presentationTimeNanoseconds: 2,
+            frameReference: UUID()
+        ))
+        #expect(await failure.count == 1)
+    }
     await activation.close()
+    #expect(await failure.count == (remoteLoss ? 1 : 0))
     #expect(await inputIO.count() == 2)
     let framedReset = await inputIO.value(at: 1)
     #expect(framedReset.prefix(4) == Data([0, 0, 0, 16]))
@@ -764,7 +827,7 @@ private func mediaPumpConnection(
     await activation.close()
 }
 
-@Test func admittedFocusEventAutomaticallyUsesReplacementPathAndHonorsOptOut()
+@Test func admittedFocusDefaultsOnAndComposerRequiresVerifiedFocus()
     async throws
 {
     let sessionID = UUID()
@@ -781,7 +844,7 @@ private func mediaPumpConnection(
         encodedHeight: 480,
         logicalWidthPoints: 640,
         logicalHeightPoints: 480,
-        interactionClasses: [.view, .pointer, .keyboard],
+        interactionClasses: [.view, .pointer, .keyboard, .text],
         privacyProfile: .visualOnly,
         metadataFields: [],
         createdAtMonotonicMilliseconds: 1,
@@ -814,14 +877,14 @@ private func mediaPumpConnection(
         encodedHeight: 600,
         logicalWidthPoints: 800,
         logicalHeightPoints: 600,
-        interactionClasses: [.view, .pointer, .keyboard],
+        interactionClasses: [.view, .pointer, .keyboard, .text],
         privacyProfile: .assistedVisual,
         metadataFields: [
             .focusCategory, .focusBounds, .editable, .secure,
         ],
         focus: focus,
         createdAtMonotonicMilliseconds: 2,
-        expiresAtMonotonicMilliseconds: 30_002
+        expiresAtMonotonicMilliseconds: Int64.max
     )
     let primary = AutomaticFocusTestPrimaryV0(
         initial: initial,
@@ -884,13 +947,57 @@ private func mediaPumpConnection(
         focus: focus,
         inputPaused: false,
         reason: .verifiedFocus,
-        expiresAtMonotonicMilliseconds: 1_000
+        expiresAtMonotonicMilliseconds: Int64.max
     )
+    #expect(await activation.isAutomaticSmartZoomEnabled())
     await activation.setAutomaticSmartZoomEnabled(false)
     let ignored = try await activation.applyFocusEvent(event)
     #expect(ignored == nil)
     let ignoredSelection = await primary.selection()
     #expect(ignoredSelection.0 == nil)
+
+    let secureFocus = try SurfaceFocus(
+        token: UUID(),
+        revision: .init(rawValue: 2),
+        category: .text,
+        bounds: focus.bounds,
+        editable: true,
+        secure: true
+    )
+    await primary.setFocusEvent(ClientSurfaceFocusEventV0(
+        messageID: WireUUID(UUID()),
+        eventSequence: 2,
+        recommendedTargetKind: .focusedRegion,
+        targetToken: WireUUID(UUID()),
+        focus: secureFocus,
+        inputPaused: false,
+        reason: .verifiedFocus,
+        expiresAtMonotonicMilliseconds: Int64.max
+    ))
+    #expect(try await activation.prepareTextInput(
+        focusAcquisitionTimeoutMilliseconds: 100,
+        surfaceTransitionTimeoutMilliseconds: 500
+    ) == nil)
+    #expect(await activation.phase == .active)
+    let secureSelection = await primary.selection()
+    #expect(secureSelection.0 == nil)
+
+    await primary.setFocusEvent(nil)
+    #expect(try await activation.prepareTextInput(
+        focusAcquisitionTimeoutMilliseconds: 500,
+        surfaceTransitionTimeoutMilliseconds: 500
+    ) == initial)
+    let textSelection = await primary.selection()
+    #expect(textSelection.0 == nil)
+
+    await primary.setFocusEvent(event)
+    #expect(try await activation.prepareTextInput(
+        focusAcquisitionTimeoutMilliseconds: 50,
+        surfaceTransitionTimeoutMilliseconds: 500
+    ) == initial)
+    #expect(await activation.phase == .active)
+    let stillNoTextSelection = await primary.selection()
+    #expect(stillNoTextSelection.0 == nil)
 
     await activation.setAutomaticSmartZoomEnabled(true)
     #expect(try await activation.applyFocusEvent(
@@ -901,12 +1008,76 @@ private func mediaPumpConnection(
     #expect(automaticSelection.0 == .focusedRegion)
     #expect(automaticSelection.1 == eventTargetToken)
 
+    let pausedWhileDisabled = ClientSurfaceFocusEventV0(
+        messageID: WireUUID(UUID()),
+        eventSequence: 2,
+        recommendedTargetKind: .focusedRegion,
+        targetToken: WireUUID(UUID()),
+        focus: try SurfaceFocus(
+            token: UUID(),
+            revision: .init(rawValue: 2),
+            category: .text,
+            bounds: focus.bounds,
+            editable: true,
+            secure: false
+        ),
+        inputPaused: true,
+        reason: .verifiedFocus,
+        expiresAtMonotonicMilliseconds: Int64.max
+    )
+    await activation.setAutomaticSmartZoomEnabled(false)
+    #expect(try await activation.applyFocusEvent(
+        pausedWhileDisabled,
+        timeoutMilliseconds: 100
+    ) == initial)
+    let disabledRecoverySelection = await primary.selection()
+    #expect(disabledRecoverySelection.0 == .desktop)
+    #expect(disabledRecoverySelection.1 == nil)
+    #expect(await activation.phase == .active)
+    await activation.setAutomaticSmartZoomEnabled(true)
+    await primary.setFocusEvent(nil)
+
+    #expect(try await activation.applyFocusEvent(
+        event,
+        timeoutMilliseconds: 100
+    ) == replacement)
+
+    let composerBinding = try #require(
+        try await activation.prepareNativeTextComposer()
+    )
+    #expect(composerBinding.surfaceID == replacement.surfaceID)
+    #expect(composerBinding.focusToken == focus.token)
+    #expect(composerBinding.focusRevision == focus.revision)
+    try await activation.sendComposedText(
+        "hello from iPhone",
+        boundTo: composerBinding
+    )
+
+    await primary.resetSelection()
+    await primary.failNextSelection(with: .focusEventExpired)
+    #expect(try await activation.applyFocusEvent(
+        event,
+        timeoutMilliseconds: 100
+    ) == initial)
+    let recoveredSelection = await primary.selection()
+    #expect(recoveredSelection.0 == .desktop)
+    #expect(recoveredSelection.1 == nil)
+    #expect(await activation.phase == .active)
+    await #expect(throws:
+        NetworkClientInteractiveInitialDesktopErrorV0.unavailable
+    ) {
+        try await activation.sendComposedText(
+            "stale draft",
+            boundTo: composerBinding
+        )
+    }
+
     _ = try await activation.selectSurface(
         targetKind: .desktop,
         targetToken: nil,
         timeoutMilliseconds: 100
     )
     let automaticEnabled = await activation.isAutomaticSmartZoomEnabled()
-    #expect(!automaticEnabled)
+    #expect(automaticEnabled)
     await activation.close()
 }

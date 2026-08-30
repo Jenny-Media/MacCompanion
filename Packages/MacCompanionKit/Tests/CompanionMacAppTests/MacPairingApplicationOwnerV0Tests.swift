@@ -221,6 +221,31 @@ private actor PresentationProbe {
     #expect(phases[3] == .idle)
 }
 
+@Test func macPairingDecisionCompletionClosesOnlyItsExactVisibleCode() async throws {
+    let scheduler = ManualExpiryScheduler()
+    let owner = MacPairingApplicationOwnerV0(
+        client: MacPairingClientProbe(),
+        clock: FixedMacPairingClock(now: appCreatedAt),
+        expiryScheduler: scheduler
+    )
+    try await owner.begin()
+    let pairingID = try #require(
+        await owner.snapshot().visibleReceipt?.pairingID
+    )
+
+    #expect(
+        await owner.pairingDecisionCompleted(pairingID: UUID()) == false
+    )
+    #expect(await owner.snapshot().visibleReceipt?.pairingID == pairingID)
+
+    #expect(
+        await owner.pairingDecisionCompleted(pairingID: pairingID)
+    )
+    #expect(await owner.snapshot().phase == .idle)
+    await scheduler.fireLatestActive()
+    #expect(await owner.snapshot().phase == .idle)
+}
+
 @Test func macPairingApplicationOwnerRetriesExactCreateAfterResponseLoss() async throws {
     let client = MacPairingClientProbe()
     await client.failNextCreate()

@@ -114,6 +114,7 @@ public actor InteractiveSurfaceRuntimeCoordinatorV0 {
             CompanionInteractiveShared.SurfaceRevision
         let expectedCoordinateSpaceRevision:
             CoordinateSpaceRevision
+        let selectedDisplayID: UUID?
         let monotonicNowMilliseconds: Int64
         let monotonicNowNanoseconds: UInt64
     }
@@ -289,6 +290,7 @@ public actor InteractiveSurfaceRuntimeCoordinatorV0 {
         expectedSurfaceRevision:
             CompanionInteractiveShared.SurfaceRevision,
         expectedCoordinateSpaceRevision: CoordinateSpaceRevision,
+        selectedDisplayID: UUID? = nil,
         monotonicNowMilliseconds: Int64,
         monotonicNowNanoseconds: UInt64
     ) async throws -> InteractiveSurfaceRuntimePreparedV0 {
@@ -297,6 +299,7 @@ public actor InteractiveSurfaceRuntimeCoordinatorV0 {
             expectedSurfaceRevision: expectedSurfaceRevision,
             expectedCoordinateSpaceRevision:
                 expectedCoordinateSpaceRevision,
+            selectedDisplayID: selectedDisplayID,
             monotonicNowMilliseconds: monotonicNowMilliseconds,
             monotonicNowNanoseconds: monotonicNowNanoseconds
         )
@@ -336,6 +339,7 @@ public actor InteractiveSurfaceRuntimeCoordinatorV0 {
         do {
             lease = try makeReplacementLease(
                 target: target,
+                selectedDisplayID: selectedDisplayID,
                 monotonicNowNanoseconds: monotonicNowNanoseconds
             )
             command = try InteractiveRuntimeSurfaceTransitionCommandV0(
@@ -482,6 +486,7 @@ public actor InteractiveSurfaceRuntimeCoordinatorV0 {
 
     private func makeReplacementLease(
         target: AdaptiveSurfaceDescriptor,
+        selectedDisplayID: UUID?,
         monotonicNowNanoseconds: UInt64
     ) throws -> InteractiveExecutionLease {
         let (maximumExpiry, overflow) = monotonicNowNanoseconds
@@ -504,7 +509,8 @@ public actor InteractiveSurfaceRuntimeCoordinatorV0 {
             deviceID: currentLease.deviceID,
             interactiveSessionID: currentLease.interactiveSessionID,
             authorizationEpoch: currentLease.authorizationEpoch,
-            selectedDisplayID: currentLease.selectedDisplayID,
+            selectedDisplayID:
+                selectedDisplayID ?? currentLease.selectedDisplayID,
             surfaceID: target.surfaceID,
             surfaceRevision: .init(
                 rawValue: target.surfaceRevision.rawValue

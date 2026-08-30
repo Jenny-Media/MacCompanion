@@ -85,6 +85,12 @@ public enum WireMessageKind: String, Codable, CaseIterable, Sendable {
     case auditListResponse = "audit.list.response"
     case keepalivePing = "keepalive.ping"
     case keepalivePong = "keepalive.pong"
+    case interactiveDisplayCatalogRequest =
+        "interactive.display.catalog.request"
+    case interactiveDisplayCatalogResponse =
+        "interactive.display.catalog.response"
+    case interactiveDisplaySelect = "interactive.display.select"
+    case interactiveDisplaySelected = "interactive.display.selected"
     case interactiveSessionRequest = "interactive.session.request"
     case interactiveSessionApprovalRequired = "interactive.session.approvalRequired"
     case interactiveSessionApprove = "interactive.session.approve"
@@ -217,6 +223,8 @@ public struct WireEnvelope<Body: WireBody>: Codable, Equatable, Sendable {
             case .authHello, .pairingBegin, .pairingResume, .routeObservation,
                  .statusSnapshotRequest,
                  .capabilityRegistryRequest, .auditListRequest, .keepalivePing,
+                 .interactiveDisplayCatalogRequest,
+                 .interactiveDisplaySelect,
                  .interactiveSessionRequest, .interactiveSessionEnd,
                  .operationInvoke, .operationApprove,
                  .operationStatusRequest, .operationCancel,
@@ -358,6 +366,8 @@ public struct WireRoutingMetadata: Equatable, Sendable {
             case .authHello, .pairingBegin, .pairingResume, .routeObservation,
                  .statusSnapshotRequest, .capabilityRegistryRequest,
                  .auditListRequest, .keepalivePing,
+                 .interactiveDisplayCatalogRequest,
+                 .interactiveDisplaySelect,
                  .interactiveSessionRequest, .interactiveSessionEnd,
                  .operationInvoke, .operationApprove,
                  .operationStatusRequest, .operationCancel,

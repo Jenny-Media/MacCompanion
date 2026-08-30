@@ -27,6 +27,7 @@ public struct ClientPrimaryWorkspaceApplicationViewV1: View {
         NetworkClientInteractiveRoleProductBindingV0
     private let onCommandFailure:
         @MainActor @Sendable (any Error) -> Void
+    private let onReconnect: @MainActor @Sendable () async -> Void
     @State private var selectedAction:
         ClientApprovedActionDestinationV1?
 
@@ -35,12 +36,14 @@ public struct ClientPrimaryWorkspaceApplicationViewV1: View {
         model: ClientPrimaryWorkspaceModelV0,
         interactiveRoles:
             NetworkClientInteractiveRoleProductBindingV0,
+        onReconnect: @escaping @MainActor @Sendable () async -> Void = {},
         onCommandFailure: @escaping @MainActor @Sendable
             (any Error) -> Void = { _ in }
     ) {
         self.macName = macName
         _model = ObservedObject(wrappedValue: model)
         self.interactiveRoles = interactiveRoles
+        self.onReconnect = onReconnect
         self.onCommandFailure = onCommandFailure
     }
 
@@ -50,6 +53,7 @@ public struct ClientPrimaryWorkspaceApplicationViewV1: View {
             model: model,
             interactiveRoles: interactiveRoles,
             onSelectAction: selectAction,
+            onReconnect: onReconnect,
             onCommandFailure: onCommandFailure
         )
         .sheet(item: $selectedAction) { destination in
