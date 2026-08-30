@@ -395,7 +395,7 @@ public actor AgentNetworkListenerIngressHandoffV2 {
     private var bindingToken: UUID?
     private var bindingRole: NetworkHostIngressRoleV0?
     private var bindingConnection: Active?
-    private var activePrimary: Active?
+    private var activePrimaries: [UUID: Active] = [:]
     private var activePairing: Active?
     private var activeInteractiveInput: Active?
     private var activeInteractiveMedia: Active?
@@ -508,7 +508,7 @@ public actor AgentNetworkListenerIngressHandoffV2 {
         let pending = self.pending
         let queued = self.queued
         let classifying = self.classifying
-        let primary = activePrimary
+        let primaries = Array(activePrimaries.values)
         let pairing = activePairing
         let interactiveInput = activeInteractiveInput
         let interactiveMedia = activeInteractiveMedia
@@ -519,7 +519,7 @@ public actor AgentNetworkListenerIngressHandoffV2 {
         bindingToken = nil
         bindingRole = nil
         bindingConnection = nil
-        activePrimary = nil
+        activePrimaries.removeAll(keepingCapacity: false)
         activePairing = nil
         activeInteractiveInput = nil
         activeInteractiveMedia = nil
@@ -527,7 +527,7 @@ public actor AgentNetworkListenerIngressHandoffV2 {
         for candidate in queued { candidate.accepted.cancel() }
         if let classifying { await classifying.classifier.cancel() }
         if let binding { await binding.connection.cancel() }
-        if let primary { await primary.connection.cancel() }
+        for primary in primaries { await primary.connection.cancel() }
         if let pairing { await pairing.connection.cancel() }
         if let interactiveInput {
             await interactiveInput.connection.cancel()
@@ -563,15 +563,15 @@ public actor AgentNetworkListenerIngressHandoffV2 {
 
     package func drainConnections() async {
         guard !cancelled, !admissionOpen else { return }
-        let primary = activePrimary
+        let primaries = Array(activePrimaries.values)
         let pairing = activePairing
         let interactiveInput = activeInteractiveInput
         let interactiveMedia = activeInteractiveMedia
-        activePrimary = nil
+        activePrimaries.removeAll(keepingCapacity: false)
         activePairing = nil
         activeInteractiveInput = nil
         activeInteractiveMedia = nil
-        if let primary { await primary.connection.cancel() }
+        for primary in primaries { await primary.connection.cancel() }
         if let pairing { await pairing.connection.cancel() }
         if let interactiveInput {
             await interactiveInput.connection.cancel()
@@ -594,7 +594,7 @@ public actor AgentNetworkListenerIngressHandoffV2 {
             hasPendingTLS: pending != nil || !queued.isEmpty,
             isClassifying: classifying != nil,
             bindingRole: bindingRole,
-            hasActivePrimary: activePrimary != nil,
+            hasActivePrimary: !activePrimaries.isEmpty,
             hasActivePairing: activePairing != nil,
             hasActiveInteractiveInput: activeInteractiveInput != nil,
             hasActiveInteractiveMedia: activeInteractiveMedia != nil
@@ -603,40 +603,51 @@ public actor AgentNetworkListenerIngressHandoffV2 {
 
     /// Sends only through the exact authenticated primary generation that is
     /// active at both ends of the suspension. The connection owns wire-lane
-    /// validation and serialized framing; this authority owns replacement.
+    /// validation and serialized framing; this authority owns retention.
     public func hasAuthenticatedPrimaryEventSink(
         primaryConnectionID: Data
     ) async -> Bool {
-        guard !cancelled, primaryConnectionID.count == 16,
-              let primary = activePrimary else { return false }
-        let authenticatedID = await primary.connection
-            .authenticatedPrimaryConnectionID()
-        let matches = authenticatedID == primaryConnectionID
-        guard !cancelled, activePrimary?.token == primary.token else {
+        guard !cancelled, primaryConnectionID.count == 16 else {
             return false
         }
-        return matches
+        for primary in activePrimaries.values {
+            let authenticatedID = await primary.connection
+                .authenticatedPrimaryConnectionID()
+            guard !cancelled, activePrimaries[primary.token] != nil else {
+                continue
+            }
+            if authenticatedID == primaryConnectionID { return true }
+        }
+        return false
     }
 
     public func sendAuthenticatedPrimaryEvent(
         _ eventJSON: Data,
         primaryConnectionID: Data
     ) async throws {
-        guard !cancelled, let primary = activePrimary else {
+        guard !cancelled, primaryConnectionID.count == 16 else {
             throw AgentNetworkAuthenticatedEventSinkErrorV2.unavailable
         }
-        let authenticatedID = await primary.connection
-            .authenticatedPrimaryConnectionID()
-        guard !cancelled, activePrimary?.token == primary.token,
-              primaryConnectionID.count == 16,
-              authenticatedID == primaryConnectionID else {
+        var selected: Active?
+        for primary in activePrimaries.values {
+            let authenticatedID = await primary.connection
+                .authenticatedPrimaryConnectionID()
+            guard !cancelled, activePrimaries[primary.token] != nil else {
+                continue
+            }
+            if authenticatedID == primaryConnectionID {
+                selected = primary
+                break
+            }
+        }
+        guard let primary = selected else {
             throw AgentNetworkAuthenticatedEventSinkErrorV2.unavailable
         }
         try await primary.connection.sendAuthenticatedEvent(
             eventJSON,
             primaryConnectionID: primaryConnectionID
         )
-        guard !cancelled, activePrimary?.token == primary.token else {
+        guard !cancelled, activePrimaries[primary.token] != nil else {
             throw AgentNetworkAuthenticatedEventSinkErrorV2.primaryReplaced
         }
     }
@@ -904,9 +915,7 @@ public actor AgentNetworkListenerIngressHandoffV2 {
         )
         switch classified.role {
         case .applicationPrimary:
-            let previous = activePrimary
-            activePrimary = active
-            if let previous { await previous.connection.cancel() }
+            activePrimaries[token] = active
         case .pairing:
             activePairing = active
         case .interactiveInput:
@@ -958,8 +967,9 @@ public actor AgentNetworkListenerIngressHandoffV2 {
         }
         switch role {
         case .applicationPrimary:
-            guard activePrimary?.token == token else { return }
-            activePrimary = nil
+            guard activePrimaries.removeValue(forKey: token) != nil else {
+                return
+            }
         case .pairing:
             guard activePairing?.token == token else { return }
             activePairing = nil
@@ -986,7 +996,7 @@ public actor AgentNetworkListenerIngressHandoffV2 {
             hasPendingTLS: pending != nil || !queued.isEmpty
                 || classifying != nil,
             isBinding: bindingToken != nil,
-            hasActivePrimary: activePrimary != nil
+            hasActivePrimary: !activePrimaries.isEmpty
         )
     }
 

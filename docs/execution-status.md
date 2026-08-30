@@ -88,6 +88,18 @@ records the 315-path starting state, the product and signed-lab commit
 boundaries, the repaired stale-soak and single-device-harness assumptions, and
 the remaining candidate construction and physical gates.
 
+The first exact-candidate multi-device run exposed deterministic primary
+ping-pong rather than a route failure: the historical singleton primary owner
+allowed the iPhone and iPad to replace one another continuously. The
+[multi-device primary-isolation checkpoint](evidence/2026-08-29-multi-device-primary-isolation.md)
+replaces that construction assumption with up to eight retained exact primary
+sessions, connection-scoped terminal cleanup and Interactive teardown, while
+preserving one global active Control session. Full repository validation passes;
+the failed candidate is superseded and a new exact signed candidate plus
+physical two-device confirmation remain active work. Any older
+`one-Mac/one-phone` or primary-replacement wording below is historical evidence,
+not the current Stage 2 contract.
+
 - `active`: work can proceed now.
 - `ready`: prerequisites are satisfied and work is queued.
 - `blocked-external`: an external approval, account value, machine, or user decision is required.

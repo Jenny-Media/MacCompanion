@@ -280,10 +280,11 @@ private actor AgentProductInteractiveRuntimeV1:
         tlsBinding: tlsBinding,
         acceptedAtMonotonicMilliseconds: 1
     )
-    #expect(await session.phase == .closed)
+    #expect(await session.phase == .awaitingHello)
     #expect(await replacement.phase == .awaitingHello)
-    #expect(await interactive.recordedCloseCount() == 1)
+    #expect(await interactive.recordedCloseCount() == 0)
     await bootstrapped.primarySessions.closeIfCurrent(session)
+    #expect(await session.phase == .closed)
     #expect(await replacement.phase == .awaitingHello)
     let network = try await AgentNetworkPrimaryConnectionFactoryV1(
         primarySessions: bootstrapped.primarySessions
@@ -306,9 +307,31 @@ private actor AgentProductInteractiveRuntimeV1:
             )
         }
     )
-    #expect(await replacement.phase == .closed)
+    #expect(await replacement.phase == .awaitingHello)
     #expect(await network.session.phase == .awaitingHello)
-    #expect(await interactive.recordedCloseCount() == 2)
+    #expect(await interactive.recordedCloseCount() == 0)
+    var retainedSessions = [replacement, network.session]
+    for offset in 0..<6 {
+        retainedSessions.append(try await bootstrapped.primarySessions.open(
+            tlsBinding: tlsBinding,
+            acceptedAtMonotonicMilliseconds: UInt64(3 + offset)
+        ))
+    }
+    await #expect(
+        throws: AgentPrimarySessionAuthorityErrorV1.capacityReached
+    ) {
+        _ = try await bootstrapped.primarySessions.open(
+            tlsBinding: tlsBinding,
+            acceptedAtMonotonicMilliseconds: 9
+        )
+    }
+    await bootstrapped.primarySessions.closeIfCurrent(retainedSessions[2])
+    #expect(await retainedSessions[2].phase == .closed)
+    let reusedCapacitySession = try await bootstrapped.primarySessions.open(
+        tlsBinding: tlsBinding,
+        acceptedAtMonotonicMilliseconds: 10
+    )
+    #expect(await reusedCapacitySession.phase == .awaitingHello)
     await #expect(throws: LifecycleAuditTransitionErrorV0.mismatchedTransition) {
         _ = try await bootstrapped.lifecycle.apply(
             .menuAppExited,
@@ -318,7 +341,7 @@ private actor AgentProductInteractiveRuntimeV1:
     }
     #expect(await bootstrapped.lifecycle.state == readyAgentLifecycleStateV1())
     #expect(await network.session.phase == .awaitingHello)
-    #expect(await interactive.recordedCloseCount() == 2)
+    #expect(await interactive.recordedCloseCount() == 0)
     let afterInvalidLifecycle = try await bootstrapped.localServices
         .statusReader.read()
     #expect(afterInvalidLifecycle.agentProcess == .ready)
@@ -336,7 +359,7 @@ private actor AgentProductInteractiveRuntimeV1:
         observedAtUnixMilliseconds: 2
     )
     #expect(await network.session.phase == .awaitingHello)
-    #expect(await interactive.recordedCloseCount() == 3)
+    #expect(await interactive.recordedCloseCount() == 1)
     let lockedStatus = try await bootstrapped.localServices.statusReader.read()
     #expect(lockedStatus.consoleSession == .locked)
     _ = try await bootstrapped.lifecycle.apply(
@@ -350,7 +373,7 @@ private actor AgentProductInteractiveRuntimeV1:
         observedAtUnixMilliseconds: 4
     )
     #expect(await network.session.phase == .awaitingHello)
-    #expect(await interactive.recordedCloseCount() == 4)
+    #expect(await interactive.recordedCloseCount() == 2)
     let otherConsoleStatus = try await bootstrapped.localServices
         .statusReader.read()
     #expect(otherConsoleStatus.consoleSession == .otherConsoleUserActive)
@@ -387,7 +410,7 @@ private actor AgentProductInteractiveRuntimeV1:
     #expect(menuEpochAfterExit ==
         afterABATransitions.menuAppObservationEpoch + 1)
     #expect(await network.session.phase == .awaitingHello)
-    #expect(await interactive.recordedCloseCount() == 5)
+    #expect(await interactive.recordedCloseCount() == 3)
     let afterMenuExit = try await bootstrapped.localServices.statusReader.read()
     #expect(afterMenuExit.agentProcess == .ready)
     #expect(afterMenuExit.menuAppProcess == .starting)
@@ -403,7 +426,9 @@ private actor AgentProductInteractiveRuntimeV1:
     #expect(agentEpochAfterExit ==
         afterABATransitions.agentObservationEpoch + 1)
     #expect(await network.session.phase == .closed)
-    #expect(await interactive.recordedCloseCount() == 6)
+    #expect(await replacement.phase == .closed)
+    #expect(await reusedCapacitySession.phase == .closed)
+    #expect(await interactive.recordedCloseCount() == 3)
     let afterAgentExit = try await bootstrapped.localServices.statusReader.read()
     #expect(afterAgentExit.agentProcess == .starting)
     #expect(afterAgentExit.menuAppProcess == .starting)

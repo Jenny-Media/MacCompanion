@@ -1113,9 +1113,11 @@ assembles a mixed payload itself. This is coherence of the published Agent
 version, not a claim that independent OS sources were sampled at one physical
 instant.
 
-For the one-Mac/one-phone v0.1 product, paired-device count and active primary
-session count are each bounded to zero or one; provider count is bounded to
-128. Route classes are supplied by a platform route monitor and are never
+For the Stage 2 product, paired-device count is bounded to eight and active
+Remote Control session count is bounded to zero or one; provider count is
+bounded to 128. Application-primary connection count is deliberately not
+published by this status model. Route classes are supplied by a platform route
+monitor and are never
 inferred from listener addresses, peer identities, or provider metadata. A
 failed paired-device inventory read preserves the last inventory and publishes
 only `storageUnavailable`. A clear emergency latch maps to `nominal`, an active

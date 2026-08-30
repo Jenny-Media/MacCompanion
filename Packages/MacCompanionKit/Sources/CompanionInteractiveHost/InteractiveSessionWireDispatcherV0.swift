@@ -750,6 +750,42 @@ public actor InteractiveSessionWireDispatcherV0 {
         )
     }
 
+    public func primarySessionClosed(primaryConnectionID: Data) async {
+        var shouldClearTransition = false
+        if pending?.binding.primaryConnectionID == primaryConnectionID {
+            pending = nil
+            shouldClearTransition = true
+        }
+        guard let closing = active,
+              closing.primaryConnectionID == primaryConnectionID else {
+            if shouldClearTransition {
+                transitionMessageID = nil
+                transitionLocalBinding = nil
+            }
+            return
+        }
+        active = nil
+        transitionMessageID = nil
+        transitionLocalBinding = nil
+        await runtime.terminate(
+            interactiveSessionID: closing.interactiveSessionID,
+            primaryConnectionID: closing.primaryConnectionID,
+            reason: .clientDisconnected
+        )
+        await surfaceControl?.primarySessionClosed()
+        await auditWriter?.recordTerminal(
+            requestID: closing.requestID,
+            interactiveSessionID: closing.interactiveSessionID,
+            code: .interactiveStopped,
+            outcome: .cancelled,
+            observedAtUnixMilliseconds: max(
+                closing.auditContext.wallNowUnixMilliseconds,
+                auditWallClock.nowUnixMilliseconds()
+            ),
+            context: closing.auditContext
+        )
+    }
+
     private func endSession(
         _ requestJSON: Data,
         context: InteractiveSessionCommandContextV0,

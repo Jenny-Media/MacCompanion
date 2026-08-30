@@ -1150,6 +1150,44 @@ private func dispatcherProof(
     ])
 }
 
+@Test func unrelatedPrimaryDisconnectLeavesPendingAndActiveControlUnchanged()
+    async throws
+{
+    let unrelatedConnectionID = Data(repeating: 0x7A, count: 16)
+    let pending = try await pendingDispatcherFlow()
+    await pending.dispatcher.primarySessionClosed(
+        primaryConnectionID: unrelatedConnectionID
+    )
+    #expect(await pending.dispatcher.hasPendingApproval)
+    #expect(await pending.runtime.terminations.isEmpty)
+
+    let active = try await pendingDispatcherFlow()
+    let proof = try dispatcherProof(for: active.challenge)
+    _ = try await active.dispatcher.dispatch(
+        requestJSON: WireCodec.encode(proof),
+        context: dispatcherContext(monotonicNow: 1_010),
+        responseMessageID: WireUUID(UUID())
+    )
+    await active.dispatcher.primarySessionClosed(
+        primaryConnectionID: unrelatedConnectionID
+    )
+    #expect(await active.dispatcher.activeInteractiveSessionID
+        == dispatcherSessionID)
+    #expect(await active.runtime.terminations.isEmpty)
+
+    await active.dispatcher.primarySessionClosed(
+        primaryConnectionID: dispatcherConnectionID
+    )
+    #expect(await active.dispatcher.activeInteractiveSessionID == nil)
+    #expect(await active.runtime.terminations == [
+        .init(
+            sessionID: dispatcherSessionID,
+            connectionID: dispatcherConnectionID,
+            reason: .clientDisconnected
+        ),
+    ])
+}
+
 @Test func localAuthorityEndsOnlyTheExactlyBoundPendingApproval() async throws {
     let flow = try await pendingDispatcherFlow()
     let binding = InteractiveLocalAuthorityBindingV0(

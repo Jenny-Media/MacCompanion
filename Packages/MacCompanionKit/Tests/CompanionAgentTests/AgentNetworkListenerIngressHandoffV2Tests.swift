@@ -919,7 +919,7 @@ private func agentNetworkInteractiveReadyChannelV2(
     #expect((await handoff.snapshot()).hasActivePairing)
 }
 
-@Test func validPrimaryReplacementCancelsOnlyPreviousPrimary() async throws {
+@Test func validPrimaryConnectionsRemainIndependent() async throws {
     let firstBound = AgentNetworkBoundIngressFakeV2()
     let secondBound = AgentNetworkBoundIngressFakeV2()
     let binder = AgentNetworkIngressBinderFakeV2(
@@ -952,9 +952,69 @@ private func agentNetworkInteractiveReadyChannelV2(
     try await handoff.admit(second, acceptedAtMonotonicMilliseconds: 2)
     second.emitReady(try agentNetworkIngressVerifiedV2())
     #expect(await agentNetworkIngressEventuallyV2 {
-        secondBound.beginCount == 1 && firstBound.cancelCount == 1
+        secondBound.beginCount == 1
     })
+    #expect(firstBound.cancelCount == 0)
     #expect(secondBound.cancelCount == 0)
+    #expect((await handoff.snapshot()).hasActivePrimary)
+}
+
+@Test func onePrimaryTerminalLeavesTheOtherPrimaryActive() async throws {
+    let firstID = Data(repeating: 0x51, count: 16)
+    let secondID = Data(repeating: 0x52, count: 16)
+    let firstBound = AgentNetworkBoundIngressFakeV2(
+        primaryConnectionID: firstID
+    )
+    let secondBound = AgentNetworkBoundIngressFakeV2(
+        primaryConnectionID: secondID
+    )
+    let binder = AgentNetworkIngressBinderFakeV2(
+        primary: [firstBound, secondBound],
+        pairing: []
+    )
+    let handoff = agentNetworkIngressHandoffV2(
+        classifiers: [
+            AgentNetworkIngressClassifierFakeV2(
+                .immediate(try agentNetworkIngressClassifiedV2(
+                    role: .applicationPrimary
+                ))
+            ),
+            AgentNetworkIngressClassifierFakeV2(
+                .immediate(try agentNetworkIngressClassifiedV2(
+                    role: .applicationPrimary
+                ))
+            ),
+        ],
+        binder: binder
+    )
+
+    let first = AgentNetworkIngressAcceptedFakeV2()
+    try await handoff.admit(first, acceptedAtMonotonicMilliseconds: 1)
+    first.emitReady(try agentNetworkIngressVerifiedV2())
+    #expect(await agentNetworkIngressEventuallyV2 {
+        await handoff.hasAuthenticatedPrimaryEventSink(
+            primaryConnectionID: firstID
+        )
+    })
+
+    let second = AgentNetworkIngressAcceptedFakeV2()
+    try await handoff.admit(second, acceptedAtMonotonicMilliseconds: 2)
+    second.emitReady(try agentNetworkIngressVerifiedV2())
+    #expect(await agentNetworkIngressEventuallyV2 {
+        await handoff.hasAuthenticatedPrimaryEventSink(
+            primaryConnectionID: secondID
+        )
+    })
+
+    await binder.endPrimary(0)
+    #expect(await agentNetworkIngressEventuallyV2 {
+        !(await handoff.hasAuthenticatedPrimaryEventSink(
+            primaryConnectionID: firstID
+        ))
+    })
+    #expect(await handoff.hasAuthenticatedPrimaryEventSink(
+        primaryConnectionID: secondID
+    ))
     #expect((await handoff.snapshot()).hasActivePrimary)
 }
 
@@ -999,9 +1059,11 @@ private func agentNetworkInteractiveReadyChannelV2(
     #expect(await agentNetworkIngressEventuallyV2 {
         firstBound.beginCount == 1
     })
-    #expect(await handoff.hasAuthenticatedPrimaryEventSink(
-        primaryConnectionID: firstID
-    ))
+    #expect(await agentNetworkIngressEventuallyV2 {
+        await handoff.hasAuthenticatedPrimaryEventSink(
+            primaryConnectionID: firstID
+        )
+    })
     try await handoff.sendAuthenticatedPrimaryEvent(
         Data([1]), primaryConnectionID: firstID
     )
@@ -1011,23 +1073,23 @@ private func agentNetworkInteractiveReadyChannelV2(
     try await handoff.admit(second, acceptedAtMonotonicMilliseconds: 2)
     second.emitReady(try agentNetworkIngressVerifiedV2())
     #expect(await agentNetworkIngressEventuallyV2 {
-        secondBound.beginCount == 1 && firstBound.cancelCount == 1
+        secondBound.beginCount == 1
     })
-    #expect(!(await handoff.hasAuthenticatedPrimaryEventSink(
-        primaryConnectionID: firstID
-    )))
     #expect(await handoff.hasAuthenticatedPrimaryEventSink(
-        primaryConnectionID: secondID
+        primaryConnectionID: firstID
     ))
-    await #expect(throws: AgentNetworkAuthenticatedEventSinkErrorV2.unavailable) {
-        try await handoff.sendAuthenticatedPrimaryEvent(
-            Data([8]), primaryConnectionID: firstID
+    #expect(await agentNetworkIngressEventuallyV2 {
+        await handoff.hasAuthenticatedPrimaryEventSink(
+            primaryConnectionID: secondID
         )
-    }
+    })
+    try await handoff.sendAuthenticatedPrimaryEvent(
+        Data([8]), primaryConnectionID: firstID
+    )
     try await handoff.sendAuthenticatedPrimaryEvent(
         Data([2]), primaryConnectionID: secondID
     )
-    #expect(firstBound.sentEvents == [Data([1])])
+    #expect(firstBound.sentEvents == [Data([1]), Data([8])])
     #expect(secondBound.sentEvents == [Data([2])])
 
     await handoff.cancel()
@@ -1191,5 +1253,5 @@ private func agentNetworkInteractiveReadyChannelV2(
             && snapshot.hasActivePrimary
             && snapshot.hasActivePairing
     })
-    #expect(active.cancelCount == 1)
+    #expect(active.cancelCount == 0)
 }

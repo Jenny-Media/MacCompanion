@@ -123,6 +123,16 @@ public protocol AuthenticatedInteractiveWireDispatchingV0: Sendable {
     /// Destroys every approval, session, and unused role credential owned by
     /// this primary connection. Implementations must make this idempotent.
     func primarySessionClosed() async
+
+    /// Destroys only Interactive authority bound to the exact authenticated
+    /// primary connection. Unrelated retained clients remain available.
+    func primarySessionClosed(primaryConnectionID: Data) async
+}
+
+public extension AuthenticatedInteractiveWireDispatchingV0 {
+    func primarySessionClosed(primaryConnectionID: Data) async {
+        await primarySessionClosed()
+    }
 }
 
 /// Owns exactly one host-side application-primary connection after the
@@ -284,7 +294,11 @@ public actor AuthenticatedPrimarySessionV0 {
                 connectionID: closingConnectionID
             )
         }
-        await interactive.primarySessionClosed()
+        if let closingConnectionID {
+            await interactive.primarySessionClosed(
+                primaryConnectionID: closingConnectionID
+            )
+        }
         if let closingPrincipal, let closingConnectionID {
             await detailedAudit?.recordClosed(
                 principal: closingPrincipal,

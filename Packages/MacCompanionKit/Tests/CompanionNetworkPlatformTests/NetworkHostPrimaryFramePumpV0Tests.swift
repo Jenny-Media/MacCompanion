@@ -624,6 +624,8 @@ func hostPumpPendingActDropsLateCompletionAndClosesOnce(overflow: Bool) async th
 
     #expect(await harness.terminals.values == [.receiveFailed])
     #expect(harness.io.cancelCount == 1)
-    #expect(await harness.interactive.closeCount == 1)
+    // This transport failed before authentication produced a connection ID,
+    // so it never owned Interactive authority to tear down.
+    #expect(await harness.interactive.closeCount == 0)
     #expect(await harness.session.phase == .closed)
 }

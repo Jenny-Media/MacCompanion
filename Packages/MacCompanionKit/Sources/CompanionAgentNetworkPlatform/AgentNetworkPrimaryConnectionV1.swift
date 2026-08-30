@@ -94,7 +94,12 @@ public struct AgentNetworkPrimaryConnectionFactoryV1: Sendable {
                 verifiedReadyConnection: verifiedReadyConnection,
                 session: session,
                 context: context,
-                terminal: terminal
+                terminal: { reason in
+                    terminal(reason)
+                    Task {
+                        await primarySessions.closeIfCurrent(session)
+                    }
+                }
             )
         } catch {
             await primarySessions.closeIfCurrent(session)
@@ -135,7 +140,12 @@ public struct AgentNetworkPrimaryConnectionFactoryV1: Sendable {
                 classifiedConnection: classifiedConnection,
                 session: session,
                 context: context,
-                terminal: terminal
+                terminal: { reason in
+                    terminal(reason)
+                    Task {
+                        await primarySessions.closeIfCurrent(session)
+                    }
+                }
             )
         } catch {
             classifiedConnection.cancel()

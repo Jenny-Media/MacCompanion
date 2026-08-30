@@ -762,14 +762,15 @@ private struct ReconciledAgentPrimaryIngressV1: Sendable {
     }
 }
 
-/// Sole primary-session owner for the one-Mac/one-phone MVP. Reconnect closes
-/// the previous owner before opening the replacement, which also makes the
-/// shared Interactive authority's close notification unambiguous.
+/// Primary-session owner for the retained paired-device set. Observe and Act
+/// transports remain independent per authenticated client; the shared
+/// Interactive authority still admits only one Control session at a time.
 public enum AgentPrimarySessionAuthorityErrorV1:
     Error, Equatable, Sendable
 {
     case transitionInProgress
-    case closedDuringReplacement
+    case closedDuringOpen
+    case capacityReached
     case sessionNotCurrent
     case lifecycleUnavailable
     case securityAdministrationUnavailable
@@ -780,6 +781,13 @@ public protocol AgentPrimaryTransportClosingV1: Sendable {
 }
 
 public actor AgentPrimarySessionAuthorityV1 {
+    private static let maximumConcurrentPrimarySessions = 8
+
+    private struct SessionEntry {
+        let session: AuthenticatedPrimarySessionV0
+        var transport: (any AgentPrimaryTransportClosingV1)?
+    }
+
     private let hostID: UUID
     private let ingress: ReconciledAgentPrimaryIngressV1
     private let authentication: ApplicationAuthenticationAuthority
@@ -792,8 +800,7 @@ public actor AgentPrimarySessionAuthorityV1 {
     private let detailedAuditWallClock: any PrimarySessionAuditWallClockV0
     private var ingressEnabled: Bool
     private var securityAdministrationIngressDenied = false
-    private var current: AuthenticatedPrimarySessionV0?
-    private var currentTransport: (any AgentPrimaryTransportClosingV1)?
+    private var sessions: [ObjectIdentifier: SessionEntry] = [:]
     private var transitionInProgress = false
     private var closeRequestedDuringTransition = false
     private var transitionWaiters: [CheckedContinuation<Void, Never>] = []
@@ -823,8 +830,8 @@ public actor AgentPrimarySessionAuthorityV1 {
         self.detailedAuditWallClock = detailedAuditWallClock
     }
 
-    /// Opens the only current application-primary session. Connection-specific
-    /// TLS evidence and acceptance time remain caller supplied; every semantic
+    /// Opens one bounded application-primary session. Connection-specific TLS
+    /// evidence and acceptance time remain caller supplied; every semantic
     /// authority was fixed at successful Agent bootstrap.
     public func open(
         tlsBinding: HostApplicationTLSBinding,
@@ -840,26 +847,13 @@ public actor AgentPrimarySessionAuthorityV1 {
         guard !transitionInProgress else {
             throw AgentPrimarySessionAuthorityErrorV1.transitionInProgress
         }
+        guard sessions.count < Self.maximumConcurrentPrimarySessions else {
+            throw AgentPrimarySessionAuthorityErrorV1.capacityReached
+        }
         transitionInProgress = true
-        let previous = current
-        let previousTransport = currentTransport
         agentPrimarySessionAuthorityLoggerV1.notice(
-            "primary replacement started hasPrevious=\(previous != nil, privacy: .public) hasTransport=\(previousTransport != nil, privacy: .public)"
+            "primary open started activeCount=\(self.sessions.count, privacy: .public)"
         )
-        current = nil
-        currentTransport = nil
-        if let previousTransport {
-            await previousTransport.closeTransport()
-            agentPrimarySessionAuthorityLoggerV1.debug(
-                "previous primary transport closed"
-            )
-        }
-        if let previous {
-            await previous.close()
-            agentPrimarySessionAuthorityLoggerV1.debug(
-                "previous primary session closed"
-            )
-        }
         let session: AuthenticatedPrimarySessionV0
         do {
             let routeObservationPublisher = try await
@@ -889,12 +883,15 @@ public actor AgentPrimarySessionAuthorityV1 {
             closeRequestedDuringTransition = false
             await session.close()
             finishTransition()
-            throw AgentPrimarySessionAuthorityErrorV1.closedDuringReplacement
+            throw AgentPrimarySessionAuthorityErrorV1.closedDuringOpen
         }
-        current = session
+        sessions[ObjectIdentifier(session)] = SessionEntry(
+            session: session,
+            transport: nil
+        )
         finishTransition()
         agentPrimarySessionAuthorityLoggerV1.notice(
-            "primary replacement completed"
+            "primary open completed activeCount=\(self.sessions.count, privacy: .public)"
         )
         return session
     }
@@ -919,74 +916,81 @@ public actor AgentPrimarySessionAuthorityV1 {
         securityAdministrationIngressDenied
     }
 
-    /// Attaches the exact transport constructed for the current session. A
-    /// lifecycle close or reconnect then owns socket teardown as well as
-    /// semantic-session teardown.
+    /// Attaches the exact transport constructed for one retained session. A
+    /// lifecycle close owns socket teardown as well as semantic-session
+    /// teardown without replacing unrelated client connections.
     public func attachTransport(
         _ transport: any AgentPrimaryTransportClosingV1,
         to session: AuthenticatedPrimarySessionV0
     ) throws {
-        guard !transitionInProgress, current === session,
-              currentTransport == nil else {
+        let key = ObjectIdentifier(session)
+        guard !transitionInProgress, var entry = sessions[key],
+              entry.session === session, entry.transport == nil else {
             throw AgentPrimarySessionAuthorityErrorV1.sessionNotCurrent
         }
-        currentTransport = transport
+        entry.transport = transport
+        sessions[key] = entry
     }
 
+    /// Closes every retained application-primary session. The historical name
+    /// remains source-compatible with lifecycle and security owners.
     public func closeCurrent() async {
         while transitionInProgress {
             closeRequestedDuringTransition = true
             await waitForTransition()
         }
         closeRequestedDuringTransition = false
-        guard let current else { return }
+        guard !sessions.isEmpty else { return }
         transitionInProgress = true
         agentPrimarySessionAuthorityLoggerV1.notice(
-            "primary close started"
+            "primary close-all started activeCount=\(self.sessions.count, privacy: .public)"
         )
-        let transport = currentTransport
-        self.current = nil
-        currentTransport = nil
-        if let transport { await transport.closeTransport() }
-        await current.close()
+        let closing = Array(sessions.values)
+        sessions.removeAll(keepingCapacity: true)
+        for entry in closing {
+            if let transport = entry.transport {
+                await transport.closeTransport()
+            }
+            await entry.session.close()
+        }
         closeRequestedDuringTransition = false
         finishTransition()
         agentPrimarySessionAuthorityLoggerV1.notice(
-            "primary close completed"
+            "primary close-all completed"
         )
     }
 
     /// Failure cleanup for a connection being composed outside this actor.
-    /// A stale factory may close its own session but can never close a newer
-    /// current session installed by a racing verified connection.
+    /// A stale factory may close only its own session and can never close an
+    /// unrelated client installed by a racing verified connection.
     public func closeIfCurrent(
         _ session: AuthenticatedPrimarySessionV0
     ) async {
         while transitionInProgress { await waitForTransition() }
-        guard current === session else {
+        let key = ObjectIdentifier(session)
+        guard let entry = sessions[key], entry.session === session else {
             await session.close()
             return
         }
         transitionInProgress = true
-        let transport = currentTransport
+        sessions.removeValue(forKey: key)
+        let transport = entry.transport
         agentPrimarySessionAuthorityLoggerV1.notice(
-            "current primary cleanup started hasTransport=\(transport != nil, privacy: .public)"
+            "primary cleanup started hasTransport=\(transport != nil, privacy: .public)"
         )
-        current = nil
-        currentTransport = nil
         if let transport {
             await transport.closeTransport()
             agentPrimarySessionAuthorityLoggerV1.debug(
-                "current primary cleanup transport closed"
+                "primary cleanup transport closed"
             )
         }
         await session.close()
         agentPrimarySessionAuthorityLoggerV1.debug(
-            "current primary cleanup session closed"
+            "primary cleanup session closed"
         )
         finishTransition()
         agentPrimarySessionAuthorityLoggerV1.notice(
-            "current primary cleanup completed"
+            "primary cleanup completed activeCount=\(self.sessions.count, privacy: .public)"
         )
     }
 

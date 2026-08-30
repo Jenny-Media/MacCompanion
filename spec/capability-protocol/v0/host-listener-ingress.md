@@ -33,25 +33,26 @@ session. A kind match cannot bypass either semantic owner.
 
 ## Independent role ownership
 
-The one-Mac/one-phone MVP owns at most one active application-primary connection
+The Stage 2 product owns at most eight active application-primary connections
 and at most one active pairing connection. A classified pairing candidate never
-closes, replaces, increments, or otherwise mutates the primary owner. A primary
-candidate never consumes or completes a pairing session. Listener shutdown,
-Agent loss, logout, or disable closes both roles; role-local failure closes only
-the matching generation.
+closes, replaces, increments, or otherwise mutates the retained primary set. A
+primary candidate never consumes or completes a pairing session. Listener
+shutdown, Agent loss, logout, or disable closes every role; role-local failure
+closes only the matching generation.
 
-Only one unclassified TLS candidate is retained while classification is in
-flight. A later accepted candidate may retire that unclassified candidate, but
-it cannot retire either active role merely by reaching TLS ready or presenting
-a registered first kind. Publication or replacement occurs only after the
-matching role factory has consumed the classified authority and activated its
-exact pump. Every callback is fenced by a local generation token.
+Only one unclassified TLS candidate is classified at a time; at most three
+additional accepted candidates wait in a bounded FIFO. A later accepted
+candidate cannot retire any active role merely by reaching TLS ready or
+presenting a registered first kind. Publication occurs only after the matching
+role factory has consumed the classified authority and activated its exact
+pump. Every callback is fenced by a local generation token.
 
-A later valid application-primary candidate may replace the current primary
-according to `primary-session-composition.md`. A second pairing candidate is
-rejected while an exact pairing connection owns the visible boot-scoped
-session; it does not displace that owner. This rule prevents an unauthenticated
-connection from interrupting a Mac user's SAS decision.
+A later valid application-primary candidate joins the bounded retained set
+according to `primary-session-composition.md`; it does not displace an existing
+client. A second pairing candidate is rejected while an exact pairing
+connection owns the visible boot-scoped session; it does not displace that
+owner. These rules prevent an unauthenticated connection from interrupting a
+Mac user's SAS decision or an authenticated client's Observe/Act connection.
 
 ## Pairing pump
 
@@ -77,8 +78,9 @@ Bundle-independent acceptance requires authoritative `auth.hello` and
 frame over-read; wrong-kind, malformed, truncated, silent-deadline, and clock-
 regression closure; one-use classified authority; strict replay of the first
 frame; pairing challenge/prove/pending ordering; silent server-initiated
-completion and expiry; cancellation; and tests proving pairing and primary
-generations cannot displace one another. Release acceptance additionally
+completion and expiry; cancellation; and tests proving pairing and retained
+primary generations cannot displace one another, while exact primary terminal
+cleanup cannot affect a peer. Release acceptance additionally
 requires live listener classification, signed key custody, authenticated local
 review publication, physical QR/TLS exchange, and fault evidence on supported
 macOS hardware.

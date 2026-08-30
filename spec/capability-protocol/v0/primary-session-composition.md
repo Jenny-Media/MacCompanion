@@ -90,33 +90,37 @@ The platform bridge consumes only the one-shot verified-ready connection
 authority produced for the exact accepted `NWConnection`. It asks the fixed
 Agent authority for a session using that authority's TLS binding, constructs
 the frame pump from the same one-shot connection, and attaches the pump as the
-session's transport before returning either value. Reconnect and lifecycle
-close cancel the attached pump before completing semantic session teardown.
-Construction or attachment failure closes only the exact candidate session;
-stale cleanup cannot close a newer current session.
+session's transport before returning either value. Exact transport termination
+removes only that session; global lifecycle and security fences cancel every
+attached pump before completing semantic teardown. Construction or attachment
+failure closes only the exact candidate session; stale cleanup cannot close an
+unrelated retained session.
 
 The shared-listener first-frame classifier and independent pairing ownership are
 normative in `host-listener-ingress.md`. A pairing-classified connection is not
-a primary candidate and cannot replace or increment the active primary owner.
+a primary candidate and cannot close, replace, or mutate the retained primary
+set.
 
 One listener-handoff authority owns the asynchronous transfer from accepted TLS
 candidate through verified readiness, Agent binding, frame-pump activation, and
-terminal cleanup. It retains only the newest pending TLS candidate. Every
-readiness, binding, and terminal callback carries an unforgeable local
-generation token; a callback may mutate state only while that exact generation
-is still pending, binding, or active. Superseded or cancelled candidates close
-their exact connection and session without touching a newer owner.
+terminal cleanup. It runs one classifier/binder at a time and retains at most
+three additional accepted candidates in a bounded FIFO so the application,
+input, and media dials cannot starve one another. Every readiness, binding, and
+terminal callback carries an unforgeable local generation token; a callback may
+mutate state only while that exact generation is still pending, binding, or
+active. Cancelled candidates close their exact connection and session without
+touching any retained owner.
 
 Pump activation has a synchronous termination latch. A terminal event that
 wins the race with activation prevents publication and closes the candidate; a
 terminal event after activation retires only the matching active generation.
-Replacing the active generation cancels the previous connection only after the
-new generation has bound, received a valid `auth.proof`, reached semantic
-`ready`, and successfully sent its session description. A TLS-ready connection
-or syntactically valid `auth.hello` is not an activated primary and cannot evict
-the current authenticated owner. Listener-handoff
-cancellation clears pending and active publication before awaiting teardown,
-is idempotent, and causes any in-flight binding result to self-retire when it
+An application-primary generation joins the bounded retained set only after it
+has bound and its preserved first frame has been accepted by the semantic
+owner. It never cancels another device's application-primary connection. A
+TLS-ready connection or syntactically valid `auth.hello` is not an activated
+primary and cannot evict an authenticated owner. Listener-handoff cancellation
+clears pending and every active publication before awaiting teardown, is
+idempotent, and causes any in-flight binding result to self-retire when it
 resumes.
 
 The outer Agent network service has one start and one terminal transition. Its
@@ -134,26 +138,27 @@ text is not diagnostic data.
 The sealed listener emits one local ready transition, distinct from start. The
 service therefore projects `idle`, `starting`, `listening`, locally stopped,
 and degraded outcomes without guessing from construction or acceptance. The
-projection exposes only `LocalAgentNetworkState`, a zero-or-one active primary
-count, and the existing `routeUnavailable` warning code. It contains no route,
-address, peer, TLS, traffic, or underlying-error detail. A per-connection start
-failure may add that warning while the listener remains listening; listener
-failure makes the network state degraded; explicit local cancellation makes it
-stopped.
+projection exposes only `LocalAgentNetworkState`, a content-free
+`hasActivePrimary` Boolean, and the existing `routeUnavailable` warning code.
+It contains no count, route, address, peer, TLS, traffic, or underlying-error
+detail. A per-connection start failure may add that warning while the listener
+remains listening; listener failure makes the network state degraded; explicit
+local cancellation makes it stopped.
 
-The one-Mac/one-phone MVP owns at most one current application-primary session.
-A reconnect constructs a valid candidate, closes the prior owner completely,
-and only then publishes the replacement. A concurrent open while close or
-replacement is suspended fails closed. This avoids an unrelated connection
-teardown invalidating the shared one-session Interactive authority. A future
-many-device release must replace this MVP rule with owner-aware Interactive
-teardown and prove cross-connection isolation before admitting simultaneous
-primary sessions.
+The Stage 2 product retains at most eight application-primary sessions, matching
+the paired-device capacity. Opens and global teardown serialize; a ninth open
+fails closed. Observe and Act dispatch remain bound to each session's
+server-issued connection ID. Exact transport termination removes only its own
+session and releases its capacity slot, so reconnect churn cannot exhaust the
+set. Interactive teardown is connection-aware: closing an unrelated primary
+does not clear another device's pending or active Control authority. The shared
+Interactive dispatcher still admits at most one active Control session across
+all retained primaries.
 
 The same returned service root owns the pure product lifecycle reducer. Menu
-process loss invokes only Interactive teardown and leaves an otherwise eligible
-Observe/Act primary session open. Disable, logout, or Agent loss closes the
-current primary owner, which performs its exactly-once Interactive teardown.
+process loss invokes only Interactive teardown and leaves otherwise eligible
+Observe/Act primary sessions open. Disable, logout, or Agent loss closes every
+primary owner, with connection-aware exactly-once Interactive teardown.
 Only after those remote-authority effects complete may the coordinator publish
 the completed transition and attempt best-effort lifecycle audit. Registration,
 unregistration, and process-recovery effects remain explicit output for the
