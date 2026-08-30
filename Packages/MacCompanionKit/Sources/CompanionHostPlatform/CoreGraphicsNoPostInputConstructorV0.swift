@@ -67,6 +67,7 @@ public struct CoreGraphicsNoPostInputConstructorV0 {
         fence: InteractiveCommandFence,
         geometry: MacDisplayGeometrySnapshotV0,
         currentCursorPosition: CGPoint,
+        buttonClickState: UInt8? = nil,
         sink: any CoreGraphicsConstructedEventSinkV0
     ) throws -> Int {
         guard fence.selectedDisplayID == geometry.selectedDisplayID,
@@ -80,7 +81,8 @@ public struct CoreGraphicsNoPostInputConstructorV0 {
             let result = try Self.events(
                 for: description,
                 selectedDisplayBounds: geometry.logicalBounds,
-                currentCursorPosition: plannedCursor
+                currentCursorPosition: plannedCursor,
+                buttonClickState: buttonClickState
             )
             constructed += result.events
             plannedCursor = result.cursorPosition
@@ -131,7 +133,8 @@ public struct CoreGraphicsNoPostInputConstructorV0 {
     private static func events(
         for description: MacInteractiveInputEventV0,
         selectedDisplayBounds: CGRect,
-        currentCursorPosition: CGPoint
+        currentCursorPosition: CGPoint,
+        buttonClickState: UInt8?
     ) throws -> (events: [CGEvent], cursorPosition: CGPoint) {
         switch description {
         case let .pointerMove(x, y):
@@ -174,6 +177,12 @@ public struct CoreGraphicsNoPostInputConstructorV0 {
                 mouseCursorPosition: currentCursorPosition,
                 mouseButton: cgButton
             ) else { throw CoreGraphicsInputConstructionErrorV0.eventCreationFailed }
+            if let buttonClickState {
+                event.setIntegerValueField(
+                    .mouseEventClickState,
+                    value: Int64(buttonClickState)
+                )
+            }
             return ([event], currentCursorPosition)
         case let .scroll(unit, deltaX, deltaY):
             let cgUnit: CGScrollEventUnit = unit == .pixel ? .pixel : .line

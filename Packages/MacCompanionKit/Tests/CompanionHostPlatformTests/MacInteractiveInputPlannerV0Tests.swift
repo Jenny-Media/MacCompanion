@@ -108,3 +108,75 @@ import Testing
         ))
     }
 }
+
+@Test func clickStateTrackerPromotesOneStationaryPairToDoubleClick() {
+    var tracker = MacInteractiveClickStateTrackerV0()
+    let down = InteractiveInputPayload.button(
+        button: .primary,
+        transition: .down
+    )
+    let up = InteractiveInputPayload.button(
+        button: .primary,
+        transition: .up
+    )
+
+    #expect(tracker.clickState(
+        for: down,
+        clientMonotonicMilliseconds: 1_000
+    ) == 1)
+    #expect(tracker.clickState(
+        for: up,
+        clientMonotonicMilliseconds: 1_001
+    ) == 1)
+    #expect(tracker.clickState(
+        for: down,
+        clientMonotonicMilliseconds: 1_100
+    ) == 2)
+    #expect(tracker.clickState(
+        for: up,
+        clientMonotonicMilliseconds: 1_101
+    ) == 2)
+}
+
+@Test func clickStateTrackerDoesNotPromoteAfterMovementOrDelay() {
+    var tracker = MacInteractiveClickStateTrackerV0()
+    let down = InteractiveInputPayload.button(
+        button: .primary,
+        transition: .down
+    )
+    let up = InteractiveInputPayload.button(
+        button: .primary,
+        transition: .up
+    )
+
+    _ = tracker.clickState(for: down, clientMonotonicMilliseconds: 1_000)
+    _ = tracker.clickState(for: up, clientMonotonicMilliseconds: 1_001)
+    _ = tracker.clickState(
+        for: .pointerMove(x: 10, y: 10),
+        clientMonotonicMilliseconds: 1_010
+    )
+    #expect(tracker.clickState(
+        for: down,
+        clientMonotonicMilliseconds: 1_020
+    ) == 1)
+    _ = tracker.clickState(for: up, clientMonotonicMilliseconds: 1_021)
+    #expect(tracker.clickState(
+        for: down,
+        clientMonotonicMilliseconds: 1_600
+    ) == 1)
+
+    tracker.reset()
+    _ = tracker.clickState(for: down, clientMonotonicMilliseconds: 2_000)
+    _ = tracker.clickState(
+        for: .pointerMove(x: 20, y: 20),
+        clientMonotonicMilliseconds: 2_010
+    )
+    #expect(tracker.clickState(
+        for: up,
+        clientMonotonicMilliseconds: 2_020
+    ) == 1)
+    #expect(tracker.clickState(
+        for: down,
+        clientMonotonicMilliseconds: 2_100
+    ) == 1)
+}

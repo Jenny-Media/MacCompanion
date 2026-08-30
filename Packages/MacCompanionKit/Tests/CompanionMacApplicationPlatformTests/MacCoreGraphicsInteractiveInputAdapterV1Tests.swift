@@ -31,6 +31,7 @@ private final class InputPermissionProbeV1: @unchecked Sendable {
 private struct InputEventSnapshotV1: Equatable {
     let type: CGEventType
     let location: CGPoint
+    let clickState: Int64
 }
 
 private final class InputEventSinkV1:
@@ -53,7 +54,10 @@ private final class InputEventSinkV1:
             }
             snapshotsStorage.append(.init(
                 type: event.type,
-                location: event.location
+                location: event.location,
+                clickState: event.getIntegerValueField(
+                    .mouseEventClickState
+                )
             ))
         }
     }
@@ -144,6 +148,7 @@ private func inputInstallCommandV1(
 private func inputEnvelopeV1(
     command: InteractiveRuntimeInstallCommandV0,
     authorizationEpoch: UInt64? = nil,
+    clientMonotonicMilliseconds: UInt64 = 1,
     payload: InteractiveInputPayload
 ) throws -> InteractiveInputEnvelope {
     try InteractiveInputEnvelope(
@@ -156,7 +161,7 @@ private func inputEnvelopeV1(
                 ?? command.lease.authorizationEpoch.rawValue
         ),
         sequence: 1,
-        clientMonotonicMilliseconds: 1,
+        clientMonotonicMilliseconds: clientMonotonicMilliseconds,
         surfaceID: WireUUID(command.lease.surfaceID),
         surfaceRevision: .init(
             rawValue: command.lease.surfaceRevision.rawValue
@@ -166,6 +171,34 @@ private func inputEnvelopeV1(
         ),
         input: payload
     )
+}
+
+@available(macOS 26.0, *)
+@Test func coreGraphicsAdapterPostsARealDoubleClickState() throws {
+    let permission = InputPermissionProbeV1(true)
+    let sink = InputEventSinkV1()
+    let adapter = inputAdapterV1(permission: permission, sink: sink)
+    let command = try inputInstallCommandV1()
+    _ = try adapter.configure(command: command, physicalDisplayID: 7)
+
+    let transitions: [(UInt64, InteractiveInputTransition)] = [
+        (1_000, .down),
+        (1_001, .up),
+        (1_100, .down),
+        (1_101, .up),
+    ]
+    for (timestamp, transition) in transitions {
+        try adapter.postInteractiveInput(inputEnvelopeV1(
+            command: command,
+            clientMonotonicMilliseconds: timestamp,
+            payload: .button(button: .primary, transition: transition)
+        ))
+    }
+
+    #expect(sink.snapshots().map(\.type) == [
+        .leftMouseDown, .leftMouseUp, .leftMouseDown, .leftMouseUp,
+    ])
+    #expect(sink.snapshots().map(\.clickState) == [1, 1, 2, 2])
 }
 
 @available(macOS 26.0, *)

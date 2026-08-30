@@ -25,6 +25,96 @@ public enum MacInteractiveInputEventV0: Equatable, Sendable {
     case unicodeText(String)
 }
 
+/// Reconstructs the Core Graphics click-state value that is intentionally not
+/// part of the v0 wire protocol. Browsers and AppKit controls use this value to
+/// distinguish a double click from two unrelated primary-button clicks.
+///
+/// The tracker only continues a click sequence while the pointer remains
+/// still and the client's monotonic timestamps remain close together. A drag,
+/// scroll, reset, or time discontinuity fails closed to a new single click.
+public struct MacInteractiveClickStateTrackerV0: Equatable, Sendable {
+    private struct ActiveClick: Equatable, Sendable {
+        let count: UInt8
+        var moved: Bool
+    }
+
+    private struct CompletedClick: Equatable, Sendable {
+        let button: InteractivePointerButton
+        let count: UInt8
+        let completedAtMilliseconds: UInt64
+    }
+
+    public static let maximumDoubleClickIntervalMilliseconds: UInt64 = 500
+
+    private var activeClicks: [InteractivePointerButton: ActiveClick] = [:]
+    private var lastCompletedClick: CompletedClick?
+
+    public init() {}
+
+    public mutating func clickState(
+        for payload: InteractiveInputPayload,
+        clientMonotonicMilliseconds: UInt64
+    ) -> UInt8? {
+        switch payload {
+        case .pointerMove:
+            lastCompletedClick = nil
+            for button in Array(activeClicks.keys) {
+                activeClicks[button]?.moved = true
+            }
+            return nil
+        case let .button(button, transition):
+            switch transition {
+            case .down:
+                let count: UInt8
+                if let previous = lastCompletedClick,
+                   previous.button == button,
+                   previous.count == 1,
+                   clientMonotonicMilliseconds
+                    >= previous.completedAtMilliseconds,
+                   clientMonotonicMilliseconds
+                    - previous.completedAtMilliseconds
+                    <= Self.maximumDoubleClickIntervalMilliseconds {
+                    count = 2
+                } else {
+                    count = 1
+                }
+                activeClicks[button] = ActiveClick(
+                    count: count,
+                    moved: false
+                )
+                return count
+            case .up:
+                guard let active = activeClicks.removeValue(forKey: button)
+                else {
+                    lastCompletedClick = nil
+                    return 1
+                }
+                if active.moved {
+                    lastCompletedClick = nil
+                } else {
+                    lastCompletedClick = CompletedClick(
+                        button: button,
+                        count: active.count,
+                        completedAtMilliseconds:
+                            clientMonotonicMilliseconds
+                    )
+                }
+                return active.count
+            }
+        case .scroll, .reset:
+            lastCompletedClick = nil
+            return nil
+        case .physicalKey, .modifiers, .text:
+            return nil
+        }
+    }
+
+    public mutating func reset() {
+        activeClicks.removeAll(keepingCapacity: true)
+        lastCompletedClick = nil
+    }
+}
+
 /// Converts the closed wire input union into descriptions consumed by a later
 /// Core Graphics adapter. This value never posts events and is safe for
 /// unsigned package tests.

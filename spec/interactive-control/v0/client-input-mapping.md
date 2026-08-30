@@ -39,6 +39,10 @@ reliable input producer assigns a sequence.
 
 - A direct tap emits exact pointer motion, button down, then button up.
 - A trackpad tap emits button down then button up at the current pointer.
+- A recognized double tap emits one pointer motion when direct-touch mapping
+  requires it, followed by two balanced down/up pairs without an intervening
+  pointer move. The host reconstructs the platform double-click state; the
+  client does not extend the closed v0 wire payload for this gesture.
 - Drag begin emits at most one pointer move followed by one button down; drag
   updates emit only pointer moves; drag end emits the matching button up.
 - Repeated begin, update/end without a held drag, an out-of-content direct

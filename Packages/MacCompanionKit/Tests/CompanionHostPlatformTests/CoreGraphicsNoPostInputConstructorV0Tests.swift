@@ -11,6 +11,7 @@ private struct ConstructedEventSnapshot: Equatable {
     let location: CGPoint
     let flags: CGEventFlags
     let virtualKeyCode: Int64
+    let clickState: Int64
     let unicodeText: String
 }
 
@@ -36,12 +37,30 @@ private final class ConstructedEventSnapshotSink:
             virtualKeyCode: event.getIntegerValueField(
                 .keyboardEventKeycode
             ),
+            clickState: event.getIntegerValueField(
+                .mouseEventClickState
+            ),
             unicodeText: String(
                 utf16CodeUnits: units,
                 count: actualLength
             )
         ))
     }
+}
+
+@Test func buttonConstructionPreservesExplicitDoubleClickState() throws {
+    let sink = ConstructedEventSnapshotSink()
+    let cursor = CGPoint(x: 12, y: 64)
+    #expect(try CoreGraphicsNoPostInputConstructorV0().construct(
+        [.button(button: .primary, transition: .down)],
+        fence: constructionFence(),
+        geometry: constructionGeometry(),
+        currentCursorPosition: cursor,
+        buttonClickState: 2,
+        sink: sink
+    ) == 1)
+    #expect(sink.snapshots.first?.type == .leftMouseDown)
+    #expect(sink.snapshots.first?.clickState == 2)
 }
 
 private let constructionBounds = CGRect(x: -100, y: 50, width: 200, height: 100)

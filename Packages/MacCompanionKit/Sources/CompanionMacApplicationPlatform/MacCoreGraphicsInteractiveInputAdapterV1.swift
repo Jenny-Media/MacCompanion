@@ -49,6 +49,7 @@ public final class MacCoreGraphicsInteractiveInputAdapterV1:
     private let constructor = CoreGraphicsNoPostInputConstructorV0()
     private let sink: any CoreGraphicsConstructedEventSinkV0
     private var planner = MacInteractiveInputPlannerV0()
+    private var clickStateTracker = MacInteractiveClickStateTrackerV0()
     private var configuration: Configuration?
 
     public convenience init() {
@@ -186,12 +187,19 @@ public final class MacCoreGraphicsInteractiveInputAdapterV1:
             }
             var nextPlanner = planner
             let events = try nextPlanner.plan(envelope.input)
+            var nextClickStateTracker = clickStateTracker
+            let buttonClickState = nextClickStateTracker.clickState(
+                for: envelope.input,
+                clientMonotonicMilliseconds:
+                    envelope.clientMonotonicMilliseconds
+            )
             do {
                 _ = try constructor.construct(
                     events,
                     fence: configuration.fence,
                     geometry: configuration.geometry,
                     currentCursorPosition: cursor,
+                    buttonClickState: buttonClickState,
                     sink: sink
                 )
             } catch {
@@ -199,6 +207,7 @@ public final class MacCoreGraphicsInteractiveInputAdapterV1:
                     .eventConstructionFailed
             }
             planner = nextPlanner
+            clickStateTracker = nextClickStateTracker
         }
     }
 
@@ -238,6 +247,7 @@ public final class MacCoreGraphicsInteractiveInputAdapterV1:
                     .eventConstructionFailed
             }
             planner = nextPlanner
+            clickStateTracker.reset()
         }
     }
 
@@ -247,6 +257,7 @@ public final class MacCoreGraphicsInteractiveInputAdapterV1:
                   planner.pressedHIDUsages.isEmpty,
                   planner.modifiers.isEmpty else { return }
             configuration = nil
+            clickStateTracker.reset()
         }
     }
 
