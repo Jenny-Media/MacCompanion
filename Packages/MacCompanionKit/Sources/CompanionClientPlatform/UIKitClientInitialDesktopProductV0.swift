@@ -163,7 +163,8 @@ public final class UIKitClientInitialDesktopProductV0 {
         UIKitClientAutomaticFocusIntentV0?
     private var automaticFocusTask: Task<Void, Never>?
     private var automaticFocusGeneration: UInt64 = 0
-    private var visualSmartZoomFocus: SurfaceFocus?
+    private var visualSmartZoomFocus:
+        UIKitClientFocusPresentationIdentityV0?
 
     fileprivate init(
         descriptor: AdaptiveSurfaceDescriptor,
@@ -431,11 +432,26 @@ public final class UIKitClientInitialDesktopProductV0 {
             case .focusedRegion:
                 guard event.reason == .verifiedFocus,
                       let focus = event.focus else { return }
-                try surface.focusVisualZoom(on: focus.bounds)
-                visualSmartZoomFocus = focus
+                let identity = UIKitClientFocusPresentationIdentityV0(focus)
+                guard visualSmartZoomFocus != identity else { return }
+                do {
+                    try surface.focusVisualZoom(on: focus.bounds)
+                } catch UIKitClientLiveSurfaceFailureV0.invalidGeometry {
+                    // Smart Zoom is local presentation. A focus refresh can
+                    // arrive while SwiftUI is temporarily laying out a zero-
+                    // sized surface; defer until the next refresh instead of
+                    // revoking a healthy authenticated Control session.
+                    print(
+                        "[MacCompanion live-control] automatic visual zoom deferred error=invalidGeometry"
+                    )
+                    return
+                }
+                visualSmartZoomFocus = identity
             case .desktop:
                 guard event.reason != .verifiedFocus,
                       event.focus == nil else { return }
+                guard visualSmartZoomFocus != nil
+                        || surface.isVisuallyZoomed else { return }
                 visualSmartZoomFocus = nil
                 surface.resetVisualZoom(animated: true)
             case .application, .window:

@@ -11,12 +11,14 @@ import CompanionWire
 package struct UIKitClientAutomaticFocusIntentV0: Equatable, Sendable {
     package let recommendedTargetKind: InteractiveSurfaceKind
     package let targetToken: WireUUID?
-    package let focus: SurfaceFocus?
+    package let focus: UIKitClientFocusPresentationIdentityV0?
 
     package init(_ event: ClientSurfaceFocusEventV0) {
         recommendedTargetKind = event.recommendedTargetKind
-        targetToken = event.targetToken
-        focus = event.focus
+        // A focused-region target token is short-lived authority, not visual
+        // identity. Retain opaque targets only for non-focus presentations.
+        targetToken = event.focus == nil ? event.targetToken : nil
+        focus = event.focus.map(UIKitClientFocusPresentationIdentityV0.init)
     }
 }
 
@@ -29,14 +31,10 @@ package struct UIKitClientFocusPresentationIdentityV0:
 {
     package let category: FocusElementCategory
     package let bounds: NormalizedSurfaceRect
-    package let editable: Bool
-    package let secure: Bool
 
     package init(_ focus: SurfaceFocus) {
         category = focus.category
         bounds = focus.bounds
-        editable = focus.editable
-        secure = focus.secure
     }
 }
 
