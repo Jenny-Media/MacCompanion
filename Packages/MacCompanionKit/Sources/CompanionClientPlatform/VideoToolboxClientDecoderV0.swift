@@ -14,7 +14,7 @@ public enum VideoToolboxClientDecoderErrorV0:
     case sessionCreationFailed
     case generationMismatch
     case sampleBufferCreationFailed
-    case decodeSubmissionFailed
+    case decodeSubmissionFailed(OSStatus)
 }
 
 public final class VideoToolboxClientDecodedFrameV0: @unchecked Sendable {
@@ -32,7 +32,17 @@ public final class VideoToolboxClientDecodedFrameV0: @unchecked Sendable {
 
 public enum VideoToolboxClientDecodeResultV0: @unchecked Sendable {
     case frame(VideoToolboxClientDecodedFrameV0)
+    case dropped(generation: UInt64, mediaSequence: UInt64)
     case failure(generation: UInt64, mediaSequence: UInt64)
+}
+
+package enum VideoToolboxClientDecodeSubmissionDispositionV0:
+    Equatable,
+    Sendable
+{
+    case accepted
+    case dropped
+    case failed(OSStatus)
 }
 
 private final class VideoToolboxClientDecodeCallbackBoxV0:
@@ -67,8 +77,14 @@ private func videoToolboxClientDecodeCallbackV0(
     guard let sourceFrameRefCon else { return }
     let box = Unmanaged<VideoToolboxClientDecodeCallbackBoxV0>
         .fromOpaque(sourceFrameRefCon).takeRetainedValue()
+    if status == noErr, infoFlags.contains(.frameDropped) {
+        box.handler(.dropped(
+            generation: box.command.generation,
+            mediaSequence: box.command.mediaSequence
+        ))
+        return
+    }
     guard status == noErr,
-          !infoFlags.contains(.frameDropped),
           let pixelBuffer = imageBuffer,
           CVPixelBufferGetWidth(pixelBuffer)
             == Int(box.command.fence.encodedWidth),
@@ -220,13 +236,39 @@ public final class VideoToolboxClientDecoderV0: @unchecked Sendable {
         let status = VTDecompressionSessionDecodeFrame(
             active.0,
             sampleBuffer: sample,
+            // The timestamp is a host-authored ordering value, not an iOS
+            // playback clock. `_1xRealTimePlayback` would compare unrelated
+            // device uptimes and can drop every otherwise valid frame.
             flags: [._EnableAsynchronousDecompression],
             frameRefcon: retained.toOpaque(),
             infoFlagsOut: &infoFlags
         )
-        guard status == noErr else {
+        switch Self.submissionDisposition(status: status) {
+        case .accepted:
+            return
+        case .dropped:
             retained.release()
-            throw VideoToolboxClientDecoderErrorV0.decodeSubmissionFailed
+            handler(.dropped(
+                generation: command.generation,
+                mediaSequence: command.mediaSequence
+            ))
+        case let .failed(status):
+            retained.release()
+            throw VideoToolboxClientDecoderErrorV0
+                .decodeSubmissionFailed(status)
+        }
+    }
+
+    package static func submissionDisposition(
+        status: OSStatus
+    ) -> VideoToolboxClientDecodeSubmissionDispositionV0 {
+        switch status {
+        case noErr:
+            .accepted
+        case kVTVideoDecoderNotAvailableNowErr:
+            .dropped
+        default:
+            .failed(status)
         }
     }
 

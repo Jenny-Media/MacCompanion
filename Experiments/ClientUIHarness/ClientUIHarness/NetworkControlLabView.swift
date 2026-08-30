@@ -637,6 +637,7 @@ private final class IntegratedLabTelemetry: ObservableObject {
     @Published var selections = 0
     @Published var closures = 0
     @Published var terminalFailures = 0
+    @Published var visualZoomed = false
     @Published var host = LabStatus()
 }
 
@@ -722,20 +723,30 @@ private final class IntegratedControlLabModel: ObservableObject {
                     self.telemetry.control = String(describing: self.workspace?.projection.control.mode ?? .unavailable)
                     (self.telemetry.attempts, self.telemetry.selections, self.telemetry.closures) = await gate.counts()
                     if let status = try? await self.command("status") { self.telemetry.host = status }
+                    var visualZoomed = false
                     for scene in UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene }) {
-                        for window in scene.windows { Self.identifyVideo(in: window) }
+                        for window in scene.windows {
+                            visualZoomed = Self.identifyVideo(in: window)
+                                || visualZoomed
+                        }
                     }
+                    self.telemetry.visualZoomed = visualZoomed
                     try? await Task.sleep(for: .milliseconds(200))
                 }
             }
         } catch { failure = String(describing: error); await close() }
     }
-    private static func identifyVideo(in view: UIView) {
+    private static func identifyVideo(in view: UIView) -> Bool {
+        var visualZoomed = false
         if let surface = view as? UIKitClientLiveSurfaceViewV0 {
             surface.accessibilityIdentifier = "Integrated live surface"
             surface.videoView.accessibilityIdentifier = "Integrated video"
+            visualZoomed = surface.isVisuallyZoomed
         }
-        for child in view.subviews { identifyVideo(in: child) }
+        for child in view.subviews {
+            visualZoomed = identifyVideo(in: child) || visualZoomed
+        }
+        return visualZoomed
     }
     func command(_ action: String) async throws -> LabStatus {
         guard let fixture else { throw LabError.closed }
@@ -806,6 +817,8 @@ private struct IntegratedLabTelemetryView: View {
                 Text(String(telemetry.host.uncleanRetirements)).accessibilityIdentifier("Integrated unclean retirements")
                 Text(String(telemetry.host.statusRequests)).accessibilityIdentifier("Integrated status requests")
                 Text(String(telemetry.host.acknowledgements)).accessibilityIdentifier("Integrated surface acknowledgements")
+                Text(telemetry.visualZoomed ? "Focused" : "Fit")
+                    .accessibilityIdentifier("Integrated visual zoom")
             }
             HStack {
                 Text(telemetry.host.runtimeIdle ? "Idle" : "Active").accessibilityIdentifier("Integrated runtime")

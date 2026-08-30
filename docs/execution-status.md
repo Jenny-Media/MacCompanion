@@ -1,6 +1,6 @@
 # Mac Companion Execution and Blocker Ledger
 
-Status date: 2026-08-29
+Status date: 2026-08-30
 
 This is the living execution authority for the staged plan. A blocker applies only to work that names it as a dependency. Work in every other safe lane continues. Evidence links point to repository artifacts or reproducible commands; secrets and Apple-account records remain outside the repository.
 
@@ -99,6 +99,16 @@ the failed candidate is superseded and a new exact signed candidate plus
 physical two-device confirmation remain active work. Any older
 `one-Mac/one-phone` or primary-replacement wording below is historical evidence,
 not the current Stage 2 contract.
+
+The superseding multi-device candidate removed primary replacement, then a
+physical iPhone console isolated a separate reconnect trigger: a VideoToolbox
+submission failure caused the client media pump to cancel the otherwise valid
+session. The [decoder-pressure recovery checkpoint](evidence/2026-08-30-physical-decoder-pressure-recovery.md)
+keeps only documented temporary decoder unavailability and explicit real-time
+frame drops nonterminal, retains exact status for all terminal failures, and
+passes the real-window Simulator journey plus complete repository validation.
+An exact signed replacement on both devices and simultaneous physical
+confirmation remain required; this checkpoint is not Stage 2 acceptance.
 
 - `active`: work can proceed now.
 - `ready`: prerequisites are satisfied and work is queued.

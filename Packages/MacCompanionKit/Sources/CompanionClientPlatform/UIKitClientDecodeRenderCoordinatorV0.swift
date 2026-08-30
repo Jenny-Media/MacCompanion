@@ -149,6 +149,11 @@ public final class UIKitClientDecodeRenderCoordinatorV0 {
                     generation: generation,
                     sequence: sequence
                 )
+            case .dropped:
+                // Real-time VideoToolbox may intentionally shed a decoded
+                // output when it cannot keep pace. The authenticated media
+                // sequence remains valid and a later frame can replace it.
+                return
             case let .failure(value, mediaSequence):
                 generation = value
                 sequence = mediaSequence
@@ -199,6 +204,8 @@ public final class UIKitClientDecodeRenderCoordinatorV0 {
             case .discardedStale:
                 break
             }
+        case .dropped:
+            break
         case let .failure(generation, mediaSequence):
             if generation == authority.generation,
                mediaSequence <= authority.lastSubmittedMediaSequence {

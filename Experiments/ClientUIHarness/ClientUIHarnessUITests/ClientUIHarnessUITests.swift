@@ -610,7 +610,16 @@ final class ClientUIHarnessUITests: XCTestCase {
     private func focusIntegratedSurface() {
         let acknowledged = integratedCount("surface acknowledgements")
         app.buttons["Lab Focus"].tap()
-        waitIntegratedCount("surface acknowledgements", greaterThan: acknowledged)
+        wait(
+            for: app.staticTexts["Integrated visual zoom"],
+            toHaveLabel: "Focused",
+            timeout: 15
+        )
+        XCTAssertEqual(
+            integratedCount("surface acknowledgements"),
+            acknowledged,
+            "Ordinary Smart Zoom must preserve the remote capture surface"
+        )
     }
 
     @MainActor
