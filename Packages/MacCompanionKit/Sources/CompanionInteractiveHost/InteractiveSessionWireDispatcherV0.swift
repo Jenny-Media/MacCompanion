@@ -1061,7 +1061,16 @@ public actor InteractiveSessionWireDispatcherV0 {
             requestID: request.messageID.rawValue,
             context: context
         )
-        guard pending == nil, active == nil, transitionMessageID == nil else {
+        if active != nil {
+            return try errorResponse(
+                correlationID: request.messageID,
+                responseMessageID: responseMessageID,
+                sentAtUnixMilliseconds: context.wallNowUnixMilliseconds,
+                code: "interactive.sessionActive",
+                retry: .afterUserAction
+            )
+        }
+        guard pending == nil, transitionMessageID == nil else {
             return try errorResponse(
                 correlationID: request.messageID,
                 responseMessageID: responseMessageID,

@@ -101,6 +101,7 @@ public struct ProtocolErrorResponseBody: WireBody {
         "operation.outcomeUnknown": ["operationID": .uuid],
         "operation.notFound": ["operationID": .uuid],
         "operation.approvalNotFound": noArguments,
+        "interactive.sessionActive": noArguments,
         "provider.unavailable": noArguments,
         "capability.registryChanged": noArguments,
         "storage.securityUnavailable": [

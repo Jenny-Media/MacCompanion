@@ -349,6 +349,27 @@ private func primaryWorkspaceSnapshot(
     #expect(rejected.control.mode == .rejected)
     #expect(rejected.control.diagnosticCode == "policy.denied")
 
+    let activeElsewhere = try ClientPrimaryWorkspaceProjectionV0(
+        macName: "Studio Mac",
+        snapshot: primaryWorkspaceSnapshot(
+            revision: 18,
+            availability: .connected,
+            controlState: .remoteRejected(
+                ClientInteractiveRemoteErrorV0(
+                    code: "interactive.sessionActive",
+                    retry: .afterUserAction
+                )
+            )
+        ),
+        monotonicNowMilliseconds: 1_201
+    )
+    #expect(activeElsewhere.control.mode == .rejected)
+    #expect(activeElsewhere.control.detail.contains(
+        "already has an active Remote Control session"
+    ))
+    #expect(activeElsewhere.control.diagnosticCode
+        == "interactive.sessionActive")
+
     let disconnected = try ClientPrimaryWorkspaceProjectionV0(
         macName: "Studio Mac",
         snapshot: primaryWorkspaceSnapshot(

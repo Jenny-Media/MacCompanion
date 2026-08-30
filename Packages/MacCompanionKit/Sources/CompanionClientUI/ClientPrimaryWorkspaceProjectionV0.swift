@@ -139,12 +139,16 @@ public struct ClientControlWorkspaceProjectionV0: Equatable, Sendable {
             diagnosticCode = "interactive.preparationFailed"
         case let .remoteRejected(error):
             mode = .rejected
-            detail = switch error.retry {
-            case .never: "Remote Control is not available for this device."
-            case .afterUserAction: "Review the Mac or device settings, then try again."
-            case .afterReconnect: "Reconnect to the Mac, then try again."
-            case .afterApproval: "Approve the required access, then try again."
-            case .backoff: "Wait briefly before trying again."
+            if error.code == "interactive.sessionActive" {
+                detail = "This Mac already has an active Remote Control session. Stop it on the controlling device or on the Mac before trying here."
+            } else {
+                detail = switch error.retry {
+                case .never: "Remote Control is not available for this device."
+                case .afterUserAction: "Review the Mac or device settings, then try again."
+                case .afterReconnect: "Reconnect to the Mac, then try again."
+                case .afterApproval: "Approve the required access, then try again."
+                case .backoff: "Wait briefly before trying again."
+                }
             }
             diagnosticCode = error.code
         }

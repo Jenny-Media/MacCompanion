@@ -744,6 +744,40 @@ private func dispatcherProof(
     #expect(await !flow.dispatcher.hasPendingApproval)
 }
 
+@Test func dispatcherRejectsSecondSessionWithoutReplacingActiveOwner() async throws {
+    let flow = try await pendingDispatcherFlow()
+    let proof = try dispatcherProof(for: flow.challenge)
+    _ = try await flow.dispatcher.dispatch(
+        requestJSON: WireCodec.encode(proof),
+        context: dispatcherContext(monotonicNow: 1_010),
+        responseMessageID: WireUUID(UUID())
+    )
+
+    let secondRequest = try WireEnvelope(
+        messageID: WireUUID(UUID()),
+        correlationID: nil,
+        sentAtUnixMilliseconds: 1_724_000_000_020,
+        body: try InteractiveSessionRequestBody(effects: [.view])
+    )
+    let rejectedData = try await flow.dispatcher.dispatch(
+        requestJSON: WireCodec.encode(secondRequest),
+        context: dispatcherContext(
+            monotonicNow: 1_020,
+            wallNow: 1_724_000_000_020
+        ),
+        responseMessageID: WireUUID(UUID())
+    )
+    let rejected = try WireCodec.decode(
+        WireEnvelope<ProtocolErrorResponseBody>.self,
+        from: rejectedData
+    )
+    #expect(rejected.body.code == "interactive.sessionActive")
+    #expect(rejected.body.retry == .afterUserAction)
+    #expect(await flow.dispatcher.activeInteractiveSessionID
+        == dispatcherSessionID)
+    #expect(await flow.runtime.terminations.isEmpty)
+}
+
 @Test func remoteEndClearsAdmissionBeforeCompleteSafetyTeardown()
     async throws
 {
