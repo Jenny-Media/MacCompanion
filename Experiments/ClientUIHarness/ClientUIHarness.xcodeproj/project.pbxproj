@@ -7,6 +7,10 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		C10000000000000000000001 = {isa = PBXBuildFile; fileRef = C20000000000000000000001; };
+		B10000000000000000000001 = {isa = PBXBuildFile; fileRef = B20000000000000000000001; };
+		B10000000000000000000002 = {isa = PBXBuildFile; productRef = B90000000000000000000001; };
+		B10000000000000000000003 = {isa = PBXBuildFile; productRef = B90000000000000000000002; };
 		A10000000000000000000001 /* ClientUIHarnessApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000001 /* ClientUIHarnessApp.swift */; };
 		A10000000000000000000002 /* HarnessContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000002 /* HarnessContentView.swift */; };
 		A10000000000000000000003 /* HarnessFixtures.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000003 /* HarnessFixtures.swift */; };
@@ -25,6 +29,8 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		C20000000000000000000001 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthenticatedJourneyView.swift; sourceTree = "<group>"; };
+		B20000000000000000000001 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NetworkControlLabView.swift; sourceTree = "<group>"; };
 		A20000000000000000000001 /* ClientUIHarnessApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClientUIHarnessApp.swift; sourceTree = "<group>"; };
 		A20000000000000000000002 /* HarnessContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HarnessContentView.swift; sourceTree = "<group>"; };
 		A20000000000000000000003 /* HarnessFixtures.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HarnessFixtures.swift; sourceTree = "<group>"; };
@@ -49,6 +55,8 @@
 				A10000000000000000000018 /* CompanionWire in Frameworks */,
 				A10000000000000000000019 /* CompanionClientPlatform in Frameworks */,
 				A10000000000000000000020 /* CompanionTransport in Frameworks */,
+				B10000000000000000000002,
+				B10000000000000000000003,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -78,6 +86,8 @@
 				A20000000000000000000002 /* HarnessContentView.swift */,
 				A20000000000000000000003 /* HarnessFixtures.swift */,
 				A20000000000000000000005 /* HarnessApplicationLifecycleModel.swift */,
+				B20000000000000000000001,
+				C20000000000000000000001,
 			);
 			path = ClientUIHarness;
 			sourceTree = "<group>";
@@ -126,6 +136,8 @@
 				A90000000000000000000008 /* CompanionWire */,
 				A90000000000000000000009 /* CompanionClientPlatform */,
 				A9000000000000000000000A /* CompanionTransport */,
+				B90000000000000000000001,
+				B90000000000000000000002,
 			);
 			productName = ClientUIHarness;
 			productReference = A20000000000000000000004 /* ClientUIHarness.app */;
@@ -199,6 +211,7 @@
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
 				A90000000000000000000010 /* XCLocalSwiftPackageReference "MacCompanionKit" */,
+				B90000000000000000000010,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = A40000000000000000000003 /* Products */;
@@ -237,6 +250,8 @@
 				A10000000000000000000002 /* HarnessContentView.swift in Sources */,
 				A10000000000000000000003 /* HarnessFixtures.swift in Sources */,
 				A10000000000000000000004 /* HarnessApplicationLifecycleModel.swift in Sources */,
+				B10000000000000000000001,
+				C10000000000000000000001,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -396,6 +411,7 @@
 /* End XCConfigurationList section */
 
 /* Begin XCLocalSwiftPackageReference section */
+		B90000000000000000000010 = {isa = XCLocalSwiftPackageReference; relativePath = ../LiveControlLab; };
 		A90000000000000000000010 /* XCLocalSwiftPackageReference "MacCompanionKit" */ = {
 			isa = XCLocalSwiftPackageReference;
 			relativePath = ../../Packages/MacCompanionKit;
@@ -403,6 +419,8 @@
 /* End XCLocalSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
+		B90000000000000000000001 = {isa = XCSwiftPackageProductDependency; package = B90000000000000000000010; productName = LiveControlLabSupport; };
+		B90000000000000000000002 = {isa = XCSwiftPackageProductDependency; package = A90000000000000000000010; productName = CompanionClientNetworkPlatform; };
 		A90000000000000000000001 /* CompanionClient */ = {isa = XCSwiftPackageProductDependency; package = A90000000000000000000010 /* XCLocalSwiftPackageReference "MacCompanionKit" */; productName = CompanionClient; };
 		A90000000000000000000002 /* CompanionClientUI */ = {isa = XCSwiftPackageProductDependency; package = A90000000000000000000010 /* XCLocalSwiftPackageReference "MacCompanionKit" */; productName = CompanionClientUI; };
 		A90000000000000000000003 /* CompanionDiscovery */ = {isa = XCSwiftPackageProductDependency; package = A90000000000000000000010 /* XCLocalSwiftPackageReference "MacCompanionKit" */; productName = CompanionDiscovery; };

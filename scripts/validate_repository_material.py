@@ -168,7 +168,23 @@ def git_inventory() -> list[str]:
     if completed.returncode != 0:
         raise ValueError("git inventory failed")
     raw_paths = completed.stdout.split(b"\0")
-    return sorted(os.fsdecode(path) for path in raw_paths if path)
+    paths = {os.fsdecode(path) for path in raw_paths if path}
+    deleted = subprocess.run(
+        ["git", "ls-files", "-z", "--deleted"],
+        cwd=REPOSITORY,
+        capture_output=True,
+        timeout=20,
+        check=False,
+    )
+    if deleted.returncode != 0:
+        raise ValueError("git deleted inventory failed")
+    deleted_paths = {
+        os.fsdecode(path) for path in deleted.stdout.split(b"\0") if path
+    }
+    # The live scan follows the working tree, including untracked material.
+    # Deleted tracked paths remain covered by the immutable history scan but
+    # have no live file to resolve or inspect.
+    return sorted(paths - deleted_paths)
 
 
 def history_inventory() -> list[tuple[str, str, str]]:

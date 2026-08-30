@@ -39,6 +39,12 @@ python3 scripts/validate_mac_lifecycle_physical_evidence.py
 python3 scripts/validate_ios_physical_evidence.py
 python3 scripts/validate_release_evidence.py
 python3 scripts/validate_native_appearance_boundary.py
+python3 scripts/validate_live_control_lab.py
+python3 scripts/validate_agent_xpc_isolation.py
+python3 scripts/verify_agent_startup_stress.py --self-test
+python3 scripts/validate_simulator_report.py
+python3 scripts/validate_performance_acceptance.py
+python3 scripts/validate_prephysical_completion_audit.py
 
 swift_arguments=(test --package-path Packages/MacCompanionKit)
 if [[ "${MACCOMPANION_DISABLE_SWIFTPM_SANDBOX:-0}" == "1" ]]; then
@@ -52,6 +58,11 @@ swift "${swift_arguments[@]}" 2>&1 | tee "$maccompanion_test_log"
 # failure. Treat its own failure footer or failed-test glyph as authoritative.
 if rg -q 'Some test targets (reported failures|did not run successfully)|✘ Test|Test run with .* failed after' "$maccompanion_test_log"; then
   echo "Swift Testing reported a failure despite the process exit status." >&2
+  exit 1
+fi
+swift test --package-path Experiments/LiveControlLab 2>&1 | tee "$maccompanion_test_log"
+if rg -q 'Some test targets (reported failures|did not run successfully)|✘ Test|Test run with .* failed after' "$maccompanion_test_log"; then
+  echo "Lab safety tests reported a failure despite the process exit status." >&2
   exit 1
 fi
 rm -f "$maccompanion_test_log"

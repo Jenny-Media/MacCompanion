@@ -30,7 +30,14 @@ private final class HarnessSyntheticDialer:
         roundID: UUID,
         requiredHostFingerprint: Data
     ) async -> DialRouteAttemptOutcomeV0 {
-        .authenticated(AuthenticatedDialRouteV0(
+        // This lifecycle scenario asserts Local Discovery. Its catalog also
+        // contains Private DNS for route-configuration UI, and the executor
+        // deliberately skips stagger delays. Let only the intended synthetic
+        // route answer so task scheduling cannot choose a different winner.
+        guard attempt.endpoint.kind == .bonjour else {
+            return .transientFailure
+        }
+        return .authenticated(AuthenticatedDialRouteV0(
             endpoint: attempt.endpoint,
             close: {}
         ))
