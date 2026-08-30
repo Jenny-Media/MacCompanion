@@ -138,7 +138,8 @@ Stage 0A is tracked as independently statusable platform, identity/networking, d
 
 ### Scope
 
-- One Mac and one iPhone or iPad
+- One Mac with up to eight retained paired iPhone or iPad clients; only one
+  active remote session is admitted at a time
 - Per-user LaunchAgent, menu-bar administration UI, and `maccompanionctl` diagnostics
 - Bonjour discovery on the local network
 - QR pairing with host fingerprint verification
@@ -172,9 +173,11 @@ The first runnable Control vertical slice is deliberately narrower than this sta
 
 ### Scope
 
-- One Mac and one paired iPhone or iPad on the local network
+- One Mac with up to eight retained paired iPhone or iPad clients on the local
+  network; only one active Control session is admitted at a time
 - A separate, device-specific Interactive Control grant with fresh phone user presence at session start
-- One selected display streamed with the H.264 baseline profile
+- Local discovery and selection of every online display, with one selected
+  display streamed per Control session using the H.264 baseline profile
 - Desktop as the persistent escape hatch, App Focus for a privacy-filtered related-window set, and explicit Window Focus for one independently captured window
 - Manual Smart Zoom plus verified focus-assisted framing, with manual visual zoom as the fallback
 - Surface-specific trackpad, direct-touch, and keyboard defaults with a persistent user override
@@ -219,7 +222,9 @@ Proceed only when the capture/input process boundary, visible-indicator dependen
 - App Focus, Window Focus, Smart Zoom, and surface-adaptive interaction over that route with explicit fallback and mode indication
 - Observe and Act tasks that complete without starting or maintaining a screen stream
 - Smart Input only if its secure-field, focus-race, Unicode, input-method, compatibility, and content-free-diagnostics experiment gate passes
-- One Mac and one phone remain the supported UX; identifiers and storage preserve future many-to-many expansion
+- One Mac with up to eight retained paired iPhone or iPad clients remains the
+  supported UX, with one active remote session at a time; a library spanning
+  multiple Macs and simultaneous multi-client sessions remain future scope
 
 ### Product evidence
 
@@ -359,6 +364,15 @@ Exact numbers are set during Stage 0A and measured continuously. At minimum trac
 - Reconnect and pairing time
 - Audit and operation-store growth
 - Battery impact on iPhone and portable Macs
+
+The canonical machine-readable status is
+[`spec/performance-acceptance/v0/profile.json`](../spec/performance-acceptance/v0/profile.json),
+with rationale and measurement rules in its
+[`README`](../spec/performance-acceptance/v0/README.md). Existing latency,
+media, durable-storage and soak numbers are frozen there. Absolute CPU/RSS,
+energy/battery, idle/Observe network, complete installed-footprint, pairing and
+text-termination thresholds remain explicitly physical-only decisions; missing
+numbers are neither unlimited budgets nor passing evidence.
 
 ### Release discipline
 

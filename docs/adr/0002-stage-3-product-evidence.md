@@ -5,6 +5,8 @@
 - Owners: Mac Companion product, privacy, and security
 - Supersedes: provisional percentages in the product proposal where this ADR
   is more specific
+- Amended: 2026-08-29 to reflect the implemented bounded multi-client pairing
+  model; cohort participants still need only one phone or tablet
 
 ## Context
 
@@ -84,7 +86,8 @@ whether opening Control was actually necessary.
 
 The Stage 3 candidate includes only what is required to test the hypothesis:
 
-1. one Mac and one phone/tablet in the supported UX;
+1. one Mac with up to eight retained paired phone/tablet clients and one active
+   remote session at a time; each cohort participant needs only one client;
 2. visible per-user Mac Agent administration, QR/SAS pairing, named-device
    revocation, and content-free local activity history;
 3. direct same-LAN operation plus explicitly configured user-managed private
@@ -100,7 +103,7 @@ The Stage 3 candidate includes only what is required to test the hypothesis:
 7. an opt-in, previewable, user-exported study report.
 
 Shell, arbitrary files, clipboard, audio streaming, virtual displays, headless
-or pre-login operation, multiple Macs/phones in the UX, general workflows,
+or pre-login operation, multiple Macs or simultaneous active clients in the UX, general workflows,
 MacTools/providers, semantic Window Text, AI, and a vendor relay remain outside
 this slice. Competitor breadth does not reopen them.
 

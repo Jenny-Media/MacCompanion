@@ -1,0 +1,27 @@
+{
+  "campaigns": [
+    {
+      "runs": [
+        {
+          "cleanupVerifiedByRunnerExit": true,
+          "durationSeconds": 198.649,
+          "finishedAtUTC": "2026-08-29T05:10:00.157612Z",
+          "report": "docs/evidence/soak-runs/2026-08-29T05-10-00Z-2c19bbba9659.json",
+          "reportSHA256": "2b44e7a09b2a321b3f8cea742cf66589dea8362ebc75a4a66a9d475af38391c0",
+          "sourceSHA256": "2c19bbba9659d510a4ceab5eda57b4812ce05955c2d9948b034387fd4807f0c0",
+          "startedAtUTC": "2026-08-29T05:05:58.756101Z",
+          "utcDate": "2026-08-29"
+        }
+      ],
+      "sourceSHA256": "2c19bbba9659d510a4ceab5eda57b4812ce05955c2d9948b034387fd4807f0c0",
+      "status": {
+        "complete": false,
+        "distinctUTCDates": 1,
+        "elapsedSpanSeconds": 0
+      }
+    }
+  ],
+  "minimumCampaignSpanSeconds": 518400,
+  "requiredDistinctUTCDates": 7,
+  "schemaVersion": 1
+}

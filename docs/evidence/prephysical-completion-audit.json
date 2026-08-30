@@ -1,0 +1,177 @@
+{
+  "schemaVersion": 1,
+  "status": "supersededSource",
+  "objective": "readinessForPhysicalAcceptanceTesting",
+  "sourceBinding": {
+    "soakSourceSHA256": "2c19bbba9659d510a4ceab5eda57b4812ce05955c2d9948b034387fd4807f0c0",
+    "ledger": "docs/evidence/prephysical-soak-ledger.json",
+    "requiredDistinctUTCDates": 7,
+    "minimumElapsedSpanSeconds": 518400
+  },
+  "completedRequirements": [
+    {
+      "id": "P1",
+      "status": "passedAutomated",
+      "evidence": [
+        "docs/evidence/2026-08-28-signed-agent-simulator-observe-act.md",
+        "docs/evidence/2026-08-29-agent-startup-handshake-stress.md"
+      ]
+    },
+    {
+      "id": "P2",
+      "status": "passedAutomated",
+      "evidence": [
+        "docs/evidence/2026-08-28-real-pairing-agent-xpc.md",
+        "docs/evidence/2026-08-28-signed-revocation-agent-xpc.md"
+      ]
+    },
+    {
+      "id": "P3",
+      "status": "passedAutomated",
+      "evidence": [
+        "docs/evidence/2026-08-28-signed-control-agent-xpc.md",
+        "docs/evidence/2026-08-28-pending-control-revocation.md"
+      ]
+    },
+    {
+      "id": "P4",
+      "status": "passedAutomated",
+      "evidence": [
+        "docs/evidence/2026-08-28-signed-agent-simulator-observe-act.md"
+      ]
+    },
+    {
+      "id": "P5",
+      "status": "passedAutomatedWithPhysicalEffectSubstituted",
+      "evidence": [
+        "docs/evidence/2026-08-28-act-concurrency-recovery.md",
+        "docs/evidence/2026-08-28-signed-agent-simulator-observe-act.md"
+      ]
+    },
+    {
+      "id": "P6",
+      "status": "passedAutomated",
+      "evidence": [
+        "docs/evidence/2026-08-29-agent-startup-handshake-stress.md",
+        "docs/evidence/2026-08-29-prephysical-automated-gate.md"
+      ]
+    },
+    {
+      "id": "P7",
+      "status": "passedAutomatedWithPhysicalUXPending",
+      "evidence": [
+        "docs/evidence/2026-08-28-signed-agent-simulator-observe-act.md",
+        "docs/physical-acceptance-checklist.md"
+      ]
+    },
+    {
+      "id": "P9",
+      "status": "passedLocalConstructionOnly",
+      "evidence": [
+        "docs/evidence/2026-08-29-prephysical-automated-gate.md"
+      ]
+    },
+    {
+      "id": "P10",
+      "status": "passedAutomatedReviewPendingAuthorization",
+      "evidence": [
+        "docs/evidence/2026-08-29-prephysical-automated-gate.md"
+      ]
+    }
+  ],
+  "remainingRequirements": [
+    {
+      "id": "P8-P11.elapsed-soak",
+      "classification": "elapsedTime",
+      "reason": "Seven distinct UTC dates spanning at least 518400 actual seconds cannot be compressed or simulated.",
+      "evidence": [
+        "docs/evidence/prephysical-soak-ledger.json"
+      ]
+    },
+    {
+      "id": "physical.iphone-hardware-custody",
+      "classification": "physicalHardware",
+      "reason": "Face ID, Secure Enclave custody, real iPhone lifecycle, orientation, hardware keyboard and device performance require physical hardware.",
+      "evidence": [
+        "docs/physical-acceptance-checklist.md"
+      ]
+    },
+    {
+      "id": "physical.real-platform-effects",
+      "classification": "physicalHardware",
+      "reason": "Actual ScreenCaptureKit pixels, Core Graphics input, visible indicator, system mute, lock, sleep, logout and real app focus cannot be certified by substituted test effects.",
+      "evidence": [
+        "docs/physical-acceptance-checklist.md"
+      ]
+    },
+    {
+      "id": "physical.real-routes-and-permissions",
+      "classification": "physicalHardware",
+      "reason": "Bonjour, Local Network privacy, IPv4, IPv6, private DNS and Tailscale behavior require real devices, routes and OS permission attribution.",
+      "evidence": [
+        "docs/physical-acceptance-checklist.md"
+      ]
+    },
+    {
+      "id": "physical.performance-and-usability",
+      "classification": "physicalHardware",
+      "reason": "Release latency, energy, thermal, battery, absolute resource, installed growth, accessibility and unassisted-user evidence require physical candidate runs.",
+      "evidence": [
+        "spec/performance-acceptance/v0/profile.json",
+        "docs/physical-acceptance-checklist.md"
+      ]
+    },
+    {
+      "id": "authorization.installed-product-and-system-state",
+      "classification": "freshAuthorization",
+      "reason": "The active goal explicitly forbids installing, launching, stopping or changing the installed app or Agent, production Keychain/TCC, privacy grants, user apps, system mute, lock, sleep or logout without fresh authorization.",
+      "evidence": [
+        "docs/pre-physical-execution-plan.md",
+        "docs/physical-acceptance-checklist.md"
+      ]
+    },
+    {
+      "id": "authorization.independent-review",
+      "classification": "freshAuthorization",
+      "reason": "The user explicitly deferred subagent or review-skill audit until separately requested; it is a pre-public-beta human gate, not an incomplete automated product path.",
+      "evidence": [
+        "docs/pre-physical-execution-plan.md"
+      ]
+    },
+    {
+      "id": "external.stable-toolchain-and-distribution",
+      "classification": "externalApprovalOrResource",
+      "reason": "Stable Xcode 26.6, controlled Developer ID and App Store profiles, notarization, stapling and promotion custody are absent from the authorized local beta-toolchain lane.",
+      "evidence": [
+        "docs/execution-status.md",
+        "docs/physical-acceptance-checklist.md"
+      ]
+    },
+    {
+      "id": "external.apple-capture-disposition",
+      "classification": "externalApprovalOrResource",
+      "reason": "Apple has not supplied the requested persistent-capture entitlement disposition; ordinary-consent fallback remains the only claimable path meanwhile.",
+      "evidence": [
+        "docs/physical-acceptance-checklist.md"
+      ]
+    },
+    {
+      "id": "external.legal-privacy-trademark",
+      "classification": "externalApprovalOrResource",
+      "reason": "Legal review of privacy, retention, Apache-2.0 and Jenny Media trademark policy is an external human decision.",
+      "evidence": [
+        "docs/physical-acceptance-checklist.md"
+      ]
+    },
+    {
+      "id": "external.publication-and-market-evidence",
+      "classification": "externalApprovalOrResource",
+      "reason": "TestFlight, publication, App Review and calibration/confirmatory tester cohorts are later authorized Stage 3 activities, not pre-physical automation.",
+      "evidence": [
+        "docs/mvp-plan.md",
+        "docs/physical-acceptance-checklist.md"
+      ]
+    }
+  ],
+  "automatableRequiredPathFailures": []
+}

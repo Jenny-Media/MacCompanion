@@ -359,6 +359,17 @@ and treats any operation-command send failure as delivery-ambiguous while a
 catalog send failure invalidates only the load. None of these states starts or
 authorizes Control.
 
+The iOS route lifecycle treats only actual background entry as foreground
+loss. UIKit's temporary `inactive` state during Face ID, Touch ID, passcode, or
+other system UI keeps the authenticated primary alive so the resulting exact
+approval signature can return on the same challenge-bound connection.
+
+Initial runtime preparation also crosses the Agent/menu process boundary. The
+menu creates the Desktop descriptor against its current host-monotonic sample;
+after that correlated receipt and final admission revalidation, the Agent takes
+a fresh monotonic sample for first-lease construction. A pre-request sample is
+never reused to judge whether the newly returned descriptor is current.
+
 All three paths share one connection-scoped client primary router after pinned
 TLS and application authentication. It registers each request before send,
 applies the 32-request limit, exact response-kind/correlation deadlines,
@@ -463,7 +474,7 @@ The persistent menu app:
 - Releases pressed buttons and keys when the session ends or IPC is lost
 - Never receives the remote network socket, device private keys, or durable grants
 
-The iOS client exposes a prominent Connect or Resume control from the Mac workspace. One selected display is supported initially. Inside the session, Desktop is the visual escape hatch, App Focus can select an application's related windows, Window Focus can isolate one window, and Smart Zoom can enlarge a verified focused region. The client selects a surface-appropriate trackpad, direct-touch, or keyboard profile while preserving an immediate manual override. Multi-display selection may be added after the single-display coordinate and lifecycle model passes.
+The iOS client exposes a prominent Connect or Resume control from the Mac workspace. The visible Mac app discovers every online display and establishes Control on one selected display. Inside the session, the client may request another currently online display through the normative surface-control protocol. The Agent replaces the old surface fail-closed, requires a fresh configuration and clean keyframe, and resumes input only after the replacement acknowledgement; one display is streamed at a time and no display switch broadens the session grant. Desktop is the visual escape hatch, App Focus can select an application's related windows, Window Focus can isolate one window, and Smart Zoom can enlarge a verified focused region. The client selects a surface-appropriate trackpad, direct-touch, or keyboard profile while preserving an immediate manual override.
 
 The menu app never records screen pixels or remote input. Audit stores session metadata—device, start, stop, route, surface-kind transitions, ephemeral source-token changes, bytes, errors, and termination reason—not video, screenshots, titles, Accessibility values, focus content, typed text, or key events.
 
@@ -719,7 +730,17 @@ Mac Companion represents current observations separately from inference:
 5. `hostPreparingForSleep`
 6. `unreachable`
 
-Stage 0 must prove that public session notifications distinguish lock from fast user switching on supported macOS versions. Until proven, the service maps ambiguity to `otherConsoleUserActive`, suspends Interactive Control, and denies locked-session-sensitive operations.
+For the logged-in MVP, exact same-UID, on-console, completed-login Quartz facts
+map to `userSessionActive`. Because a background Agent may not have a Quartz GUI
+session, an exact same-UID primary logged-in console identity from
+SystemConfiguration is the fallback only when Quartz facts are absent and not
+contradictory. Fast-user-switch resignation, contradictory facts, an explicit
+incomplete login, or an unavailable fallback maps to
+`otherConsoleUserActive`. Current public APIs do not distinguish screen lock,
+so v0.1 makes no separate `userSessionLocked` claim. The capture/input runtime
+must remain constrained to the actual system-visible surface, and locked-Mac
+behavior remains a physical-test and product-policy gate rather than an
+inferred behind-lock desktop grant.
 
 The product lifecycle represents that ambiguity explicitly rather than
 fabricating `active` or `locked`. An enabled Agent may continue authenticated

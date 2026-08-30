@@ -1,0 +1,62 @@
+{
+  "budgetStatus": "notDefined",
+  "budgetsEvaluated": false,
+  "capturedAtUTC": "2026-08-29T05:36:11.798843Z",
+  "environment": "iOS Simulator",
+  "installedMacAppUsed": false,
+  "limits": [
+    "Observed ps snapshots are a Simulator-host baseline, not Instruments energy evidence",
+    "CPU values are instantaneous host percentages and are not normalized across devices",
+    "No battery, thermal, physical rendering, real-LAN, or radio claim",
+    "No pass/fail resource threshold exists until Stage 0A budgets are approved"
+  ],
+  "physicalDeviceUsed": false,
+  "processObservations": {
+    "disposableMacHost": {
+      "cpuPercentObservedMaximum": 8.4,
+      "cpuPercentObservedMean": 4.757,
+      "distinctProcessCount": 1,
+      "residentMemoryObservedMaximumMiB": 36.156,
+      "sampleCount": 219
+    },
+    "simulatorClient": {
+      "cpuPercentObservedMaximum": 195.7,
+      "cpuPercentObservedMean": 10.386,
+      "distinctProcessCount": 1,
+      "residentMemoryObservedMaximumMiB": 387.281,
+      "sampleCount": 178
+    }
+  },
+  "reporterSHA256": "5d559d037396c19449c1a0c6d92cdb5a5c87b767e46f5da6f7319acd7d5f49e9",
+  "result": "passed",
+  "sampleIntervalSeconds": 1.0,
+  "schemaVersion": 1,
+  "source": "generated",
+  "startedAtUTC": "2026-08-29T05:32:13.150680Z",
+  "testReport": {
+    "completedExecutions": 1,
+    "durationSeconds": 199.018,
+    "environment": "iOS Simulator",
+    "exitCode": 0,
+    "installedMacAppUsed": false,
+    "iterations": 1,
+    "limits": [
+      "Software test keys and simulated local consent; not Face ID or Secure Enclave evidence",
+      "Loopback transport; not LAN, Bonjour, or shipping release-bootstrap evidence",
+      "Disposable host runtime and lease issuance; authenticated lanes use the production renewal scheduler, not the installed Agent lifecycle"
+    ],
+    "physicalDeviceUsed": false,
+    "result": "passed",
+    "schemaVersion": 1,
+    "source": "generated",
+    "suite": "soak",
+    "tests": {
+      "expectedFailures": 0,
+      "failedTests": 0,
+      "passedTests": 1,
+      "skippedTests": 0,
+      "totalTestCount": 1
+    }
+  },
+  "testedSourceSHA256": "2c19bbba9659d510a4ceab5eda57b4812ce05955c2d9948b034387fd4807f0c0"
+}

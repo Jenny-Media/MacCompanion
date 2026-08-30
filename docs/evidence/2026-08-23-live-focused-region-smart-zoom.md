@@ -40,11 +40,11 @@ race where local policy changed after event admission.
 The live UIKit product disables input and its software keyboard across every
 automatic transition, updates the authoritative descriptor and render
 dimensions only after the replacement acknowledgement, and reenables input
-only on success. **Follow Focus Automatically** is enabled by default. Any
-manual Desktop, Application, or Window selection disables it before beginning
-the transition; the user can explicitly enable it again. Invalid, expired,
-stale, ambiguous, or failed transitions converge through the existing
-fail-closed Control teardown.
+only on success. At the time of this construction checkpoint, **Follow Focus
+Automatically** was enabled by default. Any manual Desktop, Application, or
+Window selection disables it before beginning the transition; the user can
+explicitly enable it again. Invalid, expired, stale, ambiguous, or failed
+transitions converge through the existing fail-closed Control teardown.
 
 Stable focus identity uses only menu-private global geometry plus the reduced
 closed attributes. A coordinate-space change caused by the crop cannot invent
@@ -53,14 +53,27 @@ the smaller surface. A genuinely changed or missing focus inside an existing
 Focused Region still pauses input and recommends the next crop or Desktop
 fallback.
 
+## Physical-device follow-up
+
+Signed physical-device testing on 2026-08-25 showed that an ordinary Desktop
+tap into an editable Codex field could begin a focused-region replacement and
+close an otherwise healthy Control session when the one-use focus target had
+already expired. The client now distinguishes that pre-request race from a
+post-request protocol failure. An expired or superseded target that emitted no
+reset or selection request falls back through a fresh Desktop replacement;
+post-request failures remain fail-closed. Automatic focus-follow is enabled at
+the start of Control again, while any explicit surface selection disables it.
+This revised behavior still requires a signed physical-device retest.
+
 ## Verification
 
 - Five pure crop tests cover context, nonzero display origins, edge clamping,
   bounded large crops, unsafe/out-of-source rejection, and concrete
   `SCStreamConfiguration.sourceRect` assignment.
-- A client activation test proves policy opt-out, automatic Focused Region
-  selection through the existing replacement exchange, exact one-use token
-  forwarding, and manual-selection opt-out.
+- A client activation test proves default automatic Focused Region selection,
+  exact one-use token forwarding, pre-request Desktop recovery, focus-bound
+  local-composer admission, stale-composer rejection, and manual-selection
+  opt-out.
 - Existing ordered-event, selected-primary, focus-observer, replacement-media,
   input suppression, and runtime-transition suites remain green.
 - The repository-wide gate passes 73 indexed fixtures, all 1,499 discovered

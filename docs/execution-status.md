@@ -1,10 +1,92 @@
 # Mac Companion Execution and Blocker Ledger
 
-Status date: 2026-08-23
+Status date: 2026-08-29
 
 This is the living execution authority for the staged plan. A blocker applies only to work that names it as a dependency. Work in every other safe lane continues. Evidence links point to repository artifacts or reproducible commands; secrets and Apple-account records remain outside the repository.
 
+Development testing policy (2026-08-28): follow the
+[Simulator-first gate](simulator-first-testing.md). This supersedes older
+physical-test-next-step wording for day-to-day debugging. Do not return to or
+interrupt the physical iPhone without a fresh explicit user request.
+The [2026-08-28 Simulator checkpoint](evidence/2026-08-28-simulator-first-gate.md)
+records longer soak/reconnect coverage, the keyboard Stop fix, lab teardown
+repair, and the remaining shipping-lifecycle integration gap.
+The [integrated Simulator checkpoint](evidence/2026-08-28-integrated-simulator-control.md)
+now combines production route/lifecycle/role/workspace owners with live Control
+over isolated transports and records the readiness-navigation repair. Its
+explicit limits still exclude shipping TLS/bootstrap and physical-device proof.
+The final integrated checkpoint passed 9 repeated checks, the full 13-test
+Simulator suite, and 1,725 repository tests; the production iOS Release target
+also built unsigned for Simulator. Navigation-readiness and retired-callback
+repairs are in source; the installed Mac app and physical iPhone were untouched.
+
+The [authenticated Simulator journey](evidence/2026-08-28-authenticated-simulator-journey.md)
+adds production TLS/pairing/session authentication, disposable durable stores,
+actual process restarts, and same-primary Stop-to-Observe verification. It
+found and repaired host status timestamp and cached-CPU-sampling defects.
+The final real-window checkpoint passed three consecutive authenticated
+journeys, all 15 full-suite Simulator tests, and 1,736 repository tests.
+Pairing regressions, Release builds, and disposable-host/credential cleanup
+also passed. Consult that checkpoint for the exact evidence and remaining
+release-bootstrap, physical-network, and hardware-custody gaps. Software test
+keys and simulated consent never enter release targets; the physical iPhone
+and installed Mac app/Agent were untouched.
+
+The [Agent-renewal Simulator checkpoint](evidence/2026-08-28-agent-renewal-simulator.md)
+adds the production lease scheduler to authenticated journeys and fault-tests
+lost renewal receipts and lease expiry. It exposed and repaired active-stream
+failure propagation that left a blank live view and keyboard after media
+ended. The focused real-window test, all sixteen full-suite Simulator tests,
+five pairing regressions, 1,740 repository tests, Agent Release compilation,
+and unsigned iOS Simulator Release compilation passed. Temporary credentials,
+the run lock, and disposable host processes were confirmed removed. Lease
+issuance and final Agent/XPC admission remain isolated-test gaps, not certified
+shipping behavior. The installed products and physical iPhone were untouched.
+
+The [isolated Agent/XPC checkpoint](evidence/2026-08-28-isolated-agent-xpc.md)
+adds 24 signed, multi-process startup/bootstrap/status checks, passed in three
+consecutive runs with verified disposable job/process/state cleanup. Repository
+validation passed 1,742 tests, and Release symbol inspection confirmed the new
+Debug test seams are absent. This narrows the local-XPC gap without claiming
+full Keychain-backed startup or Interactive/presentation XPC integration. The
+installed products, Simulator, and physical iPhone were untouched.
+
 ## Status vocabulary
+
+Active execution objective (2026-08-29): freeze a reproducible Stage 2
+physical-alpha candidate from the current late-Stage-2 worktree. Reconcile the
+roadmap, organize the implementation and evidence into coherent commits, pass
+full validation, build/install the exact signed candidate, and execute the
+safely automatable and explicitly authorized physical checks. The earlier
+[pre-physical MVP readiness goal](pre-physical-execution-plan.md) is complete as
+a historical preparation boundary. Its one-day campaign is superseded evidence
+and cannot establish readiness for the current source. A fresh seven-day soak
+starts only after the new candidate is stable and frozen. This does not relax
+any release, device, or external-account authority gate.
+
+Latest checkpoint: [signed Act cancellation and recovery](evidence/2026-08-28-act-concurrency-recovery.md)
+extends the matrix to 55 cases. A real signed run reproduced a network reader
+blocking status/cancel behind pending Act execution. Bounded execution response
+handling fixes that, with overflow, late-response, revalidation and liveness
+regressions. Authenticated raw-client denial, same-primary status/cancel,
+at-most-once cancellation hook and post-effect crash recovery to outcomeUnknown
+without retry now pass. The prior signed Act grants, Observe/Control separation
+and revocation cases remain included. Full validation passes 1,769 tests across
+42 runners. Three consecutive 55/55 signed runs, Release test-seam exclusion
+and independent cleanup verification pass; exact evidence is in the checkpoint.
+Hardware audio, custody, capture/input/indicator effects remain substituted.
+The later [startup and signed menu-handshake stress checkpoint](evidence/2026-08-29-agent-startup-handshake-stress.md)
+passes 200 consecutive launches, including 50 complete presentation handshakes,
+under the unchanged deadline and verifies exact cleanup. This retires the older
+launch/handshake timeouts as historical evidence rather than a current required-
+path failure. Physical administration UI, broader installed lifecycle and
+hardware/storage fault evidence remain on their explicit later gates.
+The Stage 2 candidate goal is active, not complete.
+
+The [Stage 2 candidate worktree audit](evidence/2026-08-29-stage-2-candidate-worktree-audit.md)
+records the 315-path starting state, the product and signed-lab commit
+boundaries, the repaired stale-soak and single-device-harness assumptions, and
+the remaining candidate construction and physical gates.
 
 - `active`: work can proceed now.
 - `ready`: prerequisites are satisfied and work is queued.
@@ -921,6 +1003,62 @@ authority before same-pin recovery; background reconnect must retire Control,
 avoid operation replay, respect first unlock, and require fresh presence.
 Sixteen focused cases pass without installing, launching, pairing, prompting,
 networking, backgrounding, reconnecting, invoking, or publishing.
+
+## 2026-08-29 pre-physical signed end-to-end checkpoint
+
+The current disposable signed boundary is integrated rather than merely
+adjacent. Three exact-source signed Agent + Simulator journeys pass pairing,
+durable reconnect, verified Observe, bounded `setAudioMuted`, Control grant and
+lease, rendered media, pointer, verified focus/automatic Smart Zoom, native and
+ordinary iOS keyboard paths, Stop-to-Observe, client restart,
+background/foreground and route-loss recovery. Their shared fingerprint and
+cleanup records are in
+[the checkpoint](evidence/2026-08-28-signed-agent-simulator-observe-act.md).
+The complementary current 55-case signed Agent/XPC matrix covers Agent
+graceful/crash restart and adversarial admission/revocation boundaries.
+
+The exact-current full Simulator suite passes 16/16 in 910.204 seconds after
+repairing a late terminal render-receipt race and removing Xcode 27 per-key
+idleness dependence from the semantic keyboard test. Three generated and three
+test-owned real-window live repetitions also pass. Day 1 of a fail-closed,
+source-bound seven-date soak is retained in
+[`prephysical-soak-ledger.json`](evidence/prephysical-soak-ledger.json). The
+daily task was paused at the user's request on 2026-08-29 after preserving Day
+1. This is not a seven-day result yet, and no later date will be added unless
+the task is explicitly resumed.
+
+The short-duration pre-physical automated gate is now reconciled in
+[the 2026-08-29 checkpoint](evidence/2026-08-29-prephysical-automated-gate.md).
+Full repository validation and explicitly unsigned, artifact-free release
+evidence pass. A source-bound 199.018-second Simulator resource baseline is
+retained without treating Debug/Simulator CPU and memory as release budgets.
+The [physical acceptance checklist](physical-acceptance-checklist.md) now
+consolidates every hardware and release-only remainder. The closed
+[performance acceptance profile](../spec/performance-acceptance/v0/README.md)
+machine-checks the existing latency, media, durable-cap and soak numbers and
+keeps eight evidence-dependent physical measurements explicitly unresolved.
+The sole unfinished
+automated requirement is six later dates and 518,400 actual elapsed seconds in
+the same seven-date soak campaign. Physical iPhone custody, installed
+app/Agent lifecycle, final TCC/Keychain, user-owned content, LAN/Bonjour,
+stable Xcode 26.6 distribution evidence, signing/notarization/publication and
+real-device usability remain separate physical or external gates.
+
+The [Agent startup and signed menu-handshake stress gate](evidence/2026-08-29-agent-startup-handshake-stress.md)
+also passes two independent 100-cycle runs against current source. All 200
+cycles meet the unchanged ten-second deadline; 50 production-presentation
+cycles complete the signed menu handshake, generated presentation flow and
+graceful shutdown. Exact disposable jobs and state are absent after both runs.
+
+The [pre-physical completion audit](evidence/2026-08-29-prephysical-completion-audit.md)
+is machine-checked as `supersededSource`. It retains the old campaign under its
+exact fingerprint but makes no readiness claim for the current worktree. The
+current Stage 2 candidate must pass its own validation, physical checks, and a
+new exact-source campaign after source freeze.
+
+The old soak scheduler remains paused by explicit user request. Its ledger is
+authoritative historical evidence at 1/7 UTC dates; it will not be resumed or
+rebound. A distinct campaign may begin only for the frozen candidate.
 
 ## Blocker handling rule
 

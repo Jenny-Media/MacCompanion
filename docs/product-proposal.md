@@ -7,7 +7,7 @@ Mac Companion is a private companion for checking, operating, and directly contr
 The first implementation consists of:
 
 1. **Mac Companion Agent**, a standalone per-user macOS service with a trusted menu-bar administration UI.
-2. A native iOS and iPadOS client that pairs directly with one Mac initially, using identities that preserve future many-to-many support.
+2. A native iOS and iPadOS client that pairs directly with one Mac at a time; a Mac may retain up to eight paired clients while admitting only one active remote session, and identities preserve future multi-Mac support.
 3. A bounded, self-describing capability protocol shared by both apps.
 4. A separate Interactive Control protocol with Adaptive Remote Surfaces for an explicitly granted live screen, mouse, and keyboard session.
 5. Bonjour discovery for local connections and saved user-managed private-network endpoints for remote connections.
@@ -166,7 +166,8 @@ During remote activity, the menu-bar item changes appearance. Opening it identif
 
 The local-only foundation alpha proves the shared identity, state, freshness, and revocation model used by all three paths. It includes:
 
-- One Mac and one iPhone
+- One Mac with up to eight retained paired iPhone or iPad clients and one active
+  remote session at a time
 - Per-user LaunchAgent and menu-bar administration app
 - Bonjour discovery and Local Network permission handling
 - QR pairing with pinned host identity
@@ -185,6 +186,8 @@ It deliberately excludes Tailscale, many-to-many UX, generic provider manifests,
 After the shared lifecycle is trustworthy, the local Adaptive Control alpha adds:
 
 - One selected display at a time
+- Local selection among all online displays, including fail-closed switching
+  inside an active Control session
 - H.264 low-latency screen streaming
 - App Focus and explicit Window Focus using transient, privacy-filtered candidates
 - Manual Smart Zoom plus verified focus-assisted framing with manual visual fallback
@@ -216,7 +219,7 @@ The beta combines all three product paths over LAN and a user-managed private ro
 - Independent completion of Observe and Act tasks without opening Interactive Control
 - Quantitative usability, reliability, resource, and repeated-use validation
 
-The first market-facing MVP continues to support one Mac and one phone in the product UX. Many-to-many presentation and the MacTools adapter follow the repeat-use gate; their identifiers and storage constraints are preserved from the start.
+The first market-facing MVP supports one Mac with up to eight retained paired iPhone or iPad clients and one active remote session at a time. A multi-Mac library, simultaneous multi-client sessions, and the MacTools adapter follow the repeat-use gate; their identifiers and storage constraints are preserved from the start.
 
 ## Initial native actions
 

@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "suite": "soak",
+  "source": "generated",
+  "environment": "iOS Simulator",
+  "physicalDeviceUsed": false,
+  "installedMacAppUsed": false,
+  "exitCode": 0,
+  "iterations": 1,
+  "result": "passed",
+  "tests": {
+    "totalTestCount": 1,
+    "passedTests": 1,
+    "failedTests": 0,
+    "skippedTests": 0,
+    "expectedFailures": 0
+  },
+  "limits": [
+    "Software test keys and simulated local consent; not Face ID or Secure Enclave evidence",
+    "Loopback transport; not LAN, Bonjour, or shipping release-bootstrap evidence",
+    "Disposable host runtime and lease issuance; authenticated lanes use the production renewal scheduler, not the installed Agent lifecycle"
+  ],
+  "durationSeconds": 198.649,
+  "completedExecutions": 1
+}

@@ -6,7 +6,8 @@ Date: 2026-08-23
 
 The permanent iOS live Control screen now offers a local **Zoom** tool for the
 current Desktop, Application Focus, or Window Focus pixels. The user explicitly
-enters an adjustment mode, pinches from Fit through 4x, pans only within the
+pinches directly from Fit through 4x without entering an adjustment mode,
+pans the magnified viewport with two fingers only within the
 visible pixel extent, can return to Fit, and explicitly finishes adjustment
 before remote gestures resume.
 
@@ -19,7 +20,9 @@ remote field's label, value, selection, or content.
 
 Entering adjustment mode resigns the stateless software keyboard, emits the
 ordinary reset through the existing reliable-input producer, discards the
-current gesture mapper, and makes the local pinch/pan recognizers exclusive.
+current gesture mapper. One-finger pointer input remains independent; a
+two-finger pan is remote scrolling at Fit and local viewport movement while
+magnified.
 Remote tap, pointer, scroll, and drag recognizers cannot begin in that mode.
 
 After adjustment ends:
