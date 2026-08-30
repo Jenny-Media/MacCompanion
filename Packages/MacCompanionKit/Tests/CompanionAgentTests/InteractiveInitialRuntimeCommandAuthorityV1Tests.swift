@@ -554,6 +554,35 @@ private actor RuntimeOwnerMenuRouteV1:
     }
 }
 
+private actor RuntimeOwnerDisplayRouteV1:
+    AgentInteractiveDisplayMenuRoutingV1
+{
+    func interactiveDisplayCatalog() async throws
+        -> LocalInteractiveDisplayCatalogReceiptV1
+    {
+        try LocalInteractiveDisplayCatalogReceiptV1(
+            correlationID: UUID(),
+            selectedDisplayID: initialDisplayID,
+            candidates: [try LocalInteractiveDisplayCandidateV1(
+                displayID: initialDisplayID,
+                ordinal: 1,
+                pixelWidth: 2_560,
+                pixelHeight: 1_067,
+                isMain: true
+            )]
+        )
+    }
+
+    func selectInteractiveDisplay(_ displayID: UUID) async throws
+        -> LocalInteractiveDisplaySelectedReceiptV1
+    {
+        LocalInteractiveDisplaySelectedReceiptV1(
+            correlationID: UUID(),
+            selectedDisplayID: displayID
+        )
+    }
+}
+
 private actor RuntimeInstallSuspensionV1 {
     private(set) var entered = false
     private var released = false
@@ -727,6 +756,33 @@ private final class RuntimeOwnerClockV1: @unchecked Sendable {
     func now() -> UInt64 {
         lock.withLock { values.removeFirst() }
     }
+}
+
+@Test func activeRuntimeOwnerServesDisplayCatalogForItsLeaseBinding()
+    async throws
+{
+    let requirement = try initialRequirement()
+    let owner = AgentInteractiveRuntimeOwnerV1(
+        admission: RuntimeOwnerAdmissionV1([
+            requirement.admission,
+            requirement.admission,
+            requirement.admission,
+        ]),
+        desktop: RuntimeOwnerDesktopV1(descriptor: try initialDesktop()),
+        runtime: RuntimeOwnerMenuRouteV1(),
+        displayRuntime: RuntimeOwnerDisplayRouteV1(),
+        monotonicNowNanoseconds: { 2_100_000_000 }
+    )
+
+    try await owner.install(initialBootstrap(), requirement: requirement)
+    let catalog = try await owner.displayCatalog(
+        context: requirement.command
+    )
+
+    #expect(catalog.authorizationEpoch == requirement.command.authorizationEpoch)
+    #expect(catalog.admissionRevision == 9)
+    #expect(catalog.selectedDisplayID.rawValue == initialDisplayID)
+    #expect(catalog.displays.map(\.displayID.rawValue) == [initialDisplayID])
 }
 
 @Test func agentRuntimeOwnerRevalidatesInstallsAndRevokesExactly()

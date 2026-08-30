@@ -180,20 +180,59 @@ public actor AgentInteractiveRuntimeOwnerV1:
     public func displayCatalog(
         context: InteractiveSessionCommandContextV0
     ) async throws -> InteractiveDisplayCatalogResponseBodyV1 {
-        guard let displayRuntime,
-              displayCatalogIsAvailable(context: context),
-              let current = try await admission.snapshot(
-                deviceID: context.deviceID
-              ),
-              current.authorizationEpoch == context.authorizationEpoch,
-              let selectedDisplayID = current.selectedDisplayID,
-              let admissionRevision = Int64(
-                exactly: current.visibleMenuAppRevision
-              ) else {
+        guard let displayRuntime else {
+            agentInteractiveRuntimeLoggerV1.error(
+                "display catalog unavailable reason=missingDisplayRuntime"
+            )
             throw AgentInteractiveRuntimeOwnerErrorV1.unavailable
         }
-        let local = try await displayRuntime.interactiveDisplayCatalog()
+        guard displayCatalogIsAvailable(context: context) else {
+            agentInteractiveRuntimeLoggerV1.error(
+                "display catalog unavailable reason=leaseBindingMismatch"
+            )
+            throw AgentInteractiveRuntimeOwnerErrorV1.unavailable
+        }
+        guard let current = try await admission.snapshot(
+            deviceID: context.deviceID
+        ) else {
+            agentInteractiveRuntimeLoggerV1.error(
+                "display catalog unavailable reason=missingAdmission"
+            )
+            throw AgentInteractiveRuntimeOwnerErrorV1.unavailable
+        }
+        guard current.authorizationEpoch == context.authorizationEpoch else {
+            agentInteractiveRuntimeLoggerV1.error(
+                "display catalog unavailable reason=authorizationEpochMismatch"
+            )
+            throw AgentInteractiveRuntimeOwnerErrorV1.unavailable
+        }
+        guard let selectedDisplayID = current.selectedDisplayID else {
+            agentInteractiveRuntimeLoggerV1.error(
+                "display catalog unavailable reason=missingSelectedDisplay"
+            )
+            throw AgentInteractiveRuntimeOwnerErrorV1.unavailable
+        }
+        guard let admissionRevision = Int64(
+            exactly: current.visibleMenuAppRevision
+        ) else {
+            agentInteractiveRuntimeLoggerV1.error(
+                "display catalog unavailable reason=admissionRevisionOverflow"
+            )
+            throw AgentInteractiveRuntimeOwnerErrorV1.unavailable
+        }
+        let local: LocalInteractiveDisplayCatalogReceiptV1
+        do {
+            local = try await displayRuntime.interactiveDisplayCatalog()
+        } catch {
+            agentInteractiveRuntimeLoggerV1.error(
+                "display catalog menu route failed error=\(String(describing: error), privacy: .public)"
+            )
+            throw error
+        }
         guard local.selectedDisplayID == selectedDisplayID else {
+            agentInteractiveRuntimeLoggerV1.error(
+                "display catalog rejected reason=selectedDisplayMismatch"
+            )
             throw AgentInteractiveRuntimeOwnerErrorV1.finalAdmissionChanged
         }
         return try InteractiveDisplayCatalogResponseBodyV1(
