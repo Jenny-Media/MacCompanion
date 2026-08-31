@@ -1089,10 +1089,18 @@ adds authenticated ping/pong liveness, a bounded recoverable
 Network.framework waiting state, immediate Control-role safety fencing during
 uncertain connectivity, and nonterminal encoded-media queue backpressure.
 Canonical fixture validation, 141 focused tests, and the complete repository
-gate pass. This is source evidence, not installed physical evidence. Recovery
-keeps the exact authenticated primary where Network.framework permits it but
-does not silently reuse or restart Control authority; a new explicit Control
-request remains required after the roles are retired.
+gate pass. A later exact-source repair prevents a slow diagnostic dashboard
+status read from revoking the authenticated XPC generation and unrelated
+Control lease. Fresh signed Mac, iPad, and iPhone candidates from `f301469`
+passed strict verification and were installed without clearing device data,
+pairing, grants, or privacy settings. Both physical clients remained connected;
+one explicit Stop cleanly revoked its first Control runtime and a fresh runtime
+then passed at least 83 consecutive lease renewals. The new source-bound soak
+campaign passed its first 199.421-second run and remains honestly incomplete at
+one of seven UTC dates. Recovery keeps the exact authenticated primary where
+Network.framework permits it but does not silently reuse or restart Control
+authority; a new explicit Control request remains required after the roles are
+retired.
 
 ## Blocker handling rule
 

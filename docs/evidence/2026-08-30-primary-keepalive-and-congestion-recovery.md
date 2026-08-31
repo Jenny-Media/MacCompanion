@@ -361,3 +361,24 @@ the hash-bound report is retained at
 records one of seven required distinct UTC dates and zero elapsed campaign-span
 seconds. The campaign is therefore active but incomplete; the old scheduler
 remains paused and no historical run was credited to this source.
+
+Subsequent read-only physical diagnostics confirmed that both installed iOS
+applications remained running and the Agent retained two established primary
+clients. The active Control client also retained its separate input and media
+connections, for four established Agent TCP connections in total.
+
+The apparent renewal-counter reset in the longer trace was not a hidden
+transport failure. At 22:25:06 EDT the first client performed an explicit local
+Stop: ScreenCaptureKit stopped, the encoder finalized with zero dropped frames,
+the menu sent the exact revoke operation, and the interactive roles closed. At
+22:25:08 a new Control runtime installed, capture restarted, and fresh input and
+media channels authenticated. That second session reached renewal counter 83 at
+22:36:13 without `bindingMismatch`, `endpointClosed`,
+`safetyRecoveryRequired`, primary cleanup, or unexpected capture termination.
+
+A content-free 60-second diagnostic sample during that second live session
+retained four established TCP connections in every sample. The Mac menu process
+used 2.7–4.9% CPU and 91,952–93,584 KiB RSS; the Agent used 1.2–2.9% CPU and
+34,208–35,520 KiB RSS. These short Debug-build ranges are operational evidence
+only. They do not satisfy the performance profile's physical thresholds or its
+required continuous 60-minute Control run.
