@@ -382,3 +382,30 @@ used 2.7–4.9% CPU and 91,952–93,584 KiB RSS; the Agent used 1.2–2.9% CPU a
 34,208–35,520 KiB RSS. These short Debug-build ranges are operational evidence
 only. They do not satisfy the performance profile's physical thresholds or its
 required continuous 60-minute Control run.
+
+## Physical two-device process-restart checkpoint
+
+The installed physical iPad application was terminated while it owned the
+active Control roles, then relaunched without reinstalling or clearing its
+durable state. The Agent failed the old input and media roles closed, retired
+the old primary, and admitted the replacement application's primary. One stale
+input attempt was rejected as `endpointClosed`; it did not recover or redirect
+the preceding role authority. A fresh Control runtime then installed and began
+renewing a new lease. This proves process-restart fencing and recovery of a
+fresh runtime, but does not claim that Face ID or another user-presence ceremony
+was observed by this diagnostic.
+
+The installed physical iPhone application was then terminated and relaunched
+while the iPad's new Control runtime remained active. The Agent briefly retained
+three primaries while the replacement iPhone primary authenticated and the old
+primary remained inside its bounded session deadline. The stale primary was
+retired at that deadline, reducing the active count from three to two. During
+the entire overlap and cleanup, the iPad Control lease renewed continuously
+from counter 9 through counter 31 without `bindingMismatch`, `endpointClosed`,
+`safetyRecoveryRequired`, capture stop, or interactive-role teardown.
+
+The final Agent socket inventory contained exactly four established client
+connections: two application primaries plus the iPad input and media roles.
+This is a bounded multi-device process-restart and stale-primary-cleanup pass.
+It is not the broader human interaction, network-transition, or continuous
+60-minute physical acceptance gate.

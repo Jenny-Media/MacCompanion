@@ -1097,10 +1097,16 @@ pairing, grants, or privacy settings. Both physical clients remained connected;
 one explicit Stop cleanly revoked its first Control runtime and a fresh runtime
 then passed at least 83 consecutive lease renewals. The new source-bound soak
 campaign passed its first 199.421-second run and remains honestly incomplete at
-one of seven UTC dates. Recovery keeps the exact authenticated primary where
-Network.framework permits it but does not silently reuse or restart Control
-authority; a new explicit Control request remains required after the roles are
-retired.
+one of seven UTC dates. A later two-device process checkpoint terminated and
+relaunched the active iPad client, rejected a stale input endpoint, and installed
+a fresh Control runtime; terminating and relaunching the idle iPhone then left
+that iPad runtime uninterrupted while the Agent admitted the replacement
+primary and retired the stale one at its deadline. The Control lease advanced
+from counter 9 through counter 31 across the iPhone overlap, and the final
+socket inventory returned to two primaries plus input and media. Recovery keeps
+the exact authenticated primary where Network.framework permits it but does
+not silently reuse or restart Control authority; a new explicit Control request
+remains required after the roles are retired.
 
 ## Blocker handling rule
 
