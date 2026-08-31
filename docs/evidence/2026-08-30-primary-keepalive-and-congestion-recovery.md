@@ -235,3 +235,84 @@ Verification from this exact uncommitted source checkpoint:
 This is automated pre-install evidence only. It does not claim that the next
 signed Mac, iPad, or iPhone artifacts have been built or installed, nor that
 the physical checkpoint matrix or fresh post-install soak has passed.
+
+## Frozen `b869941` signed-install checkpoint
+
+The reconciled source was committed locally as `b869941` with subject
+`Stabilize persistent remote control sessions`. Fresh Debug Mac and universal
+iOS device candidates were built from that clean commit with Xcode 27 beta and
+the configured Jenny Media development team. The checked-in signed-build
+checkpoint passed its pairing tests and strict Mac/iOS signature verification.
+The retained derived-data root is
+`/private/tmp/maccompanion-b869941-signed`.
+
+The Mac containing app completed its ordered AppKit termination barrier. Its
+previous bundle remains recoverable at
+`/private/tmp/maccompanion-b869941-backup.UJIaha/Mac Companion.app`. The signed
+candidate was copied to the existing per-user Applications location and passed
+strict deep verification there. SHA-256 comparison proved that both the main
+executable and nested Agent executable match the verified build byte for byte.
+The narrow `maccompanion://repair-agent-registration` command replaced the
+still-running previous Agent process; the new Agent is executing from the
+replacement bundle, reports an active launchd job, and restored its private
+TLS listener on port 59653.
+
+The same signed iOS bundle was installed over the existing physical iPad and
+iPhone applications without uninstalling them or clearing pairing, grants, or
+application data. The prior iPad process was terminated before installation so
+it could not retain the old executable. Both clients initially launched and
+the Agent admitted two independent authenticated primaries. One primary later
+closed when its client became unavailable, while the other remained active;
+the clients were then traced independently rather than attributing the event to
+transport code.
+
+The physical iPad replacement authenticated and completed three consecutive
+idle keepalive ping/pong cycles during a bounded 50-second console trace. The
+console command ended only at its external timeout while the app remained
+running. The equivalent iPhone trace could not start because SpringBoard
+reported the phone locked. This is an external human checkpoint, not a source
+failure and not an iPhone physical pass. The full interactive device matrix and
+fresh post-install soak therefore remain open.
+
+## Dashboard status-timeout Control teardown and repair
+
+Physical testing of the frozen `b869941` candidate exposed a separate local-XPC
+failure after the iPhone had authenticated and started Control. At
+22:00:02.695 the menu app began the first Control lease renewal. At
+22:00:03.371 it canceled its own authenticated XPC generation; the Agent then
+reported `endpointClosed` and `safetyRecoveryRequired`, and the later
+`bindingMismatch` was a downstream consequence of that teardown. Media and
+input roles stopped even though the primary client connection itself had not
+failed.
+
+The bounded unified log and source audit identified the initiating event: the
+visible Mac dashboard performs a diagnostic Agent-status read every second on
+the same authenticated XPC generation that carries pairing presentation and
+Control administration. Under live-media load, one read exceeded its exact
+three-second client deadline. Both sides treated that non-authorizing status
+delay as a terminal transport failure, so a dashboard refresh revoked unrelated
+Control authority.
+
+The transport now converts a server-side slow status source into the existing
+exact `sourceUnavailable` reply. The client likewise publishes
+`agentStatusUnavailable` on its current generation, permitting the dashboard's
+existing sequential retry without canceling authentication or Control. A late
+reply for the retired read operation is ignored and cannot invalidate either a
+new same-generation retry or a replacement generation. Malformed current
+replies, authentication failures, and an actual reply-send failure remain
+terminal.
+
+Verification of this source repair includes:
+
+- 154 focused Mac local-XPC tests, covering status recovery, generation
+  fencing, late completion, serialized lease renewal, and role transport;
+- an explicit regression proving a timed-out status operation can retire,
+  admit a same-generation recovery, reject the late old completion, and leave
+  the recovery current; and
+- the complete repository `scripts/validate.sh` gate with Xcode 27 beta,
+  which completed with exit status 0.
+
+This is source evidence only until fresh signed Mac, iPad, and iPhone artifacts
+from the repair commit are installed and Control remains active across multiple
+lease renewals under live video. The failed `b869941` interactive attempt is not
+a soak pass.

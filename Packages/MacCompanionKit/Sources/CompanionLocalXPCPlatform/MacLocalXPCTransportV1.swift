@@ -4850,10 +4850,16 @@ public final class MacLocalXPCServerV1:
               ) else {
             return
         }
-        state.cancelPendingStatusRead()
-        cancelAuthenticatedPeer(
-            state,
-            presentationError: .transportFailure
+        // Status is diagnostic, non-authorizing state. A slow snapshot must
+        // not tear down the authenticated menu generation that independently
+        // carries pairing presentation and an active Control lease. Convert
+        // the bounded source delay into the existing exact unavailable reply;
+        // malformed replies and an actual reply-send failure remain terminal.
+        state.pendingStatusRead?.task?.cancel()
+        completeStatusRead(
+            state: state,
+            operation: operation,
+            result: .failure(.sourceUnavailable)
         )
     }
 
@@ -6710,6 +6716,16 @@ public final class MacLocalXPCClientV1:
         guard generationGate.admitsCallback(generation: generation) else {
             return
         }
+        // A reply may arrive after the diagnostic-only read deadline. The
+        // timeout already completed that exact operation as unavailable and a
+        // later retry may now be active. Ignore only the retired operation;
+        // never let its late callback invalidate the current generation.
+        guard statusReadGate.admits(
+            generation: generation,
+            operation: operation
+        ) else {
+            return
+        }
         guard session != nil,
               gate.state == .authenticated,
               menuReadinessPublished,
@@ -6763,7 +6779,17 @@ public final class MacLocalXPCClientV1:
               ) else {
             return
         }
-        invalidateOwnedSession(generation: generation)
+        guard statusReadGate.finish(
+            generation: generation,
+            operation: operation
+        ) else {
+            return
+        }
+        statusReadDeadline = nil
+        // Preserve the authenticated transport and surface the closed
+        // diagnostic failure. The dashboard retries sequentially on this same
+        // generation; authorization and Control ownership are unchanged.
+        onEvent(.agentStatusUnavailable(generation: generation))
     }
 
     private func handleIncomingAgentMessage(

@@ -314,7 +314,7 @@ func statusTransactionCoversAdmissionSuccessUnavailableAndRecovery() throws {
 }
 
 @Test
-func statusTimeoutAndReplacementFenceLateCompletion() throws {
+func statusTimeoutPreservesGenerationAndFencesLateCompletion() throws {
     var gate = MacLocalXPCStatusReadTransactionGateV1()
     let boundOld = gate.bind(generation: 4)
     #expect(boundOld)
@@ -323,14 +323,27 @@ func statusTimeoutAndReplacementFenceLateCompletion() throws {
         permitted: true
     )
     let timedOut = try #require(timedOutCandidate)
-    let invalidatedOld = gate.invalidate(generation: 4)
-    #expect(invalidatedOld)
+    let completedTimeout = gate.finish(
+        generation: 4,
+        operation: timedOut
+    )
+    #expect(completedTimeout)
+
+    let recoveryCandidate = gate.begin(
+        generation: 4,
+        permitted: true
+    )
+    let recovery = try #require(recoveryCandidate)
+    #expect(recovery == timedOut + 1)
     let lateCompletion = gate.finish(
         generation: 4,
         operation: timedOut
     )
     #expect(!lateCompletion)
+    #expect(gate.admits(generation: 4, operation: recovery))
 
+    let invalidatedOld = gate.invalidate(generation: 4)
+    #expect(invalidatedOld)
     let boundReplacement = gate.bind(generation: 5)
     #expect(boundReplacement)
     let replacementCandidate = gate.begin(
