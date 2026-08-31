@@ -1106,7 +1106,13 @@ from counter 9 through counter 31 across the iPhone overlap, and the final
 socket inventory returned to two primaries plus input and media. Recovery keeps
 the exact authenticated primary where Network.framework permits it but does
 not silently reuse or restart Control authority; a new explicit Control request
-remains required after the roles are retired.
+remains required after the roles are retired. A subsequent normal menu-app quit
+retired Control with `localStop` and relaunched a fresh menu process while the
+Agent stayed available. A launchd Agent restart then replaced the process,
+restored its private listener and local-XPC menu connection, and admitted one
+fresh physical-client primary without restoring old Control roles. The second
+client's post-Agent reconnection and a fresh user-present Control request remain
+human-visible checkpoints.
 
 ## Blocker handling rule
 

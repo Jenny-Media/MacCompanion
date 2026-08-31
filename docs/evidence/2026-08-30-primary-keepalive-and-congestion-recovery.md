@@ -409,3 +409,25 @@ connections: two application primaries plus the iPad input and media roles.
 This is a bounded multi-device process-restart and stale-primary-cleanup pass.
 It is not the broader human interaction, network-transition, or continuous
 60-minute physical acceptance gate.
+
+## Installed menu and Agent restart checkpoint
+
+The second live Control runtime continued through renewal counter 90 before the
+installed Mac menu app received a normal AppKit quit request. Its ordered
+termination retired input and media, stopped both capture and encoding with
+`localStop`, and completed application termination while leaving the Agent
+process and listener running. A fresh menu process then launched from the exact
+installed candidate and reconnected to the Agent. Control did not resume or
+reuse the preceding runtime.
+
+The registered per-user Agent was then restarted through launchd. The Agent PID
+changed, launchd returned to `running`, the private TLS listener returned on its
+configured port, and the menu opened a new local-XPC connection. One physical
+client authenticated a fresh primary against the replacement Agent within the
+bounded observation window. The other installed client did not reconnect in
+that window, and no fresh Control request was performed, so two-client recovery
+and user-presence restoration remain human-visible checkpoints.
+
+This verifies ordered menu-loss teardown, Agent process replacement, listener
+recovery, and one durable paired-client reconnection. It does not claim a fresh
+Control grant, two-client post-Agent recovery, or any network transition.
