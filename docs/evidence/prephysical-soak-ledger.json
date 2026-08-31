@@ -19,6 +19,26 @@
         "distinctUTCDates": 1,
         "elapsedSpanSeconds": 0
       }
+    },
+    {
+      "runs": [
+        {
+          "cleanupVerifiedByRunnerExit": true,
+          "durationSeconds": 199.421,
+          "finishedAtUTC": "2026-08-31T02:29:33.016620Z",
+          "report": "docs/evidence/soak-runs/2026-08-31T02-29-33Z-fee429c65408.json",
+          "reportSHA256": "3759629c3ae6e407687969ec144b1d47fba4a2302824fa1742f1058341f818e4",
+          "sourceSHA256": "fee429c654088c609592416a87723e63f44c7103afeacddf9e9a6d2a28bf5b48",
+          "startedAtUTC": "2026-08-31T02:25:27.501288Z",
+          "utcDate": "2026-08-31"
+        }
+      ],
+      "sourceSHA256": "fee429c654088c609592416a87723e63f44c7103afeacddf9e9a6d2a28bf5b48",
+      "status": {
+        "complete": false,
+        "distinctUTCDates": 1,
+        "elapsedSpanSeconds": 0
+      }
     }
   ],
   "minimumCampaignSpanSeconds": 518400,

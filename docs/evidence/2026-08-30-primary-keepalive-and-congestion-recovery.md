@@ -351,3 +351,13 @@ renewal after three seconds.
 This is a passing exact-candidate physical rollover checkpoint, not yet a full
 multi-device interaction matrix or long-duration soak. The fresh soak may start
 from `f301469`; evidence from `b869941` must not be counted toward it.
+
+The first fresh Simulator soak run then passed for 199.421 seconds, followed by
+the pairing reliability regressions and verified runner cleanup. Its source
+fingerprint is
+`fee429c654088c609592416a87723e63f44c7103afeacddf9e9a6d2a28bf5b48`;
+the hash-bound report is retained at
+`docs/evidence/soak-runs/2026-08-31T02-29-33Z-fee429c65408.json`. The ledger
+records one of seven required distinct UTC dates and zero elapsed campaign-span
+seconds. The campaign is therefore active but incomplete; the old scheduler
+remains paused and no historical run was credited to this source.
