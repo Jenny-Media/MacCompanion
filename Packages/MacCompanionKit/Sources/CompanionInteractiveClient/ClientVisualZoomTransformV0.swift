@@ -1,3 +1,4 @@
+import CompanionInteractiveShared
 import Foundation
 
 public enum ClientVisualZoomTransformErrorV0:
@@ -186,6 +187,64 @@ public struct ClientVisualZoomTransformV0: Equatable, Sendable {
                 x: -scale * (targetCenter.x - center.x),
                 y: -scale * (targetCenter.y - center.y)
             )
+        )
+    }
+
+    /// Maps an already-validated normalized host focus into the current
+    /// aspect-fit content before applying local Smart Zoom. Clamping the
+    /// derived edges removes floating-point overshoot at the far display edge
+    /// without accepting a host rectangle outside its normalized authority.
+    public func focused(
+        onNormalized target: NormalizedSurfaceRect,
+        maximumScale: Double = 2.25,
+        horizontalContext: Double = 1.6,
+        verticalContext: Double = 4.0
+    ) throws -> Self {
+        let divisor = Double(UInt16.max)
+        let contentMaximumX = content.x + content.width
+        let contentMaximumY = content.y + content.height
+        let lowerX = min(
+            contentMaximumX,
+            max(
+                content.x,
+                content.x + Double(target.x) / divisor * content.width
+            )
+        )
+        let lowerY = min(
+            contentMaximumY,
+            max(
+                content.y,
+                content.y + Double(target.y) / divisor * content.height
+            )
+        )
+        let upperX = min(
+            contentMaximumX,
+            max(
+                lowerX,
+                content.x
+                    + Double(UInt32(target.x) + UInt32(target.width))
+                        / divisor * content.width
+            )
+        )
+        let upperY = min(
+            contentMaximumY,
+            max(
+                lowerY,
+                content.y
+                    + Double(UInt32(target.y) + UInt32(target.height))
+                        / divisor * content.height
+            )
+        )
+        return try focused(
+            on: ClientInputRectV0(
+                x: lowerX,
+                y: lowerY,
+                width: upperX - lowerX,
+                height: upperY - lowerY
+            ),
+            maximumScale: maximumScale,
+            horizontalContext: horizontalContext,
+            verticalContext: verticalContext
         )
     }
 

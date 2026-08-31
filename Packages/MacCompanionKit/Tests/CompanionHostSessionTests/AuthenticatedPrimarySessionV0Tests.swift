@@ -486,6 +486,35 @@ private func completeAuthentication(
     return prepared.connectionID
 }
 
+@Test func authenticatedKeepaliveRevalidatesAndReturnsCorrelatedPong() async throws {
+    let fixture = try await SessionFixture.create()
+    defer { fixture.remove() }
+    let session = try makeSession(fixture: fixture)
+    _ = try await completeAuthentication(session, fixture: fixture)
+    let ping = try WireEnvelope(
+        messageID: WireUUID(UUID()),
+        correlationID: nil,
+        sentAtUnixMilliseconds: 4_100,
+        body: KeepalivePingBodyV0()
+    )
+
+    let responseData = try await session.receive(
+        requestJSON: WireCodec.encode(ping),
+        hostState: .userSessionActive,
+        wallNowUnixMilliseconds: 4_101,
+        monotonicNowMilliseconds: 15_101,
+        responseMessageID: WireUUID(UUID())
+    )
+    let pong = try WireCodec.decode(
+        WireEnvelope<KeepalivePongBodyV0>.self,
+        from: responseData
+    )
+
+    #expect(pong.correlationID == ping.messageID)
+    #expect(await session.phase == .ready)
+    #expect(await session.nextDeadlineMonotonicMilliseconds() == 60_101)
+}
+
 @Test(arguments: [Int64(5_007), 4_999, -1, WireLimits.maximumSafeInteger + 1])
 func statusReplyUsesPostSamplingClockWithoutWeakeningFreshness(responseTime: Int64) async throws {
     let fixture = try await SessionFixture.create()

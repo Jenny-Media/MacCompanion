@@ -55,6 +55,10 @@ private final class UIKitClientInitialRenderRelayV0 {
                 try await activation.reportRendered(receipt)
             } catch {
                 guard !self.closed, self.activation === activation else { return }
+                IOSClientRuntimeDiagnosticLogV0.record(
+                    "ui.render-receipt.terminal",
+                    error: error
+                )
                 print(
                     "[MacCompanion live-control] render receipt failed error=\(String(describing: error))"
                 )
@@ -103,6 +107,10 @@ private final class UIKitClientInitialInputRelayV0 {
                 case .ignoreLocally:
                     return
                 case .failClosed:
+                    IOSClientRuntimeDiagnosticLogV0.record(
+                        "ui.input-submission.terminal",
+                        error: error
+                    )
                     self.failure(error)
                 }
             }
@@ -405,6 +413,10 @@ public final class UIKitClientInitialDesktopProductV0 {
         } catch {
             pendingAutomaticFocusEvent = nil
             pendingAutomaticFocusIntent = nil
+            IOSClientRuntimeDiagnosticLogV0.record(
+                "ui.automatic-focus.terminal",
+                error: error
+            )
             failure(error)
             return
         }
@@ -434,18 +446,7 @@ public final class UIKitClientInitialDesktopProductV0 {
                       let focus = event.focus else { return }
                 let identity = UIKitClientFocusPresentationIdentityV0(focus)
                 guard visualSmartZoomFocus != identity else { return }
-                do {
-                    try surface.focusVisualZoom(on: focus.bounds)
-                } catch UIKitClientLiveSurfaceFailureV0.invalidGeometry {
-                    // Smart Zoom is local presentation. A focus refresh can
-                    // arrive while SwiftUI is temporarily laying out a zero-
-                    // sized surface; defer until the next refresh instead of
-                    // revoking a healthy authenticated Control session.
-                    print(
-                        "[MacCompanion live-control] automatic visual zoom deferred error=invalidGeometry"
-                    )
-                    return
-                }
+                guard surface.focusVisualZoom(on: focus.bounds) else { return }
                 visualSmartZoomFocus = identity
             case .desktop:
                 guard event.reason != .verifiedFocus,

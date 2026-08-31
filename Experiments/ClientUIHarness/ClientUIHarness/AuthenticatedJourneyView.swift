@@ -100,6 +100,7 @@ private final class AuthenticatedJourneyModel: ObservableObject {
     @Published var selectedPrimary = "None"
     @Published var statusError = "None"
     @Published var administration = "None"
+    @Published var visualZoomed = false
     @Published var workspace: ClientPrimaryWorkspaceModelV0?
     private(set) var network: NetworkClientConfiguredRouteApplicationProductV1?
     private var fixture: LabFixture?
@@ -215,9 +216,14 @@ private final class AuthenticatedJourneyModel: ObservableObject {
                     verifiedObservation = observation
                 }
                 control = Self.controlName(state.controlState)
+                var visualZoomed = false
                 for scene in UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene }) {
-                    for window in scene.windows { Self.identifyVideo(in: window) }
+                    for window in scene.windows {
+                        visualZoomed = Self.identifyVideo(in: window)
+                            || visualZoomed
+                    }
                 }
+                self.visualZoomed = visualZoomed
                 try? await Task.sleep(for: .milliseconds(100))
             }
         }
@@ -247,13 +253,19 @@ private final class AuthenticatedJourneyModel: ObservableObject {
         case .endFailed: "endFailed"
         case .preparationFailed: "preparationFailed"
         case .remoteRejected: "remoteRejected"
+        case .approvalFailed: "approvalFailed"
         }
     }
-    private static func identifyVideo(in view: UIView) {
+    private static func identifyVideo(in view: UIView) -> Bool {
+        var visualZoomed = false
         if let surface = view as? UIKitClientLiveSurfaceViewV0 {
             surface.accessibilityIdentifier = "Journey live surface"
+            visualZoomed = surface.isVisuallyZoomed
         }
-        for child in view.subviews { identifyVideo(in: child) }
+        for child in view.subviews {
+            visualZoomed = identifyVideo(in: child) || visualZoomed
+        }
+        return visualZoomed
     }
     func observe() async {
         do { try await workspace?.refreshStatus() }
@@ -323,6 +335,8 @@ struct AuthenticatedJourneyView: View {
                 Text("\(model.hostControl.queuedMediaRecords)").accessibilityIdentifier("Journey queue")
                 Text(model.hostControl.directTextMatches ? "Matched" : "Pending").accessibilityIdentifier("Journey text")
                 Text("\(model.hostControl.acknowledgements)").accessibilityIdentifier("Journey surface acknowledgements")
+                Text(model.visualZoomed ? "Focused" : "Fit")
+                    .accessibilityIdentifier("Journey visual zoom")
             }.font(.caption)
             HStack {
                 Text("\(model.hostControl.renewals)").accessibilityIdentifier("Journey renewals")
@@ -386,6 +400,8 @@ struct AuthenticatedJourneyView: View {
                 Text("\(model.hostControl.queuedMediaRecords)").accessibilityIdentifier("Journey queue")
                 Text("\(model.hostControl.acknowledgements)")
                     .accessibilityIdentifier("Journey surface acknowledgements")
+                Text(model.visualZoomed ? "Focused" : "Fit")
+                    .accessibilityIdentifier("Journey visual zoom")
             }.font(.caption2)
             HStack {
                 Button("Pair") { Task { await model.pair() } }.accessibilityIdentifier("Journey pair")

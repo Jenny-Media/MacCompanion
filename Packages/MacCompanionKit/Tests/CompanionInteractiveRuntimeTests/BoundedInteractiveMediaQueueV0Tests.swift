@@ -68,6 +68,57 @@ private final class QueueWakeupProbeV0: @unchecked Sendable {
     #expect(queue.status().recordCount == 0)
 }
 
+@Test func asyncMediaQueueWaitsForCapacityWithoutDroppingContinuity() async throws {
+    let queue = try BoundedInteractiveMediaQueueV0(
+        maximumRecords: 1,
+        maximumBytes: 3
+    )
+    let first = try queueHeader(sequence: 1, payloadLength: 3)
+    let second = try queueHeader(sequence: 2, payloadLength: 3)
+    #expect(queue.enqueueInteractiveMedia(
+        header: first,
+        payload: Data([1, 2, 3])
+    ))
+
+    let waiting = Task {
+        await queue.enqueueInteractiveMediaAwaitingCapacity(
+            header: second,
+            payload: Data([4, 5, 6])
+        )
+    }
+    for _ in 0..<100 {
+        await Task.yield()
+    }
+    #expect(queue.status().recordCount == 1)
+    #expect(queue.dequeue()?.header == first)
+    #expect(await waiting.value)
+    #expect(queue.status().recordCount == 1)
+    #expect(queue.dequeue()?.header == second)
+}
+
+@Test func purgeRejectsWaitingProducerWithoutRetainingBytes() async throws {
+    let queue = try BoundedInteractiveMediaQueueV0(
+        maximumRecords: 1,
+        maximumBytes: 1
+    )
+    #expect(queue.enqueueInteractiveMedia(
+        header: try queueHeader(sequence: 1, payloadLength: 1),
+        payload: Data([1])
+    ))
+    let second = try queueHeader(sequence: 2, payloadLength: 1)
+    let waiting = Task {
+        await queue.enqueueInteractiveMediaAwaitingCapacity(
+            header: second,
+            payload: Data([2])
+        )
+    }
+    for _ in 0..<100 { await Task.yield() }
+    #expect(queue.purge() == 1)
+    #expect(await waiting.value == false)
+    #expect(queue.status().recordCount == 0)
+    #expect(queue.status().byteCount == 0)
+}
+
 @Test func queueRejectsMixedSessionsUntilPurged() throws {
     let queue = try BoundedInteractiveMediaQueueV0()
     let firstSession = UUID()

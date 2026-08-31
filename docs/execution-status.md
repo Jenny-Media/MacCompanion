@@ -1082,6 +1082,18 @@ The old soak scheduler remains paused by explicit user request. Its ledger is
 authoritative historical evidence at 1/7 UTC dates; it will not be resumed or
 rebound. A distinct campaign may begin only for the frozen candidate.
 
+## 2026-08-30 primary keepalive and congestion recovery
+
+The [source checkpoint](evidence/2026-08-30-primary-keepalive-and-congestion-recovery.md)
+adds authenticated ping/pong liveness, a bounded recoverable
+Network.framework waiting state, immediate Control-role safety fencing during
+uncertain connectivity, and nonterminal encoded-media queue backpressure.
+Canonical fixture validation, 141 focused tests, and the complete repository
+gate pass. This is source evidence, not installed physical evidence. Recovery
+keeps the exact authenticated primary where Network.framework permits it but
+does not silently reuse or restart Control authority; a new explicit Control
+request remains required after the roles are retired.
+
 ## Blocker handling rule
 
 Every blocked item records its affected artifact, evidence needed to unblock it, and parallel work. The project is not globally blocked while any safe in-scope lane remains active or ready. A later-stage capability is complete only with passing exit evidence or an explicit evidence-backed `no-go` or `deferred` disposition.

@@ -109,7 +109,13 @@ public actor NetworkClientInteractiveRoleProductBindingV0 {
                         connectionID: connectionID
                     )
                 }
-            }
+            },
+            // `NWConnection.waiting` is a bounded primary-transport pause,
+            // not primary loss. Retain independently authenticated media and
+            // input roles until the primary either recovers or emits its exact
+            // terminal event. Immediate retirement here turned ordinary Wi-Fi
+            // path changes into a user-visible Control disconnect.
+            primaryTransportInterrupted: { _, _ in }
         )
     }
 
@@ -282,7 +288,8 @@ public actor NetworkClientInteractiveRoleProductBindingV0 {
                     interactiveSessionID: interactiveSessionID
                 )
             }
-        case .requestSubmitted, .approvalSubmitted, .remoteRejected:
+        case .requestSubmitted, .approvalFailed, .approvalSubmitted,
+             .remoteRejected:
             if connectionID == publication.connectionID {
                 await retirePair()
                 state = .inactive
@@ -308,6 +315,10 @@ public actor NetworkClientInteractiveRoleProductBindingV0 {
         do {
             try await automaticFocusHandler(publication.event)
         } catch {
+            IOSClientRuntimeDiagnosticLogV0.record(
+                "interactive.automatic-focus-handler.terminal",
+                error: error
+            )
             guard self.activationID == activationID,
                   initialDesktop === activation else { return }
             await activation.close()

@@ -73,6 +73,9 @@ public struct ClientInteractiveRemoteErrorV0: Equatable, Sendable {
 
 public enum ClientInteractivePrimarySessionEventV0: Equatable, Sendable {
     case requestSubmitted(effects: [InteractiveControlEffect])
+    /// OS-backed user presence or local approval-key signing did not complete.
+    /// This is a Control-request failure, not a primary protocol failure.
+    case approvalFailed
     case approvalSubmitted(effects: [InteractiveControlEffect])
     case accepted(
         session: ClientInteractiveAcceptedSessionV0,
@@ -560,6 +563,20 @@ public actor ClientInteractivePrimaryChannelV0:
                 }
             } catch let error as ClientInteractiveSessionErrorV0 {
                 return try remoteRejection(error, kind: kind)
+            } catch {
+                // LocalAuthentication cancellation, protected-key
+                // unavailability, and local signing failures do not make an
+                // authenticated Mac peer or its reply invalid. The authority
+                // has already closed this one request; keep the primary router
+                // alive so Observe, Act, and an explicit Control retry remain
+                // available.
+                requestedEffects = nil
+                clientInteractiveDebugTraceV0(
+                    "local approval failed type=\(String(reflecting: type(of: error)))"
+                )
+                return ClientPrimaryPreparedReplyV0 { [publish] in
+                    publish(.approvalFailed)
+                }
             }
         case .awaitingAcceptance:
             do {

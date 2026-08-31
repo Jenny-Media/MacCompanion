@@ -84,6 +84,10 @@ public struct ClientControlWorkspaceProjectionV0: Equatable, Sendable {
             mode = .requesting
             detail = "Waiting for the Mac to request device approval."
             diagnosticCode = nil
+        case .approvalFailed:
+            mode = .rejected
+            detail = "Device approval did not complete. Review Face ID or the device passcode, then try again."
+            diagnosticCode = "interactive.localApprovalFailed"
         case .approvalSubmitted:
             mode = .awaitingAcceptance
             detail = "Device approval was sent; the Mac is creating the session."

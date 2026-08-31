@@ -38,7 +38,11 @@ public enum IOSClientReleaseApplicationFailureV1:
 
 @available(iOS 17.0, *)
 @MainActor
-public struct IOSClientReleaseWorkspaceV1 {
+public struct IOSClientReleaseWorkspaceV1: Identifiable {
+    /// One UI ownership generation. An explicit reconnect constructs new
+    /// connection-owned state and must also construct a new SwiftUI subtree;
+    /// retaining the previous model would keep rendering a retired primary.
+    public let id: UUID
     public let hostID: UUID
     public let macName: String
     public let primaryState: NetworkClientPrimaryApplicationStateV0
@@ -49,6 +53,7 @@ public struct IOSClientReleaseWorkspaceV1 {
         @MainActor @Sendable () -> Void
 
     package init(
+        id: UUID = UUID(),
         hostID: UUID,
         macName: String,
         primaryState: NetworkClientPrimaryApplicationStateV0,
@@ -58,6 +63,7 @@ public struct IOSClientReleaseWorkspaceV1 {
         studyCaptureFailure:
             @escaping @MainActor @Sendable () -> Void
     ) {
+        self.id = id
         self.hostID = hostID
         self.macName = macName
         self.primaryState = primaryState

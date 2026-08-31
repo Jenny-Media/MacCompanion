@@ -222,6 +222,10 @@ public actor NetworkClientInteractiveInitialDesktopActivationV0 {
                     try await pump.run()
                     await self?.mediaEnded()
                 } catch {
+                    IOSClientRuntimeDiagnosticLogV0.record(
+                        "interactive.media-task.terminal",
+                        error: error
+                    )
                     print(
                         "[MacCompanion live-control] media pump failed error=\(String(describing: error))"
                     )
@@ -597,16 +601,25 @@ public actor NetworkClientInteractiveInitialDesktopActivationV0 {
 
     private func mediaEnded() async {
         guard phase != .closed, phase != .failed else { return }
+        IOSClientRuntimeDiagnosticLogV0.record(
+            "interactive.media-task.unexpected-end"
+        )
         await failClosed()
     }
 
     private func mediaFailed() async {
         guard phase != .closed, phase != .failed else { return }
+        IOSClientRuntimeDiagnosticLogV0.record(
+            "interactive.activation.media-failed"
+        )
         await failClosed()
     }
 
     private func failClosed() async {
         guard phase != .closed, phase != .failed else { return }
+        IOSClientRuntimeDiagnosticLogV0.record(
+            "interactive.activation.fail-closed"
+        )
         phase = .failed
         surfaceTransitionInFlight = false
         pumpTask?.cancel()

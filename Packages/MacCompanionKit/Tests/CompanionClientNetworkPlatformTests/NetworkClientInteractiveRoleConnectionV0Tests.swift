@@ -469,6 +469,62 @@ private func waitForRoleProductState(
     #expect(await binding.state == .inactive)
 }
 
+@Test func transientPrimaryInterruptionPreservesRolesUntilPrimaryTerminates()
+    async throws
+{
+    let composition = try roleConnectionComposition()
+    let pair = TestInteractiveRolePairOwner(
+        mode: .succeeds,
+        composition: composition
+    )
+    let binding = NetworkClientInteractiveRoleProductBindingV0(
+        hostID: composition.authenticatedSession.hostID,
+        pairFactory: { pair }
+    )
+    binding.productEvents.publishControl(NetworkClientControlPublicationV0(
+        hostID: composition.authenticatedSession.hostID,
+        connectionID: composition.authenticatedSession.connectionID,
+        event: .accepted(
+            session: composition.interactiveSession,
+            effects: [.view]
+        )
+    ))
+    #expect(await waitForRoleProductState(
+        binding,
+        .roleChannelsReady(interactiveSessionID:
+            composition.interactiveSession.interactiveSessionID)
+    ))
+
+    binding.productEvents.primaryTransportInterrupted(
+        composition.authenticatedSession.hostID,
+        composition.authenticatedSession.connectionID
+    )
+    try? await Task.sleep(nanoseconds: 2_000_000)
+    #expect(await binding.state == .roleChannelsReady(
+        interactiveSessionID:
+            composition.interactiveSession.interactiveSessionID
+    ))
+    #expect(await pair.closeCount == 0)
+    #expect(await pair.terminationCount == 0)
+
+    binding.productEvents.primaryTransportRecovered(
+        composition.authenticatedSession.hostID,
+        composition.authenticatedSession.connectionID
+    )
+    try? await Task.sleep(nanoseconds: 2_000_000)
+    #expect(await binding.state == .roleChannelsReady(
+        interactiveSessionID:
+            composition.interactiveSession.interactiveSessionID
+    ))
+
+    binding.productEvents.primaryTerminated(
+        composition.authenticatedSession.hostID,
+        composition.authenticatedSession.connectionID
+    )
+    #expect(await waitForRoleProductState(binding, .inactive))
+    #expect(await pair.terminationCount == 1)
+}
+
 @Test func roleProductBindingFailurePublishesNoReadyState() async throws {
     let composition = try roleConnectionComposition()
     let pair = TestInteractiveRolePairOwner(

@@ -82,6 +82,23 @@ public protocol InteractiveRuntimeMediaEnqueuingV0: Sendable {
         header: MediaRecordHeader,
         payload: Data
     ) -> Bool
+
+    /// Waits for bounded downstream capacity without accepting a partial
+    /// record. Implementations that do not support suspension retain the
+    /// immediate all-or-nothing behavior through the default implementation.
+    func enqueueInteractiveMediaAwaitingCapacity(
+        header: MediaRecordHeader,
+        payload: Data
+    ) async -> Bool
+}
+
+public extension InteractiveRuntimeMediaEnqueuingV0 {
+    func enqueueInteractiveMediaAwaitingCapacity(
+        header: MediaRecordHeader,
+        payload: Data
+    ) async -> Bool {
+        enqueueInteractiveMedia(header: header, payload: payload)
+    }
 }
 
 public struct InteractiveRuntimeInputActionV0: Equatable, Sendable {
@@ -1178,17 +1195,38 @@ public actor InteractiveMenuRuntimeOwnerV0 {
             throw InteractiveMenuRuntimeErrorV0
                 .safetyRecoveryRequired
         }
-        guard mediaQueue.enqueueInteractiveMedia(
+        // Commit the exact sequence/fence before the bounded queue may
+        // suspend. The queue owns the complete pending record while waiting,
+        // and actor reentrancy must never allow a late continuation to
+        // restore state retired by revoke, reset, or Agent invalidation.
+        active.lastMediaSequence = action.header.mediaSequence
+        active.lastMediaCommandID = action.commandID
+        active.lastMediaDigest = digest
+        active.surfaceAdmission = nextSurfaceAdmission
+        storage = .active(active)
+        guard await mediaQueue.enqueueInteractiveMediaAwaitingCapacity(
             header: action.header,
             payload: action.payload
         ) else {
+            guard case let .active(current) = storage,
+                  current.command.lease.interactiveSessionID
+                    == active.command.lease.interactiveSessionID,
+                  current.lastMediaCommandID == action.commandID,
+                  current.lastMediaSequence == action.header.mediaSequence
+            else {
+                if case .safetyRecoveryRequired = storage {
+                    throw InteractiveMenuRuntimeErrorV0
+                        .safetyRecoveryRequired
+                }
+                throw InteractiveMenuRuntimeErrorV0.noActiveSession
+            }
             var context = InteractiveCleanupContextV0(
-                leaseID: active.command.lease.leaseID,
+                leaseID: current.command.lease.leaseID,
                 interactiveSessionID:
-                    active.command.lease.interactiveSessionID
+                    current.command.lease.interactiveSessionID
             )
             context.progress.inputReleased
-                = active.inputReleasedForSurfaceTransition
+                = current.inputReleasedForSurfaceTransition
             storage = .terminating(context)
             await applyCleanup(&context)
             if context.progress.complete {
@@ -1198,11 +1236,6 @@ public actor InteractiveMenuRuntimeOwnerV0 {
             storage = .safetyRecoveryRequired(context)
             throw InteractiveMenuRuntimeErrorV0.safetyRecoveryRequired
         }
-        active.lastMediaSequence = action.header.mediaSequence
-        active.lastMediaCommandID = action.commandID
-        active.lastMediaDigest = digest
-        active.surfaceAdmission = nextSurfaceAdmission
-        storage = .active(active)
     }
 
     private func surfaceAdmission(

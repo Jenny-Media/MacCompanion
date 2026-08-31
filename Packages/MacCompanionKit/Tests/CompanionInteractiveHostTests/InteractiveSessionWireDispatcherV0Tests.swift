@@ -40,7 +40,8 @@ private func dispatcherContext(
     hostState: HostState = .userSessionActive,
     grantRevision: UInt64 = 5,
     monotonicNow: UInt64 = 1_000,
-    wallNow: Int64 = 1_724_000_000_000
+    wallNow: Int64 = 1_724_000_000_000,
+    primaryConnectionID: Data = dispatcherConnectionID
 ) throws -> InteractiveSessionCommandContextV0 {
     try InteractiveSessionCommandContextV0(
         deviceID: dispatcherDeviceID,
@@ -49,7 +50,7 @@ private func dispatcherContext(
         authorizationEpoch: .init(rawValue: 4),
         grantRevision: .init(rawValue: grantRevision),
         policyRevision: .init(rawValue: 6),
-        primaryConnectionID: dispatcherConnectionID,
+        primaryConnectionID: primaryConnectionID,
         hostID: dispatcherHostID,
         hostFingerprint: dispatcherFingerprint,
         hostState: hostState,
@@ -148,13 +149,21 @@ private actor DispatcherAdmission: InteractiveSessionAdmissionReadingV0 {
 }
 
 private actor DispatcherMaterials: InteractiveSessionMaterialGeneratingV0 {
+    private var approvalIDs: [UUID]
     private(set) var approvalCount = 0
     private(set) var bootstrapCount = 0
 
+    init(approvalIDs: [UUID] = [dispatcherApprovalID]) {
+        self.approvalIDs = approvalIDs
+    }
+
     func approvalMaterials() async throws -> InteractiveApprovalMaterialsV0 {
         approvalCount += 1
+        let approvalID = approvalIDs.count > 1
+            ? approvalIDs.removeFirst()
+            : approvalIDs[0]
         return try InteractiveApprovalMaterialsV0(
-            approvalID: dispatcherApprovalID,
+            approvalID: approvalID,
             serverChallenge: dispatcherServerChallenge
         )
     }
@@ -414,6 +423,7 @@ private struct PendingDispatcherFlow {
 
 private func pendingDispatcherFlow(
     snapshots: [InteractiveSessionAdmissionSnapshotV0?]? = nil,
+    materials: DispatcherMaterials = DispatcherMaterials(),
     runtime: DispatcherRuntime = DispatcherRuntime(),
     surfaceControl:
         (any InteractiveSurfaceControlDispatchingV0)? = nil,
@@ -424,7 +434,6 @@ private func pendingDispatcherFlow(
     let admission = DispatcherAdmission(
         try snapshots ?? [dispatcherSnapshot()]
     )
-    let materials = DispatcherMaterials()
     let dispatcher = InteractiveSessionWireDispatcherV0(
         admission: admission,
         materials: materials,
@@ -1157,6 +1166,105 @@ private func dispatcherProof(
     #expect(await flow.runtime.installed.isEmpty)
     #expect(await flow.dispatcher.activeInteractiveSessionID == nil)
     #expect(await !flow.dispatcher.hasPendingApproval)
+}
+
+@Test func exactPrimaryRetrySupersedesAbandonedApprovalWithoutDisconnect()
+    async throws
+{
+    let replacementApprovalID = UUID()
+    let materials = DispatcherMaterials(
+        approvalIDs: [dispatcherApprovalID, replacementApprovalID]
+    )
+    let flow = try await pendingDispatcherFlow(
+        snapshots: [
+            try dispatcherSnapshot(),
+            try dispatcherSnapshot(),
+            try dispatcherSnapshot(),
+        ],
+        materials: materials
+    )
+    let retryRequest = try WireEnvelope(
+        messageID: WireUUID(UUID()),
+        correlationID: nil,
+        sentAtUnixMilliseconds: 1_724_000_000_010,
+        body: try InteractiveSessionRequestBody(effects: [.view])
+    )
+    let retryChallengeData = try await flow.dispatcher.dispatch(
+        requestJSON: WireCodec.encode(retryRequest),
+        context: dispatcherContext(monotonicNow: 1_010),
+        responseMessageID: WireUUID(UUID())
+    )
+    let retryChallenge = try WireCodec.decode(
+        WireEnvelope<InteractiveApprovalChallengeBody>.self,
+        from: retryChallengeData
+    )
+    #expect(retryChallenge.body.approvalID.rawValue == replacementApprovalID)
+    #expect(await materials.approvalCount == 2)
+
+    // A delayed proof for the superseded challenge is rejected without
+    // erasing the replacement pending approval.
+    let staleProofData = try await flow.dispatcher.dispatch(
+        requestJSON: WireCodec.encode(try dispatcherProof(for: flow.challenge)),
+        context: dispatcherContext(monotonicNow: 1_020),
+        responseMessageID: WireUUID(UUID())
+    )
+    #expect(try WireCodec.decode(
+        WireEnvelope<ProtocolErrorResponseBody>.self,
+        from: staleProofData
+    ).body.code == "auth.invalidProof")
+    #expect(await flow.dispatcher.hasPendingApproval)
+
+    let acceptedData = try await flow.dispatcher.dispatch(
+        requestJSON: WireCodec.encode(
+            try dispatcherProof(for: retryChallenge)
+        ),
+        context: dispatcherContext(monotonicNow: 1_030),
+        responseMessageID: WireUUID(UUID())
+    )
+    _ = try WireCodec.decode(
+        WireEnvelope<InteractiveSessionAcceptedBody>.self,
+        from: acceptedData
+    )
+    #expect(await !flow.dispatcher.hasPendingApproval)
+}
+
+@Test func expiredApprovalCannotBlockAReplacementPrimaryRequest()
+    async throws
+{
+    let replacementConnectionID = Data(repeating: 0xA4, count: 16)
+    let replacementApprovalID = UUID()
+    let materials = DispatcherMaterials(
+        approvalIDs: [dispatcherApprovalID, replacementApprovalID]
+    )
+    let flow = try await pendingDispatcherFlow(
+        snapshots: [try dispatcherSnapshot(), try dispatcherSnapshot()],
+        materials: materials
+    )
+    let request = try WireEnvelope(
+        messageID: WireUUID(UUID()),
+        correlationID: nil,
+        sentAtUnixMilliseconds: 1_724_000_060_001,
+        body: try InteractiveSessionRequestBody(effects: [.view])
+    )
+    let responseData = try await flow.dispatcher.dispatch(
+        requestJSON: WireCodec.encode(request),
+        context: dispatcherContext(
+            monotonicNow: 61_001,
+            wallNow: 1_724_000_060_001,
+            primaryConnectionID: replacementConnectionID
+        ),
+        responseMessageID: WireUUID(UUID())
+    )
+    let replacement = try WireCodec.decode(
+        WireEnvelope<InteractiveApprovalChallengeBody>.self,
+        from: responseData
+    )
+    #expect(replacement.body.approvalID.rawValue == replacementApprovalID)
+    #expect(
+        replacement.body.primaryConnectionID.rawValue
+            == replacementConnectionID
+    )
+    #expect(await flow.dispatcher.hasPendingApproval)
 }
 
 @Test func dispatcherDisconnectClearsPendingAndTerminatesActiveExactlyOnce() async throws {

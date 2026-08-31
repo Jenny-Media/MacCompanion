@@ -329,6 +329,10 @@ public final class ClientPrimaryLiveControlCoordinatorV0: ObservableObject {
 
     private func fail(_ error: any Error) {
         guard phase != .closed else { return }
+        IOSClientRuntimeDiagnosticLogV0.record(
+            "ui.live-control-coordinator.terminal",
+            error: error
+        )
         productGeneration = UUID()
         print(
             "[MacCompanion live-control] coordinator failed phase=\(String(describing: phase)) error=\(String(describing: error))"

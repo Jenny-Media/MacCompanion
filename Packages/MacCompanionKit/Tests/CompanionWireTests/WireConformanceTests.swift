@@ -173,6 +173,24 @@ private func decodeCanonicalFixture<Body: WireBody>(
     #expect(acknowledgement.body.validForMilliseconds == 30_000)
 }
 
+@Test func authoritativeKeepaliveFixturesDecodeAndCanonicalize() throws {
+    let ping = try decodeCanonicalFixture(
+        "valid/keepalive-ping.json",
+        as: KeepalivePingBodyV0.self,
+        expectedSHA256:
+            "395eef263ebb9515569b857d29baec74e73bf64979ec26e5b55f0b3f33d4d4c5"
+    )
+    let pong = try decodeCanonicalFixture(
+        "valid/keepalive-pong.json",
+        as: KeepalivePongBodyV0.self,
+        expectedSHA256:
+            "924262f27ec59db012bfe374f584906cd48b75155811ffc50f2599484709d2fc"
+    )
+
+    #expect(ping.correlationID == nil)
+    #expect(pong.correlationID == ping.messageID)
+}
+
 @Test func invalidRouteObservationFixturesFailClosed() throws {
     for path in [
         "invalid/route-observation-unknown-class.json",

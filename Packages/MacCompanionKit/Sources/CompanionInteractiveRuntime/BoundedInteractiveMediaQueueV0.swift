@@ -19,9 +19,10 @@ public struct QueuedInteractiveMediaRecordV0: Equatable, Sendable {
     }
 }
 
-/// A small synchronous handoff queue for the menu-app runtime. It never drops
-/// an older record to make room: overflow is a definitive rejection so the
-/// runtime can terminate rather than silently corrupt decoder continuity.
+/// A small handoff queue for the menu-app runtime. It never drops an older
+/// encoded record or breaks decoder continuity. The runtime-facing async path
+/// suspends one producer behind bounded capacity while the encoder's own
+/// latency policy keeps only its newest not-yet-encoded source frame.
 public final class BoundedInteractiveMediaQueueV0:
     InteractiveRuntimeMediaEnqueuingV0, @unchecked Sendable
 {
@@ -35,6 +36,10 @@ public final class BoundedInteractiveMediaQueueV0:
     private var byteCount = 0
     private var enqueuedHandler:
         (token: UUID, action: @Sendable () -> Void)?
+    private var pendingEnqueue: (
+        record: QueuedInteractiveMediaRecordV0,
+        continuation: CheckedContinuation<Bool, Never>
+    )?
 
     public init(maximumRecords: Int = 8, maximumBytes: Int = 16 * 1_024 * 1_024) throws {
         guard (1...Self.maximumRecordLimit).contains(maximumRecords),
@@ -70,27 +75,95 @@ public final class BoundedInteractiveMediaQueueV0:
         return result.0
     }
 
+    public func enqueueInteractiveMediaAwaitingCapacity(
+        header: MediaRecordHeader,
+        payload: Data
+    ) async -> Bool {
+        guard let record = try? QueuedInteractiveMediaRecordV0(
+            header: header,
+            payload: payload
+        ), payload.count <= maximumBytes else { return false }
+
+        return await withCheckedContinuation { continuation in
+            let result = lock.withLock {
+                let sameSession = records.first.map {
+                    $0.header.interactiveSessionID
+                        == header.interactiveSessionID
+                } ?? pendingEnqueue.map {
+                    $0.record.header.interactiveSessionID
+                        == header.interactiveSessionID
+                } ?? true
+                guard sameSession, pendingEnqueue == nil else {
+                    return (false, false, nil as (@Sendable () -> Void)?)
+                }
+                if records.count < maximumRecords,
+                   payload.count <= maximumBytes - byteCount {
+                    records.append(record)
+                    byteCount += payload.count
+                    return (true, true, enqueuedHandler?.action)
+                }
+                pendingEnqueue = (record, continuation)
+                return (true, false, nil)
+            }
+            guard result.0 else {
+                continuation.resume(returning: false)
+                return
+            }
+            if result.1 {
+                continuation.resume(returning: true)
+                result.2?()
+            }
+        }
+    }
+
     /// Transfers one complete record to the downstream adapter. A record
     /// already transferred is downstream in-flight and remains fenced by its
     /// header plus channel/session teardown; `purge()` covers retained queue
     /// ownership only.
     public func dequeue() -> QueuedInteractiveMediaRecordV0? {
-        lock.withLock {
+        let result: (
+            QueuedInteractiveMediaRecordV0,
+            CheckedContinuation<Bool, Never>?,
+            (@Sendable () -> Void)?
+        )? = lock.withLock {
             guard !records.isEmpty else { return nil }
             let record = records.removeFirst()
             byteCount -= record.payload.count
-            return record
+            var admitted: CheckedContinuation<Bool, Never>?
+            var action: (@Sendable () -> Void)?
+            if let pendingEnqueue,
+               records.count < maximumRecords,
+               pendingEnqueue.record.payload.count
+                    <= maximumBytes - byteCount,
+               records.first.map({
+                   $0.header.interactiveSessionID
+                        == pendingEnqueue.record.header.interactiveSessionID
+               }) ?? true {
+                records.append(pendingEnqueue.record)
+                byteCount += pendingEnqueue.record.payload.count
+                admitted = pendingEnqueue.continuation
+                self.pendingEnqueue = nil
+                action = enqueuedHandler?.action
+            }
+            return (record, admitted, action)
         }
+        result?.1?.resume(returning: true)
+        result?.2?()
+        return result?.0
     }
 
     @discardableResult
     public func purge() -> Int {
-        lock.withLock {
+        let result = lock.withLock {
             let removed = records.count
             records.removeAll(keepingCapacity: true)
             byteCount = 0
-            return removed
+            let pending = pendingEnqueue?.continuation
+            pendingEnqueue = nil
+            return (removed, pending)
         }
+        result.1?.resume(returning: false)
+        return result.0
     }
 
     public func status() -> (recordCount: Int, byteCount: Int) {

@@ -78,6 +78,7 @@ public actor ClientPrimarySessionV0 {
     private var pendingRouteObservation:
         WireEnvelope<RouteObservationBodyV1>?
     private var lastRouteObservationMonotonicMilliseconds: UInt64?
+    private var pendingKeepaliveMessageID: WireUUID?
 
     package init(
         clientID: UUID,
@@ -304,6 +305,59 @@ public actor ClientPrimarySessionV0 {
         }
     }
 
+    public func beginKeepalive(
+        messageID: WireUUID,
+        sentAtUnixMilliseconds: Int64,
+        monotonicNowMilliseconds: UInt64
+    ) throws -> Data {
+        do {
+            try requirePhase(.authenticated)
+            try observe(monotonicNowMilliseconds)
+            guard pendingKeepaliveMessageID == nil else {
+                throw ClientPrimarySessionErrorV0.invalidConfiguration
+            }
+            try transport.admit(.commandFrame)
+            try admitReplay(messageID)
+            let request = try WireEnvelope(
+                messageID: messageID,
+                correlationID: nil,
+                sentAtUnixMilliseconds: sentAtUnixMilliseconds,
+                body: KeepalivePingBodyV0()
+            )
+            pendingKeepaliveMessageID = messageID
+            return try WireCodec.encode(request)
+        } catch {
+            terminate()
+            throw error
+        }
+    }
+
+    public func receiveKeepalivePong(
+        _ responseJSON: Data,
+        monotonicNowMilliseconds: UInt64
+    ) throws {
+        do {
+            try requirePhase(.authenticated)
+            try observe(monotonicNowMilliseconds)
+            guard let pendingKeepaliveMessageID else {
+                throw ClientPrimarySessionErrorV0.invalidCorrelation
+            }
+            try transport.admit(.commandFrame)
+            let response = try WireCodec.decode(
+                WireEnvelope<KeepalivePongBodyV0>.self,
+                from: responseJSON
+            )
+            try admitReplay(response.messageID)
+            guard response.correlationID == pendingKeepaliveMessageID else {
+                throw ClientPrimarySessionErrorV0.invalidCorrelation
+            }
+            self.pendingKeepaliveMessageID = nil
+        } catch {
+            terminate()
+            throw error
+        }
+    }
+
     /// Creates the initial configured-route observation or a later heartbeat.
     /// Bonjour and direct-address records intentionally produce no message.
     public func beginConfiguredRouteObservation(
@@ -488,6 +542,7 @@ public actor ClientPrimarySessionV0 {
         authenticatedSession = nil
         connectionID = nil
         pendingRouteObservation = nil
+        pendingKeepaliveMessageID = nil
         lastRouteObservationMonotonicMilliseconds = nil
         authenticationDeadlineMonotonicMilliseconds = nil
         clearHandshakeSecrets()

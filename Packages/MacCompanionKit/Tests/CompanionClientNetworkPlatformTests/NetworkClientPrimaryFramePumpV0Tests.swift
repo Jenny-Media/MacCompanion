@@ -251,7 +251,9 @@ private func makeNetworkClientPumpHarness(
     routeMessageIDs: [WireUUID] = [WireUUID(UUID())],
     routeSleep: @escaping @Sendable (UInt64) async throws -> Void = {
         try await Task.sleep(nanoseconds: $0)
-    }
+    },
+    transientlyUnavailable: @escaping @Sendable () -> Void = {},
+    recovered: @escaping @Sendable () -> Void = {}
 ) throws
     -> NetworkClientPumpHarnessV0
 {
@@ -303,6 +305,8 @@ private func makeNetworkClientPumpHarness(
         receivedCommand: { await commands.record($0) },
         routeMessageID: { routeMessageIDSource.next() },
         routeSleep: routeSleep,
+        transientlyUnavailable: transientlyUnavailable,
+        recovered: recovered,
         terminal: { reason in
             Task { await terminals.record(reason) }
         }
@@ -598,6 +602,140 @@ private func networkClientSPKI() throws -> Data {
     )
     #expect(harness.io.cancelCount == 1)
     #expect(await harness.session.phase == .closed)
+}
+
+@Test func clientPumpRecoversFromBoundedNetworkWaitingWithoutReplacingPrimary() async throws {
+    let interrupted = NetworkClientPumpReadyRecorderV0()
+    let recovered = NetworkClientPumpReadyRecorderV0()
+    let harness = try makeNetworkClientPumpHarness(
+        transientlyUnavailable: { interrupted.record() },
+        recovered: { recovered.record() }
+    )
+    try await authenticateNetworkClientPump(harness)
+
+    harness.io.updateState(.waiting)
+    for _ in 0..<100 where interrupted.count == 0 {
+        try? await Task.sleep(nanoseconds: 1_000_000)
+    }
+    #expect(interrupted.count == 1)
+    await #expect(throws: NetworkClientPrimaryFramePumpErrorV0.connectionClosed) {
+        try await harness.pump.sendAuthenticatedCommand(Data([1]))
+    }
+    #expect(await harness.terminals.values.isEmpty)
+    #expect(await harness.session.phase == .authenticated)
+
+    harness.io.updateState(.ready)
+    for _ in 0..<100 where recovered.count == 0 {
+        try? await Task.sleep(nanoseconds: 1_000_000)
+    }
+    #expect(recovered.count == 1)
+    try await harness.pump.sendAuthenticatedCommand(Data([2]))
+    #expect(await harness.terminals.values.isEmpty)
+    #expect(await harness.session.phase == .authenticated)
+}
+
+@Test func clientPumpSendsIdleKeepaliveAndAcceptsExactPong() async throws {
+    let sleep = NetworkClientImmediateThenBlockingSleepV0()
+    let keepaliveID = WireUUID(UUID())
+    let base = try makeNetworkClientPumpHarness()
+    let pump = NetworkClientPrimaryFramePumpV0(
+        io: base.io,
+        tlsHandoff: await base.pump.tlsHandoff,
+        session: base.session,
+        clock: {
+            NetworkClientClockSnapshotV0(
+                wallNowUnixMilliseconds: 2_010,
+                monotonicNowMilliseconds: 1_010
+            )
+        },
+        authenticated: { base.authenticated.record($0) },
+        readyForAuthenticatedTraffic: { base.ready.record() },
+        receivedCommand: { await base.commands.record($0) },
+        keepaliveMessageID: { keepaliveID },
+        keepaliveSleep: { _ in try await sleep.sleep() },
+        terminal: { reason in
+            Task { await base.terminals.record(reason) }
+        }
+    )
+    let harness = NetworkClientPumpHarnessV0(
+        io: base.io,
+        pump: pump,
+        session: base.session,
+        start: base.start,
+        helloMessageID: base.helloMessageID,
+        hostID: base.hostID,
+        deviceID: base.deviceID,
+        fingerprint: base.fingerprint,
+        authenticated: base.authenticated,
+        ready: base.ready,
+        commands: base.commands,
+        terminals: base.terminals
+    )
+    try await authenticateNetworkClientPump(harness)
+    let sent = await waitForNetworkClientSentCount(base.io, 3)
+    let ping = try decodeNetworkClientSentFrame(
+        sent[2],
+        as: KeepalivePingBodyV0.self
+    )
+    #expect(ping.messageID == keepaliveID)
+    let pong = try WireEnvelope(
+        messageID: WireUUID(UUID()),
+        correlationID: ping.messageID,
+        sentAtUnixMilliseconds: 2_011,
+        body: KeepalivePongBodyV0()
+    )
+    base.io.deliver(
+        try LengthPrefixedFrameDecoder.encode(WireCodec.encode(pong))
+    )
+    for _ in 0..<100 where sleep.callCount < 2 {
+        try? await Task.sleep(nanoseconds: 1_000_000)
+    }
+    #expect(sleep.callCount == 2)
+    #expect(await base.terminals.values.isEmpty)
+    #expect(await base.session.phase == .authenticated)
+}
+
+@Test func clientPumpMissingKeepalivePongIsClassifiedSeparately() async throws {
+    let base = try makeNetworkClientPumpHarness()
+    let pump = NetworkClientPrimaryFramePumpV0(
+        io: base.io,
+        tlsHandoff: await base.pump.tlsHandoff,
+        session: base.session,
+        clock: {
+            NetworkClientClockSnapshotV0(
+                wallNowUnixMilliseconds: 2_010,
+                monotonicNowMilliseconds: 1_010
+            )
+        },
+        authenticated: { base.authenticated.record($0) },
+        readyForAuthenticatedTraffic: { base.ready.record() },
+        receivedCommand: { await base.commands.record($0) },
+        keepaliveSleep: { _ in },
+        terminal: { reason in
+            Task { await base.terminals.record(reason) }
+        }
+    )
+    let harness = NetworkClientPumpHarnessV0(
+        io: base.io,
+        pump: pump,
+        session: base.session,
+        start: base.start,
+        helloMessageID: base.helloMessageID,
+        hostID: base.hostID,
+        deviceID: base.deviceID,
+        fingerprint: base.fingerprint,
+        authenticated: base.authenticated,
+        ready: base.ready,
+        commands: base.commands,
+        terminals: base.terminals
+    )
+    try await authenticateNetworkClientPump(harness)
+    #expect(
+        await waitForNetworkClientPumpTerminal(base.terminals)
+            == [.keepaliveTimeout]
+    )
+    #expect(base.io.cancelCount == 1)
+    #expect(await base.session.phase == .closed)
 }
 
 @Test func clientPumpInjectedIOClassifiesFramedRemoteDenial() async throws {

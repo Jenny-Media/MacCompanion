@@ -488,6 +488,19 @@ public actor AuthenticatedPrimarySessionV0 {
         }
 
         switch kind {
+        case .keepalivePing:
+            let request = try WireCodec.decode(
+                WireEnvelope<KeepalivePingBodyV0>.self,
+                from: requestJSON
+            )
+            try replay.admit(request.messageID)
+            recordAuthenticatedTraffic(at: monotonicNowMilliseconds)
+            return try WireCodec.encode(WireEnvelope(
+                messageID: responseMessageID,
+                correlationID: request.messageID,
+                sentAtUnixMilliseconds: wallNowUnixMilliseconds,
+                body: KeepalivePongBodyV0()
+            ))
         case .routeObservation:
             let request = try WireCodec.decode(
                 WireEnvelope<RouteObservationBodyV1>.self,

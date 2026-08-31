@@ -78,16 +78,11 @@ final class SignedAgentJourneyUITests: XCTestCase {
         let surface = app.otherElements["Journey live surface"]
         XCTAssertTrue(surface.waitForExistence(timeout: 10))
         assertVisibleSignedVideo(surface)
-        let focusedSurfaceAcknowledged = XCTNSPredicateExpectation(
-            predicate: NSPredicate { _, _ in
-                (Int(app.staticTexts["Journey surface acknowledgements"].label) ?? 0) >= 2
-            },
-            object: nil
-        )
+        label("Journey visual zoom", "Focused", timeout: 10)
         XCTAssertEqual(
-            XCTWaiter.wait(for: [focusedSurfaceAcknowledged], timeout: 10),
-            .completed,
-            "Signed automatic focus replacement must be acknowledged before input"
+            Int(app.staticTexts["Journey surface acknowledgements"].label) ?? 0,
+            1,
+            "Signed automatic Smart Zoom must preserve the acknowledged remote surface"
         )
         let beforeInput = Int(app.staticTexts["Signed input events"].label) ?? 0
         // The acknowledged adaptive replacement rebuilds the rendered surface;
@@ -100,27 +95,18 @@ final class SignedAgentJourneyUITests: XCTestCase {
         }, object: nil)
         XCTAssertEqual(XCTWaiter.wait(for: [input], timeout: 10), .completed)
 
-        // Backgrounding must retire the active Control session. Returning to
-        // the foreground reconnects Observe, but never restores Control without
-        // another explicit request from the user.
+        // A short app switch stays inside the bounded iOS grace and preserves
+        // the authenticated primary plus explicit Control session.
         let beforeBackgroundPrimary = app.staticTexts["Journey primary"].label
         XCUIDevice.shared.press(.home)
         XCTAssertTrue(app.wait(for: .runningBackground, timeout: 5)
             || app.state == .runningBackgroundSuspended)
         Thread.sleep(forTimeInterval: 2)
         app.activate()
-        let foregroundPrimary = XCTNSPredicateExpectation(
-            predicate: NSPredicate(
-                format: "label != %@ AND label != %@",
-                beforeBackgroundPrimary,
-                "None"
-            ),
-            object: app.staticTexts["Journey primary"]
-        )
-        XCTAssertEqual(XCTWaiter.wait(for: [foregroundPrimary], timeout: 20), .completed)
         label("Journey connection", "Connected")
-        label("Journey control", "ready")
-        XCTAssertFalse(app.otherElements["Journey live surface"].exists)
+        label("Journey control", "active")
+        XCTAssertEqual(app.staticTexts["Journey primary"].label, beforeBackgroundPrimary)
+        XCTAssertTrue(app.otherElements["Journey live surface"].waitForExistence(timeout: 5))
 
         // A real production lifecycle reachability loss must retire the
         // authenticated primary without deleting pairing or restoring Control.
@@ -155,17 +141,11 @@ final class SignedAgentJourneyUITests: XCTestCase {
         let foregroundSurface = app.otherElements["Journey live surface"]
         XCTAssertTrue(foregroundSurface.waitForExistence(timeout: 10))
         assertVisibleSignedVideo(foregroundSurface)
-        let foregroundFocusAcknowledged = XCTNSPredicateExpectation(
-            predicate: NSPredicate { _, _ in
-                (Int(app.staticTexts["Journey surface acknowledgements"].label) ?? 0)
-                    >= acknowledgementsBeforeForegroundControl + 2
-            },
-            object: nil
-        )
+        label("Journey visual zoom", "Focused", timeout: 10)
         XCTAssertEqual(
-            XCTWaiter.wait(for: [foregroundFocusAcknowledged], timeout: 10),
-            .completed,
-            "Foreground Control must acknowledge desktop and automatic focus before keyboard input"
+            Int(app.staticTexts["Journey surface acknowledgements"].label) ?? 0,
+            acknowledgementsBeforeForegroundControl + 1,
+            "Foreground Control must acknowledge Desktop while Smart Zoom remains local"
         )
 
         // Exercise both shipping keyboard paths across the signed Agent input
@@ -302,30 +282,23 @@ final class ClientUIHarnessUITests: XCTestCase {
         }, evaluatedWith: nil)
         waitForExpectations(timeout: 15)
         startJourneyControl()
-        let surface = app.otherElements["Journey live surface"]
-        surface.pinch(withScale: 1.5, velocity: 1)
-        surface.pinch(withScale: 0.7, velocity: -1)
         let surfaceAcknowledgements = Int(app.staticTexts["Journey surface acknowledgements"].label) ?? 0
         app.buttons["Focus"].tap()
-        // Focus is an asynchronous primary-channel event. Wait for the
-        // client's focused-surface acknowledgement, not a guessed delay;
-        // before it arrives, the direct keyboard is the correct fallback.
-        expectation(for: NSPredicate { [weak self] _, _ in
-            (Int(self?.app.staticTexts["Journey surface acknowledgements"].label ?? "0") ?? 0) > surfaceAcknowledgements
-        }, evaluatedWith: nil)
-        waitForExpectations(timeout: 10)
-        app.buttons["Keyboard"].tap()
-        let editor = app.textViews["Text to send to Mac"]
-        XCTAssertTrue(editor.waitForExistence(timeout: 8))
-        editor.tap(); editor.typeText("hello world")
-        app.buttons["Send composed text"].tap()
-        XCTAssertTrue(app.buttons["Keyboard"].waitForExistence(timeout: 5))
+        wait(for: app.staticTexts["Journey visual zoom"], toHaveLabel: "Focused", timeout: 10)
+        XCTAssertEqual(
+            Int(app.staticTexts["Journey surface acknowledgements"].label) ?? 0,
+            surfaceAcknowledgements,
+            "Ordinary Smart Zoom must preserve the acknowledged remote surface"
+        )
         app.buttons["Keyboard"].tap()
         XCTAssertTrue(app.buttons["Use Direct Keyboard"].waitForExistence(timeout: 5))
         app.buttons["Use Direct Keyboard"].tap()
         XCTAssertTrue(app.keyboards.element.waitForExistence(timeout: 5))
-        app.typeText("abc ")
+        app.typeText("hello worldabc ")
         wait(for: app.staticTexts["Journey text"], toHaveLabel: "Matched", timeout: 8)
+        let surface = app.otherElements["Journey live surface"]
+        surface.pinch(withScale: 1.5, velocity: 1)
+        surface.pinch(withScale: 0.7, velocity: -1)
         let beforeStopAuth = Int(app.staticTexts["Journey authentications"].label) ?? 0
         let beforeStopPrimary = app.staticTexts["Journey primary"].label
         stopJourneyControl()
@@ -337,19 +310,21 @@ final class ClientUIHarnessUITests: XCTestCase {
         XCTAssertEqual(Int(app.staticTexts["Journey authentications"].label), beforeStopAuth,
             "Observe must work on the same authenticated primary, not a reconnect")
         XCTAssertEqual(app.staticTexts["Journey primary"].label, beforeStopPrimary)
+        startJourneyControl()
         for _ in 0..<3 {
-            startJourneyControl()
-            let previous = Int(app.staticTexts["Journey observations"].label) ?? 0
             let oldPrimary = app.staticTexts["Journey primary"].label
             XCUIDevice.shared.press(.home)
             XCTAssertTrue(app.wait(for: .runningBackground, timeout: 5) || app.state == .runningBackgroundSuspended)
+            Thread.sleep(forTimeInterval: 2)
             app.activate()
-            waitJourneyPrimaryReplacement(of: oldPrimary)
-            waitJourneyObservation(after: previous)
             wait(for: app.staticTexts["Journey connection"], toHaveLabel: "Connected", timeout: 15)
-            XCTAssertFalse(app.otherElements["Journey live surface"].exists, "Reconnect must not resume Control")
+            wait(for: app.staticTexts["Journey control"], toHaveLabel: "active", timeout: 10)
+            XCTAssertEqual(app.staticTexts["Journey primary"].label, oldPrimary)
+            XCTAssertTrue(
+                app.otherElements["Journey live surface"].waitForExistence(timeout: 5),
+                "A quick app switch must preserve the explicit Control session"
+            )
         }
-        startJourneyControl()
         let beforeDrop = Int(app.staticTexts["Journey authentications"].label) ?? 0
         let beforeDropPrimary = app.staticTexts["Journey primary"].label
         app.buttons["Drop"].tap()
@@ -404,10 +379,16 @@ final class ClientUIHarnessUITests: XCTestCase {
             startJourneyControl()
             let beforeFocus = Int(app.staticTexts["Journey surface acknowledgements"].label) ?? 0
             app.buttons["Focus"].tap()
-            expectation(for: NSPredicate { [weak self] _, _ in
-                (Int(self?.app.staticTexts["Journey surface acknowledgements"].label ?? "0") ?? 0) > beforeFocus
-            }, evaluatedWith: nil)
-            waitForExpectations(timeout: 10)
+            wait(
+                for: app.staticTexts["Journey visual zoom"],
+                toHaveLabel: "Focused",
+                timeout: 10
+            )
+            XCTAssertEqual(
+                Int(app.staticTexts["Journey surface acknowledgements"].label) ?? 0,
+                beforeFocus,
+                "Automatic Smart Zoom must not replace the acknowledged remote surface"
+            )
             // Run through two actual production-scheduler deadlines after a
             // surface change. Host counters alone are insufficient: require
             // rendered pixels and no local failure as well.
@@ -509,8 +490,8 @@ final class ClientUIHarnessUITests: XCTestCase {
     @MainActor
     func testIntegratedControlBackgroundRecovery() throws {
         launchIntegratedLab()
+        startIntegratedControl()
         for cycle in 0..<3 {
-            startIntegratedControl()
             if cycle == 0 {
                 // Cross the production selected-primary liveness interval.
                 let media = integratedCount("media")
@@ -533,10 +514,33 @@ final class ClientUIHarnessUITests: XCTestCase {
                 || app.state == .runningBackgroundSuspended)
             Thread.sleep(forTimeInterval: 2)
             app.activate()
-            waitIntegratedCount("selections", greaterThan: selections)
-            waitIntegratedCount("retired sessions", greaterThan: retired)
-            assertIntegratedReady()
+            wait(for: app.staticTexts["Integrated connection"], toHaveLabel: "Connected", timeout: 10)
+            wait(for: app.staticTexts["Integrated Control"], toHaveLabel: "active", timeout: 10)
+            XCTAssertEqual(
+                integratedCount("selections"), selections,
+                "A short app switch must preserve the authenticated primary"
+            )
+            XCTAssertEqual(
+                integratedCount("retired sessions"), retired,
+                "A short app switch must not retire live Control"
+            )
+            XCTAssertTrue(app.otherElements["Integrated live surface"].waitForExistence(timeout: 5))
         }
+
+        // A durable background stay still fails closed. Foreground return must
+        // select a fresh primary but never restore Control without another
+        // explicit request.
+        let selections = integratedCount("selections")
+        let retired = integratedCount("retired sessions")
+        XCUIDevice.shared.press(.home)
+        XCTAssertTrue(app.wait(for: .runningBackground, timeout: 5)
+            || app.state == .runningBackgroundSuspended)
+        Thread.sleep(forTimeInterval: 11)
+        app.activate()
+        waitIntegratedCount("selections", greaterThan: selections)
+        waitIntegratedCount("retired sessions", greaterThan: retired)
+        assertIntegratedReady()
+
         startIntegratedControl()
         app.buttons["Lab Offline"].tap()
         assertIntegratedOffline()
@@ -723,6 +727,8 @@ final class ClientUIHarnessUITests: XCTestCase {
             XCTAssertEqual(app.staticTexts["Lab failure"].label, "None")
         }
         advances(by: 180, timeout: 20) // real runtime renewals; lab-owned scheduler
+        app.activate()
+        wait(for: state, toHaveLabel: "Streaming", timeout: 5)
         let surface = app.otherElements["Lab live surface"]
         XCTAssertTrue(surface.waitForExistence(timeout: 5))
         assertVisibleVideo(surface)
@@ -837,7 +843,7 @@ final class ClientUIHarnessUITests: XCTestCase {
             if raceIteration == 1 {
                 let acknowledgementsBeforeRefreshRecovery =
                     Int(app.staticTexts["Lab acknowledgements"].label) ?? 0
-                app.buttons["Lab Desktop Refresh Pause"].tap()
+                revealButton("Lab Desktop Refresh Pause").tap()
                 wait(
                     for: app.staticTexts[
                         "Lab desktop refresh recoveries"
@@ -959,15 +965,25 @@ final class ClientUIHarnessUITests: XCTestCase {
         wait(for: state, toHaveLabel: "Disconnected", timeout: 10)
     }
 
-    /// No input or surface change for 90 seconds in each mode. Frame progress,
-    /// visible pixels, runtime renewals, and both client/host errors are checked.
+    /// No input or remote-surface change for 90 seconds at fit and under local
+    /// Smart Zoom. Frame progress, visible pixels, runtime renewals, and both
+    /// client/host errors are checked.
     @MainActor
     func testNetworkControlLabIdleSoak() throws {
         launchNetworkLab()
-        for kind in ["desktop", "focusedRegion"] {
-            if kind == "focusedRegion" {
-                app.buttons["Lab Focus"].tap()
-                wait(for: app.staticTexts["Lab surface"], toHaveLabel: kind, timeout: 10)
+        for visualZoom in ["Fit", "Focused"] {
+            if visualZoom == "Focused" {
+                app.buttons["Lab Local Focus"].tap()
+                wait(
+                    for: app.staticTexts["Lab visual zoom"],
+                    toHaveLabel: visualZoom,
+                    timeout: 10
+                )
+                XCTAssertEqual(
+                    app.staticTexts["Lab surface"].label,
+                    "desktop",
+                    "Local Smart Zoom must preserve the remote Desktop surface"
+                )
             }
             let startRenewals = Int(app.staticTexts["Lab renewals"].label) ?? 0
             for _ in 0..<9 {
@@ -1166,9 +1182,7 @@ final class ClientUIHarnessUITests: XCTestCase {
         XCTAssertTrue(app.switches["Muted"].isEnabled)
         XCTAssertEqual(app.switches["Muted"].value as? String, "0")
         XCTAssertTrue(app.buttons["Run Approved Action"].isHittable)
-        app.switches["Muted"]
-            .coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5))
-            .tap()
+        app.switches["Muted"].tap()
         let mutedOn = NSPredicate(format: "value == %@", "1")
         expectation(for: mutedOn, evaluatedWith: app.switches["Muted"])
         waitForExpectations(timeout: 2)
@@ -1451,18 +1465,35 @@ final class ClientUIHarnessUITests: XCTestCase {
         )
         waitForExpectations(timeout: 2)
 
-        for round in 2...6 {
+        for _ in 0..<5 {
             XCUIDevice.shared.press(.home)
             XCTAssertTrue(app.wait(for: .runningBackground, timeout: 5)
                 || app.state == .runningBackgroundSuspended)
+            Thread.sleep(forTimeInterval: 1)
             app.activate()
-            wait(for: app.descendants(matching: .any)["Lifecycle dial rounds"],
-                 toHaveLabel: "Synthetic dial rounds, \(round)", timeout: 5)
+            wait(for: app.descendants(matching: .any)["Lifecycle app state"],
+                 toHaveLabel: "App state, Foreground", timeout: 5)
+            XCTAssertEqual(
+                app.descendants(matching: .any)["Lifecycle dial rounds"].label,
+                "Synthetic dial rounds, 1",
+                "A short app switch must preserve the authenticated route"
+            )
             XCTAssertEqual(app.descendants(matching: .any)["Lifecycle app state"].label, "App state, Foreground")
             XCTAssertEqual(app.descendants(matching: .any)["Lifecycle terminal failures"].label, "Terminal failures, 0")
             wait(for: app.descendants(matching: .any)["Lifecycle private access"],
                  toHaveLabel: "Private access, Connected through Local Discovery", timeout: 5)
         }
+
+        XCUIDevice.shared.press(.home)
+        XCTAssertTrue(app.wait(for: .runningBackground, timeout: 5)
+            || app.state == .runningBackgroundSuspended)
+        Thread.sleep(forTimeInterval: 11)
+        app.activate()
+        wait(for: app.descendants(matching: .any)["Lifecycle dial rounds"],
+             toHaveLabel: "Synthetic dial rounds, 2", timeout: 10)
+        XCTAssertEqual(app.descendants(matching: .any)["Lifecycle terminal failures"].label, "Terminal failures, 0")
+        wait(for: app.descendants(matching: .any)["Lifecycle private access"],
+             toHaveLabel: "Private access, Connected through Local Discovery", timeout: 5)
     }
 
     @MainActor

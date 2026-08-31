@@ -351,6 +351,7 @@ public actor InteractiveSessionWireDispatcherV0 {
         let approvalID: WireUUID
         let selectedDisplayID: UUID
         let binding: InteractiveSessionCommandContextV0
+        let expiresAtMonotonicMilliseconds: UInt64
         var bootstrapAuthority: InteractiveSessionBootstrapAuthority
     }
 
@@ -1070,7 +1071,35 @@ public actor InteractiveSessionWireDispatcherV0 {
                 retry: .afterUserAction
             )
         }
-        guard pending == nil, transitionMessageID == nil else {
+        if let pending {
+            if context.monotonicNowMilliseconds
+                >= pending.expiresAtMonotonicMilliseconds
+                || samePrimary(context, pending.binding) {
+                // An expired approval has no authority. A new explicit request
+                // from the exact same authenticated primary supersedes its own
+                // unconsumed challenge, which lets a local Face ID/passcode
+                // cancellation recover without reconnecting. A different
+                // primary remains fenced until expiry or exact disconnect.
+                self.pending = nil
+            } else {
+                let remaining = pending.expiresAtMonotonicMilliseconds
+                    - context.monotonicNowMilliseconds
+                return try errorResponse(
+                    correlationID: request.messageID,
+                    responseMessageID: responseMessageID,
+                    sentAtUnixMilliseconds: context.wallNowUnixMilliseconds,
+                    code: "rateLimit.exceeded",
+                    retry: .backoff,
+                    safeArguments: .object([
+                        .init(
+                            key: "retryAfterMilliseconds",
+                            value: .integer(Int64(remaining))
+                        ),
+                    ])
+                )
+            }
+        }
+        guard transitionMessageID == nil else {
             return try errorResponse(
                 correlationID: request.messageID,
                 responseMessageID: responseMessageID,
@@ -1164,6 +1193,7 @@ public actor InteractiveSessionWireDispatcherV0 {
             approvalID: WireUUID(generated.approvalID),
             selectedDisplayID: selectedDisplayID,
             binding: context,
+            expiresAtMonotonicMilliseconds: expiresAtMonotonic,
             bootstrapAuthority: InteractiveSessionBootstrapAuthority(
                 approvalAuthority: approval
             )
@@ -1198,7 +1228,14 @@ public actor InteractiveSessionWireDispatcherV0 {
               request.correlationID == pending.challengeMessageID,
               request.body.approvalID == pending.approvalID,
               samePrimary(context, pending.binding) else {
-            self.pending = nil
+            // A late proof for a superseded challenge must not erase the
+            // newer pending approval. Clear only when the proof identifies
+            // the currently pending approval on its exact primary.
+            if let current = self.pending,
+               request.body.approvalID == current.approvalID,
+               samePrimary(context, current.binding) {
+                self.pending = nil
+            }
             interactiveSessionLoggerV0.error(
                 "approval proof rejected: pending binding mismatch"
             )

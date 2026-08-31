@@ -24,6 +24,9 @@ public final class UIKitClientConfiguredRouteApplicationBridgeV1: NSObject {
     private var eventTail: Task<Void, Never>?
     private var reachabilityTask: Task<Void, Never>?
     private var reconnectStateTask: Task<Void, Never>?
+    private var delayedBackgroundTask: Task<Void, Never>?
+    private var systemBackgroundTask = UIBackgroundTaskIdentifier.invalid
+    private var backgroundGrace = ClientApplicationBackgroundGraceV1()
     private var started = false
 
     public init(
@@ -93,6 +96,7 @@ public final class UIKitClientConfiguredRouteApplicationBridgeV1: NSObject {
     public func stop() async {
         guard started else { return }
         NotificationCenter.default.removeObserver(self)
+        cancelDelayedBackgroundTransition()
         reachabilityTask?.cancel()
         reachabilityTask = nil
         reconnectStateTask?.cancel()
@@ -104,6 +108,7 @@ public final class UIKitClientConfiguredRouteApplicationBridgeV1: NSObject {
     }
 
     @objc private func willEnterForeground() {
+        cancelDelayedBackgroundTransition()
         enqueue { binding in try await binding.setForeground(true) }
     }
 
@@ -113,11 +118,64 @@ public final class UIKitClientConfiguredRouteApplicationBridgeV1: NSObject {
     /// onscreen workspace permanently classified as background. Temporary
     /// inactive states still do not publish a false transition.
     @objc private func didBecomeActive() {
+        cancelDelayedBackgroundTransition()
         enqueue { binding in try await binding.setForeground(true) }
     }
 
     @objc private func didEnterBackground() {
+        scheduleDelayedBackgroundTransition()
+    }
+
+    /// A real background entry is still fail-closed, but it is not necessarily
+    /// durable. iOS can briefly background the scene during app switching and
+    /// restore it before a user-visible reconnect can complete. Keep the
+    /// already-authenticated route for one bounded grace; a true background
+    /// stay still closes it within the protocol's 15-second bound.
+    private func scheduleDelayedBackgroundTransition() {
+        guard started else { return }
+        let token = UUID()
+        guard backgroundGrace.begin(token: token) else { return }
+
+        systemBackgroundTask = UIApplication.shared.beginBackgroundTask(
+            withName: "Mac Companion foreground-loss grace"
+        ) { [weak self] in
+            Task { @MainActor [weak self] in
+                self?.commitBackgroundTransition(token: token)
+            }
+        }
+        delayedBackgroundTask = Task { @MainActor [weak self] in
+            do {
+                try await Task.sleep(
+                    nanoseconds:
+                        ClientApplicationBackgroundGraceV1
+                            .durationNanoseconds
+                )
+            } catch {
+                return
+            }
+            self?.commitBackgroundTransition(token: token)
+        }
+    }
+
+    private func commitBackgroundTransition(token: UUID) {
+        guard backgroundGrace.consume(token: token) else { return }
+        delayedBackgroundTask?.cancel()
+        delayedBackgroundTask = nil
+        endSystemBackgroundTask()
         enqueue { binding in try await binding.setForeground(false) }
+    }
+
+    private func cancelDelayedBackgroundTransition() {
+        _ = backgroundGrace.cancel()
+        delayedBackgroundTask?.cancel()
+        delayedBackgroundTask = nil
+        endSystemBackgroundTask()
+    }
+
+    private func endSystemBackgroundTask() {
+        guard systemBackgroundTask != .invalid else { return }
+        UIApplication.shared.endBackgroundTask(systemBackgroundTask)
+        systemBackgroundTask = .invalid
     }
 
     private func enqueueReachability(_ value: Bool) {
@@ -169,6 +227,7 @@ public final class UIKitClientConfiguredRouteApplicationBridgeV1: NSObject {
 #endif
         started = false
         NotificationCenter.default.removeObserver(self)
+        cancelDelayedBackgroundTransition()
         reachabilityTask?.cancel()
         reachabilityTask = nil
         reconnectStateTask?.cancel()
@@ -177,6 +236,7 @@ public final class UIKitClientConfiguredRouteApplicationBridgeV1: NSObject {
     }
 
     deinit {
+        delayedBackgroundTask?.cancel()
         reachabilityTask?.cancel()
         reconnectStateTask?.cancel()
         eventTail?.cancel()

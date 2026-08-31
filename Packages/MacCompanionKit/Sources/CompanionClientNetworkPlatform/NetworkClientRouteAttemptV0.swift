@@ -233,6 +233,22 @@ public struct NetworkClientRouteAttemptV0: DialRouteAttemptingV0, Sendable {
                     }
                 },
                 routeMessageID: configuration.messageID,
+                transientlyUnavailable: {
+                    if let productCandidate {
+                        Task {
+                            await productCandidate
+                                .primaryTransportInterrupted()
+                        }
+                    }
+                },
+                recovered: {
+                    if let productCandidate {
+                        Task {
+                            await productCandidate
+                                .primaryTransportRecovered()
+                        }
+                    }
+                },
                 terminal: { reason in
 #if DEBUG
                     print(

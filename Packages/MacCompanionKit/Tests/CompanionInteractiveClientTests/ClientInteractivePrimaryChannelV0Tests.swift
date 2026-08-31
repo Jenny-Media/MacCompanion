@@ -66,6 +66,15 @@ private struct InteractivePrimarySignerV0:
     }
 }
 
+private struct FailingInteractivePrimarySignerV0:
+    ClientInteractiveApprovalSigningV0
+{
+    func signAfterUserPresence(_ input: Data) async throws -> Data {
+        _ = input
+        throw InteractivePrimaryCustodyErrorV0.unsupported
+    }
+}
+
 private enum InteractivePrimaryCustodyErrorV0: Error {
     case unsupported
 }
@@ -115,7 +124,10 @@ private struct InteractivePrimaryHarnessV0 {
     let focusEvents: InteractivePrimaryFocusRecorderV0
 }
 
-private func interactivePrimaryHarness() async throws
+private func interactivePrimaryHarness(
+    signer: any ClientInteractiveApprovalSigningV0 =
+        InteractivePrimarySignerV0()
+) async throws
     -> InteractivePrimaryHarnessV0
 {
     let pairingID = UUID()
@@ -182,7 +194,7 @@ private func interactivePrimaryHarness() async throws
     let channel = try ClientInteractivePrimaryChannelV0(
         pairedHost: host,
         authenticatedSession: session,
-        signer: InteractivePrimarySignerV0(),
+        signer: signer,
         sender: router.sender(for: .control),
         environment: ClientInteractivePrimaryEnvironmentV0(
             makeMessageID: { WireUUID(UUID()) },
@@ -689,6 +701,34 @@ func interactivePrimaryChannelCompletesSelectedSessionApprovalFlow(deliveryOrder
     let retry = try await harness.channel.beginSession(effects: [.view])
     #expect(retry == .requestSubmitted(effects: [.view]))
     #expect(await harness.channel.phase() == .awaitingApprovalChallenge)
+    #expect(await harness.transport.frames.count == 2)
+}
+
+@Test func localApprovalFailureDoesNotKillPrimaryAndAllowsExplicitRetry()
+    async throws
+{
+    let harness = try await interactivePrimaryHarness(
+        signer: FailingInteractivePrimarySignerV0()
+    )
+    _ = try await harness.channel.beginSession(effects: [.view])
+    let requestFrame = try #require(await harness.transport.frames.first)
+    let request = try WireCodec.decode(
+        WireEnvelope<InteractiveSessionRequestBody>.self,
+        from: requestFrame
+    )
+    let challenge = try interactivePrimaryChallenge(
+        harness: harness,
+        requestID: request.messageID,
+        effects: [.view]
+    )
+
+    try await harness.router.receive(WireCodec.encode(challenge))
+
+    #expect(harness.events.events.last == .approvalFailed)
+    #expect(await harness.channel.phase() == .closed)
+    #expect(await harness.router.state == .ready)
+    let retry = try await harness.channel.beginSession(effects: [.view])
+    #expect(retry == .requestSubmitted(effects: [.view]))
     #expect(await harness.transport.frames.count == 2)
 }
 

@@ -256,6 +256,25 @@ session at the exact boundary. Wall time is diagnostic only and must stay in
 the protocol safe-integer range. A decreasing monotonic observation is an
 invalid clock and closes the owner.
 
+### Authenticated keepalive
+
+After authentication, the client sends `keepalive.ping` when the primary
+connection has carried no authenticated inbound or outbound application frame
+for 15 seconds. The body is the closed empty object. The host revalidates the
+authenticated principal, admits the ping message ID through the connection
+replay window, records authenticated inbound traffic, and returns exactly one
+`keepalive.pong` with an empty body correlated to that ping. Keepalive does not
+enter an Observe, Act, or Control lane and grants no authority.
+
+The client permits at most one outstanding ping. A pong is accepted only on
+the same primary connection, with a fresh message ID and correlation equal to
+that outstanding ping. Other authenticated traffic may postpone a ping but
+does not satisfy an already-outstanding ping. A missing pong after 15 seconds,
+an unexpected pong, a duplicate, a wrong correlation, or a malformed body
+closes only that primary connection. The existing reconnect owner may then
+construct a fresh authenticated primary; no command, approval, Interactive
+role credential, input event, or media record is replayed across replacement.
+
 ## Ready command admission
 
 Before every ready command, the authentication authority re-reads durable

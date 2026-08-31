@@ -104,6 +104,15 @@ Every new session requires a fresh signature from the client's Secure Enclave-ba
 
 The approval expires after 60 seconds, is consumed atomically once, and cannot authorize a different session, host, device, capability, or authorization epoch. App unlock is not session approval.
 
+An unconsumed approval is not a permanent session lock. Expired pending
+approval material is removed before admitting a later request. A new explicit
+request on the exact same authenticated primary supersedes that primary's
+older unconsumed challenge; a different primary remains fenced until the
+challenge expires or its owning connection closes. A late proof for the
+superseded challenge cannot consume or erase the replacement approval. Local
+Face ID, Touch ID, passcode, or protected-key failure is presented as a local
+Control failure and does not close the authenticated primary.
+
 ### Suspension and revocation
 
 - `Disconnect` ends the current session without changing the durable device grant.
@@ -224,6 +233,15 @@ The initial encoder profile is:
 
 The host may adapt among bounded resolution, frame-rate, and bitrate profiles based on encode time, send backlog, measured receive health, thermal state, and client rendering. It drops stale delta frames and requests a clean keyframe instead of building an unbounded queue. The client never presents a decoded frame from an old authorization epoch or coordinate-space revision as current.
 
+The encoded-record handoff preserves decoder order and never evicts an older
+H.264 record to admit a newer one. When its bounded record/byte budget is full,
+one producer may wait behind downstream capacity; that backpressure reaches
+the encoder, whose separate one-frame latency policy replaces only a waiting
+unencoded source frame and forces a clean frame when required. Teardown purges
+retained records and rejects the waiting producer. Queue congestion by itself
+does not end Control, while malformed records, mixed-session ownership, or a
+failed safety purge remain terminal.
+
 Initial performance targets on a healthy LAN are:
 
 - Session request to first current frame: p95 at or below 2.5 seconds
@@ -310,6 +328,10 @@ The first release documents keyboard-layout limitations. It must not silently cl
 - Unused secondary-channel credential: 30 seconds
 - Agent-issued menu-app execution lease: 10 seconds, renewed while the full chain remains authorized
 - Lost primary connection or foreground lease: stop admitting input immediately and terminate within 15 seconds
+- A real iOS background transition may retain the existing authenticated route
+  for at most 10 seconds so a brief app switch can return without a reconnect;
+  an exact foreground return fences the stale deadline, while a durable
+  background stay still closes normally and cannot restart Control
 - Maximum session duration: four hours measured from approval consumption; setup, lock, unlock, reconnect, or surface replacement cannot extend it, and continuing requires a new user-presence approval
 - One active session and one starting request per host
 - No automatic session restart after agent, menu app, OS, network, or permission recovery

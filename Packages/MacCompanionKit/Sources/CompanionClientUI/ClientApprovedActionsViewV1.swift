@@ -89,9 +89,9 @@ public struct ClientApprovedActionsViewV1: View {
 public struct ClientApprovedActionDetailViewV1: View {
     private let macName: String
     private let descriptor: CapabilityDiscoveryDescriptorV1
-    private let draft: Binding<ClientCapabilityParameterDraftV1>
+    @Binding private var draft: ClientCapabilityParameterDraftV1
     private let operationState: ClientOperationSessionStateV1
-    private let explicitEffectReview: Binding<Bool>
+    @Binding private var explicitEffectReview: Bool
     private let onInvoke: (CanonicalJSONValue) -> Void
     private let onCancel: () -> Void
     private let onQuery: () -> Void
@@ -108,9 +108,9 @@ public struct ClientApprovedActionDetailViewV1: View {
     ) {
         self.macName = macName
         self.descriptor = descriptor
-        self.draft = draft
+        _draft = draft
         self.operationState = operationState
-        self.explicitEffectReview = explicitEffectReview
+        _explicitEffectReview = explicitEffectReview
         self.onInvoke = onInvoke
         self.onCancel = onCancel
         self.onQuery = onQuery
@@ -119,7 +119,7 @@ public struct ClientApprovedActionDetailViewV1: View {
     public var body: some View {
         let effects = ClientApprovedActionEffectProjectionV1(descriptor.effects)
         let status = ClientApprovedActionStateProjectionV1(operationState)
-        let currentDraft = draft.wrappedValue
+        let currentDraft = draft
         Form {
             Section("Target") {
                 LabeledContent("Mac", value: macName)
@@ -149,7 +149,7 @@ public struct ClientApprovedActionDetailViewV1: View {
                 if effects.requiresExplicitReview {
                     Toggle(
                         "I reviewed these effects",
-                        isOn: explicitEffectReview
+                        isOn: $explicitEffectReview
                     )
                     .accessibilityIdentifier("Explicit effect review")
                 }
@@ -184,7 +184,7 @@ public struct ClientApprovedActionDetailViewV1: View {
                     .buttonStyle(.borderedProminent)
                     .disabled(
                         effects.requiresExplicitReview
-                            && !explicitEffectReview.wrappedValue
+                            && !explicitEffectReview
                     )
                     .frame(maxWidth: .infinity)
                 }
@@ -223,50 +223,50 @@ public struct ClientApprovedActionDetailViewV1: View {
         _ value: CanonicalJSONValue,
         at path: [ClientCapabilityParameterPathComponentV1]
     ) {
-        var next = draft.wrappedValue
+        var next = draft
         guard (try? next.setValue(value, at: path)) != nil else { return }
-        draft.wrappedValue = next
+        draft = next
     }
 
     private func includeOptional(
         _ name: String,
         at path: [ClientCapabilityParameterPathComponentV1]
     ) {
-        var next = draft.wrappedValue
+        var next = draft
         guard (try? next.includeOptionalProperty(name, inObjectAt: path)) != nil else {
             return
         }
-        draft.wrappedValue = next
+        draft = next
     }
 
     private func removeOptional(
         _ name: String,
         at path: [ClientCapabilityParameterPathComponentV1]
     ) {
-        var next = draft.wrappedValue
+        var next = draft
         guard (try? next.removeOptionalProperty(name, inObjectAt: path)) != nil else {
             return
         }
-        draft.wrappedValue = next
+        draft = next
     }
 
     private func appendArrayItem(
         at path: [ClientCapabilityParameterPathComponentV1]
     ) {
-        var next = draft.wrappedValue
+        var next = draft
         guard (try? next.appendArrayItem(at: path)) != nil else { return }
-        draft.wrappedValue = next
+        draft = next
     }
 
     private func removeArrayItem(
         _ index: Int,
         at path: [ClientCapabilityParameterPathComponentV1]
     ) {
-        var next = draft.wrappedValue
+        var next = draft
         guard (try? next.removeArrayItem(at: index, inArrayAt: path)) != nil else {
             return
         }
-        draft.wrappedValue = next
+        draft = next
     }
 
     private func effectSystemImage(_ fact: String) -> String {
@@ -322,13 +322,12 @@ private struct ClientCapabilityParameterEditorV1: View {
         switch schema.presentationNode {
         case .boolean:
             let current = if case let .boolean(value) = value { value } else { false }
-            return AnyView(Toggle(
-                label ?? "Enabled",
-                isOn: Binding(
-                    get: { current },
-                    set: { onUpdate(.boolean($0), path) }
-                )
-            ).disabled(!enabled))
+            return AnyView(ClientCapabilityBooleanParameterEditorV1(
+                label: label ?? "Enabled",
+                value: current,
+                enabled: enabled,
+                onUpdate: { onUpdate(.boolean($0), path) }
+            ))
 
         case let .integer(minimum, maximum):
             let current = if case let .integer(value) = value { value } else { minimum }
@@ -464,6 +463,52 @@ private struct ClientCapabilityParameterEditorV1: View {
                     }
                 }
             })
+        }
+    }
+}
+
+@available(iOS 17.0, *)
+private struct ClientCapabilityBooleanParameterEditorV1: View {
+    let label: String
+    let value: Bool
+    let enabled: Bool
+    let onUpdate: (Bool) -> Void
+    @State private var current: Bool
+
+    init(
+        label: String,
+        value: Bool,
+        enabled: Bool,
+        onUpdate: @escaping (Bool) -> Void
+    ) {
+        self.label = label
+        self.value = value
+        self.enabled = enabled
+        self.onUpdate = onUpdate
+        _current = State(initialValue: value)
+    }
+
+    var body: some View {
+        HStack {
+            Text(label)
+            Spacer()
+            Toggle(
+                label,
+                isOn: Binding(
+                    get: { current },
+                    set: { replacement in
+                        current = replacement
+                        onUpdate(replacement)
+                    }
+                )
+            )
+            .labelsHidden()
+            .toggleStyle(.switch)
+            .accessibilityLabel(label)
+        }
+        .disabled(!enabled)
+        .onChange(of: value) { _, replacement in
+            current = replacement
         }
     }
 }

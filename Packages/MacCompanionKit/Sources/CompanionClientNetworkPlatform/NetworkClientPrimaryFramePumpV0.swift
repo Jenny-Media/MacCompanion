@@ -3,6 +3,12 @@ import CompanionTransport
 import CompanionWire
 import Foundation
 import Network
+import OSLog
+
+private let networkClientPrimaryLoggerV0 = Logger(
+    subsystem: "media.jenny.maccompanion.ios",
+    category: "primary-transport"
+)
 
 public enum NetworkClientPrimaryFramePumpErrorV0: Error, Equatable, Sendable {
     case invalidConfiguration
@@ -24,6 +30,7 @@ public enum NetworkClientPrimaryTerminationReasonV0:
     case authenticationDenied
     case protocolOrSessionFailure
     case authenticationDeadline
+    case keepaliveTimeout
 }
 
 /// Independent evidence value passed only after a live Network.framework TLS
@@ -97,6 +104,7 @@ public struct NetworkClientClockSnapshotV0: Equatable, Sendable {
 
 enum NetworkClientPrimaryFrameIOStateV0: Equatable, Sendable {
     case ready
+    case waiting
     case failed
     case cancelled
     case invalid
@@ -139,7 +147,9 @@ private final class NetworkClientPrimaryNWFrameIOV0:
             switch state {
             case .ready:
                 handler(.ready)
-            case .failed, .waiting:
+            case .waiting:
+                handler(.waiting)
+            case .failed:
                 handler(.failed)
             case .cancelled:
                 handler(.cancelled)
@@ -212,8 +222,12 @@ public actor NetworkClientPrimaryFramePumpV0 {
     private let readyForAuthenticatedTraffic: @Sendable () -> Void
     private let receivedCommand: @Sendable (Data) async throws -> Void
     private let terminal: @Sendable (NetworkClientPrimaryTerminationReasonV0) -> Void
+    private let transientlyUnavailable: @Sendable () -> Void
+    private let recovered: @Sendable () -> Void
     private let routeMessageID: @Sendable () -> WireUUID
     private let routeSleep: @Sendable (UInt64) async throws -> Void
+    private let keepaliveMessageID: @Sendable () -> WireUUID
+    private let keepaliveSleep: @Sendable (UInt64) async throws -> Void
     private var decoder = LengthPrefixedFrameDecoder()
     private var started = false
     private var stopped = false
@@ -223,6 +237,12 @@ public actor NetworkClientPrimaryFramePumpV0 {
     private var routeHeartbeatTask: Task<Void, Never>?
     private var routeAcknowledgementTask: Task<Void, Never>?
     private var awaitingRouteAcknowledgement = false
+    private var keepaliveTask: Task<Void, Never>?
+    private var keepaliveDeadlineTask: Task<Void, Never>?
+    private var awaitingKeepalivePong = false
+    private var lastAuthenticatedTrafficMonotonicMilliseconds: UInt64?
+    private var transportWaiting = false
+    private var transportRecoveryTask: Task<Void, Never>?
 
     public init(
         connection: NWConnection,
@@ -237,6 +257,11 @@ public actor NetworkClientPrimaryFramePumpV0 {
         routeMessageID: @escaping @Sendable () -> WireUUID = {
             WireUUID(UUID())
         },
+        keepaliveMessageID: @escaping @Sendable () -> WireUUID = {
+            WireUUID(UUID())
+        },
+        transientlyUnavailable: @escaping @Sendable () -> Void = {},
+        recovered: @escaping @Sendable () -> Void = {},
         terminal: @escaping @Sendable (
             NetworkClientPrimaryTerminationReasonV0
         ) -> Void = { _ in }
@@ -250,6 +275,10 @@ public actor NetworkClientPrimaryFramePumpV0 {
         self.receivedCommand = receivedCommand
         self.routeMessageID = routeMessageID
         routeSleep = { try await Task.sleep(nanoseconds: $0) }
+        self.keepaliveMessageID = keepaliveMessageID
+        keepaliveSleep = { try await Task.sleep(nanoseconds: $0) }
+        self.transientlyUnavailable = transientlyUnavailable
+        self.recovered = recovered
         self.terminal = terminal
     }
 
@@ -269,6 +298,14 @@ public actor NetworkClientPrimaryFramePumpV0 {
         routeSleep: @escaping @Sendable (UInt64) async throws -> Void = {
             try await Task.sleep(nanoseconds: $0)
         },
+        keepaliveMessageID: @escaping @Sendable () -> WireUUID = {
+            WireUUID(UUID())
+        },
+        keepaliveSleep: @escaping @Sendable (UInt64) async throws -> Void = {
+            try await Task.sleep(nanoseconds: $0)
+        },
+        transientlyUnavailable: @escaping @Sendable () -> Void = {},
+        recovered: @escaping @Sendable () -> Void = {},
         terminal: @escaping @Sendable (
             NetworkClientPrimaryTerminationReasonV0
         ) -> Void = { _ in }
@@ -282,6 +319,10 @@ public actor NetworkClientPrimaryFramePumpV0 {
         self.receivedCommand = receivedCommand
         self.routeMessageID = routeMessageID
         self.routeSleep = routeSleep
+        self.keepaliveMessageID = keepaliveMessageID
+        self.keepaliveSleep = keepaliveSleep
+        self.transientlyUnavailable = transientlyUnavailable
+        self.recovered = recovered
         self.terminal = terminal
     }
 
@@ -324,7 +365,7 @@ public actor NetworkClientPrimaryFramePumpV0 {
     }
 
     public func sendAuthenticatedCommand(_ frame: Data) async throws {
-        guard started, !stopped,
+        guard started, !stopped, !transportWaiting,
               await session.phase == .authenticated else {
             throw NetworkClientPrimaryFramePumpErrorV0.connectionClosed
         }
@@ -333,6 +374,7 @@ public actor NetworkClientPrimaryFramePumpV0 {
             try await enqueueSend(
                 LengthPrefixedFrameDecoder.encode(frame)
             )
+            recordAuthenticatedTraffic()
         } catch {
             await stop(reason: .protocolOrSessionFailure)
             throw error
@@ -349,7 +391,26 @@ public actor NetworkClientPrimaryFramePumpV0 {
         guard !stopped else { return }
         switch state {
         case .ready:
-            break
+            if transportWaiting {
+                transportWaiting = false
+                transportRecoveryTask?.cancel()
+                transportRecoveryTask = nil
+                networkClientPrimaryLoggerV0.notice(
+                    "primary transport recovered within grace"
+                )
+                recovered()
+                recordAuthenticatedTraffic()
+            }
+        case .waiting:
+            guard !transportWaiting else { return }
+            transportWaiting = true
+            keepaliveTask?.cancel()
+            keepaliveTask = nil
+            networkClientPrimaryLoggerV0.notice(
+                "primary transport waiting; recovery grace started"
+            )
+            transientlyUnavailable()
+            scheduleTransportRecoveryDeadline()
         case .failed:
             await stop(reason: .connectionFailed)
         case .cancelled:
@@ -438,11 +499,28 @@ public actor NetworkClientPrimaryFramePumpV0 {
             deadlineTask?.cancel()
             deadlineTask = nil
             try await authenticated(result)
+            recordAuthenticatedTraffic(at: now.monotonicNowMilliseconds)
             try await sendRouteObservationIfConfigured(now: now)
             readyForAuthenticatedTraffic()
         case .authenticated:
-            if try WireCodec.messageKind(from: frame)
-                == .routeObservationAck {
+            let kind = try WireCodec.messageKind(from: frame)
+            if kind == .keepalivePong {
+                guard awaitingKeepalivePong else {
+                    throw NetworkClientPrimaryFramePumpErrorV0
+                        .invalidConfiguration
+                }
+                try await session.receiveKeepalivePong(
+                    frame,
+                    monotonicNowMilliseconds: now.monotonicNowMilliseconds
+                )
+                awaitingKeepalivePong = false
+                keepaliveDeadlineTask?.cancel()
+                keepaliveDeadlineTask = nil
+                #if DEBUG
+                NSLog("[MacCompanion primary] keepalive pong received")
+                #endif
+                recordAuthenticatedTraffic(at: now.monotonicNowMilliseconds)
+            } else if kind == .routeObservationAck {
                 guard awaitingRouteAcknowledgement else {
                     throw NetworkClientPrimaryFramePumpErrorV0
                         .invalidConfiguration
@@ -456,9 +534,11 @@ public actor NetworkClientPrimaryFramePumpV0 {
                 routeAcknowledgementTask?.cancel()
                 routeAcknowledgementTask = nil
                 scheduleRouteHeartbeat()
+                recordAuthenticatedTraffic(at: now.monotonicNowMilliseconds)
             } else {
                 try await session.admitAuthenticatedTraffic(.commandFrame)
                 try await receivedCommand(frame)
+                recordAuthenticatedTraffic(at: now.monotonicNowMilliseconds)
             }
         default:
             throw NetworkClientPrimaryFramePumpErrorV0.invalidConfiguration
@@ -484,6 +564,9 @@ public actor NetworkClientPrimaryFramePumpV0 {
     ) async {
         guard !stopped else { return }
         stopped = true
+        networkClientPrimaryLoggerV0.notice(
+            "primary transport terminated reason=\(reason.rawValue, privacy: .public)"
+        )
         #if DEBUG
         NSLog("[MacCompanion primary] terminated reason=%@", reason.rawValue)
         #endif
@@ -494,6 +577,15 @@ public actor NetworkClientPrimaryFramePumpV0 {
         routeAcknowledgementTask?.cancel()
         routeAcknowledgementTask = nil
         awaitingRouteAcknowledgement = false
+        keepaliveTask?.cancel()
+        keepaliveTask = nil
+        keepaliveDeadlineTask?.cancel()
+        keepaliveDeadlineTask = nil
+        awaitingKeepalivePong = false
+        lastAuthenticatedTrafficMonotonicMilliseconds = nil
+        transportRecoveryTask?.cancel()
+        transportRecoveryTask = nil
+        transportWaiting = false
         if cancelIO { io.cancel() }
         await session.close()
         terminal(reason)
@@ -548,6 +640,7 @@ public actor NetworkClientPrimaryFramePumpV0 {
         }
         awaitingRouteAcknowledgement = true
         try await enqueueSend(LengthPrefixedFrameDecoder.encode(request))
+        recordAuthenticatedTraffic(at: now.monotonicNowMilliseconds)
         scheduleRouteAcknowledgementDeadline()
     }
 
@@ -560,6 +653,12 @@ public actor NetworkClientPrimaryFramePumpV0 {
             else { return }
             let now = self.clock().monotonicNowMilliseconds
             let delay = deadline > now ? deadline - now : 0
+            #if DEBUG
+            NSLog(
+                "[MacCompanion primary] route heartbeat scheduled delayMilliseconds=%llu",
+                delay
+            )
+            #endif
             do {
                 try await self.routeSleep(
                     min(delay, UInt64.max / 1_000_000) * 1_000_000
@@ -573,6 +672,9 @@ public actor NetworkClientPrimaryFramePumpV0 {
 
     private func routeHeartbeatReached() async {
         guard !stopped else { return }
+        #if DEBUG
+        NSLog("[MacCompanion primary] route heartbeat reached")
+        #endif
         do {
             try await sendRouteObservationIfConfigured(now: clock())
         } catch {
@@ -596,5 +698,101 @@ public actor NetworkClientPrimaryFramePumpV0 {
     private func routeAcknowledgementDeadlineReached() async {
         guard !stopped, awaitingRouteAcknowledgement else { return }
         await stop(reason: .protocolOrSessionFailure)
+    }
+
+    private func recordAuthenticatedTraffic(at time: UInt64? = nil) {
+        let observed = time ?? clock().monotonicNowMilliseconds
+        lastAuthenticatedTrafficMonotonicMilliseconds = max(
+            lastAuthenticatedTrafficMonotonicMilliseconds ?? observed,
+            observed
+        )
+        guard !awaitingKeepalivePong else { return }
+        scheduleKeepalive()
+    }
+
+    private func scheduleKeepalive() {
+        keepaliveTask?.cancel()
+        guard let lastAuthenticatedTrafficMonotonicMilliseconds else { return }
+        keepaliveTask = Task { [weak self] in
+            guard let self else { return }
+            let idleMilliseconds = UInt64(
+                V0ConnectionTiming.keepaliveIdleNanoseconds / 1_000_000
+            )
+            let deadline = lastAuthenticatedTrafficMonotonicMilliseconds
+                + idleMilliseconds
+            let now = self.clock().monotonicNowMilliseconds
+            let delay = deadline > now ? deadline - now : 0
+            do {
+                try await self.keepaliveSleep(
+                    min(delay, UInt64.max / 1_000_000) * 1_000_000
+                )
+            } catch {
+                return
+            }
+            await self.keepaliveIdleReached()
+        }
+    }
+
+    private func keepaliveIdleReached() async {
+        guard !stopped, !awaitingKeepalivePong else { return }
+        #if DEBUG
+        NSLog("[MacCompanion primary] keepalive idle reached")
+        #endif
+        let now = clock()
+        do {
+            let request = try await session.beginKeepalive(
+                messageID: keepaliveMessageID(),
+                sentAtUnixMilliseconds: now.wallNowUnixMilliseconds,
+                monotonicNowMilliseconds: now.monotonicNowMilliseconds
+            )
+            awaitingKeepalivePong = true
+            try await enqueueSend(LengthPrefixedFrameDecoder.encode(request))
+            #if DEBUG
+            NSLog("[MacCompanion primary] keepalive ping sent")
+            #endif
+            scheduleKeepaliveDeadline()
+        } catch {
+            await stop(reason: .protocolOrSessionFailure)
+        }
+    }
+
+    private func scheduleKeepaliveDeadline() {
+        keepaliveDeadlineTask?.cancel()
+        keepaliveDeadlineTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                try await self.keepaliveSleep(
+                    V0ConnectionTiming.keepaliveIdleNanoseconds
+                )
+            } catch {
+                return
+            }
+            await self.keepaliveDeadlineReached()
+        }
+    }
+
+    private func keepaliveDeadlineReached() async {
+        guard !stopped, awaitingKeepalivePong else { return }
+        await stop(reason: .keepaliveTimeout)
+    }
+
+    private func scheduleTransportRecoveryDeadline() {
+        transportRecoveryTask?.cancel()
+        transportRecoveryTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                try await self.keepaliveSleep(
+                    V0ConnectionTiming.keepaliveIdleNanoseconds
+                )
+            } catch {
+                return
+            }
+            await self.transportRecoveryDeadlineReached()
+        }
+    }
+
+    private func transportRecoveryDeadlineReached() async {
+        guard !stopped, transportWaiting else { return }
+        await stop(reason: .connectionFailed)
     }
 }

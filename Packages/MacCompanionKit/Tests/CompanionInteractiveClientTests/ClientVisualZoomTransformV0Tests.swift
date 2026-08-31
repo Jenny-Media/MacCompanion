@@ -1,4 +1,5 @@
 import CompanionInteractiveClient
+import CompanionInteractiveShared
 import Foundation
 import Testing
 
@@ -87,6 +88,72 @@ private func zoomRect(
     #expect(try focused.mappingToUnzoomed(
         ClientInputPointV0(x: 200, y: 400)
     ) == ClientInputPointV0(x: 250, y: 320))
+}
+
+@Test func normalizedFocusAtEveryContentEdgeDoesNotOvershoot() throws {
+    let viewport = try zoomRect(x: 0, y: 0, width: 1_024, height: 1_366)
+    let content = try zoomRect(
+        x: 0,
+        y: 395,
+        width: 1_024,
+        height: 576
+    )
+    let initial = try ClientVisualZoomTransformV0(
+        viewport: viewport,
+        content: content
+    )
+    let edgeTargets = [
+        try NormalizedSurfaceRect(
+            x: 0, y: 0, width: 1_535, height: 1_535
+        ),
+        try NormalizedSurfaceRect(
+            x: 64_000, y: 0, width: 1_535, height: 1_535
+        ),
+        try NormalizedSurfaceRect(
+            x: 0, y: 64_000, width: 1_535, height: 1_535
+        ),
+        try NormalizedSurfaceRect(
+            x: 64_000, y: 64_000, width: 1_535, height: 1_535
+        ),
+    ]
+
+    for target in edgeTargets {
+        let focused = try initial.focused(onNormalized: target)
+        #expect((1...ClientVisualZoomTransformV0.maximumScale)
+            .contains(focused.scale))
+        #expect(focused.content == content)
+    }
+}
+
+@Test func normalizedFocusChurnAcrossDynamicViewportsRemainsValid() throws {
+    let viewports = [
+        try zoomRect(x: 0, y: 0, width: 393, height: 852),
+        try zoomRect(x: 0, y: 0, width: 852, height: 393),
+        try zoomRect(x: 0, y: 0, width: 1_024, height: 1_366),
+    ]
+    let targets = [
+        try NormalizedSurfaceRect(
+            x: 1, y: 1, width: 8_191, height: 2_047
+        ),
+        try NormalizedSurfaceRect(
+            x: 28_000, y: 31_000, width: 9_000, height: 3_000
+        ),
+        try NormalizedSurfaceRect(
+            x: 60_000, y: 62_000, width: 5_535, height: 3_535
+        ),
+    ]
+
+    for viewport in viewports {
+        let transform = try ClientVisualZoomTransformV0(
+            viewport: viewport,
+            content: viewport
+        )
+        for _ in 0..<100 {
+            for target in targets {
+                _ = try transform.focused(onNormalized: target)
+            }
+        }
+    }
 }
 
 @Test func visualZoomEdgePanTracksEveryViewportEdgeWithBoundedSteps() throws {

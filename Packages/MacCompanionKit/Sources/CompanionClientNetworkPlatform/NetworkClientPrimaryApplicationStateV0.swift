@@ -51,6 +51,7 @@ public enum NetworkClientPrimaryControlPreparationPhaseV0:
 public enum NetworkClientPrimaryControlStateV0: Equatable, Sendable {
     case inactive
     case requestSubmitted(effects: [InteractiveControlEffect])
+    case approvalFailed
     case approvalSubmitted(effects: [InteractiveControlEffect])
     case accepted(
         interactiveSessionID: UUID,
@@ -581,6 +582,9 @@ public final class NetworkClientPrimaryApplicationStateV0:
         case let .requestSubmitted(effects):
             storage.controlState = .requestSubmitted(effects: effects)
             storage.acceptedControlSession = nil
+        case .approvalFailed:
+            storage.controlState = .approvalFailed
+            storage.acceptedControlSession = nil
         case let .approvalSubmitted(effects):
             storage.controlState = .approvalSubmitted(effects: effects)
             storage.acceptedControlSession = nil
@@ -724,7 +728,7 @@ public final class NetworkClientPrimaryApplicationStateV0:
                 return false
             }
             return true
-        case .requestSubmitted, .approvalSubmitted, .accepted,
+        case .requestSubmitted, .approvalFailed, .approvalSubmitted, .accepted,
              .remoteRejected:
             return true
         }
@@ -741,7 +745,7 @@ public final class NetworkClientPrimaryApplicationStateV0:
              let .endFailed(sessionID, effects, _),
              let .preparationFailed(sessionID, effects, _):
             return sessionID == interactiveSessionID ? effects : nil
-        case .inactive, .requestSubmitted, .approvalSubmitted,
+        case .inactive, .requestSubmitted, .approvalFailed, .approvalSubmitted,
              .remoteRejected:
             return nil
         }
@@ -769,7 +773,7 @@ public final class NetworkClientPrimaryApplicationStateV0:
                   let expiresAt = storage.acceptedControlSession?
                     .expiresAtUnixMilliseconds else { return nil }
             return (sessionID, expiresAt, effects)
-        case .inactive, .requestSubmitted, .approvalSubmitted,
+        case .inactive, .requestSubmitted, .approvalFailed, .approvalSubmitted,
              .remoteRejected:
             return nil
         }

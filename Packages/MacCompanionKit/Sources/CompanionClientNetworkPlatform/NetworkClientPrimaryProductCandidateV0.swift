@@ -58,6 +58,8 @@ public struct NetworkClientPrimaryProductEventsV0: Sendable {
         UUID,
         Data
     ) -> Void
+    public let primaryTransportInterrupted: @Sendable (UUID, Data) -> Void
+    public let primaryTransportRecovered: @Sendable (UUID, Data) -> Void
 
     public init(
         publishObserve: @escaping @Sendable (
@@ -78,6 +80,12 @@ public struct NetworkClientPrimaryProductEventsV0: Sendable {
         primaryTerminated: @escaping @Sendable (
             UUID,
             Data
+        ) -> Void = { _, _ in },
+        primaryTransportInterrupted: @escaping @Sendable (
+            UUID, Data
+        ) -> Void = { _, _ in },
+        primaryTransportRecovered: @escaping @Sendable (
+            UUID, Data
         ) -> Void = { _, _ in }
     ) {
         self.publishObserve = publishObserve
@@ -86,6 +94,8 @@ public struct NetworkClientPrimaryProductEventsV0: Sendable {
         self.publishFocus = publishFocus
         self.primarySelected = primarySelected
         self.primaryTerminated = primaryTerminated
+        self.primaryTransportInterrupted = primaryTransportInterrupted
+        self.primaryTransportRecovered = primaryTransportRecovered
     }
 
     public static let discarding = Self()
@@ -119,6 +129,14 @@ public struct NetworkClientPrimaryProductEventsV0: Sendable {
             primaryTerminated: { hostID, connectionID in
                 primaryTerminated(hostID, connectionID)
                 other.primaryTerminated(hostID, connectionID)
+            },
+            primaryTransportInterrupted: { hostID, connectionID in
+                primaryTransportInterrupted(hostID, connectionID)
+                other.primaryTransportInterrupted(hostID, connectionID)
+            },
+            primaryTransportRecovered: { hostID, connectionID in
+                primaryTransportRecovered(hostID, connectionID)
+                other.primaryTransportRecovered(hostID, connectionID)
             }
         )
     }
@@ -401,5 +419,21 @@ package actor NetworkClientPrimaryProductCandidateV0 {
 
     private func mayRefreshLiveness() -> Bool {
         selected && !terminated
+    }
+
+    func primaryTransportInterrupted() async {
+        guard let authenticatedSession = session else { return }
+        configuration.events.primaryTransportInterrupted(
+            authenticatedSession.hostID,
+            authenticatedSession.connectionID
+        )
+    }
+
+    func primaryTransportRecovered() async {
+        guard let authenticatedSession = session else { return }
+        configuration.events.primaryTransportRecovered(
+            authenticatedSession.hostID,
+            authenticatedSession.connectionID
+        )
     }
 }

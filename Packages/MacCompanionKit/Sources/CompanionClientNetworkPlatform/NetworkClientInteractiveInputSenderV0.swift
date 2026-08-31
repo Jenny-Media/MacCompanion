@@ -43,6 +43,10 @@ package actor NetworkClientInteractiveInputSenderV0 {
             do {
                 try await connection.sendRoleBytes(try frame(body))
             } catch {
+                IOSClientRuntimeDiagnosticLogV0.record(
+                    "interactive.input-send.terminal",
+                    error: error
+                )
                 await failClosed()
                 throw NetworkClientInteractiveInputSenderErrorV0.sendFailed
             }
@@ -67,6 +71,10 @@ package actor NetworkClientInteractiveInputSenderV0 {
                 try frame(InteractiveInputCodec.encode(envelope))
             )
         } catch {
+            IOSClientRuntimeDiagnosticLogV0.record(
+                "interactive.input-reset.terminal",
+                error: error
+            )
             await failClosed()
             throw NetworkClientInteractiveInputSenderErrorV0.sendFailed
         }

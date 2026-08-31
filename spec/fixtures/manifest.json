@@ -98,6 +98,18 @@
       "canonicalSHA256": "70b3c9122fc52ac7e65836c101bc7b2305d1ebbc954ea17be851049b9572cf4e"
     },
     {
+      "path": "valid/keepalive-ping.json",
+      "kind": "keepalive.ping",
+      "expect": "valid",
+      "canonicalSHA256": "395eef263ebb9515569b857d29baec74e73bf64979ec26e5b55f0b3f33d4d4c5"
+    },
+    {
+      "path": "valid/keepalive-pong.json",
+      "kind": "keepalive.pong",
+      "expect": "valid",
+      "canonicalSHA256": "924262f27ec59db012bfe374f584906cd48b75155811ffc50f2599484709d2fc"
+    },
+    {
       "path": "valid/route-observation-ack-private-dns.json",
       "kind": "route.observation.ack",
       "expect": "valid",

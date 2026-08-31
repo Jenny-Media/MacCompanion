@@ -90,6 +90,10 @@ package actor NetworkClientInteractiveMediaRecordPumpV0 {
             }
             throw NetworkClientInteractiveMediaRecordPumpErrorV0.cancelled
         } catch {
+            IOSClientRuntimeDiagnosticLogV0.record(
+                "interactive.media-pump.terminal",
+                error: error
+            )
             await failClosed()
             throw error
         }

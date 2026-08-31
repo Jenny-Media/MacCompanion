@@ -168,9 +168,12 @@ only the approval-key adapter for the closed
 `startInteractiveControl` presence reason. The adapter signs only after fresh
 OS-backed user presence, sends `interactive.session.approve` through the same
 Control lane, and publishes approval-submitted state only after that enqueue
-succeeds. A correlated closed protocol error becomes a typed Control result and
-closes only that request authority; malformed, replayed, mismatched, late, or
-otherwise invalid replies fail the primary router closed.
+succeeds. Local user-presence cancellation, protected-key unavailability, or a
+local signing failure becomes a typed local Control result and closes only that
+request authority; it MUST NOT invalidate the authenticated primary or disable
+Observe and Act. A correlated closed protocol error becomes a typed Control
+result and closes only that request authority; malformed, replayed, mismatched,
+late, or otherwise invalid peer replies fail the primary router closed.
 
 An accepted publication contains the bounded role-channel offers, but it is
 not evidence that media or input is active. The application may transition to
@@ -193,8 +196,27 @@ clears accepted offers from application state, and suppresses late approval or
 acceptance publication. A replacement primary never reuses a pending request,
 approval, accepted session, or role credential from its predecessor.
 
+A post-authentication Network.framework `waiting` state is not itself a
+candidate loss. The client stops admitting new primary commands immediately
+and gives that exact `NWConnection` at most 15 seconds to return to `ready`.
+Independently authenticated media and input role connections remain owned by
+their own exact transport state; primary `waiting` alone MUST NOT retire them.
+Recovery keeps the same authenticated primary/router and does not replay a
+command or Control event. Expiry, a send/receive failure, or another terminal
+primary state invalidates it normally and exact primary termination then
+retires the Control roles.
+
 On iOS, application background teardown begins only from the actual
 `didEnterBackground` lifecycle boundary. Temporary `inactive` transitions such
 as Face ID, Touch ID, the device passcode sheet, Control Center, or other system
 UI remain foreground scheduling state and MUST NOT invalidate the primary that
 owns the in-flight approval challenge.
+
+An actual `didEnterBackground` transition starts a single fenced grace of at
+most 10 seconds. Returning through `willEnterForeground` or `didBecomeActive`
+before that exact deadline cancels the pending background transition, and a
+stale deadline MUST NOT close the restored primary. If the application remains
+backgrounded, it publishes foreground loss at the deadline and closes the
+route normally. The bounded grace does not extend the four-hour maximum
+Control lifetime, authorize or restart Control, replay input, or weaken the
+host's 15-second foreground-loss termination bound.

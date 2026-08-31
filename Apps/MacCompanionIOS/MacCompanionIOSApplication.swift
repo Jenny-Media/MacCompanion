@@ -164,6 +164,7 @@ private struct MacCompanionIOSRootView: View {
                     workspace: workspace,
                     onReconnect: { await application.reconnect() }
                 )
+                .id(workspace.id)
             } else {
                 unavailable(
                     title: "Workspace unavailable",

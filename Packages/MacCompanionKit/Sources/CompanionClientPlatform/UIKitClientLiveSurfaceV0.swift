@@ -1,4 +1,5 @@
 #if os(iOS)
+import CompanionClientNetworkPlatform
 import CompanionInteractiveClient
 import CompanionInteractiveShared
 import CompanionInteractiveWire
@@ -334,29 +335,40 @@ public final class UIKitClientLiveSurfaceViewV0:
     /// Smoothly frames a verified host focus inside the current surface. This
     /// changes only the local viewport; it does not replace the capture source
     /// or alter the acknowledged input fence.
+    @discardableResult
     public func focusVisualZoom(
         on bounds: NormalizedSurfaceRect,
         animated: Bool = true
-    ) throws {
+    ) -> Bool {
         guard inputEnabled, self.bounds.width > 0, self.bounds.height > 0,
               encodedWidth > 0, encodedHeight > 0 else {
-            throw UIKitClientLiveSurfaceFailureV0.invalidGeometry
+            IOSClientRuntimeDiagnosticLogV0.record(
+                "ui.automatic-visual-zoom.deferred-geometry"
+            )
+            return false
         }
-        resetMapper()
-        let current = try makeVisualZoomTransform()
-        let content = current.content
-        let divisor = Double(UInt16.max)
-        let target = try ClientInputRectV0(
-            x: content.x + Double(bounds.x) / divisor * content.width,
-            y: content.y + Double(bounds.y) / divisor * content.height,
-            width: Double(bounds.width) / divisor * content.width,
-            height: Double(bounds.height) / divisor * content.height
-        )
-        acceptVisualZoomTransform(
-            try current.focused(on: target),
-            animated: animated
-        )
-        rebuildMapperForCurrentGeometry()
+        do {
+            resetMapper()
+            let current = try makeVisualZoomTransform()
+            acceptVisualZoomTransform(
+                try current.focused(onNormalized: bounds),
+                animated: animated
+            )
+            rebuildMapperForCurrentGeometry()
+            return true
+        } catch {
+            // Automatic Smart Zoom is local presentation only. A stale focus
+            // rectangle or transient UIKit geometry must never close the
+            // authenticated Control roles. Return to fit and wait for the next
+            // verified focus refresh.
+            IOSClientRuntimeDiagnosticLogV0.record(
+                "ui.automatic-visual-zoom.recovered",
+                error: error
+            )
+            resetVisualZoomState()
+            rebuildMapperForCurrentGeometry()
+            return false
+        }
     }
 
     public func setZoomOutPastFitHandler(
@@ -395,8 +407,16 @@ public final class UIKitClientLiveSurfaceViewV0:
                 )
             }
         } catch {
-            setInputEnabled(false)
-            onFailure(.invalidGeometry)
+            // View bounds can be transiently inconsistent while SwiftUI
+            // changes chrome, safe-area, or rotation geometry. Without a
+            // mapper no remote input can be emitted, so this is a local
+            // presentation outage rather than a reason to revoke the healthy
+            // authenticated Control session. A later layout pass rebuilds it.
+            resetMapper()
+            IOSClientRuntimeDiagnosticLogV0.record(
+                "ui.mapper-geometry.recovered",
+                error: error
+            )
         }
     }
 
