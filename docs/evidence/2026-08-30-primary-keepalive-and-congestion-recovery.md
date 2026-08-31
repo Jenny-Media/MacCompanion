@@ -316,3 +316,38 @@ This is source evidence only until fresh signed Mac, iPad, and iPhone artifacts
 from the repair commit are installed and Control remains active across multiple
 lease renewals under live video. The failed `b869941` interactive attempt is not
 a soak pass.
+
+## Frozen `f301469` signed physical checkpoint
+
+The status-timeout repair and its evidence were committed locally as `f301469`
+with subject `Preserve control across status timeouts`. Fresh Debug Mac and
+universal iOS-device candidates were built from that clean commit with Xcode 27
+beta and the configured Jenny Media development team. The pairing reliability
+checkpoint and strict Mac/iOS signature verification both passed. The retained
+derived-data root is `/private/tmp/maccompanion-f301469-signed`.
+
+The installed Mac app completed its normal AppKit termination barrier before
+replacement. Its previous bundle remains recoverable at
+`/private/tmp/maccompanion-f301469-backup.2ccRbn/Mac Companion.app`. The new
+bundle passed strict deep verification at its per-user installation path. Both
+its main executable and nested Agent executable matched the verified build
+byte-for-byte. The narrow Agent-registration repair replaced the preceding
+Agent, and launchd reported the new Agent running.
+
+The same signed iOS bundle was installed over the existing iPad and iPhone apps
+without uninstalling either app or clearing pairing, grants, permissions, or
+application data. The prior iPad process was terminated first so it could not
+retain the preceding binary. Both replacement apps launched successfully and
+the Agent admitted two authenticated primaries.
+
+One physical client started live Control at 22:22:42 EDT. Video capture and
+focus polling remained active while the Agent completed 12 consecutive lease
+renewals, from counter 1 at 22:22:50 through counter 12 at 22:24:18. The trace
+contained no `bindingMismatch`, `endpointClosed`, `safetyRecoveryRequired`,
+capture stop, primary cleanup, or interactive-role teardown. This crosses the
+exact prior failure boundary, which canceled authenticated XPC during the first
+renewal after three seconds.
+
+This is a passing exact-candidate physical rollover checkpoint, not yet a full
+multi-device interaction matrix or long-duration soak. The fresh soak may start
+from `f301469`; evidence from `b869941` must not be counted toward it.
