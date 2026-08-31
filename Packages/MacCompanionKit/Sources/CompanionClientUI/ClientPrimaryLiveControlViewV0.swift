@@ -387,6 +387,7 @@ private final class ClientPrimaryLiveControlViewStateV0: ObservableObject {
     @Published var displayCatalog:
         InteractiveDisplayCatalogResponseBodyV1?
     @Published var displayRequestInFlight = false
+    @Published var showingDisplayPicker = false
     @Published var automaticSmartZoomEnabled = true
     @Published var showingRemoteKeyboard = false
     @Published var remoteKeyboardModifiers: InteractiveModifierMask = []
@@ -418,6 +419,81 @@ private struct ClientNativeTextComposerPresentationV0:
 {
     let binding: SurfaceInputFence
     var id: UUID { binding.focusToken ?? binding.surfaceID }
+}
+
+@available(iOS 17.0, *)
+private struct ClientSharedDisplayPickerV0: View {
+    let catalog: InteractiveDisplayCatalogResponseBodyV1?
+    let requestInFlight: Bool
+    let selectionInFlight: Bool
+    let displayLabel: (InteractiveDisplayCandidateV1) -> String
+    let onSelect: (UUID) -> Void
+    let onRefresh: () -> Void
+    let onCancel: () -> Void
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section("Available displays") {
+                    if let catalog {
+                        ForEach(catalog.displays) { display in
+                            Button {
+                                onSelect(display.id)
+                            } label: {
+                                Label(
+                                    displayLabel(display),
+                                    systemImage:
+                                        display.displayID
+                                            == catalog.selectedDisplayID
+                                            ? "checkmark.circle.fill"
+                                            : "display"
+                                )
+                            }
+                            .accessibilityIdentifier(
+                                "Shared Display \(display.ordinal)"
+                            )
+                            .disabled(
+                                display.displayID == catalog.selectedDisplayID
+                                    || selectionInFlight
+                            )
+                        }
+                    } else if requestInFlight {
+                        HStack {
+                            ProgressView()
+                            Text("Loading displays…")
+                        }
+                        .accessibilityIdentifier("Shared Displays Loading")
+                    } else {
+                        ContentUnavailableView(
+                            "Displays unavailable",
+                            systemImage: "display.trianglebadge.exclamationmark",
+                            description: Text(
+                                "Refresh to ask the connected Mac for its current displays."
+                            )
+                        )
+                    }
+                }
+
+                Section {
+                    Button(
+                        requestInFlight ? "Refreshing…" : "Refresh Displays",
+                        systemImage: "arrow.clockwise",
+                        action: onRefresh
+                    )
+                    .accessibilityIdentifier("Refresh Shared Displays")
+                    .disabled(requestInFlight || selectionInFlight)
+                }
+            }
+            .navigationTitle("Shared Display")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Done", action: onCancel)
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
+        .presentationDragIndicator(.visible)
+    }
 }
 
 @available(iOS 17.0, *)
@@ -1055,37 +1131,9 @@ public struct ClientPrimaryLiveControlViewV0: View {
                 )
             }
             ToolbarItem(placement: .topBarTrailing) {
-                Menu {
-                    if let catalog = viewState.displayCatalog {
-                        ForEach(catalog.displays) { display in
-                            Button {
-                                selectDisplay(display.id)
-                            } label: {
-                                Label(
-                                    displayLabel(display),
-                                    systemImage:
-                                        display.displayID
-                                            == catalog.selectedDisplayID
-                                            ? "checkmark.circle.fill"
-                                        : "display"
-                                )
-                            }
-                            .accessibilityIdentifier(
-                                "Shared Display \(display.ordinal)"
-                            )
-                            .disabled(
-                                display.displayID
-                                    == catalog.selectedDisplayID
-                                    || viewState.displaySelectionInFlight
-                            )
-                        }
-                        Divider()
-                    }
-                    Button("Refresh Displays", systemImage: "arrow.clockwise") {
-                        refreshDisplays(reportFailure: true)
-                    }
-                    .accessibilityIdentifier("Refresh Shared Displays")
-                    .disabled(viewState.displayRequestInFlight)
+                Button {
+                    viewState.showingDisplayPicker = true
+                    refreshDisplays(reportFailure: true)
                 } label: {
                     Label(currentDisplayLabel, systemImage: "display.2")
                 }
@@ -1226,6 +1274,27 @@ public struct ClientPrimaryLiveControlViewV0: View {
                 }
             )
             .interactiveDismissDisabled(viewState.surfaceRequestInFlight)
+        }
+        .sheet(isPresented: $viewState.showingDisplayPicker) {
+            ClientSharedDisplayPickerV0(
+                catalog: viewState.displayCatalog,
+                requestInFlight: viewState.displayRequestInFlight,
+                selectionInFlight: viewState.displaySelectionInFlight,
+                displayLabel: displayLabel,
+                onSelect: { displayID in
+                    viewState.showingDisplayPicker = false
+                    selectDisplay(displayID)
+                },
+                onRefresh: {
+                    refreshDisplays(reportFailure: true)
+                },
+                onCancel: {
+                    viewState.showingDisplayPicker = false
+                }
+            )
+            .interactiveDismissDisabled(
+                viewState.displaySelectionInFlight
+            )
         }
         .sheet(
             isPresented: $viewState.showingRemoteKeyboard,

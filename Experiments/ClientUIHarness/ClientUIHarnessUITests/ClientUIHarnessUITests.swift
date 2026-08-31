@@ -701,6 +701,10 @@ final class ClientUIHarnessUITests: XCTestCase {
         )
         waitForExpectations(timeout: 5)
         displayMenu.tap()
+        XCTAssertTrue(
+            app.navigationBars["Shared Display"].waitForExistence(timeout: 5),
+            "The shared-display picker did not appear"
+        )
         let secondDisplay = app.buttons["Shared Display 2"]
         XCTAssertTrue(secondDisplay.waitForExistence(timeout: 5))
         secondDisplay.tap()
