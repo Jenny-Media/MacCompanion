@@ -702,9 +702,12 @@ final class ClientUIHarnessUITests: XCTestCase {
         waitForExpectations(timeout: 5)
         displayMenu.tap()
         XCTAssertTrue(
-            app.navigationBars["Shared Display"].waitForExistence(timeout: 5),
+            app.navigationBars["Choose Display"].waitForExistence(timeout: 5),
             "The shared-display picker did not appear"
         )
+        let mainDisplay = app.buttons["Shared Display 1"]
+        XCTAssertTrue(mainDisplay.waitForExistence(timeout: 5))
+        wait(for: mainDisplay, toHaveValue: "Showing", timeout: 5)
         let secondDisplay = app.buttons["Shared Display 2"]
         XCTAssertTrue(secondDisplay.waitForExistence(timeout: 5))
         secondDisplay.tap()
@@ -718,6 +721,9 @@ final class ClientUIHarnessUITests: XCTestCase {
             toHaveLabel: "2",
             timeout: 5
         )
+        wait(for: secondDisplay, toHaveValue: "Showing", timeout: 5)
+        XCTAssertEqual(mainDisplay.value as? String, "Available")
+        app.navigationBars["Choose Display"].buttons["Done"].tap()
         XCTAssertGreaterThanOrEqual(
             Int(app.staticTexts["Lab display catalog requests"].label) ?? 0,
             1
@@ -1121,6 +1127,19 @@ final class ClientUIHarnessUITests: XCTestCase {
         }
         XCTFail("Expected accessible button after scrolling: \(label)")
         return button
+    }
+
+    @MainActor
+    private func wait(
+        for element: XCUIElement,
+        toHaveValue value: String,
+        timeout: TimeInterval = 2
+    ) {
+        expectation(
+            for: NSPredicate(format: "value == %@", value),
+            evaluatedWith: element
+        )
+        waitForExpectations(timeout: timeout)
     }
 
     @MainActor

@@ -387,6 +387,8 @@ private final class ClientPrimaryLiveControlViewStateV0: ObservableObject {
     @Published var displayCatalog:
         InteractiveDisplayCatalogResponseBodyV1?
     @Published var displayRequestInFlight = false
+    @Published var pendingDisplayID: UUID?
+    @Published var displayStatusMessage: String?
     @Published var showingDisplayPicker = false
     @Published var automaticSmartZoomEnabled = true
     @Published var showingRemoteKeyboard = false
@@ -403,8 +405,9 @@ private final class ClientPrimaryLiveControlViewStateV0: ObservableObject {
     var studyControlSurfaceKind = InteractiveSurfaceKind.desktop
     var studyControlIsActive = false
     var surfaceSelectionInFlight = false
-    var displaySelectionInFlight = false
     var pendingTextPresentation: ClientPendingTextPresentationV0?
+
+    var displaySelectionInFlight: Bool { pendingDisplayID != nil }
 }
 
 @available(iOS 17.0, *)
@@ -425,8 +428,8 @@ private struct ClientNativeTextComposerPresentationV0:
 private struct ClientSharedDisplayPickerV0: View {
     let catalog: InteractiveDisplayCatalogResponseBodyV1?
     let requestInFlight: Bool
-    let selectionInFlight: Bool
-    let displayLabel: (InteractiveDisplayCandidateV1) -> String
+    let pendingDisplayID: UUID?
+    let statusMessage: String?
     let onSelect: (UUID) -> Void
     let onRefresh: () -> Void
     let onCancel: () -> Void
@@ -434,27 +437,36 @@ private struct ClientSharedDisplayPickerV0: View {
     var body: some View {
         NavigationStack {
             List {
-                Section("Available displays") {
+                Section {
                     if let catalog {
                         ForEach(catalog.displays) { display in
+                            let isShowing =
+                                display.displayID
+                                    == catalog.selectedDisplayID
+                            let isPending =
+                                display.id == pendingDisplayID
                             Button {
                                 onSelect(display.id)
                             } label: {
-                                Label(
-                                    displayLabel(display),
-                                    systemImage:
-                                        display.displayID
-                                            == catalog.selectedDisplayID
-                                            ? "checkmark.circle.fill"
-                                            : "display"
+                                ClientSharedDisplayRowV0(
+                                    display: display,
+                                    isShowing: isShowing,
+                                    isPending: isPending
                                 )
                             }
+                            .buttonStyle(.plain)
                             .accessibilityIdentifier(
                                 "Shared Display \(display.ordinal)"
                             )
+                            .accessibilityValue(
+                                isPending
+                                    ? "Switching"
+                                    : isShowing ? "Showing" : "Available"
+                            )
                             .disabled(
-                                display.displayID == catalog.selectedDisplayID
-                                    || selectionInFlight
+                                isShowing
+                                    || pendingDisplayID != nil
+                                    || requestInFlight
                             )
                         }
                     } else if requestInFlight {
@@ -472,6 +484,26 @@ private struct ClientSharedDisplayPickerV0: View {
                             )
                         )
                     }
+                } header: {
+                    Text("Available displays")
+                } footer: {
+                    Text(
+                        "Mac Companion shares one display at a time. "
+                            + "This does not rearrange your Mac displays."
+                    )
+                }
+
+                if let statusMessage {
+                    Section {
+                        Label(
+                            statusMessage,
+                            systemImage: "exclamationmark.triangle"
+                        )
+                        .foregroundStyle(.secondary)
+                        .accessibilityIdentifier(
+                            "Shared Displays Status"
+                        )
+                    }
                 }
 
                 Section {
@@ -481,10 +513,12 @@ private struct ClientSharedDisplayPickerV0: View {
                         action: onRefresh
                     )
                     .accessibilityIdentifier("Refresh Shared Displays")
-                    .disabled(requestInFlight || selectionInFlight)
+                    .disabled(
+                        requestInFlight || pendingDisplayID != nil
+                    )
                 }
             }
-            .navigationTitle("Shared Display")
+            .navigationTitle("Choose Display")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Done", action: onCancel)
@@ -493,6 +527,67 @@ private struct ClientSharedDisplayPickerV0: View {
         }
         .presentationDetents([.medium, .large])
         .presentationDragIndicator(.visible)
+    }
+}
+
+@available(iOS 17.0, *)
+private struct ClientSharedDisplayRowV0: View {
+    let display: InteractiveDisplayCandidateV1
+    let isShowing: Bool
+    let isPending: Bool
+
+    var body: some View {
+        HStack(spacing: 12) {
+            ZStack(alignment: .bottomTrailing) {
+                Image(systemName: "display")
+                    .font(.title2)
+                    .foregroundStyle(
+                        isShowing ? Color.accentColor : Color.secondary
+                    )
+                    .frame(width: 34, height: 34)
+                Text("\(display.ordinal)")
+                    .font(.caption2.bold())
+                    .monospacedDigit()
+                    .foregroundStyle(.primary)
+                    .padding(3)
+                    .background(.regularMaterial, in: Circle())
+            }
+            .accessibilityHidden(true)
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(display.isMain
+                     ? "Main Display"
+                     : "Display \(display.ordinal)")
+                    .font(.body.weight(.medium))
+                    .foregroundStyle(.primary)
+                Text(
+                    "\(display.pixelWidth) × \(display.pixelHeight)"
+                )
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+            }
+
+            Spacer(minLength: 12)
+
+            if isPending {
+                HStack(spacing: 6) {
+                    ProgressView()
+                        .controlSize(.small)
+                    Text("Switching…")
+                }
+                .font(.subheadline.weight(.medium))
+                .foregroundStyle(.secondary)
+            } else if isShowing {
+                HStack(spacing: 6) {
+                    Image(systemName: "checkmark.circle.fill")
+                    Text("Showing")
+                }
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.tint)
+            }
+        }
+        .contentShape(Rectangle())
+        .padding(.vertical, 4)
     }
 }
 
@@ -1279,10 +1374,9 @@ public struct ClientPrimaryLiveControlViewV0: View {
             ClientSharedDisplayPickerV0(
                 catalog: viewState.displayCatalog,
                 requestInFlight: viewState.displayRequestInFlight,
-                selectionInFlight: viewState.displaySelectionInFlight,
-                displayLabel: displayLabel,
+                pendingDisplayID: viewState.pendingDisplayID,
+                statusMessage: viewState.displayStatusMessage,
                 onSelect: { displayID in
-                    viewState.showingDisplayPicker = false
                     selectDisplay(displayID)
                 },
                 onRefresh: {
@@ -1388,25 +1482,20 @@ public struct ClientPrimaryLiveControlViewV0: View {
         return "Display \(selected.ordinal)"
     }
 
-    private func displayLabel(
-        _ display: InteractiveDisplayCandidateV1
-    ) -> String {
-        let name = display.isMain
-            ? "Display \(display.ordinal) (Main)"
-            : "Display \(display.ordinal)"
-        return "\(name) · \(display.pixelWidth)×\(display.pixelHeight)"
-    }
-
     private func refreshDisplays(reportFailure: Bool) {
         guard coordinator.phase == .active,
               !viewState.displayRequestInFlight,
               !viewState.displaySelectionInFlight else { return }
         viewState.displayRequestInFlight = true
+        if reportFailure {
+            viewState.displayStatusMessage = nil
+        }
         Task {
             do {
                 viewState.displayCatalog = try await coordinator
                     .requestDisplayCatalog()
                 viewState.displayRequestInFlight = false
+                viewState.displayStatusMessage = nil
             } catch is CancellationError {
                 viewState.displayRequestInFlight = false
             } catch {
@@ -1415,7 +1504,11 @@ public struct ClientPrimaryLiveControlViewV0: View {
                     "[MacCompanion live-control] display catalog failed "
                         + "error=\(String(describing: error))"
                 )
-                if reportFailure { onCommandFailure(error) }
+                if reportFailure {
+                    viewState.displayStatusMessage =
+                        "Couldn’t refresh displays. Try again."
+                    onCommandFailure(error)
+                }
             }
         }
     }
@@ -1426,16 +1519,20 @@ public struct ClientPrimaryLiveControlViewV0: View {
               viewState.displayCatalog?.selectedDisplayID.rawValue
                 != displayID else { return }
         pauseStudyControlTiming()
-        viewState.displaySelectionInFlight = true
+        viewState.pendingDisplayID = displayID
+        viewState.displayStatusMessage = nil
         Task {
             do {
                 try await coordinator.selectDisplay(displayID)
-                viewState.displaySelectionInFlight = false
-                viewState.displayCatalog = nil
+                viewState.displayCatalog = try await coordinator
+                    .requestDisplayCatalog()
+                viewState.pendingDisplayID = nil
                 synchronizeStudyControlTiming()
-                refreshDisplays(reportFailure: false)
             } catch {
-                viewState.displaySelectionInFlight = false
+                viewState.pendingDisplayID = nil
+                viewState.displayStatusMessage =
+                    "Couldn’t confirm the display switch. Try again."
+                synchronizeStudyControlTiming()
                 onCommandFailure(error)
             }
         }
