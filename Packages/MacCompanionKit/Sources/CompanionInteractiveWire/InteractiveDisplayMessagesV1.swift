@@ -46,13 +46,18 @@ public struct InteractiveDisplayCandidateV1:
     Codable, Equatable, Identifiable, Sendable
 {
     private enum CodingKeys: String, CodingKey {
-        case displayID, ordinal, pixelWidth, pixelHeight, isMain
+        case displayID, ordinal, pixelWidth, pixelHeight
+        case layoutX, layoutY, layoutWidth, layoutHeight, isMain
     }
 
     public let displayID: WireUUID
     public let ordinal: UInt8
     public let pixelWidth: UInt16
     public let pixelHeight: UInt16
+    public let layoutX: Int32
+    public let layoutY: Int32
+    public let layoutWidth: UInt16
+    public let layoutHeight: UInt16
     public let isMain: Bool
 
     public var id: UUID { displayID.rawValue }
@@ -62,12 +67,20 @@ public struct InteractiveDisplayCandidateV1:
         ordinal: UInt8,
         pixelWidth: UInt16,
         pixelHeight: UInt16,
+        layoutX: Int32,
+        layoutY: Int32,
+        layoutWidth: UInt16,
+        layoutHeight: UInt16,
         isMain: Bool
     ) throws {
         self.displayID = displayID
         self.ordinal = ordinal
         self.pixelWidth = pixelWidth
         self.pixelHeight = pixelHeight
+        self.layoutX = layoutX
+        self.layoutY = layoutY
+        self.layoutWidth = layoutWidth
+        self.layoutHeight = layoutHeight
         self.isMain = isMain
         try validate()
     }
@@ -75,13 +88,21 @@ public struct InteractiveDisplayCandidateV1:
     public init(from decoder: Decoder) throws {
         try requireExactKeys(
             decoder,
-            ["displayID", "ordinal", "pixelWidth", "pixelHeight", "isMain"]
+            [
+                "displayID", "ordinal", "pixelWidth", "pixelHeight",
+                "layoutX", "layoutY", "layoutWidth", "layoutHeight",
+                "isMain",
+            ]
         )
         let container = try decoder.container(keyedBy: CodingKeys.self)
         displayID = try container.decode(WireUUID.self, forKey: .displayID)
         ordinal = try container.decode(UInt8.self, forKey: .ordinal)
         pixelWidth = try container.decode(UInt16.self, forKey: .pixelWidth)
         pixelHeight = try container.decode(UInt16.self, forKey: .pixelHeight)
+        layoutX = try container.decode(Int32.self, forKey: .layoutX)
+        layoutY = try container.decode(Int32.self, forKey: .layoutY)
+        layoutWidth = try container.decode(UInt16.self, forKey: .layoutWidth)
+        layoutHeight = try container.decode(UInt16.self, forKey: .layoutHeight)
         isMain = try container.decode(Bool.self, forKey: .isMain)
         try validate()
     }
@@ -89,7 +110,9 @@ public struct InteractiveDisplayCandidateV1:
     public func validate() throws {
         guard ordinal >= 1,
               pixelWidth > 0,
-              pixelHeight > 0 else {
+              pixelHeight > 0,
+              layoutWidth > 0,
+              layoutHeight > 0 else {
             throw InteractiveDisplayMessageErrorV1.invalidDisplay
         }
     }

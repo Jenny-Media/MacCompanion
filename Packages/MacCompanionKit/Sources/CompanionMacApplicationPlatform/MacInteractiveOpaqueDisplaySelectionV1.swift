@@ -12,6 +12,10 @@ public struct MacInteractiveDisplayChoiceV1: Equatable, Identifiable, Sendable {
     public let name: String
     public let pixelWidth: Int
     public let pixelHeight: Int
+    public let layoutX: Int
+    public let layoutY: Int
+    public let layoutWidth: Int
+    public let layoutHeight: Int
     public let isMain: Bool
 
     package init(
@@ -19,12 +23,20 @@ public struct MacInteractiveDisplayChoiceV1: Equatable, Identifiable, Sendable {
         name: String,
         pixelWidth: Int,
         pixelHeight: Int,
+        layoutX: Int,
+        layoutY: Int,
+        layoutWidth: Int,
+        layoutHeight: Int,
         isMain: Bool
     ) {
         self.id = id
         self.name = name
         self.pixelWidth = pixelWidth
         self.pixelHeight = pixelHeight
+        self.layoutX = layoutX
+        self.layoutY = layoutY
+        self.layoutWidth = layoutWidth
+        self.layoutHeight = layoutHeight
         self.isMain = isMain
     }
 }
@@ -38,17 +50,29 @@ public final class MacInteractiveOpaqueDisplaySelectionV1: @unchecked Sendable {
         package let id: CGDirectDisplayID
         package let pixelWidth: Int
         package let pixelHeight: Int
+        package let layoutX: Int
+        package let layoutY: Int
+        package let layoutWidth: Int
+        package let layoutHeight: Int
         package let isMain: Bool
 
         package init(
             id: CGDirectDisplayID,
             pixelWidth: Int,
             pixelHeight: Int,
+            layoutX: Int = 0,
+            layoutY: Int = 0,
+            layoutWidth: Int? = nil,
+            layoutHeight: Int? = nil,
             isMain: Bool
         ) {
             self.id = id
             self.pixelWidth = pixelWidth
             self.pixelHeight = pixelHeight
+            self.layoutX = layoutX
+            self.layoutY = layoutY
+            self.layoutWidth = layoutWidth ?? pixelWidth
+            self.layoutHeight = layoutHeight ?? pixelHeight
             self.isMain = isMain
         }
     }
@@ -88,6 +112,10 @@ public final class MacInteractiveOpaqueDisplaySelectionV1: @unchecked Sendable {
                     id: physicalDisplayID,
                     pixelWidth: 1,
                     pixelHeight: 1,
+                    layoutX: 0,
+                    layoutY: 0,
+                    layoutWidth: 1,
+                    layoutHeight: 1,
                     isMain: true
                 )]
             }
@@ -125,6 +153,10 @@ public final class MacInteractiveOpaqueDisplaySelectionV1: @unchecked Sendable {
                         ? "Main Display" : "Display \(index + 1)",
                     pixelWidth: display.pixelWidth,
                     pixelHeight: display.pixelHeight,
+                    layoutX: display.layoutX,
+                    layoutY: display.layoutY,
+                    layoutWidth: display.layoutWidth,
+                    layoutHeight: display.layoutHeight,
                     isMain: display.isMain
                 )
             }
@@ -201,7 +233,11 @@ public final class MacInteractiveOpaqueDisplaySelectionV1: @unchecked Sendable {
         _ values: [PhysicalDisplay]
     ) -> [PhysicalDisplay] {
         let valid = values.filter {
-            $0.id != 0 && $0.pixelWidth > 0 && $0.pixelHeight > 0
+            $0.id != 0
+                && $0.pixelWidth > 0
+                && $0.pixelHeight > 0
+                && $0.layoutWidth > 0
+                && $0.layoutHeight > 0
         }
         var seen: Set<CGDirectDisplayID> = []
         return ordered(valid.filter { seen.insert($0.id).inserted })
@@ -225,10 +261,15 @@ public final class MacInteractiveOpaqueDisplaySelectionV1: @unchecked Sendable {
             return []
         }
         return ids.prefix(Int(count)).map {
-            PhysicalDisplay(
+            let bounds = CGDisplayBounds($0)
+            return PhysicalDisplay(
                 id: $0,
                 pixelWidth: Int(CGDisplayPixelsWide($0)),
                 pixelHeight: Int(CGDisplayPixelsHigh($0)),
+                layoutX: Int(bounds.origin.x.rounded()),
+                layoutY: Int(bounds.origin.y.rounded()),
+                layoutWidth: Int(bounds.width.rounded()),
+                layoutHeight: Int(bounds.height.rounded()),
                 isMain: CGDisplayIsMain($0) != 0
             )
         }

@@ -342,7 +342,11 @@ public actor MacInteractiveLeaseRuntimeAdapterV1:
         let candidates = try choices.enumerated().map { index, choice in
             guard index < Int(UInt8.max),
                   choice.pixelWidth <= Int(UInt16.max),
-                  choice.pixelHeight <= Int(UInt16.max) else {
+                  choice.pixelHeight <= Int(UInt16.max),
+                  (Int(Int32.min)...Int(Int32.max)).contains(choice.layoutX),
+                  (Int(Int32.min)...Int(Int32.max)).contains(choice.layoutY),
+                  (1...Int(UInt16.max)).contains(choice.layoutWidth),
+                  (1...Int(UInt16.max)).contains(choice.layoutHeight) else {
                 throw MacLocalXPCInteractiveLeaseErrorV1.unavailable
             }
             return try LocalInteractiveDisplayCandidateV1(
@@ -350,6 +354,10 @@ public actor MacInteractiveLeaseRuntimeAdapterV1:
                 ordinal: UInt8(index + 1),
                 pixelWidth: UInt16(choice.pixelWidth),
                 pixelHeight: UInt16(choice.pixelHeight),
+                layoutX: Int32(choice.layoutX),
+                layoutY: Int32(choice.layoutY),
+                layoutWidth: UInt16(choice.layoutWidth),
+                layoutHeight: UInt16(choice.layoutHeight),
                 isMain: choice.isMain
             )
         }

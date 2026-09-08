@@ -269,9 +269,13 @@ Input carrying an old surface or coordinate revision is rejected. The initial pr
 
 While Control is active, its persistent toolbar exposes a `Display` selector.
 Its periodically refreshed catalog contains only an
-opaque display ID, stable session ordinal, bounded pixel dimensions, and the
-main-display flag; it never exposes a macOS display name or platform display
-identifier. Newly connected displays can appear without ending Control. A live
+opaque display ID, stable session ordinal, bounded pixel dimensions, bounded
+signed global-layout origin, bounded logical-layout dimensions, and the
+main-display flag. The layout metadata lets the client draw the displays in
+their real relative arrangement, but is never accepted as pointer input or
+capture geometry. The catalog never exposes a macOS display name, platform
+display identifier, wallpaper, thumbnail, or display content. Newly connected
+displays can appear without ending Control. A live
 display change is carried as an ordinary authenticated Desktop surface
 replacement: the client pauses and resets input, the menu app applies the
 opaque selection and publishes a successor admission revision, the replacement

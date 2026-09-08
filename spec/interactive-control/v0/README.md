@@ -34,7 +34,8 @@ The pure reducer emits effects but does not perform capture, input injection, IP
 
 The closed [session and channel messages](session-channel-messages.md), [initial
 surface activation](initial-surface-activation.md), [surface-control
-messages](surface-control-messages.md), [surface target
+messages](surface-control-messages.md), [interactive display catalog and
+selection](display-catalog-messages.md), [surface target
 inventory](target-inventory-messages.md), and cryptographic bytes for approval and
 role-specific credentials are frozen in the [security
 profile](security-profile.md). Other independently frozen components are the

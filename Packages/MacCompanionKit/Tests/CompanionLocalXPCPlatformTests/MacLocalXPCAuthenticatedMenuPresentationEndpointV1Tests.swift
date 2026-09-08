@@ -430,6 +430,10 @@ func opaqueEndpointEncodesAllFiveClosedRequests() async throws {
                 ordinal: 1,
                 pixelWidth: 1_440,
                 pixelHeight: 900,
+                layoutX: 0,
+                layoutY: 0,
+                layoutWidth: 1_440,
+                layoutHeight: 900,
                 isMain: true
             ),
             LocalInteractiveDisplayCandidateV1(
@@ -437,6 +441,10 @@ func opaqueEndpointEncodesAllFiveClosedRequests() async throws {
                 ordinal: 2,
                 pixelWidth: 1_920,
                 pixelHeight: 1_080,
+                layoutX: 1_440,
+                layoutY: -90,
+                layoutWidth: 1_920,
+                layoutHeight: 1_080,
                 isMain: false
             ),
         ]

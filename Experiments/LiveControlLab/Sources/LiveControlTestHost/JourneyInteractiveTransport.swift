@@ -256,6 +256,10 @@ actor JourneyInteractiveDispatcher: AuthenticatedInteractiveWireDispatchingV0, H
                     ordinal: 1,
                     pixelWidth: 1512,
                     pixelHeight: 982,
+                    layoutX: 0,
+                    layoutY: 0,
+                    layoutWidth: 1512,
+                    layoutHeight: 982,
                     isMain: true
                 ),
                 try InteractiveDisplayCandidateV1(
@@ -263,6 +267,10 @@ actor JourneyInteractiveDispatcher: AuthenticatedInteractiveWireDispatchingV0, H
                     ordinal: 2,
                     pixelWidth: 2560,
                     pixelHeight: 1440,
+                    layoutX: 1512,
+                    layoutY: -229,
+                    layoutWidth: 2560,
+                    layoutHeight: 1440,
                     isMain: false
                 ),
             ]

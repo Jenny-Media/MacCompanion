@@ -190,6 +190,10 @@ private final class HarnessLiveControlProduct:
                     ordinal: 1,
                     pixelWidth: 1_280,
                     pixelHeight: 720,
+                    layoutX: 0,
+                    layoutY: 0,
+                    layoutWidth: 1_280,
+                    layoutHeight: 720,
                     isMain: true
                 ),
             ]

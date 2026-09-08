@@ -21,6 +21,10 @@ private func displayCandidate(
         ordinal: ordinal,
         pixelWidth: ordinal == 1 ? 3_024 : 2_560,
         pixelHeight: ordinal == 1 ? 1_964 : 1_440,
+        layoutX: ordinal == 1 ? 0 : 3_024,
+        layoutY: ordinal == 1 ? 0 : -240,
+        layoutWidth: ordinal == 1 ? 1_512 : 2_560,
+        layoutHeight: ordinal == 1 ? 982 : 1_440,
         isMain: isMain
     )
 }
@@ -50,6 +54,26 @@ private func displayCandidate(
     )
     #expect(decoded.body == body)
     #expect(decoded.body.selectedDisplayID.rawValue == displayTwo)
+    #expect(decoded.body.displays[1].layoutX == 3_024)
+    #expect(decoded.body.displays[1].layoutY == -240)
+    #expect(decoded.body.displays[1].layoutWidth == 2_560)
+    #expect(decoded.body.displays[1].layoutHeight == 1_440)
+}
+
+@Test func interactiveDisplayCandidateRejectsEmptyLayoutBounds() throws {
+    #expect(throws: InteractiveDisplayMessageErrorV1.self) {
+        _ = try InteractiveDisplayCandidateV1(
+            displayID: WireUUID(displayOne),
+            ordinal: 1,
+            pixelWidth: 3_024,
+            pixelHeight: 1_964,
+            layoutX: 0,
+            layoutY: 0,
+            layoutWidth: 0,
+            layoutHeight: 982,
+            isMain: true
+        )
+    }
 }
 
 @Test func interactiveDisplayCatalogRejectsMissingSelectedDisplay() throws {

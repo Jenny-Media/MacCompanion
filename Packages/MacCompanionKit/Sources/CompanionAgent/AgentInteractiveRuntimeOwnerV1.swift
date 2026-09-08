@@ -246,6 +246,10 @@ public actor AgentInteractiveRuntimeOwnerV1:
                     ordinal: $0.ordinal,
                     pixelWidth: $0.pixelWidth,
                     pixelHeight: $0.pixelHeight,
+                    layoutX: $0.layoutX,
+                    layoutY: $0.layoutY,
+                    layoutWidth: $0.layoutWidth,
+                    layoutHeight: $0.layoutHeight,
                     isMain: $0.isMain
                 )
             }

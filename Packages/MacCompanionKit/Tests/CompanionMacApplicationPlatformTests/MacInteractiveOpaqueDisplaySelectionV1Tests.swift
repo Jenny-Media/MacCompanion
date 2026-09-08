@@ -72,12 +72,20 @@ func opaqueDisplaySelectionEnumeratesSwitchesAndNeverRedirectsOnLoss()
             id: 22,
             pixelWidth: 2_560,
             pixelHeight: 1_440,
+            layoutX: 1_512,
+            layoutY: -229,
+            layoutWidth: 2_560,
+            layoutHeight: 1_440,
             isMain: false
         ),
         .init(
             id: 11,
             pixelWidth: 3_024,
             pixelHeight: 1_964,
+            layoutX: 0,
+            layoutY: 0,
+            layoutWidth: 1_512,
+            layoutHeight: 982,
             isMain: true
         ),
     ])
@@ -96,6 +104,10 @@ func opaqueDisplaySelectionEnumeratesSwitchesAndNeverRedirectsOnLoss()
             name: "Main Display",
             pixelWidth: 3_024,
             pixelHeight: 1_964,
+            layoutX: 0,
+            layoutY: 0,
+            layoutWidth: 1_512,
+            layoutHeight: 982,
             isMain: true
         ),
         .init(
@@ -103,6 +115,10 @@ func opaqueDisplaySelectionEnumeratesSwitchesAndNeverRedirectsOnLoss()
             name: "Display 2",
             pixelWidth: 2_560,
             pixelHeight: 1_440,
+            layoutX: 1_512,
+            layoutY: -229,
+            layoutWidth: 2_560,
+            layoutHeight: 1_440,
             isMain: false
         ),
     ])
@@ -119,6 +135,10 @@ func opaqueDisplaySelectionEnumeratesSwitchesAndNeverRedirectsOnLoss()
             id: 11,
             pixelWidth: 3_024,
             pixelHeight: 1_964,
+            layoutX: 0,
+            layoutY: 0,
+            layoutWidth: 1_512,
+            layoutHeight: 982,
             isMain: true
         ),
     ])

@@ -24,6 +24,10 @@ public struct LocalInteractiveDisplayCandidateV1:
     public let ordinal: UInt8
     public let pixelWidth: UInt16
     public let pixelHeight: UInt16
+    public let layoutX: Int32
+    public let layoutY: Int32
+    public let layoutWidth: UInt16
+    public let layoutHeight: UInt16
     public let isMain: Bool
 
     public init(
@@ -31,15 +35,27 @@ public struct LocalInteractiveDisplayCandidateV1:
         ordinal: UInt8,
         pixelWidth: UInt16,
         pixelHeight: UInt16,
+        layoutX: Int32,
+        layoutY: Int32,
+        layoutWidth: UInt16,
+        layoutHeight: UInt16,
         isMain: Bool
     ) throws {
-        guard ordinal >= 1, pixelWidth >= 1, pixelHeight >= 1 else {
+        guard ordinal >= 1,
+              pixelWidth >= 1,
+              pixelHeight >= 1,
+              layoutWidth >= 1,
+              layoutHeight >= 1 else {
             throw LocalInteractiveDisplaySelectionErrorV1.invalidReceipt
         }
         self.displayID = displayID
         self.ordinal = ordinal
         self.pixelWidth = pixelWidth
         self.pixelHeight = pixelHeight
+        self.layoutX = layoutX
+        self.layoutY = layoutY
+        self.layoutWidth = layoutWidth
+        self.layoutHeight = layoutHeight
         self.isMain = isMain
     }
 }

@@ -436,44 +436,34 @@ private struct ClientSharedDisplayPickerV0: View {
 
     var body: some View {
         NavigationStack {
-            List {
-                Section {
+            ScrollView {
+                VStack(spacing: 20) {
                     if let catalog {
-                        ForEach(catalog.displays) { display in
-                            let isShowing =
-                                display.displayID
-                                    == catalog.selectedDisplayID
-                            let isPending =
-                                display.id == pendingDisplayID
-                            Button {
-                                onSelect(display.id)
-                            } label: {
-                                ClientSharedDisplayRowV0(
-                                    display: display,
-                                    isShowing: isShowing,
-                                    isPending: isPending
-                                )
-                            }
-                            .buttonStyle(.plain)
-                            .accessibilityIdentifier(
-                                "Shared Display \(display.ordinal)"
-                            )
-                            .accessibilityValue(
-                                isPending
-                                    ? "Switching"
-                                    : isShowing ? "Showing" : "Available"
-                            )
-                            .disabled(
-                                isShowing
-                                    || pendingDisplayID != nil
-                                    || requestInFlight
-                            )
-                        }
+                        ClientSharedDisplayTopologyV0(
+                            catalog: catalog,
+                            requestInFlight: requestInFlight,
+                            pendingDisplayID: pendingDisplayID,
+                            onSelect: onSelect
+                        )
+                        .frame(
+                            maxWidth: .infinity,
+                            minHeight: 260,
+                            idealHeight: 320
+                        )
+
+                        Text(
+                            "Tap a display to share it. The blue display is currently showing."
+                        )
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
                     } else if requestInFlight {
-                        HStack {
+                        VStack(spacing: 12) {
                             ProgressView()
                             Text("Loading displays…")
+                                .foregroundStyle(.secondary)
                         }
+                        .frame(maxWidth: .infinity, minHeight: 260)
                         .accessibilityIdentifier("Shared Displays Loading")
                     } else {
                         ContentUnavailableView(
@@ -483,40 +473,37 @@ private struct ClientSharedDisplayPickerV0: View {
                                 "Refresh to ask the connected Mac for its current displays."
                             )
                         )
+                        .frame(maxWidth: .infinity, minHeight: 260)
                     }
-                } header: {
-                    Text("Available displays")
-                } footer: {
-                    Text(
-                        "Mac Companion shares one display at a time. "
-                            + "This does not rearrange your Mac displays."
-                    )
-                }
 
-                if let statusMessage {
-                    Section {
+                    if let statusMessage {
                         Label(
                             statusMessage,
                             systemImage: "exclamationmark.triangle"
                         )
+                        .font(.footnote)
                         .foregroundStyle(.secondary)
-                        .accessibilityIdentifier(
-                            "Shared Displays Status"
-                        )
+                        .accessibilityIdentifier("Shared Displays Status")
                     }
-                }
 
-                Section {
                     Button(
                         requestInFlight ? "Refreshing…" : "Refresh Displays",
                         systemImage: "arrow.clockwise",
                         action: onRefresh
                     )
+                    .buttonStyle(.bordered)
                     .accessibilityIdentifier("Refresh Shared Displays")
-                    .disabled(
-                        requestInFlight || pendingDisplayID != nil
+                    .disabled(requestInFlight || pendingDisplayID != nil)
+
+                    Text(
+                        "Mac Companion shares one display at a time and does not rearrange your Mac displays."
                     )
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+                    .multilineTextAlignment(.center)
                 }
+                .frame(maxWidth: .infinity)
+                .padding()
             }
             .navigationTitle("Choose Display")
             .toolbar {
@@ -531,63 +518,129 @@ private struct ClientSharedDisplayPickerV0: View {
 }
 
 @available(iOS 17.0, *)
-private struct ClientSharedDisplayRowV0: View {
+private struct ClientSharedDisplayTopologyV0: View {
+    let catalog: InteractiveDisplayCatalogResponseBodyV1
+    let requestInFlight: Bool
+    let pendingDisplayID: UUID?
+    let onSelect: (UUID) -> Void
+
+    var body: some View {
+        GeometryReader { proxy in
+            if let layout = ClientSharedDisplayTopologyGeometryV0(
+                displays: catalog.displays,
+                canvasSize: proxy.size
+            ) {
+                ZStack(alignment: .topLeading) {
+                    ForEach(orderedDisplays) { display in
+                        if let frame = layout.framesByDisplayID[display.id] {
+                            Button {
+                                guard display.displayID
+                                    != catalog.selectedDisplayID else { return }
+                                onSelect(display.id)
+                            } label: {
+                                ClientSharedDisplayTileV0(
+                                    display: display,
+                                    isShowing: display.displayID
+                                        == catalog.selectedDisplayID,
+                                    isPending: display.id == pendingDisplayID
+                                )
+                            }
+                            .buttonStyle(.plain)
+                            .frame(width: frame.width, height: frame.height)
+                            .offset(x: frame.minX, y: frame.minY)
+                            .disabled(
+                                pendingDisplayID != nil
+                                    || requestInFlight
+                            )
+                            .accessibilityIdentifier(
+                                "Shared Display \(display.ordinal)"
+                            )
+                            .accessibilityLabel(displayName(display))
+                            .accessibilityValue(
+                                display.id == pendingDisplayID
+                                    ? "Switching"
+                                    : display.displayID
+                                        == catalog.selectedDisplayID
+                                        ? "Showing" : "Available"
+                            )
+                        }
+                    }
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(
+                    Color.secondary.opacity(0.08),
+                    in: RoundedRectangle(cornerRadius: 18)
+                )
+            }
+        }
+    }
+
+    private var orderedDisplays: [InteractiveDisplayCandidateV1] {
+        catalog.displays.sorted {
+            let lhsSelected = $0.displayID == catalog.selectedDisplayID
+            let rhsSelected = $1.displayID == catalog.selectedDisplayID
+            if lhsSelected != rhsSelected { return !lhsSelected }
+            return $0.ordinal < $1.ordinal
+        }
+    }
+
+    private func displayName(_ display: InteractiveDisplayCandidateV1) -> String {
+        display.isMain ? "Main Display" : "Display \(display.ordinal)"
+    }
+}
+
+@available(iOS 17.0, *)
+private struct ClientSharedDisplayTileV0: View {
     let display: InteractiveDisplayCandidateV1
     let isShowing: Bool
     let isPending: Bool
 
     var body: some View {
-        HStack(spacing: 12) {
-            ZStack(alignment: .bottomTrailing) {
-                Image(systemName: "display")
-                    .font(.title2)
-                    .foregroundStyle(
-                        isShowing ? Color.accentColor : Color.secondary
-                    )
-                    .frame(width: 34, height: 34)
-                Text("\(display.ordinal)")
-                    .font(.caption2.bold())
-                    .monospacedDigit()
-                    .foregroundStyle(.primary)
-                    .padding(3)
-                    .background(.regularMaterial, in: Circle())
-            }
-            .accessibilityHidden(true)
-
-            VStack(alignment: .leading, spacing: 3) {
-                Text(display.isMain
-                     ? "Main Display"
-                     : "Display \(display.ordinal)")
-                    .font(.body.weight(.medium))
-                    .foregroundStyle(.primary)
-                Text(
-                    "\(display.pixelWidth) × \(display.pixelHeight)"
+        ZStack {
+            RoundedRectangle(cornerRadius: 12)
+                .fill(
+                    isShowing
+                        ? Color.accentColor.opacity(0.20)
+                        : Color(uiColor: .secondarySystemBackground)
                 )
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-            }
+            RoundedRectangle(cornerRadius: 12)
+                .strokeBorder(
+                    isShowing ? Color.accentColor : Color.secondary.opacity(0.6),
+                    lineWidth: isShowing ? 3 : 1
+                )
 
-            Spacer(minLength: 12)
-
-            if isPending {
-                HStack(spacing: 6) {
-                    ProgressView()
-                        .controlSize(.small)
-                    Text("Switching…")
-                }
-                .font(.subheadline.weight(.medium))
-                .foregroundStyle(.secondary)
-            } else if isShowing {
-                HStack(spacing: 6) {
-                    Image(systemName: "checkmark.circle.fill")
-                    Text("Showing")
+            VStack(spacing: 5) {
+                HStack(spacing: 5) {
+                    Image(systemName: display.isMain ? "display" : "display.2")
+                    Text(display.isMain
+                         ? "Main Display"
+                         : "Display \(display.ordinal)")
                 }
                 .font(.subheadline.weight(.semibold))
-                .foregroundStyle(.tint)
+                .lineLimit(1)
+
+                Text("\(display.pixelWidth) × \(display.pixelHeight)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+
+                if isPending {
+                    HStack(spacing: 5) {
+                        ProgressView()
+                            .controlSize(.mini)
+                        Text("Switching…")
+                    }
+                    .font(.caption2.weight(.medium))
+                    .foregroundStyle(.secondary)
+                } else if isShowing {
+                    Label("Showing", systemImage: "checkmark.circle.fill")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.tint)
+                }
             }
+            .padding(8)
         }
-        .contentShape(Rectangle())
-        .padding(.vertical, 4)
+        .contentShape(RoundedRectangle(cornerRadius: 12))
     }
 }
 

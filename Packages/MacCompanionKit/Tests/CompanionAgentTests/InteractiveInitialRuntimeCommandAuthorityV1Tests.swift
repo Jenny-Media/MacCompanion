@@ -232,6 +232,10 @@ private actor RuntimeBindingDisplayProbeV1:
                 ordinal: 1,
                 pixelWidth: 2_560,
                 pixelHeight: 1_067,
+                layoutX: 0,
+                layoutY: 0,
+                layoutWidth: 2_560,
+                layoutHeight: 1_067,
                 isMain: true
             )]
         )
@@ -649,6 +653,10 @@ private actor RuntimeOwnerDisplayRouteV1:
                 ordinal: 1,
                 pixelWidth: 2_560,
                 pixelHeight: 1_067,
+                layoutX: 0,
+                layoutY: 0,
+                layoutWidth: 2_560,
+                layoutHeight: 1_067,
                 isMain: true
             )]
         )

@@ -106,6 +106,10 @@ private actor DispatcherDisplaySelection:
                     ordinal: 1,
                     pixelWidth: 3_024,
                     pixelHeight: 1_964,
+                    layoutX: 0,
+                    layoutY: 0,
+                    layoutWidth: 1_512,
+                    layoutHeight: 982,
                     isMain: true
                 ),
                 try .init(
@@ -113,6 +117,10 @@ private actor DispatcherDisplaySelection:
                     ordinal: 2,
                     pixelWidth: 2_560,
                     pixelHeight: 1_440,
+                    layoutX: 1_512,
+                    layoutY: -229,
+                    layoutWidth: 2_560,
+                    layoutHeight: 1_440,
                     isMain: false
                 ),
             ]

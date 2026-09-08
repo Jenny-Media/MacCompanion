@@ -705,11 +705,24 @@ final class ClientUIHarnessUITests: XCTestCase {
             app.navigationBars["Choose Display"].waitForExistence(timeout: 5),
             "The shared-display picker did not appear"
         )
-        let mainDisplay = app.buttons["Shared Display 1"]
-        XCTAssertTrue(mainDisplay.waitForExistence(timeout: 5))
+        let mainDisplay = app.descendants(matching: .any)["Shared Display 1"]
+        XCTAssertTrue(
+            mainDisplay.waitForExistence(timeout: 5),
+            app.debugDescription
+        )
         wait(for: mainDisplay, toHaveValue: "Showing", timeout: 5)
-        let secondDisplay = app.buttons["Shared Display 2"]
+        let secondDisplay = app.descendants(matching: .any)["Shared Display 2"]
         XCTAssertTrue(secondDisplay.waitForExistence(timeout: 5))
+        XCTAssertGreaterThanOrEqual(
+            secondDisplay.frame.minX,
+            mainDisplay.frame.maxX - 1,
+            "Display 2 did not preserve its right-side Mac arrangement"
+        )
+        XCTAssertLessThan(
+            secondDisplay.frame.minY,
+            mainDisplay.frame.minY,
+            "Display 2 did not preserve its higher Mac arrangement"
+        )
         secondDisplay.tap()
         wait(
             for: app.staticTexts["Lab active display"],
