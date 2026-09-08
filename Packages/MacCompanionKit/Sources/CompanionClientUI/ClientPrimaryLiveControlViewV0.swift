@@ -436,74 +436,76 @@ private struct ClientSharedDisplayPickerV0: View {
 
     var body: some View {
         NavigationStack {
-            ScrollView {
-                VStack(spacing: 20) {
-                    if let catalog {
-                        ClientSharedDisplayTopologyV0(
-                            catalog: catalog,
-                            requestInFlight: requestInFlight,
-                            pendingDisplayID: pendingDisplayID,
-                            onSelect: onSelect
+            GeometryReader { proxy in
+                ScrollView {
+                    VStack(spacing: 20) {
+                        if let catalog {
+                            ClientSharedDisplayTopologyV0(
+                                catalog: catalog,
+                                requestInFlight: requestInFlight,
+                                pendingDisplayID: pendingDisplayID,
+                                onSelect: onSelect
+                            )
+                            .frame(
+                                maxWidth: .infinity,
+                                minHeight: 320
+                            )
+                            .frame(height: max(320, proxy.size.height * 0.62))
+
+                            Text(
+                                "Tap a display to share it. The blue display is currently showing."
+                            )
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+                        } else if requestInFlight {
+                            VStack(spacing: 12) {
+                                ProgressView()
+                                Text("Loading displays…")
+                                    .foregroundStyle(.secondary)
+                            }
+                            .frame(maxWidth: .infinity, minHeight: 320)
+                            .accessibilityIdentifier("Shared Displays Loading")
+                        } else {
+                            ContentUnavailableView(
+                                "Displays unavailable",
+                                systemImage: "display.trianglebadge.exclamationmark",
+                                description: Text(
+                                    "Refresh to ask the connected Mac for its current displays."
+                                )
+                            )
+                            .frame(maxWidth: .infinity, minHeight: 320)
+                        }
+
+                        if let statusMessage {
+                            Label(
+                                statusMessage,
+                                systemImage: "exclamationmark.triangle"
+                            )
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                            .accessibilityIdentifier("Shared Displays Status")
+                        }
+
+                        Button(
+                            requestInFlight ? "Refreshing…" : "Refresh Displays",
+                            systemImage: "arrow.clockwise",
+                            action: onRefresh
                         )
-                        .frame(
-                            maxWidth: .infinity,
-                            minHeight: 260,
-                            idealHeight: 320
-                        )
+                        .buttonStyle(.bordered)
+                        .accessibilityIdentifier("Refresh Shared Displays")
+                        .disabled(requestInFlight || pendingDisplayID != nil)
 
                         Text(
-                            "Tap a display to share it. The blue display is currently showing."
+                            "Mac Companion shares one display at a time and does not rearrange your Mac displays."
                         )
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
                         .multilineTextAlignment(.center)
-                    } else if requestInFlight {
-                        VStack(spacing: 12) {
-                            ProgressView()
-                            Text("Loading displays…")
-                                .foregroundStyle(.secondary)
-                        }
-                        .frame(maxWidth: .infinity, minHeight: 260)
-                        .accessibilityIdentifier("Shared Displays Loading")
-                    } else {
-                        ContentUnavailableView(
-                            "Displays unavailable",
-                            systemImage: "display.trianglebadge.exclamationmark",
-                            description: Text(
-                                "Refresh to ask the connected Mac for its current displays."
-                            )
-                        )
-                        .frame(maxWidth: .infinity, minHeight: 260)
                     }
-
-                    if let statusMessage {
-                        Label(
-                            statusMessage,
-                            systemImage: "exclamationmark.triangle"
-                        )
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                        .accessibilityIdentifier("Shared Displays Status")
-                    }
-
-                    Button(
-                        requestInFlight ? "Refreshing…" : "Refresh Displays",
-                        systemImage: "arrow.clockwise",
-                        action: onRefresh
-                    )
-                    .buttonStyle(.bordered)
-                    .accessibilityIdentifier("Refresh Shared Displays")
-                    .disabled(requestInFlight || pendingDisplayID != nil)
-
-                    Text(
-                        "Mac Companion shares one display at a time and does not rearrange your Mac displays."
-                    )
-                    .font(.caption)
-                    .foregroundStyle(.tertiary)
-                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: .infinity)
+                    .padding()
                 }
-                .frame(maxWidth: .infinity)
-                .padding()
             }
             .navigationTitle("Choose Display")
             .toolbar {
@@ -512,8 +514,6 @@ private struct ClientSharedDisplayPickerV0: View {
                 }
             }
         }
-        .presentationDetents([.medium, .large])
-        .presentationDragIndicator(.visible)
     }
 }
 
@@ -1423,7 +1423,7 @@ public struct ClientPrimaryLiveControlViewV0: View {
             )
             .interactiveDismissDisabled(viewState.surfaceRequestInFlight)
         }
-        .sheet(isPresented: $viewState.showingDisplayPicker) {
+        .fullScreenCover(isPresented: $viewState.showingDisplayPicker) {
             ClientSharedDisplayPickerV0(
                 catalog: viewState.displayCatalog,
                 requestInFlight: viewState.displayRequestInFlight,

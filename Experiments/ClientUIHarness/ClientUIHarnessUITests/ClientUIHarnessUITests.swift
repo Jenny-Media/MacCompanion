@@ -705,6 +705,11 @@ final class ClientUIHarnessUITests: XCTestCase {
             app.navigationBars["Choose Display"].waitForExistence(timeout: 5),
             "The shared-display picker did not appear"
         )
+        XCTAssertLessThan(
+            app.navigationBars["Choose Display"].frame.minY,
+            150,
+            "The shared-display picker did not open at full height"
+        )
         let mainDisplay = app.descendants(matching: .any)["Shared Display 1"]
         XCTAssertTrue(
             mainDisplay.waitForExistence(timeout: 5),
