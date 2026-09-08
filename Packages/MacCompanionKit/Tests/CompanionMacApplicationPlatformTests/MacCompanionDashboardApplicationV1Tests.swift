@@ -283,11 +283,12 @@ private func makeDashboardApplicationV1(
 private func eventuallyDashboardApplicationV1(
     _ condition: @escaping @Sendable () async -> Bool
 ) async -> Bool {
-    for _ in 0..<500 {
+    let deadline = ContinuousClock.now.advanced(by: .seconds(2))
+    while ContinuousClock.now < deadline {
         if await condition() { return true }
-        await Task.yield()
+        try? await Task.sleep(for: .milliseconds(1))
     }
-    return false
+    return await condition()
 }
 
 @Test
