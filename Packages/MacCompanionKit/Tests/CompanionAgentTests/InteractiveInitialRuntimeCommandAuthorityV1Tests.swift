@@ -1413,16 +1413,79 @@ func interactiveLeaseSchedulerAcceptsSerializedSurfaceChangeBeforeRenewal(transi
         primaryConnectionID: initialConnectionID, reason: .clientDisconnected)
 }
 
-@Test(arguments: ["display", "counterGap", "sameRevision", "wrongIssueTime", "wrongSurface"])
+@Test func interactiveLeaseSchedulerAcceptsSerializedDisplayChangeBeforeRenewal()
+    async throws
+{
+    let initial = try schedulerLease(
+        renewalCounter: 0,
+        issuedAt: 2_000_000_000,
+        expiresAt: 12_000_000_000
+    )
+    let display = UUID()
+    let surface = UUID()
+    let changed = try schedulerLease(
+        selectedDisplayID: display,
+        surfaceID: surface,
+        revision: 2,
+        renewalCounter: 1,
+        issuedAt: 3_000_000_000,
+        expiresAt: 13_000_000_000
+    )
+    let replacement = try schedulerLease(
+        selectedDisplayID: display,
+        surfaceID: surface,
+        revision: 2,
+        renewalCounter: 2,
+        issuedAt: 10_000_000_000,
+        expiresAt: 20_000_000_000
+    )
+    let runtime = RenewalSchedulerRuntimeV1(
+        initialLease: initial,
+        leaseAtRenewal: changed,
+        renewalResult: .replacement(replacement)
+    )
+    let clock = RuntimeOwnerClockV1([
+        2_000_000_000, 10_000_000_000, 10_000_000_000,
+    ])
+    let sleeper = RenewalSchedulerSleeperV1(successfulCalls: 1)
+    let owner = AgentInteractiveLeaseRenewalOwnerV1(
+        runtime: runtime,
+        monotonicNowNanoseconds: { clock.now() },
+        sleep: { try await sleeper.sleep(nanoseconds: $0) }
+    )
+
+    try await owner.install(
+        initialBootstrap(),
+        requirement: initialRequirement()
+    )
+    for _ in 0..<1_000 {
+        let delays = await sleeper.delays()
+        let terminations = await runtime.terminations()
+        if delays.count > 1 || !terminations.isEmpty { break }
+        try await Task.sleep(for: .milliseconds(1))
+    }
+
+    #expect(await runtime.terminations().isEmpty)
+    #expect(await sleeper.delays() == [
+        8_000_000_000, 8_000_000_000,
+    ])
+    await owner.terminate(
+        interactiveSessionID: initialSessionID,
+        primaryConnectionID: initialConnectionID,
+        reason: .clientDisconnected
+    )
+}
+
+@Test(arguments: ["counterGap", "sameRevision", "wrongIssueTime", "wrongSurface"])
 func interactiveLeaseSchedulerRejectsInvalidPostTransitionRenewal(fault: String) async throws {
     let initial = try schedulerLease(renewalCounter: 0, issuedAt: 2_000_000_000, expiresAt: 12_000_000_000)
     let surface = UUID()
-    let display = fault == "display" ? UUID() : initialDisplayID
     let revision: UInt64 = fault == "sameRevision" ? 1 : 2
-    let previous = try schedulerLease(selectedDisplayID: display, surfaceID: surface, revision: revision,
+    let previous = try schedulerLease(surfaceID: surface, revision: revision,
         renewalCounter: 1, issuedAt: 3_000_000_000, expiresAt: 13_000_000_000)
-    let replacement = try schedulerLease(selectedDisplayID: display,
-        surfaceID: fault == "wrongSurface" ? UUID() : surface, revision: revision,
+    let replacement = try schedulerLease(
+        surfaceID: fault == "wrongSurface" ? UUID() : surface,
+        revision: revision,
         renewalCounter: fault == "counterGap" ? 3 : 2,
         issuedAt: fault == "wrongIssueTime" ? 9_000_000_000 : 10_000_000_000, expiresAt: 19_000_000_000)
     let runtime = RenewalSchedulerRuntimeV1(initialLease: initial, leaseAtRenewal: previous,
@@ -1510,8 +1573,10 @@ func interactiveLeaseSchedulerRejectsInvalidPostTransitionRenewal(fault: String)
         initialBootstrap(),
         requirement: initialRequirement()
     )
-    for _ in 0..<100 where await runtime.terminations().isEmpty {
-        await Task.yield()
+    let deadline = ContinuousClock.now.advanced(by: .seconds(2))
+    while await runtime.terminations().isEmpty,
+          ContinuousClock.now < deadline {
+        try await Task.sleep(for: .milliseconds(1))
     }
 
     #expect(await runtime.renewalSamples() == [10_000_000_000])

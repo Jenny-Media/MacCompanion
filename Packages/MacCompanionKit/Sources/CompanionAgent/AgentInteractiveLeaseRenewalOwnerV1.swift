@@ -46,12 +46,15 @@ public struct AgentInteractiveLeaseRenewalResultV1: Sendable {
         let advancedSurface = previous.renewalCounter > scheduled.renewalCounter
             && previous.surfaceRevision.rawValue > scheduled.surfaceRevision.rawValue
             && previous.coordinateRevision.rawValue > scheduled.coordinateRevision.rawValue
+        // The selected display is intentionally mutable through the serialized
+        // surface-transition authority. `advancedSurface` proves that the
+        // runtime moved beyond the scheduler snapshot, while renewal validation
+        // binds the replacement to that exact authoritative lease.
         guard previous == scheduled || advancedSurface,
               previous.hostID == initial.hostID,
               previous.deviceID == initial.deviceID,
               previous.interactiveSessionID == initial.interactiveSessionID,
               previous.authorizationEpoch == initial.authorizationEpoch,
-              previous.selectedDisplayID == initial.selectedDisplayID,
               Set(initial.allowedInteractionClasses).isSuperset(of: previous.allowedInteractionClasses),
               previous.issuedAtMonotonicNanoseconds >= scheduled.issuedAtMonotonicNanoseconds,
               replacement.issuedAtMonotonicNanoseconds >= now,
