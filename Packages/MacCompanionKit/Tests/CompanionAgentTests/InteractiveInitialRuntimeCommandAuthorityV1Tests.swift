@@ -213,6 +213,44 @@ private actor RuntimeBindingProbeV1: InteractiveSessionRuntimeOwningV0 {
     }
 }
 
+private actor RuntimeBindingDisplayProbeV1:
+    InteractiveDisplaySelectionDispatchingV1
+{
+    private var catalogCountStorage = 0
+
+    func displayCatalog(
+        context: InteractiveSessionCommandContextV0
+    ) async throws -> InteractiveDisplayCatalogResponseBodyV1 {
+        catalogCountStorage += 1
+        return try InteractiveDisplayCatalogResponseBodyV1(
+            authorizationEpoch: context.authorizationEpoch,
+            admissionRevision: 9,
+            selectedDisplayID: WireUUID(initialDisplayID),
+            validForMilliseconds: 5_000,
+            displays: [try InteractiveDisplayCandidateV1(
+                displayID: WireUUID(initialDisplayID),
+                ordinal: 1,
+                pixelWidth: 2_560,
+                pixelHeight: 1_067,
+                isMain: true
+            )]
+        )
+    }
+
+    func selectDisplay(
+        _ request: InteractiveDisplaySelectBodyV1,
+        context: InteractiveSessionCommandContextV0
+    ) async throws -> InteractiveDisplaySelectedBodyV1 {
+        try InteractiveDisplaySelectedBodyV1(
+            authorizationEpoch: context.authorizationEpoch,
+            admissionRevision: request.expectedAdmissionRevision + 1,
+            selectedDisplayID: request.displayID
+        )
+    }
+
+    func catalogCount() -> Int { catalogCountStorage }
+}
+
 @Test func runtimeBindingAuthorityIsUnavailableUntilExactGenerationBinds()
     async throws
 {
@@ -270,6 +308,49 @@ private actor RuntimeBindingProbeV1: InteractiveSessionRuntimeOwningV0 {
     }
     try await authority.bind(runtime: second, generation: 8)
     #expect(await authority.state() == .bound(generation: 8))
+}
+
+@Test func runtimeBindingAuthorityServesCatalogForExactActivePrimary()
+    async throws
+{
+    let authority = AgentInteractiveRuntimeBindingAuthorityV1()
+    let runtime = RuntimeBindingProbeV1()
+    let displays = RuntimeBindingDisplayProbeV1()
+    let requirement = try initialRequirement()
+    try await authority.bind(
+        runtime: runtime,
+        channelAuthenticator: nil,
+        displayControl: displays,
+        generation: 1
+    )
+
+    _ = try await authority.displayCatalog(context: requirement.command)
+    try await authority.install(
+        initialBootstrap(),
+        requirement: requirement
+    )
+    _ = try await authority.displayCatalog(context: requirement.command)
+
+    let foreignPrimary = try InteractiveSessionCommandContextV0(
+        deviceID: initialDeviceID,
+        clientID: initialClientID,
+        deviceState: .activeGranted,
+        authorizationEpoch: .init(rawValue: 4),
+        grantRevision: .init(rawValue: 5),
+        policyRevision: .init(rawValue: 6),
+        primaryConnectionID: Data(repeating: 0xff, count: 16),
+        hostID: initialHostID,
+        hostFingerprint: initialFingerprint,
+        hostState: .userSessionActive,
+        wallNowUnixMilliseconds: 1_724_000_010_000,
+        monotonicNowMilliseconds: 2_000
+    )
+    await #expect(
+        throws: AgentInteractiveRuntimeBindingAuthorityErrorV1.unavailable
+    ) {
+        _ = try await authority.displayCatalog(context: foreignPrimary)
+    }
+    #expect(await displays.catalogCount() == 2)
 }
 
 @Test func runtimeBindingAuthorityExplicitTerminationAndFinishAreTerminal()

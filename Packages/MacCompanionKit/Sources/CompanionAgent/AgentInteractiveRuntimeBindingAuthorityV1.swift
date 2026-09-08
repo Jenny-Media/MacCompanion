@@ -126,8 +126,11 @@ public actor AgentInteractiveRuntimeBindingAuthorityV1:
         let predecessor = sequencingTail
         let operation = Task { [self] in
             await predecessor.value
-            guard !terminal, active == nil,
-                  let display = bound?.displayControl else {
+            guard !terminal,
+                  let display = bound?.displayControl,
+                  active?.primaryConnectionID == nil
+                    || active?.primaryConnectionID
+                        == context.primaryConnectionID else {
                 throw AgentInteractiveRuntimeBindingAuthorityErrorV1
                     .unavailable
             }
