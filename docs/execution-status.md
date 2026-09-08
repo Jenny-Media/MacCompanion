@@ -1,6 +1,6 @@
 # Mac Companion Execution and Blocker Ledger
 
-Status date: 2026-08-30
+Status date: 2026-09-08
 
 This is the living execution authority for the staged plan. A blocker applies only to work that names it as a dependency. Work in every other safe lane continues. Evidence links point to repository artifacts or reproducible commands; secrets and Apple-account records remain outside the repository.
 
@@ -87,6 +87,16 @@ The [Stage 2 candidate worktree audit](evidence/2026-08-29-stage-2-candidate-wor
 records the 315-path starting state, the product and signed-lab commit
 boundaries, the repaired stale-soak and single-device-harness assumptions, and
 the remaining candidate construction and physical gates.
+
+The original 21-item implementation sequence is now status-reconciled in
+[Implementation Orchestration section 7](implementation-orchestration.md#7-first-issue-sequence).
+It distinguishes locally integrated work from physical, external, release, and
+publication evidence. In particular, the Stage 2 core and its framing are
+integrated, while entitlement response, full lifecycle/compatibility proof,
+release packaging, frozen-candidate soak, and private-route evidence remain
+open. The public GitHub repository has no corresponding issue or pull-request
+records, so these planning numbers must not be described as closed GitHub
+issues.
 
 The first exact-candidate multi-device run exposed deterministic primary
 ping-pong rather than a route failure: the historical singleton primary owner

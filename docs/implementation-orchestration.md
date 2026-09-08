@@ -346,37 +346,51 @@ This workstream produces Stage 2 only after Workstream B's identity and revocati
 4. Evaluate one confidence-rated semantic overlay or provider-native surface only after the market-MVP gate.
 5. Generalize a provider SDK only from the working integration.
 
-Shell, arbitrary files, clipboard, audio, multiple displays, headless service, pre-login control, and AI-driven input remain separate post-MVP workstreams.
+Shell, arbitrary files, clipboard, audio, simultaneous multi-display streaming,
+headless service, pre-login control, and AI-driven input remain separate
+post-MVP workstreams. Stage 2 streams one display at a time and may switch that
+selection inside the active session.
 
 ## 7. First issue sequence
 
-The first implementation backlog should be created in this dependency order:
+Reconciled 2026-09-08 against local `main` at `7ae200d`. These numbers are the
+original planning backlog, not GitHub issue numbers. The public GitHub
+repository currently has no issue or pull-request records for this work, and
+its published `main` is behind the local branch. A `passed` row below therefore
+means its implementation and named evidence are integrated locally; it does
+not imply publication, notarization, external entitlement approval, or a
+complete Stage 3 beta.
 
-| Order | Issue | Evidence required to close |
-| --- | --- | --- |
-| 1 | Confirm Apple identifiers and submit managed entitlement | Account record and request ID; no secret material in repository |
-| 2 | Record ADR-001 process and trust boundary | Target graph, negative dependencies, crash behavior |
-| 3 | Scaffold workspace and strict build settings | Mac, agent, iOS, CLI, package, and test targets build in CI |
-| 4 | Produce release-shaped signed internal Mac artifact | Expanded entitlements, signature, notarization dry run or accepted artifact |
-| 5 | Prove `SMAppService` lifecycle | Login, lock, crash, disable, logout, update, uninstall matrix |
-| 6 | Select and prove authenticated local IPC | Peer identity, role authorization, invalid-client tests |
-| 7 | Freeze domain state machines and error taxonomy | Cross-target fixtures and illegal-transition tests |
-| 8 | Implement durable security-store skeleton | Migration, disk-full, corruption, rollback, epoch tests |
-| 9 | Prove host session-state observer | Physical-Mac lock, switch, logout, sleep evidence |
-| 10 | Prove Local Network and Bonjour recovery | Grant, denial, later recovery on physical iPhone |
-| 11 | Freeze pairing and authenticated-session RFC | Golden and negative transcript fixtures |
-| 12 | Deliver local pinned `status.snapshot` | One physical Mac/iPhone end-to-end test |
-| 13 | Add viewing presence and active revocation | [Bundle-independent durable local revoke convergence](evidence/2026-08-21-local-device-revocation-convergence.md), indicator truth, authenticated XPC, and sub-second physical revocation evidence |
-| 14 | Screen capture and encoder experiment | Permission attribution, format, latency, resource report |
-| 15 | Input and display-transform experiment | Bounded input, stale revision, stuck-key tests |
-| 16 | Locked-session experiment | Exact public-API result and product-contract ADR |
-| 17 | App/window/focus experiment | App and Window Focus, filter switching, modal fallback, AX timeout, secure-field, privacy report |
-| 18 | Freeze Interactive Control and Remote Surface framing | JSON/binary fixtures, revisions, fallback, fuzz bounds, keyframe recovery |
-| 19 | Deliver granted Adaptive Control | Desktop, App Focus, Window Focus, Smart Zoom, interaction profiles, grant, presence, indicator, suspend, audit privacy |
-| 20 | Package Stage 1/2 internal alpha | Clean install, update, uninstall, physical matrix |
-| 21 | Add private-route diagnostics and one action | No-relay Tailscale evidence and durable-operation tests |
+| Order | Issue | Status | Reconciled evidence and remaining closure |
+| --- | --- | --- | --- |
+| 1 | Confirm Apple identifiers and submit managed entitlement | `blocked-external` | The Jenny Media Team ID and Mac containing-app identifier are confirmed, and development signing works. Apple's managed-entitlement response and final explicit distribution identifiers/profiles remain external gates. |
+| 2 | Record ADR-001 process and trust boundary | `passed` | [ADR-0001](adr/0001-process-and-trust-boundary.md), target boundaries, negative dependencies, lifecycle behavior, and validation are integrated. |
+| 3 | Scaffold workspace and strict build settings | `passed` | Permanent Mac, embedded Agent, iOS/iPadOS, CLI, package, experiment, and test targets are checked in and compile through the repository gate. |
+| 4 | Produce release-shaped signed internal Mac artifact | `passed` | Development-signed Mac/Agent candidates and the local Developer ID packaging construction pass strict signature/topology checks. Actual notarization, stapling, and external promotion remain Issue 20 and distribution gates. |
+| 5 | Prove `SMAppService` lifecycle | `active` | Enablement, Agent/menu launch, crash/restart, disable, readiness, and signed isolated stress paths are integrated. Clean-account login/logout, update, uninstall, and the full physical lifecycle matrix remain. |
+| 6 | Select and prove authenticated local IPC | `passed` | Same-team exact-identifier peer validation, closed role authorization, invalid-client rejection, generation fencing, and signed Agent/menu XPC journeys pass. |
+| 7 | Freeze domain state machines and error taxonomy | `passed` | Normative closed states, errors, fixtures, illegal-transition coverage, and cross-target package tests are integrated. |
+| 8 | Implement durable security-store skeleton | `passed` | SQLite migrations, quotas, rollback, corruption/disk-full faults, authorization epochs, replay, grants, revocation, audit, and restart convergence are covered by the repository gate. |
+| 9 | Prove host session-state observer | `active` | Conservative public-API lifecycle modeling and fail-closed transitions are integrated. The complete physical lock, fast-user-switch, logout, sleep, wake, and display-sleep matrix remains. |
+| 10 | Prove Local Network and Bonjour recovery | `active` | Same-LAN Bonjour pairing and reconnect work on signed physical clients. Explicit Local Network denial, no-route proof, Settings recovery, and interface-change evidence remain. |
+| 11 | Freeze pairing and authenticated-session RFC | `passed` | The v0.1 pairing, pinned TLS, transcript/SAS, client proof, replay, recovery, and negative fixtures are normative and exercised end to end. |
+| 12 | Deliver local pinned `status.snapshot` | `passed` | Signed physical clients pair, authenticate to the pinned host, reconnect durably, and receive the Observe/status workspace without entering Control. |
+| 13 | Add viewing presence and active revocation | `active` | [Durable local revoke convergence](evidence/2026-08-21-local-device-revocation-convergence.md), authenticated XPC teardown, visible Control state, Stop, expiry, and restart fencing are integrated. A retained exact sub-second physical revocation measurement and complete indicator-failure matrix remain. |
+| 14 | Screen capture and encoder experiment | `passed` | Signed physical ScreenCaptureKit capture, VideoToolbox encode/decode/render, permission attribution, clean-keyframe recovery, decoder-pressure recovery, and sustained live viewing have been demonstrated. Release performance budgets remain Issue 20. |
+| 15 | Input and display-transform experiment | `passed` | Physical pointer, trackpad, click/double-click, scroll, keyboard, zoom, display transforms, live multi-display switching, stale-revision rejection, and stuck-input resets are integrated and regression-tested. |
+| 16 | Locked-session experiment | `active` | Lock/unlock teardown and recovery behavior has been exercised, but the exact supported lock-surface contract and full physical lock/display-sleep evidence have not been accepted as a completed ADR. |
+| 17 | App/window/focus experiment | `active` | App Focus, Window Focus, activation-before-input, focus observation, Smart Zoom, manual override, and deterministic Desktop fallback are integrated. The cross-app modal, AX-timeout, secure-field, custom-drawn-app, and privacy compatibility report remains incomplete. |
+| 18 | Freeze Interactive Control and Remote Surface framing | `passed` | Normative JSON and binary media/input/control fixtures, revisions, lease and replacement fences, fallbacks, bounds, malformed-input coverage, and keyframe recovery are integrated. |
+| 19 | Deliver granted Adaptive Control | `passed` | The Stage 2 product path is integrated: independent Control grant, Desktop/App/Window surfaces, Smart Zoom, touch/trackpad/keyboard input, visible Mac consent and indicator, Stop/expiry, audit privacy, reconnection, multi-client isolation, and in-session spatial display selection. Issue 20 retains acceptance and packaging work. |
+| 20 | Package Stage 1/2 internal alpha | `active` | Signed Mac and iPhone/iPad development builds install and run while preserving pairing; substantial physical use has passed. Clean install/update/uninstall, one-hour Control, full compatibility/performance matrices, stable Xcode 26.6, Developer ID/notarization, and frozen-candidate soak remain. |
+| 21 | Add private-route diagnostics and one action | `active` | The bounded `setAudioMuted` action and durable approval/operation/recovery path are integrated. Saved private endpoints exist, but physical Tailscale/private-route guidance, diagnostics, and no-relay evidence remain. |
 
-Issues 14–17 can run while 7–13 proceed because they are isolated platform probes. Issue 19 cannot merge by copying experimental shortcuts; it must consume the production identity, grant, epoch, surface, IPC, and audit boundaries established earlier.
+Issues 14–17 were allowed to run beside 7–13 as isolated platform probes. The
+implemented Issue 19 path consumes the production identity, grant, epoch,
+surface, IPC, and audit boundaries rather than copying experimental shortcuts.
+Remaining work is concentrated in external approval, physical lifecycle and
+compatibility evidence, release packaging, frozen-candidate soak, and private-
+route proof; it is not a second implementation of the completed Stage 2 core.
 
 ## 8. Change and review protocol
 
