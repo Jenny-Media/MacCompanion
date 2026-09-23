@@ -32,3 +32,36 @@ trustworthy. It prevents a second dependency, floating requirement, substituted
 revision/artifact/license, additional consumer, executable build extension, or
 topology-sanitizer drift from entering without first changing the public policy
 and its adversarial corpus.
+
+## Disposable WebRTC probe admission — September 12, 2026
+
+The user authorized the streaming reuse action plan on September 12. Its B1
+package feasibility check may directly link the community `stasel/WebRTC`
+153.0.0 Apple framework only from `Experiments/WebRTCProbe/`. This is an
+experiment-specific compiler invocation, not an admission to any Swift package
+or application target. The existing machine-readable package policy and its
+negative fixtures remain unchanged and continue to deny additional package
+dependencies, binary targets and remote Xcode references.
+
+- Distributor repository: `https://github.com/stasel/WebRTC`
+- Package revision: `4266157cd08f92115de885ab12d87196a8db87e1`
+- Reported upstream revision: `9ea5afcad008b940468c2a15aec339592cf5a935`
+- Artifact: `WebRTC-M153.xcframework.zip` from release `153.0.0`
+- Required SHA-256: `3e3a8946f27510133e3feed04d05fa23505bbe366e977620503bfc7986c2b78f`
+- Sole consumers: disposable probe executables/libraries built outside the
+  repository by `Experiments/WebRTCProbe/build.py` and the same-directory
+  `streaming_build.py` and `apps_build.py`. These extend the authorized
+  experiment to synthetic H.264 round trips and disposable capture/receiver
+  apps. Their peers use no external ICE/signaling servers. App connection
+  files move through local or existing paired-device tooling, never a new
+  unauthenticated network signaling listener. Generated projects and embedded
+  framework copies remain in private temporary directories, outside the
+  production target graph. Only experiment identities may be signed/installed
+  for the explicitly authorized device tests; no permanent identifiers change.
+
+The script rejects a different digest before extraction or compilation. It
+downloads nothing and does not sign, install, register a service, or add a
+release dependency. Source-to-binary reproducibility, complete third-party
+notices, privacy and signing review remain prerequisites for any later
+production admission. The framework's upstream license does not replace the
+licenses of its included dependencies.

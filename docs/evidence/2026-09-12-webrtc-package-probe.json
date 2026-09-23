@@ -1,0 +1,111 @@
+{
+  "release": "153.0.0",
+  "packageRevision": "4266157cd08f92115de885ab12d87196a8db87e1",
+  "reportedSourceRevision": "9ea5afcad008b940468c2a15aec339592cf5a935",
+  "archiveSHA256": "3e3a8946f27510133e3feed04d05fa23505bbe366e977620503bfc7986c2b78f",
+  "developerDirectory": "/Applications/Xcode-beta.app/Contents/Developer",
+  "builds": [
+    {
+      "sdk": "macosx",
+      "sdkPath": "/Applications/Xcode-beta.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX27.0.sdk",
+      "triple": "arm64-apple-macosx26.0",
+      "compileAndLinkPassed": true
+    },
+    {
+      "sdk": "iphoneos",
+      "sdkPath": "/Applications/Xcode-beta.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS27.0.sdk",
+      "triple": "arm64-apple-ios26.0",
+      "compileAndLinkPassed": true
+    },
+    {
+      "sdk": "iphonesimulator",
+      "sdkPath": "/Applications/Xcode-beta.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator27.0.sdk",
+      "triple": "arm64-apple-ios26.0-simulator",
+      "compileAndLinkPassed": true
+    }
+  ],
+  "runtime": {
+    "codecInventory": {
+      "decoders": [
+        "H264",
+        "H264",
+        "VP8",
+        "VP9",
+        "VP9",
+        "VP9",
+        "VP9",
+        "AV1"
+      ],
+      "encoders": [
+        "H264",
+        "H264",
+        "VP8",
+        "VP9",
+        "VP9",
+        "AV1"
+      ]
+    },
+    "encodingDecodingOrNetworkTested": false,
+    "factoryCreated": true,
+    "hardwareCodecUseVerified": false,
+    "localRendererCallbackVerified": true,
+    "physicalCaptureOrStreamingTested": false,
+    "receivedHeight": 720,
+    "receivedWidth": 1280,
+    "syntheticPixelBufferAdmitted": true
+  },
+  "physicalDeviceTested": false,
+  "releaseTargetsChanged": false,
+  "profile": "maccompanion.webrtc-package-probe-evidence.v0",
+  "date": "2026-09-12",
+  "baseRevision": "42d0431ed16d5d23069907caf180a393458b0eef",
+  "toolchain": "Apple Swift version 6.4 (swiftlang-6.4.0.25.4 clang-2100.3.25.1)\nTarget: arm64-apple-macosx27.0.0",
+  "platformInspection": [
+    {
+      "artifact": "mac-probe",
+      "loadCommands": [
+        "platform MACOS",
+        "minos 26.0",
+        "sdk 27.0"
+      ],
+      "expectedPlatformPassed": true
+    },
+    {
+      "artifact": "iphone-probe.dylib",
+      "loadCommands": [
+        "platform IOS",
+        "minos 26.0",
+        "sdk 27.0"
+      ],
+      "expectedPlatformPassed": true
+    },
+    {
+      "artifact": "simulator-probe.dylib",
+      "loadCommands": [
+        "platform IOSSIMULATOR",
+        "minos 26.0",
+        "sdk 27.0"
+      ],
+      "expectedPlatformPassed": true
+    }
+  ],
+  "negativeCheck": {
+    "substitutedArchiveRejected": true,
+    "digestFailureReported": true,
+    "noBuildDirectoryCreated": true
+  },
+  "sourceSHA256": {
+    "Experiments/WebRTCProbe/PackageProbe.swift": "4ddf511b624843cf31c1cd4fa074ed2eaa82e80813a8985f10c015d5e59adbf7",
+    "Experiments/WebRTCProbe/PackageProbeMain.swift": "dcd6e32a02caeee7d1452062da76f58299fcdf5797caffba2f7b8ab2bf5926b9",
+    "Experiments/WebRTCProbe/build.py": "764b096c2aecc56d0f5851f20cde75838b29955af656612d3a239a55d3e2eb62"
+  },
+  "diagnosticLogsEmpty": true,
+  "stableToolchainVerified": false,
+  "repositoryValidation": {
+    "command": "DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer bash scripts/validate.sh",
+    "exitCode": 0,
+    "swiftTestingTests": 1837,
+    "swiftTestingRuns": 42,
+    "logSHA256": "faff3f63d581c8c51f535b7b814bfa0fef5cf33432ac4d08c4e8ac3d8fc7f1d8"
+  }
+}

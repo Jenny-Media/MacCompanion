@@ -1,0 +1,81 @@
+{
+  "recordedAtUTC": "2026-09-23T01:23:20.729395+00:00",
+  "experimentOnly": true,
+  "productionAcceptanceEligible": false,
+  "sourceHashes": {
+    "MediaPeer.swift": "9e9feb3dc7f74e9f76c1a48a4ab8cff9d861b32b7fa273768492d38d57f74a77",
+    "SyntheticFrames.swift": "224d51e4e6eb45ccb0136840a0f053e26cef0b1d1deaa6c4c622ad9dffd1a454",
+    "Exchange.swift": "95d084eb8bec8c7d53fb3c6bc5ea89113b892c931d20b22b7f5694ced5a21c1a",
+    "CaptureApp.swift": "4c68217db23e5e99efda5eeb7d4c68464241f3b62ddd0dadfad5565521fdc32c",
+    "ReceiverApp.swift": "63de3e0b73940d87af4a998d99de998ceefaeec1d424518619aa5c5fae82fe18",
+    "ReceiverUITests.swift": "7e205f2a8fde49bc16cc2919d9d2763d5df0146e015b4142878319e9fb5f8c7e"
+  },
+  "connectPySHA256": "f3478b348bd49b34538d3e088d14e084b8da2ab1bfcfc66993d66fe4bdb940e5",
+  "operatorFailure": {
+    "observation": "Reconnecting works once then it failed to reconnect and stop",
+    "clarification": "It stopped on its own",
+    "previousAttributionToDeliberateStopWithdrawn": true,
+    "rootCauseOfStoppedLabel": "Unproven with the previous diagnostics"
+  },
+  "buildExitCodes": {
+    "Mac": 0,
+    "Device": 0
+  },
+  "simulatorBuildPassed": true,
+  "normalSimulator": {
+    "uiTestPassed": true,
+    "cycles": 8,
+    "diagnostics": {
+      "distinctReceivingSessions": 9,
+      "maximumAutomaticRetryCount": 0,
+      "injectedFailureRecorded": false,
+      "lastState": "stopped",
+      "lastStopControlCount": 1,
+      "lastVideoHidden": true,
+      "lastIdleTimerDisabled": false
+    }
+  },
+  "injectedFailureSimulator": {
+    "uiTestPassed": true,
+    "cycles": 8,
+    "diagnostics": {
+      "distinctReceivingSessions": 9,
+      "maximumAutomaticRetryCount": 1,
+      "injectedFailureRecorded": true,
+      "lastState": "stopped",
+      "lastStopControlCount": 1,
+      "lastVideoHidden": true,
+      "lastIdleTimerDisabled": false
+    }
+  },
+  "physicalIPhone": {
+    "firstUIRunPassed": false,
+    "firstFailure": "Home transition not observed; cause not established",
+    "repeatUIRunPassed": true,
+    "repeatCycles": 8,
+    "diagnosticsAcrossBothRuns": {
+      "distinctReceivingSessions": 12,
+      "maximumAutomaticRetryCount": 0,
+      "injectedFailureRecorded": false,
+      "lastState": "stopped",
+      "lastStopControlCount": 1,
+      "lastVideoHidden": true,
+      "lastIdleTimerDisabled": false
+    }
+  },
+  "expiryRegressionPassed": true,
+  "aggregateValidator": {
+    "exitCode": 1,
+    "failedAt": "validate_platform_mac_assessment.py",
+    "reason": "Missing fixed Xcode-beta stapler path"
+  },
+  "manualWiFiResult": {
+    "operatorPassed": true,
+    "backgroundRecoveryAlsoPassed": true,
+    "feedback": "Wi-Fi loss indication too slow; Wi-Fi recovery fast; background recovery somewhat slow.",
+    "quantitativeTimingsAvailable": false,
+    "evidenceBoundary": "Operator report; latest prepared relay has no matching manual transition trace."
+  },
+  "longPhysicalSoak": "Skipped at operator request",
+  "localEvidenceRoot": "/Users/yihong/.codex/visualizations/2026/09/12/01a093de-bea3-7922-bc20-22ff9e60c81e/streaming-research/run-2026-09-22/reconnect-retry"
+}

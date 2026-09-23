@@ -1,0 +1,354 @@
+{
+  "recordedAtUTC": "2026-09-23T00:42:47.278512+00:00",
+  "experimentOnly": true,
+  "productionAcceptanceEligible": false,
+  "xcode": "27.0 (27A266a)",
+  "frameworkVersion": "153.0.0",
+  "frameworkArchiveSHA256": "3e3a8946f27510133e3feed04d05fa23505bbe366e977620503bfc7986c2b78f",
+  "sourceHashes": {
+    "build.py": "764b096c2aecc56d0f5851f20cde75838b29955af656612d3a239a55d3e2eb62",
+    "ReceiverUITests.swift": "a58c65b2ab7b5323f00a248899c848349f9badd00c82a459b538c3d3fa5f616d",
+    "connect.py": "a1ac33fff76d01e7e8f484b142f9d1962a9ebee703d1dd2249a5541072243c56",
+    "RoundTripMain.swift": "c5e257d1ca4007c30f1c4b0e8b7f1b237a4107664fa02dd6527f872c20db6146",
+    "CaptureApp.swift": "49633a3a2ae52136b6b3db7026ad5ad74d0d656f5a8479eca1b8a2e45f22ebc7",
+    "README.md": "801592263a2e7be3112113b61e72f5be8c8705a42b88cce4842018a1dc62346b",
+    "apps_build.py": "9feea89398c56b0f1bc9d6ee0e0c50959816753a10a337c3eceff46d8e8ff692",
+    "soak.py": "21fb6421252d7c83742b91af1f9d503b1f3fd086f736199d0977d3915cdef880",
+    "PackageProbeMain.swift": "dcd6e32a02caeee7d1452062da76f58299fcdf5797caffba2f7b8ab2bf5926b9",
+    "SyntheticFrames.swift": "224d51e4e6eb45ccb0136840a0f053e26cef0b1d1deaa6c4c622ad9dffd1a454",
+    "PackageProbe.swift": "4ddf511b624843cf31c1cd4fa074ed2eaa82e80813a8985f10c015d5e59adbf7",
+    "ReceiverApp.swift": "99301871b30d3e47ce421c6b6acb256546d508db685c61489bbb97613b8a3ed5",
+    "streaming_build.py": "69766e84fa3be721ab7dd1c1c8616e09d8ce5e87ed3a6d347345f60970422211",
+    "MediaPeer.swift": "9e9feb3dc7f74e9f76c1a48a4ab8cff9d861b32b7fa273768492d38d57f74a77",
+    "Exchange.swift": "339e0975bb7d8c30db1a89836822dd73f690a00f05e14ce05d8e857807d6481f"
+  },
+  "originalSoakSourceHashes": {
+    "build.py": "764b096c2aecc56d0f5851f20cde75838b29955af656612d3a239a55d3e2eb62",
+    "RoundTripMain.swift": "71f369506c932dc3b25cd41ecabbbceba367e79f96a9a4e69baca32f88b822d7",
+    "CaptureApp.swift": "65e75b3cfad91090eba80ccef757f8673917668d11f9bad1c925e8d34ef16dba",
+    "README.md": "f26513f52d7e2ee64dd2a6f5eca49ca08fe972b340f857aef6ffab30167e5d05",
+    "apps_build.py": "0c2b2dcf85576f9412768e5d1c747ba48f7102808a31e91ca26fb80cc653d35d",
+    "soak.py": "094e3d663ab1d82f3b1f3db3c2b6fc8d4b14dd698be787f6269dc2624d62a1a9",
+    "PackageProbeMain.swift": "dcd6e32a02caeee7d1452062da76f58299fcdf5797caffba2f7b8ab2bf5926b9",
+    "SyntheticFrames.swift": "224d51e4e6eb45ccb0136840a0f053e26cef0b1d1deaa6c4c622ad9dffd1a454",
+    "PackageProbe.swift": "4ddf511b624843cf31c1cd4fa074ed2eaa82e80813a8985f10c015d5e59adbf7",
+    "ReceiverApp.swift": "568d331a3234d09a7851202cc437b3b21f6dd3d9798a79cc9dee6c64aeaaa561",
+    "streaming_build.py": "984b4cc37e1d53bb53704e57311ab4fd74dd776346b657651c39bfe5befec41d",
+    "MediaPeer.swift": "d2ec0d6b50aed3e64543efe40ce753f6a8fb3f8b2b6fda940f10148465a7a6af",
+    "Exchange.swift": "339e0975bb7d8c30db1a89836822dd73f690a00f05e14ce05d8e857807d6481f"
+  },
+  "finalInstalledAppSourceMatches": {
+    "CaptureApp.swift": true,
+    "MediaPeer.swift": true,
+    "SyntheticFrames.swift": true,
+    "Exchange.swift": true,
+    "receiver:ReceiverApp.swift": true,
+    "receiver:ReceiverUITests.swift": true,
+    "receiver:MediaPeer.swift": true,
+    "receiver:SyntheticFrames.swift": true,
+    "receiver:Exchange.swift": true
+  },
+  "finalReceiverBuildExitCodes": {
+    "Device": 0,
+    "Simulator": 0
+  },
+  "captureBuildExitCode": 0,
+  "captureStartup": {
+    "attempts": 10,
+    "passed": 10
+  },
+  "originalLifecycleFirstAttempt": {
+    "completedCycles": 9,
+    "passedCycles": 9,
+    "iceRestartPassedCycles": 9,
+    "stopPassedCycles": 9,
+    "errors": [
+      "timeout(\"ICE gathering state=1 candidates=3\")"
+    ],
+    "invalidMarkers": 0,
+    "wrongGenerationFrames": 0,
+    "nonIncreasingFrames": 0
+  },
+  "originalLifecycleRetry": {
+    "completedCycles": 10,
+    "passedCycles": 10,
+    "iceRestartPassedCycles": 10,
+    "stopPassedCycles": 10,
+    "errors": [],
+    "invalidMarkers": 0,
+    "wrongGenerationFrames": 0,
+    "nonIncreasingFrames": 0
+  },
+  "finalLANLifecycle": {
+    "completedCycles": 10,
+    "passedCycles": 10,
+    "iceRestartPassedCycles": 10,
+    "stopPassedCycles": 10,
+    "errors": [],
+    "invalidMarkers": 0,
+    "wrongGenerationFrames": 0,
+    "nonIncreasingFrames": 0
+  },
+  "originalOneHourSoak": {
+    "result": {
+      "exitCode": 0,
+      "elapsedSeconds": 3602.9465981669928,
+      "roundTripPassed": true,
+      "resourceSamples": 718,
+      "oneHourGrowthVerified": true,
+      "medianWindowGrowthMiB": -3.96875,
+      "rssSlopeMiBPerMinute": 0.38608616180043603,
+      "growthPassed": true,
+      "passed": true
+    },
+    "frames": {
+      "active": false,
+      "internalRoundTripP50Ms": 18.739708335488103,
+      "internalRoundTripP95Ms": 431.17308332875837,
+      "invalidMarkers": 0,
+      "lastSequence": 108000,
+      "maximumInterFrameGapSeconds": 11.204895875009242,
+      "nonIncreasingFrames": 0,
+      "receivedValidFrames": 103937,
+      "rejectedLateCallbacks": 0,
+      "retainedTimingSamples": 5000,
+      "wrongGenerationFrames": 0
+    },
+    "scope": "Synthetic source with original default adapter selection; not the final LAN-only apps or a physical one-hour test"
+  },
+  "finalLANFiveMinuteSoak": {
+    "result": {
+      "exitCode": 0,
+      "elapsedSeconds": 300.6679866669874,
+      "localNetworkOnly": true,
+      "roundTripPassed": true,
+      "resourceSamples": 60,
+      "oneHourGrowthVerified": false,
+      "passed": true
+    },
+    "frames": {
+      "active": false,
+      "internalRoundTripP50Ms": 20.895041670883074,
+      "internalRoundTripP95Ms": 595.5096666730242,
+      "invalidMarkers": 0,
+      "lastSequence": 9000,
+      "maximumInterFrameGapSeconds": 11.141186500011827,
+      "nonIncreasingFrames": 0,
+      "receivedValidFrames": 6971,
+      "rejectedLateCallbacks": 0,
+      "retainedTimingSamples": 5000,
+      "wrongGenerationFrames": 0
+    },
+    "oneHourGrowthGateSatisfied": false
+  },
+  "physical": {
+    "iPhone18ProMax": {
+      "passed": true,
+      "observedSeconds": 300.2187688749982,
+      "lastSampleAgeSeconds": 1.0090588750026654,
+      "recentFramesAdvanced": true,
+      "validFramesAdvanced": true,
+      "finalStatus": {
+        "state": "Receiving",
+        "videoHidden": false,
+        "idleTimerDisabled": true,
+        "frames": {
+          "active": true,
+          "invalidMarkers": 0,
+          "lastSequence": 10426,
+          "maximumInterFrameGapSeconds": 0.21129362500505522,
+          "nonIncreasingFrames": 37,
+          "receivedValidFrames": 6680,
+          "rejectedLateCallbacks": 0,
+          "retainedTimingSamples": 0,
+          "wrongGenerationFrames": 0
+        }
+      },
+      "selectedLocalCandidate": {
+        "networkType": "wifi",
+        "protocol": "udp",
+        "candidateType": "host"
+      },
+      "decode": {
+        "decoderImplementation": "VideoToolbox",
+        "powerEfficientDecoder": false,
+        "framesPerSecond": 22,
+        "freezeCount": 2,
+        "totalFreezesDuration": 0.415,
+        "packetsLost": 0
+      },
+      "quietObservation": {
+        "observationGapSeconds": 242.49491095542908,
+        "validFramesSincePriorSample": 8161,
+        "sameSession": true,
+        "state": "Receiving",
+        "videoHidden": false,
+        "idleTimerDisabled": true,
+        "passed": true,
+        "scope": "No paired-device file transfers during the recorded observation gap; other host work continued."
+      },
+      "finalHandsOn": {
+        "state": "background",
+        "videoHidden": true,
+        "session": null,
+        "idleTimerDisabled": false,
+        "framesActive": false,
+        "passed": true,
+        "operatorConfirmed": true,
+        "observation": "Rotation then Home/reopen: background, no video",
+        "recordedAtUTC": "2026-09-23T00:38:52.912035+00:00"
+      }
+    },
+    "iPadPro12_9ThirdGeneration": {
+      "passed": true,
+      "observedSeconds": 300.65657470800215,
+      "lastSampleAgeSeconds": 1.0101227080012904,
+      "recentFramesAdvanced": true,
+      "validFramesAdvanced": true,
+      "finalStatus": {
+        "state": "Receiving",
+        "videoHidden": false,
+        "idleTimerDisabled": true,
+        "frames": {
+          "active": true,
+          "invalidMarkers": 0,
+          "lastSequence": 10526,
+          "maximumInterFrameGapSeconds": 0.21652841666946188,
+          "nonIncreasingFrames": 52,
+          "receivedValidFrames": 6658,
+          "rejectedLateCallbacks": 0,
+          "retainedTimingSamples": 0,
+          "wrongGenerationFrames": 0
+        }
+      },
+      "selectedLocalCandidate": {
+        "networkType": "wifi",
+        "protocol": "udp",
+        "candidateType": "host"
+      },
+      "decode": {
+        "decoderImplementation": "VideoToolbox",
+        "powerEfficientDecoder": false,
+        "framesPerSecond": 24,
+        "freezeCount": 1,
+        "totalFreezesDuration": 0.216,
+        "packetsLost": 0
+      },
+      "quietObservation": {
+        "observationGapSeconds": 243.39002799987793,
+        "validFramesSincePriorSample": 8061,
+        "sameSession": true,
+        "state": "Receiving",
+        "videoHidden": false,
+        "idleTimerDisabled": true,
+        "passed": true,
+        "scope": "No paired-device file transfers during the recorded observation gap; other host work continued."
+      },
+      "finalHandsOn": {
+        "state": "stopped",
+        "videoHidden": true,
+        "session": null,
+        "idleTimerDisabled": false,
+        "framesActive": false,
+        "passed": true,
+        "operatorConfirmed": true,
+        "observation": "Tapped Stop test: stopped, no video",
+        "recordedAtUTC": "2026-09-23T00:38:54.146114+00:00"
+      }
+    }
+  },
+  "finalSimulatorUI": {
+    "rotationAndStopPassed": true,
+    "backgroundPassed": true,
+    "stopStatus": {
+      "state": "stopped",
+      "videoHidden": true,
+      "idleTimerDisabled": false,
+      "frames": {
+        "active": false,
+        "invalidMarkers": 0,
+        "lastSequence": 3940,
+        "maximumInterFrameGapSeconds": 0.18069283333898056,
+        "nonIncreasingFrames": 22,
+        "receivedValidFrames": 2580,
+        "rejectedLateCallbacks": 0,
+        "retainedTimingSamples": 0,
+        "wrongGenerationFrames": 0
+      }
+    },
+    "backgroundStatus": {
+      "state": "background",
+      "videoHidden": true,
+      "idleTimerDisabled": false,
+      "frames": {
+        "active": false,
+        "invalidMarkers": 0,
+        "lastSequence": 1427,
+        "maximumInterFrameGapSeconds": 0.1255165833281353,
+        "nonIncreasingFrames": 11,
+        "receivedValidFrames": 1089,
+        "rejectedLateCallbacks": 0,
+        "retainedTimingSamples": 0,
+        "wrongGenerationFrames": 0
+      }
+    }
+  },
+  "controlledCaptureProcessStall": {
+    "method": "Suspend only the test capture process for eight seconds; not a Wi-Fi outage",
+    "blankedStaleVideo": true,
+    "recoveredCurrentFrames": true,
+    "configuration": "LAN-only receiver before the idle-timer-only revision"
+  },
+  "invalidatedIntermediatePhoneResult": {
+    "sustainedStreamingPassed": false,
+    "reason": "The original connector discarded retired-session diagnostics and accepted an old final sample; user/background status and final sample age invalidate its optimistic passed flag.",
+    "lastCurrentSessionSampleSeconds": 38.631320249987766,
+    "claimedObservationSeconds": 120.0318374169874,
+    "correctedConnectorRequiresFreshMatchingSessionAndRecentFrameProgress": true
+  },
+  "repositoryTests": {
+    "total": 1837,
+    "runs": 42,
+    "suites": [
+      {
+        "log": "swift-tests.log",
+        "tests": 1821,
+        "runs": 40
+      },
+      {
+        "log": "lab-tests.log",
+        "tests": 8,
+        "runs": 1
+      },
+      {
+        "log": "platform-builds.log",
+        "tests": 8,
+        "runs": 1
+      }
+    ],
+    "aggregateValidationPassed": false,
+    "blockingValidators": [
+      "validate_platform_mac_assessment.py",
+      "validate_platform_notarytool_execution.py"
+    ],
+    "blocker": "Fixed paths refer to absent /Applications/Xcode-beta.app; current full Xcode is /Applications/Xcode.app"
+  },
+  "remainingGates": [
+    "Initial iPhone freeze root cause",
+    "Physical network interruption and reconnect",
+    "One-hour final-configuration physical stability",
+    "Screen-to-screen delay and frame pacing",
+    "Source/resolution changes",
+    "Device thermal/memory behavior",
+    "Production specification and authenticated peer binding",
+    "Dependency provenance, notices, privacy and signing admission",
+    "Full aggregate repository validation"
+  ],
+  "durableLocalEvidenceRoot": "/Users/yihong/.codex/visualizations/2026/09/12/01a093de-bea3-7922-bc20-22ff9e60c81e/streaming-research/run-2026-09-22",
+  "cleanup": {
+    "ownedCaptureProcessesStopped": 4,
+    "syntheticSoaksLeftRunning": false,
+    "installedTestAppsRetained": true,
+    "syntheticSoaksCompleted": true
+  }
+}

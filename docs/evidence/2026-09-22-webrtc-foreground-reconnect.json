@@ -1,0 +1,63 @@
+{
+  "recordedAtUTC": "2026-09-23T01:06:08.615069+00:00",
+  "experimentOnly": true,
+  "productionAcceptanceEligible": false,
+  "longerPhysicalSoak": "Skipped at operator request; long-session reliability remains unverified, not a blocker for the next development step",
+  "sourceHashes": {
+    "MediaPeer.swift": "9e9feb3dc7f74e9f76c1a48a4ab8cff9d861b32b7fa273768492d38d57f74a77",
+    "SyntheticFrames.swift": "224d51e4e6eb45ccb0136840a0f053e26cef0b1d1deaa6c4c622ad9dffd1a454",
+    "Exchange.swift": "95d084eb8bec8c7d53fb3c6bc5ea89113b892c931d20b22b7f5694ced5a21c1a",
+    "CaptureApp.swift": "4c68217db23e5e99efda5eeb7d4c68464241f3b62ddd0dadfad5565521fdc32c",
+    "ReceiverApp.swift": "2628637c8963e9aab31bbd83bd9e99545b902eedc6be79b3ccb92cbc69f1679c",
+    "ReceiverUITests.swift": "44a5c8b72eb58da385a11f600267b8afb5aa0e949e6bd3a99aa2b8a255f093d3"
+  },
+  "connectPySHA256": "f3478b348bd49b34538d3e088d14e084b8da2ab1bfcfc66993d66fe4bdb940e5",
+  "buildExitCodes": {
+    "Mac": 0,
+    "Device": 0
+  },
+  "simulatorBuildPassed": true,
+  "simulatorForegroundReconnect": {
+    "uiTestPassed": true,
+    "distinctReceivingSessions": 3,
+    "stopStayedStopped": true
+  },
+  "expiry": {
+    "uiTestPassed": true,
+    "finalState": "expired",
+    "videoHidden": true,
+    "hasSession": false,
+    "idleTimerDisabled": false,
+    "initialSetupFailureRetained": true
+  },
+  "physicalIPhone": {
+    "installed": true,
+    "baselinePassed": true,
+    "operatorForegroundResult": "Failed after first resume; stopped unexpectedly without pressing Stop",
+    "operatorWiFiResult": "pending",
+    "counterObservation": {
+      "receivingSessions": 2,
+      "sessionsWithAdvancingFrames": 1,
+      "lastReceiver": {
+        "state": "stopped",
+        "videoHidden": true,
+        "session": null,
+        "idleTimerDisabled": false,
+        "resumeOnForeground": false,
+        "reconnectPending": false
+      },
+      "operatorWiFiResult": "pending",
+      "wifiOutageMustNotBeInferredFromBackgroundResume": true
+    },
+    "deliberateStopAttributionWithdrawn": true
+  },
+  "aggregateValidation": {
+    "status": "blocked",
+    "exitCode": 1,
+    "failedValidator": "validate_platform_mac_assessment.py",
+    "reason": "Fixed stapler path points to absent /Applications/Xcode-beta.app/Contents/Developer/usr/bin/stapler",
+    "repositoryMaterialCheckPassed": true
+  },
+  "localEvidenceRoot": "/Users/yihong/.codex/visualizations/2026/09/12/01a093de-bea3-7922-bc20-22ff9e60c81e/streaming-research/run-2026-09-22/foreground-reconnect",
+  "followUpEvidence": "2026-09-22-webrtc-reconnect-retry.json"
+}

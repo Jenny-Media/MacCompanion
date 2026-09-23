@@ -1,0 +1,198 @@
+{
+  "recordedAtUTC": "2026-09-23T01:40:14.367923+00:00",
+  "experimentOnly": true,
+  "productionAcceptanceEligible": false,
+  "sourceHashes": {
+    "MediaPeer.swift": "9e9feb3dc7f74e9f76c1a48a4ab8cff9d861b32b7fa273768492d38d57f74a77",
+    "SyntheticFrames.swift": "224d51e4e6eb45ccb0136840a0f053e26cef0b1d1deaa6c4c622ad9dffd1a454",
+    "Exchange.swift": "95d084eb8bec8c7d53fb3c6bc5ea89113b892c931d20b22b7f5694ced5a21c1a",
+    "CaptureApp.swift": "4c68217db23e5e99efda5eeb7d4c68464241f3b62ddd0dadfad5565521fdc32c",
+    "ReceiverApp.swift": "b347afd6f0a37d9e60ab13358a2d35920c8504d18da573459934c8aeb070265d",
+    "ReceiverUITests.swift": "7e205f2a8fde49bc16cc2919d9d2763d5df0146e015b4142878319e9fb5f8c7e"
+  },
+  "connectPySHA256": "223c4fa5efd46c308ad19ed8f7ea3497e10116aa457da8e8951eaf7fc3b7cf69",
+  "changes": [
+    "Stale frame threshold 1.5 seconds, sampled every 0.5 seconds; hide stale video without closing a still-connected peer.",
+    "Resume request is included in bounded status snapshot; preserve session, generation, expiry, request correlation.",
+    "Relay waits at most 1.5 seconds for local replacement offer before another device read."
+  ],
+  "operatorReportBeforeChange": {
+    "recordedAtUTC": "2026-09-23T01:31:24.042200+00:00",
+    "wifiRecoveryPassedByOperator": true,
+    "backgroundRecoveryPassedByOperator": true,
+    "operatorReport": "Both wifi disconnected and background work. Wifi lose signal is not quick enough but reconnect is very fast. Background reconnect is kind of slow.",
+    "quantitativeWifiTimingsAvailable": false,
+    "latestPreparedSessionLogs": "Last collected receiver state is background; manual report is not assigned to a specific trace session."
+  },
+  "builds": {
+    "simulatorPassed": true,
+    "devicePassed": true,
+    "deviceInstalled": true,
+    "macReusedWithMatchingSourceHashes": true
+  },
+  "stallCheck": {
+    "interruption": "Four-second pause of the disposable capture process, not a Wi-Fi outage",
+    "firstWaiting": {
+      "elapsed": 1.651416374996188,
+      "state": "Waiting for video",
+      "hidden": true,
+      "frameAge": 1.6221440000081202,
+      "frames": 901
+    },
+    "recoverySeconds": 0.11053704099322204,
+    "sameSession": true,
+    "finalState": "Receiving",
+    "finalHidden": false,
+    "passed": true
+  },
+  "simulator": {
+    "foregroundCyclesPassed": 8,
+    "injectedFailureObserved": true,
+    "automaticRetryCount": 1,
+    "finalState": "stopped",
+    "finalVideoHidden": true,
+    "finalIdleTimerDisabled": false,
+    "stopPersistsAfterForeground": true,
+    "expiryRegressionPassed": true
+  },
+  "physical": {
+    "initialStreamPassed": true,
+    "firstUITestPassed": false,
+    "firstFailure": "UI automation mode initialization timed out before running the test.",
+    "repeatUITestPassed": false,
+    "repeatFailure": "Receiving did not arrive within 40 seconds during a foreground cycle.",
+    "recoveryEventuallyObserved": true,
+    "deviceFileTimeoutsDuringSlowCycle": 4,
+    "deviceFileTimeoutSeconds": 15,
+    "deviceFileTimeoutRootCause": "Not established. The delay preceded offer admission; both request relay and native UI automation used the paired-device connection.",
+    "foregroundTimings": {
+      "boundary": "Background-to-active transition to recorded Receiving state, not glass latency; includes partial native UI runs.",
+      "samples": [
+        {
+          "activeToReceiving": 3.064498833336984,
+          "activeToOffer": 2.069771958325873,
+          "offerToReceiving": 0.9947268750111107
+        },
+        {
+          "activeToReceiving": 3.647491916664876,
+          "activeToOffer": 2.1546808749990305,
+          "offerToReceiving": 1.4928110416658456
+        },
+        {
+          "activeToReceiving": 3.3739442500082077,
+          "activeToOffer": 2.379501999996137,
+          "offerToReceiving": 0.9944422500120709
+        },
+        {
+          "activeToReceiving": 2.7195301250030752,
+          "activeToOffer": 1.7271560416702414,
+          "offerToReceiving": 0.9923740833328338
+        },
+        {
+          "activeToReceiving": 2.882794624994858,
+          "activeToOffer": 1.8897622916701948,
+          "offerToReceiving": 0.9930323333246633
+        },
+        {
+          "activeToReceiving": 3.0333731249993434,
+          "activeToOffer": 2.040281916677486,
+          "offerToReceiving": 0.9930912083218573
+        },
+        {
+          "activeToReceiving": 3.4197396250092424,
+          "activeToOffer": 2.4272164166759467,
+          "offerToReceiving": 0.9925232083332958
+        },
+        {
+          "activeToReceiving": 61.10209591667808,
+          "activeToOffer": 59.608655083342455,
+          "offerToReceiving": 1.493440833335626
+        },
+        {
+          "activeToReceiving": 2.7125066666776547,
+          "activeToOffer": 0.21997862501302734,
+          "offerToReceiving": 2.4925280416646274
+        }
+      ],
+      "medianSeconds": 3.064498833336984
+    }
+  },
+  "baselineForegroundTimings": {
+    "boundary": "Background-to-active transition to recorded Receiving state, not glass latency; includes partial native UI runs.",
+    "samples": [
+      {
+        "activeToReceiving": 5.192766583320918,
+        "activeToOffer": 3.695134874986252,
+        "offerToReceiving": 1.4976317083346657
+      },
+      {
+        "activeToReceiving": 6.0613366666657384,
+        "activeToOffer": 4.56444820832985,
+        "offerToReceiving": 1.4968884583358886
+      },
+      {
+        "activeToReceiving": 5.665870500000892,
+        "activeToOffer": 4.172176874999423,
+        "offerToReceiving": 1.4936936250014696
+      },
+      {
+        "activeToReceiving": 6.497662833338836,
+        "activeToOffer": 5.005269750006846,
+        "offerToReceiving": 1.49239308333199
+      },
+      {
+        "activeToReceiving": 4.8200441249937285,
+        "activeToOffer": 3.822384458326269,
+        "offerToReceiving": 0.9976596666674595
+      },
+      {
+        "activeToReceiving": 5.751512791655841,
+        "activeToOffer": 4.758682999992743,
+        "offerToReceiving": 0.9928297916630981
+      },
+      {
+        "activeToReceiving": 5.086457750003319,
+        "activeToOffer": 3.592683458336978,
+        "offerToReceiving": 1.493774291666341
+      },
+      {
+        "activeToReceiving": 5.225937291659648,
+        "activeToOffer": 3.7324825416581007,
+        "offerToReceiving": 1.493454750001547
+      },
+      {
+        "activeToReceiving": 4.875429916675785,
+        "activeToOffer": 3.3819044999981998,
+        "offerToReceiving": 1.4935254166775849
+      },
+      {
+        "activeToReceiving": 4.658592374995351,
+        "activeToOffer": 3.165830833328073,
+        "offerToReceiving": 1.492761541667278
+      },
+      {
+        "activeToReceiving": 5.867853458345053,
+        "activeToOffer": 4.376045833341777,
+        "offerToReceiving": 1.4918076250032755
+      },
+      {
+        "activeToReceiving": 5.060621916665696,
+        "activeToOffer": 4.067775708332192,
+        "offerToReceiving": 0.9928462083335035
+      },
+      {
+        "activeToReceiving": 5.922506541668554,
+        "activeToOffer": 4.930494375003036,
+        "offerToReceiving": 0.9920121666655177
+      }
+    ],
+    "medianSeconds": 5.225937291659648
+  },
+  "aggregateValidator": {
+    "exitCode": 1,
+    "failedAt": "validate_platform_mac_assessment.py",
+    "reason": "Existing missing /Applications/Xcode-beta.app/Contents/Developer/usr/bin/stapler"
+  },
+  "longPhysicalSoak": "Skipped at operator request",
+  "localEvidenceRoot": "/Users/yihong/.codex/visualizations/2026/09/12/01a093de-bea3-7922-bc20-22ff9e60c81e/streaming-research/run-2026-09-22/responsiveness"
+}
