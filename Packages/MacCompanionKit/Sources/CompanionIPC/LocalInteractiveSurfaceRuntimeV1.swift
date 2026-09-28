@@ -64,9 +64,10 @@ public struct LocalInteractiveSurfaceTargetCandidateV1:
 public struct LocalInteractiveSurfaceTargetsReceiptV1:
     Codable, Equatable, Sendable
 {
-    /// Keeps the complete canonical reply below the authenticated local-XPC
-    /// 4 KiB bound even when every allowed application name is maximal.
-    public static let maximumCandidates = 8
+    /// Match the complete client-visible inventory. Encoding enforces the
+    /// separate bounded local-XPC reply size without dropping later targets.
+    public static let maximumCandidates =
+        AdaptiveSurfaceTargetInventoryV0.maximumCandidates
 
     public let correlationID: UUID
     public let interactiveSessionID: UUID
@@ -88,8 +89,9 @@ public struct LocalInteractiveSurfaceTargetsReceiptV1:
             snapshot.createdAtMonotonicMilliseconds
         expiresAtMonotonicMilliseconds =
             snapshot.expiresAtMonotonicMilliseconds
-        candidates = snapshot.candidates.prefix(Self.maximumCandidates)
-            .map(LocalInteractiveSurfaceTargetCandidateV1.init)
+        candidates = snapshot.candidates.map(
+            LocalInteractiveSurfaceTargetCandidateV1.init
+        )
         _ = try materialize()
     }
 

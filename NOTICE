@@ -4,5 +4,10 @@ Copyright 2026 Jenny Media LLC
 This product includes software developed by Jenny Media LLC and Mac Companion
 contributors.
 
+Combined product distribution uses GPL-3.0. Previously Apache-2.0 code retains
+its applicable permissions and notices. See LICENSING.md and LICENSES/Apache-2.0.txt.
+Upstream components retain their own copyright and license notices; exact
+dependency and corresponding-source inventories accompany distributed builds.
+
 Mac Companion and Jenny Media names and branding are governed separately from
 the source-code license. See TRADEMARKS.md.

@@ -31,6 +31,7 @@ private func targetFixture(_ path: String) throws -> Data {
     )
     #expect(try WireCodec.encode(response) == Data(responseSource.dropLast()))
     #expect(response.correlationID == request.messageID)
+    #expect(response.body.validForMilliseconds == 120_000)
     #expect(response.body.candidates.map(\.applicationName) == ["Notes", "Notes"])
     #expect(response.body.candidates.map(\.windowOrdinal) == [nil, 1])
 }

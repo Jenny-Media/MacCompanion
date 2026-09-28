@@ -48,6 +48,8 @@ public struct IOSClientReleaseWorkspaceV1: Identifiable {
     public let primaryState: NetworkClientPrimaryApplicationStateV0
     public let interactiveRoles:
         NetworkClientInteractiveRoleProductBindingV0
+    public let initialDesktopProductFactory:
+        UIKitClientNativeVideoCompositionV1.ProductFactory?
     public let studyCapture: Stage3StudyLocalCaptureV1
     public let studyCaptureFailure:
         @MainActor @Sendable () -> Void
@@ -59,6 +61,8 @@ public struct IOSClientReleaseWorkspaceV1: Identifiable {
         primaryState: NetworkClientPrimaryApplicationStateV0,
         interactiveRoles:
             NetworkClientInteractiveRoleProductBindingV0,
+        initialDesktopProductFactory:
+            UIKitClientNativeVideoCompositionV1.ProductFactory? = nil,
         studyCapture: Stage3StudyLocalCaptureV1,
         studyCaptureFailure:
             @escaping @MainActor @Sendable () -> Void
@@ -68,6 +72,7 @@ public struct IOSClientReleaseWorkspaceV1: Identifiable {
         self.macName = macName
         self.primaryState = primaryState
         self.interactiveRoles = interactiveRoles
+        self.initialDesktopProductFactory = initialDesktopProductFactory
         self.studyCapture = studyCapture
         self.studyCaptureFailure = studyCaptureFailure
     }
@@ -132,8 +137,24 @@ public final class IOSClientReleaseApplicationV1 {
     private var networkProduct: UIKitClientConfiguredRouteNetworkProductV1?
     private var transitionInProgress = false
     private var studyPairingStartedAtMilliseconds: Int64?
+    private let nativeVideoAdapterFactory:
+        UIKitClientNativeVideoCompositionV1.AdapterFactory?
+    private let bootstrapFactory: @Sendable () -> IOSClientReleaseBootstrapV1
 
-    public init() {}
+    public init(
+        nativeVideoAdapterFactory: UIKitClientNativeVideoCompositionV1.AdapterFactory? = nil
+    ) {
+        self.nativeVideoAdapterFactory = nativeVideoAdapterFactory
+        bootstrapFactory = { IOSClientReleaseBootstrapV1() }
+    }
+
+    #if DEBUG && targetEnvironment(simulator)
+    public init(simulatorDevelopmentNativeVideoAdapterFactory:
+        UIKitClientNativeVideoCompositionV1.AdapterFactory?) {
+        nativeVideoAdapterFactory = simulatorDevelopmentNativeVideoAdapterFactory
+        bootstrapFactory = { IOSClientReleaseBootstrapV1(simulatorDevelopment: ()) }
+    }
+    #endif
 
     public func start() async {
         guard !transitionInProgress else { return }
@@ -148,7 +169,7 @@ public final class IOSClientReleaseApplicationV1 {
         publish(phase: .preparing)
         defer { transitionInProgress = false }
 
-        let bootstrap = IOSClientReleaseBootstrapV1()
+        let bootstrap = bootstrapFactory()
         self.bootstrap = bootstrap
         let bootstrapSnapshot = await bootstrap.start()
         guard let storage = await bootstrap
@@ -447,6 +468,23 @@ public final class IOSClientReleaseApplicationV1 {
                 || snapshot.phase == .preparing else { return }
         publish(phase: .connecting)
         do {
+            // Only native composition needs an additional session signer.
+            // Resolve it from this workspace's sole durable paired host, using
+            // the same protected custody as the normal primary connection.
+            let nativeSigner: (any ClientSessionAuthenticationSigningV0)?
+            if nativeVideoAdapterFactory != nil {
+                let records = try await storage.pairedHosts.allRecords()
+                guard records.count == 1, let record = records.first,
+                      record.hostID == expectedHostID,
+                      record.clientID == storage.clientID else {
+                    throw IOSClientNativeVideoCompositionErrorV1.pairedHostUnavailable
+                }
+                nativeSigner = try ClientCustodiedSessionSignerV0(
+                    custody: storage.custody, sessionKey: record.sessionKey
+                )
+            } else {
+                nativeSigner = nil
+            }
             let runtime = NetworkClientReconnectRuntimeV1(
                 custody: storage.custody,
                 clock: Self.clock,
@@ -487,6 +525,14 @@ public final class IOSClientReleaseApplicationV1 {
                     macName: "Mac",
                     primaryState: product.primaryState,
                     interactiveRoles: product.interactiveRoles,
+                    initialDesktopProductFactory: nativeSigner.flatMap { signer in
+                        nativeVideoAdapterFactory.map { factory in
+                            UIKitClientNativeVideoCompositionV1.productFactory(
+                                signer: signer, primaryState: product.primaryState,
+                                roles: product.interactiveRoles, adapterFactory: factory
+                            )
+                        }
+                    },
                     studyCapture: storage.studyCapture,
                     studyCaptureFailure: { [weak self] in
                         self?.studyCaptureFailed = true
@@ -638,5 +684,8 @@ public final class IOSClientReleaseApplicationV1 {
         let value = DispatchTime.now().uptimeNanoseconds / 1_000_000
         return value <= UInt64(Int64.max) ? Int64(value) : -1
     }
+}
+private enum IOSClientNativeVideoCompositionErrorV1: Error {
+    case pairedHostUnavailable
 }
 #endif

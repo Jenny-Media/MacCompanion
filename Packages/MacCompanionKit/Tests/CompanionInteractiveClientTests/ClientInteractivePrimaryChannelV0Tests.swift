@@ -14,9 +14,27 @@ private actor InteractivePrimaryTransportV0:
     ClientAuthenticatedCommandSendingV1
 {
     private(set) var frames: [Data] = []
+    private var rejectNext = false
+    private var suspendNext = false
+    private var resumeSuspended: CheckedContinuation<Void, Never>?
+    private(set) var sendIsSuspended = false
+    enum Failure: Error { case injected }
+    func rejectNextSend() { rejectNext = true }
+    func suspendNextSend() { suspendNext = true }
+    func resumeSend() {
+        sendIsSuspended = false
+        resumeSuspended?.resume()
+        resumeSuspended = nil
+    }
 
     func sendAuthenticatedCommand(_ frame: Data) async throws {
+        if rejectNext { rejectNext = false; throw Failure.injected }
         frames.append(frame)
+        if suspendNext {
+            suspendNext = false
+            sendIsSuspended = true
+            await withCheckedContinuation { resumeSuspended = $0 }
+        }
     }
 }
 
@@ -114,7 +132,15 @@ private actor InteractivePrimaryCustodyV0: ClientIdentityKeyCustodyV0 {
     ) async throws {}
 }
 
+private final class NativePrimaryClockV0: @unchecked Sendable {
+    private let lock = NSLock()
+    private var time: UInt64 = 10_000
+    func now() -> UInt64 { lock.lock(); defer { lock.unlock() }; return time }
+    func advance(to value: UInt64) { lock.lock(); defer { lock.unlock() }; time = value }
+}
+
 private struct InteractivePrimaryHarnessV0 {
+    let clock: NativePrimaryClockV0
     let host: ClientDurablePairedHostV0
     let session: ClientAuthenticatedSessionV0
     let transport: InteractivePrimaryTransportV0
@@ -183,11 +209,12 @@ private func interactivePrimaryHarness(
         features: [],
         serverTimeUnixMilliseconds: 1_000
     )
+    let clock = NativePrimaryClockV0()
     let transport = InteractivePrimaryTransportV0()
     let router = try ClientPrimaryCommandRouterV0(
         authenticatedSession: session,
         transport: transport,
-        monotonicNowNanoseconds: { 10_000_000_000 }
+        monotonicNowNanoseconds: { clock.now() * 1_000_000 }
     )
     let events = InteractivePrimaryEventRecorderV0()
     let focusEvents = InteractivePrimaryFocusRecorderV0()
@@ -199,7 +226,7 @@ private func interactivePrimaryHarness(
         environment: ClientInteractivePrimaryEnvironmentV0(
             makeMessageID: { WireUUID(UUID()) },
             wallNowUnixMilliseconds: { 1_002 },
-            monotonicNowMilliseconds: { 10_000 }
+            monotonicNowMilliseconds: { clock.now() }
         ),
         publish: { events.record($0) },
         publishFocus: { focusEvents.record($0) }
@@ -207,6 +234,7 @@ private func interactivePrimaryHarness(
     try await router.installReceiver(channel, for: .control)
     try await router.activate()
     return InteractivePrimaryHarnessV0(
+        clock: clock,
         host: host,
         session: session,
         transport: transport,
@@ -215,6 +243,47 @@ private func interactivePrimaryHarness(
         events: events,
         focusEvents: focusEvents
     )
+}
+
+@Test func interactivePrimarySelectDisplayAcceptsReplyBeforeSendCompletes()
+    async throws
+{
+    let harness = try await interactivePrimaryHarness()
+    let displayID = UUID()
+    await harness.transport.suspendNextSend()
+    let selecting = Task {
+        try await harness.channel.selectDisplay(
+            displayID,
+            expectedAdmissionRevision: 1,
+            timeoutMilliseconds: 500
+        )
+    }
+    defer {
+        selecting.cancel()
+        Task { await harness.transport.resumeSend() }
+    }
+    let deadline = ContinuousClock.now + .seconds(2)
+    while await harness.transport.sendIsSuspended == false,
+          ContinuousClock.now < deadline { await Task.yield() }
+    try #require(await harness.transport.sendIsSuspended)
+    let frame = try #require(await harness.transport.frames.last)
+    let request = try WireCodec.decode(
+        WireEnvelope<InteractiveDisplaySelectBodyV1>.self,
+        from: frame
+    )
+    try await harness.router.receive(WireCodec.encode(WireEnvelope(
+        messageID: WireUUID(UUID()),
+        correlationID: request.messageID,
+        sentAtUnixMilliseconds: 1_003,
+        body: try InteractiveDisplaySelectedBodyV1(
+            authorizationEpoch: harness.session.authorizationEpoch,
+            admissionRevision: 2,
+            selectedDisplayID: WireUUID(displayID)
+        )
+    )))
+    await harness.transport.resumeSend()
+    #expect(try await selecting.value.selectedDisplayID.rawValue == displayID)
+    #expect(await harness.router.state == .ready)
 }
 
 private func interactivePrimaryChallenge(
@@ -252,7 +321,8 @@ private func interactivePrimaryChallenge(
 
 private func interactivePrimaryAccepted(
     harness: InteractivePrimaryHarnessV0,
-    proofID: WireUUID
+    proofID: WireUUID,
+    lifetime: Int64 = InteractiveSessionStateMachine.maximumDurationMilliseconds
 ) throws -> WireEnvelope<InteractiveSessionAcceptedBody> {
     try WireEnvelope(
         messageID: WireUUID(UUID()),
@@ -261,7 +331,7 @@ private func interactivePrimaryAccepted(
         body: try InteractiveSessionAcceptedBody(
             interactiveSessionID: WireUUID(UUID()),
             authorizationEpoch: harness.session.authorizationEpoch,
-            expiresAtUnixMilliseconds: 100_000,
+            expiresAtUnixMilliseconds: 2_000 + lifetime,
             inputChannel: InteractiveChannelOffer(
                 channelID: WireUUID(UUID()),
                 role: .input,
@@ -280,10 +350,143 @@ private func interactivePrimaryAccepted(
     )
 }
 
-@Test(arguments: [0, 1, 2])
-func interactivePrimaryChannelCompletesSelectedSessionApprovalFlow(deliveryOrder: Int)
+private func interactivePrimarySDP(_ byte: String) -> String {
+    let fingerprint = Array(repeating: byte, count: 32).joined(separator: ":")
+    return "v=0\r\no=- 1 1 IN IP4 0.0.0.0\r\ns=-\r\nt=0 0\r\n"
+        + "a=fingerprint:sha-256 \(fingerprint)\r\n"
+        + "a=candidate:1 1 udp 1 192.0.2.1 5000 typ host\r\n"
+        + "a=end-of-candidates\r\n"
+}
+
+private func nativePrimaryFixture<B: WireBody>(_ name: String, as type: B.Type) throws -> WireEnvelope<B> {
+    var root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+    while !FileManager.default.fileExists(atPath: root.appendingPathComponent("spec/fixtures/manifest.json").path) {
+        let parent = root.deletingLastPathComponent(); guard parent != root else { throw CocoaError(.fileNoSuchFile) }; root = parent
+    }
+    let path = "valid/native-video-\(name).json"
+    let index = try JSONSerialization.jsonObject(with: Data(contentsOf: root.appendingPathComponent("spec/fixtures/manifest.json"))) as! [String: Any]
+    #expect((index["fixtures"] as! [[String: Any]]).filter { $0["path"] as? String == path }.count == 1)
+    return try WireCodec.decode(WireEnvelope<B>.self, from: Data(contentsOf: root.appendingPathComponent("spec/fixtures/" + path)))
+}
+
+private func nativePrimarySentFrame(_ harness: InteractivePrimaryHarnessV0, kind: WireMessageKind, excluding: WireUUID? = nil) async throws -> Data {
+    let deadline = ContinuousClock.now.advanced(by: .seconds(2))
+    while ContinuousClock.now < deadline {
+        if let frame = await harness.transport.frames.last, try WireCodec.messageKind(from: frame) == kind,
+           try WireCodec.routingMetadata(from: frame).messageID != excluding { return frame }
+        try await Task.sleep(for: .milliseconds(1))
+    }
+    throw ClientInteractivePrimaryChannelErrorV0.unavailable
+}
+
+private struct NativeUnexpectedSigner: ClientSessionAuthenticationSigningV0 {
+    func signAuthenticationInput(_ input: Data) async throws -> Data {
+        Issue.record("Cancelled enrollment reached signing")
+        throw ClientInteractivePrimaryChannelErrorV0.unavailable
+    }
+}
+
+private func verifyNativePrimaryRouting(_ harness: InteractivePrimaryHarnessV0, descriptor: AdaptiveSurfaceDescriptor) async throws {
+    let template = try nativePrimaryFixture("enroll-challenge", as: InteractiveNativeVideoEnrollmentChallengeBodyV0.self)
+    let requestTemplate = try nativePrimaryFixture("enroll-request", as: InteractiveNativeVideoEnrollmentRequestBodyV0.self)
+    let requestTask = Task { try await harness.channel.requestNativeEnrollment(for: descriptor,
+        clientCertificateDER: Data(base64Encoded: requestTemplate.body.clientCertificateDERBase64)!, timeoutMilliseconds: 1000) }
+    let request = try WireCodec.decode(WireEnvelope<InteractiveNativeVideoEnrollmentRequestBodyV0>.self,
+        from: await nativePrimarySentFrame(harness, kind: .nativeEnrollRequest))
+    let t = template.body
+    let challenge = try WireEnvelope(messageID: WireUUID(UUID()), correlationID: request.messageID, sentAtUnixMilliseconds: 2_001,
+        body: InteractiveNativeVideoEnrollmentChallengeBodyV0(fence: request.body.fence, controlGeneration: t.controlGeneration,
+            encodedWidth: descriptor.encodedWidth, encodedHeight: descriptor.encodedHeight, hostCertificateDERBase64: t.hostCertificateDERBase64,
+            hostChallengeBase64: t.hostChallengeBase64, signingInputBase64: t.signingInputBase64,
+            issuedAtUnixMilliseconds: t.issuedAtUnixMilliseconds, expiresAtUnixMilliseconds: t.expiresAtUnixMilliseconds))
+    try await harness.router.receive(WireCodec.encode(challenge))
+    let received = try await requestTask.value
+    #expect(received == challenge)
+    let nativeAuthority = await harness.channel.nativeAttestationAuthority(for: challenge)
+    #expect(nativeAuthority?.binding.primaryConnectionID == harness.session.connectionID)
+    #expect(nativeAuthority?.sessionPublicKeyX963 == harness.host.sessionKey.publicKeyX963)
+    #expect(nativeAuthority?.surface.surfaceID == descriptor.surfaceID)
+    let proofTemplate = try nativePrimaryFixture("enroll-proof", as: InteractiveNativeVideoEnrollmentProofBodyV0.self)
+    let proofTask = Task { try await harness.channel.submitNativeEnrollmentProof(for: challenge,
+        signature: Data(base64Encoded: proofTemplate.body.signatureBase64)!, timeoutMilliseconds: 1000) }
+    let proof = try WireCodec.decode(WireEnvelope<InteractiveNativeVideoEnrollmentProofBodyV0>.self,
+        from: await nativePrimarySentFrame(harness, kind: .nativeEnrollProof))
+    #expect(proof.body.challengeMessageID == challenge.messageID)
+    let ready = try WireEnvelope(messageID: WireUUID(UUID()), correlationID: proof.messageID, sentAtUnixMilliseconds: 2_002,
+        body: InteractiveNativeVideoReadyBodyV0(fence: proof.body.fence, challengeMessageID: challenge.messageID, portBase: 58989))
+    try await harness.router.receive(WireCodec.encode(ready))
+    #expect(try await proofTask.value == ready)
+    let presentation = Task { try await harness.channel.acknowledgeNativePresentation(nativeGeneration: 1,
+        encodedWidth: descriptor.encodedWidth, encodedHeight: descriptor.encodedHeight, timeoutMilliseconds: 1000) }
+    let presentRequest = try WireCodec.decode(WireEnvelope<InteractiveNativeVideoPresentationRequestBodyV0>.self,
+        from: await nativePrimarySentFrame(harness, kind: .nativePresentRequest))
+    #expect(presentRequest.body.fence == request.body.fence)
+    #expect(presentRequest.body.challengeMessageID == challenge.messageID)
+    let receiptTemplate = try nativePrimaryFixture("present-receipt", as: InteractiveNativeVideoPresentationReceiptBodyV0.self)
+    let receipt = try WireEnvelope(messageID: WireUUID(UUID()), correlationID: presentRequest.messageID,
+        sentAtUnixMilliseconds: 2_003, body: InteractiveNativeVideoPresentationReceiptBodyV0(fence: presentRequest.body.fence,
+            challengeMessageID: challenge.messageID, nativeGeneration: 1,
+            encodedWidth: descriptor.encodedWidth, encodedHeight: descriptor.encodedHeight,
+            capturePixelWidth: receiptTemplate.body.capturePixelWidth, capturePixelHeight: receiptTemplate.body.capturePixelHeight,
+            logicalWidthPoints: descriptor.logicalWidthPoints, logicalHeightPoints: descriptor.logicalHeightPoints))
+    try await harness.router.receive(WireCodec.encode(receipt))
+    #expect(try await presentation.value == receipt)
+    do { _ = try await harness.channel.acknowledgeNativePresentation(nativeGeneration: 2,
+        encodedWidth: descriptor.encodedWidth, encodedHeight: descriptor.encodedHeight); Issue.record("Replacement renderer admitted") } catch {}
+    let mismatched = Task { try await harness.channel.acknowledgeNativePresentation(nativeGeneration: 1,
+        encodedWidth: descriptor.encodedWidth, encodedHeight: descriptor.encodedHeight, timeoutMilliseconds: 1000) }
+    let mismatchRequest = try WireCodec.decode(WireEnvelope<InteractiveNativeVideoPresentationRequestBodyV0>.self,
+        from: await nativePrimarySentFrame(harness, kind: .nativePresentRequest, excluding: presentRequest.messageID))
+    let wrongGeometry = try WireEnvelope(messageID: WireUUID(UUID()), correlationID: mismatchRequest.messageID,
+        sentAtUnixMilliseconds: 2_004, body: InteractiveNativeVideoPresentationReceiptBodyV0(fence: mismatchRequest.body.fence,
+            challengeMessageID: challenge.messageID, nativeGeneration: 1,
+            encodedWidth: descriptor.encodedWidth, encodedHeight: descriptor.encodedHeight,
+            capturePixelWidth: receiptTemplate.body.capturePixelWidth, capturePixelHeight: receiptTemplate.body.capturePixelHeight,
+            logicalWidthPoints: descriptor.logicalWidthPoints + 1, logicalHeightPoints: descriptor.logicalHeightPoints))
+    try await harness.router.receive(WireCodec.encode(wrongGeometry))
+    do { _ = try await mismatched.value; Issue.record("Wrong logical geometry receipt admitted") } catch {}
+    let admitted = try #require(await harness.channel.nativeAttestationAuthority(for: challenge))
+    #expect(admitted.binding.expiresAtMonotonicMilliseconds > UInt64(descriptor.expiresAtMonotonicMilliseconds))
+    harness.clock.advance(to: UInt64(descriptor.expiresAtMonotonicMilliseconds) + 1)
+    #expect(await harness.channel.nativeAttestationAuthority(for: challenge) == admitted)
+    let cancelling = Task { try await harness.channel.cancelNativeEnrollment(timeoutMilliseconds: 1000) }
+    let cancel = try WireCodec.decode(WireEnvelope<InteractiveNativeVideoCancelBodyV0>.self,
+        from: await nativePrimarySentFrame(harness, kind: .nativeCancel))
+    try await harness.router.receive(WireCodec.encode(WireEnvelope(messageID: WireUUID(UUID()), correlationID: cancel.messageID,
+        sentAtUnixMilliseconds: 2_003, body: try InteractiveNativeVideoCancelledBodyV0(fence: cancel.body.fence))))
+    try await cancelling.value
+    #expect(await harness.channel.nativeAttestationAuthority(for: challenge) == nil)
+    #expect(await harness.router.state == .ready)
+
+    let enrollingOwner = ClientNativeVideoEnrollmentSessionV0(channel: harness.channel, signer: NativeUnexpectedSigner(),
+        validateCertificate: { _ in true }, monotonicMilliseconds: { 3000 })
+    let enrolling = Task { try await enrollingOwner.enroll(descriptor: descriptor,
+        clientCertificateDER: Data(base64Encoded: requestTemplate.body.clientCertificateDERBase64)!) }
+    let secondRequest = try WireCodec.decode(WireEnvelope<InteractiveNativeVideoEnrollmentRequestBodyV0>.self,
+        from: await nativePrimarySentFrame(harness, kind: .nativeEnrollRequest))
+    #expect(secondRequest.body.fence.peerGeneration == request.body.fence.peerGeneration + 1)
+    let stop = Task { await enrollingOwner.close() }
+    let secondCancel = try WireCodec.decode(WireEnvelope<InteractiveNativeVideoCancelBodyV0>.self,
+        from: await nativePrimarySentFrame(harness, kind: .nativeCancel))
+    #expect(secondCancel.body.fence == secondRequest.body.fence)
+    // Concurrent Stop joins this exact cancellation, including the channel's
+    // own task-cancellation compensation; it must not replace the waiter.
+    let joinedStop = Task { await enrollingOwner.close() }
+    try await harness.router.receive(WireCodec.encode(WireEnvelope(messageID: WireUUID(UUID()), correlationID: secondCancel.messageID,
+        sentAtUnixMilliseconds: 2_004, body: try InteractiveNativeVideoCancelledBodyV0(fence: secondCancel.body.fence))))
+    await stop.value
+    await joinedStop.value
+    do { _ = try await enrolling.value; Issue.record("Stopped enrollment completed") } catch {}
+    #expect(await enrollingOwner.isCurrent() == false)
+    #expect(await harness.router.state == .ready)
+}
+
+@Test(arguments: [(0, false), (0, true), (1, false), (1, true), (2, false), (2, true)], [0, 1, 2])
+func interactivePrimaryChannelCompletesSelectedSessionApprovalFlow(delivery: (Int, Bool), acknowledgementDelivery: Int)
     async throws
 {
+    let (deliveryOrder, exceedsControlLifetime) = delivery
+    let replyDuringAcknowledgementSend = acknowledgementDelivery != 0
     let harness = try await interactivePrimaryHarness()
     let effects: Set<InteractiveControlEffect> = [
         .view, .pointer, .keyboard,
@@ -316,7 +519,8 @@ func interactivePrimaryChannelCompletesSelectedSessionApprovalFlow(deliveryOrder
     try await harness.router.receive(WireCodec.encode(
         try interactivePrimaryAccepted(
             harness: harness,
-            proofID: proof.messageID
+            proofID: proof.messageID,
+            lifetime: InteractiveSessionStateMachine.maximumDurationMilliseconds + (exceedsControlLifetime ? 1 : 0)
         )
     ))
     guard case let .accepted(session, acceptedEffects) =
@@ -380,6 +584,49 @@ func interactivePrimaryChannelCompletesSelectedSessionApprovalFlow(deliveryOrder
         == descriptor.interactiveSessionID)
     #expect(await harness.channel.initialSurfacePhase() == .awaitingMedia)
 
+    let mediaFence = try await harness.channel.requestWebRTCOffer(
+        for: admittedDescriptor
+    )
+    let offerRequestFrame = try #require(await harness.transport.frames.last)
+    let offerRequest = try WireCodec.decode(
+        WireEnvelope<InteractiveWebRTCOfferRequestBodyV0>.self,
+        from: offerRequestFrame
+    )
+    #expect(offerRequest.body.fence == mediaFence)
+    let mediaOffer = try WireEnvelope(
+        messageID: WireUUID(UUID()),
+        correlationID: offerRequest.messageID,
+        sentAtUnixMilliseconds: 2_002,
+        body: try InteractiveWebRTCOfferBodyV0(
+            fence: mediaFence,
+            sdp: interactivePrimarySDP("11"),
+            dtlsFingerprintHex: String(repeating: "11", count: 32)
+        )
+    )
+    try await harness.router.receive(WireCodec.encode(mediaOffer))
+    #expect(harness.events.events.last == .mediaOffer(mediaOffer))
+    try await harness.channel.submitWebRTCAnswer(
+        for: mediaOffer,
+        sdp: interactivePrimarySDP("22"),
+        dtlsFingerprintHex: String(repeating: "22", count: 32)
+    )
+    let mediaAnswerFrame = try #require(await harness.transport.frames.last)
+    let mediaAnswer = try WireCodec.decode(
+        WireEnvelope<InteractiveWebRTCAnswerBodyV0>.self,
+        from: mediaAnswerFrame
+    )
+    #expect(mediaAnswer.body.offerMessageID == mediaOffer.messageID)
+    let mediaReady = try WireEnvelope(
+        messageID: WireUUID(UUID()),
+        correlationID: mediaAnswer.messageID,
+        sentAtUnixMilliseconds: 2_003,
+        body: try InteractiveWebRTCReadyBodyV0(
+            fence: mediaFence, offerMessageID: mediaOffer.messageID
+        )
+    )
+    try await harness.router.receive(WireCodec.encode(mediaReady))
+    #expect(harness.events.events.last == .mediaReady(mediaReady))
+
     let configuration = try MediaRecordHeader(
         type: .decoderConfiguration,
         payloadLength: 16,
@@ -425,7 +672,27 @@ func interactivePrimaryChannelCompletesSelectedSessionApprovalFlow(deliveryOrder
             frameReference: UUID()
         )
     )
-    try await harness.channel.acknowledgeInitialSurface()
+    if replyDuringAcknowledgementSend { await harness.transport.suspendNextSend() }
+    let sendingAcknowledgement = Task { try await harness.channel.acknowledgeInitialSurface() }
+    defer { Task { await harness.transport.resumeSend() } }
+    if replyDuringAcknowledgementSend {
+        let deadline = ContinuousClock.now + .seconds(2)
+        while await harness.transport.sendIsSuspended == false, ContinuousClock.now < deadline { await Task.yield() }
+        try #require(await harness.transport.sendIsSuspended)
+        #expect(await harness.channel.initialSurfacePhase() == .awaitingAcknowledgement)
+        if acknowledgementDelivery == 2 {
+            await harness.router.invalidate()
+            await harness.transport.resumeSend()
+            await #expect(throws: ClientPrimaryCommandRouterErrorV0.invalidated) {
+                try await sendingAcknowledgement.value
+            }
+            #expect(await harness.channel.initialSurfacePhase() == nil)
+            #expect(await harness.channel.phase() == .closed)
+            return
+        }
+    } else {
+        try await sendingAcknowledgement.value
+    }
     let acknowledgementFrame = try #require(
         await harness.transport.frames.last
     )
@@ -462,6 +729,23 @@ func interactivePrimaryChannelCompletesSelectedSessionApprovalFlow(deliveryOrder
         )
     )))
     #expect(await harness.channel.initialSurfacePhase() == .active)
+    if replyDuringAcknowledgementSend {
+        await harness.transport.resumeSend()
+        try await sendingAcknowledgement.value
+        #expect(await harness.channel.initialSurfacePhase() == .active,
+            "Completing a suspended send must not overwrite a committed acknowledgement reply")
+    }
+    if exceedsControlLifetime {
+        let previousFrames = await harness.transport.frames.count
+        let requestFixture = try nativePrimaryFixture("enroll-request", as: InteractiveNativeVideoEnrollmentRequestBodyV0.self)
+        await #expect(throws: ClientInteractivePrimaryChannelErrorV0.unavailable) {
+            try await harness.channel.requestNativeEnrollment(for: admittedDescriptor,
+                clientCertificateDER: Data(base64Encoded: requestFixture.body.clientCertificateDERBase64)!)
+        }
+        #expect(await harness.transport.frames.count == previousFrames)
+    } else {
+        try await verifyNativePrimaryRouting(harness, descriptor: admittedDescriptor)
+    }
 
     let focusedRegionToken = WireUUID(UUID())
     let focus = try SurfaceFocus(
@@ -524,6 +808,16 @@ func interactivePrimaryChannelCompletesSelectedSessionApprovalFlow(deliveryOrder
         payloadByteCount: 128
     ) == .videoAccessUnit(cleanKeyframe: false))
     if deliveryOrder != 0 {
+        let oldMediaFence = try await harness.channel.requestWebRTCOffer(
+            for: admittedDescriptor
+        )
+        let oldMediaRequestFrame = try #require(
+            await harness.transport.frames.last
+        )
+        let oldMediaRequest = try WireCodec.decode(
+            WireEnvelope<InteractiveWebRTCOfferRequestBodyV0>.self,
+            from: oldMediaRequestFrame
+        )
         let selection = try await harness.channel.prepareReplacementSurfaceSelection(
             targetKind: .desktop, targetToken: nil
         )
@@ -597,6 +891,19 @@ func interactivePrimaryChannelCompletesSelectedSessionApprovalFlow(deliveryOrder
             #expect(try await media.value == .discontinuity)
         }
         #expect(await harness.channel.replacementSurfacePhase() == .awaitingMedia)
+        let eventCountBeforeStaleOffer = harness.events.events.count
+        try await harness.router.receive(WireCodec.encode(WireEnvelope(
+            messageID: WireUUID(UUID()),
+            correlationID: oldMediaRequest.messageID,
+            sentAtUnixMilliseconds: 2_004,
+            body: try InteractiveWebRTCOfferBodyV0(
+                fence: oldMediaFence,
+                sdp: interactivePrimarySDP("11"),
+                dtlsFingerprintHex: String(repeating: "11", count: 32)
+            )
+        )))
+        #expect(harness.events.events.count == eventCountBeforeStaleOffer)
+        #expect(await harness.router.state == .ready)
         #expect(try await !harness.channel.confirmReplacementRenderedFrame(.init(
             generation: 1, fence: ClientDecoderFenceV0(header: oldTail),
             mediaSequence: 5, presentationTimeNanoseconds: 5_000, frameReference: UUID()
@@ -611,7 +918,21 @@ func interactivePrimaryChannelCompletesSelectedSessionApprovalFlow(deliveryOrder
             generation: 2, fence: ClientDecoderFenceV0(header: replacementClean),
             mediaSequence: 8, presentationTimeNanoseconds: 8_000, frameReference: UUID()
         )))
-        try await harness.channel.acknowledgeReplacementSurface()
+        let replyDuringReplacementSend = deliveryOrder == 1
+            && !exceedsControlLifetime && acknowledgementDelivery == 0
+        defer { Task { await harness.transport.resumeSend() } }
+        if replyDuringReplacementSend { await harness.transport.suspendNextSend() }
+        let sendingReplacementAck = Task {
+            try await harness.channel.acknowledgeReplacementSurface()
+        }
+        if replyDuringReplacementSend {
+            let deadline = ContinuousClock.now + .seconds(2)
+            while await harness.transport.sendIsSuspended == false,
+                  ContinuousClock.now < deadline { await Task.yield() }
+            try #require(await harness.transport.sendIsSuspended)
+        } else {
+            try await sendingReplacementAck.value
+        }
         let ackFrame = try #require(await harness.transport.frames.last)
         let ack = try WireCodec.decode(WireEnvelope<InteractiveSurfaceAcknowledgementBodyV0>.self, from: ackFrame)
         try await harness.router.receive(WireCodec.encode(WireEnvelope(
@@ -621,8 +942,127 @@ func interactivePrimaryChannelCompletesSelectedSessionApprovalFlow(deliveryOrder
                 acknowledgement: ack.body, inputResumed: true, sequence: 4
             )
         )))
+        if replyDuringReplacementSend {
+            await harness.transport.resumeSend()
+            try await sendingReplacementAck.value
+        }
         #expect(await harness.channel.replacementSurfacePhase() == .active)
         #expect(await harness.router.state == .ready)
+        let sentBeforeInventory = await harness.transport.frames.count
+        if replyDuringReplacementSend { await harness.transport.suspendNextSend() }
+        let sendingInventory = Task {
+            try await harness.channel.requestReplacementSurfaceTargets()
+        }
+        if replyDuringReplacementSend {
+            let deadline = ContinuousClock.now + .seconds(2)
+            while await harness.transport.sendIsSuspended == false,
+                  ContinuousClock.now < deadline { await Task.yield() }
+            try #require(await harness.transport.sendIsSuspended)
+        } else {
+            try await sendingInventory.value
+        }
+        let inventoryFrame = try #require(await harness.transport.frames.last)
+        let inventoryRequest = try WireCodec.decode(
+            WireEnvelope<InteractiveSurfaceTargetsRequestBodyV0>.self,
+            from: inventoryFrame
+        )
+        #expect(try WireCodec.messageKind(from: inventoryFrame) == .interactiveSurfaceTargetsRequest)
+        #expect(await harness.transport.frames.count == sentBeforeInventory + 1,
+            "An active surface inventory request sends only its own command")
+        if replyDuringReplacementSend {
+            // The live picker can overlap the view's display refresh. A reply
+            // for one request must not be consumed by the other's pending ID.
+            let requestingDisplays = Task {
+                try await harness.channel.requestDisplayCatalog()
+            }
+            defer { requestingDisplays.cancel() }
+            let displayDeadline = ContinuousClock.now + .seconds(2)
+            while await harness.transport.frames.count < sentBeforeInventory + 2,
+                  ContinuousClock.now < displayDeadline { await Task.yield() }
+            let displayFrame = try #require(await harness.transport.frames.last)
+            let displayRequest = try WireCodec.decode(
+                WireEnvelope<InteractiveDisplayCatalogRequestBodyV1>.self,
+                from: displayFrame
+            )
+            try await harness.router.receive(WireCodec.encode(WireEnvelope(
+                messageID: WireUUID(UUID()),
+                correlationID: inventoryRequest.messageID,
+                sentAtUnixMilliseconds: 2_005,
+                body: try InteractiveSurfaceTargetsResponseBodyV0(
+                    interactiveSessionID: WireUUID(descriptor.interactiveSessionID),
+                    authorizationEpoch: descriptor.authorizationEpoch,
+                    inventoryRevision: 1,
+                    validForMilliseconds: 100,
+                    candidates: [],
+                    sequence: 5
+                )
+            )))
+            #expect(await harness.channel.replacementSurfaceTargets() == [])
+            await harness.transport.resumeSend()
+            try await sendingInventory.value
+            #expect(await harness.channel.replacementSurfaceTargets() == [],
+                "Completing a suspended send must not erase its already accepted inventory")
+            let displayID = WireUUID(UUID())
+            try await harness.router.receive(WireCodec.encode(WireEnvelope(
+                messageID: WireUUID(UUID()),
+                correlationID: displayRequest.messageID,
+                sentAtUnixMilliseconds: 2_006,
+                body: try InteractiveDisplayCatalogResponseBodyV1(
+                    authorizationEpoch: descriptor.authorizationEpoch,
+                    admissionRevision: 1,
+                    selectedDisplayID: displayID,
+                    validForMilliseconds: 1_000,
+                    displays: [try InteractiveDisplayCandidateV1(
+                        displayID: displayID, ordinal: 1,
+                        pixelWidth: 1920, pixelHeight: 1080,
+                        layoutX: 0, layoutY: 0,
+                        layoutWidth: 1920, layoutHeight: 1080,
+                        isMain: true
+                    )]
+                )
+            )))
+            #expect(try await requestingDisplays.value.selectedDisplayID == displayID)
+            await harness.transport.suspendNextSend()
+            let earlyDisplays = Task {
+                try await harness.channel.requestDisplayCatalog(timeoutMilliseconds: 500)
+            }
+            defer {
+                earlyDisplays.cancel()
+                Task { await harness.transport.resumeSend() }
+            }
+            let earlyDeadline = ContinuousClock.now + .seconds(2)
+            while await harness.transport.sendIsSuspended == false,
+                  ContinuousClock.now < earlyDeadline { await Task.yield() }
+            try #require(await harness.transport.sendIsSuspended)
+            let earlyFrame = try #require(await harness.transport.frames.last)
+            let earlyRequest = try WireCodec.decode(
+                WireEnvelope<InteractiveDisplayCatalogRequestBodyV1>.self,
+                from: earlyFrame
+            )
+            try await harness.router.receive(WireCodec.encode(WireEnvelope(
+                messageID: WireUUID(UUID()),
+                correlationID: earlyRequest.messageID,
+                sentAtUnixMilliseconds: 2_007,
+                body: try InteractiveDisplayCatalogResponseBodyV1(
+                    authorizationEpoch: descriptor.authorizationEpoch,
+                    admissionRevision: 2,
+                    selectedDisplayID: displayID,
+                    validForMilliseconds: 1_000,
+                    displays: [try InteractiveDisplayCandidateV1(
+                        displayID: displayID, ordinal: 1,
+                        pixelWidth: 1920, pixelHeight: 1080,
+                        layoutX: 0, layoutY: 0,
+                        layoutWidth: 1920, layoutHeight: 1080,
+                        isMain: true
+                    )]
+                )
+            )))
+            await harness.transport.resumeSend()
+            #expect(try await earlyDisplays.value.selectedDisplayID == displayID,
+                "An early authenticated catalog reply must resume its original waiter")
+            #expect(await harness.router.state == .ready)
+        }
+        #expect(await harness.channel.replacementSurfacePhase() == .active)
         return
     }
     let inputFrame = try await harness.channel.makeInitialInputFrame(
@@ -631,14 +1071,35 @@ func interactivePrimaryChannelCompletesSelectedSessionApprovalFlow(deliveryOrder
     let input = try InteractiveInputCodec.decode(inputFrame)
     #expect(input.sequence == 1)
     #expect(input.surfaceID.rawValue == descriptor.surfaceID)
-    let resetFrame = try #require(
-        await harness.channel.closeInitialInputFrame()
-    )
-    let reset = try InteractiveInputCodec.decode(resetFrame)
-    #expect(reset.sequence == 2)
-    #expect(reset.input == .reset)
+    if deliveryOrder == 0 {
+        let resetFrame = try #require(await harness.channel.closeInitialInputFrame())
+        let reset = try InteractiveInputCodec.decode(resetFrame)
+        #expect(reset.sequence == 2)
+        #expect(reset.input == .reset)
+    }
 
+    let stoppedFence = try await harness.channel.requestWebRTCOffer(
+        for: admittedDescriptor
+    )
+    let stoppedOfferFrame = try #require(await harness.transport.frames.last)
+    let stoppedOfferRequest = try WireCodec.decode(
+        WireEnvelope<InteractiveWebRTCOfferRequestBodyV0>.self,
+        from: stoppedOfferFrame
+    )
+
+    if deliveryOrder == 2 {
+        await harness.transport.rejectNextSend()
+        await #expect(throws: InteractivePrimaryTransportV0.Failure.injected) {
+            try await harness.channel.endSession()
+        }
+        await #expect(throws: ClientInteractivePrimaryChannelErrorV0.unavailable) {
+            try await harness.channel.makeInitialInputFrame(.pointerMove(x: 10, y: 20))
+        }
+    }
     let endSubmitted = try await harness.channel.endSession()
+    await #expect(throws: ClientInteractivePrimaryChannelErrorV0.unavailable) {
+        try await harness.channel.makeInitialInputFrame(.pointerMove(x: 10, y: 20))
+    }
     #expect(endSubmitted == .endSubmitted(
         interactiveSessionID: session.interactiveSessionID,
         effects: effects.sorted()
@@ -650,6 +1111,18 @@ func interactivePrimaryChannelCompletesSelectedSessionApprovalFlow(deliveryOrder
     )
     #expect(end.body.interactiveSessionID.rawValue
         == session.interactiveSessionID)
+    try await harness.router.receive(WireCodec.encode(WireEnvelope(
+        messageID: WireUUID(UUID()),
+        correlationID: stoppedOfferRequest.messageID,
+        sentAtUnixMilliseconds: 2_003,
+        body: try InteractiveWebRTCOfferBodyV0(
+            fence: stoppedFence,
+            sdp: interactivePrimarySDP("11"),
+            dtlsFingerprintHex: String(repeating: "11", count: 32)
+        )
+    )))
+    #expect(harness.events.events.last == endSubmitted)
+    #expect(await harness.router.state == .ready)
     try await harness.router.receive(WireCodec.encode(WireEnvelope(
         messageID: WireUUID(UUID()),
         correlationID: end.messageID,

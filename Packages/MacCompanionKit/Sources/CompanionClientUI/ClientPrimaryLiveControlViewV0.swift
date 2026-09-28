@@ -28,6 +28,7 @@ public enum ClientPrimaryLiveControlErrorV0: Error, Equatable, Sendable {
 public protocol ClientPrimaryLiveControlProductV0: AnyObject {
     var descriptor: AdaptiveSurfaceDescriptor { get }
     var surface: UIKitClientLiveSurfaceViewV0 { get }
+    func observeVideoRecovery(_ changed: @escaping @MainActor (Bool) -> Void)
     func refreshPrimaryState() async -> Bool
     func activationFailedOrClosed() async -> Bool
     func requestSurfaceTargets() async throws
@@ -53,6 +54,12 @@ public protocol ClientPrimaryLiveControlProductV0: AnyObject {
 
 @available(iOS 17.0, *)
 extension ClientPrimaryLiveControlProductV0 {
+    public func observeVideoRecovery(
+        _ changed: @escaping @MainActor (Bool) -> Void
+    ) {
+        changed(false)
+    }
+
     public func showWiderContext() async {
         surface.resetVisualZoom(animated: true)
     }
@@ -88,6 +95,7 @@ public final class ClientPrimaryLiveControlCoordinatorV0: ObservableObject {
         ClientPrimaryLiveControlPhaseV0 = .idle
     @Published public private(set) var product:
         (any ClientPrimaryLiveControlProductV0)?
+    @Published public private(set) var videoRequiresRestart = false
 
     private let productFactory: ProductFactory
     private let failure: Failure
@@ -128,6 +136,7 @@ public final class ClientPrimaryLiveControlCoordinatorV0: ObservableObject {
         activationTask?.cancel()
         productGeneration = UUID()
         let generation = productGeneration
+        videoRequiresRestart = false
         phase = .preparing
         activationTask = Task { [weak self] in
             await self?.prepare(mode: mode, generation: generation)
@@ -300,6 +309,10 @@ public final class ClientPrimaryLiveControlCoordinatorV0: ObservableObject {
                 return
             }
             product = value
+            value.observeVideoRecovery { [weak self] required in
+                guard let self, self.productGeneration == generation else { return }
+                self.videoRequiresRestart = required
+            }
             phase = .awaitingVerifiedFrame
 
             // The primary request tracker owns the protocol deadline. This
@@ -1225,6 +1238,19 @@ public struct ClientPrimaryLiveControlViewV0: View {
                         product: product,
                         mode: viewState.mode
                     )
+                    .allowsHitTesting(!coordinator.videoRequiresRestart)
+                    if coordinator.videoRequiresRestart {
+                        ContentUnavailableView(
+                            "Remote Control needs to restart",
+                            systemImage: "display.trianglebadge.exclamationmark",
+                            description: Text(
+                                "Tap Stop, then request Remote Control again to resume."
+                            )
+                        )
+                        .foregroundStyle(.white)
+                        .background(Color.black)
+                        .accessibilityIdentifier("Remote Control restart required")
+                    }
                 } else if coordinator.phase == .failed {
                     ContentUnavailableView(
                         "Remote Control unavailable",
@@ -1241,7 +1267,7 @@ public struct ClientPrimaryLiveControlViewV0: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .clipped()
 
-            if coordinator.phase == .active {
+            if coordinator.phase == .active && !coordinator.videoRequiresRestart {
                 ClientRemoteQuickActionsBarV0(
                     keyboardPreparationInFlight:
                         viewState.keyboardPreparationInFlight,
@@ -1275,7 +1301,7 @@ public struct ClientPrimaryLiveControlViewV0: View {
                 .pickerStyle(.menu)
                 .accessibilityIdentifier("Pointer mode")
                 .disabled(
-                    coordinator.phase != .active
+                    coordinator.phase != .active || coordinator.videoRequiresRestart
                 )
             }
             ToolbarItem(placement: .topBarTrailing) {
@@ -1288,6 +1314,7 @@ public struct ClientPrimaryLiveControlViewV0: View {
                 .accessibilityIdentifier("Shared Display")
                 .disabled(
                     coordinator.phase != .active
+                        || coordinator.videoRequiresRestart
                         || viewState.displaySelectionInFlight
                 )
             }
@@ -1342,7 +1369,7 @@ public struct ClientPrimaryLiveControlViewV0: View {
                     )
                     .disabled(viewState.stopSubmitted || !canStop)
                 }
-                .disabled(coordinator.phase != .active)
+                .disabled(coordinator.phase != .active || coordinator.videoRequiresRestart)
             }
             ToolbarItem(placement: .topBarTrailing) {
                 // Keep safety Stop directly reachable while UIKit's software
@@ -1386,6 +1413,14 @@ public struct ClientPrimaryLiveControlViewV0: View {
         }
         .onChange(of: coordinator.phase) { _, value in
             synchronizeStudyControlTiming()
+        }
+        .onChange(of: coordinator.videoRequiresRestart) { _, required in
+            guard required else { return }
+            viewState.showingRemoteKeyboard = false
+            viewState.showingDisplayPicker = false
+            viewState.textComposer = nil
+            viewState.pendingTextPresentation = nil
+            coordinator.product?.surface.hideSoftwareKeyboard()
         }
         .onChange(of: viewState.showingStudyJob) { _, value in
             if value {

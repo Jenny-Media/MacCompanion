@@ -769,7 +769,15 @@ record-specific bound, including an empty payload for discontinuity/end. The
 Agent rechecks the inbound transport generation and transfers the complete
 record only to the exact authenticated role-pair source. The exact payload-free
 `runtime.interactive.media.publish.ack` is withheld until that source accepts
-the record; one menu publication remains in flight, preserving backpressure.
+the record or takes ownership of discarding it after explicit retirement of that
+exact authenticated network role-pair fence. One menu publication remains in
+flight, preserving backpressure. Role-pump terminal teardown retires its media
+fence before awaiting socket cancellation. This discharges a matching pending
+publication and consumer, and recognizes late records for that retired fence.
+The route retains at most 32 retired session/epoch fences within one authenticated
+menu generation. Retirement cannot affect another active pair, grant input,
+restore a pair, or forward a retired record. Unknown mismatches still fail closed;
+menu generation invalidation clears retirement history.
 The receiver finishes within 3 seconds and the menu waits at most 4 seconds.
 
 There is no handled application-error envelope. Rejection, timeout,

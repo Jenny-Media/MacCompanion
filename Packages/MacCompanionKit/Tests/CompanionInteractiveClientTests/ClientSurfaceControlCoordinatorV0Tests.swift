@@ -91,7 +91,8 @@ private func selectedResponse(
 private func targetInventoryResponse(
     requestMessageID: WireUUID,
     targetToken: WireUUID,
-    serverSequence: Int64 = 1
+    serverSequence: Int64 = 1,
+    validForMilliseconds: Int64 = 100
 ) throws -> Data {
     try WireCodec.encode(WireEnvelope(
         messageID: WireUUID(UUID()),
@@ -101,7 +102,7 @@ private func targetInventoryResponse(
             interactiveSessionID: WireUUID(controlSessionID),
             authorizationEpoch: .init(rawValue: 4),
             inventoryRevision: 1,
-            validForMilliseconds: 100,
+            validForMilliseconds: validForMilliseconds,
             candidates: [
                 try InteractiveSurfaceTargetCandidateV0(
                     targetToken: targetToken,
@@ -563,6 +564,41 @@ private func focusedControlDescriptor(
             clientMonotonicMilliseconds: 300
         )
     }
+}
+
+@Test func clientCanSelectAfterScrollingLongInventory() throws {
+    let initial = try controlDescriptor(
+        surfaceID: controlInitialSurfaceID,
+        revision: 1,
+        coordinateRevision: 1
+    )
+    var coordinator = try ClientSurfaceControlCoordinatorV0(
+        acknowledgedDescriptor: initial,
+        sessionAllowedInteractionClasses: [.view, .pointer, .keyboard]
+    )
+    let requestID = WireUUID(UUID())
+    let targetToken = WireUUID(UUID())
+    _ = try coordinator.makeTargetInventoryRequest(
+        messageID: requestID,
+        sentAtUnixMilliseconds: 1_000
+    )
+    _ = try coordinator.receiveTargetInventory(
+        targetInventoryResponse(
+            requestMessageID: requestID,
+            targetToken: targetToken,
+            validForMilliseconds: 120_000
+        ),
+        clientMonotonicNowMilliseconds: 200
+    )
+    let selection = try coordinator.beginSelection(
+        targetKind: .application,
+        targetToken: targetToken,
+        resetMessageID: WireUUID(UUID()),
+        requestMessageID: WireUUID(UUID()),
+        sentAtUnixMilliseconds: 1_002,
+        clientMonotonicMilliseconds: 20_200
+    )
+    #expect(!selection.requestJSON.isEmpty)
 }
 
 @Test func clientSurfaceControlRequiresResetMediaProofAndExactHostAck() throws {

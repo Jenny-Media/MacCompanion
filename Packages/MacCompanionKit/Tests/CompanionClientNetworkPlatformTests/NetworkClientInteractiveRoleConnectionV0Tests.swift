@@ -421,7 +421,7 @@ private func waitForRoleProductState(
         .ending(interactiveSessionID:
             composition.interactiveSession.interactiveSessionID)
     ))
-    #expect(await pair.closeCount == 1)
+    #expect(await pair.closeCount == 0)
     binding.productEvents.publishControl(NetworkClientControlPublicationV0(
         hostID: composition.authenticatedSession.hostID,
         connectionID: composition.authenticatedSession.connectionID,

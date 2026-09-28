@@ -5,6 +5,7 @@ import CompanionAgentPlatform
 import CompanionDiscovery
 import CompanionHostPlatform
 import CompanionIPC
+import CompanionInteractiveHost
 import CompanionLocalXPCPlatform
 import CompanionNetworkPlatform
 import CompanionSecurity
@@ -1269,6 +1270,8 @@ public enum MacAgentProductBootstrapV1 {
                             channelAuthenticator: owner,
                             surfaceControl: owner,
                             displayControl: owner,
+                            mediaNegotiation: route,
+                            nativeRuntime: route,
                             generation: surfaces.generation
                         )
                         try await localInteractiveRoleData.bind(
@@ -1441,7 +1444,12 @@ private extension AgentNetworkPrimaryStartupInputsV1 {
         admission: AgentVisibleInteractiveAdmissionAuthorityV1,
         runtime: AgentInteractiveRuntimeBindingAuthorityV1
     ) -> Self {
-        Self(
+#if MACCOMPANION_WEBRTC_DEVELOPMENT
+        let mediaNegotiation: (any InteractiveWebRTCNegotiatingV0)? = runtime
+#else
+        let mediaNegotiation = interactivePlatform.mediaNegotiation
+#endif
+        return Self(
             registry: registry,
             providerLoader: providerLoader,
             wallNowUnixMilliseconds: wallNowUnixMilliseconds,
@@ -1451,6 +1459,8 @@ private extension AgentNetworkPrimaryStartupInputsV1 {
                 visibleAdmission: admission,
                 materials: interactivePlatform.materials,
                 runtime: runtime,
+                mediaNegotiation: mediaNegotiation,
+                nativeRuntime: interactivePlatform.nativeRuntime ?? runtime,
                 surfaceControl: runtime,
                 displaySelection: runtime
             )

@@ -13,6 +13,7 @@ public struct ClientPrimaryWorkspaceViewV0: View {
     @StateObject private var liveControl:
         ClientPrimaryLiveControlCoordinatorV0
     @State private var liveControlPresented = false
+    @State private var isRefreshingStatus = false
     private let onSelectAction: (CapabilityDiscoveryDescriptorV1) -> Void
     private let onCommandFailure:
         @MainActor @Sendable (any Error) -> Void
@@ -22,6 +23,7 @@ public struct ClientPrimaryWorkspaceViewV0: View {
         macName: String,
         model: ClientPrimaryWorkspaceModelV0,
         interactiveRoles: NetworkClientInteractiveRoleProductBindingV0,
+        liveProductFactory: ClientPrimaryLiveControlCoordinatorV0.ProductFactory? = nil,
         onSelectAction: @escaping (
             CapabilityDiscoveryDescriptorV1
         ) -> Void,
@@ -31,12 +33,10 @@ public struct ClientPrimaryWorkspaceViewV0: View {
     ) {
         self.macName = macName
         _model = ObservedObject(wrappedValue: model)
-        _liveControl = StateObject(wrappedValue:
-            ClientPrimaryLiveControlCoordinatorV0(
-                roles: interactiveRoles,
-                failure: onCommandFailure
-            )
-        )
+        let coordinator = liveProductFactory.map {
+            ClientPrimaryLiveControlCoordinatorV0(productFactory: $0, failure: onCommandFailure)
+        } ?? ClientPrimaryLiveControlCoordinatorV0(roles: interactiveRoles, failure: onCommandFailure)
+        _liveControl = StateObject(wrappedValue: coordinator)
         self.onSelectAction = onSelectAction
         self.onReconnect = onReconnect
         self.onCommandFailure = onCommandFailure
@@ -49,6 +49,7 @@ public struct ClientPrimaryWorkspaceViewV0: View {
                     NavigationLink("Mac Status") {
                         ClientObserveViewV0(
                             projection: model.projection.observe,
+                            isRefreshingStatus: isRefreshingStatus,
                             onRefreshStatus: refreshStatus,
                             onLoadActivity: loadActivity,
                             onLoadOlderActivity: loadActivity,
@@ -148,7 +149,12 @@ public struct ClientPrimaryWorkspaceViewV0: View {
     }
 
     private func refreshStatus() {
-        perform { try await model.refreshStatus() }
+        guard !isRefreshingStatus else { return }
+        isRefreshingStatus = true
+        perform {
+            defer { isRefreshingStatus = false }
+            try await model.refreshStatus()
+        }
     }
 
     private func loadActivity() {
@@ -246,7 +252,13 @@ public struct ClientPrimaryWorkspaceViewV0: View {
     ) {
         Task {
             do { try await command() }
-            catch { onCommandFailure(error) }
+            catch {
+                IOSClientRuntimeDiagnosticLogV0.record(
+                    "ui.workspace.command.terminal",
+                    error: error
+                )
+                onCommandFailure(error)
+            }
         }
     }
 }

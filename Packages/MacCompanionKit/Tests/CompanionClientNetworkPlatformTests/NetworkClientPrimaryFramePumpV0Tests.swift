@@ -1276,7 +1276,8 @@ private func networkClientAcceptedControlSession(
     )
 }
 
-@Test func primaryProductCandidatePublishesOnlyAfterExactSelection()
+@Test(arguments: EndpointKind.allCases)
+func primaryProductCandidatePublishesOnlyAfterExactSelection(kind: EndpointKind)
     async throws
 {
     let base = try makeNetworkClientPumpHarness()
@@ -1298,9 +1299,16 @@ private func networkClientAcceptedControlSession(
         deviceID: base.deviceID,
         fingerprint: base.fingerprint
     )
+    let value: String = switch kind {
+    case .ipv4: "192.168.1.20"
+    case .ipv6: "2001:db8::20"
+    case .dns: "mac.example"
+    case .bonjour: "testmac._maccompanion._tcp.local."
+    }
+    let nativeAddress = kind == .ipv4 || kind == .ipv6 ? value : nil
     let selectedEndpoint = try EndpointCandidate(
-        kind: .ipv4,
-        value: "192.168.1.20",
+        kind: kind,
+        value: value,
         port: 47_474
     )
     let candidate = NetworkClientPrimaryProductCandidateV0(
@@ -1372,6 +1380,7 @@ private func networkClientAcceptedControlSession(
     #expect(observePublications.values.isEmpty)
     #expect(applicationState.snapshot().availability == .disconnected)
     #expect(applicationState.snapshot().revision == 0)
+    #expect(applicationState.currentAuthenticatedNativeIPAddress(primaryConnectionID: Data(repeating: 0x11, count: 16)) == nil)
     await #expect(
         throws: NetworkClientPrimaryApplicationCommandErrorV0.unavailable
     ) {
@@ -1389,6 +1398,8 @@ private func networkClientAcceptedControlSession(
     #expect(applicationState.snapshot().authenticatedRouteClass == .lan)
     #expect(applicationState.snapshot().revision == 1)
     #expect(applicationState.snapshot().controlChannel != nil)
+    #expect(applicationState.currentAuthenticatedNativeIPAddress(primaryConnectionID: session.connectionID) == nativeAddress)
+    #expect(applicationState.currentAuthenticatedNativeIPAddress(primaryConnectionID: Data(repeating: 0x22, count: 16)) == nil)
     #expect(applicationState.snapshot().controlState == .inactive)
 
     let controlSubmitted = try await applicationState
@@ -1537,6 +1548,8 @@ private func networkClientAcceptedControlSession(
     #expect(applicationState.snapshot().authenticatedRouteClass == .privateDNS)
     #expect(applicationState.snapshot().observedStatus == nil)
     #expect(applicationState.snapshot().revision == 6)
+    #expect(applicationState.currentAuthenticatedNativeIPAddress(primaryConnectionID: session.connectionID) == nil)
+    #expect(applicationState.currentAuthenticatedNativeIPAddress(primaryConnectionID: replacementConnectionID) == nativeAddress)
 
     let acceptedControl = try networkClientAcceptedControlSession(
         primary: replacementSession
@@ -1748,6 +1761,7 @@ private func networkClientAcceptedControlSession(
     #expect(applicationState.snapshot().availability == .disconnected)
     #expect(applicationState.snapshot().authenticatedRouteClass == nil)
     #expect(applicationState.snapshot().revision == 19)
+    #expect(applicationState.currentAuthenticatedNativeIPAddress(primaryConnectionID: replacementConnectionID) == nil)
     #expect(selectedTerminations.terminations.count == 2)
     var updateIterator = applicationState.updates.makeAsyncIterator()
     #expect(await updateIterator.next()?.revision == 19)

@@ -21,7 +21,7 @@ contains exactly:
 
 - `interactiveSessionID` and `authorizationEpoch`;
 - `inventoryRevision`, a positive safe integer scoped to this session;
-- `validForMilliseconds`, from 1 through 10,000;
+- `validForMilliseconds`, from 1 through 120,000;
 - `candidates`, a sorted unique array of at most 192 candidates; and
 - the next server surface-control `sequence`.
 
@@ -29,6 +29,9 @@ The request and response consume the same per-direction sequences used by
 initial activation and surface replacement. Only one inventory request may be
 in flight. A response does not pause media or input, but selection cannot race
 an unresolved inventory response.
+An active native video enrollment stays in place while the picker inventory is
+requested. The client cancels and drains that enrollment only after the user
+chooses a replacement surface and before sending its selection command.
 
 ## Candidate schema
 
@@ -69,6 +72,11 @@ transmit, log, or persist:
   placeholders, or hierarchy; or
 - Mac Companion administration, permission, login, lock, credential, or other
   excluded security surfaces as ordinary candidates.
+
+The menu grants a 120-second picker interval by default so a person can
+inspect and scroll a full inventory before selecting. The host still checks
+the current source, ownership, exclusion policy, and capture filter at the
+moment of selection; an inventory entry alone grants no capture authority.
 
 Host-local source references remain inside the visible menu-app inventory
 owner. Inventory expires on its half-open local monotonic deadline and is

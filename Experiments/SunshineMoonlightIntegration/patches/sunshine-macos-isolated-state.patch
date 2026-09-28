@@ -1,0 +1,27 @@
+diff --git a/src/platform/macos/misc.mm b/src/platform/macos/misc.mm
+index 7c3127d..174e200 100644
+--- a/src/platform/macos/misc.mm
++++ b/src/platform/macos/misc.mm
+@@ -102,7 +102,22 @@ namespace platf {
+     return std::make_unique<deinit_t>();
+   }
+ 
++  /**
++   * @brief Resolve application state, optionally isolated by the managed host.
++   * @return Existing absolute override directory or the default Sunshine path.
++   * @throws std::invalid_argument if SUNSHINE_APPDATA is not an existing absolute directory.
++   */
+   fs::path appdata() {
++    // Managed distributions can isolate their state from a separately
++    // installed Sunshine instance. A supplied override must already exist;
++    // an invalid override must never fall back to another instance's state.
++    if (const char *override_dir = getenv("SUNSHINE_APPDATA")) {
++      fs::path directory {override_dir};
++      if (!directory.is_absolute() || !fs::is_directory(directory)) {
++        throw std::invalid_argument("SUNSHINE_APPDATA requires an existing absolute directory");
++      }
++      return directory;
++    }
+     const char *homedir;
+     if ((homedir = getenv("HOME")) == nullptr) {
+       homedir = getpwuid(geteuid())->pw_dir;

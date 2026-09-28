@@ -188,4 +188,5 @@ xpc_probe_flags=(
   Packages/MacCompanionKit/Sources/CompanionLocalXPCPlatformC/CompanionLocalXPCPlatformC.c
 
 bash -n Experiments/LocalXPCIdentityProbe/run.sh
+python3 scripts/verify_native_selected_capture.py
 git diff --check

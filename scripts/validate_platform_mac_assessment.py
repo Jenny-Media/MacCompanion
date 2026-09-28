@@ -31,7 +31,11 @@ from validate_platform_codesign_outer import execute_correlated_with_fakes
 from validate_platform_signing_subjects import TEAM_ID
 
 
-STAPLER_PATH = "/Applications/Xcode-beta.app/Contents/Developer/usr/bin/stapler"
+# Both paths are already admitted by the production assessment policy.
+# Prefer stable Xcode; inspect_fixed_tool still enforces regular-file identity.
+STAPLER_PATH = "/Applications/Xcode.app/Contents/Developer/usr/bin/stapler"
+if not Path(STAPLER_PATH).exists():
+    STAPLER_PATH = "/Applications/Xcode-beta.app/Contents/Developer/usr/bin/stapler"
 
 
 def require_failure(operation: Callable[[], Any], expected: str) -> None:

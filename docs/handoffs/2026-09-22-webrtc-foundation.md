@@ -1,5 +1,8 @@
 # WebRTC foundation handoff — September 22, 2026
 
+Follow-on authenticated signaling work is recorded in
+[`2026-09-22-webrtc-authenticated-signaling.md`](../evidence/2026-09-22-webrtc-authenticated-signaling.md).
+
 ## Decision and scope
 
 Continue evaluating native WebRTC as MacCompanion's video foundation instead of

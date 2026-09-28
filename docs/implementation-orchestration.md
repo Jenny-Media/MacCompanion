@@ -104,7 +104,7 @@ validation jobs disable persisted checkout credentials unless a reviewed step
 has a narrow authenticated need. The repository gate rejects movable action
 tags before compilation.
 
-Apache-2.0 is the selected repository-wide license, paired with a separate Mac Companion/Jenny Media trademark policy, subject to written legal review. Use a Developer Certificate of Origin by default. Adopt a Contributor License Agreement only if Jenny Media LLC makes a deliberate dual-licensing or relicensing decision before accepting contributions. GitHub private vulnerability reporting is the initial security channel. Because the repository is already public, further pushes and external contributions remain paused until the license, trademark, contribution, and security policies, full-history review, and provider-side branch/secret/push protections are complete.
+The 2026-09-26 owner decision selects GPL-3.0 for combined product distribution with retained Apache-2.0 and upstream notices under `LICENSING.md`. Corresponding-source delivery and the separate Mac Companion/Jenny Media trademark policy are distribution requirements. Use a Developer Certificate of Origin by default. Adopt a Contributor License Agreement only if Jenny Media LLC makes a deliberate dual-licensing or relicensing decision before accepting contributions. GitHub private vulnerability reporting is the initial security channel. Because the repository is already public, further pushes and external contributions remain paused until the license, trademark, contribution, and security policies, full-history review, and provider-side branch/secret/push protections are complete.
 
 ## 3. Target and module boundaries
 

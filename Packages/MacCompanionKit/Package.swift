@@ -242,7 +242,8 @@ let package = Package(
             name: "CompanionIPC",
             dependencies: [
                 "CompanionDomain", "CompanionInteractiveShared",
-                "CompanionLifecycle", "CompanionPersistence", "CompanionWire",
+                "CompanionInteractiveWire", "CompanionLifecycle",
+                "CompanionPersistence", "CompanionWire",
             ]
         ),
         .target(
@@ -361,7 +362,8 @@ let package = Package(
             name: "CompanionClientNetworkPlatform",
             dependencies: [
                 "CompanionClient", "CompanionClientApp", "CompanionDiscovery",
-                "CompanionInteractiveClient", "CompanionInteractiveWire",
+                "CompanionInteractiveClient", "CompanionInteractiveShared",
+                "CompanionInteractiveWire",
                 "CompanionPresentation", "CompanionSecurity",
                 "CompanionTransport", "CompanionWire",
             ],
@@ -548,7 +550,7 @@ let package = Package(
             name: "CompanionIPCTests",
             dependencies: [
                 "CompanionDiscovery", "CompanionDomain", "CompanionIPC", "CompanionInteractiveShared",
-                "CompanionPersistence", "CompanionTestSupport", "CompanionWire",
+                "CompanionInteractiveWire", "CompanionPersistence", "CompanionTestSupport", "CompanionWire",
             ]
         ),
         .testTarget(

@@ -1,0 +1,41 @@
+{
+  "profile": "Mac Companion private selected capture context v0.1",
+  "nativeAppWindowEnrollmentAdmitted": true,
+  "physicalIdentifiersCrossAgentIPC": false,
+  "physicalIdentifiersReachOwnedChildOnly": true,
+  "nowMonotonicNanoseconds": 1000000000,
+  "windowContext": {
+    "profile": "maccompanion.selected-capture-context.v0.1",
+    "operationID": "AAAAAAAA-BBBB-4CCC-8DDD-EEEEEEEEEEEE",
+    "kind": "window",
+    "displayID": 1,
+    "windowID": 42,
+    "processID": 123,
+    "bundleIdentifier": "test.selected",
+    "processLaunchMilliseconds": 1000,
+    "expiresAtMonotonicNanoseconds": 31000000000,
+    "boundsX": -320,
+    "boundsY": 40,
+    "boundsWidth": 320,
+    "boundsHeight": 180,
+    "backingScale": 2,
+    "sourcePixelWidth": 640,
+    "sourcePixelHeight": 360,
+    "encodedWidth": 640,
+    "encodedHeight": 360
+  },
+  "rules": [
+    "canonical closed record at most 4096 bytes",
+    "private directory owner mode 0700 and regular single-link file owner mode 0600 without symlinks",
+    "parent resolves existing private root with POSIX realpath child rejects literal symlink aliases such as /tmp",
+    "exact managed operation display encoded mode and original Control bound",
+    "parent matches existing full native authority public key and geometry before emission",
+    "positive current process launch instance and exact live owner bounds rotation scale",
+    "window uses independent filter application uses app-only padded clipped crop",
+    "malformed expired replaced resized or unsafe selection has no Desktop fallback",
+    "permission preflight only no permission prompt or independent approval",
+    "backend owner treats absent selected object as Desktop only for an active Desktop descriptor",
+    "App and Window require acknowledged replacement then fresh native enrollment and context",
+    "old renderer identity operation and input authorization cannot cross the replacement"
+  ]
+}

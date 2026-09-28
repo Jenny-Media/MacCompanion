@@ -1,0 +1,28 @@
+diff --git a/src/video.cpp b/src/video.cpp
+index 843a19a..dd9fc99 100644
+--- a/src/video.cpp
++++ b/src/video.cpp
+@@ -7,6 +7,7 @@
+ #include <array>
+ #include <atomic>
+ #include <bitset>
++#include <cstdlib>
+ #include <list>
+ #include <thread>
+ #include <utility>
+@@ -3090,6 +3091,15 @@ namespace video {
+     if (!disp) {
+       return false;
+     }
++#ifdef MACCOMPANION_SELECTED_CAPTURE_ADAPTER
++    // The managed selected capture is fixed to the client's admitted mode.
++    // Sunshine's normal 1920x1080 capability probe would ask it for a frame
++    // with different dimensions and incorrectly reject VideoToolbox.
++    if (std::getenv("MACCOMPANION_NATIVE_SELECTION_PATH")) {
++      config_max_ref_frames.width = config_autoselect.width = disp->width;
++      config_max_ref_frames.height = config_autoselect.height = disp->height;
++    }
++#endif
+     if (!disp->is_codec_supported(encoder.h264.name, config_autoselect)) {
+       fg.disable();
+       BOOST_LOG(info) << "Encoder ["sv << encoder.name << "] is not supported on this GPU"sv;

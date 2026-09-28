@@ -1,0 +1,399 @@
+diff --git a/cmake/compile_definitions/macos.cmake b/cmake/compile_definitions/macos.cmake
+index acf336c..36ba7d2 100644
+--- a/cmake/compile_definitions/macos.cmake
++++ b/cmake/compile_definitions/macos.cmake
+@@ -61,3 +61,22 @@ set(PLATFORM_TARGET_FILES
+         "${CMAKE_SOURCE_DIR}/third-party/TPCircularBuffer/TPCircularBuffer.h"
+         ${APPLE_ENTITLEMENTS_FILE}
+         ${APPLE_PLIST_FILE})
++
++# Explicit development adapter source; the default upstream display path is unchanged.
++set(MACCOMPANION_SELECTED_CAPTURE_SOURCE_ROOT "" CACHE PATH "Trusted local selected capture adapter")
++if(MACCOMPANION_SELECTED_CAPTURE_SOURCE_ROOT)
++    if(NOT EXISTS "${MACCOMPANION_SELECTED_CAPTURE_SOURCE_ROOT}/CompanionSelectedCapture.m" OR
++       NOT EXISTS "${MACCOMPANION_SELECTED_CAPTURE_SOURCE_ROOT}/CompanionSelectedCapture.h" OR
++       NOT EXISTS "${MACCOMPANION_SELECTED_CAPTURE_SOURCE_ROOT}/CompanionSelectedCaptureContext.m" OR
++       NOT EXISTS "${MACCOMPANION_SELECTED_CAPTURE_SOURCE_ROOT}/CompanionSelectedCaptureContext.h")
++        message(FATAL_ERROR "Selected capture adapter sources are missing")
++    endif()
++    find_library(SCREEN_CAPTURE_KIT_LIBRARY ScreenCaptureKit REQUIRED)
++    list(APPEND SUNSHINE_EXTERNAL_LIBRARIES ${SCREEN_CAPTURE_KIT_LIBRARY})
++    list(APPEND PLATFORM_TARGET_FILES "${MACCOMPANION_SELECTED_CAPTURE_SOURCE_ROOT}/CompanionSelectedCapture.m"
++        "${MACCOMPANION_SELECTED_CAPTURE_SOURCE_ROOT}/CompanionSelectedCaptureContext.m")
++    set_source_files_properties("${MACCOMPANION_SELECTED_CAPTURE_SOURCE_ROOT}/CompanionSelectedCapture.m"
++        "${MACCOMPANION_SELECTED_CAPTURE_SOURCE_ROOT}/CompanionSelectedCaptureContext.m" PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
++    include_directories("${MACCOMPANION_SELECTED_CAPTURE_SOURCE_ROOT}")
++    add_compile_definitions(MACCOMPANION_SELECTED_CAPTURE_ADAPTER=1)
++endif()
+diff --git a/src/confighttp.cpp b/src/confighttp.cpp
+index 1b47397..373b770 100644
+--- a/src/confighttp.cpp
++++ b/src/confighttp.cpp
+@@ -8,6 +8,7 @@
+ 
+ // standard includes
+ #include <algorithm>
++#include <cstdlib>
+ #include <charconv>
+ #include <filesystem>
+ #include <format>
+@@ -2311,6 +2312,11 @@ namespace confighttp {
+    * @brief Start the HTTPS configuration server.
+    */
+   void start() {
++    // Managed enrollment has no independent administration or pairing path.
++    const char *managed = std::getenv("MACCOMPANION_MANAGED_ENROLLMENT");
++    if (managed && std::string_view(managed) == "1") {
++      return;
++    }
+     platf::set_thread_name("confighttp");
+     const auto shutdown_event = mail::man->event<bool>(mail::shutdown);
+ 
+diff --git a/src/nvhttp.cpp b/src/nvhttp.cpp
+index 8e33cad..68f359c 100644
+--- a/src/nvhttp.cpp
++++ b/src/nvhttp.cpp
+@@ -7,6 +7,7 @@
+ 
+ // standard includes
+ #include <algorithm>
++#include <cstdlib>
+ #include <chrono>
+ #include <filesystem>
+ #include <format>
+@@ -1363,6 +1364,16 @@ namespace nvhttp {
+       return;
+     }
+ 
++    const char *managed = std::getenv("MACCOMPANION_MANAGED_ENROLLMENT");
++    if (managed && std::string_view(managed) == "1") {
++      const char *mode = std::getenv("MACCOMPANION_NATIVE_MODE");
++      if (!mode || get_arg(args, "mode") != mode) {
++        tree.put("root.gamesession", 0);
++        tree.put("root.<xmlattr>.status_code", 400);
++        return;
++      }
++    }
++
+     auto appid = util::from_view(get_arg(args, "appid"));
+ 
+     auto current_appid = proc::proc.running();
+@@ -1602,6 +1613,8 @@ namespace nvhttp {
+   std::pair<bool, std::string> get_client_status(const std::string_view cert_pem);
+ 
+   void start() {
++    const char *profile = std::getenv("MACCOMPANION_MANAGED_ENROLLMENT");
++    const bool managed = profile && std::string_view(profile) == "1";
+     platf::set_thread_name("nvhttp");
+     auto shutdown_event = mail::man->event<bool>(mail::shutdown);
+ 
+@@ -1689,18 +1702,27 @@ namespace nvhttp {
+     };
+ 
+     https_server.default_resource["GET"] = not_found<SunshineHTTPS>;
++    if (managed) {
++      https_server.default_resource["GET"] = [](auto response, auto request) {
++        response->write(SimpleWeb::StatusCode::client_error_not_found,
++                        "<root status_code=\"404\"/>"s);
++        response->close_connection_after_response = true;
++      };
++    }
+     https_server.resource["^/serverinfo$"]["GET"] = serverinfo<SunshineHTTPS>;
+-    https_server.resource["^/pair$"]["GET"] = [](auto resp, auto req) {
+-      pair<SunshineHTTPS>(resp, req);
+-    };
++    if (!managed) {
++      https_server.resource["^/pair$"]["GET"] = [](auto resp, auto req) {
++        pair<SunshineHTTPS>(resp, req);
++      };
++      https_server.resource["^/appasset$"]["GET"] = appasset;
++      https_server.resource["^/resume$"]["GET"] = [&host_audio](auto resp, auto req) {
++        resume(host_audio, resp, req);
++      };
++    }
+     https_server.resource["^/applist$"]["GET"] = applist;
+-    https_server.resource["^/appasset$"]["GET"] = appasset;
+     https_server.resource["^/launch$"]["GET"] = [&host_audio](auto resp, auto req) {
+       launch(host_audio, resp, req);
+     };
+-    https_server.resource["^/resume$"]["GET"] = [&host_audio](auto resp, auto req) {
+-      resume(host_audio, resp, req);
+-    };
+     https_server.resource["^/cancel$"]["GET"] = cancel;
+ 
+     https_server.config.reuse_address = true;
+@@ -1734,7 +1756,11 @@ namespace nvhttp {
+       }
+     };
+     std::jthread ssl {accept_and_run, &https_server};
+-    std::jthread tcp {accept_and_run, &http_server};
++    std::jthread tcp {[&]() {
++      if (!managed) {
++        accept_and_run(&http_server);
++      }
++    }};
+ 
+     // Wait for any event
+     shutdown_event->view();
+diff --git a/src/platform/macos/av_video.h b/src/platform/macos/av_video.h
+index 8832f32..dc1addc 100644
+--- a/src/platform/macos/av_video.h
++++ b/src/platform/macos/av_video.h
+@@ -7,6 +7,10 @@
+ // platform includes
+ #import <AVFoundation/AVFoundation.h>
+ #import <CoreGraphics/CoreGraphics.h>
++#ifdef MACCOMPANION_SELECTED_CAPTURE_ADAPTER
++#import "CompanionSelectedCapture.h"
++#import "CompanionSelectedCaptureContext.h"
++#endif
+ 
+ /**
+  * @brief macOS capture session and video output handles.
+@@ -41,6 +45,25 @@ struct CaptureSession {
+  * @brief Frame height property.
+  */
+ @property (nonatomic, assign) int frameHeight;
++@property (nonatomic, assign) int nativeSourceWidth;
++@property (nonatomic, assign) int nativeSourceHeight;
++@property (nonatomic, assign) uint64_t nativeSampleSequence;
++@property (nonatomic, assign) uint64_t nativeReportTime;
++@property (nonatomic, assign) bool nativeGeometryObserved;
++#ifdef MACCOMPANION_SELECTED_CAPTURE_ADAPTER
++@property (atomic, assign) BOOL selectedCaptureFailed;
++@property (nonatomic, retain) SCContentFilter *selectedFilter;
++@property (nonatomic, retain) NSMutableArray<CompanionSelectedCapture *> *selectedStreams;
++@property (nonatomic, copy) CompanionSelectedCaptureCurrent selectedIsCurrent;
++@property (nonatomic, assign) CGRect selectedSourceRect;
++@property (nonatomic, assign) int selectedEncodedWidth;
++@property (nonatomic, assign) int selectedEncodedHeight;
++// Inert local constructor; admission and process selection remain with MacCompanion.
++- (id)initWithSelectedFilter:(SCContentFilter *)filter sourceRect:(CGRect)sourceRect
++    sourcePixelWidth:(int)sourceWidth sourcePixelHeight:(int)sourceHeight
++    encodedWidth:(int)width encodedHeight:(int)height
++    isCurrent:(CompanionSelectedCaptureCurrent)isCurrent;
++#endif
+ 
+ /**
+  * @brief Objective-C block invoked for each captured sample buffer.
+diff --git a/src/platform/macos/av_video.m b/src/platform/macos/av_video.m
+index 5ad931c..7df01f9 100644
+--- a/src/platform/macos/av_video.m
++++ b/src/platform/macos/av_video.m
+@@ -4,10 +4,50 @@
+  */
+ // local includes
+ #import "av_video.h"
++#import <mach/mach_time.h>
++#include <stdlib.h>
+ 
+ @implementation AVVideo
+ 
++#ifdef MACCOMPANION_SELECTED_CAPTURE_ADAPTER
++- (id)initWithSelectedFilter:(SCContentFilter *)filter sourceRect:(CGRect)sourceRect
++    sourcePixelWidth:(int)sourceWidth sourcePixelHeight:(int)sourceHeight
++    encodedWidth:(int)width encodedHeight:(int)height
++    isCurrent:(CompanionSelectedCaptureCurrent)isCurrent {
++  self = [super init];
++  if (!self) return nil;
++  if (!filter || !isCurrent || sourceWidth < 1 || sourceWidth > 32768 || sourceHeight < 1 || sourceHeight > 32768
++      || width < 320 || width > 8192 || height < 240 || height > 8192) {
++    [self release]; return nil;
++  }
++  self.selectedFilter = filter;
++  self.selectedStreams = [NSMutableArray array];
++  self.selectedIsCurrent = isCurrent;
++  self.selectedSourceRect = sourceRect;
++  self.selectedEncodedWidth = width; self.selectedEncodedHeight = height;
++  self.frameWidth = width; self.frameHeight = height;
++  self.nativeSourceWidth = sourceWidth; self.nativeSourceHeight = sourceHeight;
++  self.pixelFormat = kCVPixelFormatType_32BGRA;
++  self.minFrameDuration = CMTimeMake(1, 60);
++  return self;
++}
++#endif
++
+ - (id)initWithDisplay:(CGDirectDisplayID)displayID frameRate:(int)frameRate {
++#ifdef MACCOMPANION_SELECTED_CAPTURE_ADAPTER
++  if (getenv("MACCOMPANION_NATIVE_SELECTION_PATH") != NULL) {
++    @autoreleasepool {
++      NSError *error = nil;
++      CompanionSelectedCaptureContext *context = [CompanionSelectedCaptureContext loadManagedContextForDisplay:displayID error:&error];
++      SCContentFilter *filter = context ? [context resolveFilter:&error] : nil;
++      if (!filter || frameRate != 60) { [self release]; return nil; }
++      return [self initWithSelectedFilter:filter sourceRect:context.sourceRect
++          sourcePixelWidth:(int)context.sourcePixelWidth sourcePixelHeight:(int)context.sourcePixelHeight
++          encodedWidth:(int)context.encodedWidth encodedHeight:(int)context.encodedHeight
++          isCurrent:^BOOL { return [context isCurrentSelection]; }];
++    }
++  }
++#endif
+   self = [super init];
+ 
+   CGDisplayModeRef mode = CGDisplayCopyDisplayMode(displayID);
+@@ -20,6 +60,8 @@
+   self.pixelFormat = kCVPixelFormatType_32BGRA;
+   self.frameWidth = (int) CGDisplayModeGetPixelWidth(mode);
+   self.frameHeight = (int) CGDisplayModeGetPixelHeight(mode);
++  self.nativeSourceWidth = self.frameWidth;
++  self.nativeSourceHeight = self.frameHeight;
+   self.minFrameDuration = CMTimeMake(1, frameRate);
+   self.session = [[AVCaptureSession alloc] init];
+   self.videoOutputs = [[NSMapTable alloc] init];
+@@ -44,6 +86,10 @@
+ }
+ 
+ - (void)dealloc {
++#ifdef MACCOMPANION_SELECTED_CAPTURE_ADAPTER
++  for (CompanionSelectedCapture *stream in self.selectedStreams) [stream stop];
++  [_selectedStreams release]; [_selectedFilter release]; [_selectedIsCurrent release];
++#endif
+   [self.videoOutputs release];
+   [self.captureCallbacks release];
+   [self.captureSignals release];
+@@ -57,6 +103,39 @@
+ }
+ 
+ - (dispatch_semaphore_t)capture:(FrameCallbackBlock)frameCallback {
++#ifdef MACCOMPANION_SELECTED_CAPTURE_ADAPTER
++  if (self.selectedFilter) {
++    dispatch_semaphore_t signal = dispatch_semaphore_create(0);
++    if (self.selectedCaptureFailed || !frameCallback || self.frameWidth != self.selectedEncodedWidth || self.frameHeight != self.selectedEncodedHeight) {
++      self.selectedCaptureFailed = YES; dispatch_semaphore_signal(signal); return signal;
++    }
++    NSError *error = nil;
++    CompanionSelectedCapture *stream = [[CompanionSelectedCapture alloc] initWithFilter:self.selectedFilter
++        sourceRect:self.selectedSourceRect sourcePixelWidth:self.nativeSourceWidth sourcePixelHeight:self.nativeSourceHeight
++        encodedWidth:self.selectedEncodedWidth encodedHeight:self.selectedEncodedHeight pixelFormat:self.pixelFormat
++        isCurrent:self.selectedIsCurrent error:&error];
++    if (!stream) { self.selectedCaptureFailed = YES; dispatch_semaphore_signal(signal); return signal; }
++    @synchronized(self) { [self.selectedStreams addObject:stream]; }
++    [stream startWithFrame:^BOOL(CMSampleBufferRef sample) {
++      [self reportNativeSample:sample aspectFit:YES];
++      return frameCallback(sample);
++    } terminal:^(NSError *terminalError) {
++      if (terminalError) self.selectedCaptureFailed = YES;
++      @synchronized(self) {
++        [self.selectedStreams removeObject:stream];
++        // A terminated last stream cannot leave fresh-looking sample evidence.
++        const char *managed = getenv("MACCOMPANION_MANAGED_ENROLLMENT");
++        const char *path = getenv("MACCOMPANION_NATIVE_GEOMETRY_PATH");
++        if (self.selectedStreams.count == 0 && managed && strcmp(managed, "1") == 0 && path) {
++          [[NSFileManager defaultManager] removeItemAtPath:[NSString stringWithUTF8String:path] error:nil];
++        }
++      }
++      dispatch_semaphore_signal(signal);
++    }];
++    [stream release];
++    return signal;
++  }
++#endif
+   @synchronized(self) {
+     AVCaptureVideoDataOutput *videoOutput = [[AVCaptureVideoDataOutput alloc] init];
+ 
+@@ -96,6 +175,8 @@
+ - (void)captureOutput:(AVCaptureOutput *)captureOutput
+   didOutputSampleBuffer:(CMSampleBufferRef)sampleBuffer
+          fromConnection:(AVCaptureConnection *)connection {
++  AVCaptureVideoDataOutput *output = (AVCaptureVideoDataOutput *) captureOutput;
++  [self reportNativeSample:sampleBuffer aspectFit:[output.videoSettings[AVVideoScalingModeKey] isEqual:AVVideoScalingModeResizeAspect]];
+   FrameCallbackBlock callback = [self.captureCallbacks objectForKey:connection];
+ 
+   if (callback != nil) {
+@@ -113,4 +194,44 @@
+   }
+ }
+ 
++- (void)reportNativeSample:(CMSampleBufferRef)sampleBuffer aspectFit:(BOOL)aspectFit {
++  @synchronized(self) {
++  const char *managed = getenv("MACCOMPANION_MANAGED_ENROLLMENT");
++  const char *reportPath = getenv("MACCOMPANION_NATIVE_GEOMETRY_PATH");
++  const char *operation = getenv("MACCOMPANION_NATIVE_OPERATION");
++  const char *expectedMode = getenv("MACCOMPANION_NATIVE_MODE");
++  CVPixelBufferRef pixels = CMSampleBufferGetImageBuffer(sampleBuffer);
++  CMVideoFormatDescriptionRef format = CMSampleBufferGetFormatDescription(sampleBuffer);
++  if (managed && strcmp(managed, "1") == 0 && reportPath && operation && expectedMode && pixels && format) {
++    size_t width = CVPixelBufferGetWidth(pixels), height = CVPixelBufferGetHeight(pixels);
++    NSString *actualMode = [NSString stringWithFormat:@"%zux%zux60", width, height];
++    // Encoder probes are not an active stream observation. Once this capture
++    // has produced the admitted dimensions, report later mismatches as well.
++    if (self.nativeGeometryObserved || [actualMode isEqualToString:[NSString stringWithUTF8String:expectedMode]]) {
++      self.nativeGeometryObserved = true;
++      self.nativeSampleSequence += 1;
++      mach_timebase_info_data_t timebase;
++      if (mach_timebase_info(&timebase) != KERN_SUCCESS || timebase.denom == 0) { return; }
++      uint64_t now = (uint64_t) (((__uint128_t) mach_absolute_time() * timebase.numer) / timebase.denom);
++      if (self.nativeReportTime == 0 || now - self.nativeReportTime >= 250000000) {
++        self.nativeReportTime = now;
++        CMVideoDimensions dimensions = CMVideoFormatDescriptionGetDimensions(format);
++        CGRect clean = CMVideoFormatDescriptionGetCleanAperture(format, true);
++        NSDictionary *report = @{@"profile": @"maccompanion.native-capture-evidence.v0.1",
++          @"operationID": [NSString stringWithUTF8String:operation], @"monotonicNanoseconds": @(now),
++          @"sampleSequence": @(self.nativeSampleSequence), @"capturePixelWidth": @(self.nativeSourceWidth),
++          @"capturePixelHeight": @(self.nativeSourceHeight), @"encodedWidth": @(width), @"encodedHeight": @(height),
++          @"formatWidth": @(dimensions.width), @"formatHeight": @(dimensions.height),
++          @"cleanX": @(clean.origin.x), @"cleanY": @(clean.origin.y), @"cleanWidth": @(clean.size.width),
++          @"cleanHeight": @(clean.size.height), @"aspectFitConfigured": @(aspectFit)};
++        NSData *bytes = [NSJSONSerialization dataWithJSONObject:report options:NSJSONWritingSortedKeys | NSJSONWritingWithoutEscapingSlashes error:nil];
++        if (bytes.length > 0 && bytes.length <= 2048) {
++          [bytes writeToFile:[NSString stringWithUTF8String:reportPath] atomically:YES];
++        }
++      }
++    }
++  }
++  }
++}
++
+ @end
+diff --git a/src/platform/macos/display.mm b/src/platform/macos/display.mm
+index d5fe3d0..63572b4 100644
+--- a/src/platform/macos/display.mm
++++ b/src/platform/macos/display.mm
+@@ -107,6 +107,9 @@ namespace platf {
+ 
+       // FIXME: We should time out if an image isn't returned for a while
+       dispatch_semaphore_wait(signal, DISPATCH_TIME_FOREVER);
++#ifdef MACCOMPANION_SELECTED_CAPTURE_ADAPTER
++      if (av_capture.selectedCaptureFailed) return capture_e::error;
++#endif
+ 
+       return capture_e::ok;
+     }
+@@ -185,6 +188,9 @@ namespace platf {
+       }];
+ 
+       dispatch_semaphore_wait(signal, DISPATCH_TIME_FOREVER);
++#ifdef MACCOMPANION_SELECTED_CAPTURE_ADAPTER
++      if (av_capture.selectedCaptureFailed) return 1;
++#endif
+ 
+       return 0;
+     }
+diff --git a/src/rtsp.cpp b/src/rtsp.cpp
+index c7135dd..fddb984 100644
+--- a/src/rtsp.cpp
++++ b/src/rtsp.cpp
+@@ -11,6 +11,7 @@ extern "C" {
+ 
+ // standard includes
+ #include <array>
++#include <cstdlib>
+ #include <cctype>
+ #include <format>
+ #include <set>
+@@ -1185,6 +1186,15 @@ namespace rtsp_stream {
+       config.monitor.height = (int) util::from_view(args.at("x-nv-video[0].clientViewportHt"sv));
+       config.monitor.width = (int) util::from_view(args.at("x-nv-video[0].clientViewportWd"sv));
+       config.monitor.framerate = (int) util::from_view(args.at("x-nv-video[0].maxFPS"sv));
++      const char *managed = std::getenv("MACCOMPANION_MANAGED_ENROLLMENT");
++      if (managed && std::string_view(managed) == "1") {
++        const char *mode = std::getenv("MACCOMPANION_NATIVE_MODE");
++        auto actual = std::to_string(config.monitor.width) + "x" + std::to_string(config.monitor.height) + "x" + std::to_string(config.monitor.framerate);
++        if (!mode || actual != mode) {
++          respond(sock, session, &option, 400, "BAD REQUEST", req->sequenceNumber, {});
++          return;
++        }
++      }
+       config.monitor.framerateX100 = (int) util::from_view(args.at("x-nv-video[0].clientRefreshRateX100"sv));
+       // Validate framerateX100 against framerate. Some clients (e.g. Moonlight Android) send the
+       // client display's refresh rate as clientRefreshRateX100, which may differ from the requested

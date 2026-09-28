@@ -177,6 +177,7 @@ private final class MacCompanionApplicationDelegate:
         self.updates = updates
         self.authenticatedAgentBuild = authenticatedAgentBuild
         self.updateAgentReactivation = updateAgentReactivation
+        let nativeBackendFactory = try? MacBundledNativeHostDevelopmentV1.factoryIfPresent(in: Bundle.main.bundleURL)
         let product = MacCompanionProductApplicationV1(
             agentRegistration: loginRoles.agentRaw,
             setup: setup,
@@ -190,7 +191,8 @@ private final class MacCompanionApplicationDelegate:
             dashboardFactory: {
                 MacCompanionDashboardApplicationV1(
                     interactiveIndicator: interactiveIndicator,
-                    agentBuildLifetime: authenticatedAgentBuild
+                    agentBuildLifetime: authenticatedAgentBuild,
+                    nativeBackendFactory: nativeBackendFactory
                 )
             }
         )

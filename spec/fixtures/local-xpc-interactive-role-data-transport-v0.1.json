@@ -37,7 +37,8 @@
     "successFields": [
       "kind:string",
       "version:signedInt64=1"
-    ]
+    ],
+    "maximumRetiredPairFences": 32
   },
   "rules": [
     "same-team exact-role authentication and accepted menu readiness are required before role-data traffic",
@@ -50,6 +51,7 @@
     "every request rechecks the retained peer, transport generation, readiness, authorization method, and private endpoint token or exact inbound generation immediately before admission",
     "there is no handled application-error envelope and neither direction retries after ambiguous delivery",
     "rejection, timeout, cancellation after send, malformed traffic, wrong kind, cross-fence data, overlap on one lane, or generation loss terminates the exact authenticated generation",
-    "role-data traffic cannot create, replace, renew, revoke, or broaden an Interactive lease and carries no credential, route, private key, arbitrary file, shell command, clipboard, or audio"
+    "role-data traffic cannot create, replace, renew, revoke, or broaden an Interactive lease and carries no credential, route, private key, arbitrary file, shell command, clipboard, or audio",
+    "explicit authenticated role-pump retirement discharges and discards only its exact session/epoch media publications; late retired records are acknowledged as disposed without crossing into a replacement role pair; unknown mismatches still fail closed and menu generation invalidation clears the bounded history"
   ]
 }

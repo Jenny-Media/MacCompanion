@@ -180,6 +180,19 @@ public final class MacCoreGraphicsInteractiveInputAdapterV1:
     public func postInteractiveInput(
         _ envelope: InteractiveInputEnvelope
     ) async throws {
+        try await postAfterActivation(envelope, nativeAuthorization: nil, beforeDeadlineNanoseconds: UInt64.max)
+    }
+
+    public func postInteractiveInput(_ envelope: InteractiveInputEnvelope,
+        nativeAuthorization: InteractiveRuntimeNativeInputPostingAuthorizationV0,
+        beforeDeadlineNanoseconds: UInt64) async throws {
+        try await postAfterActivation(envelope, nativeAuthorization: nativeAuthorization,
+            beforeDeadlineNanoseconds: beforeDeadlineNanoseconds)
+    }
+
+    private func postAfterActivation(_ envelope: InteractiveInputEnvelope,
+        nativeAuthorization: InteractiveRuntimeNativeInputPostingAuthorizationV0?,
+        beforeDeadlineNanoseconds: UInt64) async throws {
         let activationTarget = try lock.withLock {
             guard let configuration else {
                 throw MacCoreGraphicsInteractiveInputAdapterErrorV1
@@ -208,6 +221,14 @@ public final class MacCoreGraphicsInteractiveInputAdapterV1:
             throw MacCoreGraphicsInteractiveInputAdapterErrorV1
                 .bindingMismatch
         }
+        if let nativeAuthorization {
+            try await nativeAuthorization.perform(envelope, beforeDeadlineNanoseconds: beforeDeadlineNanoseconds) {
+                try self.postCurrentInput(envelope)
+            }
+        } else { try postCurrentInput(envelope) }
+    }
+
+    private func postCurrentInput(_ envelope: InteractiveInputEnvelope) throws {
         try lock.withLock {
             guard let configuration else {
                 throw MacCoreGraphicsInteractiveInputAdapterErrorV1

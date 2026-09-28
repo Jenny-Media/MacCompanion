@@ -146,6 +146,7 @@ public struct InteractiveSessionAdmissionSnapshotV0: Equatable, Sendable {
     public let grantRevision: GrantRevision
     public let policyRevision: PolicyRevision
     public let approvalPublicKeyX963: Data
+    public let sessionPublicKeyX963: Data?
     public let grants: CapabilityGrantSet
     public let deviceDisplayName: DeviceDisplayName
     public let visibleMenuAppAvailable: Bool
@@ -166,9 +167,11 @@ public struct InteractiveSessionAdmissionSnapshotV0: Equatable, Sendable {
         visibleMenuAppAvailable: Bool,
         visibleMenuAppGeneration: UUID,
         visibleMenuAppRevision: UInt64,
-        selectedDisplayID: UUID?
+        selectedDisplayID: UUID?,
+        sessionPublicKeyX963: Data? = nil
     ) throws {
         try CompanionSecurityV0.validateSigningPublicKey(approvalPublicKeyX963)
+        if let sessionPublicKeyX963 { try CompanionSecurityV0.validateSigningPublicKey(sessionPublicKeyX963) }
         guard visibleMenuAppRevision >= 1 else {
             throw InteractiveSessionWireDispatcherErrorV0.invalidConfiguration
         }
@@ -179,6 +182,7 @@ public struct InteractiveSessionAdmissionSnapshotV0: Equatable, Sendable {
         self.grantRevision = grantRevision
         self.policyRevision = policyRevision
         self.approvalPublicKeyX963 = approvalPublicKeyX963
+        self.sessionPublicKeyX963 = sessionPublicKeyX963
         self.grants = grants
         self.deviceDisplayName = deviceDisplayName
         self.visibleMenuAppAvailable = visibleMenuAppAvailable
@@ -266,6 +270,24 @@ public protocol InteractiveSessionRuntimeOwningV0: Sendable {
         primaryConnectionID: Data,
         reason: InteractiveSessionEndReason
     ) async
+}
+
+/// An optional media-only owner. Implementations must recheck the exact live
+/// runtime, acknowledged surface, original monotonic expiry, and current grant
+/// on every suspension and callback. The dispatcher never treats SDP as an
+/// authority source. Release composition currently installs no owner.
+public protocol InteractiveWebRTCNegotiatingV0: Sendable {
+    func makeOffer(
+        fence: InteractiveWebRTCNegotiationFenceV0,
+        context: InteractiveSessionCommandContextV0
+    ) async throws -> InteractiveWebRTCOfferBodyV0
+
+    func acceptAnswer(
+        _ answer: InteractiveWebRTCAnswerBodyV0,
+        context: InteractiveSessionCommandContextV0
+    ) async throws
+
+    func close(interactiveSessionID: UUID) async
 }
 
 /// Agent-owned surface authority reached only through the authenticated
@@ -364,9 +386,23 @@ public actor InteractiveSessionWireDispatcherV0 {
         let auditContext: InteractiveSessionCommandContextV0
     }
 
+    private struct MediaPending: Sendable {
+        let fence: InteractiveWebRTCNegotiationFenceV0
+        let offerMessageID: WireUUID
+        let primaryConnectionID: Data
+        let expiresAtMonotonicMilliseconds: UInt64
+    }
+
     private let admission: any InteractiveSessionAdmissionReadingV0
     private let materials: any InteractiveSessionMaterialGeneratingV0
     private let runtime: any InteractiveSessionRuntimeOwningV0
+    private let mediaNegotiation: (any InteractiveWebRTCNegotiatingV0)?
+    private let nativeNegotiation: (any InteractiveNativeVideoNegotiatingV0)?
+    private struct NativeScope { let fence: InteractiveNativeVideoRequestFenceV0; let challengeID: WireUUID; var ready = false }
+    private var nativeScope: NativeScope?
+    private var nativeTransitionMessageID: WireUUID?
+    private var lastNativePrimary: Data?
+    private var lastNativeGeneration: Int64 = 0
     private let auditWriter: (any InteractiveAuditWritingV0)?
     private let auditWallClock: any InteractiveAuditWallClockV0
     private let surfaceControl:
@@ -375,6 +411,9 @@ public actor InteractiveSessionWireDispatcherV0 {
         (any InteractiveDisplaySelectionDispatchingV1)?
     private var pending: Pending?
     private var active: Active?
+    private var mediaPending: MediaPending?
+    private var lastMediaGeneration: Int64 = 0
+    private var mediaTransitionMessageID: WireUUID?
     private var transitionMessageID: WireUUID?
     private var transitionLocalBinding: InteractiveLocalAuthorityBindingV0?
     private var lastLocalEnd: InteractiveLocalAuthorityBindingV0?
@@ -383,6 +422,8 @@ public actor InteractiveSessionWireDispatcherV0 {
         admission: any InteractiveSessionAdmissionReadingV0,
         materials: any InteractiveSessionMaterialGeneratingV0,
         runtime: any InteractiveSessionRuntimeOwningV0,
+        mediaNegotiation: (any InteractiveWebRTCNegotiatingV0)? = nil,
+        nativeNegotiation: (any InteractiveNativeVideoNegotiatingV0)? = nil,
         surfaceControl:
             (any InteractiveSurfaceControlDispatchingV0)? = nil,
         displaySelection:
@@ -394,6 +435,8 @@ public actor InteractiveSessionWireDispatcherV0 {
         self.admission = admission
         self.materials = materials
         self.runtime = runtime
+        self.mediaNegotiation = mediaNegotiation
+        self.nativeNegotiation = nativeNegotiation
         self.surfaceControl = surfaceControl
         self.displaySelection = displaySelection
         self.auditWriter = auditWriter
@@ -437,6 +480,18 @@ public actor InteractiveSessionWireDispatcherV0 {
             return try await endSession(
                 requestJSON,
                 context: context,
+                responseMessageID: responseMessageID
+            )
+        case .nativeEnrollRequest, .nativeEnrollProof, .nativePresentRequest, .nativeCancel:
+            return try await dispatchNative(requestJSON, context: context, responseMessageID: responseMessageID)
+        case .interactiveMediaOfferRequest:
+            return try await requestMediaOffer(
+                requestJSON, context: context,
+                responseMessageID: responseMessageID
+            )
+        case .interactiveMediaAnswer:
+            return try await submitMediaAnswer(
+                requestJSON, context: context,
                 responseMessageID: responseMessageID
             )
         case .interactiveInitialSurfaceRequest:
@@ -730,6 +785,7 @@ public actor InteractiveSessionWireDispatcherV0 {
         pending = nil
         guard let active else { return }
         self.active = nil
+        await retireMedia(interactiveSessionID: active.interactiveSessionID)
         await runtime.terminate(
             interactiveSessionID: active.interactiveSessionID,
             primaryConnectionID: active.primaryConnectionID,
@@ -768,6 +824,7 @@ public actor InteractiveSessionWireDispatcherV0 {
         active = nil
         transitionMessageID = nil
         transitionLocalBinding = nil
+        await retireMedia(interactiveSessionID: closing.interactiveSessionID)
         await runtime.terminate(
             interactiveSessionID: closing.interactiveSessionID,
             primaryConnectionID: closing.primaryConnectionID,
@@ -785,6 +842,163 @@ public actor InteractiveSessionWireDispatcherV0 {
             ),
             context: closing.auditContext
         )
+    }
+
+    private func requestMediaOffer(
+        _ requestJSON: Data,
+        context: InteractiveSessionCommandContextV0,
+        responseMessageID: WireUUID
+    ) async throws -> Data {
+        let request = try WireCodec.decode(
+            WireEnvelope<InteractiveWebRTCOfferRequestBodyV0>.self,
+            from: requestJSON
+        )
+        let fence = request.body.fence
+        guard let mediaNegotiation,
+              activeMatches(context),
+              active?.interactiveSessionID == fence.interactiveSessionID.rawValue,
+              fence.authorizationEpoch == context.authorizationEpoch,
+              mediaTransitionMessageID == nil,
+              fence.peerGeneration > lastMediaGeneration else {
+            return try denied(
+                correlationID: request.messageID,
+                responseMessageID: responseMessageID,
+                sentAtUnixMilliseconds: context.wallNowUnixMilliseconds
+            )
+        }
+        mediaTransitionMessageID = request.messageID
+        mediaPending = nil
+        lastMediaGeneration = fence.peerGeneration
+        defer {
+            if mediaTransitionMessageID == request.messageID {
+                mediaTransitionMessageID = nil
+            }
+        }
+        do {
+            guard let before = try await admission.snapshot(
+                deviceID: context.deviceID
+            ), isEligible(before, for: context),
+                mediaTransitionMessageID == request.messageID,
+                activeMatches(context) else {
+                throw InteractiveSessionWireDispatcherErrorV0.admissionChanged
+            }
+            let offer = try await mediaNegotiation.makeOffer(
+                fence: fence, context: context
+            )
+            guard offer.fence == fence,
+                  let after = try await admission.snapshot(
+                    deviceID: context.deviceID
+                  ), isEligible(after, for: context),
+                  mediaTransitionMessageID == request.messageID,
+                  activeMatches(context) else {
+                throw InteractiveSessionWireDispatcherErrorV0.admissionChanged
+            }
+            let (deadline, overflow) = context.monotonicNowMilliseconds
+                .addingReportingOverflow(10_000)
+            guard !overflow else {
+                throw InteractiveSessionWireDispatcherErrorV0.admissionChanged
+            }
+            mediaPending = MediaPending(
+                fence: fence,
+                offerMessageID: responseMessageID,
+                primaryConnectionID: context.primaryConnectionID,
+                expiresAtMonotonicMilliseconds: deadline
+            )
+            return try WireCodec.encode(WireEnvelope(
+                version: request.version,
+                messageID: responseMessageID,
+                correlationID: request.messageID,
+                sentAtUnixMilliseconds: context.wallNowUnixMilliseconds,
+                body: offer
+            ))
+        } catch {
+            mediaPending = nil
+            await mediaNegotiation.close(
+                interactiveSessionID: fence.interactiveSessionID.rawValue
+            )
+            return try errorResponse(
+                correlationID: request.messageID,
+                responseMessageID: responseMessageID,
+                sentAtUnixMilliseconds: context.wallNowUnixMilliseconds,
+                code: "provider.unavailable",
+                retry: .backoff
+            )
+        }
+    }
+
+    private func submitMediaAnswer(
+        _ requestJSON: Data,
+        context: InteractiveSessionCommandContextV0,
+        responseMessageID: WireUUID
+    ) async throws -> Data {
+        let request = try WireCodec.decode(
+            WireEnvelope<InteractiveWebRTCAnswerBodyV0>.self,
+            from: requestJSON
+        )
+        let answer = request.body
+        guard let mediaNegotiation,
+              let pending = mediaPending,
+              pending.fence == answer.fence,
+              pending.offerMessageID == answer.offerMessageID,
+              pending.primaryConnectionID == context.primaryConnectionID,
+              context.monotonicNowMilliseconds
+                < pending.expiresAtMonotonicMilliseconds,
+              activeMatches(context),
+              active?.interactiveSessionID
+                == answer.fence.interactiveSessionID.rawValue,
+              answer.fence.authorizationEpoch == context.authorizationEpoch,
+              mediaTransitionMessageID == nil else {
+            return try denied(
+                correlationID: request.messageID,
+                responseMessageID: responseMessageID,
+                sentAtUnixMilliseconds: context.wallNowUnixMilliseconds
+            )
+        }
+        mediaPending = nil
+        mediaTransitionMessageID = request.messageID
+        defer {
+            if mediaTransitionMessageID == request.messageID {
+                mediaTransitionMessageID = nil
+            }
+        }
+        do {
+            guard let before = try await admission.snapshot(
+                deviceID: context.deviceID
+            ), isEligible(before, for: context),
+                mediaTransitionMessageID == request.messageID,
+                activeMatches(context) else {
+                throw InteractiveSessionWireDispatcherErrorV0.admissionChanged
+            }
+            try await mediaNegotiation.acceptAnswer(answer, context: context)
+            guard let after = try await admission.snapshot(
+                deviceID: context.deviceID
+            ), isEligible(after, for: context),
+                mediaTransitionMessageID == request.messageID,
+                activeMatches(context) else {
+                throw InteractiveSessionWireDispatcherErrorV0.admissionChanged
+            }
+            return try WireCodec.encode(WireEnvelope(
+                version: request.version,
+                messageID: responseMessageID,
+                correlationID: request.messageID,
+                sentAtUnixMilliseconds: context.wallNowUnixMilliseconds,
+                body: try InteractiveWebRTCReadyBodyV0(
+                    fence: answer.fence,
+                    offerMessageID: answer.offerMessageID
+                )
+            ))
+        } catch {
+            await mediaNegotiation.close(
+                interactiveSessionID: answer.fence.interactiveSessionID.rawValue
+            )
+            return try errorResponse(
+                correlationID: request.messageID,
+                responseMessageID: responseMessageID,
+                sentAtUnixMilliseconds: context.wallNowUnixMilliseconds,
+                code: "provider.unavailable",
+                retry: .backoff
+            )
+        }
     }
 
     private func endSession(
@@ -812,11 +1026,14 @@ public actor InteractiveSessionWireDispatcherV0 {
         pending = nil
         transitionMessageID = nil
         transitionLocalBinding = nil
+        nativeScope = nil
+        nativeTransitionMessageID = nil
         await runtime.terminate(
             interactiveSessionID: active.interactiveSessionID,
             primaryConnectionID: active.primaryConnectionID,
             reason: .clientRequested
         )
+        await retireMedia(interactiveSessionID: active.interactiveSessionID)
         await surfaceControl?.primarySessionClosed()
         await auditWriter?.recordTerminal(
             requestID: active.requestID,
@@ -890,33 +1107,78 @@ public actor InteractiveSessionWireDispatcherV0 {
         context: InteractiveSessionCommandContextV0,
         responseMessageID: WireUUID
     ) async throws -> Data {
+#if DEBUG
+        FileHandle.standardError.write(Data("surface-dispatch-entered\n".utf8))
+#endif
         let request = try WireCodec.decode(
             WireEnvelope<InteractiveSurfaceSelectBodyV0>.self,
             from: requestJSON
         )
+#if DEBUG
+        FileHandle.standardError.write(Data("surface-dispatch-decoded\n".utf8))
+#endif
         let control = try requireSurfaceControl(
             sessionID: request.body.interactiveSessionID.rawValue,
             authorizationEpoch: request.body.authorizationEpoch,
             context: context
         )
+#if DEBUG
+        FileHandle.standardError.write(Data("surface-dispatch-control-current\n".utf8))
+#endif
         guard transitionMessageID == nil else {
             throw InteractiveSessionWireDispatcherErrorV0
                 .invalidTransition
         }
         transitionMessageID = request.messageID
+#if DEBUG
+        FileHandle.standardError.write(Data("surface-dispatch-transition-reserved\n".utf8))
+#endif
         defer {
             if transitionMessageID == request.messageID {
                 transitionMessageID = nil
             }
         }
-        guard let snapshot = try await admission.snapshot(
-            deviceID: context.deviceID
-        ), transitionMessageID == request.messageID,
-            isEligible(snapshot, for: context) else {
+        let snapshot: InteractiveSessionAdmissionSnapshotV0?
+        do {
+            snapshot = try await admission.snapshot(deviceID: context.deviceID)
+        } catch {
+#if DEBUG
+            FileHandle.standardError.write(Data("surface-dispatch-admission-read-failed type=\(String(reflecting: type(of: error)))\n".utf8))
+#endif
+            throw error
+        }
+#if DEBUG
+        FileHandle.standardError.write(Data("surface-dispatch-admission-state present=\(snapshot != nil) transition=\(transitionMessageID == request.messageID) eligible=\(snapshot.map { isEligible($0, for: context) } ?? false)\n".utf8))
+#endif
+        guard let snapshot,
+              transitionMessageID == request.messageID,
+              isEligible(snapshot, for: context) else {
             throw InteractiveSessionWireDispatcherErrorV0
                 .admissionChanged
         }
-        let body = try await control.select(request.body, context: context)
+#if DEBUG
+        FileHandle.standardError.write(Data("surface-dispatch-admission-current\n".utf8))
+#endif
+        await retireMedia(interactiveSessionID: request.body.interactiveSessionID.rawValue)
+#if DEBUG
+        FileHandle.standardError.write(Data("surface-dispatch-media-retired\n".utf8))
+#endif
+        guard transitionMessageID == request.messageID, activeMatches(context),
+              let current = try await admission.snapshot(deviceID: context.deviceID), isEligible(current, for: context) else {
+            throw InteractiveSessionWireDispatcherErrorV0.admissionChanged
+        }
+        let body: InteractiveSurfaceSelectedBodyV0
+        do {
+            body = try await control.select(request.body, context: context)
+        } catch {
+#if DEBUG
+            FileHandle.standardError.write(Data("surface-dispatch-control-failed type=\(String(reflecting: type(of: error)))\n".utf8))
+#endif
+            throw error
+        }
+#if DEBUG
+        FileHandle.standardError.write(Data("surface-dispatch-control-selected\n".utf8))
+#endif
         guard transitionMessageID == request.messageID,
               active?.interactiveSessionID
                 == request.body.interactiveSessionID.rawValue else {
@@ -1041,6 +1303,7 @@ public actor InteractiveSessionWireDispatcherV0 {
         transitionMessageID = nil
         transitionLocalBinding = nil
         lastLocalEnd = binding
+        await retireMedia(interactiveSessionID: active.interactiveSessionID)
         await runtime.terminate(
             interactiveSessionID: active.interactiveSessionID,
             primaryConnectionID: active.primaryConnectionID,
@@ -1344,6 +1607,9 @@ public actor InteractiveSessionWireDispatcherV0 {
                 interactiveSessionID: sessionID
             )
             active = activeReservation
+            mediaPending = nil
+            mediaTransitionMessageID = nil
+            lastMediaGeneration = 0
             try await runtime.install(
                 bootstrap,
                 requirement: InteractiveSessionRuntimeRequirementV0(
@@ -1399,6 +1665,7 @@ public actor InteractiveSessionWireDispatcherV0 {
             if let failed = active,
                failed.primaryConnectionID == context.primaryConnectionID {
                 active = nil
+                await retireMedia(interactiveSessionID: failed.interactiveSessionID)
                 await auditWriter?.recordTerminal(
                     requestID: failed.requestID,
                     interactiveSessionID: failed.interactiveSessionID,
@@ -1417,6 +1684,117 @@ public actor InteractiveSessionWireDispatcherV0 {
                 retry: .backoff
             )
         }
+    }
+
+    private func dispatchNative(_ json: Data, context: InteractiveSessionCommandContextV0,
+                                responseMessageID: WireUUID) async throws -> Data {
+        let kind = try WireCodec.messageKind(from: json)
+        let requestID = try WireCodec.routingMetadata(from: json).messageID
+        func failure() throws -> Data {
+            try errorResponse(correlationID: requestID, responseMessageID: responseMessageID,
+                sentAtUnixMilliseconds: context.wallNowUnixMilliseconds, code: "provider.unavailable", retry: .backoff)
+        }
+        guard let nativeNegotiation, activeMatches(context) else { return try failure() }
+        if kind == .nativeCancel {
+            let request = try WireCodec.decode(WireEnvelope<InteractiveNativeVideoCancelBodyV0>.self, from: json)
+            guard active?.interactiveSessionID == request.body.fence.interactiveSessionID.rawValue,
+                  request.body.fence.authorizationEpoch == context.authorizationEpoch else { return try failure() }
+            if nativeScope?.fence == request.body.fence {
+                nativeScope = nil
+                nativeTransitionMessageID = nil
+            }
+            do {
+                try await nativeNegotiation.cancel(request.body.fence, context: context)
+                guard activeMatches(context) else { return try failure() }
+                return try WireCodec.encode(WireEnvelope(version: request.version, messageID: responseMessageID,
+                    correlationID: request.messageID, sentAtUnixMilliseconds: context.wallNowUnixMilliseconds,
+                    body: try InteractiveNativeVideoCancelledBodyV0(fence: request.body.fence)))
+            } catch { return try failure() }
+        }
+        guard nativeTransitionMessageID == nil, transitionMessageID == nil else { return try failure() }
+        let fence: InteractiveNativeVideoRequestFenceV0
+        if kind == .nativeEnrollRequest {
+            let request = try WireCodec.decode(WireEnvelope<InteractiveNativeVideoEnrollmentRequestBodyV0>.self, from: json)
+            fence = request.body.fence
+            guard nativeScope == nil else { return try failure() }
+            if lastNativePrimary != context.primaryConnectionID {
+                lastNativePrimary = context.primaryConnectionID; lastNativeGeneration = 0
+            }
+            guard fence.peerGeneration > lastNativeGeneration else { return try failure() }
+            lastNativeGeneration = fence.peerGeneration
+            nativeScope = NativeScope(fence: fence, challengeID: responseMessageID)
+        } else if kind == .nativePresentRequest {
+            let request = try WireCodec.decode(WireEnvelope<InteractiveNativeVideoPresentationRequestBodyV0>.self, from: json)
+            fence = request.body.fence
+            guard let scope = nativeScope, scope.fence == fence, scope.ready,
+                  scope.challengeID == request.body.challengeMessageID else { return try failure() }
+        } else {
+            let request = try WireCodec.decode(WireEnvelope<InteractiveNativeVideoEnrollmentProofBodyV0>.self, from: json)
+            fence = request.body.fence
+            guard let scope = nativeScope, scope.fence == fence, !scope.ready else { return try failure() }
+        }
+        guard active?.interactiveSessionID == fence.interactiveSessionID.rawValue,
+              fence.authorizationEpoch == context.authorizationEpoch else {
+            if nativeScope?.fence == fence { nativeScope = nil }
+            return try failure()
+        }
+        nativeTransitionMessageID = requestID
+        defer { if nativeTransitionMessageID == requestID { nativeTransitionMessageID = nil } }
+        do {
+            guard let before = try await admission.snapshot(deviceID: context.deviceID), isEligible(before, for: context),
+                  let key = before.sessionPublicKeyX963, nativeTransitionMessageID == requestID, activeMatches(context) else {
+                throw InteractiveSessionWireDispatcherErrorV0.admissionChanged
+            }
+            let response: Data
+            if kind == .nativeEnrollRequest {
+                let request = try WireCodec.decode(WireEnvelope<InteractiveNativeVideoEnrollmentRequestBodyV0>.self, from: json)
+                let body = try await nativeNegotiation.prepare(request.body, challengeMessageID: responseMessageID,
+                                                               context: context, sessionPublicKeyX963: key)
+                guard body.fence == fence else { throw InteractiveSessionWireDispatcherErrorV0.admissionChanged }
+                response = try WireCodec.encode(WireEnvelope(version: request.version, messageID: responseMessageID,
+                    correlationID: request.messageID, sentAtUnixMilliseconds: context.wallNowUnixMilliseconds, body: body))
+            } else if kind == .nativePresentRequest {
+                let request = try WireCodec.decode(WireEnvelope<InteractiveNativeVideoPresentationRequestBodyV0>.self, from: json)
+                let body = try await nativeNegotiation.present(request.body, context: context, sessionPublicKeyX963: key)
+                guard body.fence == fence, body.challengeMessageID == nativeScope?.challengeID,
+                      body.nativeGeneration == request.body.nativeGeneration,
+                      body.encodedWidth == request.body.encodedWidth, body.encodedHeight == request.body.encodedHeight else {
+                    throw InteractiveSessionWireDispatcherErrorV0.admissionChanged
+                }
+                response = try WireCodec.encode(WireEnvelope(version: request.version, messageID: responseMessageID,
+                    correlationID: request.messageID, sentAtUnixMilliseconds: context.wallNowUnixMilliseconds, body: body))
+            } else {
+                let request = try WireCodec.decode(WireEnvelope<InteractiveNativeVideoEnrollmentProofBodyV0>.self, from: json)
+                let body = try await nativeNegotiation.activate(request.body, context: context, sessionPublicKeyX963: key)
+                guard body.fence == fence, body.challengeMessageID == nativeScope?.challengeID else {
+                    throw InteractiveSessionWireDispatcherErrorV0.admissionChanged
+                }
+                response = try WireCodec.encode(WireEnvelope(version: request.version, messageID: responseMessageID,
+                    correlationID: request.messageID, sentAtUnixMilliseconds: context.wallNowUnixMilliseconds, body: body))
+            }
+            guard let after = try await admission.snapshot(deviceID: context.deviceID), isEligible(after, for: context),
+                  after.sessionPublicKeyX963 == key, nativeTransitionMessageID == requestID,
+                  nativeScope?.fence == fence, activeMatches(context) else {
+                throw InteractiveSessionWireDispatcherErrorV0.admissionChanged
+            }
+            if kind == .nativeEnrollProof { nativeScope?.ready = true }
+            return response
+        } catch {
+            // Exact cancellation cannot retire a newer operation after a late reply.
+            try? await nativeNegotiation.cancel(fence, context: context)
+            if nativeScope?.fence == fence { nativeScope = nil }
+            return try failure()
+        }
+    }
+
+    private func retireMedia(interactiveSessionID: UUID) async {
+        mediaPending = nil
+        mediaTransitionMessageID = nil
+        lastMediaGeneration = 0
+        nativeScope = nil
+        nativeTransitionMessageID = nil
+        await nativeNegotiation?.close(interactiveSessionID: interactiveSessionID)
+        await mediaNegotiation?.close(interactiveSessionID: interactiveSessionID)
     }
 
     private func samePrimary(

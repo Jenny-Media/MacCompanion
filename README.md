@@ -1,5 +1,7 @@
 # Mac Companion
 
+Latest streaming checkpoint: [source-built portable native host](docs/evidence/2026-09-27-source-built-portable-native-host.md). Codec deployment inspection, portable package/signature/integrity checks, relocation/credential checks, stable validation and four live native Simulator sessions pass. Video, keyboard/modifiers/shortcuts, pointer and background/reconnect recovery are verified through the development package. Complete transitive source admission, permanent process/TCC ownership, normal-app composition, actual Mac input and physical installation remain pending.
+
 Mac Companion is a native iPhone and iPad companion for checking, operating, and directly controlling a personal Mac through a standalone macOS agent.
 
 The product is local-first and policy-driven, with three first-class paths: **Observe** current state, **Act** through bounded capabilities, and **Control** through an adaptive remote desktop. Control is the flagship capability, but it is not required for status checks or approved actions. Inside a control session, Mac Companion can move from the full desktop to a phone-readable application, window, or focused region while preserving the desktop as an escape hatch. It is not a general shell, arbitrary file browser, vendor relay, or hidden agent. The Mac remains the final authority, and active remote use is visible and audited.
@@ -40,7 +42,8 @@ Mac Companion is a private control companion for personal Macs, especially alway
 
 ## Documents
 
-- [Apache-2.0 license](LICENSE)
+- [GPL-3.0 license](LICENSE)
+- [Licensing and retained Apache notices](LICENSING.md)
 - [Trademark policy](TRADEMARKS.md)
 - [Security policy](SECURITY.md)
 - [Contribution hold](CONTRIBUTING.md)
@@ -52,6 +55,7 @@ Mac Companion is a private control companion for personal Macs, especially alway
 - [Interactive Control specification](docs/interactive-control-spec.md)
 - [Adaptive Remote Surfaces](docs/adaptive-remote-surfaces.md)
 - [MVP plan](docs/mvp-plan.md)
+- [Sunshine and Moonlight integration plan](docs/sunshine-moonlight-integration-plan.md)
 - [Distribution plan](docs/distribution-plan.md)
 - [External TestFlight review package](docs/testflight-review-package.md)
 - [Implementation orchestration](docs/implementation-orchestration.md)

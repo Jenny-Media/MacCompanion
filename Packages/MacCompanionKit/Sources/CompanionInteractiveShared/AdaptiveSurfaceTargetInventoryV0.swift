@@ -170,7 +170,7 @@ public struct AdaptiveSurfaceTargetInventoryV0: Sendable {
     public static let maximumApplications = 64
     public static let maximumWindowsPerApplication = 64
     public static let maximumCandidates = 192
-    public static let maximumLifetimeMilliseconds: Int64 = 10_000
+    public static let maximumLifetimeMilliseconds: Int64 = 120_000
 
     private struct Entry: Sendable {
         let candidate: AdaptiveSurfaceTargetCandidateV0

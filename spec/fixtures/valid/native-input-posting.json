@@ -1,0 +1,27 @@
+{
+  "profile": "maccompanion.native-input-posting.v0.1",
+  "cases": [
+    "exact-current-payload-posts-once",
+    "wrong-session-epoch-surface-revisions-denied",
+    "original-control-expiry-at-callback-denied",
+    "short-lease-expiry-after-window-activation-denied",
+    "cancel-before-callback-denied",
+    "callback-after-executor-return-denied",
+    "duplicate-callback-cannot-post-twice",
+    "executor-without-post-denied",
+    "suppressed-post-failure-cannot-report-success",
+    "unsupported-adapter-fails-closed",
+    "native-runtime-pause-remains-latched",
+    "runtime-install-requires-exact-paused-desktop",
+    "runtime-install-joins-original-control-and-geometry",
+    "runtime-install-cannot-replace-current-permit",
+    "runtime-renewal-retains-native-posting-and-original-deadline",
+    "runtime-repause-and-termination-revoke-retained-permit",
+    "revoked-native-permit-drains-exact-next-sequence-reset-only",
+    "retired-surface-reset-drains-after-native-revocation"
+  ],
+  "nativeSurface": {
+    "encodedWidth": 1280,
+    "encodedHeight": 720
+  }
+}

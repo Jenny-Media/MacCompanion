@@ -2,11 +2,30 @@
 import CompanionIPC
 import CompanionInteractiveHost
 import CompanionInteractiveRuntime
+import CompanionInteractiveShared
 import CompanionInteractiveWire
 import CompanionLocalXPCPlatform
+import CompanionHostPlatform
 import Dispatch
 import Foundation
 import OSLog
+#if MACCOMPANION_WEBRTC_DEVELOPMENT && canImport(WebRTC)
+import ScreenCaptureKit
+#endif
+
+// Shared with the menu owner so Stop fences reentrant reads before cleanup awaits.
+private final class MacNativeBackendAdmissionV1: @unchecked Sendable {
+    private let lock = NSLock()
+    private var open = true
+    private var generation: UInt64 = 0
+    func isOpen() -> Bool { lock.withLock { open } }
+    @discardableResult func close() -> UInt64 {
+        lock.withLock { open = false; generation &+= 1; return generation }
+    }
+    func reopen(after token: UInt64) {
+        lock.withLock { if generation == token { open = true } }
+    }
+}
 
 private let macInteractiveLeaseRuntimeLoggerV1 = Logger(
     subsystem: "media.jenny.maccompanion",
@@ -151,6 +170,11 @@ package protocol MacInteractiveMenuRuntimeLeaseOwningV1: Sendable {
         nowMonotonicNanoseconds: UInt64
     ) async throws
     func state() async -> InteractiveMenuRuntimeStateV0
+    func currentWebRTCInstallCommand() async -> InteractiveRuntimeInstallCommandV0?
+    func currentNativeVideoSnapshot(fence: InteractiveNativeVideoRequestFenceV0, nowMonotonicNanoseconds: UInt64) async throws -> LocalInteractiveNativeRuntimeSnapshotV1?
+    func installNativeInputAuthorization(_ authorization: InteractiveRuntimeNativeInputPostingAuthorizationV0,
+        fence: InteractiveNativeVideoRequestFenceV0, nowMonotonicNanoseconds: UInt64) async throws
+    func pauseInputForNativePresentation(fence: InteractiveNativeVideoRequestFenceV0, nowMonotonicNanoseconds: UInt64) async throws
     func nextLeaseDeadlineMonotonicNanoseconds() async -> UInt64?
     func expireLeaseIfRequired(
         nowMonotonicNanoseconds: UInt64
@@ -158,6 +182,16 @@ package protocol MacInteractiveMenuRuntimeLeaseOwningV1: Sendable {
 }
 
 extension MacInteractiveMenuRuntimeLeaseOwningV1 {
+    package func installNativeInputAuthorization(_ authorization: InteractiveRuntimeNativeInputPostingAuthorizationV0,
+        fence: InteractiveNativeVideoRequestFenceV0, nowMonotonicNanoseconds: UInt64) async throws {
+        throw MacLocalXPCInteractiveRoleDataErrorV1.unavailable
+    }
+    package func pauseInputForNativePresentation(fence: InteractiveNativeVideoRequestFenceV0, nowMonotonicNanoseconds: UInt64) async throws {
+        throw MacLocalXPCInteractiveRoleDataErrorV1.unavailable
+    }
+    package func currentWebRTCInstallCommand() async -> InteractiveRuntimeInstallCommandV0? {
+        nil
+    }
     package func postInputEnvelope(
         _: InteractiveInputEnvelope,
         nowMonotonicNanoseconds _: UInt64
@@ -203,6 +237,8 @@ public actor MacInteractiveLeaseRuntimeAdapterV1:
     MacLocalXPCInteractiveInputHandlingV1
 {
     private let runtime: any MacInteractiveMenuRuntimeLeaseOwningV1
+    private var nativeBackendOwner: MacInteractiveNativeBackendOwnerV1?
+    private let nativeAdmission = MacNativeBackendAdmissionV1()
     private let desktop: any MacInteractiveInitialDesktopPreparingV1
     private let surfaceTargets: MacInteractiveSurfaceTargetOwnerV1?
     private let displaySelection: MacInteractiveOpaqueDisplaySelectionV1?
@@ -216,6 +252,10 @@ public actor MacInteractiveLeaseRuntimeAdapterV1:
     private var expiryCancellation:
         (any MacInteractiveLeaseExpiryCancellationV1)?
     private var expiryToken: UUID?
+#if MACCOMPANION_WEBRTC_DEVELOPMENT && canImport(WebRTC)
+    private var webRTCPeer: MacMenuWebRTCVideoPeerV0?
+    private var webRTCFence: InteractiveWebRTCNegotiationFenceV0?
+#endif
 
     public init(runtime: InteractiveMenuRuntimeOwnerV0) {
         self.runtime = runtime
@@ -300,13 +340,45 @@ public actor MacInteractiveLeaseRuntimeAdapterV1:
         surfaceTargets: MacInteractiveSurfaceTargetOwnerV1?,
         displaySelection: MacInteractiveOpaqueDisplaySelectionV1,
         updateSelectedDisplay:
-            @escaping @Sendable (UUID?) async throws -> Void
+            @escaping @Sendable (UUID?) async throws -> Void,
+        nativeBackendFactory: MacInteractiveNativeBackendFactoryV1? = nil
     ) {
         self.runtime = runtime
         self.desktop = desktop
         self.surfaceTargets = surfaceTargets
         self.displaySelection = displaySelection
         self.updateSelectedDisplay = updateSelectedDisplay
+        if let nativeBackendFactory {
+            let admission = nativeAdmission
+            nativeBackendOwner = MacInteractiveNativeBackendOwnerV1(
+                readSnapshot: { fence, now in
+                    guard admission.isOpen() else {
+                        return nil
+                    }
+                    let snapshot = try await runtime.currentNativeVideoSnapshot(fence: fence, nowMonotonicNanoseconds: now)
+                    return admission.isOpen() ? snapshot : nil
+                },
+                pauseInput: { fence, now in
+                    guard admission.isOpen() else { throw MacLocalXPCInteractiveLeaseErrorV1.unavailable }
+                    try await runtime.pauseInputForNativePresentation(fence: fence, nowMonotonicNanoseconds: now)
+                    guard admission.isOpen() else { throw MacLocalXPCInteractiveLeaseErrorV1.unavailable }
+                },
+                installInput: { authorization, fence, now in
+                    guard admission.isOpen() else { authorization.revoke(); throw MacLocalXPCInteractiveLeaseErrorV1.unavailable }
+                    try await runtime.installNativeInputAuthorization(authorization, fence: fence, nowMonotonicNanoseconds: now)
+                    guard admission.isOpen() else { authorization.revoke(); throw MacLocalXPCInteractiveLeaseErrorV1.unavailable }
+                },
+                resolveDisplay: { try displaySelection.resolvePhysicalDisplayID(selectedDisplayID: $0) },
+                readSelectedCapture: { scope, physicalDisplayID in
+                    guard admission.isOpen() else { throw LocalInteractiveNativeBackendErrorV1.unavailable }
+                    guard let surfaceTargets else { return nil }
+                    let surface = try await surfaceTargets.nativeCaptureTarget(
+                        scope: scope, nowMonotonicNanoseconds: DispatchTime.now().uptimeNanoseconds)
+                    guard admission.isOpen() else { throw LocalInteractiveNativeBackendErrorV1.unavailable }
+                    return try surface.map { try MacManagedNativeSelectedCaptureV1(surface: $0, scope: scope,
+                        selectedPhysicalDisplayID: physicalDisplayID) }
+                }, factory: nativeBackendFactory)
+        }
         expiryScheduler = MacInteractiveSystemLeaseExpirySchedulerV1()
         monotonicClock = MacInteractiveSystemMonotonicClockV1()
     }
@@ -314,6 +386,202 @@ public actor MacInteractiveLeaseRuntimeAdapterV1:
     public func state() -> MacInteractiveLeaseRuntimeAdapterStateV1 {
         stateStorage
     }
+
+    public func nativeBackend(_ command: LocalInteractiveNativeBackendCommandV1,
+        nowMonotonicNanoseconds: UInt64) async throws -> LocalInteractiveNativeBackendReceiptV1 {
+        try requireAvailable()
+        guard command.operation == .retire || nativeAdmission.isOpen(),
+              let nativeBackendOwner else { throw MacLocalXPCInteractiveLeaseErrorV1.unavailable }
+        return try await nativeBackendOwner.handle(command)
+    }
+
+    public func nativeRuntimeSnapshot(
+        _ command: LocalInteractiveNativeSnapshotCommandV1,
+        nowMonotonicNanoseconds: UInt64
+    ) async throws -> LocalInteractiveNativeSnapshotReceiptV1 {
+        try requireAvailable()
+        let now = max(nowMonotonicNanoseconds, monotonicClock.nowMonotonicNanoseconds())
+        guard let snapshot = try await runtime.currentNativeVideoSnapshot(fence: command.fence, nowMonotonicNanoseconds: now),
+              snapshot.fence == command.fence else { throw MacLocalXPCInteractiveLeaseErrorV1.unavailable }
+        try requireAvailable()
+        guard snapshot.isCurrent(nowMonotonicNanoseconds: monotonicClock.nowMonotonicNanoseconds()) else {
+            throw MacLocalXPCInteractiveLeaseErrorV1.unavailable
+        }
+        let receipt = try LocalInteractiveNativeSnapshotReceiptV1(correlationID: command.commandID, snapshot: snapshot)
+        try receipt.validate(against: command)
+        return receipt
+    }
+
+    public func makeWebRTCOffer(
+        _ command: LocalInteractiveWebRTCOfferCommandV1,
+        nowMonotonicNanoseconds _: UInt64
+    ) async throws -> LocalInteractiveWebRTCOfferReceiptV1 {
+#if MACCOMPANION_WEBRTC_DEVELOPMENT && canImport(WebRTC)
+        let active = try await currentWebRTCCommand(matching: command.fence)
+        guard webRTCPeer == nil,
+              active.surfaceDescriptor.kind == .desktop else {
+            macInteractiveLeaseRuntimeLoggerV1.error(
+                "webRTC offer unavailable: peer or surface"
+            )
+            throw MacLocalXPCInteractiveLeaseErrorV1.unavailable
+        }
+        let peer: MacMenuWebRTCVideoPeerV0
+        do {
+            peer = try MacMenuWebRTCVideoPeerV0(
+                negotiationID: command.fence.negotiationID.rawValue
+            )
+        } catch {
+            macInteractiveLeaseRuntimeLoggerV1.error(
+                "webRTC peer creation failed: \(String(describing: error), privacy: .public)"
+            )
+            throw error
+        }
+        webRTCPeer = peer
+        webRTCFence = command.fence
+        do {
+            let sdp = try await peer.makeOffer()
+            _ = try await currentWebRTCCommand(matching: command.fence)
+            guard webRTCPeer === peer else {
+                throw MacLocalXPCInteractiveLeaseErrorV1.unavailable
+            }
+            let fingerprint = try Self.webRTCFingerprintHex(sdp)
+            return try LocalInteractiveWebRTCOfferReceiptV1(
+                correlationID: command.commandID,
+                offer: InteractiveWebRTCOfferBodyV0(
+                    fence: command.fence,
+                    sdp: sdp,
+                    dtlsFingerprintHex: fingerprint
+                )
+            )
+        } catch {
+            macInteractiveLeaseRuntimeLoggerV1.error(
+                "webRTC offer generation failed: \(String(describing: error), privacy: .public)"
+            )
+            await closeWebRTCPeer()
+            throw error
+        }
+#else
+        throw MacLocalXPCInteractiveLeaseErrorV1.unavailable
+#endif
+    }
+
+    public func acceptWebRTCAnswer(
+        _ command: LocalInteractiveWebRTCAnswerCommandV1,
+        nowMonotonicNanoseconds _: UInt64
+    ) async throws {
+#if MACCOMPANION_WEBRTC_DEVELOPMENT && canImport(WebRTC)
+        let fence = command.answer.fence
+        let active = try await currentWebRTCCommand(matching: fence)
+        guard webRTCFence == fence, let peer = webRTCPeer,
+              active.surfaceDescriptor.kind == .desktop,
+              let displaySelection else {
+            throw MacLocalXPCInteractiveLeaseErrorV1.unavailable
+        }
+        do {
+            try await peer.acceptAnswer(command.answer.sdp)
+            _ = try await currentWebRTCCommand(matching: fence)
+            guard webRTCPeer === peer else {
+                throw MacLocalXPCInteractiveLeaseErrorV1.unavailable
+            }
+            let physicalID = try displaySelection.resolvePhysicalDisplayID(
+                selectedDisplayID: active.lease.selectedDisplayID
+            )
+            let content = try await SCShareableContent.current
+            let current = try await currentWebRTCCommand(matching: fence)
+            guard webRTCPeer === peer,
+                  current.lease.selectedDisplayID == active.lease.selectedDisplayID,
+                  displaySelection.opaqueSelectedDisplayID()
+                    == active.lease.selectedDisplayID,
+                  let display = content.displays.first(where: {
+                    $0.displayID == physicalID
+                  }) else {
+                throw MacLocalXPCInteractiveLeaseErrorV1.unavailable
+            }
+            let profile = try ScreenCaptureKitCaptureProfileV0(
+                width: Int(current.surfaceDescriptor.encodedWidth),
+                height: Int(current.surfaceDescriptor.encodedHeight),
+                framesPerSecond: 30,
+                queueDepth: 3
+            )
+            try await peer.startCapture(
+                filter: ScreenCaptureKitCaptureConfigurationV0
+                    .makeDesktopFilter(display: display),
+                profile: profile
+            )
+            _ = try await currentWebRTCCommand(matching: fence)
+            guard webRTCPeer === peer else {
+                throw MacLocalXPCInteractiveLeaseErrorV1.unavailable
+            }
+        } catch {
+            await closeWebRTCPeer()
+            throw error
+        }
+#else
+        throw MacLocalXPCInteractiveLeaseErrorV1.unavailable
+#endif
+    }
+
+    public func closeWebRTC(
+        _ command: LocalInteractiveWebRTCCloseCommandV1
+    ) async throws {
+#if MACCOMPANION_WEBRTC_DEVELOPMENT && canImport(WebRTC)
+        guard webRTCFence?.interactiveSessionID.rawValue
+                == command.interactiveSessionID else { return }
+        await closeWebRTCPeer()
+#endif
+    }
+
+#if MACCOMPANION_WEBRTC_DEVELOPMENT && canImport(WebRTC)
+    private func currentWebRTCCommand(
+        matching fence: InteractiveWebRTCNegotiationFenceV0
+    ) async throws -> InteractiveRuntimeInstallCommandV0 {
+        try requireAvailable()
+        guard let current = await runtime.currentWebRTCInstallCommand() else {
+            macInteractiveLeaseRuntimeLoggerV1.error(
+                "webRTC offer unavailable: runtime inactive"
+            )
+            throw MacLocalXPCInteractiveLeaseErrorV1.unavailable
+        }
+        guard current.lease.expiresAtMonotonicNanoseconds
+                > monotonicClock.nowMonotonicNanoseconds() else {
+            macInteractiveLeaseRuntimeLoggerV1.error(
+                "webRTC offer unavailable: lease expired"
+            )
+            throw MacLocalXPCInteractiveLeaseErrorV1.unavailable
+        }
+        guard current.lease.interactiveSessionID
+                == fence.interactiveSessionID.rawValue,
+              current.lease.authorizationEpoch == fence.authorizationEpoch,
+              current.lease.surfaceID == fence.surfaceID.rawValue,
+              current.lease.surfaceRevision.rawValue == fence.surfaceRevision,
+              current.lease.coordinateRevision.rawValue
+                == fence.coordinateSpaceRevision else {
+            macInteractiveLeaseRuntimeLoggerV1.error(
+                "webRTC offer unavailable: surface fence mismatch"
+            )
+            throw MacLocalXPCInteractiveLeaseErrorV1.unavailable
+        }
+        return current
+    }
+
+    private static func webRTCFingerprintHex(_ sdp: String) throws -> String {
+        guard let line = sdp.components(separatedBy: "\r\n")
+            .first(where: { $0.hasPrefix("a=fingerprint:sha-256 ") })
+        else { throw MacLocalXPCInteractiveLeaseErrorV1.unavailable }
+        return String(line.dropFirst("a=fingerprint:sha-256 ".count))
+            .replacingOccurrences(of: ":", with: "")
+            .lowercased()
+    }
+
+    private func closeWebRTCPeer() async {
+        let peer = webRTCPeer
+        webRTCPeer = nil
+        webRTCFence = nil
+        await peer?.close()
+    }
+#else
+    private func closeWebRTCPeer() async {}
+#endif
 
     public func applyInteractiveInput(
         _ envelope: InteractiveInputEnvelope,
@@ -382,6 +650,8 @@ public actor MacInteractiveLeaseRuntimeAdapterV1:
             throw MacLocalXPCInteractiveLeaseErrorV1.unavailable
         }
         if previous != command.displayID {
+            await nativeBackendOwner?.retire()
+            await closeWebRTCPeer()
             do {
                 try displaySelection.selectDisplay(id: command.displayID)
                 if case .active = runtimeState, let surfaceTargets {
@@ -449,6 +719,9 @@ public actor MacInteractiveLeaseRuntimeAdapterV1:
         nowMonotonicNanoseconds: UInt64
     ) async throws -> InteractiveRuntimeInstallReceiptV0 {
         try requireAvailable()
+        let admissionToken = nativeAdmission.close()
+        await nativeBackendOwner?.retire()
+        await closeWebRTCPeer()
         do {
             let receipt = try await runtime.install(
                 command,
@@ -458,6 +731,7 @@ public actor MacInteractiveLeaseRuntimeAdapterV1:
                 expectedDeadline:
                     command.lease.expiresAtMonotonicNanoseconds
             )
+            nativeAdmission.reopen(after: admissionToken)
             return receipt
         } catch {
             await latchIfRuntimeRequiresSafetyRecovery()
@@ -500,10 +774,14 @@ public actor MacInteractiveLeaseRuntimeAdapterV1:
         try requireAvailable()
         do {
             let receipt = try await runtime.revoke(command)
+            await nativeBackendOwner?.retire(interactiveSessionID: command.interactiveSessionID)
+            await closeWebRTCPeer()
             disarmExpiry()
             await surfaceTargets?.invalidate()
             return receipt
         } catch {
+            await nativeBackendOwner?.retire(interactiveSessionID: command.interactiveSessionID)
+            await closeWebRTCPeer()
             await latchIfRuntimeRequiresSafetyRecovery()
             throw error
         }
@@ -561,6 +839,8 @@ public actor MacInteractiveLeaseRuntimeAdapterV1:
         nowMonotonicNanoseconds: UInt64
     ) async throws -> InteractiveRuntimeSurfaceTransitionReceiptV0 {
         try requireAvailable()
+        await nativeBackendOwner?.retire()
+        await closeWebRTCPeer()
         do {
             let receipt = try await runtime.prepareSurfaceTransition(
                 command,
@@ -597,6 +877,8 @@ public actor MacInteractiveLeaseRuntimeAdapterV1:
         _ command: LocalInteractiveSurfaceFailureCommandV1
     ) async throws -> LocalInteractiveSurfaceFailureReceiptV1 {
         try requireAvailable()
+        await nativeBackendOwner?.retire(interactiveSessionID: command.interactiveSessionID)
+        await closeWebRTCPeer()
         let terminated = try await runtime.terminateSurfaceFailure(
             interactiveSessionID: command.interactiveSessionID
         )
@@ -659,6 +941,9 @@ public actor MacInteractiveLeaseRuntimeAdapterV1:
 
     public func invalidateAgentAuthority() async {
         guard stateStorage == .available else { return }
+        nativeAdmission.close()
+        await nativeBackendOwner?.retire()
+        await closeWebRTCPeer()
         disarmExpiry()
         await surfaceTargets?.invalidate()
         do {
@@ -671,6 +956,9 @@ public actor MacInteractiveLeaseRuntimeAdapterV1:
 
     public func stopInteractiveControlLocally() async throws {
         try requireAvailable()
+        nativeAdmission.close()
+        await nativeBackendOwner?.retire()
+        await closeWebRTCPeer()
         disarmExpiry()
         await surfaceTargets?.invalidate()
         do {
@@ -691,6 +979,9 @@ public actor MacInteractiveLeaseRuntimeAdapterV1:
 
     private func latchIfRuntimeRequiresSafetyRecovery() async {
         if case .safetyRecoveryRequired = await runtime.state() {
+            nativeAdmission.close()
+            await nativeBackendOwner?.retire()
+            await closeWebRTCPeer()
             stateStorage = .safetyRecoveryRequired
             disarmExpiry()
         }
@@ -739,6 +1030,9 @@ public actor MacInteractiveLeaseRuntimeAdapterV1:
             return
         }
         expiryToken = nil
+        nativeAdmission.close()
+        await nativeBackendOwner?.retire()
+        await closeWebRTCPeer()
         do {
             _ = try await runtime.expireLeaseIfRequired(
                 nowMonotonicNanoseconds: now

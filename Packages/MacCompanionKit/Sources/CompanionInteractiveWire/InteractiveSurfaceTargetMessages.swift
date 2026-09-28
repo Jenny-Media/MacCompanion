@@ -244,7 +244,8 @@ public struct InteractiveSurfaceTargetsResponseBodyV0: WireBody {
         guard authorizationEpoch.rawValue >= 1,
               inventoryRevision >= 1,
               inventoryRevision <= WireLimits.maximumSafeInteger,
-              (1...10_000).contains(validForMilliseconds),
+              (1...AdaptiveSurfaceTargetInventoryV0.maximumLifetimeMilliseconds)
+                .contains(validForMilliseconds),
               candidates.count <= 192,
               sequence >= 1,
               sequence <= WireLimits.maximumSafeInteger,

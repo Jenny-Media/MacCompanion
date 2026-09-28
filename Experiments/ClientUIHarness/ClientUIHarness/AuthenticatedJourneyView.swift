@@ -85,6 +85,10 @@ private final class JourneyReachability: ClientCoarseReachabilitySourceV1 {
 
 @MainActor
 private final class AuthenticatedJourneyModel: ObservableObject {
+    @Published var nativePhase = "idle"
+    @Published var nativeFrames = 0
+    @Published var nativeDiagnostic = "idle"
+    var liveProductFactory: ClientPrimaryLiveControlCoordinatorV0.ProductFactory?
     @Published var phase = "Preparing"
     @Published var connected = false
     @Published var failure = "None"
@@ -96,6 +100,7 @@ private final class AuthenticatedJourneyModel: ObservableObject {
     @Published var pinRejectionVerified = false
     @Published var hostBoot = "Unknown"
     @Published var sourceName = "Unknown"
+    @Published var verifiedObservationReceipt = "None"
     @Published var verifiedObservation = "None"
     @Published var selectedPrimary = "None"
     @Published var statusError = "None"
@@ -189,6 +194,25 @@ private final class AuthenticatedJourneyModel: ObservableObject {
                 verificationQueue: DispatchQueue(label: "Journey.verify"), connectionQueue: DispatchQueue(label: "Journey.socket"),
                 monotonicNow: { Int64(DispatchTime.now().uptimeNanoseconds / 1_000_000) }, jitterBasisPoints: { 10_000 }))
         self.network = network
+#if MACCOMPANION_NATIVE_LAB
+        let signer = try ClientCustodiedSessionSignerV0(custody: custody, sessionKey: record.sessionKey)
+        nativePhase = "configured"
+        let nativeFactory = UIKitClientNativeVideoCompositionV1.productFactory(
+            signer: signer, primaryState: network.primaryState, roles: network.interactiveRoles,
+            adapterFactory: { [weak self] signer, route in
+                MoonlightNativeLaunchAdapterV0(signer: signer, verifiedPrimaryRoute: route,
+                    diagnostic: { [weak self] in self?.nativeDiagnostic = $0 })
+            }, changed: { [weak self] phase, _ in
+                if phase == .displaying, self?.nativePhase != phase.rawValue { self?.nativeFrames += 1 }
+                self?.nativePhase = phase.rawValue
+            })
+        liveProductFactory = { [weak self] mode, failure in
+            self?.nativePhase = "preparing"
+            let product = try await nativeFactory(mode, failure)
+            self?.nativePhase = "prepared"
+            return product
+        }
+#endif
         workspace = try ClientPrimaryWorkspaceModelV0(macName: "Authenticated Test Mac", primaryState: network.primaryState,
             monotonicNowMilliseconds: { Int64(DispatchTime.now().uptimeNanoseconds / 1_000_000) })
         let source = JourneyReachability()
@@ -210,7 +234,9 @@ private final class AuthenticatedJourneyModel: ObservableObject {
                 if sourceName == "signed-agent", primary != "None", primary != selectedPrimary { authentications += 1 }
                 selectedPrimary = primary
                 statusError = state.statusError?.code ?? "None"
-                if let status = state.observedStatus?.snapshot {
+                if let observed = state.observedStatus {
+                    verifiedObservationReceipt = "\(primary)/\(observed.freshness.requestStartedAtMonotonicMilliseconds)/\(observed.freshness.receivedAtMonotonicMilliseconds)"
+                    let status = observed.snapshot
                     let observation = "\(status.generation.rawValue)/\(status.revision)"
                     if sourceName == "signed-agent", observation != verifiedObservation { observations += 1 }
                     verifiedObservation = observation
@@ -326,6 +352,7 @@ struct AuthenticatedJourneyView: View {
                 Text("\(model.authentications)").accessibilityIdentifier("Journey authentications")
                 Text(model.failure).accessibilityIdentifier("Journey failure")
             }.font(.caption)
+            Text(model.verifiedObservationReceipt).accessibilityIdentifier("Journey verified observation receipt").font(.caption2).lineLimit(1)
             Text(model.verifiedObservation).accessibilityIdentifier("Journey verified observation").font(.caption2).lineLimit(1)
             Text(model.selectedPrimary).accessibilityIdentifier("Journey primary").font(.caption2).lineLimit(1)
             Text(model.statusError).accessibilityIdentifier("Journey status error").font(.caption2)
@@ -370,6 +397,7 @@ struct AuthenticatedJourneyView: View {
             if let workspace = model.workspace, let network = model.network {
                 ClientPrimaryWorkspaceApplicationViewV1(macName: "Authenticated Test Mac", model: workspace,
                     interactiveRoles: network.interactiveRoles,
+                    liveProductFactory: model.liveProductFactory,
                     onCommandFailure: { model.failure = String(describing: $0) })
             } else { Spacer() }
         }
@@ -378,6 +406,13 @@ struct AuthenticatedJourneyView: View {
 
     private var signedAgentHeader: some View {
         VStack(spacing: 4) {
+#if MACCOMPANION_NATIVE_LAB
+            HStack {
+                Text(model.nativePhase).accessibilityIdentifier("Native phase")
+                Text("\(model.nativeFrames)").accessibilityIdentifier("Native displaying frames")
+                Text(model.nativeDiagnostic).accessibilityIdentifier("Native diagnostic")
+            }.font(.caption2)
+#endif
             Text("Signed Agent · test-owned consent, media, input and audio").font(.caption2)
             HStack {
                 Text(model.phase).accessibilityIdentifier("Journey phase")
@@ -389,6 +424,7 @@ struct AuthenticatedJourneyView: View {
                 Text("\(model.observations)").accessibilityIdentifier("Journey observations")
                 Text(model.administration).accessibilityIdentifier("Signed administration")
             }.font(.caption2)
+            Text(model.verifiedObservationReceipt).accessibilityIdentifier("Journey verified observation receipt").font(.caption2).lineLimit(1)
             Text(model.verifiedObservation).accessibilityIdentifier("Journey verified observation").font(.caption2).lineLimit(1)
             Text(model.selectedPrimary).accessibilityIdentifier("Journey primary").font(.caption2).lineLimit(1)
             HStack {

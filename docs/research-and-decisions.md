@@ -238,7 +238,7 @@ When an end-to-end slice is unblocked, permanent signed targets and physical beh
 
 ### D17 — Official identity and open-source policy
 
-Jenny Media controls the `media.jenny` reverse-DNS namespace, so official role-based identifiers use `media.jenny.maccompanion`. Development identities may be installed on the development Mac, while distribution and promotion credentials remain in separate controlled custody. Apache-2.0 plus a distinct Mac Companion/Jenny Media trademark policy is the selected publication model subject to legal review, with GitHub private vulnerability reporting first. Further pushes and external contributions pause until the policy, history, and provider-protection gates pass.
+Jenny Media controls the `media.jenny` reverse-DNS namespace, so official role-based identifiers use `media.jenny.maccompanion`. Development identities may be installed on the development Mac, while distribution and promotion credentials remain in separate controlled custody. The 2026-09-26 owner decision selects GPL-3.0 combined distribution with retained Apache-2.0/upstream notices under `LICENSING.md`, corresponding-source delivery, and a distinct Mac Companion/Jenny Media trademark policy, subject to distribution review, with GitHub private vulnerability reporting first. Further pushes and external contributions pause until the policy, history, and provider-protection gates pass.
 
 ## Open decisions
 
@@ -252,5 +252,5 @@ Jenny Media controls the `media.jenny` reverse-DNS namespace, so official role-b
 - Smart Input compatibility and secure-field evidence across the supported app and keyboard matrix
 - Audit quotas and retention periods
 - Which initial actions remain reliable across the supported OS matrix
-- Final legal approval and publication of the selected Apache-2.0 license, trademark, contribution, and security-reporting policies
+- Final distribution review and publication of the selected GPL-3.0 terms, retained notices, corresponding-source arrangement, trademark, contribution, and security-reporting policies
 - Commercial model, free/Pro boundaries, pricing, and Family Sharing; a lifetime non-consumable is the working hypothesis while Mac Companion operates no recurring network service

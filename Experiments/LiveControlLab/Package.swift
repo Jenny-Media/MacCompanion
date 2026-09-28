@@ -13,6 +13,9 @@ let package = Package(
     targets: [
         .target(name: "LiveControlLabSupport"),
         .executableTarget(name: "AgentXPCTest", dependencies: [
+            .product(name: "CompanionInteractiveHost", package: "MacCompanionKit"),
+            .product(name: "CompanionInteractiveClient", package: "MacCompanionKit"),
+            .product(name: "CompanionClientPlatform", package: "MacCompanionKit"),
             "LiveControlLabSupport",
             .product(name: "CompanionOperations", package: "MacCompanionKit"),
             .product(name: "CompanionNativeProviders", package: "MacCompanionKit"),

@@ -157,16 +157,20 @@ public actor AtomicFileMacUpdateAgentReactivationStoreV0:
             if descriptor >= 0 { close(descriptor) }
             throw MacUpdateAgentReactivationStoreErrorV0.ioFailure
         }
-        lockDescriptor = descriptor
+        // Keep the descriptor local until validation succeeds. A fully
+        // initialized throwing actor runs deinit, so assigning it before the
+        // catch would close it twice and could close a newly reused descriptor.
+        let checkedDirectory = self.directory
+        let checkedDestination = destination
         do {
             try Self.withExclusiveLock(descriptor: descriptor) {
                 try Self.recoverPendingFiles(
-                    in: self.directory,
+                    in: checkedDirectory,
                     fileManager: fileManager
                 )
                 try Self.validateDirectoryContents(
-                    self.directory,
-                    destination: destination,
+                    checkedDirectory,
+                    destination: checkedDestination,
                     fileManager: fileManager
                 )
             }
@@ -174,6 +178,7 @@ public actor AtomicFileMacUpdateAgentReactivationStoreV0:
             close(descriptor)
             throw error
         }
+        lockDescriptor = descriptor
     }
 
     deinit { close(lockDescriptor) }

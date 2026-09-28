@@ -121,7 +121,11 @@ private func observeSession() -> ClientAuthenticatedSessionV0 {
     )
 }
 
-private func makeObserveHarness() async throws -> ObserveHarness {
+private func makeObserveHarness(
+    statusReservationSleep: @escaping @Sendable () async throws -> Void = {
+        try await Task.sleep(nanoseconds: 10_000_000_000)
+    }
+) async throws -> ObserveHarness {
     let transport = ObserveTransport()
     let clock = ObserveClock()
     let events = ObserveEventRecorder()
@@ -137,7 +141,8 @@ private func makeObserveHarness() async throws -> ObserveHarness {
         environment: ClientObserveChannelEnvironmentV0(
             makeMessageID: { ids.next() },
             wallNowUnixMilliseconds: { clock.wall },
-            monotonicNowMilliseconds: { clock.monotonic }
+            monotonicNowMilliseconds: { clock.monotonic },
+            statusReservationSleep: statusReservationSleep
         ),
         publish: { events.record($0) }
     )
@@ -296,6 +301,171 @@ private func observeError(
 
     try await harness.channel.requestLivenessStatus()
     #expect(await harness.transport.capturedFrames().count == 2)
+}
+
+private func waitForReservedRefresh(_ channel: ClientObserveChannelV0)
+    async throws
+{
+    for _ in 0..<1_000 {
+        if await channel.hasReservedStatusRefresh { return }
+        await Task.yield()
+    }
+    try #require(await channel.hasReservedStatusRefresh)
+}
+
+private actor ObserveReservationDelay {
+    private var released = false
+    private var waiter: CheckedContinuation<Void, Never>?
+
+    func sleep() async {
+        guard !released else { return }
+        await withCheckedContinuation { waiter = $0 }
+    }
+
+    func release() {
+        released = true
+        waiter?.resume()
+        waiter = nil
+    }
+}
+
+@Test func observeManualRefreshReservationExpiresWithoutSendingOrPublishing()
+    async throws
+{
+    let delay = ObserveReservationDelay()
+    let harness = try await makeObserveHarness(statusReservationSleep: { await delay.sleep() })
+    try await harness.channel.requestLivenessStatus()
+    let heartbeat = try requestEnvelope(
+        try #require(await harness.transport.capturedFrames().last), as: StatusSnapshotRequestBody.self
+    )
+    let refresh = Task { try await harness.channel.requestStatus() }
+    defer { refresh.cancel() }
+    try await waitForReservedRefresh(harness.channel)
+    await delay.release()
+    await #expect(throws: ClientObserveChannelErrorV0.statusWaitTimedOut) { try await refresh.value }
+    #expect(await harness.transport.capturedFrames().count == 1)
+    #expect(harness.events.events.isEmpty)
+    #expect(await harness.channel.retainedStatus == nil)
+    try await harness.router.receive(statusResponse(correlationID: heartbeat.messageID))
+    #expect(await harness.router.state == .ready)
+    try await harness.channel.requestStatus()
+    #expect(await harness.transport.capturedFrames().count == 2)
+}
+
+@Test func observeManualRefreshWaitsForLivenessThenPublishesItsOwnFreshReply()
+    async throws
+{
+    let harness = try await makeObserveHarness()
+    try await harness.channel.requestLivenessStatus()
+    let heartbeat = try requestEnvelope(
+        try #require(await harness.transport.capturedFrames().last),
+        as: StatusSnapshotRequestBody.self
+    )
+    let refresh = Task { try await harness.channel.requestStatus() }
+    defer { refresh.cancel() }
+    try await waitForReservedRefresh(harness.channel)
+    #expect(await harness.transport.capturedFrames().count == 1)
+    await #expect(throws: ClientObserveChannelErrorV0.statusRequestPending) {
+        try await harness.channel.requestStatus()
+    }
+    await #expect(throws: ClientObserveChannelErrorV0.statusRequestPending) {
+        try await harness.channel.requestLivenessStatus()
+    }
+    harness.clock.setMonotonic(1_200)
+    try await harness.router.receive(statusResponse(correlationID: heartbeat.messageID))
+    try await refresh.value
+    let frames = await harness.transport.capturedFrames()
+    #expect(frames.count == 2)
+    let manual = try requestEnvelope(try #require(frames.last), as: StatusSnapshotRequestBody.self)
+    #expect(manual.messageID != heartbeat.messageID)
+    #expect(harness.events.events.isEmpty)
+    #expect(await harness.channel.retainedStatus == nil)
+    harness.clock.setMonotonic(1_300)
+    try await harness.router.receive(statusResponse(correlationID: manual.messageID, revision: 2))
+    #expect(harness.events.events.count == 1)
+    #expect(await harness.channel.retainedStatus?.snapshot.revision == 2)
+    // Freshness starts when the manual request is actually issued, after the
+    // queued wait, rather than at the background heartbeat's start time.
+    #expect(try await harness.channel.statusAssessment(monotonicNowMilliseconds: 2_099)?.state == .live)
+    #expect(try await harness.channel.statusAssessment(monotonicNowMilliseconds: 2_100)?.state == .stale)
+}
+
+@Test func observeCanceledManualRefreshDoesNotSendOrCancelLiveness()
+    async throws
+{
+    let harness = try await makeObserveHarness()
+    try await harness.channel.requestLivenessStatus()
+    let heartbeat = try requestEnvelope(
+        try #require(await harness.transport.capturedFrames().last), as: StatusSnapshotRequestBody.self
+    )
+    let refresh = Task { try await harness.channel.requestStatus() }
+    try await waitForReservedRefresh(harness.channel)
+    refresh.cancel()
+    await #expect(throws: CancellationError.self) { try await refresh.value }
+    try await harness.router.receive(statusResponse(correlationID: heartbeat.messageID))
+    #expect(await harness.transport.capturedFrames().count == 1)
+    #expect(await harness.router.state == .ready)
+    #expect(harness.events.events.isEmpty)
+    try await harness.channel.requestStatus()
+    #expect(await harness.transport.capturedFrames().count == 2)
+}
+
+@Test func observeInvalidationBeforeLivenessCommitDiscardsManualRefresh()
+    async throws
+{
+    let harness = try await makeObserveHarness()
+    try await harness.channel.requestLivenessStatus()
+    let heartbeat = try requestEnvelope(
+        try #require(await harness.transport.capturedFrames().last), as: StatusSnapshotRequestBody.self
+    )
+    let refresh = Task { try await harness.channel.requestStatus() }
+    defer { refresh.cancel() }
+    try await waitForReservedRefresh(harness.channel)
+    _ = try await harness.channel.preparePrimaryReply(statusResponse(correlationID: heartbeat.messageID))
+    #expect(await harness.channel.hasReservedStatusRefresh)
+    #expect(await harness.transport.capturedFrames().count == 1)
+    await harness.router.invalidate()
+    await #expect(throws: ClientObserveChannelErrorV0.invalidState(.invalidated)) {
+        try await refresh.value
+    }
+    #expect(await harness.transport.capturedFrames().count == 1)
+    #expect(harness.events.events.isEmpty)
+}
+
+@Test func observeRejectedLivenessReplyCannotReleaseManualRefresh()
+    async throws
+{
+    let harness = try await makeObserveHarness()
+    try await harness.channel.requestLivenessStatus()
+    let refresh = Task { try await harness.channel.requestStatus() }
+    defer { refresh.cancel() }
+    try await waitForReservedRefresh(harness.channel)
+    await #expect(throws: ClientPrimaryCommandRouterErrorV0.routingRejected) {
+        try await harness.router.receive(statusResponse(correlationID: WireUUID(UUID())))
+    }
+    await #expect(throws: ClientObserveChannelErrorV0.invalidState(.invalidated)) {
+        try await refresh.value
+    }
+    #expect(await harness.transport.capturedFrames().count == 1)
+    #expect(harness.events.events.isEmpty)
+}
+
+@Test func observeLivenessErrorReleasesSeparateManualAttemptWithoutPublishing()
+    async throws
+{
+    let harness = try await makeObserveHarness()
+    try await harness.channel.requestLivenessStatus()
+    let heartbeat = try requestEnvelope(
+        try #require(await harness.transport.capturedFrames().last), as: StatusSnapshotRequestBody.self
+    )
+    let refresh = Task { try await harness.channel.requestStatus() }
+    defer { refresh.cancel() }
+    try await waitForReservedRefresh(harness.channel)
+    try await harness.router.receive(observeError(correlationID: heartbeat.messageID))
+    try await refresh.value
+    #expect(await harness.transport.capturedFrames().count == 2)
+    #expect(harness.events.events.isEmpty)
+    #expect(await harness.channel.retainedStatus == nil)
 }
 
 @Test func observeStatusRejectsGenerationOrRevisionRegression()

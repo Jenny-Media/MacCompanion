@@ -58,7 +58,18 @@ private actor InitialDesktopTestPrimaryV0:
     let descriptor: AdaptiveSurfaceDescriptor
     private(set) var began = false
     private(set) var acknowledgementCount = 0
+    private(set) var admissionCount = 0
     private var surfacePhase: ClientInitialSurfacePhaseV0 = .awaitingRequest
+    private var holdAcknowledgement = false
+    private var resumeAcknowledgement: CheckedContinuation<Void, Never>?
+    private(set) var acknowledgementSuspended = false
+
+    func suspendAcknowledgement() { holdAcknowledgement = true }
+    func resumeAcknowledgementSend() {
+        acknowledgementSuspended = false
+        resumeAcknowledgement?.resume()
+        resumeAcknowledgement = nil
+    }
 
     init(descriptor: AdaptiveSurfaceDescriptor) {
         self.descriptor = descriptor
@@ -76,7 +87,16 @@ private actor InitialDesktopTestPrimaryV0:
     func admitInitialMedia(
         header: MediaRecordHeader,
         payloadByteCount: Int
-    ) -> ClientMediaAdmissionV0 {
+    ) throws -> ClientMediaAdmissionV0 {
+        admissionCount += 1
+        guard header.interactiveSessionID == descriptor.interactiveSessionID,
+              header.authorizationEpoch == descriptor.authorizationEpoch,
+              header.surfaceID == descriptor.surfaceID,
+              header.surfaceRevision == descriptor.surfaceRevision,
+              header.coordinateSpaceRevision == descriptor.coordinateSpaceRevision,
+              payloadByteCount == Int(header.payloadLength) else {
+            throw NetworkClientInteractiveInitialDesktopErrorV0.invalidPhase
+        }
         switch header.type {
         case .decoderConfiguration: return .decoderConfiguration
         case .videoAccessUnit:
@@ -90,11 +110,21 @@ private actor InitialDesktopTestPrimaryV0:
 
     func confirmInitialRenderedFrame(
         _ receipt: ClientDecodedFrameReceiptV0
-    ) -> Bool { receipt.mediaSequence == 2 }
+    ) throws -> Bool {
+        guard surfacePhase == .awaitingMedia else {
+            throw ClientInitialSurfaceErrorV0.renderedFrameMismatch
+        }
+        return receipt.mediaSequence == 2
+    }
 
-    func acknowledgeInitialSurface() {
+    func acknowledgeInitialSurface() async {
         acknowledgementCount += 1
         surfacePhase = .awaitingAcknowledgement
+        if holdAcknowledgement {
+            holdAcknowledgement = false
+            acknowledgementSuspended = true
+            await withCheckedContinuation { resumeAcknowledgement = $0 }
+        }
     }
 
     func initialSurfacePhase() -> ClientInitialSurfacePhaseV0? {
@@ -163,6 +193,7 @@ private actor InitialDesktopSuspendingIOV0 {
     private var bytes: Data
     private var continuation:
         CheckedContinuation<ClientInteractiveRoleReadChunkV0, Never>?
+    private var pendingMaximum = 0
 
     init(bytes: Data) { self.bytes = bytes }
 
@@ -175,7 +206,18 @@ private actor InitialDesktopSuspendingIOV0 {
             bytes.removeFirst(count)
             return ClientInteractiveRoleReadChunkV0(data: value)
         }
+        pendingMaximum = maximumLength
         return await withCheckedContinuation { continuation = $0 }
+    }
+
+    func append(_ value: Data) {
+        bytes.append(value)
+        if let pending = continuation {
+            continuation = nil
+            let count = min(pendingMaximum, bytes.count)
+            let chunk = Data(bytes.prefix(count)); bytes.removeFirst(count)
+            pending.resume(returning: ClientInteractiveRoleReadChunkV0(data: chunk))
+        }
     }
 
     func cancel() {
@@ -522,8 +564,9 @@ private actor InitialDesktopFailureRecorderV0 {
     func record() { count += 1 }
 }
 
-@Test(arguments: [false, true])
-func initialDesktopOwnerAcknowledgesOnlyRendererProof(remoteLoss: Bool) async throws {
+@Test(arguments: [(false, false), (false, true), (true, false), (true, true)], [false, true])
+func initialDesktopOwnerAcknowledgesOnlyRendererProof(lifecycle: (Bool, Bool), overlappingReceipt: Bool) async throws {
+    let (remoteLoss, ending) = lifecycle
     let sessionID = UUID()
     let surfaceID = UUID()
     let descriptor = try AdaptiveSurfaceDescriptor(
@@ -617,15 +660,34 @@ func initialDesktopOwnerAcknowledgesOnlyRendererProof(remoteLoss: Bool) async th
     }
     #expect(await renderer.count() == 2)
     #expect(await primary.acknowledgementCount == 0)
-    try await activation.reportRendered(ClientDecodedFrameReceiptV0(
+    if overlappingReceipt { await primary.suspendAcknowledgement() }
+    let firstReceipt = ClientDecodedFrameReceiptV0(
         generation: 1,
         fence: ClientDecoderFenceV0(header: clean),
         mediaSequence: 2,
         presentationTimeNanoseconds: 2,
         frameReference: UUID()
-    ))
+    )
+    let reporting = Task { try await activation.reportRendered(firstReceipt) }
+    defer { Task { await primary.resumeAcknowledgementSend() } }
+    if overlappingReceipt {
+        let deadline = ContinuousClock.now + .seconds(2)
+        while await primary.acknowledgementSuspended == false, ContinuousClock.now < deadline { await Task.yield() }
+        try #require(await primary.acknowledgementSuspended)
+        try await activation.reportRendered(firstReceipt)
+        #expect(await primary.acknowledgementCount == 1)
+        #expect(await activation.phase == .awaitingAcknowledgement)
+        await primary.acknowledgeFromHost()
+        #expect(try await activation.refreshPrimaryState())
+        await primary.resumeAcknowledgementSend()
+        try await reporting.value
+        #expect(await activation.phase == .active,
+            "Send completion cannot rewind an activation already committed by an early reply")
+    } else {
+        try await reporting.value
+    }
     #expect(await primary.acknowledgementCount == 1)
-    #expect(await activation.phase == .awaitingAcknowledgement)
+    #expect(await activation.phase == (overlappingReceipt ? .active : .awaitingAcknowledgement))
 
     await primary.acknowledgeFromHost()
     #expect(await activation.refreshPrimaryState())
@@ -636,6 +698,27 @@ func initialDesktopOwnerAcknowledgesOnlyRendererProof(remoteLoss: Bool) async th
     #expect(framedInput.prefix(4) == Data([0, 0, 0, 22]))
     #expect(framedInput.dropFirst(4)
         == Data(#"{"kind":"pointerMove"}"#.utf8))
+    if ending {
+        await activation.beginEnding()
+        #expect(await activation.phase == .ending)
+        #expect(await renderer.closed)
+        #expect(await inputIO.cancelled == false)
+        await #expect(throws: NetworkClientInteractiveInitialDesktopErrorV0.invalidPhase) {
+            try await activation.sendInput([.pointerMove(x: 2, y: 3)])
+        }
+        let tail = try MediaRecordHeader(type: .videoAccessUnit, flags: [], payloadLength: 1,
+            interactiveSessionID: descriptor.interactiveSessionID, authorizationEpoch: descriptor.authorizationEpoch,
+            surfaceID: descriptor.surfaceID, surfaceRevision: descriptor.surfaceRevision,
+            coordinateSpaceRevision: descriptor.coordinateSpaceRevision, mediaSequence: 3,
+            presentationTimeNanoseconds: 3, encodedWidth: 640, encodedHeight: 480)
+        await io.append(tail.encode() + Data([3]))
+        let deadline = ContinuousClock.now + .seconds(2)
+        while await primary.admissionCount < 3, ContinuousClock.now < deadline { await Task.yield() }
+        #expect(await primary.admissionCount == 3)
+        #expect(await renderer.count() == 2)
+        #expect(await primary.acknowledgementCount == 1)
+        #expect(await inputIO.count() == 1)
+    }
     if remoteLoss {
         await io.cancel()
         let deadline = ContinuousClock.now.advanced(by: .seconds(2))
@@ -658,15 +741,18 @@ func initialDesktopOwnerAcknowledgesOnlyRendererProof(remoteLoss: Bool) async th
     }
     await activation.close()
     #expect(await failure.count == (remoteLoss ? 1 : 0))
-    #expect(await inputIO.count() == 2)
-    let framedReset = await inputIO.value(at: 1)
-    #expect(framedReset.prefix(4) == Data([0, 0, 0, 16]))
-    #expect(framedReset.dropFirst(4) == Data(#"{"kind":"reset"}"#.utf8))
+    #expect(await inputIO.count() == (ending ? 1 : 2))
+    if !ending {
+        let framedReset = await inputIO.value(at: 1)
+        #expect(framedReset.prefix(4) == Data([0, 0, 0, 16]))
+        #expect(framedReset.dropFirst(4) == Data(#"{"kind":"reset"}"#.utf8))
+    }
     #expect(await inputIO.cancelled)
     #expect(await renderer.closed)
 }
 
-@Test func replacementSurfaceOrdersResetBeforeSelectAndAckBeforeInput()
+@Test(arguments: [false, true])
+func replacementSurfaceOrdersResetBeforeSelectAndAckBeforeInput(native: Bool)
     async throws
 {
     let sessionID = UUID()
@@ -751,11 +837,12 @@ func initialDesktopOwnerAcknowledgesOnlyRendererProof(remoteLoss: Bool) async th
         receive: { await mediaIO.receive(maximumLength: $0) },
         cancel: { await mediaIO.cancel() }
     )
+    let renderer = InitialDesktopTestRendererV0()
     let activation = try NetworkClientInteractiveInitialDesktopActivationV0(
         channel: primary,
         inputConnection: inputConnection,
         mediaConnection: mediaConnection,
-        renderer: InitialDesktopTestRendererV0()
+        renderer: renderer
     )
 
     #expect(try await activation.start() == initial)
@@ -787,6 +874,7 @@ func initialDesktopOwnerAcknowledgesOnlyRendererProof(remoteLoss: Bool) async th
         try await activation.selectSurface(
             targetKind: .application,
             targetToken: applicationToken,
+            nativeReplacement: native,
             timeoutMilliseconds: 1_000
         )
     }
@@ -796,6 +884,23 @@ func initialDesktopOwnerAcknowledgesOnlyRendererProof(remoteLoss: Bool) async th
     }
     #expect(await primary.replacementSurfacePhase() == .awaitingMedia)
     #expect(await log.snapshot() == ["reset", "select"])
+    if native {
+        let oldHeader = try MediaRecordHeader(
+            type: .videoAccessUnit,
+            flags: [.cleanKeyframe],
+            payloadLength: 1,
+            interactiveSessionID: initial.interactiveSessionID,
+            authorizationEpoch: initial.authorizationEpoch,
+            surfaceID: initial.surfaceID,
+            surfaceRevision: initial.surfaceRevision,
+            coordinateSpaceRevision: initial.coordinateSpaceRevision,
+            mediaSequence: 2,
+            presentationTimeNanoseconds: 2,
+            encodedWidth: initial.encodedWidth,
+            encodedHeight: initial.encodedHeight
+        )
+        await mediaIO.append(oldHeader.encode() + Data([0x01]))
+    }
     let replacementHeader = try MediaRecordHeader(
         type: .videoAccessUnit,
         flags: [.cleanKeyframe],
@@ -805,16 +910,25 @@ func initialDesktopOwnerAcknowledgesOnlyRendererProof(remoteLoss: Bool) async th
         surfaceID: replacement.surfaceID,
         surfaceRevision: replacement.surfaceRevision,
         coordinateSpaceRevision: replacement.coordinateSpaceRevision,
-        mediaSequence: 2,
-        presentationTimeNanoseconds: 2,
+        mediaSequence: native ? 3 : 2,
+        presentationTimeNanoseconds: native ? 3 : 2,
         encodedWidth: replacement.encodedWidth,
         encodedHeight: replacement.encodedHeight
     )
+    if native {
+        await mediaIO.append(replacementHeader.encode() + Data([0x02]))
+        for _ in 0..<1_000 {
+            if await renderer.count() == 1 { break }
+            try await Task.sleep(for: .milliseconds(1))
+        }
+        #expect(await renderer.count() == 1)
+        #expect(await activation.phase == .active)
+    }
     try await activation.reportRendered(ClientDecodedFrameReceiptV0(
         generation: 2,
         fence: ClientDecoderFenceV0(header: replacementHeader),
-        mediaSequence: 2,
-        presentationTimeNanoseconds: 2,
+        mediaSequence: native ? 3 : 2,
+        presentationTimeNanoseconds: native ? 3 : 2,
         frameReference: UUID()
     ))
     #expect(try await selection.value == replacement)

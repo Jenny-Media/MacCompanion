@@ -298,6 +298,54 @@ package actor MacLocalXPCAuthenticatedMenuPresentationEndpointV1:
         }
     }
 
+    package func nativeBackend(_ command: LocalInteractiveNativeBackendCommandV1) async throws -> LocalInteractiveNativeBackendReceiptV1 {
+        try await submitInteractive { sender in
+            try await sender.nativeBackend(generation: generation, endpointToken: endpointToken, command: command)
+        }
+    }
+
+    package func nativeRuntimeSnapshot(_ command: LocalInteractiveNativeSnapshotCommandV1) async throws -> LocalInteractiveNativeSnapshotReceiptV1 {
+        try await submitInteractive { sender in
+            try await sender.nativeRuntimeSnapshot(generation: generation, endpointToken: endpointToken, command: command)
+        }
+    }
+
+    package func makeWebRTCOffer(
+        _ command: LocalInteractiveWebRTCOfferCommandV1
+    ) async throws -> LocalInteractiveWebRTCOfferReceiptV1 {
+        try await submitInteractive { sender in
+            try await sender.makeWebRTCOffer(
+                generation: generation,
+                endpointToken: endpointToken,
+                command: command
+            )
+        }
+    }
+
+    package func acceptWebRTCAnswer(
+        _ command: LocalInteractiveWebRTCAnswerCommandV1
+    ) async throws {
+        try await submitInteractive { sender in
+            try await sender.acceptWebRTCAnswer(
+                generation: generation,
+                endpointToken: endpointToken,
+                command: command
+            )
+        }
+    }
+
+    package func closeWebRTC(
+        _ command: LocalInteractiveWebRTCCloseCommandV1
+    ) async throws {
+        try await submitInteractive { sender in
+            try await sender.closeWebRTC(
+                generation: generation,
+                endpointToken: endpointToken,
+                command: command
+            )
+        }
+    }
+
     package func applyInteractiveInput(
         _ envelope: InteractiveInputEnvelope
     ) async throws {

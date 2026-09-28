@@ -197,22 +197,11 @@ public struct MacInteractiveSelectedSurfaceActivatorV1: Sendable {
             processIdentifier: processID
         ), application.bundleIdentifier == bundleIdentifier,
               let descriptions = CGWindowListCopyWindowInfo(
-                [.optionIncludingWindow],
-                windowID
+                .optionOnScreenOnly,
+                kCGNullWindowID
               ) as? [[String: Any]],
-              descriptions.count == 1,
-              let owner = descriptions[0][kCGWindowOwnerPID as String]
-                as? NSNumber,
-              owner.int32Value == processID,
-              let bounds = descriptions[0][kCGWindowBounds as String]
-                as? [String: Any] else { return false }
-        var actual = CGRect.zero
-        guard CGRectMakeWithDictionaryRepresentation(
-            bounds as CFDictionary,
-            &actual
-        ) else {
-            return false
-        }
+              let actual = MacSelectedWindowDescriptionV1.bounds(in: descriptions,
+                  windowID: windowID, processID: processID) else { return false }
         return approximatelyEqual(actual, globalBounds)
     }
 

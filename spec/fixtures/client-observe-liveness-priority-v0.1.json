@@ -1,0 +1,19 @@
+{
+  "profile": "Mac Companion Observe liveness and manual refresh v0.1",
+  "maximumWireStatusRequests": 1,
+  "maximumReservedManualRefreshes": 1,
+  "rules": [
+    "liveness replies never publish or retain user-visible status",
+    "manual refresh reserves one local intent behind pending liveness",
+    "router commit of exact valid liveness correlation releases the reservation",
+    "manual refresh uses a separate request identity and monotonic start time",
+    "only the manual reply updates user-visible status",
+    "additional manual refreshes and liveness checks cannot overtake a reservation",
+    "cancellation discards the local intent without canceling liveness",
+    "invalidation replacement rejected reply and liveness send failure cannot send late manual requests",
+    "correlated liveness error allows a separate manual request without publishing the error as status",
+    "normal deadline replay host correlation and freshness checks remain enforced",
+    "reservation expiry sends no manual frame publishes no status and preserves independent liveness"
+  ],
+  "maximumManualReservationMilliseconds": 10000
+}

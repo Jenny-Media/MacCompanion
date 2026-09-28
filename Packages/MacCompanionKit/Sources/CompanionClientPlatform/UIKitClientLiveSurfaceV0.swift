@@ -42,7 +42,8 @@ private final class UIKitClientKeyboardAccessoryV0: UIInputView {
     ) {
         self.submit = submit
         self.dismissKeyboard = dismissKeyboard
-        super.init(frame: .zero, inputViewStyle: .keyboard)
+        super.init(frame: CGRect(x: 0, y: 0, width: 0, height: 44), inputViewStyle: .keyboard)
+        allowsSelfSizing = true
 
         keyControl.selectedSegmentIndex = UISegmentedControl.noSegment
         keyControl.addTarget(
@@ -208,6 +209,11 @@ public final class UIKitClientLiveSurfaceViewV0:
     UIGestureRecognizerDelegate
 {
     public let videoView = UIKitClientVideoSurfaceViewV0(frame: .zero)
+    private var webRTCVideoView: UIView?
+    private var nativeVideoView: UIView?
+    private var nativeContentGeometry: InteractiveNativeVideoContentGeometryV0?
+    private var nativeInputCurrent: (@MainActor () -> Bool)?
+    private var canDispatchInput: Bool { inputEnabled && !hasUnverifiedExternalVideo }
 
     private var mapper: ClientViewportInputMapperV0?
     private var mode: ClientInputInteractionModeV0
@@ -278,6 +284,11 @@ public final class UIKitClientLiveSurfaceViewV0:
     public func setEncodedDimensions(width: UInt16, height: UInt16) {
         guard encodedWidth != width || encodedHeight != height else { return }
         resetMapper()
+        if nativeVideoView != nil {
+            nativeContentGeometry = nil
+            nativeInputCurrent = nil
+            setInputEnabled(false)
+        }
         encodedWidth = width
         encodedHeight = height
         resetVisualZoomState()
@@ -285,14 +296,17 @@ public final class UIKitClientLiveSurfaceViewV0:
     }
 
     public func setInputEnabled(_ value: Bool) {
+        if value, hasUnverifiedExternalVideo { return }
         if !value {
             keyboardProxy.resignFirstResponder()
             resetMapper()
             resetVisualZoomState()
         }
+        // UIKit defaults to enabled even before our first admitted input frame.
+        // Enforce the view state when the cached logical value is unchanged.
+        isUserInteractionEnabled = value
         guard inputEnabled != value else { return }
         inputEnabled = value
-        isUserInteractionEnabled = value
         if value { setNeedsLayout() }
     }
 
@@ -303,10 +317,76 @@ public final class UIKitClientLiveSurfaceViewV0:
         inputEnabled = false
         isUserInteractionEnabled = false
         videoView.blank()
+        removeWebRTCVideoView()
+        removeNativeVideoView()
+    }
+
+    /// The WebRTC receiver is installed only for the current negotiated peer.
+    /// Its own frame sink reveals the view after the first admitted frame.
+    public func installWebRTCVideoView(_ view: UIView) {
+        guard nativeVideoView == nil else { return }
+        removeWebRTCVideoView()
+        setInputEnabled(false)
+        view.frame = videoView.bounds
+        view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        view.isHidden = true
+        videoView.addSubview(view)
+        webRTCVideoView = view
+    }
+
+    public var hasUnverifiedWebRTCVideo: Bool {
+        webRTCVideoView != nil
+    }
+
+    public var hasUnverifiedExternalVideo: Bool {
+        webRTCVideoView != nil || (nativeVideoView != nil && nativeInputCurrent?() != true)
+    }
+
+    /// An injected native driver owns decoding. This slot remains input-disabled
+    /// until a native presentation proof is admitted by the Control authority.
+    @discardableResult
+    public func installNativeVideoView(_ view: UIView) -> Bool {
+        guard webRTCVideoView == nil, nativeVideoView == nil else { return false }
+        setInputEnabled(false)
+        view.frame = videoView.bounds
+        view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        view.isHidden = true
+        videoView.addSubview(view)
+        nativeVideoView = view
+        return true
+    }
+
+    package func stageNativeInputGeometry(_ geometry: InteractiveNativeVideoContentGeometryV0,
+        expectedView: UIView, isCurrent: @escaping @MainActor () -> Bool) throws {
+        guard nativeVideoView === expectedView, webRTCVideoView == nil,
+              geometry.encodedWidth == Int(encodedWidth), geometry.encodedHeight == Int(encodedHeight) else {
+            throw UIKitClientLiveSurfaceFailureV0.invalidGeometry
+        }
+        resetMapper()
+        nativeContentGeometry = geometry; nativeInputCurrent = isCurrent
+    }
+    package func clearNativeInputAdmission(_ expectedView: UIView) {
+        guard nativeVideoView === expectedView else { return }
+        nativeContentGeometry = nil; nativeInputCurrent = nil
+        setInputEnabled(false)
+    }
+
+    public func removeNativeVideoView(_ expected: UIView? = nil) {
+        if let expected, nativeVideoView !== expected { return }
+        nativeContentGeometry = nil; nativeInputCurrent = nil
+        nativeVideoView?.isHidden = true
+        nativeVideoView?.removeFromSuperview()
+        nativeVideoView = nil
+    }
+
+    public func removeWebRTCVideoView(_ expected: UIView? = nil) {
+        if let expected, webRTCVideoView !== expected { return }
+        webRTCVideoView?.removeFromSuperview()
+        webRTCVideoView = nil
     }
 
     public func toggleSoftwareKeyboard() {
-        guard inputEnabled else { return }
+        guard canDispatchInput else { return }
         if keyboardProxy.isFirstResponder {
             keyboardProxy.resignFirstResponder()
         } else {
@@ -340,7 +420,7 @@ public final class UIKitClientLiveSurfaceViewV0:
         on bounds: NormalizedSurfaceRect,
         animated: Bool = true
     ) -> Bool {
-        guard inputEnabled, self.bounds.width > 0, self.bounds.height > 0,
+        guard canDispatchInput, self.bounds.width > 0, self.bounds.height > 0,
               encodedWidth > 0, encodedHeight > 0 else {
             IOSClientRuntimeDiagnosticLogV0.record(
                 "ui.automatic-visual-zoom.deferred-geometry"
@@ -384,7 +464,7 @@ public final class UIKitClientLiveSurfaceViewV0:
     }
 
     private func rebuildMapperForCurrentGeometry() {
-        guard inputEnabled, bounds.width > 0, bounds.height > 0,
+        guard canDispatchInput, bounds.width > 0, bounds.height > 0,
               encodedWidth > 0, encodedHeight > 0 else { return }
         do {
             let viewport = try ClientInputRectV0(
@@ -393,11 +473,13 @@ public final class UIKitClientLiveSurfaceViewV0:
                 width: Double(bounds.width),
                 height: Double(bounds.height)
             )
-            let content = try ClientAspectFitGeometryV0.contentRect(
-                viewport: viewport,
-                encodedWidth: encodedWidth,
-                encodedHeight: encodedHeight
-            )
+            let content: ClientInputRectV0
+            if let nativeContentGeometry {
+                content = try ClientAspectFitGeometryV0.nativeContentRect(viewport: viewport, geometry: nativeContentGeometry)
+            } else {
+                content = try ClientAspectFitGeometryV0.contentRect(viewport: viewport,
+                    encodedWidth: encodedWidth, encodedHeight: encodedHeight)
+            }
             if mapper?.viewport != viewport || mapper?.content != content {
                 resetMapper()
                 mapper = try ClientViewportInputMapperV0(
@@ -486,7 +568,7 @@ public final class UIKitClientLiveSurfaceViewV0:
     public override func gestureRecognizerShouldBegin(
         _ gestureRecognizer: UIGestureRecognizer
     ) -> Bool {
-        guard inputEnabled else { return false }
+        guard canDispatchInput else { return false }
         if gestureRecognizer === visualZoomPinchRecognizer {
             return true
         }
@@ -673,7 +755,7 @@ public final class UIKitClientLiveSurfaceViewV0:
     @objc private func visualZoomPinched(
         _ recognizer: UIPinchGestureRecognizer
     ) {
-        guard inputEnabled else { return }
+        guard canDispatchInput else { return }
         do {
             if recognizer.state == .began {
                 resetMapper()
@@ -713,7 +795,7 @@ public final class UIKitClientLiveSurfaceViewV0:
     @objc private func visualZoomPanned(
         _ recognizer: UIPanGestureRecognizer
     ) {
-        guard inputEnabled,
+        guard canDispatchInput,
               UIKitClientVisualZoomGesturePolicyV0.twoFingerPanDestination(
                 visualZoomScale: visualZoomScale
               ) == .localViewport,
@@ -878,7 +960,7 @@ public final class UIKitClientLiveSurfaceViewV0:
         _ body: (inout ClientViewportInputMapperV0) throws
             -> [InteractiveInputPayload]
     ) {
-        guard inputEnabled, var mapper else { return }
+        guard canDispatchInput, var mapper else { return }
         do {
             let payloads = try body(&mapper)
             self.mapper = mapper
@@ -910,7 +992,7 @@ public final class UIKitClientLiveSurfaceViewV0:
         _ action: ClientKeyboardActionV0,
         modifiers: InteractiveModifierMask = []
     ) {
-        guard inputEnabled else { return }
+        guard canDispatchInput else { return }
         do { emit(try action.payloads(modifiers: modifiers)) }
         catch {
             setInputEnabled(false)
@@ -923,7 +1005,7 @@ public final class UIKitClientLiveSurfaceViewV0:
     }
 
     private func emit(_ payloads: [InteractiveInputPayload]) {
-        guard !payloads.isEmpty else { return }
+        guard canDispatchInput, !payloads.isEmpty else { return }
         onPayloads(payloads)
     }
 }

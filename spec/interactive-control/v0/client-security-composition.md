@@ -23,3 +23,29 @@ The client creates independent input and media authorities from the accepted rol
 The unused-channel deadline is independently bounded to 30 monotonic seconds from TCP connection. The host offer expiry remains authoritative and may reject earlier. Credentials and transcript material are cleared when the channel becomes ready or closes. Any pin, role, binding, replay, correlation, proof, phase, or deadline failure closes both the role authority and its pinned-TLS admission authority; media or input traffic is never admitted on a partially authenticated channel.
 
 Both role channels connect only to the endpoint and port that produced the owning authenticated primary connection. They may authenticate concurrently, but the client publishes neither live viewing nor live input until both are ready and the initial Desktop clean-media acknowledgement has completed. Failure, timeout, or loss of either role channel closes the other and requires a new Interactive Control session; reconnecting a role from an old accepted offer is forbidden. Primary replacement or loss synchronously closes both role channels before the old selection is released.
+
+The initial screen owner publishes its pending acknowledgement state before
+enqueueing the authenticated acknowledgement, because sending may suspend while
+an exact correlated host reply arrives. Completion of the send cannot overwrite
+that committed reply or resurrect a closed/replaced owner. Concurrent renderer
+callbacks do not enqueue a second acknowledgement while the first is pending.
+The local product likewise enters awaiting-acknowledgement before suspending on
+that send. Only an exact clean-frame receipt starts this transition, and only
+the committed host reply enables input. Send failure or invalidation stays
+terminal. These local scheduling rules are recorded by the indexed
+`client-initial-acknowledgement-ordering-v0.1.json` fixture; wire and signature
+inputs remain unchanged.
+
+Submitting authenticated Stop fences new input at the primary authority before
+its send can suspend. The local product enters ending, blanks its renderer and
+disables its input sender without prematurely closing established role sockets.
+An incomplete role handshake is cancelled and cannot publish a late activation.
+Its
+media consumer continues strict validation under the existing exact session,
+epoch and surface fences, then discards complete records without decoding,
+rendering, acknowledgement or input authority. This bounded drain lasts only
+until the correlated ended reply, end rejection, primary request timeout or
+primary loss. Those terminal paths close both roles. The host's existing Stop
+releases held input; ending does not send a late reset after the Stop request.
+An ending session cannot resume, replace a surface, or reuse a role offer.
+Malformed data or role loss still closes both roles immediately.

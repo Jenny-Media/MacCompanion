@@ -1590,3 +1590,109 @@ func interactiveLeaseSchedulerRejectsInvalidPostTransitionRenewal(fault: String)
     #expect(await runtime.renewalSamples() == [10_000_000_000])
     #expect(await runtime.terminations() == [.protocolViolation])
 }
+
+private actor NativeSnapshotInertBackendV1: InteractiveNativeVideoEnrollmentBackendV0 {
+    func prepare(operationID: UUID, authority: InteractiveNativeVideoAuthorityV0, clientCertificateDER: Data) throws -> Data {
+        throw InteractiveNativeVideoCoordinatorFailureV0.backendUnavailable
+    }
+    func activate(operationID: UUID) throws -> InteractiveNativeVideoEndpointV0 {
+        throw InteractiveNativeVideoCoordinatorFailureV0.backendUnavailable
+    }
+    func isActive(operationID: UUID) -> Bool { false }
+    func retire(operationID: UUID) {}
+}
+private actor NativeSnapshotRuntimeProbeV1: InteractiveNativeVideoRuntimeProvidingV0 {
+    let value: InteractiveNativeVideoRuntimeSnapshotV0
+    let snapshotGate: RuntimeInstallSuspensionV1?
+    let backendGate: RuntimeInstallSuspensionV1?
+    private(set) var backendCount = 0
+    init(snapshotGate: RuntimeInstallSuspensionV1? = nil, backendGate: RuntimeInstallSuspensionV1? = nil) throws {
+        self.snapshotGate = snapshotGate; self.backendGate = backendGate
+        value = .init(binding: try .init(hostID: initialHostID, hostFingerprint: initialFingerprint,
+            clientID: initialClientID, primaryConnectionID: initialConnectionID,
+            interactiveSessionID: initialSessionID, authorizationEpoch: 4, grantRevision: 5, policyRevision: 6,
+            controlGeneration: UUID(), expiresAtMonotonicMilliseconds: 61_000),
+            surface: try .init(surfaceID: initialSurfaceID, surfaceRevision: 1, coordinateSpaceRevision: 1,
+                encodedWidth: 1280, encodedHeight: 720),
+            logicalWidthPoints: 2560, logicalHeightPoints: 1440, rotation: .degrees0, selectedDisplayID: initialDisplayID,
+            visibleMenuAppGeneration: initialMenuGeneration, visibleMenuAppRevision: 9)
+    }
+    func snapshot(fence: InteractiveNativeVideoRequestFenceV0, context: InteractiveSessionCommandContextV0) async -> InteractiveNativeVideoRuntimeSnapshotV0? {
+        await snapshotGate?.suspend()
+        return value
+    }
+    func makeBackend(snapshot: InteractiveNativeVideoRuntimeSnapshotV0) async -> any InteractiveNativeVideoEnrollmentBackendV0 {
+        backendCount += 1
+        await backendGate?.suspend()
+        return NativeSnapshotInertBackendV1()
+    }
+}
+private func nativeBindingFenceV1() throws -> InteractiveNativeVideoRequestFenceV0 {
+    try .init(interactiveSessionID: .init(initialSessionID), authorizationEpoch: .init(rawValue: 4),
+        negotiationID: .init(UUID()), peerGeneration: 1, surfaceID: .init(initialSurfaceID),
+        surfaceRevision: 1, coordinateSpaceRevision: 1)
+}
+
+@Test func nativeRuntimeBindingDropsSnapshotAfterMenuGenerationLoss() async throws {
+    let authority = AgentInteractiveRuntimeBindingAuthorityV1()
+    let gate = RuntimeInstallSuspensionV1()
+    let native = try NativeSnapshotRuntimeProbeV1(snapshotGate: gate)
+    try await authority.bind(runtime: RuntimeBindingProbeV1(), channelAuthenticator: nil, nativeRuntime: native, generation: 1)
+    let requirement = try initialRequirement()
+    try await authority.install(initialBootstrap(), requirement: requirement)
+    let fence = try nativeBindingFenceV1()
+    let pending = Task { try await authority.snapshot(fence: fence, context: requirement.command) }
+    let deadline = ContinuousClock.now + .seconds(2)
+    while !(await gate.entered), ContinuousClock.now < deadline { await Task.yield() }
+    #expect(await gate.entered)
+    #expect(await authority.invalidate(generation: 1))
+    await gate.release()
+    #expect(try await pending.value == nil)
+    #expect(await native.backendCount == 0)
+}
+
+@Test func nativeRuntimeBindingDropsBackendAfterPrimaryRetirement() async throws {
+    let authority = AgentInteractiveRuntimeBindingAuthorityV1()
+    let gate = RuntimeInstallSuspensionV1()
+    let native = try NativeSnapshotRuntimeProbeV1(backendGate: gate)
+    try await authority.bind(runtime: RuntimeBindingProbeV1(), channelAuthenticator: nil, nativeRuntime: native, generation: 1)
+    let requirement = try initialRequirement()
+    try await authority.install(initialBootstrap(), requirement: requirement)
+    let snapshot = try #require(await authority.snapshot(fence: nativeBindingFenceV1(), context: requirement.command))
+    let pending = Task { try await authority.makeBackend(snapshot: snapshot) }
+    let deadline = ContinuousClock.now + .seconds(2)
+    while !(await gate.entered), ContinuousClock.now < deadline { await Task.yield() }
+    #expect(await gate.entered)
+    await authority.terminate(interactiveSessionID: initialSessionID, primaryConnectionID: initialConnectionID, reason: .clientDisconnected)
+    await gate.release()
+    await #expect(throws: AgentInteractiveRuntimeBindingAuthorityErrorV1.unavailable) { try await pending.value }
+}
+
+private actor NativeSnapshotSlowStopRuntimeV1: InteractiveSessionRuntimeOwningV0 {
+    let gate: RuntimeInstallSuspensionV1
+    init(_ gate: RuntimeInstallSuspensionV1) { self.gate = gate }
+    func install(_ bootstrap: InteractiveSessionBootstrap, requirement: InteractiveSessionRuntimeRequirementV0) {}
+    func terminate(interactiveSessionID: UUID, primaryConnectionID: Data, reason: InteractiveSessionEndReason) async {
+        await gate.suspend()
+    }
+}
+@Test func nativeRuntimeAdmissionFencesBeforeSlowStopDrains() async throws {
+    let authority = AgentInteractiveRuntimeBindingAuthorityV1()
+    let gate = RuntimeInstallSuspensionV1()
+    let native = try NativeSnapshotRuntimeProbeV1()
+    try await authority.bind(runtime: NativeSnapshotSlowStopRuntimeV1(gate), channelAuthenticator: nil, nativeRuntime: native, generation: 1)
+    let requirement = try initialRequirement()
+    try await authority.install(initialBootstrap(), requirement: requirement)
+    let fence = try nativeBindingFenceV1()
+    let value = try #require(await authority.snapshot(fence: fence, context: requirement.command))
+    let stopping = Task { await authority.terminate(interactiveSessionID: initialSessionID,
+        primaryConnectionID: initialConnectionID, reason: .clientDisconnected) }
+    let deadline = ContinuousClock.now + .seconds(2)
+    while !(await gate.entered), ContinuousClock.now < deadline { await Task.yield() }
+    #expect(await gate.entered)
+    #expect(try await authority.snapshot(fence: fence, context: requirement.command) == nil)
+    await #expect(throws: AgentInteractiveRuntimeBindingAuthorityErrorV1.unavailable) { try await authority.makeBackend(snapshot: value) }
+    #expect(await native.backendCount == 0)
+    await gate.release()
+    await stopping.value
+}

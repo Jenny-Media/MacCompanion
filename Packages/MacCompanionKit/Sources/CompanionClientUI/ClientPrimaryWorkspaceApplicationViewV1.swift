@@ -25,6 +25,7 @@ public struct ClientPrimaryWorkspaceApplicationViewV1: View {
     @ObservedObject private var model: ClientPrimaryWorkspaceModelV0
     private let interactiveRoles:
         NetworkClientInteractiveRoleProductBindingV0
+    private let liveProductFactory: ClientPrimaryLiveControlCoordinatorV0.ProductFactory?
     private let onCommandFailure:
         @MainActor @Sendable (any Error) -> Void
     private let onReconnect: @MainActor @Sendable () async -> Void
@@ -36,6 +37,7 @@ public struct ClientPrimaryWorkspaceApplicationViewV1: View {
         model: ClientPrimaryWorkspaceModelV0,
         interactiveRoles:
             NetworkClientInteractiveRoleProductBindingV0,
+        liveProductFactory: ClientPrimaryLiveControlCoordinatorV0.ProductFactory? = nil,
         onReconnect: @escaping @MainActor @Sendable () async -> Void = {},
         onCommandFailure: @escaping @MainActor @Sendable
             (any Error) -> Void = { _ in }
@@ -43,6 +45,7 @@ public struct ClientPrimaryWorkspaceApplicationViewV1: View {
         self.macName = macName
         _model = ObservedObject(wrappedValue: model)
         self.interactiveRoles = interactiveRoles
+        self.liveProductFactory = liveProductFactory
         self.onReconnect = onReconnect
         self.onCommandFailure = onCommandFailure
     }
@@ -52,6 +55,7 @@ public struct ClientPrimaryWorkspaceApplicationViewV1: View {
             macName: macName,
             model: model,
             interactiveRoles: interactiveRoles,
+            liveProductFactory: liveProductFactory,
             onSelectAction: selectAction,
             onReconnect: onReconnect,
             onCommandFailure: onCommandFailure

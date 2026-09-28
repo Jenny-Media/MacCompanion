@@ -16,17 +16,21 @@ public struct MacAccessibilityFocusObservationV0: Equatable, Sendable {
     public let globalBounds: CGRect
     public let editable: Bool
     public let secure: Bool
+    /// Local owner evidence only; never included in the focus projection.
+    public let processID: pid_t?
 
     public init(
         category: FocusElementCategory,
         globalBounds: CGRect,
         editable: Bool,
-        secure: Bool
+        secure: Bool,
+        processID: pid_t? = nil
     ) {
         self.category = category
         self.globalBounds = globalBounds
         self.editable = editable
         self.secure = secure
+        self.processID = processID
     }
 }
 
@@ -55,7 +59,10 @@ public struct SystemMacAccessibilityFocusReaderV0:
             return .unavailable(.noVerifiedFocus)
         }
         let focused = unsafeDowncast(focusedValue, to: AXUIElement.self)
-        guard let role = Self.copyString(kAXRoleAttribute, from: focused),
+        var processID: pid_t = 0
+        guard AXUIElementGetPid(focused, &processID) == .success,
+              processID > 0,
+              let role = Self.copyString(kAXRoleAttribute, from: focused),
               let position = Self.copyPoint(
                 kAXPositionAttribute,
                 from: focused
@@ -80,7 +87,8 @@ public struct SystemMacAccessibilityFocusReaderV0:
             category: Self.category(for: role, subrole: subrole),
             globalBounds: CGRect(origin: position, size: size),
             editable: editable,
-            secure: subrole == kAXSecureTextFieldSubrole
+            secure: subrole == kAXSecureTextFieldSubrole,
+            processID: processID
         ))
     }
 

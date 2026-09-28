@@ -212,6 +212,18 @@ public final class NetworkClientPrimaryApplicationStateV0:
         return storage.droppedStaleEventCount
     }
 
+    /// Numeric route of this exact authenticated selected primary. This read
+    /// creates no Control authority and never resolves unverified host names.
+    public func currentAuthenticatedNativeIPAddress(primaryConnectionID: Data) -> String? {
+        lock.lock()
+        defer { lock.unlock() }
+        guard primaryConnectionID.count == 16,
+              storage.session?.connectionID == primaryConnectionID,
+              let endpoint = storage.selectedEndpoint,
+              endpoint.kind == .ipv4 || endpoint.kind == .ipv6 else { return nil }
+        return endpoint.value
+    }
+
     package func acceptedControlSessionForRoleChannelComposition()
         -> NetworkClientInteractiveRoleCompositionV0?
     {
@@ -616,6 +628,10 @@ public final class NetworkClientPrimaryApplicationStateV0:
         case let .remoteRejected(error):
             storage.controlState = .remoteRejected(error)
             storage.acceptedControlSession = nil
+        case .mediaOffer, .mediaReady, .mediaRejected:
+            // Media negotiation has its own product owner. It does not change
+            // Control grants or the workspace's session state.
+            break
         }
         continuation.yield(makeSnapshot(storage))
     }
@@ -731,6 +747,14 @@ public final class NetworkClientPrimaryApplicationStateV0:
         case .requestSubmitted, .approvalFailed, .approvalSubmitted, .accepted,
              .remoteRejected:
             return true
+        case let .mediaOffer(offer):
+            return storage.acceptedControlSession?.interactiveSessionID
+                == offer.body.fence.interactiveSessionID.rawValue
+        case let .mediaReady(ready):
+            return storage.acceptedControlSession?.interactiveSessionID
+                == ready.body.fence.interactiveSessionID.rawValue
+        case .mediaRejected:
+            return storage.acceptedControlSession != nil
         }
     }
 

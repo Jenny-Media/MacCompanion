@@ -12,6 +12,7 @@ public enum NetworkClientInteractiveInitialDesktopPhaseV0:
     case streaming
     case awaitingAcknowledgement
     case active
+    case ending
     case failed
     case closed
 }
@@ -130,6 +131,18 @@ private actor NetworkClientInteractiveInitialMediaConsumerV0:
         any NetworkClientInteractiveInitialPrimaryControllingV0
     private let renderer: any ClientInteractiveInitialMediaRenderingV0
 
+    private var ending = false
+    private var suppressedSurfaceID: UUID?
+
+    func suppressRendering(surfaceID: UUID) {
+        suppressedSurfaceID = surfaceID
+    }
+
+    func beginEnding() async {
+        ending = true
+        await renderer.close()
+    }
+
     init(
         channel: any NetworkClientInteractiveInitialPrimaryControllingV0,
         renderer: any ClientInteractiveInitialMediaRenderingV0
@@ -140,15 +153,31 @@ private actor NetworkClientInteractiveInitialMediaConsumerV0:
 
     func consume(header: MediaRecordHeader, payload: Data) async throws {
         do {
-            let admission = try await channel.admitInitialMedia(
-                header: header,
-                payloadByteCount: payload.count
-            )
-            try await renderer.process(
-                header: header,
-                payload: payload,
-                admission: admission
-            )
+            let admission: ClientMediaAdmissionV0
+            do {
+                admission = try await channel.admitInitialMedia(
+                    header: header,
+                    payloadByteCount: payload.count
+                )
+            } catch {
+                IOSClientRuntimeDiagnosticLogV0.record(
+                    "interactive.media-admission.failed", error: error
+                )
+                throw error
+            }
+            guard !ending, header.surfaceID != suppressedSurfaceID else { return }
+            do {
+                try await renderer.process(
+                    header: header,
+                    payload: payload,
+                    admission: admission
+                )
+            } catch {
+                IOSClientRuntimeDiagnosticLogV0.record(
+                    "interactive.media-render.failed", error: error
+                )
+                throw error
+            }
         } catch {
 #if DEBUG
             print("[MacCompanion live-control] media consumer rejected type=\(header.type) sequence=\(header.mediaSequence) error=\(String(describing: error))")
@@ -169,6 +198,7 @@ public actor NetworkClientInteractiveInitialDesktopActivationV0 {
         any NetworkClientInteractiveInitialPrimaryControllingV0
     private let renderer: any ClientInteractiveInitialMediaRenderingV0
     private let pump: NetworkClientInteractiveMediaRecordPumpV0
+    private let consumer: NetworkClientInteractiveInitialMediaConsumerV0
     private let input: NetworkClientInteractiveInputSenderV0
     private let failure: @Sendable () async -> Void
     private var pumpTask: Task<Void, Never>?
@@ -191,12 +221,11 @@ public actor NetworkClientInteractiveInitialDesktopActivationV0 {
             connection: inputConnection,
             primary: channel
         )
+        let consumer = NetworkClientInteractiveInitialMediaConsumerV0(channel: channel, renderer: renderer)
+        self.consumer = consumer
         pump = try NetworkClientInteractiveMediaRecordPumpV0(
             connection: mediaConnection,
-            consumer: NetworkClientInteractiveInitialMediaConsumerV0(
-                channel: channel,
-                renderer: renderer
-            )
+            consumer: consumer
         )
     }
 
@@ -250,7 +279,7 @@ public actor NetworkClientInteractiveInitialDesktopActivationV0 {
         // this activation has already failed or closed. It carries no new
         // authority and must not turn a completed fail-closed transition into
         // a second user-visible command failure.
-        if phase == .failed || phase == .closed { return }
+        if phase == .failed || phase == .closed || phase == .ending { return }
         if phase == .active, surfaceTransitionInFlight {
             do {
                 let matched = try await channel
@@ -271,9 +300,11 @@ public actor NetworkClientInteractiveInitialDesktopActivationV0 {
             let matched = try await channel.confirmInitialRenderedFrame(
                 receipt
             )
-            guard matched else { return }
-            try await channel.acknowledgeInitialSurface()
+            guard matched, phase == .streaming else { return }
+            // Another decoder callback or an early host reply can run while
+            // this send suspends. Neither may enqueue or rewind this transition.
             phase = .awaitingAcknowledgement
+            try await channel.acknowledgeInitialSurface()
         } catch {
             await failClosed()
             throw error
@@ -499,13 +530,15 @@ public actor NetworkClientInteractiveInitialDesktopActivationV0 {
     public func selectSurface(
         targetKind: InteractiveSurfaceKind,
         targetToken: UUID?,
+        nativeReplacement: Bool = false,
         timeoutMilliseconds: UInt64 = 30_000
     ) async throws -> AdaptiveSurfaceDescriptor {
         return try await transitionSurface(
             targetKind: targetKind,
             targetToken: targetToken,
             targetDisplayID: nil,
-            timeoutMilliseconds: timeoutMilliseconds
+            timeoutMilliseconds: timeoutMilliseconds,
+            suppressOldMediaRendering: nativeReplacement
         )
     }
 
@@ -535,14 +568,22 @@ public actor NetworkClientInteractiveInitialDesktopActivationV0 {
         targetToken: UUID?,
         targetDisplayID: UUID? = nil,
         timeoutMilliseconds: UInt64,
-        recoverSupersededFocus: Bool = false
+        recoverSupersededFocus: Bool = false,
+        suppressOldMediaRendering: Bool = false
     ) async throws -> AdaptiveSurfaceDescriptor {
         guard phase == .active, !surfaceTransitionInFlight,
               timeoutMilliseconds > 0 else {
+            IOSClientRuntimeDiagnosticLogV0.record("interactive.surface-selection.invalid-phase")
             throw NetworkClientInteractiveInitialDesktopErrorV0.invalidPhase
         }
         surfaceTransitionInFlight = true
         do {
+            if suppressOldMediaRendering {
+                guard let previous = await channel.replacementSurfaceDescriptor() else {
+                    throw NetworkClientInteractiveInitialDesktopErrorV0.unavailable
+                }
+                await consumer.suppressRendering(surfaceID: previous.surfaceID)
+            }
             let selection: ClientSurfaceSelectionRequestV0
             if let targetDisplayID {
                 selection = try await channel
@@ -556,10 +597,13 @@ public actor NetworkClientInteractiveInitialDesktopActivationV0 {
                         targetToken: targetToken
                     )
             }
+            IOSClientRuntimeDiagnosticLogV0.record("interactive.surface-selection.prepared")
             try await input.sendPreparedReset(selection.reset)
+            IOSClientRuntimeDiagnosticLogV0.record("interactive.surface-selection.reset-sent")
             try await channel.sendReplacementSurfaceSelection(
                 selection.requestJSON
             )
+            IOSClientRuntimeDiagnosticLogV0.record("interactive.surface-selection.select-sent")
             let attempts = max(1, timeoutMilliseconds / 50)
             for _ in 0..<attempts {
                 let surfacePhase = await channel.replacementSurfacePhase()
@@ -570,6 +614,7 @@ public actor NetworkClientInteractiveInitialDesktopActivationV0 {
                     return descriptor
                 }
                 if surfacePhase == .closed || surfacePhase == nil {
+                    IOSClientRuntimeDiagnosticLogV0.record("interactive.surface-selection.coordinator-closed")
                     throw NetworkClientInteractiveInitialDesktopErrorV0
                         .unavailable
                 }
@@ -578,6 +623,7 @@ public actor NetworkClientInteractiveInitialDesktopActivationV0 {
             throw ClientInteractivePrimaryChannelErrorV0
                 .surfaceTransitionDeadlineExceeded
         } catch {
+            IOSClientRuntimeDiagnosticLogV0.record("interactive.surface-selection.terminal", error: error)
             if recoverSupersededFocus,
                Self.isRecoverableFocusSelectionError(error) {
                 surfaceTransitionInFlight = false
@@ -586,6 +632,14 @@ public actor NetworkClientInteractiveInitialDesktopActivationV0 {
             await failClosed()
             throw error
         }
+    }
+
+    public func beginEnding() async {
+        guard phase != .closed, phase != .failed, phase != .ending else { return }
+        phase = .ending
+        surfaceTransitionInFlight = false
+        await input.fenceForStop()
+        await consumer.beginEnding()
     }
 
     public func close() async {

@@ -93,10 +93,17 @@ private final class AgentRoleDataConnectionIOV0: @unchecked Sendable {
 private actor AgentRoleDataMenuRouteV0:
     AgentInteractiveMenuRoleDataRoutingV0
 {
+    private(set) var retiredPairs = 0
+    private let retirementGate: AsyncStream<Void>?
+    func retireInteractiveMedia(pair: AgentInteractiveReadyRolePairV0) async {
+        retiredPairs += 1
+        if let retirementGate { for await _ in retirementGate { break } }
+    }
     private(set) var inputs: [InteractiveInputEnvelope] = []
     private var media: [AgentInteractiveOutboundMediaRecordV0]
 
-    init(media: [AgentInteractiveOutboundMediaRecordV0]) {
+    init(media: [AgentInteractiveOutboundMediaRecordV0], retirementGate: AsyncStream<Void>? = nil) {
+        self.retirementGate = retirementGate
         self.media = media
     }
 
@@ -296,6 +303,7 @@ private func agentRoleDataInputFrameV0(
     } catch let reason as AgentInteractiveRoleDataPumpErrorV0 {
         #expect(reason == .mediaSourceClosed)
     }
+    #expect(await route.retiredPairs == 1)
     #expect(await route.inputs == [inputEnvelope])
     #expect(mediaIO.sent == [header.encode()])
     #expect(inputIO.cancelCount == 1)
@@ -342,6 +350,7 @@ private func agentRoleDataInputFrameV0(
     } catch let reason as AgentInteractiveRoleDataPumpErrorV0 {
         #expect(reason == .inputFenceMismatch)
     }
+    #expect(await route.retiredPairs == 1)
     #expect(await route.inputs.isEmpty)
     #expect(mediaIO.sent.isEmpty)
     #expect(await terminal.reasons == [.inputFenceMismatch])
@@ -403,6 +412,7 @@ private final class HermeticInputPipelineSinkV0:
 private actor HermeticInputPipelineRouteV0:
     AgentInteractiveMenuRoleDataRoutingV0
 {
+    func retireInteractiveMedia(pair: AgentInteractiveReadyRolePairV0) {}
     private var admission = InteractiveInputAdmissionAuthority()
     private var planner = MacInteractiveInputPlannerV0()
     private let session: InteractiveSessionStateMachine
@@ -709,4 +719,30 @@ private func hermeticInputPipelineFrameV0(
         try await authority.accept(pair)
     }
     #expect(await authority.state() == .bound(generation: 7))
+}
+
+@Test func concurrentPumpCancellationJoinsMediaRetirement() async throws {
+    let session = UUID(), epoch = AuthorizationEpoch(rawValue: 1)
+    let pair = try AgentInteractiveReadyRolePairV0(
+        input: agentRoleDataChannelV0(role: .input, sessionID: session, epoch: epoch, io: AgentRoleDataConnectionIOV0()),
+        media: agentRoleDataChannelV0(role: .media, sessionID: session, epoch: epoch, io: AgentRoleDataConnectionIOV0()))
+    let (stream, continuation) = AsyncStream<Void>.makeStream()
+    defer { continuation.finish() }
+    let route = AgentRoleDataMenuRouteV0(media: [], retirementGate: stream)
+    let completion = AgentRoleDataTerminalRecorderV0()
+    let pump = AgentInteractiveRoleDataPumpV0(pair: pair, route: route, terminal: { _, _ in })
+    let first = Task { await pump.cancel() }
+    for _ in 0..<100 {
+        if await route.retiredPairs == 1 { break }
+        try await Task.sleep(for: .milliseconds(5))
+    }
+    #expect(await route.retiredPairs == 1)
+    let second = Task { await pump.cancel(); await completion.record(.cancelled) }
+    try await Task.sleep(for: .milliseconds(20))
+    #expect(await completion.reasons.isEmpty)
+    continuation.yield(())
+    await first.value
+    await second.value
+    #expect(await route.retiredPairs == 1)
+    #expect(await completion.reasons == [.cancelled])
 }

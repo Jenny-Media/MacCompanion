@@ -84,6 +84,7 @@ public struct LabStatus: Codable, Sendable {
     public var returnKeyDelivered = false
     public var transitions = 0
     public var acknowledgements = 0
+    public var nativePresentations = 0
     public var mediaRecords = 0
     public var renewals = 0
     public var renewalAttempts = 0

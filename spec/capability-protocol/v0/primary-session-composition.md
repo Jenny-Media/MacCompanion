@@ -34,6 +34,11 @@ authority, and authenticated principal. None of these values is accepted from
 an operation or status request body. Closing destroys all boot-scoped session
 state. A closed owner cannot reopen.
 
+The candidate Interactive WebRTC media lease described in
+`../../interactive-control/v0/webrtc-media-adapter.md` may only receive this
+owner's authenticated connection binding. Its local peer generation and
+negotiation data cannot establish or replace a primary session.
+
 Only `auth.hello` is accepted in `awaitingHello`. Only an `auth.proof` whose
 `correlationID` exactly equals this owner's `auth.challenge` message ID is
 accepted in `awaitingProof`. Successful proof produces the correlated
@@ -354,3 +359,10 @@ Act or Control authority remains intact. Operation domain failures are converted
 by the operation dispatcher to the closed safe error body. Protocol,
 authentication, authorization, timing, and replay failures are terminal for
 this primary session.
+
+## Optional native video enrollment
+
+The closed records in [native video primary messages](native-video-primary-messages.md)
+use only the authenticated Control lane and current acknowledged Desktop.
+They preserve independent Observe and Act grants. A ready reply proves enrollment
+and host startup only; it cannot enable input or acknowledge a displayed frame.

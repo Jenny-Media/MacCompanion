@@ -1,0 +1,23 @@
+// swift-tools-version: 6.0
+import PackageDescription
+let package = Package(name: "ManagedHostProbe", platforms: [.macOS(.v14)],
+    dependencies: [.package(path: __MACCOMPANION_KIT_PATH__)],
+    targets: [.target(name: "NativeTLS", path: "NativeTLS", publicHeadersPath: ".",
+        cSettings: [.unsafeFlags(["-fobjc-arc", "-DMACCOMPANION_MANAGED_ROUTE_PROBE=1", "-I/opt/homebrew/opt/openssl@3/include"])],
+        linkerSettings: [.linkedFramework("Foundation"), .linkedLibrary("ssl"), .linkedLibrary("crypto"),
+            .unsafeFlags(["-L/opt/homebrew/opt/openssl@3/lib"])]),
+        .executableTarget(name: "ManagedHostProbe", dependencies: [
+        "NativeTLS",
+        .product(name: "CompanionAgentProductPlatform", package: "MacCompanionKit"),
+        .product(name: "CompanionMacApplicationPlatform", package: "MacCompanionKit"),
+        .product(name: "CompanionIPC", package: "MacCompanionKit"),
+        .product(name: "CompanionDomain", package: "MacCompanionKit"),
+        .product(name: "CompanionInteractiveWire", package: "MacCompanionKit"),
+        .product(name: "CompanionLocalXPCPlatform", package: "MacCompanionKit"),
+        .product(name: "CompanionInteractiveRuntime", package: "MacCompanionKit"),
+        .product(name: "CompanionInteractiveHost", package: "MacCompanionKit"),
+        .product(name: "CompanionInteractiveClient", package: "MacCompanionKit"),
+        .product(name: "CompanionClient", package: "MacCompanionKit"),
+        .product(name: "CompanionInteractiveShared", package: "MacCompanionKit")
+    ], path: ".", exclude: ["patches", "__pycache__", "NativeTLS"],
+    sources: ["SunshineProcessOwner.swift", "ManagedSunshineEnrollmentBackend.swift", "ManagedHostProbeMain.swift", "NativeLaunchResponseV0.swift"])])

@@ -5,7 +5,23 @@ import SwiftUI
 
 @main
 struct MacCompanionIOSApplication: App {
-    @State private var application = IOSClientReleaseApplicationV1()
+    @State private var application = Self.makeApplication()
+
+    @MainActor
+    private static func makeApplication() -> IOSClientReleaseApplicationV1 {
+        #if DEBUG && MACCOMPANION_ADMITTED_NATIVE_DEVELOPMENT && canImport(CompanionMoonlightEngine)
+        let factory: UIKitClientNativeVideoCompositionV1.AdapterFactory = { signer, route in
+            MoonlightNativeLaunchAdapterV0(signer: signer, verifiedPrimaryRoute: route)
+        }
+        #if targetEnvironment(simulator)
+        return IOSClientReleaseApplicationV1(simulatorDevelopmentNativeVideoAdapterFactory: factory)
+        #else
+        return IOSClientReleaseApplicationV1(nativeVideoAdapterFactory: factory)
+        #endif
+        #else
+        return IOSClientReleaseApplicationV1()
+        #endif
+    }
 
     var body: some Scene {
         WindowGroup {
@@ -28,6 +44,18 @@ private struct MacCompanionIOSRootView: View {
 
     var body: some View {
         content
+            #if DEBUG && MACCOMPANION_ADMITTED_NATIVE_DEVELOPMENT && targetEnvironment(simulator)
+            .safeAreaInset(edge: .bottom) {
+                // The warning is shown during setup. Once the workspace opens,
+                // its own controls must keep their full touch area, including
+                // the Control screen's keyboard, shortcuts, and Stop actions.
+                if application.snapshot.phase != .workspace {
+                    Text("Simulator testing · Device protection is unavailable")
+                        .font(.caption).padding(8)
+                        .frame(maxWidth: .infinity).background(.thinMaterial)
+                }
+            }
+            #endif
             .task { await application.start() }
             .toolbar {
                 if application.studyReportOwner != nil {
@@ -102,6 +130,9 @@ private struct MacCompanionIOSRootView: View {
                             Task {
                                 await application.continueAfterPairing()
                             }
+                        },
+                        onPastePairingCode: { value in
+                            Task { await application.receivePairingScan(value) }
                         }
                     )
                 }
@@ -242,6 +273,9 @@ private struct MacCompanionIOSWorkspaceRoot: View {
                     macName: workspace.macName,
                     model: model,
                     interactiveRoles: workspace.interactiveRoles,
+                    liveProductFactory: workspace.initialDesktopProductFactory.map { factory in
+                        { mode, failure in try await factory(mode, failure) }
+                    },
                     onReconnect: onReconnect,
                     onCommandFailure: { _ in
                         commandFailureShown = true

@@ -2,6 +2,13 @@
 
 Status: normative closed JSON schemas. The authority and cryptographic rules in `security-profile.md` remain mandatory; decoding these messages never grants Control.
 
+The candidate WebRTC media boundary in `webrtc-media-adapter.md` defines a
+closed, complete-gathering offer/answer exchange on this authenticated command
+channel. It grants no new Control authority. A host without an installed media
+negotiation authority rejects these message kinds; the existing credentialed
+media role remains the active release transport until dependency admission and
+runtime composition are complete.
+
 ## Primary session-control flow
 
 Session messages use the capability protocol v0.1 command envelope and its 65,536-byte strict-JSON bound.

@@ -65,7 +65,7 @@ private func inventoryObservations()
         nowMonotonicMilliseconds: 100
     )
     #expect(snapshot.revision == 1)
-    #expect(snapshot.expiresAtMonotonicMilliseconds == 10_100)
+    #expect(snapshot.expiresAtMonotonicMilliseconds == 120_100)
     #expect(snapshot.candidates.count == 2)
     #expect(snapshot.candidates[0].kind == .application)
     #expect(snapshot.candidates[0].applicationName == "Notes")

@@ -1,0 +1,16 @@
+{
+  "profile": "interactive.focus.owner-policy.v0.1",
+  "cases": [
+    { "name": "desktop-accepts-local-app", "currentKind": "desktop", "selectedProcessID": null, "observedProcessID": 201, "accept": true },
+    { "name": "desktop-rejects-missing-pid", "currentKind": "desktop", "selectedProcessID": null, "observedProcessID": null, "accept": false },
+    { "name": "app-accepts-own-focus", "currentKind": "application", "selectedProcessID": 201, "observedProcessID": 201, "accept": true },
+    { "name": "app-rejects-cross-app-modal", "currentKind": "application", "selectedProcessID": 201, "observedProcessID": 202, "accept": false },
+    { "name": "app-rejects-lost-target", "currentKind": "application", "selectedProcessID": null, "observedProcessID": 201, "accept": false },
+    { "name": "window-accepts-own-focus", "currentKind": "window", "selectedProcessID": 201, "observedProcessID": 201, "accept": true },
+    { "name": "window-rejects-cross-app-modal", "currentKind": "window", "selectedProcessID": 201, "observedProcessID": 202, "accept": false },
+    { "name": "focus-from-app-retains-owner", "currentKind": "focusedRegion", "selectedProcessID": 201, "observedProcessID": 201, "accept": true },
+    { "name": "focus-from-app-rejects-cross-app", "currentKind": "focusedRegion", "selectedProcessID": 201, "observedProcessID": 202, "accept": false },
+    { "name": "focus-from-desktop-accepts-local-app", "currentKind": "focusedRegion", "selectedProcessID": null, "observedProcessID": 202, "accept": true },
+    { "name": "focus-rejects-invalid-pid", "currentKind": "focusedRegion", "selectedProcessID": null, "observedProcessID": 0, "accept": false }
+  ]
+}

@@ -173,6 +173,129 @@ public final class UIKitClientInitialDesktopProductV0 {
     private var automaticFocusGeneration: UInt64 = 0
     private var visualSmartZoomFocus:
         UIKitClientFocusPresentationIdentityV0?
+    private var webRTCStartTask: Task<Void, Never>?
+    private var webRTCStartRequested = false
+    private var nativePreparer: (any UIKitClientNativeVideoPreparingV0)?
+    private var replacementNativePreparer: (@MainActor () throws -> any UIKitClientNativeVideoPreparingV0)?
+    private var nativePreparationTask: Task<Void, Never>?
+    private var nativePreparationRequested = false
+    private var nativeChanged: (@MainActor (InteractiveNativeVideoPhaseV0, InteractiveNativeVideoFailureV0?) -> Void)?
+    private var nativeVideoOwner: UIKitClientNativeVideoOwnerV0?
+    private var videoRecoveryChanged: (@MainActor (Bool) -> Void)?
+    private var closed = false
+
+    public func observeVideoRecovery(
+        _ changed: @escaping @MainActor (Bool) -> Void
+    ) {
+        videoRecoveryChanged = changed
+        changed(nativeVideoOwner?.lifecycle.isTerminal == true)
+    }
+
+    private var inputPathIsReady: Bool {
+        guard !closed, !surfaceTransitionInFlight else { return false }
+        if nativePreparer != nil || nativeVideoOwner != nil {
+            return nativeVideoOwner?.allowsInput == true && !surface.hasUnverifiedExternalVideo
+        }
+        return !surface.hasUnverifiedExternalVideo
+    }
+    private func updateInputAvailability() {
+        inputRelay?.setActive(inputPathIsReady)
+        surface.setInputEnabled(inputPathIsReady)
+    }
+
+    /// Installs an admitted adapter. The next active Desktop refresh starts
+    /// preparation once; permanent targets currently supply no such adapter.
+    public func configureNativeVideo(
+        preparer: any UIKitClientNativeVideoPreparingV0,
+        replacementPreparer: (@MainActor () throws -> any UIKitClientNativeVideoPreparingV0)? = nil,
+        changed: @escaping @MainActor (InteractiveNativeVideoPhaseV0, InteractiveNativeVideoFailureV0?) -> Void
+    ) throws {
+        guard !closed, nativePreparer == nil, nativeVideoOwner == nil,
+              !surface.hasUnverifiedExternalVideo else {
+            throw NetworkClientInteractiveInitialDesktopErrorV0.invalidPhase
+        }
+        cancelPendingAutomaticFocusEvent()
+        nativePreparer = preparer
+        replacementNativePreparer = replacementPreparer
+        nativeChanged = changed
+        inputRelay?.setActive(false)
+        surface.setInputEnabled(false)
+        webRTCStartRequested = true
+    }
+
+    private func prepareConfiguredNativeVideo() {
+        guard !nativePreparationRequested, let preparer = nativePreparer, let changed = nativeChanged else { return }
+        nativePreparationRequested = true
+        let expected = descriptor
+        nativePreparationTask = Task { [weak self] in
+            guard let self, !self.closed else { await preparer.close(); return }
+            do {
+                let prepared = try await preparer.prepare(descriptor: expected, roles: self.roles)
+                IOSClientRuntimeDiagnosticLogV0.record("native.video.preparation-ready")
+                guard !self.closed, !Task.isCancelled, self.descriptor == expected else {
+                    throw NetworkClientInteractiveInitialDesktopErrorV0.invalidPhase
+                }
+                try await self.startNativeVideo(binding: prepared.binding, driver: prepared.driver,
+                    current: prepared.current, changed: changed, acknowledgePresentation: prepared.acknowledgePresentation)
+                IOSClientRuntimeDiagnosticLogV0.record("native.video.start-requested")
+            } catch {
+                IOSClientRuntimeDiagnosticLogV0.record("native.video.preparation-terminal", error: error)
+                await preparer.close()
+                guard !self.closed, !Task.isCancelled, self.nativePreparer === preparer else { return }
+                changed(.failed, .connectionFailed)
+                self.failure(error)
+            }
+        }
+    }
+
+    /// Composition hook for the native engine. The release app supplies no
+    /// driver until dependency/enrollment admission. Displaying this candidate
+    /// does not enable input or acknowledge native frames as H.264 role data.
+    public func startNativeVideo(
+        binding: InteractiveNativeVideoBindingV0,
+        driver: any UIKitClientNativeVideoDriverV0,
+        current: @escaping @MainActor () -> InteractiveNativeVideoBindingV0?,
+        changed: @escaping @MainActor (InteractiveNativeVideoPhaseV0, InteractiveNativeVideoFailureV0?) -> Void,
+        acknowledgePresentation: (@MainActor (UInt64, InteractiveNativeVideoSurfaceV0) async throws -> InteractiveNativeVideoPresentationReceiptBodyV0)? = nil
+    ) async throws {
+        guard !closed, !surfaceTransitionInFlight, !Task.isCancelled,
+              nativeVideoOwner == nil, !surface.hasUnverifiedExternalVideo,
+              await roles.refreshInitialDesktopState() else {
+            throw NetworkClientInteractiveInitialDesktopErrorV0.invalidPhase
+        }
+        guard !closed, !surfaceTransitionInFlight, !Task.isCancelled, nativeVideoOwner == nil,
+              descriptor.kind != .focusedRegion,
+              binding.interactiveSessionID == descriptor.interactiveSessionID,
+              binding.authorizationEpoch == descriptor.authorizationEpoch.rawValue,
+              let surfaceRevision = Int64(exactly: descriptor.surfaceRevision.rawValue),
+              let coordinateRevision = Int64(exactly: descriptor.coordinateSpaceRevision.rawValue) else {
+            throw NetworkClientInteractiveInitialDesktopErrorV0.invalidPhase
+        }
+        webRTCStartTask?.cancel()
+        webRTCStartTask = nil
+        webRTCStartRequested = true
+        inputRelay?.setActive(false)
+        surface.setInputEnabled(false)
+        let owner = try UIKitClientNativeVideoOwnerV0(
+            binding: binding,
+            descriptor: .init(surfaceID: descriptor.surfaceID,
+                              surfaceRevision: surfaceRevision,
+                              coordinateSpaceRevision: coordinateRevision,
+                              encodedWidth: Int(descriptor.encodedWidth),
+                              encodedHeight: Int(descriptor.encodedHeight)),
+            surface: surface, driver: driver, current: current,
+            changed: { [weak self] phase, failure in
+                self?.videoRecoveryChanged?(
+                    phase == .failed || phase == .draining || phase == .retired
+                )
+                changed(phase, failure)
+            },
+            logicalWidthPoints: descriptor.logicalWidthPoints, logicalHeightPoints: descriptor.logicalHeightPoints,
+            inputAdmissionChanged: { [weak self] _ in self?.updateInputAvailability() },
+            acknowledgePresentation: acknowledgePresentation)
+        nativeVideoOwner = owner
+        try owner.start()
+    }
 
     fileprivate init(
         descriptor: AdaptiveSurfaceDescriptor,
@@ -197,10 +320,29 @@ public final class UIKitClientInitialDesktopProductV0 {
 
     @discardableResult
     public func refreshPrimaryState() async -> Bool {
+        guard !closed else { return false }
+        if surfaceTransitionInFlight { return await roles.refreshInitialDesktopState() }
         let active = await roles.refreshInitialDesktopState()
+        guard !closed else { return false }
+        nativeVideoOwner?.refresh()
+        // Before the bootstrap frame is acknowledged, false means preparation
+        // is still in progress. Keep the inert native adapter available for the
+        // first active refresh. Once native preparation starts, loss of the
+        // active surface must cancel and drain it immediately.
+        if !active, nativePreparationRequested || nativeVideoOwner != nil {
+            nativePreparationTask?.cancel()
+            await nativeVideoOwner?.close()
+            await nativePreparer?.close()
+        }
         if active {
-            inputRelay?.setActive(true)
-            surface.setInputEnabled(true)
+            prepareConfiguredNativeVideo()
+            updateInputAvailability()
+#if MACCOMPANION_WEBRTC_DEVELOPMENT && canImport(WebRTC)
+            if !webRTCStartRequested {
+                webRTCStartRequested = true
+                startDevelopmentWebRTCVideo()
+            }
+#endif
         }
         return active
     }
@@ -208,6 +350,9 @@ public final class UIKitClientInitialDesktopProductV0 {
     public func sendInput(
         _ payloads: [InteractiveInputPayload]
     ) async throws {
+        guard inputPathIsReady else {
+            throw NetworkClientInteractiveInitialDesktopErrorV0.invalidPhase
+        }
         try await activation.sendInput(payloads)
     }
 
@@ -224,6 +369,9 @@ public final class UIKitClientInitialDesktopProductV0 {
     }
 
     public func selectDisplay(_ displayID: UUID) async throws {
+        guard !closed, nativePreparer == nil && nativeVideoOwner == nil && !surface.hasUnverifiedExternalVideo else {
+            throw NetworkClientInteractiveInitialDesktopErrorV0.invalidPhase
+        }
         visualSmartZoomFocus = nil
         cancelPendingAutomaticFocusEvent()
         guard !surfaceTransitionInFlight else {
@@ -273,11 +421,67 @@ public final class UIKitClientInitialDesktopProductV0 {
         kind: InteractiveSurfaceKind,
         targetToken: UUID?
     ) async throws {
+        guard !closed, nativeVideoOwner?.lifecycle.isTerminal != true,
+              (nativePreparer != nil || nativeVideoOwner != nil || !surface.hasUnverifiedExternalVideo) else {
+            throw NetworkClientInteractiveInitialDesktopErrorV0.invalidPhase
+        }
         visualSmartZoomFocus = nil
+        if nativePreparer != nil || nativeVideoOwner != nil {
+            try await performNativeSurfaceSelection(kind: kind, targetToken: targetToken)
+            return
+        }
         try await performSurfaceSelection(
             kind: kind,
             targetToken: targetToken
         )
+    }
+
+    private func performNativeSurfaceSelection(
+        kind: InteractiveSurfaceKind,
+        targetToken: UUID?
+    ) async throws {
+        guard kind != .focusedRegion, !surfaceTransitionInFlight,
+              let replacementNativePreparer else {
+            throw NetworkClientInteractiveInitialDesktopErrorV0.invalidPhase
+        }
+        cancelPendingAutomaticFocusEvent()
+        surfaceTransitionInFlight = true
+        IOSClientRuntimeDiagnosticLogV0.record("native.surface-selection.fenced")
+        inputRelay?.setActive(false)
+        surface.setInputEnabled(false)
+        surface.hideSoftwareKeyboard()
+        nativePreparationTask?.cancel()
+        await nativeVideoOwner?.close()
+        IOSClientRuntimeDiagnosticLogV0.record("native.surface-selection.renderer-drained")
+        await nativePreparer?.close()
+        IOSClientRuntimeDiagnosticLogV0.record("native.surface-selection.enrollment-drained")
+        await nativePreparationTask?.value
+        IOSClientRuntimeDiagnosticLogV0.record("native.surface-selection.preparation-joined")
+        nativeVideoOwner = nil
+        nativePreparer = nil
+        nativePreparationTask = nil
+        nativePreparationRequested = false
+        do {
+            guard !closed else { throw NetworkClientInteractiveInitialDesktopErrorV0.invalidPhase }
+            let next = try await activation.selectSurface(
+                targetKind: kind, targetToken: targetToken,
+                nativeReplacement: true
+            )
+            IOSClientRuntimeDiagnosticLogV0.record("native.surface-selection.host-acknowledged")
+            guard !closed, next.kind == kind else {
+                throw NetworkClientInteractiveInitialDesktopErrorV0.invalidPhase
+            }
+            apply(next)
+            nativePreparer = try replacementNativePreparer()
+            surfaceTransitionInFlight = false
+            IOSClientRuntimeDiagnosticLogV0.record("native.surface-selection.replacement-started")
+            prepareConfiguredNativeVideo()
+        } catch {
+            IOSClientRuntimeDiagnosticLogV0.record("native.surface-selection.terminal", error: error)
+            await close()
+            failure(error)
+            throw error
+        }
     }
 
     private func performSurfaceSelection(
@@ -319,12 +523,20 @@ public final class UIKitClientInitialDesktopProductV0 {
     /// authority or positively identifies a secure focus. Missing or
     /// ambiguous Accessibility focus does not disable the remote keyboard.
     public func prepareTextInput() async throws -> Bool {
-        guard !surfaceTransitionInFlight else { return false }
-        guard let current = try await activation.prepareTextInput() else {
-            return false
-        }
-        apply(current)
-        return Self.authorizesText(descriptor)
+        guard inputPathIsReady else { return false }
+        let expectedNativeOwner = nativeVideoOwner
+        guard let current = try await activation.prepareTextInput(), inputPathIsReady else { return false }
+        if let expectedNativeOwner {
+            guard nativeVideoOwner === expectedNativeOwner,
+                  current.interactiveSessionID == descriptor.interactiveSessionID,
+                  current.authorizationEpoch == descriptor.authorizationEpoch,
+                  current.surfaceID == descriptor.surfaceID,
+                  current.surfaceRevision == descriptor.surfaceRevision,
+                  current.coordinateSpaceRevision == descriptor.coordinateSpaceRevision,
+                  current.encodedWidth == descriptor.encodedWidth, current.encodedHeight == descriptor.encodedHeight,
+                  current.logicalWidthPoints == descriptor.logicalWidthPoints, current.logicalHeightPoints == descriptor.logicalHeightPoints else { return false }
+        } else { apply(current) }
+        return Self.authorizesText(current)
     }
 
     /// Prefers a verified focused-region composer. If the latest admitted
@@ -333,6 +545,10 @@ public final class UIKitClientInitialDesktopProductV0 {
     public func prepareNativeTextComposer() async throws
         -> SurfaceInputFence?
     {
+        guard inputPathIsReady else { return nil }
+        // The initial native profile keeps Desktop capture. Direct keyboard
+        // does not require a focused-region capture transition.
+        if nativeVideoOwner != nil { return nil }
         guard !surfaceTransitionInFlight else { return nil }
         if let binding = try await activation.prepareNativeTextComposer() {
             return binding
@@ -346,6 +562,9 @@ public final class UIKitClientInitialDesktopProductV0 {
         _ text: String,
         boundTo binding: SurfaceInputFence
     ) async throws {
+        guard !closed, nativePreparer == nil && nativeVideoOwner == nil && !surface.hasUnverifiedExternalVideo else {
+            throw NetworkClientInteractiveInitialDesktopErrorV0.invalidPhase
+        }
         guard !surfaceTransitionInFlight else {
             throw NetworkClientInteractiveInitialDesktopErrorV0.invalidPhase
         }
@@ -360,6 +579,7 @@ public final class UIKitClientInitialDesktopProductV0 {
         _ event: ClientSurfaceFocusEventV0
     ) {
         latestAutomaticFocusEvent = event
+        guard nativePreparer == nil, nativeVideoOwner == nil else { return }
         guard automaticZoomPolicy.admitsFocusEvent(
             inputPaused: event.inputPaused
         ) else { return }
@@ -567,15 +787,57 @@ public final class UIKitClientInitialDesktopProductV0 {
     }
 
     public func close() async {
-        cancelPendingAutomaticFocusEvent()
-        surface.setZoomOutPastFitHandler(nil)
-        surface.setManualViewportChangeHandler(nil)
+        closed = true
         relay.close()
         inputRelay?.close()
         surface.resetInputAndBlank()
-        await activation.close()
         decoderRenderer.closeAndBlank()
+        webRTCStartTask?.cancel()
+        webRTCStartTask = nil
+        nativePreparationTask?.cancel()
+        await nativeVideoOwner?.close()
+        await nativePreparer?.close()
+        await nativePreparationTask?.value
+        nativePreparationTask = nil
+        nativePreparer = nil
+        replacementNativePreparer = nil
+        nativeChanged = nil
+        await roles.stopWebRTC()
+        cancelPendingAutomaticFocusEvent()
+        surface.setZoomOutPastFitHandler(nil)
+        surface.setManualViewportChangeHandler(nil)
+        await activation.close()
+        await nativeVideoOwner?.close()
+        nativeVideoOwner = nil
     }
+
+#if MACCOMPANION_WEBRTC_DEVELOPMENT && canImport(WebRTC)
+    fileprivate func startDevelopmentWebRTCVideo() {
+        webRTCStartTask?.cancel()
+        inputRelay?.setActive(false)
+        surface.setInputEnabled(false)
+        webRTCStartTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let peer = try UIKitClientWebRTCVideoPeerV0(
+                    surface: self.surface
+                )
+                try await self.roles.startWebRTC(
+                    descriptor: self.descriptor, peer: peer
+                )
+            } catch {
+                IOSClientRuntimeDiagnosticLogV0.record(
+                    "interactive.webrtc-video.unavailable", error: error
+                )
+                guard !Task.isCancelled,
+                      await self.roles.refreshInitialDesktopState(),
+                      self.nativeVideoOwner == nil && !self.surface.hasUnverifiedExternalVideo else { return }
+                self.inputRelay?.setActive(true)
+                self.surface.setInputEnabled(true)
+            }
+        }
+    }
+#endif
 }
 
 @available(iOS 17.0, *)

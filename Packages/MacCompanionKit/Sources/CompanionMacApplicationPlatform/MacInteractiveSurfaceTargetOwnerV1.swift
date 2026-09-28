@@ -45,6 +45,30 @@ enum MacInteractiveFocusReuseGuardV1 {
     }
 }
 
+/// A selected app/window can be covered by another app's modal at the same
+/// coordinates. Geometry alone cannot bind an AX focus to the capture owner.
+enum MacInteractiveFocusOwnershipV1 {
+    static func accepts(
+        currentKind: InteractiveSurfaceKind,
+        selectedProcessID: pid_t?,
+        observedProcessID: pid_t?
+    ) -> Bool {
+        guard let observedProcessID, observedProcessID > 0 else {
+            return false
+        }
+        switch currentKind {
+        case .desktop:
+            return true
+        case .application, .window:
+            return selectedProcessID == observedProcessID
+                && selectedProcessID != nil
+        case .focusedRegion:
+            return selectedProcessID.map { $0 == observedProcessID }
+                ?? true
+        }
+    }
+}
+
 /// The menu-process-only bridge between privacy-filtered opaque picker tokens
 /// and live ScreenCaptureKit objects. The Agent can receive only sanitized
 /// inventory and descriptors; the selected filter and global input geometry
@@ -63,6 +87,7 @@ public actor MacInteractiveSurfaceTargetOwnerV1 {
         var focusedRegionPointPixelScale: Double?
         var localActivationTarget:
             ScreenCaptureKitLocalActivationTargetV0?
+        var nativeCaptureSurface: ScreenCaptureKitResolvedSurfaceV0? = nil
     }
 
     private struct FocusFingerprint: Equatable {
@@ -70,6 +95,7 @@ public actor MacInteractiveSurfaceTargetOwnerV1 {
         let globalBounds: CGRect
         let editable: Bool
         let secure: Bool
+        let processID: pid_t?
     }
 
     private let excludedBundleIdentifiers: Set<String>
@@ -335,6 +361,7 @@ public actor MacInteractiveSurfaceTargetOwnerV1 {
         active.focusedRegionPointPixelScale =
             taken.inputBackingScaleFactor
         active.localActivationTarget = taken.localActivationTarget
+        active.nativeCaptureSurface = taken
         self.active = active
         self.taken = nil
         if let focus = transition.descriptor.focus,
@@ -348,6 +375,60 @@ public actor MacInteractiveSurfaceTargetOwnerV1 {
             lastFocus = nil
             lastFocusGlobalBounds = nil
         }
+    }
+
+    /// An absent selected object is valid only for the exact active Desktop.
+    /// Pending, replaced and unsupported targets cannot be treated as Desktop.
+    public func nativeCaptureTarget(
+        scope: LocalInteractiveNativeBackendScopeV1,
+        nowMonotonicNanoseconds: UInt64
+    ) throws -> ScreenCaptureKitResolvedSurfaceV0? {
+        try scope.validate()
+        guard pending == nil, taken == nil,
+              let active, let lease = active.lease,
+              lease.hostID == scope.hostID,
+              lease.interactiveSessionID == scope.interactiveSessionID,
+              lease.authorizationEpoch.rawValue == UInt64(scope.authorizationEpoch),
+              lease.selectedDisplayID == scope.selectedDisplayID,
+              lease.surfaceID == scope.surfaceID,
+              lease.surfaceRevision.rawValue == UInt64(scope.surfaceRevision),
+              lease.coordinateRevision.rawValue == UInt64(scope.coordinateSpaceRevision),
+              Int(active.descriptor.encodedWidth) == scope.encodedWidth,
+              Int(active.descriptor.encodedHeight) == scope.encodedHeight,
+              active.descriptor.logicalWidthPoints == scope.logicalWidthPoints,
+              active.descriptor.logicalHeightPoints == scope.logicalHeightPoints,
+              active.descriptor.rotation == scope.rotation,
+              nowMonotonicNanoseconds < lease.expiresAtMonotonicNanoseconds,
+              nowMonotonicNanoseconds / 1_000_000 < scope.expiresAtMonotonicMilliseconds else {
+            throw LocalInteractiveNativeBackendErrorV1.unavailable
+        }
+        if active.descriptor.kind == .desktop {
+            guard active.nativeCaptureSurface == nil || (active.nativeCaptureSurface?.descriptor == active.descriptor
+                && active.nativeCaptureSurface?.localActivationTarget == nil) else {
+                throw LocalInteractiveNativeBackendErrorV1.unavailable
+            }
+            return nil
+        }
+        guard active.descriptor.kind == .application || active.descriptor.kind == .window,
+              let surface = active.nativeCaptureSurface,
+              surface.descriptor == active.descriptor else {
+            throw LocalInteractiveNativeBackendErrorV1.unavailable
+        }
+        _ = try MacInteractiveNativeCaptureGeometryV1.readSelectedSurface(surface, scope: scope)
+        return surface
+    }
+
+    /// Retained ScreenCaptureKit objects remain entirely in the menu. The
+    /// caller still needs a current native runtime snapshot, actual sample
+    /// evidence and presentation admission before it can stream or post input.
+    public func nativeCaptureSurface(
+        scope: LocalInteractiveNativeBackendScopeV1,
+        nowMonotonicNanoseconds: UInt64
+    ) throws -> ScreenCaptureKitResolvedSurfaceV0 {
+        guard let surface = try nativeCaptureTarget(scope: scope, nowMonotonicNanoseconds: nowMonotonicNanoseconds) else {
+            throw LocalInteractiveNativeBackendErrorV1.unavailable
+        }
+        return surface
     }
 
     public func focusCandidate(
@@ -368,14 +449,28 @@ public actor MacInteractiveSurfaceTargetOwnerV1 {
               Self.valid(active.inputBounds) else {
             throw MacInteractiveSurfaceTargetOwnerErrorV1.bindingMismatch
         }
-        let readResult = focusReader.readCurrentFocus()
+        let rawReadResult = focusReader.readCurrentFocus()
+        let readResult: MacAccessibilityFocusReadResultV0
+        if case let .verified(observation) = rawReadResult,
+           !MacInteractiveFocusOwnershipV1.accepts(
+               currentKind: active.descriptor.kind,
+               selectedProcessID: Self.processID(
+                   for: active.localActivationTarget
+               ),
+               observedProcessID: observation.processID
+           ) {
+            readResult = .unavailable(.noVerifiedFocus)
+        } else {
+            readResult = rawReadResult
+        }
         let observationFingerprint: FocusFingerprint?
         if case let .verified(observation) = readResult {
             observationFingerprint = FocusFingerprint(
                 category: observation.category,
                 globalBounds: observation.globalBounds,
                 editable: observation.editable,
-                secure: observation.secure
+                secure: observation.secure,
+                processID: observation.processID
             )
         } else {
             observationFingerprint = nil
@@ -552,6 +647,18 @@ public actor MacInteractiveSurfaceTargetOwnerV1 {
         }
     }
 
+    private static func processID(
+        for target: ScreenCaptureKitLocalActivationTargetV0?
+    ) -> pid_t? {
+        switch target {
+        case let .application(processID, _),
+             let .window(_, processID, _, _):
+            processID
+        case nil:
+            nil
+        }
+    }
+
     private func makeFocusedRegionReplacement(
         active: Active,
         content: SCShareableContent,
@@ -561,6 +668,13 @@ public actor MacInteractiveSurfaceTargetOwnerV1 {
         guard let expectedFocus = lastFocus,
               let expectedGlobalBounds = lastFocusGlobalBounds,
               case let .verified(observation) = focusReader.readCurrentFocus(),
+              MacInteractiveFocusOwnershipV1.accepts(
+                  currentKind: active.descriptor.kind,
+                  selectedProcessID: Self.processID(
+                      for: active.localActivationTarget
+                  ),
+                  observedProcessID: observation.processID
+              ),
               observation.globalBounds == expectedGlobalBounds,
               nowMonotonicMilliseconds <= Int64.max - 10_000 else {
             throw MacInteractiveSurfaceTargetOwnerErrorV1.bindingMismatch
@@ -569,7 +683,8 @@ public actor MacInteractiveSurfaceTargetOwnerV1 {
             category: observation.category,
             globalBounds: observation.globalBounds,
             editable: observation.editable,
-            secure: observation.secure
+            secure: observation.secure,
+            processID: observation.processID
         )
         guard fingerprint == lastFocusFingerprint else {
             throw MacInteractiveSurfaceTargetOwnerErrorV1.bindingMismatch

@@ -88,6 +88,8 @@ public struct AgentInteractiveOutboundMediaRecordV0:
 /// authenticated menu generation. Input acknowledgement means the menu runtime
 /// accepted the exact action; media retrieval is one-at-a-time backpressure.
 public protocol AgentInteractiveMenuRoleDataRoutingV0: Sendable {
+    func retireInteractiveMedia(pair: AgentInteractiveReadyRolePairV0) async
+
     func applyInteractiveInput(
         _ envelope: InteractiveInputEnvelope,
         pair: AgentInteractiveReadyRolePairV0,
@@ -122,6 +124,7 @@ public actor AgentInteractiveRoleDataPumpV0 {
         AgentInteractiveReadyRolePairV0,
         AgentInteractiveRoleDataPumpErrorV0
     ) async -> Void
+    private var mediaRetirement: Task<Void, Never>?
     private var terminalReason: AgentInteractiveRoleDataPumpErrorV0?
     private var lastMonotonicNanoseconds: UInt64?
 
@@ -295,9 +298,15 @@ public actor AgentInteractiveRoleDataPumpV0 {
     private func failClosed(
         _ reason: AgentInteractiveRoleDataPumpErrorV0
     ) async {
-        guard phase != .closed else { return }
+        guard phase != .closed else {
+            await mediaRetirement?.value
+            return
+        }
         phase = .closed
         terminalReason = reason
+        let retirement = Task { [route, pair] in await route.retireInteractiveMedia(pair: pair) }
+        mediaRetirement = retirement
+        await retirement.value
         await pair.input.cancel()
         await pair.media.cancel()
         await terminal(pair, reason)

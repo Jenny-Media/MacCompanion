@@ -56,6 +56,17 @@ public protocol MacLocalXPCInteractiveLeaseSendingV1: Sendable {
     func selectInteractiveDisplay(
         _ command: LocalInteractiveDisplaySelectCommandV1
     ) async throws -> LocalInteractiveDisplaySelectedReceiptV1
+    func nativeBackend(_ command: LocalInteractiveNativeBackendCommandV1) async throws -> LocalInteractiveNativeBackendReceiptV1
+    func nativeRuntimeSnapshot(_ command: LocalInteractiveNativeSnapshotCommandV1) async throws -> LocalInteractiveNativeSnapshotReceiptV1
+    func makeWebRTCOffer(
+        _ command: LocalInteractiveWebRTCOfferCommandV1
+    ) async throws -> LocalInteractiveWebRTCOfferReceiptV1
+    func acceptWebRTCAnswer(
+        _ command: LocalInteractiveWebRTCAnswerCommandV1
+    ) async throws
+    func closeWebRTC(
+        _ command: LocalInteractiveWebRTCCloseCommandV1
+    ) async throws
 }
 
 extension MacLocalXPCInteractiveLeaseSendingV1 {
@@ -97,6 +108,27 @@ extension MacLocalXPCInteractiveLeaseSendingV1 {
     public func selectInteractiveDisplay(
         _: LocalInteractiveDisplaySelectCommandV1
     ) async throws -> LocalInteractiveDisplaySelectedReceiptV1 {
+        throw MacLocalXPCInteractiveLeaseErrorV1.unavailable
+    }
+    public func nativeBackend(_ command: LocalInteractiveNativeBackendCommandV1) async throws -> LocalInteractiveNativeBackendReceiptV1 {
+        throw MacLocalXPCInteractiveLeaseErrorV1.unavailable
+    }
+    public func nativeRuntimeSnapshot(_ command: LocalInteractiveNativeSnapshotCommandV1) async throws -> LocalInteractiveNativeSnapshotReceiptV1 {
+        throw MacLocalXPCInteractiveLeaseErrorV1.unavailable
+    }
+    public func makeWebRTCOffer(
+        _: LocalInteractiveWebRTCOfferCommandV1
+    ) async throws -> LocalInteractiveWebRTCOfferReceiptV1 {
+        throw MacLocalXPCInteractiveLeaseErrorV1.unavailable
+    }
+    public func acceptWebRTCAnswer(
+        _: LocalInteractiveWebRTCAnswerCommandV1
+    ) async throws {
+        throw MacLocalXPCInteractiveLeaseErrorV1.unavailable
+    }
+    public func closeWebRTC(
+        _: LocalInteractiveWebRTCCloseCommandV1
+    ) async throws {
         throw MacLocalXPCInteractiveLeaseErrorV1.unavailable
     }
 }
@@ -173,6 +205,23 @@ package protocol MacLocalXPCGenerationBoundInteractiveLeaseSendingV1:
         endpointToken: UUID,
         command: LocalInteractiveDisplaySelectCommandV1
     ) async throws -> LocalInteractiveDisplaySelectedReceiptV1
+    func nativeBackend(generation: UInt64, endpointToken: UUID, command: LocalInteractiveNativeBackendCommandV1) async throws -> LocalInteractiveNativeBackendReceiptV1
+    func nativeRuntimeSnapshot(generation: UInt64, endpointToken: UUID, command: LocalInteractiveNativeSnapshotCommandV1) async throws -> LocalInteractiveNativeSnapshotReceiptV1
+    func makeWebRTCOffer(
+        generation: UInt64,
+        endpointToken: UUID,
+        command: LocalInteractiveWebRTCOfferCommandV1
+    ) async throws -> LocalInteractiveWebRTCOfferReceiptV1
+    func acceptWebRTCAnswer(
+        generation: UInt64,
+        endpointToken: UUID,
+        command: LocalInteractiveWebRTCAnswerCommandV1
+    ) async throws
+    func closeWebRTC(
+        generation: UInt64,
+        endpointToken: UUID,
+        command: LocalInteractiveWebRTCCloseCommandV1
+    ) async throws
 }
 
 extension MacLocalXPCGenerationBoundInteractiveLeaseSendingV1 {
@@ -232,6 +281,33 @@ extension MacLocalXPCGenerationBoundInteractiveLeaseSendingV1 {
     ) async throws -> LocalInteractiveDisplaySelectedReceiptV1 {
         throw MacLocalXPCInteractiveLeaseErrorV1.unavailable
     }
+    package func nativeBackend(generation: UInt64, endpointToken: UUID, command: LocalInteractiveNativeBackendCommandV1) async throws -> LocalInteractiveNativeBackendReceiptV1 {
+        throw MacLocalXPCInteractiveLeaseErrorV1.unavailable
+    }
+    package func nativeRuntimeSnapshot(generation: UInt64, endpointToken: UUID, command: LocalInteractiveNativeSnapshotCommandV1) async throws -> LocalInteractiveNativeSnapshotReceiptV1 {
+        throw MacLocalXPCInteractiveLeaseErrorV1.unavailable
+    }
+    package func makeWebRTCOffer(
+        generation _: UInt64,
+        endpointToken _: UUID,
+        command _: LocalInteractiveWebRTCOfferCommandV1
+    ) async throws -> LocalInteractiveWebRTCOfferReceiptV1 {
+        throw MacLocalXPCInteractiveLeaseErrorV1.unavailable
+    }
+    package func acceptWebRTCAnswer(
+        generation _: UInt64,
+        endpointToken _: UUID,
+        command _: LocalInteractiveWebRTCAnswerCommandV1
+    ) async throws {
+        throw MacLocalXPCInteractiveLeaseErrorV1.unavailable
+    }
+    package func closeWebRTC(
+        generation _: UInt64,
+        endpointToken _: UUID,
+        command _: LocalInteractiveWebRTCCloseCommandV1
+    ) async throws {
+        throw MacLocalXPCInteractiveLeaseErrorV1.unavailable
+    }
 }
 
 package enum MacLocalXPCInteractiveLeaseCommandKindV1:
@@ -250,6 +326,11 @@ package enum MacLocalXPCInteractiveLeaseCommandKindV1:
     case focusSnapshot
     case displayCatalog
     case displaySelect
+    case nativeBackend
+    case nativeSnapshot
+    case webRTCOffer
+    case webRTCAnswer
+    case webRTCClose
 }
 
 /// Pure queue-admission binding copied from the opaque ready-generation
@@ -331,11 +412,30 @@ public protocol MacLocalXPCInteractiveLeaseHandlingV1: Sendable {
         _ command: LocalInteractiveDisplaySelectCommandV1,
         nowMonotonicNanoseconds: UInt64
     ) async throws -> LocalInteractiveDisplaySelectedReceiptV1
+    func nativeBackend(_ command: LocalInteractiveNativeBackendCommandV1, nowMonotonicNanoseconds: UInt64) async throws -> LocalInteractiveNativeBackendReceiptV1
+    func nativeRuntimeSnapshot(_ command: LocalInteractiveNativeSnapshotCommandV1, nowMonotonicNanoseconds: UInt64) async throws -> LocalInteractiveNativeSnapshotReceiptV1
+    func makeWebRTCOffer(
+        _ command: LocalInteractiveWebRTCOfferCommandV1,
+        nowMonotonicNanoseconds: UInt64
+    ) async throws -> LocalInteractiveWebRTCOfferReceiptV1
+    func acceptWebRTCAnswer(
+        _ command: LocalInteractiveWebRTCAnswerCommandV1,
+        nowMonotonicNanoseconds: UInt64
+    ) async throws
+    func closeWebRTC(
+        _ command: LocalInteractiveWebRTCCloseCommandV1
+    ) async throws
 
     func invalidateAgentAuthority() async
 }
 
 extension MacLocalXPCInteractiveLeaseHandlingV1 {
+    public func nativeBackend(_ command: LocalInteractiveNativeBackendCommandV1, nowMonotonicNanoseconds: UInt64) async throws -> LocalInteractiveNativeBackendReceiptV1 {
+        throw MacLocalXPCInteractiveLeaseErrorV1.unavailable
+    }
+    public func nativeRuntimeSnapshot(_ command: LocalInteractiveNativeSnapshotCommandV1, nowMonotonicNanoseconds: UInt64) async throws -> LocalInteractiveNativeSnapshotReceiptV1 {
+        throw MacLocalXPCInteractiveLeaseErrorV1.unavailable
+    }
     public func prepareInitialInteractiveDesktop(
         _: LocalInteractiveInitialDesktopPreparationCommandV1,
         nowMonotonicNanoseconds _: UInt64

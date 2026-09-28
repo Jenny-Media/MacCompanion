@@ -18,6 +18,7 @@ public enum LocalInteractiveLeaseWireCodecErrorV1:
 /// concerns.
 public enum LocalInteractiveLeaseWireCodecV1 {
     public static let maximumEncodedBytes = 4_096
+    public static let maximumSurfaceTargetsReceiptBytes = 65_536
 
     public static func encodeInitialDesktopCommand(
         _ command: LocalInteractiveInitialDesktopPreparationCommandV1
@@ -121,12 +122,18 @@ public enum LocalInteractiveLeaseWireCodecV1 {
 
     public static func encodeSurfaceTargetsReceipt(
         _ receipt: LocalInteractiveSurfaceTargetsReceiptV1
-    ) throws -> Data { try encode(receipt) }
+    ) throws -> Data {
+        try encode(receipt, maximumBytes: maximumSurfaceTargetsReceiptBytes)
+    }
 
     public static func decodeSurfaceTargetsReceipt(
         _ data: Data
     ) throws -> LocalInteractiveSurfaceTargetsReceiptV1 {
-        try decode(LocalInteractiveSurfaceTargetsReceiptV1.self, from: data)
+        try decode(
+            LocalInteractiveSurfaceTargetsReceiptV1.self,
+            from: data,
+            maximumBytes: maximumSurfaceTargetsReceiptBytes
+        )
     }
 
     public static func encodeSurfaceResolveCommand(
@@ -275,8 +282,83 @@ public enum LocalInteractiveLeaseWireCodecV1 {
         try decode(LocalInteractiveDisplaySelectedReceiptV1.self, from: data)
     }
 
+    public static func encodeNativeBackendCommand(_ command: LocalInteractiveNativeBackendCommandV1) throws -> Data {
+        try command.validate(); return try encode(command)
+    }
+    public static func decodeNativeBackendCommand(_ data: Data) throws -> LocalInteractiveNativeBackendCommandV1 {
+        let command = try decode(LocalInteractiveNativeBackendCommandV1.self, from: data)
+        try command.validate(); return command
+    }
+    public static func encodeNativeBackendReceipt(_ receipt: LocalInteractiveNativeBackendReceiptV1) throws -> Data {
+        try receipt.validate(); return try encode(receipt)
+    }
+    public static func decodeNativeBackendReceipt(_ data: Data) throws -> LocalInteractiveNativeBackendReceiptV1 {
+        let receipt = try decode(LocalInteractiveNativeBackendReceiptV1.self, from: data)
+        try receipt.validate(); return receipt
+    }
+
+    public static func encodeNativeSnapshotCommand(_ command: LocalInteractiveNativeSnapshotCommandV1) throws -> Data {
+        try command.fence.validate()
+        return try encode(command)
+    }
+    public static func decodeNativeSnapshotCommand(_ data: Data) throws -> LocalInteractiveNativeSnapshotCommandV1 {
+        let command = try decode(LocalInteractiveNativeSnapshotCommandV1.self, from: data)
+        try command.fence.validate()
+        return command
+    }
+    public static func encodeNativeSnapshotReceipt(_ receipt: LocalInteractiveNativeSnapshotReceiptV1) throws -> Data {
+        try receipt.snapshot.validate()
+        return try encode(receipt)
+    }
+    public static func decodeNativeSnapshotReceipt(_ data: Data) throws -> LocalInteractiveNativeSnapshotReceiptV1 {
+        let receipt = try decode(LocalInteractiveNativeSnapshotReceiptV1.self, from: data)
+        try receipt.snapshot.validate()
+        return receipt
+    }
+
+    public static func encodeWebRTCOfferCommand(
+        _ command: LocalInteractiveWebRTCOfferCommandV1
+    ) throws -> Data { try encode(command) }
+
+    public static func decodeWebRTCOfferCommand(
+        _ data: Data
+    ) throws -> LocalInteractiveWebRTCOfferCommandV1 {
+        try decode(LocalInteractiveWebRTCOfferCommandV1.self, from: data)
+    }
+
+    public static func encodeWebRTCOfferReceipt(
+        _ receipt: LocalInteractiveWebRTCOfferReceiptV1
+    ) throws -> Data { try encode(receipt) }
+
+    public static func decodeWebRTCOfferReceipt(
+        _ data: Data
+    ) throws -> LocalInteractiveWebRTCOfferReceiptV1 {
+        try decode(LocalInteractiveWebRTCOfferReceiptV1.self, from: data)
+    }
+
+    public static func encodeWebRTCAnswerCommand(
+        _ command: LocalInteractiveWebRTCAnswerCommandV1
+    ) throws -> Data { try encode(command) }
+
+    public static func decodeWebRTCAnswerCommand(
+        _ data: Data
+    ) throws -> LocalInteractiveWebRTCAnswerCommandV1 {
+        try decode(LocalInteractiveWebRTCAnswerCommandV1.self, from: data)
+    }
+
+    public static func encodeWebRTCCloseCommand(
+        _ command: LocalInteractiveWebRTCCloseCommandV1
+    ) throws -> Data { try encode(command) }
+
+    public static func decodeWebRTCCloseCommand(
+        _ data: Data
+    ) throws -> LocalInteractiveWebRTCCloseCommandV1 {
+        try decode(LocalInteractiveWebRTCCloseCommandV1.self, from: data)
+    }
+
     private static func encode<Value: Encodable>(
-        _ value: Value
+        _ value: Value,
+        maximumBytes: Int = maximumEncodedBytes
     ) throws -> Data {
         do {
             let encoder = JSONEncoder()
@@ -285,7 +367,7 @@ public enum LocalInteractiveLeaseWireCodecV1 {
             guard !data.isEmpty else {
                 throw LocalInteractiveLeaseWireCodecErrorV1.emptyPayload
             }
-            guard data.count <= maximumEncodedBytes else {
+            guard data.count <= maximumBytes else {
                 throw LocalInteractiveLeaseWireCodecErrorV1.payloadTooLarge
             }
             let parsed = try CanonicalJSON.parse(data)
@@ -304,12 +386,13 @@ public enum LocalInteractiveLeaseWireCodecV1 {
 
     private static func decode<Value: Codable>(
         _ type: Value.Type,
-        from data: Data
+        from data: Data,
+        maximumBytes: Int = maximumEncodedBytes
     ) throws -> Value {
         guard !data.isEmpty else {
             throw LocalInteractiveLeaseWireCodecErrorV1.emptyPayload
         }
-        guard data.count <= maximumEncodedBytes else {
+        guard data.count <= maximumBytes else {
             throw LocalInteractiveLeaseWireCodecErrorV1.payloadTooLarge
         }
         do {
@@ -321,7 +404,7 @@ public enum LocalInteractiveLeaseWireCodecV1 {
                     .nonCanonicalPayload
             }
             let value = try JSONDecoder().decode(type, from: data)
-            guard try encode(value) == data else {
+            guard try encode(value, maximumBytes: maximumBytes) == data else {
                 throw LocalInteractiveLeaseWireCodecErrorV1
                     .nonCanonicalPayload
             }

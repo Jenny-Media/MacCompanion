@@ -68,6 +68,7 @@ def source_fingerprint():
 
 class Probe:
     def __init__(self):
+        self.package_path = ROOT / "Experiments/LiveControlLab"
         self.started = time.time()
         self.source_sha256 = source_fingerprint()
         self.test_id = str(uuid.uuid4())
@@ -155,14 +156,13 @@ class Probe:
         """Keep exact-job launch evidence and track PID even before readiness."""
         self.serial += 1
         result = subprocess.run(["launchctl", "print", self.job], capture_output=True, text=True, timeout=5)
-        (self.evidence / f"{self.serial:02d}-job-{reason}.log").write_text(result.stdout + result.stderr)
         pid = re.search(r"^\s*pid = (\d+)$", result.stdout, re.MULTILINE)
         if pid:
             value = int(pid.group(1))
             if value not in self.agent_pids:
                 self.agent_pids.append(value)
-            return True
-        return False
+        (self.evidence / f"{self.serial:02d}-job-{reason}.log").write_text(result.stdout + result.stderr)
+        return pid is not None
 
     def wait_agent_exit(self):
         deadline = time.monotonic() + 8
@@ -194,11 +194,15 @@ class Probe:
         if result.returncode == 0:
             raise AssertionError("Disposable job survived bootout")
 
-    def background_client(self, mode):
-        log = self.evidence / f"background-{self.serial}-{mode}.log"
+    def background_client(self, mode, *, log_suffix=None, environment=None):
+        name = f"background-{self.serial}-{mode}"
+        log = self.evidence / f"{name}{'-' + log_suffix if log_suffix else ''}.log"
         output = log.open("w")
+        process_environment = os.environ.copy()
+        if environment is not None:
+            process_environment.update(environment)
         process = subprocess.Popen([str(self.evidence / "menu"), "client", self.test_id, mode],
-                                   stdout=output, stderr=subprocess.STDOUT)
+                                   stdout=output, stderr=subprocess.STDOUT, env=process_environment)
         output.close()
         self.children.append(process)
         return process, log
@@ -210,9 +214,9 @@ class Probe:
 
     def prepare(self):
         print(f"Evidence: {self.evidence}", flush=True)
-        self.command(["swift", "build", "--package-path", "Experiments/LiveControlLab",
+        self.command(["swift", "build", "--package-path", self.package_path,
                       "--product", "maccompanion-agent-xpc-test"], timeout=600, name="build")
-        bin_path = self.command(["swift", "build", "--package-path", "Experiments/LiveControlLab",
+        bin_path = self.command(["swift", "build", "--package-path", self.package_path,
                                  "--show-bin-path"], timeout=60, name="bin-path").strip().splitlines()[-1]
         binary = Path(bin_path) / "maccompanion-agent-xpc-test"
         identity = os.environ.get("MACCOMPANION_XPC_PROBE_SIGNING_IDENTITY", "Developer ID Application")
@@ -524,13 +528,21 @@ class Probe:
                     child.kill()
                     child.wait(timeout=3)
         if subprocess.run(["launchctl", "print", self.job], capture_output=True, timeout=5).returncode == 0:
-            self.capture_job_state("before-cleanup")
+            try:
+                self.capture_job_state("before-cleanup")
+            except OSError:
+                # Diagnostic storage exhaustion must not prevent exact-job
+                # termination and private-state cleanup.
+                pass
             result = subprocess.run(["launchctl", "bootout", self.job], capture_output=True, timeout=10)
             if result.returncode:
                 raise RuntimeError("Disposable job cleanup failed; preserve evidence for recovery")
             self.loaded = False
-        if subprocess.run(["launchctl", "print", self.job], capture_output=True, timeout=5).returncode == 0:
-            raise RuntimeError("Disposable job remains registered")
+        deadline = time.monotonic() + 3
+        while subprocess.run(["launchctl", "print", self.job], capture_output=True, timeout=5).returncode == 0:
+            if time.monotonic() >= deadline:
+                raise RuntimeError("Disposable job remains registered")
+            time.sleep(.05)
         self.wait_agent_exit()
         assert self.state.parent == Path("/private/tmp") and self.state.name == f"maccompanion-agent-xpc-{self.test_id}"
         shutil.rmtree(self.state)

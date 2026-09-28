@@ -128,7 +128,18 @@ surface acknowledgement can reopen input; no drained action is replayed later.
 
 An expired or superseded target, stale current fence, mismatched focus binding,
 unavailable Accessibility result, or unsafe geometry cannot create a crop. A
-focus sample or publication prepared from a surface/primary snapshot that
+menu-side focus observation must have a positive Accessibility process ID.
+While the current visual surface is one application or window, that process
+must equal the locally retained owner of the selected capture target. A
+focused-region surface derived from an application or window retains the same
+owner check. Desktop and Desktop-derived focused regions can observe any
+positive local process ID. The process ID stays in the menu process; it is
+never serialized in a focus event or used as a grant. A cross-application
+modal, missing process ID, or changed owner produces a Desktop recommendation
+with no focus token or crop, even if its rectangle lies inside the selected
+surface. The authoritative local decision cases are indexed in
+`spec/fixtures/manifest.json`.
+A focus sample or publication prepared from a surface/primary snapshot that
 became stale while an asynchronous local operation was in flight is discarded
 without ending the newer current session. Failure to publish on the still-
 current authenticated primary event sink remains terminal because delivery is

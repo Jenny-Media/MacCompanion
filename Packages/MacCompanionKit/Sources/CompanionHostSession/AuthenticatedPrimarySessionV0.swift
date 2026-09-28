@@ -619,6 +619,8 @@ public actor AuthenticatedPrimarySessionV0 {
         case .interactiveDisplayCatalogRequest, .interactiveDisplaySelect,
              .interactiveSessionRequest, .interactiveSessionApprove,
              .interactiveSessionEnd,
+             .interactiveMediaOfferRequest, .interactiveMediaAnswer,
+             .nativeEnrollRequest, .nativeEnrollProof, .nativePresentRequest, .nativeCancel,
              .interactiveInitialSurfaceRequest,
              .interactiveInitialSurfaceAcknowledgement,
              .interactiveSurfaceTargetsRequest,

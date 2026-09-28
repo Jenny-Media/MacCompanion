@@ -30,7 +30,8 @@ the prior campaign's elapsed time.
   the candidate uses the ordinary-consent capture path and states its lifecycle
   limit; it does not claim unattended persistent capture.
 - [ ] Legal/privacy approval covers the Stage 3 disclosure, retention schedule,
-  Apache-2.0 license, trademark policy, security reporting, and tester region.
+  GPL-3.0 distribution terms and retained notices, corresponding-source delivery,
+  trademark policy, security reporting, and tester region.
 - [ ] Test devices contain no irreplaceable data; evidence capture excludes
   screen content, typed text, credentials, keys, passcodes and private logs.
 

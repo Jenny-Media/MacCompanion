@@ -251,19 +251,25 @@
       "path": "local-xpc-interactive-lease-transport-v0.1.json",
       "kind": "localXPC.interactiveLeaseTransport.v0.1",
       "expect": "valid",
-      "canonicalSHA256": "1c94a8df96552e18b7072366541ea37b83661aefabbcc8b7e581919e0170fddb"
+      "canonicalSHA256": "93b23014cfb9e79fb4a11ba70340b65ebee5b1ad722d318e68930c541f9078b7"
+    },
+    {
+      "path": "local-xpc-interactive-webrtc-transport-v0.1.json",
+      "kind": "localXPC.interactiveWebRTCTransport.v0.1",
+      "expect": "valid",
+      "canonicalSHA256": "c571a966bd7cfe3c34d33cbb09768fadcd5bb09e6cd841b7ca2b92f0f1ea5abf"
     },
     {
       "path": "local-xpc-interactive-admission-transport-v0.1.json",
       "kind": "localXPC.interactiveAdmissionTransport.v0.1",
       "expect": "valid",
-      "canonicalSHA256": "53c586eaff8c2055dfdb3b72be08636278ee10fc3054555db32eb7ef33f70b35"
+      "canonicalSHA256": "fee035e322711b5d4e40425bb53ae495d4c932d50756667e49fcea2a0ea4a723"
     },
     {
       "path": "local-xpc-interactive-role-data-transport-v0.1.json",
       "kind": "localXPC.interactiveRoleDataTransport.v0.1",
       "expect": "valid",
-      "canonicalSHA256": "3f1b43bb66973399949b5bed1234bb9aeca557740088923522b9a29fd901fc73"
+      "canonicalSHA256": "733d522531cbdf1ff898cb5ce10782b8de207568e767ddd200c60e992f65672c"
     },
     {
       "path": "mac-interactive-platform-effects-v0.1.json",
@@ -281,7 +287,7 @@
       "path": "host-interactive-role-data-plane-v0.1.json",
       "kind": "hostNetwork.interactiveRoleDataPlane.v0.1",
       "expect": "valid",
-      "canonicalSHA256": "e0493f64005973e06bfbdc034d1229c4dfb58a7d0081ab6df2041b7e0111ab4f"
+      "canonicalSHA256": "14e05906230bce36557487273fab082daff9500353d4b6a42c7959dc780c59cd"
     },
     {
       "path": "client-configured-routes-v0.1.json",
@@ -374,10 +380,16 @@
       "canonicalSHA256": "17af4431a47c1cfa1cc53b656f6bafc28bc949e4547de0c197991dfeac9aead4"
     },
     {
+      "path": "valid/interactive-display-catalog-response.json",
+      "kind": "interactive.display.catalog.response",
+      "expect": "valid",
+      "canonicalSHA256": "1c1a82724978e878759dc9aaf91093313e3b28231c5a70895fcba11adbacf1e9"
+    },
+    {
       "path": "valid/interactive-surface-targets-response.json",
       "kind": "interactive.surface.targets.response",
       "expect": "valid",
-      "canonicalSHA256": "34eb72c6d03719468fa5c3d91585c9729249f610ccd156b1f4a0544f166d226f"
+      "canonicalSHA256": "7104e3d35663053d689f6d306a8a565f19c414d2369c0859aaef7f39478bdc7d"
     },
     {
       "path": "valid/interactive-surface-selected.json",
@@ -396,6 +408,12 @@
       "kind": "interactive.surface.focusChanged",
       "expect": "valid",
       "canonicalSHA256": "4f2d9a9c4d6f5041c0ab790c65834992cb13b0204573cc703e7c29966f091504"
+    },
+    {
+      "path": "valid/interactive-focus-owner-policy.json",
+      "kind": "interactive.focus.owner-policy",
+      "expect": "valid",
+      "canonicalSHA256": "b5752826b9ef6c2ebdeeead96de457b4b04941dcddde44cc6337d66ededd1e37"
     },
     {
       "path": "invalid/status-snapshot-unknown-field.json",
@@ -484,6 +502,204 @@
       "kind": "interactive.input",
       "expect": "valid",
       "canonicalSHA256": "8aad771d0523209ec5eabe93caa867124eacb06e8cad5ee5932fe64973f6f1ca"
+    },
+    {
+      "path": "valid/interactive-webrtc-media-lease.json",
+      "kind": "interactive.webRTCMediaLease.v0.1",
+      "expect": "valid",
+      "canonicalSHA256": "da69e5ee85fed0fd53eec34b81853ffa5a5bb7b6e16800a2b9d70abf31ff876a"
+    },
+    {
+      "path": "valid/interactive-media-offer-request.json",
+      "kind": "interactive.media.offer.request",
+      "expect": "valid",
+      "canonicalSHA256": "4e0fd37f61789aeaaba300609d1254e9a580fd4e4f2f47a5186056f0d1fa8ea2"
+    },
+    {
+      "path": "valid/interactive-media-offer.json",
+      "kind": "interactive.media.offer",
+      "expect": "valid",
+      "canonicalSHA256": "8e51370bf29c10022031e8856aeb1379ed4f59782fb06ad33ccfc713ce837476"
+    },
+    {
+      "path": "valid/interactive-media-answer.json",
+      "kind": "interactive.media.answer",
+      "expect": "valid",
+      "canonicalSHA256": "f760247556ea1e252c77f8dd98405c6735876b4accb378b7d3a2911e5301f6e5"
+    },
+    {
+      "path": "valid/interactive-media-ready.json",
+      "kind": "interactive.media.ready",
+      "expect": "valid",
+      "canonicalSHA256": "28ec2b347cb61fd00d3f9dfcae012e8fdd040ba3c241aa79f5baf11804a9a500"
+    },
+    {
+      "path": "invalid/interactive-media-offer-fingerprint-mismatch.json",
+      "kind": "interactive.media.offer",
+      "expect": "invalid",
+      "canonicalSHA256": "dfde36c7603f35619c1f431f5cbebf8fb6fc8c88f7be1547cc868ed02703f0b5"
+    },
+    {
+      "path": "invalid/interactive-media-offer-no-candidate.json",
+      "kind": "interactive.media.offer",
+      "expect": "invalid",
+      "canonicalSHA256": "d5725d4a1f22cd14b66851fb192366a0d161a2ff5c5a9cfa4a857dc5d1074b6f"
+    },
+    {
+      "path": "invalid/interactive-media-answer-unsafe-generation.json",
+      "kind": "interactive.media.answer",
+      "expect": "invalid",
+      "canonicalSHA256": "824e80badd0bef2231b170545f1ee57a8cf41c502f01a1c3fbdf81db78bcc774"
+    },
+    {
+      "path": "valid/native-video-lifecycle.json",
+      "kind": "interactive.nativeVideoLifecycle.v0.1",
+      "expect": "valid",
+      "canonicalSHA256": "202c850a03f73d7f3828a83d9292f107da974aa233b3cee4b6951a5fde9daf2d"
+    },
+    {
+      "path": "crypto/native-video-enrollment-v0.1.json",
+      "kind": "crypto.nativeVideoEnrollment.v0.1",
+      "expect": "valid",
+      "canonicalSHA256": "e5640323269b519e906ead9bbf3531143da90c773a2a3798959012066f8a088f"
+    },
+    {
+      "path": "valid/native-video-enrollment-admission.json",
+      "kind": "interactive.nativeVideoEnrollmentAdmission.v0.1",
+      "expect": "valid",
+      "canonicalSHA256": "331832645f60bfc1e4a508555fb3914fc1cdaff05838f65b3883c3298c2894aa"
+    },
+    {
+      "path": "crypto/native-video-enrollment-coordinator-v0.1.json",
+      "kind": "crypto.nativeVideoEnrollmentCoordinator.v0.1",
+      "expect": "valid",
+      "canonicalSHA256": "711e87ad4db0b13b69ddd9082a725b6a58dac54ea9eb31082c57561fc1f25369"
+    },
+    {
+      "path": "valid/native-video-enroll-request.json",
+      "kind": "interactive.native.enroll.request",
+      "expect": "valid",
+      "canonicalSHA256": "a825320ed0b82604ebf71e341f7980f3e65a0adde3c4b704f6db485aced94d2a"
+    },
+    {
+      "path": "valid/native-video-enroll-challenge.json",
+      "kind": "interactive.native.enroll.challenge",
+      "expect": "valid",
+      "canonicalSHA256": "deb277317eef646b39615ff2c76e37a746b9f8dcb36a1970057360e612889934"
+    },
+    {
+      "path": "valid/native-video-enroll-proof.json",
+      "kind": "interactive.native.enroll.proof",
+      "expect": "valid",
+      "canonicalSHA256": "519773822e3e8cbdb7f62fc1171790334ca0bcd1b76157f23b57bae551e9eaef"
+    },
+    {
+      "path": "valid/native-video-ready.json",
+      "kind": "interactive.native.ready",
+      "expect": "valid",
+      "canonicalSHA256": "72f2aa82bcb450558cad23a0e1bea6c83bc1056f01cc56ea2e421eb05ed3b6a2"
+    },
+    {
+      "path": "valid/native-video-cancel.json",
+      "kind": "interactive.native.cancel",
+      "expect": "valid",
+      "canonicalSHA256": "7902a8a176ec33072565030cc1c899689feef2bce09a7529769b80f81e6fba53"
+    },
+    {
+      "path": "valid/native-video-cancelled.json",
+      "kind": "interactive.native.cancelled",
+      "expect": "valid",
+      "canonicalSHA256": "87e054c5d679a0adf9892afa96bfad83b0265a52930c9f4471cff3320279958d"
+    },
+    {
+      "path": "valid/native-client-launch-admission.json",
+      "kind": "interactive.nativeClientLaunchAdmission.v0.1",
+      "expect": "valid",
+      "canonicalSHA256": "60ec39a8e6b06e263c1a90ffd1342191fe6534ae4e04f406ea11798dc6a911f6"
+    },
+    {
+      "path": "valid/managed-native-host-admission.json",
+      "kind": "interactive.managedNativeHostAdmission.v0.1",
+      "expect": "valid",
+      "canonicalSHA256": "8c749970fa41b7940e42a68a1c513ec8b349b107b947ab14ba9c2fc0d579f6e2"
+    },
+    {
+      "path": "local-xpc-native-runtime-snapshot-v0.1.json",
+      "kind": "interactive.localNativeRuntimeSnapshot.v0.1",
+      "expect": "valid",
+      "canonicalSHA256": "abe2b2459a9a137f9e5aff3bf8f75e2433bd565ab6fd389f5845ae2f9be05b20"
+    },
+    {
+      "path": "local-xpc-native-backend-v0.1.json",
+      "kind": "interactive.localNativeBackend.v0.1",
+      "expect": "valid",
+      "canonicalSHA256": "804694c3650e69c6ee080c88f6ed05e5bc98c3ddf6ee066ec10f247467b44469"
+    },
+    {
+      "path": "valid/native-video-content-geometry.json",
+      "kind": "interactive.nativeVideoContentGeometry.v0.1",
+      "expect": "valid",
+      "canonicalSHA256": "cbf73c43ed14264d3b32369c1c9110deedb57efa169bda44e3f264af1de8cda7"
+    },
+    {
+      "path": "valid/native-backend-capture-evidence.json",
+      "kind": "nativeVideo.captureEvidence.v0.1",
+      "expect": "valid",
+      "canonicalSHA256": "faf197a48a4599dd29e27a87fea5ea319877cb35f82e26861c3323d04012b285"
+    },
+    {
+      "path": "valid/native-video-present-request.json",
+      "kind": "interactive.native.present.request",
+      "expect": "valid",
+      "canonicalSHA256": "398160a0ec4639940a61af65064acfa44cb04b3916f11c6bb65c69adf82844fe"
+    },
+    {
+      "path": "valid/native-video-present-receipt.json",
+      "kind": "interactive.native.present.receipt",
+      "expect": "valid",
+      "canonicalSHA256": "10b3b18f9d1499602bb9361dc9e443ab58e70b93b55bb4e57420d9e6f957a8ef"
+    },
+    {
+      "path": "valid/native-input-posting.json",
+      "kind": "nativeInput.posting.v0.1",
+      "expect": "valid",
+      "canonicalSHA256": "2539f8aaf16b4dd58d982ffa5a52e35853456be89a20f25837dc3ae0f7f639eb"
+    },
+    {
+      "path": "valid/normal-native-simulator-development.json",
+      "kind": "interactive.normalNativeSimulatorDevelopment.v0.1",
+      "expect": "valid",
+      "canonicalSHA256": "0bb01e503ab15980e8e6533f111271f78faf3cc97b07a4259d73f468e4baf9c4"
+    },
+    {
+      "path": "client-observe-liveness-priority-v0.1.json",
+      "kind": "client.observeLivenessPriority.v0.1",
+      "expect": "valid",
+      "canonicalSHA256": "f58f308b0c71099594826bf5287e2d4b56c2b172c0ca8359c2abec3b5e75ec1d"
+    },
+    {
+      "path": "client-initial-acknowledgement-ordering-v0.1.json",
+      "kind": "client.initialAcknowledgementOrdering.v0.1",
+      "expect": "valid",
+      "canonicalSHA256": "bae1d44ac15a447dfba89950575dcbc2587ce175d8840355d4be2a65f0131e4d"
+    },
+    {
+      "path": "native-selected-capture-projection-v0.1.json",
+      "kind": "native.selectedCaptureProjection.v0.1",
+      "expect": "valid",
+      "canonicalSHA256": "c349c7ac2b29a2e7e0f061a02a7aabb6635430815409cfec67d55c1b54995d25"
+    },
+    {
+      "path": "native-selected-stream-lifecycle-v0.1.json",
+      "kind": "native.selectedStreamLifecycle.v0.1",
+      "expect": "valid",
+      "canonicalSHA256": "8f5502bd9780d8ebb325461b5a594f090d13ba35f5ac09191d60c6d5619c9284"
+    },
+    {
+      "path": "native-selected-capture-context-v0.1.json",
+      "kind": "native.privateSelectedCaptureContext.v0.1",
+      "expect": "valid",
+      "canonicalSHA256": "52a4b92a15a048e441cb38334501a99f48b64bb9082039d52f309627269f5b80"
     }
   ]
 }

@@ -1,0 +1,107 @@
+{
+  "profile": "maccompanion.native-video-enrollment-admission.v0.1",
+  "cryptoFixture": "crypto/native-video-enrollment-v0.1.json",
+  "issuedAtMonotonicMilliseconds": 1000,
+  "controlExpiresAtMonotonicMilliseconds": 16000,
+  "cases": [
+    {
+      "id": "valid-once",
+      "steps": [
+        "valid",
+        "valid"
+      ],
+      "expect": [
+        true,
+        false
+      ]
+    },
+    {
+      "id": "bad-signature-consumes",
+      "steps": [
+        "badSignature",
+        "valid"
+      ],
+      "expect": [
+        false,
+        false
+      ]
+    },
+    {
+      "id": "revoked-binding",
+      "steps": [
+        "wrongBinding",
+        "valid"
+      ],
+      "expect": [
+        false,
+        false
+      ]
+    },
+    {
+      "id": "wrong-surface",
+      "steps": [
+        "wrongSurface",
+        "valid"
+      ],
+      "expect": [
+        false,
+        false
+      ]
+    },
+    {
+      "id": "wrong-session-key",
+      "steps": [
+        "wrongKey",
+        "valid"
+      ],
+      "expect": [
+        false,
+        false
+      ]
+    },
+    {
+      "id": "missing-authority",
+      "steps": [
+        "missingAuthority",
+        "valid"
+      ],
+      "expect": [
+        false,
+        false
+      ]
+    },
+    {
+      "id": "deadline-boundary",
+      "steps": [
+        "expired",
+        "valid"
+      ],
+      "expect": [
+        false,
+        false
+      ]
+    },
+    {
+      "id": "clock-before-issuance",
+      "steps": [
+        "beforeIssue",
+        "valid"
+      ],
+      "expect": [
+        false,
+        false
+      ]
+    },
+    {
+      "id": "cancelled",
+      "steps": [
+        "cancel",
+        "valid"
+      ],
+      "expect": [
+        false,
+        false
+      ]
+    }
+  ]
+}

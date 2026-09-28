@@ -499,6 +499,11 @@ public final class MacLocalXPCServerV1:
         case focusSnapshot(LocalInteractiveFocusSnapshotCommandV1)
         case displayCatalog(LocalInteractiveDisplayCatalogCommandV1)
         case displaySelect(LocalInteractiveDisplaySelectCommandV1)
+        case nativeBackend(LocalInteractiveNativeBackendCommandV1)
+        case nativeSnapshot(LocalInteractiveNativeSnapshotCommandV1)
+        case webRTCOffer(LocalInteractiveWebRTCOfferCommandV1)
+        case webRTCAnswer(LocalInteractiveWebRTCAnswerCommandV1)
+        case webRTCClose(LocalInteractiveWebRTCCloseCommandV1)
 
         var kind: MacLocalXPCInteractiveLeaseCommandKindV1 {
             switch self {
@@ -514,6 +519,11 @@ public final class MacLocalXPCServerV1:
             case .focusSnapshot: .focusSnapshot
             case .displayCatalog: .displayCatalog
             case .displaySelect: .displaySelect
+            case .nativeBackend: .nativeBackend
+            case .nativeSnapshot: .nativeSnapshot
+            case .webRTCOffer: .webRTCOffer
+            case .webRTCAnswer: .webRTCAnswer
+            case .webRTCClose: .webRTCClose
             }
         }
 
@@ -528,7 +538,8 @@ public final class MacLocalXPCServerV1:
                 .applyInteractiveSurface
             case .focusSnapshot:
                 .applyInteractiveSurface
-            case .displayCatalog, .displaySelect:
+            case .displayCatalog, .displaySelect,
+                 .nativeBackend, .nativeSnapshot, .webRTCOffer, .webRTCAnswer, .webRTCClose:
                 .applyInteractiveSurface
             }
         }
@@ -2158,6 +2169,168 @@ public final class MacLocalXPCServerV1:
         }
     }
 
+    public func nativeBackend(_ command: LocalInteractiveNativeBackendCommandV1) async throws -> LocalInteractiveNativeBackendReceiptV1 {
+        try await nativeBackend(command, endpointBinding: nil)
+    }
+    package func nativeBackend(generation: UInt64, endpointToken: UUID, command: LocalInteractiveNativeBackendCommandV1) async throws -> LocalInteractiveNativeBackendReceiptV1 {
+        try await nativeBackend(command, endpointBinding: .init(generation: generation, endpointToken: endpointToken))
+    }
+    private func nativeBackend(_ command: LocalInteractiveNativeBackendCommandV1,
+        endpointBinding: MacLocalXPCInteractiveLeaseEndpointBindingV1?) async throws -> LocalInteractiveNativeBackendReceiptV1 {
+        let payload = try encodeInteractiveLeasePayload { try LocalInteractiveLeaseWireCodecV1.encodeNativeBackendCommand(command) }
+        let reply = try await sendInteractiveLeaseCommand(command: .nativeBackend(command), payload: payload, endpointBinding: endpointBinding)
+        do {
+            guard let reply else { throw MacLocalXPCInteractiveLeaseErrorV1.malformedOrTransportError }
+            let receipt = try LocalInteractiveLeaseWireCodecV1.decodeNativeBackendReceipt(reply)
+            try receipt.validate(against: command)
+            return receipt
+        } catch {
+            cancelPeerAfterMalformedInteractiveReply(endpointBinding: endpointBinding)
+            throw MacLocalXPCInteractiveLeaseErrorV1.malformedOrTransportError
+        }
+    }
+
+    public func nativeRuntimeSnapshot(_ command: LocalInteractiveNativeSnapshotCommandV1) async throws -> LocalInteractiveNativeSnapshotReceiptV1 {
+        try await nativeRuntimeSnapshot(command, endpointBinding: nil)
+    }
+    package func nativeRuntimeSnapshot(generation: UInt64, endpointToken: UUID, command: LocalInteractiveNativeSnapshotCommandV1) async throws -> LocalInteractiveNativeSnapshotReceiptV1 {
+        try await nativeRuntimeSnapshot(command, endpointBinding: .init(generation: generation, endpointToken: endpointToken))
+    }
+    private func nativeRuntimeSnapshot(_ command: LocalInteractiveNativeSnapshotCommandV1,
+        endpointBinding: MacLocalXPCInteractiveLeaseEndpointBindingV1?) async throws -> LocalInteractiveNativeSnapshotReceiptV1 {
+        let payload = try encodeInteractiveLeasePayload { try LocalInteractiveLeaseWireCodecV1.encodeNativeSnapshotCommand(command) }
+        let reply = try await sendInteractiveLeaseCommand(command: .nativeSnapshot(command), payload: payload, endpointBinding: endpointBinding)
+        do {
+            guard let reply else { throw MacLocalXPCInteractiveLeaseErrorV1.malformedOrTransportError }
+            let receipt = try LocalInteractiveLeaseWireCodecV1.decodeNativeSnapshotReceipt(reply)
+            try receipt.validate(against: command)
+            return receipt
+        } catch {
+            cancelPeerAfterMalformedInteractiveReply(endpointBinding: endpointBinding)
+            throw MacLocalXPCInteractiveLeaseErrorV1.malformedOrTransportError
+        }
+    }
+
+    public func makeWebRTCOffer(
+        _ command: LocalInteractiveWebRTCOfferCommandV1
+    ) async throws -> LocalInteractiveWebRTCOfferReceiptV1 {
+        try await makeWebRTCOffer(command, endpointBinding: nil)
+    }
+
+    package func makeWebRTCOffer(
+        generation: UInt64,
+        endpointToken: UUID,
+        command: LocalInteractiveWebRTCOfferCommandV1
+    ) async throws -> LocalInteractiveWebRTCOfferReceiptV1 {
+        try await makeWebRTCOffer(command, endpointBinding: .init(
+            generation: generation, endpointToken: endpointToken
+        ))
+    }
+
+    private func makeWebRTCOffer(
+        _ command: LocalInteractiveWebRTCOfferCommandV1,
+        endpointBinding: MacLocalXPCInteractiveLeaseEndpointBindingV1?
+    ) async throws -> LocalInteractiveWebRTCOfferReceiptV1 {
+        let payload = try encodeInteractiveLeasePayload {
+            try LocalInteractiveLeaseWireCodecV1
+                .encodeWebRTCOfferCommand(command)
+        }
+        let reply = try await sendInteractiveLeaseCommand(
+            command: .webRTCOffer(command), payload: payload,
+            endpointBinding: endpointBinding
+        )
+        do {
+            guard let reply else {
+                throw MacLocalXPCInteractiveLeaseErrorV1
+                    .malformedOrTransportError
+            }
+            let receipt = try LocalInteractiveLeaseWireCodecV1
+                .decodeWebRTCOfferReceipt(reply)
+            try receipt.validate(against: command)
+            return receipt
+        } catch {
+            cancelPeerAfterMalformedInteractiveReply(
+                endpointBinding: endpointBinding
+            )
+            throw MacLocalXPCInteractiveLeaseErrorV1
+                .malformedOrTransportError
+        }
+    }
+
+    public func acceptWebRTCAnswer(
+        _ command: LocalInteractiveWebRTCAnswerCommandV1
+    ) async throws {
+        try await acceptWebRTCAnswer(command, endpointBinding: nil)
+    }
+
+    package func acceptWebRTCAnswer(
+        generation: UInt64,
+        endpointToken: UUID,
+        command: LocalInteractiveWebRTCAnswerCommandV1
+    ) async throws {
+        try await acceptWebRTCAnswer(command, endpointBinding: .init(
+            generation: generation, endpointToken: endpointToken
+        ))
+    }
+
+    private func acceptWebRTCAnswer(
+        _ command: LocalInteractiveWebRTCAnswerCommandV1,
+        endpointBinding: MacLocalXPCInteractiveLeaseEndpointBindingV1?
+    ) async throws {
+        let payload = try encodeInteractiveLeasePayload {
+            try LocalInteractiveLeaseWireCodecV1
+                .encodeWebRTCAnswerCommand(command)
+        }
+        let reply = try await sendInteractiveLeaseCommand(
+            command: .webRTCAnswer(command), payload: payload,
+            endpointBinding: endpointBinding
+        )
+        guard reply == nil else {
+            cancelPeerAfterMalformedInteractiveReply(
+                endpointBinding: endpointBinding
+            )
+            throw MacLocalXPCInteractiveLeaseErrorV1
+                .malformedOrTransportError
+        }
+    }
+
+    public func closeWebRTC(
+        _ command: LocalInteractiveWebRTCCloseCommandV1
+    ) async throws {
+        try await closeWebRTC(command, endpointBinding: nil)
+    }
+
+    package func closeWebRTC(
+        generation: UInt64,
+        endpointToken: UUID,
+        command: LocalInteractiveWebRTCCloseCommandV1
+    ) async throws {
+        try await closeWebRTC(command, endpointBinding: .init(
+            generation: generation, endpointToken: endpointToken
+        ))
+    }
+
+    private func closeWebRTC(
+        _ command: LocalInteractiveWebRTCCloseCommandV1,
+        endpointBinding: MacLocalXPCInteractiveLeaseEndpointBindingV1?
+    ) async throws {
+        let payload = try encodeInteractiveLeasePayload {
+            try LocalInteractiveLeaseWireCodecV1
+                .encodeWebRTCCloseCommand(command)
+        }
+        let reply = try await sendInteractiveLeaseCommand(
+            command: .webRTCClose(command), payload: payload,
+            endpointBinding: endpointBinding
+        )
+        guard reply == nil else {
+            cancelPeerAfterMalformedInteractiveReply(
+                endpointBinding: endpointBinding
+            )
+            throw MacLocalXPCInteractiveLeaseErrorV1
+                .malformedOrTransportError
+        }
+    }
+
     private func encodeInteractiveLeasePayload(
         _ body: () throws -> Data
     ) throws -> Data {
@@ -2330,16 +2503,22 @@ public final class MacLocalXPCServerV1:
         pending.deadline = nil
 
         let validPayloadShape: Bool = switch transaction.kind {
+        case .surfaceTargets:
+            payload.map {
+                !$0.isEmpty
+                    && $0.count <= LocalInteractiveLeaseWireCodecV1
+                        .maximumSurfaceTargetsReceiptBytes
+            } ?? false
         case .prepareInitialDesktop, .install, .revoke,
-                .surfaceTargets, .surfaceResolve, .surfaceTransition,
+                .surfaceResolve, .surfaceTransition,
                 .surfaceAcknowledgement, .surfaceFailure, .focusSnapshot,
-                .displayCatalog, .displaySelect:
+                .displayCatalog, .displaySelect, .nativeBackend, .nativeSnapshot, .webRTCOffer:
             payload.map {
                 !$0.isEmpty
                     && $0.count <= LocalInteractiveLeaseWireCodecV1
                         .maximumEncodedBytes
             } ?? false
-        case .renew:
+        case .renew, .webRTCAnswer, .webRTCClose:
             payload == nil
         }
         guard !malformedOrTransportError, validPayloadShape else {
@@ -2460,6 +2639,16 @@ public final class MacLocalXPCServerV1:
             MCLocalXPCInteractiveLeaseCommandDisplayCatalog
         case .displaySelect:
             MCLocalXPCInteractiveLeaseCommandDisplaySelect
+        case .nativeBackend:
+            MCLocalXPCInteractiveLeaseCommandNativeBackend
+        case .nativeSnapshot:
+            MCLocalXPCInteractiveLeaseCommandNativeSnapshot
+        case .webRTCOffer:
+            MCLocalXPCInteractiveLeaseCommandWebRTCOffer
+        case .webRTCAnswer:
+            MCLocalXPCInteractiveLeaseCommandWebRTCAnswer
+        case .webRTCClose:
+            MCLocalXPCInteractiveLeaseCommandWebRTCClose
         }
     }
 
@@ -5042,6 +5231,11 @@ public final class MacLocalXPCClientV1:
         case focusSnapshot(LocalInteractiveFocusSnapshotCommandV1)
         case displayCatalog(LocalInteractiveDisplayCatalogCommandV1)
         case displaySelect(LocalInteractiveDisplaySelectCommandV1)
+        case nativeBackend(LocalInteractiveNativeBackendCommandV1)
+        case nativeSnapshot(LocalInteractiveNativeSnapshotCommandV1)
+        case webRTCOffer(LocalInteractiveWebRTCOfferCommandV1)
+        case webRTCAnswer(LocalInteractiveWebRTCAnswerCommandV1)
+        case webRTCClose(LocalInteractiveWebRTCCloseCommandV1)
 
         var kind: MacLocalXPCInteractiveLeaseCommandKindV1 {
             switch self {
@@ -5057,6 +5251,11 @@ public final class MacLocalXPCClientV1:
             case .focusSnapshot: .focusSnapshot
             case .displayCatalog: .displayCatalog
             case .displaySelect: .displaySelect
+            case .nativeBackend: .nativeBackend
+            case .nativeSnapshot: .nativeSnapshot
+            case .webRTCOffer: .webRTCOffer
+            case .webRTCAnswer: .webRTCAnswer
+            case .webRTCClose: .webRTCClose
             }
         }
 
@@ -5071,7 +5270,8 @@ public final class MacLocalXPCClientV1:
                 .applyInteractiveSurface
             case .focusSnapshot:
                 .applyInteractiveSurface
-            case .displayCatalog, .displaySelect:
+            case .displayCatalog, .displaySelect,
+                 .nativeBackend, .nativeSnapshot, .webRTCOffer, .webRTCAnswer, .webRTCClose:
                 .applyInteractiveSurface
             }
         }
@@ -5094,6 +5294,11 @@ public final class MacLocalXPCClientV1:
         case focusSnapshot(LocalInteractiveFocusSnapshotReceiptV1)
         case displayCatalog(LocalInteractiveDisplayCatalogReceiptV1)
         case displaySelected(LocalInteractiveDisplaySelectedReceiptV1)
+        case nativeBackend(LocalInteractiveNativeBackendReceiptV1)
+        case nativeSnapshot(LocalInteractiveNativeSnapshotReceiptV1)
+        case webRTCOffer(LocalInteractiveWebRTCOfferReceiptV1)
+        case webRTCAnswered
+        case webRTCClosed
     }
 
     private final class PendingIncomingInteractiveLeaseCommand:
@@ -7070,6 +7275,25 @@ public final class MacLocalXPCClientV1:
                     try LocalInteractiveLeaseWireCodecV1
                         .decodeDisplaySelectCommand(payload)
                 )
+            case MCLocalXPCInteractiveLeaseCommandNativeBackend:
+                return .nativeBackend(try LocalInteractiveLeaseWireCodecV1.decodeNativeBackendCommand(payload))
+            case MCLocalXPCInteractiveLeaseCommandNativeSnapshot:
+                return .nativeSnapshot(try LocalInteractiveLeaseWireCodecV1.decodeNativeSnapshotCommand(payload))
+            case MCLocalXPCInteractiveLeaseCommandWebRTCOffer:
+                return .webRTCOffer(
+                    try LocalInteractiveLeaseWireCodecV1
+                        .decodeWebRTCOfferCommand(payload)
+                )
+            case MCLocalXPCInteractiveLeaseCommandWebRTCAnswer:
+                return .webRTCAnswer(
+                    try LocalInteractiveLeaseWireCodecV1
+                        .decodeWebRTCAnswerCommand(payload)
+                )
+            case MCLocalXPCInteractiveLeaseCommandWebRTCClose:
+                return .webRTCClose(
+                    try LocalInteractiveLeaseWireCodecV1
+                        .decodeWebRTCCloseCommand(payload)
+                )
             default:
                 return nil
             }
@@ -7210,6 +7434,32 @@ public final class MacLocalXPCClientV1:
                                     monotonicNowNanoseconds()
                             )
                     )
+                case .nativeBackend(let value):
+                    result = .nativeBackend(try await interactiveLeaseHandler.nativeBackend(
+                        value, nowMonotonicNanoseconds: monotonicNowNanoseconds()))
+                case .nativeSnapshot(let value):
+                    result = .nativeSnapshot(try await interactiveLeaseHandler.nativeRuntimeSnapshot(
+                        value, nowMonotonicNanoseconds: monotonicNowNanoseconds()))
+                case .webRTCOffer(let value):
+                    result = .webRTCOffer(
+                        try await interactiveLeaseHandler
+                            .makeWebRTCOffer(
+                                value,
+                                nowMonotonicNanoseconds:
+                                    monotonicNowNanoseconds()
+                            )
+                    )
+                case .webRTCAnswer(let value):
+                    try await interactiveLeaseHandler
+                        .acceptWebRTCAnswer(
+                            value,
+                            nowMonotonicNanoseconds:
+                                monotonicNowNanoseconds()
+                        )
+                    result = .webRTCAnswered
+                case .webRTCClose(let value):
+                    try await interactiveLeaseHandler.closeWebRTC(value)
+                    result = .webRTCClosed
                 }
                 queue.async { [weak self] in
                     self?.completeIncomingInteractiveLeaseCommand(
@@ -7361,6 +7611,19 @@ public final class MacLocalXPCClientV1:
                 try receipt.validate(against: command)
                 return try LocalInteractiveLeaseWireCodecV1
                     .encodeDisplaySelectedReceipt(receipt)
+            case (.nativeBackend(let command), .nativeBackend(let receipt)):
+                try receipt.validate(against: command)
+                return try LocalInteractiveLeaseWireCodecV1.encodeNativeBackendReceipt(receipt)
+            case (.nativeSnapshot(let command), .nativeSnapshot(let receipt)):
+                try receipt.validate(against: command)
+                return try LocalInteractiveLeaseWireCodecV1.encodeNativeSnapshotReceipt(receipt)
+            case (.webRTCOffer(let command), .webRTCOffer(let receipt)):
+                try receipt.validate(against: command)
+                return try LocalInteractiveLeaseWireCodecV1
+                    .encodeWebRTCOfferReceipt(receipt)
+            case (.webRTCAnswer, .webRTCAnswered),
+                 (.webRTCClose, .webRTCClosed):
+                return Data()
             default:
                 return nil
             }
@@ -7435,6 +7698,16 @@ public final class MacLocalXPCClientV1:
             MCLocalXPCInteractiveLeaseCommandDisplayCatalog
         case .displaySelect:
             MCLocalXPCInteractiveLeaseCommandDisplaySelect
+        case .nativeBackend:
+            MCLocalXPCInteractiveLeaseCommandNativeBackend
+        case .nativeSnapshot:
+            MCLocalXPCInteractiveLeaseCommandNativeSnapshot
+        case .webRTCOffer:
+            MCLocalXPCInteractiveLeaseCommandWebRTCOffer
+        case .webRTCAnswer:
+            MCLocalXPCInteractiveLeaseCommandWebRTCAnswer
+        case .webRTCClose:
+            MCLocalXPCInteractiveLeaseCommandWebRTCClose
         }
     }
 

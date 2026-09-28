@@ -43,7 +43,7 @@ The Persistent Content Capture entitlement is managed. Apple says it enables VNC
 
 ### Open-source builds
 
-The intended source license is Apache-2.0 with a separate Mac Companion/Jenny Media trademark policy, both subject to legal review. GitHub private vulnerability reporting is the initial reporting channel; a company security address may later supplement or replace it. Because the remote repository is already public, further pushes and external contributions remain paused until those policies, a full-history review, and provider-side branch/secret/push protections are complete.
+The 2026-09-26 owner decision selects GPL-3.0 for combined product distribution, preserving applicable Apache-2.0 and upstream notices under `LICENSING.md`. Corresponding-source delivery, third-party terms, the intended Apple distribution channel, and the separate Mac Companion/Jenny Media trademark policy require review before external release. GitHub private vulnerability reporting is the initial reporting channel; a company security address may later supplement or replace it. Because the remote repository is already public, further pushes and external contributions remain paused until those policies, a full-history review, and provider-side branch/secret/push protections are complete.
 
 Publishing source does not publish Jenny Media's binary identity. Official Mac Companion releases alone use the Jenny Media bundle IDs, managed entitlement, Developer ID identity, notarization records, Sparkle feed, and App Store listing. A fork must choose its own product and bundle identities, request its own Apple capabilities, sign its own binaries, and configure an independent update feed.
 

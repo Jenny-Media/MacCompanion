@@ -1,0 +1,159 @@
+diff --git a/Limelight/Stream/Connection.m b/Limelight/Stream/Connection.m
+index 8ce40b6..7a35acf 100644
+--- a/Limelight/Stream/Connection.m
++++ b/Limelight/Stream/Connection.m
+@@ -8,6 +8,10 @@
+ 
+ #import "Connection.h"
+ #import "Utils.h"
++#if MACCOMPANION_REFERENCE_EMBEDDED_ENGINE
++@import CompanionMoonlightEngine;
++#import <CompanionMoonlightAdapter/CompanionMoonlightAdapter-Swift.h>
++#endif
+ 
+ #import <VideoToolbox/VideoToolbox.h>
+ 
+@@ -18,6 +22,11 @@
+ #include "opus_multistream.h"
+ 
+ @implementation Connection {
++#if MACCOMPANION_REFERENCE_EMBEDDED_ENGINE
++    id _embeddedVideo;
++    StreamConfiguration *_embeddedConfiguration;
++    BOOL _embeddedRetired;
++#endif
+     SERVER_INFORMATION _serverInfo;
+     STREAM_CONFIGURATION _streamConfig;
+     CONNECTION_LISTENER_CALLBACKS _clCallbacks;
+@@ -42,6 +51,7 @@ static SDL_AudioDeviceID audioDevice;
+ static OPUS_MULTISTREAM_CONFIGURATION audioConfig;
+ static void* audioBuffer;
+ static int audioFrameSize;
++static BOOL referenceSilentAudio;
+ 
+ static VideoDecoderRenderer* renderer;
+ 
+@@ -189,6 +199,12 @@ int DrSubmitDecodeUnit(PDECODE_UNIT decodeUnit)
+ 
+ int ArInit(int audioConfiguration, POPUS_MULTISTREAM_CONFIGURATION opusConfig, void* context, int flags)
+ {
++    referenceSilentAudio = getenv("MACCOMPANION_REFERENCE_SILENT_AUDIO") != NULL &&
++        strcmp(getenv("MACCOMPANION_REFERENCE_SILENT_AUDIO"), "1") == 0;
++    if (referenceSilentAudio) {
++        Log(LOG_I, @"MacCompanion reference: audio output explicitly disabled");
++        return 0;
++    }
+     int err;
+     SDL_AudioSpec want, have;
+     
+@@ -242,6 +258,10 @@ int ArInit(int audioConfiguration, POPUS_MULTISTREAM_CONFIGURATION opusConfig, v
+ 
+ void ArCleanup(void)
+ {
++    if (referenceSilentAudio) {
++        referenceSilentAudio = NO;
++        return;
++    }
+     if (opusDecoder != NULL) {
+         opus_multistream_decoder_destroy(opusDecoder);
+         opusDecoder = NULL;
+@@ -262,6 +282,9 @@ void ArCleanup(void)
+ 
+ void ArDecodeAndPlaySample(char* sampleData, int sampleLength)
+ {
++    if (referenceSilentAudio) {
++        return;
++    }
+     int decodeLen;
+     
+     // Don't queue if there's already more than 30 ms of audio data waiting
+@@ -353,6 +376,19 @@ void ClSetControllerLED(uint16_t controllerNumber, uint8_t r, uint8_t g, uint8_t
+ 
+ -(void) terminate
+ {
++#if MACCOMPANION_REFERENCE_EMBEDDED_ENGINE
++    if (getenv("MACCOMPANION_REFERENCE_EMBEDDED_ENGINE") != NULL) {
++        dispatch_async(dispatch_get_main_queue(), ^{
++            self->_embeddedRetired = YES;
++            [self->_embeddedVideo stopWithCompletion:^{
++                Log(LOG_I, @"MacCompanion embedded: native Stop drained");
++                self->_embeddedVideo = nil;
++                self->_embeddedConfiguration = nil;
++            }];
++        });
++        return;
++    }
++#endif
+     // Interrupt any action blocking LiStartConnection(). This is
+     // thread-safe and done outside initLock on purpose, since we
+     // won't be able to acquire it if LiStartConnection is in
+@@ -372,6 +408,9 @@ void ClSetControllerLED(uint16_t controllerNumber, uint8_t r, uint8_t g, uint8_t
+ -(id) initWithConfig:(StreamConfiguration*)config renderer:(VideoDecoderRenderer*)myRenderer connectionCallbacks:(id<ConnectionCallbacks>)callbacks
+ {
+     self = [super init];
++#if MACCOMPANION_REFERENCE_EMBEDDED_ENGINE
++    _embeddedConfiguration = config;
++#endif
+ 
+     // Use a lock to ensure that only one thread is initializing
+     // or deinitializing a connection at a time.
+@@ -477,6 +516,59 @@ void ClSetControllerLED(uint16_t controllerNumber, uint8_t r, uint8_t g, uint8_t
+ 
+ -(void) main
+ {
++#if MACCOMPANION_REFERENCE_EMBEDDED_ENGINE
++    if (getenv("MACCOMPANION_REFERENCE_EMBEDDED_ENGINE") != NULL) {
++        dispatch_sync(dispatch_get_main_queue(), ^{
++            if (self->_embeddedRetired) { return; }
++            StreamConfiguration *source = self->_embeddedConfiguration;
++            CompanionMoonlightVideoConfiguration *config = [CompanionMoonlightVideoConfiguration new];
++            config.host = [Utils addressPortStringToAddress:source.host];
++            config.appVersion = source.appVersion;
++            config.serverCodecModeSupport = source.serverCodecModeSupport;
++            config.sessionURL = source.rtspSessionUrl;
++            config.streamKey = source.riKey;
++            config.streamKeyID = source.riKeyId;
++            config.width = source.width;
++            config.height = source.height;
++            config.framesPerSecond = source.frameRate;
++            config.bitrateKbps = source.bitRate;
++            NSError *error;
++            void (^eventCallback)(CompanionMoonlightVideoEvent, int) = ^(CompanionMoonlightVideoEvent event, int code) {
++                    switch (event) {
++                    case CompanionMoonlightVideoEventConnected:
++                        Log(LOG_I, @"MacCompanion embedded: connection started");
++                        [_callbacks connectionStarted]; break;
++                    case CompanionMoonlightVideoEventFirstFrame:
++                        Log(LOG_I, @"MacCompanion embedded: first decoded video frame displayed");
++                        [_callbacks videoContentShown]; break;
++                    case CompanionMoonlightVideoEventFailed:
++                        [_callbacks launchFailed:[NSString stringWithFormat:@"Embedded video failed (%d)", code]]; break;
++                    case CompanionMoonlightVideoEventDisconnected:
++                        [_callbacks connectionTerminated:code]; break;
++                    }
++                };
++            BOOL started = NO;
++            if (getenv("MACCOMPANION_REFERENCE_NORMAL_SURFACE") != NULL) {
++                MacCompanionNativeSurfaceProbe *probe = [[MacCompanionNativeSurfaceProbe alloc]
++                    initWithConfiguration:config referenceView:[renderer companionReferenceView]
++                    event:eventCallback error:&error];
++                self->_embeddedVideo = probe;
++                started = [probe startAndReturnError:&error];
++                Log(LOG_I, @"MacCompanion embedded: normal UIKit surface selected (input disabled)");
++            } else {
++                CompanionMoonlightVideo *video = [[CompanionMoonlightVideo alloc] initWithConfiguration:config
++                    view:[renderer companionReferenceView] event:eventCallback error:&error];
++                self->_embeddedVideo = video;
++                started = [video start:&error];
++            }
++            if (!self->_embeddedVideo || !started) {
++                [_callbacks launchFailed:@"Embedded video could not start"];
++            }
++            self->_embeddedConfiguration = nil;
++        });
++        return;
++    }
++#endif
+     [initLock lock];
+     LiStartConnection(&_serverInfo,
+                       &_streamConfig,

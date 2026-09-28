@@ -33,6 +33,8 @@
     "valid null publication during desktop preparation prevents lease installation without retiring signed XPC or Observe",
     "request and success payloads are nonempty closed canonical JSON no larger than 4096 bytes",
     "transport replacement or loss immediately withdraws the matching visible admission without accepting stale invalidation",
+    "same-process transport replacement awaits old receiver and runtime cleanup, retains a closed old native-admission gate, and constructs fresh runtime authority only after the persistent indicator is inactive",
+    "the new transport publishes revision 1 under the same process UUID or a new replacement-process UUID and grants no prior session or input authority",
     "timeout, cancellation after send, malformed traffic, unknown fields, correlation mismatch, and concurrent publication terminate the generation",
     "publication grants no Observe, Act, Control, capture, input, media, route, pairing, or credential authority"
   ]

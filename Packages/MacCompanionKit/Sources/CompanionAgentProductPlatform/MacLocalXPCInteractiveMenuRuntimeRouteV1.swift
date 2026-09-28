@@ -113,6 +113,32 @@ private actor MacLocalXPCSerializedInteractiveLeaseSenderV1:
     ) async throws -> LocalInteractiveDisplaySelectedReceiptV1 {
         try await enqueue { try await $0.selectInteractiveDisplay(command) }
     }
+
+    func nativeBackend(_ command: LocalInteractiveNativeBackendCommandV1) async throws -> LocalInteractiveNativeBackendReceiptV1 {
+        try await enqueue { try await $0.nativeBackend(command) }
+    }
+
+    func nativeRuntimeSnapshot(_ command: LocalInteractiveNativeSnapshotCommandV1) async throws -> LocalInteractiveNativeSnapshotReceiptV1 {
+        try await enqueue { try await $0.nativeRuntimeSnapshot(command) }
+    }
+
+    func makeWebRTCOffer(
+        _ command: LocalInteractiveWebRTCOfferCommandV1
+    ) async throws -> LocalInteractiveWebRTCOfferReceiptV1 {
+        try await enqueue { try await $0.makeWebRTCOffer(command) }
+    }
+
+    func acceptWebRTCAnswer(
+        _ command: LocalInteractiveWebRTCAnswerCommandV1
+    ) async throws {
+        try await enqueue { try await $0.acceptWebRTCAnswer(command) }
+    }
+
+    func closeWebRTC(
+        _ command: LocalInteractiveWebRTCCloseCommandV1
+    ) async throws {
+        try await enqueue { try await $0.closeWebRTC(command) }
+    }
 }
 
 /// Product-layer type adapter that gives the pure Agent runtime owner only the
@@ -126,17 +152,89 @@ package struct MacLocalXPCInteractiveMenuRuntimeRouteV1:
     AgentInteractiveDisplayMenuRoutingV1,
     InteractiveSurfaceRuntimeRoutingV0,
     InteractiveSurfaceTargetResolvingV0,
-    InteractiveSurfaceTargetInventoryProvidingV0
+    InteractiveSurfaceTargetInventoryProvidingV0,
+    InteractiveWebRTCNegotiatingV0,
+    InteractiveNativeVideoRuntimeProvidingV0
 {
     private let sender: any MacLocalXPCInteractiveLeaseSendingV1
+    private let nativeBackendFactory: (@Sendable (InteractiveNativeVideoRuntimeSnapshotV0) async throws -> any InteractiveNativeVideoEnrollmentBackendV0)?
     private let identifier: @Sendable () -> UUID
 
     package init(
         sender: any MacLocalXPCInteractiveLeaseSendingV1,
-        identifier: @escaping @Sendable () -> UUID = { UUID() }
+        identifier: @escaping @Sendable () -> UUID = { UUID() },
+        nativeBackendFactory: (@Sendable (InteractiveNativeVideoRuntimeSnapshotV0) async throws -> any InteractiveNativeVideoEnrollmentBackendV0)? = nil
     ) {
         self.sender = MacLocalXPCSerializedInteractiveLeaseSenderV1(sender)
         self.identifier = identifier
+        self.nativeBackendFactory = nativeBackendFactory
+    }
+
+    package func snapshot(fence: InteractiveNativeVideoRequestFenceV0,
+        context: InteractiveSessionCommandContextV0) async throws -> InteractiveNativeVideoRuntimeSnapshotV0? {
+        guard fence.authorizationEpoch == context.authorizationEpoch else { return nil }
+        let command = try LocalInteractiveNativeSnapshotCommandV1(commandID: identifier(), fence: fence)
+        let receipt = try await sender.nativeRuntimeSnapshot(command)
+        try receipt.validate(against: command)
+        let value = receipt.snapshot
+        guard value.hostID == context.hostID, value.deviceID == context.deviceID,
+              value.isCurrent(nowMonotonicNanoseconds: DispatchTime.now().uptimeNanoseconds) else { return nil }
+        let binding = try InteractiveNativeVideoBindingV0(hostID: context.hostID, hostFingerprint: context.hostFingerprint,
+            clientID: context.clientID, primaryConnectionID: context.primaryConnectionID,
+            interactiveSessionID: fence.interactiveSessionID.rawValue, authorizationEpoch: Int64(context.authorizationEpoch.rawValue),
+            grantRevision: Int64(context.grantRevision.rawValue), policyRevision: Int64(context.policyRevision.rawValue),
+            controlGeneration: value.controlGeneration,
+            expiresAtMonotonicMilliseconds: value.sessionDeadlineMonotonicNanoseconds / 1_000_000)
+        let surface = try InteractiveNativeVideoSurfaceV0(surfaceID: fence.surfaceID.rawValue,
+            surfaceRevision: fence.surfaceRevision, coordinateSpaceRevision: fence.coordinateSpaceRevision,
+            encodedWidth: value.encodedWidth, encodedHeight: value.encodedHeight)
+        return .init(binding: binding, surface: surface,
+            logicalWidthPoints: value.logicalWidthPoints, logicalHeightPoints: value.logicalHeightPoints, rotation: value.rotation,
+            selectedDisplayID: value.selectedDisplayID,
+            visibleMenuAppGeneration: value.menuAppGeneration, visibleMenuAppRevision: value.menuAppRevision)
+    }
+
+    package func makeBackend(snapshot: InteractiveNativeVideoRuntimeSnapshotV0) async throws -> any InteractiveNativeVideoEnrollmentBackendV0 {
+        if let nativeBackendFactory { return try await nativeBackendFactory(snapshot) }
+        return MacLocalXPCNativeEnrollmentBackendV1(sender: sender, snapshot: snapshot)
+    }
+
+    package func makeOffer(
+        fence: InteractiveWebRTCNegotiationFenceV0,
+        context: InteractiveSessionCommandContextV0
+    ) async throws -> InteractiveWebRTCOfferBodyV0 {
+        guard fence.authorizationEpoch == context.authorizationEpoch else {
+            throw MacLocalXPCInteractiveLeaseErrorV1.unavailable
+        }
+        let command = try LocalInteractiveWebRTCOfferCommandV1(
+            commandID: identifier(), fence: fence
+        )
+        let receipt = try await sender.makeWebRTCOffer(command)
+        try receipt.validate(against: command)
+        return receipt.offer
+    }
+
+    package func acceptAnswer(
+        _ answer: InteractiveWebRTCAnswerBodyV0,
+        context: InteractiveSessionCommandContextV0
+    ) async throws {
+        guard answer.fence.authorizationEpoch
+                == context.authorizationEpoch else {
+            throw MacLocalXPCInteractiveLeaseErrorV1.unavailable
+        }
+        let command = try LocalInteractiveWebRTCAnswerCommandV1(
+            commandID: identifier(), answer: answer
+        )
+        try await sender.acceptWebRTCAnswer(command)
+    }
+
+    package func close(interactiveSessionID: UUID) async {
+        try? await sender.closeWebRTC(
+            LocalInteractiveWebRTCCloseCommandV1(
+                commandID: identifier(),
+                interactiveSessionID: interactiveSessionID
+            )
+        )
     }
 
     package func prepareInitialDesktop(

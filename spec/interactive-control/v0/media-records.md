@@ -2,6 +2,9 @@
 
 Status: normative binary framing. Channel authentication, credential construction, and session-control messages remain separate prerequisites.
 
+The candidate WebRTC adapter in `webrtc-media-adapter.md` does not change this
+v1 record format or authorize a WebRTC media channel in the release path.
+
 Each media record is one 96-byte header followed by exactly `payloadLength` bytes. Integers are unsigned big-endian. UUIDs are the 16 RFC 4122 bytes in network order. A receiver reads and validates the fixed header before allocating payload storage. Any mismatch closes the media channel.
 
 On the host, the role-pair data owner requests one complete menu-produced

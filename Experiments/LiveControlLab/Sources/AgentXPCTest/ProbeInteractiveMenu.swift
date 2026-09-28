@@ -9,6 +9,8 @@ import CompanionInteractiveShared
 import CompanionInteractiveWire
 import CompanionLocalXPCPlatform
 import CompanionMacApplicationPlatform
+import AppKit
+import CoreGraphics
 import CoreMedia
 import CoreVideo
 import Foundation
@@ -38,10 +40,19 @@ private struct ProbeInteractiveLeaseHandler: MacLocalXPCInteractiveLeaseHandling
     let base: MacInteractiveLeaseRuntimeAdapterV1
     let effects: ProbeInteractiveEffects
     let focus: SurfaceFocus
+    let syntheticNativeDesktopSelection: Bool
+    let displaySelection: MacInteractiveOpaqueDisplaySelectionV1?
+    let surfaceTargets: MacInteractiveSurfaceTargetOwnerV1?
 
-    init(base: MacInteractiveLeaseRuntimeAdapterV1, effects: ProbeInteractiveEffects) throws {
+    init(base: MacInteractiveLeaseRuntimeAdapterV1, effects: ProbeInteractiveEffects,
+         syntheticNativeDesktopSelection: Bool = false,
+         displaySelection: MacInteractiveOpaqueDisplaySelectionV1? = nil,
+         surfaceTargets: MacInteractiveSurfaceTargetOwnerV1? = nil) throws {
         self.base = base
         self.effects = effects
+        self.syntheticNativeDesktopSelection = syntheticNativeDesktopSelection
+        self.displaySelection = displaySelection
+        self.surfaceTargets = surfaceTargets
         focus = try SurfaceFocus(
             token: UUID(),
             revision: .init(rawValue: 1),
@@ -69,8 +80,16 @@ private struct ProbeInteractiveLeaseHandler: MacLocalXPCInteractiveLeaseHandling
         _ command: InteractiveRuntimeInstallCommandV0,
         nowMonotonicNanoseconds: UInt64
     ) async throws -> InteractiveRuntimeInstallReceiptV0 {
-        try await base.installInteractiveLease(
-            command, nowMonotonicNanoseconds: nowMonotonicNanoseconds)
+        FileHandle.standardError.write(Data("native-bootstrap-runtime-install-entered\n".utf8))
+        do {
+            let receipt = try await base.installInteractiveLease(command, nowMonotonicNanoseconds: nowMonotonicNanoseconds)
+            try await surfaceTargets?.bindInstalledLease(command)
+            FileHandle.standardError.write(Data("native-bootstrap-runtime-install-completed\n".utf8))
+            return receipt
+        } catch {
+            FileHandle.standardError.write(Data("native-bootstrap-runtime-install-failed type=\(String(reflecting: type(of: error)))\n".utf8))
+            throw error
+        }
     }
 
     func renewInteractiveLease(
@@ -79,6 +98,7 @@ private struct ProbeInteractiveLeaseHandler: MacLocalXPCInteractiveLeaseHandling
     ) async throws {
         try await base.renewInteractiveLease(
             renewal, nowMonotonicNanoseconds: nowMonotonicNanoseconds)
+        try await surfaceTargets?.adoptRenewedLease(renewal)
     }
 
     func revokeInteractiveLease(
@@ -91,7 +111,19 @@ private struct ProbeInteractiveLeaseHandler: MacLocalXPCInteractiveLeaseHandling
         _ command: LocalInteractiveSurfaceTargetsCommandV1,
         nowMonotonicNanoseconds: UInt64
     ) async throws -> LocalInteractiveSurfaceTargetsReceiptV1 {
-        try await base.interactiveSurfaceTargets(
+        if syntheticNativeDesktopSelection {
+            let now = Int64(nowMonotonicNanoseconds / 1_000_000)
+            let snapshot = try AdaptiveSurfaceTargetInventorySnapshotV0(
+                interactiveSessionID: command.interactiveSessionID,
+                authorizationEpoch: command.authorizationEpoch,
+                revision: 1, createdAtMonotonicMilliseconds: now,
+                expiresAtMonotonicMilliseconds: now + 10_000, candidates: [])
+            let receipt = try LocalInteractiveSurfaceTargetsReceiptV1(
+                correlationID: command.commandID, snapshot: snapshot)
+            try receipt.validate(against: command)
+            return receipt
+        }
+        return try await base.interactiveSurfaceTargets(
             command, nowMonotonicNanoseconds: nowMonotonicNanoseconds)
     }
 
@@ -99,6 +131,35 @@ private struct ProbeInteractiveLeaseHandler: MacLocalXPCInteractiveLeaseHandling
         _ command: LocalInteractiveSurfaceResolveCommandV1,
         nowMonotonicNanoseconds: UInt64
     ) async throws -> LocalInteractiveSurfaceResolvedReceiptV1 {
+        if syntheticNativeDesktopSelection && command.targetKind == .desktop {
+            FileHandle.standardError.write(Data("native-surface-resolve-entered\n".utf8))
+            guard let displaySelection,
+                  let selectedID = displaySelection.opaqueSelectedDisplayID(),
+                  let display = displaySelection.availableDisplays().first(where: { $0.id == selectedID }) else {
+                throw LocalInteractiveSurfaceRuntimeErrorV1.invalidCommand
+            }
+            let profile = try ScreenCaptureKitOpaqueTargetCatalogV0.captureProfile(
+                logicalWidth: display.pixelWidth, logicalHeight: display.pixelHeight)
+            let now = Int64(nowMonotonicNanoseconds / 1_000_000)
+            let descriptor = try AdaptiveSurfaceDescriptor(
+                interactiveSessionID: command.interactiveSessionID,
+                authorizationEpoch: command.authorizationEpoch,
+                surfaceID: UUID(), kind: .desktop,
+                surfaceRevision: try command.expectedSurfaceRevision.advanced(),
+                coordinateSpaceRevision: try command.expectedCoordinateSpaceRevision.advanced(),
+                encodedWidth: UInt16(profile.width), encodedHeight: UInt16(profile.height),
+                logicalWidthPoints: UInt32(display.layoutWidth),
+                logicalHeightPoints: UInt32(display.layoutHeight),
+                interactionClasses: [.view, .pointer, .keyboard, .text],
+                privacyProfile: .visualOnly, metadataFields: [],
+                createdAtMonotonicMilliseconds: now,
+                expiresAtMonotonicMilliseconds: now + 60_000)
+            let receipt = try LocalInteractiveSurfaceResolvedReceiptV1(
+                correlationID: command.commandID, descriptor: descriptor)
+            try receipt.validate(against: command)
+            FileHandle.standardError.write(Data("native-surface-resolve-completed\n".utf8))
+            return receipt
+        }
         if command.targetKind == .focusedRegion {
             guard let targetToken = command.targetToken else {
                 throw LocalInteractiveSurfaceRuntimeErrorV1.invalidCommand
@@ -145,8 +206,21 @@ private struct ProbeInteractiveLeaseHandler: MacLocalXPCInteractiveLeaseHandling
         _ command: InteractiveRuntimeSurfaceTransitionCommandV0,
         nowMonotonicNanoseconds: UInt64
     ) async throws -> InteractiveRuntimeSurfaceTransitionReceiptV0 {
-        try await base.prepareInteractiveSurfaceTransition(
-            command, nowMonotonicNanoseconds: nowMonotonicNanoseconds)
+        FileHandle.standardError.write(Data("native-surface-prepare-entered\n".utf8))
+        do {
+            if let surfaceTargets {
+                _ = try await surfaceTargets.takePreparedSurface(for: command)
+            }
+            let receipt = try await base.prepareInteractiveSurfaceTransition(
+                command, nowMonotonicNanoseconds: nowMonotonicNanoseconds)
+            try await surfaceTargets?.commit(command)
+            FileHandle.standardError.write(Data("native-surface-prepare-completed\n".utf8))
+            return receipt
+        } catch {
+            await surfaceTargets?.invalidate()
+            FileHandle.standardError.write(Data("native-surface-prepare-failed type=\(String(reflecting: type(of: error)))\n".utf8))
+            throw error
+        }
     }
 
     func acknowledgeInteractiveSurface(
@@ -186,6 +260,88 @@ private struct ProbeInteractiveLeaseHandler: MacLocalXPCInteractiveLeaseHandling
     func invalidateAgentAuthority() async {
         await base.invalidateAgentAuthority()
     }
+
+    func nativeBackend(_ command: LocalInteractiveNativeBackendCommandV1,
+        nowMonotonicNanoseconds: UInt64) async throws -> LocalInteractiveNativeBackendReceiptV1 {
+        FileHandle.standardError.write(Data("native-local-backend-\(command.operation.rawValue)\n".utf8))
+        do {
+            let receipt = try await base.nativeBackend(command, nowMonotonicNanoseconds: nowMonotonicNanoseconds)
+            if command.operation == .retire {
+                FileHandle.standardError.write(Data("native-local-backend-retire-completed\n".utf8))
+            }
+            if command.operation == .present, receipt.inputAdmitted == true {
+                await effects.recordNativePresentation()
+                FileHandle.standardError.write(Data("native-local-presentation-input-admitted\n".utf8))
+            }
+            return receipt
+        }
+        catch {
+            let closedCase = (error as? LocalInteractiveNativeBackendErrorV1)
+                .map { String(describing: $0) } ?? "other"
+            FileHandle.standardError.write(Data("native-local-backend-failed type=\(String(reflecting: type(of: error))) case=\(closedCase)\n".utf8))
+            if command.operation == .prepare, let surfaceTargets {
+                do {
+                    let surface = try await surfaceTargets.nativeCaptureTarget(
+                        scope: command.scope,
+                        nowMonotonicNanoseconds: DispatchTime.now().uptimeNanoseconds)
+                    FileHandle.standardError.write(Data("native-selected-capture-retained=\(surface != nil)\n".utf8))
+                    if let surface {
+                        _ = try MacInteractiveNativeCaptureGeometryV1.readSelectedSurface(
+                            surface, scope: command.scope)
+                        FileHandle.standardError.write(Data("native-selected-capture-geometry-current\n".utf8))
+                        if case let .application(processID, bundleID) = surface.localActivationTarget {
+                            let running = NSRunningApplication(processIdentifier: processID)
+                            FileHandle.standardError.write(Data(
+                                "native-selected-capture-process-current=\(running != nil && running?.isTerminated == false) bundle-current=\(running?.bundleIdentifier == bundleID) launch-current=\(running?.launchDate != nil)\n".utf8))
+                        }
+                        _ = try MacManagedNativeSelectedCaptureV1(
+                            surface: surface, scope: command.scope,
+                            selectedPhysicalDisplayID: CGMainDisplayID())
+                        FileHandle.standardError.write(Data("native-selected-capture-context-current\n".utf8))
+                    }
+                } catch {
+                    FileHandle.standardError.write(Data("native-selected-capture-diagnostic-failed type=\(String(reflecting: type(of: error)))\n".utf8))
+                }
+            }
+            throw error
+        }
+    }
+
+    func interactiveDisplayCatalog(_ command: LocalInteractiveDisplayCatalogCommandV1,
+        nowMonotonicNanoseconds: UInt64) async throws -> LocalInteractiveDisplayCatalogReceiptV1 {
+        try await base.interactiveDisplayCatalog(command, nowMonotonicNanoseconds: nowMonotonicNanoseconds)
+    }
+
+    func selectInteractiveDisplay(_ command: LocalInteractiveDisplaySelectCommandV1,
+        nowMonotonicNanoseconds: UInt64) async throws -> LocalInteractiveDisplaySelectedReceiptV1 {
+        try await base.selectInteractiveDisplay(command, nowMonotonicNanoseconds: nowMonotonicNanoseconds)
+    }
+
+    func nativeRuntimeSnapshot(_ command: LocalInteractiveNativeSnapshotCommandV1,
+        nowMonotonicNanoseconds: UInt64) async throws -> LocalInteractiveNativeSnapshotReceiptV1 {
+        FileHandle.standardError.write(Data("native-local-snapshot-request admission=\(await effects.nativeAdmissionPhase())\n".utf8))
+        return try await base.nativeRuntimeSnapshot(command, nowMonotonicNanoseconds: nowMonotonicNanoseconds)
+    }
+
+    func makeWebRTCOffer(
+        _ command: LocalInteractiveWebRTCOfferCommandV1,
+        nowMonotonicNanoseconds: UInt64
+    ) async throws -> LocalInteractiveWebRTCOfferReceiptV1 {
+        try await base.makeWebRTCOffer(
+            command, nowMonotonicNanoseconds: nowMonotonicNanoseconds)
+    }
+
+    func acceptWebRTCAnswer(
+        _ command: LocalInteractiveWebRTCAnswerCommandV1,
+        nowMonotonicNanoseconds: UInt64
+    ) async throws {
+        try await base.acceptWebRTCAnswer(
+            command, nowMonotonicNanoseconds: nowMonotonicNanoseconds)
+    }
+
+    func closeWebRTC(_ command: LocalInteractiveWebRTCCloseCommandV1) async throws {
+        try await base.closeWebRTC(command)
+    }
 }
 
 private final class ProbeInteractiveInputSink: InteractiveRuntimeInputPostingV0, @unchecked Sendable {
@@ -195,6 +351,13 @@ private final class ProbeInteractiveInputSink: InteractiveRuntimeInputPostingV0,
         _ envelope: InteractiveInputEnvelope
     ) async throws {
         lock.withLock { count += 1 }
+    }
+    func postInteractiveInput(_ envelope: InteractiveInputEnvelope,
+        nativeAuthorization: InteractiveRuntimeNativeInputPostingAuthorizationV0,
+        beforeDeadlineNanoseconds: UInt64) async throws {
+        try await nativeAuthorization.perform(envelope, beforeDeadlineNanoseconds: beforeDeadlineNanoseconds) {
+            self.lock.withLock { self.count += 1 }
+        }
     }
     func snapshot() -> Int { lock.withLock { count } }
 }
@@ -217,14 +380,18 @@ actor ProbeInteractiveEffects: InteractiveRuntimeIndicatorControllingV0,
         let acknowledgements: Int
     }
     nonisolated let menuGeneration = UUID()
-    nonisolated let displayID = UUID()
+    nonisolated let displayID: UUID
     private var started = 0, renewed = 0, stopped = 0, released = 0, blanked = 0, cleared = 0
     private var encodedFrames = 0
     private var acknowledgements = 0
+    private var nativePresentations = 0
     private var lease: InteractiveExecutionLease?
     private weak var runtime: InteractiveMenuRuntimeOwnerV0?
     private let queue: BoundedInteractiveMediaQueueV0
     private let streamsMedia: Bool
+    private let bootstrapOnly: Bool
+    private let encodedWidth: UInt16
+    private let encodedHeight: UInt16
     private var publisher: VideoToolboxInteractiveMediaPublisherV0?
     private var encoder: VideoToolboxH264EncoderOwnerV0?
     private var encoderGeneration: UUID?
@@ -235,8 +402,10 @@ actor ProbeInteractiveEffects: InteractiveRuntimeIndicatorControllingV0,
     func pauseNextDesktop() { pauseDesktop = true }
     func resumeDesktop() { pauseDesktop = false }
 
-    init(queue: BoundedInteractiveMediaQueueV0, streamsMedia: Bool) {
-        self.queue = queue; self.streamsMedia = streamsMedia
+    init(queue: BoundedInteractiveMediaQueueV0, streamsMedia: Bool, bootstrapOnly: Bool = false, displayID: UUID = UUID(), encodedWidth: UInt16 = 64, encodedHeight: UInt16 = 48) {
+        self.bootstrapOnly = bootstrapOnly
+        self.encodedWidth = encodedWidth; self.encodedHeight = encodedHeight
+        self.displayID = displayID; self.queue = queue; self.streamsMedia = streamsMedia
     }
     func bind(_ runtime: InteractiveMenuRuntimeOwnerV0) { self.runtime = runtime }
     func snapshot() -> Snapshot {
@@ -244,7 +413,20 @@ actor ProbeInteractiveEffects: InteractiveRuntimeIndicatorControllingV0,
               released: released, blanked: blanked, cleared: cleared,
               encodedFrames: encodedFrames, acknowledgements: acknowledgements)
     }
-    func recordSurfaceAcknowledgement() { acknowledgements += 1 }
+    func nativeAdmissionPhase() async -> String { String(describing: await runtime?.surfaceAdmissionState()) }
+    func recordNativePresentation() { nativePresentations += 1 }
+    func nativePresentationCount() -> Int { nativePresentations }
+    func recordSurfaceAcknowledgement() {
+        acknowledgements += 1
+        if bootstrapOnly {
+            // Generated pixels only bootstrap the authenticated native lane.
+            // Keep queued records available to the real role/XPC drain; the
+            // managed host becomes the actual continuing video source.
+            frames?.cancel(); frames = nil
+            retireEncoderWithoutWaitingForPublication()
+            encoder = nil
+        }
+    }
     func prepareInitialInteractiveDesktop(_ command: LocalInteractiveInitialDesktopPreparationCommandV1,
         nowMonotonicNanoseconds: UInt64) async throws -> LocalInteractiveInitialDesktopPreparedReceiptV1 {
         guard command.selectedDisplayID == displayID else { throw Failure.badBinding }
@@ -261,8 +443,8 @@ actor ProbeInteractiveEffects: InteractiveRuntimeIndicatorControllingV0,
         return try .init(correlationID: command.commandID, descriptor: AdaptiveSurfaceDescriptor(
             interactiveSessionID: command.interactiveSessionID, authorizationEpoch: command.authorizationEpoch,
             surfaceID: UUID(), kind: .desktop, surfaceRevision: .init(rawValue: 1),
-            coordinateSpaceRevision: .init(rawValue: 1), encodedWidth: 64, encodedHeight: 48,
-            logicalWidthPoints: 64, logicalHeightPoints: 48,
+            coordinateSpaceRevision: .init(rawValue: 1), encodedWidth: encodedWidth, encodedHeight: encodedHeight,
+            logicalWidthPoints: UInt32(encodedWidth), logicalHeightPoints: UInt32(encodedHeight),
             interactionClasses: Set(command.interactionClasses), privacyProfile: .visualOnly,
             metadataFields: [], createdAtMonotonicMilliseconds: now, expiresAtMonotonicMilliseconds: now + 60_000))
     }
@@ -293,6 +475,7 @@ actor ProbeInteractiveEffects: InteractiveRuntimeIndicatorControllingV0,
     func prepareInteractiveCaptureTransition(
         _ command: InteractiveRuntimeSurfaceTransitionCommandV0
     ) async throws -> Set<SurfaceInteractionClass> {
+        FileHandle.standardError.write(Data("native-capture-transition-prepare-entered\n".utf8))
         guard let lease, publisher != nil, pendingTransition == nil,
               command.previousLeaseID == lease.leaseID,
               command.replacement.interactiveSessionID == lease.interactiveSessionID,
@@ -304,12 +487,14 @@ actor ProbeInteractiveEffects: InteractiveRuntimeIndicatorControllingV0,
         retireEncoderWithoutWaitingForPublication()
         encoder = nil
         pendingTransition = command
+        FileHandle.standardError.write(Data("native-capture-transition-prepare-completed\n".utf8))
         return Set(command.descriptor.interactionClasses)
     }
     func activatePreparedInteractiveCaptureTransition(
         _ command: InteractiveRuntimeSurfaceTransitionCommandV0,
         mediaSequenceBeforeTransition: UInt64
     ) async throws {
+        FileHandle.standardError.write(Data("native-capture-transition-activate-entered\n".utf8))
         guard pendingTransition == command, publisher != nil, let runtime else {
             throw Failure.badBinding
         }
@@ -335,6 +520,7 @@ actor ProbeInteractiveEffects: InteractiveRuntimeIndicatorControllingV0,
             descriptor: command.descriptor
         )
         pendingTransition = nil
+        FileHandle.standardError.write(Data("native-capture-transition-activate-completed\n".utf8))
     }
     func stopInteractiveCapture() async {
         frames?.cancel(); frames = nil
@@ -399,7 +585,12 @@ actor ProbeInteractiveEffects: InteractiveRuntimeIndicatorControllingV0,
                         duration: CMTime(value: 1, timescale: 15)))
                     await self?.recordEncodedFrame()
                     try await Task.sleep(for: .milliseconds(66))
-                } catch { return }
+                } catch {
+                    if !Task.isCancelled {
+                        FileHandle.standardError.write(Data("native-bootstrap-frame-submit-failed type=\(String(reflecting: type(of: error)))\n".utf8))
+                    }
+                    return
+                }
             }
         }
     }
@@ -438,7 +629,7 @@ actor ProbeInteractiveEffects: InteractiveRuntimeIndicatorControllingV0,
 
 @available(macOS 26.0, *)
 final class ProbeInteractiveMenu: Sendable {
-    enum Scenario: String, Sendable { case lifecycle, admissionRace, menuLoss, revoke, revocationRace, simulator }
+    enum Scenario: String, Sendable { case lifecycle, admissionRace, menuLoss, revoke, revocationRace, simulator, native, nativeContinuous }
     let scenario: Scenario
     let effects: ProbeInteractiveEffects
     private let input: ProbeInteractiveInputSink
@@ -450,24 +641,71 @@ final class ProbeInteractiveMenu: Sendable {
         self.scenario = scenario
         let queue = try BoundedInteractiveMediaQueueV0(maximumRecords: 64,
                                                        maximumBytes: 16 * 1_024 * 1_024)
-        let effects = ProbeInteractiveEffects(queue: queue, streamsMedia: scenario == .simulator)
+        let isNative = scenario == .native || scenario == .nativeContinuous
+        let selection = isNative ? try MacInteractiveOpaqueDisplaySelectionV1() : nil
+        let realSelectedTargets = isNative
+            && ProcessInfo.processInfo.environment["MACCOMPANION_NATIVE_LAB_SELECTED_SURFACES"] == "1"
+        let surfaceTargets = realSelectedTargets ? MacInteractiveSurfaceTargetOwnerV1() : nil
+        let effects = ProbeInteractiveEffects(queue: queue, streamsMedia: scenario == .simulator || isNative,
+            bootstrapOnly: scenario == .native,
+            displayID: selection?.opaqueSelectedDisplayID() ?? UUID())
         let input = ProbeInteractiveInputSink()
         let runtime = InteractiveMenuRuntimeOwnerV0(indicator: effects, capture: effects,
             input: effects, frame: effects, inputPoster: input, mediaQueue: queue)
         self.effects = effects; self.input = input; mediaQueue = queue
         self.runtime = runtime
-        let adapter = MacInteractiveLeaseRuntimeAdapterV1(runtime: runtime, desktop: effects)
+        let adapter: MacInteractiveLeaseRuntimeAdapterV1
+        if let selection {
+            adapter = MacInteractiveLeaseRuntimeAdapterV1(runtime: runtime,
+                desktop: ProbeNativeDesktopPreparer(selection: selection, surfaceTargets: surfaceTargets),
+                surfaceTargets: surfaceTargets,
+                displaySelection: selection, updateSelectedDisplay: { _ in }, nativeBackendFactory: try ProbeNativeFlow.factory())
+        } else {
+            adapter = MacInteractiveLeaseRuntimeAdapterV1(runtime: runtime, desktop: effects)
+        }
         self.adapter = adapter
-        leaseHandler = try ProbeInteractiveLeaseHandler(base: adapter, effects: effects)
+        leaseHandler = try ProbeInteractiveLeaseHandler(base: adapter, effects: effects,
+            syntheticNativeDesktopSelection: isNative && !realSelectedTargets,
+            displaySelection: selection, surfaceTargets: surfaceTargets)
         Task { await effects.bind(runtime) }
     }
 
     func simulatorSnapshot() async -> (captureActive: Bool, inputEvents: Int,
                                        encodedFrames: Int, runtimeIdle: Bool,
-                                       queuedRecords: Int, acknowledgements: Int) {
+                                       queuedRecords: Int, acknowledgements: Int, nativePresentations: Int) {
         let effects = await effects.snapshot()
         let state = await runtime.state()
         return (effects.started > effects.stopped, input.snapshot(), effects.encodedFrames,
-                state == .idle, mediaQueue.status().recordCount, effects.acknowledgements)
+                state == .idle, mediaQueue.status().recordCount, effects.acknowledgements,
+                await self.effects.nativePresentationCount())
+    }
+}
+
+/// Native experiments use the same physical Desktop projection as the normal
+/// Mac composition. Generated bootstrap pixels do not define input geometry.
+@available(macOS 26.0, *)
+private struct ProbeNativeDesktopPreparer: MacInteractiveInitialDesktopPreparingV1 {
+    let selection: MacInteractiveOpaqueDisplaySelectionV1
+    let surfaceTargets: MacInteractiveSurfaceTargetOwnerV1?
+    func prepareInitialInteractiveDesktop(
+        _ command: LocalInteractiveInitialDesktopPreparationCommandV1,
+        nowMonotonicNanoseconds: UInt64
+    ) async throws -> LocalInteractiveInitialDesktopPreparedReceiptV1 {
+        let receipt = try await MacInteractiveInitialDesktopPreparerV1(
+            displaySelection: selection, surfaceTargets: surfaceTargets
+        ).prepareInitialInteractiveDesktop(command, nowMonotonicNanoseconds: nowMonotonicNanoseconds)
+        guard let display = selection.availableDisplays().first(where: { $0.id == command.selectedDisplayID }),
+              receipt.descriptor.logicalWidthPoints == UInt32(display.layoutWidth),
+              receipt.descriptor.logicalHeightPoints == UInt32(display.layoutHeight) else {
+            throw ProbeInteractiveEffects.Failure.badBinding
+        }
+        let profile = try ScreenCaptureKitOpaqueTargetCatalogV0.captureProfile(
+            logicalWidth: display.pixelWidth, logicalHeight: display.pixelHeight)
+        guard Int(receipt.descriptor.encodedWidth) == profile.width,
+              Int(receipt.descriptor.encodedHeight) == profile.height else {
+            throw ProbeInteractiveEffects.Failure.badBinding
+        }
+        FileHandle.standardError.write(Data("native-production-desktop-geometry-verified\n".utf8))
+        return receipt
     }
 }

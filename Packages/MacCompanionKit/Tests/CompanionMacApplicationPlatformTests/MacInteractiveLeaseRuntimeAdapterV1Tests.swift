@@ -2,6 +2,7 @@
 import CompanionIPC
 import CompanionInteractiveRuntime
 import CompanionInteractiveShared
+import CompanionInteractiveWire
 @testable import CompanionMacApplicationPlatform
 import Foundation
 import Testing
@@ -65,6 +66,8 @@ private actor AdapterRuntimeV1:
         deadline = nil
         stateStorage = .idle
     }
+
+    func currentNativeVideoSnapshot(fence: InteractiveNativeVideoRequestFenceV0, nowMonotonicNanoseconds: UInt64) async throws -> LocalInteractiveNativeRuntimeSnapshotV1? { nil }
 
     func state() async -> InteractiveMenuRuntimeStateV0 { stateStorage }
 

@@ -97,6 +97,12 @@ An `error` is routed by correlation, never guessed from its body or current UI
 screen. Unknown correlation, duplicate reply message ID, wrong reply kind,
 deadline expiry, a missing receiver, malformed generic metadata, or a receiver
 decode failure invalidates the whole router and all lane receivers.
+Within the Interactive Control receiver, a pending display-catalog or
+display-selection request consumes only a reply whose `correlationID` equals
+that request's message ID. Other registered Interactive Control requests,
+including surface-target inventory, may complete while display refresh is
+pending. Each response still undergoes its own exact body, phase, sequence,
+and correlation checks; an unmatched response fails closed.
 
 ## Product lanes
 

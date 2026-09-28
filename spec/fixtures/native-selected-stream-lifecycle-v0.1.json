@@ -1,0 +1,21 @@
+{
+  "profile": "Mac Companion selected stream lifecycle v0.1",
+  "nativeAppWindowEnrollmentAdmitted": false,
+  "constructorStartsCapture": false,
+  "terminalBeforeStopAcknowledgement": false,
+  "rules": [
+    "serialize start sample delivery revocation and stop",
+    "current local selection and Control required before start and every frame",
+    "stop fences frames before asynchronous stop acknowledgement",
+    "late start completion cannot reopen capture",
+    "terminal completion once after actual stop acknowledgement",
+    "only fresh complete samples with exact image format clean aperture and aspect fit placement",
+    "content scale may reflect native resampling but must be finite positive and bounded",
+    "display time increases with at most two seconds of age and 100 milliseconds of future clock skew",
+    "boolean scale and content-scale metadata are malformed and fail closed",
+    "idle and blank frames do not refresh evidence",
+    "malformed changed stale or reordered complete samples terminate capture",
+    "failed capture reports failure to streaming and encoder probes instead of success with no image",
+    "adapter creates no independent approval input or permission prompt"
+  ]
+}

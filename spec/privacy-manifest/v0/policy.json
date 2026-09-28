@@ -110,6 +110,20 @@
     {
       "api": "fstat",
       "category": "NSPrivacyAccessedAPICategoryFileTimestamp",
+      "path": "Packages/MacCompanionKit/Sources/CompanionMacApplicationPlatform/MacManagedSunshineEnrollmentBackendV1.swift",
+      "count": 1,
+      "platforms": ["macOS"]
+    },
+    {
+      "api": "stat",
+      "category": "NSPrivacyAccessedAPICategoryFileTimestamp",
+      "path": "Packages/MacCompanionKit/Sources/CompanionMacApplicationPlatform/MacManagedSunshineEnrollmentBackendV1.swift",
+      "count": 1,
+      "platforms": ["macOS"]
+    },
+    {
+      "api": "fstat",
+      "category": "NSPrivacyAccessedAPICategoryFileTimestamp",
       "path": "Packages/MacCompanionKit/Sources/CompanionPersistence/EmergencyDenyLatch.swift",
       "count": 2,
       "platforms": ["macOS"]

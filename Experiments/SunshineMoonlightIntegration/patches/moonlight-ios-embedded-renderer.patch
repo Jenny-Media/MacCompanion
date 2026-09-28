@@ -1,0 +1,104 @@
+diff --git a/Limelight/Stream/VideoDecoderRenderer.h b/Limelight/Stream/VideoDecoderRenderer.h
+index 0513374..a563577 100644
+--- a/Limelight/Stream/VideoDecoderRenderer.h
++++ b/Limelight/Stream/VideoDecoderRenderer.h
+@@ -23,4 +23,8 @@
+ 
+ - (int)submitDecodeBuffer:(unsigned char *)data length:(int)length bufferType:(int)bufferType decodeUnit:(PDECODE_UNIT)du;
+ 
++// Reference-only access to the existing native presentation surface.
++- (UIView *)companionReferenceView;
++- (int)companionDecodedWidth;
++- (int)companionDecodedHeight;
+ @end
+diff --git a/Limelight/Stream/VideoDecoderRenderer.m b/Limelight/Stream/VideoDecoderRenderer.m
+index a2adf08..5c4ff09 100644
+--- a/Limelight/Stream/VideoDecoderRenderer.m
++++ b/Limelight/Stream/VideoDecoderRenderer.m
+@@ -7,8 +7,9 @@
+ //
+ 
+ #import "VideoDecoderRenderer.h"
+-#import "StreamView.h"
++#import <UIKit/UIKit.h>
+ 
++#if !MACCOMPANION_NATIVE_H264_HEVC_ONLY
+ #include <libavcodec/avcodec.h>
+ #include <libavcodec/cbs.h>
+ #include <libavcodec/cbs_av1.h>
+@@ -18,9 +19,10 @@
+ // Private libavformat API for writing the AV1 Codec Configuration Box
+ extern int ff_isom_write_av1c(AVIOContext *pb, const uint8_t *buf, int size,
+                               int write_seq_header);
++#endif
+ 
+ @implementation VideoDecoderRenderer {
+-    StreamView* _view;
++    UIView* _view;
+     id<ConnectionCallbacks> _callbacks;
+     float _streamAspectRatio;
+     
+@@ -37,6 +39,11 @@ extern int ff_isom_write_av1c(AVIOContext *pb, const uint8_t *buf, int size,
+     BOOL framePacing;
+ }
+ 
++- (UIView *)companionReferenceView { return _view; }
++- (int)companionDecodedWidth { return formatDesc ? CMVideoFormatDescriptionGetDimensions(formatDesc).width : 0; }
++- (int)companionDecodedHeight { return formatDesc ? CMVideoFormatDescriptionGetDimensions(formatDesc).height : 0; }
++
++
+ - (void)reinitializeDisplayLayer
+ {
+     CALayer *oldLayer = displayLayer;
+@@ -77,7 +84,7 @@ extern int ff_isom_write_av1c(AVIOContext *pb, const uint8_t *buf, int size,
+     }
+ }
+ 
+-- (id)initWithView:(StreamView*)view callbacks:(id<ConnectionCallbacks>)callbacks streamAspectRatio:(float)aspectRatio useFramePacing:(BOOL)useFramePacing
++- (id)initWithView:(UIView*)view callbacks:(id<ConnectionCallbacks>)callbacks streamAspectRatio:(float)aspectRatio useFramePacing:(BOOL)useFramePacing
+ {
+     self = [super init];
+     
+@@ -143,6 +150,9 @@ int DrSubmitDecodeUnit(PDECODE_UNIT decodeUnit);
+ - (void)stop
+ {
+     [_displayLink invalidate];
++    _displayLink = nil;
++    [displayLayer flushAndRemoveImage];
++    displayLayer.hidden = YES;
+ }
+ 
+ #define NALU_START_PREFIX_SIZE 3
+@@ -182,6 +192,7 @@ int DrSubmitDecodeUnit(PDECODE_UNIT decodeUnit);
+     }
+ }
+ 
++#if !MACCOMPANION_NATIVE_H264_HEVC_ONLY
+ - (NSData*)getAv1CodecConfigurationBox:(NSData*)frameData  {
+     AVIOContext* ioctx = NULL;
+     int err;
+@@ -401,6 +412,8 @@ int DrSubmitDecodeUnit(PDECODE_UNIT decodeUnit);
+     return formatDesc;
+ }
+ 
++#endif
++
+ // This function must free data for bufferType == BUFFER_TYPE_PICDATA
+ - (int)submitDecodeBuffer:(unsigned char *)data length:(int)length bufferType:(int)bufferType decodeUnit:(PDECODE_UNIT)du
+ {
+@@ -498,10 +511,15 @@ int DrSubmitDecodeUnit(PDECODE_UNIT decodeUnit);
+             [parameterSetBuffers removeAllObjects];
+         }
+         else if (videoFormat & VIDEO_FORMAT_MASK_AV1) {
++#if MACCOMPANION_NATIVE_H264_HEVC_ONLY
++            // Native candidate does not advertise or parse AV1.
++            formatDesc = NULL;
++#else
+             NSData* fullFrameData = [NSData dataWithBytesNoCopy:data length:length freeWhenDone:NO];
+             
+             Log(LOG_I, @"Constructing new AV1 format description");
+             formatDesc = [self createAV1FormatDescriptionForIDRFrame:fullFrameData];
++#endif
+         }
+         else {
+             // Unsupported codec!

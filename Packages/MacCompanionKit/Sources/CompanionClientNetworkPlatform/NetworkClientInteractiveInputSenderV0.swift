@@ -20,6 +20,7 @@ package actor NetworkClientInteractiveInputSenderV0 {
     private let primary:
         any NetworkClientInteractiveInitialPrimaryControllingV0
     private var closed = false
+    private var stopping = false
 
     package init(
         connection: NetworkClientInteractiveReadyRoleConnectionV0,
@@ -35,7 +36,7 @@ package actor NetworkClientInteractiveInputSenderV0 {
     package func send(
         _ payloads: [InteractiveInputPayload]
     ) async throws {
-        guard !closed else {
+        guard !closed, !stopping else {
             throw NetworkClientInteractiveInputSenderErrorV0.closed
         }
         for payload in payloads {
@@ -58,7 +59,7 @@ package actor NetworkClientInteractiveInputSenderV0 {
     package func sendPreparedReset(
         _ envelope: InteractiveInputEnvelope?
     ) async throws {
-        guard !closed else {
+        guard !closed, !stopping else {
             throw NetworkClientInteractiveInputSenderErrorV0.closed
         }
         guard let envelope else { return }
@@ -80,10 +81,12 @@ package actor NetworkClientInteractiveInputSenderV0 {
         }
     }
 
+    package func fenceForStop() { stopping = true }
+
     package func close() async {
         guard !closed else { return }
         do {
-            if let reset = try await primary.closeInitialInputFrame(),
+            if !stopping, let reset = try await primary.closeInitialInputFrame(),
                let framed = try? frame(reset) {
                 try? await connection.sendRoleBytes(framed)
             }

@@ -33,6 +33,27 @@ observation time. It is never relabelled live.
 A status send failure clears that pending read and publishes no fabricated
 snapshot. The prior validated snapshot, if any, remains unchanged.
 
+An automatic selected-primary liveness check uses the same correlated status
+exchange but never retains or publishes its sample as user-visible Observe
+status. If a manual refresh arrives while that check is pending, the owner may
+reserve one local manual intent. It sends no second wire request until the
+router commits the valid correlated liveness reply. The manual request then
+receives its own message ID and monotonic start time; only its own validated
+reply can update user-visible status. Another manual intent or automatic check
+cannot overtake the reservation. There is no unbounded queue.
+The local reservation expires after at most ten seconds without a committed
+liveness reply. Expiration fails the manual attempt without sending it or
+turning any cached sample live; it does not cancel the independent heartbeat.
+
+Cancellation discards the reserved intent without canceling the independent
+liveness check. Invalidation, connection replacement, failed liveness send or
+rejected reply fails the waiter and cannot send a late manual request. A
+correlated liveness error releases the local reservation for a separate manual
+attempt; it does not turn the liveness error into user-visible status. Normal
+request deadlines, correlation, replay, host identity and freshness checks stay
+in force. The indexed `client-observe-liveness-priority-v0.1.json` fixture records
+these local scheduling rules.
+
 ## Self-audit
 
 At most one `audit.list.request` is pending. Pagination delegates to

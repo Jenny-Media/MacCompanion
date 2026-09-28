@@ -65,13 +65,21 @@ public protocol InteractiveRuntimeFrameControllingV0: Sendable {
     func blankLastInteractiveFrame() async throws
 }
 
-/// The production implementation performs one bounded, synchronous platform
-/// post. Keeping it synchronous lets the runtime owner validate and invoke in
-/// one actor turn, with no revocation interleaving between those two steps.
+/// Platform posting may suspend for selected-window activation. Native posting
+/// requires its separate final batch authorization after that suspension.
 public protocol InteractiveRuntimeInputPostingV0: Sendable {
-    func postInteractiveInput(
-        _ envelope: InteractiveInputEnvelope
-    ) async throws
+    func postInteractiveInput(_ envelope: InteractiveInputEnvelope) async throws
+    func postInteractiveInput(_ envelope: InteractiveInputEnvelope,
+        nativeAuthorization: InteractiveRuntimeNativeInputPostingAuthorizationV0,
+        beforeDeadlineNanoseconds: UInt64) async throws
+}
+
+public extension InteractiveRuntimeInputPostingV0 {
+    func postInteractiveInput(_ envelope: InteractiveInputEnvelope,
+        nativeAuthorization: InteractiveRuntimeNativeInputPostingAuthorizationV0,
+        beforeDeadlineNanoseconds: UInt64) async throws {
+        throw InteractiveRuntimeNativeInputPostingErrorV0.unavailable
+    }
 }
 
 /// A session-bound bounded queue. `true` means the complete record is owned by
@@ -261,6 +269,8 @@ private struct ActiveInteractiveRuntimeV0: Sendable {
     var lastMediaCommandID: UUID?
     var lastMediaDigest: Data?
     var retiredResetCommand: InteractiveRuntimeInstallCommandV0? = nil
+    var nativeInputPause: InteractiveNativeVideoRequestFenceV0? = nil
+    var nativeInputAuthorization: InteractiveRuntimeNativeInputPostingAuthorizationV0? = nil
 }
 
 /// The bundle-independent, single-owner execution seam for the visible menu
@@ -334,11 +344,96 @@ public actor InteractiveMenuRuntimeOwnerV0 {
         return active.command.lease.expiresAtMonotonicNanoseconds
     }
 
+    /// Menu-local snapshot only. Callers must recheck after every suspension;
+    /// this value never crosses XPC or grants capture authority on its own.
+    public func currentWebRTCInstallCommand() -> InteractiveRuntimeInstallCommandV0? {
+        guard case let .active(active) = storage else { return nil }
+        return active.command
+    }
+
+    /// One actor read joins the acknowledged surface, active lease and visible
+    /// receipt. The original session deadline survives renewable short leases.
+    public func currentNativeVideoSnapshot(fence: InteractiveNativeVideoRequestFenceV0, nowMonotonicNanoseconds: UInt64) throws -> LocalInteractiveNativeRuntimeSnapshotV1? {
+        guard case let .active(active) = storage, active.surfaceAdmission == .ready else { return nil }
+        let snapshot = try LocalInteractiveNativeRuntimeSnapshotV1(command: active.command, receipt: active.receipt, fence: fence)
+        guard snapshot.isCurrent(nowMonotonicNanoseconds: nowMonotonicNanoseconds) else { return nil }
+        return snapshot
+    }
+
     public func surfaceAdmissionState()
         -> InteractiveRuntimeSurfaceAdmissionStateV0?
     {
         guard case let .active(active) = storage else { return nil }
         return active.surfaceAdmission
+    }
+
+    /// The native engine cannot inherit input authority from the legacy
+    /// bootstrap. This latch is independent of media ownership/readiness.
+    public func pauseInputForNativePresentation(
+        fence: InteractiveNativeVideoRequestFenceV0,
+        nowMonotonicNanoseconds: UInt64
+    ) async throws {
+        let predecessor = sequencingTail
+        let operation = Task { [self] in
+            await predecessor.value
+            guard try currentNativeVideoSnapshot(fence: fence,
+                nowMonotonicNanoseconds: nowMonotonicNanoseconds) != nil,
+                  case var .active(active) = storage else {
+                throw InteractiveMenuRuntimeErrorV0.surfaceNotAcknowledged
+            }
+            if active.nativeInputPause == fence, active.nativeInputAuthorization == nil { return }
+            active.nativeInputAuthorization?.revoke()
+            active.nativeInputAuthorization = nil
+            active.nativeInputPause = fence
+            storage = .active(active)
+            do {
+                try await input.releaseAllInteractiveInput()
+            } catch {
+                _ = try await performUnacknowledgedTermination(force: true)
+                throw InteractiveMenuRuntimeErrorV0.platformActionFailed
+            }
+        }
+        sequencingTail = Task { _ = try? await operation.value }
+        return try await operation.value
+    }
+
+    /// Internal handoff from the trusted native backend owner after correlated
+    /// presentation admission. The pause marker is retained, so native input
+    /// can never silently inherit the legacy posting path.
+    public func installNativeInputAuthorization(
+        _ authorization: InteractiveRuntimeNativeInputPostingAuthorizationV0,
+        fence: InteractiveNativeVideoRequestFenceV0,
+        nowMonotonicNanoseconds: UInt64
+    ) async throws {
+        let predecessor = sequencingTail
+        let operation = Task { [self] in
+            await predecessor.value
+            guard !Task.isCancelled,
+                  let snapshot = try currentNativeVideoSnapshot(fence: fence, nowMonotonicNanoseconds: nowMonotonicNanoseconds),
+                  case var .active(active) = storage,
+                  active.nativeInputPause == fence,
+                  active.nativeInputAuthorization == nil,
+                  !authorization.isRevoked else {
+                throw InteractiveMenuRuntimeErrorV0.surfaceNotAcknowledged
+            }
+            let binding = authorization.binding, surface = authorization.surface
+            guard binding.hostID == snapshot.hostID,
+                  binding.interactiveSessionID == snapshot.fence.interactiveSessionID.rawValue,
+                  UInt64(binding.authorizationEpoch) == snapshot.fence.authorizationEpoch.rawValue,
+                  binding.controlGeneration == snapshot.controlGeneration,
+                  binding.expiresAtMonotonicMilliseconds == snapshot.sessionDeadlineMonotonicNanoseconds / 1_000_000,
+                  surface.surfaceID == snapshot.fence.surfaceID.rawValue,
+                  surface.surfaceRevision == snapshot.fence.surfaceRevision,
+                  surface.coordinateSpaceRevision == snapshot.fence.coordinateSpaceRevision,
+                  surface.encodedWidth == snapshot.encodedWidth,
+                  surface.encodedHeight == snapshot.encodedHeight else {
+                throw InteractiveMenuRuntimeErrorV0.bindingMismatch
+            }
+            active.nativeInputAuthorization = authorization
+            storage = .active(active)
+        }
+        sequencingTail = Task { _ = try? await operation.value }
+        try await withTaskCancellationHandler(operation: { try await operation.value }, onCancel: { operation.cancel(); authorization.revoke() })
     }
 
     public func install(
@@ -707,7 +802,9 @@ public actor InteractiveMenuRuntimeOwnerV0 {
             lastMediaSequence: active.lastMediaSequence,
             lastMediaCommandID: active.lastMediaCommandID,
             lastMediaDigest: active.lastMediaDigest,
-            retiredResetCommand: active.retiredResetCommand
+            retiredResetCommand: active.retiredResetCommand,
+            nativeInputPause: active.nativeInputPause,
+            nativeInputAuthorization: active.nativeInputAuthorization
         ))
     }
 
@@ -759,6 +856,8 @@ public actor InteractiveMenuRuntimeOwnerV0 {
         }
 
         let priorLeaseID = active.command.lease.leaseID
+        active.nativeInputAuthorization?.revoke()
+        active.nativeInputAuthorization = nil
         active.surfaceAdmission = .preparing(
             transitionCommandID: transition.commandID
         )
@@ -933,6 +1032,7 @@ public actor InteractiveMenuRuntimeOwnerV0 {
                     == command.interactiveSessionID else {
                 throw InteractiveMenuRuntimeErrorV0.bindingMismatch
             }
+            active.nativeInputAuthorization?.revoke()
             context = InteractiveCleanupContextV0(
                 leaseID: command.leaseID,
                 interactiveSessionID: command.interactiveSessionID,
@@ -987,6 +1087,19 @@ public actor InteractiveMenuRuntimeOwnerV0 {
             throw InteractiveMenuRuntimeErrorV0.noActiveSession
         }
         let command = active.command
+        let drainingRevokedNativeReset = action.envelope.input == .reset
+            && active.surfaceAdmission == .ready
+            && active.nativeInputPause != nil
+            && active.nativeInputAuthorization?.isRevoked == true
+        let replayingNativeReset = action.envelope.input == .reset
+            && active.nativeInputPause != nil
+            && active.lastInputAction == action
+        guard drainingRevokedNativeReset
+                || replayingNativeReset
+                || active.nativeInputPause == nil
+                || active.nativeInputAuthorization?.isRevoked == false else {
+            throw InteractiveMenuRuntimeErrorV0.surfaceNotAcknowledged
+        }
         let drainingFocusPause = active.surfaceAdmission == .focusPaused
             && active.inputReleasedForSurfaceTransition
         guard active.surfaceAdmission == .ready || drainingFocusPause else {
@@ -1025,8 +1138,32 @@ public actor InteractiveMenuRuntimeOwnerV0 {
             storage = .active(active)
             return
         }
+        if drainingRevokedNativeReset {
+            guard action.envelope.focusToken?.rawValue
+                    == command.surfaceDescriptor.focus?.token,
+                  action.envelope.focusRevision
+                    == command.surfaceDescriptor.focus?.revision else {
+                throw InteractiveMenuRuntimeErrorV0.bindingMismatch
+            }
+            active.nativeInputAuthorization = nil
+            active.lastInputAction = action
+            active.retiredResetCommand = nil
+            storage = .active(active)
+            do {
+                try await input.releaseAllInteractiveInput()
+            } catch {
+                _ = try await performUnacknowledgedTermination(force: true)
+                throw InteractiveMenuRuntimeErrorV0.platformActionFailed
+            }
+            return
+        }
         do {
-            try await inputPoster.postInteractiveInput(action.envelope)
+            if let native = active.nativeInputAuthorization, active.nativeInputPause != nil {
+                try await inputPoster.postInteractiveInput(action.envelope, nativeAuthorization: native,
+                    beforeDeadlineNanoseconds: command.lease.expiresAtMonotonicNanoseconds)
+            } else {
+                try await inputPoster.postInteractiveInput(action.envelope)
+            }
         } catch {
             throw InteractiveMenuRuntimeErrorV0.platformActionFailed
         }
@@ -1060,6 +1197,8 @@ public actor InteractiveMenuRuntimeOwnerV0 {
             throw InteractiveMenuRuntimeErrorV0
                 .surfaceTransitionInProgress
         }
+        active.nativeInputAuthorization?.revoke()
+        active.nativeInputAuthorization = nil
         active.surfaceAdmission = .focusPaused
         storage = .active(active)
         try await input.releaseAllInteractiveInput()
@@ -1177,6 +1316,7 @@ public actor InteractiveMenuRuntimeOwnerV0 {
                 current: active.surfaceAdmission
             )
         } catch {
+            active.nativeInputAuthorization?.revoke()
             var context = InteractiveCleanupContextV0(
                 leaseID: active.command.lease.leaseID,
                 interactiveSessionID:
@@ -1220,6 +1360,7 @@ public actor InteractiveMenuRuntimeOwnerV0 {
                 }
                 throw InteractiveMenuRuntimeErrorV0.noActiveSession
             }
+            current.nativeInputAuthorization?.revoke()
             var context = InteractiveCleanupContextV0(
                 leaseID: current.command.lease.leaseID,
                 interactiveSessionID:
@@ -1300,6 +1441,7 @@ public actor InteractiveMenuRuntimeOwnerV0 {
                     return false
                 }
             }
+            active.nativeInputAuthorization?.revoke()
             context = InteractiveCleanupContextV0(
                 leaseID: command.lease.leaseID,
                 interactiveSessionID: command.lease.interactiveSessionID

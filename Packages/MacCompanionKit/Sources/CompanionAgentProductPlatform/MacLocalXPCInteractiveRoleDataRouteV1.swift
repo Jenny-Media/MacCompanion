@@ -21,12 +21,20 @@ package enum MacLocalXPCInteractiveRoleDataRouteErrorV1:
 
 /// A zero-buffer rendezvous between the menu's authenticated XPC publication
 /// and the exact network media role. The menu acknowledgement is withheld
-/// until the role-data pump takes ownership of the complete record.
+/// until the role-data pump takes ownership of the complete record or the
+/// exact retired pair takes ownership of discarding it.
 @available(macOS 26.0, *)
 package actor MacLocalXPCInteractiveRoleDataRouteV1:
     MacLocalXPCInteractiveMediaHandlingV1,
     AgentInteractiveMenuRoleDataRoutingV0
 {
+    private struct MediaFence: Hashable {
+        let sessionID: UUID
+        let epoch: UInt64
+    }
+    private var activeMediaFence: MediaFence?
+    private var retiredMediaFences: [MediaFence] = []
+
     private struct Publication {
         let id: UUID
         let record: AgentInteractiveOutboundMediaRecordV0
@@ -65,6 +73,8 @@ package actor MacLocalXPCInteractiveRoleDataRouteV1:
     package func invalidate(generation: UInt64) {
         guard self.generation == generation else { return }
         self.generation = nil
+        activeMediaFence = nil
+        retiredMediaFences.removeAll()
         input = nil
         let publication = self.publication
         self.publication = nil
@@ -92,6 +102,11 @@ package actor MacLocalXPCInteractiveRoleDataRouteV1:
                 "media publication rejected: stale menu generation"
             )
             throw MacLocalXPCInteractiveRoleDataRouteErrorV1.staleGeneration
+        }
+        let fence = mediaFence(record.header)
+        if retiredMediaFences.contains(fence) { return }
+        if let activeMediaFence, activeMediaFence != fence {
+            throw MacLocalXPCInteractiveRoleDataRouteErrorV1.pairMismatch
         }
         if let consumer {
             guard pair(consumer.pair, admits: record) else {
@@ -161,6 +176,12 @@ package actor MacLocalXPCInteractiveRoleDataRouteV1:
         guard let generation else {
             throw MacLocalXPCInteractiveRoleDataRouteErrorV1.unavailable
         }
+        let fence = mediaFence(pair)
+        guard !retiredMediaFences.contains(fence),
+              activeMediaFence == nil || activeMediaFence == fence else {
+            throw MacLocalXPCInteractiveRoleDataRouteErrorV1.pairMismatch
+        }
+        activeMediaFence = fence
         if let publication {
             guard self.pair(pair, admits: publication.record) else {
                 macLocalXPCInteractiveRoleDataRouteLoggerV1.error(
@@ -196,6 +217,33 @@ package actor MacLocalXPCInteractiveRoleDataRouteV1:
         } onCancel: {
             Task { await self.cancelConsumer(id: id) }
         }
+    }
+
+    package func retireInteractiveMedia(pair: AgentInteractiveReadyRolePairV0) {
+        guard generation != nil else { return }
+        let fence = mediaFence(pair)
+        guard activeMediaFence == fence || publication.map({ mediaFence($0.record.header) == fence }) == true
+            || consumer.map({ mediaFence($0.pair) == fence }) == true else { return }
+        if activeMediaFence == fence { activeMediaFence = nil }
+        if !retiredMediaFences.contains(fence) {
+            retiredMediaFences.append(fence)
+            if retiredMediaFences.count > 32 { retiredMediaFences.removeFirst() }
+        }
+        if let publication, mediaFence(publication.record.header) == fence {
+            self.publication = nil
+            publication.continuation.resume()
+        }
+        if let consumer, mediaFence(consumer.pair) == fence {
+            self.consumer = nil
+            consumer.continuation.resume(throwing: CancellationError())
+        }
+    }
+
+    private func mediaFence(_ pair: AgentInteractiveReadyRolePairV0) -> MediaFence {
+        .init(sessionID: pair.interactiveSessionID, epoch: pair.authorizationEpoch.rawValue)
+    }
+    private func mediaFence(_ header: MediaRecordHeader) -> MediaFence {
+        .init(sessionID: header.interactiveSessionID, epoch: header.authorizationEpoch.rawValue)
     }
 
     private func pair(

@@ -1,0 +1,80 @@
+{
+  "profile": "maccompanion.local-native-backend.v0.1",
+  "maximumPayloadBytes": 4096,
+  "maximumInFlightCommandsPerGeneration": 1,
+  "receiverOperationTimeoutMilliseconds": 4000,
+  "senderReplyTimeoutMilliseconds": 5000,
+  "commands": [
+    {
+      "kind": "runtime.interactive.native.backend",
+      "authorizationMethod": "applyInteractiveSurface",
+      "requestPayloadType": "LocalInteractiveNativeBackendCommandV1",
+      "successKind": "runtime.interactive.native.backend.ack",
+      "successPayloadType": "LocalInteractiveNativeBackendReceiptV1"
+    }
+  ],
+  "operations": [
+    "prepare",
+    "activate",
+    "health",
+    "present",
+    "retire"
+  ],
+  "cases": [
+    "prepare-has-no-listener",
+    "golden-proof-before-activate",
+    "exact-opaque-display-resolves-only-in-menu",
+    "current-acknowledged-desktop-required",
+    "wrong-scope-denied",
+    "single-operation-reserved-before-await",
+    "late-factory-retired-and-joined",
+    "stop-fences-permit-before-drain",
+    "original-deadline-preserved",
+    "revocation-watchdog-drains",
+    "stale-retire-cannot-touch-replacement",
+    "cross-operation-receipt-denied",
+    "canonical-public-der-only",
+    "oversized-local-envelope-denied",
+    "native-input-paused-before-factory",
+    "native-pause-exact-fence-required",
+    "native-pause-release-failure-drains-runtime",
+    "native-pause-replay-does-not-repeat-release",
+    "native-pause-renewal-cannot-restore-input",
+    "native-pause-retirement-cannot-restore-legacy-input",
+    "logical-geometry-scope-required",
+    "logical-geometry-scope-mismatch-denied",
+    "capture-mode-pixels-distinct-from-logical-bounds",
+    "missing-capture-mode-denied",
+    "rotated-native-capture-not-admitted",
+    "capture-geometry-retained-before-factory",
+    "capture-geometry-change-during-factory-drains",
+    "capture-geometry-loss-watchdog-revokes-permit",
+    "same-operation-health-readers-share-one-command",
+    "retirement-fences-shared-health-before-drain",
+    "late-shared-health-cannot-revive-retired-operation",
+    "present-fields-required-and-otherwise-forbidden",
+    "present-receipt-echoes-generation-challenge-and-input-admission",
+    "present-joins-current-active-backend-and-fresh-sample",
+    "present-installs-exact-paused-runtime-posting-primitive",
+    "present-repeat-cannot-replace-or-revive-revoked-primitive",
+    "present-cancellation-revokes-before-drain",
+    "health-during-presentation-joins-then-reinspects"
+  ],
+  "requiredGeometryFields": [
+    "encodedWidth",
+    "encodedHeight",
+    "logicalWidthPoints",
+    "logicalHeightPoints",
+    "rotation"
+  ],
+  "logicalDimensionRange": [
+    1,
+    4294967295
+  ],
+  "rotations": [
+    0,
+    90,
+    180,
+    270
+  ]
+}

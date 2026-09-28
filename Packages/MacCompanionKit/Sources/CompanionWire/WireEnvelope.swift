@@ -97,6 +97,18 @@ public enum WireMessageKind: String, Codable, CaseIterable, Sendable {
     case interactiveSessionAccepted = "interactive.session.accepted"
     case interactiveSessionEnd = "interactive.session.end"
     case interactiveSessionEnded = "interactive.session.ended"
+    case interactiveMediaOfferRequest = "interactive.media.offer.request"
+    case interactiveMediaOffer = "interactive.media.offer"
+    case interactiveMediaAnswer = "interactive.media.answer"
+    case interactiveMediaReady = "interactive.media.ready"
+    case nativeEnrollRequest = "interactive.native.enroll.request"
+    case nativeEnrollChallenge = "interactive.native.enroll.challenge"
+    case nativeEnrollProof = "interactive.native.enroll.proof"
+    case nativeReady = "interactive.native.ready"
+    case nativePresentRequest = "interactive.native.present.request"
+    case nativePresentReceipt = "interactive.native.present.receipt"
+    case nativeCancel = "interactive.native.cancel"
+    case nativeCancelled = "interactive.native.cancelled"
     case interactiveInitialSurfaceRequest = "interactive.surface.initial.request"
     case interactiveInitialSurfaceDescriptor = "interactive.surface.initial.descriptor"
     case interactiveInitialSurfaceAcknowledgement = "interactive.surface.initial.ack"
@@ -226,6 +238,8 @@ public struct WireEnvelope<Body: WireBody>: Codable, Equatable, Sendable {
                  .interactiveDisplayCatalogRequest,
                  .interactiveDisplaySelect,
                  .interactiveSessionRequest, .interactiveSessionEnd,
+                 .interactiveMediaOfferRequest, .interactiveMediaAnswer,
+                 .nativeEnrollRequest, .nativeEnrollProof, .nativePresentRequest, .nativeCancel,
                  .operationInvoke, .operationApprove,
                  .operationStatusRequest, .operationCancel,
                  .interactiveInitialSurfaceRequest,
@@ -369,6 +383,8 @@ public struct WireRoutingMetadata: Equatable, Sendable {
                  .interactiveDisplayCatalogRequest,
                  .interactiveDisplaySelect,
                  .interactiveSessionRequest, .interactiveSessionEnd,
+                 .interactiveMediaOfferRequest, .interactiveMediaAnswer,
+                 .nativeEnrollRequest, .nativeEnrollProof, .nativePresentRequest, .nativeCancel,
                  .operationInvoke, .operationApprove,
                  .operationStatusRequest, .operationCancel,
                  .interactiveInitialSurfaceRequest,
