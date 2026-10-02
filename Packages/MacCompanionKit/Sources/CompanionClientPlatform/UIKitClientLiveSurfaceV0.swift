@@ -133,13 +133,16 @@ private final class UIKitClientKeyboardProxyV0:
 {
     private static let sentinel = "\u{2060}"
     private let submit: (ClientKeyboardActionV0) -> Void
+    private let visibilityChanged: (Bool) -> Void
     private lazy var keyboardAccessory = UIKitClientKeyboardAccessoryV0(
         submit: { [weak self] action in self?.submit(action) },
         dismissKeyboard: { [weak self] in self?.resignFirstResponder() }
     )
 
-    init(submit: @escaping (ClientKeyboardActionV0) -> Void) {
+    init(submit: @escaping (ClientKeyboardActionV0) -> Void,
+         visibilityChanged: @escaping (Bool) -> Void) {
         self.submit = submit
+        self.visibilityChanged = visibilityChanged
         super.init(frame: .zero)
         delegate = self
         text = Self.sentinel
@@ -166,8 +169,18 @@ private final class UIKitClientKeyboardProxyV0:
     override func becomeFirstResponder() -> Bool {
         restoreSentinel()
         let becameFirstResponder = super.becomeFirstResponder()
-        if becameFirstResponder { restoreSentinel() }
+        if becameFirstResponder {
+            restoreSentinel()
+            visibilityChanged(true)
+        }
         return becameFirstResponder
+    }
+
+    @discardableResult
+    override func resignFirstResponder() -> Bool {
+        let resigned = super.resignFirstResponder()
+        if resigned { visibilityChanged(false) }
+        return resigned
     }
 
     func textField(
@@ -231,9 +244,17 @@ public final class UIKitClientLiveSurfaceViewV0:
     private var dragLastLocation: CGPoint?
     private var onZoomOutPastFit: (() -> Void)?
     private var onManualViewportChange: (() -> Void)?
-    private lazy var keyboardProxy = UIKitClientKeyboardProxyV0 {
-        [weak self] action in self?.submitKeyboardAction(action)
-    }
+    private lazy var keyboardProxy = UIKitClientKeyboardProxyV0(
+        submit: { [weak self] action in self?.submitKeyboardAction(action) },
+        visibilityChanged: { [weak self] visible in
+            guard let self else { return }
+            if !visible { self.clearSoftwareKeyboardModifiers() }
+            self.onSoftwareKeyboardVisibilityChanged?(visible)
+        }
+    )
+    private var softwareKeyboardModifiers: InteractiveModifierMask = []
+    public var onSoftwareKeyboardVisibilityChanged: ((Bool) -> Void)?
+    public var onSoftwareKeyboardModifiersCleared: (() -> Void)?
     private let onPayloads: ([InteractiveInputPayload]) -> Void
     private let onFailure: (UIKitClientLiveSurfaceFailureV0) -> Void
 
@@ -299,6 +320,7 @@ public final class UIKitClientLiveSurfaceViewV0:
         if value, hasUnverifiedExternalVideo { return }
         if !value {
             keyboardProxy.resignFirstResponder()
+            clearSoftwareKeyboardModifiers()
             resetMapper()
             resetVisualZoomState()
         }
@@ -400,6 +422,25 @@ public final class UIKitClientLiveSurfaceViewV0:
 
     public func hideSoftwareKeyboard() {
         keyboardProxy.resignFirstResponder()
+        clearSoftwareKeyboardModifiers()
+    }
+
+    /// The normal session owns a single bar above the system keyboard. Other
+    /// embedders keep the existing UIKit accessory unless they opt into it.
+    public func useExternalSoftwareKeyboardBar() {
+        guard keyboardProxy.inputAccessoryView != nil else { return }
+        keyboardProxy.inputAccessoryView = nil
+        if keyboardProxy.isFirstResponder { keyboardProxy.reloadInputViews() }
+    }
+
+    public func setSoftwareKeyboardModifiers(_ modifiers: InteractiveModifierMask) {
+        softwareKeyboardModifiers = modifiers
+    }
+
+    private func clearSoftwareKeyboardModifiers() {
+        guard !softwareKeyboardModifiers.isEmpty else { return }
+        softwareKeyboardModifiers = []
+        onSoftwareKeyboardModifiersCleared?()
     }
 
     public var isVisuallyZoomed: Bool {
@@ -1001,7 +1042,13 @@ public final class UIKitClientLiveSurfaceViewV0:
     }
 
     private func submitKeyboardAction(_ action: ClientKeyboardActionV0) {
-        sendKeyboardAction(action)
+        guard canDispatchInput else { return }
+        defer { clearSoftwareKeyboardModifiers() }
+        do { emit(try action.softwareKeyboardPayloads(modifiers: softwareKeyboardModifiers)) }
+        catch {
+            setInputEnabled(false)
+            onFailure(.invalidGesture)
+        }
     }
 
     private func emit(_ payloads: [InteractiveInputPayload]) {

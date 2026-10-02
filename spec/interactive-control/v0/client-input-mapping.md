@@ -93,6 +93,16 @@ The separate software-keyboard path may emit bounded Unicode `text`. It never
 uses the clipboard. The input producer remains responsible for denying text
 unless the exact acknowledged focus is non-secure and authorized for text.
 
+The compact keyboard bar may arm a local modifier snapshot for the next key.
+With no armed modifiers, software-keyboard commits retain their Unicode text
+semantics. With modifiers armed, one supported ASCII key may instead use the
+existing balanced physical-key chord path; uppercase and shifted punctuation
+include Shift. An unmappable or multi-character modified commit emits nothing,
+and must never silently become unmodified text. The local selection clears after
+the key, keyboard dismissal, surface replacement, input retirement, or Stop.
+Modifier selection itself emits no remote held-key state. This changes neither
+the wire payloads nor Keyboard/Text authority or secure-focus checks.
+
 For an exact acknowledged Focused Region whose verified focus category is
 `text`, `editable` is true, and `secure` is false, the iOS client may offer a
 phone-local composer. The composer reads no Mac value and retains only the

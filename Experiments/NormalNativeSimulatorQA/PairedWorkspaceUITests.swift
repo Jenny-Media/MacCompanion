@@ -147,9 +147,11 @@ final class PairedWorkspaceUITests: XCTestCase {
             var expectedPresentations = 0
             for cycle in 1...sessionCount {
                 app.buttons["Request Remote Control"].tap()
-                let stop = app.buttons["Stop Remote Control top"]
+                let stop = app.buttons["Stop Remote Control"]
                 XCTAssertTrue(stop.waitForExistence(timeout: 45), app.debugDescription)
-                let keyboard = app.buttons["Keyboard"]
+                XCTAssertEqual(app.buttons.matching(identifier: "Stop Remote Control").count, 1,
+                    "The session must expose one Close/Stop control")
+                let keyboard = app.buttons["Remote Keyboard"]
                 let ready = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == 1 AND enabled == 1"), object: keyboard)
                 XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 45), .completed, app.debugDescription)
                 func hostControl() throws -> [String: Any] {
@@ -169,9 +171,22 @@ final class PairedWorkspaceUITests: XCTestCase {
                     // A local view picker must not retire an admitted stream.
                     // Keep it open past the native visibility monitor's tick.
                     Thread.sleep(forTimeInterval: 1)
+                    app.buttons["More"].tap()
                     app.buttons["Shared Display"].tap()
                     XCTAssertTrue(app.navigationBars["Choose Display"].waitForExistence(timeout: 10), app.debugDescription)
                     Thread.sleep(forTimeInterval: 1)
+                    let layout = app.otherElements["Display Layout"]
+                    XCTAssertTrue(layout.exists, app.debugDescription)
+                    let tiles = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "Display Map Tile "))
+                    XCTAssertGreaterThan(tiles.count, 0)
+                    for tile in tiles.allElementsBoundByIndex {
+                        XCTAssertTrue(layout.frame.insetBy(dx: -1, dy: -1).contains(tile.frame),
+                            "Every display tile must fit inside the map canvas")
+                    }
+                    let displayShot = XCTAttachment(screenshot: app.screenshot())
+                    displayShot.name = "Contained display picker"
+                    displayShot.lifetime = .keepAlways
+                    add(displayShot)
                     XCTAssertTrue(app.buttons["Done"].exists,
                         "Opening the display picker must not trigger video retirement and dismiss it")
                     app.buttons["Done"].tap()
@@ -183,6 +198,7 @@ final class PairedWorkspaceUITests: XCTestCase {
                     // Switch away and back so subsequent App/Window coverage
                     // keeps using its original physical display.
                     for _ in 0..<2 {
+                        app.buttons["More"].tap()
                         app.buttons["Shared Display"].tap()
                         let otherDisplay = app.buttons.matching(NSPredicate(
                             format: "identifier BEGINSWITH %@ AND value == %@",
@@ -272,7 +288,7 @@ final class PairedWorkspaceUITests: XCTestCase {
                                     XCTAssertTrue(keyboard.exists && keyboard.isEnabled,
                                         "The restarted Control screen must remain usable before Stop")
                                 }
-                                app.buttons["Stop Remote Control bottom"].tap()
+                                app.buttons["Stop Remote Control"].tap()
                                 XCTAssertTrue(request.waitForExistence(timeout: 30),
                                     "The restarted Control session must Stop cleanly: \(app.debugDescription)")
                             }
@@ -297,6 +313,20 @@ final class PairedWorkspaceUITests: XCTestCase {
                 keyboard.tap()
                 XCTAssertTrue(app.keyboards.element.waitForExistence(timeout: 10))
                 app.keys["a"].tap()
+                XCTAssertTrue(stop.isHittable, "The single Close/Stop must remain available with the keyboard open")
+                let bar = app.otherElements["Remote Session Bar"]
+                XCTAssertTrue(bar.exists, app.debugDescription)
+                XCTAssertLessThanOrEqual(bar.frame.maxY, app.keyboards.element.frame.minY + 2,
+                    "The compact bar must remain above the system keyboard")
+                let command = app.buttons["Remote modifier command"]
+                command.tap()
+                XCTAssertEqual(command.value as? String, "Armed for next key")
+                app.keys["a"].tap()
+                XCTAssertEqual(command.value as? String, "Off", "Modifier selection must clear after a software-keyboard chord")
+                let keyboardShot = XCTAttachment(screenshot: app.screenshot())
+                keyboardShot.name = "Native keyboard and modifiers"
+                keyboardShot.lifetime = .keepAlways
+                add(keyboardShot)
                 app.buttons["Hide Keyboard"].tap()
                 var delivered = try hostControl()
                 let inputDeadline = Date().addingTimeInterval(10)
@@ -320,11 +350,9 @@ final class PairedWorkspaceUITests: XCTestCase {
                     app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
                 }
                 if cycle == 1 {
+                    app.buttons["More"].tap()
                     let shortcuts = app.buttons["All remote shortcuts"]
                     XCTAssertTrue(shortcuts.waitForExistence(timeout: 5))
-                    for _ in 0..<3 where !shortcuts.isHittable {
-                        app.scrollViews.containing(.button, identifier: "All remote shortcuts").firstMatch.swipeLeft()
-                    }
                     shortcuts.tap()
                     app.buttons["shift"].tap()
                     try deliversInput {
@@ -335,7 +363,7 @@ final class PairedWorkspaceUITests: XCTestCase {
                     app.buttons["Done"].tap()
                     XCTAssertTrue(app.buttons["Remote Keyboard"].isHittable,
                         "The Control toolbar must keep its keyboard button touchable")
-                    XCTAssertTrue(app.buttons["Stop Remote Control bottom"].isHittable,
+                    XCTAssertTrue(app.buttons["Stop Remote Control"].isHittable,
                         "The Control toolbar must keep its Stop button touchable")
                 }
                 if holdSeconds > 0 {
@@ -421,7 +449,7 @@ final class PairedWorkspaceUITests: XCTestCase {
                 }
                 stop.tap()
                 XCTAssertTrue(app.buttons["Request Remote Control"].waitForExistence(timeout: 20))
-                XCTAssertFalse(app.buttons["Stop Remote Control top"].exists)
+                XCTAssertFalse(app.buttons["Stop Remote Control"].exists)
                 let ended = try NormalConsentBridge.command("journey-status")
                 let clean = try XCTUnwrap(ended["control"] as? [String: Any])
                 XCTAssertEqual(clean["captureActive"] as? Bool, false)

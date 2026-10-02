@@ -629,6 +629,9 @@ def verify(build, output, simulator, resume_build=False, reuse_build_project=Fal
             if native and passed and failure is None else 0,
         'nativeSharedDisplayPickerVerified': native_surface_replacement and passed and failure is None,
         'nativeSharedDisplayReplacementVerified': native_surface_replacement and passed and failure is None,
+        'nativeDisplayLayoutContainmentVerified': native_surface_replacement and passed and failure is None,
+        'nativeCompactKeyboardBarVerified': native and window_change is None and passed and failure is None,
+        'nativeSingleStopControlVerified': native and passed and failure is None,
         'nativeSurfaceTransitionsVerified': 20 if native_window_soak and passed and failure is None else 0,
         'nativeSessionStartsAndStopsVerified': 10 if native_session_soak and passed and failure is None else 0,
         'nativeSustainedMinutesVerified': (30 if native_session_hold else 1 if native_video_continuity else 0)

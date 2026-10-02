@@ -391,9 +391,19 @@ public final class ClientPrimaryLiveControlCoordinatorV0: ObservableObject {
 private struct ClientPrimaryInitialDesktopSurfaceV0: UIViewRepresentable {
     let product: any ClientPrimaryLiveControlProductV0
     let mode: ClientInputInteractionModeV0
+    let viewState: ClientPrimaryLiveControlViewStateV0
+    let keyboardModifiers: InteractiveModifierMask
 
     func makeUIView(context: Context) -> UIKitClientLiveSurfaceViewV0 {
-        product.surface
+        let view = product.surface
+        view.useExternalSoftwareKeyboardBar()
+        view.onSoftwareKeyboardVisibilityChanged = { [weak viewState] visible in
+            viewState?.softwareKeyboardVisible = visible
+        }
+        view.onSoftwareKeyboardModifiersCleared = { [weak viewState] in
+            viewState?.remoteKeyboardModifiers = []
+        }
+        return view
     }
 
     func updateUIView(
@@ -401,6 +411,7 @@ private struct ClientPrimaryInitialDesktopSurfaceV0: UIViewRepresentable {
         context: Context
     ) {
         view.setMode(mode)
+        view.setSoftwareKeyboardModifiers(keyboardModifiers)
         view.setEncodedDimensions(
             width: product.descriptor.encodedWidth,
             height: product.descriptor.encodedHeight
@@ -428,6 +439,7 @@ private final class ClientPrimaryLiveControlViewStateV0: ObservableObject {
     @Published var automaticSmartZoomEnabled = true
     @Published var showingRemoteKeyboard = false
     @Published var remoteKeyboardModifiers: InteractiveModifierMask = []
+    @Published var softwareKeyboardVisible = false
     @Published var textComposer: ClientNativeTextComposerPresentationV0?
     @Published var keyboardPreparationInFlight = false
     @Published var showingKeyboardFocusHelp = false
@@ -457,226 +469,6 @@ private struct ClientNativeTextComposerPresentationV0:
 {
     let binding: SurfaceInputFence
     var id: UUID { binding.focusToken ?? binding.surfaceID }
-}
-
-@available(iOS 17.0, *)
-private struct ClientSharedDisplayPickerV0: View {
-    let catalog: InteractiveDisplayCatalogResponseBodyV1?
-    let requestInFlight: Bool
-    let pendingDisplayID: UUID?
-    let statusMessage: String?
-    let onSelect: (UUID) -> Void
-    let onRefresh: () -> Void
-    let onCancel: () -> Void
-
-    var body: some View {
-        NavigationStack {
-            GeometryReader { proxy in
-                ScrollView {
-                    VStack(spacing: 20) {
-                        if let catalog {
-                            ClientSharedDisplayTopologyV0(
-                                catalog: catalog,
-                                requestInFlight: requestInFlight,
-                                pendingDisplayID: pendingDisplayID,
-                                onSelect: onSelect
-                            )
-                            .frame(
-                                maxWidth: .infinity,
-                                minHeight: 320
-                            )
-                            .frame(height: max(320, proxy.size.height * 0.62))
-
-                            Text(
-                                "Tap a display to share it. The blue display is currently showing."
-                            )
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                            .multilineTextAlignment(.center)
-                        } else if requestInFlight {
-                            VStack(spacing: 12) {
-                                ProgressView()
-                                Text("Loading displays…")
-                                    .foregroundStyle(.secondary)
-                            }
-                            .frame(maxWidth: .infinity, minHeight: 320)
-                            .accessibilityIdentifier("Shared Displays Loading")
-                        } else {
-                            ContentUnavailableView(
-                                "Displays unavailable",
-                                systemImage: "display.trianglebadge.exclamationmark",
-                                description: Text(
-                                    "Refresh to ask the connected Mac for its current displays."
-                                )
-                            )
-                            .frame(maxWidth: .infinity, minHeight: 320)
-                        }
-
-                        if let statusMessage {
-                            Label(
-                                statusMessage,
-                                systemImage: "exclamationmark.triangle"
-                            )
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                            .accessibilityIdentifier("Shared Displays Status")
-                        }
-
-                        Button(
-                            requestInFlight ? "Refreshing…" : "Refresh Displays",
-                            systemImage: "arrow.clockwise",
-                            action: onRefresh
-                        )
-                        .buttonStyle(.bordered)
-                        .accessibilityIdentifier("Refresh Shared Displays")
-                        .disabled(requestInFlight || pendingDisplayID != nil)
-
-                        Text(
-                            "Mac Companion shares one display at a time and does not rearrange your Mac displays."
-                        )
-                        .font(.caption)
-                        .foregroundStyle(.tertiary)
-                        .multilineTextAlignment(.center)
-                    }
-                    .frame(maxWidth: .infinity)
-                    .padding()
-                }
-            }
-            .navigationTitle("Choose Display")
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Done", action: onCancel)
-                }
-            }
-        }
-    }
-}
-
-@available(iOS 17.0, *)
-private struct ClientSharedDisplayTopologyV0: View {
-    let catalog: InteractiveDisplayCatalogResponseBodyV1
-    let requestInFlight: Bool
-    let pendingDisplayID: UUID?
-    let onSelect: (UUID) -> Void
-
-    var body: some View {
-        GeometryReader { proxy in
-            if let layout = ClientSharedDisplayTopologyGeometryV0(
-                displays: catalog.displays,
-                canvasSize: proxy.size
-            ) {
-                ZStack(alignment: .topLeading) {
-                    ForEach(orderedDisplays) { display in
-                        if let frame = layout.framesByDisplayID[display.id] {
-                            Button {
-                                guard display.displayID
-                                    != catalog.selectedDisplayID else { return }
-                                onSelect(display.id)
-                            } label: {
-                                ClientSharedDisplayTileV0(
-                                    display: display,
-                                    isShowing: display.displayID
-                                        == catalog.selectedDisplayID,
-                                    isPending: display.id == pendingDisplayID
-                                )
-                            }
-                            .buttonStyle(.plain)
-                            .frame(width: frame.width, height: frame.height)
-                            .offset(x: frame.minX, y: frame.minY)
-                            .disabled(
-                                pendingDisplayID != nil
-                                    || requestInFlight
-                            )
-                            .accessibilityIdentifier(
-                                "Shared Display \(display.ordinal)"
-                            )
-                            .accessibilityLabel(displayName(display))
-                            .accessibilityValue(
-                                display.id == pendingDisplayID
-                                    ? "Switching"
-                                    : display.displayID
-                                        == catalog.selectedDisplayID
-                                        ? "Showing" : "Available"
-                            )
-                        }
-                    }
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(
-                    Color.secondary.opacity(0.08),
-                    in: RoundedRectangle(cornerRadius: 18)
-                )
-            }
-        }
-    }
-
-    private var orderedDisplays: [InteractiveDisplayCandidateV1] {
-        catalog.displays.sorted {
-            let lhsSelected = $0.displayID == catalog.selectedDisplayID
-            let rhsSelected = $1.displayID == catalog.selectedDisplayID
-            if lhsSelected != rhsSelected { return !lhsSelected }
-            return $0.ordinal < $1.ordinal
-        }
-    }
-
-    private func displayName(_ display: InteractiveDisplayCandidateV1) -> String {
-        display.isMain ? "Main Display" : "Display \(display.ordinal)"
-    }
-}
-
-@available(iOS 17.0, *)
-private struct ClientSharedDisplayTileV0: View {
-    let display: InteractiveDisplayCandidateV1
-    let isShowing: Bool
-    let isPending: Bool
-
-    var body: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: 12)
-                .fill(
-                    isShowing
-                        ? Color.accentColor.opacity(0.20)
-                        : Color(uiColor: .secondarySystemBackground)
-                )
-            RoundedRectangle(cornerRadius: 12)
-                .strokeBorder(
-                    isShowing ? Color.accentColor : Color.secondary.opacity(0.6),
-                    lineWidth: isShowing ? 3 : 1
-                )
-
-            VStack(spacing: 5) {
-                HStack(spacing: 5) {
-                    Image(systemName: display.isMain ? "display" : "display.2")
-                    Text(display.isMain
-                         ? "Main Display"
-                         : "Display \(display.ordinal)")
-                }
-                .font(.subheadline.weight(.semibold))
-                .lineLimit(1)
-
-                Text("\(display.pixelWidth) × \(display.pixelHeight)")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-
-                if isPending {
-                    HStack(spacing: 5) {
-                        ProgressView()
-                            .controlSize(.mini)
-                        Text("Switching…")
-                    }
-                    .font(.caption2.weight(.medium))
-                    .foregroundStyle(.secondary)
-                } else if isShowing {
-                    Label("Showing", systemImage: "checkmark.circle.fill")
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(.tint)
-                }
-            }
-            .padding(8)
-        }
-        .contentShape(RoundedRectangle(cornerRadius: 12))
-    }
 }
 
 @available(iOS 17.0, *)
@@ -981,73 +773,6 @@ private struct ClientRemoteKeyboardViewV0: View {
     }
 }
 
-@available(iOS 17.0, *)
-private struct ClientRemoteQuickActionsBarV0: View {
-    let keyboardPreparationInFlight: Bool
-    let keyboardDisabled: Bool
-    let stopSubmitted: Bool
-    let stopDisabled: Bool
-    let onKeyboard: () -> Void
-    let onShortcut: (ClientRemoteShortcutV0) -> Void
-    let onMore: () -> Void
-    let onStop: () -> Void
-
-    var body: some View {
-        HStack(spacing: 8) {
-            Button("Keyboard", systemImage: "keyboard", action: onKeyboard)
-                .labelStyle(.iconOnly)
-                .buttonStyle(.bordered)
-                .disabled(keyboardDisabled)
-                .accessibilityIdentifier("Remote Keyboard")
-                .overlay {
-                    if keyboardPreparationInFlight {
-                        ProgressView().controlSize(.small)
-                    }
-                }
-
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
-                    ForEach(ClientRemoteShortcutCatalogV0.quick) { shortcut in
-                        Button(
-                            shortcut.label,
-                            systemImage: shortcut.systemImage
-                        ) {
-                            onShortcut(shortcut)
-                        }
-                        .buttonStyle(.bordered)
-                        .fixedSize()
-                        .accessibilityIdentifier(
-                            "Remote shortcut \(shortcut.id)"
-                        )
-                    }
-                    Button(
-                        "Shortcuts",
-                        systemImage: "command",
-                        action: onMore
-                    )
-                        .buttonStyle(.bordered)
-                        .fixedSize()
-                        .accessibilityIdentifier("All remote shortcuts")
-                }
-            }
-
-            Button(
-                stopSubmitted ? "Stopping…" : "Stop",
-                systemImage: "stop.circle.fill",
-                role: .destructive,
-                action: onStop
-            )
-            .labelStyle(.iconOnly)
-            .buttonStyle(.bordered)
-            .disabled(stopDisabled)
-            .accessibilityIdentifier("Stop Remote Control bottom")
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
-        .background(.ultraThinMaterial)
-    }
-}
-
 /// A phone-local composing surface for one exact verified Mac text focus. It
 /// never displays or reads the Mac field value; only the uncommitted local
 /// draft exists here, and it is sent once under the original focus fence.
@@ -1258,7 +983,9 @@ public struct ClientPrimaryLiveControlViewV0: View {
                 if let product = coordinator.product {
                     ClientPrimaryInitialDesktopSurfaceV0(
                         product: product,
-                        mode: viewState.mode
+                        mode: viewState.mode,
+                        viewState: viewState,
+                        keyboardModifiers: viewState.remoteKeyboardModifiers
                     )
                     .allowsHitTesting(!coordinator.videoRequiresRestart)
                     if coordinator.videoRequiresRestart {
@@ -1293,123 +1020,31 @@ public struct ClientPrimaryLiveControlViewV0: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .clipped()
 
-            if coordinator.phase == .active && !coordinator.videoRequiresRestart {
-                ClientRemoteQuickActionsBarV0(
-                    keyboardPreparationInFlight:
-                        viewState.keyboardPreparationInFlight,
-                    keyboardDisabled:
-                        viewState.keyboardPreparationInFlight
-                            || viewState.surfaceSelectionInFlight,
-                    stopSubmitted: viewState.stopSubmitted,
-                    stopDisabled: viewState.stopSubmitted || !canStop,
-                    onKeyboard: toggleSoftwareKeyboard,
-                    onShortcut: sendRemoteShortcut,
-                    onMore: showRemoteKeyboard,
-                    onStop: stopRemoteControl
-                )
-            }
         }
         .background(Color.black.ignoresSafeArea())
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            ClientRemoteSessionBarV0(
+                modifiers: $viewState.remoteKeyboardModifiers,
+                keyboardVisible: viewState.softwareKeyboardVisible,
+                keyboardPreparationInFlight: viewState.keyboardPreparationInFlight,
+                disabled: coordinator.phase != .active || coordinator.videoRequiresRestart
+                    || viewState.surfaceSelectionInFlight || viewState.displaySelectionInFlight,
+                onKeyboard: toggleSoftwareKeyboard,
+                onKey: sendRemoteKey,
+                options: { sessionOptions }
+            )
+        }
         .navigationTitle(macName)
         .navigationBarTitleDisplayMode(.inline)
+        .navigationBarBackButtonHidden(true)
         .toolbarBackground(.black.opacity(0.75), for: .navigationBar)
         .toolbarColorScheme(.dark, for: .navigationBar)
         .toolbar {
             ToolbarItem(placement: .topBarLeading) {
-                Picker("Pointer mode", selection: $viewState.mode) {
-                    Text("Touch").tag(
-                        ClientInputInteractionModeV0.directTouch
-                    )
-                    Text("Trackpad").tag(
-                        ClientInputInteractionModeV0.trackpad
-                    )
-                }
-                .pickerStyle(.menu)
-                .accessibilityIdentifier("Pointer mode")
-                .disabled(
-                    coordinator.phase != .active || coordinator.videoRequiresRestart
-                )
-            }
-            ToolbarItem(placement: .topBarTrailing) {
-                Button {
-                    viewState.showingDisplayPicker = true
-                    refreshDisplays(reportFailure: true)
-                } label: {
-                    Label(currentDisplayLabel, systemImage: "display.2")
-                }
-                .accessibilityIdentifier("Shared Display")
-                .disabled(
-                    coordinator.phase != .active
-                        || coordinator.videoRequiresRestart
-                        || viewState.displaySelectionInFlight
-                )
-            }
-            ToolbarItem(placement: .topBarTrailing) {
-                Menu(
-                    "More",
-                    systemImage: "ellipsis.circle"
-                ) {
-                    Button("Choose Surface", systemImage: "rectangle.stack") {
-                        requestSurfaceTargets(showPicker: true)
-                    }
-                    .disabled(
-                        viewState.surfaceRequestInFlight
-                    )
-                    Toggle(
-                        "Zoom to Focus Automatically",
-                        isOn: $viewState.automaticSmartZoomEnabled
-                    )
-                    Button(
-                        "Fit Screen",
-                        systemImage: "arrow.down.right.and.arrow.up.left",
-                        action: fitScreen
-                    )
-                    Button(
-                        "Resume Smart Zoom",
-                        systemImage: "scope",
-                        action: resumeSmartZoom
-                    )
-                    Divider()
-                    Button("Keys & Shortcuts", systemImage: "command") {
-                        showRemoteKeyboard()
-                    }
-                    .disabled(
-                        viewState.surfaceSelectionInFlight
-                    )
-                    Button("Record Test Job", systemImage: "checklist") {
-                        viewState.studyJobRecorded = false
-                        viewState.showingStudyJob = true
-                    }
-                    .disabled(
-                        viewState.studyJobInFlight
-                            || viewState.surfaceSelectionInFlight
-                    )
-                    Divider()
-                    // UIKit can cover the bottom toolbar with its software
-                    // keyboard. Keep the existing Stop action reachable above it.
-                    Button(
-                        viewState.stopSubmitted ? "Stopping…" : "Stop Remote Control",
-                        systemImage: "stop.circle.fill",
-                        role: .destructive,
-                        action: stopRemoteControl
-                    )
+                Button("Stop Remote Control", systemImage: "xmark", action: stopRemoteControl)
+                    .labelStyle(.iconOnly)
+                    .accessibilityIdentifier("Stop Remote Control")
                     .disabled(viewState.stopSubmitted || !canStop)
-                }
-                .disabled(coordinator.phase != .active || coordinator.videoRequiresRestart)
-            }
-            ToolbarItem(placement: .topBarTrailing) {
-                // Keep safety Stop directly reachable while UIKit's software
-                // keyboard covers the bottom toolbar. A transient Menu action
-                // is not reliably activatable while the text input session owns
-                // focus, and Stop must not depend on dismissing that keyboard.
-                Button(
-                    viewState.stopSubmitted ? "Stopping…" : "Stop Remote Control",
-                    systemImage: "stop.circle.fill",
-                    role: .destructive,
-                    action: stopRemoteControl
-                )
-                .accessibilityIdentifier("Stop Remote Control top")
-                .disabled(viewState.stopSubmitted || !canStop)
             }
         }
         .onAppear {
@@ -1585,6 +1220,39 @@ public struct ClientPrimaryLiveControlViewV0: View {
         }
     }
 
+    @ViewBuilder
+    private var sessionOptions: some View {
+        Button("Shared Display", systemImage: "display.2") {
+            viewState.showingDisplayPicker = true
+            refreshDisplays(reportFailure: true)
+        }
+        .accessibilityIdentifier("Shared Display")
+        .disabled(viewState.displaySelectionInFlight)
+        Button("Choose Surface", systemImage: "rectangle.stack") {
+            requestSurfaceTargets(showPicker: true)
+        }
+        .disabled(viewState.surfaceRequestInFlight)
+        Picker("Pointer mode", selection: $viewState.mode) {
+            Text("Touch").tag(ClientInputInteractionModeV0.directTouch)
+            Text("Trackpad").tag(ClientInputInteractionModeV0.trackpad)
+        }
+        .accessibilityIdentifier("Pointer mode")
+        Divider()
+        Button("Keys & Shortcuts", systemImage: "command", action: showRemoteKeyboard)
+            .accessibilityIdentifier("All remote shortcuts")
+        Button("Fit Screen", systemImage: "arrow.down.right.and.arrow.up.left", action: fitScreen)
+        Toggle("Zoom to Focus Automatically", isOn: $viewState.automaticSmartZoomEnabled)
+        Button("Resume Smart Zoom", systemImage: "scope", action: resumeSmartZoom)
+        #if DEBUG
+        Divider()
+        Button("Record Test Job", systemImage: "checklist") {
+            viewState.studyJobRecorded = false
+            viewState.showingStudyJob = true
+        }
+        .disabled(viewState.studyJobInFlight)
+        #endif
+    }
+
     private var canStop: Bool {
         switch control.mode {
         case .acceptedPreparingChannels, .channelsReady,
@@ -1645,6 +1313,8 @@ public struct ClientPrimaryLiveControlViewV0: View {
               viewState.displayCatalog?.selectedDisplayID.rawValue
                 != displayID else { return }
         pauseStudyControlTiming()
+        viewState.remoteKeyboardModifiers = []
+        coordinator.product?.surface.hideSoftwareKeyboard()
         viewState.pendingDisplayID = displayID
         viewState.displayStatusMessage = nil
         Task {
@@ -1724,6 +1394,8 @@ public struct ClientPrimaryLiveControlViewV0: View {
     private func selectSurface(_ choice: ClientSurfaceChoiceV0) {
         guard !viewState.surfaceRequestInFlight else { return }
         pauseStudyControlTiming()
+        viewState.remoteKeyboardModifiers = []
+        coordinator.product?.surface.hideSoftwareKeyboard()
         viewState.surfaceSelectionInFlight = true
         viewState.surfaceRequestInFlight = true
         Task {
@@ -1758,6 +1430,7 @@ public struct ClientPrimaryLiveControlViewV0: View {
             action,
             modifiers: modifiers
         )
+        viewState.remoteKeyboardModifiers = []
     }
 
     private func sendRemoteShortcut(_ shortcut: ClientRemoteShortcutV0) {

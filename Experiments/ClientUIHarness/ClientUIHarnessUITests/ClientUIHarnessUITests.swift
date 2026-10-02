@@ -173,7 +173,7 @@ final class SignedAgentJourneyUITests: XCTestCase {
         XCTAssertEqual(XCTWaiter.wait(for: [directText], timeout: 10), .completed)
 
         let activePrimary = app.staticTexts["Journey primary"].label
-        let stop = app.buttons["Stop Remote Control top"]
+        let stop = app.buttons["Stop Remote Control"]
         XCTAssertTrue(stop.waitForExistence(timeout: 5))
         XCTAssertTrue(stop.isHittable)
         stop.tap()
@@ -474,7 +474,7 @@ final class ClientUIHarnessUITests: XCTestCase {
             bottomStop.tap()
             return
         }
-        let topStop = app.buttons["Stop Remote Control top"]
+        let topStop = app.buttons["Stop Remote Control"]
         XCTAssertTrue(topStop.waitForExistence(timeout: 3))
         XCTAssertTrue(topStop.isHittable)
         topStop.tap()
@@ -1044,7 +1044,7 @@ final class ClientUIHarnessUITests: XCTestCase {
             // Exercise teardown while the iOS keyboard and a focused surface
             // are owned. Abrupt loss must also clear both before reconnecting.
             let termination = app.buttons[
-                cycle.isMultiple(of: 2) ? "Stop Remote Control top" : "Lab Drop"
+                cycle.isMultiple(of: 2) ? "Stop Remote Control" : "Lab Drop"
             ]
             XCTAssertTrue(termination.waitForExistence(timeout: 3))
             XCTAssertTrue(termination.isHittable, "Stop must stay reachable with the keyboard open")

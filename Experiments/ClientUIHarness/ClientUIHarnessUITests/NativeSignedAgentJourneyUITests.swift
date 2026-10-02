@@ -124,7 +124,7 @@ final class NativeSignedAgentJourneyUITests: XCTestCase {
                 label("Journey failure", "None")
                 continue
             }
-            let stop = app.buttons["Stop Remote Control top"]
+            let stop = app.buttons["Stop Remote Control"]
             XCTAssertTrue(stop.waitForExistence(timeout: 5))
             stop.tap()
             label("Journey capture", "Stopped")

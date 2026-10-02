@@ -2,6 +2,18 @@
 
 ## 2026-09-26 streaming engine and licensing decision
 
+Latest interface checkpoint: [compact remote session controls](evidence/2026-10-02-compact-remote-session-ui.md).
+Choose Display contains its topology and provides readable selection rows. One
+bar above the native keyboard exposes Escape, Tab and one-shot modifiers; one
+Close/Stop replaces duplicate navigation/Stop controls. Indexed chord vectors,
+both native SDKs, 12 embedded lifecycle tests, full stable Xcode 27.0 validation,
+and the normal-app Simulator display/window/input/Stop journey pass. Private
+screenshots were inspected. The signed normal update is installed on the iPhone
+18 Pro Max with existing identity/data; launch was denied because the phone was
+locked. Physical UI/input confirmation remains pending. All Displays has an
+explicit capture/input plan and is not implemented. Everyday acceptance and
+production release gates remain open.
+
 Latest Shared Display checkpoint: [native display recovery](evidence/2026-10-02-shared-display-native-recovery.md).
 The iPhone 18 Pro Max report is reproduced in the normal Simulator app. Shared
 Display now preserves the visible renderer with a sheet. Fresh display enrollment

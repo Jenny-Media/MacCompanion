@@ -107,6 +107,45 @@ public enum ClientKeyboardActionV0: Equatable, Sendable {
         }
     }
 
+    /// An armed modifier applies to a physical key, never to a Unicode text
+    /// commit. Unsupported modified commits are omitted locally.
+    public func softwareKeyboardPayloads(
+        modifiers: InteractiveModifierMask = []
+    ) throws -> [InteractiveInputPayload] {
+        guard case let .text(value) = self, !modifiers.isEmpty else {
+            return try payloads(modifiers: modifiers)
+        }
+        let bytes = Array(value.utf8)
+        guard bytes.count == 1 else { return [] }
+        let byte = bytes[0]
+        var effective = modifiers
+        let usage: UInt16
+        switch byte {
+        case 97...122: usage = UInt16(byte - 97) + 0x04
+        case 65...90:
+            usage = UInt16(byte - 65) + 0x04
+            effective.insert(.leftShift)
+        case 49...57: usage = UInt16(byte - 49) + 0x1e
+        case 48: usage = 0x27
+        case 32: usage = 0x2c
+        default:
+            let keys: [(UInt8, UInt8, UInt16)] = [
+                (45, 95, 0x2d), (61, 43, 0x2e),
+                (91, 123, 0x2f), (93, 125, 0x30), (92, 124, 0x31),
+                (59, 58, 0x33), (39, 34, 0x34), (96, 126, 0x35),
+                (44, 60, 0x36), (46, 62, 0x37), (47, 63, 0x38),
+                (49, 33, 0x1e), (50, 64, 0x1f), (51, 35, 0x20),
+                (52, 36, 0x21), (53, 37, 0x22), (54, 94, 0x23),
+                (55, 38, 0x24), (56, 42, 0x25), (57, 40, 0x26),
+                (48, 41, 0x27),
+            ]
+            guard let key = keys.first(where: { $0.0 == byte || $0.1 == byte }) else { return [] }
+            usage = key.2
+            if key.1 == byte { effective.insert(.leftShift) }
+        }
+        return try Self.physicalKey(usage: usage).payloads(modifiers: effective)
+    }
+
     private static func stroke(
         usage: UInt16,
         modifiers: InteractiveModifierMask

@@ -663,7 +663,7 @@
       "path": "valid/native-input-posting.json",
       "kind": "nativeInput.posting.v0.1",
       "expect": "valid",
-      "canonicalSHA256": "2539f8aaf16b4dd58d982ffa5a52e35853456be89a20f25837dc3ae0f7f639eb"
+      "canonicalSHA256": "a15ed206ca4149f4e0d3c7f8501273499c52cbdd02c32942e7cb54116a212be1"
     },
     {
       "path": "valid/normal-native-simulator-development.json",

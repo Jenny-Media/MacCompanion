@@ -23,5 +23,63 @@
   "nativeSurface": {
     "encodedWidth": 1280,
     "encodedHeight": 720
-  }
+  },
+  "softwareKeyboardCases": [
+    {
+      "text": "a",
+      "modifierMask": 8,
+      "usage": 4,
+      "effectiveModifierMask": 8
+    },
+    {
+      "text": "C",
+      "modifierMask": 8,
+      "usage": 6,
+      "effectiveModifierMask": 10
+    },
+    {
+      "text": "a",
+      "modifierMask": 1,
+      "usage": 4,
+      "effectiveModifierMask": 1
+    },
+    {
+      "text": "7",
+      "modifierMask": 4,
+      "usage": 36,
+      "effectiveModifierMask": 4
+    },
+    {
+      "text": "!",
+      "modifierMask": 8,
+      "usage": 30,
+      "effectiveModifierMask": 10
+    },
+    {
+      "text": " ",
+      "modifierMask": 2,
+      "usage": 44,
+      "effectiveModifierMask": 2
+    },
+    {
+      "text": "é",
+      "modifierMask": 0,
+      "unicodeText": "é"
+    },
+    {
+      "text": "你好",
+      "modifierMask": 0,
+      "unicodeText": "你好"
+    },
+    {
+      "text": "é",
+      "modifierMask": 8,
+      "omitted": true
+    },
+    {
+      "text": "hello",
+      "modifierMask": 8,
+      "omitted": true
+    }
+  ]
 }
