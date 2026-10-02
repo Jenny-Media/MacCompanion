@@ -699,7 +699,7 @@
       "path": "native-selected-capture-context-v0.1.json",
       "kind": "native.privateSelectedCaptureContext.v0.1",
       "expect": "valid",
-      "canonicalSHA256": "c5b0e260e4699f40847634e4342169c35bc1ae04922092a50cfdbecfdcdb7e01"
+      "canonicalSHA256": "aa775bc1f0ba0b0a98a1285a217ce0afff0c12ef134032e4cee91066aa5f41b2"
     },
     {
       "path": "client-failed-product-retirement-v0.1.json",

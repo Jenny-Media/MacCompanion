@@ -166,6 +166,12 @@ revalidate both the unchanged opaque mapping and the immutable selected capture;
 moving the window between displays requires fresh selection. Neither physical
 identifier crosses Agent IPC or changes the existing native signature scope.
 
+Before deleting a retired operation's private state, the menu may retain closed
+capture/encoder diagnostic codes from at most the final 64 KiB of each owned
+child log. This excludes raw log text, request URLs, credentials, input content,
+selection identities, bounds and pixels. Diagnostics do not confer admission or
+change retirement; expected encoder probes may also emit codes.
+
 The managed Mac adapter supplies an operation ID, private geometry-report path
 and exact expected encoded dimensions in a closed local spawn context. Inherited
 values are cleared. Managed launch rejects a missing/different requested video

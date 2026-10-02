@@ -2,6 +2,19 @@
 
 ## 2026-09-26 streaming engine and licensing decision
 
+Latest physical App/Window checkpoint: [native launch investigation](evidence/2026-10-02-native-app-switch-investigation.md).
+The user reports display switching now works, but App/Window switching still
+fails. The physical trace reaches acknowledged capture, native enrollment and
+server/application-list validation, then fails native launch response parsing.
+The underlying capture/encoder cause is not yet established. Animated and static
+selected App normal Simulator journeys both pass with five fresh presentations.
+Bounded fixed capture diagnostics now survive owned-child cleanup; indexed
+vocabulary/file-safety tests and full stable Xcode 27.0 validation with all 118
+fixtures pass. The signed diagnostic Mac update is installed and its existing
+Agent listener is verified; the iPhone remains on the preceding repair build.
+A physical repeat is requested. App/Window failure remains unresolved, and
+everyday acceptance and production release gates remain open.
+
 Latest replacement reliability checkpoint: [native Window and repeated view repair](evidence/2026-10-02-native-window-and-replacement-repair.md).
 The physical iPhone reports Window failure and blank video after display changes.
 Matched content-free traces reproduce a reset rejection during replacement

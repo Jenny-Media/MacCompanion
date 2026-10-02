@@ -91,5 +91,46 @@
       "selectedPhysicalDisplayID": 0,
       "denied": true
     }
+  ],
+  "childDiagnosticCases": [
+    {
+      "lines": [
+        "selected-capture-context-error=12",
+        "selected-capture-stream-error=4",
+        "selected-capture-sample-rejected=7"
+      ],
+      "codes": [
+        "selected-capture-context-error=12",
+        "selected-capture-sample-rejected=7",
+        "selected-capture-stream-error=4"
+      ]
+    },
+    {
+      "lines": [
+        "selected-capture-sample-rejected=65",
+        "selected-capture-sample-rejected=65"
+      ],
+      "codes": [
+        "selected-capture-sample-rejected=65"
+      ]
+    },
+    {
+      "lines": [
+        "other log text",
+        "selected-capture-stream-error=999",
+        "selected-capture-sample-rejected=7 extra",
+        "prefix selected-capture-context-error=12",
+        "selected-capture-context-error=012"
+      ],
+      "codes": []
+    },
+    {
+      "lines": [
+        "[timestamp]: Error: Couldn't find any working encoder matching [videotoolbox]"
+      ],
+      "codes": [
+        "no-working-encoder"
+      ]
+    }
   ]
 }

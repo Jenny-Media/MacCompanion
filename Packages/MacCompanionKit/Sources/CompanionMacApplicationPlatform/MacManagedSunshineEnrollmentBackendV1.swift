@@ -1,8 +1,12 @@
 #if os(macOS)
 import Foundation
 import Darwin
+import OSLog
 import CompanionInteractiveHost
 import CompanionInteractiveShared
+
+private let managedNativeCaptureDiagnosticsLoggerV1 = Logger(
+    subsystem: "media.jenny.maccompanion.mac", category: "native-host-diagnostics")
 
 /// Menu-owned backend with isolated, finite-lived enrollment state.
 /// Only the coordinator's valid proof may call activate. Private state belongs
@@ -268,7 +272,17 @@ public final class MacManagedSunshineEnrollmentBackendV1: InteractiveNativeVideo
         await task.value
         processOwner = nil
         clientPEM = nil; hostDER = nil
-        if let directory { try? FileManager.default.removeItem(at: directory) }
+        if let directory {
+            let codes = Set(["startup.log", "sunshine.log"].flatMap {
+                MacManagedNativeCaptureDiagnosticsV1.codes(file: directory.appendingPathComponent($0))
+            })
+            let kind = approvedSelectedCapture?.surfaceKind.rawValue ?? "desktop"
+            for code in codes.sorted() {
+                managedNativeCaptureDiagnosticsLoggerV1.notice(
+                    "managed native child retired kind=\(kind, privacy: .public) diagnostic=\(code, privacy: .public)")
+            }
+            try? FileManager.default.removeItem(at: directory)
+        }
         directory = nil
     }
 

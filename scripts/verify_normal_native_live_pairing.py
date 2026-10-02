@@ -129,7 +129,7 @@ class SelectedTargetProcess:
         raise TimeoutError('Disposable selected target did not terminate')
 
 
-def start_selected_target(output, change_window=False, other_display=False):
+def start_selected_target(output, change_window=False, other_display=False, static_target=False):
     """Own one visible, disposable AppKit target with no captured user content."""
     source = ROOT / 'Experiments/NormalNativeSimulatorQA/SelectedTarget.m'
     bundle = output / 'SelectedTarget.app'
@@ -150,10 +150,12 @@ def start_selected_target(output, change_window=False, other_display=False):
     launch = ['open', '-n', '-a', str(bundle), '--args', str(ready_path)]
     if change_path is not None:
         launch.append(str(change_path))
-    elif other_display:
+    elif other_display or static_target:
         launch.append(str(output / 'selected-target-unused-change.txt'))
     if other_display:
         launch.append('other-display')
+    elif static_target:
+        launch.append('static')
     subprocess.run(launch,
                    check=True, capture_output=True, timeout=15)
     deadline = time.monotonic() + 10
@@ -178,7 +180,7 @@ def verify(build, output, simulator, resume_build=False, reuse_build_project=Fal
            native_session_hold=False, native_video_continuity=False, native_window_closure=False,
            native_window_move=False, native_window_resize=False,
            native_window_resize_restart=False, native_window_resize_rapid_stop=False,
-           native_selected_window_other_display=False):
+           native_selected_window_other_display=False, native_selected_target_static=False):
     native = native_root is not None
     assert not native_window_resize_restart or native_window_resize
     assert not native_window_resize_rapid_stop or native_window_resize_restart
@@ -196,6 +198,8 @@ def verify(build, output, simulator, resume_build=False, reuse_build_project=Fal
     assert not (native_selected_target and native_selected_window)
     assert not native_window_soak or native_selected_window
     assert not native_selected_window_other_display or (native_selected_window and window_change is None)
+    assert not native_selected_target_static or ((native_selected_target or native_selected_window)
+        and not native_selected_window_other_display and window_change is None)
     assert window_change is None or (native_selected_window and not native_window_soak)
     assert not native_session_soak or (native and not native_background and not native_connection_loss
                                        and not native_surface_replacement and not native_window_soak)
@@ -370,7 +374,7 @@ def verify(build, output, simulator, resume_build=False, reuse_build_project=Fal
             host_log_monitor.start()
         if native_selected_target or native_selected_window:
             selected_target_process, selected_target_log = start_selected_target(
-                output, window_change is not None, native_selected_window_other_display)
+                output, window_change is not None, native_selected_window_other_display, native_selected_target_static)
         fixture = json.loads((probe.state / 'simulator-fixture.json').read_text())
         receipt = command(fixture, 'journey-pair' if complete_pairing else 'journey-pair-preview')
         if complete_pairing:
@@ -656,6 +660,7 @@ def verify(build, output, simulator, resume_build=False, reuse_build_project=Fal
         'nativeSelectedTargetVerified': (native_selected_target or native_selected_window) and passed and failure is None,
         'nativeSelectedWindowVerified': native_selected_window and passed and failure is None,
         'nativeSelectedWindowOtherDisplayVerified': native_selected_window_other_display and passed and failure is None,
+        'nativeSelectedStaticTargetVerified': native_selected_target_static and passed and failure is None,
         'nativeSelectedWindowClosureVerified': native_window_closure and passed and failure is None,
         'nativeSelectedWindowMoveRecoveryVerified': native_window_move and passed and failure is None,
         'nativeSelectedWindowResizeRecoveryVerified': native_window_resize and passed and failure is None,
@@ -688,6 +693,8 @@ if __name__ == '__main__':
     parser.add_argument('--native-selected-window', action='store_true', help='Select the disposable AppKit window through the normal iOS picker')
     parser.add_argument('--native-selected-window-other-display', action='store_true',
                         help='Place the disposable selected Window on another physical display from the main Desktop')
+    parser.add_argument('--native-selected-target-static', action='store_true',
+                        help='Keep the disposable selected App/Window static to exercise a typical idle interface')
     parser.add_argument('--native-window-soak', action='store_true', help='Repeat 20 selected Window/Desktop transitions in one normal Control journey')
     parser.add_argument('--native-session-soak', action='store_true', help='Run ten normal Control start/Stop journeys with fresh video and input')
     parser.add_argument('--native-session-hold', action='store_true', help='Keep one normal Control journey active for 30 minutes with continued video and input')
@@ -710,4 +717,4 @@ if __name__ == '__main__':
                         args.native_video_continuity, args.native_window_closure,
                         args.native_window_move, args.native_window_resize,
                         args.native_window_resize_restart, args.native_window_resize_rapid_stop,
-                        args.native_selected_window_other_display) else 1)
+                        args.native_selected_window_other_display, args.native_selected_target_static) else 1)

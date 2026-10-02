@@ -11,7 +11,8 @@ int main(int argc, char **argv) {
         application.activationPolicy = NSApplicationActivationPolicyAccessory;
         if (argc < 2 || argc > 4) return 2;
         BOOL otherDisplay = argc == 4 && strcmp(argv[3], "other-display") == 0;
-        if (argc == 4 && !otherDisplay) return 2;
+        BOOL staticTarget = argc == 4 && strcmp(argv[3], "static") == 0;
+        if (argc == 4 && !otherDisplay && !staticTarget) return 2;
         NSWindow *window = [[NSWindow alloc]
             initWithContentRect:NSMakeRect(120, 120, 800, 500)
                       styleMask:NSWindowStyleMaskTitled
@@ -37,7 +38,7 @@ int main(int argc, char **argv) {
         // A changing synthetic surface proves that the selected App stream
         // continues to deliver frames after Sunshine's encoder probes.
         __block BOOL alternate = NO;
-        [NSTimer scheduledTimerWithTimeInterval:1.0 / 15.0 repeats:YES block:^(NSTimer *timer) {
+        if (!staticTarget) [NSTimer scheduledTimerWithTimeInterval:1.0 / 15.0 repeats:YES block:^(NSTimer *timer) {
             (void)timer;
             alternate = !alternate;
             window.backgroundColor = alternate ? NSColor.blueColor : NSColor.redColor;
