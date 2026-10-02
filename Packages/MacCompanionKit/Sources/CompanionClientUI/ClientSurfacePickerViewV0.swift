@@ -5,6 +5,7 @@ import SwiftUI
 
 @available(iOS 17.0, *)
 public struct ClientSurfacePickerViewV0: View {
+    @State private var searchText = ""
     private let choices: [ClientSurfaceChoiceV0]
     private let onSelect: (ClientSurfaceChoiceV0) -> Void
     private let onRefresh: () -> Void
@@ -41,8 +42,11 @@ public struct ClientSurfacePickerViewV0: View {
                             Text("Refresh to ask the Mac for a new privacy-limited list.")
                         }
                         .listRowBackground(Color.clear)
+                    } else if filteredChoices.isEmpty {
+                        ContentUnavailableView.search(text: searchText)
+                            .listRowBackground(Color.clear)
                     } else {
-                        ForEach(choices.dropFirst()) { choice in
+                        ForEach(filteredChoices) { choice in
                             choiceButton(choice)
                         }
                     }
@@ -53,6 +57,11 @@ public struct ClientSurfacePickerViewV0: View {
                 }
             }
             .navigationTitle("Choose Mac View")
+            .searchable(
+                text: $searchText,
+                placement: .navigationBarDrawer(displayMode: .always),
+                prompt: "Find an app or window"
+            )
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel", role: .cancel, action: onCancel)
@@ -61,6 +70,15 @@ public struct ClientSurfacePickerViewV0: View {
                     Button("Refresh", systemImage: "arrow.clockwise", action: onRefresh)
                 }
             }
+        }
+    }
+
+    private var filteredChoices: [ClientSurfaceChoiceV0] {
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        return choices.dropFirst().filter { choice in
+            query.isEmpty
+                || choiceTitle(choice).localizedStandardContains(query)
+                || (choiceDetail(choice)?.localizedStandardContains(query) ?? false)
         }
     }
 

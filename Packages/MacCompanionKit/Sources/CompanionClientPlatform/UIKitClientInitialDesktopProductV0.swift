@@ -293,9 +293,13 @@ public final class UIKitClientInitialDesktopProductV0 {
                               encodedHeight: Int(descriptor.encodedHeight)),
             surface: surface, driver: driver, current: current,
             changed: { [weak self] phase, failure in
-                self?.videoRecoveryChanged?(
-                    phase == .failed || phase == .draining || phase == .retired
-                )
+                // An explicit surface replacement drains the old owner as a
+                // normal transition. It does not require restarting Control.
+                if let self, !self.surfaceTransitionInFlight {
+                    self.videoRecoveryChanged?(
+                        phase == .failed || phase == .draining || phase == .retired
+                    )
+                }
                 changed(phase, failure)
             },
             logicalWidthPoints: descriptor.logicalWidthPoints, logicalHeightPoints: descriptor.logicalHeightPoints,

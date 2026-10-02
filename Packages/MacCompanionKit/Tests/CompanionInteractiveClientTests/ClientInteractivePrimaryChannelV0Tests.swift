@@ -386,6 +386,94 @@ private struct NativeUnexpectedSigner: ClientSessionAuthenticationSigningV0 {
     }
 }
 
+private actor NativeCertificateValidationGate {
+    private var continuation: CheckedContinuation<Bool, Never>?
+    private(set) var entered = false
+    func wait() async -> Bool {
+        entered = true
+        return await withCheckedContinuation { continuation = $0 }
+    }
+    func release() { continuation?.resume(returning: true); continuation = nil }
+}
+
+private actor NativeDrainCompletion {
+    private(set) var finished = false
+    func finish() { finished = true }
+}
+
+private func verifyRetiredNativeEnrollmentCannotCancelReplacement(
+    _ harness: InteractivePrimaryHarnessV0, descriptor: AdaptiveSurfaceDescriptor
+) async throws {
+    let template = try nativePrimaryFixture("enroll-challenge", as: InteractiveNativeVideoEnrollmentChallengeBodyV0.self)
+    let certificate = try nativePrimaryFixture("enroll-request", as: InteractiveNativeVideoEnrollmentRequestBodyV0.self)
+    let der = try #require(Data(base64Encoded: certificate.body.clientCertificateDERBase64))
+    let gate = NativeCertificateValidationGate()
+    let owner = ClientNativeVideoEnrollmentSessionV0(channel: harness.channel, signer: NativeUnexpectedSigner(),
+        validateCertificate: { _ in await gate.wait() }, monotonicMilliseconds: { 3000 })
+    let attempt = Task { try await owner.enroll(descriptor: descriptor, clientCertificateDER: der) }
+    let request = try WireCodec.decode(WireEnvelope<InteractiveNativeVideoEnrollmentRequestBodyV0>.self,
+        from: await nativePrimarySentFrame(harness, kind: .nativeEnrollRequest))
+    func challenge(for request: WireEnvelope<InteractiveNativeVideoEnrollmentRequestBodyV0>) throws
+        -> WireEnvelope<InteractiveNativeVideoEnrollmentChallengeBodyV0> {
+        let t = template.body
+        return try WireEnvelope(messageID: WireUUID(UUID()), correlationID: request.messageID, sentAtUnixMilliseconds: 2_001,
+            body: InteractiveNativeVideoEnrollmentChallengeBodyV0(fence: request.body.fence, controlGeneration: t.controlGeneration,
+                encodedWidth: descriptor.encodedWidth, encodedHeight: descriptor.encodedHeight,
+                hostCertificateDERBase64: t.hostCertificateDERBase64, hostChallengeBase64: t.hostChallengeBase64,
+                signingInputBase64: t.signingInputBase64, issuedAtUnixMilliseconds: t.issuedAtUnixMilliseconds,
+                expiresAtUnixMilliseconds: t.expiresAtUnixMilliseconds))
+    }
+    try await harness.router.receive(WireCodec.encode(challenge(for: request)))
+    let validationDeadline = ContinuousClock.now.advanced(by: .seconds(2))
+    while !(await gate.entered), ContinuousClock.now < validationDeadline {
+        try await Task.sleep(for: .milliseconds(1))
+    }
+    #expect(await gate.entered)
+    let completion = NativeDrainCompletion()
+    let closing = Task { await owner.close(); await completion.finish() }
+    let cancel = try WireCodec.decode(WireEnvelope<InteractiveNativeVideoCancelBodyV0>.self,
+        from: await nativePrimarySentFrame(harness, kind: .nativeCancel))
+    #expect(cancel.body.fence == request.body.fence)
+    try await harness.router.receive(WireCodec.encode(WireEnvelope(messageID: WireUUID(UUID()), correlationID: cancel.messageID,
+        sentAtUnixMilliseconds: 2_002, body: try InteractiveNativeVideoCancelledBodyV0(fence: cancel.body.fence))))
+    try await harness.channel.cancelNativeEnrollment()
+    // The canceled certificate validator deliberately ignores task cancellation.
+    // A fresh reservation can exist while the old owner joins that validator.
+    let replacement = Task { try await harness.channel.requestNativeEnrollment(for: descriptor, clientCertificateDER: der) }
+    let replacementRequest = try WireCodec.decode(WireEnvelope<InteractiveNativeVideoEnrollmentRequestBodyV0>.self,
+        from: await nativePrimarySentFrame(harness, kind: .nativeEnrollRequest, excluding: request.messageID))
+    await gate.release()
+    var staleCancel: WireEnvelope<InteractiveNativeVideoCancelBodyV0>?
+    let closeDeadline = ContinuousClock.now.advanced(by: .seconds(2))
+    while !(await completion.finished), ContinuousClock.now < closeDeadline {
+        if let frame = await harness.transport.frames.last, try WireCodec.messageKind(from: frame) == .nativeCancel {
+            let candidate = try WireCodec.decode(WireEnvelope<InteractiveNativeVideoCancelBodyV0>.self, from: frame)
+            if candidate.body.fence == replacementRequest.body.fence { staleCancel = candidate; break }
+        }
+        try await Task.sleep(for: .milliseconds(1))
+    }
+    if let staleCancel {
+        // Unblock the broken implementation so failure evidence includes cleanup.
+        try await harness.router.receive(WireCodec.encode(WireEnvelope(messageID: WireUUID(UUID()), correlationID: staleCancel.messageID,
+            sentAtUnixMilliseconds: 2_003, body: try InteractiveNativeVideoCancelledBodyV0(fence: staleCancel.body.fence))))
+    }
+    await closing.value
+    do { _ = try await attempt.value; Issue.record("Retired certificate attempt completed") } catch {}
+    #expect(staleCancel == nil, "Retired enrollment compensation canceled the replacement's exact fence")
+    if staleCancel != nil { _ = try? await replacement.value; return }
+    let freshChallenge = try challenge(for: replacementRequest)
+    try await harness.router.receive(WireCodec.encode(freshChallenge))
+    #expect(try await replacement.value == freshChallenge)
+    #expect(await harness.channel.nativeAttestationAuthority(for: freshChallenge) != nil)
+    let cleanup = Task { try await harness.channel.cancelNativeEnrollment() }
+    let cleanupRequest = try WireCodec.decode(WireEnvelope<InteractiveNativeVideoCancelBodyV0>.self,
+        from: await nativePrimarySentFrame(harness, kind: .nativeCancel, excluding: cancel.messageID))
+    try await harness.router.receive(WireCodec.encode(WireEnvelope(messageID: WireUUID(UUID()), correlationID: cleanupRequest.messageID,
+        sentAtUnixMilliseconds: 2_004, body: try InteractiveNativeVideoCancelledBodyV0(fence: cleanupRequest.body.fence))))
+    try await cleanup.value
+    #expect(await harness.router.state == .ready)
+}
+
 private func verifyNativePrimaryRouting(_ harness: InteractivePrimaryHarnessV0, descriptor: AdaptiveSurfaceDescriptor) async throws {
     let template = try nativePrimaryFixture("enroll-challenge", as: InteractiveNativeVideoEnrollmentChallengeBodyV0.self)
     let requestTemplate = try nativePrimaryFixture("enroll-request", as: InteractiveNativeVideoEnrollmentRequestBodyV0.self)
@@ -744,6 +832,9 @@ func interactivePrimaryChannelCompletesSelectedSessionApprovalFlow(delivery: (In
         }
         #expect(await harness.transport.frames.count == previousFrames)
     } else {
+        if deliveryOrder == 0 && acknowledgementDelivery == 0 {
+            try await verifyRetiredNativeEnrollmentCannotCancelReplacement(harness, descriptor: admittedDescriptor)
+        }
         try await verifyNativePrimaryRouting(harness, descriptor: admittedDescriptor)
     }
 

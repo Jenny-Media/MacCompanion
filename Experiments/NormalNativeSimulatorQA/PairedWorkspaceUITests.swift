@@ -172,15 +172,16 @@ final class PairedWorkspaceUITests: XCTestCase {
                         XCTAssertTrue(app.navigationBars["Choose Mac View"].waitForExistence(timeout: 10), app.debugDescription)
                         let chooseSelected = transition.isMultiple(of: 2)
                         if chooseSelected && (selectedTarget != nil || selectedWindow != nil) {
+                            let search = app.searchFields["Find an app or window"]
+                            XCTAssertTrue(search.waitForExistence(timeout: 5), app.debugDescription)
+                            search.tap()
+                            search.typeText(selectedWindow ?? selectedTarget ?? "")
                             let predicate = selectedWindow.map {
                                 NSPredicate(format: "label BEGINSWITH %@ AND label CONTAINS %@", "Window ", $0)
                             } ?? NSPredicate(format: "label BEGINSWITH %@", selectedTarget ?? "")
                             let target = app.buttons.matching(predicate).firstMatch
-                            for _ in 0..<48 where !target.exists {
-                                app.swipeUp()
-                            }
                             XCTAssertTrue(target.waitForExistence(timeout: 5),
-                                "Disposable selected target did not appear in the complete picker inventory")
+                                "Search must find the disposable selected target in the picker inventory")
                             target.tap()
                         } else {
                             app.buttons["Desktop"].tap()
@@ -189,6 +190,8 @@ final class PairedWorkspaceUITests: XCTestCase {
                             predicate: NSPredicate(format: "exists == 1 AND enabled == 1"), object: keyboard)
                         XCTAssertEqual(XCTWaiter.wait(for: [reenrolled], timeout: 45), .completed,
                             "Replacement must wait for fresh native presentation")
+                        XCTAssertFalse(app.staticTexts["Remote Control needs to restart"].exists,
+                            "A successful surface replacement must not retain restart guidance")
                         expectedPresentations += 1
                         var after = try hostControl()
                         let deadline = Date().addingTimeInterval(45)

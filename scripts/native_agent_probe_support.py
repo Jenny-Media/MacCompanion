@@ -21,13 +21,11 @@ def verify_development_host_package(path: Path):
 def configure_native_probe(root: Path, portable_host: Path | None = None):
     root = root.resolve()
     source = verify_source(root, "Sunshine")
-    binary = source / "cmake-build-maccompanion-reference/Sunshine.app/Contents/MacOS/Sunshine"
-    assert digest(binary) == "c48a6824dea93f0157bc1bcbd3819201da671610895a2c5c7885173c9044582d", "Unexpected host artifact"
-    assert (root / "managed-host-supervisor").is_file(), "Run the managed host probe first"
     tls_prefix = Path("/opt/homebrew/opt/openssl@3")
     if portable_host is not None:
         from package_rebuilt_source_host import openssl_binding
         package_record = verify_development_host_package(portable_host)
+        binary = portable_host / "Sunshine.app/Contents/MacOS/Sunshine"
         binding = openssl_binding(package_record)
         if binding is not None:
             from build_source_native_host import verified_files
@@ -35,6 +33,10 @@ def configure_native_probe(root: Path, portable_host: Path | None = None):
             assert digest(record_path) == binding["sha256"], "Native test TLS dependency record changed"
             tls_prefix = record_path.parent / "prefixes/openssl"
             verified_files(tls_prefix, json.loads(record_path.read_text()))
+    else:
+        binary = source / "cmake-build-maccompanion-reference/Sunshine.app/Contents/MacOS/Sunshine"
+        assert digest(binary) == "c48a6824dea93f0157bc1bcbd3819201da671610895a2c5c7885173c9044582d", "Unexpected host artifact"
+        assert (root / "managed-host-supervisor").is_file(), "Run the managed host probe first"
     os.environ.setdefault("DEVELOPER_DIR", "/Applications/Xcode.app/Contents/Developer")
     probe = Probe()
     package = probe.evidence / "native-package"

@@ -106,6 +106,15 @@ closed replies may be decoded and discarded but cannot revive the renderer.
 Session End and primary invalidation retire waiters before awaiting transport or
 cleanup. Surface selection cancels the native operation before changing capture.
 
+Each local client enrollment owner retains a unique opaque reservation identity.
+Its cancellation and post-join compensation may retire only the primary slot
+reserved by that identity. A former owner cannot cancel a replacement, including
+one on the same Control surface. The reservation is local state and is not a
+wire field, signing input, or additional grant.
+A caller joining an already running cancellation publishes completion of that
+same local reservation before returning. A completed cancellation cannot leave
+the replacement slot marked busy while another joiner finishes returning.
+
 For a native App/Window/Desktop replacement, the client first fences local
 keyboard and pointer input, cancels pending native preparation, and drains the
 current Moonlight renderer, TLS identity and enrollment. It then uses the

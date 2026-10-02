@@ -23,7 +23,8 @@ PROFILE = "maccompanion.native-candidate-source-inputs.v1"
 PREFIXES = ("Native/", "Apps/", "Packages/", "Tests/", "scripts/", "spec/", "LICENSES/",
             "docs/", ".github/",
             "MacCompanion.xcodeproj/", "Experiments/SunshineMoonlightIntegration/",
-            "Experiments/LiveControlLab/", "Experiments/ClientUIHarness/")
+            "Experiments/LiveControlLab/", "Experiments/ClientUIHarness/",
+            "Experiments/NormalNativeSimulatorQA/")
 ROOT_FILES = {"LICENSE", "LICENSING.md", "NOTICE", "README.md", "SECURITY.md",
               "TRADEMARKS.md", "CONTRIBUTING.md", "project.yml", ".gitignore"}
 PRIVATE_EXTENSIONS = {".pem", ".p12", ".pfx", ".cer", ".crt", ".key", ".mobileprovision", ".provisionprofile"}

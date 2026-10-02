@@ -168,6 +168,7 @@ public actor ClientInteractivePrimaryChannelV0:
     private var nativeCancellationTask: Task<Void, Error>?
     private var nativeCancellationToken: UUID?
     private var nativeFence: InteractiveNativeVideoRequestFenceV0?
+    private var nativeEnrollmentOwnerID: UUID?
     private var nativeChallenge: WireEnvelope<InteractiveNativeVideoEnrollmentChallengeBodyV0>?
     private var nativeReady = false
     private var nativePresentationGeneration: Int64?
@@ -363,7 +364,8 @@ public actor ClientInteractivePrimaryChannelV0:
     }
 
     public func requestNativeEnrollment(for descriptor: AdaptiveSurfaceDescriptor,
-                                        clientCertificateDER: Data, timeoutMilliseconds: UInt64 = 15_000) async throws
+                                        clientCertificateDER: Data, localOwnerID: UUID? = nil,
+                                        timeoutMilliseconds: UInt64 = 15_000) async throws
         -> WireEnvelope<InteractiveNativeVideoEnrollmentChallengeBodyV0> {
         guard let accepted = await authority.acceptedSession, !Task.isCancelled, !invalidated, endRequestMessageID == nil,
               nativeFence == nil, nativeRequestID == nil, nativeCancellationTask == nil, nativeGeneration < WireLimits.maximumSafeInteger,
@@ -384,6 +386,7 @@ public actor ClientInteractivePrimaryChannelV0:
             surfaceID: WireUUID(descriptor.surfaceID), surfaceRevision: surfaceRevision,
             coordinateSpaceRevision: coordinateRevision)
         nativeFence = fence
+        nativeEnrollmentOwnerID = localOwnerID
         let body = try InteractiveNativeVideoEnrollmentRequestBodyV0(fence: fence, clientCertificateDERBase64: clientCertificateDER.base64EncodedString())
         let reply = try await waitNative(body, expected: .nativeEnrollChallenge, timeout: timeoutMilliseconds)
         guard case .challenge(let challenge) = reply else { throw ClientInteractivePrimaryChannelErrorV0.unavailable }
@@ -447,8 +450,20 @@ public actor ClientInteractivePrimaryChannelV0:
         return receipt
     }
 
+    public func cancelNativeEnrollment(ownedBy localOwnerID: UUID, timeoutMilliseconds: UInt64 = 15_000) async throws {
+        guard nativeEnrollmentOwnerID == localOwnerID else { return }
+        try await cancelNativeEnrollment(timeoutMilliseconds: timeoutMilliseconds)
+    }
+
     public func cancelNativeEnrollment(timeoutMilliseconds: UInt64 = 15_000) async throws {
-        if let nativeCancellationTask { try await nativeCancellationTask.value; return }
+        if let nativeCancellationTask {
+            let token = nativeCancellationToken
+            defer {
+                if nativeCancellationToken == token { self.nativeCancellationTask = nil; nativeCancellationToken = nil }
+            }
+            try await nativeCancellationTask.value
+            return
+        }
         guard !invalidated, endRequestMessageID == nil, let fence = nativeFence else { return }
         let token = UUID()
         let task = Task { try await self.performNativeCancellation(fence, timeoutMilliseconds: timeoutMilliseconds) }
@@ -567,7 +582,8 @@ public actor ClientInteractivePrimaryChannelV0:
             }
         case .success(.cancelled(let fence)):
             guard nativeFence == fence else { finishNativeWaiter(.failure(ClientInteractivePrimaryChannelErrorV0.unavailable)); return }
-            nativeFence = nil; nativeChallenge = nil; nativeReady = false; nativePresentationGeneration = nil
+            nativeFence = nil; nativeEnrollmentOwnerID = nil
+            nativeChallenge = nil; nativeReady = false; nativePresentationGeneration = nil
         case .failure: break
         }
         finishNativeWaiter(result)
@@ -594,7 +610,8 @@ public actor ClientInteractivePrimaryChannelV0:
     private func fenceNativeSession() {
         nativeCancellationTask?.cancel(); nativeCancellationTask = nil; nativeCancellationToken = nil
         if let id = nativeRequestID { discardNativeWaiter(id) }
-        nativeFence = nil; nativeChallenge = nil; nativeReady = false; nativePresentationGeneration = nil
+        nativeFence = nil; nativeEnrollmentOwnerID = nil
+        nativeChallenge = nil; nativeReady = false; nativePresentationGeneration = nil
     }
 
     /// Starts one complete-gathering negotiation on the current acknowledged

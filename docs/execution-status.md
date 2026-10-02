@@ -2,6 +2,25 @@
 
 ## 2026-09-26 streaming engine and licensing decision
 
+Latest usability and source checkpoint: [enrollment ownership and frozen-source
+preparation](evidence/2026-10-01-native-owner-usability-and-source-preparation.md).
+The App/Window picker searches privacy-limited names/ordinals. A deterministic
+regression proves an old enrollment owner's post-join compensation could cancel
+a fresh reservation; scoped local ownership and completed-cancel publication
+repair it without changing wire/signature/grant semantics. The 18 ordering cases,
+both SDK builds, installed signed iPhone 17 Pro Max update, and full stable Xcode
+27.0 validation with 118 fixtures pass. Ten normal-app Simulator sessions pass
+after compilation finishes. An earlier run lost local XPC after a media reply
+timeout under concurrent source rebuilds; its cause remains unproven. The frozen
+current source archive reconstructs runtime/codecs/Web/host/both client SDKs and
+a portable host package. Separate normal-client App and Window selection pass
+against that archive-built host with three fresh presentations and input
+delivery in each journey. The three-session normal-client background/primary-cut
+recovery journey also passes against the archive host. Physical input approval,
+the loaded-session stall,
+native Release admission, distribution profiles, source delivery review,
+notarization, and the final acceptance/elapsed soak gates remain open.
+
 Latest physical reliability checkpoint: [installed enrollment and route
 repair](evidence/2026-10-01-installed-native-enrollment-and-route-repair.md).
 The user's iPhone 17 Pro Max authenticates using its saved pair. Physical testing

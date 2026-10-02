@@ -4,6 +4,7 @@ import UIKit
 import CompanionClient
 import CompanionClientPlatform
 import CompanionClientNetworkPlatform
+import CompanionInteractiveClient
 import CompanionInteractiveShared
 import CompanionInteractiveWire
 import CompanionMoonlightEngine
@@ -155,7 +156,11 @@ public final class MoonlightNativeLaunchAdapterV0: UIKitClientNativeVideoPrepari
                         receipt = try await roles.acknowledgeNativePresentation(nativeGeneration: generation,
                             encodedWidth: UInt16(surface.encodedWidth), encodedHeight: UInt16(surface.encodedHeight))
                     } catch {
-                        self.diagnostic("presentation-failed-" + String(reflecting: type(of: error)))
+                        if let failure = error as? ClientInteractivePrimaryChannelErrorV0 {
+                            self.diagnostic("presentation-failed-primary-" + String(describing: failure))
+                        } else {
+                            self.diagnostic("presentation-failed-" + String(reflecting: type(of: error)))
+                        }
                         throw error
                     }
                     try await self.check()

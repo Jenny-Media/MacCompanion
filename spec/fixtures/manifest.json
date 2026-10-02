@@ -615,7 +615,7 @@
       "path": "valid/native-client-launch-admission.json",
       "kind": "interactive.nativeClientLaunchAdmission.v0.1",
       "expect": "valid",
-      "canonicalSHA256": "46402e743c1af05cbaa7212d2794303413d61ff27d5577189a2ceb2790f7288f"
+      "canonicalSHA256": "68d9b38925f5c8ee424aedf33073bca8fb9abb130b471730741019d932b1d990"
     },
     {
       "path": "valid/managed-native-host-admission.json",

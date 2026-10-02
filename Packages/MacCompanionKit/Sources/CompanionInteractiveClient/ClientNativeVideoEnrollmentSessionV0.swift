@@ -18,6 +18,7 @@ public struct ClientNativeVideoEnrolledSessionV0: Sendable {
 /// same drain. A platform owns and erases its ephemeral native client identity.
 public actor ClientNativeVideoEnrollmentSessionV0 {
     private let channel: ClientInteractivePrimaryChannelV0
+    private let localOwnerID = UUID()
     private let signer: any ClientSessionAuthenticationSigningV0
     private let validateCertificate: @Sendable (Data) async throws -> Bool
     private let now: @Sendable () -> UInt64
@@ -53,7 +54,8 @@ public actor ClientNativeVideoEnrollmentSessionV0 {
 
     private func performEnrollment(descriptor: AdaptiveSurfaceDescriptor, clientCertificateDER: Data) async throws -> ClientNativeVideoEnrolledSessionV0 {
         do {
-            let challenge = try await channel.requestNativeEnrollment(for: descriptor, clientCertificateDER: clientCertificateDER)
+            let challenge = try await channel.requestNativeEnrollment(for: descriptor,
+                clientCertificateDER: clientCertificateDER, localOwnerID: localOwnerID)
             guard !closed, let authority = await channel.nativeAttestationAuthority(for: challenge) else {
                 throw ClientNativeVideoAttestationFailureV0.authorizationLost
             }
@@ -112,7 +114,7 @@ public actor ClientNativeVideoEnrollmentSessionV0 {
         guard started else { return }
         monitor?.cancel()
         monitor = nil
-        let owner = attestation, channel = self.channel, pending = attempt
+        let owner = attestation, channel = self.channel, pending = attempt, localOwnerID = self.localOwnerID
         pending?.cancel()
         attempt = nil
         attestation = nil
@@ -120,11 +122,11 @@ public actor ClientNativeVideoEnrollmentSessionV0 {
         expected = nil
         let task = Task {
             await owner?.retire()
-            try? await channel.cancelNativeEnrollment()
+            try? await channel.cancelNativeEnrollment(ownedBy: localOwnerID)
             _ = try? await pending?.value
             // A request suspended before reserving its fence may have finished
             // while cancellation was sent. Join then compensate once more.
-            try? await channel.cancelNativeEnrollment()
+            try? await channel.cancelNativeEnrollment(ownedBy: localOwnerID)
         }
         drain = task
         await task.value

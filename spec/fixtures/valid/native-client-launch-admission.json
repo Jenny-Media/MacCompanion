@@ -38,6 +38,8 @@
     "resolved-dns-bonjour-uses-exact-authenticated-transport-ip",
     "unselected-measured-route-unavailable",
     "replacement-primary-discards-prior-measured-route",
-    "measured-native-route-does-not-classify-provenance"
+    "measured-native-route-does-not-classify-provenance",
+    "retired-enrollment-owner-cannot-cancel-replacement",
+    "joined-native-cancel-publishes-idle-before-return"
   ]
 }
