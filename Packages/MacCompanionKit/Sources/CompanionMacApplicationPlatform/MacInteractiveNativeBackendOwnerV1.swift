@@ -69,6 +69,7 @@ public actor MacInteractiveNativeBackendOwnerV1 {
         let operationID: UUID
         let scope: LocalInteractiveNativeBackendScopeV1
         let permit: MacInteractiveNativeBackendPermitV1
+        let leasePhysicalDisplayID: UInt32
         let physicalDisplayID: UInt32
         let captureGeometry: InteractiveNativeVideoContentGeometryV0?
         let selectedCapture: MacManagedNativeSelectedCaptureV1?
@@ -138,7 +139,8 @@ public actor MacInteractiveNativeBackendOwnerV1 {
             // Reserve before the first suspension; physical mapping is joined
             // later inside the retained task while Stop can already fence it.
             owned = .init(backendID: command.backendID, operationID: command.operationID, scope: command.scope,
-                permit: .init(deadline: command.scope.expiresAtMonotonicMilliseconds), physicalDisplayID: 0, captureGeometry: nil,
+                permit: .init(deadline: command.scope.expiresAtMonotonicMilliseconds), leasePhysicalDisplayID: 0,
+                physicalDisplayID: 0, captureGeometry: nil,
                 selectedCapture: nil,
                 backend: nil, phase: .preparing)
             startWatcher()
@@ -199,28 +201,30 @@ public actor MacInteractiveNativeBackendOwnerV1 {
             try await pauseInput(command.scope.runtimeFence(backendID: command.backendID),
                 DispatchTime.now().uptimeNanoseconds)
             try await check(command)
-            let physical = try resolveDisplay(command.scope.selectedDisplayID)
-            let selected = try await readSelectedCapture(command.scope, physical)
+            let leasePhysical = try resolveDisplay(command.scope.selectedDisplayID)
+            let selected = try await readSelectedCapture(command.scope, leasePhysical)
             let snapshot = try await readSnapshot(command.scope.runtimeFence(backendID: command.backendID),
                 DispatchTime.now().uptimeNanoseconds)
-            guard physical != 0, let snapshot, command.scope.matches(snapshot),
+            guard leasePhysical != 0, let snapshot, command.scope.matches(snapshot),
                   snapshot.isCurrent(nowMonotonicNanoseconds: DispatchTime.now().uptimeNanoseconds),
                   let current = owned, exact(command, current), current.permit.isCurrent else {
                 throw LocalInteractiveNativeBackendErrorV1.unavailable
             }
-            guard selectionMatches(snapshot: snapshot, selected: selected),
-                  selected == nil || selected?.physicalDisplayID == physical else {
+            guard selectionMatches(snapshot: snapshot, selected: selected) else {
                 throw LocalInteractiveNativeBackendErrorV1.unavailable
             }
+            let physical = try Self.captureDisplayID(kind: snapshot.surfaceKind, leaseDisplayID: leasePhysical,
+                selectedDisplayID: selected?.physicalDisplayID)
             let geometry = try measureGeometry(physical, scope: command.scope, selected: selected)
             let resolve = resolveDisplay, readGeometry = readCaptureGeometry, scope = command.scope
             try current.permit.bindCapture {
-                guard try resolve(scope.selectedDisplayID) == physical else { return false }
+                guard try resolve(scope.selectedDisplayID) == leasePhysical else { return false }
                 if let selected { return selected.isCurrent && selected.geometry == geometry }
                 return try readGeometry(physical, scope) == geometry
             }
             owned = .init(backendID: current.backendID, operationID: current.operationID, scope: current.scope,
-                permit: current.permit, physicalDisplayID: physical, captureGeometry: geometry,
+                permit: current.permit, leasePhysicalDisplayID: leasePhysical,
+                physicalDisplayID: physical, captureGeometry: geometry,
                 selectedCapture: selected, backend: nil, phase: .preparing)
             try await check(command)
             let backend = try await factory(physical, geometry, current.permit, selected)
@@ -311,19 +315,41 @@ public actor MacInteractiveNativeBackendOwnerV1 {
             guard selectionMatches(snapshot: snapshot, selected: latest.selectedCapture) else {
                 throw LocalInteractiveNativeBackendErrorV1.unavailable
             }
-            guard try resolveDisplay(command.scope.selectedDisplayID) == latest.physicalDisplayID,
+            guard try resolveDisplay(command.scope.selectedDisplayID) == latest.leasePhysicalDisplayID,
                   let expected = latest.captureGeometry else {
                 throw LocalInteractiveNativeBackendErrorV1.unavailable
             }
-            let selected = try await readSelectedCapture(command.scope, latest.physicalDisplayID)
+            let selected = try await readSelectedCapture(command.scope, latest.leasePhysicalDisplayID)
             guard !Task.isCancelled, let current = owned, exact(command, current), current.permit.isCurrent,
                   selectionMatches(snapshot: snapshot, selected: selected),
+                  try Self.captureDisplayID(kind: snapshot.surfaceKind,
+                      leaseDisplayID: current.leasePhysicalDisplayID,
+                      selectedDisplayID: selected?.physicalDisplayID) == current.physicalDisplayID,
                   selected == current.selectedCapture,
                   try measureGeometry(current.physicalDisplayID, scope: command.scope, selected: selected) == expected else {
                 throw LocalInteractiveNativeBackendErrorV1.unavailable
             }
         }
     }
+    nonisolated package static func captureDisplayID(kind: InteractiveSurfaceKind,
+        leaseDisplayID: UInt32, selectedDisplayID: UInt32?) throws -> UInt32 {
+        guard leaseDisplayID != 0 else { throw LocalInteractiveNativeBackendErrorV1.unavailable }
+        switch kind {
+        case .desktop:
+            guard selectedDisplayID == nil else { throw LocalInteractiveNativeBackendErrorV1.unavailable }
+        case .window:
+            guard let selectedDisplayID, selectedDisplayID != 0 else {
+                throw LocalInteractiveNativeBackendErrorV1.unavailable
+            }
+            return selectedDisplayID
+        case .application:
+            guard selectedDisplayID == leaseDisplayID else { throw LocalInteractiveNativeBackendErrorV1.unavailable }
+        case .focusedRegion:
+            throw LocalInteractiveNativeBackendErrorV1.unavailable
+        }
+        return leaseDisplayID
+    }
+
     private func selectionMatches(snapshot: LocalInteractiveNativeRuntimeSnapshotV1,
                                   selected: MacManagedNativeSelectedCaptureV1?) -> Bool {
         if snapshot.surfaceKind == .desktop { return selected == nil }

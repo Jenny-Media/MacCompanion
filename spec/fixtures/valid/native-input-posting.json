@@ -81,5 +81,17 @@
       "modifierMask": 8,
       "omitted": true
     }
+  ],
+  "pausedResetCases": [
+    {
+      "authorization": "absent",
+      "expectedPostedInputs": 0,
+      "expectedReleaseCount": 2
+    },
+    {
+      "authorization": "revoked",
+      "expectedPostedInputs": 0,
+      "expectedReleaseCount": 2
+    }
   ]
 }

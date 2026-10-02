@@ -37,5 +37,59 @@
     "backend owner treats absent selected object as Desktop only for an active Desktop descriptor",
     "App and Window require acknowledged replacement then fresh native enrollment and context",
     "old renderer identity operation and input authorization cannot cross the replacement"
+  ],
+  "captureDisplayCases": [
+    {
+      "kind": "desktop",
+      "leasePhysicalDisplayID": 1,
+      "capturePhysicalDisplayID": 1
+    },
+    {
+      "kind": "window",
+      "leasePhysicalDisplayID": 1,
+      "selectedPhysicalDisplayID": 1,
+      "capturePhysicalDisplayID": 1
+    },
+    {
+      "kind": "window",
+      "leasePhysicalDisplayID": 1,
+      "selectedPhysicalDisplayID": 2,
+      "capturePhysicalDisplayID": 2
+    },
+    {
+      "kind": "application",
+      "leasePhysicalDisplayID": 1,
+      "selectedPhysicalDisplayID": 1,
+      "capturePhysicalDisplayID": 1
+    },
+    {
+      "kind": "application",
+      "leasePhysicalDisplayID": 1,
+      "selectedPhysicalDisplayID": 2,
+      "denied": true
+    },
+    {
+      "kind": "desktop",
+      "leasePhysicalDisplayID": 1,
+      "selectedPhysicalDisplayID": 2,
+      "denied": true
+    },
+    {
+      "kind": "window",
+      "leasePhysicalDisplayID": 1,
+      "denied": true
+    },
+    {
+      "kind": "window",
+      "leasePhysicalDisplayID": 0,
+      "selectedPhysicalDisplayID": 2,
+      "denied": true
+    },
+    {
+      "kind": "window",
+      "leasePhysicalDisplayID": 1,
+      "selectedPhysicalDisplayID": 0,
+      "denied": true
+    }
   ]
 }

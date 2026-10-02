@@ -1,4 +1,5 @@
 #import <AppKit/AppKit.h>
+#import <CoreGraphics/CoreGraphics.h>
 #include <stdio.h>
 #include <unistd.h>
 
@@ -8,6 +9,9 @@ int main(int argc, char **argv) {
     @autoreleasepool {
         NSApplication *application = NSApplication.sharedApplication;
         application.activationPolicy = NSApplicationActivationPolicyAccessory;
+        if (argc < 2 || argc > 4) return 2;
+        BOOL otherDisplay = argc == 4 && strcmp(argv[3], "other-display") == 0;
+        if (argc == 4 && !otherDisplay) return 2;
         NSWindow *window = [[NSWindow alloc]
             initWithContentRect:NSMakeRect(120, 120, 800, 500)
                       styleMask:NSWindowStyleMaskTitled
@@ -16,6 +20,19 @@ int main(int argc, char **argv) {
         window.title = @"Mac Companion QA Target";
         window.backgroundColor = NSColor.redColor;
         window.releasedWhenClosed = NO;
+        if (otherDisplay) {
+            NSScreen *target = nil;
+            for (NSScreen *screen in NSScreen.screens) {
+                if ([screen.deviceDescription[@"NSScreenNumber"] unsignedIntValue] != CGMainDisplayID()) {
+                    target = screen;
+                    break;
+                }
+            }
+            if (!target) return 4;
+            NSRect visible = target.visibleFrame;
+            [window setFrameOrigin:NSMakePoint(NSMidX(visible) - NSWidth(window.frame) / 2,
+                                              NSMidY(visible) - NSHeight(window.frame) / 2)];
+        }
         [window makeKeyAndOrderFront:nil];
         // A changing synthetic surface proves that the selected App stream
         // continues to deliver frames after Sunshine's encoder probes.
@@ -25,8 +42,7 @@ int main(int argc, char **argv) {
             alternate = !alternate;
             window.backgroundColor = alternate ? NSColor.blueColor : NSColor.redColor;
         }];
-        if (argc != 2 && argc != 3) return 2;
-        if (argc == 3) {
+        if (argc >= 3) {
             NSString *changePath = [NSString stringWithUTF8String:argv[2]];
             if (!changePath) return 2;
             [NSTimer scheduledTimerWithTimeInterval:0.2 repeats:YES block:^(NSTimer *timer) {
@@ -44,7 +60,12 @@ int main(int argc, char **argv) {
         }
         FILE *ready = fopen(argv[1], "w");
         if (ready == NULL) return 3;
-        fprintf(ready, "selected-target-ready %ld\n", (long)getpid());
+        if (otherDisplay) {
+            fprintf(ready, "selected-target-ready %ld %u %u\n", (long)getpid(), CGMainDisplayID(),
+                    [window.screen.deviceDescription[@"NSScreenNumber"] unsignedIntValue]);
+        } else {
+            fprintf(ready, "selected-target-ready %ld\n", (long)getpid());
+        }
         fclose(ready);
         // The twenty-transition UI journey can exceed five minutes. The
         // runner owns this disposable process and terminates it on cleanup.

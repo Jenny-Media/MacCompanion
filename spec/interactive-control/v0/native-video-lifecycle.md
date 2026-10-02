@@ -47,7 +47,9 @@ connection. A current connection failure retires it, clears presentation, and
 retains a bounded typed failure for the UI. Stop is terminal, including while
 connecting. Draining completion is accepted only for the retiring generation.
 When native retirement races the old-surface input socket, a revoked native
-posting permit cannot make the client's exact terminal reset fatal. The runtime
+posting permit cannot make the client's exact terminal reset fatal. The same
+release-only rule applies while native preparation has paused input and no
+posting permit has been installed. The runtime
 drains only that reset under the current or immediately retired surface fence,
 without posting input or restoring native admission. Other input stays denied.
 

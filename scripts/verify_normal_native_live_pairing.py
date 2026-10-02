@@ -129,7 +129,7 @@ class SelectedTargetProcess:
         raise TimeoutError('Disposable selected target did not terminate')
 
 
-def start_selected_target(output, change_window=False):
+def start_selected_target(output, change_window=False, other_display=False):
     """Own one visible, disposable AppKit target with no captured user content."""
     source = ROOT / 'Experiments/NormalNativeSimulatorQA/SelectedTarget.m'
     bundle = output / 'SelectedTarget.app'
@@ -142,7 +142,7 @@ def start_selected_target(output, change_window=False):
             'CFBundlePackageType': 'APPL', 'LSUIElement': True}
     (bundle / 'Contents/Info.plist').write_bytes(plistlib.dumps(info))
     subprocess.run(['xcrun', 'clang', '-fobjc-arc', '-mmacosx-version-min=26.0',
-                    '-framework', 'AppKit', str(source), '-o', str(binary)], check=True, timeout=45)
+                    '-framework', 'AppKit', '-framework', 'CoreGraphics', str(source), '-o', str(binary)], check=True, timeout=45)
     subprocess.run(['codesign', '--force', '--sign', '-', '--identifier', info['CFBundleIdentifier'],
                     str(bundle)], check=True, capture_output=True, timeout=30)
     ready_path = output / 'selected-target-ready.txt'
@@ -150,15 +150,22 @@ def start_selected_target(output, change_window=False):
     launch = ['open', '-n', '-a', str(bundle), '--args', str(ready_path)]
     if change_path is not None:
         launch.append(str(change_path))
+    elif other_display:
+        launch.append(str(output / 'selected-target-unused-change.txt'))
+    if other_display:
+        launch.append('other-display')
     subprocess.run(launch,
                    check=True, capture_output=True, timeout=15)
     deadline = time.monotonic() + 10
     while time.monotonic() < deadline:
         if ready_path.is_file():
             parts = ready_path.read_text().strip().split(' ')
-            assert len(parts) == 2 and parts[0] == 'selected-target-ready'
+            assert len(parts) == (4 if other_display else 2) and parts[0] == 'selected-target-ready'
             process = SelectedTargetProcess(int(parts[1]), binary, change_path)
             assert process.is_owned(), 'LaunchServices did not retain the disposable test app'
+            if other_display:
+                assert int(parts[2]) > 0 and int(parts[3]) > 0 and parts[2] != parts[3], \
+                    'Disposable Window must be on a different physical display from the main Desktop'
             return process, None
         time.sleep(.1)
     raise RuntimeError('Disposable App/Window target did not become visible')
@@ -170,7 +177,8 @@ def verify(build, output, simulator, resume_build=False, reuse_build_project=Fal
            native_selected_window=False, native_window_soak=False, native_session_soak=False,
            native_session_hold=False, native_video_continuity=False, native_window_closure=False,
            native_window_move=False, native_window_resize=False,
-           native_window_resize_restart=False, native_window_resize_rapid_stop=False):
+           native_window_resize_restart=False, native_window_resize_rapid_stop=False,
+           native_selected_window_other_display=False):
     native = native_root is not None
     assert not native_window_resize_restart or native_window_resize
     assert not native_window_resize_rapid_stop or native_window_resize_restart
@@ -187,6 +195,7 @@ def verify(build, output, simulator, resume_build=False, reuse_build_project=Fal
     assert not native_selected_window or native_real_targets
     assert not (native_selected_target and native_selected_window)
     assert not native_window_soak or native_selected_window
+    assert not native_selected_window_other_display or (native_selected_window and window_change is None)
     assert window_change is None or (native_selected_window and not native_window_soak)
     assert not native_session_soak or (native and not native_background and not native_connection_loss
                                        and not native_surface_replacement and not native_window_soak)
@@ -360,7 +369,8 @@ def verify(build, output, simulator, resume_build=False, reuse_build_project=Fal
                 args=(probe, output, host_log_stop), daemon=True)
             host_log_monitor.start()
         if native_selected_target or native_selected_window:
-            selected_target_process, selected_target_log = start_selected_target(output, window_change is not None)
+            selected_target_process, selected_target_log = start_selected_target(
+                output, window_change is not None, native_selected_window_other_display)
         fixture = json.loads((probe.state / 'simulator-fixture.json').read_text())
         receipt = command(fixture, 'journey-pair' if complete_pairing else 'journey-pair-preview')
         if complete_pairing:
@@ -645,6 +655,7 @@ def verify(build, output, simulator, resume_build=False, reuse_build_project=Fal
         'nativeRealTargetCatalogVerified': native_real_targets and passed and failure is None,
         'nativeSelectedTargetVerified': (native_selected_target or native_selected_window) and passed and failure is None,
         'nativeSelectedWindowVerified': native_selected_window and passed and failure is None,
+        'nativeSelectedWindowOtherDisplayVerified': native_selected_window_other_display and passed and failure is None,
         'nativeSelectedWindowClosureVerified': native_window_closure and passed and failure is None,
         'nativeSelectedWindowMoveRecoveryVerified': native_window_move and passed and failure is None,
         'nativeSelectedWindowResizeRecoveryVerified': native_window_resize and passed and failure is None,
@@ -675,6 +686,8 @@ if __name__ == '__main__':
     parser.add_argument('--native-real-targets', action='store_true', help='Use the real menu-owned ScreenCaptureKit target catalog during native surface replacement')
     parser.add_argument('--native-selected-target', action='store_true', help='Select the disposable AppKit application through the normal iOS picker')
     parser.add_argument('--native-selected-window', action='store_true', help='Select the disposable AppKit window through the normal iOS picker')
+    parser.add_argument('--native-selected-window-other-display', action='store_true',
+                        help='Place the disposable selected Window on another physical display from the main Desktop')
     parser.add_argument('--native-window-soak', action='store_true', help='Repeat 20 selected Window/Desktop transitions in one normal Control journey')
     parser.add_argument('--native-session-soak', action='store_true', help='Run ten normal Control start/Stop journeys with fresh video and input')
     parser.add_argument('--native-session-hold', action='store_true', help='Keep one normal Control journey active for 30 minutes with continued video and input')
@@ -696,4 +709,5 @@ if __name__ == '__main__':
                         args.native_session_soak, args.native_session_hold,
                         args.native_video_continuity, args.native_window_closure,
                         args.native_window_move, args.native_window_resize,
-                        args.native_window_resize_restart, args.native_window_resize_rapid_stop) else 1)
+                        args.native_window_resize_restart, args.native_window_resize_rapid_stop,
+                        args.native_selected_window_other_display) else 1)

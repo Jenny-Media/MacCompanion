@@ -1622,7 +1622,7 @@ private func nativeRuntimeFence(_ command: InteractiveRuntimeInstallCommandV0) t
         coordinateSpaceRevision: Int64(command.lease.coordinateRevision.rawValue))
 }
 
-@Test func nativeInputPauseRejectsEveryPayloadAndSurvivesRenewal() async throws {
+@Test func nativeInputPauseRejectsInputEffectsAndSurvivesRenewal() async throws {
     let effects = RuntimeEffectsProbe(readyClasses: [.view, .pointer, .keyboard, .text])
     let poster = RuntimeInputPosterProbe()
     let owner = runtimeOwner(probe: effects, poster: poster)
@@ -1647,7 +1647,7 @@ private func nativeRuntimeFence(_ command: InteractiveRuntimeInstallCommandV0) t
         .pointerMove(x: 1, y: 1), .button(button: .primary, transition: .down),
         .scroll(unit: .pixel, deltaX: 1, deltaY: 1),
         .physicalKey(usage: 0x04, transition: .down, modifiers: []),
-        .modifiers([]), .text(String(UnicodeScalar(65))), .reset
+        .modifiers([]), .text(String(UnicodeScalar(65)))
     ]
     for payload in payloads {
         let envelope = try runtimeInput(lease: replacement, payload: payload, sequence: 2)
@@ -1959,6 +1959,45 @@ private func runtimeNativePostingAuthorization(_ command: InteractiveRuntimeInst
     #expect(authorization.isRevoked)
     await #expect(throws: (any Error).self) {
         try await owner.installNativeInputAuthorization(authorization, fence: fence, nowMonotonicNanoseconds: clock.read())
+    }
+}
+
+@Test func pausedNativePreparationDrainsOnlyExactCurrentResetFromIndexedCases() async throws {
+    var root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+    while !FileManager.default.fileExists(atPath: root.appendingPathComponent("spec/fixtures/manifest.json").path) {
+        let parent = root.deletingLastPathComponent()
+        try #require(parent != root)
+        root = parent
+    }
+    let fixture = try #require(JSONSerialization.jsonObject(with: Data(contentsOf:
+        root.appendingPathComponent("spec/fixtures/valid/native-input-posting.json"))) as? [String: Any])
+    for row in try #require(fixture["pausedResetCases"] as? [[String: Any]]) {
+        let effects = RuntimeEffectsProbe(readyClasses: [.view, .pointer, .keyboard, .text])
+        let poster = RuntimeInputPosterProbe(), owner = runtimeOwner(probe: effects, poster: poster)
+        let command = try runtimeNativePostingCommand(), clock = RuntimeNativeClock()
+        let fence = try nativeRuntimeFence(command)
+        _ = try await installAndActivateInitial(owner, command: command, now: clock.read())
+        try await owner.pauseInputForNativePresentation(fence: fence, nowMonotonicNanoseconds: clock.read())
+        if row["authorization"] as? String == "revoked" {
+            let authorization = try runtimeNativePostingAuthorization(command, clock: clock)
+            try await owner.installNativeInputAuthorization(authorization, fence: fence, nowMonotonicNanoseconds: clock.read())
+            authorization.revoke()
+        }
+        await #expect(throws: InteractiveMenuRuntimeErrorV0.surfaceNotAcknowledged) {
+            try await owner.postInputEnvelope(try runtimeInput(lease: command.lease), nowMonotonicNanoseconds: clock.read())
+        }
+        let stale = try runtimeLease(allowedClasses: [.view, .pointer, .keyboard, .text], surfaceID: UUID())
+        await #expect(throws: (any Error).self) {
+            try await owner.postInputEnvelope(try runtimeInput(lease: stale, payload: .reset), nowMonotonicNanoseconds: clock.read())
+        }
+        let reset = try runtimeInput(lease: command.lease, payload: .reset)
+        try await owner.postInputEnvelope(reset, nowMonotonicNanoseconds: clock.read())
+        try await owner.postInputEnvelope(reset, nowMonotonicNanoseconds: clock.read())
+        #expect(poster.postedInputs().count == (row["expectedPostedInputs"] as? Int))
+        #expect(await effects.events().filter { $0 == .release }.count == (row["expectedReleaseCount"] as? Int))
+        await #expect(throws: InteractiveMenuRuntimeErrorV0.surfaceNotAcknowledged) {
+            try await owner.postInputEnvelope(try runtimeInput(lease: command.lease, sequence: 2), nowMonotonicNanoseconds: clock.read())
+        }
     }
 }
 

@@ -156,6 +156,16 @@ geometry and local target while preparing and during each health/input fence.
 The local route supplies no new Agent, client or process authority. An absent
 selected object cannot start an App/Window backend or fall back to Desktop.
 
+The opaque lease display and the physical capture display are distinct local
+facts for Window. The opaque display must continue to resolve to its original
+physical display, while the exact committed window supplies its own current
+physical display, bounds and backing scale. Window capture may therefore reside
+on another display. Desktop uses the opaque display's physical mapping;
+Application retains its selected-display crop. Every health/input check must
+revalidate both the unchanged opaque mapping and the immutable selected capture;
+moving the window between displays requires fresh selection. Neither physical
+identifier crosses Agent IPC or changes the existing native signature scope.
+
 The managed Mac adapter supplies an operation ID, private geometry-report path
 and exact expected encoded dimensions in a closed local spawn context. Inherited
 values are cleared. Managed launch rejects a missing/different requested video

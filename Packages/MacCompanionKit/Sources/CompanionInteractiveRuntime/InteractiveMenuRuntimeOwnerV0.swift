@@ -1087,14 +1087,14 @@ public actor InteractiveMenuRuntimeOwnerV0 {
             throw InteractiveMenuRuntimeErrorV0.noActiveSession
         }
         let command = active.command
-        let drainingRevokedNativeReset = action.envelope.input == .reset
+        let drainingPausedNativeReset = action.envelope.input == .reset
             && active.surfaceAdmission == .ready
             && active.nativeInputPause != nil
-            && active.nativeInputAuthorization?.isRevoked == true
+            && active.nativeInputAuthorization?.isRevoked != false
         let replayingNativeReset = action.envelope.input == .reset
             && active.nativeInputPause != nil
             && active.lastInputAction == action
-        guard drainingRevokedNativeReset
+        guard drainingPausedNativeReset
                 || replayingNativeReset
                 || active.nativeInputPause == nil
                 || active.nativeInputAuthorization?.isRevoked == false else {
@@ -1138,7 +1138,7 @@ public actor InteractiveMenuRuntimeOwnerV0 {
             storage = .active(active)
             return
         }
-        if drainingRevokedNativeReset {
+        if drainingPausedNativeReset {
             guard action.envelope.focusToken?.rawValue
                     == command.surfaceDescriptor.focus?.token,
                   action.envelope.focusRevision

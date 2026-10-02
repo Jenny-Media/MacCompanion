@@ -27,6 +27,32 @@ import Testing
     #expect(MacSelectedWindowDescriptionV1.bounds(in: [selected, selected], windowID: 21, processID: 7) == nil)
 }
 
+@available(macOS 26.0, *)
+@Test func nativeCaptureDisplayRoutingUsesIndexedCases() throws {
+    var root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+    while !FileManager.default.fileExists(atPath: root.appendingPathComponent("spec/fixtures/manifest.json").path) {
+        let parent = root.deletingLastPathComponent()
+        try #require(parent != root)
+        root = parent
+    }
+    let fixture = try #require(JSONSerialization.jsonObject(with: Data(contentsOf:
+        root.appendingPathComponent("spec/fixtures/native-selected-capture-context-v0.1.json"))) as? [String: Any])
+    for row in try #require(fixture["captureDisplayCases"] as? [[String: Any]]) {
+        let kindValue = try #require(row["kind"] as? String)
+        let kind = try #require(InteractiveSurfaceKind(rawValue: kindValue))
+        let lease = try #require(row["leasePhysicalDisplayID"] as? NSNumber).uint32Value
+        let selected = (row["selectedPhysicalDisplayID"] as? NSNumber)?.uint32Value
+        if row["denied"] as? Bool == true {
+            #expect(throws: LocalInteractiveNativeBackendErrorV1.unavailable) {
+                try MacInteractiveNativeBackendOwnerV1.captureDisplayID(kind: kind, leaseDisplayID: lease, selectedDisplayID: selected)
+            }
+        } else {
+            let expected = try #require(row["capturePhysicalDisplayID"] as? NSNumber).uint32Value
+            #expect(try MacInteractiveNativeBackendOwnerV1.captureDisplayID(kind: kind, leaseDisplayID: lease, selectedDisplayID: selected) == expected)
+        }
+    }
+}
+
 private actor NativeBackendGateV1 {
     private(set) var entered = false
     private var released = false

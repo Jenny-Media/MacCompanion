@@ -663,7 +663,7 @@
       "path": "valid/native-input-posting.json",
       "kind": "nativeInput.posting.v0.1",
       "expect": "valid",
-      "canonicalSHA256": "a15ed206ca4149f4e0d3c7f8501273499c52cbdd02c32942e7cb54116a212be1"
+      "canonicalSHA256": "46e8c29612f7c9a2d9de63422fc91f1697e10150421f2fc86b5d6482e89d9f2d"
     },
     {
       "path": "valid/normal-native-simulator-development.json",
@@ -699,7 +699,7 @@
       "path": "native-selected-capture-context-v0.1.json",
       "kind": "native.privateSelectedCaptureContext.v0.1",
       "expect": "valid",
-      "canonicalSHA256": "52a4b92a15a048e441cb38334501a99f48b64bb9082039d52f309627269f5b80"
+      "canonicalSHA256": "c5b0e260e4699f40847634e4342169c35bc1ae04922092a50cfdbecfdcdb7e01"
     },
     {
       "path": "client-failed-product-retirement-v0.1.json",

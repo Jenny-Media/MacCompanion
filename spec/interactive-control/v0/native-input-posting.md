@@ -48,3 +48,10 @@ Control bound. Re-pause, focus/surface transition and termination revoke the sha
 primitive before releasing held input or starting cleanup. Revocation also fences
 copies retained by an in-flight executor; a synchronously admitted bounded batch
 may finish before revocation returns.
+
+An exact current-surface reset while native input is paused and the posting
+primitive is absent or revoked consumes only ordered release state. It must
+validate the current lease, epoch, surface, coordinate, focus and sequence, release
+held input, and preserve the native pause. Duplicate exact reset is idempotent;
+other input or a stale fence cannot post or restore admission. This permits a
+second surface choice during native preparation without terminating Control.

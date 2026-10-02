@@ -2,6 +2,19 @@
 
 ## 2026-09-26 streaming engine and licensing decision
 
+Latest replacement reliability checkpoint: [native Window and repeated view repair](evidence/2026-10-02-native-window-and-replacement-repair.md).
+The physical iPhone reports Window failure and blank video after display changes.
+Matched content-free traces reproduce a reset rejection during replacement
+preparation; inspection also finds native Window capture incorrectly restricted
+to the Desktop's display. Normative specs and indexed fixtures precede both
+repairs. Before/after regressions, all 118 fixtures, full stable Xcode 27.0
+validation, both native SDKs and 12 lifecycle tests pass. The expanded normal-app
+Simulator journey deliberately places the Window on another physical display
+and passes both display switches, Window/input, Stop/start and cleanup with five
+fresh presentations. Signed normal Mac and iPhone 18 Pro Max updates are
+installed and launched with existing identities and pairing. Physical retry
+confirmation remains pending; everyday and production release gates remain open.
+
 Latest interface checkpoint: [compact remote session controls](evidence/2026-10-02-compact-remote-session-ui.md).
 Choose Display contains its topology and provides readable selection rows. One
 bar above the native keyboard exposes Escape, Tab and one-shot modifiers; one
