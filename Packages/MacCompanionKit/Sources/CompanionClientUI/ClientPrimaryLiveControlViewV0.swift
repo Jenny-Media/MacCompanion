@@ -1493,7 +1493,10 @@ public struct ClientPrimaryLiveControlViewV0: View {
             )
             .interactiveDismissDisabled(viewState.surfaceRequestInFlight)
         }
-        .fullScreenCover(isPresented: $viewState.showingDisplayPicker) {
+        // Preserve the admitted renderer's visible window hierarchy while
+        // choosing a display. A full-screen cover can detach or hide it and
+        // correctly trigger the native owner's irreversible presentation fence.
+        .sheet(isPresented: $viewState.showingDisplayPicker) {
             ClientSharedDisplayPickerV0(
                 catalog: viewState.displayCatalog,
                 requestInFlight: viewState.displayRequestInFlight,

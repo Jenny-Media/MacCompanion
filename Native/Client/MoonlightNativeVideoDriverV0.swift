@@ -32,14 +32,18 @@ public final class MoonlightNativeVideoDriverV0: UIKitClientNativeVideoDriverV0 
         }
         // ObjC guarantees main-thread delivery. `assumeIsolated` verifies that
         // promise rather than scheduling a stale callback onto a later owner.
-        let native = try CompanionMoonlightVideo(configuration: configuration, view: view) { [weak self] value, _ in
+        let native = try CompanionMoonlightVideo(configuration: configuration, view: view) { [weak self] value, code in
             MainActor.assumeIsolated {
                 guard let self, !self.stopped, let native = self.session else { return }
                 switch value {
                 case .connected: event(.connected)
                 case .firstFrame: event(.firstFrame(width: Int(native.decodedWidth), height: Int(native.decodedHeight)))
-                case .failed: event(.failed)
-                case .disconnected: event(.disconnected)
+                case .failed:
+                    self.diagnostic("native.video.driver.failed-code-" + String(code))
+                    event(.failed)
+                case .disconnected:
+                    self.diagnostic("native.video.driver.disconnected-code-" + String(code))
+                    event(.disconnected)
                 @unknown default: event(.failed)
                 }
             }

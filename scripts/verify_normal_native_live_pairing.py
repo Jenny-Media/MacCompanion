@@ -514,7 +514,9 @@ def verify(build, output, simulator, resume_build=False, reuse_build_project=Fal
                 if native_window_resize_restart:
                     presentations += replacement_markers.count('native-local-presentation-input-admitted')
                 assert presentations == (
-                    22 if native_window_soak else 10 if native_session_soak else 1 if native_session_hold or native_video_continuity else 3 if native_window_resize_restart else 2 if window_change is not None else 3 if native_connection_loss or native_surface_replacement else 2)
+                    (22 if native_window_soak else 10 if native_session_soak else 1 if native_session_hold or native_video_continuity else 3 if native_window_resize_restart else 2 if window_change is not None else 3 if native_connection_loss or native_surface_replacement else 2)
+                    + (2 if native_surface_replacement else 0)), \
+                    f'Unexpected native presentations: {presentations}'
                 if window_change is None:
                     assert 'signed-simulator-control-input-observed' in markers
                 if native_connection_loss:
@@ -622,8 +624,11 @@ def verify(build, output, simulator, resume_build=False, reuse_build_project=Fal
         'liveTLSAndPairingProofVerified': passed and failure is None, 'paired': complete_pairing and passed,
         'workspaceRestartVerified': complete_pairing and passed,
         'nativeControlRequested': native, 'nativeSessionVerified': native and passed and failure is None,
-        'nativePresentedSessions': (22 if native_window_soak else 10 if native_session_soak else 1 if native_session_hold or native_video_continuity else 3 if native_window_resize_restart else 2 if window_change is not None else 3 if native_connection_loss or native_surface_replacement else 2)
+        'nativePresentedSessions': ((22 if native_window_soak else 10 if native_session_soak else 1 if native_session_hold or native_video_continuity else 3 if native_window_resize_restart else 2 if window_change is not None else 3 if native_connection_loss or native_surface_replacement else 2)
+            + (2 if native_surface_replacement else 0))
             if native and passed and failure is None else 0,
+        'nativeSharedDisplayPickerVerified': native_surface_replacement and passed and failure is None,
+        'nativeSharedDisplayReplacementVerified': native_surface_replacement and passed and failure is None,
         'nativeSurfaceTransitionsVerified': 20 if native_window_soak and passed and failure is None else 0,
         'nativeSessionStartsAndStopsVerified': 10 if native_session_soak and passed and failure is None else 0,
         'nativeSustainedMinutesVerified': (30 if native_session_hold else 1 if native_video_continuity else 0)

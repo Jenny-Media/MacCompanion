@@ -81,13 +81,15 @@ reader revalidates runtime and durable authority throughout its lifetime.
 The Agent composition constructs that reader from its reconciled store. Platform
 services supply only the acknowledged runtime snapshot and an inert backend
 factory. The runtime display token and visible-menu generation must match
-admission on both sides of the read. The visible activity receipt revision must
-be at least the admitted menu revision, as required by initial runtime receipt
-admission. Showing and clearing the indicator can advance this receipt revision
-between Control sessions without changing the authenticated menu publication.
+admission on both sides of the read. The visible activity receipt revision and
+authenticated menu publication revision must each be positive and remain current
+within their own counter. They are independent: showing/clearing Control advances
+activity, and changing the selected display advances publication. They must not
+be ordered against each other. The activity receipt must remain bound to the
+exact current installed lease, session and acknowledged surface.
 The complete durable admission and runtime snapshot must still remain unchanged
-around construction and on later authority reads; a receipt older than admission
-is rejected. Backend construction must not create
+around construction and on later authority reads; a zero revision, wrong
+generation or stale lease/session/surface binding is rejected. Backend construction must not create
 credentials or listeners, and admission is checked again after construction.
 
 A bridge owns one pending factory task, one verifier/coordinator, and one drain.

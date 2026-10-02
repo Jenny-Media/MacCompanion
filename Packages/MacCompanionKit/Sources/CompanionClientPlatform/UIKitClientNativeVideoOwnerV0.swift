@@ -38,6 +38,8 @@ public final class UIKitClientNativeVideoOwnerV0: NSObject {
     private let current: @MainActor () -> InteractiveNativeVideoBindingV0?
     private let now: @MainActor () -> UInt64
     private let changed: @MainActor (InteractiveNativeVideoPhaseV0, InteractiveNativeVideoFailureV0?) -> Void
+    private let diagnostic: @MainActor (String) -> Void
+    private var reportedPhase: InteractiveNativeVideoPhaseV0?
     public private(set) var presentationAcknowledged = false
     private let acknowledgePresentation: (@MainActor (UInt64, InteractiveNativeVideoSurfaceV0) async throws -> InteractiveNativeVideoPresentationReceiptBodyV0)?
     private let expectedLogicalWidthPoints: UInt32?
@@ -60,7 +62,9 @@ public final class UIKitClientNativeVideoOwnerV0: NSObject {
                 changed: @escaping @MainActor (InteractiveNativeVideoPhaseV0, InteractiveNativeVideoFailureV0?) -> Void,
                 logicalWidthPoints: UInt32? = nil, logicalHeightPoints: UInt32? = nil,
                 inputAdmissionChanged: @escaping @MainActor (Bool) -> Void = { _ in },
-                acknowledgePresentation: (@MainActor (UInt64, InteractiveNativeVideoSurfaceV0) async throws -> InteractiveNativeVideoPresentationReceiptBodyV0)? = nil) {
+                acknowledgePresentation: (@MainActor (UInt64, InteractiveNativeVideoSurfaceV0) async throws -> InteractiveNativeVideoPresentationReceiptBodyV0)? = nil,
+                diagnostic: @escaping @MainActor (String) -> Void = { _ in }) {
+        self.diagnostic = diagnostic
         self.acknowledgePresentation = acknowledgePresentation
         expectedLogicalWidthPoints = logicalWidthPoints; expectedLogicalHeightPoints = logicalHeightPoints
         self.inputAdmissionChanged = inputAdmissionChanged
@@ -135,27 +139,43 @@ public final class UIKitClientNativeVideoOwnerV0: NSObject {
     /// as the periodic deadline guard. Neither path restores input.
     public func refresh() {
         guard drain == nil, lifecycle.requiresDrain else { return }
-        guard let current = current() else { stopAdmission(); return }
+        guard let current = current() else {
+            diagnostic("authority-unavailable")
+            stopAdmission(); return
+        }
         if !lifecycle.revalidate(current: current, nowMonotonicMilliseconds: now()) {
             retireViewAndDrain()
         } else {
-            if presentationAcknowledged && !presentationIsCurrent() { stopAdmission(); return }
+            if presentationAcknowledged, let reason = presentationUnavailableReason() {
+                diagnostic("presentation-unavailable-" + reason)
+                stopAdmission(); return
+            }
             schedulePresentationAcknowledgement()
         }
     }
 
     private func presentationIsCurrent() -> Bool {
-        guard drain == nil, lifecycle.phase == .displaying, !lifecycle.isTerminal,
-              current() == lifecycle.binding, now() < lifecycle.binding.expiresAtMonotonicMilliseconds,
-              driver.presentationIsReady, UIApplication.shared.applicationState == .active,
-              let window = view.window, window.windowScene?.activationState == .foregroundActive,
-              view.bounds.width > 0, view.bounds.height > 0 else { return false }
+        presentationUnavailableReason() == nil
+    }
+
+    // Closed local codes distinguish UIKit presentation loss from transport or
+    // authority loss without recording the displayed view or input content.
+    private func presentationUnavailableReason() -> String? {
+        guard drain == nil, lifecycle.phase == .displaying, !lifecycle.isTerminal else { return "owner-not-displaying" }
+        guard current() == lifecycle.binding else { return "authority-changed" }
+        guard now() < lifecycle.binding.expiresAtMonotonicMilliseconds else { return "deadline-expired" }
+        guard driver.presentationIsReady else { return "renderer-not-ready" }
+        guard UIApplication.shared.applicationState == .active else { return "application-inactive" }
+        guard let window = view.window else { return "view-detached" }
+        guard window.windowScene?.activationState == .foregroundActive else { return "scene-inactive" }
+        guard view.bounds.width > 0, view.bounds.height > 0 else { return "empty-view-bounds" }
         var candidate: UIView? = view
         while let currentView = candidate {
-            guard !currentView.isHidden, currentView.alpha > 0 else { return false }
+            guard !currentView.isHidden else { return "hidden-view" }
+            guard currentView.alpha > 0 else { return "transparent-view" }
             candidate = currentView.superview
         }
-        return true
+        return nil
     }
 
     private func schedulePresentationAcknowledgement() {
@@ -276,6 +296,12 @@ public final class UIKitClientNativeVideoOwnerV0: NSObject {
         publish()
     }
 
-    private func publish() { changed(lifecycle.phase, lifecycle.failure) }
+    private func publish() {
+        if reportedPhase != lifecycle.phase {
+            reportedPhase = lifecycle.phase
+            diagnostic("phase-" + lifecycle.phase.rawValue)
+        }
+        changed(lifecycle.phase, lifecycle.failure)
+    }
 }
 #endif

@@ -117,7 +117,7 @@ private func initialBootstrap() throws -> InteractiveSessionBootstrap {
     )
 }
 
-private func initialRequirement() throws
+private func initialRequirement(menuRevision: UInt64 = 9) throws
     -> InteractiveSessionRuntimeRequirementV0 {
     let approvalKey = try initialApprovalKey()
     return InteractiveSessionRuntimeRequirementV0(
@@ -150,7 +150,7 @@ private func initialRequirement() throws
             deviceDisplayName: DeviceDisplayName("Jenny’s iPhone"),
             visibleMenuAppAvailable: true,
             visibleMenuAppGeneration: initialMenuGeneration,
-            visibleMenuAppRevision: 9,
+            visibleMenuAppRevision: menuRevision,
             selectedDisplayID: initialDisplayID
         )
     )
@@ -476,6 +476,36 @@ private func initialReceipt(
         .transferred
     )) {
         _ = try authority.takeInstalledBootstrap()
+    }
+}
+
+@Test func initialRuntimeReceiptsKeepActivityAndPublicationRevisionsIndependent() throws {
+    var root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+    while !FileManager.default.fileExists(atPath: root.appendingPathComponent("spec/fixtures/manifest.json").path) {
+        let parent = root.deletingLastPathComponent()
+        try #require(parent != root)
+        root = parent
+    }
+    let index = try JSONSerialization.jsonObject(with: Data(contentsOf: root.appendingPathComponent("spec/fixtures/manifest.json"))) as! [String: Any]
+    let path = "local-xpc-native-runtime-snapshot-v0.1.json"
+    try #require((index["fixtures"] as! [[String: Any]]).filter { $0["path"] as? String == path }.count == 1)
+    let vectors = try JSONSerialization.jsonObject(with: Data(contentsOf: root.appendingPathComponent("spec/fixtures/" + path))) as! [String: Any]
+    for row in vectors["independentRevisionCases"] as! [[String: Any]] {
+        let publication = (row["publicationRevision"] as! NSNumber).uint64Value
+        let activity = (row["activityRevision"] as! NSNumber).uint64Value
+        let accepted = row["accepted"] as! Bool
+        var authority = try InteractiveInitialRuntimeCommandAuthorityV1(
+            bootstrap: initialBootstrap(), requirement: initialRequirement(menuRevision: publication), desktop: initialDesktop())
+        let prepared = try authority.prepare(commandID: UUID(), leaseID: UUID(), nowMonotonicNanoseconds: 2_000_000_000)
+        do {
+            let receipt = try initialReceipt(prepared,
+                generation: row["menuGenerationMatches"] as! Bool ? initialMenuGeneration : UUID(), revision: activity)
+            try authority.accept(receipt, nowMonotonicNanoseconds: 2_100_000_000)
+            #expect(accepted)
+            #expect(authority.state == .installed)
+        } catch {
+            #expect(!accepted)
+        }
     }
 }
 

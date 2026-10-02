@@ -166,6 +166,45 @@ final class PairedWorkspaceUITests: XCTestCase {
                     "Each session must present native video and receive host input admission")
                 XCTAssertEqual(control["captureActive"] as? Bool, true)
                 if surfaceReplacement && cycle == 1 {
+                    // A local view picker must not retire an admitted stream.
+                    // Keep it open past the native visibility monitor's tick.
+                    Thread.sleep(forTimeInterval: 1)
+                    app.buttons["Shared Display"].tap()
+                    XCTAssertTrue(app.navigationBars["Choose Display"].waitForExistence(timeout: 10), app.debugDescription)
+                    Thread.sleep(forTimeInterval: 1)
+                    XCTAssertTrue(app.buttons["Done"].exists,
+                        "Opening the display picker must not trigger video retirement and dismiss it")
+                    app.buttons["Done"].tap()
+                    XCTAssertTrue(keyboard.waitForExistence(timeout: 10), app.debugDescription)
+                    XCTAssertFalse(app.descendants(matching: .any)["Remote Control restart required"].firstMatch.exists,
+                        "Dismissing a local picker must preserve the current native owner")
+                    XCTAssertEqual(try hostControl()["nativePresentations"] as? Int, expectedPresentations,
+                        "A local picker must not require another native enrollment")
+                    // Switch away and back so subsequent App/Window coverage
+                    // keeps using its original physical display.
+                    for _ in 0..<2 {
+                        app.buttons["Shared Display"].tap()
+                        let otherDisplay = app.buttons.matching(NSPredicate(
+                            format: "identifier BEGINSWITH %@ AND value == %@",
+                            "Shared Display ", "Available")).firstMatch
+                        XCTAssertTrue(otherDisplay.waitForExistence(timeout: 10), app.debugDescription)
+                        otherDisplay.tap()
+                        expectedPresentations += 1
+                        let displayDeadline = Date().addingTimeInterval(45)
+                        while (try hostControl()["nativePresentations"] as? Int ?? 0) < expectedPresentations,
+                              Date() < displayDeadline {
+                            Thread.sleep(forTimeInterval: 0.2)
+                        }
+                        XCTAssertEqual(try hostControl()["nativePresentations"] as? Int, expectedPresentations,
+                            "Changing Shared Display must present the replacement while the picker remains open")
+                        XCTAssertTrue(app.buttons["Done"].exists,
+                            "A successful display replacement must preserve the picker until dismissed")
+                        app.buttons["Done"].tap()
+                        XCTAssertTrue(keyboard.waitForExistence(timeout: 10), app.debugDescription)
+                        Thread.sleep(forTimeInterval: 1)
+                        XCTAssertFalse(app.descendants(matching: .any)["Remote Control restart required"].firstMatch.exists,
+                            "Changing Shared Display must not retire the replacement native owner")
+                    }
                     for transition in 0..<windowTransitions {
                         app.buttons["More"].tap()
                         app.buttons["Choose Surface"].tap()

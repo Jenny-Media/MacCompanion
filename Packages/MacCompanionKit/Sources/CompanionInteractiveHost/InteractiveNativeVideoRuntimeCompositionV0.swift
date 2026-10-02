@@ -117,13 +117,13 @@ public struct InteractiveNativeVideoRuntimeCompositionV0: Sendable {
               current.logicalWidthPoints > 0, current.logicalHeightPoints > 0,
               before.selectedDisplayID == current.selectedDisplayID,
               before.visibleMenuAppGeneration == current.visibleMenuAppGeneration,
-              // Match initial runtime receipt admission. The visible activity
-              // receipt advances on show/clear between sessions independently
-              // of an unchanged authenticated menu publication.
-              current.visibleMenuAppRevision >= before.visibleMenuAppRevision,
+              // The current installed activity receipt and authenticated menu
+              // publication advance independently. Their exact bindings and
+              // stable joined snapshots establish authority, not count order.
+              current.visibleMenuAppRevision > 0,
               monotonicMilliseconds() < b.expiresAtMonotonicMilliseconds else {
             // Only comparison outcomes; never log identities, keys or geometry.
-            nativeRuntimeCompositionLoggerV0.error("native runtime binding rejected display=\(before.selectedDisplayID == current.selectedDisplayID, privacy: .public) menuGeneration=\(before.visibleMenuAppGeneration == current.visibleMenuAppGeneration, privacy: .public) menuRevisionCurrent=\(current.visibleMenuAppRevision >= before.visibleMenuAppRevision, privacy: .public) deadline=\(monotonicMilliseconds() < b.expiresAtMonotonicMilliseconds, privacy: .public)")
+            nativeRuntimeCompositionLoggerV0.error("native runtime binding rejected display=\(before.selectedDisplayID == current.selectedDisplayID, privacy: .public) menuGeneration=\(before.visibleMenuAppGeneration == current.visibleMenuAppGeneration, privacy: .public) activityRevisionValid=\(current.visibleMenuAppRevision > 0, privacy: .public) deadline=\(monotonicMilliseconds() < b.expiresAtMonotonicMilliseconds, privacy: .public)")
             return nil
         }
         return try .init(runtime: current, admission: before,

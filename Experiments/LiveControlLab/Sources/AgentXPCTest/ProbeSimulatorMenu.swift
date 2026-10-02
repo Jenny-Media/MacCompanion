@@ -28,6 +28,7 @@ actor ProbeSimulatorMenu {
     private var reportedStop = false
     private let reviewWait: Duration
     private var networkClosed = false
+    private var admissionRevision: UInt64 = 1
 
     init(menu: MacLocalXPCClientV1, surfaces: ProbePresentationSurface,
          interactive: ProbeInteractiveMenu,
@@ -63,6 +64,10 @@ actor ProbeSimulatorMenu {
         let driver = ProbeSimulatorMenu(menu: menu, surfaces: surfaces,
             interactive: interactive, status: status, emit: emit,
             expectedClientID: expectedClientID)
+        await interactive.effects.bindDisplayAdmissionUpdate { [weak driver] displayID in
+            guard let driver else { throw LabError.closed }
+            try await driver.updateSelectedDisplay(displayID)
+        }
         let parameters = NWParameters.tcp
         parameters.requiredLocalEndpoint = .hostPort(host: "127.0.0.1", port: .any)
         let listener = try NWListener(using: parameters)
@@ -88,6 +93,16 @@ actor ProbeSimulatorMenu {
         let file = directory.appendingPathComponent("simulator-fixture.json")
         try JSONEncoder().encode(fixture).write(to: file, options: .withoutOverwriting)
         try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path)
+    }
+
+    private func updateSelectedDisplay(_ displayID: UUID) async throws {
+        guard admissionRevision < UInt64.max else { throw LabError.unauthorized }
+        admissionRevision += 1
+        let publication = try LocalInteractiveAdmissionPublicationV1(commandID: UUID(),
+            menuAppGeneration: interactive.effects.menuGeneration, revision: admissionRevision,
+            selectedDisplayID: displayID)
+        try (await menu.publishInteractiveAdmission(publication)).validate(against: publication)
+        emit("signed-simulator-display-admission-updated")
     }
 
     private func accept(_ socket: NWConnection) async {

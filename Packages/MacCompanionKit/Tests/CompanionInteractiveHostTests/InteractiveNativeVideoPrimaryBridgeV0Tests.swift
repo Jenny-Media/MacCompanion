@@ -80,24 +80,28 @@ final class InteractiveNativeVideoPrimaryBridgeV0Tests: XCTestCase {
             visibleMenuAppAvailable: true, visibleMenuAppGeneration: menu, visibleMenuAppRevision: revision,
             selectedDisplayID: display, sessionPublicKeyX963: m.authority.sessionPublicKeyX963)
     }
-    func testStoreBoundFactoryAllowsNextSessionIndicatorReceiptAndRejectsOlderReceipt() async throws {
-        // A first show/clear/show advances the activity receipt to 3 while
-        // the authenticated menu publication can still be revision 1.
-        for (admissionRevision, runtimeRevision, accepted) in [(UInt64(1), UInt64(3), true), (3, 1, false)] {
+    func testStoreBoundFactoryKeepsActivityAndPublicationRevisionsIndependent() async throws {
+        let vectors = try JSONSerialization.jsonObject(with: fixture("local-xpc-native-runtime-snapshot-v0.1.json")) as! [String: Any]
+        for row in vectors["independentRevisionCases"] as! [[String: Any]] {
+            let admissionRevision = (row["publicationRevision"] as! NSNumber).uint64Value
+            let runtimeRevision = (row["activityRevision"] as! NSNumber).uint64Value
+            let accepted = row["accepted"] as! Bool
             let m = try material(), display = UUID(), menu = UUID()
             let a = Admission(try admission(m, display: display, menu: menu, revision: admissionRevision))
             let b = Backend(Data(base64Encoded: m.challenge.body.hostCertificateDERBase64)!)
             let runtime = NativeRuntime(.init(binding: m.authority.binding, surface: m.authority.surface,
                 logicalWidthPoints: 2560, logicalHeightPoints: 1440, rotation: .degrees0,
-                selectedDisplayID: display, visibleMenuAppGeneration: menu, visibleMenuAppRevision: runtimeRevision), backend: b)
+                selectedDisplayID: display,
+                visibleMenuAppGeneration: row["menuGenerationMatches"] as! Bool ? menu : UUID(),
+                visibleMenuAppRevision: runtimeRevision), backend: b)
             let owner = InteractiveNativeVideoRuntimeCompositionV0(admission: a, runtime: runtime,
                 monotonicMilliseconds: { 1000 }, unixMilliseconds: { 1724000000000 }).bridge()
             do {
                 _ = try await owner.prepare(m.request, challengeMessageID: m.challenge.messageID,
                     context: m.context, sessionPublicKeyX963: m.authority.sessionPublicKeyX963)
-                XCTAssertTrue(accepted, "Receipt older than admission was accepted")
+                XCTAssertTrue(accepted, "Zero activity revision or wrong menu generation was accepted")
             } catch {
-                XCTAssertFalse(accepted, "Current second-session activity receipt was rejected")
+                XCTAssertFalse(accepted, "Independent current activity/publication counters were rejected")
             }
             let count = await runtime.count()
             XCTAssertEqual(count, accepted ? 1 : 0)

@@ -251,7 +251,7 @@
       "path": "local-xpc-interactive-lease-transport-v0.1.json",
       "kind": "localXPC.interactiveLeaseTransport.v0.1",
       "expect": "valid",
-      "canonicalSHA256": "93b23014cfb9e79fb4a11ba70340b65ebee5b1ad722d318e68930c541f9078b7"
+      "canonicalSHA256": "43e977ff7fdfd515563aff828f2f7b0c799efde3a1f125d2d19043ba58496ffb"
     },
     {
       "path": "local-xpc-interactive-webrtc-transport-v0.1.json",
@@ -627,7 +627,7 @@
       "path": "local-xpc-native-runtime-snapshot-v0.1.json",
       "kind": "interactive.localNativeRuntimeSnapshot.v0.1",
       "expect": "valid",
-      "canonicalSHA256": "5d90a8e8832bfb227b80932c7de37ba9327c8f1bd7a29656b83850f6341d3c39"
+      "canonicalSHA256": "6b3541159415e1d4e0836e4c736b8f63d1dedc74e446d11cb293e18e7df7d251"
     },
     {
       "path": "local-xpc-native-backend-v0.1.json",

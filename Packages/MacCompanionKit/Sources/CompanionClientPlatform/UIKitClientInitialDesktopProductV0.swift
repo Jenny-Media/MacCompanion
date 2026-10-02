@@ -304,7 +304,8 @@ public final class UIKitClientInitialDesktopProductV0 {
             },
             logicalWidthPoints: descriptor.logicalWidthPoints, logicalHeightPoints: descriptor.logicalHeightPoints,
             inputAdmissionChanged: { [weak self] _ in self?.updateInputAvailability() },
-            acknowledgePresentation: acknowledgePresentation)
+            acknowledgePresentation: acknowledgePresentation,
+            diagnostic: { IOSClientRuntimeDiagnosticLogV0.record("native.video.owner." + $0) })
         nativeVideoOwner = owner
         try owner.start()
     }

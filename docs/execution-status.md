@@ -2,6 +2,20 @@
 
 ## 2026-09-26 streaming engine and licensing decision
 
+Latest Shared Display checkpoint: [native display recovery](evidence/2026-10-02-shared-display-native-recovery.md).
+The iPhone 18 Pro Max report is reproduced in the normal Simulator app. Shared
+Display now preserves the visible renderer with a sheet. Fresh display enrollment
+also exposed an invalid ordering comparison between independent authenticated
+menu publication and Control activity counters. Normative specs and indexed
+fixtures precede both corrected runtime guards; exact authority bindings remain
+enforced. Before/after regressions, both native SDK builds, 16 lifecycle tests,
+and full stable Xcode 27.0 validation pass. The expanded normal-client journey
+passes both display replacements, selected Window/input, Stop/start and cleanup
+with five fresh presentations. Signed normal Mac and iPhone 18 Pro Max updates
+are installed and launched with existing identities. On 2026-10-02 local the user
+confirms the repaired Shared Display flow works on the physical iPhone 18 Pro Max.
+Production release and elapsed acceptance gates remain open.
+
 Latest usability and source checkpoint: [enrollment ownership and frozen-source
 preparation](evidence/2026-10-01-native-owner-usability-and-source-preparation.md).
 The App/Window picker searches privacy-limited names/ordinals. A deterministic

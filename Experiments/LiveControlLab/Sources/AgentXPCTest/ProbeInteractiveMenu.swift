@@ -399,6 +399,14 @@ actor ProbeInteractiveEffects: InteractiveRuntimeIndicatorControllingV0,
     private var pendingTransition: InteractiveRuntimeSurfaceTransitionCommandV0?
     private var pauseDesktop = false
     private(set) var desktopIsWaiting = false
+    private var displayAdmissionUpdate: (@Sendable (UUID) async throws -> Void)?
+    func bindDisplayAdmissionUpdate(_ update: @escaping @Sendable (UUID) async throws -> Void) {
+        displayAdmissionUpdate = update
+    }
+    func updateSelectedDisplay(_ displayID: UUID) async throws {
+        guard let displayAdmissionUpdate else { throw Failure.badBinding }
+        try await displayAdmissionUpdate(displayID)
+    }
     func pauseNextDesktop() { pauseDesktop = true }
     func resumeDesktop() { pauseDesktop = false }
 
@@ -659,7 +667,10 @@ final class ProbeInteractiveMenu: Sendable {
             adapter = MacInteractiveLeaseRuntimeAdapterV1(runtime: runtime,
                 desktop: ProbeNativeDesktopPreparer(selection: selection, surfaceTargets: surfaceTargets),
                 surfaceTargets: surfaceTargets,
-                displaySelection: selection, updateSelectedDisplay: { _ in }, nativeBackendFactory: try ProbeNativeFlow.factory())
+                displaySelection: selection, updateSelectedDisplay: { displayID in
+                    guard let displayID else { throw ProbeInteractiveEffects.Failure.badBinding }
+                    try await effects.updateSelectedDisplay(displayID)
+                }, nativeBackendFactory: try ProbeNativeFlow.factory())
         } else {
             adapter = MacInteractiveLeaseRuntimeAdapterV1(runtime: runtime, desktop: effects)
         }

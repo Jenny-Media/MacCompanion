@@ -51,10 +51,13 @@ before waiting for the serialized or platform cleanup chain.
 Snapshot receipt alone grants neither host startup nor input. The existing
 store-bound native composition must still recheck durable grants and registered
 session key around backend construction and on every authority read.
-The visible receipt revision is allowed to advance after a prior session is
-stopped. It must be at least the current authenticated menu admission revision;
-equality is not required. Exact generation, display, primary, session and surface
-checks remain mandatory, and neither revision may change during the joined read.
+The visible activity receipt revision and authenticated menu publication revision
+are independent positive counters. Showing/clearing Control advances the former;
+changing the selected display advances the latter. Neither numeric ordering nor
+equality between them is authority. The activity receipt must belong to the exact
+currently installed, acknowledged lease and menu generation. Exact generation,
+display, primary, session and surface checks remain mandatory, and neither
+revision may change during the joined read. Zero activity revisions are denied.
 
 An injected backend factory remains inert until attested enrollment preparation.
 Physical display mapping and process startup remain owned by the menu runtime;

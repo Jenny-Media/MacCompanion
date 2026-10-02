@@ -13,7 +13,11 @@
       "requestPayloadType": "LocalInteractiveInitialDesktopPreparationCommandV1",
       "successKind": "runtime.interactive.desktop.prepare.ack",
       "successPayloadType": "LocalInteractiveInitialDesktopPreparedReceiptV1",
-      "requestAndSuccessFields": ["kind:string", "version:signedInt64=1", "payload:data"]
+      "requestAndSuccessFields": [
+        "kind:string",
+        "version:signedInt64=1",
+        "payload:data"
+      ]
     },
     {
       "kind": "runtime.interactive.install",
@@ -21,7 +25,11 @@
       "requestPayloadType": "InteractiveRuntimeInstallCommandV0",
       "successKind": "runtime.interactive.install.ack",
       "successPayloadType": "InteractiveRuntimeInstallReceiptV0",
-      "requestAndSuccessFields": ["kind:string", "version:signedInt64=1", "payload:data"]
+      "requestAndSuccessFields": [
+        "kind:string",
+        "version:signedInt64=1",
+        "payload:data"
+      ]
     },
     {
       "kind": "runtime.interactive.renew",
@@ -29,8 +37,15 @@
       "requestPayloadType": "InteractiveRuntimeLeaseRenewalV0",
       "successKind": "runtime.interactive.renew.ack",
       "successPayloadType": null,
-      "requestFields": ["kind:string", "version:signedInt64=1", "payload:data"],
-      "successFields": ["kind:string", "version:signedInt64=1"]
+      "requestFields": [
+        "kind:string",
+        "version:signedInt64=1",
+        "payload:data"
+      ],
+      "successFields": [
+        "kind:string",
+        "version:signedInt64=1"
+      ]
     },
     {
       "kind": "runtime.interactive.revoke",
@@ -38,7 +53,11 @@
       "requestPayloadType": "InteractiveRuntimeRevokeCommandV0",
       "successKind": "runtime.interactive.revoke.ack",
       "successPayloadType": "InteractiveRuntimeRevokedReceiptV0",
-      "requestAndSuccessFields": ["kind:string", "version:signedInt64=1", "payload:data"]
+      "requestAndSuccessFields": [
+        "kind:string",
+        "version:signedInt64=1",
+        "payload:data"
+      ]
     },
     {
       "kind": "runtime.interactive.surface.targets",
@@ -46,7 +65,11 @@
       "requestPayloadType": "LocalInteractiveSurfaceTargetsCommandV1",
       "successKind": "runtime.interactive.surface.targets.ack",
       "successPayloadType": "LocalInteractiveSurfaceTargetsReceiptV1",
-      "requestAndSuccessFields": ["kind:string", "version:signedInt64=1", "payload:data"]
+      "requestAndSuccessFields": [
+        "kind:string",
+        "version:signedInt64=1",
+        "payload:data"
+      ]
     },
     {
       "kind": "runtime.interactive.surface.resolve",
@@ -54,7 +77,11 @@
       "requestPayloadType": "LocalInteractiveSurfaceResolveCommandV1",
       "successKind": "runtime.interactive.surface.resolve.ack",
       "successPayloadType": "LocalInteractiveSurfaceResolvedReceiptV1",
-      "requestAndSuccessFields": ["kind:string", "version:signedInt64=1", "payload:data"]
+      "requestAndSuccessFields": [
+        "kind:string",
+        "version:signedInt64=1",
+        "payload:data"
+      ]
     },
     {
       "kind": "runtime.interactive.surface.transition",
@@ -62,7 +89,11 @@
       "requestPayloadType": "InteractiveRuntimeSurfaceTransitionCommandV0",
       "successKind": "runtime.interactive.surface.transition.ack",
       "successPayloadType": "InteractiveRuntimeSurfaceTransitionReceiptV0",
-      "requestAndSuccessFields": ["kind:string", "version:signedInt64=1", "payload:data"]
+      "requestAndSuccessFields": [
+        "kind:string",
+        "version:signedInt64=1",
+        "payload:data"
+      ]
     },
     {
       "kind": "runtime.interactive.surface.acknowledge",
@@ -70,7 +101,11 @@
       "requestPayloadType": "InteractiveRuntimeSurfaceAcknowledgementCommandV0",
       "successKind": "runtime.interactive.surface.acknowledge.ack",
       "successPayloadType": "InteractiveRuntimeSurfaceAcknowledgementReceiptV0",
-      "requestAndSuccessFields": ["kind:string", "version:signedInt64=1", "payload:data"]
+      "requestAndSuccessFields": [
+        "kind:string",
+        "version:signedInt64=1",
+        "payload:data"
+      ]
     },
     {
       "kind": "runtime.interactive.surface.failure",
@@ -78,7 +113,11 @@
       "requestPayloadType": "LocalInteractiveSurfaceFailureCommandV1",
       "successKind": "runtime.interactive.surface.failure.ack",
       "successPayloadType": "LocalInteractiveSurfaceFailureReceiptV1",
-      "requestAndSuccessFields": ["kind:string", "version:signedInt64=1", "payload:data"]
+      "requestAndSuccessFields": [
+        "kind:string",
+        "version:signedInt64=1",
+        "payload:data"
+      ]
     }
   ],
   "rules": [
@@ -100,6 +139,7 @@
     "the receiver completes within four monotonic seconds and the sender waits at most five",
     "there is no handled application-error envelope; rejection, timeout, cancellation after send, malformed traffic, unknown fields, cross-kind replies, premature traffic, and concurrent admission terminate the generation",
     "generation loss invokes menu-runtime authority invalidation and the Agent treats every ambiguous result as Control teardown",
-    "runtime lifecycle traffic contains no media, input, screen pixels, focus, route, credential, private key, or arbitrary diagnostic text"
+    "runtime lifecycle traffic contains no media, input, screen pixels, focus, route, credential, private key, or arbitrary diagnostic text",
+    "install activity receipt and authenticated menu publication have independent positive revision counters; only the exact current command, lease, session, display and menu generation establish receipt authority; numeric ordering between the two counters is not authority"
   ]
 }

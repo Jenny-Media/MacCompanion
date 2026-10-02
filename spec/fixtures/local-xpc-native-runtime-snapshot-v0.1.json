@@ -38,8 +38,10 @@
     "focused-region-or-unknown-kind-denied",
     "selected-kind-without-current-menu-target-denied",
     "current-runtime-receipt-after-indicator-revision-advance-accepted",
-    "runtime-receipt-older-than-menu-admission-denied",
-    "changed-menu-admission-during-native-read-denied"
+    "changed-menu-admission-during-native-read-denied",
+    "independent-positive-publication-and-activity-revisions-accepted",
+    "zero-activity-revision-denied",
+    "wrong-menu-generation-despite-positive-revisions-denied"
   ],
   "requiredGeometryFields": [
     "encodedWidth",
@@ -68,5 +70,37 @@
     90,
     180,
     270
+  ],
+  "independentRevisionCases": [
+    {
+      "publicationRevision": 1,
+      "activityRevision": 3,
+      "menuGenerationMatches": true,
+      "accepted": true
+    },
+    {
+      "publicationRevision": 3,
+      "activityRevision": 1,
+      "menuGenerationMatches": true,
+      "accepted": true
+    },
+    {
+      "publicationRevision": 21,
+      "activityRevision": 1,
+      "menuGenerationMatches": true,
+      "accepted": true
+    },
+    {
+      "publicationRevision": 3,
+      "activityRevision": 0,
+      "menuGenerationMatches": true,
+      "accepted": false
+    },
+    {
+      "publicationRevision": 3,
+      "activityRevision": 1,
+      "menuGenerationMatches": false,
+      "accepted": false
+    }
   ]
 }
