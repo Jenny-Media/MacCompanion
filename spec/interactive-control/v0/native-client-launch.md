@@ -23,7 +23,13 @@ exact primary ID before and after suspensions. Do not accept an arbitrary addres
 from UI, discovery, native server metadata, or an RTSP URL. The selected
 primary's numeric authenticated endpoint may supply this address while its exact
 connection ID remains current. DNS/Bonjour endpoints require separately measured
-numeric-route evidence; unresolved names are unavailable to this adapter. The native HTTPS port
+numeric-route evidence; unresolved names are unavailable to this adapter. The
+Network.framework composition measures the ready connection's numeric remote
+path endpoint after consuming that connection's verified TLS handoff. It retains
+the measurement only with the selected authenticated primary, clears it on
+replacement/termination, and does not resolve the configured name again for
+native launch. This measurement supplies no route classification or approval.
+The native HTTPS port
 is portBase minus five. Endpoint construction itself grants no Control.
 
 Only bounded serverinfo, applist, launch, and cancel operations are allowed.

@@ -5,6 +5,12 @@ import CompanionInteractiveClient
 import CompanionInteractiveShared
 import Foundation
 
+/// Fixed recovery text supplied by a local adapter; never raw server text,
+/// addresses, security material, or input content.
+public protocol ClientCommandFailurePresentingV0: Error {
+    var commandFailureDetail: String { get }
+}
+
 /// Normal-app construction seam for an independently admitted video adapter.
 /// Each Control request constructs a fresh preparer. The route reader remains
 /// bound to the workspace's currently selected authenticated primary.

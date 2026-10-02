@@ -1781,6 +1781,7 @@ public actor InteractiveSessionWireDispatcherV0 {
             return response
         } catch {
             // Exact cancellation cannot retire a newer operation after a late reply.
+            interactiveSessionLoggerV0.error("native transition failed errorType=\(String(reflecting: type(of: error)), privacy: .public)")
             try? await nativeNegotiation.cancel(fence, context: context)
             if nativeScope?.fence == fence { nativeScope = nil }
             return try failure()

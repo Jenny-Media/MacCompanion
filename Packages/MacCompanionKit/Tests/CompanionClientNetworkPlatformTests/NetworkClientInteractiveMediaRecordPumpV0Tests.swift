@@ -254,6 +254,8 @@ private actor ReplacementTestPrimaryV0:
     let log: ReplacementOrderingLogV0
     private var initialPhase: ClientInitialSurfacePhaseV0 = .awaitingRequest
     private var replacementPhase: ClientSurfaceControlPhaseV0 = .active
+    private var replacementSelected = false
+    private(set) var selectedDisplayID: UUID?
 
     init(
         initial: AdaptiveSurfaceDescriptor,
@@ -316,7 +318,16 @@ private actor ReplacementTestPrimaryV0:
             requestJSON: Data([0xaa])
         )
     }
+    func prepareReplacementDisplaySelection(
+        displayID: UUID
+    ) throws -> ClientSurfaceSelectionRequestV0 {
+        selectedDisplayID = displayID
+        return try prepareReplacementSurfaceSelection(
+            targetKind: .desktop, targetToken: nil
+        )
+    }
     func sendReplacementSurfaceSelection(_ frame: Data) async {
+        replacementSelected = true
         await log.append("select")
         replacementPhase = .awaitingMedia
     }
@@ -325,7 +336,7 @@ private actor ReplacementTestPrimaryV0:
     }
     func replacementSurfaceDescriptor()
         -> AdaptiveSurfaceDescriptor?
-    { replacement }
+    { replacementSelected ? replacement : initial }
     func confirmReplacementRenderedFrame(
         _ receipt: ClientDecodedFrameReceiptV0
     ) -> Bool {
@@ -654,6 +665,9 @@ func initialDesktopOwnerAcknowledgesOnlyRendererProof(lifecycle: (Bool, Bool), o
         )
 
     #expect(try await activation.start() == descriptor)
+    await #expect(throws: NetworkClientInteractiveInitialDesktopErrorV0.unavailable) {
+        try await activation.suppressLegacyRenderingForNativeVideo(descriptor: descriptor)
+    }
     for _ in 0..<1_000 {
         if await renderer.count() == 2 { break }
         await Task.yield()
@@ -692,6 +706,19 @@ func initialDesktopOwnerAcknowledgesOnlyRendererProof(lifecycle: (Bool, Bool), o
     await primary.acknowledgeFromHost()
     #expect(await activation.refreshPrimaryState())
     #expect(await activation.phase == .active)
+    try await activation.suppressLegacyRenderingForNativeVideo(descriptor: descriptor)
+    let nativeTail = try MediaRecordHeader(type: .videoAccessUnit, flags: [], payloadLength: 1,
+        interactiveSessionID: descriptor.interactiveSessionID, authorizationEpoch: descriptor.authorizationEpoch,
+        surfaceID: descriptor.surfaceID, surfaceRevision: descriptor.surfaceRevision,
+        coordinateSpaceRevision: descriptor.coordinateSpaceRevision, mediaSequence: 3,
+        presentationTimeNanoseconds: 3, encodedWidth: 640, encodedHeight: 480)
+    await io.append(nativeTail.encode() + Data([3]))
+    let nativeDeadline = ContinuousClock.now + .seconds(2)
+    while await primary.admissionCount < 3, ContinuousClock.now < nativeDeadline { await Task.yield() }
+    #expect(await primary.admissionCount == 3)
+    #expect(await renderer.count() == 2)
+    #expect(await primary.acknowledgementCount == 1)
+    #expect(await activation.phase == .active)
     try await activation.sendInput([.pointerMove(x: 1, y: 2)])
     #expect(await inputIO.count() == 1)
     let framedInput = await inputIO.value(at: 0)
@@ -709,12 +736,12 @@ func initialDesktopOwnerAcknowledgesOnlyRendererProof(lifecycle: (Bool, Bool), o
         let tail = try MediaRecordHeader(type: .videoAccessUnit, flags: [], payloadLength: 1,
             interactiveSessionID: descriptor.interactiveSessionID, authorizationEpoch: descriptor.authorizationEpoch,
             surfaceID: descriptor.surfaceID, surfaceRevision: descriptor.surfaceRevision,
-            coordinateSpaceRevision: descriptor.coordinateSpaceRevision, mediaSequence: 3,
-            presentationTimeNanoseconds: 3, encodedWidth: 640, encodedHeight: 480)
+            coordinateSpaceRevision: descriptor.coordinateSpaceRevision, mediaSequence: 4,
+            presentationTimeNanoseconds: 4, encodedWidth: 640, encodedHeight: 480)
         await io.append(tail.encode() + Data([3]))
         let deadline = ContinuousClock.now + .seconds(2)
-        while await primary.admissionCount < 3, ContinuousClock.now < deadline { await Task.yield() }
-        #expect(await primary.admissionCount == 3)
+        while await primary.admissionCount < 4, ContinuousClock.now < deadline { await Task.yield() }
+        #expect(await primary.admissionCount == 4)
         #expect(await renderer.count() == 2)
         #expect(await primary.acknowledgementCount == 1)
         #expect(await inputIO.count() == 1)
@@ -751,12 +778,13 @@ func initialDesktopOwnerAcknowledgesOnlyRendererProof(lifecycle: (Bool, Bool), o
     #expect(await renderer.closed)
 }
 
-@Test(arguments: [false, true])
-func replacementSurfaceOrdersResetBeforeSelectAndAckBeforeInput(native: Bool)
+@Test(arguments: [false, true], [false, true])
+func replacementSurfaceOrdersResetBeforeSelectAndAckBeforeInput(native: Bool, display: Bool)
     async throws
 {
     let sessionID = UUID()
     let applicationToken = UUID()
+    let displayID = UUID()
     let initial = try AdaptiveSurfaceDescriptor(
         interactiveSessionID: sessionID,
         authorizationEpoch: .init(rawValue: 1),
@@ -778,18 +806,18 @@ func replacementSurfaceOrdersResetBeforeSelectAndAckBeforeInput(native: Bool)
         interactiveSessionID: sessionID,
         authorizationEpoch: initial.authorizationEpoch,
         surfaceID: UUID(),
-        kind: .application,
+        kind: display ? .desktop : .application,
         surfaceRevision: .init(rawValue: 2),
         coordinateSpaceRevision: .init(rawValue: 2),
-        applicationToken: applicationToken,
-        fallbackSurfaceID: initial.surfaceID,
+        applicationToken: display ? nil : applicationToken,
+        fallbackSurfaceID: display ? nil : initial.surfaceID,
         encodedWidth: 800,
         encodedHeight: 600,
         logicalWidthPoints: 800,
         logicalHeightPoints: 600,
         interactionClasses: [.view, .pointer, .keyboard],
         privacyProfile: .visualOnly,
-        metadataFields: [.applicationName],
+        metadataFields: display ? [] : [.applicationName],
         createdAtMonotonicMilliseconds: 2,
         expiresAtMonotonicMilliseconds: 30_002
     )
@@ -868,10 +896,19 @@ func replacementSurfaceOrdersResetBeforeSelectAndAckBeforeInput(native: Bool)
     ))
     await primary.acknowledgeInitialFromHost()
     #expect(await activation.refreshPrimaryState())
+    if native {
+        try await activation.suppressLegacyRenderingForNativeVideo(descriptor: initial)
+    }
     #expect(try await activation.requestSurfaceTargets() == [candidate])
 
     let selection = Task {
-        try await activation.selectSurface(
+        if display {
+            return try await activation.selectDisplay(
+                displayID, nativeReplacement: native,
+                timeoutMilliseconds: 1_000
+            )
+        }
+        return try await activation.selectSurface(
             targetKind: .application,
             targetToken: applicationToken,
             nativeReplacement: native,
@@ -883,6 +920,7 @@ func replacementSurfaceOrdersResetBeforeSelectAndAckBeforeInput(native: Bool)
         try await Task.sleep(for: .milliseconds(1))
     }
     #expect(await primary.replacementSurfacePhase() == .awaitingMedia)
+    #expect(await primary.selectedDisplayID == (display ? displayID : nil))
     #expect(await log.snapshot() == ["reset", "select"])
     if native {
         let oldHeader = try MediaRecordHeader(

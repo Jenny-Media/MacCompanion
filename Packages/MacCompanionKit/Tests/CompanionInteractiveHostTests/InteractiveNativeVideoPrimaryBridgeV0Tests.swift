@@ -72,13 +72,37 @@ final class InteractiveNativeVideoPrimaryBridgeV0Tests: XCTestCase {
                 visibleMenuAppGeneration: value.visibleMenuAppGeneration, visibleMenuAppRevision: value.visibleMenuAppRevision)
         }
     }
-    private func admission(_ m: Material, display: UUID, menu: UUID) throws -> InteractiveSessionAdmissionSnapshotV0 {
+    private func admission(_ m: Material, display: UUID, menu: UUID, revision: UInt64 = 1) throws -> InteractiveSessionAdmissionSnapshotV0 {
         try .init(deviceID: m.context.deviceID, clientID: m.context.clientID, deviceState: .activeGranted,
             authorizationEpoch: m.context.authorizationEpoch, grantRevision: m.context.grantRevision,
             policyRevision: m.context.policyRevision, approvalPublicKeyX963: m.authority.sessionPublicKeyX963,
             grants: CapabilityGrantSet([InteractiveControlCapabilityV0.identifier]), deviceDisplayName: DeviceDisplayName("Test phone"),
-            visibleMenuAppAvailable: true, visibleMenuAppGeneration: menu, visibleMenuAppRevision: 1,
+            visibleMenuAppAvailable: true, visibleMenuAppGeneration: menu, visibleMenuAppRevision: revision,
             selectedDisplayID: display, sessionPublicKeyX963: m.authority.sessionPublicKeyX963)
+    }
+    func testStoreBoundFactoryAllowsNextSessionIndicatorReceiptAndRejectsOlderReceipt() async throws {
+        // A first show/clear/show advances the activity receipt to 3 while
+        // the authenticated menu publication can still be revision 1.
+        for (admissionRevision, runtimeRevision, accepted) in [(UInt64(1), UInt64(3), true), (3, 1, false)] {
+            let m = try material(), display = UUID(), menu = UUID()
+            let a = Admission(try admission(m, display: display, menu: menu, revision: admissionRevision))
+            let b = Backend(Data(base64Encoded: m.challenge.body.hostCertificateDERBase64)!)
+            let runtime = NativeRuntime(.init(binding: m.authority.binding, surface: m.authority.surface,
+                logicalWidthPoints: 2560, logicalHeightPoints: 1440, rotation: .degrees0,
+                selectedDisplayID: display, visibleMenuAppGeneration: menu, visibleMenuAppRevision: runtimeRevision), backend: b)
+            let owner = InteractiveNativeVideoRuntimeCompositionV0(admission: a, runtime: runtime,
+                monotonicMilliseconds: { 1000 }, unixMilliseconds: { 1724000000000 }).bridge()
+            do {
+                _ = try await owner.prepare(m.request, challengeMessageID: m.challenge.messageID,
+                    context: m.context, sessionPublicKeyX963: m.authority.sessionPublicKeyX963)
+                XCTAssertTrue(accepted, "Receipt older than admission was accepted")
+            } catch {
+                XCTAssertFalse(accepted, "Current second-session activity receipt was rejected")
+            }
+            let count = await runtime.count()
+            XCTAssertEqual(count, accepted ? 1 : 0)
+            await owner.close(interactiveSessionID: m.authority.binding.interactiveSessionID)
+        }
     }
     func testStoreBoundFactoryRejectsRuntimeDisplayMismatchBeforeBackendConstruction() async throws {
         let m = try material(), display = UUID(), menu = UUID()

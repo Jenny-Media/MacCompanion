@@ -142,6 +142,7 @@ public final class NetworkClientPrimaryApplicationStateV0:
         var revision: UInt64 = 0
         var session: ClientAuthenticatedSessionV0?
         var selectedEndpoint: EndpointCandidate?
+        var measuredRemoteIPAddress: String?
         var authenticatedRouteClass:
             NetworkClientAuthenticatedRouteClassV1?
         var observeChannel: ClientObserveChannelV0?
@@ -213,13 +214,14 @@ public final class NetworkClientPrimaryApplicationStateV0:
     }
 
     /// Numeric route of this exact authenticated selected primary. This read
-    /// creates no Control authority and never resolves unverified host names.
+    /// creates no Control authority and never resolves host names again.
     public func currentAuthenticatedNativeIPAddress(primaryConnectionID: Data) -> String? {
         lock.lock()
         defer { lock.unlock() }
         guard primaryConnectionID.count == 16,
-              storage.session?.connectionID == primaryConnectionID,
-              let endpoint = storage.selectedEndpoint,
+              storage.session?.connectionID == primaryConnectionID else { return nil }
+        if let measured = storage.measuredRemoteIPAddress { return measured }
+        guard let endpoint = storage.selectedEndpoint,
               endpoint.kind == .ipv4 || endpoint.kind == .ipv6 else { return nil }
         return endpoint.value
     }
@@ -450,6 +452,7 @@ public final class NetworkClientPrimaryApplicationStateV0:
         guard advanceRevision() else { return }
         storage.session = session
         storage.selectedEndpoint = value.endpoint
+        storage.measuredRemoteIPAddress = value.measuredRemoteIPAddress
         storage.authenticatedRouteClass = value.authenticatedRouteClass
         storage.observeChannel = value.observeChannel
         storage.actChannel = value.actChannel
@@ -478,6 +481,7 @@ public final class NetworkClientPrimaryApplicationStateV0:
         }
         storage.session = nil
         storage.selectedEndpoint = nil
+        storage.measuredRemoteIPAddress = nil
         storage.authenticatedRouteClass = nil
         storage.observeChannel = nil
         storage.actChannel = nil

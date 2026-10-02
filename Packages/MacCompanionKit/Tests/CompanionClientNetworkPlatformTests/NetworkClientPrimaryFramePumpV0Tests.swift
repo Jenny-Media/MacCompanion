@@ -1276,8 +1276,17 @@ private func networkClientAcceptedControlSession(
     )
 }
 
-@Test(arguments: EndpointKind.allCases)
-func primaryProductCandidatePublishesOnlyAfterExactSelection(kind: EndpointKind)
+@Test func nativeRouteMeasurementRejectsNamesAndServiceEndpoints() throws {
+    let port = try #require(NWEndpoint.Port(rawValue: 47474))
+    #expect(NetworkClientRouteAttemptV0.numericRemoteIPAddress(nil) == nil)
+    #expect(NetworkClientRouteAttemptV0.numericRemoteIPAddress(.hostPort(host: "mac.example", port: port)) == nil)
+    #expect(NetworkClientRouteAttemptV0.numericRemoteIPAddress(.service(name: "Mac", type: "_maccompanion._tcp", domain: "local", interface: nil)) == nil)
+    #expect(NetworkClientRouteAttemptV0.numericRemoteIPAddress(.hostPort(host: "192.168.1.20", port: port)) == "192.168.1.20")
+    #expect(NetworkClientRouteAttemptV0.numericRemoteIPAddress(.hostPort(host: "2001:db8::20", port: port)) == "2001:db8::20")
+}
+
+@Test(arguments: EndpointKind.allCases, [false, true])
+func primaryProductCandidatePublishesOnlyAfterExactSelection(kind: EndpointKind, measured: Bool)
     async throws
 {
     let base = try makeNetworkClientPumpHarness()
@@ -1305,7 +1314,9 @@ func primaryProductCandidatePublishesOnlyAfterExactSelection(kind: EndpointKind)
     case .dns: "mac.example"
     case .bonjour: "testmac._maccompanion._tcp.local."
     }
-    let nativeAddress = kind == .ipv4 || kind == .ipv6 ? value : nil
+    let configuredNativeAddress = kind == .ipv4 || kind == .ipv6 ? value : nil
+    let measuredAddress = measured ? "192.168.1.21" : nil
+    let nativeAddress = measuredAddress ?? configuredNativeAddress
     let selectedEndpoint = try EndpointCandidate(
         kind: kind,
         value: value,
@@ -1313,6 +1324,7 @@ func primaryProductCandidatePublishesOnlyAfterExactSelection(kind: EndpointKind)
     )
     let candidate = NetworkClientPrimaryProductCandidateV0(
         endpoint: selectedEndpoint,
+        measuredRemoteIPAddress: measuredAddress,
         authenticatedRouteClass: .lan,
         configuration: NetworkClientPrimaryProductConfigurationV0(
             pairedHost: pairedHost,
@@ -1536,6 +1548,7 @@ func primaryProductCandidatePublishesOnlyAfterExactSelection(kind: EndpointKind)
     applicationState.productEvents.primarySelected(
         NetworkClientPrimaryProductSelectionV0(
             endpoint: selection.endpoint,
+            measuredRemoteIPAddress: nil,
             authenticatedRouteClass: .privateDNS,
             authenticatedSession: replacementSession,
             observeChannel: selection.observeChannel,
@@ -1549,7 +1562,7 @@ func primaryProductCandidatePublishesOnlyAfterExactSelection(kind: EndpointKind)
     #expect(applicationState.snapshot().observedStatus == nil)
     #expect(applicationState.snapshot().revision == 6)
     #expect(applicationState.currentAuthenticatedNativeIPAddress(primaryConnectionID: session.connectionID) == nil)
-    #expect(applicationState.currentAuthenticatedNativeIPAddress(primaryConnectionID: replacementConnectionID) == nativeAddress)
+    #expect(applicationState.currentAuthenticatedNativeIPAddress(primaryConnectionID: replacementConnectionID) == configuredNativeAddress)
 
     let acceptedControl = try networkClientAcceptedControlSession(
         primary: replacementSession

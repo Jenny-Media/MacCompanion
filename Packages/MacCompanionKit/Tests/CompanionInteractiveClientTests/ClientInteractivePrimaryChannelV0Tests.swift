@@ -1065,6 +1065,14 @@ func interactivePrimaryChannelCompletesSelectedSessionApprovalFlow(delivery: (In
         #expect(await harness.channel.replacementSurfacePhase() == .active)
         return
     }
+    // A delayed product failure must not end a different accepted session,
+    // enqueue a command, or fence that session's current input.
+    let framesBeforeStaleRetirement = await harness.transport.frames.count
+    await #expect(throws: ClientInteractivePrimaryChannelErrorV0.unavailable) {
+        try await harness.channel.endSession(expectedInteractiveSessionID: UUID())
+    }
+    #expect(await harness.transport.frames.count == framesBeforeStaleRetirement)
+    #expect(await harness.channel.phase() == .accepted)
     let inputFrame = try await harness.channel.makeInitialInputFrame(
         .pointerMove(x: 10, y: 20)
     )
@@ -1096,7 +1104,9 @@ func interactivePrimaryChannelCompletesSelectedSessionApprovalFlow(delivery: (In
             try await harness.channel.makeInitialInputFrame(.pointerMove(x: 10, y: 20))
         }
     }
-    let endSubmitted = try await harness.channel.endSession()
+    let endSubmitted = try await harness.channel.endSession(
+        expectedInteractiveSessionID: session.interactiveSessionID
+    )
     await #expect(throws: ClientInteractivePrimaryChannelErrorV0.unavailable) {
         try await harness.channel.makeInitialInputFrame(.pointerMove(x: 10, y: 20))
     }
@@ -1105,6 +1115,13 @@ func interactivePrimaryChannelCompletesSelectedSessionApprovalFlow(delivery: (In
         effects: effects.sorted()
     ))
     let endFrame = try #require(await harness.transport.frames.last)
+    let framesAfterRetirement = await harness.transport.frames.count
+    await #expect(throws: ClientInteractivePrimaryChannelErrorV0.unavailable) {
+        try await harness.channel.endSession(
+            expectedInteractiveSessionID: session.interactiveSessionID
+        )
+    }
+    #expect(await harness.transport.frames.count == framesAfterRetirement)
     let end = try WireCodec.decode(
         WireEnvelope<InteractiveSessionEndBodyV0>.self,
         from: endFrame
@@ -1139,6 +1156,56 @@ func interactivePrimaryChannelCompletesSelectedSessionApprovalFlow(delivery: (In
     ))
     #expect(await harness.channel.phase() == .closed)
     #expect(await harness.channel.initialSurfacePhase() == nil)
+    #expect(await harness.router.state == .ready)
+}
+
+@Test func concurrentFailedProductRetirementReservesOneEndRequest() async throws {
+    let harness = try await interactivePrimaryHarness()
+    _ = try await harness.channel.beginSession(effects: [.view])
+    let request = try WireCodec.decode(
+        WireEnvelope<InteractiveSessionRequestBody>.self,
+        from: try #require(await harness.transport.frames.last)
+    )
+    try await harness.router.receive(WireCodec.encode(
+        try interactivePrimaryChallenge(
+            harness: harness, requestID: request.messageID, effects: [.view]
+        )
+    ))
+    let proof = try WireCodec.decode(
+        WireEnvelope<InteractiveApprovalProofBody>.self,
+        from: try #require(await harness.transport.frames.last)
+    )
+    try await harness.router.receive(WireCodec.encode(
+        try interactivePrimaryAccepted(harness: harness, proofID: proof.messageID)
+    ))
+    guard case let .accepted(session, _) = harness.events.events.last else {
+        Issue.record("Expected accepted session")
+        return
+    }
+    let framesBefore = await harness.transport.frames.count
+    let submittedCount = await withTaskGroup(of: Bool.self) { group in
+        for _ in 0..<8 {
+            group.addTask {
+                do {
+                    _ = try await harness.channel.endSession(
+                        expectedInteractiveSessionID: session.interactiveSessionID
+                    )
+                    return true
+                } catch { return false }
+            }
+        }
+        var count = 0
+        for await submitted in group { if submitted { count += 1 } }
+        return count
+    }
+    #expect(submittedCount == 1)
+    #expect(await harness.transport.frames.count == framesBefore + 1)
+    let end = try WireCodec.decode(
+        WireEnvelope<InteractiveSessionEndBodyV0>.self,
+        from: try #require(await harness.transport.frames.last)
+    )
+    #expect(end.body.interactiveSessionID.rawValue == session.interactiveSessionID)
+    #expect(end.body.authorizationEpoch == session.authorizationEpoch)
     #expect(await harness.router.state == .ready)
 }
 

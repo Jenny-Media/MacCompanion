@@ -615,19 +615,19 @@
       "path": "valid/native-client-launch-admission.json",
       "kind": "interactive.nativeClientLaunchAdmission.v0.1",
       "expect": "valid",
-      "canonicalSHA256": "60ec39a8e6b06e263c1a90ffd1342191fe6534ae4e04f406ea11798dc6a911f6"
+      "canonicalSHA256": "46402e743c1af05cbaa7212d2794303413d61ff27d5577189a2ceb2790f7288f"
     },
     {
       "path": "valid/managed-native-host-admission.json",
       "kind": "interactive.managedNativeHostAdmission.v0.1",
       "expect": "valid",
-      "canonicalSHA256": "8c749970fa41b7940e42a68a1c513ec8b349b107b947ab14ba9c2fc0d579f6e2"
+      "canonicalSHA256": "aa3d1af22808f3f3c81fa68fd3e08f804845aa84b89da2b1fa9d98a5de362859"
     },
     {
       "path": "local-xpc-native-runtime-snapshot-v0.1.json",
       "kind": "interactive.localNativeRuntimeSnapshot.v0.1",
       "expect": "valid",
-      "canonicalSHA256": "abe2b2459a9a137f9e5aff3bf8f75e2433bd565ab6fd389f5845ae2f9be05b20"
+      "canonicalSHA256": "5d90a8e8832bfb227b80932c7de37ba9327c8f1bd7a29656b83850f6341d3c39"
     },
     {
       "path": "local-xpc-native-backend-v0.1.json",
@@ -700,6 +700,18 @@
       "kind": "native.privateSelectedCaptureContext.v0.1",
       "expect": "valid",
       "canonicalSHA256": "52a4b92a15a048e441cb38334501a99f48b64bb9082039d52f309627269f5b80"
+    },
+    {
+      "path": "client-failed-product-retirement-v0.1.json",
+      "kind": "client.failedProductRetirement.v0.1",
+      "expect": "valid",
+      "canonicalSHA256": "419ee10fd905218ca19e2aad2a9e6712bfde88a6d83bf437e933935e47991dc6"
+    },
+    {
+      "path": "native-bootstrap-rendering-v0.1.json",
+      "kind": "client.nativeBootstrapRendering.v0.1",
+      "expect": "valid",
+      "canonicalSHA256": "463dbcc3addf168c482b19b5a5a79254d91cc1072389118344733f007a89d20e"
     }
   ]
 }

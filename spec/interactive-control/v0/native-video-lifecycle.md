@@ -32,6 +32,14 @@ existing clean-frame render and acknowledgement before a fresh native enrollment
 Malformed media or a failed media role remains terminal; suppressing stale visual
 output does not weaken media admission.
 
+A display choice during native playback uses that same replacement lifecycle.
+Fence input and drain the current native renderer, enrollment and preparation
+before sending the existing authenticated Desktop replacement for the selected
+opaque display. The new display must render and acknowledge its bootstrap frame
+before fresh native enrollment. Input resumes only after the exact new native
+presentation receipt. A display choice does not reuse old capture geometry,
+renderer generation or input admission, or change pairing and approval semantics.
+
 Every preparation, callback, and presentation query revalidates the exact binding
 and deadline. An identity/revision/deadline mismatch retires the session and
 requires teardown. Stale-generation events are rejected without mutating a newer
@@ -96,3 +104,12 @@ observe the platform background event; periodic readiness polling alone is
 insufficient because suspension can prevent it from running. Foreground return
 cannot restore that generation's input admission; a fresh explicit Control/native
 enrollment is required. Primary-channel background grace remains independent.
+
+After the exact bootstrap surface's clean-frame acknowledgement commits, native
+video construction suppresses further legacy decoding for that surface. The
+media role continues full header, payload, sequence and authority validation;
+suppression grants no native presentation or input authority. This prevents a
+hidden legacy VideoToolbox decoder from failing a native session on background.
+A fresh replacement surface remains eligible for its own bootstrap render and
+acknowledgement. Role EOF and malformed media remain terminal. The indexed
+`native-bootstrap-rendering-v0.1.json` fixture records these local rules.

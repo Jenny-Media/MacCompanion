@@ -2,6 +2,46 @@
 
 ## 2026-09-26 streaming engine and licensing decision
 
+Latest physical reliability checkpoint: [installed enrollment and route
+repair](evidence/2026-10-01-installed-native-enrollment-and-route-repair.md).
+The user's iPhone 17 Pro Max authenticates using its saved pair. Physical testing
+reproduced a bundled OpenSSL lookup into a missing developer build tree; the
+signed installed Mac now explicitly uses its catalog-bound configuration.
+Enrollment and managed-host startup then completed, exposing a missing measured
+numeric route for DNS/Bonjour primaries. The client now retains the exact verified
+transport's numeric address, with selection/replacement/termination fences.
+Regression tests, 116 fixtures and full validation on stable Xcode 27.0 pass.
+The final signed normal iOS native build is installed on the iPhone 17 Pro Max.
+User Touch ID approval enabled physical tracing. The primary selected IPv6 while
+the managed host listened only on IPv4; the signed installed development Mac
+now uses dual-stack listeners. Real native video ran for more than four minutes;
+Stop retired the host and preserved authentication. A fresh second session
+exposed native admission incorrectly requiring equality between the advancing
+activity receipt revision and unchanged menu publication revision. The correction
+is installed; its regression fails before and passes after the change, with all
+11 native bridge tests and final full repository validation passing. Physical
+Stop/start on the same primary now passes without re-pairing or reconnecting;
+the second session streamed for more than 21 minutes. The App shortcut switched
+the Mac application. Failed-product retirement now targets the captured exact
+session/primary, rejects stale and duplicate Stop, and uses terminal UI text.
+The 18 ordering cases, concurrent retirement regression and five iOS coordinator
+tests pass. Physical backgrounding exposed a hidden legacy bootstrap decoder
+failure; foreground authenticated reconnect passes. Native construction now
+suppresses legacy decoding after verified bootstrap acknowledgement while
+retaining media admission and replacement bootstrap gates. A fresh physical session
+verifies that suppression, advancing native video and background retirement without
+the hidden decoder failure. Foreground saved-pair authentication passes after the
+ten-second background grace expires. Native display selection exposed an existing
+active-owner rejection; exact-session failed-product Stop physically passes for
+that failure. The display drain/replacement correction is signed and installed;
+the physical display switch now passes with fresh native presentation input
+admission and advancing video, without reconnect or pairing. All four selected
+native/legacy App/Display ordering cases pass. Real pointer/text/modifiers and
+selected App/Window focus remain pending. The signed normal iOS client
+containing the background and display recovery repairs is
+installed on the physical iPhone 17 Pro Max; the saved pair authenticates after
+installation. Final stable-Xcode validation passes with 118 indexed fixtures.
+
 Latest installed Mac recovery checkpoint: [Agent entitlement preservation and
 real dashboard reconnect](evidence/2026-09-28-agent-entitlement-preservation-and-installed-recovery.md).
 The development stager now retains the Agent's required signed Keychain

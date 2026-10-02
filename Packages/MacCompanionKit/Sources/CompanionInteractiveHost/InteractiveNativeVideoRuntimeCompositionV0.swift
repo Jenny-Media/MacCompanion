@@ -1,6 +1,11 @@
 import Foundation
+import OSLog
 import CompanionInteractiveShared
 import CompanionInteractiveWire
+
+private let nativeRuntimeCompositionLoggerV0 = Logger(
+    subsystem: "media.jenny.maccompanion.agent", category: "native-runtime-admission"
+)
 
 /// Facts from the authenticated, acknowledged Desktop runtime. The display
 /// token is the menu selection joined by admission, never a remote display ID.
@@ -88,9 +93,18 @@ public struct InteractiveNativeVideoRuntimeCompositionV0: Sendable {
         guard !Task.isCancelled,
               let before = try await admission.snapshot(deviceID: context.deviceID),
               InteractiveSessionRuntimeRequirementV0(command: context, admission: before).isEligibleForInteractiveControl,
-              before.sessionPublicKeyX963 == registeredKey,
-              let current = try await runtime.snapshot(fence: fence, context: context),
-              let after = try await admission.snapshot(deviceID: context.deviceID), before == after else { return nil }
+              before.sessionPublicKeyX963 == registeredKey else {
+            nativeRuntimeCompositionLoggerV0.error("native runtime admission unavailable before snapshot")
+            return nil
+        }
+        guard let current = try await runtime.snapshot(fence: fence, context: context) else {
+            nativeRuntimeCompositionLoggerV0.error("native runtime snapshot unavailable")
+            return nil
+        }
+        guard let after = try await admission.snapshot(deviceID: context.deviceID), before == after else {
+            nativeRuntimeCompositionLoggerV0.error("native runtime admission changed during snapshot")
+            return nil
+        }
         let b = current.binding, s = current.surface
         guard !Task.isCancelled, b.hostID == context.hostID, b.hostFingerprint == context.hostFingerprint,
               b.clientID == context.clientID, b.primaryConnectionID == context.primaryConnectionID,
@@ -103,8 +117,15 @@ public struct InteractiveNativeVideoRuntimeCompositionV0: Sendable {
               current.logicalWidthPoints > 0, current.logicalHeightPoints > 0,
               before.selectedDisplayID == current.selectedDisplayID,
               before.visibleMenuAppGeneration == current.visibleMenuAppGeneration,
-              before.visibleMenuAppRevision == current.visibleMenuAppRevision,
-              monotonicMilliseconds() < b.expiresAtMonotonicMilliseconds else { return nil }
+              // Match initial runtime receipt admission. The visible activity
+              // receipt advances on show/clear between sessions independently
+              // of an unchanged authenticated menu publication.
+              current.visibleMenuAppRevision >= before.visibleMenuAppRevision,
+              monotonicMilliseconds() < b.expiresAtMonotonicMilliseconds else {
+            // Only comparison outcomes; never log identities, keys or geometry.
+            nativeRuntimeCompositionLoggerV0.error("native runtime binding rejected display=\(before.selectedDisplayID == current.selectedDisplayID, privacy: .public) menuGeneration=\(before.visibleMenuAppGeneration == current.visibleMenuAppGeneration, privacy: .public) menuRevisionCurrent=\(current.visibleMenuAppRevision >= before.visibleMenuAppRevision, privacy: .public) deadline=\(monotonicMilliseconds() < b.expiresAtMonotonicMilliseconds, privacy: .public)")
+            return nil
+        }
         return try .init(runtime: current, admission: before,
             authority: .init(binding: b, surface: s, sessionPublicKeyX963: registeredKey))
     }

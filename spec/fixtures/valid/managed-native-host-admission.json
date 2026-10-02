@@ -37,6 +37,13 @@
     "nonloopback-attested-client-https-accepted",
     "nonloopback-unregistered-client-rejected",
     "native-stream-route-remains-current-verified-primary-address",
-    "retirement-closes-nonloopback-listeners"
+    "retirement-closes-nonloopback-listeners",
+    "certificate-generation-selects-admitted-packaged-configuration",
+    "missing-developer-openssl-prefix-does-not-block-enrollment",
+    "missing-selected-openssl-configuration-fails-closed",
+    "normal-debug-dual-stack-listener-matches-measured-ipv6-primary",
+    "dual-stack-attested-client-https-accepted",
+    "dual-stack-unregistered-client-rejected",
+    "dual-stack-retirement-closes-ipv4-and-ipv6-listeners"
   ]
 }

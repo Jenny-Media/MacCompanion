@@ -80,8 +80,14 @@ owner; request geometry/keys/deadlines cannot supply these facts. The coordinato
 reader revalidates runtime and durable authority throughout its lifetime.
 The Agent composition constructs that reader from its reconciled store. Platform
 services supply only the acknowledged runtime snapshot and an inert backend
-factory. The runtime display token and visible-menu generation/revision must
-match admission on both sides of the read. Backend construction must not create
+factory. The runtime display token and visible-menu generation must match
+admission on both sides of the read. The visible activity receipt revision must
+be at least the admitted menu revision, as required by initial runtime receipt
+admission. Showing and clearing the indicator can advance this receipt revision
+between Control sessions without changing the authenticated menu publication.
+The complete durable admission and runtime snapshot must still remain unchanged
+around construction and on later authority reads; a receipt older than admission
+is rejected. Backend construction must not create
 credentials or listeners, and admission is checked again after construction.
 
 A bridge owns one pending factory task, one verifier/coordinator, and one drain.

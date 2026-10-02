@@ -49,3 +49,21 @@ primary loss. Those terminal paths close both roles. The host's existing Stop
 releases held input; ending does not send a late reset after the Stop request.
 An ending session cannot resume, replace a surface, or reuse a role offer.
 Malformed data or role loss still closes both roles immediately.
+
+## Failed product retirement
+
+Before constructing a live product, the client may capture a retirement action
+for the exact accepted session and its owning primary channel. A terminal
+product failure first disables local input, then submits the existing
+`interactive.session.end` through that captured channel. The channel must still
+be valid and hold the same accepted session ID and authorization epoch. A stale
+action cannot use the currently selected channel to stop a replacement session.
+An already pending end is not submitted again. Failure to submit does not claim
+remote completion; existing primary loss and host expiry remain terminal gates.
+Local navigation alone does not invoke this action. Observe and Act grants are
+unchanged. No new wire message or approval/signature input is introduced.
+
+The live failure screen uses terminal recovery text and removes keyboard and
+surface controls. It cannot display the last active workspace detail as a claim
+that viewing or input is still live. These rules are recorded in the indexed
+`client-failed-product-retirement-v0.1.json` fixture.

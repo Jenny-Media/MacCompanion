@@ -271,6 +271,14 @@ public final class UIKitClientInitialDesktopProductV0 {
               let coordinateRevision = Int64(exactly: descriptor.coordinateSpaceRevision.rawValue) else {
             throw NetworkClientInteractiveInitialDesktopErrorV0.invalidPhase
         }
+        let nativeDescriptor = descriptor
+        try await activation.suppressLegacyRenderingForNativeVideo(
+            descriptor: nativeDescriptor
+        )
+        guard !closed, !surfaceTransitionInFlight, !Task.isCancelled,
+              nativeVideoOwner == nil, descriptor == nativeDescriptor else {
+            throw NetworkClientInteractiveInitialDesktopErrorV0.invalidPhase
+        }
         webRTCStartTask?.cancel()
         webRTCStartTask = nil
         webRTCStartRequested = true
@@ -369,10 +377,17 @@ public final class UIKitClientInitialDesktopProductV0 {
     }
 
     public func selectDisplay(_ displayID: UUID) async throws {
-        guard !closed, nativePreparer == nil && nativeVideoOwner == nil && !surface.hasUnverifiedExternalVideo else {
+        guard !closed, nativeVideoOwner?.lifecycle.isTerminal != true,
+              (nativePreparer != nil || nativeVideoOwner != nil || !surface.hasUnverifiedExternalVideo) else {
             throw NetworkClientInteractiveInitialDesktopErrorV0.invalidPhase
         }
         visualSmartZoomFocus = nil
+        if nativePreparer != nil || nativeVideoOwner != nil {
+            try await performNativeSurfaceSelection(
+                kind: .desktop, targetToken: nil, targetDisplayID: displayID
+            )
+            return
+        }
         cancelPendingAutomaticFocusEvent()
         guard !surfaceTransitionInFlight else {
             throw NetworkClientInteractiveInitialDesktopErrorV0.invalidPhase
@@ -438,7 +453,8 @@ public final class UIKitClientInitialDesktopProductV0 {
 
     private func performNativeSurfaceSelection(
         kind: InteractiveSurfaceKind,
-        targetToken: UUID?
+        targetToken: UUID?,
+        targetDisplayID: UUID? = nil
     ) async throws {
         guard kind != .focusedRegion, !surfaceTransitionInFlight,
               let replacementNativePreparer else {
@@ -463,10 +479,17 @@ public final class UIKitClientInitialDesktopProductV0 {
         nativePreparationRequested = false
         do {
             guard !closed else { throw NetworkClientInteractiveInitialDesktopErrorV0.invalidPhase }
-            let next = try await activation.selectSurface(
-                targetKind: kind, targetToken: targetToken,
-                nativeReplacement: true
-            )
+            let next: AdaptiveSurfaceDescriptor
+            if let targetDisplayID {
+                next = try await activation.selectDisplay(
+                    targetDisplayID, nativeReplacement: true
+                )
+            } else {
+                next = try await activation.selectSurface(
+                    targetKind: kind, targetToken: targetToken,
+                    nativeReplacement: true
+                )
+            }
             IOSClientRuntimeDiagnosticLogV0.record("native.surface-selection.host-acknowledged")
             guard !closed, next.kind == kind else {
                 throw NetworkClientInteractiveInitialDesktopErrorV0.invalidPhase

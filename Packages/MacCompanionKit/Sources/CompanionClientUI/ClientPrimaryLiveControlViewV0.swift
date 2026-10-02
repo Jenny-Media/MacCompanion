@@ -90,6 +90,8 @@ public final class ClientPrimaryLiveControlCoordinatorV0: ObservableObject {
         ClientInputInteractionModeV0,
         @escaping Failure
     ) async throws -> any ClientPrimaryLiveControlProductV0
+    public typealias FailureRetirementFactory = @MainActor @Sendable () async
+        -> (@Sendable () async -> Void)?
 
     @Published public private(set) var phase:
         ClientPrimaryLiveControlPhaseV0 = .idle
@@ -98,7 +100,9 @@ public final class ClientPrimaryLiveControlCoordinatorV0: ObservableObject {
     @Published public private(set) var videoRequiresRestart = false
 
     private let productFactory: ProductFactory
+    private let failureRetirementFactory: FailureRetirementFactory
     private let failure: Failure
+    private var failureRetirement: (@Sendable () async -> Void)?
     private var activationTask: Task<Void, Never>?
     private var productGeneration = UUID()
 
@@ -113,14 +117,19 @@ public final class ClientPrimaryLiveControlCoordinatorV0: ObservableObject {
                 failure: productFailure
             )
         }
+        failureRetirementFactory = {
+            await roles.makeFailedSessionRetirement()
+        }
         self.failure = failure
     }
 
     public init(
         productFactory: @escaping ProductFactory,
+        failureRetirementFactory: @escaping FailureRetirementFactory = { nil },
         failure: @escaping Failure = { _ in }
     ) {
         self.productFactory = productFactory
+        self.failureRetirementFactory = failureRetirementFactory
         self.failure = failure
     }
 
@@ -260,7 +269,11 @@ public final class ClientPrimaryLiveControlCoordinatorV0: ObservableObject {
             activationTask = nil
             product?.surface.setInputEnabled(false)
             phase = .ending
-        case .endFailed, .preparationFailed, .rejected, .unavailable,
+        case .preparationFailed:
+            if phase != .failed && phase != .closed {
+                fail(ClientPrimaryLiveControlErrorV0.unavailable)
+            }
+        case .endFailed, .rejected, .unavailable,
              .grantRequired:
             activationTask?.cancel()
             activationTask = nil
@@ -285,6 +298,7 @@ public final class ClientPrimaryLiveControlCoordinatorV0: ObservableObject {
     ) {
         guard product != nil || phase != terminalPhase else { return }
         productGeneration = UUID()
+        failureRetirement = nil
         let retiring = product
         product = nil
         phase = terminalPhase
@@ -296,6 +310,9 @@ public final class ClientPrimaryLiveControlCoordinatorV0: ObservableObject {
         generation: UUID
     ) async {
         do {
+            let retirement = await failureRetirementFactory()
+            guard productGeneration == generation, !Task.isCancelled else { return }
+            failureRetirement = retirement
             let value = try await
                 productFactory(
                     mode,
@@ -353,9 +370,14 @@ public final class ClientPrimaryLiveControlCoordinatorV0: ObservableObject {
         activationTask?.cancel()
         activationTask = nil
         let retiring = product
+        let retirement = failureRetirement
+        failureRetirement = nil
+        retiring?.surface.setInputEnabled(false)
+        retiring?.surface.hideSoftwareKeyboard()
         product = nil
         phase = .failed
         Task {
+            await retirement?()
             await retiring?.close()
             _ = await retiring?.refreshPrimaryState()
         }
@@ -1255,7 +1277,11 @@ public struct ClientPrimaryLiveControlViewV0: View {
                     ContentUnavailableView(
                         "Remote Control unavailable",
                         systemImage: "display.trianglebadge.exclamationmark",
-                        description: Text(control.detail)
+                        description: Text(
+                            "The live session failed. Return to the workspace "
+                                + "and request Remote Control again. If Stop is "
+                                + "still available, use it first."
+                        )
                     )
                     .foregroundStyle(.white)
                 } else {
@@ -1412,6 +1438,15 @@ public struct ClientPrimaryLiveControlViewV0: View {
             }
         }
         .onChange(of: coordinator.phase) { _, value in
+            if value == .failed || value == .ending || value == .closed {
+                viewState.showingRemoteKeyboard = false
+                viewState.showingSurfacePicker = false
+                viewState.showingDisplayPicker = false
+                viewState.textComposer = nil
+                viewState.pendingTextPresentation = nil
+                viewState.remoteKeyboardModifiers = []
+                coordinator.product?.surface.hideSoftwareKeyboard()
+            }
             synchronizeStudyControlTiming()
         }
         .onChange(of: coordinator.videoRequiresRestart) { _, required in

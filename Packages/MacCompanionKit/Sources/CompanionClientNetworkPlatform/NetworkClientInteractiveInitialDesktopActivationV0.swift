@@ -325,6 +325,20 @@ public actor NetworkClientInteractiveInitialDesktopActivationV0 {
         return false
     }
 
+    /// The admitted bootstrap stays a validated role stream, but its hidden
+    /// legacy decoder must not run beside native playback or in background.
+    public func suppressLegacyRenderingForNativeVideo(
+        descriptor: AdaptiveSurfaceDescriptor
+    ) async throws {
+        guard phase == .active, !surfaceTransitionInFlight,
+              await channel.replacementSurfaceDescriptor() == descriptor,
+              phase == .active, !surfaceTransitionInFlight else {
+            throw NetworkClientInteractiveInitialDesktopErrorV0.unavailable
+        }
+        await consumer.suppressRendering(surfaceID: descriptor.surfaceID)
+        IOSClientRuntimeDiagnosticLogV0.record("native.bootstrap-rendering.suppressed")
+    }
+
     public func sendInput(
         _ payloads: [InteractiveInputPayload]
     ) async throws {
@@ -553,13 +567,15 @@ public actor NetworkClientInteractiveInitialDesktopActivationV0 {
 
     public func selectDisplay(
         _ displayID: UUID,
+        nativeReplacement: Bool = false,
         timeoutMilliseconds: UInt64 = 30_000
     ) async throws -> AdaptiveSurfaceDescriptor {
         try await transitionSurface(
             targetKind: .desktop,
             targetToken: nil,
             targetDisplayID: displayID,
-            timeoutMilliseconds: timeoutMilliseconds
+            timeoutMilliseconds: timeoutMilliseconds,
+            suppressOldMediaRendering: nativeReplacement
         )
     }
 

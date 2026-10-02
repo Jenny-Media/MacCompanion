@@ -248,6 +248,7 @@ private struct MacCompanionIOSWorkspaceRoot: View {
 
     @State private var model: ClientPrimaryWorkspaceModelV0?
     @State private var commandFailureShown = false
+    @State private var commandFailureDetail = "The request failed. Stop the failed session if that option is shown, then reconnect and try again."
 
     init(
         workspace: IOSClientReleaseWorkspaceV1,
@@ -277,7 +278,9 @@ private struct MacCompanionIOSWorkspaceRoot: View {
                         { mode, failure in try await factory(mode, failure) }
                     },
                     onReconnect: onReconnect,
-                    onCommandFailure: { _ in
+                    onCommandFailure: { error in
+                        commandFailureDetail = (error as? any ClientCommandFailurePresentingV0)?.commandFailureDetail
+                            ?? "The request failed. Stop the failed session if that option is shown, then reconnect and try again."
                         commandFailureShown = true
                     }
                 )
@@ -294,9 +297,7 @@ private struct MacCompanionIOSWorkspaceRoot: View {
         .alert("Command did not complete", isPresented: $commandFailureShown) {
             Button("OK", role: .cancel) {}
         } message: {
-            Text(
-                "Mac Companion kept the previous verified state. Reconnect or retry from the relevant screen."
-            )
+            Text(commandFailureDetail)
         }
     }
 }

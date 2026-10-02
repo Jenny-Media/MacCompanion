@@ -22,6 +22,9 @@ private final class LiveControlTextProductV0:
     private(set) var textPreparationStarted = false
     private(set) var composerBinding: SurfaceInputFence?
     private(set) var composedText: String?
+    var runtimeFailure: ClientPrimaryLiveControlCoordinatorV0.Failure?
+    private(set) var retirementCount = 0
+    private(set) var closed = false
     private var textPreparationContinuation: CheckedContinuation<Bool, Never>?
 
     init() throws {
@@ -49,6 +52,10 @@ private final class LiveControlTextProductV0:
     func requestSurfaceTargets() async throws
         -> [InteractiveSurfaceTargetCandidateV0]
     { [] }
+    func requestDisplayCatalog() async throws
+        -> InteractiveDisplayCatalogResponseBodyV1
+    { throw ClientPrimaryLiveControlErrorV0.unavailable }
+    func selectDisplay(_ displayID: UUID) async throws {}
     func setAutomaticSmartZoomEnabled(_ enabled: Bool) async throws {}
 
     func prepareNativeTextComposer() async throws -> SurfaceInputFence? {
@@ -92,7 +99,8 @@ private final class LiveControlTextProductV0:
         targetToken: UUID?
     ) async throws {}
 
-    func close() async {}
+    func retireFailedSession() { retirementCount += 1 }
+    func close() async { closed = true }
 }
 
 @Test @MainActor
@@ -154,5 +162,55 @@ func repeatedTerminalWorkspaceModeDoesNotRepublishCoordinatorState() {
     #expect(changesAfterFirstDelivery > 0)
     #expect(changes == changesAfterFirstDelivery)
     withExtendedLifetime(observation) {}
+}
+
+@Test @MainActor
+func liveProductFailureRetiresItsCapturedSessionOnce() async throws {
+    let product = try LiveControlTextProductV0()
+    let coordinator = ClientPrimaryLiveControlCoordinatorV0(
+        productFactory: { _, failure in
+            product.runtimeFailure = failure
+            return product
+        },
+        failureRetirementFactory: {
+            { await product.retireFailedSession() }
+        }
+    )
+    coordinator.start(mode: .trackpad)
+    let deadline = ContinuousClock.now + .seconds(2)
+    while coordinator.phase != .active, ContinuousClock.now < deadline {
+        await Task.yield()
+    }
+    try #require(coordinator.phase == .active)
+    let failure = try #require(product.runtimeFailure)
+    failure(ClientPrimaryLiveControlErrorV0.unavailable)
+    failure(ClientPrimaryLiveControlErrorV0.unavailable)
+    while !product.closed, ContinuousClock.now < deadline { await Task.yield() }
+    #expect(product.closed)
+    #expect(product.retirementCount == 1)
+    #expect(coordinator.phase == .failed)
+    #expect(coordinator.product == nil)
+}
+
+@Test @MainActor
+func localNavigationDoesNotRetireTheRemoteSession() async throws {
+    let product = try LiveControlTextProductV0()
+    let coordinator = ClientPrimaryLiveControlCoordinatorV0(
+        productFactory: { _, _ in product },
+        failureRetirementFactory: {
+            { await product.retireFailedSession() }
+        }
+    )
+    coordinator.start(mode: .trackpad)
+    let deadline = ContinuousClock.now + .seconds(2)
+    while coordinator.phase != .active, ContinuousClock.now < deadline {
+        await Task.yield()
+    }
+    try #require(coordinator.phase == .active)
+    coordinator.closeLocalProduct()
+    while !product.closed, ContinuousClock.now < deadline { await Task.yield() }
+    #expect(product.closed)
+    #expect(product.retirementCount == 0)
+    #expect(coordinator.phase == .closed)
 }
 #endif

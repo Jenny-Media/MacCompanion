@@ -119,7 +119,7 @@ public enum ClientInteractivePrimaryChannelErrorV0:
 public actor ClientInteractivePrimaryChannelV0:
     ClientPrimaryReplyReceivingV0
 {
-    public let primary: ClientInteractivePrimaryBindingV0
+    public nonisolated let primary: ClientInteractivePrimaryBindingV0
 
     private var authority: ClientInteractiveSessionAuthorityV0
     private let signer: any ClientInteractiveApprovalSigningV0
@@ -1268,13 +1268,18 @@ public actor ClientInteractivePrimaryChannelV0:
     }
 
     @discardableResult
-    public func endSession()
+    public func endSession(expectedInteractiveSessionID: UUID? = nil)
         async throws -> ClientInteractivePrimarySessionEventV0
     {
+        // Read the authority before reserving the end slot. That cross-actor
+        // read can suspend while another failure callback submits Stop.
+        let accepted = await authority.acceptedSession
         guard !invalidated,
               endRequestMessageID == nil,
               let effects = requestedEffects,
-              let accepted = await authority.acceptedSession else {
+              let accepted,
+              expectedInteractiveSessionID == nil
+                || expectedInteractiveSessionID == accepted.interactiveSessionID else {
             throw ClientInteractivePrimaryChannelErrorV0.unavailable
         }
         let messageID = environment.makeMessageID()

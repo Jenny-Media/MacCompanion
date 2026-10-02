@@ -33,14 +33,25 @@ comparison; those processes cannot serve as managed enrollment backends.
 Loss of Control, original deadline expiry, parent death or host failure retires
 the process and its private credentials. Retirement joins process termination
 before admitting a replacement. A trusted local composition selects either
-loopback IPv4 (`127.0.0.1`) or all IPv4 interfaces (`0.0.0.0`). Remote requests
+loopback IPv4 (`127.0.0.1`), all IPv4 interfaces (`0.0.0.0`), or dual-stack
+interfaces (`::`, with Sunshine `address_family = both`). Remote requests
 cannot choose this setting. The default component/test composition remains
-loopback; the admitted normal Mac Debug composition selects IPv4 interfaces so
+loopback; the admitted normal Mac Debug composition selects dual-stack interfaces so
 its paired phone can connect on the existing verified primary route. This does
 not classify a route as LAN or authorize UPnP, discovery, a relay or release
-packaging. Reachable IPv4 interfaces all retain mandatory encryption, exact
+packaging. Reachable IPv4 and IPv6 interfaces all retain mandatory encryption, exact
 client certificate admission, sealed routes and the original Control bound.
 The local readiness probe continues using loopback and the prepared certificate.
+The primary may select IPv6 on the same local network; native listeners must
+support that measured address without substituting an independently resolved
+IPv4 address. IPv4 component compositions remain available for isolated tests.
+
+Certificate generation explicitly selects a trusted local OpenSSL configuration.
+The admitted bundled composition uses its catalog-bound `openssl.cnf`; component
+tests use an empty configuration with the same explicit certificate options.
+Generation cannot depend on the helper's compiled developer installation path.
+A missing selected configuration fails closed. This changes no certificate
+purpose, enrollment proof, signing bytes or approval requirement.
 
 The native endpoint carries only its existing port base. The client uses the
 address of its current verified primary route and must reject any stream URL

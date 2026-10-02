@@ -30,6 +30,7 @@ public struct NetworkClientFocusPublicationV0: Sendable {
 
 public struct NetworkClientPrimaryProductSelectionV0: Sendable {
     package let endpoint: EndpointCandidate
+    package let measuredRemoteIPAddress: String?
     public let authenticatedRouteClass:
         NetworkClientAuthenticatedRouteClassV1?
     public let authenticatedSession: ClientAuthenticatedSessionV0
@@ -260,6 +261,7 @@ private final class NetworkClientPrimaryPublicationRelayV0:
 /// publication until the reconnect owner selects this exact route as primary.
 package actor NetworkClientPrimaryProductCandidateV0 {
     private let endpoint: EndpointCandidate
+    private let measuredRemoteIPAddress: String?
     private let authenticatedRouteClass:
         NetworkClientAuthenticatedRouteClassV1?
     private let configuration: NetworkClientPrimaryProductConfigurationV0
@@ -272,11 +274,13 @@ package actor NetworkClientPrimaryProductCandidateV0 {
 
     init(
         endpoint: EndpointCandidate,
+        measuredRemoteIPAddress: String? = nil,
         authenticatedRouteClass:
             NetworkClientAuthenticatedRouteClassV1?,
         configuration: NetworkClientPrimaryProductConfigurationV0
     ) {
         self.endpoint = endpoint
+        self.measuredRemoteIPAddress = measuredRemoteIPAddress
         self.authenticatedRouteClass = authenticatedRouteClass
         self.configuration = configuration
         let relay = NetworkClientPrimaryPublicationRelayV0(
@@ -366,6 +370,7 @@ package actor NetworkClientPrimaryProductCandidateV0 {
         configuration.events.primarySelected(
             NetworkClientPrimaryProductSelectionV0(
                 endpoint: endpoint,
+                measuredRemoteIPAddress: measuredRemoteIPAddress,
                 authenticatedRouteClass: authenticatedRouteClass,
                 authenticatedSession: session,
                 observeChannel: observe,

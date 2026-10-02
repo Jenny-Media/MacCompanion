@@ -1,0 +1,16 @@
+{
+  "profile": "Mac Companion native bootstrap rendering v0.1",
+  "rules": [
+    "suppression requires an active acknowledged bootstrap surface",
+    "suppression binds the exact current descriptor",
+    "subsequent admitted media for that surface is discarded without legacy decoding",
+    "header payload sequence and authority validation remain mandatory",
+    "suppression grants no native presentation or input authority",
+    "replacement surface still requires its own bootstrap render and acknowledgement",
+    "native display choice drains old renderer enrollment and preparation before authenticated Desktop replacement",
+    "new display requires fresh bootstrap acknowledgement enrollment and native presentation before input",
+    "role EOF and malformed media remain terminal",
+    "foreground return cannot revive a retired native generation",
+    "wire and signature inputs are unchanged"
+  ]
+}

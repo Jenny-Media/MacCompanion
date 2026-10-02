@@ -141,6 +141,33 @@ public actor NetworkClientInteractiveRoleProductBindingV0 {
         state = .closed
     }
 
+    /// Capture before product construction. The returned action never looks up
+    /// a later selected primary or takes its session ID from mutable UI state.
+    public func makeFailedSessionRetirement()
+        -> (@Sendable () async -> Void)?
+    {
+        guard let sessionID = currentInteractiveSessionID,
+              let connectionID, let channel = channelFactory(),
+              channel.primary.hostID == hostID,
+              channel.primary.primaryConnectionID == connectionID else {
+            return nil
+        }
+        return {
+            do {
+                _ = try await channel.endSession(
+                    expectedInteractiveSessionID: sessionID
+                )
+                IOSClientRuntimeDiagnosticLogV0.record(
+                    "interactive.failed-product.end-submitted"
+                )
+            } catch {
+                IOSClientRuntimeDiagnosticLogV0.record(
+                    "interactive.failed-product.end-unavailable", error: error
+                )
+            }
+        }
+    }
+
     /// Starts the candidate video peer on the selected authenticated primary.
     /// The caller supplies a peer whose renderer blanks on close. This never
     /// promotes Control or enables input; the existing visible-frame gate
@@ -606,6 +633,9 @@ public actor NetworkClientInteractiveRoleProductBindingV0 {
     ) {
         state = value
         progressPublisher(connectionID, interactiveSessionID, progress)
+        if case .failed = value, let retirement = makeFailedSessionRetirement() {
+            Task { await retirement() }
+        }
     }
 
     private func retirePair() async {

@@ -9,6 +9,7 @@ import Foundation
 public enum MacManagedSunshineBackendFactoryV1 {
     public static func make(
         root: URL, sunshine: URL, supervisor: URL, openssl: URL, port: UInt16,
+        opensslConfiguration: URL = URL(fileURLWithPath: "/dev/null"),
         listenerScope: MacManagedSunshineEnrollmentBackendV1.ListenerScope = .loopback,
         validateArtifacts: @escaping @Sendable () throws -> Void
     ) -> MacInteractiveNativeBackendFactoryV1 {
@@ -19,6 +20,7 @@ public enum MacManagedSunshineBackendFactoryV1 {
                 guard permit.isCurrent else { throw LocalInteractiveNativeBackendErrorV1.unavailable }
                 return try MacManagedSunshineEnrollmentBackendV1(
                     root: root, sunshine: sunshine, supervisor: supervisor, openssl: openssl,
+                    opensslConfiguration: opensslConfiguration,
                     port: port, approvedDesktopDisplayID: physicalDisplayID,
                     approvedCaptureGeometry: geometry, currentControl: { permit.isCurrent },
                     withCurrentControl: { deadline, batch in

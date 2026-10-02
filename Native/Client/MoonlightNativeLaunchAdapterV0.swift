@@ -8,6 +8,17 @@ import CompanionInteractiveShared
 import CompanionInteractiveWire
 import CompanionMoonlightEngine
 
+extension NativeLaunchFailure: ClientCommandFailurePresentingV0 {
+    var commandFailureDetail: String {
+        switch self {
+        case .invalidRoute: "The Mac’s connected address could not be used for video. Reconnect and try Remote Control again."
+        case .invalidResponse: "The Mac’s video service returned an invalid response. Stop the failed session and retry Remote Control."
+        case .invalidMaterial: "Video security material could not be prepared. Stop the failed session and retry Remote Control."
+        case .unavailable: "The video session ended during preparation. Reconnect and try Remote Control again."
+        }
+    }
+}
+
 /// OpenSSL identity/socket synchronization is inside the Objective-C owner.
 private final class NativeTLSBox: @unchecked Sendable {
     let value: CompanionNativeTLS

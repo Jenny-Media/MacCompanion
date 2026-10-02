@@ -740,6 +740,55 @@ private func nativePresentCommandV1(_ world: NativeBackendWorldV1, backendID: UU
 private enum ManagedArtifactRejectionV1: Error { case rejected, timeout }
 
 @available(macOS 26.0, *)
+@Test(.enabled(if: ProcessInfo.processInfo.environment["MACCOMPANION_TEST_OPENSSL"] != nil))
+@MainActor
+func managedEnrollmentUsesExplicitConfigurationWithoutDeveloperPrefix() async throws {
+    let cli = URL(fileURLWithPath: try #require(ProcessInfo.processInfo.environment["MACCOMPANION_TEST_OPENSSL"]))
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("maccompanion-enrollment-config-test-" + UUID().uuidString)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+    defer { try? FileManager.default.removeItem(at: root) }
+    let configuration = root.appendingPathComponent("openssl.cnf")
+    try Data("# Explicit certificate options only.\n".utf8).write(to: configuration)
+    let key = root.appendingPathComponent("client-key.pem"), certificate = root.appendingPathComponent("client.pem")
+    let der = root.appendingPathComponent("client.der")
+    func run(_ arguments: [String]) throws {
+        let child = Process()
+        child.executableURL = cli; child.arguments = arguments
+        child.environment = ["OPENSSL_CONF": root.appendingPathComponent("absent-developer-config").path]
+        child.standardInput = FileHandle.nullDevice
+        child.standardOutput = FileHandle.nullDevice; child.standardError = FileHandle.nullDevice
+        try child.run(); child.waitUntilExit()
+        try #require(child.terminationStatus == 0)
+    }
+    try run(["req", "-config", configuration.path, "-x509", "-newkey", "rsa:2048", "-nodes", "-sha256", "-days", "1",
+             "-subj", "/CN=Native enrollment test", "-addext", "extendedKeyUsage=clientAuth", "-keyout", key.path, "-out", certificate.path])
+    try run(["x509", "-in", certificate.path, "-outform", "DER", "-out", der.path])
+    let world = try NativeBackendWorldV1()
+    let authority = try InteractiveNativeVideoAuthorityV0(binding: world.scope.binding(), surface: world.scope.surface(),
+                                                         sessionPublicKeyX963: world.scope.sessionPublicKeyX963())
+    let geometry = try world.geometryReader.read(world.scope)
+    // Preparation exercises the real relocated CLI without starting Sunshine.
+    for config in [configuration, root.appendingPathComponent("missing-selected-config")] {
+        let backend = try MacManagedSunshineEnrollmentBackendV1(root: root, sunshine: cli, supervisor: cli, openssl: cli,
+            opensslConfiguration: config, port: 58989, approvedDesktopDisplayID: 1234,
+            approvedCaptureGeometry: geometry, currentControl: { true })
+        let operationID = UUID()
+        do {
+            let host = try await backend.prepare(operationID: operationID, authority: authority, clientCertificateDER: Data(contentsOf: der))
+            #expect(config == configuration)
+            #expect(!host.isEmpty)
+        } catch let error as MacManagedSunshineEnrollmentBackendV1.Failure {
+            #expect(config != configuration)
+            #expect(String(describing: error) == "invalidCertificate")
+        } catch {
+            await backend.retire(operationID: operationID)
+            throw error
+        }
+        await backend.retire(operationID: operationID)
+    }
+}
+
+@available(macOS 26.0, *)
 @Test func managedFactoryRejectsArtifactsBeforeEnrollmentOrChildConstruction() async throws {
     let world = try NativeBackendWorldV1()
     _ = try await world.owner.handle(world.command(.prepare, backendID: UUID(), operationID: UUID()))

@@ -34,7 +34,13 @@ public struct ClientPrimaryWorkspaceViewV0: View {
         self.macName = macName
         _model = ObservedObject(wrappedValue: model)
         let coordinator = liveProductFactory.map {
-            ClientPrimaryLiveControlCoordinatorV0(productFactory: $0, failure: onCommandFailure)
+            ClientPrimaryLiveControlCoordinatorV0(
+                productFactory: $0,
+                failureRetirementFactory: {
+                    await interactiveRoles.makeFailedSessionRetirement()
+                },
+                failure: onCommandFailure
+            )
         } ?? ClientPrimaryLiveControlCoordinatorV0(roles: interactiveRoles, failure: onCommandFailure)
         _liveControl = StateObject(wrappedValue: coordinator)
         self.onSelectAction = onSelectAction

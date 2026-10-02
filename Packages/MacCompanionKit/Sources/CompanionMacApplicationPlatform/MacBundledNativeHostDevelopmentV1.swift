@@ -36,7 +36,8 @@ public enum MacBundledNativeHostDevelopmentV1 {
             sunshine: host.appendingPathComponent("Contents/MacOS/Sunshine"),
             supervisor: host.appendingPathComponent("Contents/Helpers/companion-supervisor"),
             openssl: host.appendingPathComponent("Contents/Helpers/openssl"), port: 58989,
-            listenerScope: .ipv4Interfaces,
+            opensslConfiguration: host.appendingPathComponent("Contents/Resources/DependencyNotices/openssl.cnf"),
+            listenerScope: .dualStackInterfaces,
             validateArtifacts: validate)
         #else
         return nil

@@ -36,7 +36,10 @@
     "application-and-window-require-ready-replacement-and-current-menu-target",
     "client-native-enrollment-after-app-or-window-replacement-requires-the-exact-acknowledged-current-surface-and-original-control-deadline",
     "focused-region-or-unknown-kind-denied",
-    "selected-kind-without-current-menu-target-denied"
+    "selected-kind-without-current-menu-target-denied",
+    "current-runtime-receipt-after-indicator-revision-advance-accepted",
+    "runtime-receipt-older-than-menu-admission-denied",
+    "changed-menu-admission-during-native-read-denied"
   ],
   "requiredGeometryFields": [
     "encodedWidth",

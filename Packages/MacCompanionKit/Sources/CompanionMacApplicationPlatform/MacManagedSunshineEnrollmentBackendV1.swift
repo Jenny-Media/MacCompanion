@@ -10,14 +10,22 @@ import CompanionInteractiveShared
 @MainActor
 public final class MacManagedSunshineEnrollmentBackendV1: InteractiveNativeVideoEnrollmentBackendV0 {
     public enum ListenerScope: Sendable {
-        case loopback, ipv4Interfaces
-        fileprivate var bindAddress: String { self == .loopback ? "127.0.0.1" : "0.0.0.0" }
+        case loopback, ipv4Interfaces, dualStackInterfaces
+        package var bindAddress: String {
+            switch self {
+            case .loopback: "127.0.0.1"
+            case .ipv4Interfaces: "0.0.0.0"
+            case .dualStackInterfaces: "::"
+            }
+        }
+        package var addressFamily: String { self == .dualStackInterfaces ? "both" : "ipv4" }
     }
     public enum Failure: Error { case invalidPhase, invalidCertificate, startupFailed, invalidPath }
     private let root: URL
     private let sunshine: URL
     private let supervisor: URL
     private let openssl: URL
+    private let opensslConfiguration: URL
     private let port: UInt16
     private let listenerScope: ListenerScope
     private let approvedDesktopDisplayID: UInt32
@@ -39,11 +47,12 @@ public final class MacManagedSunshineEnrollmentBackendV1: InteractiveNativeVideo
     private var drain: Task<Void, Never>?
 
     public init(root: URL, sunshine: URL, supervisor: URL, openssl: URL,
+         opensslConfiguration: URL = URL(fileURLWithPath: "/dev/null"),
          port: UInt16, approvedDesktopDisplayID: UInt32, approvedCaptureGeometry: InteractiveNativeVideoContentGeometryV0, currentControl: @escaping @MainActor () -> Bool,
         withCurrentControl: (@MainActor (UInt64, () throws -> Void) throws -> Void)? = nil,
         listenerScope: ListenerScope = .loopback,
         approvedSelectedCapture: MacManagedNativeSelectedCaptureV1? = nil) throws {
-        for url in [root, sunshine, supervisor, openssl] {
+        for url in [root, sunshine, supervisor, openssl, opensslConfiguration] {
             guard url.isFileURL, url.path.hasPrefix("/"), !url.path.contains("\n"), !url.path.contains("\r") else { throw Failure.invalidPath }
         }
         guard approvedDesktopDisplayID != 0 else { throw Failure.invalidPath }
@@ -52,6 +61,7 @@ public final class MacManagedSunshineEnrollmentBackendV1: InteractiveNativeVideo
         self.root = try approvedSelectedCapture == nil ? root : Self.physicalRoot(root)
         self.sunshine = sunshine; self.supervisor = supervisor
         self.openssl = openssl; self.port = port
+        self.opensslConfiguration = opensslConfiguration
         self.approvedDesktopDisplayID = approvedSelectedCapture?.physicalDisplayID ?? approvedDesktopDisplayID
         self.currentControl = {
             let controlIsCurrent = currentControl()
@@ -104,7 +114,9 @@ public final class MacManagedSunshineEnrollmentBackendV1: InteractiveNativeVideo
         try command(["x509", "-in", path("client.pem"), "-outform", "DER", "-out", path("canonical.der")])
         guard try Data(contentsOf: dir.appendingPathComponent("canonical.der")) == clientCertificateDER else { throw Failure.invalidCertificate }
         try command(["verify", "-check_ss_sig", "-purpose", "sslclient", "-CAfile", path("client.pem"), path("client.pem")])
-        try command(["req", "-x509", "-newkey", "rsa:2048", "-nodes", "-sha256", "-days", "1",
+        // The relocated helper retains its developer OPENSSLDIR. Select the
+        // admitted configuration even after that build directory is removed.
+        try command(["req", "-config", opensslConfiguration.path, "-x509", "-newkey", "rsa:2048", "-nodes", "-sha256", "-days", "1",
                      "-subj", "/CN=localhost", "-addext", "extendedKeyUsage=serverAuth", "-addext", "subjectAltName=DNS:localhost",
                      "-keyout", path("key.pem"), "-out", path("cert.pem")])
         try command(["x509", "-in", path("cert.pem"), "-outform", "DER", "-out", path("host.der")])
@@ -130,7 +142,7 @@ public final class MacManagedSunshineEnrollmentBackendV1: InteractiveNativeVideo
                                 "cert": clientPEM, "enabled": true]]]]
         try write(try JSONSerialization.data(withJSONObject: state), "state.json")
         try write(try JSONSerialization.data(withJSONObject: ["env": [:], "apps": [["name": "Desktop", "image-path": "desktop.png"]]]), "apps.json")
-        let values: [String: String] = ["port": String(port), "bind_address": listenerScope.bindAddress, "address_family": "ipv4",
+        let values: [String: String] = ["port": String(port), "bind_address": listenerScope.bindAddress, "address_family": listenerScope.addressFamily,
             "lan_encryption_mode": "2", "wan_encryption_mode": "2",
             "keyboard": "disabled", "mouse": "disabled", "controller": "disabled", "native_pen_touch": "disabled",
             "upnp": "disabled", "stream_audio": "disabled", "origin_web_ui_allowed": "pc", "encoder": "videotoolbox",

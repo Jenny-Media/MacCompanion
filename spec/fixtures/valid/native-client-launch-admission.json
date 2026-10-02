@@ -34,6 +34,10 @@
     "unresolved-dns-bonjour-native-route-unavailable",
     "normal-development-requires-explicit-local-build-admission",
     "normal-native-framework-excludes-reference-probe",
-    "release-does-not-select-development-adapter"
+    "release-does-not-select-development-adapter",
+    "resolved-dns-bonjour-uses-exact-authenticated-transport-ip",
+    "unselected-measured-route-unavailable",
+    "replacement-primary-discards-prior-measured-route",
+    "measured-native-route-does-not-classify-provenance"
   ]
 }

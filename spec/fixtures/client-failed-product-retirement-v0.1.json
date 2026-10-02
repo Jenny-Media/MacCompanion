@@ -1,0 +1,18 @@
+{
+  "profile": "Mac Companion failed live product retirement v0.1",
+  "maximumPendingEndRequests": 1,
+  "rules": [
+    "capture exact primary channel and accepted session before product construction",
+    "disable local input before asynchronous retirement",
+    "submit existing session end only for the same accepted session and epoch",
+    "stale retirement cannot stop a replacement session or primary",
+    "duplicate retirement cannot submit a second pending end",
+    "submission failure does not claim remote completion",
+    "primary loss and host expiry remain terminal gates",
+    "local navigation alone does not stop remote control",
+    "terminal presentation hides keyboard and surface controls",
+    "terminal presentation never reuses active workspace detail",
+    "Observe and Act grants are unchanged",
+    "wire and signature inputs are unchanged"
+  ]
+}
