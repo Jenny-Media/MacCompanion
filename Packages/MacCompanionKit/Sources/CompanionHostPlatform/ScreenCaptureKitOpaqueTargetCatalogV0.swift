@@ -275,6 +275,7 @@ public final class ScreenCaptureKitOpaqueTargetCatalogV0: @unchecked Sendable {
             let visibleWindowBounds = currentContent.windows.compactMap {
                 window -> CGRect? in
                 window.isOnScreen
+                    && window.windowLayer == 0
                     && window.frame.width > 0
                     && window.frame.height > 0
                     && window.owningApplication?.processID == processID

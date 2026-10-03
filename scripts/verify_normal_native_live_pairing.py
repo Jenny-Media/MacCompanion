@@ -180,11 +180,12 @@ def verify(build, output, simulator, resume_build=False, reuse_build_project=Fal
            native_session_hold=False, native_video_continuity=False, native_window_closure=False,
            native_window_move=False, native_window_resize=False,
            native_window_resize_restart=False, native_window_resize_rapid_stop=False,
-           native_selected_window_other_display=False, native_selected_target_static=False, native_picker_window_disappearance=False):
+           native_selected_window_other_display=False, native_selected_target_static=False, native_picker_window_disappearance=False, native_window_auto_recovery=False):
     native = native_root is not None
     assert not native_picker_window_disappearance or (native_selected_window
         and not native_selected_window_other_display and not native_window_soak
         and not (native_window_closure or native_window_move or native_window_resize))
+    assert not native_window_auto_recovery or (native_window_resize and not native_window_resize_restart)
     assert not native_window_resize_restart or native_window_resize
     assert not native_window_resize_rapid_stop or native_window_resize_restart
     assert sum((native_window_closure, native_window_move, native_window_resize)) <= 1
@@ -229,7 +230,8 @@ def verify(build, output, simulator, resume_build=False, reuse_build_project=Fal
                   for name in ['CompanionMoonlightEngine', 'OpenSSL']}
     qa = ROOT / 'Experiments/NormalNativeSimulatorQA'
     test = qa / ('PairedWorkspaceUITests.swift' if complete_pairing else 'LivePairingUITests.swift')
-    selected = ('PairedWorkspaceUITests/testNormalAppRecoversDesktopWhenPickerWindowDisappears' if native_picker_window_disappearance else
+    selected = ('PairedWorkspaceUITests/testNormalAppReturnsToDesktopAfterSelectedWindowResizes' if native_window_auto_recovery else
+                'PairedWorkspaceUITests/testNormalAppRecoversDesktopWhenPickerWindowDisappears' if native_picker_window_disappearance else
                 'PairedWorkspaceUITests/testNormalAppRetiresNativeVideoWhenSelectedWindowCloses' if native_window_closure else
                 'PairedWorkspaceUITests/testNormalAppRetiresNativeVideoWhenSelectedWindowMoves' if native_window_move else
                 'PairedWorkspaceUITests/testNormalAppRestartsControlAfterSelectedWindowResizes' if native_window_resize_restart else
@@ -372,6 +374,9 @@ def verify(build, output, simulator, resume_build=False, reuse_build_project=Fal
         probe.start_server('productionInteractive')
         menu_process, menu_log = probe.background_client('presentation-native-simulator-continuous' if native else 'presentation-simulator')
         probe.wait_marker(menu_log, 'signed-simulator-menu-ready')
+        # Menu authentication precedes listener composition. Pairing commands
+        # must wait for the owned Agent's actual loopback readiness.
+        probe.wait_marker(probe.server_log, 'isolated-loopback-ready')
         if native:
             host_log_monitor = threading.Thread(target=retain_native_host_logs,
                 args=(probe, output, host_log_stop), daemon=True)
@@ -503,7 +508,7 @@ def verify(build, output, simulator, resume_build=False, reuse_build_project=Fal
         # Changing the selected Window intentionally tears down the local
         # backend, including this disposable status bridge. The XCTest checks
         # the client screen; the signed menu and managed host logs check drain.
-        if window_change is None:
+        if window_change is None or native_window_auto_recovery:
             status = command(fixture, 'journey-status')
             assert status['pairedDevices'] == (1 if complete_pairing else 0)
         elif native_window_resize_restart and passed:
@@ -522,7 +527,7 @@ def verify(build, output, simulator, resume_build=False, reuse_build_project=Fal
                 markers = menu_log.read_text().splitlines()
                 assert 'signed-simulator-control-granted' in markers
                 assert 'signed-simulator-control-media-active' in markers
-                if window_change is not None:
+                if window_change is not None and not native_window_auto_recovery:
                     assert any(line.startswith('native-local-backend-failed ') for line in markers), 'Window loss did not fail the local backend'
                     assert 'local-xpc-invalidated' in markers, 'Window loss did not invalidate the local endpoint'
                     assert any('Terminate handler called' in path.read_text(errors='replace')
@@ -537,10 +542,10 @@ def verify(build, output, simulator, resume_build=False, reuse_build_project=Fal
                 if native_window_resize_restart:
                     presentations += replacement_markers.count('native-local-presentation-input-admitted')
                 assert presentations == (
-                    (22 if native_window_soak else 10 if native_session_soak else 1 if native_session_hold or native_video_continuity else 3 if native_window_resize_restart else 2 if window_change is not None else 3 if native_connection_loss or native_surface_replacement else 2)
+                    (22 if native_window_soak else 10 if native_session_soak else 1 if native_session_hold or native_video_continuity else 4 if native_window_auto_recovery else 3 if native_window_resize_restart else 2 if window_change is not None else 3 if native_connection_loss or native_surface_replacement else 2)
                     + (2 if native_surface_replacement else 0)), \
                     f'Unexpected native presentations: {presentations}'
-                if window_change is None:
+                if window_change is None or native_window_auto_recovery:
                     assert 'signed-simulator-control-input-observed' in markers
                 if native_connection_loss:
                     assert 'signed-simulator-primary-connections-drained' in markers
@@ -648,21 +653,21 @@ def verify(build, output, simulator, resume_build=False, reuse_build_project=Fal
         'liveTLSAndPairingProofVerified': passed and failure is None, 'paired': complete_pairing and passed,
         'workspaceRestartVerified': complete_pairing and passed,
         'nativeControlRequested': native, 'nativeSessionVerified': native and passed and failure is None,
-        'nativePresentedSessions': ((22 if native_window_soak else 10 if native_session_soak else 1 if native_session_hold or native_video_continuity else 3 if native_window_resize_restart else 2 if window_change is not None else 3 if native_connection_loss or native_surface_replacement else 2)
+        'nativePresentedSessions': ((22 if native_window_soak else 10 if native_session_soak else 1 if native_session_hold or native_video_continuity else 4 if native_window_auto_recovery else 3 if native_window_resize_restart else 2 if window_change is not None else 3 if native_connection_loss or native_surface_replacement else 2)
             + (2 if native_surface_replacement else 0))
             if native and passed and failure is None else 0,
         'nativeSharedDisplayPickerVerified': native_surface_replacement and passed and failure is None,
         'nativeSharedDisplayReplacementVerified': native_surface_replacement and passed and failure is None,
         'nativeDisplayLayoutContainmentVerified': native_surface_replacement and passed and failure is None,
-        'nativeCompactKeyboardBarVerified': native and window_change is None and passed and failure is None,
+        'nativeCompactKeyboardBarVerified': native and (window_change is None or native_window_auto_recovery) and passed and failure is None,
         'nativeSingleStopControlVerified': native and passed and failure is None,
         'nativeSurfaceTransitionsVerified': 20 if native_window_soak and passed and failure is None else 0,
         'nativeSessionStartsAndStopsVerified': 10 if native_session_soak and passed and failure is None else 0,
         'nativeSustainedMinutesVerified': (30 if native_session_hold else 1 if native_video_continuity else 0)
             if passed and failure is None else 0,
         'nativeClientFrameProgressVerified': native_video_continuity and passed and failure is None,
-        'nativeKeyboardDeliveryVerified': native and window_change is None and passed and failure is None,
-        'nativePointerModifierShortcutDeliveryVerified': native and window_change is None and passed and failure is None,
+        'nativeKeyboardDeliveryVerified': native and (window_change is None or native_window_auto_recovery) and passed and failure is None,
+        'nativePointerModifierShortcutDeliveryVerified': native and (window_change is None or native_window_auto_recovery) and passed and failure is None,
         'nativeBackgroundInputFencingVerified': native_background and passed and failure is None,
         'nativeForegroundRequiresExplicitRestartVerified': native_background and passed and failure is None,
         'nativePrimaryConnectionLossRecoveryVerified': native_connection_loss and passed and failure is None,
@@ -672,10 +677,11 @@ def verify(build, output, simulator, resume_build=False, reuse_build_project=Fal
         'nativeSelectedWindowVerified': native_selected_window and not native_picker_window_disappearance and passed and failure is None,
         'nativePickerWindowDisappearanceRecoveryVerified': native_picker_window_disappearance and passed and failure is None,
         'nativeSelectedWindowOtherDisplayVerified': native_selected_window_other_display and passed and failure is None,
-        'nativeSelectedStaticTargetVerified': native_selected_target_static and passed and failure is None,
+        'nativeSelectedStaticTargetVerified': native_selected_target_static and not native_picker_window_disappearance and passed and failure is None,
         'nativeSelectedWindowClosureVerified': native_window_closure and passed and failure is None,
         'nativeSelectedWindowMoveRecoveryVerified': native_window_move and passed and failure is None,
         'nativeSelectedWindowResizeRecoveryVerified': native_window_resize and passed and failure is None,
+        'nativeSelectedWindowAutomaticDesktopRecoveryVerified': native_window_auto_recovery and passed and failure is None,
         'nativeSelectedWindowResizeRestartVerified': native_window_resize_restart and passed and failure is None,
         'nativeSelectedWindowResizeRapidStopVerified': native_window_resize_rapid_stop and passed and failure is None,
         'nativeReplacementMenuAdmissionVerified': native_window_resize_restart and passed and failure is None,
@@ -716,6 +722,7 @@ if __name__ == '__main__':
     parser.add_argument('--native-window-closure', action='store_true', help='Close the disposable selected Window after native presentation and require Control retirement')
     parser.add_argument('--native-window-move', action='store_true', help='Move the disposable selected Window after native presentation and require fail-closed recovery')
     parser.add_argument('--native-window-resize', action='store_true', help='Resize the disposable selected Window after native presentation and require fail-closed recovery')
+    parser.add_argument('--native-window-auto-recovery', action='store_true', help='Require one fresh Desktop replacement within the current Control session after resizing')
     parser.add_argument('--native-window-resize-restart', action='store_true', help='After resizing, replace the disposable Mac menu and require a sustained fresh Control stream')
     parser.add_argument('--native-window-resize-rapid-stop', action='store_true', help='Stop promptly after restarted input enables and require clean backend retirement')
     args = parser.parse_args()
@@ -731,4 +738,4 @@ if __name__ == '__main__':
                         args.native_video_continuity, args.native_window_closure,
                         args.native_window_move, args.native_window_resize,
                         args.native_window_resize_restart, args.native_window_resize_rapid_stop,
-                        args.native_selected_window_other_display, args.native_selected_target_static, args.native_picker_window_disappearance) else 1)
+                        args.native_selected_window_other_display, args.native_selected_target_static, args.native_picker_window_disappearance, args.native_window_auto_recovery) else 1)

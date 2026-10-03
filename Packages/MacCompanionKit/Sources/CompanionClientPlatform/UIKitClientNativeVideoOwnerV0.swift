@@ -256,6 +256,7 @@ public final class UIKitClientNativeVideoOwnerV0: NSObject {
         // A decoder may reveal its own UIView before invoking its callback.
         // Only this owner's admitted displaying state may keep that view shown.
         view.isHidden = lifecycle.phase != .displaying
+        if lifecycle.phase == .displaying { surface.revealNativeReplacement(expectedView: cover) }
         if lifecycle.phase == .failed { retireViewAndDrain() }
         else { publish() }
     }

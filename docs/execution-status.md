@@ -2,7 +2,27 @@
 
 ## 2026-09-26 streaming engine and licensing decision
 
-Latest picker/capture checkpoint: [useful picker and centered Window capture](evidence/2026-10-02-picker-and-centered-window-capture.md).
+Latest input/view recovery checkpoint: [input, Finder and resize recovery](evidence/2026-10-02-input-switch-finder-resize-recovery.md).
+One ordered and paced input worker coalesces pending cursor motion, fences old
+geometry, and preserves button/key order. Native replacement stays opaque until
+a fresh frame. Finder App crops consistently exclude background/overlay windows.
+Exact retired native health is non-authorizing and leaves current Control usable.
+A resized selected Window now gets one foreground Desktop recovery under fresh
+primary Control and the original expiry, with new presentation acknowledgement.
+Eight focused tests, 14 renderer lifecycle tests and required full stable Xcode
+27.0 validation pass with 118 indexed fixtures. The normal Simulator resize
+journey passes six native presentations, current-session Desktop recovery,
+input, Stop/restart and cleanup. A second stale-picker disappearance journey
+passes five presentations and keyboard/modifier/shortcut/pointer delivery.
+The earlier failed live run exhausted disk space; its cleanup passed and only
+completed disposable build caches were pruned before the successful rerun.
+Signed normal Mac/Agent and iPhone 18 Pro Max updates are installed with existing
+identities, entitlements, pairing and data retained. Physical Finder/resize/input
+acceptance and latency measurement remain pending. Seamless resize tracking,
+All Displays, the older permit-retirement/-102 trace, updated corresponding-source
+closure, everyday acceptance and production distribution gates remain open.
+
+Previous picker/capture checkpoint: [useful picker and centered Window capture](evidence/2026-10-02-picker-and-centered-window-capture.md).
 The user reports intermittent return to the workspace and unhelpful picker rows.
 A metadata-only probe reproduces the Window code-7 failure: platform output is
 at the top-left while the admitted geometry expects centered fractional padding.

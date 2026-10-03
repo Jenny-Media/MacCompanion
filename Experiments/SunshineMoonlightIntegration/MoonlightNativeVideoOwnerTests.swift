@@ -1,4 +1,4 @@
-import CompanionClientPlatform
+@testable import CompanionClientPlatform
 import CompanionInteractiveShared
 import CompanionMoonlightEngine
 @testable import CompanionMoonlightAdapter
@@ -67,6 +67,38 @@ final class MoonlightNativeVideoOwnerTests: XCTestCase {
         await owner.close()
         XCTAssertEqual(driver.stops, 1)
         XCTAssertFalse(surface.hasUnverifiedExternalVideo)
+    }
+
+    func testReplacementCoverSurvivesOldDrainUntilFreshAdmittedFrame() async throws {
+        let current = try binding(), surface = surface(), first = ControlledNativeDriver()
+        let old = try UIKitClientNativeVideoOwnerV0(binding: current, descriptor: descriptor(),
+            surface: surface, driver: first, current: { current }, nowMonotonicMilliseconds: { 10 }, changed: { _, _ in })
+        try old.start(); first.event?(.connected); first.event?(.firstFrame(width: 1280, height: 720))
+        surface.beginNativeReplacement()
+        XCTAssertTrue(surface.isNativeReplacementCovered)
+        await old.close()
+        XCTAssertTrue(surface.isNativeReplacementCovered, "Old renderer drain must not reveal bootstrap video")
+        let fresh = ControlledNativeDriver()
+        let replacement = try UIKitClientNativeVideoOwnerV0(binding: current, descriptor: descriptor(),
+            surface: surface, driver: fresh, current: { current }, nowMonotonicMilliseconds: { 10 }, changed: { _, _ in })
+        try replacement.start(); fresh.event?(.connected)
+        XCTAssertTrue(surface.isNativeReplacementCovered)
+        fresh.event?(.firstFrame(width: 1280, height: 720))
+        XCTAssertFalse(surface.isNativeReplacementCovered)
+        XCTAssertFalse(replacement.allowsInput, "Fresh video still requires host presentation ACK")
+        await replacement.close()
+    }
+
+    func testInvalidReplacementFrameCannotRevealBootstrapAndStopClearsCover() async throws {
+        let current = try binding(), surface = surface(), driver = ControlledNativeDriver()
+        surface.beginNativeReplacement()
+        let owner = try UIKitClientNativeVideoOwnerV0(binding: current, descriptor: descriptor(),
+            surface: surface, driver: driver, current: { current }, nowMonotonicMilliseconds: { 10 }, changed: { _, _ in })
+        try owner.start(); driver.event?(.connected); driver.event?(.firstFrame(width: 1920, height: 1080))
+        XCTAssertTrue(surface.isNativeReplacementCovered)
+        await owner.close()
+        surface.resetInputAndBlank()
+        XCTAssertFalse(surface.isNativeReplacementCovered)
     }
 
     func testWrongDimensionsFailVisiblyAndDrain() async throws {

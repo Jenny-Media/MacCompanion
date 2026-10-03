@@ -7,6 +7,8 @@
 @interface CompanionSelectedCaptureContext (LocalContractProbe)
 + (instancetype)parseData:(NSData *)data operationID:(NSString *)operation displayID:(CGDirectDisplayID)displayID
     now:(uint64_t)now error:(NSError **)error;
++ (CGRect)applicationBoundsForWindows:(NSArray<NSDictionary *> *)windows processID:(pid_t)processID
+    displayBounds:(CGRect)displayBounds;
 @end
 
 #define Require(condition) do { if (!(condition)) { fprintf(stderr,"Selected context check failed at line %d\n",__LINE__); abort(); } } while (0)
@@ -31,6 +33,26 @@ int main(int argc, const char **argv) {
     Require(argc == 2);
     NSData *fixtureData = [NSData dataWithContentsOfFile:[NSString stringWithUTF8String:argv[1]]];
     NSDictionary *fixture = [NSJSONSerialization JSONObjectWithData:fixtureData options:0 error:nil];
+    for (NSDictionary *row in fixture[@"applicationCropCases"]) {
+      NSArray *display = row[@"displayBounds"];
+      CGRect displayBounds = CGRectMake([display[0] doubleValue],[display[1] doubleValue],
+          [display[2] doubleValue],[display[3] doubleValue]);
+      NSMutableArray *windows = [NSMutableArray array];
+      for (NSDictionary *item in row[@"windows"]) {
+        NSArray *b = item[@"bounds"];
+        CGRect frame = CGRectMake([b[0] doubleValue],[b[1] doubleValue],[b[2] doubleValue],[b[3] doubleValue]);
+        [windows addObject:@{(__bridge NSString *)kCGWindowOwnerPID:item[@"processID"],
+          (__bridge NSString *)kCGWindowIsOnscreen:item[@"onScreen"],
+          (__bridge NSString *)kCGWindowLayer:item[@"layer"],
+          (__bridge NSString *)kCGWindowBounds:CFBridgingRelease(CGRectCreateDictionaryRepresentation(frame))}];
+      }
+      CGRect actual = [CompanionSelectedCaptureContext applicationBoundsForWindows:windows
+          processID:[row[@"processID"] intValue] displayBounds:displayBounds];
+      NSArray *crop = row[@"crop"];
+      if ((id)crop == [NSNull null]) Require(CGRectIsNull(actual));
+      else Require(CGRectEqualToRect(actual,CGRectMake([crop[0] doubleValue],[crop[1] doubleValue],
+          [crop[2] doubleValue],[crop[3] doubleValue])));
+    }
     NSDictionary *source = fixture[@"windowContext"];
     uint64_t fakeNow = [fixture[@"nowMonotonicNanoseconds"] unsignedLongLongValue];
     Require([CompanionSelectedCaptureContext parseData:Canonical(source) operationID:Operation displayID:1 now:fakeNow error:nil] != nil);

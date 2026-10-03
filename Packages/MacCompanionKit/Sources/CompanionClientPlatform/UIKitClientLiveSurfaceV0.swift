@@ -224,6 +224,8 @@ public final class UIKitClientLiveSurfaceViewV0:
     public let videoView = UIKitClientVideoSurfaceViewV0(frame: .zero)
     private var webRTCVideoView: UIView?
     private var nativeVideoView: UIView?
+    private var nativeReplacementCover: UIView?
+    package var isNativeReplacementCovered: Bool { nativeReplacementCover != nil }
     private var nativeContentGeometry: InteractiveNativeVideoContentGeometryV0?
     private var nativeInputCurrent: (@MainActor () -> Bool)?
     private var canDispatchInput: Bool { inputEnabled && !hasUnverifiedExternalVideo }
@@ -341,6 +343,30 @@ public final class UIKitClientLiveSurfaceViewV0:
         videoView.blank()
         removeWebRTCVideoView()
         removeNativeVideoView()
+        endNativeReplacement()
+    }
+
+    /// A constant opaque boundary during replacement prevents bootstrap
+    /// frames from flashing through between drained native owners.
+    package func beginNativeReplacement() {
+        guard nativeReplacementCover == nil else { return }
+        let cover = UIView(frame: bounds)
+        cover.backgroundColor = .black
+        cover.isOpaque = true
+        cover.isUserInteractionEnabled = false
+        cover.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        addSubview(cover)
+        nativeReplacementCover = cover
+    }
+
+    package func revealNativeReplacement(expectedView: UIView) {
+        guard nativeVideoView === expectedView else { return }
+        endNativeReplacement()
+    }
+
+    private func endNativeReplacement() {
+        nativeReplacementCover?.removeFromSuperview()
+        nativeReplacementCover = nil
     }
 
     /// The WebRTC receiver is installed only for the current negotiated peer.

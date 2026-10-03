@@ -24,6 +24,20 @@ package enum MacSelectedWindowDescriptionV1 {
         }
         return matched
     }
+
+    package static func applicationBounds(in descriptions: [[String: Any]], processID: pid_t,
+                                         displayBounds: CGRect) -> CGRect? {
+        let frames = descriptions.compactMap { window -> CGRect? in
+            guard (window[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value == processID,
+                  (window[kCGWindowIsOnscreen as String] as? NSNumber)?.boolValue == true,
+                  (window[kCGWindowLayer as String] as? NSNumber)?.intValue == 0,
+                  let object = window[kCGWindowBounds as String] as? [String: Any],
+                  let frame = CGRect(dictionaryRepresentation: object as CFDictionary) else { return nil }
+            return frame
+        }
+        return try? ScreenCaptureKitApplicationCropV0(windowGlobalBounds: frames,
+            sourceGlobalBounds: displayBounds).globalBounds
+    }
 }
 
 /// Menu-local projection for the exact owned child. Deliberately not Codable:
@@ -87,16 +101,8 @@ public struct MacManagedNativeSelectedCaptureV1: Equatable, Sendable {
             return CGGetDisplaysWithPoint(CGPoint(x: frame.midX, y: frame.midY), 1, &display, &count) == .success
                 && count == 1 && display == physicalDisplayID
         }
-        var visibleBounds: [CGRect] = []
-        for window in windows {
-            guard (window[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value == processID,
-                  (window[kCGWindowIsOnscreen as String] as? NSNumber)?.boolValue == true,
-                  let object = window[kCGWindowBounds as String] as? [String: Any],
-                  let frame = CGRect(dictionaryRepresentation: object as CFDictionary) else { continue }
-            visibleBounds.append(frame)
-        }
-        return (try? ScreenCaptureKitApplicationCropV0(windowGlobalBounds: visibleBounds,
-            sourceGlobalBounds: CGDisplayBounds(physicalDisplayID)).globalBounds) == bounds
+        return MacSelectedWindowDescriptionV1.applicationBounds(in: windows, processID: processID,
+            displayBounds: CGDisplayBounds(physicalDisplayID)) == bounds
     }
 
     public func contextData(operationID: UUID, authority: InteractiveNativeVideoAuthorityV0) throws -> Data {

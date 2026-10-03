@@ -29,6 +29,7 @@ public protocol ClientPrimaryLiveControlProductV0: AnyObject {
     var descriptor: AdaptiveSurfaceDescriptor { get }
     var surface: UIKitClientLiveSurfaceViewV0 { get }
     func observeVideoRecovery(_ changed: @escaping @MainActor (Bool) -> Void)
+    func observeSurfaceTransition(_ changed: @escaping @MainActor (Bool, String?) -> Void)
     func refreshPrimaryState() async -> Bool
     func activationFailedOrClosed() async -> Bool
     func requestSurfaceTargets() async throws
@@ -54,6 +55,9 @@ public protocol ClientPrimaryLiveControlProductV0: AnyObject {
 
 @available(iOS 17.0, *)
 extension ClientPrimaryLiveControlProductV0 {
+    public func observeSurfaceTransition(_ changed: @escaping @MainActor (Bool, String?) -> Void) {
+        changed(false, nil)
+    }
     public func observeVideoRecovery(
         _ changed: @escaping @MainActor (Bool) -> Void
     ) {
@@ -98,6 +102,8 @@ public final class ClientPrimaryLiveControlCoordinatorV0: ObservableObject {
     @Published public private(set) var product:
         (any ClientPrimaryLiveControlProductV0)?
     @Published public private(set) var videoRequiresRestart = false
+    @Published public private(set) var isViewTransitioning = false
+    @Published public private(set) var viewTransitionMessage: String?
 
     private let productFactory: ProductFactory
     private let failureRetirementFactory: FailureRetirementFactory
@@ -146,6 +152,8 @@ public final class ClientPrimaryLiveControlCoordinatorV0: ObservableObject {
         productGeneration = UUID()
         let generation = productGeneration
         videoRequiresRestart = false
+        isViewTransitioning = false
+        viewTransitionMessage = nil
         phase = .preparing
         activationTask = Task { [weak self] in
             await self?.prepare(mode: mode, generation: generation)
@@ -329,6 +337,11 @@ public final class ClientPrimaryLiveControlCoordinatorV0: ObservableObject {
             value.observeVideoRecovery { [weak self] required in
                 guard let self, self.productGeneration == generation else { return }
                 self.videoRequiresRestart = required
+            }
+            value.observeSurfaceTransition { [weak self] busy, message in
+                guard let self, self.productGeneration == generation else { return }
+                self.isViewTransitioning = busy
+                self.viewTransitionMessage = message
             }
             phase = .awaitingVerifiedFrame
 
@@ -987,7 +1000,19 @@ public struct ClientPrimaryLiveControlViewV0: View {
                         viewState: viewState,
                         keyboardModifiers: viewState.remoteKeyboardModifiers
                     )
-                    .allowsHitTesting(!coordinator.videoRequiresRestart)
+                    .allowsHitTesting(!coordinator.videoRequiresRestart && !coordinator.isViewTransitioning)
+                    if coordinator.isViewTransitioning {
+                        ProgressView(coordinator.viewTransitionMessage ?? "Switching view…")
+                            .tint(.white).foregroundStyle(.white)
+                            .padding().background(.black.opacity(0.8), in: Capsule())
+                            .accessibilityIdentifier("Remote view switching")
+                    } else if let message = coordinator.viewTransitionMessage {
+                        VStack {
+                            Spacer()
+                            Text(message).font(.footnote).foregroundStyle(.white)
+                                .padding().background(.black.opacity(0.8), in: Capsule())
+                        }.padding()
+                    }
                     if coordinator.videoRequiresRestart {
                         ContentUnavailableView(
                             "Remote Control needs to restart",
@@ -1027,7 +1052,7 @@ public struct ClientPrimaryLiveControlViewV0: View {
                 modifiers: $viewState.remoteKeyboardModifiers,
                 keyboardVisible: viewState.softwareKeyboardVisible,
                 keyboardPreparationInFlight: viewState.keyboardPreparationInFlight,
-                disabled: coordinator.phase != .active || coordinator.videoRequiresRestart
+                disabled: coordinator.phase != .active || coordinator.videoRequiresRestart || coordinator.isViewTransitioning
                     || viewState.surfaceSelectionInFlight || viewState.displaySelectionInFlight,
                 onKeyboard: toggleSoftwareKeyboard,
                 onKey: sendRemoteKey,

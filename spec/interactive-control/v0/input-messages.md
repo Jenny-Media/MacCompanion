@@ -38,6 +38,15 @@ The host revalidates the session, epoch, descriptor half-open lifetime, and comp
 
 Pointer motion may be coalesced before sequence assignment. Once assigned, reliable transport preserves every message. Button and key transitions are never coalesced. Repeated down, unmatched up, backward client time, a gap/duplicate sequence, invalid body, or stale fence is a protocol violation: no partial state is applied and the input channel closes after all held input is released.
 
+The client dispatches input through one ordered worker with at most 256 pending
+unsequenced payloads. Only adjacent pending absolute pointer moves may collapse
+to their latest position; buttons, keys, modifiers, scroll and reset are ordering
+barriers. On a surface fence, pending unsequenced input is discarded and the
+already dispatched send is joined before assigning the old-surface reset.
+Queued gestures from an earlier surface cannot enter the replacement. Overflow
+fails closed. Ordinary pointer moves are paced locally before sequence assignment;
+this does not change either host rate limit.
+
 ## Sliding rates and state
 
 Using host monotonic receipt time, the host admits at most 240 total messages and 120 pointer moves in `(now - 1000 ms, now]`. The limits are independent. A rate rejection does not execute input; the channel is closed rather than permitting the sender to retry an ambiguous transition.

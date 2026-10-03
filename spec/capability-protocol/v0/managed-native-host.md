@@ -143,6 +143,22 @@ this repair does not relax sample, owner, expiry or input checks.
 Application capture includes only that app on the selected display, with the
 existing 24-point padded/clipped visible-window crop. Moving, resizing, closing,
 replacing or changing the selected content requires a new admitted selection.
+Application crop resolution and both live geometry checks use on-screen,
+nonempty layer-zero windows owned by the exact application. Desktop/background
+and elevated overlay windows cannot enlarge that crop. Private Core Graphics
+and ScreenCaptureKit inventories must apply the same layer rule.
+
+After a locally owned native backend retires, an exactly matched health command
+may return `active=false` with no capture evidence, certificate, port or input
+admission. The menu retains at most 64 complete retired backend/operation/scope
+bindings for this non-authorizing observation. Unknown or mismatched bindings
+remain unavailable; a retired health observation cannot affect a newer backend.
+Retirement fences native input and joins the child before publishing inactivity.
+A current client may make one explicit Desktop selection after an App/Window
+native connection failure. This is a fresh acknowledged replacement under the
+same Control authority and original expiry, not continuation of stale geometry.
+Input resumes only after fresh native presentation acknowledgement. Stop,
+backgrounding, authority loss, expiry, and another selection cancel recovery.
 Capture permission is preflighted; the child cannot request a permission prompt.
 It does not extend the parent's original deadline or provide independent approval.
 
@@ -258,3 +274,8 @@ Refreshing the development host requires rebuilding the complete package invento
 pinning its newly computed catalog digest in both the normal Mac Debug selector
 and staging tool, and rechecking the signed containing app. An earlier catalog
 must never authorize a new package by name or version alone.
+Native enrollment retirement alone does not revoke the primary Control grant.
+When the native owner reports enrollment loss after an acknowledged App/Window
+presentation, the client MUST obtain a fresh current primary Control state before
+the single Desktop recovery attempt. Control revocation, inactive foreground,
+or the original deadline prevents recovery; no native receipt renews Control.

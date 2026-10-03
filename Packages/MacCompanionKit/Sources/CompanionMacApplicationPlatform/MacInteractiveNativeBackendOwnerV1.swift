@@ -91,6 +91,7 @@ public actor MacInteractiveNativeBackendOwnerV1 {
     private var watcher: Task<Void, Never>?
     private var drain: Task<Void, Never>?
     private var retiredIDs: [UUID] = []
+    private var retiredScopes: [(backendID: UUID, operationID: UUID, scope: LocalInteractiveNativeBackendScopeV1)] = []
 
     public static func make(
         displaySelection: MacInteractiveOpaqueDisplaySelectionV1,
@@ -121,6 +122,19 @@ public actor MacInteractiveNativeBackendOwnerV1 {
 
     public func handle(_ command: LocalInteractiveNativeBackendCommandV1) async throws -> LocalInteractiveNativeBackendReceiptV1 {
         try command.validate()
+        if command.operation == .health,
+           retiredScopes.contains(where: { $0.backendID == command.backendID
+               && $0.operationID == command.operationID && $0.scope == command.scope }) {
+            return try .init(command: command, active: false)
+        }
+        if command.operation == .health, let current = owned, exact(command, current), let drain {
+            await drain.value
+            return try .init(command: command, active: false)
+        }
+        if command.operation == .health, let current = owned, exact(command, current), !current.permit.isCurrent {
+            await retire()
+            return try .init(command: command, active: false)
+        }
         if command.operation == .retire {
             if let current = owned, current.backendID == command.backendID {
                 guard current.operationID == command.operationID, current.scope == command.scope else {
@@ -165,6 +179,11 @@ public actor MacInteractiveNativeBackendOwnerV1 {
         } catch {
             // The worker has completed before this drain joins its handle.
             if let current = owned, exact(command, current) { await retire() }
+            if command.operation == .health, error as? LocalInteractiveNativeBackendErrorV1 == .unavailable,
+               retiredScopes.contains(where: { $0.backendID == command.backendID
+                   && $0.operationID == command.operationID && $0.scope == command.scope }) {
+                return try .init(command: command, active: false)
+            }
             throw error
         }
     }
@@ -191,6 +210,8 @@ public actor MacInteractiveNativeBackendOwnerV1 {
         drain = task
         await task.value
         remember(current.backendID)
+        retiredScopes.append((current.backendID, current.operationID, current.scope))
+        if retiredScopes.count > 64 { retiredScopes.removeFirst(retiredScopes.count - 64) }
         owned = nil; pending = nil; drain = nil
     }
 

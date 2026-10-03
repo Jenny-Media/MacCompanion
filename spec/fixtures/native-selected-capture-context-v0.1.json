@@ -258,5 +258,139 @@
         1195.984555984556
       ]
     }
+  ],
+  "applicationCropCases": [
+    {
+      "name": "main-window-only",
+      "displayBounds": [
+        0,
+        0,
+        1920,
+        1080
+      ],
+      "processID": 7,
+      "windows": [
+        {
+          "processID": 7,
+          "layer": 0,
+          "onScreen": true,
+          "bounds": [
+            100,
+            80,
+            800,
+            600
+          ]
+        }
+      ],
+      "crop": [
+        76,
+        56,
+        848,
+        648
+      ]
+    },
+    {
+      "name": "finder-background-and-overlay-excluded",
+      "displayBounds": [
+        0,
+        0,
+        1920,
+        1080
+      ],
+      "processID": 7,
+      "windows": [
+        {
+          "processID": 7,
+          "layer": -2147483623,
+          "onScreen": true,
+          "bounds": [
+            0,
+            0,
+            1920,
+            1080
+          ]
+        },
+        {
+          "processID": 7,
+          "layer": 24,
+          "onScreen": true,
+          "bounds": [
+            0,
+            0,
+            1920,
+            1080
+          ]
+        },
+        {
+          "processID": 7,
+          "layer": 0,
+          "onScreen": true,
+          "bounds": [
+            100,
+            80,
+            800,
+            600
+          ]
+        },
+        {
+          "processID": 8,
+          "layer": 0,
+          "onScreen": true,
+          "bounds": [
+            0,
+            0,
+            1920,
+            1080
+          ]
+        },
+        {
+          "processID": 7,
+          "layer": 0,
+          "onScreen": false,
+          "bounds": [
+            0,
+            0,
+            1920,
+            1080
+          ]
+        }
+      ],
+      "crop": [
+        76,
+        56,
+        848,
+        648
+      ]
+    },
+    {
+      "name": "no-main-window",
+      "displayBounds": [
+        0,
+        0,
+        1920,
+        1080
+      ],
+      "processID": 7,
+      "windows": [
+        {
+          "processID": 7,
+          "layer": -2147483623,
+          "onScreen": true,
+          "bounds": [
+            0,
+            0,
+            1920,
+            1080
+          ]
+        }
+      ],
+      "crop": null
+    }
+  ],
+  "retiredHealthRules": [
+    "only complete matching backend operation and scope can observe inactive retirement",
+    "inactive health has no evidence input certificate or port",
+    "retirement joins child before inactivity and retains at most 64 bindings",
+    "old inactive observation cannot retire a newer backend"
   ]
 }

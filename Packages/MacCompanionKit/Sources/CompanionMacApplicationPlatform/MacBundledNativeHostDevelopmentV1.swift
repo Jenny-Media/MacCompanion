@@ -8,7 +8,7 @@ import Security
 @available(macOS 26.0, *)
 public enum MacBundledNativeHostDevelopmentV1 {
     public enum Failure: Error { case invalidSignature, invalidCatalog, changedResources }
-    private static let catalogSHA256 = "c820bded599f3dd66ac94f5aa9fb3226803b209187276e67f38cd52d20fd7404"
+    private static let catalogSHA256 = "e10c2652e47bc5686f74f9dba4747d1c7199c47c7da825537f113357769d4351"
 
     public static func factoryIfPresent(in app: URL) throws -> MacInteractiveNativeBackendFactoryV1? {
         #if DEBUG

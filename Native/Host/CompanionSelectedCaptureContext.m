@@ -72,6 +72,8 @@ static int ContextDirectory(NSString *path) {
 }
 + (instancetype)parseData:(NSData *)data operationID:(NSString *)operation displayID:(CGDirectDisplayID)displayID
     now:(uint64_t)now error:(NSError **)error;
++ (CGRect)applicationBoundsForWindows:(NSArray<NSDictionary *> *)windows processID:(pid_t)processID
+    displayBounds:(CGRect)displayBounds;
 @end
 
 @implementation CompanionSelectedCaptureContext
@@ -175,7 +177,8 @@ static int ContextDirectory(NSString *path) {
   double scale = fmax(CGDisplayPixelsWide(_displayID)/displayBounds.size.width, CGDisplayPixelsHigh(_displayID)/displayBounds.size.height);
   if (scale != _backingScale) return NO;
   NSArray *windows = CFBridgingRelease(CGWindowListCopyWindowInfo(_windowID ? kCGWindowListOptionIncludingWindow : kCGWindowListOptionOnScreenOnly, _windowID));
-  CGRect unionBounds = CGRectNull;
+  if (!_windowID) return CGRectEqualToRect([CompanionSelectedCaptureContext applicationBoundsForWindows:windows
+      processID:_processID displayBounds:displayBounds], _bounds);
   for (NSDictionary *window in windows) {
     if ([window[(__bridge NSString *)kCGWindowOwnerPID] intValue] != _processID || ![window[(__bridge NSString *)kCGWindowIsOnscreen] boolValue]) continue;
     CGRect frame;
@@ -186,10 +189,27 @@ static int ContextDirectory(NSString *path) {
         && CGGetDisplaysWithPoint(CGPointMake(CGRectGetMidX(frame),CGRectGetMidY(frame)),1,&centerDisplay,&count) == kCGErrorSuccess
         && count == 1 && centerDisplay == _displayID;
     }
+  }
+  return NO;
+}
+
++ (CGRect)applicationBoundsForWindows:(NSArray<NSDictionary *> *)windows processID:(pid_t)processID
+    displayBounds:(CGRect)displayBounds {
+  if (!ContextRect(displayBounds)) return CGRectNull;
+  CGRect unionBounds = CGRectNull;
+  for (NSDictionary *window in windows) {
+    NSNumber *layer = window[(__bridge NSString *)kCGWindowLayer];
+    if (![layer isKindOfClass:[NSNumber class]] || layer.integerValue != 0
+        || [window[(__bridge NSString *)kCGWindowOwnerPID] intValue] != processID
+        || ![window[(__bridge NSString *)kCGWindowIsOnscreen] boolValue]) continue;
+    CGRect frame;
+    if (!CGRectMakeWithDictionaryRepresentation((__bridge CFDictionaryRef)window[(__bridge NSString *)kCGWindowBounds],&frame)
+        || !ContextRect(frame)) continue;
     CGRect clipped = CGRectIntersection(frame,displayBounds);
     if (ContextRect(clipped)) unionBounds = CGRectIsNull(unionBounds) ? clipped : CGRectUnion(unionBounds,clipped);
   }
-  return !CGRectIsNull(unionBounds) && CGRectEqualToRect(CGRectIntersection(CGRectInset(unionBounds,-24,-24),displayBounds),_bounds);
+  return CGRectIsNull(unionBounds) ? CGRectNull
+      : CGRectIntersection(CGRectInset(unionBounds,-24,-24),displayBounds);
 }
 
 - (SCContentFilter *)resolveFilter:(NSError **)error {

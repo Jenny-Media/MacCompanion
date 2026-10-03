@@ -53,6 +53,33 @@ import Testing
     }
 }
 
+@Test func applicationCropExcludesFinderDesktopAndOverlaysUsingIndexedCases() throws {
+    var root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+    while !FileManager.default.fileExists(atPath: root.appendingPathComponent("spec/fixtures/manifest.json").path) {
+        let parent = root.deletingLastPathComponent(); try #require(parent != root); root = parent
+    }
+    let fixture = try #require(JSONSerialization.jsonObject(with: Data(contentsOf:
+        root.appendingPathComponent("spec/fixtures/native-selected-capture-context-v0.1.json"))) as? [String: Any])
+    func rect(_ values: [NSNumber]) -> CGRect {
+        CGRect(x: values[0].doubleValue, y: values[1].doubleValue,
+               width: values[2].doubleValue, height: values[3].doubleValue)
+    }
+    for row in try #require(fixture["applicationCropCases"] as? [[String: Any]]) {
+        let display = rect(try #require(row["displayBounds"] as? [NSNumber]))
+        let processID = try #require(row["processID"] as? NSNumber).int32Value
+        let descriptions = try #require(row["windows"] as? [[String: Any]]).map { window -> [String: Any] in
+            [kCGWindowOwnerPID as String: try #require(window["processID"] as? NSNumber),
+             kCGWindowLayer as String: try #require(window["layer"] as? NSNumber),
+             kCGWindowIsOnscreen as String: try #require(window["onScreen"] as? NSNumber),
+             kCGWindowBounds as String: rect(try #require(window["bounds"] as? [NSNumber])).dictionaryRepresentation]
+        }
+        let actual = MacSelectedWindowDescriptionV1.applicationBounds(in: descriptions,
+            processID: processID, displayBounds: display)
+        if let expected = row["crop"] as? [NSNumber] { #expect(actual == rect(expected)) }
+        else { #expect(actual == nil) }
+    }
+}
+
 private actor NativeBackendGateV1 {
     private(set) var entered = false
     private var released = false
@@ -470,6 +497,45 @@ func nativeSelectedCaptureUsesSelectedBoundsAndBackingScale(scale: Double, kind:
     #expect(await first.0.retirements == 1)
     #expect(await first.0.activations == 1)
     await world.owner.retire()
+}
+
+@available(macOS 26.0, *)
+@Test func retiredHealthIsBoundToOldScopeAndCannotRetireFreshBackend() async throws {
+    let world = try NativeBackendWorldV1(), oldID = UUID(), oldOperation = UUID()
+    _ = try await world.owner.handle(world.command(.prepare, backendID: oldID, operationID: oldOperation))
+    _ = try await world.owner.handle(world.command(.activate, backendID: oldID, operationID: oldOperation))
+    world.geometryReader.change(width: 2560, height: 1440, available: false)
+    let retired = try await world.owner.handle(world.command(.health, backendID: oldID, operationID: oldOperation))
+    #expect(retired.active == false)
+    #expect(retired.captureEvidence == nil && retired.portBase == nil && retired.hostCertificateDERBase64 == nil)
+    let old = try #require(await world.spy.created.first)
+    #expect(await old.0.retirements == 1)
+    world.geometryReader.change(width: 2560, height: 1440)
+    let freshID = UUID(), freshOperation = UUID()
+    _ = try await world.owner.handle(world.command(.prepare, backendID: freshID, operationID: freshOperation))
+    _ = try await world.owner.handle(world.command(.activate, backendID: freshID, operationID: freshOperation))
+    #expect(try await world.owner.handle(world.command(.health, backendID: oldID, operationID: oldOperation)).active == false)
+    await #expect(throws: LocalInteractiveNativeBackendErrorV1.unavailable) {
+        try await world.owner.handle(world.command(.health, backendID: oldID, operationID: UUID()))
+    }
+    #expect(try await world.owner.handle(world.command(.health, backendID: freshID, operationID: freshOperation)).active == true)
+    let fresh = try #require(await world.spy.created.last)
+    #expect(fresh.1.isCurrent)
+    #expect(await fresh.0.retirements == 0)
+    await world.owner.retire()
+}
+
+@available(macOS 26.0, *)
+@Test func healthDuringRetirementWaitsForNativeDrainBeforeInactiveReceipt() async throws {
+    let gate = NativeBackendGateV1(), id = UUID(), operation = UUID()
+    let world = try NativeBackendWorldV1(retireGate: gate)
+    _ = try await world.owner.handle(world.command(.prepare, backendID: id, operationID: operation))
+    _ = try await world.owner.handle(world.command(.activate, backendID: id, operationID: operation))
+    let retirement = Task { await world.owner.retire() }
+    await waitNativeGateV1(gate)
+    let receipt = Task { try await world.owner.handle(world.command(.health, backendID: id, operationID: operation)) }
+    await gate.release(); await retirement.value
+    #expect(try await receipt.value.active == false)
 }
 
 private func backendSampleEvidenceV1(operationID: UUID) throws -> InteractiveNativeVideoCaptureEvidenceV0 {

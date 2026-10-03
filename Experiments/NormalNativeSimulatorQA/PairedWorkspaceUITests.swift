@@ -47,6 +47,12 @@ final class PairedWorkspaceUITests: XCTestCase {
                        selectedWindowInvalidation: true)
     }
 
+    func testNormalAppReturnsToDesktopAfterSelectedWindowResizes() throws {
+        try runJourney(nativeControl: true, surfaceReplacement: true,
+                       selectedWindow: "Mac Companion QA Target",
+                       selectedWindowInvalidation: true, automaticWindowRecovery: true)
+    }
+
     func testNormalAppRestartsControlAfterSelectedWindowResizes() throws {
         try runJourney(nativeControl: true, surfaceReplacement: true,
                        selectedWindow: "Mac Companion QA Target",
@@ -66,7 +72,7 @@ final class PairedWorkspaceUITests: XCTestCase {
                             connectionLoss: Bool = false, surfaceReplacement: Bool = false,
                             selectedTarget: String? = nil, selectedWindow: String? = nil,
                             selectedWindowInvalidation: Bool = false,
-                            restartAfterWindowInvalidation: Bool = false) throws {
+                            restartAfterWindowInvalidation: Bool = false, automaticWindowRecovery: Bool = false) throws {
         continueAfterFailure = false
         XCTAssertFalse(selectedWindowInvalidation && selectedWindow == nil)
         XCTAssertFalse(restartAfterWindowInvalidation && !selectedWindowInvalidation)
@@ -273,6 +279,20 @@ final class PairedWorkspaceUITests: XCTestCase {
                             let readyToChange = try NormalConsentBridge.command("journey-window-change-ready")
                             XCTAssertEqual((readyToChange["control"] as? [String: Any])?["nativePresentations"] as? Int,
                                 expectedPresentations)
+                            if automaticWindowRecovery {
+                                XCTAssertTrue(app.staticTexts["Showing Desktop. Choose the window again when ready."]
+                                    .waitForExistence(timeout: 45), app.debugDescription)
+                                let recovered = XCTNSPredicateExpectation(
+                                    predicate: NSPredicate(format: "exists == 1 AND enabled == 1"), object: keyboard)
+                                XCTAssertEqual(XCTWaiter.wait(for: [recovered], timeout: 45), .completed,
+                                    "Resize must obtain a fresh Desktop presentation without another Control request")
+                                XCTAssertTrue(stop.exists)
+                                XCTAssertFalse(app.buttons["Stop Failed Session"].exists)
+                                XCTAssertFalse(app.staticTexts["Remote Control needs to restart"].exists)
+                                expectedPresentations += 1
+                                after = try hostControl()
+                                XCTAssertEqual(after["nativePresentations"] as? Int, expectedPresentations)
+                            } else {
                             let failedSession = app.buttons["Stop Failed Session"]
                             XCTAssertTrue(failedSession.waitForExistence(timeout: 45),
                                 "The client must show a recoverable failed session after Window geometry or visibility changes: \(app.debugDescription)")
@@ -307,6 +327,7 @@ final class PairedWorkspaceUITests: XCTestCase {
                                     "The restarted Control session must Stop cleanly: \(app.debugDescription)")
                             }
                             return
+                            }
                         }
                         XCTAssertEqual(after["captureActive"] as? Bool, true)
                         if windowTransitions > 1 {
