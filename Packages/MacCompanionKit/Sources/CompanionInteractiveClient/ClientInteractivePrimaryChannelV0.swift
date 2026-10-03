@@ -170,6 +170,7 @@ public actor ClientInteractivePrimaryChannelV0:
     private var nativeFence: InteractiveNativeVideoRequestFenceV0?
     private var nativeEnrollmentOwnerID: UUID?
     private var nativeChallenge: WireEnvelope<InteractiveNativeVideoEnrollmentChallengeBodyV0>?
+    private var lastNativeControlBinding: InteractiveNativeVideoBindingV0?
     private var nativeReady = false
     private var nativePresentationGeneration: Int64?
     private var nativeRequestID: WireUUID?
@@ -417,6 +418,25 @@ public actor ClientInteractivePrimaryChannelV0:
         return try? .init(binding: binding, surface: surface, sessionPublicKeyX963: nativeSessionPublicKeyX963)
     }
 
+    /// The last verified enrollment supplies only the original Control facts.
+    /// Cancellation may discard that enrollment while the same primary/Control
+    /// remains active. This observation grants neither native video nor input.
+    public func currentNativeControlBinding() async -> InteractiveNativeVideoBindingV0? {
+        guard !invalidated, endRequestMessageID == nil, !localInputStopped,
+              let binding = lastNativeControlBinding, nativeClockIsCurrent(),
+              let accepted = await authority.acceptedSession,
+              accepted.interactiveSessionID == binding.interactiveSessionID,
+              accepted.authorizationEpoch.rawValue == UInt64(binding.authorizationEpoch),
+              primary.hostID == binding.hostID, primary.hostFingerprint == binding.hostFingerprint,
+              primary.clientID == binding.clientID, primary.primaryConnectionID == binding.primaryConnectionID,
+              primary.grantRevision.rawValue == UInt64(binding.grantRevision),
+              primary.policyRevision.rawValue == UInt64(binding.policyRevision),
+              nativeOriginalControlDeadline == binding.expiresAtMonotonicMilliseconds,
+              let descriptor = currentNativeDescriptor(), isCurrentNativeDescriptor(descriptor),
+              descriptor.interactiveSessionID == binding.interactiveSessionID else { return nil }
+        return binding
+    }
+
     public func submitNativeEnrollmentProof(for challenge: WireEnvelope<InteractiveNativeVideoEnrollmentChallengeBodyV0>,
                                             signature: Data, timeoutMilliseconds: UInt64 = 15_000) async throws
         -> WireEnvelope<InteractiveNativeVideoReadyBodyV0> {
@@ -568,6 +588,7 @@ public actor ClientInteractivePrimaryChannelV0:
                 finishNativeWaiter(.failure(ClientInteractivePrimaryChannelErrorV0.unavailable)); return
             }
             nativeReady = true
+            lastNativeControlBinding = nativeAttestationAuthority(for: challenge)?.binding
         case .success(.presented(let receipt)):
             guard nativeReady, receipt.body.fence == nativeFence,
                   receipt.body.challengeMessageID == nativeChallenge?.messageID,

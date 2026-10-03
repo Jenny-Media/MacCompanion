@@ -718,6 +718,12 @@
       "kind": "native.streamContinuity.v0.1",
       "expect": "valid",
       "canonicalSHA256": "1adaea23a36220bc5ad05a35146b42631b5a227995a909dacf5a3c08b2048879"
+    },
+    {
+      "path": "native-foreground-recovery-v0.1.json",
+      "kind": "interactive.nativeForegroundRecovery.v0.1",
+      "expect": "valid",
+      "canonicalSHA256": "a16bb1afa498a0b8a5ea817974f90813f8fe7bb49eaf869debb1a133854c119a"
     }
   ]
 }

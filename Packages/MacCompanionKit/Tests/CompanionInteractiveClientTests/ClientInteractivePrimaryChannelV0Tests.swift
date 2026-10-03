@@ -504,6 +504,7 @@ private func verifyNativePrimaryRouting(_ harness: InteractivePrimaryHarnessV0, 
         body: InteractiveNativeVideoReadyBodyV0(fence: proof.body.fence, challengeMessageID: challenge.messageID, portBase: 58989))
     try await harness.router.receive(WireCodec.encode(ready))
     #expect(try await proofTask.value == ready)
+    #expect(await harness.channel.currentNativeControlBinding() == nativeAuthority?.binding)
     let presentation = Task { try await harness.channel.acknowledgeNativePresentation(nativeGeneration: 1,
         encodedWidth: descriptor.encodedWidth, encodedHeight: descriptor.encodedHeight, timeoutMilliseconds: 1000) }
     let presentRequest = try WireCodec.decode(WireEnvelope<InteractiveNativeVideoPresentationRequestBodyV0>.self,
@@ -544,6 +545,8 @@ private func verifyNativePrimaryRouting(_ harness: InteractivePrimaryHarnessV0, 
         sentAtUnixMilliseconds: 2_003, body: try InteractiveNativeVideoCancelledBodyV0(fence: cancel.body.fence))))
     try await cancelling.value
     #expect(await harness.channel.nativeAttestationAuthority(for: challenge) == nil)
+    #expect(await harness.channel.currentNativeControlBinding() == admitted.binding,
+        "Native cancellation cannot revive video, but the unchanged Control approval remains observable")
     #expect(await harness.router.state == .ready)
 
     let enrollingOwner = ClientNativeVideoEnrollmentSessionV0(channel: harness.channel, signer: NativeUnexpectedSigner(),

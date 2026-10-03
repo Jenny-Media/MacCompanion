@@ -240,7 +240,7 @@ def verify(build, output, simulator, resume_build=False, reuse_build_project=Fal
                 'PairedWorkspaceUITests/testNormalAppReenrollsNativeVideoAfterAppSelection' if native_selected_target else
                 'PairedWorkspaceUITests/testNormalAppReenrollsNativeVideoAfterDesktopSelection' if native_surface_replacement else
                 'PairedWorkspaceUITests/testNormalAppNativeBackgroundAndConnectionRecovery' if native_connection_loss else
-                'PairedWorkspaceUITests/testNormalAppNativeBackgroundFencesInputAndRequiresRestart' if native_background else
+                'PairedWorkspaceUITests/testNormalAppNativeBackgroundFencesInputAndFreshlyResumes' if native_background else
                 'PairedWorkspaceUITests/testNormalAppPairsAndRunsNativeControl' if native else
                 'PairedWorkspaceUITests/testNormalAppPairsAndRestartsIntoWorkspace' if complete_pairing
                 else 'LivePairingUITests/testNormalAppVerifiesLivePairingAndCancels')
@@ -543,7 +543,7 @@ def verify(build, output, simulator, resume_build=False, reuse_build_project=Fal
                     presentations += replacement_markers.count('native-local-presentation-input-admitted')
                 assert presentations == (
                     (22 if native_window_soak else 10 if native_session_soak else 1 if native_session_hold or native_video_continuity else 4 if native_window_auto_recovery else 3 if native_window_resize_restart else 2 if window_change is not None else 3 if native_connection_loss or native_surface_replacement else 2)
-                    + (2 if native_surface_replacement else 0)), \
+                    + (2 if native_surface_replacement else 0) + (3 if native_background else 0)), \
                     f'Unexpected native presentations: {presentations}'
                 if window_change is None or native_window_auto_recovery:
                     assert 'signed-simulator-control-input-observed' in markers
@@ -654,7 +654,7 @@ def verify(build, output, simulator, resume_build=False, reuse_build_project=Fal
         'workspaceRestartVerified': complete_pairing and passed,
         'nativeControlRequested': native, 'nativeSessionVerified': native and passed and failure is None,
         'nativePresentedSessions': ((22 if native_window_soak else 10 if native_session_soak else 1 if native_session_hold or native_video_continuity else 4 if native_window_auto_recovery else 3 if native_window_resize_restart else 2 if window_change is not None else 3 if native_connection_loss or native_surface_replacement else 2)
-            + (2 if native_surface_replacement else 0))
+            + (2 if native_surface_replacement else 0) + (3 if native_background else 0))
             if native and passed and failure is None else 0,
         'nativeSharedDisplayPickerVerified': native_surface_replacement and passed and failure is None,
         'nativeSharedDisplayReplacementVerified': native_surface_replacement and passed and failure is None,
@@ -669,7 +669,7 @@ def verify(build, output, simulator, resume_build=False, reuse_build_project=Fal
         'nativeKeyboardDeliveryVerified': native and (window_change is None or native_window_auto_recovery) and passed and failure is None,
         'nativePointerModifierShortcutDeliveryVerified': native and (window_change is None or native_window_auto_recovery) and passed and failure is None,
         'nativeBackgroundInputFencingVerified': native_background and passed and failure is None,
-        'nativeForegroundRequiresExplicitRestartVerified': native_background and passed and failure is None,
+        'nativeForegroundFreshEnrollmentRecoveryVerified': native_background and passed and failure is None,
         'nativePrimaryConnectionLossRecoveryVerified': native_connection_loss and passed and failure is None,
         'nativeRealTargetCatalogVerified': native_real_targets and passed and failure is None,
         'nativeSelectedTargetVerified': (native_selected_target or native_selected_window)
@@ -703,7 +703,7 @@ if __name__ == '__main__':
     parser.add_argument('--complete-pairing', action='store_true', help='Approve the disposable host pair, verify normal workspace/restart, and restore owned Simulator state')
     parser.add_argument('--native-root', type=Path, help='Use a disposable native host for normal Control, with --complete-pairing')
     parser.add_argument('--native-host-package', type=Path, help='Exact verified portable development host package')
-    parser.add_argument('--native-background', action='store_true', help='Exercise real normal-app background input fencing and explicit native restart')
+    parser.add_argument('--native-background', action='store_true', help='Exercise real normal-app background input fencing and fresh foreground native recovery')
     parser.add_argument('--native-connection-loss', action='store_true', help='Drain/reopen the disposable primary listener during active Control and exercise normal Reconnect')
     parser.add_argument('--native-surface-replacement', action='store_true', help='Switch synthetic Desktop in normal native Control and verify fresh presentation')
     parser.add_argument('--native-real-targets', action='store_true', help='Use the real menu-owned ScreenCaptureKit target catalog during native surface replacement')

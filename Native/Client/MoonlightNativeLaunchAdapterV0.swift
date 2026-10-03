@@ -77,6 +77,10 @@ public final class MoonlightNativeLaunchAdapterV0: UIKitClientNativeVideoPrepari
              IOSClientRuntimeDiagnosticLogV0.record("native.launch." + $0)
          }) {
         self.signer = signer; route = verifiedPrimaryRoute; self.diagnostic = diagnostic
+        // Inert TLS material can be generated while the old stream drains and
+        // the replacement bootstrap is acknowledged. No socket or enrollment
+        // starts until prepare validates the new descriptor through roles.
+        creation = Task.detached { try NativeTLSBox() }
     }
 
     public func prepare(descriptor: AdaptiveSurfaceDescriptor, roles: NetworkClientInteractiveRoleProductBindingV0) async throws -> UIKitClientNativeVideoPreparationV0 {
@@ -84,7 +88,7 @@ public final class MoonlightNativeLaunchAdapterV0: UIKitClientNativeVideoPrepari
         started = true; self.roles = roles
         do {
             diagnostic("identity")
-            let creation = Task.detached { try NativeTLSBox() }; self.creation = creation
+            guard let creation else { throw NativeLaunchFailure.unavailable }
             let identity = try await creation.value
             guard !closed, !Task.isCancelled else { await identity.close(); throw NativeLaunchFailure.unavailable }
             tls = identity; self.creation = nil

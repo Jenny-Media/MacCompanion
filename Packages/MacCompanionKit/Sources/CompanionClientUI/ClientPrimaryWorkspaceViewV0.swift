@@ -122,6 +122,14 @@ public struct ClientPrimaryWorkspaceViewV0: View {
                 liveControlPresented = false
             }
         }
+        .onReceive(model.$projection.map { $0.connected }.removeDuplicates()) { connected in
+            // A stream failure under a live primary keeps its recovery screen.
+            // Once that authenticated primary ends, expose the workspace's
+            // Reconnect action instead of stranding the user in that screen.
+            guard !connected, liveControlPresented else { return }
+            liveControl.closeLocalProduct()
+            liveControlPresented = false
+        }
     }
 
     @ViewBuilder

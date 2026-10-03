@@ -44,6 +44,8 @@ public final class MacManagedSunshineEnrollmentBackendV1: InteractiveNativeVideo
     private var deadline: UInt64?
     private var processOwner: MacManagedSunshineProcessOwnerV1?
     private var probe: Process?
+    private var commandProcess: Process?
+    private var commandTask: Task<Int32, Error>?
     private var retired = false
     private var ready = false
     private var captureReported = false
@@ -114,16 +116,16 @@ public final class MacManagedSunshineEnrollmentBackendV1: InteractiveNativeVideo
         if let selectedContext { try write(selectedContext, "selected-capture.json") }
         try write(clientCertificateDER, "client.der")
         // Exact DER roundtrip and a valid, current self-signed TLS client identity.
-        try command(["x509", "-inform", "DER", "-in", path("client.der"), "-out", path("client.pem")])
-        try command(["x509", "-in", path("client.pem"), "-outform", "DER", "-out", path("canonical.der")])
+        try await command(["x509", "-inform", "DER", "-in", path("client.der"), "-out", path("client.pem")])
+        try await command(["x509", "-in", path("client.pem"), "-outform", "DER", "-out", path("canonical.der")])
         guard try Data(contentsOf: dir.appendingPathComponent("canonical.der")) == clientCertificateDER else { throw Failure.invalidCertificate }
-        try command(["verify", "-check_ss_sig", "-purpose", "sslclient", "-CAfile", path("client.pem"), path("client.pem")])
+        try await command(["verify", "-check_ss_sig", "-purpose", "sslclient", "-CAfile", path("client.pem"), path("client.pem")])
         // The relocated helper retains its developer OPENSSLDIR. Select the
         // admitted configuration even after that build directory is removed.
-        try command(["req", "-config", opensslConfiguration.path, "-x509", "-newkey", "rsa:2048", "-nodes", "-sha256", "-days", "1",
+        try await command(["req", "-config", opensslConfiguration.path, "-x509", "-newkey", "rsa:2048", "-nodes", "-sha256", "-days", "1",
                      "-subj", "/CN=localhost", "-addext", "extendedKeyUsage=serverAuth", "-addext", "subjectAltName=DNS:localhost",
                      "-keyout", path("key.pem"), "-out", path("cert.pem")])
-        try command(["x509", "-in", path("cert.pem"), "-outform", "DER", "-out", path("host.der")])
+        try await command(["x509", "-in", path("cert.pem"), "-outform", "DER", "-out", path("host.der")])
         let cert = try Data(contentsOf: dir.appendingPathComponent("host.der"))
         guard (1...4096).contains(cert.count) else { throw Failure.invalidCertificate }
         for name in ["client.pem", "canonical.der", "key.pem", "cert.pem", "host.der"] {
@@ -256,8 +258,19 @@ public final class MacManagedSunshineEnrollmentBackendV1: InteractiveNativeVideo
         ready = false
         let pendingProbe = probe
         pendingProbe?.terminate()
+        let pendingCommand = commandTask, pendingProcess = commandProcess
+        pendingCommand?.cancel()
+        if pendingProcess?.isRunning == true { pendingProcess?.terminate() }
         let owner = processOwner
         let task = Task { @MainActor in
+            if let pendingProcess {
+                let deadline = DispatchTime.now().uptimeNanoseconds + 1_000_000_000
+                while pendingProcess.isRunning, DispatchTime.now().uptimeNanoseconds < deadline {
+                    try? await Task.sleep(for: .milliseconds(10))
+                }
+                if pendingProcess.isRunning { kill(pendingProcess.processIdentifier, SIGKILL) }
+            }
+            _ = try? await pendingCommand?.value
             if let pendingProbe {
                 let deadline = DispatchTime.now().uptimeNanoseconds + 1_000_000_000
                 while pendingProbe.isRunning, DispatchTime.now().uptimeNanoseconds < deadline {
@@ -309,7 +322,7 @@ public final class MacManagedSunshineEnrollmentBackendV1: InteractiveNativeVideo
         // No client key lives on the host, so TLS rejects the missing client
         // certificate after exposing the server certificate. Check exact DER.
         do {
-            try command(["x509", "-in", outputURL.path, "-outform", "DER", "-out", path("peer.der")])
+            try await command(["x509", "-in", outputURL.path, "-outform", "DER", "-out", path("peer.der")])
             return try Data(contentsOf: directory.appendingPathComponent("peer.der")) == hostDER
         } catch { return false }
     }
@@ -318,11 +331,32 @@ public final class MacManagedSunshineEnrollmentBackendV1: InteractiveNativeVideo
         try data.write(to: URL(fileURLWithPath: path(name)), options: .atomic)
         try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: path(name))
     }
-    private func command(_ arguments: [String]) throws {
+    private func command(_ arguments: [String]) async throws {
+        guard !retired, !Task.isCancelled, currentControl(), commandProcess == nil else { throw Failure.invalidPhase }
         let child = Process(); child.executableURL = openssl; child.arguments = arguments
         child.standardInput = FileHandle.nullDevice; child.standardOutput = FileHandle.nullDevice; child.standardError = FileHandle.nullDevice
-        try child.run(); child.waitUntilExit()
-        guard child.terminationStatus == 0 else { throw Failure.invalidCertificate }
+        commandProcess = child
+        let task = Task { @MainActor in
+            guard !retired, !Task.isCancelled else { throw Failure.invalidPhase }
+            return try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Int32, Error>) in
+                child.terminationHandler = { process in continuation.resume(returning: process.terminationStatus) }
+                do { try child.run() }
+                catch { child.terminationHandler = nil; continuation.resume(throwing: error) }
+            }
+        }
+        commandTask = task
+        defer {
+            if commandProcess === child { commandProcess = nil; commandTask = nil }
+        }
+        // Process.waitUntilExit polls the caller's run loop. On this Mac it
+        // adds about 65 ms even to /usr/bin/true and blocks menu input/lease
+        // checks. Await termination instead, preserving every validation.
+        let status = try await withTaskCancellationHandler { try await task.value } onCancel: {
+            task.cancel()
+            if child.isRunning { child.terminate() }
+        }
+        guard !retired, !Task.isCancelled, currentControl() else { throw Failure.invalidPhase }
+        guard status == 0 else { throw Failure.invalidCertificate }
     }
 }
 

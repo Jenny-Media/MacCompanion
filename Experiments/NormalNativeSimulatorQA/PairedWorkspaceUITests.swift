@@ -60,7 +60,7 @@ final class PairedWorkspaceUITests: XCTestCase {
                        restartAfterWindowInvalidation: true)
     }
 
-    func testNormalAppNativeBackgroundFencesInputAndRequiresRestart() throws {
+    func testNormalAppNativeBackgroundFencesInputAndFreshlyResumes() throws {
         try runJourney(nativeControl: true, background: true)
     }
 
@@ -423,28 +423,49 @@ final class PairedWorkspaceUITests: XCTestCase {
                     XCTAssertGreaterThanOrEqual(Date().timeIntervalSince(started), Double(holdSeconds))
                 }
                 if background && cycle == 1 {
-                    keyboard.tap()
-                    XCTAssertTrue(app.keyboards.element.waitForExistence(timeout: 10))
-                    XCUIDevice.shared.press(.home)
-                    XCTAssertTrue(app.wait(for: .runningBackground, timeout: 5)
-                        || app.state == .runningBackgroundSuspended)
-                    Thread.sleep(forTimeInterval: 2)
-                    app.activate()
-                    XCTAssertTrue(stop.waitForExistence(timeout: 10), app.debugDescription)
-                    XCTAssertFalse(app.keyboards.element.exists)
-                    XCTAssertTrue(app.descendants(matching: .any)["Remote Control restart required"].firstMatch
-                        .waitForExistence(timeout: 10), app.debugDescription)
-                    XCTAssertFalse(keyboard.exists && keyboard.isEnabled,
-                        "Retired video must not offer keyboard input on foreground return")
-                    let fenced = try hostControl()
-                    let previous = try XCTUnwrap(fenced["inputEvents"] as? Int)
-                    app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
-                    Thread.sleep(forTimeInterval: 1)
-                    let denied = try hostControl()
-                    XCTAssertEqual(denied["inputEvents"] as? Int, previous,
-                        "Foreground return must not restore input from the retired native generation")
-                    XCTAssertEqual(denied["nativePresentations"] as? Int, cycle,
-                        "Foreground return must not automatically enroll another native session")
+                    for entry in 0..<3 {
+                        if entry == 2 {
+                            _ = try NormalConsentBridge.command("journey-native-hold-next-surface")
+                            app.buttons["More"].tap()
+                            app.buttons["Choose Surface"].tap()
+                            XCTAssertTrue(app.navigationBars["Choose Mac View"].waitForExistence(timeout: 5))
+                            app.buttons["Desktop"].tap()
+                            _ = try NormalConsentBridge.command("journey-native-surface-held")
+                        } else {
+                            keyboard.tap()
+                            XCTAssertTrue(app.keyboards.element.waitForExistence(timeout: 10))
+                        }
+                        XCUIDevice.shared.press(.home)
+                        XCTAssertTrue(app.wait(for: .runningBackground, timeout: 5)
+                            || app.state == .runningBackgroundSuspended)
+                        if entry == 2 {
+                            _ = try NormalConsentBridge.command("journey-native-release-surface")
+                        }
+                        Thread.sleep(forTimeInterval: 1)
+                        let entered = try hostControl()
+                        let previousInput = try XCTUnwrap(entered["inputEvents"] as? Int)
+                        Thread.sleep(forTimeInterval: 1)
+                        let fenced = try hostControl()
+                        XCTAssertEqual(fenced["inputEvents"] as? Int, previousInput,
+                            "Background retirement must not emit or replay remote input")
+                        XCTAssertEqual(fenced["nativePresentations"] as? Int, expectedPresentations,
+                            "No native enrollment may present while backgrounded")
+                        app.activate()
+                        XCTAssertTrue(stop.waitForExistence(timeout: 10), app.debugDescription)
+                        XCTAssertFalse(app.keyboards.element.exists)
+                        let resumed = XCTNSPredicateExpectation(
+                            predicate: NSPredicate(format: "exists == 1 AND enabled == 1"), object: keyboard)
+                        XCTAssertEqual(XCTWaiter.wait(for: [resumed], timeout: 45), .completed,
+                            "Short background return must obtain fresh native presentation under the same Control approval")
+                        expectedPresentations += 1
+                        let after = try hostControl()
+                        XCTAssertEqual(after["nativePresentations"] as? Int, expectedPresentations)
+                        XCTAssertEqual(after["captureActive"] as? Bool, true)
+                        XCTAssertFalse(app.descendants(matching: .any)["Remote Control restart required"].firstMatch.exists)
+                        try deliversInput {
+                            app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+                        }
+                    }
                 }
                 if connectionLoss && cycle == 2 {
                     keyboard.tap()
@@ -473,7 +494,7 @@ final class PairedWorkspaceUITests: XCTestCase {
                     XCTAssertFalse(stop.exists)
                     XCTAssertFalse(app.buttons["Enter Pairing Code"].exists)
                     let recovered = try hostControl()
-                    XCTAssertEqual(recovered["nativePresentations"] as? Int, cycle,
+                    XCTAssertEqual(recovered["nativePresentations"] as? Int, expectedPresentations,
                         "Connection recovery must not automatically restart native Control")
                     XCTAssertEqual(recovered["captureActive"] as? Bool, false)
                     app.buttons["Mac Status"].tap()

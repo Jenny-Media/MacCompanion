@@ -158,8 +158,18 @@ public final class UIKitClientNativeVideoOwnerV0: NSObject {
             retireViewAndDrain()
         } else {
             if presentationAcknowledged, let reason = presentationUnavailableReason() {
+                if UIApplication.shared.applicationState != .background,
+                   reason == "application-inactive" || reason == "scene-inactive" {
+                    surface.setInputEnabled(false)
+                    inputAdmissionChanged(false)
+                    return
+                }
                 diagnostic("presentation-unavailable-" + reason)
                 stopAdmission(); return
+            }
+            if presentationAcknowledged {
+                surface.setInputEnabled(allowsInput)
+                inputAdmissionChanged(allowsInput)
             }
             schedulePresentationAcknowledgement()
         }

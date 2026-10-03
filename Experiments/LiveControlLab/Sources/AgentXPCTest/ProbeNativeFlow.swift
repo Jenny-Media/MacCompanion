@@ -19,6 +19,8 @@ import CryptoKit
 private struct ProbeTracedNativeBackend: InteractiveNativeVideoEnrollmentBackendV0 {
     let base: ManagedSunshineEnrollmentBackend
     func prepare(operationID: UUID, authority: InteractiveNativeVideoAuthorityV0, clientCertificateDER: Data) async throws -> Data {
+        let started = DispatchTime.now().uptimeNanoseconds
+        defer { FileHandle.standardError.write(Data("native-managed-prepare-elapsed-ms=\((DispatchTime.now().uptimeNanoseconds - started) / 1_000_000)\n".utf8)) }
         FileHandle.standardError.write(Data("native-managed-prepare-entered\n".utf8))
         do { return try await base.prepare(operationID: operationID, authority: authority, clientCertificateDER: clientCertificateDER) }
         catch {
@@ -26,7 +28,11 @@ private struct ProbeTracedNativeBackend: InteractiveNativeVideoEnrollmentBackend
             FileHandle.standardError.write(Data("native-managed-prepare-failed \(reason)\n".utf8)); throw error
         }
     }
-    func activate(operationID: UUID) async throws -> InteractiveNativeVideoEndpointV0 { try await base.activate(operationID: operationID) }
+    func activate(operationID: UUID) async throws -> InteractiveNativeVideoEndpointV0 {
+        let started = DispatchTime.now().uptimeNanoseconds
+        defer { FileHandle.standardError.write(Data("native-managed-activate-elapsed-ms=\((DispatchTime.now().uptimeNanoseconds - started) / 1_000_000)\n".utf8)) }
+        return try await base.activate(operationID: operationID)
+    }
     func isActive(operationID: UUID) async -> Bool { await base.isActive(operationID: operationID) }
     func captureEvidence(operationID: UUID) async throws -> InteractiveNativeVideoCaptureEvidenceV0? { try await base.captureEvidence(operationID: operationID) }
     func canPostInput(operationID: UUID) async -> Bool { await base.canPostInput(operationID: operationID) }

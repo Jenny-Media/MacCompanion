@@ -62,6 +62,7 @@ def native_source_inputs():
                      "spec/capability-protocol/v0/local-native-backend.md",
                      "spec/capability-protocol/v0/native-stream-continuity.md",
                      "spec/fixtures/native-stream-continuity-v0.1.json",
+                     "spec/fixtures/native-foreground-recovery-v0.1.json",
                      "spec/fixtures/local-xpc-native-backend-v0.1.json",
                      "spec/fixtures/local-xpc-native-runtime-snapshot-v0.1.json",
                      "spec/fixtures/valid/managed-native-host-admission.json",

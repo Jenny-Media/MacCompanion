@@ -1,0 +1,26 @@
+{
+  "profile": "Mac Companion native foreground recovery v0.1",
+  "rules": [
+    "background immediately retires native video and input",
+    "foreground never revives the retired native generation",
+    "one fresh Desktop replacement and enrollment per background entry",
+    "old preparation drain and in-flight surface selection complete before recovery selection",
+    "exact original primary Control binding and deadline remain current",
+    "fresh bootstrap and native presentation acknowledgements precede input",
+    "Stop background revocation expiry and primary replacement cancel recovery",
+    "no approval input or interrupted command is replayed",
+    "wire and golden signature inputs are unchanged"
+  ],
+  "cases": [
+    {"id": "short-background", "steps": ["background", "resume"], "expect": ["waiting", "resume"]},
+    {"id": "one-attempt", "steps": ["background", "resume", "resume"], "expect": ["waiting", "resume", "deny"]},
+    {"id": "stop-before-return", "steps": ["background", "cancel", "resume"], "expect": ["waiting", "cancelled", "deny"]},
+    {"id": "expired-control", "steps": ["background", "expire", "resume"], "expect": ["waiting", "expired", "deny"]},
+    {"id": "revoked-control", "steps": ["background", "revoke", "resume"], "expect": ["waiting", "revoked", "deny"]},
+    {"id": "changed-primary", "steps": ["background", "changePrimary", "resume"], "expect": ["waiting", "changed", "deny"]},
+    {"id": "changed-grant", "steps": ["background", "changeGrant", "resume"], "expect": ["waiting", "changed", "deny"]},
+    {"id": "inactive-not-background", "steps": ["resume"], "expect": ["deny"]},
+    {"id": "still-background", "steps": ["background", "inactiveResume", "resume"], "expect": ["waiting", "deny", "resume"]},
+    {"id": "new-background-fences-old-return", "steps": ["background", "resume", "background", "oldTicket", "resume"], "expect": ["waiting", "resume", "waiting", "deny", "resume"]}
+  ]
+}

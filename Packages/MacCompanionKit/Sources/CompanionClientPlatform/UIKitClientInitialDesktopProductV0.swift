@@ -150,7 +150,7 @@ public final class UIKitClientInitialMediaRendererV0:
 
 @available(iOS 17.0, *)
 @MainActor
-public final class UIKitClientInitialDesktopProductV0 {
+public final class UIKitClientInitialDesktopProductV0: NSObject {
     public private(set) var descriptor: AdaptiveSurfaceDescriptor
     public let activation:
         NetworkClientInteractiveInitialDesktopActivationV0
@@ -187,6 +187,15 @@ public final class UIKitClientInitialDesktopProductV0 {
     private var nativeRecoveryTask: Task<Void, Never>?
     private var recoveredSurfaceID: UUID?
     private var presentedNativeSurfaceID: UUID?
+    private var nativeControlBinding: InteractiveNativeVideoBindingV0?
+    private var foregroundRecovery = InteractiveNativeVideoForegroundRecoveryV0()
+    private var foregroundRecoveryTicket: InteractiveNativeVideoForegroundRecoveryV0.Ticket?
+    private var backgroundDrain: Task<Void, Never>?
+    private var foregroundRecoveryTask: Task<Void, Never>?
+    private var foregroundRecoveryAttemptID: UUID?
+    private var backgroundRequested = false
+    private var nativeSurfaceTransitionPending = false
+    private var nativeSurfaceTransitionWaiters: [CheckedContinuation<Void, Never>] = []
     private var closed = false
 
     public func observeVideoRecovery(
@@ -293,13 +302,20 @@ public final class UIKitClientInitialDesktopProductV0 {
                 guard !self.closed, !Task.isCancelled, self.descriptor == expected else {
                     throw NetworkClientInteractiveInitialDesktopErrorV0.invalidPhase
                 }
+                if let ticket = self.foregroundRecoveryTicket {
+                    guard self.foregroundRecovery.isCurrent(ticket), prepared.binding == ticket.binding else {
+                        throw NetworkClientInteractiveInitialDesktopErrorV0.unavailable
+                    }
+                }
+                self.nativeControlBinding = prepared.binding
                 try await self.startNativeVideo(binding: prepared.binding, driver: prepared.driver,
                     current: prepared.current, changed: changed, acknowledgePresentation: prepared.acknowledgePresentation)
                 IOSClientRuntimeDiagnosticLogV0.record("native.video.start-requested")
             } catch {
                 IOSClientRuntimeDiagnosticLogV0.record("native.video.preparation-terminal", error: error)
                 await preparer.close()
-                guard !self.closed, !Task.isCancelled, self.nativePreparer === preparer else { return }
+                guard !self.closed, !Task.isCancelled, !self.backgroundRequested,
+                      self.nativePreparer === preparer else { return }
                 changed(.failed, .connectionFailed)
                 self.failure(error)
             }
@@ -353,7 +369,8 @@ public final class UIKitClientInitialDesktopProductV0 {
             changed: { [weak self] phase, failure in
                 // An explicit surface replacement drains the old owner as a
                 // normal transition. It does not require restarting Control.
-                if let self, !self.surfaceTransitionInFlight, self.descriptor == nativeDescriptor {
+                if let self, !self.backgroundRequested, UIApplication.shared.applicationState == .active,
+                   !self.surfaceTransitionInFlight, self.descriptor == nativeDescriptor {
                     let recovering = self.nativeRecoveryTask != nil
                         || self.recoverNativeSurfaceIfPossible(failure: failure, binding: binding, expected: nativeDescriptor)
                     self.videoRecoveryChanged?(
@@ -400,11 +417,79 @@ public final class UIKitClientInitialDesktopProductV0 {
         self.surface = surface
         self.inputRelay = inputRelay
         self.failure = failure
+        super.init()
+        NotificationCenter.default.addObserver(self, selector: #selector(nativeEnteredBackground),
+            name: UIApplication.didEnterBackgroundNotification, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(nativeBecameActive),
+            name: UIApplication.didBecomeActiveNotification, object: nil)
+    }
+
+    @objc private func nativeEnteredBackground() {
+        guard !closed, replacementNativePreparer != nil || nativePreparer != nil || nativeVideoOwner != nil else { return }
+        backgroundRequested = true
+        foregroundRecovery.background(binding: nativeControlBinding)
+        foregroundRecoveryTicket = nil
+        foregroundRecoveryTask?.cancel(); foregroundRecoveryTask = nil
+        foregroundRecoveryAttemptID = nil
+        nativeRecoveryTask?.cancel()
+        inputRelay?.setActive(false); surface.setInputEnabled(false)
+        surface.hideSoftwareKeyboard(); surface.beginNativeReplacement()
+        publishSurfaceTransition(busy: true, message: "Paused. Return to resume…")
+        videoRecoveryChanged?(false)
+        nativePreparationTask?.cancel()
+        let previous = backgroundDrain, owner = nativeVideoOwner, preparer = nativePreparer,
+            preparation = nativePreparationTask
+        backgroundDrain = Task {
+            await previous?.value
+            await owner?.close()
+            await preparer?.close()
+            await preparation?.value
+        }
+        IOSClientRuntimeDiagnosticLogV0.record("native.background.input-fenced")
+    }
+
+    @objc private func nativeBecameActive() {
+        guard !closed, backgroundRequested, foregroundRecoveryTask == nil else { return }
+        let attemptID = UUID()
+        foregroundRecoveryAttemptID = attemptID
+        foregroundRecoveryTask = Task { [weak self] in
+            guard let self else { return }
+            defer {
+                if self.foregroundRecoveryAttemptID == attemptID {
+                    self.foregroundRecoveryTask = nil
+                    self.foregroundRecoveryAttemptID = nil
+                }
+            }
+            await self.backgroundDrain?.value
+            await self.joinNativeSurfaceTransition()
+            guard !self.closed, !Task.isCancelled, self.backgroundRequested,
+                  self.foregroundRecoveryAttemptID == attemptID else { return }
+            _ = await self.roles.refreshInitialDesktopState()
+            let current = await self.roles.currentNativeControlBinding()
+            guard !self.closed, !Task.isCancelled, self.backgroundRequested,
+                  self.foregroundRecoveryAttemptID == attemptID else { return }
+            guard let ticket = self.foregroundRecovery.resume(current: current,
+                foreground: UIApplication.shared.applicationState == .active,
+                nowMonotonicMilliseconds: DispatchTime.now().uptimeNanoseconds / 1_000_000) else {
+                self.backgroundRequested = false
+                self.publishSurfaceTransition(busy: false, message: nil)
+                self.videoRecoveryChanged?(true)
+                return
+            }
+            self.foregroundRecoveryTicket = ticket
+            self.backgroundRequested = false
+            self.publishSurfaceTransition(busy: true, message: "Resuming Remote Control…")
+            IOSClientRuntimeDiagnosticLogV0.record("native.foreground.fresh-enrollment-requested")
+            do {
+                try await self.performNativeSurfaceSelection(kind: .desktop, targetToken: nil, recovering: true)
+            } catch { /* Selection owns terminal failure and cleanup. */ }
+        }
     }
 
     @discardableResult
     public func refreshPrimaryState() async -> Bool {
         guard !closed else { return false }
+        if backgroundRequested { return await roles.refreshInitialDesktopState() }
         if surfaceTransitionInFlight { return await roles.refreshInitialDesktopState() }
         let active = await roles.refreshInitialDesktopState()
         guard !closed else { return false }
@@ -539,8 +624,17 @@ public final class UIKitClientInitialDesktopProductV0 {
               let replacementNativePreparer else {
             throw NetworkClientInteractiveInitialDesktopErrorV0.invalidPhase
         }
+        let recoveryTicket = foregroundRecoveryTicket
+        let replacement = try replacementNativePreparer()
         cancelPendingAutomaticFocusEvent()
         surfaceTransitionInFlight = true
+        nativeSurfaceTransitionPending = true
+        defer {
+            nativeSurfaceTransitionPending = false
+            let waiters = nativeSurfaceTransitionWaiters
+            nativeSurfaceTransitionWaiters.removeAll()
+            for waiter in waiters { waiter.resume() }
+        }
         if !recovering { publishSurfaceTransition(busy: true, message: "Switching view…") }
         IOSClientRuntimeDiagnosticLogV0.record("native.surface-selection.fenced")
         inputRelay?.setActive(false)
@@ -560,7 +654,8 @@ public final class UIKitClientInitialDesktopProductV0 {
         nativePreparationTask = nil
         nativePreparationRequested = false
         do {
-            guard !closed, !Task.isCancelled else { throw NetworkClientInteractiveInitialDesktopErrorV0.invalidPhase }
+            guard !closed, !Task.isCancelled, !backgroundRequested,
+                  recoveryTicket == foregroundRecoveryTicket else { throw CancellationError() }
             let next: AdaptiveSurfaceDescriptor
             if let targetDisplayID {
                 next = try await activation.selectDisplay(
@@ -576,20 +671,34 @@ public final class UIKitClientInitialDesktopProductV0 {
             let disappearedSourceDesktop = [.application, .window].contains(kind)
                 && next.kind == .desktop && next.applicationToken == nil
                 && next.windowToken == nil && next.focus == nil
-            guard !closed, next.kind == kind || disappearedSourceDesktop else {
+            guard !closed, !backgroundRequested, recoveryTicket == foregroundRecoveryTicket else { throw CancellationError() }
+            guard next.kind == kind || disappearedSourceDesktop else {
                 throw NetworkClientInteractiveInitialDesktopErrorV0.invalidPhase
             }
             apply(next)
-            nativePreparer = try replacementNativePreparer()
+            nativePreparer = replacement
             surfaceTransitionInFlight = false
             IOSClientRuntimeDiagnosticLogV0.record("native.surface-selection.replacement-started")
             prepareConfiguredNativeVideo()
         } catch {
+            await replacement.close()
+            if backgroundRequested || error is CancellationError {
+                surfaceTransitionInFlight = false
+                throw CancellationError()
+            }
             IOSClientRuntimeDiagnosticLogV0.record("native.surface-selection.terminal", error: error)
             await close()
             failure(error)
             throw error
         }
+    }
+
+    /// Background can arrive after old owners have drained but while the
+    /// surface acknowledgement is still pending. Join that selection before
+    /// reserving foreground recovery, including its cancellation cleanup.
+    private func joinNativeSurfaceTransition() async {
+        guard nativeSurfaceTransitionPending else { return }
+        await withCheckedContinuation { nativeSurfaceTransitionWaiters.append($0) }
     }
 
     private func performSurfaceSelection(
@@ -899,6 +1008,10 @@ public final class UIKitClientInitialDesktopProductV0 {
 
     public func close() async {
         closed = true
+        NotificationCenter.default.removeObserver(self)
+        foregroundRecovery.cancel()
+        foregroundRecoveryTask?.cancel()
+        foregroundRecoveryAttemptID = nil
         nativeRecoveryTask?.cancel()
         publishSurfaceTransition(busy: false, message: nil)
         relay.close()
@@ -911,6 +1024,7 @@ public final class UIKitClientInitialDesktopProductV0 {
         await nativeVideoOwner?.close()
         await nativePreparer?.close()
         await nativePreparationTask?.value
+        await backgroundDrain?.value
         nativePreparationTask = nil
         nativePreparer = nil
         replacementNativePreparer = nil

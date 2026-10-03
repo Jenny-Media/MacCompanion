@@ -30,6 +30,36 @@ private struct ProbePublisherRuntime: InteractiveMediaRuntimePublishingV0 {
     }
 }
 
+/// Disposable lab latch for a real normal-client background/selection race.
+/// It owns no approval or capture and times out instead of retaining work.
+actor ProbeNativeSelectionHold {
+    enum Failure: Error { case invalidPhase, timeout }
+    private var armed = false
+    private var waiting = false
+    func arm() throws {
+        guard !armed, !waiting else { throw Failure.invalidPhase }
+        armed = true
+    }
+    func requireWaiting() async throws {
+        let deadline = ContinuousClock.now + .seconds(2)
+        while !waiting, ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        guard waiting else { throw Failure.timeout }
+    }
+    func release() { armed = false }
+    func waitIfArmed() async throws {
+        guard armed else { return }
+        waiting = true
+        defer { armed = false; waiting = false }
+        let deadline = ContinuousClock.now + .seconds(8)
+        while armed, ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        guard !armed else { throw Failure.timeout }
+    }
+}
+
 /// Keeps the production lease/runtime adapter while supplying one generated,
 /// privacy-filtered editable focus. This exercises the signed focus/Smart Zoom
 /// and keyboard paths without querying Accessibility or naming a real app.
@@ -43,16 +73,19 @@ private struct ProbeInteractiveLeaseHandler: MacLocalXPCInteractiveLeaseHandling
     let syntheticNativeDesktopSelection: Bool
     let displaySelection: MacInteractiveOpaqueDisplaySelectionV1?
     let surfaceTargets: MacInteractiveSurfaceTargetOwnerV1?
+    let selectionHold: ProbeNativeSelectionHold
 
     init(base: MacInteractiveLeaseRuntimeAdapterV1, effects: ProbeInteractiveEffects,
          syntheticNativeDesktopSelection: Bool = false,
          displaySelection: MacInteractiveOpaqueDisplaySelectionV1? = nil,
-         surfaceTargets: MacInteractiveSurfaceTargetOwnerV1? = nil) throws {
+         surfaceTargets: MacInteractiveSurfaceTargetOwnerV1? = nil,
+         selectionHold: ProbeNativeSelectionHold) throws {
         self.base = base
         self.effects = effects
         self.syntheticNativeDesktopSelection = syntheticNativeDesktopSelection
         self.displaySelection = displaySelection
         self.surfaceTargets = surfaceTargets
+        self.selectionHold = selectionHold
         focus = try SurfaceFocus(
             token: UUID(),
             revision: .init(rawValue: 1),
@@ -131,6 +164,7 @@ private struct ProbeInteractiveLeaseHandler: MacLocalXPCInteractiveLeaseHandling
         _ command: LocalInteractiveSurfaceResolveCommandV1,
         nowMonotonicNanoseconds: UInt64
     ) async throws -> LocalInteractiveSurfaceResolvedReceiptV1 {
+        try await selectionHold.waitIfArmed()
         if syntheticNativeDesktopSelection && command.targetKind == .desktop {
             FileHandle.standardError.write(Data("native-surface-resolve-entered\n".utf8))
             guard let displaySelection,
@@ -645,6 +679,7 @@ final class ProbeInteractiveMenu: Sendable {
     let runtime: InteractiveMenuRuntimeOwnerV0
     let adapter: MacInteractiveLeaseRuntimeAdapterV1
     let leaseHandler: any MacLocalXPCInteractiveLeaseHandlingV1
+    let selectionHold = ProbeNativeSelectionHold()
     init(scenario: Scenario = .lifecycle) throws {
         self.scenario = scenario
         let queue = try BoundedInteractiveMediaQueueV0(maximumRecords: 64,
@@ -677,7 +712,7 @@ final class ProbeInteractiveMenu: Sendable {
         self.adapter = adapter
         leaseHandler = try ProbeInteractiveLeaseHandler(base: adapter, effects: effects,
             syntheticNativeDesktopSelection: isNative && !realSelectedTargets,
-            displaySelection: selection, surfaceTargets: surfaceTargets)
+            displaySelection: selection, surfaceTargets: surfaceTargets, selectionHold: selectionHold)
         Task { await effects.bind(runtime) }
     }
 

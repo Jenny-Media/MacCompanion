@@ -193,6 +193,11 @@ public final class ClientPrimaryLiveControlCoordinatorV0: ObservableObject {
                 throw ClientPrimaryLiveControlErrorV0.unavailable
             }
             phase = .active
+        } catch is CancellationError {
+            // The product already fenced input. Background recovery owns the
+            // fresh presentation; local cancellation must not end Control.
+            if self.product === product, phase == .awaitingVerifiedFrame { phase = .active }
+            throw CancellationError()
         } catch {
             if self.product === product { fail(error) }
             throw error
@@ -258,6 +263,9 @@ public final class ClientPrimaryLiveControlCoordinatorV0: ObservableObject {
                 throw ClientPrimaryLiveControlErrorV0.unavailable
             }
             phase = .active
+        } catch is CancellationError {
+            if self.product === product, phase == .awaitingVerifiedFrame { phase = .active }
+            throw CancellationError()
         } catch {
             if self.product === product { fail(error) }
             throw error
@@ -1354,6 +1362,7 @@ public struct ClientPrimaryLiveControlViewV0: View {
                 synchronizeStudyControlTiming()
             } catch {
                 viewState.pendingDisplayID = nil
+                guard !(error is CancellationError) else { return }
                 viewState.displayStatusMessage =
                     "Couldn’t confirm the display switch. Try again."
                 synchronizeStudyControlTiming()
@@ -1438,6 +1447,7 @@ public struct ClientPrimaryLiveControlViewV0: View {
                 viewState.surfaceSelectionInFlight = false
                 viewState.surfaceRequestInFlight = false
                 viewState.showingSurfacePicker = false
+                guard !(error is CancellationError) else { return }
                 onCommandFailure(error)
             }
         }

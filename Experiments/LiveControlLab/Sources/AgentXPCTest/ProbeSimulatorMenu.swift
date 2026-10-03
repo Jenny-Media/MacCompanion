@@ -210,6 +210,15 @@ actor ProbeSimulatorMenu {
             try await menu.reopenNetworkAdmissionAfterUpdateFailure()
             networkClosed = false
             emit("signed-simulator-primary-admission-restored")
+        case "journey-native-hold-next-surface":
+            guard deviceID != nil, interactive.scenario == .nativeContinuous else { throw LabError.unauthorized }
+            try await interactive.selectionHold.arm()
+        case "journey-native-surface-held":
+            guard deviceID != nil else { throw LabError.unauthorized }
+            try await interactive.selectionHold.requireWaiting()
+        case "journey-native-release-surface":
+            guard deviceID != nil else { throw LabError.unauthorized }
+            await interactive.selectionHold.release()
         case "journey-status", "journey-window-change-ready": break
         default: throw LabError.unsupported
         }

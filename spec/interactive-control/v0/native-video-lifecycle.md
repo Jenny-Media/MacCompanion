@@ -110,8 +110,24 @@ Entering application background synchronously retires the current native generat
 and clears input admission before awaiting decoder/network drain. The owner must
 observe the platform background event; periodic readiness polling alone is
 insufficient because suspension can prevent it from running. Foreground return
-cannot restore that generation's input admission; a fresh explicit Control/native
-enrollment is required. Primary-channel background grace remains independent.
+cannot restore that generation's input admission. While the exact original
+primary and Control approval remain current within the existing background
+grace, the normal client may make one fresh Desktop replacement and native
+enrollment per background entry. Join old renderer/enrollment preparation,
+drain and any in-flight surface selection before this attempt. Revalidate the
+complete original Control binding and
+unchanged deadline before selection and again after enrollment; require the new
+bootstrap acknowledgement and native presentation receipt before input.
+Stop, another background entry, primary replacement, revocation or expiry
+cancels the attempt. A failed attempt requires explicit restart; never retry it
+in a loop. No Control approval, input or interrupted command is replayed. If the
+primary grace has expired, ordinary explicit Control approval is required.
+Primary-channel background grace remains independent. The manifest-indexed
+`native-foreground-recovery-v0.1.json` records these local recovery rules.
+Temporary UIKit inactive states do not retire native video. They disable local
+input while the application or scene is inactive; actual background entry still
+retires immediately. Returning to active rechecks the same current binding,
+deadline, renderer and receipt before input can be available again.
 
 After the exact bootstrap surface's clean-frame acknowledgement commits, native
 video construction suppresses further legacy decoding for that surface. The

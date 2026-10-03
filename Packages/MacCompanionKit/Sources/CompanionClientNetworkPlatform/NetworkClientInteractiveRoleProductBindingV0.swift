@@ -263,6 +263,15 @@ public actor NetworkClientInteractiveRoleProductBindingV0 {
         return await nativeEnrollment.isCurrent()
     }
 
+    public func currentNativeControlBinding() async -> InteractiveNativeVideoBindingV0? {
+        guard case let .active(sessionID) = state, let channel = channelFactory(),
+              let expectedConnection = connectionID, let expectedActivation = activationID else { return nil }
+        let binding = await channel.currentNativeControlBinding()
+        guard state == .active(interactiveSessionID: sessionID), connectionID == expectedConnection,
+              activationID == expectedActivation, binding?.interactiveSessionID == sessionID else { return nil }
+        return binding
+    }
+
     public func stopNativeVideoEnrollment() async {
         let retiring = nativeEnrollment
         nativeEnrollment = nil

@@ -2,6 +2,23 @@
 
 ## 2026-09-26 streaming engine and licensing decision
 
+Latest foreground recovery checkpoint: [foreground recovery and setup latency](evidence/2026-10-03-native-foreground-recovery.md).
+Short background returns can make one fresh Desktop/native enrollment under
+the exact still-current original Control approval and expiry. Old preparation,
+renderer, enrollment and pending view selection drain before fresh admission.
+Temporary inactive states fence input without retiring video. Canceled view
+selection preserves Control; genuine primary loss exposes workspace recovery.
+Asynchronous certificate commands and early inert client identity preparation
+remove setup stalls. The normal Simulator foreground journey passes six native
+presentations, three background recoveries including a held selection,
+network-loss/reconnect, explicit Control restart, input and cleanup. Six UIKit
+coordinator tests and both normal iOS/Mac builds pass. Separate display and
+Window switches measure 2.2–3.1 seconds; normal switching still reconnects.
+Required final stable validation passes with 120 fixtures. Signed normal Mac
+and iPhone 18 Pro Max updates are installed and launched with existing pairing
+and entitlements preserved. Complete connection reuse, physical acceptance and production
+distribution gates remain open.
+
 Latest input/view recovery checkpoint: [input, Finder and resize recovery](evidence/2026-10-02-input-switch-finder-resize-recovery.md).
 One ordered and paced input worker coalesces pending cursor motion, fences old
 geometry, and preserves button/key order. Native replacement stays opaque until

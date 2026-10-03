@@ -25,6 +25,7 @@ private final class LiveControlTextProductV0:
     var runtimeFailure: ClientPrimaryLiveControlCoordinatorV0.Failure?
     private(set) var retirementCount = 0
     private(set) var closed = false
+    var cancelSelection = false
     private var textPreparationContinuation: CheckedContinuation<Bool, Never>?
 
     init() throws {
@@ -55,7 +56,9 @@ private final class LiveControlTextProductV0:
     func requestDisplayCatalog() async throws
         -> InteractiveDisplayCatalogResponseBodyV1
     { throw ClientPrimaryLiveControlErrorV0.unavailable }
-    func selectDisplay(_ displayID: UUID) async throws {}
+    func selectDisplay(_ displayID: UUID) async throws {
+        if cancelSelection { throw CancellationError() }
+    }
     func setAutomaticSmartZoomEnabled(_ enabled: Bool) async throws {}
 
     func prepareNativeTextComposer() async throws -> SurfaceInputFence? {
@@ -97,7 +100,9 @@ private final class LiveControlTextProductV0:
     func selectSurface(
         kind: InteractiveSurfaceKind,
         targetToken: UUID?
-    ) async throws {}
+    ) async throws {
+        if cancelSelection { throw CancellationError() }
+    }
 
     func retireFailedSession() { retirementCount += 1 }
     func close() async { closed = true }
@@ -217,5 +222,29 @@ func localNavigationDoesNotRetireTheRemoteSession() async throws {
     #expect(product.closed)
     #expect(product.retirementCount == 0)
     #expect(coordinator.phase == .closed)
+}
+
+@Test(arguments: [false, true]) @MainActor
+func backgroundCancelledSelectionKeepsItsControlProduct(display: Bool) async throws {
+    let product = try LiveControlTextProductV0()
+    product.cancelSelection = true
+    let coordinator = ClientPrimaryLiveControlCoordinatorV0(
+        productFactory: { _, _ in product },
+        failureRetirementFactory: { { await product.retireFailedSession() } }
+    )
+    coordinator.start(mode: .trackpad)
+    let deadline = ContinuousClock.now + .seconds(2)
+    while coordinator.phase != .active, ContinuousClock.now < deadline { await Task.yield() }
+    try #require(coordinator.phase == .active)
+    do {
+        if display { try await coordinator.selectDisplay(UUID()) }
+        else { try await coordinator.selectSurface(.desktop) }
+        Issue.record("Selection must propagate its local cancellation")
+    } catch is CancellationError {}
+    #expect(coordinator.product === product)
+    #expect(coordinator.phase == .active)
+    #expect(!product.closed)
+    #expect(product.retirementCount == 0)
+    coordinator.closeLocalProduct()
 }
 #endif
