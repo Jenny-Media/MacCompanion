@@ -7,7 +7,11 @@ windows on the selected display. The capture rectangle is their union, with
 24 points of padding clipped to that display. The application filter preserves
 window positions; it does not pack windows together. Several separated windows
 therefore produce a wide canvas containing blank gaps. This explains the
-reported Xcode Device Hub layout when several Xcode windows were open.
+reported Device Hub layout when that app had several windows open. The user
+selected **Device Hub**, not Xcode. Device Hub runs as a separate application
+process bundled inside Xcode; the capture filter uses the selected process's
+windows, not every window belonging to Xcode. The initial test instruction to
+select Xcode was incorrect; select Device Hub and then its desired window.
 
 The current native selection path fences and drains input, closes the renderer
 and enrollment, obtains the replacement surface, creates a new TLS identity and
@@ -80,7 +84,7 @@ build 1. The update did not uninstall the app or alter pairing material.
 - Private signing receipt:
   `/private/tmp/maccompanion-app-window-picker-iphone18-signature-20261002.json`.
 
-Physical Xcode Device Hub acceptance remains pending. This change does not
+Physical Device Hub acceptance remains pending. This change does not
 reduce stream replacement time, compose multiple windows into a new layout,
 or implement continuous window resizing.
 
