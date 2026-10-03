@@ -12,6 +12,7 @@ import SwiftUI
 import UIKit
 
 struct HarnessContentView: View {
+    @State private var showingSurfacePicker = false
     @EnvironmentObject private var lifecycle:
         HarnessApplicationLifecycleModel
 
@@ -71,8 +72,8 @@ struct HarnessContentView: View {
                     NavigationLink("Live Control Screen") {
                         LiveControlHarnessView()
                     }
-                    NavigationLink("Choose Mac View") {
-                        SurfacePickerHarnessView()
+                    Button("Choose Mac View") {
+                        showingSurfacePicker = true
                     }
                     Text("Remote Control is one independently authorized capability, not the app shell.")
                         .font(.footnote)
@@ -80,6 +81,9 @@ struct HarnessContentView: View {
                 }
             }
             .navigationTitle("Mac Companion")
+        }
+        .sheet(isPresented: $showingSurfacePicker) {
+            SurfacePickerHarnessView()
         }
     }
 }
@@ -678,6 +682,7 @@ private struct RouteEditorHarnessView: View {
 }
 
 private struct SurfacePickerHarnessView: View {
+    @Environment(\.dismiss) private var dismiss
     @State private var result = "No surface selected."
 
     var body: some View {
@@ -691,7 +696,7 @@ private struct SurfacePickerHarnessView: View {
                     result = "Refreshed the static privacy-limited fixture."
                 },
                 onCancel: {
-                    result = "Cancelled; the active surface is unchanged."
+                    dismiss()
                 }
             )
             Text(result)
@@ -699,7 +704,7 @@ private struct SurfacePickerHarnessView: View {
                 .frame(maxWidth: .infinity)
                 .padding(10)
                 .background(.regularMaterial)
-                .accessibilityLabel("Harness result")
+                .accessibilityIdentifier("Harness result")
         }
     }
 }

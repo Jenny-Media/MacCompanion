@@ -79,3 +79,26 @@ private func surfaceUICandidate(
     #expect(choices[1].windowTitle == "Example note")
     #expect(choices[1].targetToken == surfaceUIWindowToken)
 }
+
+@Test func appWindowChoicesUseOpaqueAssociationAndOmitUnavailableWindows() throws {
+    let otherApp = UUID()
+    let secondWindow = UUID()
+    let otherWindow = try InteractiveSurfaceTargetCandidateV0(
+        targetToken: .init(UUID()), kind: .window, applicationToken: .init(otherApp),
+        applicationName: "Notes", windowOrdinal: 1, currentWindowAvailable: true
+    )
+    let windows = ClientSurfaceChoiceProjectionV0.windows(
+        forApplication: surfaceUIAppToken,
+        candidates: [
+            try surfaceUICandidate(kind: .application, targetToken: surfaceUIAppToken, ordinal: nil),
+            try surfaceUICandidate(kind: .window, targetToken: surfaceUIWindowToken,
+                ordinal: 1, title: "First note"),
+            otherWindow,
+            try surfaceUICandidate(kind: .window, targetToken: UUID(), ordinal: 2, available: false),
+            try surfaceUICandidate(kind: .window, targetToken: secondWindow,
+                ordinal: 3, title: "Second note"),
+        ]
+    )
+    #expect(windows.map(\.targetToken) == [surfaceUIWindowToken, secondWindow])
+    #expect(windows.allSatisfy { $0.kind == .window })
+}

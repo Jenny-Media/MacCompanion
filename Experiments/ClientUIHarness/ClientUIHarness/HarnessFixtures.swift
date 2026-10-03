@@ -241,6 +241,16 @@ enum HarnessFixtures {
                 currentWindowAvailable: true
             ),
             try! InteractiveSurfaceTargetCandidateV0(
+                targetToken: WireUUID(UUID(uuidString: "018f8100-0000-7000-8000-000000000003")!),
+                kind: .window, applicationToken: notes, applicationName: "Notes",
+                windowOrdinal: 1, currentWindowAvailable: true, windowTitle: "First note"
+            ),
+            try! InteractiveSurfaceTargetCandidateV0(
+                targetToken: WireUUID(UUID(uuidString: "018f8100-0000-7000-8000-000000000004")!),
+                kind: .window, applicationToken: notes, applicationName: "Notes",
+                windowOrdinal: 2, currentWindowAvailable: true, windowTitle: "Second note"
+            ),
+            try! InteractiveSurfaceTargetCandidateV0(
                 targetToken: WireUUID(UUID(uuidString: "018f8100-0000-7000-8000-000000000001")!),
                 kind: .window,
                 applicationToken: browser,

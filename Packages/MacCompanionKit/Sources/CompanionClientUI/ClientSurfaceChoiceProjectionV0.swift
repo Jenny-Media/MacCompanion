@@ -45,6 +45,18 @@ public struct ClientSurfaceChoiceV0: Equatable, Identifiable, Sendable {
 }
 
 public enum ClientSurfaceChoiceProjectionV0 {
+    /// Names can coincide; the host's opaque application token is the only
+    /// association used when choosing a window within an app.
+    public static func windows(
+        forApplication applicationToken: UUID,
+        candidates: [InteractiveSurfaceTargetCandidateV0]
+    ) -> [ClientSurfaceChoiceV0] {
+        Array(make(candidates: candidates.filter {
+            $0.kind == .window
+                && $0.applicationToken.rawValue == applicationToken
+        }).dropFirst())
+    }
+
     public static func make(
         candidates: [InteractiveSurfaceTargetCandidateV0]
     ) -> [ClientSurfaceChoiceV0] {

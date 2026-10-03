@@ -6,7 +6,9 @@ import SwiftUI
 @available(iOS 17.0, *)
 public struct ClientSurfacePickerViewV0: View {
     @State private var searchText = ""
+    @State private var applicationPath: [UUID] = []
     private let choices: [ClientSurfaceChoiceV0]
+    private let windowsByApplication: [UUID: [ClientSurfaceChoiceV0]]
     private let onSelect: (ClientSurfaceChoiceV0) -> Void
     private let onRefresh: () -> Void
     private let onCancel: () -> Void
@@ -20,13 +22,21 @@ public struct ClientSurfacePickerViewV0: View {
         choices = ClientSurfaceChoiceProjectionV0.make(
             candidates: candidates
         )
+        windowsByApplication = Dictionary(
+            candidates.filter { $0.kind == .application }.map { candidate in
+                let token = candidate.targetToken.rawValue
+                return (token, ClientSurfaceChoiceProjectionV0.windows(
+                    forApplication: token, candidates: candidates
+                ))
+            }, uniquingKeysWith: { first, _ in first }
+        )
         self.onSelect = onSelect
         self.onRefresh = onRefresh
         self.onCancel = onCancel
     }
 
     public var body: some View {
-        NavigationStack {
+        NavigationStack(path: $applicationPath) {
             List {
                 Section {
                     choiceButton(.desktop)
@@ -47,16 +57,19 @@ public struct ClientSurfacePickerViewV0: View {
                             .listRowBackground(Color.clear)
                     } else {
                         ForEach(filteredChoices) { choice in
-                            choiceButton(choice)
+                            pickerRow(choice)
                         }
                     }
                 } header: {
                     Text("Applications and Windows")
                 } footer: {
-                    Text("Choose an app to show its windows on this display, or choose one window.")
+                    Text("Choose an app, then pick the window to show. You can also choose a window directly.")
                 }
             }
             .navigationTitle("Choose Mac View")
+            .navigationDestination(for: UUID.self) { token in
+                applicationWindows(token)
+            }
             .searchable(
                 text: $searchText,
                 placement: .navigationBarDrawer(displayMode: .always),
@@ -67,10 +80,74 @@ public struct ClientSurfacePickerViewV0: View {
                     Button("Cancel", role: .cancel, action: onCancel)
                 }
                 ToolbarItem(placement: .primaryAction) {
-                    Button("Refresh", systemImage: "arrow.clockwise", action: onRefresh)
+                    Button("Refresh", systemImage: "arrow.clockwise", action: refreshTargets)
                 }
             }
+            .onChange(of: choices.map(\.id)) { _, _ in
+                // Refresh replaces the one-use inventory tokens. Do not retain
+                // a destination or window choice from the retired inventory.
+                applicationPath.removeAll()
+            }
         }
+    }
+
+    @ViewBuilder
+    private func pickerRow(_ choice: ClientSurfaceChoiceV0) -> some View {
+        if choice.kind == .application, let token = choice.targetToken {
+            let windows = windowsByApplication[token] ?? []
+            if windows.count == 1, let window = windows.first {
+                choiceButton(choice, selection: window, detail: "Show this window")
+            } else {
+                NavigationLink(value: token) {
+                    choiceLabel(choice, detail: "Choose a window")
+                }
+                .accessibilityIdentifier(choiceIdentifier(choice))
+                .accessibilityHint("Choose which app window to show")
+            }
+        } else {
+            choiceButton(choice)
+        }
+    }
+
+    @ViewBuilder
+    private func applicationWindows(_ token: UUID) -> some View {
+        if let application = choices.first(where: {
+            $0.kind == .application && $0.targetToken == token
+        }) {
+            List {
+                Section("Choose a Window") {
+                    let windows = windowsByApplication[token] ?? []
+                    if windows.isEmpty {
+                        Text("No windows available. Refresh to try again.")
+                            .foregroundStyle(.secondary)
+                    } else {
+                        ForEach(windows) { choice in
+                            choiceButton(choice)
+                        }
+                    }
+                }
+                Section {
+                    choiceButton(application, title: "All App Windows",
+                        detail: "On the selected display")
+                } footer: {
+                    Text("All windows keep their Mac positions. Space between them appears blank.")
+                }
+            }
+            .navigationTitle(application.applicationName ?? "App Windows")
+            .toolbar {
+                ToolbarItem(placement: .primaryAction) {
+                    Button("Refresh", systemImage: "arrow.clockwise", action: refreshTargets)
+                }
+            }
+        } else {
+            ContentUnavailableView("Windows Refreshed", systemImage: "arrow.clockwise",
+                description: Text("Go back to choose a current window."))
+        }
+    }
+
+    private func refreshTargets() {
+        applicationPath.removeAll()
+        onRefresh()
     }
 
     private var filteredChoices: [ClientSurfaceChoiceV0] {
@@ -83,44 +160,56 @@ public struct ClientSurfacePickerViewV0: View {
     }
 
     private func choiceButton(
-        _ choice: ClientSurfaceChoiceV0
+        _ choice: ClientSurfaceChoiceV0,
+        selection: ClientSurfaceChoiceV0? = nil,
+        title: String? = nil,
+        detail: String? = nil
     ) -> some View {
         Button {
-            onSelect(choice)
+            onSelect(selection ?? choice)
         } label: {
-            HStack(spacing: 12) {
-                Image(systemName: choiceSystemImage(choice))
-                    .frame(width: 28)
-                    .foregroundStyle(
-                        choice.available
-                            ? Color.accentColor
-                            : Color.secondary
-                    )
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(choiceTitle(choice))
-                    if let detail = choiceDetail(choice) {
-                        Text(detail)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                Spacer()
-                if !choice.available {
-                    Text("Unavailable")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            }
-            .contentShape(Rectangle())
+            choiceLabel(choice, title: title, detail: detail)
         }
         .buttonStyle(.plain)
-        .accessibilityIdentifier("Surface \(choice.kind == .window ? "Window" : "Application") \(choice.targetToken?.uuidString ?? "Desktop")")
+        .accessibilityIdentifier(choiceIdentifier(choice))
         .disabled(!choice.available)
         .accessibilityHint(
             choice.available
                 ? "Switches the live Mac view"
                 : "Refresh after the window becomes available"
         )
+    }
+
+    private func choiceIdentifier(_ choice: ClientSurfaceChoiceV0) -> String {
+        "Surface \(choice.kind == .window ? "Window" : "Application") \(choice.targetToken?.uuidString ?? "Desktop")"
+    }
+
+    private func choiceLabel(_ choice: ClientSurfaceChoiceV0,
+        title: String? = nil, detail: String? = nil) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: choiceSystemImage(choice))
+                .frame(width: 28)
+                .foregroundStyle(
+                    choice.available
+                        ? Color.accentColor
+                        : Color.secondary
+                )
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title ?? choiceTitle(choice))
+                if let detail = detail ?? choiceDetail(choice) {
+                    Text(detail)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            Spacer()
+            if !choice.available {
+                Text("Unavailable")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .contentShape(Rectangle())
     }
 
     private func choiceTitle(_ choice: ClientSurfaceChoiceV0) -> String {
