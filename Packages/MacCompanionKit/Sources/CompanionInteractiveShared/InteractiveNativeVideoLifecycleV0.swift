@@ -38,14 +38,14 @@ public enum InteractiveNativeVideoFailureV0: Error, Equatable, Sendable {
 }
 
 public enum InteractiveNativeVideoPhaseV0: String, Sendable {
-    case idle, connecting, connected, displaying, failed, draining, retired
+    case idle, connecting, connected, displaying, switching, failed, draining, retired
 }
 
 /// Local lifecycle only. A displayed frame never creates an input grant or
 /// substitutes for the existing host's clean-frame acknowledgement.
 public struct InteractiveNativeVideoLifecycleV0: Sendable {
     public let binding: InteractiveNativeVideoBindingV0
-    public let surface: InteractiveNativeVideoSurfaceV0
+    public private(set) var surface: InteractiveNativeVideoSurfaceV0
     public private(set) var generation: UInt64 = 0
     public private(set) var phase: InteractiveNativeVideoPhaseV0 = .idle
     public private(set) var failure: InteractiveNativeVideoFailureV0?
@@ -88,6 +88,36 @@ public struct InteractiveNativeVideoLifecycleV0: Sendable {
         phase = .connecting
         failure = nil
         return generation
+    }
+
+    /// Fence callbacks and input immediately while retaining the connection's
+    /// drain obligation. The caller must keep the native stream alive and
+    /// obtain a fresh acknowledged descriptor and existing enrollment proof.
+    public mutating func beginSurfaceReplacement(current: InteractiveNativeVideoBindingV0,
+        nowMonotonicMilliseconds now: UInt64) -> UInt64? {
+        guard revalidate(current: current, nowMonotonicMilliseconds: now), requiresDrain,
+              phase == .connected || phase == .displaying else { return nil }
+        guard generation < UInt64.max else { retire(.generationExhausted); return nil }
+        inputAdmitted = false
+        generation += 1
+        phase = .switching
+        return generation
+    }
+
+    /// The connection is already connected. A verified epoch frame, followed
+    /// by a fresh correlated presentation receipt, must still enable input.
+    @discardableResult
+    public mutating func configureSurfaceReplacement(_ replacement: InteractiveNativeVideoSurfaceV0,
+        generation candidate: UInt64, current: InteractiveNativeVideoBindingV0,
+        nowMonotonicMilliseconds now: UInt64) -> Bool {
+        guard candidate == generation, phase == .switching, requiresDrain,
+              revalidate(current: current, nowMonotonicMilliseconds: now) else { return false }
+        guard replacement != surface,
+              replacement.encodedWidth == surface.encodedWidth,
+              replacement.encodedHeight == surface.encodedHeight else { return false }
+        surface = replacement
+        phase = .connected
+        return true
     }
 
     @discardableResult
@@ -161,7 +191,7 @@ public struct InteractiveNativeVideoLifecycleV0: Sendable {
                                now: UInt64) -> Bool {
         // Old callbacks must not mutate or retire the new generation.
         guard candidate == generation, requiresDrain,
-              phase == .connecting || phase == .connected || phase == .displaying else { return false }
+              phase == .connecting || phase == .connected || phase == .displaying || phase == .switching else { return false }
         return revalidate(current: current, nowMonotonicMilliseconds: now)
     }
 

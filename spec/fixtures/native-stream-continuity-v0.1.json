@@ -1,0 +1,69 @@
+{
+  "profile": "maccompanion.native-stream-continuity.v0.1",
+  "changesAuthenticationTranscript": false,
+  "retainsPresentationAuthorization": false,
+  "encodedCanvasChangesDuringConnection": false,
+  "streamCases": [
+    "switch-retains-stream-instance",
+    "switch-drops-samples-until-both-updates-complete",
+    "switch-drops-pre-completion-samples",
+    "switch-updates-centered-source-placement",
+    "switch-revalidates-new-owner-before-delivery",
+    "switch-filter-failure-drains",
+    "switch-configuration-failure-drains",
+    "stop-during-update-fences-late-completion",
+    "stop-joins-in-flight-update-before-terminal",
+    "concurrent-update-denied-without-changing-first-update",
+    "invalid-update-cannot-change-canvas-or-owner",
+    "stop-during-configuration-joins-before-terminal",
+    "platform-stop-during-update-cannot-reopen-stream",
+    "switch-drops-scheduled-old-sample"
+  ],
+  "authorityCases": [
+    "same-original-control-primary-key-and-deadline-required",
+    "old-input-authorization-revoked-before-selection",
+    "fresh-existing-golden-proof-binds-new-surface",
+    "old-proof-cannot-activate-new-surface",
+    "host-and-client-certificate-and-process-retained",
+    "no-second-native-launch-for-normal-view-change",
+    "capture-frame-epoch-preserved-through-encoder-queue",
+    "old-epoch-frame-cannot-acknowledge-new-view",
+    "new-idr-geometry-and-presentation-receipt-before-input",
+    "stop-expiry-grant-loss-and-background-drain-retained-resources",
+    "stale-retire-cannot-touch-replacement",
+    "unsupported-continuity-keeps-existing-replacement-path"
+  ],
+  "epoch": {
+    "userDataUUID": "D5E7C93A-1DA9-4BF2-8F2B-09A1DE105A51",
+    "surfaceID": "11111111-2222-4333-8444-555555555555",
+    "surfaceRevision": 2,
+    "coordinateSpaceRevision": 3,
+    "bytesHex": "d5e7c93a1da94bf28f2b09a1de105a511111111122224333844455555555555500000000000000020000000000000003",
+    "maximumFrameBytes": 67108864
+  },
+  "epochCases": [
+    "h264-prefix-roundtrip",
+    "h265-prefix-roundtrip",
+    "escaped-zero-roundtrip",
+    "unknown-user-data-does-not-admit",
+    "missing-marker-does-not-admit",
+    "truncated-marker-denied",
+    "duplicate-marker-denied",
+    "unsafe-revision-denied",
+    "marker-before-idr-required",
+    "mixed-epoch-denied",
+    "non-idr-does-not-complete-switch"
+  ],
+  "clientLifecycleCases": [
+    "switch-increments-generation-without-drain",
+    "switch-pauses-input-until-new-frame-and-receipt",
+    "old-frame-and-old-receipt-cannot-change-new-generation",
+    "same-surface-replay-cannot-complete-switch",
+    "canvas-change-denied",
+    "concurrent-switch-denied",
+    "stop-during-switch-is-terminal",
+    "authority-loss-during-switch-is-terminal",
+    "expiry-during-switch-is-terminal"
+  ],
+  "maximumScheduledSampleLeadNanoseconds": 100000000
+}

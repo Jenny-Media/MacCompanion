@@ -6,7 +6,7 @@
 @end
 
 typedef NS_ENUM(NSInteger, CompanionSelectedPhase) {
-  CompanionSelectedCreated, CompanionSelectedStarting, CompanionSelectedStreaming,
+  CompanionSelectedCreated, CompanionSelectedStarting, CompanionSelectedStreaming, CompanionSelectedUpdating,
   CompanionSelectedStopping, CompanionSelectedStopped
 };
 
@@ -38,7 +38,10 @@ static BOOL PositiveRect(CGRect rect) {
   OSType _pixelFormat;
   CGColorRef _backgroundColor;
   uint64_t _lastDisplayTime;
+  uint64_t _minimumDisplayTime;
   BOOL _startPending;
+  BOOL _updatePending, _stopRequested, _platformStopped;
+  void (^_updateCompletion)(NSError *);
 }
 // Injectable local stream transport, used by deterministic lifecycle tests.
 // It confers no authority and is not a wire entry point.
@@ -49,6 +52,22 @@ static BOOL PositiveRect(CGRect rect) {
 @end
 
 @implementation CompanionSelectedCapture
+
+- (SCStreamConfiguration *)configurationForSourceRect:(CGRect)sourceRect
+    sourcePixelWidth:(NSInteger)sourceWidth sourcePixelHeight:(NSInteger)sourceHeight {
+  SCStreamConfiguration *configuration = [[SCStreamConfiguration alloc] init];
+  configuration.width = _width; configuration.height = _height; configuration.pixelFormat = _pixelFormat;
+  configuration.minimumFrameInterval = CMTimeMake(1, 60); configuration.queueDepth = 3;
+  configuration.scalesToFit = YES; configuration.preservesAspectRatio = YES;
+  double aspectScale = fmin((double)_width / sourceWidth, (double)_height / sourceHeight);
+  double contentWidth = sourceWidth * aspectScale, contentHeight = sourceHeight * aspectScale;
+  configuration.destinationRect = CGRectMake((_width - contentWidth) / 2,
+      (_height - contentHeight) / 2, contentWidth, contentHeight);
+  configuration.ignoreShadowsSingleWindow = YES; configuration.ignoreShadowsDisplay = YES;
+  configuration.capturesAudio = NO; configuration.backgroundColor = _backgroundColor;
+  if (!CGRectIsNull(sourceRect)) configuration.sourceRect = sourceRect;
+  return configuration;
+}
 
 - (instancetype)initWithFilter:(SCContentFilter *)filter sourceRect:(CGRect)sourceRect
     sourcePixelWidth:(NSInteger)sourceWidth sourcePixelHeight:(NSInteger)sourceHeight
@@ -78,25 +97,15 @@ static BOOL PositiveRect(CGRect rect) {
   _queue = dispatch_queue_create("MacCompanion.selectedCapture", DISPATCH_QUEUE_SERIAL);
   _width = width; _height = height; _sourceWidth = sourceWidth; _sourceHeight = sourceHeight;
   _pixelFormat = pixelFormat; _isCurrent = [isCurrent copy]; _phase = CompanionSelectedCreated;
-  SCStreamConfiguration *configuration = [[SCStreamConfiguration alloc] init];
-  configuration.width = width; configuration.height = height; configuration.pixelFormat = pixelFormat;
-  configuration.minimumFrameInterval = CMTimeMake(1, 60); configuration.queueDepth = 3;
-  configuration.scalesToFit = YES; configuration.preservesAspectRatio = YES;
   // ScreenCaptureKit's default independent-window placement is top-left.
   // Chroma-aligned output can have small padding even for a nearly matching
   // aspect ratio. Establish the same centered content rectangle that the
   // sample validator and input mapper require, rather than assuming centering.
-  double aspectScale = fmin((double)width / sourceWidth, (double)height / sourceHeight);
-  double contentWidth = sourceWidth * aspectScale, contentHeight = sourceHeight * aspectScale;
-  configuration.destinationRect = CGRectMake((width - contentWidth) / 2,
-      (height - contentHeight) / 2, contentWidth, contentHeight);
-  configuration.ignoreShadowsSingleWindow = YES; configuration.ignoreShadowsDisplay = YES;
-  configuration.capturesAudio = NO;
   // SCStreamConfiguration declares this property assign. Keep the color alive
   // through SCStream's copy and the capture session's entire lifetime.
   _backgroundColor = CGColorCreateGenericRGB(0, 0, 0, 1);
-  configuration.backgroundColor = _backgroundColor;
-  if (!CGRectIsNull(sourceRect)) configuration.sourceRect = sourceRect;
+  SCStreamConfiguration *configuration = [self configurationForSourceRect:sourceRect
+      sourcePixelWidth:sourceWidth sourcePixelHeight:sourceHeight];
   _session = factory(self, configuration);
   NSError *registrationError = nil;
   if (!_session || ![_session addStreamOutput:self type:SCStreamOutputTypeScreen sampleHandlerQueue:_queue error:&registrationError]) {
@@ -123,9 +132,13 @@ static BOOL PositiveRect(CGRect rect) {
     self->_startPending = YES;
     [self->_session startCaptureWithCompletionHandler:^(NSError *error) {
       dispatch_async(self->_queue, ^{
+        if (self->_phase != CompanionSelectedStarting && self->_phase != CompanionSelectedStopping) return;
         self->_startPending = NO;
         // Stop owns the terminal state even if start's completion arrives later.
-        if (self->_phase == CompanionSelectedStopping) { [self stopSession]; return; }
+        if (self->_phase == CompanionSelectedStopping) {
+          if (self->_platformStopped) [self stopped]; else [self stopSession];
+          return;
+        }
         if (self->_phase != CompanionSelectedStarting) return;
         if (error || !self->_isCurrent()) { [self finish:SelectedError(error ? 2 : 4) alreadyStopped:NO]; return; }
         self->_phase = CompanionSelectedStreaming;
@@ -138,19 +151,87 @@ static BOOL PositiveRect(CGRect rect) {
   dispatch_async(_queue, ^{ [self finish:nil alreadyStopped:self->_phase == CompanionSelectedCreated]; });
 }
 
+- (void)updateFilter:(SCContentFilter *)filter sourceRect:(CGRect)sourceRect
+    sourcePixelWidth:(NSInteger)sourceWidth sourcePixelHeight:(NSInteger)sourceHeight
+    isCurrent:(CompanionSelectedCaptureCurrent)isCurrent completion:(void (^)(NSError *))completion {
+  dispatch_async(_queue, ^{
+    if (self->_phase != CompanionSelectedStreaming || !filter || !isCurrent || !completion
+        || sourceWidth < 1 || sourceWidth > 32768 || sourceHeight < 1 || sourceHeight > 32768
+        || (!CGRectIsNull(sourceRect) && (!PositiveRect(sourceRect) || sourceRect.origin.x < 0 || sourceRect.origin.y < 0))) {
+      if (completion) completion(SelectedError(1));
+      return;
+    }
+    // Reserve before platform callbacks. A second request cannot change this
+    // request's selection, completion or geometry while it is suspended.
+    self->_phase = CompanionSelectedUpdating;
+    self->_updatePending = YES;
+    self->_updateCompletion = [completion copy];
+    if (!isCurrent()) { [self updateFinished:SelectedError(4)]; return; }
+    SCStreamConfiguration *configuration = [self configurationForSourceRect:sourceRect
+        sourcePixelWidth:sourceWidth sourcePixelHeight:sourceHeight];
+    [self->_session updateContentFilter:filter completionHandler:^(NSError *filterError) {
+      dispatch_async(self->_queue, ^{
+        if (self->_phase != CompanionSelectedUpdating && self->_phase != CompanionSelectedStopping) return;
+        if (self->_phase == CompanionSelectedStopping || filterError) {
+          [self updateFinished:filterError ? SelectedError(7) : SelectedError(3)]; return;
+        }
+        if (!isCurrent()) { [self updateFinished:SelectedError(4)]; return; }
+        [self->_session updateConfiguration:configuration completionHandler:^(NSError *configurationError) {
+          dispatch_async(self->_queue, ^{
+            if (self->_phase != CompanionSelectedUpdating && self->_phase != CompanionSelectedStopping) return;
+            if (self->_phase == CompanionSelectedStopping || configurationError || !isCurrent()) {
+              [self updateFinished:SelectedError(configurationError ? 8 : 4)]; return;
+            }
+            self->_sourceWidth = sourceWidth; self->_sourceHeight = sourceHeight;
+            self->_isCurrent = [isCurrent copy];
+            // Drop queued samples from before both platform completions, even
+            // if the previous view happened to have identical dimensions.
+            mach_timebase_info_data_t timebase = {0};
+            if (mach_timebase_info(&timebase) != KERN_SUCCESS || !timebase.numer || !timebase.denom) {
+              [self updateFinished:SelectedError(8)]; return;
+            }
+            uint64_t lead = (uint64_t)(((__uint128_t)100000000 * timebase.denom + timebase.numer - 1) / timebase.numer);
+            uint64_t ticks = mach_absolute_time();
+            if (ticks > UINT64_MAX - lead) { [self updateFinished:SelectedError(8)]; return; }
+            self->_minimumDisplayTime = ticks + lead;
+            self->_phase = CompanionSelectedStreaming;
+            [self updateFinished:nil];
+          });
+        }];
+      });
+    }];
+  });
+}
+
+- (void)updateFinished:(NSError *)error {
+  if (!_updatePending) return;
+  _updatePending = NO;
+  if (_phase == CompanionSelectedStopping) {
+    if (_platformStopped) [self stopped]; else [self stopSession];
+    return;
+  }
+  if (error) { [self finish:error alreadyStopped:NO]; return; }
+  void (^completion)(NSError *) = _updateCompletion;
+  _updateCompletion = nil;
+  if (completion) completion(nil);
+}
+
 - (void)finish:(NSError *)error alreadyStopped:(BOOL)alreadyStopped {
   if (_phase == CompanionSelectedStopping || _phase == CompanionSelectedStopped) return;
   _phase = CompanionSelectedStopping;
   _frame = nil;
   _terminalError = error;
-  if (alreadyStopped) { [self stopped]; return; }
+  _platformStopped = alreadyStopped;
   // Fence now, but join the in-flight start before asking the platform to stop.
   // Otherwise an early stop acknowledgement could precede a successful start.
-  if (_startPending) return;
+  if (_startPending || _updatePending) return;
+  if (_platformStopped) { [self stopped]; return; }
   [self stopSession];
 }
 
 - (void)stopSession {
+  if (_stopRequested) return;
+  _stopRequested = YES;
   [_session stopCaptureWithCompletionHandler:^(NSError *stopError) {
     dispatch_async(self->_queue, ^{
       if (self->_phase != CompanionSelectedStopping) return;
@@ -165,6 +246,9 @@ static BOOL PositiveRect(CGRect rect) {
   NSError *removalError = nil;
   [_session removeStreamOutput:self type:SCStreamOutputTypeScreen error:&removalError];
   _session = nil; _isCurrent = nil;
+  void (^updateCompletion)(NSError *) = _updateCompletion;
+  _updateCompletion = nil;
+  if (updateCompletion) updateCompletion(_terminalError ?: SelectedError(3));
   CompanionSelectedCaptureTerminal terminal = _terminal;
   _terminal = nil;
   if (terminal) terminal(_terminalError);
@@ -173,7 +257,11 @@ static BOOL PositiveRect(CGRect rect) {
 - (void)stream:(SCStream *)stream didStopWithError:(NSError *)error {
   dispatch_async(_queue, ^{
     if ((id)stream != self->_session || self->_phase == CompanionSelectedStopped) return;
-    if (self->_phase == CompanionSelectedStopping) { [self stopped]; return; }
+    if (self->_phase == CompanionSelectedStopping) {
+      self->_platformStopped = YES;
+      if (!self->_startPending && !self->_updatePending) [self stopped];
+      return;
+    }
     [self finish:SelectedError(5) alreadyStopped:YES];
   });
 }
@@ -195,6 +283,14 @@ static BOOL PositiveRect(CGRect rect) {
     [self finish:SelectedError(6) alreadyStopped:NO]; return;
   }
   if (status.integerValue == SCFrameStatusIdle || status.integerValue == SCFrameStatusBlank) return;
+  if (_minimumDisplayTime) {
+    NSNumber *displayTime = info[SCStreamFrameInfoDisplayTime];
+    if (![displayTime isKindOfClass:[NSNumber class]] || CFGetTypeID((__bridge CFTypeRef)displayTime) == CFBooleanGetTypeID()
+        || !isfinite(displayTime.doubleValue) || displayTime.doubleValue < 1) {
+      [self finish:SelectedError(6) alreadyStopped:NO]; return;
+    }
+    if (displayTime.unsignedLongLongValue <= _minimumDisplayTime) return;
+  }
   if (status.integerValue != SCFrameStatusComplete || ![self sampleMatches:sample info:info]) {
     if (status.integerValue != SCFrameStatusComplete) SampleRejected(2);
     [self finish:SelectedError(6) alreadyStopped:NO]; return;

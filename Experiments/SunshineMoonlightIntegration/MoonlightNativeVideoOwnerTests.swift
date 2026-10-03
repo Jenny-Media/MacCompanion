@@ -11,12 +11,21 @@ private final class ControlledNativeDriver: UIKitClientNativeVideoDriverV0 {
     var view: UIView?
     var stops = 0
     var starts = 0
+    var supportsSurfaceReplacement = false
+    var presentationIsReady = false
+    var replacements = 0
+    var replacementSurface: InteractiveNativeVideoSurfaceV0?
     func start(view: UIView, event: @escaping @MainActor (UIKitClientNativeVideoEventV0) -> Void) throws {
         starts += 1
         self.view = view
         self.event = event
     }
     func stop() async { stops += 1 }
+    func beginSurfaceReplacement(event: @escaping @MainActor (UIKitClientNativeVideoEventV0) -> Void) throws {
+        replacements += 1
+        self.event = event
+    }
+    func resumeSurfaceReplacement(surface: InteractiveNativeVideoSurfaceV0) throws { replacementSurface = surface }
 }
 
 @MainActor
@@ -47,6 +56,72 @@ final class MoonlightNativeVideoOwnerTests: XCTestCase {
     private func surface() -> UIKitClientLiveSurfaceViewV0 {
         .init(mode: .directTouch, onPayloads: { _ in XCTFail("Unacknowledged native frame enabled input") },
               onFailure: { _ in XCTFail("Unexpected surface error") })
+    }
+
+    func testSurfaceReplacementRetainsDriverAndRejectsOldCallbackWithoutInputReceipt() async throws {
+        let current = try binding(), driver = ControlledNativeDriver(), surface = surface()
+        driver.supportsSurfaceReplacement = true; driver.presentationIsReady = true
+        let first = try descriptor(), next = try descriptor()
+        let owner = UIKitClientNativeVideoOwnerV0(binding: current, descriptor: first,
+            surface: surface, driver: driver, current: { current }, nowMonotonicMilliseconds: { 10 }, changed: { _, _ in })
+        try owner.start(); driver.event?(.connected); driver.event?(.firstFrame(width: 1280, height: 720))
+        let oldCallback = driver.event, oldView = driver.view
+        try owner.beginSurfaceReplacement(current: { current })
+        XCTAssertEqual(owner.lifecycle.phase, .switching)
+        XCTAssertFalse(owner.allowsInput)
+        XCTAssertEqual(driver.replacements, 1)
+        XCTAssertEqual(driver.starts, 1); XCTAssertEqual(driver.stops, 0)
+        try owner.resumeSurfaceReplacement(descriptor: next, logicalWidthPoints: 640, logicalHeightPoints: 360,
+            current: { current }, acknowledgePresentation: { _, _ in
+                XCTFail("A detached synthetic view must not request input admission")
+                throw InteractiveNativeVideoFailureV0.authorizationLost
+            })
+        XCTAssertEqual(driver.replacementSurface, next)
+        XCTAssertEqual(owner.lifecycle.phase, .connected)
+        oldCallback?(.firstFrame(width: 1920, height: 1080))
+        XCTAssertEqual(owner.lifecycle.phase, .connected, "Old frames must not fail or display the replacement")
+        driver.event?(.firstFrame(width: 1280, height: 720))
+        XCTAssertEqual(owner.lifecycle.phase, .displaying)
+        XCTAssertFalse(owner.allowsInput, "A new-epoch frame still cannot substitute for the fresh receipt")
+        XCTAssertTrue(driver.view === oldView)
+        XCTAssertEqual(driver.starts, 1); XCTAssertEqual(driver.stops, 0)
+        await owner.close()
+        XCTAssertEqual(driver.stops, 1)
+    }
+
+    func testRevocationDuringRetainedSurfaceChangeDrainsAndRejectsLateFrame() async throws {
+        let original = try binding(), driver = ControlledNativeDriver(), surface = surface()
+        var current: InteractiveNativeVideoBindingV0? = original
+        driver.supportsSurfaceReplacement = true; driver.presentationIsReady = true
+        let owner = try UIKitClientNativeVideoOwnerV0(binding: original, descriptor: descriptor(),
+            surface: surface, driver: driver, current: { current }, nowMonotonicMilliseconds: { 10 }, changed: { _, _ in })
+        try owner.start(); driver.event?(.connected); driver.event?(.firstFrame(width: 1280, height: 720))
+        try owner.beginSurfaceReplacement(current: { current })
+        current = nil; owner.refresh(); driver.event?(.firstFrame(width: 1280, height: 720))
+        XCTAssertEqual(owner.lifecycle.failure, .authorizationLost)
+        XCTAssertEqual(driver.view?.isHidden, true)
+        XCTAssertFalse(owner.allowsInput)
+        await owner.close()
+        XCTAssertEqual(driver.starts, 1); XCTAssertEqual(driver.stops, 1)
+    }
+
+    func testCanvasMismatchRetiresRetainedSurfaceChange() async throws {
+        let current = try binding(), driver = ControlledNativeDriver(), surface = surface()
+        driver.supportsSurfaceReplacement = true; driver.presentationIsReady = true
+        let owner = try UIKitClientNativeVideoOwnerV0(binding: current, descriptor: descriptor(),
+            surface: surface, driver: driver, current: { current }, nowMonotonicMilliseconds: { 10 }, changed: { _, _ in })
+        try owner.start(); driver.event?(.connected); driver.event?(.firstFrame(width: 1280, height: 720))
+        try owner.beginSurfaceReplacement(current: { current })
+        let mismatch = try InteractiveNativeVideoSurfaceV0(surfaceID: UUID(), surfaceRevision: 2,
+            coordinateSpaceRevision: 2, encodedWidth: 1920, encodedHeight: 1080)
+        XCTAssertThrowsError(try owner.resumeSurfaceReplacement(descriptor: mismatch,
+            logicalWidthPoints: 640, logicalHeightPoints: 360, current: { current }, acknowledgePresentation: { _, _ in
+                throw InteractiveNativeVideoFailureV0.authorizationLost
+            }))
+        await owner.close()
+        XCTAssertEqual(driver.starts, 1); XCTAssertEqual(driver.stops, 1)
+        XCTAssertNil(driver.replacementSurface)
+        XCTAssertFalse(owner.allowsInput)
     }
 
     func testCurrentFrameDisplaysButCannotEnableKeyboardOrInput() async throws {

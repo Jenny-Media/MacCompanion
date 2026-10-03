@@ -1,5 +1,6 @@
 #if os(iOS)
 import CompanionClientPlatform
+import CompanionInteractiveShared
 import CompanionMoonlightEngine
 import UIKit
 
@@ -13,6 +14,7 @@ public final class MoonlightNativeVideoDriverV0: UIKitClientNativeVideoDriverV0 
     private var stopped = false
     private var retired: (@MainActor () -> Void)?
     private var frameProgressMonitor: Task<Void, Never>?
+    private var eventHandler: (@MainActor (UIKitClientNativeVideoEventV0) -> Void)?
     private let diagnostic: @MainActor (String) -> Void
 
     public init(configuration: CompanionMoonlightVideoConfiguration,
@@ -30,11 +32,13 @@ public final class MoonlightNativeVideoDriverV0: UIKitClientNativeVideoDriverV0 
         guard !stopped, session == nil, let configuration else {
             throw DriverFailure.invalidPhase
         }
+        eventHandler = event
         // ObjC guarantees main-thread delivery. `assumeIsolated` verifies that
         // promise rather than scheduling a stale callback onto a later owner.
         let native = try CompanionMoonlightVideo(configuration: configuration, view: view) { [weak self] value, code in
             MainActor.assumeIsolated {
                 guard let self, !self.stopped, let native = self.session else { return }
+                guard let event = self.eventHandler else { return }
                 switch value {
                 case .connected: event(.connected)
                 case .firstFrame: event(.firstFrame(width: Int(native.decodedWidth), height: Int(native.decodedHeight)))
@@ -71,9 +75,30 @@ public final class MoonlightNativeVideoDriverV0: UIKitClientNativeVideoDriverV0 
     }
 
     public var presentationIsReady: Bool { !stopped && session?.presentationReady == true }
+    public var supportsSurfaceReplacement: Bool { !stopped && session != nil }
+
+    public func beginSurfaceReplacement(event: @escaping @MainActor (UIKitClientNativeVideoEventV0) -> Void) throws {
+        guard !stopped, let session else { throw DriverFailure.invalidPhase }
+        try session.beginSurfaceReplacement()
+        eventHandler = event
+    }
+
+    public func resumeSurfaceReplacement(surface: InteractiveNativeVideoSurfaceV0) throws {
+        guard !stopped, let session else { throw DriverFailure.invalidPhase }
+        var bytes = Data([0xd5,0xe7,0xc9,0x3a,0x1d,0xa9,0x4b,0xf2,0x8f,0x2b,0x09,0xa1,0xde,0x10,0x5a,0x51])
+        var uuid = surface.surfaceID.uuid
+        withUnsafeBytes(of: &uuid) { bytes.append(contentsOf: $0) }
+        for revision in [surface.surfaceRevision, surface.coordinateSpaceRevision] {
+            guard (1...9_007_199_254_740_991).contains(revision) else { throw DriverFailure.invalidPhase }
+            var bigEndian = UInt64(revision).bigEndian
+            withUnsafeBytes(of: &bigEndian) { bytes.append(contentsOf: $0) }
+        }
+        try session.resumeSurfaceReplacement(withEpoch: bytes)
+    }
 
     public func stop() async {
         stopped = true
+        eventHandler = nil
         frameProgressMonitor?.cancel()
         frameProgressMonitor = nil
         configuration = nil

@@ -1,10 +1,61 @@
 #import <XCTest/XCTest.h>
 #import <CompanionMoonlightEngine/CompanionMoonlightVideo.h>
+#include "CompanionNativeSurfaceEpoch.h"
+
+@interface CompanionMoonlightVideo (LocalEpochGateTest)
+- (BOOL)acceptPicture:(const unsigned char *)data length:(size_t)length independent:(BOOL *)independent;
+@end
+
+// Inert transport: exercises the local gate without starting native sockets,
+// capturing a screen or constructing any authorization or pairing proof.
+@interface CompanionEpochGateTestSession : CompanionMoonlightVideo
+@end
+@implementation CompanionEpochGateTestSession
+- (BOOL)presentationReady { return YES; }
+@end
 
 @interface CompanionMoonlightVideoTests : XCTestCase
 @end
 
 @implementation CompanionMoonlightVideoTests
+- (void)testReplacementEpochFencesOldAndUnmarkedPicturesWithoutStartingConnection {
+    NSURL *fixtureURL = [[NSBundle bundleForClass:self.class] URLForResource:@"native-stream-continuity-v0.1" withExtension:@"json"];
+    XCTAssertNotNil(fixtureURL);
+    NSDictionary *fixture = [NSJSONSerialization JSONObjectWithData:[NSData dataWithContentsOfURL:fixtureURL] options:0 error:nil];
+    NSString *hex = fixture[@"epoch"][@"bytesHex"];
+    XCTAssertEqual(hex.length,96U);
+    uint8_t bytes[48];
+    for (NSUInteger index = 0; index < 48; index++) {
+        unsigned byte = 0;
+        XCTAssertEqual(sscanf([[hex substringWithRange:NSMakeRange(index*2,2)] UTF8String],"%2x",&byte),1);
+        bytes[index] = (uint8_t)byte;
+    }
+    CompanionNativeSurfaceEpoch epoch;
+    XCTAssertTrue(CompanionNativeEpochDecode(bytes,48,&epoch));
+    CompanionEpochGateTestSession *session = [[CompanionEpochGateTestSession alloc] initWithConfiguration:[self configuration]
+        view:[UIView new] event:^(CompanionMoonlightVideoEvent event, int code) { XCTFail(@"Inert gate emitted a transport event"); } error:nil];
+    // KVC sets only the test's inert transport state; no native start is called.
+    [session setValue:@YES forKey:@"started"];
+    uint8_t frame[192]; BOOL independent = NO;
+    size_t size = CompanionNativeEpochSEI(&epoch,false,frame,sizeof(frame));
+    const uint8_t idr[] = {0,0,0,1,0x65,0xb8};
+    memcpy(frame+size,idr,sizeof(idr)); size += sizeof(idr);
+    XCTAssertTrue([session beginSurfaceReplacement:nil]);
+    XCTAssertFalse([session acceptPicture:frame length:size independent:&independent], @"Frames before fresh epoch configuration must be dropped");
+    XCTAssertFalse([session beginSurfaceReplacement:nil], @"Only one replacement may be in flight");
+    XCTAssertTrue([session resumeSurfaceReplacementWithEpoch:[NSData dataWithBytes:bytes length:48] error:nil]);
+    XCTAssertFalse([session resumeSurfaceReplacementWithEpoch:[NSData dataWithBytes:bytes length:48] error:nil]);
+    XCTAssertFalse([session acceptPicture:idr length:sizeof(idr) independent:&independent]);
+    XCTAssertTrue([session acceptPicture:frame length:size independent:&independent]);
+    XCTAssertTrue(independent);
+    CompanionNativeSurfaceEpoch stale = epoch; stale.surfaceRevision++;
+    size = CompanionNativeEpochSEI(&stale,false,frame,sizeof(frame));
+    memcpy(frame+size,idr,sizeof(idr)); size += sizeof(idr);
+    XCTAssertFalse([session acceptPicture:frame length:size independent:&independent]);
+    XCTAssertEqual(session.queuedVideoFrameCount,0U, @"Codec observation must not enqueue or authorize a picture");
+    [session setValue:@NO forKey:@"started"];
+    [session stopWithCompletion:^{}];
+}
 - (CompanionMoonlightVideoConfiguration *)configuration {
     CompanionMoonlightVideoConfiguration *config = [CompanionMoonlightVideoConfiguration new];
     config.host = @"127.0.0.1";

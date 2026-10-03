@@ -18,11 +18,21 @@ public protocol UIKitClientNativeVideoDriverV0: AnyObject {
     func start(view: UIView, event: @escaping @MainActor (UIKitClientNativeVideoEventV0) -> Void) throws
     func stop() async
     var presentationIsReady: Bool { get }
+    var supportsSurfaceReplacement: Bool { get }
+    func beginSurfaceReplacement(event: @escaping @MainActor (UIKitClientNativeVideoEventV0) -> Void) throws
+    func resumeSurfaceReplacement(surface: InteractiveNativeVideoSurfaceV0) throws
 }
 
 @available(iOS 17.0, *)
 public extension UIKitClientNativeVideoDriverV0 {
     var presentationIsReady: Bool { false }
+    var supportsSurfaceReplacement: Bool { false }
+    func beginSurfaceReplacement(event: @escaping @MainActor (UIKitClientNativeVideoEventV0) -> Void) throws {
+        throw InteractiveNativeVideoFailureV0.connectionFailed
+    }
+    func resumeSurfaceReplacement(surface: InteractiveNativeVideoSurfaceV0) throws {
+        throw InteractiveNativeVideoFailureV0.connectionFailed
+    }
 }
 
 /// Used by the normal Control product; engine-specific source stays outside
@@ -35,15 +45,16 @@ public final class UIKitClientNativeVideoOwnerV0: NSObject {
     private let view = UIView()
     private let cover = UIView()
     private let driver: any UIKitClientNativeVideoDriverV0
-    private let current: @MainActor () -> InteractiveNativeVideoBindingV0?
+    private var current: @MainActor () -> InteractiveNativeVideoBindingV0?
     private let now: @MainActor () -> UInt64
     private let changed: @MainActor (InteractiveNativeVideoPhaseV0, InteractiveNativeVideoFailureV0?) -> Void
     private let diagnostic: @MainActor (String) -> Void
     private var reportedPhase: InteractiveNativeVideoPhaseV0?
     public private(set) var presentationAcknowledged = false
-    private let acknowledgePresentation: (@MainActor (UInt64, InteractiveNativeVideoSurfaceV0) async throws -> InteractiveNativeVideoPresentationReceiptBodyV0)?
-    private let expectedLogicalWidthPoints: UInt32?
-    private let expectedLogicalHeightPoints: UInt32?
+    private var acknowledgePresentation: (@MainActor (UInt64, InteractiveNativeVideoSurfaceV0) async throws -> InteractiveNativeVideoPresentationReceiptBodyV0)?
+    private var expectedLogicalWidthPoints: UInt32?
+    private var expectedLogicalHeightPoints: UInt32?
+    private var replacementSnapshot: UIView?
     private let inputAdmissionChanged: @MainActor (Bool) -> Void
     public var allowsInput: Bool { lifecycle.allowsInput && presentationAcknowledged && presentationIsCurrent() }
     private var presentationTask: Task<Void, Never>?
@@ -154,6 +165,75 @@ public final class UIKitClientNativeVideoOwnerV0: NSObject {
         }
     }
 
+    public var supportsSurfaceReplacement: Bool { driver.supportsSurfaceReplacement }
+
+    /// The replacement reader must check the same primary/Control authority
+    /// independently of the native enrollment that is being replaced.
+    public func beginSurfaceReplacement(
+        current replacementCurrent: @escaping @MainActor () -> InteractiveNativeVideoBindingV0?
+    ) throws {
+        guard drain == nil, driver.supportsSurfaceReplacement, lifecycle.phase == .displaying,
+              driver.presentationIsReady,
+              let binding = replacementCurrent(), binding == lifecycle.binding,
+              let generation = lifecycle.beginSurfaceReplacement(current: binding, nowMonotonicMilliseconds: now()) else {
+            throw InteractiveNativeVideoFailureV0.authorizationLost
+        }
+        current = replacementCurrent
+        presentationAcknowledged = false
+        presentationAttempted = false
+        presentationTask?.cancel(); presentationTask = nil
+        surface.clearNativeInputAdmission(cover)
+        surface.setInputEnabled(false)
+        inputAdmissionChanged(false)
+        // Ephemeral UIKit snapshot holds the previous view during the decoder
+        // flush. It is removed before fresh input admission and never persisted.
+        replacementSnapshot = view.snapshotView(afterScreenUpdates: false)
+        if let snapshot = replacementSnapshot {
+            snapshot.frame = cover.bounds
+            snapshot.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+            cover.addSubview(snapshot)
+        }
+        do {
+            guard drain == nil, lifecycle.phase == .switching, !lifecycle.isTerminal,
+                  current() == binding, now() < binding.expiresAtMonotonicMilliseconds else {
+                stopAdmission()
+                throw InteractiveNativeVideoFailureV0.authorizationLost
+            }
+            try driver.beginSurfaceReplacement { [weak self] event in self?.receive(event, generation: generation) }
+            publish()
+        } catch {
+            _ = lifecycle.connectionFailed(generation: generation, current: binding, nowMonotonicMilliseconds: now())
+            retireViewAndDrain()
+            throw error
+        }
+    }
+
+    /// Called only after fresh existing enrollment proof and acknowledged
+    /// geometry have been joined to this retained connection's original binding.
+    public func resumeSurfaceReplacement(descriptor: InteractiveNativeVideoSurfaceV0,
+        logicalWidthPoints: UInt32, logicalHeightPoints: UInt32,
+        current replacementCurrent: @escaping @MainActor () -> InteractiveNativeVideoBindingV0?,
+        acknowledgePresentation: @escaping @MainActor (UInt64, InteractiveNativeVideoSurfaceV0) async throws -> InteractiveNativeVideoPresentationReceiptBodyV0
+    ) throws {
+        let generation = lifecycle.generation
+        guard drain == nil, logicalWidthPoints > 0, logicalHeightPoints > 0,
+              let binding = replacementCurrent(), binding == lifecycle.binding,
+              lifecycle.configureSurfaceReplacement(descriptor, generation: generation,
+                  current: binding, nowMonotonicMilliseconds: now()) else {
+            stopAdmission()
+            throw InteractiveNativeVideoFailureV0.authorizationLost
+        }
+        current = replacementCurrent
+        expectedLogicalWidthPoints = logicalWidthPoints; expectedLogicalHeightPoints = logicalHeightPoints
+        self.acknowledgePresentation = acknowledgePresentation
+        do { try driver.resumeSurfaceReplacement(surface: descriptor); publish() }
+        catch {
+            _ = lifecycle.connectionFailed(generation: generation, current: binding, nowMonotonicMilliseconds: now())
+            retireViewAndDrain()
+            throw error
+        }
+    }
+
     private func presentationIsCurrent() -> Bool {
         presentationUnavailableReason() == nil
     }
@@ -208,6 +288,7 @@ public final class UIKitClientNativeVideoOwnerV0: NSObject {
                     guard let current = self.current(), self.lifecycle.admitInput(generation: generation, surface: descriptor,
                         current: current, nowMonotonicMilliseconds: self.now()) else { throw InteractiveNativeVideoFailureV0.authorizationLost }
                 }
+                self.replacementSnapshot?.removeFromSuperview(); self.replacementSnapshot = nil
                 self.presentationAcknowledged = true
                 self.surface.setInputEnabled(self.allowsInput)
                 self.inputAdmissionChanged(self.allowsInput)
@@ -274,6 +355,7 @@ public final class UIKitClientNativeVideoOwnerV0: NSObject {
     private func retireViewAndDrain() {
         NotificationCenter.default.removeObserver(self, name: UIApplication.didEnterBackgroundNotification, object: nil)
         presentationAcknowledged = false
+        replacementSnapshot?.removeFromSuperview(); replacementSnapshot = nil
         surface.clearNativeInputAdmission(cover)
         inputAdmissionChanged(false)
         presentationTask?.cancel()

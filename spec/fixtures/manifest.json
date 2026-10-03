@@ -712,6 +712,12 @@
       "kind": "client.nativeBootstrapRendering.v0.1",
       "expect": "valid",
       "canonicalSHA256": "463dbcc3addf168c482b19b5a5a79254d91cc1072389118344733f007a89d20e"
+    },
+    {
+      "path": "native-stream-continuity-v0.1.json",
+      "kind": "native.streamContinuity.v0.1",
+      "expect": "valid",
+      "canonicalSHA256": "1adaea23a36220bc5ad05a35146b42631b5a227995a909dacf5a3c08b2048879"
     }
   ]
 }

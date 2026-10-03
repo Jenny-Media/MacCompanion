@@ -38,6 +38,11 @@ typedef NS_ENUM(NSInteger, CompanionMoonlightVideoEvent) {
                                          event:(void (^)(CompanionMoonlightVideoEvent event, int code))event
                                          error:(NSError **)error;
 - (BOOL)start:(NSError **)error;
+/// Fences picture delivery and flushes the display, retaining native sockets.
+- (BOOL)beginSurfaceReplacement:(NSError **)error;
+/// Requires the exact 48-byte epoch from a freshly acknowledged surface. A
+/// matching independently decodable picture must arrive before readiness.
+- (BOOL)resumeSurfaceReplacementWithEpoch:(NSData *)epoch error:(NSError **)error;
 - (void)stopWithCompletion:(void (^)(void))completion;
 @end
 

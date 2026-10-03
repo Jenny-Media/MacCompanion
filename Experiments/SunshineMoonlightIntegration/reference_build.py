@@ -60,6 +60,8 @@ def native_source_inputs():
                      "spec/fixtures/valid/normal-native-simulator-development.json",
                      "spec/capability-protocol/v0/local-native-runtime-snapshot.md",
                      "spec/capability-protocol/v0/local-native-backend.md",
+                     "spec/capability-protocol/v0/native-stream-continuity.md",
+                     "spec/fixtures/native-stream-continuity-v0.1.json",
                      "spec/fixtures/local-xpc-native-backend-v0.1.json",
                      "spec/fixtures/local-xpc-native-runtime-snapshot-v0.1.json",
                      "spec/fixtures/valid/managed-native-host-admission.json",

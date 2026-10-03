@@ -129,4 +129,74 @@ final class InteractiveNativeVideoLifecycleV0Tests: XCTestCase {
         XCTAssertTrue(lease.requiresDrain)
         XCTAssertTrue(lease.drained(generation: second))
     }
+
+    func testIndexedConnectionPreservingSurfaceLifecycle() throws {
+        var root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+        while !FileManager.default.fileExists(atPath: root.appendingPathComponent("spec/fixtures/manifest.json").path) {
+            let parent = root.deletingLastPathComponent()
+            guard root != parent else { throw CocoaError(.fileNoSuchFile) }
+            root = parent
+        }
+        let fixture = try XCTUnwrap(try JSONSerialization.jsonObject(with: Data(contentsOf:
+            root.appendingPathComponent("spec/fixtures/native-stream-continuity-v0.1.json"))) as? [String: Any])
+        let cases = try XCTUnwrap(fixture["clientLifecycleCases"] as? [String])
+        XCTAssertEqual(cases.count, 9)
+        for name in cases {
+            let current = try binding(), oldSurface = try surface(), replacement = try surface(revision: 2)
+            var lease = InteractiveNativeVideoLifecycleV0(binding: current, surface: oldSurface)
+            let old = try XCTUnwrap(lease.begin(current: current, nowMonotonicMilliseconds: 10))
+            XCTAssertTrue(lease.connected(generation: old, current: current, nowMonotonicMilliseconds: 10))
+            XCTAssertTrue(lease.frame(generation: old, surface: oldSurface, current: current, nowMonotonicMilliseconds: 10))
+            XCTAssertTrue(lease.admitInput(generation: old, surface: oldSurface, current: current, nowMonotonicMilliseconds: 10))
+            let next = try XCTUnwrap(lease.beginSurfaceReplacement(current: current, nowMonotonicMilliseconds: 11))
+            XCTAssertEqual(next, old + 1, name)
+            XCTAssertTrue(lease.requiresDrain, name)
+            XCTAssertEqual(lease.phase, .switching, name)
+            XCTAssertFalse(lease.allowsInput, name)
+            XCTAssertFalse(lease.frame(generation: old, surface: oldSurface, current: current, nowMonotonicMilliseconds: 11), name)
+            XCTAssertFalse(lease.admitInput(generation: old, surface: oldSurface, current: current, nowMonotonicMilliseconds: 11), name)
+            XCTAssertFalse(lease.drained(generation: old), name)
+            switch name {
+            case "same-surface-replay-cannot-complete-switch":
+                XCTAssertFalse(lease.configureSurfaceReplacement(oldSurface, generation: next, current: current, nowMonotonicMilliseconds: 11))
+                XCTAssertEqual(lease.phase, .switching)
+                continue
+            case "canvas-change-denied":
+                XCTAssertFalse(lease.configureSurfaceReplacement(try surface(revision: 2, width: 1280),
+                    generation: next, current: current, nowMonotonicMilliseconds: 11))
+                XCTAssertEqual(lease.surface, oldSurface)
+                continue
+            case "concurrent-switch-denied":
+                XCTAssertNil(lease.beginSurfaceReplacement(current: current, nowMonotonicMilliseconds: 11))
+                XCTAssertEqual(lease.generation, next)
+            case "stop-during-switch-is-terminal":
+                lease.stop()
+                XCTAssertFalse(lease.configureSurfaceReplacement(replacement, generation: next, current: current, nowMonotonicMilliseconds: 11))
+                XCTAssertTrue(lease.isTerminal)
+                XCTAssertTrue(lease.drained(generation: next))
+                XCTAssertNil(lease.begin(current: current, nowMonotonicMilliseconds: 11))
+                continue
+            case "authority-loss-during-switch-is-terminal", "expiry-during-switch-is-terminal":
+                let revoked = name == "authority-loss-during-switch-is-terminal"
+                XCTAssertFalse(lease.configureSurfaceReplacement(replacement, generation: next,
+                    current: revoked ? try binding(grantRevision: 2) : current,
+                    nowMonotonicMilliseconds: revoked ? 11 : 100))
+                XCTAssertTrue(lease.isTerminal)
+                XCTAssertFalse(lease.allowsInput)
+                continue
+            case "switch-increments-generation-without-drain", "switch-pauses-input-until-new-frame-and-receipt",
+                 "old-frame-and-old-receipt-cannot-change-new-generation": break
+            default: XCTFail("Unknown indexed continuity case: \(name)")
+            }
+            XCTAssertTrue(lease.configureSurfaceReplacement(replacement, generation: next, current: current, nowMonotonicMilliseconds: 11), name)
+            XCTAssertEqual(lease.phase, .connected)
+            XCTAssertFalse(lease.admitInput(generation: next, surface: replacement, current: current, nowMonotonicMilliseconds: 11), name)
+            XCTAssertFalse(lease.frame(generation: old, surface: oldSurface, current: current, nowMonotonicMilliseconds: 11), name)
+            XCTAssertTrue(lease.frame(generation: next, surface: replacement, current: current, nowMonotonicMilliseconds: 11), name)
+            XCTAssertFalse(lease.allowsInput, name)
+            XCTAssertFalse(lease.admitInput(generation: old, surface: oldSurface, current: current, nowMonotonicMilliseconds: 11), name)
+            XCTAssertTrue(lease.admitInput(generation: next, surface: replacement, current: current, nowMonotonicMilliseconds: 11), name)
+            XCTAssertTrue(lease.allowsInput, name)
+        }
+    }
 }

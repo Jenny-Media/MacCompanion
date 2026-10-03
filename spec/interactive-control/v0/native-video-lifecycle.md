@@ -24,7 +24,13 @@ The supported native kinds are Desktop, App and Window. Focused region requires
 its own later capture and input contract. The App/Window descriptor is admitted
 only after the existing replacement clean-frame acknowledgement, followed by a
 fresh native enrollment and selected capture context. Old renderer generation,
-certificate and input authorization cannot move to the replacement.
+enrollment proof and input authorization cannot move to the replacement.
+The optional connection-preserving profile in
+`spec/capability-protocol/v0/native-stream-continuity.md` retains certificates
+and sockets only with a fresh proof, frame epoch and presentation receipt. It
+does not retain the old surface's renderer generation or input authorization.
+Until both normal-app adapters admit that complete profile, the replacement
+path below remains required.
 During a native surface choice, the client continues validating records on the
 existing authenticated media role but does not submit old-surface frames to the
 renderer after that surface is fenced. New-surface records still require the

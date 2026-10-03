@@ -5,6 +5,7 @@
 #include "Limelight.h"
 #include <openssl/crypto.h>
 #include <stdatomic.h>
+#include "CompanionNativeSurfaceEpoch.h"
 
 @implementation CompanionMoonlightVideoConfiguration
 @end
@@ -17,11 +18,14 @@
 @property (nonatomic) BOOL retired;
 @property (nonatomic) BOOL started;
 @property (nonatomic) BOOL stopping;
+@property (nonatomic) BOOL waitingForEpoch;
+@property (nonatomic) int videoFormat;
 @property (strong, nonatomic) NSMutableArray *stopCompletions;
 @property (strong, nonatomic) dispatch_queue_t worker;
 @property (strong, nonatomic, nullable) dispatch_source_t interruptTimer;
 - (void)deliver:(CompanionMoonlightVideoEvent)event code:(int)code;
 - (void)recordQueuedVideoFrame;
+- (BOOL)acceptPicture:(const unsigned char *)data length:(size_t)length independent:(BOOL *)independent;
 @end
 
 // moonlight-common-c has a process-global connection. Reserve it until Stop
@@ -43,6 +47,10 @@ static CompanionMoonlightVideo *currentSession(void) {
     char _version[32];
     char _sessionURL[128];
     _Atomic(uint64_t) _queuedVideoFrameCount;
+    _Atomic(uint64_t) _frameEpochGeneration;
+    CompanionNativeSurfaceEpoch _expectedEpoch;
+    BOOL _hasExpectedEpoch, _waitingForEpoch, _awaitingEpochConfiguration;
+    int _videoFormat;
 }
 
 + (void)initialize {
@@ -77,6 +85,8 @@ static BOOL fail(NSError **error, NSInteger code) {
         && config.framesPerSecond <= 120 && config.bitrateKbps >= 500 && config.bitrateKbps <= 150000;
     if (!valid) { fail(error, 1); return nil; }
     if (!(self = [super init])) { return nil; }
+    atomic_init(&_queuedVideoFrameCount,0);
+    atomic_init(&_frameEpochGeneration,0);
     _stateLock = [[NSLock alloc] init];
     _stopCompletions = [[NSMutableArray alloc] init];
     _worker = dispatch_queue_create("maccompanion.moonlight.video", DISPATCH_QUEUE_SERIAL);
@@ -117,6 +127,7 @@ static int decoderSetup(int format, int width, int height, int fps, void *contex
     }
     dispatch_sync(dispatch_get_main_queue(), ^{
         if (!session.retired) {
+            session.videoFormat = format;
             [session.renderer setupWithVideoFormat:format width:width height:height frameRate:fps];
         }
     });
@@ -135,7 +146,7 @@ static void decoderStop(void) {
 
 // The upstream renderer pulls complete frames on the main thread.
 int DrSubmitDecodeUnit(PDECODE_UNIT unit) {
-    if (!unit || unit->fullLength <= 0 || !unit->bufferList) { return DR_NEED_IDR; }
+    if (!unit || unit->fullLength <= 0 || unit->fullLength > 67108864 || !unit->bufferList) { return DR_NEED_IDR; }
     unsigned char *data = malloc(unit->fullLength);
     if (!data) { return DR_NEED_IDR; }
     int length = 0;
@@ -145,23 +156,35 @@ int DrSubmitDecodeUnit(PDECODE_UNIT unit) {
     for (PLENTRY entry = unit->bufferList; entry; entry = entry->next) {
         if (!entry->data || entry->length <= 0 || entry->length > unit->fullLength - total) { free(data); return DR_NEED_IDR; }
         total += entry->length;
-        if (entry->bufferType != BUFFER_TYPE_PICDATA) {
-            // Picture fragments may be shorter than an Annex B header;
-            // parameter NALs submitted independently still require a header.
-            if (entry->length < 4) { free(data); return DR_NEED_IDR; }
-            int result = [session.renderer submitDecodeBuffer:(unsigned char *)entry->data length:entry->length
-                                                  bufferType:entry->bufferType decodeUnit:unit];
-            if (result != DR_OK) { free(data); return result; }
-        } else {
+        if (entry->bufferType == BUFFER_TYPE_PICDATA) {
             memcpy(data + length, entry->data, entry->length);
             length += entry->length;
         }
     }
     if (total != unit->fullLength || length == 0) { free(data); return DR_NEED_IDR; }
+    BOOL independent = NO;
+    if (![session acceptPicture:data length:(size_t)length independent:&independent]) {
+        free(data); return DR_OK;
+    }
+    if (session.waitingForEpoch && (!independent || unit->frameType != FRAME_TYPE_IDR)) {
+        free(data); return DR_NEED_IDR;
+    }
+    // Parameter sets from an old epoch must not alter the decoder's state.
+    // Validate the complete picture's marker before submitting any of them.
+    for (PLENTRY entry = unit->bufferList; entry; entry = entry->next) {
+        if (entry->bufferType == BUFFER_TYPE_PICDATA) continue;
+        if (entry->length < 4) { free(data); return DR_NEED_IDR; }
+        int result = [session.renderer submitDecodeBuffer:(unsigned char *)entry->data length:entry->length
+                                              bufferType:entry->bufferType decodeUnit:unit];
+        if (result != DR_OK) { free(data); return result; }
+    }
     // Upstream takes ownership of the picture allocation, including failures.
     int result = [session.renderer submitDecodeBuffer:data length:length
                                            bufferType:BUFFER_TYPE_PICDATA decodeUnit:unit];
-    if (result == DR_OK) [session recordQueuedVideoFrame];
+    if (result == DR_OK) {
+        session.waitingForEpoch = NO;
+        [session recordQueuedVideoFrame];
+    }
     return result;
 }
 
@@ -210,9 +233,48 @@ static void discardAudio(char *bytes, int length) { }
 }
 
 - (void)deliver:(CompanionMoonlightVideoEvent)event code:(int)code {
+    uint64_t generation = atomic_load_explicit(&_frameEpochGeneration,memory_order_relaxed);
     dispatch_async(dispatch_get_main_queue(), ^{
+        if (event == CompanionMoonlightVideoEventFirstFrame
+            && generation != atomic_load_explicit(&self->_frameEpochGeneration,memory_order_relaxed)) return;
         if (!self.retired && currentSession() == self) { self.event(event, code); }
     });
+}
+
+- (BOOL)beginSurfaceReplacement:(NSError **)error {
+    NSAssert(NSThread.isMainThread, @"Surface replacement must use the main thread");
+    if (self.retired || self.stopping || !self.started || _waitingForEpoch
+        || !self.presentationReady || atomic_load(&_frameEpochGeneration) == UINT64_MAX) return fail(error,4);
+    _waitingForEpoch = YES;
+    _awaitingEpochConfiguration = YES;
+    atomic_fetch_add(&_frameEpochGeneration,1);
+    for (CALayer *layer in self.renderView.layer.sublayers) {
+        if ([layer isKindOfClass:AVSampleBufferDisplayLayer.class]) {
+            [(AVSampleBufferDisplayLayer *)layer flushAndRemoveImage]; layer.hidden = YES;
+        }
+    }
+    return YES;
+}
+
+- (BOOL)resumeSurfaceReplacementWithEpoch:(NSData *)bytes error:(NSError **)error {
+    NSAssert(NSThread.isMainThread, @"Surface replacement must use the main thread");
+    CompanionNativeSurfaceEpoch epoch;
+    if (self.retired || self.stopping || !_waitingForEpoch || !_awaitingEpochConfiguration
+        || !CompanionNativeEpochDecode(bytes.bytes,bytes.length,&epoch)
+        || (_hasExpectedEpoch && CompanionNativeEpochEqual(&epoch,&_expectedEpoch))) return fail(error,4);
+    _expectedEpoch = epoch; _hasExpectedEpoch = YES;
+    _awaitingEpochConfiguration = NO;
+    return YES;
+}
+
+- (BOOL)acceptPicture:(const unsigned char *)data length:(size_t)length independent:(BOOL *)independent {
+    NSAssert(NSThread.isMainThread, @"Picture acceptance must use the main thread");
+    if (_awaitingEpochConfiguration) return NO;
+    if (!_hasExpectedEpoch) return !_waitingForEpoch;
+    CompanionNativeSurfaceEpoch epoch; bool idr = false;
+    int result = CompanionNativeEpochInspect(data,length,_videoFormat == VIDEO_FORMAT_H265,&epoch,&idr);
+    *independent = idr;
+    return result == 1 && CompanionNativeEpochEqual(&epoch,&_expectedEpoch);
 }
 
 - (void)stopWithCompletion:(void (^)(void))completion {
@@ -255,7 +317,7 @@ static void discardAudio(char *bytes, int length) { }
 
 - (BOOL)presentationReady {
     NSAssert(NSThread.isMainThread, @"Read presentation readiness on the main thread");
-    if (self.retired || self.stopping || !self.started || !self.renderView) return NO;
+    if (self.retired || self.stopping || !self.started || !self.renderView || _waitingForEpoch) return NO;
     // The pinned renderer installs one display layer directly in this view.
     // An IDR enqueue callback alone is not AVFoundation display readiness.
     for (CALayer *layer in self.renderView.layer.sublayers) {

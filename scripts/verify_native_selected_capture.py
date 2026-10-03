@@ -2,6 +2,7 @@
 """Compile and exercise selected capture lifecycle with synthetic native samples."""
 from pathlib import Path
 import argparse
+import json
 import subprocess
 import sys
 import tempfile
@@ -11,6 +12,16 @@ parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--native-root", type=Path, help="Also check the bridge against the exact pinned Sunshine checkout")
 args = parser.parse_args()
 with tempfile.TemporaryDirectory(prefix="maccompanion-selected-capture-", dir="/private/tmp") as temporary:
+    epoch = Path(temporary) / "native-surface-epoch-tests"
+    fixture = json.loads((ROOT / "spec/fixtures/native-stream-continuity-v0.1.json").read_text())
+    manifest = json.loads((ROOT / "spec/fixtures/manifest.json").read_text())
+    assert sum(entry["path"] == "native-stream-continuity-v0.1.json" for entry in manifest["fixtures"]) == 1
+    assert len(fixture["epochCases"]) == 11
+    subprocess.run(["xcrun", "clang", "-std=c11", "-Wall", "-Wextra", "-Werror",
+                    "-I" + str(ROOT / "Native/Client"),
+                    str(ROOT / "Experiments/SunshineMoonlightIntegration/NativeSurfaceEpochTests.c"),
+                    "-o", str(epoch)], check=True)
+    subprocess.run([str(epoch), fixture["epoch"]["bytesHex"]], check=True, timeout=10)
     executable = Path(temporary) / "selected-capture-tests"
     subprocess.run(["xcrun", "clang", "-fobjc-arc", "-fblocks", "-mmacosx-version-min=26.0",
                     "-Wall", "-Wextra", "-Werror", "-I" + str(ROOT / "Native/Host"),
@@ -18,7 +29,8 @@ with tempfile.TemporaryDirectory(prefix="maccompanion-selected-capture-", dir="/
                     str(ROOT / "Experiments/SunshineMoonlightIntegration/SelectedCaptureTests.m"),
                     "-framework", "Foundation", "-framework", "ScreenCaptureKit", "-framework", "CoreMedia",
                     "-framework", "CoreVideo", "-framework", "CoreGraphics", "-o", str(executable)], check=True)
-    subprocess.run([str(executable), str(ROOT / "spec/fixtures/native-selected-capture-context-v0.1.json")], check=True, timeout=30)
+    subprocess.run([str(executable), str(ROOT / "spec/fixtures/native-selected-capture-context-v0.1.json"),
+                    str(ROOT / "spec/fixtures/native-stream-continuity-v0.1.json")], check=True, timeout=30)
     context = Path(temporary) / "selected-context-tests"
     subprocess.run(["xcrun", "clang", "-fobjc-arc", "-fblocks", "-mmacosx-version-min=26.0",
                     "-Wall", "-Wextra", "-Werror", "-I" + str(ROOT / "Native/Host"),

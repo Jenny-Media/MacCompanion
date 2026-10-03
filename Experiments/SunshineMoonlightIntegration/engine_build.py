@@ -24,7 +24,7 @@ def main():
     project = root / "embedded-engine"
     sources = project / "Sources"
     sources.mkdir(parents=True, exist_ok=True)
-    for name in ["CompanionMoonlightVideo.h", "CompanionMoonlightVideo.m", "CompanionNativeTLS.h", "CompanionNativeTLS.m"]:
+    for name in ["CompanionMoonlightVideo.h", "CompanionMoonlightVideo.m", "CompanionNativeSurfaceEpoch.h", "CompanionNativeTLS.h", "CompanionNativeTLS.m"]:
         shutil.copy2(HERE.parents[1] / "Native/Client" / name, sources / name)
     for name in ["Stream/VideoDecoderRenderer.h", "Stream/VideoDecoderRenderer.m",
                  "Stream/ConnectionCallbacks.h", "Utility/Logger.h", "Utility/Logger.m"]:
@@ -79,10 +79,12 @@ def main():
         "sources": project_sources, "dependencies": dependencies_spec, "settings": {"base": settings}}}}
     spec["targets"]["CompanionMoonlightVideoTests"] = {
         "type": "bundle.unit-test", "platform": "iOS", "deploymentTarget": "26.0",
-        "sources": [{"path": str(HERE / "CompanionMoonlightVideoTests.m")}],
+        "sources": [{"path": str(HERE / "CompanionMoonlightVideoTests.m")},
+                    {"path": str(HERE.parents[1] / "spec/fixtures/native-stream-continuity-v0.1.json"), "buildPhase": "resources"}],
         "dependencies": [{"target": "CompanionMoonlightEngine"}],
         "settings": {"base": {"PRODUCT_BUNDLE_IDENTIFIER": "dev.maccompanion.experiment.moonlight-tests",
-                                "GENERATE_INFOPLIST_FILE": "YES"}}}
+                                "GENERATE_INFOPLIST_FILE": "YES",
+                                "HEADER_SEARCH_PATHS": [str(HERE.parents[1] / "Native/Client")]}}}
     spec["schemes"] = {"CompanionMoonlightEngine": {
         "build": {"targets": {"CompanionMoonlightEngine": "all"}},
         "test": {"targets": ["CompanionMoonlightVideoTests"]}}}

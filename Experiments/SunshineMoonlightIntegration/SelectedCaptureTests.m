@@ -19,6 +19,9 @@ static void Wait(dispatch_semaphore_t signal) { Require(dispatch_semaphore_wait(
 @property(copy) void (^startCompletion)(NSError *);
 @property(copy) void (^stopCompletion)(NSError *);
 @property(atomic) NSInteger starts, stops, removals;
+@property(strong) dispatch_semaphore_t filterEntered, configurationEntered;
+@property(copy) void (^filterCompletion)(NSError *), (^configurationCompletion)(NSError *);
+@property(strong) SCStreamConfiguration *updatedConfiguration;
 - (void)completeStart;
 - (void)completeStop;
 - (void)emit:(CMSampleBufferRef)sample;
@@ -26,7 +29,10 @@ static void Wait(dispatch_semaphore_t signal) { Require(dispatch_semaphore_wait(
 @end
 
 @implementation SelectedTestSession
-- (instancetype)init { self = [super init]; if (self) { _startEntered = dispatch_semaphore_create(0); _stopEntered = dispatch_semaphore_create(0); } return self; }
+- (instancetype)init { self = [super init]; if (self) {
+  _startEntered = dispatch_semaphore_create(0); _stopEntered = dispatch_semaphore_create(0);
+  _filterEntered = dispatch_semaphore_create(0); _configurationEntered = dispatch_semaphore_create(0);
+} return self; }
 - (BOOL)addStreamOutput:(id<SCStreamOutput>)output type:(SCStreamOutputType)type sampleHandlerQueue:(dispatch_queue_t)queue error:(NSError **)error {
   (void)error; Require(type == SCStreamOutputTypeScreen); self.output = (id)output; self.queue = queue; return YES;
 }
@@ -35,6 +41,13 @@ static void Wait(dispatch_semaphore_t signal) { Require(dispatch_semaphore_wait(
 }
 - (void)startCaptureWithCompletionHandler:(void (^)(NSError *))completion { self.starts += 1; self.startCompletion = completion; dispatch_semaphore_signal(self.startEntered); }
 - (void)stopCaptureWithCompletionHandler:(void (^)(NSError *))completion { self.stops += 1; self.stopCompletion = completion; dispatch_semaphore_signal(self.stopEntered); }
+- (void)updateContentFilter:(SCContentFilter *)filter completionHandler:(void (^)(NSError *))completion {
+  Require(filter != nil && self.filterCompletion == nil); self.filterCompletion = completion; dispatch_semaphore_signal(self.filterEntered);
+}
+- (void)updateConfiguration:(SCStreamConfiguration *)configuration completionHandler:(void (^)(NSError *))completion {
+  Require(configuration != nil && self.configurationCompletion == nil); self.updatedConfiguration = configuration;
+  self.configurationCompletion = completion; dispatch_semaphore_signal(self.configurationEntered);
+}
 - (void)completeStart { void (^completion)(NSError *) = self.startCompletion; self.startCompletion = nil; Require(completion != nil); completion(nil); [self flush]; }
 - (void)completeStop { void (^completion)(NSError *) = self.stopCompletion; self.stopCompletion = nil; Require(completion != nil); completion(nil); [self flush]; }
 - (void)emit:(CMSampleBufferRef)sample {
@@ -206,15 +219,129 @@ static void RequireCenteredCapturePlacement(NSString *fixturePath) {
   }
 }
 
+static void CompleteUpdate(SelectedTestSession *session, BOOL configuration, NSError *error) {
+  void (^completion)(NSError *) = configuration ? session.configurationCompletion : session.filterCompletion;
+  if (configuration) session.configurationCompletion = nil; else session.filterCompletion = nil;
+  Require(completion != nil); completion(error); [session flush];
+}
+
+static void ReconfigureStream(NSString *name) {
+  SelectedTestSession *session = [SelectedTestSession new];
+  __block atomic_bool newCurrent; atomic_init(&newCurrent, true);
+  CompanionSelectedCapture *capture = Capture(session, ^BOOL { return YES; });
+  __block NSInteger frames = 0, updates = 0, terminals = 0;
+  __block NSError *updateError = nil, *terminalError = nil;
+  dispatch_semaphore_t done = dispatch_semaphore_create(0);
+  [capture startWithFrame:^BOOL(CMSampleBufferRef sample) { (void)sample; frames += 1; return YES; }
+      terminal:^(NSError *error) { terminalError = error; terminals += 1; dispatch_semaphore_signal(done); }];
+  Wait(session.startEntered); [session completeStart];
+  CMSampleBufferRef oldSample = Sample(320,240,SCFrameStatusComplete,
+      [name isEqual:@"switch-drops-scheduled-old-sample"] ? 14 : 0);
+  BOOL invalid = [name isEqual:@"invalid-update-cannot-change-canvas-or-owner"];
+  // The injected session never uses this object as a real platform filter.
+  SCContentFilter *filter = (SCContentFilter *)[NSObject new];
+  [capture updateFilter:filter sourceRect:CGRectNull sourcePixelWidth:invalid ? 0 : 480 sourcePixelHeight:640
+      isCurrent:^BOOL { return atomic_load(&newCurrent); } completion:^(NSError *error) {
+        updateError = error; updates += 1;
+      }];
+  [session flush];
+  if (invalid) {
+    Require(updates == 1 && updateError.code == 1 && session.filterCompletion == nil && terminals == 0);
+    [session emit:oldSample]; Require(frames == 1);
+    [capture stop]; Wait(session.stopEntered); [session completeStop]; Wait(done);
+    CFRelease(oldSample); return;
+  }
+  Wait(session.filterEntered);
+  [session emit:oldSample]; Require(frames == 0 && updates == 0);
+  if ([name isEqual:@"concurrent-update-denied-without-changing-first-update"]) {
+    __block NSInteger denied = 0;
+    [capture updateFilter:filter sourceRect:CGRectNull sourcePixelWidth:640 sourcePixelHeight:360
+        isCurrent:^BOOL { return YES; } completion:^(NSError *error) { Require(error.code == 1); denied += 1; }];
+    [session flush]; Require(denied == 1 && updates == 0);
+  }
+  BOOL stop = [name hasPrefix:@"stop-"];
+  NSError *failure = [NSError errorWithDomain:@"Synthetic.Update" code:1 userInfo:nil];
+  BOOL configurationStop = [name isEqual:@"stop-during-configuration-joins-before-terminal"];
+  if ([name isEqual:@"platform-stop-during-update-cannot-reopen-stream"]) {
+    [session.output stream:(SCStream *)session didStopWithError:failure]; [session flush];
+    Require(terminals == 0 && updates == 0 && session.stops == 0);
+    CompleteUpdate(session, NO, nil); Wait(done);
+    Require(updates == 1 && updateError.code == 5 && terminalError.code == 5 && session.stops == 0);
+    Require(session.configurationCompletion == nil && session.removals == 1);
+    CFRelease(oldSample); return;
+  }
+  if (stop && !configurationStop) {
+    [capture stop]; [session flush]; Require(session.stops == 0 && terminals == 0 && updates == 0);
+  }
+  BOOL filterFailure = [name isEqual:@"switch-filter-failure-drains"];
+  CompleteUpdate(session, NO, filterFailure ? failure : nil);
+  if ((stop && !configurationStop) || filterFailure) {
+    Wait(session.stopEntered); Require(terminals == 0 && updates == 0 && session.configurationCompletion == nil);
+    [session emit:oldSample]; Require(frames == 0);
+    [session completeStop]; Wait(done);
+    Require(updates == 1 && updateError != nil && terminals == 1 && session.removals == 1);
+    Require(stop ? terminalError == nil : terminalError.code == 7);
+    CFRelease(oldSample); return;
+  }
+  Wait(session.configurationEntered);
+  Require(session.updatedConfiguration.width == 320 && session.updatedConfiguration.height == 240);
+  Require(CGRectEqualToRect(session.updatedConfiguration.destinationRect, CGRectMake(70,0,180,240)));
+  [session emit:oldSample]; Require(frames == 0 && updates == 0);
+  if (configurationStop) {
+    [capture stop]; [session flush]; Require(terminals == 0 && updates == 0 && session.stops == 0);
+    CompleteUpdate(session, YES, nil); Wait(session.stopEntered);
+    Require(terminals == 0 && updates == 0);
+    [session emit:oldSample]; Require(frames == 0);
+    [session completeStop]; Wait(done);
+    Require(updates == 1 && updateError != nil && terminalError == nil && terminals == 1 && session.removals == 1);
+    CFRelease(oldSample); return;
+  }
+  BOOL configurationFailure = [name isEqual:@"switch-configuration-failure-drains"];
+  CompleteUpdate(session, YES, configurationFailure ? failure : nil);
+  if (configurationFailure) {
+    Wait(session.stopEntered); Require(updates == 0 && terminals == 0);
+    [session completeStop]; Wait(done);
+    Require(updates == 1 && updateError.code == 8 && terminalError.code == 8);
+    CFRelease(oldSample); return;
+  }
+  Require(updates == 1 && updateError == nil && session.starts == 1 && session.stops == 0);
+  // This frame has the old timestamp and old geometry. It must be dropped
+  // before geometry validation, rather than terminating the new selection.
+  [session emit:oldSample]; Require(frames == 0 && terminals == 0 && session.stops == 0);
+  CFRelease(oldSample);
+  BOOL revoked = [name isEqual:@"switch-revalidates-new-owner-before-delivery"];
+  if (revoked) atomic_store(&newCurrent, false);
+  CMSampleBufferRef newSample = Sample(320,240,SCFrameStatusComplete,0);
+  NSMutableDictionary *info = (__bridge NSMutableDictionary *)CFArrayGetValueAtIndex(CMSampleBufferGetSampleAttachmentsArray(newSample, YES),0);
+  mach_timebase_info_data_t timebase = {0};
+  Require(mach_timebase_info(&timebase) == KERN_SUCCESS && timebase.numer && timebase.denom);
+  info[SCStreamFrameInfoDisplayTime] = @(mach_absolute_time() + (uint64_t)((__uint128_t)100000000 * timebase.denom / timebase.numer));
+  info[SCStreamFrameInfoContentRect] = CFBridgingRelease(CGRectCreateDictionaryRepresentation(CGRectMake(35,0,90,120)));
+  [session emit:newSample]; CFRelease(newSample);
+  Require(frames == (revoked ? 0 : 1));
+  if (!revoked) [capture stop];
+  Wait(session.stopEntered); [session completeStop]; Wait(done);
+  Require(terminalError == nil || (revoked && terminalError.code == 4));
+  Require(terminals == 1 && session.starts == 1 && session.stops == 1 && session.removals == 1);
+}
+
+static void RequireIndexedContinuity(NSString *path) {
+  NSDictionary *fixture = [NSJSONSerialization JSONObjectWithData:[NSData dataWithContentsOfFile:path] options:0 error:nil];
+  NSArray *cases = fixture[@"streamCases"];
+  Require(cases.count == 14);
+  for (NSString *name in cases) ReconfigureStream(name);
+}
+
 int main(int argc, const char **argv) {
   @autoreleasepool {
-    Require(argc == 2);
+    Require(argc == 3);
     RequireCenteredCapturePlacement([NSString stringWithUTF8String:argv[1]]);
     DeniedBeforeStart(); StopJoinsPendingStart(); FrameBeforeStartReplyCanFinishCapture(); RevocationFencesFrame();
     AcceptScheduledDisplaySample();
     for (NSInteger alteration = 1; alteration <= 13; alteration++) RejectChangedCompleteSample(alteration);
     RejectChangedCompleteSample(15);
-    puts("Selected capture: 19 lifecycle/sample cases and 3 indexed placement cases passed; synthetic samples, no capture permission or input effects.");
+    RequireIndexedContinuity([NSString stringWithUTF8String:argv[2]]);
+    puts("Selected capture: 19 lifecycle/sample, 3 indexed placement and 14 indexed continuity cases passed; synthetic samples, no capture permission or input effects.");
   }
   return 0;
 }
