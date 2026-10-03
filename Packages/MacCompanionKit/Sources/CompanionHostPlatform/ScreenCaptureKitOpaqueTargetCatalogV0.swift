@@ -13,6 +13,7 @@ public enum ScreenCaptureKitOpaqueTargetCatalogErrorV0:
     case invalidConfiguration
     case selectedDisplayUnavailable
     case sourceUnavailable
+    case sourceDisappeared
     case descriptorMismatch
 }
 
@@ -87,8 +88,8 @@ public final class ScreenCaptureKitResolvedSurfaceV0: @unchecked Sendable {
 }
 
 /// Owns the only mapping from session-scoped opaque target tokens to
-/// ScreenCaptureKit identities. It never reads a window title and never
-/// returns bundle identifiers, PIDs, window IDs, or ScreenCaptureKit objects
+/// ScreenCaptureKit identities. It exposes only bounded transient picker titles
+/// and never returns bundle identifiers, PIDs, window IDs, or ScreenCaptureKit objects
 /// through its inventory snapshot.
 @available(macOS 13.0, *)
 public final class ScreenCaptureKitOpaqueTargetCatalogV0: @unchecked Sendable {
@@ -151,9 +152,7 @@ public final class ScreenCaptureKitOpaqueTargetCatalogV0: @unchecked Sendable {
         let applications = content.applications.filter(isAllowed)
         let allowedPIDs = Set(applications.map(\.processID))
         let windows = content.windows.filter { window in
-            guard window.isOnScreen,
-                  window.frame.width > 0,
-                  window.frame.height > 0,
+            guard Self.isSelectableWindow(window),
                   let owner = window.owningApplication else { return false }
             return allowedPIDs.contains(owner.processID)
                 && isAllowed(owner)
@@ -166,6 +165,7 @@ public final class ScreenCaptureKitOpaqueTargetCatalogV0: @unchecked Sendable {
         var nextSources: [UUID: LocalSource] = [:]
 
         for application in applications {
+            guard !(windowsByPID[application.processID] ?? []).isEmpty else { continue }
             let sourceReference = UUID()
             sourceReferences[application.processID] = sourceReference
             do {
@@ -175,7 +175,8 @@ public final class ScreenCaptureKitOpaqueTargetCatalogV0: @unchecked Sendable {
                     applicationSourceReference: sourceReference,
                     applicationName: application.applicationName,
                     currentWindowAvailable:
-                        !(windowsByPID[application.processID] ?? []).isEmpty,
+                        Self.applicationViewAvailable(windows: windowsByPID[application.processID] ?? [],
+                            displayID: selectedDisplayID),
                     localSortOrder: UInt64(
                         UInt32(bitPattern: application.processID)
                     )
@@ -199,7 +200,8 @@ public final class ScreenCaptureKitOpaqueTargetCatalogV0: @unchecked Sendable {
                 applicationSourceReference: applicationReference,
                 applicationName: owner.applicationName,
                 currentWindowAvailable: true,
-                localSortOrder: UInt64(window.windowID)
+                localSortOrder: UInt64(window.windowID),
+                windowTitle: AdaptiveSurfaceTargetObservationV0.sanitizedWindowTitle(window.title)
             ))
             nextSources[sourceReference] = .window(
                 windowID: window.windowID,
@@ -262,11 +264,11 @@ public final class ScreenCaptureKitOpaqueTargetCatalogV0: @unchecked Sendable {
             ScreenCaptureKitLocalActivationTargetV0
         switch source {
         case let .application(processID, bundleIdentifier):
+            guard let application = currentContent.applications.first(where: {
+                $0.processID == processID
+            }) else { throw ScreenCaptureKitOpaqueTargetCatalogErrorV0.sourceDisappeared }
             guard expectedKind == .application,
-                  let application = currentContent.applications.first(where: {
-                      $0.processID == processID
-                        && $0.bundleIdentifier == bundleIdentifier
-                  }), isAllowed(application) else {
+                  application.bundleIdentifier == bundleIdentifier, isAllowed(application) else {
                 throw ScreenCaptureKitOpaqueTargetCatalogErrorV0
                     .sourceUnavailable
             }
@@ -288,7 +290,7 @@ public final class ScreenCaptureKitOpaqueTargetCatalogV0: @unchecked Sendable {
                       sourceGlobalBounds: displayBounds
                   ) else {
                 throw ScreenCaptureKitOpaqueTargetCatalogErrorV0
-                    .sourceUnavailable
+                    .sourceDisappeared
             }
             filter = ScreenCaptureKitCaptureConfigurationV0
                 .makeApplicationFilter(
@@ -320,18 +322,19 @@ public final class ScreenCaptureKitOpaqueTargetCatalogV0: @unchecked Sendable {
                 bundleIdentifier: bundleIdentifier
             )
         case let .window(windowID, processID, bundleIdentifier):
+            guard let window = currentContent.windows.first(where: {
+                $0.windowID == windowID
+            }) else { throw ScreenCaptureKitOpaqueTargetCatalogErrorV0.sourceDisappeared }
             guard expectedKind == .window,
-                  let window = currentContent.windows.first(where: {
-                      $0.windowID == windowID
-                  }), window.isOnScreen,
-                  window.frame.width > 0,
-                  window.frame.height > 0,
                   window.owningApplication?.processID == processID,
                   let owner = window.owningApplication,
                   owner.bundleIdentifier == bundleIdentifier,
                   isAllowed(owner) else {
                 throw ScreenCaptureKitOpaqueTargetCatalogErrorV0
                     .sourceUnavailable
+            }
+            guard Self.isSelectableWindow(window) else {
+                throw ScreenCaptureKitOpaqueTargetCatalogErrorV0.sourceDisappeared
             }
             filter = ScreenCaptureKitCaptureConfigurationV0
                 .makeWindowFilter(window: window)
@@ -389,6 +392,9 @@ public final class ScreenCaptureKitOpaqueTargetCatalogV0: @unchecked Sendable {
             logicalWidth: captureWidth,
             logicalHeight: captureHeight
         )
+        guard profile.width >= 320, profile.height >= 240 else {
+            throw ScreenCaptureKitOpaqueTargetCatalogErrorV0.sourceDisappeared
+        }
         guard logicalWidth > 0, logicalHeight > 0,
               captureWidth > 0, captureHeight > 0,
               inputBounds.origin.x.isFinite,
@@ -497,6 +503,41 @@ public final class ScreenCaptureKitOpaqueTargetCatalogV0: @unchecked Sendable {
     private func invalidateLocked() {
         inventory.invalidate()
         localSources.removeAll(keepingCapacity: false)
+    }
+
+    /// Main windows only, with the same minimum mode as native enrollment.
+    /// This pure predicate is covered by the indexed picker cases.
+    public static func isSelectableWindow(onScreen: Bool, layer: Int,
+        width: Double, height: Double, scale: Double) -> Bool {
+        guard onScreen, layer == 0, width.isFinite, height.isFinite,
+              scale.isFinite, (1...4).contains(scale), width > 0, height > 0,
+              width * scale <= 32768, height * scale <= 32768,
+              let profile = try? captureProfile(logicalWidth: Int(ceil(width * scale)),
+                  logicalHeight: Int(ceil(height * scale))) else { return false }
+        return profile.width >= 320 && profile.height >= 240
+    }
+
+    private static func isSelectableWindow(_ window: SCWindow) -> Bool {
+        let frame = window.frame
+        guard frame.origin.x.isFinite, frame.origin.y.isFinite else { return false }
+        var displayID: CGDirectDisplayID = 0
+        var count: UInt32 = 0
+        guard CGGetDisplaysWithPoint(CGPoint(x: frame.midX, y: frame.midY), 1,
+                  &displayID, &count) == .success, count == 1, displayID != 0,
+              CGDisplayIsActive(displayID) != 0, CGDisplayRotation(displayID) == 0,
+              let scale = try? backingScaleFactor(for: displayID) else { return false }
+        return isSelectableWindow(onScreen: window.isOnScreen, layer: window.windowLayer,
+            width: frame.width, height: frame.height, scale: scale)
+    }
+
+    private static func applicationViewAvailable(windows: [SCWindow],
+        displayID: CGDirectDisplayID) -> Bool {
+        guard let crop = try? ScreenCaptureKitApplicationCropV0(
+                  windowGlobalBounds: windows.map(\.frame), sourceGlobalBounds: CGDisplayBounds(displayID)),
+              let scale = try? backingScaleFactor(for: displayID),
+              let profile = try? captureProfile(logicalWidth: Int(ceil(crop.globalBounds.width * scale)),
+                  logicalHeight: Int(ceil(crop.globalBounds.height * scale))) else { return false }
+        return profile.width >= 320 && profile.height >= 240
     }
 
     public static func captureProfile(

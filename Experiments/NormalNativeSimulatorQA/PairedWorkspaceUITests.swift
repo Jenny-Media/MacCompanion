@@ -24,6 +24,11 @@ final class PairedWorkspaceUITests: XCTestCase {
                        selectedWindow: "Mac Companion QA Target")
     }
 
+    func testNormalAppRecoversDesktopWhenPickerWindowDisappears() throws {
+        try runJourney(nativeControl: true, surfaceReplacement: true,
+                       selectedWindow: "Mac Companion QA Target")
+    }
+
     func testNormalAppRetiresNativeVideoWhenSelectedWindowCloses() throws {
         try runJourney(nativeControl: true, surfaceReplacement: true,
                        selectedWindow: "Mac Companion QA Target",
@@ -232,11 +237,20 @@ final class PairedWorkspaceUITests: XCTestCase {
                             search.tap()
                             search.typeText(selectedWindow ?? selectedTarget ?? "")
                             let predicate = selectedWindow.map {
-                                NSPredicate(format: "label BEGINSWITH %@ AND label CONTAINS %@", "Window ", $0)
+                                NSPredicate(format: "identifier BEGINSWITH %@ AND label CONTAINS %@", "Surface Window ", $0)
                             } ?? NSPredicate(format: "label BEGINSWITH %@", selectedTarget ?? "")
                             let target = app.buttons.matching(predicate).firstMatch
                             XCTAssertTrue(target.waitForExistence(timeout: 5),
                                 "Search must find the disposable selected target in the picker inventory")
+                            if let path = ProcessInfo.processInfo.environment["MACCOMPANION_TEST_PICKER_WINDOW_CLOSE_PATH"] {
+                                XCTAssertTrue(path.hasPrefix("/private/tmp/maccompanion-"))
+                                try "close\n".write(toFile: path, atomically: true, encoding: .utf8)
+                                let deadline = Date().addingTimeInterval(5)
+                                while !FileManager.default.fileExists(atPath: path + ".done"), Date() < deadline {
+                                    Thread.sleep(forTimeInterval: 0.1)
+                                }
+                                XCTAssertTrue(FileManager.default.fileExists(atPath: path + ".done"))
+                            }
                             target.tap()
                         } else {
                             app.buttons["Desktop"].tap()

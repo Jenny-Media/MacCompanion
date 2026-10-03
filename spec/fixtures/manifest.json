@@ -251,7 +251,7 @@
       "path": "local-xpc-interactive-lease-transport-v0.1.json",
       "kind": "localXPC.interactiveLeaseTransport.v0.1",
       "expect": "valid",
-      "canonicalSHA256": "43e977ff7fdfd515563aff828f2f7b0c799efde3a1f125d2d19043ba58496ffb"
+      "canonicalSHA256": "1c6ee2042862863a115e98432a8c0e5dc3dafd0f9c3c785a79789f024c5e2cd0"
     },
     {
       "path": "local-xpc-interactive-webrtc-transport-v0.1.json",
@@ -389,7 +389,7 @@
       "path": "valid/interactive-surface-targets-response.json",
       "kind": "interactive.surface.targets.response",
       "expect": "valid",
-      "canonicalSHA256": "7104e3d35663053d689f6d306a8a565f19c414d2369c0859aaef7f39478bdc7d"
+      "canonicalSHA256": "058421d9ef7dbcbea39708ea2038d9c19b3f09ca2d50b732eb6f857afbf4f481"
     },
     {
       "path": "valid/interactive-surface-selected.json",
@@ -699,7 +699,7 @@
       "path": "native-selected-capture-context-v0.1.json",
       "kind": "native.privateSelectedCaptureContext.v0.1",
       "expect": "valid",
-      "canonicalSHA256": "aa775bc1f0ba0b0a98a1285a217ce0afff0c12ef134032e4cee91066aa5f41b2"
+      "canonicalSHA256": "1e6127c2c6c8591444fa2f77396e41fb4d49368383eac3efec2ea33b46d3986b"
     },
     {
       "path": "client-failed-product-retirement-v0.1.json",

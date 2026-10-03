@@ -39,7 +39,7 @@ public struct ClientSurfacePickerViewV0: View {
                         ContentUnavailableView {
                             Label("No Targets Available", systemImage: "rectangle.stack.badge.minus")
                         } description: {
-                            Text("Refresh to ask the Mac for a new privacy-limited list.")
+                            Text("Open a window on the Mac, then refresh.")
                         }
                         .listRowBackground(Color.clear)
                     } else if filteredChoices.isEmpty {
@@ -53,7 +53,7 @@ public struct ClientSurfacePickerViewV0: View {
                 } header: {
                     Text("Applications and Windows")
                 } footer: {
-                    Text("Window titles and document names never leave the Mac.")
+                    Text("Choose an app to show its windows on this display, or choose one window.")
                 }
             }
             .navigationTitle("Choose Mac View")
@@ -114,6 +114,7 @@ public struct ClientSurfacePickerViewV0: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .accessibilityIdentifier("Surface \(choice.kind == .window ? "Window" : "Application") \(choice.targetToken?.uuidString ?? "Desktop")")
         .disabled(!choice.available)
         .accessibilityHint(
             choice.available
@@ -129,7 +130,7 @@ public struct ClientSurfacePickerViewV0: View {
         case .application:
             choice.applicationName ?? "Application"
         case .window:
-            "Window \(choice.windowOrdinal ?? 0)"
+            choice.windowTitle ?? "\(choice.applicationName ?? "App") — Window \(choice.windowOrdinal ?? 0)"
         case .focusedRegion:
             "Smart Zoom"
         }
@@ -140,7 +141,7 @@ public struct ClientSurfacePickerViewV0: View {
         case .desktop:
             nil
         case .application:
-            "Application Focus"
+            "All app windows on this display"
         case .window:
             choice.applicationName
         case .focusedRegion:

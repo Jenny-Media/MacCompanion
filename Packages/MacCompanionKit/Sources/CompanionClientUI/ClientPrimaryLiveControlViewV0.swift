@@ -263,7 +263,7 @@ public final class ClientPrimaryLiveControlCoordinatorV0: ObservableObject {
         case .active:
             if product != nil, phase != .active { phase = .active }
         case .ending:
-            guard phase != .ending else { return }
+            guard phase != .ending, phase != .failed else { return }
             productGeneration = UUID()
             activationTask?.cancel()
             activationTask = nil
@@ -1005,9 +1005,9 @@ public struct ClientPrimaryLiveControlViewV0: View {
                         "Remote Control unavailable",
                         systemImage: "display.trianglebadge.exclamationmark",
                         description: Text(
-                            "The live session failed. Return to the workspace "
-                                + "and request Remote Control again. If Stop is "
-                                + "still available, use it first."
+                            "The selected view stopped streaming. Close this screen "
+                                + "and request Remote Control again. You can then "
+                                + "choose Desktop or another window."
                         )
                     )
                     .foregroundStyle(.white)
@@ -1041,10 +1041,13 @@ public struct ClientPrimaryLiveControlViewV0: View {
         .toolbarColorScheme(.dark, for: .navigationBar)
         .toolbar {
             ToolbarItem(placement: .topBarLeading) {
-                Button("Stop Remote Control", systemImage: "xmark", action: stopRemoteControl)
+                Button(canStop ? "Stop Remote Control" : "Close Remote Control", systemImage: "xmark") {
+                    if canStop { stopRemoteControl() }
+                    else { coordinator.closeLocalProduct(); dismiss() }
+                }
                     .labelStyle(.iconOnly)
                     .accessibilityIdentifier("Stop Remote Control")
-                    .disabled(viewState.stopSubmitted || !canStop)
+                    .disabled(viewState.stopSubmitted || (!canStop && coordinator.phase != .failed))
             }
         }
         .onAppear {

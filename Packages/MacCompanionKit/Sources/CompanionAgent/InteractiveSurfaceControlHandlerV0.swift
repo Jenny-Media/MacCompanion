@@ -226,7 +226,8 @@ public actor InteractiveSurfaceControlHandlerV0:
                     applicationName: candidate.applicationName,
                     windowOrdinal: candidate.windowOrdinal.map(Int64.init),
                     currentWindowAvailable:
-                        candidate.currentWindowAvailable
+                        candidate.currentWindowAvailable,
+                    windowTitle: candidate.windowTitle
                 )
             }
             let serverSequence = try consumeServerSequence()
@@ -366,6 +367,10 @@ public actor InteractiveSurfaceControlHandlerV0:
                     expectedFocus = nil
                     selectedTargetKind = .desktop
                 }
+            }
+            if [.application, .window].contains(selectedTargetKind), target.kind == .desktop,
+               target.applicationToken == nil, target.windowToken == nil, target.focus == nil {
+                selectedTargetKind = .desktop
             }
             guard target.kind == selectedTargetKind else {
                 throw InteractiveSurfaceControlHandlerErrorV0

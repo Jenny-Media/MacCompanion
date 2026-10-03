@@ -82,6 +82,14 @@ static BOOL PositiveRect(CGRect rect) {
   configuration.width = width; configuration.height = height; configuration.pixelFormat = pixelFormat;
   configuration.minimumFrameInterval = CMTimeMake(1, 60); configuration.queueDepth = 3;
   configuration.scalesToFit = YES; configuration.preservesAspectRatio = YES;
+  // ScreenCaptureKit's default independent-window placement is top-left.
+  // Chroma-aligned output can have small padding even for a nearly matching
+  // aspect ratio. Establish the same centered content rectangle that the
+  // sample validator and input mapper require, rather than assuming centering.
+  double aspectScale = fmin((double)width / sourceWidth, (double)height / sourceHeight);
+  double contentWidth = sourceWidth * aspectScale, contentHeight = sourceHeight * aspectScale;
+  configuration.destinationRect = CGRectMake((width - contentWidth) / 2,
+      (height - contentHeight) / 2, contentWidth, contentHeight);
   configuration.ignoreShadowsSingleWindow = YES; configuration.ignoreShadowsDisplay = YES;
   configuration.capturesAudio = NO;
   // SCStreamConfiguration declares this property assign. Keep the color alive

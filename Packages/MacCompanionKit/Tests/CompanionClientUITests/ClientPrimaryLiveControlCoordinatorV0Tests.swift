@@ -190,6 +190,11 @@ func liveProductFailureRetiresItsCapturedSessionOnce() async throws {
     #expect(product.retirementCount == 1)
     #expect(coordinator.phase == .failed)
     #expect(coordinator.product == nil)
+    coordinator.acceptWorkspaceMode(.ending)
+    coordinator.acceptWorkspaceMode(.ready)
+    #expect(coordinator.phase == .failed)
+    coordinator.closeLocalProduct()
+    #expect(coordinator.phase == .closed)
 }
 
 @Test @MainActor

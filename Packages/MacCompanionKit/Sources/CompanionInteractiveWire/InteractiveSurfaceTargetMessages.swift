@@ -69,13 +69,14 @@ public struct InteractiveSurfaceTargetCandidateV0:
 {
     private enum CodingKeys: String, CodingKey {
         case targetToken, kind, applicationToken, applicationName
-        case windowOrdinal, currentWindowAvailable
+        case windowOrdinal, currentWindowAvailable, windowTitle
     }
 
     public let targetToken: WireUUID
     public let kind: InteractiveSurfaceKind
     public let applicationToken: WireUUID
     public let applicationName: String
+    public let windowTitle: String?
     public let windowOrdinal: Int64?
     public let currentWindowAvailable: Bool
 
@@ -85,12 +86,14 @@ public struct InteractiveSurfaceTargetCandidateV0:
         applicationToken: WireUUID,
         applicationName: String,
         windowOrdinal: Int64?,
-        currentWindowAvailable: Bool
+        currentWindowAvailable: Bool,
+        windowTitle: String? = nil
     ) throws {
         self.targetToken = targetToken
         self.kind = kind
         self.applicationToken = applicationToken
         self.applicationName = applicationName
+        self.windowTitle = windowTitle
         self.windowOrdinal = windowOrdinal
         self.currentWindowAvailable = currentWindowAvailable
         try validate()
@@ -102,7 +105,7 @@ public struct InteractiveSurfaceTargetCandidateV0:
             [
                 "targetToken", "kind", "applicationToken",
                 "applicationName", "windowOrdinal",
-                "currentWindowAvailable",
+                "currentWindowAvailable", "windowTitle",
             ]
         )
         let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -116,6 +119,7 @@ public struct InteractiveSurfaceTargetCandidateV0:
             String.self,
             forKey: .applicationName
         )
+        windowTitle = try container.decodeIfPresent(String.self, forKey: .windowTitle)
         windowOrdinal = try container.decodeIfPresent(
             Int64.self,
             forKey: .windowOrdinal
@@ -134,6 +138,8 @@ public struct InteractiveSurfaceTargetCandidateV0:
         try container.encode(kind, forKey: .kind)
         try container.encode(applicationToken, forKey: .applicationToken)
         try container.encode(applicationName, forKey: .applicationName)
+        if let windowTitle { try container.encode(windowTitle, forKey: .windowTitle) }
+        else { try container.encodeNil(forKey: .windowTitle) }
         if let windowOrdinal {
             try container.encode(windowOrdinal, forKey: .windowOrdinal)
         } else {
@@ -156,10 +162,12 @@ public struct InteractiveSurfaceTargetCandidateV0:
               }) else {
             throw InteractiveSurfaceTargetMessageErrorV0.invalidName
         }
+        do { try AdaptiveSurfaceTargetObservationV0.validateWindowTitle(windowTitle) }
+        catch { throw InteractiveSurfaceTargetMessageErrorV0.invalidName }
         switch kind {
         case .application:
             guard targetToken == applicationToken,
-                  windowOrdinal == nil else {
+                  windowOrdinal == nil, windowTitle == nil else {
                 throw InteractiveSurfaceTargetMessageErrorV0.invalidCandidate
             }
         case .window:

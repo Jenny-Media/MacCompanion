@@ -186,13 +186,35 @@ static void RejectChangedCompleteSample(NSInteger alteration) {
   [session completeStop]; Wait(done); Require(session.removals == 1);
 }
 
-int main(void) {
+static void RequireCenteredCapturePlacement(NSString *fixturePath) {
+  NSDictionary *fixture = [NSJSONSerialization JSONObjectWithData:[NSData dataWithContentsOfFile:fixturePath] options:0 error:nil];
+  NSArray *cases = fixture[@"capturePlacementCases"];
+  Require(cases.count == 3);
+  for (NSDictionary *value in cases) {
+    SelectedTestSession *session = [SelectedTestSession new];
+    NSError *error = nil;
+    CompanionSelectedCapture *capture = [[CompanionSelectedCapture alloc] initWithFactory:^id<CompanionSelectedCaptureSession>(id<SCStreamOutput, SCStreamDelegate> output, SCStreamConfiguration *configuration) {
+      (void)output;
+      NSArray *rect = value[@"destinationRect"];
+      CGRect expected = CGRectMake([rect[0] doubleValue], [rect[1] doubleValue], [rect[2] doubleValue], [rect[3] doubleValue]);
+      Require(CGRectEqualToRect(configuration.destinationRect, expected));
+      return session;
+    } sourceRect:CGRectNull sourcePixelWidth:[value[@"sourceWidth"] integerValue] sourcePixelHeight:[value[@"sourceHeight"] integerValue]
+      encodedWidth:[value[@"encodedWidth"] integerValue] encodedHeight:[value[@"encodedHeight"] integerValue]
+      pixelFormat:kCVPixelFormatType_32BGRA isCurrent:^BOOL { return YES; } error:&error];
+    Require(capture != nil && error == nil && session.starts == 0);
+  }
+}
+
+int main(int argc, const char **argv) {
   @autoreleasepool {
+    Require(argc == 2);
+    RequireCenteredCapturePlacement([NSString stringWithUTF8String:argv[1]]);
     DeniedBeforeStart(); StopJoinsPendingStart(); FrameBeforeStartReplyCanFinishCapture(); RevocationFencesFrame();
     AcceptScheduledDisplaySample();
     for (NSInteger alteration = 1; alteration <= 13; alteration++) RejectChangedCompleteSample(alteration);
     RejectChangedCompleteSample(15);
-    puts("Selected capture: 19 lifecycle/sample cases passed; synthetic samples, no capture permission or input effects.");
+    puts("Selected capture: 19 lifecycle/sample cases and 3 indexed placement cases passed; synthetic samples, no capture permission or input effects.");
   }
   return 0;
 }

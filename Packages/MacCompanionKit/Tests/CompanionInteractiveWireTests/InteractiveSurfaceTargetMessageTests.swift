@@ -34,6 +34,7 @@ private func targetFixture(_ path: String) throws -> Data {
     #expect(response.body.validForMilliseconds == 120_000)
     #expect(response.body.candidates.map(\.applicationName) == ["Notes", "Notes"])
     #expect(response.body.candidates.map(\.windowOrdinal) == [nil, 1])
+    #expect(response.body.candidates.map(\.windowTitle) == [nil, "Example note"])
 }
 
 @Test func targetInventoryRejectsContentMetadataAndInvalidOwnership() throws {
@@ -45,7 +46,7 @@ private func targetFixture(_ path: String) throws -> Data {
     )
     var body = try #require(object["body"] as? [String: Any])
     var candidates = try #require(body["candidates"] as? [[String: Any]])
-    candidates[1]["windowTitle"] = "Secret document"
+    candidates[1]["windowTitle"] = "Invalid\nTitle"
     body["candidates"] = candidates
     object["body"] = body
     #expect(throws: (any Error).self) {
@@ -55,7 +56,7 @@ private func targetFixture(_ path: String) throws -> Data {
         )
     }
 
-    candidates[1].removeValue(forKey: "windowTitle")
+    candidates[1]["windowTitle"] = "Example note"
     candidates[1]["applicationToken"] =
         "018f7200-0000-7000-8000-000000000099"
     body["candidates"] = candidates

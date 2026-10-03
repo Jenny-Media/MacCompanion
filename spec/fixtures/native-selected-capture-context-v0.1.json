@@ -132,5 +132,131 @@
         "no-working-encoder"
       ]
     }
+  ],
+  "pickerWindowCases": [
+    {
+      "onScreen": true,
+      "layer": 0,
+      "width": 800,
+      "height": 500,
+      "scale": 2,
+      "selectable": true
+    },
+    {
+      "onScreen": true,
+      "layer": 0,
+      "width": 160,
+      "height": 120,
+      "scale": 2,
+      "selectable": true
+    },
+    {
+      "onScreen": true,
+      "layer": 0,
+      "width": 159,
+      "height": 120,
+      "scale": 2,
+      "selectable": false
+    },
+    {
+      "onScreen": true,
+      "layer": 0,
+      "width": 800,
+      "height": 50,
+      "scale": 2,
+      "selectable": false
+    },
+    {
+      "onScreen": false,
+      "layer": 0,
+      "width": 800,
+      "height": 500,
+      "scale": 2,
+      "selectable": false
+    },
+    {
+      "onScreen": true,
+      "layer": 25,
+      "width": 800,
+      "height": 500,
+      "scale": 2,
+      "selectable": false
+    },
+    {
+      "onScreen": true,
+      "layer": 0,
+      "width": 800,
+      "height": 500,
+      "scale": 0,
+      "selectable": false
+    },
+    {
+      "onScreen": true,
+      "layer": 0,
+      "width": 0,
+      "height": 500,
+      "scale": 2,
+      "selectable": false
+    }
+  ],
+  "pickerTitleCases": [
+    {
+      "input": "Example note",
+      "title": "Example note"
+    },
+    {
+      "input": "  First\nsecond\tline  ",
+      "title": "First second line"
+    },
+    {
+      "input": "‮title⁦",
+      "title": "title"
+    },
+    {
+      "input": "",
+      "title": null
+    },
+    {
+      "input": "éééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééé",
+      "title": "éééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééé"
+    }
+  ],
+  "capturePlacementCases": [
+    {
+      "sourceWidth": 640,
+      "sourceHeight": 360,
+      "encodedWidth": 320,
+      "encodedHeight": 240,
+      "destinationRect": [
+        0.0,
+        30.0,
+        320.0,
+        180.0
+      ]
+    },
+    {
+      "sourceWidth": 2560,
+      "sourceHeight": 1036,
+      "encodedWidth": 1920,
+      "encodedHeight": 776,
+      "destinationRect": [
+        1.2355212355213325,
+        0.0,
+        1917.5289575289573,
+        776.0
+      ]
+    },
+    {
+      "sourceWidth": 1036,
+      "sourceHeight": 2560,
+      "encodedWidth": 484,
+      "encodedHeight": 1200,
+      "destinationRect": [
+        0.0,
+        2.007722007722009,
+        484.0,
+        1195.984555984556
+      ]
+    }
   ]
 }

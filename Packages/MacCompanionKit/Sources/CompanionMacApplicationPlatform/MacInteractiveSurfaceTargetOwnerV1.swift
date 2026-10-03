@@ -300,13 +300,22 @@ public actor MacInteractiveSurfaceTargetOwnerV1 {
                     || request.targetKind == .window else {
                 throw MacInteractiveSurfaceTargetOwnerErrorV1.bindingMismatch
             }
-            resolved = try active.catalog.resolve(
-                targetToken: targetToken,
-                expectedKind: request.targetKind,
-                currentContent: content,
-                replacing: active.descriptor,
-                nowMonotonicMilliseconds: nowMonotonicMilliseconds
-            )
+            do {
+                resolved = try active.catalog.resolve(
+                    targetToken: targetToken,
+                    expectedKind: request.targetKind,
+                    currentContent: content,
+                    replacing: active.descriptor,
+                    nowMonotonicMilliseconds: nowMonotonicMilliseconds
+                )
+            } catch ScreenCaptureKitOpaqueTargetCatalogErrorV0.sourceDisappeared {
+                // The exact token was consumed, but its live source vanished.
+                // Publish a fresh acknowledged Desktop transition, preserving
+                // the current lease and selected display. Invalid tokens and
+                // authority errors never reach this recovery path.
+                resolved = try makeDesktopReplacement(active: active, content: content,
+                    nowMonotonicMilliseconds: nowMonotonicMilliseconds)
+            }
         }
         pending = resolved
         return resolved.descriptor

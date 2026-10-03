@@ -18,7 +18,7 @@ with tempfile.TemporaryDirectory(prefix="maccompanion-selected-capture-", dir="/
                     str(ROOT / "Experiments/SunshineMoonlightIntegration/SelectedCaptureTests.m"),
                     "-framework", "Foundation", "-framework", "ScreenCaptureKit", "-framework", "CoreMedia",
                     "-framework", "CoreVideo", "-framework", "CoreGraphics", "-o", str(executable)], check=True)
-    subprocess.run([str(executable)], check=True, timeout=30)
+    subprocess.run([str(executable), str(ROOT / "spec/fixtures/native-selected-capture-context-v0.1.json")], check=True, timeout=30)
     context = Path(temporary) / "selected-context-tests"
     subprocess.run(["xcrun", "clang", "-fobjc-arc", "-fblocks", "-mmacosx-version-min=26.0",
                     "-Wall", "-Wextra", "-Werror", "-I" + str(ROOT / "Native/Host"),

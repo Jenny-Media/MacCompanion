@@ -180,8 +180,11 @@ def verify(build, output, simulator, resume_build=False, reuse_build_project=Fal
            native_session_hold=False, native_video_continuity=False, native_window_closure=False,
            native_window_move=False, native_window_resize=False,
            native_window_resize_restart=False, native_window_resize_rapid_stop=False,
-           native_selected_window_other_display=False, native_selected_target_static=False):
+           native_selected_window_other_display=False, native_selected_target_static=False, native_picker_window_disappearance=False):
     native = native_root is not None
+    assert not native_picker_window_disappearance or (native_selected_window
+        and not native_selected_window_other_display and not native_window_soak
+        and not (native_window_closure or native_window_move or native_window_resize))
     assert not native_window_resize_restart or native_window_resize
     assert not native_window_resize_rapid_stop or native_window_resize_restart
     assert sum((native_window_closure, native_window_move, native_window_resize)) <= 1
@@ -226,7 +229,8 @@ def verify(build, output, simulator, resume_build=False, reuse_build_project=Fal
                   for name in ['CompanionMoonlightEngine', 'OpenSSL']}
     qa = ROOT / 'Experiments/NormalNativeSimulatorQA'
     test = qa / ('PairedWorkspaceUITests.swift' if complete_pairing else 'LivePairingUITests.swift')
-    selected = ('PairedWorkspaceUITests/testNormalAppRetiresNativeVideoWhenSelectedWindowCloses' if native_window_closure else
+    selected = ('PairedWorkspaceUITests/testNormalAppRecoversDesktopWhenPickerWindowDisappears' if native_picker_window_disappearance else
+                'PairedWorkspaceUITests/testNormalAppRetiresNativeVideoWhenSelectedWindowCloses' if native_window_closure else
                 'PairedWorkspaceUITests/testNormalAppRetiresNativeVideoWhenSelectedWindowMoves' if native_window_move else
                 'PairedWorkspaceUITests/testNormalAppRestartsControlAfterSelectedWindowResizes' if native_window_resize_restart else
                 'PairedWorkspaceUITests/testNormalAppRetiresNativeVideoWhenSelectedWindowResizes' if native_window_resize else
@@ -374,7 +378,7 @@ def verify(build, output, simulator, resume_build=False, reuse_build_project=Fal
             host_log_monitor.start()
         if native_selected_target or native_selected_window:
             selected_target_process, selected_target_log = start_selected_target(
-                output, window_change is not None, native_selected_window_other_display, native_selected_target_static)
+                output, window_change is not None or native_picker_window_disappearance, native_selected_window_other_display, native_selected_target_static)
         fixture = json.loads((probe.state / 'simulator-fixture.json').read_text())
         receipt = command(fixture, 'journey-pair' if complete_pairing else 'journey-pair-preview')
         if complete_pairing:
@@ -388,6 +392,9 @@ def verify(build, output, simulator, resume_build=False, reuse_build_project=Fal
         ui_targets[0].setdefault('EnvironmentVariables', {})['MACCOMPANION_TEST_PAIRING_CODE'] = receipt['qr']
         if native:
             ui_targets[0]['EnvironmentVariables']['MACCOMPANION_TEST_CONSENT_FIXTURE'] = json.dumps(fixture)
+        if native_picker_window_disappearance:
+            assert selected_target_process.is_owned()
+            ui_targets[0]['EnvironmentVariables']['MACCOMPANION_TEST_PICKER_WINDOW_CLOSE_PATH'] = str(selected_target_process.change_path)
         if native_window_soak:
             ui_targets[0]['EnvironmentVariables']['MACCOMPANION_TEST_WINDOW_SOAK_TRANSITIONS'] = '20'
         if native_session_soak:
@@ -467,6 +474,8 @@ def verify(build, output, simulator, resume_build=False, reuse_build_project=Fal
             'summary', '--path', str(output / 'result.xcresult')]))
         counts, passed = verified_counts(summary, result.returncode)
         passed = passed and counts['totalTestCount'] == 1
+        if native_picker_window_disappearance:
+            assert selected_target_process.window_change_completed('close')
         if window_change is not None:
             selected_window_change_thread.join(timeout=2)
             assert not selected_window_change_thread.is_alive(), 'Selected Window change trigger did not finish'
@@ -563,6 +572,7 @@ def verify(build, output, simulator, resume_build=False, reuse_build_project=Fal
         ui_targets[0].get('EnvironmentVariables', {}).pop('MACCOMPANION_TEST_PAIRING_CODE', None)
         ui_targets[0].get('EnvironmentVariables', {}).pop('MACCOMPANION_TEST_CONSENT_FIXTURE', None)
         ui_targets[0].get('EnvironmentVariables', {}).pop('MACCOMPANION_TEST_WINDOW_SOAK_TRANSITIONS', None)
+        ui_targets[0].get('EnvironmentVariables', {}).pop('MACCOMPANION_TEST_PICKER_WINDOW_CLOSE_PATH', None)
         ui_targets[0].get('EnvironmentVariables', {}).pop('MACCOMPANION_TEST_NATIVE_SESSION_SOAK_COUNT', None)
         ui_targets[0].get('EnvironmentVariables', {}).pop('MACCOMPANION_TEST_NATIVE_HOLD_SECONDS', None)
         run_file.write_bytes(plistlib.dumps(run))
@@ -657,8 +667,10 @@ def verify(build, output, simulator, resume_build=False, reuse_build_project=Fal
         'nativeForegroundRequiresExplicitRestartVerified': native_background and passed and failure is None,
         'nativePrimaryConnectionLossRecoveryVerified': native_connection_loss and passed and failure is None,
         'nativeRealTargetCatalogVerified': native_real_targets and passed and failure is None,
-        'nativeSelectedTargetVerified': (native_selected_target or native_selected_window) and passed and failure is None,
-        'nativeSelectedWindowVerified': native_selected_window and passed and failure is None,
+        'nativeSelectedTargetVerified': (native_selected_target or native_selected_window)
+            and not native_picker_window_disappearance and passed and failure is None,
+        'nativeSelectedWindowVerified': native_selected_window and not native_picker_window_disappearance and passed and failure is None,
+        'nativePickerWindowDisappearanceRecoveryVerified': native_picker_window_disappearance and passed and failure is None,
         'nativeSelectedWindowOtherDisplayVerified': native_selected_window_other_display and passed and failure is None,
         'nativeSelectedStaticTargetVerified': native_selected_target_static and passed and failure is None,
         'nativeSelectedWindowClosureVerified': native_window_closure and passed and failure is None,
@@ -693,6 +705,8 @@ if __name__ == '__main__':
     parser.add_argument('--native-selected-window', action='store_true', help='Select the disposable AppKit window through the normal iOS picker')
     parser.add_argument('--native-selected-window-other-display', action='store_true',
                         help='Place the disposable selected Window on another physical display from the main Desktop')
+    parser.add_argument('--native-picker-window-disappearance', action='store_true',
+                        help='Close the owned disposable Window after inventory, then verify acknowledged Desktop recovery')
     parser.add_argument('--native-selected-target-static', action='store_true',
                         help='Keep the disposable selected App/Window static to exercise a typical idle interface')
     parser.add_argument('--native-window-soak', action='store_true', help='Repeat 20 selected Window/Desktop transitions in one normal Control journey')
@@ -717,4 +731,4 @@ if __name__ == '__main__':
                         args.native_video_continuity, args.native_window_closure,
                         args.native_window_move, args.native_window_resize,
                         args.native_window_resize_restart, args.native_window_resize_rapid_stop,
-                        args.native_selected_window_other_display, args.native_selected_target_static) else 1)
+                        args.native_selected_window_other_display, args.native_selected_target_static, args.native_picker_window_disappearance) else 1)

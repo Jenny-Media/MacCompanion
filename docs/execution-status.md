@@ -2,7 +2,25 @@
 
 ## 2026-09-26 streaming engine and licensing decision
 
-Latest physical App/Window checkpoint: [native launch investigation](evidence/2026-10-02-native-app-switch-investigation.md).
+Latest picker/capture checkpoint: [useful picker and centered Window capture](evidence/2026-10-02-picker-and-centered-window-capture.md).
+The user reports intermittent return to the workspace and unhelpful picker rows.
+A metadata-only probe reproduces the Window code-7 failure: platform output is
+at the top-left while the admitted geometry expects centered fractional padding.
+Explicit output placement fixes that measured mismatch without relaxing sample
+checks. Titles are bounded transient Control-only metadata, helper/unavailable
+choices are omitted, and exactly bound disappeared sources can acknowledge a
+fresh Desktop replacement. Runtime failure keeps visible recovery guidance until
+closed. Before/after placement regressions, all 118 fixtures, full stable Xcode
+27.0 validation, both native SDKs, 12 lifecycle tests and normal app builds pass.
+The signed Mac/Agent update with the new pinned host catalog is installed and
+listening; the signed normal iPhone update is installed and launched on the
+verified iPhone 18 Pro Max, with the existing pairing retained.
+The new normal-app Simulator journey fails during disposable-service setup before
+pairing; Window streaming/disappearance acceptance is unverified for this
+candidate. The separate physical permit-retirement/-102 trace, physical retry,
+everyday acceptance and production distribution gates remain open.
+
+Previous physical App/Window checkpoint: [native launch investigation](evidence/2026-10-02-native-app-switch-investigation.md).
 The user reports display switching now works, but App/Window switching still
 fails. The physical trace reaches acknowledged capture, native enrollment and
 server/application-list validation, then fails native launch response parsing.

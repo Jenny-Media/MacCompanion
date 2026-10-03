@@ -243,7 +243,8 @@ public struct ClientPrimaryWorkspaceViewV0: View {
     private func shouldDismissLiveControl(
         for mode: ClientControlWorkspaceModeV0
     ) -> Bool {
-        switch mode {
+        guard liveControl.phase != .failed else { return false }
+        return switch mode {
         case .ready, .rejected, .preparationFailed, .endFailed,
              .unavailable, .grantRequired:
             true

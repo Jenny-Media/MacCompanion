@@ -135,6 +135,11 @@ back to Desktop.
 Before resolving a new filter and before every accepted frame, the child checks
 the same live process launch instance, source bounds, display rotation and scale.
 Window capture uses a desktop-independent window filter for that exact owner.
+Selected App/Window streams explicitly set their output destination rectangle to
+the centered aspect-fit rectangle of the admitted source and encoded dimensions.
+Platform default top-left placement cannot stand in for that geometry. Complete
+frame metadata must still match the centered rectangle within one encoded pixel;
+this repair does not relax sample, owner, expiry or input checks.
 Application capture includes only that app on the selected display, with the
 existing 24-point padded/clipped visible-window crop. Moving, resizing, closing,
 replacing or changing the selected content requires a new admitted selection.

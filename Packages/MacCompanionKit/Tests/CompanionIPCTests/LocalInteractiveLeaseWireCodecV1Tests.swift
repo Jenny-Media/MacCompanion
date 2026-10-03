@@ -518,11 +518,12 @@ private func codecDesktopDescriptor()
             let token = UUID()
             return try AdaptiveSurfaceTargetCandidateV0(
                 targetToken: token,
-                kind: .application,
-                applicationToken: token,
+                kind: .window,
+                applicationToken: UUID(),
                 applicationName: name,
-                windowOrdinal: nil,
-                currentWindowAvailable: true
+                windowOrdinal: 1,
+                currentWindowAvailable: true,
+                windowTitle: name
             )
         }
     let snapshot = try AdaptiveSurfaceTargetInventorySnapshotV0(

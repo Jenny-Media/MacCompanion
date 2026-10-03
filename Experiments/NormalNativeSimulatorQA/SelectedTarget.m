@@ -21,6 +21,12 @@ int main(int argc, char **argv) {
         window.title = @"Mac Companion QA Target";
         window.backgroundColor = NSColor.redColor;
         window.releasedWhenClosed = NO;
+        if (staticTarget) {
+            // Typical full-width app geometry on the physical test Mac.
+            // The even encoded mode leaves fractional horizontal padding;
+            // native capture must explicitly center it before admitting input.
+            [window setFrame:NSMakeRect(0, 31, 2560, 1036) display:NO];
+        }
         if (otherDisplay) {
             NSScreen *target = nil;
             for (NSScreen *screen in NSScreen.screens) {

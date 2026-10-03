@@ -37,6 +37,7 @@ public struct LocalInteractiveSurfaceTargetCandidateV1:
     public let kind: InteractiveSurfaceKind
     public let applicationToken: UUID
     public let applicationName: String
+    public let windowTitle: String?
     public let windowOrdinal: UInt8?
     public let currentWindowAvailable: Bool
 
@@ -45,6 +46,7 @@ public struct LocalInteractiveSurfaceTargetCandidateV1:
         kind = candidate.kind
         applicationToken = candidate.applicationToken
         applicationName = candidate.applicationName
+        windowTitle = candidate.windowTitle
         windowOrdinal = candidate.windowOrdinal
         currentWindowAvailable = candidate.currentWindowAvailable
     }
@@ -56,7 +58,8 @@ public struct LocalInteractiveSurfaceTargetCandidateV1:
             applicationToken: applicationToken,
             applicationName: applicationName,
             windowOrdinal: windowOrdinal,
-            currentWindowAvailable: currentWindowAvailable
+            currentWindowAvailable: currentWindowAvailable,
+            windowTitle: windowTitle
         )
     }
 }
@@ -191,7 +194,10 @@ public struct LocalInteractiveSurfaceResolvedReceiptV1:
                 == command.interactiveSessionID,
               descriptor.authorizationEpoch
                 == command.authorizationEpoch,
-              descriptor.kind == command.targetKind else {
+              (descriptor.kind == command.targetKind
+                || ([.application, .window].contains(command.targetKind)
+                    && descriptor.kind == .desktop && descriptor.applicationToken == nil
+                    && descriptor.windowToken == nil && descriptor.focus == nil)) else {
             throw LocalInteractiveSurfaceRuntimeErrorV1.invalidReceipt
         }
     }
