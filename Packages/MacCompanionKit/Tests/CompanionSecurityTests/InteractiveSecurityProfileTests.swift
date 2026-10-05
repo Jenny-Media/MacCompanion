@@ -8,6 +8,7 @@ private struct InteractiveCryptoVector: Decodable {
     struct Inputs: Decodable {
         let approvalID: UUID
         let approvalPrivateKeyHex: String
+        let trustedSessionPrivateKeyHex: String
         let authorizationEpoch: UInt64
         let channelCredentialHex: String
         let channelID: UUID
@@ -33,6 +34,7 @@ private struct InteractiveCryptoVector: Decodable {
     }
     struct Derived: Decodable {
         let approvalSignatureRawBase64URL: String
+        let trustedSessionSignatureRawBase64URL: String
         let approvalSigningInputHex: String
         let approvalSigningInputSHA256Hex: String
         let channelClientProofHex: String
@@ -91,6 +93,23 @@ private func interactiveVector() throws -> InteractiveCryptoVector {
         rawSignature: Data(interactiveBase64URL: derived.approvalSignatureRawBase64URL),
         signingInput: approvalInput,
         publicKeyX963: approvalKey.publicKey.x963Representation
+    ))
+
+    let trustedKey = try P256.Signing.PrivateKey(
+        rawRepresentation: Data(interactiveHex: input.trustedSessionPrivateKeyHex)
+    )
+    let trustedSignature = Data(interactiveBase64URL: derived.trustedSessionSignatureRawBase64URL)
+    #expect(try CompanionSecurityV0.verifySignature(
+        rawSignature: trustedSignature, signingInput: approvalInput,
+        publicKeyX963: trustedKey.publicKey.x963Representation
+    ))
+    #expect(try !CompanionSecurityV0.verifySignature(
+        rawSignature: trustedSignature, signingInput: approvalInput,
+        publicKeyX963: approvalKey.publicKey.x963Representation
+    ))
+    #expect(try !CompanionSecurityV0.verifySignature(
+        rawSignature: Data(interactiveBase64URL: derived.approvalSignatureRawBase64URL),
+        signingInput: approvalInput, publicKeyX963: trustedKey.publicKey.x963Representation
     ))
 
     let channelInput = try CompanionSecurityV0.interactiveChannelTranscriptInput(

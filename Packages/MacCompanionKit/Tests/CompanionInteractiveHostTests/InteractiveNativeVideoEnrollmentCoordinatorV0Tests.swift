@@ -60,6 +60,9 @@ final class InteractiveNativeVideoEnrollmentCoordinatorV0Tests: XCTestCase {
         var preparing = false, activating = false, retired = false
         var starts = 0, drains = 0
         var captureMode = "valid", holdCapture = false, capturing = false
+        var pendingCaptureReads = 0, captureReads = 0
+        func delayCapture(reads: Int) { pendingCaptureReads = reads }
+        func captureReadCount() -> Int { captureReads }
         var inputAdmission = false, holdPresentation = false, presenting = false
         func presentationSettings(admitted: Bool, hold: Bool = false) { inputAdmission = admitted; holdPresentation = hold }
         func presentationStarted() -> Bool { presenting }
@@ -94,7 +97,9 @@ final class InteractiveNativeVideoEnrollmentCoordinatorV0Tests: XCTestCase {
         func captureStarted() -> Bool { capturing }
         func captureEvidence(operationID: UUID) async throws -> InteractiveNativeVideoCaptureEvidenceV0? {
             capturing = true
+            captureReads += 1
             if holdCapture { await withCheckedContinuation { waiter = $0 } }
+            if pendingCaptureReads > 0 { pendingCaptureReads -= 1; return nil }
             if captureMode == "pending" { return nil }
             var root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
             while !FileManager.default.fileExists(atPath: root.appendingPathComponent("spec/fixtures/manifest.json").path) {
@@ -276,6 +281,57 @@ final class InteractiveNativeVideoEnrollmentCoordinatorV0Tests: XCTestCase {
             let phase = await o.phase, counts = await b.counts()
             XCTAssertEqual(phase, .retired); XCTAssertEqual(counts.1, 1)
         }
+    }
+
+    func testDelayedFirstCaptureObservationDoesNotRestartOrRetireBackend() async throws {
+        let m = try material(), b = Backend(m.hostDER), a = Authority(m.authority), c = Clock(), o = owner(m, b, a, c)
+        _ = try await o.prepare(clientCertificateDER: m.clientDER)
+        _ = try await o.activate(rawSignature: m.signature)
+        await b.delayCapture(reads: 4)
+        let evidence = try await o.presentationEvidence(encodedWidth: m.authority.surface.encodedWidth,
+            encodedHeight: m.authority.surface.encodedHeight)
+        XCTAssertEqual(evidence.capturePixelWidth, 5120)
+        let counts = await b.counts(), phase = await o.phase
+        XCTAssertEqual(counts.0, 1); XCTAssertEqual(counts.1, 0); XCTAssertEqual(phase, .active)
+        await o.retire()
+    }
+
+    func testLossWhileWaitingForFirstObservationNeverReturnsPresentation() async throws {
+        for loss in ["stop", "revocation", "expiry", "backend"] {
+            let m = try material(), b = Backend(m.hostDER), a = Authority(m.authority), c = Clock(), o = owner(m, b, a, c)
+            _ = try await o.prepare(clientCertificateDER: m.clientDER)
+            _ = try await o.activate(rawSignature: m.signature)
+            await b.captureSettings(mode: "pending")
+            let work = Task { try await o.presentationEvidence(encodedWidth: m.authority.surface.encodedWidth,
+                encodedHeight: m.authority.surface.encodedHeight) }
+            for _ in 0..<100 { if await b.captureReadCount() >= 2 { break }; try await Task.sleep(for: .milliseconds(2)) }
+            let reads = await b.captureReadCount(); XCTAssertGreaterThanOrEqual(reads, 2)
+            switch loss {
+            case "stop": await o.retire()
+            case "revocation": await a.revoke()
+            case "expiry": c.set(60_000)
+            default: await b.crash()
+            }
+            do { _ = try await work.value; XCTFail("Pending observation escaped \(loss)") } catch {}
+            let counts = await b.counts(), phase = await o.phase
+            XCTAssertEqual(counts.1, 1); XCTAssertEqual(phase, .retired)
+        }
+    }
+
+    func testSampleReadFinishingAfterPendingDeadlineCannotAdmitPresentation() async throws {
+        let m = try material(), b = Backend(m.hostDER), a = Authority(m.authority), c = Clock(), o = owner(m, b, a, c)
+        _ = try await o.prepare(clientCertificateDER: m.clientDER)
+        _ = try await o.activate(rawSignature: m.signature)
+        await b.captureSettings(hold: true)
+        let work = Task { try await o.presentationEvidence(encodedWidth: m.authority.surface.encodedWidth,
+            encodedHeight: m.authority.surface.encodedHeight) }
+        for _ in 0..<100 { if await b.captureStarted() { break }; try await Task.sleep(for: .milliseconds(2)) }
+        let started = await b.captureStarted(); XCTAssertTrue(started)
+        try await Task.sleep(for: .milliseconds(2100))
+        await b.release()
+        do { _ = try await work.value; XCTFail("Late sample escaped pending deadline") } catch {}
+        let phase = await o.phase, counts = await b.counts()
+        XCTAssertEqual(phase, .retired); XCTAssertEqual(counts.1, 1)
     }
 
     func testStopRevocationAndBackendLossDuringSampleReadSuppressLateReceipt() async throws {

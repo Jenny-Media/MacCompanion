@@ -11,7 +11,41 @@ import CompanionClientNetworkPlatform
 public protocol UIKitClientNativeVideoPreparingV0: AnyObject {
     func prepare(descriptor: AdaptiveSurfaceDescriptor,
                  roles: NetworkClientInteractiveRoleProductBindingV0) async throws -> UIKitClientNativeVideoPreparationV0
+    func supportsStreamContinuity() async -> Bool
+    func retainStream() async throws
+    func prepareReplacement(descriptor: AdaptiveSurfaceDescriptor,
+        roles: NetworkClientInteractiveRoleProductBindingV0) async throws -> UIKitClientNativeVideoPreparationV0
     func close() async
+}
+
+@available(iOS 17.0, *)
+public extension UIKitClientNativeVideoPreparingV0 {
+    func supportsStreamContinuity() async -> Bool { false }
+    func retainStream() async throws { throw InteractiveNativeVideoFailureV0.authorizationLost }
+    func prepareReplacement(descriptor: AdaptiveSurfaceDescriptor,
+        roles: NetworkClientInteractiveRoleProductBindingV0) async throws -> UIKitClientNativeVideoPreparationV0 {
+        throw InteractiveNativeVideoFailureV0.authorizationLost
+    }
+}
+
+/// Local selection preflight only; the existing Control/presentation owners
+/// still own all transport and input admission.
+@available(iOS 17.0, *)
+@MainActor
+enum UIKitClientNativeSurfaceSelectionPreflightV0 {
+    static func canRetain(
+        supportsStreamContinuity: @MainActor () async -> Bool,
+        rendererReady: @MainActor () -> Bool,
+        selectionCurrent: @MainActor () -> Bool
+    ) async throws -> Bool {
+        guard !Task.isCancelled, selectionCurrent() else { throw CancellationError() }
+        let supported = await supportsStreamContinuity()
+        // Recovery can publish its busy state before it reserves the surface
+        // transition. Revalidate after the probe even for unsupported peers;
+        // a false result must not send stale work down the replacement path.
+        guard !Task.isCancelled, selectionCurrent() else { throw CancellationError() }
+        return supported && rendererReady()
+    }
 }
 
 @available(iOS 17.0, *)

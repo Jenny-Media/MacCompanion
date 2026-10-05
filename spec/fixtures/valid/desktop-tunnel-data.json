@@ -1,0 +1,20 @@
+{
+  "version": {
+    "major": 0,
+    "minor": 1
+  },
+  "messageID": "018f1000-0000-7000-8000-000000000090",
+  "correlationID": null,
+  "channel": "command",
+  "kind": "desktop.tunnel",
+  "sentAtUnixMilliseconds": 5000,
+  "body": {
+    "tunnelID": "018f1000-0000-7000-8000-000000000091",
+    "interactiveSessionID": "018f1000-0000-7000-8000-000000000092",
+    "operation": "data",
+    "sequence": 1,
+    "bytes": [
+      "UkZCIDAwMy44ODkK"
+    ]
+  }
+}

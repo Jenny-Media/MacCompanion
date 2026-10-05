@@ -335,10 +335,13 @@ def dump_package(package_path: Path) -> dict[str, Any]:
 
 
 def live_snapshot() -> dict[str, Any]:
+    from verify_direct_client_dependencies import validate
+    development_packages, _ = validate()
     manifests = sorted(
         path
         for path in REPOSITORY.rglob("Package.swift")
         if not any(part in IGNORED_PARTS for part in path.relative_to(REPOSITORY).parts)
+        and path.parent.relative_to(REPOSITORY).as_posix() not in development_packages
     )
     packages: list[dict[str, Any]] = []
     for manifest in manifests:
@@ -528,6 +531,9 @@ def live_xcode_state() -> dict[str, Any]:
         for path in REPOSITORY.rglob("Package.resolved")
         if not any(part in IGNORED_PARTS for part in path.relative_to(REPOSITORY).parts)
     )
+    from verify_direct_client_dependencies import validate
+    _, development_lockfiles = validate()
+    lockfiles = [p for p in lockfiles if p.relative_to(REPOSITORY).as_posix() not in development_lockfiles]
     lockfile_paths = [path.relative_to(REPOSITORY).as_posix() for path in lockfiles]
     lock = _lock_state(lockfiles[0]) if len(lockfiles) == 1 else {"schema": "invalid"}
 

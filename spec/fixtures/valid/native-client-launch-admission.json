@@ -40,6 +40,17 @@
     "replacement-primary-discards-prior-measured-route",
     "measured-native-route-does-not-classify-provenance",
     "retired-enrollment-owner-cannot-cancel-replacement",
-    "joined-native-cancel-publishes-idle-before-return"
+    "joined-native-cancel-publishes-idle-before-return",
+    "measured-ipv4-interface-debug-annotation-excluded-from-native-address"
+  ],
+  "measuredIPv4Routes": [
+    {
+      "input": "192.0.2.1",
+      "expected": "192.0.2.1"
+    },
+    {
+      "input": "192.0.2.1%lo0",
+      "expected": "192.0.2.1"
+    }
   ]
 }

@@ -291,6 +291,22 @@ private func configuredRouteSnapshotV1(
     #expect(try await restarted.snapshot(hostID: hostID) == second)
 }
 
+@Test func macLibraryForgetRemovesOnlySelectedHostRoutesAndSurvivesRestart() async throws {
+    let fixture = try configuredRouteCatalogFixtureV1()
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("maccompanion-route-removal-\(UUID())")
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = try AtomicFileClientConfiguredRouteStoreV1(directory: root)
+    let forgotten = try configuredRouteSnapshotV1(hostID: UUID(), revision: 1, records: [fixture.validRecords[0]])
+    let retained = try configuredRouteSnapshotV1(hostID: UUID(), revision: 1, records: [fixture.validRecords[1]])
+    _ = try await store.replaceAtomically(forgotten, expectedRevision: nil)
+    _ = try await store.replaceAtomically(retained, expectedRevision: nil)
+    try await store.remove(hostID: forgotten.hostID)
+    try await store.remove(hostID: forgotten.hostID)
+    let restarted = try AtomicFileClientConfiguredRouteStoreV1(directory: root)
+    #expect(try await restarted.snapshot(hostID: forgotten.hostID) == nil)
+    #expect(try await restarted.snapshot(hostID: retained.hostID) == retained)
+}
+
 private enum ConfiguredRouteConcurrentReplaceOutcomeV1: Equatable {
     case replaced
     case conflict

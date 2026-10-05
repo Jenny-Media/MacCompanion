@@ -397,6 +397,7 @@ private func authenticateNetworkClientPump(
             hostFingerprint: WireFingerprint(harness.fingerprint)
         )
     )
+    try #require(await waitForNetworkClientPendingReceive(harness.io))
     harness.io.deliver(
         try LengthPrefixedFrameDecoder.encode(WireCodec.encode(challenge))
     )
@@ -421,6 +422,7 @@ private func authenticateNetworkClientPump(
             serverTimeUnixMilliseconds: 2_003
         )
     )
+    try #require(await waitForNetworkClientPendingReceive(harness.io))
     harness.io.deliver(
         try LengthPrefixedFrameDecoder.encode(WireCodec.encode(description))
     )
@@ -594,6 +596,7 @@ private func networkClientSPKI() throws -> Data {
     )
     #expect(hello.messageID == harness.helloMessageID)
 
+    try #require(await waitForNetworkClientPendingReceive(harness.io))
     harness.io.deliver(Data([0, 0, 0, 0]))
 
     #expect(
@@ -684,6 +687,7 @@ private func networkClientSPKI() throws -> Data {
         sentAtUnixMilliseconds: 2_011,
         body: KeepalivePongBodyV0()
     )
+    try #require(await waitForNetworkClientPendingReceive(base.io))
     base.io.deliver(
         try LengthPrefixedFrameDecoder.encode(WireCodec.encode(pong))
     )
@@ -751,6 +755,7 @@ private func networkClientSPKI() throws -> Data {
         )
     )
 
+    try #require(await waitForNetworkClientPendingReceive(harness.io))
     harness.io.deliver(
         try LengthPrefixedFrameDecoder.encode(try WireCodec.encode(denial))
     )
@@ -769,6 +774,7 @@ private func networkClientSPKI() throws -> Data {
     let harness = try makeNetworkClientPumpHarness()
     try await harness.pump.beginOnVerifiedReadyConnection(harness.start)
 
+    try #require(await waitForNetworkClientPendingReceive(harness.io))
     harness.io.deliver(nil, failed: true)
     #expect(
         await waitForNetworkClientPumpTerminal(harness.terminals)
@@ -824,7 +830,7 @@ private func networkClientSPKI() throws -> Data {
     #expect(observation.body.routeClass == .privateDNS)
     #expect(observation.body.observationSequence == 1)
 
-    #expect(await waitForNetworkClientPendingReceive(harness.io))
+    try #require(await waitForNetworkClientPendingReceive(harness.io))
     let unrelatedResponse = try WireEnvelope(
         messageID: WireUUID(UUID()),
         correlationID: nil,
@@ -832,6 +838,7 @@ private func networkClientSPKI() throws -> Data {
         body: StatusSnapshotRequestBody()
     )
     let unrelatedData = try WireCodec.encode(unrelatedResponse)
+    try #require(await waitForNetworkClientPendingReceive(harness.io))
     harness.io.deliver(
         try LengthPrefixedFrameDecoder.encode(unrelatedData)
     )
@@ -840,7 +847,7 @@ private func networkClientSPKI() throws -> Data {
             == [unrelatedData]
     )
 
-    #expect(await waitForNetworkClientPendingReceive(harness.io))
+    try #require(await waitForNetworkClientPendingReceive(harness.io))
     let acknowledgement = try WireEnvelope(
         messageID: WireUUID(UUID()),
         correlationID: observation.messageID,
@@ -852,6 +859,7 @@ private func networkClientSPKI() throws -> Data {
             observationSequence: observation.body.observationSequence
         )
     )
+    try #require(await waitForNetworkClientPendingReceive(harness.io))
     harness.io.deliver(
         try LengthPrefixedFrameDecoder.encode(WireCodec.encode(acknowledgement))
     )
@@ -1090,7 +1098,7 @@ private struct NetworkClientOperationApprovalSignerV0:
 private struct NetworkClientInteractiveApprovalSignerV0:
     ClientInteractiveApprovalSigningV0
 {
-    func signAfterUserPresence(_ input: Data) async throws -> Data {
+    func signSessionChallenge(_ input: Data) async throws -> Data {
         Data(repeating: 0x78, count: 64)
     }
 }
@@ -1285,6 +1293,25 @@ private func networkClientAcceptedControlSession(
     #expect(NetworkClientRouteAttemptV0.numericRemoteIPAddress(.hostPort(host: "2001:db8::20", port: port)) == "2001:db8::20")
 }
 
+@Test func nativeMeasuredIPv4RouteExcludesInterfaceDebugAnnotation() throws {
+    var root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+    while !FileManager.default.fileExists(atPath: root.appendingPathComponent("spec/fixtures/manifest.json").path) {
+        let parent = root.deletingLastPathComponent()
+        try #require(parent != root)
+        root = parent
+    }
+    let fixture = try #require(JSONSerialization.jsonObject(with: Data(contentsOf:
+        root.appendingPathComponent("spec/fixtures/valid/native-client-launch-admission.json"))) as? [String: Any])
+    let cases = try #require(fixture["measuredIPv4Routes"] as? [[String: String]])
+    let port = try #require(NWEndpoint.Port(rawValue: 47474))
+    for vector in cases {
+        let input = try #require(vector["input"]), expected = try #require(vector["expected"])
+        let address = try #require(IPv4Address(input))
+        if input.contains("%") { #expect(address.debugDescription.contains("%")) }
+        #expect(NetworkClientRouteAttemptV0.numericRemoteIPAddress(.hostPort(host: .ipv4(address), port: port)) == expected)
+    }
+}
+
 @Test(arguments: EndpointKind.allCases, [false, true])
 func primaryProductCandidatePublishesOnlyAfterExactSelection(kind: EndpointKind, measured: Bool)
     async throws
@@ -1445,7 +1472,7 @@ func primaryProductCandidatePublishesOnlyAfterExactSelection(kind: EndpointKind,
             nextAfterCapabilityID: nil
         )
     )
-    #expect(await waitForNetworkClientPendingReceive(base.io))
+    try #require(await waitForNetworkClientPendingReceive(base.io))
     base.io.deliver(
         try LengthPrefixedFrameDecoder.encode(WireCodec.encode(catalogResponse))
     )
@@ -1487,7 +1514,7 @@ func primaryProductCandidatePublishesOnlyAfterExactSelection(kind: EndpointKind,
             )
         )
     )
-    #expect(await waitForNetworkClientPendingReceive(base.io))
+    try #require(await waitForNetworkClientPendingReceive(base.io))
     base.io.deliver(
         try LengthPrefixedFrameDecoder.encode(WireCodec.encode(response))
     )
@@ -1955,7 +1982,7 @@ func primaryProductCandidatePublishesOnlyAfterExactSelection(kind: EndpointKind,
             )
         )
     )
-    #expect(await waitForNetworkClientPendingReceive(base.io))
+    try #require(await waitForNetworkClientPendingReceive(base.io))
     base.io.deliver(
         try LengthPrefixedFrameDecoder.encode(WireCodec.encode(response))
     )
@@ -2053,7 +2080,7 @@ func primaryProductCandidatePublishesOnlyAfterExactSelection(kind: EndpointKind,
             nextAfterCapabilityID: nil
         )
     )
-    #expect(await waitForNetworkClientPendingReceive(base.io))
+    try #require(await waitForNetworkClientPendingReceive(base.io))
     base.io.deliver(
         try LengthPrefixedFrameDecoder.encode(WireCodec.encode(response))
     )
@@ -2095,7 +2122,7 @@ func primaryProductCandidatePublishesOnlyAfterExactSelection(kind: EndpointKind,
             )
         )
     )
-    #expect(await waitForNetworkClientPendingReceive(base.io))
+    try #require(await waitForNetworkClientPendingReceive(base.io))
     base.io.deliver(
         try LengthPrefixedFrameDecoder.encode(WireCodec.encode(statusResponse))
     )

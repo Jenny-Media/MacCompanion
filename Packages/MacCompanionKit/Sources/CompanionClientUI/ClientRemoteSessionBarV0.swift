@@ -5,14 +5,14 @@ import SwiftUI
 
 /// One session bar remains above the native keyboard through safeAreaInset.
 @available(iOS 17.0, *)
-struct ClientRemoteSessionBarV0<Options: View>: View {
+struct ClientRemoteSessionBarV0: View {
     @Binding var modifiers: InteractiveModifierMask
     let keyboardVisible: Bool
-    let keyboardPreparationInFlight: Bool
+    let keyboardDisabled: Bool
     let disabled: Bool
     let onKeyboard: () -> Void
     let onKey: (ClientKeyboardActionV0, InteractiveModifierMask) -> Void
-    @ViewBuilder let options: () -> Options
+    let onOptions: () -> Void
 
     var body: some View {
         HStack(spacing: 4) {
@@ -22,8 +22,7 @@ struct ClientRemoteSessionBarV0<Options: View>: View {
             }
             .accessibilityLabel(keyboardVisible ? "Hide Keyboard" : "Keyboard")
             .accessibilityIdentifier("Remote Keyboard")
-            .overlay { if keyboardPreparationInFlight { ProgressView().controlSize(.small) } }
-            .disabled(disabled || keyboardPreparationInFlight)
+            .disabled(keyboardDisabled)
 
             keyButton("esc", label: "Escape", action: .escape)
             keyButton("⇥", label: "Tab", action: .tab)
@@ -32,7 +31,7 @@ struct ClientRemoteSessionBarV0<Options: View>: View {
             modifierButton("⌥", label: "Option", mask: .leftOption)
             modifierButton("⌘", label: "Command", mask: .leftCommand)
 
-            Menu(content: options) {
+            Button(action: onOptions) {
                 Image(systemName: "ellipsis")
                     .frame(maxWidth: .infinity, minHeight: 44)
             }

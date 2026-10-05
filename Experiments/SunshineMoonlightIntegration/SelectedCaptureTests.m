@@ -225,13 +225,30 @@ static void CompleteUpdate(SelectedTestSession *session, BOOL configuration, NSE
   Require(completion != nil); completion(error); [session flush];
 }
 
-static void ReconfigureStream(NSString *name) {
+static void SetFreshCutoverDisplayTime(CMSampleBufferRef sample) {
+  NSMutableDictionary *info = (__bridge NSMutableDictionary *)CFArrayGetValueAtIndex(CMSampleBufferGetSampleAttachmentsArray(sample, YES),0);
+  mach_timebase_info_data_t timebase = {0};
+  Require(mach_timebase_info(&timebase) == KERN_SUCCESS && timebase.numer && timebase.denom);
+  info[SCStreamFrameInfoDisplayTime] = @(mach_absolute_time() + (uint64_t)((__uint128_t)100000000 * timebase.denom / timebase.numer));
+}
+
+static NSData *EpochBytes(NSString *hex);
+
+static void ReconfigureStream(NSString *name, NSDictionary *fixture) {
   SelectedTestSession *session = [SelectedTestSession new];
   __block atomic_bool newCurrent; atomic_init(&newCurrent, true);
   CompanionSelectedCapture *capture = Capture(session, ^BOOL { return YES; });
   __block NSInteger frames = 0, updates = 0, terminals = 0;
   __block NSError *updateError = nil, *terminalError = nil;
   dispatch_semaphore_t done = dispatch_semaphore_create(0);
+  BOOL epochCase = [name isEqual:@"switch-discards-unsettled-placement-without-epoch-tag"];
+  NSData *newEpoch = nil;
+  if (epochCase) {
+    NSData *oldEpoch = EpochBytes(fixture[@"epoch"][@"bytesHex"]);
+    NSError *error = nil;
+    Require([capture configureInitialEpoch:oldEpoch error:&error] && !error);
+    NSMutableData *next = [oldEpoch mutableCopy]; ((uint8_t *)next.mutableBytes)[47] += 1; newEpoch = [next copy];
+  }
   [capture startWithFrame:^BOOL(CMSampleBufferRef sample) { (void)sample; frames += 1; return YES; }
       terminal:^(NSError *error) { terminalError = error; terminals += 1; dispatch_semaphore_signal(done); }];
   Wait(session.startEntered); [session completeStart];
@@ -241,7 +258,7 @@ static void ReconfigureStream(NSString *name) {
   // The injected session never uses this object as a real platform filter.
   SCContentFilter *filter = (SCContentFilter *)[NSObject new];
   [capture updateFilter:filter sourceRect:CGRectNull sourcePixelWidth:invalid ? 0 : 480 sourcePixelHeight:640
-      isCurrent:^BOOL { return atomic_load(&newCurrent); } completion:^(NSError *error) {
+      isCurrent:^BOOL { return atomic_load(&newCurrent); } frameEpoch:newEpoch completion:^(NSError *error) {
         updateError = error; updates += 1;
       }];
   [session flush];
@@ -305,31 +322,135 @@ static void ReconfigureStream(NSString *name) {
     CFRelease(oldSample); return;
   }
   Require(updates == 1 && updateError == nil && session.starts == 1 && session.stops == 0);
+  BOOL timeout = [name isEqual:@"switch-unsettled-placement-timeout-without-samples"];
+  BOOL stopPlacement = [name isEqual:@"stop-during-placement-wait-fences-timeout"];
+  BOOL obsoleteTimeout = [name isEqual:@"obsolete-placement-timeout-cannot-stop-new-update"];
+  BOOL timeoutRevoked = [name isEqual:@"switch-placement-timeout-rechecks-original-owner"];
+  BOOL latePlacement = [name isEqual:@"switch-discards-late-old-placement"] || epochCase || timeout
+    || stopPlacement || obsoleteTimeout || timeoutRevoked;
+  if (latePlacement) SetFreshCutoverDisplayTime(oldSample);
   // This frame has the old timestamp and old geometry. It must be dropped
   // before geometry validation, rather than terminating the new selection.
   [session emit:oldSample]; Require(frames == 0 && terminals == 0 && session.stops == 0);
+  if (epochCase) Require(CMGetAttachment(oldSample, CFSTR("MacCompanion.NativeSurfaceEpoch"), NULL) == nil);
   CFRelease(oldSample);
+  if (timeout || timeoutRevoked) {
+    if (timeoutRevoked) atomic_store(&newCurrent, false);
+    Require(dispatch_semaphore_wait(session.stopEntered, dispatch_time(DISPATCH_TIME_NOW, 3000000000)) == 0);
+    Require(frames == 0 && terminals == 0);
+    [session completeStop]; Wait(done);
+    Require(terminalError.code == (timeoutRevoked ? 4 : 9) && terminals == 1 && session.stops == 1);
+    return;
+  }
+  if (stopPlacement) {
+    [capture stop]; Wait(session.stopEntered); [session completeStop]; Wait(done);
+    usleep(2100000); [session flush];
+    Require(terminalError == nil && frames == 0 && terminals == 1 && session.stops == 1 && session.removals == 1);
+    return;
+  }
+  if (obsoleteTimeout) {
+    usleep(1200000);
+    [capture updateFilter:filter sourceRect:CGRectNull sourcePixelWidth:640 sourcePixelHeight:360
+      isCurrent:^BOOL { return atomic_load(&newCurrent); } completion:^(NSError *error) { Require(!error); updates += 1; }];
+    Wait(session.filterEntered); CompleteUpdate(session,NO,nil);
+    Wait(session.configurationEntered); CompleteUpdate(session,YES,nil);
+    usleep(1000000); [session flush];
+    Require(frames == 0 && terminals == 0 && session.stops == 0 && updates == 2);
+  }
   BOOL revoked = [name isEqual:@"switch-revalidates-new-owner-before-delivery"];
   if (revoked) atomic_store(&newCurrent, false);
-  CMSampleBufferRef newSample = Sample(320,240,SCFrameStatusComplete,0);
+  BOOL malformed = [name isEqual:@"switch-malformed-sample-during-placement-wait-is-terminal"];
+  CMSampleBufferRef newSample = Sample(320,240,SCFrameStatusComplete,malformed ? 3 : 0);
   NSMutableDictionary *info = (__bridge NSMutableDictionary *)CFArrayGetValueAtIndex(CMSampleBufferGetSampleAttachmentsArray(newSample, YES),0);
   mach_timebase_info_data_t timebase = {0};
   Require(mach_timebase_info(&timebase) == KERN_SUCCESS && timebase.numer && timebase.denom);
   info[SCStreamFrameInfoDisplayTime] = @(mach_absolute_time() + (uint64_t)((__uint128_t)100000000 * timebase.denom / timebase.numer));
-  info[SCStreamFrameInfoContentRect] = CFBridgingRelease(CGRectCreateDictionaryRepresentation(CGRectMake(35,0,90,120)));
+  if (!obsoleteTimeout) info[SCStreamFrameInfoContentRect] = CFBridgingRelease(CGRectCreateDictionaryRepresentation(CGRectMake(35,0,90,120)));
   [session emit:newSample]; CFRelease(newSample);
-  Require(frames == (revoked ? 0 : 1));
-  if (!revoked) [capture stop];
+  Require(frames == (revoked || malformed ? 0 : 1));
+  BOOL changedAfterFrame = [name isEqual:@"switch-placement-after-first-matching-frame-remains-terminal"];
+  if (changedAfterFrame) {
+    CMSampleBufferRef changed = Sample(320,240,SCFrameStatusComplete,0);
+    SetFreshCutoverDisplayTime(changed); [session emit:changed]; CFRelease(changed);
+    Require(frames == 1);
+  }
+  if (!revoked && !malformed && !changedAfterFrame) [capture stop];
   Wait(session.stopEntered); [session completeStop]; Wait(done);
-  Require(terminalError == nil || (revoked && terminalError.code == 4));
+  Require(terminalError == nil || (revoked && terminalError.code == 4)
+    || ((malformed || changedAfterFrame) && terminalError.code == 6));
   Require(terminals == 1 && session.starts == 1 && session.stops == 1 && session.removals == 1);
+}
+
+static NSData *EpochBytes(NSString *hex) {
+  NSMutableData *bytes = [NSMutableData data];
+  Require(hex.length == 96);
+  for (NSUInteger index = 0; index < hex.length; index += 2) {
+    unsigned value = 0;
+    Require([[NSScanner scannerWithString:[hex substringWithRange:NSMakeRange(index,2)]] scanHexInt:&value]);
+    uint8_t byte = (uint8_t)value; [bytes appendBytes:&byte length:1];
+  }
+  return bytes;
+}
+
+static void RetainedCaptureFenceAndEpoch(NSDictionary *fixture, BOOL stopWhilePaused) {
+  Require([fixture[@"captureRetentionCases"] count] == 4);
+  NSData *oldEpoch = EpochBytes(fixture[@"epoch"][@"bytesHex"]);
+  NSMutableData *next = [oldEpoch mutableCopy];
+  ((uint8_t *)next.mutableBytes)[47] += 1;
+  NSData *newEpoch = [next copy];
+  SelectedTestSession *session = [SelectedTestSession new];
+  __block BOOL oldCurrent = YES;
+  CompanionSelectedCapture *capture = Capture(session, ^BOOL { return oldCurrent; });
+  NSError *error = nil;
+  Require([capture configureInitialEpoch:oldEpoch error:&error] && !error);
+  __block NSInteger frames = 0;
+  dispatch_semaphore_t done = dispatch_semaphore_create(0);
+  [capture startWithFrame:^BOOL(CMSampleBufferRef sample) {
+    NSData *epoch = (__bridge NSData *)CMGetAttachment(sample, CFSTR("MacCompanion.NativeSurfaceEpoch"), NULL);
+    Require([epoch isEqual:frames == 0 ? oldEpoch : newEpoch]);
+    frames += 1; return YES;
+  } terminal:^(NSError *terminalError) { Require(!terminalError); dispatch_semaphore_signal(done); }];
+  Wait(session.startEntered); [session completeStart];
+  CMSampleBufferRef oldSample = Sample(320,240,SCFrameStatusComplete,0);
+  [session emit:oldSample]; Require(frames == 1);
+  // Setting a marker on a live stream is rejected, without queue deadlock.
+  Require(![capture configureInitialEpoch:newEpoch error:&error]);
+  dispatch_semaphore_t paused = dispatch_semaphore_create(0);
+  [capture pauseDeliveryWithCompletion:^(NSError *pauseError) { Require(!pauseError); dispatch_semaphore_signal(paused); }];
+  Wait(paused); oldCurrent = NO;
+  CMSampleBufferRef queued = Sample(320,240,SCFrameStatusComplete,0);
+  [session emit:queued]; CFRelease(queued);
+  Require(frames == 1 && session.starts == 1 && session.stops == 0);
+  if (!stopWhilePaused) {
+    dispatch_semaphore_t updated = dispatch_semaphore_create(0);
+    [capture updateFilter:(SCContentFilter *)[NSObject new] sourceRect:CGRectNull sourcePixelWidth:640 sourcePixelHeight:360
+        isCurrent:^BOOL { return YES; } frameEpoch:newEpoch completion:^(NSError *updateError) {
+      Require(!updateError); dispatch_semaphore_signal(updated);
+    }];
+    Wait(session.filterEntered);
+    void (^filterReply)(NSError *) = session.filterCompletion; session.filterCompletion = nil; filterReply(nil);
+    Wait(session.configurationEntered);
+    void (^configurationReply)(NSError *) = session.configurationCompletion; session.configurationCompletion = nil; configurationReply(nil);
+    Wait(updated);
+    CMSampleBufferRef fresh = Sample(320,240,SCFrameStatusComplete,0);
+    NSMutableDictionary *info = (__bridge NSMutableDictionary *)CFArrayGetValueAtIndex(CMSampleBufferGetSampleAttachmentsArray(fresh,YES),0);
+    mach_timebase_info_data_t timebase = {0}; Require(mach_timebase_info(&timebase) == KERN_SUCCESS && timebase.numer && timebase.denom);
+    info[SCStreamFrameInfoDisplayTime] = @(mach_absolute_time() + (uint64_t)((__uint128_t)100000000 * timebase.denom / timebase.numer));
+    [session emit:fresh]; CFRelease(fresh); Require(frames == 2);
+    // Retaining the old sample across a selection preserves its capture epoch.
+    Require([(__bridge NSData *)CMGetAttachment(oldSample,CFSTR("MacCompanion.NativeSurfaceEpoch"),NULL) isEqual:oldEpoch]);
+  }
+  CFRelease(oldSample);
+  [capture stop]; Wait(session.stopEntered); [session completeStop]; Wait(done);
+  Require(session.starts == 1 && session.stops == 1 && session.removals == 1);
 }
 
 static void RequireIndexedContinuity(NSString *path) {
   NSDictionary *fixture = [NSJSONSerialization JSONObjectWithData:[NSData dataWithContentsOfFile:path] options:0 error:nil];
   NSArray *cases = fixture[@"streamCases"];
-  Require(cases.count == 14);
-  for (NSString *name in cases) ReconfigureStream(name);
+  Require(cases.count == 22 && [fixture[@"maximumPlacementSettlementNanoseconds"] unsignedLongLongValue] == 2000000000);
+  for (NSString *name in cases) ReconfigureStream(name,fixture);
+  RetainedCaptureFenceAndEpoch(fixture,NO); RetainedCaptureFenceAndEpoch(fixture,YES);
 }
 
 int main(int argc, const char **argv) {
@@ -341,7 +462,7 @@ int main(int argc, const char **argv) {
     for (NSInteger alteration = 1; alteration <= 13; alteration++) RejectChangedCompleteSample(alteration);
     RejectChangedCompleteSample(15);
     RequireIndexedContinuity([NSString stringWithUTF8String:argv[2]]);
-    puts("Selected capture: 19 lifecycle/sample, 3 indexed placement and 14 indexed continuity cases passed; synthetic samples, no capture permission or input effects.");
+    puts("Selected capture: 19 lifecycle/sample, 3 indexed placement and 22 indexed continuity and 4 retained capture cases passed; synthetic samples, no capture permission or input effects.");
   }
   return 0;
 }

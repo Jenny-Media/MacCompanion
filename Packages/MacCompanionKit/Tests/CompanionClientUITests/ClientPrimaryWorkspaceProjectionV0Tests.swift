@@ -113,7 +113,7 @@ private func primaryWorkspaceSnapshot(
     #expect(projection.control.mode == .grantRequired)
     #expect(projection.control.entry(hasLocalLiveProduct: false)
         == .grantRequired)
-    #expect(projection.control.detail.contains("Observe only"))
+    #expect(projection.control.detail.contains("Allow Remote Control once"))
     #expect(projection.control.diagnosticCode == "interactive.grantRequired")
 }
 

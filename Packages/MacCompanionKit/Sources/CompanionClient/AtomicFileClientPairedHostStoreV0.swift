@@ -137,6 +137,18 @@ public actor AtomicFileClientPairedHostStoreV0:
         try loadAllRecords()
     }
 
+    /// Exact-record removal after the app has durably fenced this host and
+    /// removed its keys/routes. Never removes a replacement pairing by ID.
+    public func remove(_ expected: ClientDurablePairedHostV0) async throws {
+        let matches = try loadAllRecords().filter { $0.hostID == expected.hostID }
+        guard let current = matches.first else { return }
+        guard matches.count == 1, current == expected else {
+            throw ClientIdentityPublicationErrorV0.persistenceConflict
+        }
+        try fileManager.removeItem(at: recordURL(pairingID: current.pairingID, clientID: current.clientID))
+        try Self.synchronizeDirectory(directory)
+    }
+
     public func pairedHost(
         hostID: UUID
     ) async throws -> ClientDurablePairedHostV0? {

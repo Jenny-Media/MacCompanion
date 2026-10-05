@@ -7,6 +7,7 @@ No reference harness, reference authority, or experimental implementation is lin
 import argparse
 import json
 import plistlib
+import shutil
 import struct
 from pathlib import Path
 import subprocess
@@ -50,8 +51,21 @@ def verify_simulator_entitlements(output, app):
             "packagedSimulatedEntitlementsSHA256": digest(packaged[0])}
 
 
-def build(native_root, output, sdk):
+def build(native_root, output, sdk, reuse_build=None):
     output.mkdir(parents=True, exist_ok=False)
+    prior_artifact = None
+    if reuse_build is not None:
+        # Only a previous disposable normal development build may supply the
+        # cache. Preserve its verified app before rebuilding its shared cache.
+        assert reuse_build.parent == Path('/private/tmp') and reuse_build.name.startswith('maccompanion-')
+        previous = json.loads((reuse_build / 'build-report.json').read_text())
+        assert previous['normalSourceRoot'] and previous['releaseAdmitted'] is False and previous['sdk'] == sdk
+        previous_app = Path(previous['app'])
+        assert digest(previous_app / 'Mac Companion') == previous['normalApplicationBinarySHA256']
+        prior_artifact = reuse_build / 'PreservedVerifiedApplication.app'
+        shutil.copytree(previous_app, prior_artifact, symlinks=True)
+        assert digest(prior_artifact / 'Mac Companion') == previous['normalApplicationBinarySHA256']
+        (output / 'DerivedData').symlink_to((reuse_build / 'DerivedData').resolve(strict=True), target_is_directory=True)
     source_sha = native_source_inputs()[1]
     builder_sha = digest(Path(__file__))
     products = native_root / f"embedded-engine/DerivedData/Build/Products/Debug-{sdk}"
@@ -131,6 +145,8 @@ def build(native_root, output, sdk):
               "approvalUserPresenceSubstituted": False,
               "normalApplicationBinarySHA256": digest(app / "Mac Companion"),
               "installed": False, "nativeSessionVerified": False}
+    record['reusedDisposableBuildCache'] = str(reuse_build) if reuse_build else None
+    record['previousVerifiedApplicationPreserved'] = str(prior_artifact) if prior_artifact else None
     (output / "build-report.json").write_text(json.dumps(record, indent=2, sort_keys=True) + "\n")
     return record
 
@@ -140,5 +156,7 @@ if __name__ == "__main__":
     parser.add_argument("--root", required=True, type=Path)
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--sdk", choices=["iphonesimulator", "iphoneos"], default="iphonesimulator")
+    parser.add_argument("--reuse-build-cache", type=Path, help="Reuse a disposable normal build cache after preserving its verified app")
     args = parser.parse_args()
-    print(json.dumps(build(args.root.resolve(), args.output.resolve(), args.sdk), sort_keys=True))
+    print(json.dumps(build(args.root.resolve(), args.output.resolve(), args.sdk,
+        args.reuse_build_cache.resolve() if args.reuse_build_cache else None), sort_keys=True))

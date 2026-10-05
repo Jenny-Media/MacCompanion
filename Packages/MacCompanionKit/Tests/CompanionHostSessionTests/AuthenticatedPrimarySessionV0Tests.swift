@@ -6,6 +6,7 @@ import CompanionInteractiveWire
 import CompanionOperations
 import CompanionPersistence
 import CompanionSecurity
+import CompanionTestSupport
 import CompanionTransport
 import CompanionWire
 import CryptoKit
@@ -376,6 +377,62 @@ private actor RecordingRouteObservationPublisher:
     func withdraw(connectionID: Data) async {
         withdrawals.append(connectionID)
     }
+}
+
+private actor DesktopContextGateV1: AuthenticatedInteractiveWireDispatchingV0 {
+    var contexts: [AuthenticatedInteractiveCommandContextV0] = []
+    func authorizeDesktop(sessionID: UUID, context: AuthenticatedInteractiveCommandContextV0) {
+        contexts.append(context)
+    }
+    func dispatch(requestJSON: Data, context: AuthenticatedInteractiveCommandContextV0, responseMessageID: WireUUID) throws -> Data {
+        throw AuthenticatedPrimarySessionErrorV0.invalidConfiguration
+    }
+    func primarySessionClosed() {}
+}
+
+@Test func desktopTunnelPrimaryGateUsesAuthenticatedContextAndRejectsReplayAndClosedPrimary() async throws {
+    let fixture = try await SessionFixture.create()
+    defer { fixture.remove() }
+    let gate = DesktopContextGateV1()
+    let session = try makeSession(fixture: fixture, interactive: gate)
+    let sessionID = UUID()
+    let frame = try WireCodec.encode(WireEnvelope(messageID: WireUUID(UUID()), correlationID: nil,
+        sentAtUnixMilliseconds: 5_000,
+        body: DesktopTunnelBodyV1(tunnelID: UUID(), interactiveSessionID: sessionID, operation: .open, sequence: 0)))
+    await #expect(throws: (any Error).self) {
+        try await session.authorizeDesktop(sessionID: sessionID, request: frame, contextHostState: .userSessionActive,
+            wallNowUnixMilliseconds: 5_000, monotonicNowMilliseconds: 100)
+    }
+    #expect(await gate.contexts.isEmpty)
+    let connectionID = try await completeAuthentication(session, fixture: fixture)
+    try await session.authorizeDesktop(sessionID: sessionID, request: frame, contextHostState: .userSessionActive,
+        wallNowUnixMilliseconds: 5_000, monotonicNowMilliseconds: 200)
+    let context = try #require(await gate.contexts.first)
+    #expect(context.primaryConnectionID == connectionID)
+    #expect(context.principal.deviceID == sessionDeviceID)
+    #expect(context.hostID == sessionHostID)
+    await #expect(throws: (any Error).self) {
+        try await session.authorizeDesktop(sessionID: sessionID, request: frame, contextHostState: .userSessionActive,
+            wallNowUnixMilliseconds: 5_001, monotonicNowMilliseconds: 201)
+    }
+    let root = FixturePaths.authoritativeFixtures()
+    let goldenQuery = try WireCodec.decode(WireEnvelope<DesktopTunnelBodyV1>.self,
+        from: Data(contentsOf: root.appendingPathComponent("valid/desktop-window-query.json"))).body
+    let queryFrame = try WireCodec.encode(WireEnvelope(messageID: WireUUID(UUID()), correlationID: nil,
+        sentAtUnixMilliseconds: 5_001, body: DesktopTunnelBodyV1(tunnelID: goldenQuery.tunnelID.rawValue,
+            interactiveSessionID: sessionID, operation: .windowQuery, sequence: goldenQuery.sequence, data: goldenQuery.data)))
+    try await session.authorizeDesktop(sessionID: sessionID, request: queryFrame, contextHostState: .userSessionActive,
+        wallNowUnixMilliseconds: 5_001, monotonicNowMilliseconds: 201)
+    await #expect(throws: (any Error).self) {
+        try await session.authorizeDesktop(sessionID: sessionID, request: queryFrame, contextHostState: .userSessionActive,
+            wallNowUnixMilliseconds: 5_002, monotonicNowMilliseconds: 202)
+    }
+    await session.close()
+    await #expect(throws: (any Error).self) {
+        try await session.authorizeDesktop(sessionID: sessionID, contextHostState: .userSessionActive,
+            wallNowUnixMilliseconds: 5_002, monotonicNowMilliseconds: 202)
+    }
+    #expect(await gate.contexts.count == 2)
 }
 
 private func makeSession(

@@ -17,7 +17,9 @@ MAC_SUBMODULES = [
     "third-party/Simple-Web-Server", "third-party/TPCircularBuffer",
     "third-party/libdisplaydevice",
 ]
-MAC_VERIFIED_SUBMODULES = MAC_SUBMODULES + ["third-party/moonlight-common-c/enet"]
+MAC_VERIFIED_SUBMODULES = MAC_SUBMODULES + [
+    "third-party/moonlight-common-c/enet", "third-party/moonlight-common-c/nanors",
+]
 
 
 def run(*args, cwd=None, log=None):
@@ -87,6 +89,9 @@ def native_source_inputs():
 
 
 def normalized_diff(data):
+    # A blank context line may be encoded as either an empty line or one space.
+    # Preserve every nonblank byte, hunk, path and source edit in this comparison.
+    data = data.replace(b"\n \n", b"\n\n")
     return sorted(b"diff --git " + section for section in data.split(b"diff --git ")[1:])
 
 
@@ -117,7 +122,7 @@ def verify_source(root, name):
                if item["source"] == name]
     # Compare the complete tracked diff to the admitted local patch. Reject
     # unrelated edits rather than resetting a caller's source checkout.
-    expected_diff = b"".join(p.read_bytes() for p, _ in patches)
+    expected_diff = b"".join(p.read_bytes() for p, item in patches if not item.get("copyOnlySubmodule"))
     for patch, item in patches:
         if digest(patch) != item["sha256"]:
             raise ValueError(f"Local patch changed: {patch.name}")
@@ -127,6 +132,22 @@ def verify_source(root, name):
     if git(path, "ls-files", "--others", "--exclude-standard"):
         raise ValueError(f"{name}: unexpected untracked source files")
     return path
+
+
+def copy_native_depacketizer(upstream, destination):
+    """Apply one admitted adapter patch to a disposable pinned-source copy."""
+    filename = "moonlight-common-native-frame-epoch.patch"
+    item = LOCK["patches"][filename]
+    if item["source"] != "moonlight-ios" or item.get("copyOnlySubmodule") != "moonlight-common/moonlight-common-c":
+        raise ValueError("Unexpected embedded depacketizer patch scope")
+    patch = HERE / "patches" / filename
+    if digest(patch) != item["sha256"]:
+        raise ValueError("Embedded depacketizer patch checksum mismatch")
+    destination.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(upstream / item["copyOnlySubmodule"] / "src/VideoDepacketizer.c", destination / "VideoDepacketizer.c")
+    run("git", "apply", "--check", str(patch), cwd=destination)
+    run("git", "apply", str(patch), cwd=destination)
+    return destination / "VideoDepacketizer.c"
 
 
 def fetch(root, name):
@@ -143,12 +164,12 @@ def fetch(root, name):
     if name == "Sunshine":
         run("git", "submodule", "update", "--init", "--depth", "1",
             *MAC_SUBMODULES, cwd=path)
-        run("git", "submodule", "update", "--init", "--depth", "1", "enet",
+        run("git", "submodule", "update", "--init", "--depth", "1", "enet", "nanors",
             cwd=path / "third-party/moonlight-common-c")
     else:
         run("git", "submodule", "update", "--init", "--recursive", "--depth", "1", cwd=path)
     for filename, patch in LOCK["patches"].items():
-        if patch["source"] != name:
+        if patch["source"] != name or patch.get("copyOnlySubmodule"):
             continue
         patch_path = HERE / "patches" / filename
         if digest(patch_path) != patch["sha256"]:

@@ -1133,7 +1133,8 @@ public func activePairedDeviceCount() throws -> Int {
         record: StoredDeviceRecord,
         displayName: DeviceDisplayName?
     ) throws {
-        guard record.authorization.state == .activeMonitorOnly,
+        guard record.authorization.state == .activeMonitorOnly
+                || record.authorization.state == .activeGranted,
               record.authorization.authorizationEpoch.rawValue == 1,
               record.authorization.grantRevision.rawValue == 1,
               record.revokedAtUnixMilliseconds == nil else {
@@ -1152,6 +1153,16 @@ public func activePairedDeviceCount() throws -> Int {
                 sqlite3_bind_int64(statement, 3, record.updatedAtUnixMilliseconds)
             }
             try insertDevice(record)
+            if record.authorization.state == .activeGranted {
+                // Only the disclosed, fixed desktop scope can be granted by
+                // pairing. Device, consumption and grant rows commit together.
+                try replaceGrantRows(
+                    deviceID: record.deviceID,
+                    grants: CapabilityGrantSet([
+                        PairingAccessProfileV1.remoteDesktopCapabilityID,
+                    ])
+                )
+            }
             if let displayName {
                 try executeBound(
                     "INSERT INTO device_display_names(device_id, display_name, updated_at_ms) VALUES (?1, ?2, ?3)"
@@ -1168,7 +1179,9 @@ public func activePairedDeviceCount() throws -> Int {
             try inject(.afterDeviceMutation)
             try inject(.beforeSecurityEvent)
             try insertSecurityEvent(
-                kind: "pairing.committedMonitorOnly",
+                kind: record.authorization.state == .activeGranted
+                    ? "pairing.committedRemoteDesktop"
+                    : "pairing.committedMonitorOnly",
                 deviceID: record.deviceID,
                 occurredAtUnixMilliseconds: record.updatedAtUnixMilliseconds
             )

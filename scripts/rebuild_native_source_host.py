@@ -134,6 +134,10 @@ def main():
             {"CompanionSelectedCapture.h", "CompanionSelectedCapture.m"},
             {"CompanionSelectedCapture.h", "CompanionSelectedCapture.m",
              "CompanionSelectedCaptureContext.h", "CompanionSelectedCaptureContext.m"},
+            {"CompanionSelectedCapture.h", "CompanionSelectedCapture.m",
+             "CompanionSelectedCaptureContext.h", "CompanionSelectedCaptureContext.m",
+             "CompanionSelectedCaptureHandoff.h", "CompanionSelectedCaptureHandoff.m",
+             "CompanionNativeEpochAssociation.h", "../Client/CompanionNativeSurfaceEpoch.h"},
         ]
         if (set(selected_sources) not in admitted_source_sets
                 or len(selected_flags) != 1

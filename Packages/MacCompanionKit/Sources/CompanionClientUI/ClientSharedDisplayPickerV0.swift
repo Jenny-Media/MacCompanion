@@ -49,7 +49,10 @@ struct ClientSharedDisplayPickerV0: View {
                         )
                     }
 
-                    if let statusMessage {
+                    if requestInFlight, catalog != nil {
+                        ProgressView(statusMessage ?? "Refreshing displays…")
+                            .accessibilityIdentifier("Shared Displays Updating")
+                    } else if let statusMessage {
                         Label(statusMessage, systemImage: "exclamationmark.triangle")
                             .font(.footnote)
                             .foregroundStyle(.secondary)

@@ -6,6 +6,7 @@
 #include <openssl/crypto.h>
 #include <stdatomic.h>
 #include "CompanionNativeSurfaceEpoch.h"
+#include "CompanionMoonlightTerminalDiagnostic.h"
 
 @implementation CompanionMoonlightVideoConfiguration
 @end
@@ -25,6 +26,8 @@
 @property (strong, nonatomic, nullable) dispatch_source_t interruptTimer;
 - (void)deliver:(CompanionMoonlightVideoEvent)event code:(int)code;
 - (void)recordQueuedVideoFrame;
+- (void)recordEngineTerminalFormat:(const char *)format;
+- (void)requestReplacementKeyFrame;
 - (BOOL)acceptPicture:(const unsigned char *)data length:(size_t)length independent:(BOOL *)independent;
 @end
 
@@ -48,6 +51,7 @@ static CompanionMoonlightVideo *currentSession(void) {
     char _sessionURL[128];
     _Atomic(uint64_t) _queuedVideoFrameCount;
     _Atomic(uint64_t) _frameEpochGeneration;
+    _Atomic(int) _terminalDiagnosticCode;
     CompanionNativeSurfaceEpoch _expectedEpoch;
     BOOL _hasExpectedEpoch, _waitingForEpoch, _awaitingEpochConfiguration;
     int _videoFormat;
@@ -190,6 +194,14 @@ int DrSubmitDecodeUnit(PDECODE_UNIT unit) {
 
 static void connectionStarted(void) { [currentSession() deliver:CompanionMoonlightVideoEventConnected code:0]; }
 static void connectionTerminated(int code) { [currentSession() deliver:CompanionMoonlightVideoEventDisconnected code:code]; }
+static void engineLogMessage(const char *format, ...) {
+    [currentSession() recordEngineTerminalFormat:format];
+}
+- (void)recordEngineTerminalFormat:(const char *)format {
+    int code = CompanionMoonlightTerminalDiagnostic(format), expected = 0;
+    if (code) atomic_compare_exchange_strong(&_terminalDiagnosticCode, &expected, code);
+}
+- (int)terminalDiagnosticCode { return atomic_load(&_terminalDiagnosticCode); }
 static void stageFailed(int stage, int code) {
     NSLog(@"MacCompanion embedded: stage failed stage=%d code=%d", stage, code);
     [currentSession() deliver:CompanionMoonlightVideoEventFailed code:code];
@@ -223,6 +235,7 @@ static void discardAudio(char *bytes, int length) { }
         connection.connectionStarted = connectionStarted;
         connection.connectionTerminated = connectionTerminated;
         connection.stageFailed = stageFailed;
+        connection.logMessage = engineLogMessage;
         audio.init = audioSetup;
         audio.decodeAndPlaySample = discardAudio;
         audio.capabilities = CAPABILITY_SUPPORTS_ARBITRARY_AUDIO_DURATION;
@@ -264,8 +277,13 @@ static void discardAudio(char *bytes, int length) { }
         || (_hasExpectedEpoch && CompanionNativeEpochEqual(&epoch,&_expectedEpoch))) return fail(error,4);
     _expectedEpoch = epoch; _hasExpectedEpoch = YES;
     _awaitingEpochConfiguration = NO;
+    // The host's first new-epoch IDR may arrive while we are still fenced.
+    // Request one once the new epoch is installed, using this same transport.
+    [self requestReplacementKeyFrame];
     return YES;
 }
+
+- (void)requestReplacementKeyFrame { LiRequestIdrFrame(); }
 
 - (BOOL)acceptPicture:(const unsigned char *)data length:(size_t)length independent:(BOOL *)independent {
     NSAssert(NSThread.isMainThread, @"Picture acceptance must use the main thread");

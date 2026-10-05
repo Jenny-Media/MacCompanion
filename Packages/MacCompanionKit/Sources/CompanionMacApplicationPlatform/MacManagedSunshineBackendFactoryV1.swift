@@ -11,6 +11,7 @@ public enum MacManagedSunshineBackendFactoryV1 {
         root: URL, sunshine: URL, supervisor: URL, openssl: URL, port: UInt16,
         opensslConfiguration: URL = URL(fileURLWithPath: "/dev/null"),
         listenerScope: MacManagedSunshineEnrollmentBackendV1.ListenerScope = .loopback,
+        streamContinuityEnabled: Bool = false,
         validateArtifacts: @escaping @Sendable () throws -> Void
     ) -> MacInteractiveNativeBackendFactoryV1 {
         { physicalDisplayID, geometry, permit, selected in
@@ -26,7 +27,7 @@ public enum MacManagedSunshineBackendFactoryV1 {
                     withCurrentControl: { deadline, batch in
                         try permit.withCurrentInput(beforeDeadlineNanoseconds: deadline, batch)
                     }, listenerScope: listenerScope,
-                    approvedSelectedCapture: selected)
+                    approvedSelectedCapture: selected, streamContinuityEnabled: streamContinuityEnabled)
             }
         }
     }

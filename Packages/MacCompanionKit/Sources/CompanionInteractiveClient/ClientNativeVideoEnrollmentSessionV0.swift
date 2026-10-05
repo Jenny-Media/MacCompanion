@@ -11,6 +11,7 @@ public struct ClientNativeVideoEnrolledSessionV0: Sendable {
     public let authority: ClientNativeVideoAttestationAuthorityV0
     public let hostCertificateDER: Data
     public let portBase: UInt16
+    public let streamContinuity: Bool
 }
 
 /// Retains the enrollment/signing attempt for the normal Control product.
@@ -23,6 +24,8 @@ public actor ClientNativeVideoEnrollmentSessionV0 {
     private let validateCertificate: @Sendable (Data) async throws -> Bool
     private let now: @Sendable () -> UInt64
     private var attempt: Task<ClientNativeVideoEnrolledSessionV0, Error>?
+    private var retained = false
+    private var enrolled: ClientNativeVideoEnrolledSessionV0?
     private var started = false
     private var closed = false
     private var attestation: ClientNativeVideoAttestationOwnerV0?
@@ -41,23 +44,31 @@ public actor ClientNativeVideoEnrollmentSessionV0 {
         self.now = monotonicMilliseconds
     }
 
-    public func enroll(descriptor: AdaptiveSurfaceDescriptor, clientCertificateDER: Data) async throws -> ClientNativeVideoEnrolledSessionV0 {
+    public func enroll(descriptor: AdaptiveSurfaceDescriptor, clientCertificateDER: Data, streamContinuity: Bool = false) async throws -> ClientNativeVideoEnrolledSessionV0 {
         guard !started, !closed else { throw ClientNativeVideoAttestationFailureV0.invalidPhase }
         started = true
-        let task = Task { try await self.performEnrollment(descriptor: descriptor, clientCertificateDER: clientCertificateDER) }
+        let task = Task { try await self.performEnrollment(descriptor: descriptor, clientCertificateDER: clientCertificateDER, streamContinuity: streamContinuity) }
         attempt = task
         return try await withTaskCancellationHandler {
-            do { return try await task.value }
+            do { let result = try await task.value; attempt = nil; enrolled = result; return result }
             catch { await close(); throw error }
         } onCancel: { [weak self] in Task { await self?.close() } }
     }
 
-    private func performEnrollment(descriptor: AdaptiveSurfaceDescriptor, clientCertificateDER: Data) async throws -> ClientNativeVideoEnrolledSessionV0 {
+    private func performEnrollment(descriptor: AdaptiveSurfaceDescriptor, clientCertificateDER: Data, streamContinuity: Bool) async throws -> ClientNativeVideoEnrolledSessionV0 {
         do {
             let challenge = try await channel.requestNativeEnrollment(for: descriptor,
-                clientCertificateDER: clientCertificateDER, localOwnerID: localOwnerID)
+                clientCertificateDER: clientCertificateDER, localOwnerID: localOwnerID, streamContinuity: streamContinuity)
             guard !closed, let authority = await channel.nativeAttestationAuthority(for: challenge) else {
                 throw ClientNativeVideoAttestationFailureV0.authorizationLost
+            }
+            if retained, let previous = enrolled {
+                guard authority.binding == previous.authority.binding,
+                      authority.surface.encodedWidth == previous.authority.surface.encodedWidth,
+                      authority.surface.encodedHeight == previous.authority.surface.encodedHeight,
+                      try challenge.body.preparation().hostCertificateDER == previous.hostCertificateDER else {
+                    throw ClientNativeVideoAttestationFailureV0.authorizationLost
+                }
             }
             self.challenge = challenge
             expected = authority
@@ -74,6 +85,11 @@ public actor ClientNativeVideoEnrollmentSessionV0 {
             guard !closed, await channel.nativeAttestationAuthority(for: challenge) == authority else {
                 throw ClientNativeVideoAttestationFailureV0.authorizationLost
             }
+            if retained, ready.body.portBase != enrolled?.portBase || ready.body.streamContinuity != true {
+                throw ClientNativeVideoAttestationFailureV0.authorizationLost
+            }
+            retained = false
+            monitor?.cancel()
             monitor = Task { [weak self] in
                 while !Task.isCancelled {
                     try? await Task.sleep(for: .milliseconds(50))
@@ -82,15 +98,42 @@ public actor ClientNativeVideoEnrollmentSessionV0 {
                 }
             }
             return .init(authority: authority, hostCertificateDER: try challenge.body.preparation().hostCertificateDER,
-                         portBase: ready.body.portBase)
+                         portBase: ready.body.portBase, streamContinuity: ready.body.streamContinuity == true)
         } catch {
             throw error
         }
     }
 
+    public func supportsStreamContinuity() async -> Bool {
+        guard !closed, !retained, enrolled?.streamContinuity == true else { return false }
+        return await channel.nativeStreamContinuityAvailable(ownedBy: localOwnerID)
+    }
+
+    public func retainStream() async throws {
+        guard !closed, !retained, attempt == nil, await supportsStreamContinuity(), !closed else {
+            throw ClientNativeVideoAttestationFailureV0.invalidPhase
+        }
+        retained = true // Monitor the original Control while the old surface is paused.
+        do {
+            try await channel.retainNativeEnrollment(ownedBy: localOwnerID)
+            guard !closed, await isCurrent() else { throw ClientNativeVideoAttestationFailureV0.authorizationLost }
+            await attestation?.retire(); attestation = nil
+        } catch { await close(); throw error }
+    }
+
+    public func replaceSurface(descriptor: AdaptiveSurfaceDescriptor, clientCertificateDER: Data) async throws -> ClientNativeVideoEnrolledSessionV0 {
+        guard !closed, retained, attempt == nil, enrolled != nil else { throw ClientNativeVideoAttestationFailureV0.invalidPhase }
+        let task = Task { try await self.performEnrollment(descriptor: descriptor, clientCertificateDER: clientCertificateDER, streamContinuity: true) }
+        attempt = task
+        return try await withTaskCancellationHandler {
+            do { let result = try await task.value; attempt = nil; enrolled = result; return result }
+            catch { await close(); throw error }
+        } onCancel: { [weak self] in Task { await self?.close() } }
+    }
+
     @discardableResult
     public func acknowledgePresentation(nativeGeneration: Int64, encodedWidth: UInt16, encodedHeight: UInt16) async throws -> InteractiveNativeVideoPresentationReceiptBodyV0 {
-        guard await isCurrent(), !Task.isCancelled else { throw ClientNativeVideoAttestationFailureV0.authorizationLost }
+        guard !retained, await isCurrent(), !Task.isCancelled else { throw ClientNativeVideoAttestationFailureV0.authorizationLost }
         do {
             let receipt = try await channel.acknowledgeNativePresentation(nativeGeneration: nativeGeneration,
                 encodedWidth: encodedWidth, encodedHeight: encodedHeight)
@@ -103,7 +146,12 @@ public actor ClientNativeVideoEnrollmentSessionV0 {
     }
 
     public func isCurrent() async -> Bool {
-        guard !closed, let challenge, let expected else { return false }
+        guard !closed, let expected else { return false }
+        if retained {
+            let binding = await channel.currentNativeControlBinding()
+            return !closed && binding == expected.binding
+        }
+        guard let challenge else { return false }
         let current = await channel.nativeAttestationAuthority(for: challenge)
         return !closed && current == expected
     }
@@ -120,6 +168,7 @@ public actor ClientNativeVideoEnrollmentSessionV0 {
         attestation = nil
         challenge = nil
         expected = nil
+        enrolled = nil; retained = false
         let task = Task {
             await owner?.retire()
             try? await channel.cancelNativeEnrollment(ownedBy: localOwnerID)

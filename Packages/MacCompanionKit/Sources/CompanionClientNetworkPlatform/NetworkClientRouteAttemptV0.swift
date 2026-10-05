@@ -106,7 +106,10 @@ public struct NetworkClientRouteAttemptV0: DialRouteAttemptingV0, Sendable {
     package static func numericRemoteIPAddress(_ endpoint: NWEndpoint?) -> String? {
         guard case let .hostPort(host, _) = endpoint else { return nil }
         switch host {
-        case let .ipv4(address): return address.debugDescription
+        // A measured endpoint may carry an interface, whose debug form adds
+        // "%en0" even to IPv4. Reconstruct from the exact four bytes so the
+        // native inet_pton parser receives numeric address text only.
+        case let .ipv4(address): return IPv4Address(address.rawValue)?.debugDescription
         case let .ipv6(address): return address.debugDescription
         case .name: return nil
         @unknown default: return nil

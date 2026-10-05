@@ -12,6 +12,7 @@ public actor MacLocalXPCNativeEnrollmentBackendV1: InteractiveNativeVideoEnrollm
     private let sender: any MacLocalXPCInteractiveLeaseSendingV1
     private let snapshot: InteractiveNativeVideoRuntimeSnapshotV0
     private let backendID = UUID()
+    private let predecessor: (backendID: UUID, operationID: UUID, scope: LocalInteractiveNativeBackendScopeV1)?
     private var operationID: UUID?
     private var scope: LocalInteractiveNativeBackendScopeV1?
     private var pending: Task<LocalInteractiveNativeBackendReceiptV1, Error>?
@@ -19,10 +20,28 @@ public actor MacLocalXPCNativeEnrollmentBackendV1: InteractiveNativeVideoEnrollm
     private var healthRead: (token: UUID, task: Task<LocalInteractiveNativeBackendReceiptV1, Error>)?
     private var presentationRead: (token: UUID, generation: Int64, id: UUID, task: Task<LocalInteractiveNativeBackendReceiptV1, Error>)?
     private var retired = false
+    private var retaining = false
+    private var retained = false
     private var drain: Task<Void, Never>?
 
     public init(sender: any MacLocalXPCInteractiveLeaseSendingV1, snapshot: InteractiveNativeVideoRuntimeSnapshotV0) {
-        self.sender = sender; self.snapshot = snapshot
+        self.sender = sender; self.snapshot = snapshot; predecessor = nil
+    }
+    private init(sender: any MacLocalXPCInteractiveLeaseSendingV1, snapshot: InteractiveNativeVideoRuntimeSnapshotV0,
+        predecessor: (UUID, UUID, LocalInteractiveNativeBackendScopeV1)) {
+        self.sender = sender; self.snapshot = snapshot; self.predecessor = predecessor
+    }
+    package func replacementBackend(snapshot: InteractiveNativeVideoRuntimeSnapshotV0,
+        retained material: InteractiveNativeVideoRetainedEnrollmentV1) throws -> MacLocalXPCNativeEnrollmentBackendV1 {
+        guard !retired, retained, !retaining, let operationID, let scope,
+              operationID == material.operationID, try scope.binding() == material.authority.binding,
+              try scope.surface() == material.authority.surface, snapshot.binding == material.authority.binding,
+              snapshot.surface != material.authority.surface,
+              snapshot.surface.encodedWidth == material.authority.surface.encodedWidth,
+              snapshot.surface.encodedHeight == material.authority.surface.encodedHeight else {
+            throw LocalInteractiveNativeBackendErrorV1.bindingMismatch
+        }
+        return .init(sender: sender, snapshot: snapshot, predecessor: (backendID, operationID, scope))
     }
     public func prepare(operationID: UUID, authority: InteractiveNativeVideoAuthorityV0, clientCertificateDER: Data) async throws -> Data {
         guard !retired, self.operationID == nil, authority.binding == snapshot.binding, authority.surface == snapshot.surface else {
@@ -33,24 +52,56 @@ public actor MacLocalXPCNativeEnrollmentBackendV1: InteractiveNativeVideoEnrollm
             selectedDisplayID: snapshot.selectedDisplayID, menuAppGeneration: snapshot.visibleMenuAppGeneration,
             menuAppRevision: snapshot.visibleMenuAppRevision, sessionPublicKeyX963: authority.sessionPublicKeyX963)
         self.operationID = operationID; self.scope = scope
+        if let predecessor, !scope.retainsOriginalControl(of: predecessor.scope) { throw LocalInteractiveNativeBackendErrorV1.bindingMismatch }
         let reply = try await submit(.init(commandID: UUID(), backendID: backendID, operationID: operationID,
-            operation: .prepare, scope: scope, clientCertificateDER: clientCertificateDER))
+            operation: predecessor == nil ? .prepare : .prepareReplacement, scope: scope, clientCertificateDER: clientCertificateDER,
+            previousBackendID: predecessor?.backendID, previousOperationID: predecessor?.operationID))
         guard let encoded = reply.hostCertificateDERBase64 else { throw LocalInteractiveNativeBackendErrorV1.invalidMaterial }
         return try LocalInteractiveNativeBackendScopeV1.bytes(encoded, count: 1...4096)
     }
     public func activate(operationID: UUID) async throws -> InteractiveNativeVideoEndpointV0 {
         guard self.operationID == operationID, let scope else { throw LocalInteractiveNativeBackendErrorV1.unavailable }
-        let reply = try await submit(.init(commandID: UUID(), backendID: backendID, operationID: operationID,
-            operation: .activate, scope: scope))
-        guard let port = reply.portBase else { throw LocalInteractiveNativeBackendErrorV1.invalidMaterial }
-        return try .init(portBase: port)
+        let until = min(scope.expiresAtMonotonicMilliseconds, DispatchTime.now().uptimeNanoseconds / 1_000_000
+            + LocalInteractiveNativeBackendOperationV1.activationStartupMilliseconds)
+        while !Task.isCancelled, !retired, DispatchTime.now().uptimeNanoseconds / 1_000_000 < until {
+            let reply = try await submit(.init(commandID: UUID(), backendID: backendID, operationID: operationID,
+                operation: .activate, scope: scope, pollActivation: true))
+            if let port = reply.portBase { return try .init(portBase: port) }
+            guard reply.activationPending == true else { throw LocalInteractiveNativeBackendErrorV1.invalidMaterial }
+            try await Task.sleep(for: .milliseconds(LocalInteractiveNativeBackendOperationV1.activationPollMilliseconds))
+        }
+        await retire(operationID: operationID)
+        throw LocalInteractiveNativeBackendErrorV1.unavailable
     }
     public func isActive(operationID: UUID) async -> Bool {
-        guard !retired, self.operationID == operationID, scope != nil else { return false }
+        guard !retired, !retained, !retaining, self.operationID == operationID, scope != nil else { return false }
         do {
             let reply = try await health(operationID: operationID)
             return reply.active == true
         } catch { return false }
+    }
+    public func supportsStreamContinuity(operationID: UUID) async -> Bool {
+        guard !retired, !retained, !retaining, self.operationID == operationID else { return false }
+        return (try? await health(operationID: operationID).streamContinuity) == true
+    }
+    public func retainStream(operationID: UUID) async throws {
+        guard !retired, !retained, !retaining, self.operationID == operationID, let scope else { throw LocalInteractiveNativeBackendErrorV1.unavailable }
+        retaining = true
+        do {
+            if let presentation = presentationRead?.task { _ = try await presentation.value }
+            if let observation = healthRead?.task { _ = try await observation.value }
+            if let worker = pending { _ = try await worker.value }
+            guard !Task.isCancelled, !retired, self.operationID == operationID, self.scope == scope else { throw LocalInteractiveNativeBackendErrorV1.unavailable }
+            let reply = try await submit(.init(commandID: UUID(), backendID: backendID, operationID: operationID,
+                operation: .retain, scope: scope))
+            guard !Task.isCancelled, !retired, self.operationID == operationID, self.scope == scope,
+                  reply.streamRetained == true else { throw LocalInteractiveNativeBackendErrorV1.unavailable }
+            retained = true; retaining = false
+        } catch { await retire(operationID: operationID); throw error }
+    }
+    public func isStreamRetained(operationID: UUID) async -> Bool {
+        guard !retired, retained, !retaining, self.operationID == operationID else { return false }
+        return (try? await health(operationID: operationID, forRetained: true).streamRetained) == true
     }
     public func captureEvidence(operationID: UUID) async throws -> InteractiveNativeVideoCaptureEvidenceV0? {
         guard !retired, self.operationID == operationID, scope != nil else { throw LocalInteractiveNativeBackendErrorV1.unavailable }
@@ -85,8 +136,8 @@ public actor MacLocalXPCNativeEnrollmentBackendV1: InteractiveNativeVideoEnrollm
         return reply.inputAdmitted == true
     }
 
-    private func health(operationID: UUID) async throws -> LocalInteractiveNativeBackendReceiptV1 {
-        guard !retired, self.operationID == operationID, let scope else { throw LocalInteractiveNativeBackendErrorV1.unavailable }
+    private func health(operationID: UUID, forRetained: Bool = false) async throws -> LocalInteractiveNativeBackendReceiptV1 {
+        guard !retired, !retaining, retained == forRetained, self.operationID == operationID, let scope else { throw LocalInteractiveNativeBackendErrorV1.unavailable }
         if let presentation = presentationRead?.task {
             _ = try await presentation.value
             guard !Task.isCancelled, !retired, self.operationID == operationID, self.scope == scope else {
@@ -98,7 +149,7 @@ public actor MacLocalXPCNativeEnrollmentBackendV1: InteractiveNativeVideoEnrollm
         else {
             guard pending == nil else { throw LocalInteractiveNativeBackendErrorV1.unavailable }
             let command = try LocalInteractiveNativeBackendCommandV1(commandID: UUID(), backendID: backendID,
-                operationID: operationID, operation: .health, scope: scope)
+                operationID: operationID, operation: forRetained ? .retainedHealth : .health, scope: scope)
             read = (UUID(), Task { try await self.submit(command) })
             healthRead = read
         }
@@ -114,6 +165,7 @@ public actor MacLocalXPCNativeEnrollmentBackendV1: InteractiveNativeVideoEnrollm
         guard self.operationID == nil || self.operationID == operationID else { return }
         if let drain { await drain.value; return }
         retired = true
+        retained = false; retaining = false
         let presentation = presentationRead?.task
         presentationRead = nil; presentation?.cancel()
         let observation = healthRead?.task

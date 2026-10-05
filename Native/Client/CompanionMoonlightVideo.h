@@ -33,6 +33,9 @@ typedef NS_ENUM(NSInteger, CompanionMoonlightVideoEvent) {
 @property (readonly, nonatomic) int decodedHeight;
 /// Complete picture samples accepted by the local display layer. Contains no pixels.
 @property (readonly, nonatomic) uint64_t queuedVideoFrameCount;
+/// Closed content-free classification of the first native terminal message.
+/// Zero means unknown. This has no authority or lifecycle effect.
+@property (readonly, nonatomic) int terminalDiagnosticCode;
 - (nullable instancetype)initWithConfiguration:(CompanionMoonlightVideoConfiguration *)configuration
                                           view:(UIView *)view
                                          event:(void (^)(CompanionMoonlightVideoEvent event, int code))event

@@ -27,11 +27,21 @@ API_AVAILABLE(macos(14.0))
     encodedWidth:(NSInteger)width encodedHeight:(NSInteger)height pixelFormat:(OSType)pixelFormat
     isCurrent:(CompanionSelectedCaptureCurrent)isCurrent error:(NSError **)error;
 - (void)startWithFrame:(CompanionSelectedCaptureFrame)frame terminal:(CompanionSelectedCaptureTerminal)terminal;
+/// Set the initial frame marker while inert; never changes a live selection.
+- (BOOL)configureInitialEpoch:(NSData *)epoch error:(NSError **)error;
+/// Acknowledge on the delivery queue after old sample callbacks finish.
+/// The caller still owns original Control/deadline checks while paused.
+- (void)pauseDeliveryWithCompletion:(void (^)(NSError * _Nullable))completion;
 /// Retains the stream and encoded canvas. Delivery is fenced until both updates
 /// succeed and a fresh sample agrees with the new, locally authorized selection.
 - (void)updateFilter:(SCContentFilter *)filter sourceRect:(CGRect)sourceRect
     sourcePixelWidth:(NSInteger)sourceWidth sourcePixelHeight:(NSInteger)sourceHeight
     isCurrent:(CompanionSelectedCaptureCurrent)isCurrent
+    completion:(void (^)(NSError * _Nullable))completion;
+/// Exact capture-time epoch; only published after both updates succeed.
+- (void)updateFilter:(SCContentFilter *)filter sourceRect:(CGRect)sourceRect
+    sourcePixelWidth:(NSInteger)sourceWidth sourcePixelHeight:(NSInteger)sourceHeight
+    isCurrent:(CompanionSelectedCaptureCurrent)isCurrent frameEpoch:(nullable NSData *)epoch
     completion:(void (^)(NSError * _Nullable))completion;
 /// Fences further delivery before asynchronous stream stop; terminal follows acknowledgement.
 - (void)stop;

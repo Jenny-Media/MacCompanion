@@ -346,11 +346,13 @@ private func agentNetworkServiceContextV1() -> NetworkHostRequestContextV0 {
 private func agentNetworkServiceEventuallyV1(
     _ condition: @escaping @Sendable () async -> Bool
 ) async -> Bool {
-    for _ in 0..<1_000 {
+    let clock = ContinuousClock()
+    let deadline = clock.now.advanced(by: .seconds(2))
+    repeat {
         if await condition() { return true }
-        await Task.yield()
-    }
-    return false
+        try? await Task.sleep(for: .milliseconds(1))
+    } while clock.now < deadline
+    return await condition()
 }
 
 private func agentNetworkServiceHarnessV1(

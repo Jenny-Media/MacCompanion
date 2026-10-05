@@ -7,9 +7,10 @@ import CompanionWire
 import Foundation
 
 public protocol ClientInteractiveApprovalSigningV0: Sendable {
-    /// The implementation obtains fresh OS-backed user presence before using
-    /// the approval key and returns fixed-width P-256 `r || s` bytes.
-    func signAfterUserPresence(_ input: Data) async throws -> Data
+    /// Signs the fully validated challenge with the immutable product profile
+    /// and returns fixed-width P-256 `r || s` bytes. Legacy composition uses
+    /// fresh presence; trusted-device composition uses the paired session key.
+    func signSessionChallenge(_ input: Data) async throws -> Data
 }
 
 public struct ClientInteractivePrimaryBindingV0: Equatable, Sendable {
@@ -178,7 +179,7 @@ public actor ClientInteractiveSessionAuthorityV0 {
             guard !overflow, deadline <= UInt64(Int64.max) else {
                 throw ClientInteractiveSessionErrorV0.invalidClock
             }
-            let signature = try await signer.signAfterUserPresence(
+            let signature = try await signer.signSessionChallenge(
                 response.body.signingInput(version: response.version)
             )
             guard signature.count == 64 else {

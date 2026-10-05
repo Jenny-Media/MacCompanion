@@ -6,6 +6,10 @@ import CompanionInteractiveShared
 import CompanionInteractiveWire
 import CoreGraphics
 import Foundation
+import OSLog
+
+private let macNativeInputDiagnosticsLoggerV1 = Logger(
+    subsystem: "media.jenny.maccompanion.mac", category: "native-input-diagnostics")
 
 public enum MacCoreGraphicsInteractiveInputAdapterErrorV1:
     Error, Equatable, Sendable
@@ -186,8 +190,13 @@ public final class MacCoreGraphicsInteractiveInputAdapterV1:
     public func postInteractiveInput(_ envelope: InteractiveInputEnvelope,
         nativeAuthorization: InteractiveRuntimeNativeInputPostingAuthorizationV0,
         beforeDeadlineNanoseconds: UInt64) async throws {
-        try await postAfterActivation(envelope, nativeAuthorization: nativeAuthorization,
-            beforeDeadlineNanoseconds: beforeDeadlineNanoseconds)
+        do {
+            try await postAfterActivation(envelope, nativeAuthorization: nativeAuthorization,
+                beforeDeadlineNanoseconds: beforeDeadlineNanoseconds)
+        } catch {
+            macNativeInputDiagnosticsLoggerV1.error("native-input-rejected stage=input-adapter reason=\(MacNativeFailureDiagnosticsV1.reason(error), privacy: .public)")
+            throw error
+        }
     }
 
     private func postAfterActivation(_ envelope: InteractiveInputEnvelope,
@@ -218,12 +227,18 @@ public final class MacCoreGraphicsInteractiveInputAdapterV1:
         do {
             try await surfaceActivator.activate(activationTarget)
         } catch {
+            macNativeInputDiagnosticsLoggerV1.error("native-input-rejected stage=input-activation reason=\(MacNativeFailureDiagnosticsV1.reason(error), privacy: .public)")
             throw MacCoreGraphicsInteractiveInputAdapterErrorV1
                 .bindingMismatch
         }
         if let nativeAuthorization {
-            try await nativeAuthorization.perform(envelope, beforeDeadlineNanoseconds: beforeDeadlineNanoseconds) {
-                try self.postCurrentInput(envelope)
+            do {
+                try await nativeAuthorization.perform(envelope, beforeDeadlineNanoseconds: beforeDeadlineNanoseconds) {
+                    try self.postCurrentInput(envelope)
+                }
+            } catch {
+                macNativeInputDiagnosticsLoggerV1.error("native-input-rejected stage=native-post reason=\(MacNativeFailureDiagnosticsV1.reason(error), privacy: .public)")
+                throw error
             }
         } else { try postCurrentInput(envelope) }
     }
@@ -271,6 +286,7 @@ public final class MacCoreGraphicsInteractiveInputAdapterV1:
                     sink: sink
                 )
             } catch {
+                macNativeInputDiagnosticsLoggerV1.error("native-input-rejected stage=event-construction reason=\(MacNativeFailureDiagnosticsV1.reason(error), privacy: .public)")
                 throw MacCoreGraphicsInteractiveInputAdapterErrorV1
                     .eventConstructionFailed
             }

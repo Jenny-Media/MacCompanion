@@ -1,5 +1,5 @@
 @testable import CompanionClient
-import CompanionClientNetworkPlatform
+@testable import CompanionClientNetworkPlatform
 import CompanionDiscovery
 import CompanionDomain
 import CompanionWire
@@ -170,7 +170,8 @@ private func reconnectCompositionConfigurationV1(
     )
 }
 
-@Test func reconnectCompositionBindsExactDurableSessionKeyAndIdentity()
+@Test(arguments: [InteractiveSessionConsentProfileV1.freshUserPresence, .trustedDevice])
+func reconnectCompositionBindsExactDurableSessionKeyAndIdentity(profile: InteractiveSessionConsentProfileV1)
     async throws
 {
     let endpoint = try EndpointCandidate(
@@ -186,6 +187,7 @@ private func reconnectCompositionConfigurationV1(
     let custody = ReconnectCompositionCustodyV1()
     let runtime = NetworkClientReconnectRuntimeV1(
         custody: custody,
+        sessionConsentProfile: profile,
         clock: {
             NetworkClientClockSnapshotV0(
                 wallNowUnixMilliseconds: 1_724_000_000_000,
@@ -223,6 +225,12 @@ private func reconnectCompositionConfigurationV1(
     #expect(attempt.expectedHostID == pairedHost.hostID)
     #expect(attempt.expectedDeviceID == pairedHost.deviceID)
     #expect(attempt.primaryProduct != nil)
+    if profile == .trustedDevice {
+        let product = try #require(attempt.primaryProduct)
+        _ = try await product.interactiveApprovalSigner.signSessionChallenge(Data([2]))
+        #expect(await custody.sessionReferences == [pairedHost.sessionKey.reference, pairedHost.sessionKey.reference])
+        #expect(runtime.replacingProductEvents(.discarding).sessionConsentProfile == .trustedDevice)
+    }
     #expect(try attempt.configuredRoute(forExactEndpoint: endpoint)
         == configuration.catalog.records.first)
 }

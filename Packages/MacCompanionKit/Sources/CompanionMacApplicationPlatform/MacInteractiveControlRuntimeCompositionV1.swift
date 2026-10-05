@@ -23,6 +23,12 @@ public enum MacInteractiveControlRuntimeCompositionErrorV1:
 }
 
 @available(macOS 26.0, *)
+public enum MacInteractiveDesktopEngineV1: Sendable {
+    case nativeCapture
+    case screenSharing
+}
+
+@available(macOS 26.0, *)
 public struct MacInteractiveControlRuntimeCompositionV1: Sendable {
     public let runtime: InteractiveMenuRuntimeOwnerV0
     public let mediaQueue: BoundedInteractiveMediaQueueV0
@@ -30,7 +36,8 @@ public struct MacInteractiveControlRuntimeCompositionV1: Sendable {
 
     public static func make(
         indicator: MacInteractiveActivityIndicatorV1,
-        displaySelection: MacInteractiveOpaqueDisplaySelectionV1
+        displaySelection: MacInteractiveOpaqueDisplaySelectionV1,
+        engine: MacInteractiveDesktopEngineV1 = .nativeCapture
     ) throws -> Self {
         let queue = try BoundedInteractiveMediaQueueV0(
             // Capture necessarily starts before the client can open its
@@ -44,12 +51,15 @@ public struct MacInteractiveControlRuntimeCompositionV1: Sendable {
         let input = MacCoreGraphicsInteractiveInputAdapterV1()
         let runtimeReference = MacInteractiveRuntimeReferenceV1()
         let surfaceTargets = MacInteractiveSurfaceTargetOwnerV1()
-        let capture = MacInteractiveDesktopCaptureAdapterV1(
-            displaySelection: displaySelection,
-            input: input,
-            runtimeReference: runtimeReference,
-            surfaceTargets: surfaceTargets
-        )
+        let capture: any InteractiveRuntimeCaptureControllingV0
+        switch engine {
+        case .nativeCapture:
+            capture = MacInteractiveDesktopCaptureAdapterV1(
+                displaySelection: displaySelection, input: input,
+                runtimeReference: runtimeReference, surfaceTargets: surfaceTargets)
+        case .screenSharing:
+            capture = MacScreenSharingLeaseAdapterV1()
+        }
         let frame = QueuePurgingInteractiveFrameControllerV0(
             queue: queue,
             renderer: MacInteractiveNoRetainedRendererV1()

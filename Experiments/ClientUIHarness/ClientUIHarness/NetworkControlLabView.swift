@@ -20,7 +20,7 @@ import UIKit
 
 private struct LabApprovalSigner: ClientInteractiveApprovalSigningV0 {
     let key: Data
-    func signAfterUserPresence(_ input: Data) async throws -> Data {
+    func signSessionChallenge(_ input: Data) async throws -> Data {
         try P256.Signing.PrivateKey(rawRepresentation: key).signature(for: input).rawRepresentation
     }
 }
@@ -506,7 +506,7 @@ private struct IntegratedLabSigner: ClientOperationApprovalSigningV1, ClientInte
     func signOperationApprovalInput(_ input: Data) async throws -> Data {
         throw LabError.unsupported // No Act execution in this lane.
     }
-    func signAfterUserPresence(_ input: Data) async throws -> Data {
+    func signSessionChallenge(_ input: Data) async throws -> Data {
         try P256.Signing.PrivateKey(rawRepresentation: key).signature(for: input).rawRepresentation
     }
 }

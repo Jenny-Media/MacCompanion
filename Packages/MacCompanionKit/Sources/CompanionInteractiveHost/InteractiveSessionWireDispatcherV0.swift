@@ -252,6 +252,8 @@ public struct InteractiveSessionRuntimeRequirementV0: Equatable, Sendable {
 }
 
 public protocol InteractiveSessionRuntimeOwningV0: Sendable {
+    func desktopAccessCurrent(sessionID: UUID, primaryConnectionID: Data) async -> Bool
+
     /// Atomically installs the starting session and both one-time channel
     /// authorities before the accepted response can be disclosed. Inside the
     /// same serialized boundary, the implementation re-reads durable device,
@@ -270,6 +272,10 @@ public protocol InteractiveSessionRuntimeOwningV0: Sendable {
         primaryConnectionID: Data,
         reason: InteractiveSessionEndReason
     ) async
+}
+
+public extension InteractiveSessionRuntimeOwningV0 {
+    func desktopAccessCurrent(sessionID: UUID, primaryConnectionID: Data) async -> Bool { false }
 }
 
 /// An optional media-only owner. Implementations must recheck the exact live
@@ -393,12 +399,14 @@ public actor InteractiveSessionWireDispatcherV0 {
         let expiresAtMonotonicMilliseconds: UInt64
     }
 
+    private let sessionConsentProfile: InteractiveSessionConsentProfileV1
     private let admission: any InteractiveSessionAdmissionReadingV0
     private let materials: any InteractiveSessionMaterialGeneratingV0
     private let runtime: any InteractiveSessionRuntimeOwningV0
     private let mediaNegotiation: (any InteractiveWebRTCNegotiatingV0)?
     private let nativeNegotiation: (any InteractiveNativeVideoNegotiatingV0)?
     private struct NativeScope { let fence: InteractiveNativeVideoRequestFenceV0; let challengeID: WireUUID; var ready = false }
+    private var desktopRetirement: (sessionID: UUID, action: @Sendable () async -> Void)?
     private var nativeScope: NativeScope?
     private var nativeTransitionMessageID: WireUUID?
     private var lastNativePrimary: Data?
@@ -420,6 +428,7 @@ public actor InteractiveSessionWireDispatcherV0 {
 
     package init(
         admission: any InteractiveSessionAdmissionReadingV0,
+        sessionConsentProfile: InteractiveSessionConsentProfileV1 = .freshUserPresence,
         materials: any InteractiveSessionMaterialGeneratingV0,
         runtime: any InteractiveSessionRuntimeOwningV0,
         mediaNegotiation: (any InteractiveWebRTCNegotiatingV0)? = nil,
@@ -432,6 +441,7 @@ public actor InteractiveSessionWireDispatcherV0 {
         auditWallClock: any InteractiveAuditWallClockV0 =
             SystemInteractiveAuditWallClockV0()
     ) {
+        self.sessionConsentProfile = sessionConsentProfile
         self.admission = admission
         self.materials = materials
         self.runtime = runtime
@@ -441,6 +451,36 @@ public actor InteractiveSessionWireDispatcherV0 {
         self.displaySelection = displaySelection
         self.auditWriter = auditWriter
         self.auditWallClock = auditWallClock
+    }
+
+    private func sessionStartKey(_ snapshot: InteractiveSessionAdmissionSnapshotV0) throws -> Data {
+        switch sessionConsentProfile {
+        case .freshUserPresence:
+            return snapshot.approvalPublicKeyX963
+        case .trustedDevice:
+            guard let key = snapshot.sessionPublicKeyX963 else {
+                throw InteractiveSessionWireDispatcherErrorV0.invalidConfiguration
+            }
+            return key
+        }
+    }
+
+    public func authorizeDesktop(sessionID: UUID, context: InteractiveSessionCommandContextV0) async throws {
+        guard active?.interactiveSessionID == sessionID, activeMatches(context),
+              let snapshot = try await admission.snapshot(deviceID: context.deviceID),
+              isEligible(snapshot, for: context),
+              await runtime.desktopAccessCurrent(sessionID: sessionID, primaryConnectionID: context.primaryConnectionID),
+              active?.interactiveSessionID == sessionID, activeMatches(context) else {
+            throw InteractiveSessionWireDispatcherErrorV0.admissionChanged
+        }
+    }
+
+    public func bindDesktopRetirement(sessionID: UUID, primaryConnectionID: Data,
+        action: @escaping @Sendable () async -> Void) throws {
+        guard active?.interactiveSessionID == sessionID, active?.primaryConnectionID == primaryConnectionID else {
+            throw InteractiveSessionWireDispatcherErrorV0.admissionChanged
+        }
+        desktopRetirement = (sessionID, action)
     }
 
     public var hasPendingApproval: Bool { pending != nil }
@@ -1159,7 +1199,10 @@ public actor InteractiveSessionWireDispatcherV0 {
 #if DEBUG
         FileHandle.standardError.write(Data("surface-dispatch-admission-current\n".utf8))
 #endif
-        await retireMedia(interactiveSessionID: request.body.interactiveSessionID.rawValue)
+        let retainNative = request.body.targetKind != .focusedRegion
+            ? await nativeNegotiation?.hasRetainedStream(context: context) == true : false
+        await retireMedia(interactiveSessionID: request.body.interactiveSessionID.rawValue,
+            preservingRetainedNative: retainNative)
 #if DEBUG
         FileHandle.standardError.write(Data("surface-dispatch-media-retired\n".utf8))
 #endif
@@ -1386,7 +1429,8 @@ public actor InteractiveSessionWireDispatcherV0 {
                 command: context,
                 admission: snapshot
               ).isEligibleForInteractiveControl,
-              let selectedDisplayID = snapshot.selectedDisplayID else {
+              let selectedDisplayID = snapshot.selectedDisplayID,
+              let sessionStartPublicKey = try? sessionStartKey(snapshot) else {
             return try denied(
                 correlationID: request.messageID,
                 responseMessageID: responseMessageID,
@@ -1423,7 +1467,7 @@ public actor InteractiveSessionWireDispatcherV0 {
             expiresAtUnixMilliseconds: UInt64(expiresAtWall),
             selectedMajor: request.version.major,
             selectedMinor: request.version.minor,
-            approvalPublicKeyX963: snapshot.approvalPublicKeyX963,
+            approvalPublicKeyX963: sessionStartPublicKey,
             issuedAtMonotonicMilliseconds: context.monotonicNowMilliseconds,
             expiresAtMonotonicMilliseconds: expiresAtMonotonic
         )
@@ -1555,7 +1599,7 @@ public actor InteractiveSessionWireDispatcherV0 {
                     authorizationEpoch: context.authorizationEpoch.rawValue,
                     grantRevision: context.grantRevision.rawValue,
                     policyRevision: context.policyRevision.rawValue,
-                    approvalPublicKeyX963: snapshot.approvalPublicKeyX963
+                    approvalPublicKeyX963: try sessionStartKey(snapshot)
                 ),
                 materials: generatedMaterials,
                 wallNowUnixMilliseconds: context.wallNowUnixMilliseconds,
@@ -1704,12 +1748,28 @@ public actor InteractiveSessionWireDispatcherV0 {
                 nativeTransitionMessageID = nil
             }
             do {
-                try await nativeNegotiation.cancel(request.body.fence, context: context)
+                var retained = false
+                if request.body.retainStream == true {
+                    guard let before = try await admission.snapshot(deviceID: context.deviceID),
+                          isEligible(before, for: context), let key = before.sessionPublicKeyX963 else {
+                        throw InteractiveSessionWireDispatcherErrorV0.admissionChanged
+                    }
+                    retained = try await nativeNegotiation.retain(request.body.fence, context: context)
+                    guard let after = try await admission.snapshot(deviceID: context.deviceID),
+                          isEligible(after, for: context), after.sessionPublicKeyX963 == key else {
+                        throw InteractiveSessionWireDispatcherErrorV0.admissionChanged
+                    }
+                } else {
+                    try await nativeNegotiation.cancel(request.body.fence, context: context)
+                }
                 guard activeMatches(context) else { return try failure() }
                 return try WireCodec.encode(WireEnvelope(version: request.version, messageID: responseMessageID,
                     correlationID: request.messageID, sentAtUnixMilliseconds: context.wallNowUnixMilliseconds,
-                    body: try InteractiveNativeVideoCancelledBodyV0(fence: request.body.fence)))
-            } catch { return try failure() }
+                    body: try InteractiveNativeVideoCancelledBodyV0(fence: request.body.fence, streamRetained: retained ? true : nil)))
+            } catch {
+                try? await nativeNegotiation.cancel(request.body.fence, context: context)
+                return try failure()
+            }
         }
         guard nativeTransitionMessageID == nil, transitionMessageID == nil else { return try failure() }
         let fence: InteractiveNativeVideoRequestFenceV0
@@ -1788,13 +1848,18 @@ public actor InteractiveSessionWireDispatcherV0 {
         }
     }
 
-    private func retireMedia(interactiveSessionID: UUID) async {
+    private func retireMedia(interactiveSessionID: UUID, preservingRetainedNative: Bool = false) async {
+        if let desktop = desktopRetirement, desktop.sessionID == interactiveSessionID {
+            desktopRetirement = nil
+            await desktop.action()
+        }
+
         mediaPending = nil
         mediaTransitionMessageID = nil
         lastMediaGeneration = 0
         nativeScope = nil
         nativeTransitionMessageID = nil
-        await nativeNegotiation?.close(interactiveSessionID: interactiveSessionID)
+        if !preservingRetainedNative { await nativeNegotiation?.close(interactiveSessionID: interactiveSessionID) }
         await mediaNegotiation?.close(interactiveSessionID: interactiveSessionID)
     }
 

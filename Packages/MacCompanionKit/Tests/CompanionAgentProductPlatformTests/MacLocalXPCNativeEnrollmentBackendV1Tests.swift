@@ -18,12 +18,21 @@ private actor NativeProxySenderV1: MacLocalXPCInteractiveLeaseSendingV1 {
     private let pauseHealth: Bool
     private let pause: Bool
     private let wrongReply: Bool
-    init(pause: Bool = false, wrongReply: Bool = false, pauseHealth: Bool = false, pausePresentation: Bool = false) {
+    private var activationPendingCount: Int
+    init(pause: Bool = false, wrongReply: Bool = false, pauseHealth: Bool = false, pausePresentation: Bool = false, activationPendingCount: Int = 0) {
         self.pause = pause; self.wrongReply = wrongReply; self.pauseHealth = pauseHealth; self.pausePresentation = pausePresentation
+        self.activationPendingCount = activationPendingCount
     }
     func release() { waiter?.resume(); waiter = nil }
     func nativeBackend(_ command: LocalInteractiveNativeBackendCommandV1) async throws -> LocalInteractiveNativeBackendReceiptV1 {
         commands.append(command)
+        if command.operation == .activate {
+            if activationPendingCount > 0 {
+                activationPendingCount -= 1
+                return try .init(command: command, activationPending: true)
+            }
+            return try .init(command: command, portBase: 58989)
+        }
         if command.operation == .prepare {
             if pause {
                 await withTaskCancellationHandler(operation: { await withCheckedContinuation { waiter = $0 } },
@@ -188,6 +197,31 @@ func nativeProxyRetirementFencesPresentationAndWaitingHealth() async throws {
     await #expect(throws: (any Error).self) { _ = try await presenting.value }
     #expect(await health.value == false)
     #expect(await sender.commands.map(\.operation) == [.prepare, .present, .retire])
+}
+
+@Test @available(macOS 26.0, *)
+func nativeProxyPolledActivationCorrelatesEachReplyAndKeepsOriginalScope() async throws {
+    let sender = NativeProxySenderV1(activationPendingCount: 2)
+    let (proxy, authority) = try nativeProxyWorldV1(sender), op = UUID()
+    _ = try await proxy.prepare(operationID: op, authority: authority, clientCertificateDER: Data([1]))
+    let endpoint = try await proxy.activate(operationID: op)
+    #expect(endpoint.portBase == 58989)
+    let polls = await sender.commands.filter { $0.operation == .activate }
+    #expect(polls.count == 3 && Set(polls.map(\.commandID)).count == 3)
+    #expect(polls.allSatisfy { $0.pollActivation == true && $0.scope == polls[0].scope && $0.operationID == op })
+    await proxy.retire(operationID: op)
+}
+@Test @available(macOS 26.0, *)
+func nativeProxyStopDuringPolledActivationCannotReturnLateEndpoint() async throws {
+    let sender = NativeProxySenderV1(activationPendingCount: 100)
+    let (proxy, authority) = try nativeProxyWorldV1(sender), op = UUID()
+    _ = try await proxy.prepare(operationID: op, authority: authority, clientCertificateDER: Data([1]))
+    let start = Task { try await proxy.activate(operationID: op) }
+    while await !sender.commands.contains(where: { $0.operation == .activate }) { await Task.yield() }
+    await proxy.retire(operationID: op)
+    await #expect(throws: (any Error).self) { try await start.value }
+    #expect(await sender.commands.filter { $0.operation == .retire }.count == 1)
+    #expect(await proxy.isActive(operationID: op) == false)
 }
 
 #endif

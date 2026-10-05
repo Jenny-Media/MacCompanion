@@ -370,13 +370,17 @@ public actor MacInteractiveLeaseRuntimeAdapterV1:
                 },
                 resolveDisplay: { try displaySelection.resolvePhysicalDisplayID(selectedDisplayID: $0) },
                 readSelectedCapture: { scope, physicalDisplayID in
-                    guard admission.isOpen() else { throw LocalInteractiveNativeBackendErrorV1.unavailable }
+                    guard admission.isOpen() else { throw MacNativeFailureDiagnosticsV1.selectionUnavailable(.admissionClosedBeforeSelection) }
                     guard let surfaceTargets else { return nil }
                     let surface = try await surfaceTargets.nativeCaptureTarget(
                         scope: scope, nowMonotonicNanoseconds: DispatchTime.now().uptimeNanoseconds)
-                    guard admission.isOpen() else { throw LocalInteractiveNativeBackendErrorV1.unavailable }
+                    guard admission.isOpen() else { throw MacNativeFailureDiagnosticsV1.selectionUnavailable(.admissionClosedAfterSelection) }
                     return try surface.map { try MacManagedNativeSelectedCaptureV1(surface: $0, scope: scope,
                         selectedPhysicalDisplayID: physicalDisplayID) }
+                }, readOriginalControl: { scope, now in
+                    guard admission.isOpen() else { return false }
+                    let current = await runtime.originalNativeControlIsCurrent(scope: scope, nowMonotonicNanoseconds: now)
+                    return current && admission.isOpen()
                 }, factory: nativeBackendFactory)
         }
         expiryScheduler = MacInteractiveSystemLeaseExpirySchedulerV1()
@@ -650,7 +654,7 @@ public actor MacInteractiveLeaseRuntimeAdapterV1:
             throw MacLocalXPCInteractiveLeaseErrorV1.unavailable
         }
         if previous != command.displayID {
-            await nativeBackendOwner?.retire()
+            await nativeBackendOwner?.prepareSurfaceChange()
             await closeWebRTCPeer()
             do {
                 try displaySelection.selectDisplay(id: command.displayID)
@@ -824,7 +828,7 @@ public actor MacInteractiveLeaseRuntimeAdapterV1:
             command,
             nowMonotonicMilliseconds: Int64(
                 nowMonotonicNanoseconds / 1_000_000
-            )
+            ), retainedCanvas: await nativeBackendOwner?.retainedCanvas()
         )
         let receipt = try LocalInteractiveSurfaceResolvedReceiptV1(
             correlationID: command.commandID,
@@ -839,7 +843,7 @@ public actor MacInteractiveLeaseRuntimeAdapterV1:
         nowMonotonicNanoseconds: UInt64
     ) async throws -> InteractiveRuntimeSurfaceTransitionReceiptV0 {
         try requireAvailable()
-        await nativeBackendOwner?.retire()
+        await nativeBackendOwner?.prepareSurfaceChange(command)
         await closeWebRTCPeer()
         do {
             let receipt = try await runtime.prepareSurfaceTransition(

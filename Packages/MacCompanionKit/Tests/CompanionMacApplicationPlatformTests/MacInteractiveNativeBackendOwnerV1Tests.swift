@@ -86,17 +86,31 @@ private actor NativeBackendGateV1 {
     private var wait: CheckedContinuation<Void, Never>?
     func suspend() async { entered = true; if released { return }; await withCheckedContinuation { wait = $0 } }
     func release() { released = true; wait?.resume(); wait = nil }
+    func waitUntilEntered() async throws {
+        let deadline = ContinuousClock.now.advanced(by: .seconds(3))
+        while !entered, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(5)) }
+        try #require(entered)
+    }
 }
-private actor NativeBackendProbeV1: InteractiveNativeVideoEnrollmentBackendV0 {
+private actor NativeBackendProbeV1: MacInteractiveNativeStreamReplacingV1 {
+    private let continuity: Bool
+    private var retained = false
+    private var currentOperation: UUID?
     private(set) var preparations = 0
     private(set) var activations = 0
     private(set) var retirements = 0
     private var evidence: InteractiveNativeVideoCaptureEvidenceV0?
+    private var nextEvidenceReadGate: NativeBackendGateV1?
     private let inputPermit: MacInteractiveNativeBackendPermitV1?
     private let prepareGate: NativeBackendGateV1?
     private let retireGate: NativeBackendGateV1?
-    init(prepareGate: NativeBackendGateV1?, retireGate: NativeBackendGateV1?, inputPermit: MacInteractiveNativeBackendPermitV1? = nil) {
+    private let activateGate: NativeBackendGateV1?
+    private let retainGate: NativeBackendGateV1?
+    init(prepareGate: NativeBackendGateV1?, retireGate: NativeBackendGateV1?, inputPermit: MacInteractiveNativeBackendPermitV1? = nil, continuity: Bool = false, activateGate: NativeBackendGateV1? = nil, retainGate: NativeBackendGateV1? = nil) {
+        self.continuity = continuity
         self.prepareGate = prepareGate; self.retireGate = retireGate; self.inputPermit = inputPermit
+        self.activateGate = activateGate
+        self.retainGate = retainGate
     }
     func canPostInput(operationID: UUID) -> Bool { activations > 0 && retirements == 0 && inputPermit != nil }
     func postInputBatch(operationID: UUID, beforeDeadlineNanoseconds: UInt64, batch: @escaping @Sendable () throws -> Void) throws {
@@ -104,34 +118,87 @@ private actor NativeBackendProbeV1: InteractiveNativeVideoEnrollmentBackendV0 {
         try inputPermit.withCurrentInput(beforeDeadlineNanoseconds: beforeDeadlineNanoseconds, batch)
     }
     func prepare(operationID: UUID, authority: InteractiveNativeVideoAuthorityV0, clientCertificateDER: Data) async -> Data {
-        preparations += 1; await prepareGate?.suspend(); return Data([1, 2, 3])
+        preparations += 1; currentOperation = operationID; await prepareGate?.suspend(); return Data([1, 2, 3])
     }
-    func activate(operationID: UUID) throws -> InteractiveNativeVideoEndpointV0 { activations += 1; return try .init(portBase: 58989) }
+    func activate(operationID: UUID) async throws -> InteractiveNativeVideoEndpointV0 {
+        retained = false; activations += 1; await activateGate?.suspend()
+        return try .init(portBase: 58989)
+    }
     func isActive(operationID: UUID) -> Bool { activations > 0 && retirements == 0 }
-    func captureEvidence(operationID: UUID) -> InteractiveNativeVideoCaptureEvidenceV0? { evidence }
+    func captureEvidence(operationID: UUID) async -> InteractiveNativeVideoCaptureEvidenceV0? {
+        let gate = nextEvidenceReadGate; nextEvidenceReadGate = nil
+        await gate?.suspend()
+        return evidence
+    }
+    func suspendNextEvidenceRead(_ gate: NativeBackendGateV1) { nextEvidenceReadGate = gate }
     func setEvidence(_ value: InteractiveNativeVideoCaptureEvidenceV0) { evidence = value }
-    func retire(operationID: UUID) async { retirements += 1; await retireGate?.suspend() }
+    func retire(operationID: UUID) async {
+        if continuity && currentOperation != operationID { return }
+        retirements += 1; retained = false; await retireGate?.suspend()
+    }
+    func supportsStreamContinuity(operationID: UUID) -> Bool { continuity && currentOperation == operationID && !retained }
+    func retainStream(operationID: UUID) async throws {
+        guard continuity, currentOperation == operationID, retirements == 0 else { throw LocalInteractiveNativeBackendErrorV1.unavailable }
+        retained = true
+        await retainGate?.suspend()
+    }
+    func isStreamRetained(operationID: UUID) -> Bool { continuity && retained && currentOperation == operationID && retirements == 0 }
+    func configureRetainedReplacement(predecessorOperationID: UUID, authority: InteractiveNativeVideoAuthorityV0,
+        physicalDisplayID: UInt32, geometry: InteractiveNativeVideoContentGeometryV0, selected: MacManagedNativeSelectedCaptureV1?) throws {
+        guard retained, currentOperation == predecessorOperationID else { throw LocalInteractiveNativeBackendErrorV1.unavailable }
+    }
 }
 private actor NativeBackendFactorySpyV1 {
     private(set) var created: [(NativeBackendProbeV1, MacInteractiveNativeBackendPermitV1)] = []
     func append(_ backend: NativeBackendProbeV1, permit: MacInteractiveNativeBackendPermitV1) { created.append((backend, permit)) }
 }
 private actor NativeBackendSnapshotReaderV1 {
-    let command: InteractiveRuntimeInstallCommandV0
-    let receipt: InteractiveRuntimeInstallReceiptV0
+    var command: InteractiveRuntimeInstallCommandV0
+    var receipt: InteractiveRuntimeInstallReceiptV0
     var admitted = true
     private(set) var inputPaused = false
     private(set) var installedAuthorization: InteractiveRuntimeNativeInputPostingAuthorizationV0?
     private(set) var installations = 0
+    private var nextOriginalReadGate: NativeBackendGateV1?
+    func suspendNextOriginalRead(_ gate: NativeBackendGateV1) { nextOriginalReadGate = gate }
     func install(_ authorization: InteractiveRuntimeNativeInputPostingAuthorizationV0, fence: InteractiveNativeVideoRequestFenceV0, now: UInt64) throws {
         guard inputPaused, installedAuthorization == nil, try read(fence, now: now) != nil else { throw LocalInteractiveNativeBackendErrorV1.unavailable }
         installedAuthorization = authorization; installations += 1
     }
     init(command: InteractiveRuntimeInstallCommandV0, receipt: InteractiveRuntimeInstallReceiptV0) { self.command = command; self.receipt = receipt }
     func revoke() { admitted = false }
+    func originalCurrent(_ scope: LocalInteractiveNativeBackendScopeV1, now: UInt64) async -> Bool {
+        let current = admitted && command.commandID == scope.controlGeneration && receipt.menuAppGeneration == scope.menuAppGeneration
+            && command.sessionDeadlineMonotonicNanoseconds / 1_000_000 == scope.expiresAtMonotonicMilliseconds
+            && now < command.sessionDeadlineMonotonicNanoseconds
+        let gate = nextOriginalReadGate; nextOriginalReadGate = nil
+        await gate?.suspend()
+        return current
+    }
+    func rebase(_ scope: LocalInteractiveNativeBackendScopeV1) throws {
+        let previous = command.lease
+        let lease = try InteractiveExecutionLease(leaseID: UUID(), hostID: previous.hostID, deviceID: previous.deviceID,
+            interactiveSessionID: previous.interactiveSessionID, authorizationEpoch: previous.authorizationEpoch,
+            selectedDisplayID: scope.selectedDisplayID, surfaceID: scope.surfaceID,
+            surfaceRevision: .init(rawValue: UInt64(scope.surfaceRevision)), coordinateRevision: .init(rawValue: UInt64(scope.coordinateSpaceRevision)),
+            allowedInteractionClasses: Set(previous.allowedInteractionClasses), renewalCounter: previous.renewalCounter,
+            issuedAtMonotonicNanoseconds: previous.issuedAtMonotonicNanoseconds, expiresAtMonotonicNanoseconds: previous.expiresAtMonotonicNanoseconds)
+        let descriptor = try AdaptiveSurfaceDescriptor(interactiveSessionID: scope.interactiveSessionID,
+            authorizationEpoch: previous.authorizationEpoch, surfaceID: scope.surfaceID, kind: .desktop,
+            surfaceRevision: .init(rawValue: lease.surfaceRevision.rawValue), coordinateSpaceRevision: .init(rawValue: lease.coordinateRevision.rawValue),
+            encodedWidth: UInt16(scope.encodedWidth), encodedHeight: UInt16(scope.encodedHeight),
+            logicalWidthPoints: scope.logicalWidthPoints, logicalHeightPoints: scope.logicalHeightPoints,
+            interactionClasses: Set(previous.allowedInteractionClasses), privacyProfile: .visualOnly, metadataFields: [],
+            createdAtMonotonicMilliseconds: 1, expiresAtMonotonicMilliseconds: 30_000)
+        command = try .init(commandID: command.commandID, lease: lease, deviceDisplayName: command.deviceDisplayName,
+            surfaceDescriptor: descriptor, sessionDeadlineMonotonicNanoseconds: command.sessionDeadlineMonotonicNanoseconds)
+        receipt = try .init(correlationID: command.commandID, leaseID: lease.leaseID, interactiveSessionID: lease.interactiveSessionID,
+            selectedDisplayID: lease.selectedDisplayID, menuAppGeneration: receipt.menuAppGeneration, menuAppRevision: scope.menuAppRevision,
+            readyInteractionClasses: Set(receipt.readyInteractionClasses), indicatorVisible: true)
+    }
     func pause(_ fence: InteractiveNativeVideoRequestFenceV0, now: UInt64) throws {
         guard try read(fence, now: now) != nil else { throw LocalInteractiveNativeBackendErrorV1.unavailable }
-        inputPaused = true
+        inputPaused = true; installedAuthorization?.revoke(); installedAuthorization = nil
     }
     func read(_ fence: InteractiveNativeVideoRequestFenceV0, now: UInt64) throws -> LocalInteractiveNativeRuntimeSnapshotV1? {
         guard admitted else { return nil }
@@ -164,7 +231,7 @@ private struct NativeBackendWorldV1 {
     let geometryReader = NativeCaptureGeometryReaderV1()
     init(factoryGate: NativeBackendGateV1? = nil, prepareGate: NativeBackendGateV1? = nil, retireGate: NativeBackendGateV1? = nil,
          denyInputPause: Bool = false, denySelectedCapture: Bool = false,
-         supportsInput: Bool = false, installGate: NativeBackendGateV1? = nil) throws {
+         supportsInput: Bool = false, continuity: Bool = false, installGate: NativeBackendGateV1? = nil, activateGate: NativeBackendGateV1? = nil, retainGate: NativeBackendGateV1? = nil) throws {
         let now = DispatchTime.now().uptimeNanoseconds
         let hostID = UUID(), sessionID = UUID(), displayID = UUID(), generation = UUID()
         let binding = try InteractiveNativeVideoBindingV0(hostID: hostID, hostFingerprint: Data(repeating: 1, count: 32), clientID: UUID(),
@@ -190,6 +257,7 @@ private struct NativeBackendWorldV1 {
             sessionPublicKeyX963: P256.Signing.PrivateKey().publicKey.x963Representation)
         reader = NativeBackendSnapshotReaderV1(command: install, receipt: installed)
         let reader = self.reader, spy = self.spy, geometryReader = self.geometryReader
+        let originalControl: (@Sendable (LocalInteractiveNativeBackendScopeV1, UInt64) async throws -> Bool)? = continuity ? { @Sendable scope, now in await reader.originalCurrent(scope, now: now) } : nil
         owner = .init(readSnapshot: { try await reader.read($0, now: $1) },
             pauseInput: {
                 guard !denyInputPause else { throw LocalInteractiveNativeBackendErrorV1.unavailable }
@@ -203,12 +271,12 @@ private struct NativeBackendWorldV1 {
         readSelectedCapture: { _, _ in
             guard !denySelectedCapture else { throw LocalInteractiveNativeBackendErrorV1.unavailable }
             return nil
-        }, factory: { physicalID, geometry, permit, _ in
+        }, readOriginalControl: originalControl, factory: { physicalID, geometry, permit, _ in
             #expect(await reader.inputPaused)
             #expect(geometry.capturePixelWidth == 2560 && geometry.capturePixelHeight == 1440)
             #expect(geometry.logicalWidthPoints == 1280 && geometry.logicalHeightPoints == 720)
             guard physicalID == 1234 else { throw LocalInteractiveNativeBackendErrorV1.bindingMismatch }
-            let backend = NativeBackendProbeV1(prepareGate: prepareGate, retireGate: retireGate, inputPermit: supportsInput ? permit : nil)
+            let backend = NativeBackendProbeV1(prepareGate: prepareGate, retireGate: retireGate, inputPermit: supportsInput ? permit : nil, continuity: continuity, activateGate: activateGate, retainGate: retainGate)
             await spy.append(backend, permit: permit)
             await factoryGate?.suspend()
             return backend
@@ -536,6 +604,47 @@ func nativeSelectedCaptureUsesSelectedBoundsAndBackingScale(scale: Double, kind:
     let receipt = Task { try await world.owner.handle(world.command(.health, backendID: id, operationID: operation)) }
     await gate.release(); await retirement.value
     #expect(try await receipt.value.active == false)
+}
+
+@available(macOS 26.0, *)
+@Test func inFlightHealthJoinsPublishedWatchdogRetirement() async throws {
+    var root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+    while !FileManager.default.fileExists(atPath: root.appendingPathComponent("spec/fixtures/manifest.json").path) {
+        let parent = root.deletingLastPathComponent(); try #require(parent != root); root = parent
+    }
+    let fixture = try #require(JSONSerialization.jsonObject(with: Data(contentsOf:
+        root.appendingPathComponent("spec/fixtures/local-xpc-native-backend-v0.1.json"))) as? [String: Any])
+    #expect((fixture["retirementPublicationCases"] as? [String])?.contains(
+        "in-flight-health-loses-capture-during-watchdog-retirement-returns-inactive") == true)
+    for _ in 0..<32 {
+        let evidenceGate = NativeBackendGateV1(), retireGate = NativeBackendGateV1()
+        let world = try NativeBackendWorldV1(retireGate: retireGate), id = UUID(), operation = UUID()
+        _ = try await world.owner.handle(world.command(.prepare, backendID: id, operationID: operation))
+        _ = try await world.owner.handle(world.command(.activate, backendID: id, operationID: operation))
+        let pair = try #require(await world.spy.created.first)
+        await pair.0.suspendNextEvidenceRead(evidenceGate)
+        let health = Task { try await world.owner.handle(world.command(.health, backendID: id, operationID: operation)) }
+        await waitNativeGateV1(evidenceGate)
+        world.geometryReader.change(width: 2560, height: 1440, available: false)
+        let deadline = ContinuousClock.now + .seconds(2)
+        while pair.1.isCurrent, ContinuousClock.now < deadline { await Task.yield() }
+        #expect(!pair.1.isCurrent)
+        await evidenceGate.release()
+        await waitNativeGateV1(retireGate)
+        await retireGate.release()
+        // Await this health reader first: the watchdog is a separate drain
+        // waiter and must not be required to publish cleanup after it resumes.
+        do {
+            let receipt = try await health.value
+            #expect(receipt.active == false && receipt.captureEvidence == nil)
+        } catch { Issue.record("Exact health escaped retirement as \(String(reflecting: type(of: error)))") }
+        world.geometryReader.change(width: 2560, height: 1440)
+        let freshID = UUID(), freshOperation = UUID()
+        do {
+            _ = try await world.owner.handle(world.command(.prepare, backendID: freshID, operationID: freshOperation))
+        } catch { Issue.record("Health returned before retired ownership was published") }
+        await world.owner.retire()
+    }
 }
 
 private func backendSampleEvidenceV1(operationID: UUID) throws -> InteractiveNativeVideoCaptureEvidenceV0 {
@@ -922,4 +1031,201 @@ func managedEnrollmentUsesExplicitConfigurationWithoutDeveloperPrefix() async th
     #expect(!FileManager.default.fileExists(atPath: missing.path))
     await world.owner.retire()
 }
+@available(macOS 26.0, *)
+@Test func retainedMenuReplacementKeepsBackendAndFencesOldInputAndRetirement() async throws {
+    let world = try NativeBackendWorldV1(supportsInput: true, continuity: true)
+    let oldID = UUID(), oldOperation = UUID()
+    _ = try await world.owner.handle(world.command(.prepare, backendID: oldID, operationID: oldOperation))
+    _ = try await world.owner.handle(world.command(.activate, backendID: oldID, operationID: oldOperation))
+    let (backend, permit) = try #require(await world.spy.created.first)
+    await backend.setEvidence(try backendSampleEvidenceV1(operationID: oldOperation))
+    _ = try await world.owner.handle(nativePresentCommandV1(world, backendID: oldID, operationID: oldOperation, id: UUID()))
+    let oldAuthorization = try #require(await world.reader.installedAuthorization)
+    #expect(try await world.owner.handle(world.command(.health, backendID: oldID, operationID: oldOperation)).streamContinuity == true)
+    #expect(try await world.owner.handle(world.command(.retain, backendID: oldID, operationID: oldOperation)).streamRetained == true)
+    #expect(oldAuthorization.isRevoked)
+    #expect(throws: LocalInteractiveNativeBackendErrorV1.unavailable) {
+        try permit.withCurrentInput(beforeDeadlineNanoseconds: DispatchTime.now().uptimeNanoseconds + 1_000_000_000) { Issue.record("Old input escaped pause") }
+    }
+    await world.owner.prepareSurfaceChange()
+    #expect(await backend.retirements == 0)
+    let surface = try InteractiveNativeVideoSurfaceV0(surfaceID: UUID(), surfaceRevision: 2, coordinateSpaceRevision: 2, encodedWidth: 1280, encodedHeight: 720)
+    let scope = try LocalInteractiveNativeBackendScopeV1(binding: world.scope.binding(), surface: surface,
+        logicalWidthPoints: 1280, logicalHeightPoints: 720, rotation: .degrees0, selectedDisplayID: world.scope.selectedDisplayID,
+        menuAppGeneration: world.scope.menuAppGeneration, menuAppRevision: 2, sessionPublicKeyX963: world.scope.sessionPublicKeyX963())
+    try await world.reader.rebase(scope)
+    let id = UUID(), operation = UUID()
+    _ = try await world.owner.handle(.init(commandID: UUID(), backendID: id, operationID: operation, operation: .prepareReplacement,
+        scope: scope, clientCertificateDER: Data([4,5,6]), previousBackendID: oldID, previousOperationID: oldOperation))
+    _ = try await world.owner.handle(world.command(.retire, backendID: oldID, operationID: oldOperation))
+    #expect(await world.spy.created.count == 1)
+    #expect(await backend.retirements == 0)
+    _ = try await world.owner.handle(.init(commandID: UUID(), backendID: id, operationID: operation, operation: .activate, scope: scope))
+    await backend.setEvidence(try backendSampleEvidenceV1(operationID: operation))
+    let receipt = try await world.owner.handle(.init(commandID: UUID(), backendID: id, operationID: operation, operation: .present,
+        scope: scope, nativeGeneration: 2, presentationID: UUID()))
+    #expect(receipt.inputAdmitted == true)
+    #expect(await world.reader.installations == 2)
+    try permit.withCurrentInput(beforeDeadlineNanoseconds: DispatchTime.now().uptimeNanoseconds + 1_000_000_000) {}
+    await world.owner.retire()
+    #expect(await backend.retirements == 1 && !permit.isCurrent)
+}
+
+@available(macOS 26.0, *)
+private func requireBackendWatcherFixtureCaseV1(_ name: String) throws {
+    var root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+    while !FileManager.default.fileExists(atPath: root.appendingPathComponent("spec/fixtures/manifest.json").path) {
+        let parent = root.deletingLastPathComponent(); try #require(parent != root); root = parent
+    }
+    let fixture = try #require(JSONSerialization.jsonObject(with: Data(contentsOf:
+        root.appendingPathComponent("spec/fixtures/native-stream-continuity-v0.1.json"))) as? [String: Any])
+    let cases = try #require(fixture["backendWatcherLifecycleCases"] as? [String])
+    try #require(cases.contains(name))
+}
+
+@available(macOS 26.0, *)
+@Test func staleRetainingWatcherCannotRetireCompletedRetention() async throws {
+    try requireBackendWatcherFixtureCaseV1("stale-retaining-check-cannot-retire-completed-retention")
+    let retainGate = NativeBackendGateV1(), watcherGate = NativeBackendGateV1()
+    let world = try NativeBackendWorldV1(continuity: true, retainGate: retainGate)
+    let id = UUID(), operation = UUID()
+    _ = try await world.owner.handle(world.command(.prepare, backendID: id, operationID: operation))
+    _ = try await world.owner.handle(world.command(.activate, backendID: id, operationID: operation))
+    let backend = try #require(await world.spy.created.first).0
+    let retention = Task { try await world.owner.handle(world.command(.retain, backendID: id, operationID: operation)) }
+    try await retainGate.waitUntilEntered()
+    await world.reader.suspendNextOriginalRead(watcherGate)
+    try await watcherGate.waitUntilEntered()
+    // The watcher observed .retaining; the same exact operation now becomes
+    // .retained while its authority read remains suspended.
+    await retainGate.release()
+    #expect(try await retention.value.streamRetained == true)
+    await watcherGate.release()
+    try await Task.sleep(for: .milliseconds(200))
+    #expect(await backend.retirements == 0)
+    #expect(try await world.owner.handle(world.command(.retainedHealth, backendID: id, operationID: operation)).streamRetained == true)
+    await world.owner.retire()
+}
+
+@available(macOS 26.0, *)
+@Test func staleRetainingWatcherStillDrainsLostOriginalControl() async throws {
+    try requireBackendWatcherFixtureCaseV1("original-control-loss-after-stale-check-still-drains")
+    let retainGate = NativeBackendGateV1(), watcherGate = NativeBackendGateV1()
+    let world = try NativeBackendWorldV1(continuity: true, retainGate: retainGate)
+    let id = UUID(), operation = UUID()
+    _ = try await world.owner.handle(world.command(.prepare, backendID: id, operationID: operation))
+    _ = try await world.owner.handle(world.command(.activate, backendID: id, operationID: operation))
+    let (backend, permit) = try #require(await world.spy.created.first)
+    let retention = Task { try await world.owner.handle(world.command(.retain, backendID: id, operationID: operation)) }
+    try await retainGate.waitUntilEntered()
+    await world.reader.suspendNextOriginalRead(watcherGate)
+    try await watcherGate.waitUntilEntered()
+    await retainGate.release()
+    #expect(try await retention.value.streamRetained == true)
+    await world.reader.revoke()
+    await watcherGate.release()
+    let deadline = ContinuousClock.now.advanced(by: .seconds(3))
+    while await backend.retirements == 0, ContinuousClock.now < deadline {
+        try await Task.sleep(for: .milliseconds(5))
+    }
+    #expect(await backend.retirements == 1)
+    #expect(!permit.isCurrent)
+    await world.owner.retire()
+}
+
+@available(macOS 26.0, *)
+@Test func retainedMenuOriginalControlLossDrainsSameBackend() async throws {
+    let world = try NativeBackendWorldV1(continuity: true), id = UUID(), operation = UUID()
+    _ = try await world.owner.handle(world.command(.prepare, backendID: id, operationID: operation))
+    _ = try await world.owner.handle(world.command(.activate, backendID: id, operationID: operation))
+    _ = try await world.owner.handle(world.command(.retain, backendID: id, operationID: operation))
+    let (backend, permit) = try #require(await world.spy.created.first)
+    await world.reader.revoke()
+    await world.owner.prepareSurfaceChange()
+    #expect(await backend.retirements == 1 && !permit.isCurrent)
+}
+
+@available(macOS 26.0, *)
+@Test func polledNativeActivationLeavesCommandLaneFreeAndStartsOneWorker() async throws {
+    let gate = NativeBackendGateV1(), world = try NativeBackendWorldV1(activateGate: gate)
+    let backendID = UUID(), operationID = UUID()
+    _ = try await world.owner.handle(world.command(.prepare, backendID: backendID, operationID: operationID))
+    func poll() throws -> LocalInteractiveNativeBackendCommandV1 {
+        try .init(commandID: UUID(), backendID: backendID, operationID: operationID,
+            operation: .activate, scope: world.scope, pollActivation: true)
+    }
+    let first = try await world.owner.handle(poll())
+    #expect(first.activationPending == true && first.portBase == nil)
+    while !(await gate.entered) { await Task.yield() }
+    let second = try await world.owner.handle(poll())
+    #expect(second.activationPending == true)
+    let observation = try await world.owner.handle(world.command(.health, backendID: backendID, operationID: operationID))
+    #expect(observation.active == false)
+    let backend = try #require(await world.spy.created.first).0
+    #expect(await backend.activations == 1)
+    await gate.release()
+    var endpoint: UInt16?
+    for _ in 0..<100 {
+        endpoint = try await world.owner.handle(poll()).portBase
+        if endpoint != nil { break }
+        try await Task.sleep(for: .milliseconds(10))
+    }
+    #expect(endpoint == 58989)
+    #expect(await backend.activations == 1)
+    await world.owner.retire()
+}
+
+@available(macOS 26.0, *)
+@Test func polledNativeActivationStopFencesBeforeJoiningLateEndpoint() async throws {
+    let gate = NativeBackendGateV1(), world = try NativeBackendWorldV1(activateGate: gate)
+    let id = UUID(), op = UUID()
+    _ = try await world.owner.handle(world.command(.prepare, backendID: id, operationID: op))
+    let poll = try LocalInteractiveNativeBackendCommandV1(commandID: UUID(), backendID: id, operationID: op,
+        operation: .activate, scope: world.scope, pollActivation: true)
+    #expect(try await world.owner.handle(poll).activationPending == true)
+    while !(await gate.entered) { await Task.yield() }
+    let pair = try #require(await world.spy.created.first)
+    let stop = Task { await world.owner.retire() }
+    while pair.1.isCurrent { await Task.yield() }
+    #expect(!pair.1.isCurrent)
+    await gate.release(); await stop.value
+    await #expect(throws: LocalInteractiveNativeBackendErrorV1.unavailable) { try await world.owner.handle(poll) }
+    #expect(await pair.0.retirements == 1)
+}
+
+@available(macOS 26.0, *)
+@Test func polledActivationWireRejectsPendingWithoutOptInAndWrongFields() throws {
+    var root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+    while !FileManager.default.fileExists(atPath: root.appendingPathComponent("spec/fixtures/manifest.json").path) {
+        let parent = root.deletingLastPathComponent(); try #require(parent != root); root = parent
+    }
+    let fixture = try #require(JSONSerialization.jsonObject(with: Data(contentsOf:
+        root.appendingPathComponent("spec/fixtures/local-xpc-native-backend-v0.1.json"))) as? [String: Any])
+    let polling = try #require(fixture["activationPolling"] as? [String: Any])
+    #expect((polling["maximumStartupMilliseconds"] as? NSNumber)?.uint64Value == LocalInteractiveNativeBackendOperationV1.activationStartupMilliseconds)
+    #expect(polling["pollIntervalMilliseconds"] as? Int == LocalInteractiveNativeBackendOperationV1.activationPollMilliseconds)
+    let world = try NativeBackendWorldV1(), id = UUID(), op = UUID()
+    let legacy = try world.command(.activate, backendID: id, operationID: op)
+    #expect(throws: LocalInteractiveNativeBackendErrorV1.invalidMaterial) {
+        try LocalInteractiveNativeBackendReceiptV1(command: legacy, activationPending: true)
+    }
+    let opted = try LocalInteractiveNativeBackendCommandV1(commandID: UUID(), backendID: id, operationID: op,
+        operation: .activate, scope: world.scope, pollActivation: true)
+    let pending = try LocalInteractiveNativeBackendReceiptV1(command: opted, activationPending: true)
+    #expect(try LocalInteractiveLeaseWireCodecV1.decodeNativeBackendReceipt(
+        LocalInteractiveLeaseWireCodecV1.encodeNativeBackendReceipt(pending)) == pending)
+    for value in [false, true] {
+        #expect(throws: LocalInteractiveNativeBackendErrorV1.invalidMaterial) {
+            try LocalInteractiveNativeBackendCommandV1(commandID: UUID(), backendID: id, operationID: op,
+                operation: .health, scope: world.scope, pollActivation: value)
+        }
+    }
+    #expect(throws: LocalInteractiveNativeBackendErrorV1.invalidMaterial) {
+        try LocalInteractiveNativeBackendReceiptV1(command: opted, portBase: 58989, activationPending: true)
+    }
+    #expect(throws: LocalInteractiveNativeBackendErrorV1.invalidMaterial) {
+        try LocalInteractiveNativeBackendReceiptV1(command: opted, activationPending: false)
+    }
+}
+
 #endif

@@ -134,6 +134,7 @@ private final class UIKitClientKeyboardProxyV0:
     private static let sentinel = "\u{2060}"
     private let submit: (ClientKeyboardActionV0) -> Void
     private let visibilityChanged: (Bool) -> Void
+    private var discardingComposition = false
     private lazy var keyboardAccessory = UIKitClientKeyboardAccessoryV0(
         submit: { [weak self] action in self?.submit(action) },
         dismissKeyboard: { [weak self] in self?.resignFirstResponder() }
@@ -178,6 +179,7 @@ private final class UIKitClientKeyboardProxyV0:
 
     @discardableResult
     override func resignFirstResponder() -> Bool {
+        discardComposition()
         let resigned = super.resignFirstResponder()
         if resigned { visibilityChanged(false) }
         return resigned
@@ -188,7 +190,7 @@ private final class UIKitClientKeyboardProxyV0:
         shouldChangeCharactersIn range: NSRange,
         replacementString string: String
     ) -> Bool {
-        guard textField === self else { return false }
+        guard textField === self, !discardingComposition else { return false }
         defer { restoreSentinel() }
         if string.isEmpty {
             submit(.deleteBackward)
@@ -201,10 +203,18 @@ private final class UIKitClientKeyboardProxyV0:
     }
 
     func textFieldShouldReturn(_ textField: UITextField) -> Bool {
-        guard textField === self else { return false }
+        guard textField === self, !discardingComposition else { return false }
         submit(.returnKey)
         restoreSentinel()
         return false
+    }
+
+    func discardComposition() {
+        guard !discardingComposition else { return }
+        discardingComposition = true
+        defer { discardingComposition = false }
+        unmarkText()
+        restoreSentinel()
     }
 
     private func restoreSentinel() {
@@ -256,6 +266,7 @@ public final class UIKitClientLiveSurfaceViewV0:
     )
     private var softwareKeyboardModifiers: InteractiveModifierMask = []
     public var onSoftwareKeyboardVisibilityChanged: ((Bool) -> Void)?
+    public var onSoftwareKeyboardInputOmitted: (() -> Void)?
     public var onSoftwareKeyboardModifiersCleared: (() -> Void)?
     private let onPayloads: ([InteractiveInputPayload]) -> Void
     private let onFailure: (UIKitClientLiveSurfaceFailureV0) -> Void
@@ -320,22 +331,29 @@ public final class UIKitClientLiveSurfaceViewV0:
 
     public func setInputEnabled(_ value: Bool) {
         if value, hasUnverifiedExternalVideo { return }
+        // Local keyboard presentation is independent of remote input admission.
+        // Discard composition on both sides of a pause; never replay old drafts.
+        let changed = inputEnabled != value
+        if changed || !value {
+            inputEnabled = false
+            keyboardProxy.discardComposition()
+        }
+        inputEnabled = value
         if !value {
-            keyboardProxy.resignFirstResponder()
             clearSoftwareKeyboardModifiers()
             resetMapper()
             resetVisualZoomState()
         }
-        // UIKit defaults to enabled even before our first admitted input frame.
-        // Enforce the view state when the cached logical value is unchanged.
-        isUserInteractionEnabled = value
-        guard inputEnabled != value else { return }
-        inputEnabled = value
+        // Disabling the container also resigns its text responder. Keep local
+        // keyboard UI alive; recognizers and every delivery path stay fenced.
+        isUserInteractionEnabled = true
+        gestureRecognizers?.forEach { $0.isEnabled = value }
         if value { setNeedsLayout() }
     }
 
     public func resetInputAndBlank() {
-        keyboardProxy.resignFirstResponder()
+        inputEnabled = false
+        hideSoftwareKeyboard()
         resetMapper()
         resetVisualZoomState()
         inputEnabled = false
@@ -434,12 +452,17 @@ public final class UIKitClientLiveSurfaceViewV0:
     }
 
     public func toggleSoftwareKeyboard() {
-        guard canDispatchInput else { return }
+        guard window != nil else { return }
         if keyboardProxy.isFirstResponder {
             keyboardProxy.resignFirstResponder()
         } else {
-            _ = keyboardProxy.becomeFirstResponder()
+            showSoftwareKeyboard()
         }
+    }
+
+    public func showSoftwareKeyboard() {
+        guard window != nil, !keyboardProxy.isFirstResponder else { return }
+        _ = keyboardProxy.becomeFirstResponder()
     }
 
     public var isSoftwareKeyboardVisible: Bool {
@@ -448,6 +471,7 @@ public final class UIKitClientLiveSurfaceViewV0:
 
     public func hideSoftwareKeyboard() {
         keyboardProxy.resignFirstResponder()
+        keyboardProxy.discardComposition()
         clearSoftwareKeyboardModifiers()
     }
 
@@ -1068,8 +1092,8 @@ public final class UIKitClientLiveSurfaceViewV0:
     }
 
     private func submitKeyboardAction(_ action: ClientKeyboardActionV0) {
-        guard canDispatchInput else { return }
         defer { clearSoftwareKeyboardModifiers() }
+        guard canDispatchInput else { return }
         do { emit(try action.softwareKeyboardPayloads(modifiers: softwareKeyboardModifiers)) }
         catch {
             setInputEnabled(false)

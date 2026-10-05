@@ -1457,6 +1457,7 @@ private extension AgentNetworkPrimaryStartupInputsV1 {
             statusPlatform: statusPlatform,
             interactivePlatform: AgentInteractivePlatformServicesV1(
                 visibleAdmission: admission,
+                sessionConsentProfile: .trustedDevice,
                 materials: interactivePlatform.materials,
                 runtime: runtime,
                 mediaNegotiation: mediaNegotiation,

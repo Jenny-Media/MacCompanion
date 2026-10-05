@@ -131,6 +131,94 @@
       "codes": [
         "no-working-encoder"
       ]
+    },
+    {
+      "lines": [
+        "selected-capture-validation-error=1",
+        "selected-capture-validation-error=2",
+        "selected-capture-validation-error=3",
+        "selected-capture-validation-error=4",
+        "selected-capture-validation-error=5",
+        "selected-capture-validation-error=6",
+        "selected-capture-validation-error=7",
+        "selected-capture-validation-error=8",
+        "selected-capture-validation-error=9",
+        "selected-capture-validation-error=10",
+        "selected-capture-validation-error=11",
+        "selected-capture-validation-error=12",
+        "selected-capture-handoff-error=1",
+        "selected-capture-handoff-error=2",
+        "selected-capture-handoff-error=3",
+        "selected-capture-handoff-error=4",
+        "selected-capture-handoff-error=5",
+        "selected-capture-handoff-error=6",
+        "selected-capture-handoff-error=7",
+        "selected-capture-handoff-error=8",
+        "selected-capture-handoff-error=9",
+        "selected-capture-handoff-error=10",
+        "selected-capture-handoff-error=11",
+        "selected-capture-handoff-error=12",
+        "selected-capture-handoff-error=13"
+      ],
+      "codes": [
+        "selected-capture-handoff-error=1",
+        "selected-capture-handoff-error=10",
+        "selected-capture-handoff-error=11",
+        "selected-capture-handoff-error=12",
+        "selected-capture-handoff-error=13",
+        "selected-capture-handoff-error=2",
+        "selected-capture-handoff-error=3",
+        "selected-capture-handoff-error=4",
+        "selected-capture-handoff-error=5",
+        "selected-capture-handoff-error=6",
+        "selected-capture-handoff-error=7",
+        "selected-capture-handoff-error=8",
+        "selected-capture-handoff-error=9",
+        "selected-capture-validation-error=1",
+        "selected-capture-validation-error=10",
+        "selected-capture-validation-error=11",
+        "selected-capture-validation-error=12",
+        "selected-capture-validation-error=2",
+        "selected-capture-validation-error=3",
+        "selected-capture-validation-error=4",
+        "selected-capture-validation-error=5",
+        "selected-capture-validation-error=6",
+        "selected-capture-validation-error=7",
+        "selected-capture-validation-error=8",
+        "selected-capture-validation-error=9"
+      ]
+    },
+    {
+      "lines": [
+        "selected-capture-validation-error=0",
+        "selected-capture-validation-error=13",
+        "selected-capture-validation-error=01",
+        "selected-capture-validation-error=10 private",
+        "selected-capture-handoff-error=0",
+        "selected-capture-handoff-error=14",
+        "selected-capture-handoff-error=01",
+        "selected-capture-handoff-error=9 private"
+      ],
+      "codes": []
+    },
+    {
+      "lines": [
+        "selected-capture-placement-discarded=1",
+        "selected-capture-placement-discarded=2",
+        "selected-capture-stream-error=9",
+        "selected-capture-placement-discarded=3",
+        "selected-capture-placement-discarded=01",
+        "selected-capture-placement-discarded=1 extra",
+        "selected-capture-stream-error=7",
+        "selected-capture-stream-error=8"
+      ],
+      "codes": [
+        "selected-capture-placement-discarded=1",
+        "selected-capture-placement-discarded=2",
+        "selected-capture-stream-error=7",
+        "selected-capture-stream-error=8",
+        "selected-capture-stream-error=9"
+      ]
     }
   ],
   "pickerWindowCases": [
@@ -209,7 +297,7 @@
       "title": "First second line"
     },
     {
-      "input": "‮title⁦",
+      "input": "\u202etitle\u2066",
       "title": "title"
     },
     {
@@ -217,8 +305,8 @@
       "title": null
     },
     {
-      "input": "éééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééé",
-      "title": "éééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééé"
+      "input": "\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9",
+      "title": "\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9"
     }
   ],
   "capturePlacementCases": [
@@ -392,5 +480,117 @@
     "inactive health has no evidence input certificate or port",
     "retirement joins child before inactivity and retains at most 64 bindings",
     "old inactive observation cannot retire a newer backend"
+  ],
+  "windowContinuityContext": {
+    "profile": "maccompanion.selected-capture-context.v0.2",
+    "operationID": "AAAAAAAA-BBBB-4CCC-8DDD-EEEEEEEEEEEE",
+    "kind": "window",
+    "displayID": 1,
+    "windowID": 42,
+    "processID": 123,
+    "bundleIdentifier": "test.selected",
+    "processLaunchMilliseconds": 1000,
+    "expiresAtMonotonicNanoseconds": 31000000000,
+    "boundsX": -320,
+    "boundsY": 40,
+    "boundsWidth": 320,
+    "boundsHeight": 180,
+    "backingScale": 2,
+    "sourcePixelWidth": 640,
+    "sourcePixelHeight": 360,
+    "encodedWidth": 640,
+    "encodedHeight": 360,
+    "frameEpochHex": "d5e7c93a1da94bf28f2b09a1de105a511111111122224333844455555555555500000000000000020000000000000003"
+  },
+  "desktopContinuityContext": {
+    "profile": "maccompanion.selected-capture-context.v0.2",
+    "operationID": "AAAAAAAA-BBBB-4CCC-8DDD-EEEEEEEEEEEE",
+    "kind": "desktop",
+    "displayID": 1,
+    "windowID": 0,
+    "processID": 0,
+    "bundleIdentifier": "",
+    "processLaunchMilliseconds": 0,
+    "expiresAtMonotonicNanoseconds": 31000000000,
+    "boundsX": 0,
+    "boundsY": 0,
+    "boundsWidth": 320,
+    "boundsHeight": 180,
+    "backingScale": 2,
+    "sourcePixelWidth": 640,
+    "sourcePixelHeight": 360,
+    "encodedWidth": 640,
+    "encodedHeight": 360,
+    "frameEpochHex": "d5e7c93a1da94bf28f2b09a1de105a511111111122224333844455555555555500000000000000020000000000000003"
+  },
+  "continuityContextCases": [
+    "legacy-desktop-stays-rejected",
+    "desktop-requires-empty-process-scope",
+    "exact-captured-epoch-required",
+    "canvas-and-original-deadline-stay-fixed"
+  ],
+  "desktopNativePixelCases": [
+    {
+      "id": "retina-ultrawide",
+      "logical": [
+        2560,
+        1067
+      ],
+      "cgPixels": [
+        2560,
+        1067
+      ],
+      "nativePixels": [
+        5120,
+        2134
+      ],
+      "backingScale": 2
+    },
+    {
+      "id": "retina-built-in",
+      "logical": [
+        1512,
+        982
+      ],
+      "cgPixels": [
+        1512,
+        982
+      ],
+      "nativePixels": [
+        3024,
+        1964
+      ],
+      "backingScale": 2
+    },
+    {
+      "id": "ordinary-one-to-one",
+      "logical": [
+        1920,
+        1080
+      ],
+      "cgPixels": [
+        1920,
+        1080
+      ],
+      "nativePixels": [
+        1920,
+        1080
+      ],
+      "backingScale": 1
+    }
+  ],
+  "childValidationReasons": [
+    "expiry",
+    "display-activity-or-rotation",
+    "display-bounds",
+    "display-mode",
+    "desktop-geometry",
+    "selected-backing-scale",
+    "process-identity",
+    "window-inventory",
+    "window-identity-or-visibility",
+    "window-geometry",
+    "window-display",
+    "application-geometry"
   ]
 }

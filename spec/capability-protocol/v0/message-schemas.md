@@ -539,3 +539,9 @@ Registered argument keys are closed per error:
 `invalidCorrelation`, `invalidJSON`, `invalidScalar`, or `unknownField`.
 `recovery` is `localRepair` or `reenableService`. Arbitrary provider/server
 text is never substituted.
+
+## Paired desktop stream extension
+
+`desktop.tunnel` and `desktop.tunnel.event` are registered by
+[vnc-desktop-tunnel.md](vnc-desktop-tunnel.md). Their closed body and sequence
+rules apply independently of the ordinary request/reply router.

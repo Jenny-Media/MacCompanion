@@ -198,6 +198,13 @@ package struct MacLocalXPCInteractiveMenuRuntimeRouteV1:
         if let nativeBackendFactory { return try await nativeBackendFactory(snapshot) }
         return MacLocalXPCNativeEnrollmentBackendV1(sender: sender, snapshot: snapshot)
     }
+    package func makeReplacementBackend(snapshot: InteractiveNativeVideoRuntimeSnapshotV0,
+        retained: InteractiveNativeVideoRetainedEnrollmentV1) async throws -> any InteractiveNativeVideoEnrollmentBackendV0 {
+        guard nativeBackendFactory == nil, let previous = retained.backend as? MacLocalXPCNativeEnrollmentBackendV1 else {
+            throw LocalInteractiveNativeBackendErrorV1.unavailable
+        }
+        return try await previous.replacementBackend(snapshot: snapshot, retained: retained)
+    }
 
     package func makeOffer(
         fence: InteractiveWebRTCNegotiationFenceV0,

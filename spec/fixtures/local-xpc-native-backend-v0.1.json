@@ -18,7 +18,10 @@
     "activate",
     "health",
     "present",
-    "retire"
+    "retire",
+    "retain",
+    "retainedHealth",
+    "prepareReplacement"
   ],
   "cases": [
     "prepare-has-no-listener",
@@ -76,5 +79,170 @@
     90,
     180,
     270
-  ]
+  ],
+  "continuityCases": [
+    "capability-omitted-until-complete-adapter-admitted",
+    "retain-revokes-posting-before-child-pause-ack",
+    "retained-health-rechecks-original-control-without-old-surface",
+    "replacement-binds-exact-predecessor-ids-original-binding-key-canvas",
+    "late-predecessor-retire-cannot-drain-transferred-child",
+    "stop-grant-loss-and-retained-timeout-join-child"
+  ],
+  "activationPolling": {
+    "maximumStartupMilliseconds": 15000,
+    "pollIntervalMilliseconds": 100,
+    "cases": [
+      "literal-true-opt-in-only-on-activate",
+      "pending-receipt-forbids-endpoint-and-input",
+      "pending-without-opt-in-denied",
+      "one-worker-across-repeated-exact-polls",
+      "lease-renewal-lane-available-during-startup",
+      "stop-fences-and-joins-worker-before-late-endpoint",
+      "worker-failure-and-original-deadline-drain",
+      "polling-cannot-extend-startup-budget",
+      "backend-readiness-shares-elapsed-startup-budget-not-attempt-count"
+    ]
+  },
+  "retirementPublicationCases": [
+    "in-flight-health-loses-capture-during-watchdog-retirement-returns-inactive",
+    "all-retirement-waiters-observe-published-exact-scope",
+    "retired-health-wrong-operation-remains-denied"
+  ],
+  "failureDiagnostics": {
+    "profile": "maccompanion.local-native-failure-diagnostics.v1",
+    "failureOnly": true,
+    "arbitraryErrorDescriptionAllowed": false,
+    "unknownReason": "unclassified",
+    "stages": [
+      "initial-check",
+      "pause-input",
+      "resolve-display",
+      "read-selection",
+      "read-snapshot",
+      "snapshot-validation",
+      "selection-validation",
+      "measure-geometry",
+      "bind-capture",
+      "configure-replacement",
+      "backend-prepare",
+      "activation-worker",
+      "input-activation",
+      "native-post",
+      "event-construction",
+      "command-admission",
+      "input-adapter"
+    ],
+    "reasons": {
+      "local": [
+        "invalidMaterial",
+        "bindingMismatch",
+        "unavailable"
+      ],
+      "input": [
+        "alreadyConfigured",
+        "unavailable",
+        "permissionDenied",
+        "bindingMismatch",
+        "eventConstructionFailed"
+      ],
+      "constructor": [
+        "invalidDisplayBounds",
+        "invalidCursorPosition",
+        "cursorOutsideSelectedDisplay",
+        "geometryFenceMismatch",
+        "eventCreationFailed"
+      ],
+      "activation": [
+        "invalidTarget",
+        "activationFailed",
+        "verificationFailed"
+      ],
+      "posting": [
+        "bindingMismatch",
+        "expired",
+        "unavailable",
+        "notPosted"
+      ],
+      "backend": [
+        "invalidPhase",
+        "invalidCertificate",
+        "startupFailed",
+        "invalidPath"
+      ],
+      "handoff": [
+        "invalidDirectory",
+        "unavailable",
+        "invalidRecord",
+        "timedOut"
+      ],
+      "evidence": [
+        "invalidPayload",
+        "bindingMismatch",
+        "notCurrent"
+      ]
+    },
+    "captureEvidence": [
+      "not-active",
+      "file-absent",
+      "empty-file",
+      "unsafe-file",
+      "short-read",
+      "malformed-evidence",
+      "evidence-validation",
+      "evidence-not-current",
+      "owner-changed"
+    ],
+    "phases": [
+      "idle",
+      "preparing",
+      "prepared",
+      "activating",
+      "active",
+      "retaining",
+      "retained"
+    ],
+    "selectionRejections": [
+      "admissionClosedBeforeSelection",
+      "admissionClosedAfterSelection",
+      "pendingSelection",
+      "uncommittedSelection",
+      "activeAbsent",
+      "leaseAbsent",
+      "hostMismatch",
+      "sessionMismatch",
+      "authorizationMismatch",
+      "displayMismatch",
+      "surfaceMismatch",
+      "surfaceRevisionMismatch",
+      "coordinateRevisionMismatch",
+      "encodedWidthMismatch",
+      "encodedHeightMismatch",
+      "logicalWidthMismatch",
+      "logicalHeightMismatch",
+      "rotationMismatch",
+      "leaseExpired",
+      "controlExpired",
+      "desktopSurfaceMismatch",
+      "unsupportedKind",
+      "selectedSurfaceAbsent",
+      "selectedDescriptorMismatch",
+      "geometryScopeMismatch",
+      "activationTargetInvalid",
+      "geometryInvalid",
+      "captureWindowDisplay",
+      "captureApplicationDisplay",
+      "captureKind",
+      "captureApplicationIdentity",
+      "captureScale",
+      "liveExpired",
+      "liveDisplay",
+      "liveApplication",
+      "liveScale",
+      "liveWindowInventory",
+      "liveWindowIdentity",
+      "liveWindowGeometry",
+      "liveWindowDisplay",
+      "liveApplicationGeometry"
+    ]
+  }
 }

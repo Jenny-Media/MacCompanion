@@ -107,17 +107,29 @@ public enum ClientKeyboardActionV0: Equatable, Sendable {
         }
     }
 
-    /// An armed modifier applies to a physical key, never to a Unicode text
-    /// commit. Unsupported modified commits are omitted locally.
+    /// Unicode Text and physical Keyboard retain independent authority. A
+    /// physical-only fallback maps the entire commit or omits it, never a prefix.
     public func softwareKeyboardPayloads(
-        modifiers: InteractiveModifierMask = []
+        modifiers: InteractiveModifierMask = [],
+        allowsUnicodeText: Bool = true
     ) throws -> [InteractiveInputPayload] {
-        guard case let .text(value) = self, !modifiers.isEmpty else {
+        guard case let .text(value) = self else {
             return try payloads(modifiers: modifiers)
         }
+        try InteractiveInputPayload.text(value).validate()
+        if modifiers.isEmpty, allowsUnicodeText { return [.text(value)] }
         let bytes = Array(value.utf8)
-        guard bytes.count == 1 else { return [] }
-        let byte = bytes[0]
+        guard bytes.count <= 32, modifiers.isEmpty || bytes.count == 1 else { return [] }
+        var result: [InteractiveInputPayload] = []
+        for byte in bytes {
+            guard let key = Self.asciiKey(byte, modifiers: modifiers) else { return [] }
+            result += try Self.physicalKey(usage: key.usage).payloads(modifiers: key.modifiers)
+        }
+        return result
+    }
+
+    private static func asciiKey(_ byte: UInt8, modifiers: InteractiveModifierMask)
+        -> (usage: UInt16, modifiers: InteractiveModifierMask)? {
         var effective = modifiers
         let usage: UInt16
         switch byte {
@@ -139,11 +151,11 @@ public enum ClientKeyboardActionV0: Equatable, Sendable {
                 (55, 38, 0x24), (56, 42, 0x25), (57, 40, 0x26),
                 (48, 41, 0x27),
             ]
-            guard let key = keys.first(where: { $0.0 == byte || $0.1 == byte }) else { return [] }
+            guard let key = keys.first(where: { $0.0 == byte || $0.1 == byte }) else { return nil }
             usage = key.2
             if key.1 == byte { effective.insert(.leftShift) }
         }
-        return try Self.physicalKey(usage: usage).payloads(modifiers: effective)
+        return (usage, effective)
     }
 
     private static func stroke(

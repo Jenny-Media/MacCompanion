@@ -56,6 +56,12 @@
       "canonicalSHA256": "4e218672c33dd24064ade731f8762ab83271e8f72106d2ca2da2f7270d823cc7"
     },
     {
+      "path": "valid/pairing-complete-remote-desktop.json",
+      "kind": "pairing.complete",
+      "expect": "valid",
+      "canonicalSHA256": "27aab27ed058d14c221ad7f7c446fc6c4c34b7d7c5fe2b20f0d4ac653bb1b95e"
+    },
+    {
       "path": "valid/pairing-resume.json",
       "kind": "pairing.resume",
       "expect": "valid",
@@ -203,7 +209,7 @@
       "path": "crypto/interactive-v0.1.json",
       "kind": "crypto.interactive.v0.1",
       "expect": "valid",
-      "canonicalSHA256": "f5c11a88da642a6ab0bbd2caaa7c4b2d3dc9cd582f518b02a2ccac7ab5b44565"
+      "canonicalSHA256": "5c9025f27fde632525854158f5334f54617d2de749498c509923aafc7785b809"
     },
     {
       "path": "crypto/tls-spki-v0.1.json",
@@ -615,7 +621,7 @@
       "path": "valid/native-client-launch-admission.json",
       "kind": "interactive.nativeClientLaunchAdmission.v0.1",
       "expect": "valid",
-      "canonicalSHA256": "68d9b38925f5c8ee424aedf33073bca8fb9abb130b471730741019d932b1d990"
+      "canonicalSHA256": "6880e1730ef640252779634e8d449df4543aa69b39a0c57d4a9e9253a2e5042e"
     },
     {
       "path": "valid/managed-native-host-admission.json",
@@ -633,7 +639,7 @@
       "path": "local-xpc-native-backend-v0.1.json",
       "kind": "interactive.localNativeBackend.v0.1",
       "expect": "valid",
-      "canonicalSHA256": "804694c3650e69c6ee080c88f6ed05e5bc98c3ddf6ee066ec10f247467b44469"
+      "canonicalSHA256": "0bacd64960fe9023f86798d2e04eb6a9c4a7787a0bbea655db35e60948e464e7"
     },
     {
       "path": "valid/native-video-content-geometry.json",
@@ -663,7 +669,7 @@
       "path": "valid/native-input-posting.json",
       "kind": "nativeInput.posting.v0.1",
       "expect": "valid",
-      "canonicalSHA256": "46e8c29612f7c9a2d9de63422fc91f1697e10150421f2fc86b5d6482e89d9f2d"
+      "canonicalSHA256": "1ede9efc2140104e8a47f6c77cbec9386e97008222277c04fdb136d8c77bf497"
     },
     {
       "path": "valid/normal-native-simulator-development.json",
@@ -699,7 +705,7 @@
       "path": "native-selected-capture-context-v0.1.json",
       "kind": "native.privateSelectedCaptureContext.v0.1",
       "expect": "valid",
-      "canonicalSHA256": "ea5436ba83cb2d8f0c05c5fbe1e576c55e3d7330dd3fcceea5cd161bf2cc7357"
+      "canonicalSHA256": "03da1aafeec8bf28b001981fcd12344a1cbf2b84e7c0d6350c938245c27db6ff"
     },
     {
       "path": "client-failed-product-retirement-v0.1.json",
@@ -717,13 +723,85 @@
       "path": "native-stream-continuity-v0.1.json",
       "kind": "native.streamContinuity.v0.1",
       "expect": "valid",
-      "canonicalSHA256": "1adaea23a36220bc5ad05a35146b42631b5a227995a909dacf5a3c08b2048879"
+      "canonicalSHA256": "84ed480f588ecb59e9e7faf24cc1d34102cd833a734757530cace3d482631e89"
     },
     {
       "path": "native-foreground-recovery-v0.1.json",
       "kind": "interactive.nativeForegroundRecovery.v0.1",
       "expect": "valid",
       "canonicalSHA256": "a16bb1afa498a0b8a5ea817974f90813f8fe7bb49eaf869debb1a133854c119a"
+    },
+    {
+      "path": "client-keyboard-presentation-v0.1.json",
+      "kind": "client.keyboardPresentation.v0.1",
+      "expect": "valid",
+      "canonicalSHA256": "2e763c2850d543c0d4b4b4824e193cffe26566e141cc43f100167976cefa3e51"
+    },
+    {
+      "path": "trusted-device-session-consent-v0.1.json",
+      "kind": "interactive.trustedDeviceSessionConsent.v0.1",
+      "expect": "valid",
+      "canonicalSHA256": "247ed9b38ccc55c91c7f0bebc790c9223d34687c77406f1c201ec4e549102cc4"
+    },
+    {
+      "path": "client-mac-library-v0.1.json",
+      "kind": "client.macLibrary.v0.1",
+      "expect": "valid",
+      "canonicalSHA256": "270c34dfc08b3abd8969f0ed638ffca7e3d89979f7ede410cc1ed60d15c4c89d"
+    },
+    {
+      "path": "crypto/native-video-continuity-coordinator-v0.1.json",
+      "kind": "nativeVideo.continuityCoordinator.v0.1",
+      "expect": "valid",
+      "canonicalSHA256": "165962ad144d4370ea543158a23d73bd54fe9cb0c96f20689d34a83bf815f1ad"
+    },
+    {
+      "path": "vnc-desktop-tunnel-v0.1.json",
+      "kind": "desktop.tunnel.profile.v0.1",
+      "expect": "valid",
+      "canonicalSHA256": "1c5956cd055630e21bcdccfeb1cb87d45d95acffe1aaadd739f48d1f06eae6be"
+    },
+    {
+      "path": "valid/desktop-tunnel-open.json",
+      "kind": "desktop.tunnel",
+      "expect": "valid",
+      "canonicalSHA256": "175a7b409611f3dfb0c32d5221ed36456b0434a0c81d3ea989ca28e35f6c456c"
+    },
+    {
+      "path": "valid/desktop-tunnel-data.json",
+      "kind": "desktop.tunnel",
+      "expect": "valid",
+      "canonicalSHA256": "ca02cb7f964cd8fc0ba721ed874f7c205c73c3730ce23bee7cea2a8573eed719"
+    },
+    {
+      "path": "valid/desktop-tunnel-opened.json",
+      "kind": "desktop.tunnel.event",
+      "expect": "valid",
+      "canonicalSHA256": "4ff2b1bd957130ae507c73a21fc60a330feecaf5486051df9ffc99c31f547999"
+    },
+    {
+      "path": "valid/desktop-tunnel-closed.json",
+      "kind": "desktop.tunnel.event",
+      "expect": "valid",
+      "canonicalSHA256": "a5e2e5efd924a8062d3129456d4f765c29b1052a409b7be066c2f602e43d32a5"
+    },
+    {
+      "path": "valid/desktop-window-query.json",
+      "kind": "desktop.tunnel",
+      "expect": "valid",
+      "canonicalSHA256": "9f76bf5a723cc91e77ebdfbb11cb8e5d0e313327119f61df8d3df92b0f17e84f"
+    },
+    {
+      "path": "valid/desktop-window-geometry.json",
+      "kind": "desktop.tunnel.event",
+      "expect": "valid",
+      "canonicalSHA256": "b835e9529888edfdf309a6d7c87917a1929bddabf8f88ac21858069b2ec6545f"
+    },
+    {
+      "path": "direct-screen-sharing-v1.json",
+      "kind": "directScreenSharing.v1",
+      "expect": "valid",
+      "canonicalSHA256": "d431ae13cbd32822f0537a9542cf6922c3d2be23e8eccc696da648b0d72acf54"
     }
   ]
 }

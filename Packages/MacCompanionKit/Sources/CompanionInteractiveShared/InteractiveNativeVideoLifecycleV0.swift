@@ -26,6 +26,23 @@ public struct InteractiveNativeVideoSurfaceV0: Equatable, Sendable {
         self.encodedWidth = encodedWidth
         self.encodedHeight = encodedHeight
     }
+
+    /// Capture metadata only. It never admits presentation or input.
+    public func frameEpochData() throws -> Data {
+        guard surfaceRevision <= 9_007_199_254_740_991,
+              coordinateSpaceRevision <= 9_007_199_254_740_991 else {
+            throw InteractiveNativeVideoFailureV0.invalidSurface
+        }
+        var marker = UUID(uuidString: "D5E7C93A-1DA9-4BF2-8F2B-09A1DE105A51")!.uuid
+        var identifier = surfaceID.uuid
+        var surface = UInt64(surfaceRevision).bigEndian
+        var coordinates = UInt64(coordinateSpaceRevision).bigEndian
+        var data = withUnsafeBytes(of: &marker) { Data($0) }
+        withUnsafeBytes(of: &identifier) { data.append(contentsOf: $0) }
+        withUnsafeBytes(of: &surface) { data.append(contentsOf: $0) }
+        withUnsafeBytes(of: &coordinates) { data.append(contentsOf: $0) }
+        return data
+    }
 }
 
 public enum InteractiveNativeVideoFailureV0: Error, Equatable, Sendable {

@@ -7,12 +7,19 @@
 #include <math.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include "../Client/CompanionNativeSurfaceEpoch.h"
 
 static NSError *ContextError(NSInteger code) {
   // The managed child has no user-facing diagnostic channel. Fixed codes
   // identify the failed check without logging window metadata or pixels.
   if (getenv("MACCOMPANION_NATIVE_SELECTION_PATH")) fprintf(stderr,"selected-capture-context-error=%ld\n",(long)code);
   return [NSError errorWithDomain:@"MacCompanion.SelectedCaptureContext" code:code userInfo:nil];
+}
+// Closed local classification only. The same rejection still occurs immediately;
+// no window, process, geometry, identity, pixel or input material is emitted.
+static BOOL ContextInvalidSelection(unsigned code) {
+  if (getenv("MACCOMPANION_NATIVE_SELECTION_PATH")) fprintf(stderr,"selected-capture-validation-error=%u\n",code);
+  return NO;
 }
 static uint64_t ContextNow(void) {
   mach_timebase_info_data_t timebase;
@@ -27,6 +34,18 @@ static BOOL ContextNumber(id value, double minimum, double maximum, BOOL integer
   if (![value isKindOfClass:[NSNumber class]] || CFGetTypeID((__bridge CFTypeRef)value) == CFBooleanGetTypeID()) return NO;
   double number = [value doubleValue];
   return isfinite(number) && number >= minimum && number <= maximum && (!integer || number == floor(number));
+}
+static NSData *ContextEpoch(id hex) {
+  if (![hex isKindOfClass:[NSString class]] || [hex length] != 96) return nil;
+  uint8_t bytes[48];
+  for (NSUInteger index = 0; index < 96; index++) {
+    unichar digit = [hex characterAtIndex:index];
+    int value = digit >= '0' && digit <= '9' ? digit - '0' : digit >= 'a' && digit <= 'f' ? digit - 'a' + 10 : -1;
+    if (value < 0) return nil;
+    if (index % 2 == 0) bytes[index/2] = (uint8_t)(value << 4); else bytes[index/2] |= (uint8_t)value;
+  }
+  CompanionNativeSurfaceEpoch decoded;
+  return CompanionNativeEpochDecode(bytes,sizeof(bytes),&decoded) ? [NSData dataWithBytes:bytes length:sizeof(bytes)] : nil;
 }
 
 static BOOL ContextAbsoluteLiteralPath(NSString *path) {
@@ -123,19 +142,24 @@ static int ContextDirectory(NSString *path) {
 + (instancetype)parseData:(NSData *)data operationID:(NSString *)operation displayID:(CGDirectDisplayID)displayID
     now:(uint64_t)now error:(NSError **)error {
   NSDictionary *value = data.length > 0 && data.length <= 4096 ? [NSJSONSerialization JSONObjectWithData:data options:0 error:nil] : nil;
-  NSSet *keys = [NSSet setWithArray:@[@"profile",@"operationID",@"kind",@"displayID",@"windowID",@"processID",@"bundleIdentifier",
+  BOOL continuity = [value isKindOfClass:[NSDictionary class]] && [value[@"profile"] isEqual:@"maccompanion.selected-capture-context.v0.2"];
+  BOOL desktop = continuity && [value[@"kind"] isEqual:@"desktop"];
+  NSData *epoch = continuity ? ContextEpoch(value[@"frameEpochHex"]) : nil;
+  NSMutableSet *keys = [NSMutableSet setWithArray:@[@"profile",@"operationID",@"kind",@"displayID",@"windowID",@"processID",@"bundleIdentifier",
     @"processLaunchMilliseconds",@"expiresAtMonotonicNanoseconds",@"boundsX",@"boundsY",@"boundsWidth",@"boundsHeight",
     @"backingScale",@"sourcePixelWidth",@"sourcePixelHeight",@"encodedWidth",@"encodedHeight"]];
+  if (continuity) [keys addObject:@"frameEpochHex"];
   if (![value isKindOfClass:[NSDictionary class]] || ![[NSSet setWithArray:value.allKeys] isEqual:keys]
       || ![data isEqual:[NSJSONSerialization dataWithJSONObject:value options:NSJSONWritingSortedKeys | NSJSONWritingWithoutEscapingSlashes error:nil]]
-      || ![value[@"profile"] isEqual:@"maccompanion.selected-capture-context.v0.1"]
+      || (!continuity && ![value[@"profile"] isEqual:@"maccompanion.selected-capture-context.v0.1"])
+      || (continuity && !epoch)
       || ![[[NSUUID alloc] initWithUUIDString:operation] UUIDString] || ![value[@"operationID"] isEqual:operation]
-      || (![value[@"kind"] isEqual:@"window"] && ![value[@"kind"] isEqual:@"application"])
+      || (![value[@"kind"] isEqual:@"window"] && ![value[@"kind"] isEqual:@"application"] && !desktop)
       || !ContextNumber(value[@"displayID"],1,UINT32_MAX,YES) || [value[@"displayID"] unsignedIntValue] != displayID
-      || !ContextNumber(value[@"windowID"],0,UINT32_MAX,YES) || !ContextNumber(value[@"processID"],1,INT32_MAX,YES)
-      || !ContextNumber(value[@"processLaunchMilliseconds"],1,9007199254740991.0,YES)
+      || !ContextNumber(value[@"windowID"],0,UINT32_MAX,YES) || !ContextNumber(value[@"processID"],desktop ? 0 : 1,INT32_MAX,YES)
+      || !ContextNumber(value[@"processLaunchMilliseconds"],desktop ? 0 : 1,9007199254740991.0,YES)
       || !ContextNumber(value[@"expiresAtMonotonicNanoseconds"],1,(double)UINT64_MAX,YES)
-      || ![value[@"bundleIdentifier"] isKindOfClass:[NSString class]] || [value[@"bundleIdentifier"] length] < 1
+      || ![value[@"bundleIdentifier"] isKindOfClass:[NSString class]] || (!desktop && [value[@"bundleIdentifier"] length] < 1)
       || [value[@"bundleIdentifier"] length] > 255
       || !ContextNumber(value[@"boundsX"],-DBL_MAX,DBL_MAX,NO) || !ContextNumber(value[@"boundsY"],-DBL_MAX,DBL_MAX,NO)
       || !ContextNumber(value[@"boundsWidth"],1,32768,NO) || !ContextNumber(value[@"boundsHeight"],1,32768,NO)
@@ -148,11 +172,14 @@ static int ContextDirectory(NSString *path) {
   BOOL window = [value[@"kind"] isEqual:@"window"];
   if (expiry <= now || expiry - now > 14400000000000ULL
       || (window ? [value[@"windowID"] unsignedIntValue] == 0 : [value[@"windowID"] unsignedIntValue] != 0)
+      || (desktop && ([value[@"processID"] intValue] != 0 || [value[@"processLaunchMilliseconds"] unsignedLongLongValue] != 0
+          || [value[@"bundleIdentifier"] length] != 0))
       || ceil([value[@"boundsWidth"] doubleValue] * [value[@"backingScale"] doubleValue]) != [value[@"sourcePixelWidth"] integerValue]
       || ceil([value[@"boundsHeight"] doubleValue] * [value[@"backingScale"] doubleValue]) != [value[@"sourcePixelHeight"] integerValue]) {
     if (error) *error = ContextError(10); return nil;
   }
   CompanionSelectedCaptureContext *context = [self new];
+  context->_operationID = [operation copy]; context->_expiresAtMonotonicNanoseconds = expiry; context->_frameEpoch = epoch;
   context->_kind = [value[@"kind"] copy]; context->_bundleIdentifier = [value[@"bundleIdentifier"] copy];
   context->_displayID = displayID; context->_windowID = [value[@"windowID"] unsignedIntValue]; context->_processID = [value[@"processID"] intValue];
   context->_processLaunchMilliseconds = [value[@"processLaunchMilliseconds"] unsignedLongLongValue]; context->_expiry = expiry;
@@ -161,36 +188,53 @@ static int ContextDirectory(NSString *path) {
   context->_sourcePixelWidth = [value[@"sourcePixelWidth"] integerValue]; context->_sourcePixelHeight = [value[@"sourcePixelHeight"] integerValue];
   context->_encodedWidth = [value[@"encodedWidth"] integerValue]; context->_encodedHeight = [value[@"encodedHeight"] integerValue];
   CGRect displayBounds = CGDisplayBounds(displayID);
-  context->_sourceRect = window ? CGRectNull : CGRectMake(context->_bounds.origin.x-displayBounds.origin.x,
+  context->_sourceRect = window || desktop ? CGRectNull : CGRectMake(context->_bounds.origin.x-displayBounds.origin.x,
     context->_bounds.origin.y-displayBounds.origin.y,context->_bounds.size.width,context->_bounds.size.height);
   return context;
 }
 
 - (BOOL)isCurrentSelection {
-  if (ContextNow() >= _expiry || !CGDisplayIsActive(_displayID) || CGDisplayRotation(_displayID) != 0) return NO;
+  if (ContextNow() >= _expiry) return ContextInvalidSelection(1);
+  if (!CGDisplayIsActive(_displayID) || CGDisplayRotation(_displayID) != 0) return ContextInvalidSelection(2);
+  CGRect displayBounds = CGDisplayBounds(_displayID);
+  if (!ContextRect(displayBounds)) return ContextInvalidSelection(3);
+  if ([_kind isEqual:@"desktop"]) {
+    CGDisplayModeRef mode = CGDisplayCopyDisplayMode(_displayID);
+    if (!mode) return ContextInvalidSelection(4);
+    size_t width = CGDisplayModeGetPixelWidth(mode), height = CGDisplayModeGetPixelHeight(mode);
+    CFRelease(mode);
+    double scale = fmax(width/displayBounds.size.width, height/displayBounds.size.height);
+    BOOL current = CGRectEqualToRect(displayBounds,_bounds) && width == (size_t)_sourcePixelWidth && height == (size_t)_sourcePixelHeight
+      && isfinite(scale) && scale == _backingScale;
+    return current ? YES : ContextInvalidSelection(5);
+  }
+  double scale = fmax(CGDisplayPixelsWide(_displayID)/displayBounds.size.width, CGDisplayPixelsHigh(_displayID)/displayBounds.size.height);
+  if (scale != _backingScale) return ContextInvalidSelection(6);
   NSRunningApplication *application = [NSRunningApplication runningApplicationWithProcessIdentifier:_processID];
   double launched = application.launchDate.timeIntervalSince1970 * 1000;
   if (!application || application.terminated || ![application.bundleIdentifier isEqual:_bundleIdentifier]
-      || !isfinite(launched) || launched <= 0 || floor(launched) != _processLaunchMilliseconds) return NO;
-  CGRect displayBounds = CGDisplayBounds(_displayID);
-  if (!ContextRect(displayBounds)) return NO;
-  double scale = fmax(CGDisplayPixelsWide(_displayID)/displayBounds.size.width, CGDisplayPixelsHigh(_displayID)/displayBounds.size.height);
-  if (scale != _backingScale) return NO;
+      || !isfinite(launched) || launched <= 0 || floor(launched) != _processLaunchMilliseconds) return ContextInvalidSelection(7);
   NSArray *windows = CFBridgingRelease(CGWindowListCopyWindowInfo(_windowID ? kCGWindowListOptionIncludingWindow : kCGWindowListOptionOnScreenOnly, _windowID));
-  if (!_windowID) return CGRectEqualToRect([CompanionSelectedCaptureContext applicationBoundsForWindows:windows
+  if (!windows) return ContextInvalidSelection(8);
+  if (!_windowID) {
+    BOOL current = CGRectEqualToRect([CompanionSelectedCaptureContext applicationBoundsForWindows:windows
       processID:_processID displayBounds:displayBounds], _bounds);
+    return current ? YES : ContextInvalidSelection(12);
+  }
   for (NSDictionary *window in windows) {
     if ([window[(__bridge NSString *)kCGWindowOwnerPID] intValue] != _processID || ![window[(__bridge NSString *)kCGWindowIsOnscreen] boolValue]) continue;
     CGRect frame;
     if (!CGRectMakeWithDictionaryRepresentation((__bridge CFDictionaryRef)window[(__bridge NSString *)kCGWindowBounds],&frame) || !ContextRect(frame)) continue;
     if (_windowID) {
+      if ([window[(__bridge NSString *)kCGWindowNumber] unsignedIntValue] != _windowID) return ContextInvalidSelection(9);
+      if (!CGRectEqualToRect(frame,_bounds)) return ContextInvalidSelection(10);
       CGDirectDisplayID centerDisplay = 0; uint32_t count = 0;
-      return [window[(__bridge NSString *)kCGWindowNumber] unsignedIntValue] == _windowID && CGRectEqualToRect(frame,_bounds)
-        && CGGetDisplaysWithPoint(CGPointMake(CGRectGetMidX(frame),CGRectGetMidY(frame)),1,&centerDisplay,&count) == kCGErrorSuccess
+      BOOL current = CGGetDisplaysWithPoint(CGPointMake(CGRectGetMidX(frame),CGRectGetMidY(frame)),1,&centerDisplay,&count) == kCGErrorSuccess
         && count == 1 && centerDisplay == _displayID;
+      return current ? YES : ContextInvalidSelection(11);
     }
   }
-  return NO;
+  return ContextInvalidSelection(9);
 }
 
 + (CGRect)applicationBoundsForWindows:(NSArray<NSDictionary *> *)windows processID:(pid_t)processID
@@ -233,6 +277,9 @@ static int ContextDirectory(NSString *path) {
   } else {
     for (SCDisplay *display in content.displays) {
       if (display.displayID != _displayID) continue;
+      if ([_kind isEqual:@"desktop"]) {
+        return [[SCContentFilter alloc] initWithDisplay:display excludingWindows:@[]];
+      }
       for (SCRunningApplication *application in content.applications) {
         if (application.processID == _processID && [application.bundleIdentifier isEqual:_bundleIdentifier]) {
           return [[SCContentFilter alloc] initWithDisplay:display includingApplications:@[application] exceptingWindows:@[]];

@@ -8,7 +8,7 @@ from pathlib import Path
 import shutil
 import subprocess
 
-from reference_build import HERE, digest, native_source_inputs, run, verify_source
+from reference_build import HERE, copy_native_depacketizer, digest, native_source_inputs, run, verify_source
 from openssl_build import build as build_openssl
 
 
@@ -24,7 +24,7 @@ def main():
     project = root / "embedded-engine"
     sources = project / "Sources"
     sources.mkdir(parents=True, exist_ok=True)
-    for name in ["CompanionMoonlightVideo.h", "CompanionMoonlightVideo.m", "CompanionNativeSurfaceEpoch.h", "CompanionNativeTLS.h", "CompanionNativeTLS.m"]:
+    for name in ["CompanionMoonlightVideo.h", "CompanionMoonlightVideo.m", "CompanionNativeSurfaceEpoch.h", "CompanionMoonlightTerminalDiagnostic.h", "CompanionNativeTLS.h", "CompanionNativeTLS.m"]:
         shutil.copy2(HERE.parents[1] / "Native/Client" / name, sources / name)
     for name in ["Stream/VideoDecoderRenderer.h", "Stream/VideoDecoderRenderer.m",
                  "Stream/ConnectionCallbacks.h", "Utility/Logger.h", "Utility/Logger.m"]:
@@ -50,7 +50,11 @@ def main():
         shutil.rmtree(installed_openssl)
     shutil.copytree(source_openssl, installed_openssl)
     common = upstream / "moonlight-common/moonlight-common-c"
-    c_sources = sorted((common / "src").glob("*.c")) + sorted((common / "reedsolomon").glob("*.c"))
+    # Apply the indexed adapter patch to a disposable source copy. Keep the
+    # pinned upstream submodule clean and verify its revision on every build.
+    copy_native_depacketizer(upstream, sources)
+    c_sources = [p for p in sorted((common / "src").glob("*.c")) if p.name != "VideoDepacketizer.c"]
+    c_sources += [sources / "VideoDepacketizer.c"] + sorted((common / "reedsolomon").glob("*.c"))
     c_sources += [common / "enet" / name for name in ["callbacks.c", "compress.c", "host.c", "list.c", "packet.c", "peer.c", "protocol.c", "unix.c"]]
     headers = [sources / name for name in ["VideoDecoderRenderer.h", "ConnectionCallbacks.h", "Logger.h", "Prefix.h"]]
     project_sources = [{"path": str(p)} for p in c_sources]
@@ -66,7 +70,7 @@ def main():
     settings = {"PRODUCT_BUNDLE_IDENTIFIER": "dev.maccompanion.experiment.moonlight-engine",
                 "DEFINES_MODULE": "YES", "CLANG_ENABLE_OBJC_ARC": "YES",
                 "GENERATE_INFOPLIST_FILE": "YES", "GCC_PREFIX_HEADER": str(sources / "Prefix.h"),
-                "GCC_PREPROCESSOR_DEFINITIONS": ["$(inherited)", "NDEBUG", "__APPLE_USE_RFC_3542", "HAS_SOCKLEN_T", "MACCOMPANION_NATIVE_H264_HEVC_ONLY=1"],
+                "GCC_PREPROCESSOR_DEFINITIONS": ["$(inherited)", "NDEBUG", "__APPLE_USE_RFC_3542", "HAS_SOCKLEN_T", "MACCOMPANION_NATIVE_H264_HEVC_ONLY=1", "MACCOMPANION_NATIVE_SURFACE_EPOCH=1"],
                 "GCC_C_LANGUAGE_STANDARD": "gnu11", "TARGETED_DEVICE_FAMILY": "1,2",
                 "ENABLE_MODULE_VERIFIER": "NO", "SKIP_INSTALL": "NO",
                 "HEADER_SEARCH_PATHS": [str(common / "src"), str(common / "reedsolomon"), str(common / "enet/include"),

@@ -14,6 +14,8 @@ public final class MoonlightNativeVideoDriverV0: UIKitClientNativeVideoDriverV0 
     private var stopped = false
     private var retired: (@MainActor () -> Void)?
     private var frameProgressMonitor: Task<Void, Never>?
+    private var surfaceProgressMonitor: Task<Void, Never>?
+    private var surfaceProgressAttempt = UUID()
     private var eventHandler: (@MainActor (UIKitClientNativeVideoEventV0) -> Void)?
     private let diagnostic: @MainActor (String) -> Void
 
@@ -41,11 +43,15 @@ public final class MoonlightNativeVideoDriverV0: UIKitClientNativeVideoDriverV0 
                 guard let event = self.eventHandler else { return }
                 switch value {
                 case .connected: event(.connected)
-                case .firstFrame: event(.firstFrame(width: Int(native.decodedWidth), height: Int(native.decodedHeight)))
+                case .firstFrame:
+                    self.observeSurfaceProgress(native)
+                    event(.firstFrame(width: Int(native.decodedWidth), height: Int(native.decodedHeight)))
                 case .failed:
+                    self.diagnostic("native.video.driver.terminal-source-" + String(native.terminalDiagnosticCode))
                     self.diagnostic("native.video.driver.failed-code-" + String(code))
                     event(.failed)
                 case .disconnected:
+                    self.diagnostic("native.video.driver.terminal-source-" + String(native.terminalDiagnosticCode))
                     self.diagnostic("native.video.driver.disconnected-code-" + String(code))
                     event(.disconnected)
                 @unknown default: event(.failed)
@@ -77,9 +83,37 @@ public final class MoonlightNativeVideoDriverV0: UIKitClientNativeVideoDriverV0 
     public var presentationIsReady: Bool { !stopped && session?.presentationReady == true }
     public var supportsSurfaceReplacement: Bool { !stopped && session != nil }
 
+    /// Debug evidence only: a second queued frame must belong to this exact
+    /// presentation generation. This never changes admission or UI timing.
+    private func observeSurfaceProgress(_ native: CompanionMoonlightVideo) {
+        #if DEBUG
+        surfaceProgressMonitor?.cancel()
+        let attempt = surfaceProgressAttempt
+        let baseline = native.queuedVideoFrameCount
+        diagnostic("native.video.surface-presented attempt=" + attempt.uuidString)
+        surfaceProgressMonitor = Task { [weak self, weak native] in
+            for _ in 0..<20 {
+                try? await Task.sleep(for: .milliseconds(100))
+                guard !Task.isCancelled, let self, let native, !self.stopped,
+                      self.session === native, self.surfaceProgressAttempt == attempt else { return }
+                if native.presentationReady && native.queuedVideoFrameCount > baseline {
+                    self.diagnostic("native.video.surface-frames-advanced attempt=" + attempt.uuidString)
+                    return
+                }
+            }
+            guard let self, !Task.isCancelled, !self.stopped,
+                  self.surfaceProgressAttempt == attempt else { return }
+            self.diagnostic("native.video.surface-frames-stalled attempt=" + attempt.uuidString)
+        }
+        #endif
+    }
+
     public func beginSurfaceReplacement(event: @escaping @MainActor (UIKitClientNativeVideoEventV0) -> Void) throws {
         guard !stopped, let session else { throw DriverFailure.invalidPhase }
         try session.beginSurfaceReplacement()
+        surfaceProgressMonitor?.cancel()
+        surfaceProgressMonitor = nil
+        surfaceProgressAttempt = UUID()
         eventHandler = event
     }
 
@@ -101,6 +135,8 @@ public final class MoonlightNativeVideoDriverV0: UIKitClientNativeVideoDriverV0 
         eventHandler = nil
         frameProgressMonitor?.cancel()
         frameProgressMonitor = nil
+        surfaceProgressMonitor?.cancel()
+        surfaceProgressMonitor = nil
         configuration = nil
         let callback = retired
         retired = nil

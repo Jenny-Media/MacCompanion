@@ -74,14 +74,14 @@ struct TestIdentity {
     let sessionPublicKey = P256.Signing.PrivateKey().publicKey.x963Representation
     let approvalPublicKey = P256.Signing.PrivateKey().publicKey.x963Representation
 
-    func record() throws -> StoredDeviceRecord {
+    func record(state: DeviceAuthorizationState = .activeMonitorOnly) throws -> StoredDeviceRecord {
         try StoredDeviceRecord(
             deviceID: deviceID,
             clientID: clientID,
             sessionPublicKeyX963: sessionPublicKey,
             approvalPublicKeyX963: approvalPublicKey,
             authorization: DeviceAuthorization(
-                state: .activeMonitorOnly,
+                state: state,
                 authorizationEpoch: .init(rawValue: 1),
                 grantRevision: .init(rawValue: 1)
             ),
@@ -1199,5 +1199,53 @@ private func rawSQLiteText(
     try Data("not a sqlite database".utf8).write(to: corrupt.database)
     #expect(throws: SecurityStoreError.self) {
         _ = try SQLiteSecurityStore(path: corrupt.database.path)
+    }
+}
+
+@Test func desktopPairingCommitsOnlyFixedGrantAndConsumptionTogether() async throws {
+    let temporary = try TemporaryDatabase()
+    defer { temporary.remove() }
+    let identity = TestIdentity()
+    let store = try SQLiteSecurityStore(path: temporary.database.path)
+    try await store.commitPairing(
+        pairingID: identity.pairingID,
+        record: identity.record(state: .activeGranted),
+        displayName: DeviceDisplayName("Trusted phone")
+    )
+    #expect(try await store.deviceGrants(identity.deviceID).capabilityIDs
+        == [PairingAccessProfileV1.remoteDesktopCapabilityID])
+    #expect(try await store.device(identity.deviceID)?.authorization.state == .activeGranted)
+    #expect(try await store.securityEventCount() == 1)
+    #expect(try await store.pairingConsumptionDeviceID(identity.pairingID) == identity.deviceID)
+    await #expect(throws: SecurityStoreError.pairingAlreadyConsumed(identity.pairingID)) {
+        try await store.commitPairing(
+            pairingID: identity.pairingID,
+            record: identity.record(state: .activeGranted)
+        )
+    }
+}
+
+@Test func desktopPairingFaultRollsBackGrantDeviceAndConsumption() async throws {
+    for fault in [PersistenceFaultPoint.afterDeviceMutation, .beforeSecurityEvent, .beforeTransactionCommit] {
+        let temporary = try TemporaryDatabase()
+        defer { temporary.remove() }
+        let identity = TestIdentity()
+        let store = try SQLiteSecurityStore(
+            path: temporary.database.path,
+            injectedFaults: [fault]
+        )
+        await #expect(throws: SecurityStoreError.injectedFault(fault)) {
+            try await store.commitPairing(
+                pairingID: identity.pairingID,
+                record: identity.record(state: .activeGranted),
+                displayName: DeviceDisplayName("Trusted phone")
+            )
+        }
+        #expect(try await store.device(identity.deviceID) == nil)
+        await #expect(throws: SecurityStoreError.deviceNotFound(identity.deviceID)) {
+            _ = try await store.deviceGrants(identity.deviceID)
+        }
+        #expect(try await store.pairingConsumptionDeviceID(identity.pairingID) == nil)
+        #expect(try await store.securityEventCount() == 0)
     }
 }

@@ -1,0 +1,9 @@
+{
+  "library": "LibVNCClient",
+  "repository": "https://github.com/LibVNC/libvncserver.git",
+  "tag": "LibVNCServer-0.9.15",
+  "revision": "9b54b1ec32731bd23158ca014dc18014db4194c3",
+  "license": "GPL-2.0-or-later",
+  "opensslVersion": "3.5.8",
+  "opensslSourceSHA256": "a8f84a39918ec6415ce765d9b429d313ba97b8143169c172e734b9514464f5b2"
+}

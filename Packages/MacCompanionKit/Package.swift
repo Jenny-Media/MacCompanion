@@ -480,6 +480,7 @@ let package = Package(
         .testTarget(
             name: "CompanionMacApplicationPlatformTests",
             dependencies: [
+                "CompanionTestSupport",
                 "CompanionAgent", "CompanionAgentPlatform", "CompanionIPC",
                 "CompanionDomain", "CompanionHostPlatform",
                 "CompanionInteractiveRuntime", "CompanionInteractiveShared",
@@ -626,6 +627,7 @@ let package = Package(
         .testTarget(
             name: "CompanionHostSessionTests",
             dependencies: [
+                "CompanionTestSupport",
                 "CompanionAuthentication", "CompanionDomain", "CompanionHost",
                 "CompanionHostSession", "CompanionInteractiveWire",
                 "CompanionOperations", "CompanionPersistence", "CompanionSecurity",
@@ -640,6 +642,7 @@ let package = Package(
                 "CompanionInteractiveClient", "CompanionInteractiveWire",
                 "CompanionPresentation", "CompanionSecurity",
                 "CompanionTransport", "CompanionWire",
+                "CompanionTestSupport",
             ]
         ),
         .testTarget(

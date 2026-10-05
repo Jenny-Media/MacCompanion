@@ -67,6 +67,9 @@ public final class MoonlightNativeLaunchAdapterV0: UIKitClientNativeVideoPrepari
     private var driver: MoonlightNativeVideoDriverV0?
     private var binding: InteractiveNativeVideoBindingV0?
     private var key: NSMutableData?
+    private var enrolledSession: ClientNativeVideoEnrolledSessionV0?
+    private var boundAddress: String?
+    private var retained = false
     private var closed = false
     private var started = false
     private var monitor: Task<Void, Never>?
@@ -95,18 +98,20 @@ public final class MoonlightNativeLaunchAdapterV0: UIKitClientNativeVideoPrepari
             guard let der = identity.value.certificateDER else { throw NativeLaunchFailure.invalidMaterial }
             if case .active = await roles.state { diagnostic("enrollment-active") }
             else { diagnostic("enrollment-inactive") }
-            let enrolled = try await roles.enrollNativeVideo(descriptor: descriptor, clientCertificateDER: der, signer: signer,
+            let enrolled = try await roles.enrollNativeVideo(descriptor: descriptor, clientCertificateDER: der, signer: signer, streamContinuity: true,
                 validateCertificate: { data in
                     // The existing attestation validator accepts either purpose;
                     // the adapter checks the specific host purpose again below.
                     CompanionNativeTLS.validateCertificateDER(data, server: false) || CompanionNativeTLS.validateCertificateDER(data, server: true)
                 })
             binding = enrolled.authority.binding
+            enrolledSession = enrolled
             diagnostic("enrolled")
             try await check()
             guard let address = try await route(enrolled.authority.binding.primaryConnectionID) else { throw NativeLaunchFailure.invalidRoute }
             try await check()
             _ = try identity.value.bindAddress(address, portBase: enrolled.portBase, hostCertificateDER: enrolled.hostCertificateDER)
+            boundAddress = address
             diagnostic("route-bound")
             let info = try NativeLaunchXML.parse(await identity.request("/serverinfo?uniqueid=" + descriptor.interactiveSessionID.uuidString))
             try await check()
@@ -174,11 +179,56 @@ public final class MoonlightNativeLaunchAdapterV0: UIKitClientNativeVideoPrepari
         } catch {
             if let failure = error as? NativeLaunchFailure {
                 diagnostic("failed-" + String(describing: failure))
+            } else if (error as NSError).domain == "CompanionNativeTLS",
+                      (1...7).contains((error as NSError).code) {
+                // Closed diagnostic code only; no address, certificate, request
+                // path or localized error description enters the local log.
+                diagnostic("failed-native-tls-code-\((error as NSError).code)")
             } else {
                 diagnostic("failed-" + String(reflecting: type(of: error)))
             }
             await close(); throw error
         }
+    }
+    public func supportsStreamContinuity() async -> Bool {
+        guard !closed, !retained, driver?.supportsSurfaceReplacement == true,
+              enrolledSession?.streamContinuity == true, let roles else { return false }
+        return await roles.supportsNativeStreamContinuity()
+    }
+    public func retainStream() async throws {
+        guard await supportsStreamContinuity(), !closed, let roles else { throw NativeLaunchFailure.unavailable }
+        retained = true
+        do { try await roles.retainNativeStream(); try await check() }
+        catch { await close(); throw error }
+    }
+    public func prepareReplacement(descriptor: AdaptiveSurfaceDescriptor,
+        roles: NetworkClientInteractiveRoleProductBindingV0) async throws -> UIKitClientNativeVideoPreparationV0 {
+        guard !closed, retained, self.roles === roles, let identity = tls, let der = identity.value.certificateDER,
+              let previous = enrolledSession, let driver, let address = boundAddress else { throw NativeLaunchFailure.unavailable }
+        do {
+            try await check()
+            let enrolled = try await roles.replaceNativeSurface(descriptor: descriptor, clientCertificateDER: der)
+            guard !closed, !Task.isCancelled, enrolled.streamContinuity,
+                  enrolled.authority.binding == previous.authority.binding,
+                  enrolled.hostCertificateDER == previous.hostCertificateDER, enrolled.portBase == previous.portBase,
+                  enrolled.authority.surface.encodedWidth == previous.authority.surface.encodedWidth,
+                  enrolled.authority.surface.encodedHeight == previous.authority.surface.encodedHeight,
+                  try await route(enrolled.authority.binding.primaryConnectionID) == address else { throw NativeLaunchFailure.unavailable }
+            enrolledSession = enrolled; retained = false
+            try await check()
+            diagnostic("retained-surface-prepared")
+            return .init(binding: enrolled.authority.binding, driver: driver,
+                current: { [weak self] in self?.closed == false ? self?.binding : nil },
+                acknowledgePresentation: { [weak self] generation, surface in
+                    guard let self, let generation = Int64(exactly: generation) else { throw NativeLaunchFailure.unavailable }
+                    try await self.check()
+                    let receipt = try await roles.acknowledgeNativePresentation(nativeGeneration: generation,
+                        encodedWidth: UInt16(surface.encodedWidth), encodedHeight: UInt16(surface.encodedHeight))
+                    try await self.check()
+                    self.diagnostic(receipt.inputAdmitted ? "presentation-input-admitted" : "presentation-acknowledged")
+                    return receipt
+                })
+        } catch { await close(); throw error }
     }
     private func check() async throws {
         guard !closed, !Task.isCancelled, let roles, await roles.isNativeVideoEnrollmentCurrent(), !closed,
@@ -186,7 +236,7 @@ public final class MoonlightNativeLaunchAdapterV0: UIKitClientNativeVideoPrepari
     }
     public func close() async {
         if let drain { await drain.value; return }
-        closed = true; binding = nil; monitor?.cancel(); monitor = nil
+        closed = true; binding = nil; retained = false; enrolledSession = nil; boundAddress = nil; monitor?.cancel(); monitor = nil
         creation?.cancel(); tls?.value.retire()
         let tls = self.tls, pending = creation, driver = self.driver, roles = self.roles, key = self.key
         self.tls = nil; creation = nil; self.driver = nil; self.roles = nil; self.key = nil

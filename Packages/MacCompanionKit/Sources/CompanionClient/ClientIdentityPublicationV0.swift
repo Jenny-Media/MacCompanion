@@ -192,7 +192,7 @@ public struct ClientDurablePairedHostV0: Equatable, Sendable {
               host.hostFingerprint.count == 32,
               (1...8).contains(host.endpoints.count),
               Set(host.endpoints).count == host.endpoints.count,
-              host.deviceState == .activeMonitorOnly,
+              host.deviceState == .activeMonitorOnly || host.deviceState == .activeGranted,
               host.authorizationEpoch.rawValue == 1,
               host.grantRevision.rawValue == 1,
               host.policyRevision.rawValue >= 1 else {

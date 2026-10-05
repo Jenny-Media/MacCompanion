@@ -1,0 +1,521 @@
+#import "CompanionVNCSession.h"
+#import "CompanionVNCFramebufferBounds.h"
+#import "CompanionVNCKeyboard.h"
+#import "CompanionVNCCursor.h"
+#import "CompanionVNCDirectConnection.h"
+#import "CompanionVNCDirectEndpoint.h"
+#import "CompanionVNCDisplayLayout.h"
+#import <rfb/rfbclient.h>
+#import <netdb.h>
+#import <arpa/inet.h>
+#import <sys/socket.h>
+#import <unistd.h>
+
+static char ownerTag;
+static _Thread_local int protocolFailure;
+static _Thread_local int protocolStage;
+// Classify only upstream constant format strings. Never format or retain arguments.
+static void QuietLog(const char *format, ...) {
+    if (!strncmp(format, "VNC server supports protocol version", 36)) protocolStage = 1;
+    else if (!strcmp(format, "Selected Security Scheme %d\n")) protocolStage = 2;
+    else if (!strcmp(format, "VNC authentication succeeded\n")) protocolStage = 4;
+    if (!strcmp(format, "HandleARDAuth: generating keypair failed\n")) protocolFailure = 3;
+    else if (!strcmp(format, "HandleARDAuth: creating shared key failed\n")) protocolFailure = 4;
+    else if (!strcmp(format, "HandleARDAuth: hashing shared key failed\n")) protocolFailure = 5;
+    else if (!strcmp(format, "HandleARDAuth: encrypting credentials failed\n")) protocolFailure = 6;
+    else if (!strcmp(format, "HandleARDAuth: reading credential failed\n")) protocolFailure = 7;
+    else if (!strcmp(format, "VNC connection failed: %s\n") || !strncmp(format, "VNC authentication failed", 25)) protocolFailure = 8;
+    else if (!strncmp(format, "Unknown authentication scheme", 29)) protocolFailure = 2;
+    else if (!strcmp(format, "Connection timed out\n") && !protocolFailure) protocolFailure = 1;
+}
+
+@interface CompanionVNCSession () {
+    NSLock *_lock;
+    NSMutableArray<NSDictionary *> *_events;
+    dispatch_queue_t _worker;
+    BOOL _running, _stopping, _framePending, _overflow, _inputReady, _inputOnly, _modeChanged;
+    BOOL _paused, _releaseInputRequested, _resumeRequested, _awaitingResumeFrame;
+    NSUInteger _presentationEpoch;
+    dispatch_semaphore_t _wake;
+    void (^_pauseCompletion)(void);
+    NSString *_username, *_password;
+    uint8_t *_pixels;
+    NSUInteger _connections, _updates, _resizes, _inputs, _viewChanges, _presentedFrames;
+    NSInteger _generation;
+    int _socket;
+    NSInteger _failureStage, _credentialRequests;
+    NSInteger _framebufferWidth, _framebufferHeight;
+    BOOL _probeOnly;
+    BOOL _dirty, _extensionFailed, _layoutPending;
+    NSDictionary *_latestLayout;
+    NSDictionary *_layoutDiagnostics;
+    NSUInteger _layoutMessages;
+    double _lastFrame;
+    NSMutableSet<NSNumber *> *_heldKeys;
+    NSInteger _lastX, _lastY;
+    NSInteger _queuedPointerMask;
+    UIImage *_cursorImage;
+    CGPoint _cursorHotspot, _cursorPosition;
+    BOOL _cursorPositionKnown, _cursorPending, _cursorDirty;
+    NSUInteger _cursorShapes, _cursorPositions, _pauses, _resumes, _resumeFrames;
+}
+- (rfbCredential *)credential:(int)type;
+- (rfbBool)allocate:(rfbClient *)client;
+- (void)updated;
+- (void)publishFrame:(rfbClient *)client;
+- (void)cursorShape:(rfbClient *)client x:(int)x y:(int)y width:(int)width height:(int)height bytesPerPixel:(int)bytes;
+- (rfbBool)cursorPosition:(rfbClient *)client x:(int)x y:(int)y;
+- (void)publishCursor;
+- (void)report:(NSString *)state;
+- (void)beginSocket:(int)socket addresses:(NSArray<NSString *> *)addresses port:(NSInteger)port user:(NSString *)user password:(NSString *)password;
+- (BOOL)registerSocket:(int)socket;
+- (void)processConnectedClient:(rfbClient *)client;
+- (rfbBool)displayLayout:(rfbClient *)client;
+- (rfbBool)displayLayout:(rfbClient *)client encoding:(int)encoding;
+@end
+
+static CompanionVNCSession *Owner(rfbClient *client) {
+    return (__bridge CompanionVNCSession *)rfbClientGetClientData(client, &ownerTag);
+}
+static rfbBool Allocate(rfbClient *client) { return [Owner(client) allocate:client]; }
+static void Updated(rfbClient *client, int x, int y, int w, int h) { [Owner(client) updated]; }
+static rfbCredential *Credential(rfbClient *client, int type) { return [Owner(client) credential:type]; }
+static void CursorShape(rfbClient *client, int x, int y, int width, int height, int bytes) {
+    [Owner(client) cursorShape:client x:x y:y width:width height:height bytesPerPixel:bytes];
+}
+static rfbBool CursorPosition(rfbClient *client, int x, int y) { return [Owner(client) cursorPosition:client x:x y:y]; }
+static rfbBool AppleLayout(rfbClient *client, rfbFramebufferUpdateRectHeader *rect) {
+    if (rect->encoding != 1101 && rect->encoding != 1105) return FALSE;
+    return [Owner(client) displayLayout:client encoding:rect->encoding];
+}
+// 1101 enables the server's display-info delivery; 1105 selects the newer
+// layout format. Requesting 1105 alone leaves its send-display-info gate off.
+static int layoutEncodings[] = {1101, 1105, 0};
+static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncodings, .handleEncoding = AppleLayout};
+
+@implementation CompanionVNCSession
+- (instancetype)init {
+    if ((self = [super init])) {
+        _lock = [NSLock new]; _events = [NSMutableArray new]; _heldKeys = [NSMutableSet new];
+        _worker = dispatch_queue_create("media.jenny.maccompanion.rfb.owner", DISPATCH_QUEUE_SERIAL);
+        _socket = -1; _wake = dispatch_semaphore_create(0);
+        rfbClientLog = QuietLog; rfbClientErr = QuietLog;
+        static dispatch_once_t once;
+        dispatch_once(&once, ^{ rfbClientRegisterExtension(&layoutExtension); });
+    }
+    return self;
+}
+- (BOOL)running { [_lock lock]; BOOL r = _running; [_lock unlock]; return r; }
+- (BOOL)connected { [_lock lock]; BOOL ready = _running && _inputReady && !_paused && !_stopping; [_lock unlock]; return ready; }
+- (BOOL)inputOnly { [_lock lock]; BOOL value = _inputOnly; [_lock unlock]; return value; }
+- (void)setInputOnly:(BOOL)value {
+    [_lock lock]; if (_inputOnly != value) { _inputOnly = value; _modeChanged = YES; _presentationEpoch++; }
+    [_lock unlock]; dispatch_semaphore_signal(_wake);
+}
+- (BOOL)tryClickX:(NSInteger)x y:(NSInteger)y mask:(NSInteger)mask {
+    [_lock lock]; BOOL accept = _running && _inputReady && !_paused && !_stopping && !_overflow && _events.count <= 510;
+    if (accept) {
+        [_events addObject:@{@"x": @(x), @"y": @(y), @"mask": @(mask), @"motion": @NO}];
+        [_events addObject:@{@"x": @(x), @"y": @(y), @"mask": @0, @"motion": @NO}]; _queuedPointerMask = 0;
+    }
+    [_lock unlock]; return accept;
+}
+- (void)pauseWithCompletion:(void (^)(void))completion {
+    [_lock lock];
+    if (!_running || !_inputReady || _stopping || _paused) { [_lock unlock]; if (completion) completion(); return; }
+    _paused = YES; _pauses++; _inputReady = NO; _releaseInputRequested = YES; _presentationEpoch++;
+    [_events removeAllObjects]; _queuedPointerMask = 0; _pauseCompletion = [completion copy];
+    [_lock unlock]; dispatch_semaphore_signal(_wake);
+}
+- (void)resume {
+    [_lock lock];
+    if (_running && _paused && !_stopping) {
+        _paused = NO; _resumes++; _resumeRequested = YES; _awaitingResumeFrame = !_inputOnly; if (_inputOnly) _inputReady = YES; _presentationEpoch++;
+    }
+    [_lock unlock]; dispatch_semaphore_signal(_wake);
+}
+- (void)connectSocket:(int)socket username:(NSString *)username password:(NSString *)password {
+    [self beginSocket:socket addresses:nil port:5900 user:username password:password];
+}
+- (void)connectHost:(NSString *)host username:(NSString *)username password:(NSString *)password {
+    [self connectAddresses:@[host] port:5900 username:username password:password];
+}
+- (void)connectAddresses:(NSArray<NSString *> *)addresses port:(NSInteger)port username:(NSString *)username password:(NSString *)password {
+    [self beginSocket:-1 addresses:[addresses copy] port:port user:username password:password];
+}
+- (BOOL)registerSocket:(int)socket {
+    [_lock lock];
+    BOOL accept = socket < 0 || !_stopping;
+    // A separate descriptor keeps Stop's shutdown safe even when LibVNCClient
+    // closes its descriptor internally on a failed handshake.
+    if (accept) { if (_socket >= 0) close(_socket); _socket = socket >= 0 ? dup(socket) : -1; }
+    [_lock unlock]; return accept;
+}
+- (void)beginSocket:(int)socket addresses:(NSArray<NSString *> *)addresses port:(NSInteger)port user:(NSString *)user password:(NSString *)password {
+    [_lock lock];
+    if (_running) { [_lock unlock]; if (socket >= 0) close(socket); return; }
+    _running = YES; _stopping = NO; _overflow = NO; _framePending = NO; _cursorPending = NO; _layoutPending = NO; _latestLayout = nil; _inputReady = NO; _failureStage = 0;
+    _layoutDiagnostics = @{}; _layoutMessages = 0;
+    _paused = NO; _releaseInputRequested = NO; _resumeRequested = NO; _awaitingResumeFrame = NO; _presentationEpoch++;
+    [_events removeAllObjects]; _queuedPointerMask = 0; _generation++; _connections++;
+    NSInteger generation = _generation;
+    [_lock unlock];
+    [self report:@"Connecting"];
+    dispatch_async(_worker, ^{
+        @autoreleasepool {
+            protocolFailure = 0; protocolStage = 0;
+            NSData *u = [user dataUsingEncoding:NSUTF8StringEncoding], *p = [password dataUsingEncoding:NSUTF8StringEncoding];
+            if (!CompanionVNCLoginBytes(u.bytes, u.length) || !CompanionVNCLoginBytes(p.bytes, p.length)) {
+                if (socket >= 0) close(socket);
+                [self finish:@"Enter a Mac login of 1–63 UTF-8 bytes per field"]; return;
+            }
+            int connection = socket;
+            NSInteger routeFailure = 0;
+            if (addresses) connection = CompanionVNCConnectAddresses(addresses, port, ^{
+                [self->_lock lock]; BOOL stopped = self->_stopping; [self->_lock unlock]; return stopped;
+            }, ^BOOL(int fd) { return [self registerSocket:fd]; }, ^(NSUInteger index, NSUInteger count) {
+                [self report:count > 1 ? [NSString stringWithFormat:@"Contacting Mac · address %lu of %lu", (unsigned long)index, (unsigned long)count] : @"Contacting Mac"];
+            }, &routeFailure);
+            else if (![self registerSocket:connection]) { close(connection); [self finish:@"Disconnected"]; return; }
+            if (connection < 0) {
+                [self->_lock lock]; self->_failureStage = routeFailure; [self->_lock unlock];
+                [self finish:routeFailure == 10 ? @"Address unavailable. Check the address, DNS or VPN connection." : @"Mac did not respond. Check Screen Sharing, VPN access and the port."]; return;
+            }
+            [self report:@"Signing in"];
+            self->_cursorImage = nil; self->_cursorHotspot = CGPointZero; self->_cursorPosition = CGPointZero;
+            self->_cursorPositionKnown = NO; self->_cursorDirty = YES;
+            self->_extensionFailed = NO;
+            self->_username = user; self->_password = password;
+            rfbClient *client = rfbGetClient(8, 3, 4);
+            if (!client) { [self registerSocket:-1]; close(connection); [self finish:@"Client allocation failed"]; return; }
+            [self configureClient:client]; client->sock = connection;
+            uint32_t schemes[] = {rfbARD};
+
+            SetClientAuthSchemes(client, schemes, 1);
+            int argc = 1; char *argv[] = {"MacCompanion", NULL};
+            // rfbInitClient frees the rfbClient on failure; framebuffer ownership is ours.
+            BOOL connected = rfbInitClient(client, &argc, argv);
+            self->_username = nil; self->_password = nil;
+            if (!connected) {
+                [self registerSocket:-1];
+                [self->_lock lock]; self->_failureStage = protocolFailure; [self->_lock unlock];
+                NSArray *failures = @[@"Connection or handshake failed", @"Network read timed out",
+                    @"Mac authentication method unsupported", @"ARD key generation failed",
+                    @"ARD shared key failed", @"ARD key hashing failed", @"ARD credential encryption failed",
+                    @"Credentials not supplied", @"Mac rejected login or Screen Sharing access", @"Desktop exceeds framebuffer limit"];
+                [self finish:failures[MIN((NSUInteger)self->_failureStage, failures.count - 1)]];
+                return;
+            }
+            [self->_lock lock]; self->_inputReady = !self->_stopping; BOOL active = self->_inputReady; [self->_lock unlock];
+            if (active) [self report:@"Opening desktop"];
+            [self processConnectedClient:client];
+            (void)generation;
+        }
+    });
+}
+- (void)processConnectedClient:(rfbClient *)client {
+    BOOL healthy = YES;
+    while (healthy) {
+        @autoreleasepool {
+            [self->_lock lock]; BOOL stopping = self->_stopping || self->_overflow;
+            BOOL paused = self->_paused, release = self->_releaseInputRequested, resume = self->_resumeRequested;
+            BOOL inputOnly = self->_inputOnly, modeChanged = self->_modeChanged; self->_modeChanged = NO;
+            self->_releaseInputRequested = NO; self->_resumeRequested = NO;
+            void (^completion)(void) = release ? self->_pauseCompletion : nil;
+            if (release) self->_pauseCompletion = nil;
+            NSArray *events = [self->_events copy]; [self->_events removeAllObjects];
+            [self->_lock unlock];
+            if (stopping) break;
+            if (release) {
+                for (NSNumber *key in self->_heldKeys) if (!SendKeyEvent(client, key.unsignedIntValue, FALSE)) healthy = NO;
+                [self->_heldKeys removeAllObjects];
+                if (!SendPointerEvent(client, (int)self->_lastX, (int)self->_lastY, 0)) healthy = NO;
+                if (completion) dispatch_async(dispatch_get_main_queue(), completion);
+            }
+            if (!healthy) break;
+            if (paused) {
+                // No polling, decoding, or update requests while hidden. Stop/resume wake the owner.
+                dispatch_semaphore_wait(self->_wake, DISPATCH_TIME_FOREVER); continue;
+            }
+            // LibVNCClient normally requests another frame automatically after every update.
+            // On the sole socket owner, mask only update requests and use an empty rectangle
+            // so even a server capability refresh cannot ask for desktop pixels in input-only.
+            unsigned char *requests = &client->supportedMessages.client2server[rfbFramebufferUpdateRequest / 8];
+            unsigned char bit = 1 << (rfbFramebufferUpdateRequest % 8);
+            if (inputOnly) {
+                *requests &= ~bit; rfbRectangle empty = {0, 0, 0, 0}; rfbClientSetUpdateRect(client, &empty);
+                if (resume) [self report:@"Connected"];
+            } else {
+                *requests |= bit; rfbClientSetUpdateRect(client, NULL);
+            }
+            if (!inputOnly && (resume || modeChanged) && !SendFramebufferUpdateRequest(client, 0, 0, client->width, client->height, FALSE)) { healthy = NO; break; }
+            for (NSDictionary *event in events) {
+                [self->_lock lock]; BOOL acceptsInput = self->_inputReady && !self->_paused && !self->_stopping; [self->_lock unlock];
+                if (!acceptsInput) break;
+                if (event[@"key"]) {
+                    uint32_t key = [event[@"key"] unsignedIntValue]; BOOL down = [event[@"down"] boolValue];
+                    healthy = SendKeyEvent(client, key, down);
+                    if (down) [self->_heldKeys addObject:@(key)]; else [self->_heldKeys removeObject:@(key)];
+                } else {
+                    self->_lastX = MAX(0, MIN(client->width - 1, [event[@"x"] integerValue]));
+                    self->_lastY = MAX(0, MIN(client->height - 1, [event[@"y"] integerValue]));
+                    healthy = SendPointerEvent(client, (int)self->_lastX, (int)self->_lastY, [event[@"mask"] intValue]);
+                }
+                [self->_lock lock]; self->_inputs++; [self->_lock unlock];
+                if (!healthy) break;
+            }
+            if (!healthy) break;
+            int ready = WaitForMessage(client, 10000);
+            if (ready < 0 || (ready > 0 && !HandleRFBServerMessage(client)) || self->_extensionFailed) { healthy = NO; break; }
+            [self publishFrame:client];
+            [self publishCursor];
+        }
+    }
+    // A disconnect cancels queued input and releases every key/button actually sent.
+    for (NSNumber *key in self->_heldKeys) SendKeyEvent(client, key.unsignedIntValue, FALSE);
+    [self->_heldKeys removeAllObjects];
+    SendPointerEvent(client, (int)self->_lastX, (int)self->_lastY, 0);
+    [self registerSocket:-1]; rfbClientCleanup(client);
+    [self finish:self->_overflow ? @"Input queue full; disconnected safely" : healthy ? @"Disconnected" : @"Connection ended — reconnect"];
+
+}
+- (void)configureClient:(rfbClient *)client {
+    rfbClientSetClientData(client, &ownerTag, (__bridge void *)self);
+    free(client->serverHost);
+    client->serverHost = strdup("selected-desktop"); client->listenSpecified = TRUE;
+    client->MallocFrameBuffer = Allocate; client->GotFrameBufferUpdate = Updated;
+    client->GetCredential = Credential;
+    client->GotCursorShape = CursorShape; client->HandleCursorPos = CursorPosition;
+    client->appData.useRemoteCursor = TRUE;
+    client->canHandleNewFBSize = TRUE;
+    client->connectTimeout = 8; client->readTimeout = 8;
+    client->format.redShift = 16; client->format.greenShift = 8; client->format.blueShift = 0;
+    client->format.bigEndian = FALSE; client->format.depth = 24;
+    client->appData.encodingsString = "zrle zlib hextile raw";
+}
+- (void)finish:(NSString *)state {
+    [self registerSocket:-1];
+    free(_pixels); _pixels = NULL; _username = nil; _password = nil;
+    _cursorImage = nil; _cursorPositionKnown = NO; _cursorDirty = NO;
+    [_lock lock]; _running = NO; _inputReady = NO; [_events removeAllObjects]; [_lock unlock];
+    [self report:state];
+}
+- (rfbCredential *)credential:(int)type {
+    if (type != rfbCredentialTypeUser) return NULL;
+    protocolStage = 3;
+    [_lock lock]; _credentialRequests++; [_lock unlock];
+
+    [self report:@"Authenticating with macOS"];
+    rfbCredential *credential = calloc(1, sizeof(rfbCredential));
+    if (credential) {
+        credential->userCredential.username = strdup(_username.UTF8String ?: "");
+        credential->userCredential.password = strdup(_password.UTF8String ?: "");
+    }
+    return credential;
+}
+- (rfbBool)allocate:(rfbClient *)client {
+    [_lock lock]; _framebufferWidth = client->width; _framebufferHeight = client->height; [_lock unlock];
+    size_t bytes;
+    if (!CompanionVNCFramebufferByteCount(client->width, client->height, &bytes)) { protocolFailure = 9; return FALSE; }
+    uint8_t *pixels = calloc(1, (size_t)bytes);
+    if (!pixels) return FALSE;
+    free(_pixels); _pixels = pixels; client->frameBuffer = pixels;
+    protocolStage = 5;
+    [_lock lock]; _resizes++; [_lock unlock]; _dirty = NO;
+    _cursorImage = nil; _cursorHotspot = CGPointZero; _cursorPositionKnown = NO; _cursorDirty = YES;
+    return TRUE;
+}
+- (void)updated { _dirty = YES; [_lock lock]; _updates++; [_lock unlock]; }
+- (rfbBool)displayLayout:(rfbClient *)client {
+    return [self displayLayout:client encoding:1105];
+}
+- (rfbBool)displayLayout:(rfbClient *)client encoding:(int)encoding {
+    uint8_t prefix[2];
+    if (!ReadFromRFBServer(client, (char *)prefix, 2)) { _extensionFailed = YES; return TRUE; }
+    size_t length = CompanionVNCBE16(prefix);
+    NSMutableData *body = [NSMutableData dataWithLength:length];
+    if (length && !ReadFromRFBServer(client, body.mutableBytes, (unsigned int)length)) { _extensionFailed = YES; return TRUE; }
+    CompanionVNCDisplayLayout decoded;
+    NSMutableArray *views = [NSMutableArray new];
+    CGFloat aspect = 0;
+    BOOL parsed = encoding == 1105 && CompanionVNCDecodeDisplayLayout(body.bytes, length, &decoded);
+    // Retain only numeric geometry, never the opaque payload or framebuffer.
+    const uint8_t *p = body.bytes;
+    NSMutableDictionary *geometry = [@{@"encoding": @(encoding), @"bodyLength": @(length), @"parsed": @(parsed)} mutableCopy];
+    if (length >= 20) {
+        geometry[@"version"] = @(CompanionVNCBE16(p));
+        geometry[@"scaledWidth"] = @(CompanionVNCBE16(p + 2));
+        geometry[@"scaledHeight"] = @(CompanionVNCBE16(p + 4));
+        geometry[@"backingWidth"] = @(CompanionVNCBE16(p + 6));
+        geometry[@"backingHeight"] = @(CompanionVNCBE16(p + 8));
+        geometry[@"declaredCount"] = @(CompanionVNCBE16(p + 18));
+        NSMutableArray *records = [NSMutableArray new];
+        for (NSUInteger i = 0; i < MIN((length - 20) / 56, 32); i++) {
+            const uint8_t *r = p + 20 + i * 56;
+            [records addObject:@{@"rect20": @[@(CompanionVNCBE16(r + 20)), @(CompanionVNCBE16(r + 22)), @(CompanionVNCBE16(r + 24)), @(CompanionVNCBE16(r + 26))],
+                @"rect28": @[@(CompanionVNCBE16(r + 28)), @(CompanionVNCBE16(r + 30)), @(CompanionVNCBE16(r + 32)), @(CompanionVNCBE16(r + 34))]}];
+        }
+        geometry[@"records"] = records;
+    }
+    [_lock lock]; _layoutMessages++; _layoutDiagnostics = geometry; [_lock unlock];
+    if (encoding == 1101) { [self report:@"Connected"]; return TRUE; }
+    if (parsed) {
+        aspect = (CGFloat)decoded.width / decoded.height;
+        for (NSUInteger i = 0; i < decoded.count; i++) {
+            CompanionVNCDisplay d = decoded.displays[i];
+            [views addObject:@{@"id": @(d.id), @"title": [NSString stringWithFormat:@"Display %lu", (unsigned long)i + 1],
+                @"pixelWidth": @(d.width), @"pixelHeight": @(d.height),
+                @"x": @((double)d.x / decoded.width), @"y": @((double)d.y / decoded.height),
+                @"width": @((double)d.width / decoded.width), @"height": @((double)d.height / decoded.height)}];
+        }
+    }
+    CGFloat scale = parsed && CompanionVNCBE16(p + 2) > 0 ? (CGFloat)decoded.width / CompanionVNCBE16(p + 2) : 2;
+    NSDictionary *layout = @{@"aspectRatio": @(aspect), @"backingScale": @(scale), @"views": views};
+    [self report:@"Connected"];
+    [_lock lock]; NSInteger generation = _generation; NSUInteger epoch = _presentationEpoch; _latestLayout = layout;
+    if (_layoutPending) { [_lock unlock]; return TRUE; }
+    _layoutPending = YES; [_lock unlock];
+    dispatch_async(dispatch_get_main_queue(), ^{
+        [self->_lock lock]; BOOL valid = generation == self->_generation && epoch == self->_presentationEpoch && self->_running && !self->_stopping && !self->_paused;
+        NSDictionary *latest = self->_latestLayout;
+        if (generation == self->_generation) { self->_layoutPending = NO; self->_latestLayout = nil; }
+        [self->_lock unlock];
+        if (valid && self.displayLayoutHandler) self.displayLayoutHandler(latest);
+    });
+    return TRUE;
+}
+- (void)cursorShape:(rfbClient *)client x:(int)x y:(int)y width:(int)width height:(int)height bytesPerPixel:(int)bytes {
+    _cursorImage = nil; _cursorHotspot = CGPointZero; _cursorDirty = YES;
+    [_lock lock]; _cursorShapes++; [_lock unlock];
+    if (width <= 0 || height <= 0 || width > 256 || height > 256 || bytes != 4) return;
+    NSUInteger count = (NSUInteger)width * height;
+    NSMutableData *rgba = [NSMutableData dataWithLength:count * 4];
+    if (!CompanionVNCCursorRGBA(width, height, bytes, x, y, client->rcSource, count * 4,
+        client->rcMask, count, rgba.mutableBytes, rgba.length)) return;
+    CGDataProviderRef provider = CGDataProviderCreateWithCFData((__bridge CFDataRef)rgba);
+    CGColorSpaceRef colors = CGColorSpaceCreateDeviceRGB();
+    CGImageRef image = CGImageCreate(width, height, 8, 32, width * 4, colors,
+        (CGBitmapInfo)kCGBitmapByteOrder32Big | (CGBitmapInfo)kCGImageAlphaPremultipliedLast, provider, NULL, NO, kCGRenderingIntentDefault);
+    if (image) { _cursorImage = [UIImage imageWithCGImage:image]; _cursorHotspot = CGPointMake(x, y); CGImageRelease(image); }
+    CGColorSpaceRelease(colors); CGDataProviderRelease(provider);
+}
+- (rfbBool)cursorPosition:(rfbClient *)client x:(int)x y:(int)y {
+    _cursorPositionKnown = x >= 0 && y >= 0 && x < client->width && y < client->height;
+    _cursorPosition = CGPointMake(x, y); _cursorDirty = YES;
+    [_lock lock]; _cursorPositions++; [_lock unlock];
+    return TRUE;
+}
+- (void)publishCursor {
+    if (!_cursorDirty) return;
+    [_lock lock];
+    if (_cursorPending || _stopping || _paused) { [_lock unlock]; return; }
+    _cursorPending = YES; NSInteger generation = _generation; NSUInteger epoch = _presentationEpoch; [_lock unlock];
+    _cursorDirty = NO;
+    UIImage *image = _cursorImage; CGPoint hotspot = _cursorHotspot, position = _cursorPosition;
+    BOOL known = _cursorPositionKnown;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        [self->_lock lock]; BOOL valid = generation == self->_generation && epoch == self->_presentationEpoch && self->_running && !self->_stopping && !self->_paused;
+        if (generation == self->_generation) self->_cursorPending = NO; [self->_lock unlock];
+        if (valid && self.cursorHandler) self.cursorHandler(image, hotspot, position, known);
+    });
+}
+- (void)publishFrame:(rfbClient *)client {
+    double now = NSProcessInfo.processInfo.systemUptime;
+    if (!_dirty || now - _lastFrame < 1.0 / 30) return;
+    [_lock lock];
+    if (_framePending || _stopping || _paused || _inputOnly) { [_lock unlock]; return; }
+    _framePending = YES; NSInteger generation = _generation; NSUInteger epoch = _presentationEpoch; [_lock unlock];
+    _dirty = NO; _lastFrame = now;
+    NSData *copy = [NSData dataWithBytes:client->frameBuffer length:(NSUInteger)client->width * client->height * 4];
+    CGDataProviderRef provider = CGDataProviderCreateWithCFData((__bridge CFDataRef)copy);
+    CGColorSpaceRef colors = CGColorSpaceCreateDeviceRGB();
+    CGImageRef image = CGImageCreate(client->width, client->height, 8, 32, client->width * 4, colors,
+        (CGBitmapInfo)kCGBitmapByteOrder32Little | (CGBitmapInfo)kCGImageAlphaNoneSkipFirst, provider, NULL, NO, kCGRenderingIntentDefault);
+    UIImage *frame = image ? [UIImage imageWithCGImage:image] : nil;
+    if (image) CGImageRelease(image); CGColorSpaceRelease(colors); CGDataProviderRelease(provider);
+    dispatch_async(dispatch_get_main_queue(), ^{
+        [self->_lock lock]; BOOL valid = generation == self->_generation && epoch == self->_presentationEpoch && self->_running && !self->_stopping && !self->_paused;
+        if (generation == self->_generation) self->_framePending = NO; [self->_lock unlock];
+        if (valid && frame && self.frameHandler) self.frameHandler(frame);
+        if (valid && frame) {
+            [self->_lock lock]; self->_presentedFrames++;
+            BOOL resumed = self->_awaitingResumeFrame;
+            if (resumed) { self->_resumeFrames++; self->_awaitingResumeFrame = NO; self->_inputReady = YES; }
+            [self->_lock unlock];
+            if (resumed || self->_presentedFrames == 1) [self report:@"Connected"];
+        }
+    });
+    if (_presentedFrames > 0 && _updates % 30 == 0) [self report:@"Connected"];
+}
+- (void)report:(NSString *)state {
+    // No endpoints, names, credentials, pixels, or typed content in diagnostics.
+    [_lock lock];
+    if ([state isEqualToString:@"Connected"] && (_paused || _awaitingResumeFrame || _presentedFrames == 0)) { [_lock unlock]; return; }
+    NSInteger generation = _generation; NSUInteger epoch = _presentationEpoch; BOOL intermediate = _running;
+    NSDictionary *stats = @{@"connectionStarts": @(_connections), @"updateRects": @(_updates),
+        @"framebufferAllocations": @(_resizes), @"inputEvents": @(_inputs), @"viewChanges": @(_viewChanges), @"presentedFrames": @(_presentedFrames),
+        @"failureStage": @(_failureStage), @"credentialRequests": @(_credentialRequests), @"handshakeStage": @(protocolStage),
+        @"framebufferWidth": @(_framebufferWidth), @"framebufferHeight": @(_framebufferHeight),
+        @"displayLayoutMessages": @(_layoutMessages), @"displayLayout": _layoutDiagnostics ?: @{},
+        @"backgroundPauses": @(_pauses), @"retainedResumes": @(_resumes), @"resumeFrames": @(_resumeFrames),
+        @"cursorShapeUpdates": @(_cursorShapes), @"cursorPositionUpdates": @(_cursorPositions)};
+    [_lock unlock];
+    dispatch_async(dispatch_get_main_queue(), ^{
+        [self->_lock lock]; BOOL current = generation == self->_generation && !(intermediate && (self->_stopping || epoch != self->_presentationEpoch)); [self->_lock unlock];
+        if (current && self.stateHandler) self.stateHandler(state, stats);
+    });
+}
+- (void)stop {
+    [_lock lock]; _stopping = YES; _presentationEpoch++; [_events removeAllObjects]; NSInteger generation = _generation;
+    void (^completion)(void) = _pauseCompletion; _pauseCompletion = nil;
+    if (!_inputReady && _socket >= 0) shutdown(_socket, SHUT_RDWR);
+    [_lock unlock];
+    dispatch_semaphore_signal(_wake);
+    if (completion) dispatch_async(dispatch_get_main_queue(), completion);
+    // Give the owner a short opportunity to release sent keys, then unblock any
+    // stalled partial-frame read. This never affects a newer connection.
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 250 * NSEC_PER_MSEC), dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+        [self->_lock lock];
+        if (self->_generation == generation && self->_stopping && self->_socket >= 0) shutdown(self->_socket, SHUT_RDWR);
+        [self->_lock unlock];
+    });
+}
+- (void)enqueue:(NSDictionary *)event {
+    [_lock lock];
+    if (_running && _inputReady && !_paused && !_stopping) {
+        // Coalesce only motion with identical button state, preserving key/button ordering.
+        NSDictionary *last = _events.lastObject;
+        if (event[@"mask"]) {
+            NSInteger mask = [event[@"mask"] integerValue];
+            BOOL motion = mask == _queuedPointerMask;
+            _queuedPointerMask = mask;
+            NSMutableDictionary *annotated = [event mutableCopy]; annotated[@"motion"] = @(motion); event = annotated;
+            if (motion && [last[@"motion"] boolValue] && [event[@"mask"] isEqual:last[@"mask"]]) [_events removeLastObject];
+        }
+        if (_events.count >= 512) _overflow = YES; else [_events addObject:event];
+    }
+    [_lock unlock];
+}
+- (void)pointerX:(NSInteger)x y:(NSInteger)y mask:(NSInteger)mask {
+    [self enqueue:@{@"x": @(x), @"y": @(y), @"mask": @(mask)}];
+}
+- (void)key:(uint32_t)key down:(BOOL)down { [self enqueue:@{@"key": @(key), @"down": @(down)}]; }
+- (void)keyEvents:(NSArray<NSDictionary *> *)events {
+    [_lock lock];
+    if (_running && _inputReady && !_paused && !_stopping && !_overflow) {
+        if (!CompanionVNCKeyGroupFits(_events.count, events.count, 512)) _overflow = YES;
+        else [_events addObjectsFromArray:events];
+    }
+    [_lock unlock];
+}
+- (void)viewChanged {
+    [_lock lock]; _viewChanges++; [_lock unlock];
+}
+- (BOOL)tryKeyEvents:(NSArray<NSDictionary *> *)events {
+    [_lock lock];
+    BOOL allowed = _running && _inputReady && !_paused && !_stopping && !_overflow
+        && events.count > 0 && CompanionVNCKeyGroupFits(_events.count, events.count, 512);
+    if (allowed) [_events addObjectsFromArray:events];
+    [_lock unlock]; return allowed;
+}
+@end

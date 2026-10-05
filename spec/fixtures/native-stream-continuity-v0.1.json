@@ -17,7 +17,15 @@
     "invalid-update-cannot-change-canvas-or-owner",
     "stop-during-configuration-joins-before-terminal",
     "platform-stop-during-update-cannot-reopen-stream",
-    "switch-drops-scheduled-old-sample"
+    "switch-drops-scheduled-old-sample",
+    "switch-discards-late-old-placement",
+    "switch-discards-unsettled-placement-without-epoch-tag",
+    "switch-unsettled-placement-timeout-without-samples",
+    "switch-placement-after-first-matching-frame-remains-terminal",
+    "switch-malformed-sample-during-placement-wait-is-terminal",
+    "stop-during-placement-wait-fences-timeout",
+    "obsolete-placement-timeout-cannot-stop-new-update",
+    "switch-placement-timeout-rechecks-original-owner"
   ],
   "authorityCases": [
     "same-original-control-primary-key-and-deadline-required",
@@ -65,5 +73,344 @@
     "authority-loss-during-switch-is-terminal",
     "expiry-during-switch-is-terminal"
   ],
-  "maximumScheduledSampleLeadNanoseconds": 100000000
+  "normalClientLifecycleCases": [
+    "normal-selection-waits-for-fresh-input-admission",
+    "second-local-selection-does-not-retire-control",
+    "workspace-active-publication-cannot-release-selection-gate",
+    "stop-during-normal-selection-cannot-reopen-product",
+    "desktop-video-loss-recovers-under-original-control-once",
+    "recovery-budget-rearms-after-thirty-healthy-seconds",
+    "stop-background-and-control-loss-deny-desktop-recovery",
+    "old-admission-during-input-drain-cannot-complete-new-view",
+    "open-picker-shows-recovery-and-restores-selection-after-fresh-admission",
+    "open-picker-refreshes-invalidated-inventory-before-restoring-selection"
+  ],
+  "maximumScheduledSampleLeadNanoseconds": 100000000,
+  "presentationReadinessCases": [
+    "pending-sample-waits-up-to-two-seconds",
+    "fresh-sample-completes-without-backend-restart",
+    "stop-revocation-expiry-and-crash-cancel-pending-read",
+    "wrong-operation-future-and-malformed-samples-fail-immediately",
+    "pending-sample-timeout-drains-once",
+    "late-sample-read-cannot-extend-pending-deadline"
+  ],
+  "maximumRetainedHandoffMilliseconds": 15000,
+  "wireCases": [
+    "omitted-capability-preserves-existing-path",
+    "only-literal-true-admits",
+    "exact-retained-predecessor-required",
+    "next-peer-generation-required",
+    "fresh-golden-proof-binds-replacement",
+    "old-golden-proof-rejected",
+    "legacy-client-without-request-receives-no-capability-field"
+  ],
+  "wireRecords": {
+    "ready": {
+      "body": {
+        "challengeMessageID": "018f6000-0000-7000-8000-000000000008",
+        "fence": {
+          "authorizationEpoch": 4,
+          "coordinateSpaceRevision": 2,
+          "interactiveSessionID": "018f6000-0000-7000-8000-000000000003",
+          "negotiationID": "018f6000-0000-7000-8000-000000000006",
+          "peerGeneration": 1,
+          "surfaceID": "018f6000-0000-7000-8000-000000000005",
+          "surfaceRevision": 1
+        },
+        "portBase": 58989,
+        "streamContinuity": true
+      },
+      "channel": "command",
+      "correlationID": "018f6000-0000-7000-8000-000000000009",
+      "kind": "interactive.native.ready",
+      "messageID": "018f6000-0000-7000-8000-000000000010",
+      "sentAtUnixMilliseconds": 1724000000000,
+      "version": {
+        "major": 0,
+        "minor": 1
+      }
+    },
+    "cancel": {
+      "body": {
+        "fence": {
+          "authorizationEpoch": 4,
+          "coordinateSpaceRevision": 2,
+          "interactiveSessionID": "018f6000-0000-7000-8000-000000000003",
+          "negotiationID": "018f6000-0000-7000-8000-000000000006",
+          "peerGeneration": 1,
+          "surfaceID": "018f6000-0000-7000-8000-000000000005",
+          "surfaceRevision": 1
+        },
+        "retainStream": true
+      },
+      "channel": "command",
+      "correlationID": null,
+      "kind": "interactive.native.cancel",
+      "messageID": "018f6000-0000-7000-8000-000000000011",
+      "sentAtUnixMilliseconds": 1724000000000,
+      "version": {
+        "major": 0,
+        "minor": 1
+      }
+    },
+    "cancelled": {
+      "body": {
+        "fence": {
+          "authorizationEpoch": 4,
+          "coordinateSpaceRevision": 2,
+          "interactiveSessionID": "018f6000-0000-7000-8000-000000000003",
+          "negotiationID": "018f6000-0000-7000-8000-000000000006",
+          "peerGeneration": 1,
+          "surfaceID": "018f6000-0000-7000-8000-000000000005",
+          "surfaceRevision": 1
+        },
+        "streamRetained": true
+      },
+      "channel": "command",
+      "correlationID": "018f6000-0000-7000-8000-000000000011",
+      "kind": "interactive.native.cancelled",
+      "messageID": "018f6000-0000-7000-8000-000000000012",
+      "sentAtUnixMilliseconds": 1724000000000,
+      "version": {
+        "major": 0,
+        "minor": 1
+      }
+    },
+    "enroll-request": {
+      "body": {
+        "clientCertificateDERBase64": "TWFjQ29tcGFuaW9uIHB1YmxpYyBjbGllbnQgY2VydGlmaWNhdGUgY29uZm9ybWFuY2UgYnl0ZXM=",
+        "fence": {
+          "authorizationEpoch": 4,
+          "coordinateSpaceRevision": 3,
+          "interactiveSessionID": "018f6000-0000-7000-8000-000000000003",
+          "negotiationID": "018f6000-0000-7000-8000-000000000009",
+          "peerGeneration": 2,
+          "surfaceID": "018f6000-0000-7000-8000-000000000008",
+          "surfaceRevision": 2
+        },
+        "previousFence": {
+          "authorizationEpoch": 4,
+          "coordinateSpaceRevision": 2,
+          "interactiveSessionID": "018f6000-0000-7000-8000-000000000003",
+          "negotiationID": "018f6000-0000-7000-8000-000000000006",
+          "peerGeneration": 1,
+          "surfaceID": "018f6000-0000-7000-8000-000000000005",
+          "surfaceRevision": 1
+        },
+        "streamContinuity": true
+      },
+      "channel": "command",
+      "correlationID": null,
+      "kind": "interactive.native.enroll.request",
+      "messageID": "018f6000-0000-7000-8000-000000000007",
+      "sentAtUnixMilliseconds": 1724000000000,
+      "version": {
+        "major": 0,
+        "minor": 1
+      }
+    },
+    "enroll-challenge": {
+      "body": {
+        "controlGeneration": "018f6000-0000-7000-8000-000000000004",
+        "encodedHeight": 720,
+        "encodedWidth": 1280,
+        "expiresAtUnixMilliseconds": 1724000016000,
+        "fence": {
+          "authorizationEpoch": 4,
+          "coordinateSpaceRevision": 3,
+          "interactiveSessionID": "018f6000-0000-7000-8000-000000000003",
+          "negotiationID": "018f6000-0000-7000-8000-000000000009",
+          "peerGeneration": 2,
+          "surfaceID": "018f6000-0000-7000-8000-000000000008",
+          "surfaceRevision": 2
+        },
+        "hostCertificateDERBase64": "TWFjQ29tcGFuaW9uIHB1YmxpYyBob3N0IGNlcnRpZmljYXRlIGNvbmZvcm1hbmNlIGJ5dGVz",
+        "hostChallengeBase64": "UFFSU1RVVldYWVpbXF1eX2BhYmNkZWZnaGlqa2xtbm8=",
+        "issuedAtUnixMilliseconds": 1724000001000,
+        "signingInputBase64": "TWFjQ29tcGFuaW9uL05hdGl2ZVZpZGVvRW5yb2xsbWVudC92MC4xAAAAEAGPYAAAAHAAgAAAAAAAAAEAAAAggIGCg4SFhoeIiYqLjI2Oj5CRkpOUlZaXmJmam5ydnp8AAAAQAY9gAAAAcACAAAAAAAAAAgAAABAAAQIDBAUGBwgJCgsMDQ4PAAAAEAGPYAAAAHAAgAAAAAAAAAMAAAAAAAAABAAAAAAAAAAFAAAAAAAAAAYAAAAQAY9gAAAAcACAAAAAAAAABAAAABABj2AAAABwAIAAAAAAAAAIAAAAAAAAAAIAAAAAAAAAAwUAAtAAAAAgX1yPnphx+/Q/4hExpuPY29eC9GjuHVzZ6KPvjNKop7kAAAAg5Huh5qG89RVv0G+L1svJTLna/dqjSkWU13Z9L0rqa9oAAAAgUFFSU1RVVldYWVpbXF1eX2BhYmNkZWZnaGlqa2xtbm8AAAGRZmhb6AAAAZFmaJaAAAAAAQ=="
+      },
+      "channel": "command",
+      "correlationID": "018f6000-0000-7000-8000-000000000007",
+      "kind": "interactive.native.enroll.challenge",
+      "messageID": "018f6000-0000-7000-8000-000000000008",
+      "sentAtUnixMilliseconds": 1724000000000,
+      "version": {
+        "major": 0,
+        "minor": 1
+      }
+    },
+    "enroll-proof": {
+      "body": {
+        "challengeMessageID": "018f6000-0000-7000-8000-000000000008",
+        "fence": {
+          "authorizationEpoch": 4,
+          "coordinateSpaceRevision": 3,
+          "interactiveSessionID": "018f6000-0000-7000-8000-000000000003",
+          "negotiationID": "018f6000-0000-7000-8000-000000000009",
+          "peerGeneration": 2,
+          "surfaceID": "018f6000-0000-7000-8000-000000000008",
+          "surfaceRevision": 2
+        },
+        "signatureBase64": "eI+Hbcbl3SHwsEU1rsdS6sqTmAb89M4D8Je7RpUSu0Z5Swgjl/74ax+JS+nA0V0pB0+2cirBWWWIlZb4W133OA=="
+      },
+      "channel": "command",
+      "correlationID": null,
+      "kind": "interactive.native.enroll.proof",
+      "messageID": "018f6000-0000-7000-8000-000000000009",
+      "sentAtUnixMilliseconds": 1724000000000,
+      "version": {
+        "major": 0,
+        "minor": 1
+      }
+    }
+  },
+  "captureRetentionCases": [
+    "pause-acknowledges-serial-delivery-fence",
+    "paused-old-selection-loss-cannot-deliver-or-stop",
+    "captured-sample-keeps-exact-epoch-after-next-selection",
+    "stop-while-paused-joins-capture"
+  ],
+  "childHandoff": {
+    "nowMonotonicNanoseconds": 1000000000,
+    "initialContext": {
+      "profile": "maccompanion.selected-capture-context.v0.2",
+      "operationID": "AAAAAAAA-BBBB-4CCC-8DDD-EEEEEEEEEEEE",
+      "kind": "window",
+      "displayID": 1,
+      "windowID": 42,
+      "processID": 123,
+      "bundleIdentifier": "test.selected",
+      "processLaunchMilliseconds": 1000,
+      "expiresAtMonotonicNanoseconds": 31000000000,
+      "boundsX": -320,
+      "boundsY": 40,
+      "boundsWidth": 320,
+      "boundsHeight": 180,
+      "backingScale": 2,
+      "sourcePixelWidth": 640,
+      "sourcePixelHeight": 360,
+      "encodedWidth": 640,
+      "encodedHeight": 360,
+      "frameEpochHex": "d5e7c93a1da94bf28f2b09a1de105a511111111122224333844455555555555500000000000000020000000000000003"
+    },
+    "pause": {
+      "profile": "maccompanion.capture-handoff.v1",
+      "transportOperationID": "AAAAAAAA-BBBB-4CCC-8DDD-EEEEEEEEEEEE",
+      "operationID": "AAAAAAAA-BBBB-4CCC-8DDD-EEEEEEEEEEEE",
+      "sequence": 1,
+      "action": "pause",
+      "expiresAtMonotonicNanoseconds": 31000000000
+    },
+    "select": {
+      "profile": "maccompanion.capture-handoff.v1",
+      "transportOperationID": "AAAAAAAA-BBBB-4CCC-8DDD-EEEEEEEEEEEE",
+      "operationID": "BBBBBBBB-CCCC-4DDD-8EEE-FFFFFFFFFFFF",
+      "sequence": 2,
+      "action": "select",
+      "expiresAtMonotonicNanoseconds": 31000000000,
+      "previousOperationID": "AAAAAAAA-BBBB-4CCC-8DDD-EEEEEEEEEEEE",
+      "context": {
+        "profile": "maccompanion.selected-capture-context.v0.2",
+        "operationID": "BBBBBBBB-CCCC-4DDD-8EEE-FFFFFFFFFFFF",
+        "kind": "desktop",
+        "displayID": 1,
+        "windowID": 0,
+        "processID": 0,
+        "bundleIdentifier": "",
+        "processLaunchMilliseconds": 0,
+        "expiresAtMonotonicNanoseconds": 31000000000,
+        "boundsX": 0,
+        "boundsY": 0,
+        "boundsWidth": 320,
+        "boundsHeight": 180,
+        "backingScale": 2,
+        "sourcePixelWidth": 640,
+        "sourcePixelHeight": 360,
+        "encodedWidth": 640,
+        "encodedHeight": 360,
+        "frameEpochHex": "d5e7c93a1da94bf28f2b09a1de105a511111111122224333844455555555555500000000000000030000000000000004"
+      }
+    }
+  },
+  "childHandoffCases": [
+    "exact-transport-current-operation-sequence-deadline-and-canvas-required",
+    "duplicate-exact-command-does-not-extend-deadline",
+    "same-sequence-changed-command-denied",
+    "select-before-pause-denied",
+    "changed-epoch-and-operation-required",
+    "pause-ack-waits-for-old-delivery",
+    "stop-joins-pending-pause-and-update",
+    "late-update-cannot-publish-after-stop",
+    "fifteen-second-pause-timeout-drains",
+    "unsafe-command-and-receipt-files-denied",
+    "atomic-command-replacement-discards-old-snapshot",
+    "atomic-receipt-replacement-discards-old-snapshot",
+    "same-named-inode-mutation-and-unsafe-replacement-denied",
+    "duplicate-command-preserves-identical-safe-receipt-inode"
+  ],
+  "encoderEpochCases": [
+    "queued-packet-keeps-capture-epoch-after-switch",
+    "packet-pts-controls-association-not-emission-order",
+    "duplicate-or-unknown-packet-does-not-admit",
+    "association-capacity-fails-without-overwrite",
+    "missing-marker-after-continuity-start-fails",
+    "each-new-epoch-forces-independently-decodable-frame"
+  ],
+  "canvasCases": [
+    {
+      "id": "window-wide-to-tall",
+      "original": [
+        1280,
+        720
+      ],
+      "sourceLogical": [
+        360,
+        800
+      ],
+      "keepsCanvas": true
+    },
+    {
+      "id": "display-resolution-change",
+      "original": [
+        1280,
+        720
+      ],
+      "sourceLogical": [
+        1512,
+        982
+      ],
+      "keepsCanvas": true
+    },
+    {
+      "id": "focused-crop",
+      "original": [
+        1280,
+        720
+      ],
+      "kind": "focusedRegion",
+      "keepsCanvas": false
+    }
+  ],
+  "captureOwnerLifecycleCases": [
+    "last-probe-joins-handoff-before-waking-encoder",
+    "next-probe-creates-fresh-handoff-owner",
+    "old-stream-terminal-cannot-stop-new-owner"
+  ],
+  "depacketizerEpochCases": [
+    "h264-and-hevc-ordinary-picture-preserves-prefix",
+    "h264-and-hevc-idr-parameter-set-path-preserves-prefix",
+    "unknown-sei-and-aud-remain-stripped",
+    "duplicate-marker-reaches-adapter-rejection",
+    "unmarked-picture-cannot-complete-replacement"
+  ],
+  "replacementKeyframeCases": [
+    "before-epoch-configuration-does-not-request",
+    "valid-fresh-epoch-requests-once",
+    "rejected-repeat-does-not-request"
+  ],
+  "backendWatcherLifecycleCases": [
+    "stale-retaining-check-cannot-retire-completed-retention",
+    "original-control-loss-after-stale-check-still-drains"
+  ],
+  "maximumPlacementSettlementNanoseconds": 2000000000
 }

@@ -8,8 +8,11 @@ package enum MacManagedNativeCaptureDiagnosticsV1 {
     static func codes(in data: Data) -> [String] {
         let allowed: [String: Set<Int>] = [
             "selected-capture-context-error": Set(10...16),
-            "selected-capture-stream-error": Set(1...6),
+            "selected-capture-validation-error": Set(1...12),
+            "selected-capture-handoff-error": Set(1...13),
+            "selected-capture-stream-error": Set(1...9),
             "selected-capture-sample-rejected": Set(1...7).union(61...65),
+            "selected-capture-placement-discarded": [1, 2],
         ]
         var result = Set<String>()
         for line in String(decoding: data, as: UTF8.self).split(whereSeparator: \.isNewline) {

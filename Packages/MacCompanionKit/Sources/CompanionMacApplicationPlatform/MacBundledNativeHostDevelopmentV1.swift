@@ -8,7 +8,7 @@ import Security
 @available(macOS 26.0, *)
 public enum MacBundledNativeHostDevelopmentV1 {
     public enum Failure: Error { case invalidSignature, invalidCatalog, changedResources }
-    private static let catalogSHA256 = "e10c2652e47bc5686f74f9dba4747d1c7199c47c7da825537f113357769d4351"
+    private static let catalogSHA256 = "f05e3645cfd64fc25700165d7781cc0e27e1acaa41a4938214b3f666217018b3"
 
     public static func factoryIfPresent(in app: URL) throws -> MacInteractiveNativeBackendFactoryV1? {
         #if DEBUG
@@ -37,7 +37,7 @@ public enum MacBundledNativeHostDevelopmentV1 {
             supervisor: host.appendingPathComponent("Contents/Helpers/companion-supervisor"),
             openssl: host.appendingPathComponent("Contents/Helpers/openssl"), port: 58989,
             opensslConfiguration: host.appendingPathComponent("Contents/Resources/DependencyNotices/openssl.cnf"),
-            listenerScope: .dualStackInterfaces,
+            listenerScope: .dualStackInterfaces, streamContinuityEnabled: true,
             validateArtifacts: validate)
         #else
         return nil

@@ -15,10 +15,8 @@ private struct ClientApprovedActionDestinationV1: Identifiable {
     }
 }
 
-/// Release-shaped workspace shell over the value-driven Observe, Act, and
-/// independently authorized Control surfaces. Approved Action details are a
-/// selected-item sheet so they do not need a second competing navigation
-/// owner and never make Control the app's root flow.
+/// Remote-desktop MVP shell over the authenticated primary workspace.
+/// Deferred action-sheet plumbing remains for protocol compatibility.
 @available(iOS 17.0, *)
 public struct ClientPrimaryWorkspaceApplicationViewV1: View {
     private let macName: String
@@ -29,6 +27,7 @@ public struct ClientPrimaryWorkspaceApplicationViewV1: View {
     private let onCommandFailure:
         @MainActor @Sendable (any Error) -> Void
     private let onReconnect: @MainActor @Sendable () async -> Void
+    private let onShowMacLibrary: @MainActor @Sendable () async -> Void
     @State private var selectedAction:
         ClientApprovedActionDestinationV1?
 
@@ -39,6 +38,7 @@ public struct ClientPrimaryWorkspaceApplicationViewV1: View {
             NetworkClientInteractiveRoleProductBindingV0,
         liveProductFactory: ClientPrimaryLiveControlCoordinatorV0.ProductFactory? = nil,
         onReconnect: @escaping @MainActor @Sendable () async -> Void = {},
+        onShowMacLibrary: @escaping @MainActor @Sendable () async -> Void = {},
         onCommandFailure: @escaping @MainActor @Sendable
             (any Error) -> Void = { _ in }
     ) {
@@ -47,6 +47,7 @@ public struct ClientPrimaryWorkspaceApplicationViewV1: View {
         self.interactiveRoles = interactiveRoles
         self.liveProductFactory = liveProductFactory
         self.onReconnect = onReconnect
+        self.onShowMacLibrary = onShowMacLibrary
         self.onCommandFailure = onCommandFailure
     }
 
@@ -58,6 +59,7 @@ public struct ClientPrimaryWorkspaceApplicationViewV1: View {
             liveProductFactory: liveProductFactory,
             onSelectAction: selectAction,
             onReconnect: onReconnect,
+            onShowMacLibrary: onShowMacLibrary,
             onCommandFailure: onCommandFailure
         )
         .sheet(item: $selectedAction) { destination in

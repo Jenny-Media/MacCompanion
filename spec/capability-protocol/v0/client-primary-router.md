@@ -169,10 +169,10 @@ owner. The request-submitted state is connection-scoped and is published only
 after transport enqueue succeeds.
 
 The Control receiver delegates challenge and acceptance validation to the
-normative Interactive client authority. A valid approval challenge may expose
-only the approval-key adapter for the closed
-`startInteractiveControl` presence reason. The adapter signs only after fresh
-OS-backed user presence, sends `interactive.session.approve` through the same
+normative Interactive client authority. A valid challenge may expose only the immutable profile-selected signer.
+The adapter signs with the explicit session consent profile: normal trusted-device
+remote desktop uses the paired session key without fresh presence; the legacy
+profile retains fresh OS-backed presence through its approval key. It sends `interactive.session.approve` through the same
 Control lane, and publishes approval-submitted state only after that enqueue
 succeeds. Local user-presence cancellation, protected-key unavailability, or a
 local signing failure becomes a typed local Control result and closes only that

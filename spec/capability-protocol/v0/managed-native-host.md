@@ -46,6 +46,14 @@ The primary may select IPv6 on the same local network; native listeners must
 support that measured address without substituting an independently resolved
 IPv4 address. IPv4 component compositions remain available for isolated tests.
 
+The client projects an authenticated transport's measured IPv4 address from its
+four address bytes. Network-framework interface annotations in a debug string
+are not IPv4 address text and must not enter the native numeric socket parser.
+This projection preserves the exact address and selected primary connection;
+it performs no DNS lookup, chooses no replacement route and changes no native
+TLS, certificate, attestation or Control admission rule. IPv6 scope handling is
+not changed by this IPv4 projection.
+
 Certificate generation explicitly selects a trusted local OpenSSL configuration.
 The admitted bundled composition uses its catalog-bound `openssl.cnf`; component
 tests use an empty configuration with the same explicit certificate options.
@@ -101,7 +109,10 @@ for scheduled display and measurement skew. A larger future offset is malformed.
 reflect ScreenCaptureKit resampling of the native source. The latter cannot be
 equated to the menu's approved output pixel size. The selected target and
 configured output geometry still require separate exact checks.
-Malformed or changed complete samples terminate the capture. Failure must
+Malformed or changed complete samples terminate the capture, except for the
+bounded post-update placement-discard interval in `native-stream-continuity.md`.
+That interval admits no mismatched frame or input and preserves every other
+existing validation. Failure must
 propagate to Sunshine's streaming and encoder-probe results; waking
 a capture waiter without an accepted image cannot report successful capture.
 The adapter has no pairing, permission prompt, independent approval or input API, and does not
@@ -192,6 +203,17 @@ capture/encoder diagnostic codes from at most the final 64 KiB of each owned
 child log. This excludes raw log text, request URLs, credentials, input content,
 selection identities, bounds and pixels. Diagnostics do not confer admission or
 change retirement; expected encoder probes may also emit codes.
+Placement-discard diagnostics are closed codes 1 (matches the prior configured
+placement) and 2 (another mismatch), emitted at most once each per update.
+Stream error 9 means the two-second post-update placement interval expired.
+They contain no rectangle values, bounds, identity or pixels.
+Native selection revalidation emits only `selected-capture-validation-error`
+codes 1...12: expiry, display activity/rotation, display bounds, missing display
+mode, Desktop geometry, selected backing scale, process identity, window
+inventory, window identity/visibility, window geometry, window display and
+application geometry. The existing child handoff emits only
+`selected-capture-handoff-error` codes 1...13. These classify its existing
+rejections and retain every current-owner, geometry and deadline check.
 
 The managed Mac adapter supplies an operation ID, private geometry-report path
 and exact expected encoded dimensions in a closed local spawn context. Inherited

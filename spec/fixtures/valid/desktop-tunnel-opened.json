@@ -1,0 +1,18 @@
+{
+  "version": {
+    "major": 0,
+    "minor": 1
+  },
+  "messageID": "018f1000-0000-7000-8000-000000000090",
+  "correlationID": null,
+  "channel": "events",
+  "kind": "desktop.tunnel.event",
+  "sentAtUnixMilliseconds": 5000,
+  "body": {
+    "tunnelID": "018f1000-0000-7000-8000-000000000091",
+    "interactiveSessionID": "018f1000-0000-7000-8000-000000000092",
+    "operation": "opened",
+    "sequence": 0,
+    "bytes": []
+  }
+}

@@ -7,6 +7,8 @@ import SwiftUI
 public struct ClientSurfacePickerViewV0: View {
     @State private var searchText = ""
     @State private var applicationPath: [UUID] = []
+    private let isBusy: Bool
+    private let statusMessage: String?
     private let choices: [ClientSurfaceChoiceV0]
     private let windowsByApplication: [UUID: [ClientSurfaceChoiceV0]]
     private let onSelect: (ClientSurfaceChoiceV0) -> Void
@@ -15,10 +17,14 @@ public struct ClientSurfacePickerViewV0: View {
 
     public init(
         candidates: [InteractiveSurfaceTargetCandidateV0],
+        isBusy: Bool = false,
+        statusMessage: String? = nil,
         onSelect: @escaping (ClientSurfaceChoiceV0) -> Void,
         onRefresh: @escaping () -> Void,
         onCancel: @escaping () -> Void
     ) {
+        self.isBusy = isBusy
+        self.statusMessage = statusMessage
         choices = ClientSurfaceChoiceProjectionV0.make(
             candidates: candidates
         )
@@ -38,6 +44,7 @@ public struct ClientSurfacePickerViewV0: View {
     public var body: some View {
         NavigationStack(path: $applicationPath) {
             List {
+                transitionStatus
                 Section {
                     choiceButton(.desktop)
                 } footer: {
@@ -81,6 +88,7 @@ public struct ClientSurfacePickerViewV0: View {
                 }
                 ToolbarItem(placement: .primaryAction) {
                     Button("Refresh", systemImage: "arrow.clockwise", action: refreshTargets)
+                        .disabled(isBusy)
                 }
             }
             .onChange(of: choices.map(\.id)) { _, _ in
@@ -103,6 +111,7 @@ public struct ClientSurfacePickerViewV0: View {
                 }
                 .accessibilityIdentifier(choiceIdentifier(choice))
                 .accessibilityHint("Choose which app window to show")
+                .disabled(isBusy)
             }
         } else {
             choiceButton(choice)
@@ -115,6 +124,7 @@ public struct ClientSurfacePickerViewV0: View {
             $0.kind == .application && $0.targetToken == token
         }) {
             List {
+                transitionStatus
                 Section("Choose a Window") {
                     let windows = windowsByApplication[token] ?? []
                     if windows.isEmpty {
@@ -137,11 +147,26 @@ public struct ClientSurfacePickerViewV0: View {
             .toolbar {
                 ToolbarItem(placement: .primaryAction) {
                     Button("Refresh", systemImage: "arrow.clockwise", action: refreshTargets)
+                        .disabled(isBusy)
                 }
             }
         } else {
             ContentUnavailableView("Windows Refreshed", systemImage: "arrow.clockwise",
                 description: Text("Go back to choose a current window."))
+        }
+    }
+
+    @ViewBuilder
+    private var transitionStatus: some View {
+        if isBusy {
+            Section {
+                ProgressView(statusMessage ?? "Updating Mac View…")
+                    .accessibilityIdentifier("Surface Picker Busy")
+            }
+        } else if let statusMessage {
+            Section {
+                Text(statusMessage).foregroundStyle(.secondary)
+            }
         }
     }
 
@@ -172,7 +197,7 @@ public struct ClientSurfacePickerViewV0: View {
         }
         .buttonStyle(.plain)
         .accessibilityIdentifier(choiceIdentifier(choice))
-        .disabled(!choice.available)
+        .disabled(isBusy || !choice.available)
         .accessibilityHint(
             choice.available
                 ? "Switches the live Mac view"

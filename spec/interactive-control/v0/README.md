@@ -2,7 +2,7 @@
 
 Status: normative for bundle-independent session authority. Pinned TLS role admission, message handshakes, and media/input records are frozen in their linked profiles; concrete Network.framework and Apple media/input adapters remain platform work.
 
-This profile defines the host-owned state machine implemented by `CompanionInteractiveShared`. It does not authorize a remote request by itself. Every session remains bound to a paired device, a current grant, a current authorization epoch, and one freshly consumed user-presence approval.
+This profile defines the host-owned state machine implemented by `CompanionInteractiveShared`. It does not authorize a remote request by itself. Every session remains bound to a paired device, a current grant, a current authorization epoch, and one freshly consumed profile-selected signed challenge. Normal remote desktop uses trusted-device session signing; the legacy profile retains fresh user presence.
 
 The visible Mac-side one-session warning and local stop presentation are defined in [`../../capability-protocol/v0/local-authority-presentation.md`](../../capability-protocol/v0/local-authority-presentation.md). That presentation neither creates a grant nor replaces the phone approval.
 

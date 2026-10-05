@@ -6,6 +6,9 @@
 #include <stdint.h>
 #include <string.h>
 
+// Private captured-sample attachment, consumed before native encoding.
+#define CompanionNativeSurfaceEpochAttachment "MacCompanion.NativeSurfaceEpoch"
+
 // A frame observation only. Neither this marker nor this codec grants input.
 typedef struct {
   uint8_t surfaceID[16];

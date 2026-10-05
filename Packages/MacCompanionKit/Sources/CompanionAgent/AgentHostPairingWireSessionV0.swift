@@ -327,6 +327,7 @@ public actor AgentHostPairingWireSessionV0 {
                     body: PairingCompleteBody(
                         hostID: WireUUID(hostID),
                         deviceID: WireUUID(completed.deviceID),
+                        deviceState: completed.deviceState,
                         policyRevision: completed.policyRevision,
                         hostFingerprint: WireFingerprint(
                             tlsBinding.hostFingerprint
@@ -650,6 +651,7 @@ public actor AgentHostPairingWireSessionV0 {
                 body: PairingCompleteBody(
                     hostID: WireUUID(hostID),
                     deviceID: WireUUID(completed.deviceID),
+                    deviceState: completed.deviceState,
                     policyRevision: completed.policyRevision,
                     hostFingerprint: WireFingerprint(
                         tlsBinding.hostFingerprint

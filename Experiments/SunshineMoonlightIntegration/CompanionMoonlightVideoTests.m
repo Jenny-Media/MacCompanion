@@ -1,27 +1,54 @@
 #import <XCTest/XCTest.h>
 #import <CompanionMoonlightEngine/CompanionMoonlightVideo.h>
 #include "CompanionNativeSurfaceEpoch.h"
+#include "CompanionMoonlightTerminalDiagnostic.h"
 
 @interface CompanionMoonlightVideo (LocalEpochGateTest)
 - (BOOL)acceptPicture:(const unsigned char *)data length:(size_t)length independent:(BOOL *)independent;
+- (void)requestReplacementKeyFrame;
+- (void)recordEngineTerminalFormat:(const char *)format;
 @end
 
 // Inert transport: exercises the local gate without starting native sockets,
 // capturing a screen or constructing any authorization or pairing proof.
 @interface CompanionEpochGateTestSession : CompanionMoonlightVideo
+@property (nonatomic) NSUInteger keyframeRequests;
 @end
 @implementation CompanionEpochGateTestSession
 - (BOOL)presentationReady { return YES; }
+- (void)requestReplacementKeyFrame { self.keyframeRequests++; }
 @end
 
 @interface CompanionMoonlightVideoTests : XCTestCase
 @end
 
 @implementation CompanionMoonlightVideoTests
+- (void)testTerminalDiagnosticsIgnorePrivateArgumentsAndKeepFirstClassification {
+    XCTAssertEqual(CompanionMoonlightTerminalDiagnostic(NULL),0);
+    XCTAssertEqual(CompanionMoonlightTerminalDiagnostic("private endpoint or input %s"),0);
+    XCTAssertEqual(CompanionMoonlightTerminalDiagnostic("Control stream received unexpected disconnect event\n"),1);
+    XCTAssertEqual(CompanionMoonlightTerminalDiagnostic("Disconnect event timeout expired\n"),2);
+    XCTAssertEqual(CompanionMoonlightTerminalDiagnostic("Video Receive: recvUdpSocket() failed: %d\n"),4);
+    XCTAssertEqual(CompanionMoonlightTerminalDiagnostic("Server notified termination reason: 0x%08x\n"),12);
+    CompanionMoonlightVideo *session = [[CompanionMoonlightVideo alloc] initWithConfiguration:[self configuration]
+        view:[UIView new] event:^(CompanionMoonlightVideoEvent event, int code) {
+            XCTFail(@"Diagnostic classification must not emit a lifecycle event");
+        } error:nil];
+    [session recordEngineTerminalFormat:"unrecognized message %s"];
+    XCTAssertEqual(session.terminalDiagnosticCode,0);
+    [session recordEngineTerminalFormat:"Disconnect event timeout expired\n"];
+    [session recordEngineTerminalFormat:"Audio Receive: recvUdpSocket() failed: %d\n"];
+    [session recordEngineTerminalFormat:"unrecognized message %s"];
+    XCTAssertEqual(session.terminalDiagnosticCode,2);
+    XCTAssertFalse(session.presentationReady);
+    XCTAssertEqual(session.queuedVideoFrameCount,0U);
+    [session stopWithCompletion:^{}];
+}
 - (void)testReplacementEpochFencesOldAndUnmarkedPicturesWithoutStartingConnection {
     NSURL *fixtureURL = [[NSBundle bundleForClass:self.class] URLForResource:@"native-stream-continuity-v0.1" withExtension:@"json"];
     XCTAssertNotNil(fixtureURL);
     NSDictionary *fixture = [NSJSONSerialization JSONObjectWithData:[NSData dataWithContentsOfURL:fixtureURL] options:0 error:nil];
+    XCTAssertEqual([fixture[@"replacementKeyframeCases"] count],3U);
     NSString *hex = fixture[@"epoch"][@"bytesHex"];
     XCTAssertEqual(hex.length,96U);
     uint8_t bytes[48];
@@ -41,10 +68,12 @@
     const uint8_t idr[] = {0,0,0,1,0x65,0xb8};
     memcpy(frame+size,idr,sizeof(idr)); size += sizeof(idr);
     XCTAssertTrue([session beginSurfaceReplacement:nil]);
+    XCTAssertEqual(session.keyframeRequests,0U);
     XCTAssertFalse([session acceptPicture:frame length:size independent:&independent], @"Frames before fresh epoch configuration must be dropped");
     XCTAssertFalse([session beginSurfaceReplacement:nil], @"Only one replacement may be in flight");
     XCTAssertTrue([session resumeSurfaceReplacementWithEpoch:[NSData dataWithBytes:bytes length:48] error:nil]);
     XCTAssertFalse([session resumeSurfaceReplacementWithEpoch:[NSData dataWithBytes:bytes length:48] error:nil]);
+    XCTAssertEqual(session.keyframeRequests,1U, @"Only fresh epoch configuration requests a keyframe, without a second native start");
     XCTAssertFalse([session acceptPicture:idr length:sizeof(idr) independent:&independent]);
     XCTAssertTrue([session acceptPicture:frame length:size independent:&independent]);
     XCTAssertTrue(independent);

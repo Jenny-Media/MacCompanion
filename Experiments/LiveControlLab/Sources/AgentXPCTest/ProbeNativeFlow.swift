@@ -16,7 +16,7 @@ import CoreVideo
 import Security
 import CryptoKit
 
-private struct ProbeTracedNativeBackend: InteractiveNativeVideoEnrollmentBackendV0 {
+private struct ProbeTracedNativeBackend: MacInteractiveNativeStreamReplacingV1 {
     let base: ManagedSunshineEnrollmentBackend
     func prepare(operationID: UUID, authority: InteractiveNativeVideoAuthorityV0, clientCertificateDER: Data) async throws -> Data {
         let started = DispatchTime.now().uptimeNanoseconds
@@ -31,7 +31,11 @@ private struct ProbeTracedNativeBackend: InteractiveNativeVideoEnrollmentBackend
     func activate(operationID: UUID) async throws -> InteractiveNativeVideoEndpointV0 {
         let started = DispatchTime.now().uptimeNanoseconds
         defer { FileHandle.standardError.write(Data("native-managed-activate-elapsed-ms=\((DispatchTime.now().uptimeNanoseconds - started) / 1_000_000)\n".utf8)) }
-        return try await base.activate(operationID: operationID)
+        do { return try await base.activate(operationID: operationID) }
+        catch {
+            let reason = (error as? ManagedSunshineEnrollmentBackend.Failure).map { String(describing: $0) } ?? String(reflecting: type(of: error))
+            FileHandle.standardError.write(Data("native-managed-activate-failed \(reason)\n".utf8)); throw error
+        }
     }
     func isActive(operationID: UUID) async -> Bool { await base.isActive(operationID: operationID) }
     func captureEvidence(operationID: UUID) async throws -> InteractiveNativeVideoCaptureEvidenceV0? { try await base.captureEvidence(operationID: operationID) }
@@ -39,6 +43,17 @@ private struct ProbeTracedNativeBackend: InteractiveNativeVideoEnrollmentBackend
     func postInputBatch(operationID: UUID, beforeDeadlineNanoseconds: UInt64,
                         batch: @escaping @Sendable () throws -> Void) async throws {
         try await base.postInputBatch(operationID: operationID, beforeDeadlineNanoseconds: beforeDeadlineNanoseconds, batch: batch)
+    }
+    func supportsStreamContinuity(operationID: UUID) async -> Bool { await base.supportsStreamContinuity(operationID: operationID) }
+    func retainStream(operationID: UUID) async throws {
+        try await base.retainStream(operationID: operationID)
+        FileHandle.standardError.write(Data("native-managed-stream-retained\n".utf8))
+    }
+    func isStreamRetained(operationID: UUID) async -> Bool { await base.isStreamRetained(operationID: operationID) }
+    func configureRetainedReplacement(predecessorOperationID: UUID, authority: InteractiveNativeVideoAuthorityV0,
+        physicalDisplayID: UInt32, geometry: InteractiveNativeVideoContentGeometryV0, selected: MacManagedNativeSelectedCaptureV1?) async throws {
+        try await base.configureRetainedReplacement(predecessorOperationID: predecessorOperationID,
+            authority: authority, physicalDisplayID: physicalDisplayID, geometry: geometry, selected: selected)
     }
     func retire(operationID: UUID) async { await base.retire(operationID: operationID) }
 }
@@ -106,9 +121,12 @@ enum ProbeNativeFlow {
             (url, Data(SHA256.hash(data: try Data(contentsOf: url))))
         }
         let factory = MacManagedSunshineBackendFactoryV1.make(root: owned,
-            sunshine: sunshine, supervisor: supervisor, openssl: openssl, port: 58989,
+            // Keep the disposable listener and all Sunshine offset ports
+            // separate from the installed Mac host's 58989 port range.
+            sunshine: sunshine, supervisor: supervisor, openssl: openssl, port: 59089,
             listenerScope: ProcessInfo.processInfo.environment["MACCOMPANION_NATIVE_LAB_IPV4_INTERFACES"] == "1"
                 ? .ipv4Interfaces : .loopback,
+            streamContinuityEnabled: true,
             validateArtifacts: {
                 for (url, expected) in artifacts {
                     guard Data(SHA256.hash(data: try Data(contentsOf: url))) == expected else {

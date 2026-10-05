@@ -48,11 +48,20 @@ public protocol InteractiveNativeVideoEnrollmentBackendV0: Sendable {
     /// validation under a revocable permit. This is not presentation admission.
     func postInputBatch(operationID: UUID, beforeDeadlineNanoseconds: UInt64,
                         batch: @escaping @Sendable () throws -> Void) async throws
+    /// Admission is explicit, and defaults off until the full adapter exists.
+    func supportsStreamContinuity(operationID: UUID) async -> Bool
+    /// Revoke input and pause capture before returning. Keep the exact owned
+    /// certificate/process/socket resources, bounded by the original lease.
+    func retainStream(operationID: UUID) async throws
+    func isStreamRetained(operationID: UUID) async -> Bool
     /// Fence before suspending; cancel preparation/activation, reap the helper,
     /// and destroy owned credentials. Idempotent even before preparation starts.
     func retire(operationID: UUID) async
 }
 public extension InteractiveNativeVideoEnrollmentBackendV0 {
+    func supportsStreamContinuity(operationID: UUID) async -> Bool { false }
+    func retainStream(operationID: UUID) async throws { throw InteractiveNativeVideoCoordinatorFailureV0.backendUnavailable }
+    func isStreamRetained(operationID: UUID) async -> Bool { false }
     func canPostInput(operationID: UUID) async -> Bool { false }
     func admitPresentation(operationID: UUID, nativeGeneration: Int64, presentationID: UUID) async throws -> Bool { false }
     func postInputBatch(operationID: UUID, beforeDeadlineNanoseconds: UInt64,
@@ -60,6 +69,25 @@ public extension InteractiveNativeVideoEnrollmentBackendV0 {
         throw InteractiveNativeVideoCoordinatorFailureV0.backendUnavailable
     }
     func captureEvidence(operationID: UUID) async throws -> InteractiveNativeVideoCaptureEvidenceV0? { nil }
+}
+
+/// Local retained-resource capsule. It is never decoded from a peer. Every
+/// replacement still uses the existing golden proof for its new surface.
+public struct InteractiveNativeVideoRetainedEnrollmentV1: Sendable {
+    public let operationID: UUID
+    public let authority: InteractiveNativeVideoAuthorityV0
+    public let clientCertificateDER: Data
+    public let hostCertificateDER: Data
+    public let backend: any InteractiveNativeVideoEnrollmentBackendV0
+    public let handoffDeadlineMonotonicMilliseconds: UInt64
+    fileprivate init(operationID: UUID, authority: InteractiveNativeVideoAuthorityV0,
+        clientCertificateDER: Data, hostCertificateDER: Data,
+        backend: any InteractiveNativeVideoEnrollmentBackendV0,
+        handoffDeadlineMonotonicMilliseconds: UInt64) {
+        self.operationID = operationID; self.authority = authority
+        self.clientCertificateDER = clientCertificateDER; self.hostCertificateDER = hostCertificateDER
+        self.backend = backend; self.handoffDeadlineMonotonicMilliseconds = handoffDeadlineMonotonicMilliseconds
+    }
 }
 
 
@@ -70,7 +98,7 @@ public enum InteractiveNativeVideoCoordinatorFailureV0: Error, Equatable, Sendab
 /// One generation, one challenge, one backend drain. This is a local host seam;
 /// callers still need the normative authenticated primary message composition.
 public actor InteractiveNativeVideoEnrollmentCoordinatorV0 {
-    public enum Phase: Sendable { case idle, preparing, challenged, proving, active, retiring, retired }
+    public enum Phase: Sendable { case idle, preparing, challenged, proving, active, retaining, retained, retiring, retired }
     public private(set) var phase: Phase = .idle
     private let operationID = UUID()
     public let logicalWidthPoints: UInt32?
@@ -81,6 +109,11 @@ public actor InteractiveNativeVideoEnrollmentCoordinatorV0 {
     private let monotonicMilliseconds: @Sendable () -> UInt64
     private let unixMilliseconds: @Sendable () -> UInt64
     private let backend: any InteractiveNativeVideoEnrollmentBackendV0
+    private let readRetainedAuthority: @Sendable () async throws -> Bool
+    private let predecessor: InteractiveNativeVideoRetainedEnrollmentV1?
+    private var clientCertificateDER: Data?
+    private var hostCertificateDER: Data?
+    private var retentionDeadline: UInt64?
     private let initialMonotonicMilliseconds: UInt64
     private let conformanceChallenge: Data?
     private var challenge: InteractiveNativeVideoEnrollmentChallengeV0?
@@ -94,7 +127,9 @@ public actor InteractiveNativeVideoEnrollmentCoordinatorV0 {
                 unixMilliseconds: @escaping @Sendable () -> UInt64,
                 conformanceChallenge: Data? = nil,
                 logicalWidthPoints: UInt32? = nil, logicalHeightPoints: UInt32? = nil,
-                monotonicNanoseconds: @escaping @Sendable () -> UInt64 = { DispatchTime.now().uptimeNanoseconds }) {
+                monotonicNanoseconds: @escaping @Sendable () -> UInt64 = { DispatchTime.now().uptimeNanoseconds },
+                readRetainedAuthority: @escaping @Sendable () async throws -> Bool = { false },
+                predecessor: InteractiveNativeVideoRetainedEnrollmentV1? = nil) {
         self.logicalWidthPoints = logicalWidthPoints
         self.logicalHeightPoints = logicalHeightPoints
         self.monotonicNanoseconds = monotonicNanoseconds
@@ -105,6 +140,8 @@ public actor InteractiveNativeVideoEnrollmentCoordinatorV0 {
         self.unixMilliseconds = unixMilliseconds
         self.initialMonotonicMilliseconds = monotonicMilliseconds()
         self.conformanceChallenge = conformanceChallenge
+        self.readRetainedAuthority = readRetainedAuthority
+        self.predecessor = predecessor
     }
 
     public func prepare(clientCertificateDER: Data) async throws -> InteractiveNativeVideoEnrollmentPreparationV0 {
@@ -114,6 +151,16 @@ public actor InteractiveNativeVideoEnrollmentCoordinatorV0 {
             guard (1...4096).contains(clientCertificateDER.count) else {
                 throw InteractiveNativeVideoCoordinatorFailureV0.invalidMaterial
             }
+            if let predecessor {
+                guard authority.binding == predecessor.authority.binding,
+                      authority.sessionPublicKeyX963 == predecessor.authority.sessionPublicKeyX963,
+                      authority.surface != predecessor.authority.surface,
+                      authority.surface.encodedWidth == predecessor.authority.surface.encodedWidth,
+                      authority.surface.encodedHeight == predecessor.authority.surface.encodedHeight,
+                      clientCertificateDER == predecessor.clientCertificateDER else {
+                    throw InteractiveNativeVideoCoordinatorFailureV0.authorizationLost
+                }
+            }
             try await checkAuthority(expected: .preparing)
             let hostDER = try await backend.prepare(operationID: operationID,
                 authority: authority, clientCertificateDER: clientCertificateDER)
@@ -121,6 +168,11 @@ public actor InteractiveNativeVideoEnrollmentCoordinatorV0 {
             guard (1...4096).contains(hostDER.count) else {
                 throw InteractiveNativeVideoCoordinatorFailureV0.invalidMaterial
             }
+            guard predecessor == nil || hostDER == predecessor?.hostCertificateDER else {
+                throw InteractiveNativeVideoCoordinatorFailureV0.authorizationLost
+            }
+            self.clientCertificateDER = clientCertificateDER
+            self.hostCertificateDER = hostDER
             let proof = try InteractiveNativeVideoEnrollmentChallengeV0(
                 binding: authority.binding, surface: authority.surface,
                 sessionPublicKeyX963: authority.sessionPublicKeyX963,
@@ -139,6 +191,69 @@ public actor InteractiveNativeVideoEnrollmentCoordinatorV0 {
         } catch {
             await retire()
             throw error
+        }
+    }
+
+    public func supportsStreamContinuity() async -> Bool {
+        guard phase == .active else { return false }
+        let supported = await backend.supportsStreamContinuity(operationID: operationID)
+        return supported && phase == .active
+    }
+
+    /// The old exact-surface reader is checked before suspension. Once capture
+    /// is paused, the retained reader checks the original Control/key/primary
+    /// independently of a view that is about to change.
+    public func retainStream() async throws {
+        guard phase == .active, clientCertificateDER != nil, hostCertificateDER != nil else {
+            throw InteractiveNativeVideoCoordinatorFailureV0.invalidPhase
+        }
+        do {
+            try await checkAuthority(expected: .active)
+            guard await supportsStreamContinuity() else { throw InteractiveNativeVideoCoordinatorFailureV0.backendUnavailable }
+            try await checkAuthority(expected: .active)
+            phase = .retaining
+            let now = monotonicMilliseconds()
+            retentionDeadline = min(authority.binding.expiresAtMonotonicMilliseconds,
+                now > UInt64.max - 15_000 ? UInt64.max : now + 15_000)
+            try await checkRetainedAuthority(expected: .retaining)
+            try await backend.retainStream(operationID: operationID)
+            try await checkRetainedAuthority(expected: .retaining)
+            guard await backend.isStreamRetained(operationID: operationID) else {
+                throw InteractiveNativeVideoCoordinatorFailureV0.backendUnavailable
+            }
+            try await checkRetainedAuthority(expected: .retaining)
+            phase = .retained
+        } catch { await retire(); throw error }
+    }
+
+    public func retainedEnrollment() async throws -> InteractiveNativeVideoRetainedEnrollmentV1 {
+        try await checkRetainedAuthority(expected: .retained)
+        guard let clientCertificateDER, let hostCertificateDER, let retentionDeadline,
+              await backend.isStreamRetained(operationID: operationID) else {
+            throw InteractiveNativeVideoCoordinatorFailureV0.authorizationLost
+        }
+        try await checkRetainedAuthority(expected: .retained)
+        return .init(operationID: operationID, authority: authority,
+            clientCertificateDER: clientCertificateDER, hostCertificateDER: hostCertificateDER,
+            backend: backend, handoffDeadlineMonotonicMilliseconds: retentionDeadline)
+    }
+
+    /// Only the trusted bridge calls this after replacement preparation has
+    /// transferred resource ownership. It does not admit presentation or input.
+    package func relinquishRetainedEnrollment() {
+        guard phase == .retained else { return }
+        watchdog?.cancel(); watchdog = nil
+        challenge?.cancel(); challenge = nil
+        phase = .retired
+        clientCertificateDER = nil; hostCertificateDER = nil
+    }
+
+    private func checkRetainedAuthority(expected: Phase) async throws {
+        guard !Task.isCancelled, phase == expected, clockIsValid(proofDeadline: false),
+              let retentionDeadline, monotonicMilliseconds() < retentionDeadline,
+              try await readRetainedAuthority(), !Task.isCancelled, phase == expected,
+              clockIsValid(proofDeadline: false), monotonicMilliseconds() < retentionDeadline else {
+            throw InteractiveNativeVideoCoordinatorFailureV0.authorizationLost
         }
     }
 
@@ -205,9 +320,7 @@ public actor InteractiveNativeVideoEnrollmentCoordinatorV0 {
                 throw InteractiveNativeVideoCoordinatorFailureV0.backendUnavailable
             }
             try await checkAuthority(expected: .active)
-            guard let evidence = try await backend.captureEvidence(operationID: operationID) else {
-                throw InteractiveNativeVideoCoordinatorFailureV0.backendUnavailable
-            }
+            let evidence = try await waitForCaptureEvidence()
             try evidence.validate(operationID: operationID, encodedWidth: encodedWidth,
                 encodedHeight: encodedHeight, nowMonotonicNanoseconds: monotonicNanoseconds())
             try await checkAuthority(expected: .active)
@@ -224,6 +337,29 @@ public actor InteractiveNativeVideoEnrollmentCoordinatorV0 {
             await retire()
             throw error
         }
+    }
+
+    /// A client frame can precede the child's first evidence publication. An
+    /// absent observation is pending, never admission. Every await remains
+    /// fenced by the original authority, backend and Control deadline.
+    private func waitForCaptureEvidence() async throws -> InteractiveNativeVideoCaptureEvidenceV0 {
+        let deadline = ContinuousClock.now + .seconds(2)
+        repeat {
+            try Task.checkCancellation()
+            try await checkAuthority(expected: .active)
+            let evidence = try await backend.captureEvidence(operationID: operationID)
+            try await checkAuthority(expected: .active)
+            guard await backend.isActive(operationID: operationID) else {
+                throw InteractiveNativeVideoCoordinatorFailureV0.backendUnavailable
+            }
+            try await checkAuthority(expected: .active)
+            // A backend read can finish after the pending observation window.
+            // Its late sample must not turn an expired wait into admission.
+            guard ContinuousClock.now < deadline else { break }
+            if let evidence { return evidence }
+            try await Task.sleep(for: .milliseconds(25))
+        } while ContinuousClock.now < deadline
+        throw InteractiveNativeVideoCoordinatorFailureV0.backendUnavailable
     }
 
     /// Explicit Stop, disconnect, or surface replacement is terminal. All callers
@@ -243,11 +379,11 @@ public actor InteractiveNativeVideoEnrollmentCoordinatorV0 {
     }
 
     private func checkAuthority(expected: Phase, proofDeadline: Bool = false) async throws {
-        guard phase == expected, clockIsValid(proofDeadline: proofDeadline) else {
+        guard !Task.isCancelled, phase == expected, clockIsValid(proofDeadline: proofDeadline) else {
             throw InteractiveNativeVideoCoordinatorFailureV0.authorizationLost
         }
         let current = try await readAuthority()
-        guard phase == expected, current == authority, clockIsValid(proofDeadline: proofDeadline) else {
+        guard !Task.isCancelled, phase == expected, current == authority, clockIsValid(proofDeadline: proofDeadline) else {
             throw InteractiveNativeVideoCoordinatorFailureV0.authorizationLost
         }
     }
@@ -256,6 +392,8 @@ public actor InteractiveNativeVideoEnrollmentCoordinatorV0 {
         let now = monotonicMilliseconds()
         guard now >= initialMonotonicMilliseconds,
               now < authority.binding.expiresAtMonotonicMilliseconds else { return false }
+        if (phase == .preparing || phase == .challenged || phase == .proving), let predecessor,
+           now >= predecessor.handoffDeadlineMonotonicMilliseconds { return false }
         if proofDeadline, let challenge { return now < challenge.expiresAtMonotonicMilliseconds }
         return true
     }
@@ -274,8 +412,19 @@ public actor InteractiveNativeVideoEnrollmentCoordinatorV0 {
     @discardableResult public func refreshAuthority() async -> Bool {
         let expected = phase
         if expected == .retiring { await retire(); return false }
-        guard expected == .challenged || expected == .proving || expected == .active else { return false }
+        guard expected == .challenged || expected == .proving || expected == .active
+            || expected == .retaining || expected == .retained else { return false }
         do {
+            if expected == .retaining || expected == .retained {
+                try await checkRetainedAuthority(expected: expected)
+                if expected == .retained {
+                    guard await backend.isStreamRetained(operationID: operationID) else {
+                        throw InteractiveNativeVideoCoordinatorFailureV0.backendUnavailable
+                    }
+                    try await checkRetainedAuthority(expected: expected)
+                }
+                return true
+            }
             try await checkAuthority(expected: expected, proofDeadline: expected != .active)
             if expected == .active {
                 guard await backend.isActive(operationID: operationID) else {

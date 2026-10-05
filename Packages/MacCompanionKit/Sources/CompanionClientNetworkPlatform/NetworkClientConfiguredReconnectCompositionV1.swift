@@ -1,4 +1,5 @@
 import CompanionClient
+import CompanionDomain
 import CompanionInteractiveClient
 import CompanionTransport
 import CompanionWire
@@ -16,6 +17,7 @@ public enum NetworkClientReconnectRuntimeErrorV1:
 /// paired identity and route catalog are deliberately absent: the composition
 /// takes both only from `ClientReconnectConfigurationV1` on every rebuild.
 public struct NetworkClientReconnectRuntimeV1: Sendable {
+    package let sessionConsentProfile: InteractiveSessionConsentProfileV1
     package let custody: any ClientIdentityKeyCustodyV0
     package let clock: @Sendable () -> NetworkClientClockSnapshotV0
     package let nonce: NetworkClientRouteAttemptConfigurationV0.Nonce
@@ -32,6 +34,7 @@ public struct NetworkClientReconnectRuntimeV1: Sendable {
 
     public init(
         custody: any ClientIdentityKeyCustodyV0,
+        sessionConsentProfile: InteractiveSessionConsentProfileV1 = .freshUserPresence,
         clock: @escaping @Sendable () -> NetworkClientClockSnapshotV0,
         verificationQueue: DispatchQueue,
         connectionQueue: DispatchQueue,
@@ -54,6 +57,7 @@ public struct NetworkClientReconnectRuntimeV1: Sendable {
     ) {
         self.init(
             custody: custody,
+            sessionConsentProfile: sessionConsentProfile,
             clock: clock,
             nonce: Self.systemNonce,
             messageID: { WireUUID(UUID()) },
@@ -75,6 +79,7 @@ public struct NetworkClientReconnectRuntimeV1: Sendable {
 
     package init(
         custody: any ClientIdentityKeyCustodyV0,
+        sessionConsentProfile: InteractiveSessionConsentProfileV1 = .freshUserPresence,
         clock: @escaping @Sendable () -> NetworkClientClockSnapshotV0,
         nonce: @escaping NetworkClientRouteAttemptConfigurationV0.Nonce,
         messageID: @escaping NetworkClientRouteAttemptConfigurationV0.MessageID,
@@ -98,6 +103,7 @@ public struct NetworkClientReconnectRuntimeV1: Sendable {
             _ in
         }
     ) {
+        self.sessionConsentProfile = sessionConsentProfile
         self.custody = custody
         self.clock = clock
         self.nonce = nonce
@@ -134,6 +140,7 @@ public struct NetworkClientReconnectRuntimeV1: Sendable {
     ) -> NetworkClientReconnectRuntimeV1 {
         NetworkClientReconnectRuntimeV1(
             custody: custody,
+            sessionConsentProfile: sessionConsentProfile,
             clock: clock,
             nonce: nonce,
             messageID: messageID,
@@ -206,11 +213,19 @@ public enum NetworkClientConfiguredReconnectCompositionV1 {
             custody: runtime.custody,
             approvalKey: configuration.pairedHost.approvalKey
         )
-        let interactiveApprovalSigner = try
-            ClientCustodiedInteractiveApprovalSignerV0(
+        let interactiveApprovalSigner: any ClientInteractiveApprovalSigningV0
+        switch runtime.sessionConsentProfile {
+        case .freshUserPresence:
+            interactiveApprovalSigner = try ClientCustodiedInteractiveApprovalSignerV0(
                 custody: runtime.custody,
                 approvalKey: configuration.pairedHost.approvalKey
             )
+        case .trustedDevice:
+            interactiveApprovalSigner = try ClientCustodiedTrustedInteractiveSignerV1(
+                custody: runtime.custody,
+                sessionKey: configuration.pairedHost.sessionKey
+            )
+        }
         return NetworkClientRouteAttemptConfigurationV0(
             clientID: configuration.pairedHost.clientID,
             expectedHostID: configuration.pairedHost.hostID,

@@ -70,7 +70,7 @@ public struct ClientControlWorkspaceProjectionV0: Equatable, Sendable {
             mode = deviceState == .activeMonitorOnly
                 ? .grantRequired : .unavailable
             detail = deviceState == .activeMonitorOnly
-                ? "This iPhone is paired for Observe only. Remote Control must first be allowed on the Mac."
+                ? "This device was paired before remote access was included. Allow Remote Control once on the Mac."
                 : "The current device authorization cannot start Remote Control."
             diagnosticCode = "interactive.grantRequired"
             return
@@ -78,19 +78,19 @@ public struct ClientControlWorkspaceProjectionV0: Equatable, Sendable {
         switch state {
         case .inactive:
             mode = .ready
-            detail = "Starting Remote Control requires separate device approval."
+            detail = "Open your Mac desktop, or choose a display or window."
             diagnosticCode = nil
         case .requestSubmitted:
             mode = .requesting
-            detail = "Waiting for the Mac to request device approval."
+            detail = "Opening a secure session with your Mac."
             diagnosticCode = nil
         case .approvalFailed:
             mode = .rejected
-            detail = "Device approval did not complete. Review Face ID or the device passcode, then try again."
+            detail = "This device could not open the secure session. Unlock the device and try again."
             diagnosticCode = "interactive.localApprovalFailed"
         case .approvalSubmitted:
             mode = .awaitingAcceptance
-            detail = "Device approval was sent; the Mac is creating the session."
+            detail = "The Mac is starting your remote session."
             diagnosticCode = nil
         case .accepted:
             mode = .acceptedPreparingChannels

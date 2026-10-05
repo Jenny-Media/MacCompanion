@@ -9,6 +9,7 @@ import json
 import os
 from pathlib import Path
 import plistlib
+import re
 import signal
 import shutil
 import socket
@@ -22,6 +23,8 @@ import uuid
 
 from verify_agent_xpc import Probe, ROOT, source_fingerprint
 from report_simulator_run import verified_counts
+from report_native_view_transitions import diagnostic_window, surface_progress, summarize as summarize_view_transitions
+from native_diagnostic_journal import NativeDiagnosticJournal
 sys.path.insert(0, str(ROOT / 'Experiments/SunshineMoonlightIntegration'))
 from reference_build import digest, native_source_inputs
 from build_native_ios_development import verify_simulator_entitlements
@@ -180,12 +183,15 @@ def verify(build, output, simulator, resume_build=False, reuse_build_project=Fal
            native_session_hold=False, native_video_continuity=False, native_window_closure=False,
            native_window_move=False, native_window_resize=False,
            native_window_resize_restart=False, native_window_resize_rapid_stop=False,
-           native_selected_window_other_display=False, native_selected_target_static=False, native_picker_window_disappearance=False, native_window_auto_recovery=False):
+           native_selected_window_other_display=False, native_selected_target_static=False, native_picker_window_disappearance=False, native_window_auto_recovery=False, native_window_soak_transitions=20, require_stream_continuity=False):
+    assert 2 <= native_window_soak_transitions <= 200 and native_window_soak_transitions % 2 == 0
     native = native_root is not None
+    native_window_reselection = native_window_auto_recovery and not native_window_closure
     assert not native_picker_window_disappearance or (native_selected_window
         and not native_selected_window_other_display and not native_window_soak
         and not (native_window_closure or native_window_move or native_window_resize))
-    assert not native_window_auto_recovery or (native_window_resize and not native_window_resize_restart)
+    assert not native_window_auto_recovery or (
+        (native_window_resize or native_window_closure or native_window_move) and not native_window_resize_restart)
     assert not native_window_resize_restart or native_window_resize
     assert not native_window_resize_rapid_stop or native_window_resize_restart
     assert sum((native_window_closure, native_window_move, native_window_resize)) <= 1
@@ -201,6 +207,7 @@ def verify(build, output, simulator, resume_build=False, reuse_build_project=Fal
     assert not native_selected_window or native_real_targets
     assert not (native_selected_target and native_selected_window)
     assert not native_window_soak or native_selected_window
+    assert not require_stream_continuity or native_window_soak
     assert not native_selected_window_other_display or (native_selected_window and window_change is None)
     assert not native_selected_target_static or ((native_selected_target or native_selected_window)
         and not native_selected_window_other_display and window_change is None)
@@ -230,7 +237,9 @@ def verify(build, output, simulator, resume_build=False, reuse_build_project=Fal
                   for name in ['CompanionMoonlightEngine', 'OpenSSL']}
     qa = ROOT / 'Experiments/NormalNativeSimulatorQA'
     test = qa / ('PairedWorkspaceUITests.swift' if complete_pairing else 'LivePairingUITests.swift')
-    selected = ('PairedWorkspaceUITests/testNormalAppReturnsToDesktopAfterSelectedWindowResizes' if native_window_auto_recovery else
+    selected = ('PairedWorkspaceUITests/testNormalAppReturnsToDesktopAfterSelectedWindowCloses' if native_window_auto_recovery and native_window_closure else
+                'PairedWorkspaceUITests/testNormalAppReselectsWindowAfterMoveRecovery' if native_window_auto_recovery and native_window_move else
+                'PairedWorkspaceUITests/testNormalAppReselectsWindowAfterResizeRecovery' if native_window_auto_recovery else
                 'PairedWorkspaceUITests/testNormalAppRecoversDesktopWhenPickerWindowDisappears' if native_picker_window_disappearance else
                 'PairedWorkspaceUITests/testNormalAppRetiresNativeVideoWhenSelectedWindowCloses' if native_window_closure else
                 'PairedWorkspaceUITests/testNormalAppRetiresNativeVideoWhenSelectedWindowMoves' if native_window_move else
@@ -247,6 +256,8 @@ def verify(build, output, simulator, resume_build=False, reuse_build_project=Fal
     test_inputs = [test, Path(__file__)] + ([qa / 'PairedIdentityCleanup.swift', qa / 'NormalConsentBridge.swift'] if complete_pairing else [])
     if native:
         test_inputs.append(ROOT / 'scripts/native_agent_probe_support.py')
+        test_inputs.append(ROOT / 'scripts/native_diagnostic_journal.py')
+        test_inputs.append(ROOT / 'scripts/report_native_view_transitions.py')
     if native_selected_target or native_selected_window:
         test_inputs.append(qa / 'SelectedTarget.m')
     inputs = {str(p.relative_to(ROOT)): digest(p) for p in test_inputs}
@@ -340,6 +351,12 @@ def verify(build, output, simulator, resume_build=False, reuse_build_project=Fal
     selected_window_change_stop = threading.Event()
     selected_window_change_thread = None
     selected_window_change_failure = []
+    diagnostic_started = None
+    diagnostic_finished = None
+    diagnostic_journal = None
+    diagnostic_journal_report = None
+    transition_report = None
+    transport_reuse = None
     menu_reactivation_thread = None
     menu_reactivation_failure = []
     menu_reactivation = {}
@@ -401,7 +418,7 @@ def verify(build, output, simulator, resume_build=False, reuse_build_project=Fal
             assert selected_target_process.is_owned()
             ui_targets[0]['EnvironmentVariables']['MACCOMPANION_TEST_PICKER_WINDOW_CLOSE_PATH'] = str(selected_target_process.change_path)
         if native_window_soak:
-            ui_targets[0]['EnvironmentVariables']['MACCOMPANION_TEST_WINDOW_SOAK_TRANSITIONS'] = '20'
+            ui_targets[0]['EnvironmentVariables']['MACCOMPANION_TEST_WINDOW_SOAK_TRANSITIONS'] = str(native_window_soak_transitions)
         if native_session_soak:
             ui_targets[0]['EnvironmentVariables']['MACCOMPANION_TEST_NATIVE_SESSION_SOAK_COUNT'] = '10'
         if native_session_hold or native_video_continuity:
@@ -468,17 +485,36 @@ def verify(build, output, simulator, resume_build=False, reuse_build_project=Fal
             menu_reactivation_thread.start()
         run_file.write_bytes(plistlib.dumps(run))
         run_file.chmod(0o600)
+        if native:
+            def current_diagnostic_source():
+                container = Path(subprocess.check_output(['xcrun', 'simctl', 'get_app_container', simulator,
+                    'media.jenny.maccompanion.ios', 'data'], text=True, timeout=10).strip())
+                assert container.is_absolute() and f'/Devices/{simulator}/data/Containers/Data/Application/' in str(container)
+                return container / 'Library/Caches/mac-companion-runtime-diagnostics-v0.log'
+            diagnostic_journal = NativeDiagnosticJournal(
+                current_diagnostic_source(), output / 'diagnostic-journal.log',
+                resolve_source=current_diagnostic_source)
+            diagnostic_journal.start()
         with (output / 'test.log').open('w') as log:
+            diagnostic_started = time.time()
             result = subprocess.run(['xcodebuild', '-xctestrun', str(run_file), '-destination',
                 'platform=iOS Simulator,id=' + simulator, '-parallel-testing-enabled', 'NO',
                 '-collect-test-diagnostics', 'never',
                 '-only-testing:NormalLivePairingUITests/' + selected,
                 '-resultBundlePath', str(output / 'result.xcresult'), 'test-without-building'],
-                stdout=log, stderr=subprocess.STDOUT, timeout=2_400 if native_session_hold else 900 if native_window_soak or native_session_soak else 360 if native else 180)
+                stdout=log, stderr=subprocess.STDOUT,
+                timeout=2_400 if native_session_hold else max(900, native_window_soak_transitions * 20 + 300) if native_window_soak else 900 if native_session_soak else 360 if native else 180)
+            diagnostic_finished = time.time()
+        # Preserve the actual UI outcome even when evidence collection fails.
+        # A passing XCTest is still insufficient for the native evidence gate.
         summary = json.loads(subprocess.check_output(['xcrun', 'xcresulttool', 'get', 'test-results',
             'summary', '--path', str(output / 'result.xcresult')]))
         counts, passed = verified_counts(summary, result.returncode)
         passed = passed and counts['totalTestCount'] == 1
+        if diagnostic_journal is not None:
+            finished_journal, diagnostic_journal = diagnostic_journal, None
+            diagnostic_journal_report = finished_journal.finish()
+            (output / 'diagnostic-journal.json').write_text(json.dumps(diagnostic_journal_report, indent=2) + '\n')
         if native_picker_window_disappearance:
             assert selected_target_process.window_change_completed('close')
         if window_change is not None:
@@ -493,11 +529,63 @@ def verify(build, output, simulator, resume_build=False, reuse_build_project=Fal
             assert not menu_reactivation_failure, menu_reactivation_failure
             assert 'log' in menu_reactivation, 'Replacement menu evidence is missing'
         if native:
-            container = Path(subprocess.check_output(['xcrun', 'simctl', 'get_app_container', simulator,
-                'media.jenny.maccompanion.ios', 'data'], text=True).strip())
-            diagnostics = container / 'Library/Caches/mac-companion-runtime-diagnostics-v0.log'
+            diagnostics = output / 'diagnostic-journal.log'
             if diagnostics.is_file() and not diagnostics.is_symlink():
-                shutil.copy2(diagnostics, output / 'content-free-runtime-diagnostics.log')
+                assert diagnostics.stat().st_size <= 8 * 1024 * 1024
+                lines = diagnostic_window(diagnostics.read_text().splitlines(), diagnostic_started, diagnostic_finished)
+                (output / 'content-free-runtime-diagnostics.log').write_text('\n'.join(lines) + '\n')
+                transition_report = summarize_view_transitions(lines)
+                (output / 'view-transitions.json').write_text(json.dumps(transition_report, indent=2) + '\n')
+                if native_window_soak:
+                    host_lines = menu_log.read_text().splitlines()
+                    expected_switches = native_window_soak_transitions + (2 if native_surface_replacement else 0)
+                    count = lambda event: sum('event=' + event + ' ' in line or line.endswith('event=' + event) for line in lines)
+                    progress = surface_progress(lines, expected_switches + 2)
+                    progress_verified = progress['everyPresentationAdvanced']
+                    transport_reuse = {
+                        'expectedSwitches': expected_switches,
+                        'clientRetainedSwitches': count('native.surface-selection.connection-retained'),
+                        'clientVideoStarts': count('native.video.start-requested'),
+                        'clientNativeLaunches': count('native.launch.launch-response-valid'),
+                        'hostFactories': sum(line.startswith('native-managed-factory ') for line in host_lines),
+                        'hostRetains': host_lines.count('native-managed-stream-retained'),
+                        'expectedControlSessions': 2,
+                        **progress,
+                    }
+                    transport_reuse['verified'] = (passed and transition_report['counts']['succeeded'] == expected_switches
+                        and sum(value for status, value in transition_report['counts'].items() if status != 'succeeded') == 0
+                        and progress_verified
+                        and transport_reuse['clientRetainedSwitches'] == expected_switches
+                        and transport_reuse['hostRetains'] == expected_switches
+                        and all(transport_reuse[key] == 2 for key in ('clientVideoStarts', 'clientNativeLaunches', 'hostFactories')))
+                    (output / 'transport-reuse.json').write_text(json.dumps(transport_reuse, indent=2) + '\n')
+                    if require_stream_continuity and passed:
+                        assert transport_reuse['verified'], 'Ordinary switches did not retain the native transport: ' + str(transport_reuse)
+            if native_window_auto_recovery:
+                host_lines = menu_log.read_text().splitlines()
+                expected_presentations = 6 + int(native_window_reselection)
+                count = lambda event: sum('event=' + event + ' ' in line or line.endswith('event=' + event) for line in lines)
+                recovery_reuse = {
+                    'expectedRetainedSwitches': 3 + int(native_window_reselection),
+                    'clientRetainedSwitches': count('native.surface-selection.connection-retained'),
+                    'clientVideoStarts': count('native.video.start-requested'),
+                    'clientNativeLaunches': count('native.launch.launch-response-valid'),
+                    'hostFactories': sum(line.startswith('native-managed-factory ') for line in host_lines),
+                    'hostRetains': host_lines.count('native-managed-stream-retained'),
+                    'expectedControlSessions': 2,
+                    'expectedVideoStartsIncludingRecovery': 3,
+                    **surface_progress(lines, expected_presentations),
+                }
+                recovery_reuse['verified'] = (passed
+                    and transition_report['counts']['succeeded'] == 4 + int(native_window_reselection)
+                    and sum(value for status, value in transition_report['counts'].items() if status != 'succeeded') == 0
+                    and recovery_reuse['everyPresentationAdvanced']
+                    and recovery_reuse['clientRetainedSwitches'] == recovery_reuse['expectedRetainedSwitches']
+                    and recovery_reuse['hostRetains'] == recovery_reuse['expectedRetainedSwitches']
+                    and all(recovery_reuse[key] == 3 for key in ('clientVideoStarts', 'clientNativeLaunches', 'hostFactories')))
+                (output / 'recovery-transport-reuse.json').write_text(json.dumps(recovery_reuse, indent=2) + '\n')
+                if passed:
+                    assert recovery_reuse['verified'], 'Window recovery/reselection did not preserve fresh host: ' + str(recovery_reuse)
             if native_video_continuity and passed:
                 lines = (output / 'content-free-runtime-diagnostics.log').read_text().splitlines()
                 progress = [index for index, line in enumerate(lines)
@@ -525,7 +613,7 @@ def verify(build, output, simulator, resume_build=False, reuse_build_project=Fal
             assert digest(native_host_package / 'host-package.json') == native_manifest_sha
             if passed:
                 markers = menu_log.read_text().splitlines()
-                assert 'signed-simulator-control-granted' in markers
+                assert 'signed-simulator-control-paired' in markers
                 assert 'signed-simulator-control-media-active' in markers
                 if window_change is not None and not native_window_auto_recovery:
                     assert any(line.startswith('native-local-backend-failed ') for line in markers), 'Window loss did not fail the local backend'
@@ -542,7 +630,7 @@ def verify(build, output, simulator, resume_build=False, reuse_build_project=Fal
                 if native_window_resize_restart:
                     presentations += replacement_markers.count('native-local-presentation-input-admitted')
                 assert presentations == (
-                    (22 if native_window_soak else 10 if native_session_soak else 1 if native_session_hold or native_video_continuity else 4 if native_window_auto_recovery else 3 if native_window_resize_restart else 2 if window_change is not None else 3 if native_connection_loss or native_surface_replacement else 2)
+                    ((native_window_soak_transitions + 2) if native_window_soak else 10 if native_session_soak else 1 if native_session_hold or native_video_continuity else (4 + int(native_window_reselection)) if native_window_auto_recovery else 3 if native_window_resize_restart else 2 if window_change is not None else 3 if native_connection_loss or native_surface_replacement else 2)
                     + (2 if native_surface_replacement else 0) + (3 if native_background else 0)), \
                     f'Unexpected native presentations: {presentations}'
                 if window_change is None or native_window_auto_recovery:
@@ -555,6 +643,12 @@ def verify(build, output, simulator, resume_build=False, reuse_build_project=Fal
     except (Exception, KeyboardInterrupt) as error:
         failure = f'{type(error).__name__}: {error}'
     finally:
+        if diagnostic_journal is not None:
+            try:
+                diagnostic_journal_report = diagnostic_journal.finish()
+                (output / 'diagnostic-journal.json').write_text(json.dumps(diagnostic_journal_report, indent=2) + '\n')
+            except Exception as error:
+                failure = f'{failure or ""} Diagnostic journal: {error}'
         host_log_stop.set()
         selected_window_change_stop.set()
         if selected_window_change_thread is not None:
@@ -640,6 +734,10 @@ def verify(build, output, simulator, resume_build=False, reuse_build_project=Fal
     report = {'profile': 'maccompanion.normal-native-live-pairing.v1',
         'status': 'passed' if passed and cleaned and client_keys_cleaned and state_restored and failure is None else 'failed',
         'tests': counts, 'failure': failure, 'cleanupVerified': cleaned, 'hostEvidence': str(probe.evidence),
+        'diagnosticWindowUnixSeconds': {'start': diagnostic_started, 'end': diagnostic_finished},
+        'diagnosticJournal': diagnostic_journal_report,
+        'nativeViewTransitionDiagnostics': transition_report,
+        'nativeTransportReuse': transport_reuse,
         'sourceInputSHA256': source, 'hostSourceSHA256': host_source, 'uiInputs': inputs,
         'baselineReportSHA256': baseline_report_sha,
         'applicationBinarySHA256': tested_binary_sha, 'simulatorID': simulator,
@@ -653,7 +751,7 @@ def verify(build, output, simulator, resume_build=False, reuse_build_project=Fal
         'liveTLSAndPairingProofVerified': passed and failure is None, 'paired': complete_pairing and passed,
         'workspaceRestartVerified': complete_pairing and passed,
         'nativeControlRequested': native, 'nativeSessionVerified': native and passed and failure is None,
-        'nativePresentedSessions': ((22 if native_window_soak else 10 if native_session_soak else 1 if native_session_hold or native_video_continuity else 4 if native_window_auto_recovery else 3 if native_window_resize_restart else 2 if window_change is not None else 3 if native_connection_loss or native_surface_replacement else 2)
+        'nativePresentedSessions': (((native_window_soak_transitions + 2) if native_window_soak else 10 if native_session_soak else 1 if native_session_hold or native_video_continuity else (4 + int(native_window_reselection)) if native_window_auto_recovery else 3 if native_window_resize_restart else 2 if window_change is not None else 3 if native_connection_loss or native_surface_replacement else 2)
             + (2 if native_surface_replacement else 0) + (3 if native_background else 0))
             if native and passed and failure is None else 0,
         'nativeSharedDisplayPickerVerified': native_surface_replacement and passed and failure is None,
@@ -661,7 +759,7 @@ def verify(build, output, simulator, resume_build=False, reuse_build_project=Fal
         'nativeDisplayLayoutContainmentVerified': native_surface_replacement and passed and failure is None,
         'nativeCompactKeyboardBarVerified': native and (window_change is None or native_window_auto_recovery) and passed and failure is None,
         'nativeSingleStopControlVerified': native and passed and failure is None,
-        'nativeSurfaceTransitionsVerified': 20 if native_window_soak and passed and failure is None else 0,
+        'nativeSurfaceTransitionsVerified': native_window_soak_transitions if native_window_soak and passed and failure is None else 0,
         'nativeSessionStartsAndStopsVerified': 10 if native_session_soak and passed and failure is None else 0,
         'nativeSustainedMinutesVerified': (30 if native_session_hold else 1 if native_video_continuity else 0)
             if passed and failure is None else 0,
@@ -682,6 +780,7 @@ def verify(build, output, simulator, resume_build=False, reuse_build_project=Fal
         'nativeSelectedWindowMoveRecoveryVerified': native_window_move and passed and failure is None,
         'nativeSelectedWindowResizeRecoveryVerified': native_window_resize and passed and failure is None,
         'nativeSelectedWindowAutomaticDesktopRecoveryVerified': native_window_auto_recovery and passed and failure is None,
+        'nativeSelectedWindowReselectionAfterRecoveryVerified': native_window_reselection and passed and failure is None,
         'nativeSelectedWindowResizeRestartVerified': native_window_resize_restart and passed and failure is None,
         'nativeSelectedWindowResizeRapidStopVerified': native_window_resize_rapid_stop and passed and failure is None,
         'nativeReplacementMenuAdmissionVerified': native_window_resize_restart and passed and failure is None,
@@ -715,14 +814,16 @@ if __name__ == '__main__':
                         help='Close the owned disposable Window after inventory, then verify acknowledged Desktop recovery')
     parser.add_argument('--native-selected-target-static', action='store_true',
                         help='Keep the disposable selected App/Window static to exercise a typical idle interface')
-    parser.add_argument('--native-window-soak', action='store_true', help='Repeat 20 selected Window/Desktop transitions in one normal Control journey')
+    parser.add_argument('--native-window-soak', action='store_true', help='Repeat selected Window/Desktop transitions in one normal Control journey')
+    parser.add_argument('--native-window-soak-transitions', type=int, default=20, help='Even switch count from 2 to 200; requires --native-window-soak')
+    parser.add_argument('--require-stream-continuity', action='store_true', help='Require retained switch counts and only one native launch/host per Control session')
     parser.add_argument('--native-session-soak', action='store_true', help='Run ten normal Control start/Stop journeys with fresh video and input')
     parser.add_argument('--native-session-hold', action='store_true', help='Keep one normal Control journey active for 30 minutes with continued video and input')
     parser.add_argument('--native-video-continuity', action='store_true', help='Keep one normal Control journey active for one minute and require ongoing local video-frame progress')
     parser.add_argument('--native-window-closure', action='store_true', help='Close the disposable selected Window after native presentation and require Control retirement')
     parser.add_argument('--native-window-move', action='store_true', help='Move the disposable selected Window after native presentation and require fail-closed recovery')
     parser.add_argument('--native-window-resize', action='store_true', help='Resize the disposable selected Window after native presentation and require fail-closed recovery')
-    parser.add_argument('--native-window-auto-recovery', action='store_true', help='Require one fresh Desktop replacement within the current Control session after resizing')
+    parser.add_argument('--native-window-auto-recovery', action='store_true', help='Require one fresh Desktop replacement within the current Control session after selected-window resize, closure or move')
     parser.add_argument('--native-window-resize-restart', action='store_true', help='After resizing, replace the disposable Mac menu and require a sustained fresh Control stream')
     parser.add_argument('--native-window-resize-rapid-stop', action='store_true', help='Stop promptly after restarted input enables and require clean backend retirement')
     args = parser.parse_args()
@@ -738,4 +839,4 @@ if __name__ == '__main__':
                         args.native_video_continuity, args.native_window_closure,
                         args.native_window_move, args.native_window_resize,
                         args.native_window_resize_restart, args.native_window_resize_rapid_stop,
-                        args.native_selected_window_other_display, args.native_selected_target_static, args.native_picker_window_disappearance, args.native_window_auto_recovery) else 1)
+                        args.native_selected_window_other_display, args.native_selected_target_static, args.native_picker_window_disappearance, args.native_window_auto_recovery, args.native_window_soak_transitions, args.require_stream_continuity) else 1)

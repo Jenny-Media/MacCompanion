@@ -4,6 +4,15 @@ import CompanionWire
 import CompanionInteractiveWire
 
 final class InteractiveNativeVideoMessagesV0Tests: XCTestCase {
+    private func indexed(_ path: String) throws -> Data {
+        var root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+        while !FileManager.default.fileExists(atPath: root.appendingPathComponent("spec/fixtures/manifest.json").path) {
+            let parent = root.deletingLastPathComponent(); guard parent != root else { throw CocoaError(.fileNoSuchFile) }; root = parent
+        }
+        let index = try JSONSerialization.jsonObject(with: Data(contentsOf: root.appendingPathComponent("spec/fixtures/manifest.json"))) as! [String: Any]
+        XCTAssertEqual((index["fixtures"] as! [[String: Any]]).filter { $0["path"] as? String == path }.count, 1)
+        return try Data(contentsOf: root.appendingPathComponent("spec/fixtures/" + path))
+    }
     private func fixture(_ name: String) throws -> Data {
         var root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
         while !FileManager.default.fileExists(atPath: root.appendingPathComponent("spec/fixtures/manifest.json").path) {
@@ -73,5 +82,41 @@ final class InteractiveNativeVideoMessagesV0Tests: XCTestCase {
         XCTAssertEqual(preparation.signingInput.base64EncodedString(), challenge.body.signingInputBase64)
         XCTAssertEqual(preparation.hostChallenge.count, 32)
         XCTAssertEqual(preparation.expiresAtUnixMilliseconds - preparation.issuedAtUnixMilliseconds, 15_000)
+    }
+
+    func testIndexedContinuityRecordsAndLiteralTrueAdmission() throws {
+        let fixture = try JSONSerialization.jsonObject(with: indexed("native-stream-continuity-v0.1.json")) as! [String: Any]
+        let records = fixture["wireRecords"] as! [String: [String: Any]]
+        XCTAssertEqual(records.count, 6)
+        for (name, record) in records {
+            let source = try JSONSerialization.data(withJSONObject: record)
+            XCTAssertEqual(try JSONSerialization.jsonObject(with: decode(name, source)) as! NSDictionary, record as NSDictionary)
+            if let field = ["ready": "streamContinuity", "cancel": "retainStream", "cancelled": "streamRetained", "enroll-request": "streamContinuity"][name] {
+                for invalid: Any in [false, NSNull(), 1, "true"] {
+                    var modified = record, body = record["body"] as! [String: Any]
+                    body[field] = invalid; modified["body"] = body
+                    XCTAssertThrowsError(try decode(name, JSONSerialization.data(withJSONObject: modified)))
+                }
+                var omitted = record, body = record["body"] as! [String: Any]
+                body.removeValue(forKey: field); omitted["body"] = body
+                if name == "enroll-request" {
+                    XCTAssertThrowsError(try decode(name, JSONSerialization.data(withJSONObject: omitted)))
+                    body.removeValue(forKey: "previousFence"); omitted["body"] = body
+                }
+                _ = try decode(name, JSONSerialization.data(withJSONObject: omitted))
+            }
+        }
+        var request = records["enroll-request"]!, body = request["body"] as! [String: Any]
+        let next = body["fence"] as! [String: Any]
+        for key in ["interactiveSessionID", "authorizationEpoch", "negotiationID", "peerGeneration"] {
+            var previous = body["previousFence"] as! [String: Any]
+            previous[key] = key == "interactiveSessionID" ? "018f6000-0000-7000-8000-000000000010" :
+                key == "authorizationEpoch" ? 5 : next[key]!
+            body["previousFence"] = previous; request["body"] = body
+            XCTAssertThrowsError(try decode("enroll-request", JSONSerialization.data(withJSONObject: request)), key)
+            body = records["enroll-request"]!["body"] as! [String: Any]
+        }
+        body["previousFence"] = NSNull(); request["body"] = body
+        XCTAssertThrowsError(try decode("enroll-request", JSONSerialization.data(withJSONObject: request)))
     }
 }

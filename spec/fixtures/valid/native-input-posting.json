@@ -80,6 +80,50 @@
       "text": "hello",
       "modifierMask": 8,
       "omitted": true
+    },
+    {
+      "text": "a",
+      "modifierMask": 0,
+      "allowsUnicodeText": false,
+      "physicalKeys": [
+        {
+          "usage": 4,
+          "modifierMask": 0
+        }
+      ]
+    },
+    {
+      "text": "C!",
+      "modifierMask": 0,
+      "allowsUnicodeText": false,
+      "physicalKeys": [
+        {
+          "usage": 6,
+          "modifierMask": 2
+        },
+        {
+          "usage": 30,
+          "modifierMask": 2
+        }
+      ]
+    },
+    {
+      "text": "aé",
+      "modifierMask": 0,
+      "allowsUnicodeText": false,
+      "omitted": true
+    },
+    {
+      "text": "你好",
+      "modifierMask": 0,
+      "allowsUnicodeText": false,
+      "omitted": true
+    },
+    {
+      "text": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "modifierMask": 0,
+      "allowsUnicodeText": false,
+      "omitted": true
     }
   ],
   "pausedResetCases": [

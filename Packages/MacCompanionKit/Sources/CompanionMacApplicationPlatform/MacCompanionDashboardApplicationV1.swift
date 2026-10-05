@@ -324,6 +324,7 @@ public final class MacCompanionDashboardApplicationV1 {
     public convenience init(
         interactiveIndicator: MacInteractiveActivityIndicatorV1,
         agentBuildLifetime: MacAuthenticatedAgentBuildLifetimeV0 = .init(),
+        desktopEngine: MacInteractiveDesktopEngineV1 = .nativeCapture,
         nativeBackendFactory: MacInteractiveNativeBackendFactoryV1? = nil
     ) {
         let displaySelection = try?
@@ -332,7 +333,8 @@ public final class MacCompanionDashboardApplicationV1 {
            let composition = try?
             MacInteractiveControlRuntimeCompositionV1.make(
                 indicator: interactiveIndicator,
-                displaySelection: displaySelection
+                displaySelection: displaySelection,
+                engine: desktopEngine
             ) {
             self.init(
                 interactiveRuntime: composition.runtime,
@@ -348,7 +350,8 @@ public final class MacCompanionDashboardApplicationV1 {
                     }
                     return try? MacInteractiveControlRuntimeCompositionV1.make(
                         indicator: interactiveIndicator,
-                        displaySelection: displaySelection
+                        displaySelection: displaySelection,
+                        engine: desktopEngine
                     )
                 }
             )
@@ -369,7 +372,8 @@ public final class MacCompanionDashboardApplicationV1 {
                     }
                     return try? MacInteractiveControlRuntimeCompositionV1.make(
                         indicator: interactiveIndicator,
-                        displaySelection: displaySelection
+                        displaySelection: displaySelection,
+                        engine: desktopEngine
                     )
                 }
             )

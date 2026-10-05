@@ -13,11 +13,10 @@ public struct ClientPrimaryWorkspaceViewV0: View {
     @StateObject private var liveControl:
         ClientPrimaryLiveControlCoordinatorV0
     @State private var liveControlPresented = false
-    @State private var isRefreshingStatus = false
-    private let onSelectAction: (CapabilityDiscoveryDescriptorV1) -> Void
     private let onCommandFailure:
         @MainActor @Sendable (any Error) -> Void
     private let onReconnect: @MainActor @Sendable () async -> Void
+    private let onShowMacLibrary: @MainActor @Sendable () async -> Void
 
     public init(
         macName: String,
@@ -28,6 +27,7 @@ public struct ClientPrimaryWorkspaceViewV0: View {
             CapabilityDiscoveryDescriptorV1
         ) -> Void,
         onReconnect: @escaping @MainActor @Sendable () async -> Void = {},
+        onShowMacLibrary: @escaping @MainActor @Sendable () async -> Void = {},
         onCommandFailure: @escaping @MainActor @Sendable
             (any Error) -> Void = { _ in }
     ) {
@@ -43,34 +43,19 @@ public struct ClientPrimaryWorkspaceViewV0: View {
             )
         } ?? ClientPrimaryLiveControlCoordinatorV0(roles: interactiveRoles, failure: onCommandFailure)
         _liveControl = StateObject(wrappedValue: coordinator)
-        self.onSelectAction = onSelectAction
         self.onReconnect = onReconnect
+        self.onShowMacLibrary = onShowMacLibrary
         self.onCommandFailure = onCommandFailure
     }
 
     public var body: some View {
         NavigationStack {
             List {
-                Section("Observe") {
-                    NavigationLink("Mac Status") {
-                        ClientObserveViewV0(
-                            projection: model.projection.observe,
-                            isRefreshingStatus: isRefreshingStatus,
-                            onRefreshStatus: refreshStatus,
-                            onLoadActivity: loadActivity,
-                            onLoadOlderActivity: loadActivity,
-                            onRecordStudyJob: { category in
-                                _ = try await model.recordObserveStudyJob(
-                                    category: category
-                                )
-                            },
-                            onCommandFailure: onCommandFailure
-                        )
-                    }
+                Section("Connection") {
                     Label(
                         model.projection.connected
                             ? "Authenticated connection"
-                            : "Last-known information only",
+                            : "Mac disconnected",
                         systemImage: model.projection.connected
                             ? "checkmark.shield"
                             : "wifi.exclamationmark"
@@ -83,16 +68,7 @@ public struct ClientPrimaryWorkspaceViewV0: View {
                     }
                 }
 
-                Section("Act") {
-                    NavigationLink("Approved Actions") {
-                        approvedActionsDestination
-                    }
-                    Text("Approved Actions use bounded grants and do not start Remote Control.")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                }
-
-                Section("Control") {
+                Section("Remote Control") {
                     controlEntry
                     Text(model.projection.control.detail)
                         .font(.footnote)
@@ -100,6 +76,14 @@ public struct ClientPrimaryWorkspaceViewV0: View {
                 }
             }
             .navigationTitle(macName)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("My Macs", systemImage: "desktopcomputer") {
+                        Task { await onShowMacLibrary() }
+                    }
+                    .accessibilityIdentifier("my-macs")
+                }
+            }
             .navigationDestination(isPresented: $liveControlPresented) {
                 liveControlDestination
             }
@@ -130,53 +114,6 @@ public struct ClientPrimaryWorkspaceViewV0: View {
             liveControl.closeLocalProduct()
             liveControlPresented = false
         }
-    }
-
-    @ViewBuilder
-    private var approvedActionsDestination: some View {
-        if let catalog = model.projection.approvedActions {
-            ClientApprovedActionsViewV1(
-                macName: macName,
-                catalog: catalog,
-                onSelect: onSelectAction,
-                onReload: reloadActions
-            )
-        } else {
-            ContentUnavailableView(
-                "Approved Actions unavailable",
-                systemImage: "checklist.unchecked",
-                description: Text(
-                    model.projection.connected
-                        ? "Reload the authenticated granted-action catalog."
-                        : "Reconnect to load actions granted by this Mac."
-                )
-            )
-            .navigationTitle("Approved Actions")
-            .toolbar {
-                if model.projection.connected {
-                    Button("Reload", systemImage: "arrow.clockwise") {
-                        reloadActions()
-                    }
-                }
-            }
-        }
-    }
-
-    private func refreshStatus() {
-        guard !isRefreshingStatus else { return }
-        isRefreshingStatus = true
-        perform {
-            defer { isRefreshingStatus = false }
-            try await model.refreshStatus()
-        }
-    }
-
-    private func loadActivity() {
-        perform { try await model.loadNextActivityPage() }
-    }
-
-    private func reloadActions() {
-        perform { try await model.reloadApprovedActions() }
     }
 
     @ViewBuilder

@@ -165,6 +165,17 @@ actor ProbeSimulatorMenu {
                 decidedAtUnixMilliseconds: ProbePairingClient.wall()))
             guard receipt.storedGrantIDs == [NativeAudioMuteCapabilityV1.capabilityID] else { throw LabError.unauthorized }
             emit("signed-simulator-act-granted")
+        case "journey-admit-paired-control":
+            // The normal MVP paired device already has the durable desktop
+            // grant. Publish only visible session admission; no grant mutation.
+            guard deviceID != nil else { throw LabError.unauthorized }
+            let current = try await status()
+            guard current.interactiveControlGranted else { throw LabError.unauthorized }
+            let admission = try LocalInteractiveAdmissionPublicationV1(commandID: UUID(),
+                menuAppGeneration: interactive.effects.menuGeneration, revision: 1,
+                selectedDisplayID: interactive.effects.displayID)
+            try (await menu.publishInteractiveAdmission(admission)).validate(against: admission)
+            emit("signed-simulator-control-paired")
         case "journey-grant-control", "journey-grant-control-observe":
             guard deviceID != nil else { throw LabError.unauthorized }
             let review = try await menu.makeInteractiveControlGrantReview(.init(
@@ -228,7 +239,8 @@ actor ProbeSimulatorMenu {
         // so the UI test can verify drainage and request its signed reopen.
         guard networkClosed || snapshot.networkState == .listening else { throw LabError.unauthorized }
         if action == "journey-grant-control" || action == "journey-grant-control-observe"
-            || action == "journey-reactivate-control-admission" {
+            || action == "journey-reactivate-control-admission"
+            || action == "journey-admit-paired-control" {
             guard snapshot.interactiveControlGranted else { throw LabError.unauthorized }
         }
         let runtime = await interactive.simulatorSnapshot()

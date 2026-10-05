@@ -39,6 +39,94 @@ private final class NativeOwnerReference {
 }
 
 @MainActor
+private final class SuspendedNativeSelectionProbe {
+    var entered: (() -> Void)?
+    private var reply: CheckedContinuation<Bool, Never>?
+    func check() async -> Bool {
+        await withCheckedContinuation { continuation in
+            reply = continuation
+            entered?()
+        }
+    }
+    func complete(_ supported: Bool) {
+        let pending = reply; reply = nil
+        pending?.resume(returning: supported)
+    }
+}
+
+@MainActor
+final class NativeSurfaceSelectionPreflightTests: XCTestCase {
+    func testRecoveryReservationRejectsBothRetainedAndReplacementPaths() async throws {
+        for supported in [true, false] {
+            let probe = SuspendedNativeSelectionProbe()
+            let started = expectation(description: "Capability probe suspended")
+            probe.entered = { started.fulfill() }
+            var recoveryBusy = false, rendererReady = true
+            var retained = 0, replaced = 0
+            let selection = Task { @MainActor in
+                let result = try await UIKitClientNativeSurfaceSelectionPreflightV0.canRetain(
+                    supportsStreamContinuity: { await probe.check() },
+                    rendererReady: { rendererReady }, selectionCurrent: { !recoveryBusy })
+                if result { retained += 1 } else { replaced += 1 }
+            }
+            await fulfillment(of: [started], timeout: 2)
+            // Recovery publishes busy while its primary refresh is suspended;
+            // the surface-transition flag has not been reserved yet.
+            recoveryBusy = true; rendererReady = false
+            probe.complete(supported)
+            do { try await selection.value; XCTFail("Recovery must own both selection paths") }
+            catch { XCTAssertTrue(error is CancellationError) }
+            XCTAssertEqual(retained, 0); XCTAssertEqual(replaced, 0)
+        }
+    }
+
+    func testCancellationOrOwnerChangeDuringProbeCannotSelect() async throws {
+        for cancelTask in [true, false] {
+            let probe = SuspendedNativeSelectionProbe()
+            let started = expectation(description: "Capability probe suspended")
+            probe.entered = { started.fulfill() }
+            var current = true
+            let selection = Task { @MainActor in
+                try await UIKitClientNativeSurfaceSelectionPreflightV0.canRetain(
+                    supportsStreamContinuity: { await probe.check() },
+                    rendererReady: { true }, selectionCurrent: { current })
+            }
+            await fulfillment(of: [started], timeout: 2)
+            if cancelTask { selection.cancel() } else { current = false }
+            probe.complete(true)
+            do { _ = try await selection.value; XCTFail("Suspended selection lost its owner") }
+            catch { XCTAssertTrue(error is CancellationError) }
+        }
+    }
+
+    func testDisconnectedRendererWithoutCompetingRecoveryUsesReplacement() async throws {
+        let probe = SuspendedNativeSelectionProbe()
+        let started = expectation(description: "Capability probe suspended")
+        probe.entered = { started.fulfill() }
+        var rendererReady = true
+        let selection = Task { @MainActor in
+            try await UIKitClientNativeSurfaceSelectionPreflightV0.canRetain(
+                supportsStreamContinuity: { await probe.check() },
+                rendererReady: { rendererReady }, selectionCurrent: { true })
+        }
+        await fulfillment(of: [started], timeout: 2)
+        rendererReady = false; probe.complete(true)
+        let retained = try await selection.value
+        XCTAssertFalse(retained)
+    }
+
+    func testHealthyOrUnsupportedPeerKeepsItsExistingPath() async throws {
+        for supported in [true, false] {
+            var probes = 0
+            let retained = try await UIKitClientNativeSurfaceSelectionPreflightV0.canRetain(
+                supportsStreamContinuity: { probes += 1; return supported },
+                rendererReady: { true }, selectionCurrent: { true })
+            XCTAssertEqual(retained, supported); XCTAssertEqual(probes, 1)
+        }
+    }
+}
+
+@MainActor
 final class MoonlightNativeVideoOwnerTests: XCTestCase {
     private func binding() throws -> InteractiveNativeVideoBindingV0 {
         try .init(hostID: UUID(), hostFingerprint: Data(repeating: 1, count: 32),
@@ -124,7 +212,7 @@ final class MoonlightNativeVideoOwnerTests: XCTestCase {
         XCTAssertFalse(owner.allowsInput)
     }
 
-    func testCurrentFrameDisplaysButCannotEnableKeyboardOrInput() async throws {
+    func testCurrentFrameDisplaysButCannotAdmitRemoteInput() async throws {
         let current = try binding(), driver = ControlledNativeDriver(), surface = surface()
         let owner = try UIKitClientNativeVideoOwnerV0(binding: current, descriptor: descriptor(),
             surface: surface, driver: driver, current: { current }, nowMonotonicMilliseconds: { 10 }, changed: { _, _ in })
@@ -136,7 +224,12 @@ final class MoonlightNativeVideoOwnerTests: XCTestCase {
         XCTAssertEqual(owner.lifecycle.phase, .displaying)
         XCTAssertEqual(driver.view?.isHidden, false)
         surface.setInputEnabled(true)
-        XCTAssertFalse(surface.isUserInteractionEnabled)
+        XCTAssertTrue(surface.isUserInteractionEnabled, "Local keyboard container remains available")
+        XCTAssertTrue(surface.hasUnverifiedExternalVideo)
+        XCTAssertFalse(owner.allowsInput)
+        XCTAssertTrue(surface.gestureRecognizers?.allSatisfy { !$0.isEnabled } == true)
+        surface.sendKeyboardAction(.escape)
+        XCTAssertNil(surface.window, "This inert test has no presented UIWindow")
         surface.toggleSoftwareKeyboard()
         XCTAssertFalse(surface.isSoftwareKeyboardVisible)
         await owner.close()

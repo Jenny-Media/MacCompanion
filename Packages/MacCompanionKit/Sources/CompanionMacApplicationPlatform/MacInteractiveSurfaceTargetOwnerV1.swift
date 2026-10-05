@@ -256,7 +256,8 @@ public actor MacInteractiveSurfaceTargetOwnerV1 {
 
     public func resolve(
         _ request: LocalInteractiveSurfaceResolveCommandV1,
-        nowMonotonicMilliseconds: Int64
+        nowMonotonicMilliseconds: Int64,
+        retainedCanvas: (width: Int, height: Int)? = nil
     ) async throws -> AdaptiveSurfaceDescriptor {
         guard let active, pending == nil, taken == nil,
               active.lease != nil,
@@ -317,8 +318,13 @@ public actor MacInteractiveSurfaceTargetOwnerV1 {
                     nowMonotonicMilliseconds: nowMonotonicMilliseconds)
             }
         }
-        pending = resolved
-        return resolved.descriptor
+        if let canvas = retainedCanvas, resolved.descriptor.kind != .focusedRegion {
+            guard canvas.width == Int(active.descriptor.encodedWidth), canvas.height == Int(active.descriptor.encodedHeight) else {
+                throw MacInteractiveSurfaceTargetOwnerErrorV1.bindingMismatch
+            }
+            pending = try Self.withRetainedCanvas(resolved, width: canvas.width, height: canvas.height)
+        } else { pending = resolved }
+        return pending!.descriptor
     }
 
     public func takePreparedSurface(
@@ -409,22 +415,54 @@ public actor MacInteractiveSurfaceTargetOwnerV1 {
               active.descriptor.rotation == scope.rotation,
               nowMonotonicNanoseconds < lease.expiresAtMonotonicNanoseconds,
               nowMonotonicNanoseconds / 1_000_000 < scope.expiresAtMonotonicMilliseconds else {
+            if let reason = nativeSelectionAdmissionRejection(scope: scope, now: nowMonotonicNanoseconds) {
+                MacNativeFailureDiagnosticsV1.recordSelectionRejection(reason)
+            }
             throw LocalInteractiveNativeBackendErrorV1.unavailable
         }
         if active.descriptor.kind == .desktop {
             guard active.nativeCaptureSurface == nil || (active.nativeCaptureSurface?.descriptor == active.descriptor
                 && active.nativeCaptureSurface?.localActivationTarget == nil) else {
-                throw LocalInteractiveNativeBackendErrorV1.unavailable
+                throw MacNativeFailureDiagnosticsV1.selectionUnavailable(.desktopSurfaceMismatch)
             }
             return nil
         }
         guard active.descriptor.kind == .application || active.descriptor.kind == .window,
               let surface = active.nativeCaptureSurface,
               surface.descriptor == active.descriptor else {
+            let reason: MacNativeFailureDiagnosticsV1.SelectionRejection =
+                active.descriptor.kind != .application && active.descriptor.kind != .window ? .unsupportedKind
+                : active.nativeCaptureSurface == nil ? .selectedSurfaceAbsent : .selectedDescriptorMismatch
+            MacNativeFailureDiagnosticsV1.recordSelectionRejection(reason)
             throw LocalInteractiveNativeBackendErrorV1.unavailable
         }
         _ = try MacInteractiveNativeCaptureGeometryV1.readSelectedSurface(surface, scope: scope)
         return surface
+    }
+
+    /// Called only after the unchanged admission guard failed. All comparisons
+    /// are actor-local and synchronous; only the closed check name is logged.
+    private func nativeSelectionAdmissionRejection(scope: LocalInteractiveNativeBackendScopeV1,
+        now: UInt64) -> MacNativeFailureDiagnosticsV1.SelectionRejection? {
+        if pending != nil { return .pendingSelection }
+        if taken != nil { return .uncommittedSelection }
+        guard let active else { return .activeAbsent }
+        guard let lease = active.lease else { return .leaseAbsent }
+        if lease.hostID != scope.hostID { return .hostMismatch }
+        if lease.interactiveSessionID != scope.interactiveSessionID { return .sessionMismatch }
+        if lease.authorizationEpoch.rawValue != UInt64(scope.authorizationEpoch) { return .authorizationMismatch }
+        if lease.selectedDisplayID != scope.selectedDisplayID { return .displayMismatch }
+        if lease.surfaceID != scope.surfaceID { return .surfaceMismatch }
+        if lease.surfaceRevision.rawValue != UInt64(scope.surfaceRevision) { return .surfaceRevisionMismatch }
+        if lease.coordinateRevision.rawValue != UInt64(scope.coordinateSpaceRevision) { return .coordinateRevisionMismatch }
+        if Int(active.descriptor.encodedWidth) != scope.encodedWidth { return .encodedWidthMismatch }
+        if Int(active.descriptor.encodedHeight) != scope.encodedHeight { return .encodedHeightMismatch }
+        if active.descriptor.logicalWidthPoints != scope.logicalWidthPoints { return .logicalWidthMismatch }
+        if active.descriptor.logicalHeightPoints != scope.logicalHeightPoints { return .logicalHeightMismatch }
+        if active.descriptor.rotation != scope.rotation { return .rotationMismatch }
+        if now >= lease.expiresAtMonotonicNanoseconds { return .leaseExpired }
+        if now / 1_000_000 >= scope.expiresAtMonotonicMilliseconds { return .controlExpired }
+        return nil
     }
 
     /// Retained ScreenCaptureKit objects remain entirely in the menu. The
@@ -584,6 +622,24 @@ public actor MacInteractiveSurfaceTargetOwnerV1 {
         lastFocus = nil
         lastFocusGlobalBounds = nil
         issuedFocusTokens.removeAll(keepingCapacity: false)
+    }
+
+    private static func withRetainedCanvas(_ source: ScreenCaptureKitResolvedSurfaceV0, width: Int, height: Int) throws -> ScreenCaptureKitResolvedSurfaceV0 {
+        let value = source.descriptor
+        let descriptor = try AdaptiveSurfaceDescriptor(interactiveSessionID: value.interactiveSessionID,
+            authorizationEpoch: value.authorizationEpoch, surfaceID: value.surfaceID, kind: value.kind,
+            surfaceRevision: value.surfaceRevision, coordinateSpaceRevision: value.coordinateSpaceRevision,
+            applicationToken: value.applicationToken, windowToken: value.windowToken, parentSurfaceID: value.parentSurfaceID,
+            fallbackSurfaceID: value.fallbackSurfaceID, encodedWidth: UInt16(width), encodedHeight: UInt16(height),
+            logicalWidthPoints: value.logicalWidthPoints, logicalHeightPoints: value.logicalHeightPoints, rotation: value.rotation,
+            interactionClasses: Set(value.interactionClasses), privacyProfile: value.privacyProfile,
+            metadataFields: Set(value.metadataFields), focus: value.focus,
+            createdAtMonotonicMilliseconds: value.createdAtMonotonicMilliseconds, expiresAtMonotonicMilliseconds: value.expiresAtMonotonicMilliseconds)
+        let profile = try ScreenCaptureKitCaptureProfileV0(width: width, height: height,
+            framesPerSecond: source.profile.framesPerSecond, queueDepth: source.profile.queueDepth)
+        return .init(filter: source.filter, focusedRegionFilter: source.focusedRegionFilter, descriptor: descriptor,
+            profile: profile, sourceRect: source.sourceRect, focusedRegionSourceGlobalBounds: source.focusedRegionSourceGlobalBounds,
+            inputBounds: source.inputBounds, inputBackingScaleFactor: source.inputBackingScaleFactor, localActivationTarget: source.localActivationTarget)
     }
 
     private func makeDesktopReplacement(

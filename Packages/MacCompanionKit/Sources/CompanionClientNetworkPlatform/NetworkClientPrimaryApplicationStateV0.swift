@@ -147,6 +147,7 @@ public final class NetworkClientPrimaryApplicationStateV0:
             NetworkClientAuthenticatedRouteClassV1?
         var observeChannel: ClientObserveChannelV0?
         var actChannel: ClientActChannelV1?
+        var desktopTunnel: NetworkClientDesktopTunnelV1?
         var controlChannel: ClientInteractivePrimaryChannelV0?
         var observedStatus: ClientObservedStatusV0?
         var latestAuditPage: AuditListResponseBodyV1?
@@ -305,6 +306,11 @@ public final class NetworkClientPrimaryApplicationStateV0:
         continuation.yield(makeSnapshot(storage))
     }
 
+    public func currentDesktopTunnel() -> NetworkClientDesktopTunnelV1? {
+        lock.lock(); defer { lock.unlock() }
+        return storage.session == nil ? nil : storage.desktopTunnel
+    }
+
     public func refreshStatus() async throws {
         let channel = try currentObserveChannel()
         try await channel.requestStatus()
@@ -456,6 +462,7 @@ public final class NetworkClientPrimaryApplicationStateV0:
         storage.authenticatedRouteClass = value.authenticatedRouteClass
         storage.observeChannel = value.observeChannel
         storage.actChannel = value.actChannel
+        storage.desktopTunnel = value.desktopTunnel
         storage.controlChannel = value.controlChannel
         storage.observedStatus = nil
         storage.latestAuditPage = nil
@@ -486,6 +493,7 @@ public final class NetworkClientPrimaryApplicationStateV0:
         storage.observeChannel = nil
         storage.actChannel = nil
         storage.controlChannel = nil
+        storage.desktopTunnel = nil
         storage.statusError = nil
         storage.auditError = nil
         storage.latestObserveErrorRequest = nil

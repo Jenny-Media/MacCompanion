@@ -72,7 +72,7 @@ import Testing
 }
 
 @Test func nativeSurfaceRecoveryRequiresCurrentForegroundControlAndOriginalDeadline() {
-    for kind in [InteractiveSurfaceKind.application, .window] {
+    for kind in [InteractiveSurfaceKind.desktop, .application, .window] {
         for failure in [InteractiveNativeVideoFailureV0.connectionFailed, .incompatibleFrame, .authorizationLost] {
             #expect(ClientNativeSurfaceRecoveryPolicyV0.permitsDesktopRecovery(kind: kind, failure: failure,
                 primaryCurrent: true, foreground: true, now: 10, expiry: 20))
@@ -88,6 +88,37 @@ import Testing
         #expect(!ClientNativeSurfaceRecoveryPolicyV0.permitsDesktopRecovery(kind: .window, failure: failure,
             primaryCurrent: true, foreground: true, now: 10, expiry: 20))
     }
-    #expect(!ClientNativeSurfaceRecoveryPolicyV0.permitsDesktopRecovery(kind: .desktop, failure: .connectionFailed,
+    #expect(!ClientNativeSurfaceRecoveryPolicyV0.permitsDesktopRecovery(kind: .focusedRegion, failure: .connectionFailed,
         primaryCurrent: true, foreground: true, now: 10, expiry: 20))
+}
+
+@Test func nativeRecoveryBudgetCannotLoopAcrossReplacementDescriptors() {
+    var budget = ClientNativeSurfaceRecoveryBudgetV1()
+    budget.presented(now: 1_000)
+    let first = budget.take(now: 1_100)
+    #expect(first)
+    budget.presented(now: 1_200)
+    let immediateRetry = budget.take(now: 1_300)
+    #expect(!immediateRetry)
+    budget.presented(now: 2_000)
+    let healthyRetry = budget.take(now: 32_000)
+    #expect(healthyRetry)
+    let repeatedRetry = budget.take(now: 32_001)
+    #expect(!repeatedRetry)
+    budget.userSelectedView()
+    let userRetry = budget.take(now: 32_002)
+    #expect(userRetry)
+}
+
+@Test func backgroundAndClockRollbackCannotRearmRecovery() {
+    var budget = ClientNativeSurfaceRecoveryBudgetV1()
+    let first = budget.take(now: 1_000)
+    #expect(first)
+    budget.presented(now: 2_000)
+    budget.interrupted()
+    let backgroundRetry = budget.take(now: 40_000)
+    #expect(!backgroundRetry)
+    budget.presented(now: 50_000)
+    let rollbackRetry = budget.take(now: 49_000)
+    #expect(!rollbackRetry)
 }

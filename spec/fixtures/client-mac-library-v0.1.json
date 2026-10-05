@@ -1,0 +1,9 @@
+{
+  "profile": "maccompanion.client-mac-library.v0.1",
+  "cases": [
+    {"name": "empty", "pairedCount": 0, "pendingRemovalCount": 0, "visibleCount": 0},
+    {"name": "two-independent-macs", "pairedCount": 2, "pendingRemovalCount": 0, "visibleCount": 2},
+    {"name": "interrupted-forget", "pairedCount": 2, "pendingRemovalCount": 1, "visibleCount": 1},
+    {"name": "forget-final-mac", "pairedCount": 1, "pendingRemovalCount": 1, "visibleCount": 0}
+  ]
+}

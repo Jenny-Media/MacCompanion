@@ -26,6 +26,9 @@ private final class LiveControlTextProductV0:
     private(set) var retirementCount = 0
     private(set) var closed = false
     var cancelSelection = false
+    var delayPresentation = false
+    private(set) var selectionCount = 0
+    private var transitionObserver: (@MainActor (Bool, String?) -> Void)?
     private var textPreparationContinuation: CheckedContinuation<Bool, Never>?
 
     init() throws {
@@ -58,7 +61,14 @@ private final class LiveControlTextProductV0:
     { throw ClientPrimaryLiveControlErrorV0.unavailable }
     func selectDisplay(_ displayID: UUID) async throws {
         if cancelSelection { throw CancellationError() }
+        selectionCount += 1
+        if delayPresentation { transitionObserver?(true, "Switching view…") }
     }
+    func observeSurfaceTransition(_ changed: @escaping @MainActor (Bool, String?) -> Void) {
+        transitionObserver = changed
+        changed(false, nil)
+    }
+    func finishPresentation() { transitionObserver?(false, nil) }
     func setAutomaticSmartZoomEnabled(_ enabled: Bool) async throws {}
 
     func prepareNativeTextComposer() async throws -> SurfaceInputFence? {
@@ -102,10 +112,68 @@ private final class LiveControlTextProductV0:
         targetToken: UUID?
     ) async throws {
         if cancelSelection { throw CancellationError() }
+        selectionCount += 1
+        if delayPresentation { transitionObserver?(true, "Switching view…") }
     }
 
     func retireFailedSession() { retirementCount += 1 }
     func close() async { closed = true }
+}
+
+@Test(arguments: [false, true]) @MainActor
+func normalSelectionOwnsTheGateUntilPresentation(display: Bool) async throws {
+    let product = try LiveControlTextProductV0()
+    product.delayPresentation = true
+    let coordinator = ClientPrimaryLiveControlCoordinatorV0(
+        productFactory: { _, _ in product },
+        failureRetirementFactory: { { await product.retireFailedSession() } }
+    )
+    coordinator.start(mode: .trackpad)
+    let deadline = ContinuousClock.now + .seconds(2)
+    while coordinator.phase != .active, ContinuousClock.now < deadline { await Task.yield() }
+    try #require(coordinator.phase == .active)
+    let first = Task {
+        if display { try await coordinator.selectDisplay(UUID()) }
+        else { try await coordinator.selectSurface(.desktop) }
+    }
+    while !coordinator.isViewTransitioning, ContinuousClock.now < deadline { await Task.yield() }
+    try #require(coordinator.isViewTransitioning)
+    coordinator.acceptWorkspaceMode(.active)
+    #expect(coordinator.phase == .awaitingVerifiedFrame)
+    do {
+        if display { try await coordinator.selectSurface(.desktop) }
+        else { try await coordinator.selectDisplay(UUID()) }
+        Issue.record("A second choice must remain outside the product transition")
+    } catch {
+        #expect(error as? ClientPrimaryLiveControlErrorV0 == .viewTransitionInProgress)
+    }
+    #expect(product.selectionCount == 1)
+    #expect(product.retirementCount == 0)
+    #expect(!product.closed)
+    product.finishPresentation()
+    try await first.value
+    #expect(coordinator.phase == .active)
+    coordinator.closeLocalProduct()
+}
+
+@Test @MainActor
+func stopDuringNormalSelectionCannotRestoreTheProduct() async throws {
+    let product = try LiveControlTextProductV0()
+    product.delayPresentation = true
+    let coordinator = ClientPrimaryLiveControlCoordinatorV0(productFactory: { _, _ in product })
+    coordinator.start(mode: .trackpad)
+    let deadline = ContinuousClock.now + .seconds(2)
+    while coordinator.phase != .active, ContinuousClock.now < deadline { await Task.yield() }
+    try #require(coordinator.phase == .active)
+    let first = Task { try await coordinator.selectSurface(.desktop) }
+    while !coordinator.isViewTransitioning, ContinuousClock.now < deadline { await Task.yield() }
+    try #require(coordinator.isViewTransitioning)
+    coordinator.closeLocalProduct()
+    product.finishPresentation()
+    do { try await first.value; Issue.record("A late selection must not reopen a stopped product") }
+    catch {}
+    #expect(coordinator.phase == .closed)
+    #expect(coordinator.product == nil)
 }
 
 @Test @MainActor

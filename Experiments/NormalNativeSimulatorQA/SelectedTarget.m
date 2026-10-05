@@ -74,9 +74,10 @@ int main(int argc, char **argv) {
             fprintf(ready, "selected-target-ready %ld\n", (long)getpid());
         }
         fclose(ready);
-        // The twenty-transition UI journey can exceed five minutes. The
-        // runner owns this disposable process and terminates it on cleanup.
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 1200LL * NSEC_PER_SEC),
+        // A 200-switch or long-session journey can exceed twenty minutes.
+        // The runner terminates this owned target on cleanup; the two-hour
+        // backstop exceeds its longest bounded campaign timeout.
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 7200LL * NSEC_PER_SEC),
                        dispatch_get_main_queue(), ^{ [application terminate:nil]; });
         [application run];
     }

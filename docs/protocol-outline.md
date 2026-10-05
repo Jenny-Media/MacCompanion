@@ -231,7 +231,7 @@ Effect declarations are bounded by provider type and can be raised by the host. 
 
 ## Approval challenge
 
-When policy requires user presence, the Mac returns a short-lived approval challenge. The client asks the user for Face ID, Touch ID, or device-passcode-backed authorization and signs the canonical challenge with its separate approval key.
+Normal remote-desktop session starts use a short-lived, fully bound challenge signed by the paired protected session key, without per-session biometric confirmation. The fixed Remote Control grant, one-use challenge, current revisions, host pin and visible admission remain required. Deferred action paths retain their policy-driven approvals. When policy requires user presence, the Mac returns a short-lived approval challenge. The client asks the user for Face ID, Touch ID, or device-passcode-backed authorization and signs the canonical challenge with its separate approval key.
 
 The challenge binds:
 
@@ -258,7 +258,8 @@ stateDiagram-v2
     [*] --> unpaired
     unpaired --> pairingPending: local QR session created
     pairingPending --> unpaired: expired/cancelled/failed
-    pairingPending --> activeMonitorOnly: transcript verified and committed
+    pairingPending --> activeMonitorOnly: legacy monitor pairing committed
+    pairingPending --> activeGranted: disclosed remote desktop pairing committed
     activeMonitorOnly --> activeGranted: local grant change
     activeGranted --> activeGranted: local grant replacement
     activeGranted --> activeMonitorOnly: local grant reduction
@@ -272,7 +273,7 @@ stateDiagram-v2
     revoked --> unpaired: bounded tombstone retention expires
 ```
 
-Pairing always commits `activeMonitorOnly`; it cannot enter `activeGranted`. Every durable grant change, suspend, resume, or revoke advances the authorization epoch. `revoked` is terminal for the device identity: re-pairing creates a new device identity rather than transitioning the old record back to active. The final tombstone transition removes only the retained anti-replay/audit marker after its documented window; it does not restore trust.
+The remote-desktop MVP pairing commits `activeGranted` with exactly `maccompanion.interactive.control` after explicit local pairing consent. The legacy Monitor Only profile commits `activeMonitorOnly` without grants. Both initial commits use epoch and grant revision 1. Every later durable grant change, suspend, resume, or revoke advances the authorization epoch. `revoked` is terminal for the device identity: re-pairing creates a new device identity rather than transitioning the old record back to active. The final tombstone transition removes only the retained anti-replay/audit marker after its documented window; it does not restore trust.
 
 ## Durable operations and idempotency
 

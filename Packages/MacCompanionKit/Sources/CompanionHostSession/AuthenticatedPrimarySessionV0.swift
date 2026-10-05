@@ -114,6 +114,9 @@ public struct AuthenticatedInteractiveCommandContextV0: Equatable, Sendable {
 /// grant checks, approval-key lookup, visible-app availability, and atomic
 /// bootstrap creation. The primary session supplies only authenticated facts.
 public protocol AuthenticatedInteractiveWireDispatchingV0: Sendable {
+    func authorizeDesktop(sessionID: UUID, context: AuthenticatedInteractiveCommandContextV0) async throws
+    func bindDesktopRetirement(sessionID: UUID, primaryConnectionID: Data, action: @escaping @Sendable () async -> Void) async throws
+
     func dispatch(
         requestJSON: Data,
         context: AuthenticatedInteractiveCommandContextV0,
@@ -130,6 +133,13 @@ public protocol AuthenticatedInteractiveWireDispatchingV0: Sendable {
 }
 
 public extension AuthenticatedInteractiveWireDispatchingV0 {
+    func bindDesktopRetirement(sessionID: UUID, primaryConnectionID: Data, action: @escaping @Sendable () async -> Void) async throws {
+        throw AuthenticatedPrimarySessionErrorV0.unauthenticated
+    }
+    func authorizeDesktop(sessionID: UUID, context: AuthenticatedInteractiveCommandContextV0) async throws {
+        throw AuthenticatedPrimarySessionErrorV0.unauthenticated
+    }
+
     func primarySessionClosed(primaryConnectionID: Data) async {
         await primarySessionClosed()
     }
@@ -275,6 +285,31 @@ public actor AuthenticatedPrimarySessionV0 {
             await close()
             throw error
         }
+    }
+
+    public func authorizeDesktop(sessionID: UUID, request: Data? = nil,
+        contextHostState: HostState, wallNowUnixMilliseconds: Int64, monotonicNowMilliseconds: UInt64,
+        retirement: (@Sendable () async -> Void)? = nil) async throws {
+        guard phase == .ready, let principal, let connectionID else {
+            throw AuthenticatedPrimarySessionErrorV0.unauthenticated
+        }
+        try enforceTiming(at: monotonicNowMilliseconds)
+        _ = try await authentication.revalidate(principal)
+        guard phase == .ready, self.connectionID == connectionID else { throw AuthenticatedPrimarySessionErrorV0.unauthenticated }
+        if let request {
+            let envelope = try WireCodec.decode(WireEnvelope<DesktopTunnelBodyV1>.self, from: request)
+            guard envelope.body.interactiveSessionID.rawValue == sessionID,
+                  [.open, .data, .close, .windowQuery].contains(envelope.body.operation) else { throw AuthenticatedPrimarySessionErrorV0.invalidConfiguration }
+            try replay.admit(envelope.messageID)
+            recordAuthenticatedTraffic(at: monotonicNowMilliseconds)
+        }
+        try await interactive.authorizeDesktop(sessionID: sessionID, context: AuthenticatedInteractiveCommandContextV0(
+            principal: principal, primaryConnectionID: connectionID, hostID: hostID, hostFingerprint: tlsBinding.hostFingerprint,
+            hostState: contextHostState, wallNowUnixMilliseconds: wallNowUnixMilliseconds, monotonicNowMilliseconds: monotonicNowMilliseconds))
+        if let retirement {
+            try await interactive.bindDesktopRetirement(sessionID: sessionID, primaryConnectionID: connectionID, action: retirement)
+        }
+        guard phase == .ready, self.connectionID == connectionID else { throw AuthenticatedPrimarySessionErrorV0.unauthenticated }
     }
 
     public func close() async {

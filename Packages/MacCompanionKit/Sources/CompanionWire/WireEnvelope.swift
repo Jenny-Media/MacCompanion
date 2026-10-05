@@ -63,6 +63,8 @@ public enum WireChannel: String, Codable, Sendable {
 }
 
 public enum WireMessageKind: String, Codable, CaseIterable, Sendable {
+    case desktopTunnel = "desktop.tunnel"
+    case desktopTunnelEvent = "desktop.tunnel.event"
     case authHello = "auth.hello"
     case authChallenge = "auth.challenge"
     case authProof = "auth.proof"
@@ -221,18 +223,18 @@ public struct WireEnvelope<Body: WireBody>: Codable, Equatable, Sendable {
         }
         switch channel {
         case .events:
-            guard kind == .interactiveSurfaceFocusChanged,
+            guard (kind == .interactiveSurfaceFocusChanged || kind == .desktopTunnelEvent),
                   correlationID == nil else {
                 throw WireError.invalidFrame(
                     reason: "invalid event kind or correlation"
                 )
             }
         case .command:
-            guard kind != .interactiveSurfaceFocusChanged else {
+            guard kind != .interactiveSurfaceFocusChanged && kind != .desktopTunnelEvent else {
                 throw WireError.invalidFrame(reason: "event on command channel")
             }
             switch kind {
-            case .authHello, .pairingBegin, .pairingResume, .routeObservation,
+            case .desktopTunnel, .authHello, .pairingBegin, .pairingResume, .routeObservation,
                  .statusSnapshotRequest,
                  .capabilityRegistryRequest, .auditListRequest, .keepalivePing,
                  .interactiveDisplayCatalogRequest,
@@ -364,20 +366,20 @@ public struct WireRoutingMetadata: Equatable, Sendable {
         }
         switch parsedChannel {
         case .events:
-            guard parsedKind == .interactiveSurfaceFocusChanged,
+            guard (parsedKind == .interactiveSurfaceFocusChanged || parsedKind == .desktopTunnelEvent),
                   parsedCorrelationID == nil else {
                 throw WireError.invalidFrame(
                     reason: "invalid event kind or correlation"
                 )
             }
         case .command:
-            guard parsedKind != .interactiveSurfaceFocusChanged else {
+            guard parsedKind != .interactiveSurfaceFocusChanged && parsedKind != .desktopTunnelEvent else {
                 throw WireError.invalidFrame(
                     reason: "event on command channel"
                 )
             }
             switch parsedKind {
-            case .authHello, .pairingBegin, .pairingResume, .routeObservation,
+            case .desktopTunnel, .authHello, .pairingBegin, .pairingResume, .routeObservation,
                  .statusSnapshotRequest, .capabilityRegistryRequest,
                  .auditListRequest, .keepalivePing,
                  .interactiveDisplayCatalogRequest,

@@ -32,12 +32,41 @@ public struct ClientCustodiedInteractiveApprovalSignerV0:
         reference = approvalKey.reference
     }
 
-    public func signAfterUserPresence(_ input: Data) async throws -> Data {
+    public func signSessionChallenge(_ input: Data) async throws -> Data {
         let signature = try await custody.signApprovalInput(
             input,
             using: reference,
             reason: .startInteractiveControl
         )
+        guard signature.count == 64 else {
+            throw ClientIdentityPublicationErrorV0.invalidIdentity
+        }
+        return signature
+    }
+}
+
+/// Remote desktop's paired-device consent uses only the existing session key.
+/// It cannot access the presence-bound approval key or broaden a durable grant.
+public struct ClientCustodiedTrustedInteractiveSignerV1:
+    ClientInteractiveApprovalSigningV0, Sendable
+{
+    private let custody: any ClientIdentityKeyCustodyV0
+    private let reference: ClientSigningKeyReferenceV0
+
+    public init(
+        custody: any ClientIdentityKeyCustodyV0,
+        sessionKey: ClientCustodiedPublicKeyV0
+    ) throws {
+        guard sessionKey.role == .session,
+              sessionKey.protection == .afterFirstUnlockThisDeviceOnly else {
+            throw ClientIdentityPublicationErrorV0.invalidIdentity
+        }
+        self.custody = custody
+        reference = sessionKey.reference
+    }
+
+    public func signSessionChallenge(_ input: Data) async throws -> Data {
+        let signature = try await custody.signSessionInput(input, using: reference)
         guard signature.count == 64 else {
             throw ClientIdentityPublicationErrorV0.invalidIdentity
         }
@@ -139,6 +168,7 @@ public actor ClientInteractivePrimaryChannelV0:
     private var descriptorDeadlineTask: Task<Void, Never>?
     private var endRequestMessageID: WireUUID?
     private var localInputStopped = false
+    private var retireOnAcceptance = false
     private var endingInteractiveSessionID: UUID?
     private var mediaOfferRequestMessageID: WireUUID?
     private var mediaAnswerRequestMessageID: WireUUID?
@@ -160,7 +190,7 @@ public actor ClientInteractivePrimaryChannelV0:
         case challenge(WireEnvelope<InteractiveNativeVideoEnrollmentChallengeBodyV0>)
         case ready(WireEnvelope<InteractiveNativeVideoReadyBodyV0>)
         case presented(WireEnvelope<InteractiveNativeVideoPresentationReceiptBodyV0>)
-        case cancelled(InteractiveNativeVideoRequestFenceV0)
+        case cancelled(InteractiveNativeVideoCancelledBodyV0)
     }
     private let nativeSessionPublicKeyX963: Data
     private var nativeOriginalControlDeadline: UInt64?
@@ -171,6 +201,10 @@ public actor ClientInteractivePrimaryChannelV0:
     private var nativeEnrollmentOwnerID: UUID?
     private var nativeChallenge: WireEnvelope<InteractiveNativeVideoEnrollmentChallengeBodyV0>?
     private var lastNativeControlBinding: InteractiveNativeVideoBindingV0?
+    private var nativeContinuityRequested = false
+    private var nativeContinuityConfirmed = false
+    private var nativeRetainRequested = false
+    private var retainedNative: (fence: InteractiveNativeVideoRequestFenceV0, ownerID: UUID?, until: UInt64)?
     private var nativeReady = false
     private var nativePresentationGeneration: Int64?
     private var nativeRequestID: WireUUID?
@@ -230,6 +264,7 @@ public actor ClientInteractivePrimaryChannelV0:
             throw ClientInteractivePrimaryChannelErrorV0.unavailable
         }
         if await authority.phase == .closed {
+            retireOnAcceptance = false
             authority = ClientInteractiveSessionAuthorityV0(
                 primary: primary,
                 signer: signer
@@ -238,6 +273,7 @@ public actor ClientInteractivePrimaryChannelV0:
             mediaCurrentOffer = nil
             mediaExpectedFence = nil
         }
+        guard !retireOnAcceptance else { throw ClientInteractivePrimaryChannelErrorV0.unavailable }
         let sortedEffects = effects.sorted()
         let frame = try await authority.beginRequest(
             effects: effects,
@@ -366,7 +402,7 @@ public actor ClientInteractivePrimaryChannelV0:
 
     public func requestNativeEnrollment(for descriptor: AdaptiveSurfaceDescriptor,
                                         clientCertificateDER: Data, localOwnerID: UUID? = nil,
-                                        timeoutMilliseconds: UInt64 = 15_000) async throws
+                                        streamContinuity: Bool = false, timeoutMilliseconds: UInt64 = 15_000) async throws
         -> WireEnvelope<InteractiveNativeVideoEnrollmentChallengeBodyV0> {
         guard let accepted = await authority.acceptedSession, !Task.isCancelled, !invalidated, endRequestMessageID == nil,
               nativeFence == nil, nativeRequestID == nil, nativeCancellationTask == nil, nativeGeneration < WireLimits.maximumSafeInteger,
@@ -380,6 +416,12 @@ public actor ClientInteractivePrimaryChannelV0:
             clientInteractiveDebugTraceV0("native request denied descriptorCurrent=\(isCurrentNativeDescriptor(descriptor)) clockCurrent=\(nativeClockIsCurrent()) initialPhase=\(String(describing: initialSurface?.phase)) replacementPhase=\(String(describing: replacementSurface?.phase))")
             throw ClientInteractivePrimaryChannelErrorV0.unavailable
         }
+        if let retainedNative {
+            guard streamContinuity, retainedNative.ownerID == localOwnerID,
+                  environment.monotonicNowMilliseconds() < retainedNative.until else {
+                throw ClientInteractivePrimaryChannelErrorV0.unavailable
+            }
+        }
         clientInteractiveDebugTraceV0("native request admitted")
         nativeGeneration += 1
         let fence = try InteractiveNativeVideoRequestFenceV0(interactiveSessionID: WireUUID(descriptor.interactiveSessionID),
@@ -388,7 +430,9 @@ public actor ClientInteractivePrimaryChannelV0:
             coordinateSpaceRevision: coordinateRevision)
         nativeFence = fence
         nativeEnrollmentOwnerID = localOwnerID
-        let body = try InteractiveNativeVideoEnrollmentRequestBodyV0(fence: fence, clientCertificateDERBase64: clientCertificateDER.base64EncodedString())
+        nativeContinuityRequested = streamContinuity; nativeContinuityConfirmed = false
+        let body = try InteractiveNativeVideoEnrollmentRequestBodyV0(fence: fence, clientCertificateDERBase64: clientCertificateDER.base64EncodedString(),
+            previousFence: retainedNative?.fence, streamContinuity: streamContinuity ? true : nil)
         let reply = try await waitNative(body, expected: .nativeEnrollChallenge, timeout: timeoutMilliseconds)
         guard case .challenge(let challenge) = reply else { throw ClientInteractivePrimaryChannelErrorV0.unavailable }
         return challenge
@@ -431,9 +475,7 @@ public actor ClientInteractivePrimaryChannelV0:
               primary.clientID == binding.clientID, primary.primaryConnectionID == binding.primaryConnectionID,
               primary.grantRevision.rawValue == UInt64(binding.grantRevision),
               primary.policyRevision.rawValue == UInt64(binding.policyRevision),
-              nativeOriginalControlDeadline == binding.expiresAtMonotonicMilliseconds,
-              let descriptor = currentNativeDescriptor(), isCurrentNativeDescriptor(descriptor),
-              descriptor.interactiveSessionID == binding.interactiveSessionID else { return nil }
+              nativeOriginalControlDeadline == binding.expiresAtMonotonicMilliseconds else { return nil }
         return binding
     }
 
@@ -470,8 +512,27 @@ public actor ClientInteractivePrimaryChannelV0:
         return receipt
     }
 
+    public func nativeStreamContinuityAvailable(ownedBy localOwnerID: UUID) -> Bool {
+        !invalidated && nativeReady && nativeContinuityConfirmed && nativeEnrollmentOwnerID == localOwnerID
+            && nativePresentationGeneration != nil && nativeClockIsCurrent()
+    }
+
+    public func retainNativeEnrollment(ownedBy localOwnerID: UUID) async throws {
+        guard nativeEnrollmentOwnerID == localOwnerID, nativeReady, nativeContinuityConfirmed,
+              nativePresentationGeneration != nil, nativeCancellationTask == nil, nativeRequestID == nil,
+              let fence = nativeFence, nativeClockIsCurrent(), retainedNative == nil else {
+            throw ClientInteractivePrimaryChannelErrorV0.unavailable
+        }
+        nativeRetainRequested = true
+        defer { nativeRetainRequested = false }
+        let reply = try await waitNative(InteractiveNativeVideoCancelBodyV0(fence: fence, retainStream: true),
+            expected: .nativeCancelled, timeout: 5_000)
+        guard case .cancelled(let receipt) = reply, receipt.streamRetained == true,
+              retainedNative?.fence == fence else { throw ClientInteractivePrimaryChannelErrorV0.unavailable }
+    }
+
     public func cancelNativeEnrollment(ownedBy localOwnerID: UUID, timeoutMilliseconds: UInt64 = 15_000) async throws {
-        guard nativeEnrollmentOwnerID == localOwnerID else { return }
+        guard nativeEnrollmentOwnerID == localOwnerID || retainedNative?.ownerID == localOwnerID else { return }
         try await cancelNativeEnrollment(timeoutMilliseconds: timeoutMilliseconds)
     }
 
@@ -484,7 +545,7 @@ public actor ClientInteractivePrimaryChannelV0:
             try await nativeCancellationTask.value
             return
         }
-        guard !invalidated, endRequestMessageID == nil, let fence = nativeFence else { return }
+        guard !invalidated, endRequestMessageID == nil, let fence = nativeFence ?? retainedNative?.fence else { return }
         let token = UUID()
         let task = Task { try await self.performNativeCancellation(fence, timeoutMilliseconds: timeoutMilliseconds) }
         nativeCancellationTask = task
@@ -496,7 +557,7 @@ public actor ClientInteractivePrimaryChannelV0:
     }
 
     private func performNativeCancellation(_ fence: InteractiveNativeVideoRequestFenceV0, timeoutMilliseconds: UInt64) async throws {
-        guard !invalidated, endRequestMessageID == nil, nativeFence == fence else { return }
+        guard !invalidated, endRequestMessageID == nil, nativeFence == fence || retainedNative?.fence == fence else { return }
         if let requestID = nativeRequestID { discardNativeWaiter(requestID) }
         let reply = try await waitNative(InteractiveNativeVideoCancelBodyV0(fence: fence), expected: .nativeCancelled, timeout: timeoutMilliseconds)
         guard case .cancelled = reply else { throw ClientInteractivePrimaryChannelErrorV0.unavailable }
@@ -568,7 +629,7 @@ public actor ClientInteractivePrimaryChannelV0:
             return .success(.presented(try WireCodec.decode(WireEnvelope<InteractiveNativeVideoPresentationReceiptBodyV0>.self, from: frame)))
         case .nativeCancelled:
             let response = try WireCodec.decode(WireEnvelope<InteractiveNativeVideoCancelledBodyV0>.self, from: frame)
-            return .success(.cancelled(response.body.fence))
+            return .success(.cancelled(response.body))
         default: throw ClientInteractivePrimaryChannelErrorV0.unavailable
         }
     }
@@ -587,6 +648,14 @@ public actor ClientInteractivePrimaryChannelV0:
                   let challenge = nativeChallenge, nativeAttestationAuthority(for: challenge) != nil else {
                 finishNativeWaiter(.failure(ClientInteractivePrimaryChannelErrorV0.unavailable)); return
             }
+            guard ready.body.streamContinuity != true || nativeContinuityRequested else {
+                finishNativeWaiter(.failure(ClientInteractivePrimaryChannelErrorV0.unavailable)); return
+            }
+            nativeContinuityConfirmed = ready.body.streamContinuity == true
+            if retainedNative != nil && !nativeContinuityConfirmed {
+                finishNativeWaiter(.failure(ClientInteractivePrimaryChannelErrorV0.unavailable)); return
+            }
+            retainedNative = nil
             nativeReady = true
             lastNativeControlBinding = nativeAttestationAuthority(for: challenge)?.binding
         case .success(.presented(let receipt)):
@@ -601,8 +670,19 @@ public actor ClientInteractivePrimaryChannelV0:
                   receipt.body.logicalHeightPoints == descriptor.logicalHeightPoints else {
                 finishNativeWaiter(.failure(ClientInteractivePrimaryChannelErrorV0.unavailable)); return
             }
-        case .success(.cancelled(let fence)):
-            guard nativeFence == fence else { finishNativeWaiter(.failure(ClientInteractivePrimaryChannelErrorV0.unavailable)); return }
+        case .success(.cancelled(let receipt)):
+            let fence = receipt.fence
+            guard nativeFence == fence || retainedNative?.fence == fence,
+                  (receipt.streamRetained == true) == nativeRetainRequested else {
+                finishNativeWaiter(.failure(ClientInteractivePrimaryChannelErrorV0.unavailable)); return
+            }
+            if nativeRetainRequested {
+                guard nativeContinuityConfirmed, let deadline = nativeOriginalControlDeadline else {
+                    finishNativeWaiter(.failure(ClientInteractivePrimaryChannelErrorV0.unavailable)); return
+                }
+                retainedNative = (fence, nativeEnrollmentOwnerID, min(deadline, environment.monotonicNowMilliseconds() + 15_000))
+            } else { retainedNative = nil }
+            nativeContinuityConfirmed = false; nativeContinuityRequested = false
             nativeFence = nil; nativeEnrollmentOwnerID = nil
             nativeChallenge = nil; nativeReady = false; nativePresentationGeneration = nil
         case .failure: break
@@ -629,6 +709,7 @@ public actor ClientInteractivePrimaryChannelV0:
         if !cancelling, !invalidated, endRequestMessageID == nil { try? await cancelNativeEnrollment() }
     }
     private func fenceNativeSession() {
+        retainedNative = nil; nativeContinuityRequested = false; nativeContinuityConfirmed = false; nativeRetainRequested = false
         nativeCancellationTask?.cancel(); nativeCancellationTask = nil; nativeCancellationToken = nil
         if let id = nativeRequestID { discardNativeWaiter(id) }
         nativeFence = nil; nativeEnrollmentOwnerID = nil
@@ -1158,6 +1239,12 @@ public actor ClientInteractivePrimaryChannelV0:
                 guard !invalidated else {
                     throw ClientInteractivePrimaryChannelErrorV0.unavailable
                 }
+                if retireOnAcceptance {
+                    // A viewer cancelled while approval was in flight. End the
+                    // exact eventual session without publishing it as usable.
+                    _ = try await endSession(expectedInteractiveSessionID: session.interactiveSessionID)
+                    return ClientPrimaryPreparedReplyV0 {}
+                }
                 let acceptedEnvelope = try WireCodec.decode(WireEnvelope<InteractiveSessionAcceptedBody>.self, from: frame)
                 localInputStopped = false
                 let (lifetime, lifetimeOverflow) = session.expiresAtUnixMilliseconds.subtractingReportingOverflow(acceptedEnvelope.sentAtUnixMilliseconds)
@@ -1357,6 +1444,16 @@ public actor ClientInteractivePrimaryChannelV0:
         )
         publish(event)
         return event
+    }
+
+    /// Retires this channel's current request, including acceptance that arrives
+    /// after cancellation. A replacement request waits for the ended reply.
+    public func retireSessionRequest() async {
+        retireOnAcceptance = true
+        localInputStopped = true
+        if let accepted = await authority.acceptedSession {
+            _ = try? await endSession(expectedInteractiveSessionID: accepted.interactiveSessionID)
+        }
     }
 
     @discardableResult

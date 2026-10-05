@@ -7,7 +7,7 @@ Status: normative bundle-independent custody and persistence boundary. The stric
 One new pairing prepares two distinct P-256 signing keys and returns only their 65-byte X9.63 public keys plus opaque references:
 
 - the `session` key uses `afterFirstUnlockThisDeviceOnly`, supports pairing proof and ordinary background reconnect after first unlock, and never requires a biometric prompt merely to reconnect;
-- the `approval` key uses `whenUnlockedThisDeviceOnlyUserPresence` and requires fresh local user presence for each closed reason: pairing a Mac, approving an operation, starting Interactive Control, or expanding a grant.
+- the `approval` key uses `whenUnlockedThisDeviceOnlyUserPresence` and requires fresh local user presence for each closed reason: pairing a Mac, approving an operation, starting legacy fresh-presence Interactive Control, or expanding a grant. Normal trusted-device remote desktop session starts use only the session key and do not access the approval key.
 
 The references and public keys must be distinct. The custody interface has no private-key export, raw-private-key, socket, route, host-authority, or persistence method. Its signing methods receive only the normative signing input, an exact opaque reference, and—only for approval signing—one closed presence reason. The session-key adapter implements pairing and primary-authentication signing but cannot access the approval key.
 
@@ -43,3 +43,12 @@ At restart, the reconciler preflights the complete prepared-key inventory before
 ## Acceptance boundary
 
 Bundle-independent tests cover exact role/protection separation, distinct public keys/references, opaque-reference signing, closed approval-presence reasons, monitor-only record validation, key-presence failure, injected publication rollback and retry, completion mismatch, cancellation, canonical storage round trip, unknown/noncanonical/broadened record rejection, bounded multi-host atomic-file persistence, permissions, conflict/quota rejection, pre/post-rename fault convergence, real-store restart adoption, orphan cleanup, no-mutation conflict preflight, exact Security construction profiles/configuration bounds, and DER-to-raw P-256 conversion. Release acceptance still requires Security framework access-control inspection, app-container protection/backup inspection, device-lock/first-unlock/biometric/passcode/restore/reinstall tests, crash-loop reconciliation against the actual Keychain and container, and physical signing through both keys.
+
+## Trusted-device remote desktop composition
+
+The normal MVP selects the `trustedDevice` session consent profile from
+`spec/interactive-control/v0/security-profile.md`. A fresh, exactly bound
+interactive challenge is signed with the existing nonexportable session key.
+Key protection and stored public keys remain unchanged; existing Control-enabled
+pairings need no re-pairing. The presence-bound approval key is retained for
+deferred operation/grant compatibility and cannot sign a trusted session start.

@@ -55,6 +55,59 @@ int main(int argc, const char **argv) {
     }
     NSDictionary *source = fixture[@"windowContext"];
     uint64_t fakeNow = [fixture[@"nowMonotonicNanoseconds"] unsignedLongLongValue];
+    Require([fixture[@"continuityContextCases"] count] == 4);
+    for (NSString *field in @[@"windowContinuityContext",@"desktopContinuityContext"]) {
+      NSDictionary *record = fixture[field];
+      CompanionSelectedCaptureContext *context = [CompanionSelectedCaptureContext parseData:Canonical(record)
+          operationID:Operation displayID:1 now:fakeNow error:nil];
+      Require(context != nil && context.frameEpoch.length == 48 && [context.operationID isEqual:Operation]);
+      Require(context.expiresAtMonotonicNanoseconds == [record[@"expiresAtMonotonicNanoseconds"] unsignedLongLongValue]);
+      Deny(record,@"frameEpochHex",nil,fakeNow);
+      Deny(record,@"frameEpochHex",@NO,fakeNow);
+      Deny(record,@"frameEpochHex",@"d5e7",fakeNow);
+      Deny(record,@"frameEpochHex",[record[@"frameEpochHex"] uppercaseString],fakeNow);
+      NSMutableString *unsafeEpoch = [record[@"frameEpochHex"] mutableCopy];
+      [unsafeEpoch replaceCharactersInRange:NSMakeRange(64,16) withString:@"0020000000000000"];
+      Deny(record,@"frameEpochHex",unsafeEpoch,fakeNow);
+      Deny(record,@"profile",@"maccompanion.selected-capture-context.v0.1",fakeNow);
+    }
+    NSDictionary *desktop = fixture[@"desktopContinuityContext"];
+    NSArray *pixelCases = fixture[@"desktopNativePixelCases"];
+    Require(pixelCases.count == 3);
+    for (NSDictionary *pixelCase in pixelCases) {
+      NSArray *logical = pixelCase[@"logical"], *native = pixelCase[@"nativePixels"];
+      double scale = [pixelCase[@"backingScale"] doubleValue];
+      Require(ceil([logical[0] doubleValue] * scale) == [native[0] doubleValue]);
+      Require(ceil([logical[1] doubleValue] * scale) == [native[1] doubleValue]);
+    }
+    // Read-only display metadata exercises the actual Retina mismatch. It
+    // starts no capture and establishes no session or input authority.
+    CGDirectDisplayID mainDisplay = CGMainDisplayID();
+    CGDisplayModeRef mainMode = CGDisplayCopyDisplayMode(mainDisplay);
+    Require(mainMode != NULL);
+    CGRect mainBounds = CGDisplayBounds(mainDisplay);
+    size_t nativeWidth = CGDisplayModeGetPixelWidth(mainMode), nativeHeight = CGDisplayModeGetPixelHeight(mainMode);
+    CFRelease(mainMode);
+    NSMutableDictionary *actualDesktop = [desktop mutableCopy];
+    actualDesktop[@"displayID"] = @(mainDisplay);
+    actualDesktop[@"boundsX"] = @(mainBounds.origin.x); actualDesktop[@"boundsY"] = @(mainBounds.origin.y);
+    actualDesktop[@"boundsWidth"] = @(mainBounds.size.width); actualDesktop[@"boundsHeight"] = @(mainBounds.size.height);
+    actualDesktop[@"sourcePixelWidth"] = @(nativeWidth); actualDesktop[@"sourcePixelHeight"] = @(nativeHeight);
+    actualDesktop[@"backingScale"] = @(fmax(nativeWidth/mainBounds.size.width,nativeHeight/mainBounds.size.height));
+    actualDesktop[@"expiresAtMonotonicNanoseconds"] = @(Now()+30000000000ULL);
+    CompanionSelectedCaptureContext *currentDesktop = [CompanionSelectedCaptureContext parseData:Canonical(actualDesktop)
+        operationID:Operation displayID:mainDisplay now:Now() error:nil];
+    Require(currentDesktop != nil && currentDesktop.isCurrentSelection);
+    if (CGDisplayPixelsWide(mainDisplay) != nativeWidth || CGDisplayPixelsHigh(mainDisplay) != nativeHeight) {
+      actualDesktop[@"sourcePixelWidth"] = @(CGDisplayPixelsWide(mainDisplay));
+      actualDesktop[@"sourcePixelHeight"] = @(CGDisplayPixelsHigh(mainDisplay));
+      actualDesktop[@"backingScale"] = @(fmax(CGDisplayPixelsWide(mainDisplay)/mainBounds.size.width,CGDisplayPixelsHigh(mainDisplay)/mainBounds.size.height));
+      CompanionSelectedCaptureContext *logicalDesktop = [CompanionSelectedCaptureContext parseData:Canonical(actualDesktop)
+          operationID:Operation displayID:mainDisplay now:Now() error:nil];
+      Require(logicalDesktop != nil && !logicalDesktop.isCurrentSelection);
+    }
+    Deny(desktop,@"windowID",@1,fakeNow); Deny(desktop,@"processID",@123,fakeNow);
+    Deny(desktop,@"processLaunchMilliseconds",@1000,fakeNow); Deny(desktop,@"bundleIdentifier",@"test.selected",fakeNow);
     Require([CompanionSelectedCaptureContext parseData:Canonical(source) operationID:Operation displayID:1 now:fakeNow error:nil] != nil);
     Deny(source,@"operationID",@"BBBBBBBB-BBBB-4CCC-8DDD-EEEEEEEEEEEE",fakeNow);
     Deny(source,@"displayID",@2,fakeNow);

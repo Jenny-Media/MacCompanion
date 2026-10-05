@@ -39,6 +39,20 @@ public protocol InteractiveNativeVideoRuntimeProvidingV0: Sendable {
     func snapshot(fence: InteractiveNativeVideoRequestFenceV0,
                   context: InteractiveSessionCommandContextV0) async throws -> InteractiveNativeVideoRuntimeSnapshotV0?
     func makeBackend(snapshot: InteractiveNativeVideoRuntimeSnapshotV0) async throws -> any InteractiveNativeVideoEnrollmentBackendV0
+    func makeReplacementBackend(snapshot: InteractiveNativeVideoRuntimeSnapshotV0,
+        retained: InteractiveNativeVideoRetainedEnrollmentV1) async throws -> any InteractiveNativeVideoEnrollmentBackendV0
+    /// Original installed Control only; selected-view state may change while
+    /// capture and input are explicitly paused.
+    func retainedControlIsCurrent(binding: InteractiveNativeVideoBindingV0,
+        context: InteractiveSessionCommandContextV0) async -> Bool
+}
+public extension InteractiveNativeVideoRuntimeProvidingV0 {
+    func makeReplacementBackend(snapshot: InteractiveNativeVideoRuntimeSnapshotV0,
+        retained: InteractiveNativeVideoRetainedEnrollmentV1) async throws -> any InteractiveNativeVideoEnrollmentBackendV0 {
+        throw InteractiveNativeVideoCoordinatorFailureV0.backendUnavailable
+    }
+    func retainedControlIsCurrent(binding: InteractiveNativeVideoBindingV0,
+        context: InteractiveSessionCommandContextV0) async -> Bool { false }
 }
 
 /// Binds every coordinator read to the same reconciled admission store used by
@@ -60,10 +74,25 @@ public struct InteractiveNativeVideoRuntimeCompositionV0: Sendable {
     }
 
     public func bridge() -> InteractiveNativeVideoPrimaryBridgeV0 {
-        .init { fence, context, registeredKey in
+        .init(factory: { fence, context, registeredKey in
+            try await self.coordinator(fence: fence, context: context, registeredKey: registeredKey, retained: nil)
+        }, replacementFactory: { fence, context, registeredKey, retained in
+            try await self.coordinator(fence: fence, context: context, registeredKey: registeredKey, retained: retained)
+        })
+    }
+
+    private func coordinator(fence: InteractiveNativeVideoRequestFenceV0, context: InteractiveSessionCommandContextV0,
+        registeredKey: Data, retained: InteractiveNativeVideoRetainedEnrollmentV1?) async throws -> InteractiveNativeVideoEnrollmentCoordinatorV0 {
             let expected = try await self.read(fence: fence, context: context, registeredKey: registeredKey)
             guard let expected else { throw InteractiveNativeVideoCoordinatorFailureV0.authorizationLost }
-            let backend = try await self.runtime.makeBackend(snapshot: expected.runtime)
+            let backend: any InteractiveNativeVideoEnrollmentBackendV0
+            if let retained {
+                guard expected.authority.binding == retained.authority.binding,
+                      expected.authority.sessionPublicKeyX963 == retained.authority.sessionPublicKeyX963 else {
+                    throw InteractiveNativeVideoCoordinatorFailureV0.authorizationLost
+                }
+                backend = try await self.runtime.makeReplacementBackend(snapshot: expected.runtime, retained: retained)
+            } else { backend = try await self.runtime.makeBackend(snapshot: expected.runtime) }
             // Backend construction must be inert. Recheck before any credential
             // preparation; cancellation during construction cannot leak it.
             guard !Task.isCancelled,
@@ -78,8 +107,24 @@ public struct InteractiveNativeVideoRuntimeCompositionV0: Sendable {
                     return current.authority
                 }, monotonicMilliseconds: self.monotonicMilliseconds, unixMilliseconds: self.unixMilliseconds,
                 logicalWidthPoints: expected.runtime.logicalWidthPoints,
-                logicalHeightPoints: expected.runtime.logicalHeightPoints)
+                logicalHeightPoints: expected.runtime.logicalHeightPoints,
+                readRetainedAuthority: { try await self.retainedAuthorityIsCurrent(expected: expected, context: context) },
+                predecessor: retained)
+    }
+
+    private func retainedAuthorityIsCurrent(expected: Joined, context: InteractiveSessionCommandContextV0) async throws -> Bool {
+        let binding = expected.authority.binding
+        func matches(_ snapshot: InteractiveSessionAdmissionSnapshotV0) -> Bool {
+            InteractiveSessionRuntimeRequirementV0(command: context, admission: snapshot).isEligibleForInteractiveControl
+                && snapshot.sessionPublicKeyX963 == expected.authority.sessionPublicKeyX963
+                && snapshot.visibleMenuAppGeneration == expected.runtime.visibleMenuAppGeneration
         }
+        guard !Task.isCancelled, monotonicMilliseconds() < binding.expiresAtMonotonicMilliseconds,
+              let before = try await admission.snapshot(deviceID: context.deviceID), matches(before),
+              await runtime.retainedControlIsCurrent(binding: binding, context: context),
+              let after = try await admission.snapshot(deviceID: context.deviceID), matches(after),
+              !Task.isCancelled, monotonicMilliseconds() < binding.expiresAtMonotonicMilliseconds else { return false }
+        return true
     }
 
     private struct Joined: Equatable, Sendable {

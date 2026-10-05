@@ -79,7 +79,7 @@ private final class InteractivePrimaryFocusRecorderV0:
 private struct InteractivePrimarySignerV0:
     ClientInteractiveApprovalSigningV0
 {
-    func signAfterUserPresence(_ input: Data) async throws -> Data {
+    func signSessionChallenge(_ input: Data) async throws -> Data {
         Data(repeating: 0x66, count: 64)
     }
 }
@@ -87,7 +87,7 @@ private struct InteractivePrimarySignerV0:
 private struct FailingInteractivePrimarySignerV0:
     ClientInteractiveApprovalSigningV0
 {
-    func signAfterUserPresence(_ input: Data) async throws -> Data {
+    func signSessionChallenge(_ input: Data) async throws -> Data {
         _ = input
         throw InteractivePrimaryCustodyErrorV0.unsupported
     }
@@ -99,6 +99,7 @@ private enum InteractivePrimaryCustodyErrorV0: Error {
 
 private actor InteractivePrimaryCustodyV0: ClientIdentityKeyCustodyV0 {
     private(set) var approvalReasons: [ClientApprovalPresenceReasonV0] = []
+    private(set) var sessionReferences: [ClientSigningKeyReferenceV0] = []
 
     func prepareIdentity(
         pairingID: UUID,
@@ -115,7 +116,8 @@ private actor InteractivePrimaryCustodyV0: ClientIdentityKeyCustodyV0 {
         _ input: Data,
         using reference: ClientSigningKeyReferenceV0
     ) async throws -> Data {
-        throw InteractivePrimaryCustodyErrorV0.unsupported
+        sessionReferences.append(reference)
+        return Data(repeating: 0x55, count: 64)
     }
 
     func signApprovalInput(
@@ -358,6 +360,27 @@ private func interactivePrimarySDP(_ byte: String) -> String {
         + "a=end-of-candidates\r\n"
 }
 
+@Test func desktopTunnelCancellationRetiresLateAcceptanceWithoutPublishingUsableSession() async throws {
+    let harness = try await interactivePrimaryHarness()
+    let effects: Set<InteractiveControlEffect> = [.view, .pointer, .keyboard]
+    _ = try await harness.channel.beginSession(effects: effects)
+    let request = try WireCodec.decode(WireEnvelope<InteractiveSessionRequestBody>.self,
+        from: try #require(await harness.transport.frames.first))
+    await harness.channel.retireSessionRequest()
+    try await harness.router.receive(WireCodec.encode(try interactivePrimaryChallenge(harness: harness,
+        requestID: request.messageID, effects: effects)))
+    let proof = try WireCodec.decode(WireEnvelope<InteractiveApprovalProofBody>.self,
+        from: try #require(await harness.transport.frames.last))
+    let accepted = try interactivePrimaryAccepted(harness: harness, proofID: proof.messageID)
+    try await harness.router.receive(WireCodec.encode(accepted))
+    let end = try WireCodec.decode(WireEnvelope<InteractiveSessionEndBodyV0>.self,
+        from: try #require(await harness.transport.frames.last))
+    #expect(end.body.interactiveSessionID == accepted.body.interactiveSessionID)
+    #expect(!harness.events.events.contains { if case .accepted = $0 { return true }; return false })
+    #expect(await harness.router.state == .ready)
+    await #expect(throws: (any Error).self) { try await harness.channel.beginSession(effects: effects) }
+}
+
 private func nativePrimaryFixture<B: WireBody>(_ name: String, as type: B.Type) throws -> WireEnvelope<B> {
     var root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
     while !FileManager.default.fileExists(atPath: root.appendingPathComponent("spec/fixtures/manifest.json").path) {
@@ -474,11 +497,13 @@ private func verifyRetiredNativeEnrollmentCannotCancelReplacement(
     #expect(await harness.router.state == .ready)
 }
 
-private func verifyNativePrimaryRouting(_ harness: InteractivePrimaryHarnessV0, descriptor: AdaptiveSurfaceDescriptor) async throws {
+private func verifyNativePrimaryRouting(_ harness: InteractivePrimaryHarnessV0, descriptor: AdaptiveSurfaceDescriptor, continuity: Bool = false) async throws {
     let template = try nativePrimaryFixture("enroll-challenge", as: InteractiveNativeVideoEnrollmentChallengeBodyV0.self)
     let requestTemplate = try nativePrimaryFixture("enroll-request", as: InteractiveNativeVideoEnrollmentRequestBodyV0.self)
+    let ownerID = UUID()
     let requestTask = Task { try await harness.channel.requestNativeEnrollment(for: descriptor,
-        clientCertificateDER: Data(base64Encoded: requestTemplate.body.clientCertificateDERBase64)!, timeoutMilliseconds: 1000) }
+        clientCertificateDER: Data(base64Encoded: requestTemplate.body.clientCertificateDERBase64)!, localOwnerID: ownerID,
+        streamContinuity: continuity, timeoutMilliseconds: 1000) }
     let request = try WireCodec.decode(WireEnvelope<InteractiveNativeVideoEnrollmentRequestBodyV0>.self,
         from: await nativePrimarySentFrame(harness, kind: .nativeEnrollRequest))
     let t = template.body
@@ -501,7 +526,7 @@ private func verifyNativePrimaryRouting(_ harness: InteractivePrimaryHarnessV0, 
         from: await nativePrimarySentFrame(harness, kind: .nativeEnrollProof))
     #expect(proof.body.challengeMessageID == challenge.messageID)
     let ready = try WireEnvelope(messageID: WireUUID(UUID()), correlationID: proof.messageID, sentAtUnixMilliseconds: 2_002,
-        body: InteractiveNativeVideoReadyBodyV0(fence: proof.body.fence, challengeMessageID: challenge.messageID, portBase: 58989))
+        body: InteractiveNativeVideoReadyBodyV0(fence: proof.body.fence, challengeMessageID: challenge.messageID, portBase: 58989, streamContinuity: continuity ? true : nil))
     try await harness.router.receive(WireCodec.encode(ready))
     #expect(try await proofTask.value == ready)
     #expect(await harness.channel.currentNativeControlBinding() == nativeAuthority?.binding)
@@ -520,6 +545,28 @@ private func verifyNativePrimaryRouting(_ harness: InteractivePrimaryHarnessV0, 
             logicalWidthPoints: descriptor.logicalWidthPoints, logicalHeightPoints: descriptor.logicalHeightPoints))
     try await harness.router.receive(WireCodec.encode(receipt))
     #expect(try await presentation.value == receipt)
+    if continuity {
+        #expect(request.body.streamContinuity == true && request.body.previousFence == nil)
+        #expect(await harness.channel.nativeStreamContinuityAvailable(ownedBy: ownerID))
+        let retaining = Task { try await harness.channel.retainNativeEnrollment(ownedBy: ownerID) }
+        let pause = try WireCodec.decode(WireEnvelope<InteractiveNativeVideoCancelBodyV0>.self,
+            from: await nativePrimarySentFrame(harness, kind: .nativeCancel))
+        #expect(pause.body.retainStream == true && pause.body.fence == request.body.fence)
+        try await harness.router.receive(WireCodec.encode(WireEnvelope(messageID: WireUUID(UUID()), correlationID: pause.messageID,
+            sentAtUnixMilliseconds: 2_004, body: try InteractiveNativeVideoCancelledBodyV0(fence: pause.body.fence, streamRetained: true))))
+        try await retaining.value
+        #expect(await harness.channel.nativeAttestationAuthority(for: challenge) == nil)
+        #expect(await harness.channel.currentNativeControlBinding() == nativeAuthority?.binding)
+        let stopping = Task { try await harness.channel.cancelNativeEnrollment(ownedBy: ownerID, timeoutMilliseconds: 1000) }
+        let stop = try WireCodec.decode(WireEnvelope<InteractiveNativeVideoCancelBodyV0>.self,
+            from: await nativePrimarySentFrame(harness, kind: .nativeCancel, excluding: pause.messageID))
+        #expect(stop.body.retainStream == nil && stop.body.fence == pause.body.fence)
+        try await harness.router.receive(WireCodec.encode(WireEnvelope(messageID: WireUUID(UUID()), correlationID: stop.messageID,
+            sentAtUnixMilliseconds: 2_005, body: try InteractiveNativeVideoCancelledBodyV0(fence: stop.body.fence))))
+        try await stopping.value
+        #expect(await harness.router.state == .ready)
+        return
+    }
     do { _ = try await harness.channel.acknowledgeNativePresentation(nativeGeneration: 2,
         encodedWidth: descriptor.encodedWidth, encodedHeight: descriptor.encodedHeight); Issue.record("Replacement renderer admitted") } catch {}
     let mismatched = Task { try await harness.channel.acknowledgeNativePresentation(nativeGeneration: 1,
@@ -837,6 +884,9 @@ func interactivePrimaryChannelCompletesSelectedSessionApprovalFlow(delivery: (In
     } else {
         if deliveryOrder == 0 && acknowledgementDelivery == 0 {
             try await verifyRetiredNativeEnrollmentCannotCancelReplacement(harness, descriptor: admittedDescriptor)
+        }
+        if deliveryOrder == 0 && acknowledgementDelivery == 0 {
+            try await verifyNativePrimaryRouting(harness, descriptor: admittedDescriptor, continuity: true)
         }
         try await verifyNativePrimaryRouting(harness, descriptor: admittedDescriptor)
     }
@@ -1380,6 +1430,20 @@ func interactivePrimaryChannelCompletesSelectedSessionApprovalFlow(delivery: (In
             protection: .whenUnlockedThisDeviceOnlyUserPresence
         )
     )
-    #expect(try await signer.signAfterUserPresence(Data([0x01])).count == 64)
+    #expect(try await signer.signSessionChallenge(Data([0x01])).count == 64)
     #expect(await custody.approvalReasons == [.startInteractiveControl])
+}
+
+@Test func trustedInteractiveSignerUsesOnlyPairedSessionKeyWithoutPresence() async throws {
+    let custody = InteractivePrimaryCustodyV0()
+    let reference = try ClientSigningKeyReferenceV0(UUID())
+    let key = try ClientCustodiedPublicKeyV0(
+        role: .session, reference: reference,
+        publicKeyX963: P256.Signing.PrivateKey().publicKey.x963Representation,
+        protection: .afterFirstUnlockThisDeviceOnly
+    )
+    let signer = try ClientCustodiedTrustedInteractiveSignerV1(custody: custody, sessionKey: key)
+    #expect(try await signer.signSessionChallenge(Data([1])) == Data(repeating: 0x55, count: 64))
+    #expect(await custody.sessionReferences == [reference])
+    #expect(await custody.approvalReasons.isEmpty)
 }

@@ -47,7 +47,7 @@ private func initialApprovalKey() throws -> P256.Signing.PrivateKey {
     return try P256.Signing.PrivateKey(rawRepresentation: scalar)
 }
 
-private func initialBootstrap() throws -> InteractiveSessionBootstrap {
+private func initialBootstrap(effects: InteractiveApprovalEffects = [.view, .pointer]) throws -> InteractiveSessionBootstrap {
     let approvalKey = try initialApprovalKey()
     let authority = try InteractiveApprovalAuthority(
         hostID: initialHostID,
@@ -62,7 +62,7 @@ private func initialBootstrap() throws -> InteractiveSessionBootstrap {
         policyRevision: 6,
         selectedDisplayID: initialDisplayID,
         initialSurface: .desktop,
-        effects: [.view, .pointer],
+        effects: effects,
         issuedAtUnixMilliseconds: 1_724_000_000_000,
         expiresAtUnixMilliseconds: 1_724_000_060_000,
         approvalPublicKeyX963: approvalKey.publicKey.x963Representation,
@@ -83,7 +83,7 @@ private func initialBootstrap() throws -> InteractiveSessionBootstrap {
             policyRevision: 6,
             selectedDisplayID: initialDisplayID,
             initialSurface: .desktop,
-            effects: [.view, .pointer],
+            effects: effects,
             issuedAtUnixMilliseconds: 1_724_000_000_000,
             expiresAtUnixMilliseconds: 1_724_000_060_000,
             selectedMajor: 0,
@@ -1725,4 +1725,19 @@ private actor NativeSnapshotSlowStopRuntimeV1: InteractiveSessionRuntimeOwningV0
     #expect(await native.backendCount == 0)
     await gate.release()
     await stopping.value
+}
+
+@Test(arguments: [false, true])
+func desktopTunnelRequiresKeyboardAndPointerAndCurrentRuntimeLease(fullControl: Bool) async throws {
+    let requirement = try initialRequirement()
+    let owner = AgentInteractiveRuntimeOwnerV1(
+        admission: RuntimeOwnerAdmissionV1(Array(repeating: requirement.admission, count: 8)),
+        desktop: RuntimeOwnerDesktopV1(descriptor: try initialDesktop(classes: fullControl ? [.view, .pointer, .keyboard, .text] : [.view, .pointer])),
+        runtime: RuntimeOwnerMenuRouteV1(), monotonicNowNanoseconds: { 2_100_000_000 })
+    try await owner.install(initialBootstrap(effects: fullControl ? [.view, .pointer, .keyboard, .text] : [.view, .pointer]), requirement: requirement)
+    #expect(await owner.desktopAccessCurrent(sessionID: initialSessionID, primaryConnectionID: initialConnectionID) == fullControl)
+    #expect(await owner.desktopAccessCurrent(sessionID: UUID(), primaryConnectionID: initialConnectionID) == false)
+    #expect(await owner.desktopAccessCurrent(sessionID: initialSessionID, primaryConnectionID: Data(repeating: 0, count: 16)) == false)
+    await owner.terminate(interactiveSessionID: initialSessionID, primaryConnectionID: initialConnectionID, reason: .clientDisconnected)
+    #expect(await owner.desktopAccessCurrent(sessionID: initialSessionID, primaryConnectionID: initialConnectionID) == false)
 }

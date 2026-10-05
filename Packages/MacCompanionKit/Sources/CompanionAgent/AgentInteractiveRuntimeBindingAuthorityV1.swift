@@ -3,6 +3,11 @@ import CompanionInteractiveShared
 import CompanionInteractiveWire
 import CompanionWire
 import Foundation
+import OSLog
+
+private let nativeBindingSnapshotLoggerV1 = Logger(
+    subsystem: "media.jenny.maccompanion.agent", category: "native-binding-snapshot"
+)
 
 public enum AgentInteractiveRuntimeBindingAuthorityErrorV1:
     Error,
@@ -64,6 +69,7 @@ public actor AgentInteractiveRuntimeBindingAuthorityV1:
     private var active: Active?
     private var nativeRetiring: Active?
     private var nativeSnapshot: (generation: UInt64, value: InteractiveNativeVideoRuntimeSnapshotV0)?
+    private var nativeControlBinding: (generation: UInt64, value: InteractiveNativeVideoBindingV0)?
     private struct PendingInstall {
         let token: UUID
         let binding: Active
@@ -96,11 +102,21 @@ public actor AgentInteractiveRuntimeBindingAuthorityV1:
               installed.generation == selected.generation, nativeRetiring != installed,
               installed.interactiveSessionID == fence.interactiveSessionID.rawValue,
               installed.primaryConnectionID == context.primaryConnectionID,
-              let runtime = selected.nativeRuntime else { return nil }
-        guard let value = try await runtime.snapshot(fence: fence, context: context), !Task.isCancelled,
+              let runtime = selected.nativeRuntime else {
+            nativeBindingSnapshotLoggerV1.error("native snapshot rejected reason=installed-binding-unavailable")
+            return nil
+        }
+        guard let value = try await runtime.snapshot(fence: fence, context: context) else {
+            nativeBindingSnapshotLoggerV1.error("native snapshot rejected reason=menu-snapshot-unavailable")
+            return nil
+        }
+        guard !Task.isCancelled,
               !terminal, bound?.generation == selected.generation, active == installed, nativeRetiring != installed,
               value.binding.primaryConnectionID == installed.primaryConnectionID,
-              value.binding.interactiveSessionID == installed.interactiveSessionID else { return nil }
+              value.binding.interactiveSessionID == installed.interactiveSessionID else {
+            nativeBindingSnapshotLoggerV1.error("native snapshot rejected reason=installed-binding-changed")
+            return nil
+        }
         nativeSnapshot = (selected.generation, value)
         return value
     }
@@ -114,6 +130,43 @@ public actor AgentInteractiveRuntimeBindingAuthorityV1:
               let runtime = selected.nativeRuntime else { throw AgentInteractiveRuntimeBindingAuthorityErrorV1.unavailable }
         let backend = try await runtime.makeBackend(snapshot: snapshot)
         guard !Task.isCancelled, !terminal, bound?.generation == selected.generation, active == installed, nativeRetiring != installed,
+              nativeSnapshot?.generation == selected.generation, nativeSnapshot?.value == snapshot else {
+            throw AgentInteractiveRuntimeBindingAuthorityErrorV1.unavailable
+        }
+        nativeControlBinding = (selected.generation, snapshot.binding)
+        return backend
+    }
+
+    public func retainedControlIsCurrent(binding: InteractiveNativeVideoBindingV0,
+        context: InteractiveSessionCommandContextV0) async -> Bool {
+        guard !terminal, let selected = bound, let installed = active,
+              installed.generation == selected.generation, nativeRetiring != installed,
+              installed.interactiveSessionID == binding.interactiveSessionID,
+              installed.primaryConnectionID == binding.primaryConnectionID,
+              nativeControlBinding?.generation == selected.generation, nativeControlBinding?.value == binding,
+              binding.hostID == context.hostID, binding.hostFingerprint == context.hostFingerprint,
+              binding.clientID == context.clientID, binding.primaryConnectionID == context.primaryConnectionID,
+              binding.authorizationEpoch == Int64(context.authorizationEpoch.rawValue),
+              binding.grantRevision == Int64(context.grantRevision.rawValue),
+              binding.policyRevision == Int64(context.policyRevision.rawValue),
+              DispatchTime.now().uptimeNanoseconds / 1_000_000 < binding.expiresAtMonotonicMilliseconds else { return false }
+        return true
+    }
+
+    public func makeReplacementBackend(snapshot: InteractiveNativeVideoRuntimeSnapshotV0,
+        retained: InteractiveNativeVideoRetainedEnrollmentV1) async throws -> any InteractiveNativeVideoEnrollmentBackendV0 {
+        guard !terminal, let selected = bound, let installed = active,
+              installed.generation == selected.generation, nativeRetiring != installed,
+              installed.primaryConnectionID == snapshot.binding.primaryConnectionID,
+              installed.interactiveSessionID == snapshot.binding.interactiveSessionID,
+              nativeControlBinding?.generation == selected.generation,
+              nativeControlBinding?.value == retained.authority.binding,
+              snapshot.binding == retained.authority.binding,
+              nativeSnapshot?.generation == selected.generation, nativeSnapshot?.value == snapshot,
+              let runtime = selected.nativeRuntime else { throw AgentInteractiveRuntimeBindingAuthorityErrorV1.unavailable }
+        let backend = try await runtime.makeReplacementBackend(snapshot: snapshot, retained: retained)
+        guard !Task.isCancelled, !terminal, bound?.generation == selected.generation, active == installed, nativeRetiring != installed,
+              nativeControlBinding?.generation == selected.generation, nativeControlBinding?.value == snapshot.binding,
               nativeSnapshot?.generation == selected.generation, nativeSnapshot?.value == snapshot else {
             throw AgentInteractiveRuntimeBindingAuthorityErrorV1.unavailable
         }
@@ -510,6 +563,14 @@ public actor AgentInteractiveRuntimeBindingAuthorityV1:
         }
         sequencingTail = operation
         await operation.value
+    }
+
+    public func desktopAccessCurrent(sessionID: UUID, primaryConnectionID: Data) async -> Bool {
+        guard !terminal, let selected = bound, let installed = active,
+              installed.generation == selected.generation, nativeRetiring != installed,
+              installed.interactiveSessionID == sessionID, installed.primaryConnectionID == primaryConnectionID else { return false }
+        let allowed = await selected.runtime.desktopAccessCurrent(sessionID: sessionID, primaryConnectionID: primaryConnectionID)
+        return allowed && !terminal && bound?.generation == selected.generation && active == installed && nativeRetiring != installed
     }
 
     public func install(

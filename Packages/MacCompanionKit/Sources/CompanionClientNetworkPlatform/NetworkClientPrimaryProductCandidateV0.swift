@@ -37,6 +37,7 @@ public struct NetworkClientPrimaryProductSelectionV0: Sendable {
     public let observeChannel: ClientObserveChannelV0
     public let actChannel: ClientActChannelV1
     public let controlChannel: ClientInteractivePrimaryChannelV0
+    public var desktopTunnel: NetworkClientDesktopTunnelV1? = nil
 }
 
 public struct NetworkClientPrimaryProductEventsV0: Sendable {
@@ -375,7 +376,8 @@ package actor NetworkClientPrimaryProductCandidateV0 {
                 authenticatedSession: session,
                 observeChannel: observe,
                 actChannel: act,
-                controlChannel: control
+                controlChannel: control,
+                desktopTunnel: await bridge.currentDesktopTunnel()
             )
         )
         scheduleLivenessRefresh(observe: observe)

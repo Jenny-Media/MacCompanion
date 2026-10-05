@@ -200,6 +200,9 @@ private actor DispatcherRuntime: InteractiveSessionRuntimeOwningV0 {
     private let failInstall: Bool
     private(set) var installed: [InteractiveSessionBootstrap] = []
     private(set) var terminations: [Termination] = []
+    func desktopAccessCurrent(sessionID: UUID, primaryConnectionID: Data) -> Bool {
+        sessionID == dispatcherSessionID && primaryConnectionID == dispatcherConnectionID && !installed.isEmpty && terminations.isEmpty
+    }
 
     init(failInstall: Bool = false) {
         self.failInstall = failInstall
@@ -223,6 +226,32 @@ private actor DispatcherRuntime: InteractiveSessionRuntimeOwningV0 {
             connectionID: primaryConnectionID,
             reason: reason
         ))
+    }
+}
+
+private actor DesktopRetirementCounterV1 {
+    var count = 0
+    func retired() { count += 1 }
+}
+@Test func desktopTunnelRetiresOnPrimaryLossAndCannotRebindRetiredSession() async throws {
+    let flow = try await pendingDispatcherFlow()
+    _ = try await flow.dispatcher.dispatch(requestJSON: WireCodec.encode(try dispatcherProof(for: flow.challenge)),
+        context: dispatcherContext(monotonicNow: 1_010), responseMessageID: WireUUID(UUID()))
+    try await flow.dispatcher.authorizeDesktop(sessionID: dispatcherSessionID, context: dispatcherContext(monotonicNow: 1_011))
+    let counter = DesktopRetirementCounterV1()
+    try await flow.dispatcher.bindDesktopRetirement(sessionID: dispatcherSessionID, primaryConnectionID: dispatcherConnectionID,
+        action: { await counter.retired() })
+    await #expect(throws: (any Error).self) {
+        try await flow.dispatcher.authorizeDesktop(sessionID: UUID(), context: dispatcherContext(monotonicNow: 1_012))
+    }
+    await flow.dispatcher.primarySessionClosed(primaryConnectionID: dispatcherConnectionID)
+    #expect(await counter.count == 1)
+    #expect(await flow.runtime.terminations.count == 1)
+    await flow.dispatcher.primarySessionClosed(primaryConnectionID: dispatcherConnectionID)
+    #expect(await counter.count == 1)
+    await #expect(throws: (any Error).self) {
+        try await flow.dispatcher.bindDesktopRetirement(sessionID: dispatcherSessionID, primaryConnectionID: dispatcherConnectionID,
+            action: { await counter.retired() })
     }
 }
 
@@ -479,6 +508,7 @@ private struct PendingDispatcherFlow {
 
 private func pendingDispatcherFlow(
     snapshots: [InteractiveSessionAdmissionSnapshotV0?]? = nil,
+    sessionConsentProfile: InteractiveSessionConsentProfileV1 = .freshUserPresence,
     materials: DispatcherMaterials = DispatcherMaterials(),
     runtime: DispatcherRuntime = DispatcherRuntime(),
     mediaNegotiation: (any InteractiveWebRTCNegotiatingV0)? = nil,
@@ -494,6 +524,7 @@ private func pendingDispatcherFlow(
     )
     let dispatcher = InteractiveSessionWireDispatcherV0(
         admission: admission,
+        sessionConsentProfile: sessionConsentProfile,
         materials: materials,
         runtime: runtime,
         mediaNegotiation: mediaNegotiation,
@@ -824,9 +855,10 @@ private func pendingDispatcherFlow(
 }
 
 private func dispatcherProof(
-    for challenge: WireEnvelope<InteractiveApprovalChallengeBody>
+    for challenge: WireEnvelope<InteractiveApprovalChallengeBody>,
+    key: P256.Signing.PrivateKey? = nil
 ) throws -> WireEnvelope<InteractiveApprovalProofBody> {
-    let signature = try dispatcherApprovalKey().signature(
+    let signature = try (key ?? dispatcherApprovalKey()).signature(
         for: challenge.body.signingInput(version: challenge.version)
     ).rawRepresentation
     return try WireEnvelope(
@@ -1757,4 +1789,61 @@ private actor DispatcherNativeVideo: InteractiveNativeVideoNegotiatingV0 {
         #expect(await native.closes == 1)
         #expect(await flow.dispatcher.activeInteractiveSessionID == nil)
     }
+}
+
+@Test func trustedSessionStartAcceptsOnlyPairedSessionKey() async throws {
+    var scalar = Data(repeating: 0, count: 32)
+    scalar[31] = 1
+    let key = try P256.Signing.PrivateKey(rawRepresentation: scalar)
+    let snapshot = try dispatcherSnapshot(sessionPublicKeyX963: key.publicKey.x963Representation)
+    let trusted = try await pendingDispatcherFlow(snapshots: [snapshot], sessionConsentProfile: .trustedDevice)
+    let proof = try dispatcherProof(for: trusted.challenge, key: key)
+    let response = try await trusted.dispatcher.dispatch(
+        requestJSON: WireCodec.encode(proof), context: dispatcherContext(monotonicNow: 1_010),
+        responseMessageID: WireUUID(UUID())
+    )
+    #expect(try WireCodec.messageKind(from: response) == .interactiveSessionAccepted)
+    #expect(await trusted.dispatcher.activeInteractiveSessionID != nil)
+    await trusted.dispatcher.primarySessionClosed()
+
+    let wrong = try await pendingDispatcherFlow(snapshots: [snapshot], sessionConsentProfile: .trustedDevice)
+    let wrongResponse = try await wrong.dispatcher.dispatch(
+        requestJSON: WireCodec.encode(dispatcherProof(for: wrong.challenge)),
+        context: dispatcherContext(monotonicNow: 1_010), responseMessageID: WireUUID(UUID())
+    )
+    #expect(try WireCodec.messageKind(from: wrongResponse) == .error)
+    #expect(await wrong.dispatcher.activeInteractiveSessionID == nil)
+
+    let changedKey = try dispatcherSnapshot(sessionPublicKeyX963: P256.Signing.PrivateKey().publicKey.x963Representation)
+    let stale = try await pendingDispatcherFlow(snapshots: [snapshot, changedKey], sessionConsentProfile: .trustedDevice)
+    let staleResponse = try await stale.dispatcher.dispatch(
+        requestJSON: WireCodec.encode(dispatcherProof(for: stale.challenge, key: key)),
+        context: dispatcherContext(monotonicNow: 1_010), responseMessageID: WireUUID(UUID())
+    )
+    #expect(try WireCodec.messageKind(from: staleResponse) == .error)
+    #expect(await stale.dispatcher.activeInteractiveSessionID == nil)
+}
+
+@Test(arguments: [true, false])
+func trustedSessionStartRequiresFixedGrantAndPairedSessionKey(missingKey: Bool) async throws {
+    let request = try WireEnvelope(
+        messageID: WireUUID(UUID()), correlationID: nil,
+        sentAtUnixMilliseconds: 1_724_000_000_000,
+        body: InteractiveSessionRequestBody(effects: [.view])
+    )
+    let snapshot = try dispatcherSnapshot(
+        grants: missingKey ? [InteractiveControlCapabilityV0.identifier] : [],
+        sessionPublicKeyX963: missingKey ? nil : P256.Signing.PrivateKey().publicKey.x963Representation
+    )
+    let dispatcher = InteractiveSessionWireDispatcherV0(
+        admission: DispatcherAdmission([snapshot]), sessionConsentProfile: .trustedDevice,
+        materials: DispatcherMaterials(), runtime: DispatcherRuntime()
+    )
+    let response = try await dispatcher.dispatch(
+        requestJSON: WireCodec.encode(request), context: dispatcherContext(),
+        responseMessageID: WireUUID(UUID())
+    )
+    #expect(try WireCodec.messageKind(from: response) == .error)
+    #expect(await dispatcher.hasPendingApproval == false)
+    #expect(await dispatcher.activeInteractiveSessionID == nil)
 }

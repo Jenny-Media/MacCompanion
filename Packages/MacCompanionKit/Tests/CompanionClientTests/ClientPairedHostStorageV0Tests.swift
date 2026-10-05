@@ -178,7 +178,7 @@ private struct ClientStorageTemporaryDirectory {
     #expect(!text.contains("privateKey"))
 }
 
-@Test func pairedHostStorageRejectsUnknownWhitespaceAndBroadenedState() throws {
+@Test func pairedHostStorageRejectsUnknownWhitespaceAndNonInitialState() throws {
     let identity = try storageIdentity(
         pairingID: UUID(),
         clientID: UUID(),
@@ -204,7 +204,7 @@ private struct ClientStorageTemporaryDirectory {
     }
     #expect(throws: ClientPairedHostStorageErrorV0.invalidRecord) {
         _ = try ClientPairedHostStorageCodecV0.decode(Data(text
-            .replacingOccurrences(of: "activeMonitorOnly", with: "activeGranted")
+            .replacingOccurrences(of: "activeMonitorOnly", with: "suspended")
             .utf8))
     }
 }
@@ -500,4 +500,76 @@ private struct ClientStorageTemporaryDirectory {
     await #expect(throws: ClientPairedHostFileStoreErrorV0.unsafeStorage) {
         _ = try await unexpected.allRecords()
     }
+}
+
+@Test func macLibraryKeepsIndependentHostsAndFencesInterruptedForget() async throws {
+    var root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+    while !FileManager.default.fileExists(atPath: root.appendingPathComponent("spec/fixtures/manifest.json").path) {
+        let parent = root.deletingLastPathComponent()
+        try #require(parent != root); root = parent
+    }
+    let path = "client-mac-library-v0.1.json"
+    let manifest = try JSONSerialization.jsonObject(with: Data(contentsOf: root.appendingPathComponent("spec/fixtures/manifest.json"))) as! [String: Any]
+    try #require((manifest["fixtures"] as! [[String: Any]]).filter { $0["path"] as? String == path }.count == 1)
+    let fixture = try JSONSerialization.jsonObject(with: Data(contentsOf: root.appendingPathComponent("spec/fixtures/" + path))) as! [String: Any]
+    let clientID = UUID()
+    let records = try (0..<2).map { index in
+        try storageRecord(identity: storageIdentity(pairingID: UUID(), clientID: clientID, scalar: UInt8(50 + index * 2)))
+    }
+    for item in fixture["cases"] as! [[String: Any]] {
+        let paired = Array(records.prefix(item["pairedCount"] as! Int))
+        var preferences = ClientMacLibraryPreferencesV1()
+        for record in paired.prefix(item["pendingRemovalCount"] as! Int) { preferences.beginRemoval(hostID: record.hostID) }
+        #expect(try preferences.visibleRecords(paired, clientID: clientID).count == item["visibleCount"] as! Int)
+    }
+
+    let temporary = try ClientStorageTemporaryDirectory()
+    defer { temporary.remove() }
+    let paired = try AtomicFileClientPairedHostStoreV0(directory: temporary.store)
+    for record in records { _ = try await paired.commitAtomically(record) }
+    let namesDirectory = temporary.root.appendingPathComponent("Library", isDirectory: true)
+    try FileManager.default.createDirectory(at: namesDirectory, withIntermediateDirectories: true)
+    let library = try AtomicFileClientMacLibraryStoreV1(directory: namesDirectory)
+    var preferences = try await library.snapshot()
+    try preferences.rename(hostID: records[0].hostID, name: "Studio Mac")
+    try preferences.rename(hostID: records[1].hostID, name: "Travel Mac")
+    preferences.beginRemoval(hostID: records[0].hostID)
+    try await library.replace(preferences)
+    let restarted = try AtomicFileClientMacLibraryStoreV1(directory: namesDirectory)
+    let stored = try await restarted.snapshot()
+    #expect(stored == preferences)
+    let visible = try stored.library(records: await paired.allRecords(), clientID: clientID,
+        configuredHostIDs: [records[1].hostID])
+    #expect(visible.map(\.name) == ["Travel Mac"])
+    #expect(visible.first?.needsRouteSetup == false)
+    #expect(try await paired.pairedHost(hostID: records[1].hostID) == records[1])
+
+    try await paired.remove(records[0])
+    try await paired.remove(records[0]) // Interrupted cleanup is idempotent.
+    #expect(try await paired.allRecords() == [records[1]])
+    preferences.finishRemoval(hostID: records[0].hostID)
+    try await library.replace(preferences)
+    #expect(try await restarted.snapshot().names == [records[1].hostID: "Travel Mac"])
+}
+
+@Test func macLibraryRejectsConflictsUnsafeMetadataAndWrongHostRemoval() async throws {
+    let clientID = UUID()
+    let record = try storageRecord(identity: storageIdentity(pairingID: UUID(), clientID: clientID, scalar: 60))
+    var preferences = ClientMacLibraryPreferencesV1()
+    #expect(throws: ClientMacLibraryErrorV1.invalidName) { try preferences.rename(hostID: record.hostID, name: "  ") }
+    #expect(throws: ClientMacLibraryErrorV1.invalidName) { try preferences.rename(hostID: record.hostID, name: "a\nb") }
+    #expect(throws: ClientMacLibraryErrorV1.conflictingInventory) { _ = try preferences.visibleRecords([record, record], clientID: clientID) }
+    #expect(throws: ClientMacLibraryErrorV1.conflictingInventory) { _ = try preferences.visibleRecords([record], clientID: UUID()) }
+
+    let temporary = try ClientStorageTemporaryDirectory()
+    defer { temporary.remove() }
+    let paired = try AtomicFileClientPairedHostStoreV0(directory: temporary.store)
+    _ = try await paired.commitAtomically(record)
+    let replacement = try storageRecord(identity: storageIdentity(pairingID: UUID(), clientID: clientID, scalar: 62), hostID: record.hostID)
+    await #expect(throws: ClientIdentityPublicationErrorV0.persistenceConflict) { try await paired.remove(replacement) }
+    #expect(try await paired.allRecords() == [record])
+    let library = try AtomicFileClientMacLibraryStoreV1(directory: temporary.store)
+    try Data("{}".utf8).write(to: temporary.store.appendingPathComponent("library.json"))
+    await #expect(throws: (any Error).self) { _ = try await library.snapshot() }
+    await #expect(throws: (any Error).self) { try await library.replace(.init()) }
 }

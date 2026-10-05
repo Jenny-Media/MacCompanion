@@ -325,6 +325,24 @@ public actor AgentInteractiveRuntimeOwnerV1:
         }
     }
 
+    public func desktopAccessCurrent(sessionID: UUID, primaryConnectionID: Data) async -> Bool {
+        guard case let .active(active) = storage,
+              active.primaryConnectionID == primaryConnectionID,
+              active.currentLease.interactiveSessionID == sessionID,
+              active.currentLease.expiresAtMonotonicNanoseconds > monotonicNowNanoseconds(),
+              Set(active.currentLease.allowedInteractionClasses).isSuperset(of: [.keyboard, .pointer]),
+              let current = try? await admission.snapshot(deviceID: active.requirement.command.deviceID),
+              InteractiveSessionRuntimeRequirementV0(command: active.requirement.command, admission: current).isEligibleForInteractiveControl,
+              current.authorizationEpoch == active.requirement.admission.authorizationEpoch,
+              current.grantRevision == active.requirement.admission.grantRevision,
+              current.policyRevision == active.requirement.admission.policyRevision,
+              case let .active(after) = storage,
+              after.currentLease.interactiveSessionID == sessionID,
+              after.primaryConnectionID == primaryConnectionID,
+              after.currentLease.expiresAtMonotonicNanoseconds > monotonicNowNanoseconds() else { return false }
+        return true
+    }
+
     public func activeLeaseForScheduling() -> InteractiveExecutionLease? {
         guard case .active(let active) = storage else { return nil }
         return active.currentLease
@@ -726,6 +744,8 @@ public actor AgentInteractiveRuntimeOwnerV1:
                 == active.requirement.admission.grantRevision,
               current.approvalPublicKeyX963
                 == active.requirement.admission.approvalPublicKeyX963,
+              current.sessionPublicKeyX963
+                == active.requirement.admission.sessionPublicKeyX963,
               current.grants == active.requirement.admission.grants,
               current.deviceDisplayName
                 == active.requirement.admission.deviceDisplayName,

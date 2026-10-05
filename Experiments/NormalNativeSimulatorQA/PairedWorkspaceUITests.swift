@@ -47,10 +47,22 @@ final class PairedWorkspaceUITests: XCTestCase {
                        selectedWindowInvalidation: true)
     }
 
-    func testNormalAppReturnsToDesktopAfterSelectedWindowResizes() throws {
+    func testNormalAppReselectsWindowAfterResizeRecovery() throws {
+        try runJourney(nativeControl: true, surfaceReplacement: true,
+                       selectedWindow: "Mac Companion QA Target",
+                       selectedWindowInvalidation: true, automaticWindowRecovery: true, reselectWindowAfterRecovery: true)
+    }
+
+    func testNormalAppReturnsToDesktopAfterSelectedWindowCloses() throws {
         try runJourney(nativeControl: true, surfaceReplacement: true,
                        selectedWindow: "Mac Companion QA Target",
                        selectedWindowInvalidation: true, automaticWindowRecovery: true)
+    }
+
+    func testNormalAppReselectsWindowAfterMoveRecovery() throws {
+        try runJourney(nativeControl: true, surfaceReplacement: true,
+                       selectedWindow: "Mac Companion QA Target",
+                       selectedWindowInvalidation: true, automaticWindowRecovery: true, reselectWindowAfterRecovery: true)
     }
 
     func testNormalAppRestartsControlAfterSelectedWindowResizes() throws {
@@ -72,14 +84,16 @@ final class PairedWorkspaceUITests: XCTestCase {
                             connectionLoss: Bool = false, surfaceReplacement: Bool = false,
                             selectedTarget: String? = nil, selectedWindow: String? = nil,
                             selectedWindowInvalidation: Bool = false,
-                            restartAfterWindowInvalidation: Bool = false, automaticWindowRecovery: Bool = false) throws {
+                            restartAfterWindowInvalidation: Bool = false, automaticWindowRecovery: Bool = false,
+                            reselectWindowAfterRecovery: Bool = false) throws {
         continueAfterFailure = false
         XCTAssertFalse(selectedWindowInvalidation && selectedWindow == nil)
         XCTAssertFalse(restartAfterWindowInvalidation && !selectedWindowInvalidation)
+        XCTAssertFalse(reselectWindowAfterRecovery && !automaticWindowRecovery)
         let windowTransitions: Int
         if let raw = ProcessInfo.processInfo.environment["MACCOMPANION_TEST_WINDOW_SOAK_TRANSITIONS"] {
             windowTransitions = try XCTUnwrap(Int(raw))
-            XCTAssertTrue(selectedWindow != nil && windowTransitions == 20)
+            XCTAssertTrue(selectedWindow != nil && (2...200).contains(windowTransitions) && windowTransitions % 2 == 0)
         } else {
             windowTransitions = 1
         }
@@ -129,27 +143,36 @@ final class PairedWorkspaceUITests: XCTestCase {
         XCTAssertTrue(choice.waitForExistence(timeout: 5))
         choice.tap()
         app.buttons["Continue"].tap()
-        XCTAssertTrue(app.buttons["Mac Status"].waitForExistence(timeout: 30))
-        XCTAssertTrue(app.staticTexts["Authenticated connection"].waitForExistence(timeout: 20))
-        XCTAssertTrue(app.staticTexts["This iPhone is paired for Observe only. Remote Control must first be allowed on the Mac."].exists)
-        app.buttons["Mac Status"].tap()
-        XCTAssertTrue(app.buttons["Refresh Status"].waitForExistence(timeout: 10))
-        app.buttons["Refresh Status"].tap()
-        XCTAssertTrue(app.staticTexts["Live status"].waitForExistence(timeout: 20))
-        XCTAssertFalse(app.staticTexts["Mac Connected"].exists)
+        XCTAssertTrue(app.staticTexts["Authenticated connection"].waitForExistence(timeout: 30))
+        XCTAssertFalse(app.buttons["Mac Status"].exists)
+        XCTAssertFalse(app.buttons["Approved Actions"].exists)
+        XCTAssertTrue(app.buttons["Request Remote Control"].waitForExistence(timeout: 10))
         app.terminate()
         app.launch()
-        XCTAssertTrue(app.buttons["Mac Status"].waitForExistence(timeout: 30))
-        XCTAssertTrue(app.staticTexts["Authenticated connection"].waitForExistence(timeout: 20))
-        XCTAssertTrue(app.staticTexts["This iPhone is paired for Observe only. Remote Control must first be allowed on the Mac."].exists)
-        app.buttons["Mac Status"].tap()
-        XCTAssertTrue(app.buttons["Refresh Status"].waitForExistence(timeout: 10))
-        app.buttons["Refresh Status"].tap()
-        XCTAssertTrue(app.staticTexts["Live status"].waitForExistence(timeout: 20))
+        XCTAssertTrue(app.staticTexts["Authenticated connection"].waitForExistence(timeout: 30))
         XCTAssertFalse(app.buttons["Enter Pairing Code"].exists)
+        app.buttons["my-macs"].tap()
+        XCTAssertTrue(app.navigationBars["My Macs"].waitForExistence(timeout: 10), app.debugDescription)
+        app.buttons["Manage Mac 1"].tap()
+        app.buttons["Rename"].tap()
+        let name = app.textFields["mac-rename-name"]
+        XCTAssertTrue(name.waitForExistence(timeout: 5))
+        name.tap()
+        name.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: 5) + "Studio Mac")
+        app.navigationBars["Rename Mac"].buttons["Save"].tap()
+        XCTAssertTrue(app.staticTexts["Studio Mac"].waitForExistence(timeout: 10), app.debugDescription)
+        app.buttons["pair-another-mac"].tap()
+        XCTAssertTrue(app.buttons["Enter Pairing Code"].waitForExistence(timeout: 10), app.debugDescription)
+        app.buttons["My Macs"].tap()
+        XCTAssertTrue(app.navigationBars["My Macs"].waitForExistence(timeout: 10))
+        app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "saved-mac-")).firstMatch.tap()
+        XCTAssertTrue(app.staticTexts["Authenticated connection"].waitForExistence(timeout: 30))
+        app.terminate()
+        app.launch()
+        XCTAssertTrue(app.navigationBars["Studio Mac"].waitForExistence(timeout: 30), app.debugDescription)
+        XCTAssertTrue(app.staticTexts["Authenticated connection"].waitForExistence(timeout: 30))
         if nativeControl {
-            app.navigationBars["Mac Status"].buttons["Mac"].tap()
-            let grant = try NormalConsentBridge.command("journey-grant-control-observe")
+            let grant = try NormalConsentBridge.command("journey-admit-paired-control")
             XCTAssertEqual(grant["pairedDevices"] as? Int, 1)
             app.terminate()
             app.launch()
@@ -163,7 +186,8 @@ final class PairedWorkspaceUITests: XCTestCase {
                 XCTAssertEqual(app.buttons.matching(identifier: "Stop Remote Control").count, 1,
                     "The session must expose one Close/Stop control")
                 let keyboard = app.buttons["Remote Keyboard"]
-                let ready = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == 1 AND enabled == 1"), object: keyboard)
+                let admittedKey = app.buttons["Remote key escape"]
+                let ready = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == 1 AND enabled == 1"), object: admittedKey)
                 XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 45), .completed, app.debugDescription)
                 func hostControl() throws -> [String: Any] {
                     try XCTUnwrap(NormalConsentBridge.command("journey-status")["control"] as? [String: Any])
@@ -206,6 +230,9 @@ final class PairedWorkspaceUITests: XCTestCase {
                         "Dismissing a local picker must preserve the current native owner")
                     XCTAssertEqual(try hostControl()["nativePresentations"] as? Int, expectedPresentations,
                         "A local picker must not require another native enrollment")
+                    keyboard.tap()
+                    XCTAssertTrue(app.keyboards.element.waitForExistence(timeout: 10))
+                    XCTAssertFalse(app.alerts["Keyboard input unavailable"].exists)
                     // Switch away and back so subsequent App/Window coverage
                     // keeps using its original physical display.
                     for _ in 0..<2 {
@@ -228,13 +255,19 @@ final class PairedWorkspaceUITests: XCTestCase {
                             "A successful display replacement must preserve the picker until dismissed")
                         app.buttons["Done"].tap()
                         XCTAssertTrue(keyboard.waitForExistence(timeout: 10), app.debugDescription)
+                        XCTAssertTrue(app.keyboards.element.waitForExistence(timeout: 10),
+                            "Keyboard must return after a display picker switch without another keyboard tap")
                         Thread.sleep(forTimeInterval: 1)
                         XCTAssertFalse(app.descendants(matching: .any)["Remote Control restart required"].firstMatch.exists,
                             "Changing Shared Display must not retire the replacement native owner")
                     }
                     for transition in 0..<windowTransitions {
                         app.buttons["More"].tap()
-                        app.buttons["Choose Surface"].tap()
+                        let chooseSurface = app.buttons["Choose Surface"]
+                        XCTAssertTrue(chooseSurface.waitForExistence(timeout: 5), app.debugDescription)
+                        XCTAssertTrue(chooseSurface.isEnabled && chooseSurface.isHittable,
+                            "The view picker action must remain reachable with the keyboard open")
+                        chooseSurface.tap()
                         XCTAssertTrue(app.navigationBars["Choose Mac View"].waitForExistence(timeout: 10), app.debugDescription)
                         let chooseSelected = transition.isMultiple(of: 2)
                         if chooseSelected && (selectedTarget != nil || selectedWindow != nil) {
@@ -262,9 +295,12 @@ final class PairedWorkspaceUITests: XCTestCase {
                             app.buttons["Desktop"].tap()
                         }
                         let reenrolled = XCTNSPredicateExpectation(
-                            predicate: NSPredicate(format: "exists == 1 AND enabled == 1"), object: keyboard)
+                            predicate: NSPredicate(format: "exists == 1 AND enabled == 1"), object: admittedKey)
                         XCTAssertEqual(XCTWaiter.wait(for: [reenrolled], timeout: 45), .completed,
                             "Replacement must wait for fresh native presentation")
+                        XCTAssertTrue(app.keyboards.element.waitForExistence(timeout: 10),
+                            "Keyboard must return after a Window picker switch")
+                        XCTAssertFalse(app.alerts["Keyboard input unavailable"].exists)
                         XCTAssertFalse(app.staticTexts["Remote Control needs to restart"].exists,
                             "A successful surface replacement must not retain restart guidance")
                         expectedPresentations += 1
@@ -276,27 +312,86 @@ final class PairedWorkspaceUITests: XCTestCase {
                         }
                         XCTAssertEqual(after["nativePresentations"] as? Int, expectedPresentations)
                         if selectedWindowInvalidation {
+                            if reselectWindowAfterRecovery {
+                                app.buttons["More"].tap()
+                                app.buttons["Choose Surface"].tap()
+                                XCTAssertTrue(app.navigationBars["Choose Mac View"].waitForExistence(timeout: 10),
+                                    app.debugDescription)
+                                let search = app.searchFields["Find an app or window"]
+                                XCTAssertTrue(search.waitForExistence(timeout: 5))
+                                search.tap()
+                                search.typeText(try XCTUnwrap(selectedWindow))
+                            }
                             let readyToChange = try NormalConsentBridge.command("journey-window-change-ready")
                             XCTAssertEqual((readyToChange["control"] as? [String: Any])?["nativePresentations"] as? Int,
                                 expectedPresentations)
                             if automaticWindowRecovery {
+                                if reselectWindowAfterRecovery {
+                                    XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "Surface Picker Busy").firstMatch
+                                        .waitForExistence(timeout: 10),
+                                        "Recovery must remain visible inside an already open picker")
+                                    XCTAssertFalse(app.buttons["Desktop"].isEnabled,
+                                        "A recovering picker must not advertise ignored selections as available")
+                                    // Active native search replaces the sheet's
+                                    // Cancel toolbar item with its local Close.
+                                    let cancel = app.buttons["Cancel"].exists
+                                        ? app.buttons["Cancel"] : app.buttons["Close"]
+                                    XCTAssertTrue(cancel.exists && cancel.isEnabled,
+                                        "Recovery must leave local picker/search cancellation available")
+                                }
                                 XCTAssertTrue(app.staticTexts["Showing Desktop. Choose the window again when ready."]
                                     .waitForExistence(timeout: 45), app.debugDescription)
-                                let recovered = XCTNSPredicateExpectation(
-                                    predicate: NSPredicate(format: "exists == 1 AND enabled == 1"), object: keyboard)
-                                XCTAssertEqual(XCTWaiter.wait(for: [recovered], timeout: 45), .completed,
-                                    "Resize must obtain a fresh Desktop presentation without another Control request")
-                                XCTAssertTrue(stop.exists)
+                                if !reselectWindowAfterRecovery {
+                                    let recovered = XCTNSPredicateExpectation(
+                                        predicate: NSPredicate(format: "exists == 1 AND enabled == 1"), object: admittedKey)
+                                    XCTAssertEqual(XCTWaiter.wait(for: [recovered], timeout: 45), .completed,
+                                        "Selected-window loss must obtain a fresh Desktop presentation without another Control request")
+                                    XCTAssertTrue(stop.exists)
+                                }
                                 XCTAssertFalse(app.buttons["Stop Failed Session"].exists)
                                 XCTAssertFalse(app.staticTexts["Remote Control needs to restart"].exists)
                                 expectedPresentations += 1
                                 after = try hostControl()
                                 XCTAssertEqual(after["nativePresentations"] as? Int, expectedPresentations)
+                                if reselectWindowAfterRecovery {
+                                    // The first ordinary selection after recovery must
+                                    // reuse the fresh Desktop host, receive its own
+                                    // presentation and continue delivering frames.
+                                    XCTAssertTrue(app.navigationBars["Choose Mac View"].exists,
+                                        "The picker must remain open through bounded recovery")
+                                    let target = app.buttons.matching(NSPredicate(
+                                        format: "identifier BEGINSWITH %@ AND label CONTAINS %@",
+                                        "Surface Window ", try XCTUnwrap(selectedWindow))).firstMatch
+                                    XCTAssertTrue(target.waitForExistence(timeout: 5), app.debugDescription)
+                                    let selectable = XCTNSPredicateExpectation(
+                                        predicate: NSPredicate(format: "exists == 1 AND enabled == 1"), object: target)
+                                    XCTAssertEqual(XCTWaiter.wait(for: [selectable], timeout: 5), .completed,
+                                        "Recovered picker choices must become selectable again")
+                                    target.tap()
+                                    let reselected = XCTNSPredicateExpectation(
+                                        predicate: NSPredicate(format: "exists == 1 AND enabled == 1"), object: admittedKey)
+                                    XCTAssertEqual(XCTWaiter.wait(for: [reselected], timeout: 45), .completed,
+                                        "Window selection immediately after Desktop recovery must present fresh video and input")
+                                    expectedPresentations += 1
+                                    after = try hostControl()
+                                    XCTAssertEqual(after["nativePresentations"] as? Int, expectedPresentations)
+                                    let previousMedia = try XCTUnwrap(after["mediaRecords"] as? Int)
+                                    let mediaDeadline = Date().addingTimeInterval(5)
+                                    while (after["mediaRecords"] as? Int ?? 0) <= previousMedia, Date() < mediaDeadline {
+                                        Thread.sleep(forTimeInterval: 0.2)
+                                        after = try hostControl()
+                                    }
+                                    XCTAssertGreaterThan(try XCTUnwrap(after["mediaRecords"] as? Int), previousMedia,
+                                        "The reselected Window must keep producing video after recovery")
+                                    XCTAssertTrue(stop.exists)
+                                    XCTAssertFalse(app.buttons["Stop Failed Session"].exists)
+                                    XCTAssertFalse(app.staticTexts["Remote Control needs to restart"].exists)
+                                }
                             } else {
                             let failedSession = app.buttons["Stop Failed Session"]
                             XCTAssertTrue(failedSession.waitForExistence(timeout: 45),
                                 "The client must show a recoverable failed session after Window geometry or visibility changes: \(app.debugDescription)")
-                            XCTAssertFalse(keyboard.exists && keyboard.isEnabled,
+                            XCTAssertFalse(admittedKey.exists && admittedKey.isEnabled,
                                 "A changed Window must not retain Keyboard authority")
                             failedSession.tap()
                             let request = app.buttons["Request Remote Control"]
@@ -311,7 +406,7 @@ final class PairedWorkspaceUITests: XCTestCase {
                                 XCTAssertTrue(stop.waitForExistence(timeout: 45),
                                     "Control must restart after the changed Window session is stopped: \(app.debugDescription)")
                                 let restarted = XCTNSPredicateExpectation(
-                                    predicate: NSPredicate(format: "exists == 1 AND enabled == 1"), object: keyboard)
+                                    predicate: NSPredicate(format: "exists == 1 AND enabled == 1"), object: admittedKey)
                                 XCTAssertEqual(XCTWaiter.wait(for: [restarted], timeout: 45), .completed,
                                     "A fresh native frame must enable input after restart: \(app.debugDescription)")
                                 // The replacement Mac test menu has a new loopback
@@ -331,6 +426,15 @@ final class PairedWorkspaceUITests: XCTestCase {
                         }
                         XCTAssertEqual(after["captureActive"] as? Bool, true)
                         if windowTransitions > 1 {
+                            let mediaBefore = try XCTUnwrap(after["mediaRecords"] as? Int)
+                            let mediaDeadline = Date().addingTimeInterval(5)
+                            var advancing = try hostControl()
+                            while (advancing["mediaRecords"] as? Int ?? 0) <= mediaBefore, Date() < mediaDeadline {
+                                Thread.sleep(forTimeInterval: 0.2)
+                                advancing = try hostControl()
+                            }
+                            XCTAssertGreaterThan(try XCTUnwrap(advancing["mediaRecords"] as? Int), mediaBefore,
+                                "Every new surface must keep producing video after its fresh presentation")
                             let previous = try XCTUnwrap(after["inputEvents"] as? Int)
                             app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
                             var delivered = try hostControl()
@@ -345,6 +449,7 @@ final class PairedWorkspaceUITests: XCTestCase {
                     }
                 }
                 let beforeInput = try XCTUnwrap(control["inputEvents"] as? Int)
+                if app.keyboards.element.exists { app.buttons["Hide Keyboard"].tap() }
                 keyboard.tap()
                 XCTAssertTrue(app.keyboards.element.waitForExistence(timeout: 10))
                 app.keys["a"].tap()
@@ -454,7 +559,7 @@ final class PairedWorkspaceUITests: XCTestCase {
                         XCTAssertTrue(stop.waitForExistence(timeout: 10), app.debugDescription)
                         XCTAssertFalse(app.keyboards.element.exists)
                         let resumed = XCTNSPredicateExpectation(
-                            predicate: NSPredicate(format: "exists == 1 AND enabled == 1"), object: keyboard)
+                            predicate: NSPredicate(format: "exists == 1 AND enabled == 1"), object: admittedKey)
                         XCTAssertEqual(XCTWaiter.wait(for: [resumed], timeout: 45), .completed,
                             "Short background return must obtain fresh native presentation under the same Control approval")
                         expectedPresentations += 1
@@ -497,10 +602,7 @@ final class PairedWorkspaceUITests: XCTestCase {
                     XCTAssertEqual(recovered["nativePresentations"] as? Int, expectedPresentations,
                         "Connection recovery must not automatically restart native Control")
                     XCTAssertEqual(recovered["captureActive"] as? Bool, false)
-                    app.buttons["Mac Status"].tap()
-                    app.buttons["Refresh Status"].tap()
-                    XCTAssertTrue(app.staticTexts["Live status"].waitForExistence(timeout: 20))
-                    app.navigationBars["Mac Status"].buttons["Mac"].tap()
+                    XCTAssertFalse(app.buttons["Mac Status"].exists)
                     continue
                 }
                 stop.tap()
@@ -523,10 +625,7 @@ final class PairedWorkspaceUITests: XCTestCase {
                     }
                 }
                 XCTAssertTrue(app.staticTexts["Authenticated connection"].exists)
-                app.buttons["Mac Status"].tap()
-                app.buttons["Refresh Status"].tap()
-                XCTAssertTrue(app.staticTexts["Live status"].waitForExistence(timeout: 20))
-                app.navigationBars["Mac Status"].buttons["Mac"].tap()
+                XCTAssertFalse(app.buttons["Mac Status"].exists)
             }
         }
     }

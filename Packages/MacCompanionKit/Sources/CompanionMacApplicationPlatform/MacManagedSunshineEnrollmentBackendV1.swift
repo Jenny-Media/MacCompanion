@@ -1,9 +1,11 @@
 #if os(macOS)
 import Foundation
 import Darwin
+import CoreGraphics
 import OSLog
 import CompanionInteractiveHost
 import CompanionInteractiveShared
+import CompanionIPC
 
 private let managedNativeCaptureDiagnosticsLoggerV1 = Logger(
     subsystem: "media.jenny.maccompanion.mac", category: "native-host-diagnostics")
@@ -12,7 +14,7 @@ private let managedNativeCaptureDiagnosticsLoggerV1 = Logger(
 /// Only the coordinator's valid proof may call activate. Private state belongs
 /// exclusively to this instance; the installed Sunshine state is never read.
 @MainActor
-public final class MacManagedSunshineEnrollmentBackendV1: InteractiveNativeVideoEnrollmentBackendV0 {
+public final class MacManagedSunshineEnrollmentBackendV1: MacInteractiveNativeStreamReplacingV1 {
     public enum ListenerScope: Sendable {
         case loopback, ipv4Interfaces, dualStackInterfaces
         package var bindAddress: String {
@@ -32,10 +34,37 @@ public final class MacManagedSunshineEnrollmentBackendV1: InteractiveNativeVideo
     private let opensslConfiguration: URL
     private let port: UInt16
     private let listenerScope: ListenerScope
-    private let approvedDesktopDisplayID: UInt32
-    private let approvedCaptureGeometry: InteractiveNativeVideoContentGeometryV0
-    private let approvedSelectedCapture: MacManagedNativeSelectedCaptureV1?
-    private let currentControl: @MainActor () -> Bool
+    private var approvedDesktopDisplayID: UInt32
+    private var approvedCaptureGeometry: InteractiveNativeVideoContentGeometryV0
+    private var approvedSelectedCapture: MacManagedNativeSelectedCaptureV1?
+    private let originalControl: @MainActor () -> Bool
+    private let streamContinuityEnabled: Bool
+    private var originalAuthority: InteractiveNativeVideoAuthorityV0?
+    private var clientDER: Data?
+    private var captureOperationID: UUID?
+    private var handoff: MacManagedCaptureHandoffV1?
+    private var retained = false
+    private var retaining = false
+    private var retainedUntil: UInt64?
+    private var replacement: (authority: InteractiveNativeVideoAuthorityV0, physicalDisplayID: UInt32,
+        geometry: InteractiveNativeVideoContentGeometryV0, selected: MacManagedNativeSelectedCaptureV1?)?
+    private var replacementContext: Data?
+    private var reportedControlFailure = false
+    private var currentControl: @MainActor () -> Bool {
+        { [weak self] in
+            guard let self, !self.retired else { return false }
+            guard self.originalControl() else {
+                self.recordControlFailure(selectedReason: 0)
+                return false
+            }
+            if self.retained { return true }
+            if let reason = self.approvedSelectedCapture?.validationFailure {
+                self.recordControlFailure(selectedReason: reason.rawValue)
+                return false
+            }
+            return true
+        }
+    }
     private let withCurrentControl: (@MainActor (UInt64, () throws -> Void) throws -> Void)?
     private var operation: UUID?
     private var directory: URL?
@@ -50,37 +79,37 @@ public final class MacManagedSunshineEnrollmentBackendV1: InteractiveNativeVideo
     private var ready = false
     private var captureReported = false
     private var captureShapeReported = false
+    private var lastEvidenceFailure: String? = nil
     private var drain: Task<Void, Never>?
+
+    private func recordControlFailure(selectedReason: Int) {
+        guard !reportedControlFailure else { return }
+        reportedControlFailure = true
+        // 0 means original local permit loss; 1...9 are the closed selected
+        // capture codes. No identities, bounds, titles or input are formatted.
+        managedNativeCaptureDiagnosticsLoggerV1.error("native-control-invalid selectedReason=\(selectedReason, privacy: .public)")
+    }
 
     public init(root: URL, sunshine: URL, supervisor: URL, openssl: URL,
          opensslConfiguration: URL = URL(fileURLWithPath: "/dev/null"),
          port: UInt16, approvedDesktopDisplayID: UInt32, approvedCaptureGeometry: InteractiveNativeVideoContentGeometryV0, currentControl: @escaping @MainActor () -> Bool,
         withCurrentControl: (@MainActor (UInt64, () throws -> Void) throws -> Void)? = nil,
         listenerScope: ListenerScope = .loopback,
-        approvedSelectedCapture: MacManagedNativeSelectedCaptureV1? = nil) throws {
+        approvedSelectedCapture: MacManagedNativeSelectedCaptureV1? = nil,
+        streamContinuityEnabled: Bool = false) throws {
         for url in [root, sunshine, supervisor, openssl, opensslConfiguration] {
             guard url.isFileURL, url.path.hasPrefix("/"), !url.path.contains("\n"), !url.path.contains("\r") else { throw Failure.invalidPath }
         }
         guard approvedDesktopDisplayID != 0 else { throw Failure.invalidPath }
         _ = try InteractiveNativeVideoEndpointV0(portBase: port)
         guard approvedSelectedCapture == nil || approvedSelectedCapture?.geometry == approvedCaptureGeometry else { throw Failure.invalidPhase }
-        self.root = try approvedSelectedCapture == nil ? root : Self.physicalRoot(root)
+        self.root = try approvedSelectedCapture == nil && !streamContinuityEnabled ? root : Self.physicalRoot(root)
         self.sunshine = sunshine; self.supervisor = supervisor
         self.openssl = openssl; self.port = port
         self.opensslConfiguration = opensslConfiguration
         self.approvedDesktopDisplayID = approvedSelectedCapture?.physicalDisplayID ?? approvedDesktopDisplayID
-        self.currentControl = {
-            let controlIsCurrent = currentControl()
-            let selectionIsCurrent = approvedSelectedCapture?.isCurrent ?? true
-            #if DEBUG
-            if !controlIsCurrent || !selectionIsCurrent {
-                NSLog("[MacCompanion selected capture] current control=%@ selection=%@",
-                      controlIsCurrent ? "true" : "false",
-                      selectionIsCurrent ? "true" : "false")
-            }
-            #endif
-            return controlIsCurrent && selectionIsCurrent
-        }
+        self.originalControl = currentControl
+        self.streamContinuityEnabled = streamContinuityEnabled
         self.approvedCaptureGeometry = approvedCaptureGeometry
         self.approvedSelectedCapture = approvedSelectedCapture
         self.withCurrentControl = withCurrentControl
@@ -103,12 +132,15 @@ public final class MacManagedSunshineEnrollmentBackendV1: InteractiveNativeVideo
     }
 
     public func prepare(operationID: UUID, authority: InteractiveNativeVideoAuthorityV0, clientCertificateDER: Data) async throws -> Data {
-        guard !retired, operation == nil, currentControl(), (1...4096).contains(clientCertificateDER.count) else { throw Failure.invalidPhase }
+        if operation != nil {
+            return try prepareRetainedReplacement(operationID: operationID, authority: authority, clientCertificateDER: clientCertificateDER)
+        }
+        guard !retired, currentControl(), (1...4096).contains(clientCertificateDER.count) else { throw Failure.invalidPhase }
         guard authority.surface.encodedWidth == approvedCaptureGeometry.encodedWidth,
               authority.surface.encodedHeight == approvedCaptureGeometry.encodedHeight else { throw Failure.invalidPhase }
         // Validate the complete existing authority before retaining any local
         // selected metadata. This projection supplies no substitute proof.
-        let selectedContext = try approvedSelectedCapture?.contextData(operationID: operationID, authority: authority)
+        let selectedContext = try captureContext(operationID: operationID, authority: authority)
         operation = operationID
         let dir = root.appendingPathComponent("managed-" + operationID.uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
@@ -134,10 +166,12 @@ public final class MacManagedSunshineEnrollmentBackendV1: InteractiveNativeVideo
         clientPEM = try String(contentsOf: dir.appendingPathComponent("client.pem"), encoding: .utf8)
         hostDER = cert
         deadline = authority.binding.expiresAtMonotonicMilliseconds
+        originalAuthority = authority; clientDER = clientCertificateDER; captureOperationID = operationID
         return cert
     }
 
     public func activate(operationID: UUID) async throws -> InteractiveNativeVideoEndpointV0 {
+        if processOwner != nil { return try await activateRetainedReplacement(operationID: operationID) }
         guard !retired, operation == operationID, processOwner == nil, currentControl(),
               let dir = directory, let clientPEM, let deadline,
               deadline > DispatchTime.now().uptimeNanoseconds / 1_000_000,
@@ -157,32 +191,147 @@ public final class MacManagedSunshineEnrollmentBackendV1: InteractiveNativeVideo
         try write(Data(values.keys.sorted().map { "\($0) = \(values[$0]!)\n" }.joined().utf8), "sunshine.conf")
         try write(Data(), "startup.log")
         try write(Data(), "capture-geometry.json")
+        if streamContinuityEnabled {
+            handoff = try MacManagedCaptureHandoffV1(directory: dir, transport: operationID,
+                expiryNanoseconds: deadline * 1_000_000, current: { [weak self] in
+                    guard let self else { return false }; return !self.retired && self.originalControl() && self.processOwner?.isRunning == true
+                })
+        }
         let owner = MacManagedSunshineProcessOwnerV1(revalidateControl: currentControl, didExit: { [weak self] _ in
             // A helper crash destroys its credentials as well as its listener.
-            Task { @MainActor [weak self] in await self?.retire(operationID: operationID) }
+            Task { @MainActor [weak self] in
+                guard let self, let currentOperation = self.operation else { return }
+                await self.retire(operationID: currentOperation)
+            }
         })
         processOwner = owner
         try owner.start(supervisor: supervisor, sunshine: sunshine, configuration: dir.appendingPathComponent("sunshine.conf"),
                         dataDirectory: dir, log: dir.appendingPathComponent("startup.log"), expiresAtMonotonicNanoseconds: deadline * 1_000_000, managedEnrollment: true,
                         nativeCapture: (operationID, dir.appendingPathComponent("capture-geometry.json"),
                             "\(approvedCaptureGeometry.encodedWidth)x\(approvedCaptureGeometry.encodedHeight)x60"),
-                        selectedCaptureContext: approvedSelectedCapture == nil ? nil : dir.appendingPathComponent("selected-capture.json"))
+                        selectedCaptureContext: approvedSelectedCapture == nil && !streamContinuityEnabled ? nil : dir.appendingPathComponent("selected-capture.json"))
         // Require the listening peer to present the prepared certificate. A
         // service already using the port cannot masquerade as this operation.
-        for _ in 0..<30 {
-            guard !retired, currentControl(), DispatchTime.now().uptimeNanoseconds / 1_000_000 < deadline else { throw Failure.startupFailed }
+        let startupUntil = min(deadline, DispatchTime.now().uptimeNanoseconds / 1_000_000
+            + LocalInteractiveNativeBackendOperationV1.activationStartupMilliseconds)
+        while DispatchTime.now().uptimeNanoseconds / 1_000_000 < startupUntil {
+            guard !Task.isCancelled, !retired, currentControl(), DispatchTime.now().uptimeNanoseconds / 1_000_000 < deadline else { throw Failure.startupFailed }
             if try await matchesPreparedServerCertificate() {
-                guard !retired, processOwner?.isRunning == true else { throw Failure.startupFailed }
+                guard !Task.isCancelled, !retired, currentControl(), processOwner?.isRunning == true,
+                      DispatchTime.now().uptimeNanoseconds / 1_000_000 < startupUntil else { throw Failure.startupFailed }
                 ready = true
                 return try .init(portBase: port)
             }
             try await Task.sleep(for: .milliseconds(100))
         }
+        managedNativeCaptureDiagnosticsLoggerV1.error("native startup rejected reason=startup-budget")
         throw Failure.startupFailed
     }
 
     public func isActive(operationID: UUID) async -> Bool {
-        !retired && ready && operation == operationID && processOwner?.isRunning == true
+        !retired && !retained && ready && operation == operationID && processOwner?.isRunning == true
+    }
+
+    public func supportsStreamContinuity(operationID: UUID) async -> Bool {
+        streamContinuityEnabled && handoff != nil && !retired && !retained && ready
+            && operation == operationID && processOwner?.isRunning == true && currentControl()
+    }
+    public func retainStream(operationID: UUID) async throws {
+        guard await supportsStreamContinuity(operationID: operationID), let handoff, let deadline else { throw Failure.invalidPhase }
+        let now = DispatchTime.now().uptimeNanoseconds / 1_000_000
+        retainedUntil = min(deadline, now + 15_000)
+        // Fence backend posting before any child acknowledgement. The menu
+        // owner separately revokes the exact installed input authorization.
+        retained = true; retaining = true
+        do {
+            try await handoff.pause(operationID: operationID)
+            guard !Task.isCancelled, !retired, operation == operationID, originalControl(),
+                  processOwner?.isRunning == true, let retainedUntil,
+                  DispatchTime.now().uptimeNanoseconds / 1_000_000 < retainedUntil else { throw Failure.invalidPhase }
+            retaining = false; captureReported = false; captureShapeReported = false
+        } catch {
+            if let reason = error as? MacManagedCaptureHandoffV1.Failure {
+                managedNativeCaptureDiagnosticsLoggerV1.error("capture-handoff-failed reason=\(reason.rawValue, privacy: .public)")
+            }
+            await retire(operationID: operationID); throw error
+        }
+    }
+    public func isStreamRetained(operationID: UUID) async -> Bool {
+        !retired && retained && !retaining && operation == operationID && processOwner?.isRunning == true
+            && originalControl() && (retainedUntil.map { DispatchTime.now().uptimeNanoseconds / 1_000_000 < $0 } ?? false)
+    }
+
+    /// Only the menu's current runtime/display projection supplies these local
+    /// values. No serialized physical metadata is accepted from a peer.
+    public func configureRetainedReplacement(predecessorOperationID: UUID,
+        authority: InteractiveNativeVideoAuthorityV0, physicalDisplayID: UInt32,
+        geometry: InteractiveNativeVideoContentGeometryV0, selected: MacManagedNativeSelectedCaptureV1?) async throws {
+        guard await isStreamRetained(operationID: predecessorOperationID), replacement == nil, replacementContext == nil,
+              let originalAuthority, authority.binding == originalAuthority.binding,
+              authority.sessionPublicKeyX963 == originalAuthority.sessionPublicKeyX963,
+              authority.surface.encodedWidth == originalAuthority.surface.encodedWidth,
+              authority.surface.encodedHeight == originalAuthority.surface.encodedHeight,
+              geometry.encodedWidth == authority.surface.encodedWidth, geometry.encodedHeight == authority.surface.encodedHeight,
+              physicalDisplayID != 0, selected == nil || selected?.geometry == geometry else { throw Failure.invalidPhase }
+        replacement = (authority, physicalDisplayID, geometry, selected)
+    }
+    private func prepareRetainedReplacement(operationID: UUID, authority: InteractiveNativeVideoAuthorityV0,
+        clientCertificateDER: Data) throws -> Data {
+        guard !Task.isCancelled, !retired, retained, !retaining, originalControl(), processOwner?.isRunning == true,
+              let oldOperation = operation, operationID != oldOperation, clientDER == clientCertificateDER,
+              let replacement, replacement.authority == authority, let hostDER, let retainedUntil,
+              DispatchTime.now().uptimeNanoseconds / 1_000_000 < retainedUntil else { throw Failure.invalidPhase }
+        // Validate and encode before moving the logical owner. Old-operation
+        // retirement is harmless after this exact transfer; Stop owns the new one.
+        let oldDisplay = approvedDesktopDisplayID, oldGeometry = approvedCaptureGeometry, oldSelected = approvedSelectedCapture
+        approvedDesktopDisplayID = replacement.physicalDisplayID
+        approvedCaptureGeometry = replacement.geometry; approvedSelectedCapture = replacement.selected
+        do {
+            guard replacement.selected?.isCurrent ?? true,
+                  let context = try captureContext(operationID: operationID, authority: authority) else { throw Failure.invalidPhase }
+            replacementContext = context; operation = operationID; self.replacement = nil
+            captureReported = false; captureShapeReported = false
+            return hostDER
+        } catch {
+            approvedDesktopDisplayID = oldDisplay; approvedCaptureGeometry = oldGeometry; approvedSelectedCapture = oldSelected
+            throw error
+        }
+    }
+    private func activateRetainedReplacement(operationID: UUID) async throws -> InteractiveNativeVideoEndpointV0 {
+        guard !retired, retained, !retaining, operation == operationID, originalControl(),
+              let context = replacementContext, let previous = captureOperationID, let handoff,
+              let retainedUntil, DispatchTime.now().uptimeNanoseconds / 1_000_000 < retainedUntil,
+              approvedSelectedCapture?.isCurrent ?? true else { throw Failure.invalidPhase }
+        do {
+            try await handoff.select(operationID: operationID, previousOperationID: previous, context: context)
+            guard !Task.isCancelled, !retired, operation == operationID, originalControl(), processOwner?.isRunning == true,
+                  DispatchTime.now().uptimeNanoseconds / 1_000_000 < retainedUntil,
+                  approvedSelectedCapture?.isCurrent ?? true else { throw Failure.invalidPhase }
+            captureOperationID = operationID; replacementContext = nil; retained = false; self.retainedUntil = nil
+            return try .init(portBase: port)
+        } catch {
+            if let reason = error as? MacManagedCaptureHandoffV1.Failure {
+                managedNativeCaptureDiagnosticsLoggerV1.error("capture-handoff-failed reason=\(reason.rawValue, privacy: .public)")
+            }
+            await retire(operationID: operationID); throw error
+        }
+    }
+    private func captureContext(operationID: UUID, authority: InteractiveNativeVideoAuthorityV0) throws -> Data? {
+        let epoch = try streamContinuityEnabled ? authority.surface.frameEpochData() : nil
+        if let selected = approvedSelectedCapture {
+            return try selected.contextData(operationID: operationID, authority: authority, frameEpoch: epoch)
+        }
+        guard streamContinuityEnabled else { return nil }
+        let bounds = CGDisplayBounds(approvedDesktopDisplayID)
+        guard bounds.width == Double(approvedCaptureGeometry.logicalWidthPoints),
+              bounds.height == Double(approvedCaptureGeometry.logicalHeightPoints), CGDisplayIsActive(approvedDesktopDisplayID) != 0,
+              CGDisplayRotation(approvedDesktopDisplayID) == 0,
+              authority.binding.expiresAtMonotonicMilliseconds <= UInt64.max / 1_000_000 else { throw Failure.invalidPhase }
+        let scale = Double(approvedCaptureGeometry.capturePixelWidth) / bounds.width
+        return try MacManagedNativeSelectedCaptureV1.encodeContext(operationID: operationID, kind: "desktop",
+            physicalDisplayID: approvedDesktopDisplayID, windowID: 0, processID: 0, bundleIdentifier: "", processLaunchMilliseconds: 0,
+            bounds: bounds, backingScale: scale, geometry: approvedCaptureGeometry,
+            expiryNanoseconds: authority.binding.expiresAtMonotonicMilliseconds * 1_000_000, frameEpoch: epoch)
     }
 
     public func captureEvidence(operationID: UUID) async throws -> InteractiveNativeVideoCaptureEvidenceV0? {
@@ -193,20 +342,27 @@ public final class MacManagedSunshineEnrollmentBackendV1: InteractiveNativeVideo
     // Synchronous: also called under the atomic permit. It must not reenter
     // currentControl(), which reads that permit's lock.
     private func readCaptureEvidence(operationID: UUID) throws -> InteractiveNativeVideoCaptureEvidenceV0? {
-        guard !retired, ready, operation == operationID, processOwner?.isRunning == true,
+        lastEvidenceFailure = "not-active"
+        guard !retired, !retained, ready, operation == operationID, processOwner?.isRunning == true,
               approvedSelectedCapture?.isCurrent ?? true,
               let directory else { return nil }
         let url = directory.appendingPathComponent("capture-geometry.json")
+        lastEvidenceFailure = "file-absent"
         let fd = open(url.path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK)
         if fd < 0 { if errno == ENOENT { return nil }; throw Failure.invalidPhase }
         defer { close(fd) }
         var facts = stat()
+        lastEvidenceFailure = "unsafe-file"
         guard fstat(fd, &facts) == 0, (facts.st_mode & mode_t(S_IFMT)) == mode_t(S_IFREG),
               facts.st_uid == geteuid(), (facts.st_mode & 0o777) == 0o600,
               facts.st_size >= 0, facts.st_size <= 2048 else { throw Failure.invalidPhase }
-        if facts.st_size == 0 { return nil }
+        if facts.st_size == 0 {
+            lastEvidenceFailure = "empty-file"
+            return nil
+        }
         var bytes = [UInt8](repeating: 0, count: Int(facts.st_size))
         let count = bytes.withUnsafeMutableBytes { read(fd, $0.baseAddress, $0.count) }
+        lastEvidenceFailure = "short-read"
         guard count == bytes.count else { throw Failure.invalidPhase }
         if !captureShapeReported, let object = try? JSONSerialization.jsonObject(with: Data(bytes)) as? [String: Any] {
             let keys: Set<String> = ["encodedWidth", "encodedHeight", "formatWidth", "formatHeight", "cleanX", "cleanY", "cleanWidth", "cleanHeight", "aspectFitConfigured"]
@@ -217,12 +373,19 @@ public final class MacManagedSunshineEnrollmentBackendV1: InteractiveNativeVideo
                 FileHandle.standardError.write(Data("native-backend-sample-shape " .utf8) + data + Data("\n".utf8))
             }
         }
+        lastEvidenceFailure = "malformed-evidence"
         let evidence = try InteractiveNativeVideoCaptureEvidenceV0.decode(Data(bytes))
+        lastEvidenceFailure = "evidence-validation"
         do {
             try evidence.validate(operationID: operationID, geometry: approvedCaptureGeometry,
                 nowMonotonicNanoseconds: DispatchTime.now().uptimeNanoseconds)
-        } catch InteractiveNativeVideoCaptureEvidenceErrorV0.notCurrent { return nil }
-        guard !retired, ready, operation == operationID, processOwner?.isRunning == true else { return nil }
+        } catch InteractiveNativeVideoCaptureEvidenceErrorV0.notCurrent {
+            lastEvidenceFailure = "evidence-not-current"
+            return nil
+        }
+        lastEvidenceFailure = "owner-changed"
+        guard !retired, !retained, ready, operation == operationID, processOwner?.isRunning == true else { return nil }
+        lastEvidenceFailure = nil
         if !captureReported {
             captureReported = true
             FileHandle.standardError.write(Data("native-backend-sample-geometry-verified\n".utf8))
@@ -231,7 +394,7 @@ public final class MacManagedSunshineEnrollmentBackendV1: InteractiveNativeVideo
     }
 
     public func canPostInput(operationID: UUID) async -> Bool {
-        !Task.isCancelled && !retired && ready && operation == operationID && processOwner?.isRunning == true
+        !Task.isCancelled && !retired && !retained && ready && operation == operationID && processOwner?.isRunning == true
             && currentControl() && withCurrentControl != nil
     }
 
@@ -239,8 +402,13 @@ public final class MacManagedSunshineEnrollmentBackendV1: InteractiveNativeVideo
                         batch: @escaping @Sendable () throws -> Void) async throws {
         guard !Task.isCancelled, currentControl(), let withCurrentControl else { throw Failure.invalidPhase }
         try withCurrentControl(beforeDeadlineNanoseconds) {
-            guard !Task.isCancelled, !retired, ready, operation == operationID, processOwner?.isRunning == true,
-                  let deadline, let evidence = try readCaptureEvidence(operationID: operationID) else {
+            guard !Task.isCancelled, !retired, !retained, ready, operation == operationID, processOwner?.isRunning == true,
+                  let deadline else {
+                managedNativeCaptureDiagnosticsLoggerV1.error("native-input-rejected stage=native-post reason=backend.invalidPhase")
+                throw Failure.invalidPhase
+            }
+            guard let evidence = try readCaptureEvidence(operationID: operationID) else {
+                managedNativeCaptureDiagnosticsLoggerV1.error("native-input-capture-evidence-unavailable reason=\(self.lastEvidenceFailure ?? "unclassified", privacy: .public)")
                 throw Failure.invalidPhase
             }
             let now = DispatchTime.now().uptimeNanoseconds
@@ -255,7 +423,8 @@ public final class MacManagedSunshineEnrollmentBackendV1: InteractiveNativeVideo
         guard operation == nil || operation == operationID else { return }
         if let drain { await drain.value; return }
         retired = true
-        ready = false
+        ready = false; retained = false; retaining = false; retainedUntil = nil
+        handoff?.close(); handoff = nil; replacement = nil; replacementContext = nil
         let pendingProbe = probe
         pendingProbe?.terminate()
         let pendingCommand = commandTask, pendingProcess = commandProcess
@@ -284,7 +453,7 @@ public final class MacManagedSunshineEnrollmentBackendV1: InteractiveNativeVideo
         drain = task
         await task.value
         processOwner = nil
-        clientPEM = nil; hostDER = nil
+        clientPEM = nil; hostDER = nil; clientDER = nil; originalAuthority = nil
         if let directory {
             let codes = Set(["startup.log", "sunshine.log"].flatMap {
                 MacManagedNativeCaptureDiagnosticsV1.codes(file: directory.appendingPathComponent($0))
@@ -312,7 +481,7 @@ public final class MacManagedSunshineEnrollmentBackendV1: InteractiveNativeVideo
         probe = child
         try child.run()
         let timeout = DispatchTime.now().uptimeNanoseconds + 1_000_000_000
-        while child.isRunning, !retired, DispatchTime.now().uptimeNanoseconds < timeout {
+        while child.isRunning, !Task.isCancelled, !retired, DispatchTime.now().uptimeNanoseconds < timeout {
             try? await Task.sleep(for: .milliseconds(10))
         }
         if child.isRunning { kill(child.processIdentifier, SIGKILL) }

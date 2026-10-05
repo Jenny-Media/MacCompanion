@@ -15,7 +15,7 @@ public enum LocalInteractiveControlGrantErrorV0:
 /// Fixed product authority used only to explain and persist the durable
 /// Interactive Control grant. It is deliberately not a published Act provider.
 public enum InteractiveControlDurableGrantV0 {
-    public static let identifier = "maccompanion.interactive.control"
+    public static let identifier = PairingAccessProfileV1.remoteDesktopCapabilityID
     public static let reviewLifetimeMilliseconds: Int64 = 300_000
 
     public static func descriptor() throws -> CapabilityDescriptorV1 {

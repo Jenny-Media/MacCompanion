@@ -17,7 +17,7 @@ import Testing
     for row in fixture["softwareKeyboardCases"] as! [[String: Any]] {
         let text = row["text"] as! String
         let modifiers = InteractiveModifierMask(rawValue: (row["modifierMask"] as! NSNumber).uint8Value)
-        let payloads = try ClientKeyboardActionV0.text(text).softwareKeyboardPayloads(modifiers: modifiers)
+        let payloads = try ClientKeyboardActionV0.text(text).softwareKeyboardPayloads(modifiers: modifiers, allowsUnicodeText: row["allowsUnicodeText"] as? Bool ?? true)
         if let usage = row["usage"] as? NSNumber {
             let effective = InteractiveModifierMask(rawValue: (row["effectiveModifierMask"] as! NSNumber).uint8Value)
             #expect(payloads == [
@@ -25,6 +25,16 @@ import Testing
                 .physicalKey(usage: usage.uint16Value, transition: .up, modifiers: effective),
                 .modifiers([]),
             ])
+        } else if let keys = row["physicalKeys"] as? [[String: Any]] {
+            var expected: [InteractiveInputPayload] = []
+            for key in keys {
+                let usage = (key["usage"] as! NSNumber).uint16Value
+                let mask = InteractiveModifierMask(rawValue: (key["modifierMask"] as! NSNumber).uint8Value)
+                expected += [.physicalKey(usage: usage, transition: .down, modifiers: mask),
+                             .physicalKey(usage: usage, transition: .up, modifiers: mask)]
+                if !mask.isEmpty { expected.append(.modifiers([])) }
+            }
+            #expect(payloads == expected)
         } else if let unicode = row["unicodeText"] as? String {
             #expect(payloads == [.text(unicode)])
         } else {

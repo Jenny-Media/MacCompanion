@@ -18,6 +18,7 @@ public enum IOSClientReleaseBootstrapPhaseV1: Equatable, Sendable {
     case idle
     case preparing
     case unpaired
+    case macLibrary
     case pairedRouteConfigurationRequired(hostID: UUID)
     case paired(hostID: UUID)
     case unavailable(IOSClientReleaseBootstrapFailureV1)
@@ -80,7 +81,7 @@ public actor IOSClientReleaseBootstrapV1 {
         switch snapshotValue.phase {
         case .idle, .unavailable:
             break
-        case .preparing, .unpaired, .pairedRouteConfigurationRequired,
+        case .preparing, .unpaired, .macLibrary, .pairedRouteConfigurationRequired,
              .paired, .closed:
             return snapshotValue
         }
@@ -105,12 +106,11 @@ public actor IOSClientReleaseBootstrapV1 {
 
         let records: [ClientDurablePairedHostV0]
         do {
-            records = try await storage.pairedHosts.allRecords()
+            try await storage.resumePendingMacRemovals()
+            let preferences = try await storage.macLibrary.snapshot()
+            records = try preferences.visibleRecords(await storage.pairedHosts.allRecords(), clientID: storage.clientID)
         } catch {
             return publish(.unavailable(.storageUnavailable))
-        }
-        guard records.count <= 1 else {
-            return publish(.unavailable(.ambiguousSavedState))
         }
         guard records.allSatisfy({ $0.clientID == storage.clientID }) else {
             return publish(.unavailable(.invalidInstallationIdentity))
@@ -123,17 +123,25 @@ public actor IOSClientReleaseBootstrapV1 {
             return publish(.unavailable(.storageUnavailable))
         }
 
-        if let record = records.first {
-            guard routeHostIDs.isEmpty || routeHostIDs == [record.hostID]
-            else {
+        let pairedHostIDs = Set(records.map(\.hostID))
+        let pending = (try? await storage.macLibrary.snapshot())?.pendingRemovals ?? []
+        guard routeHostIDs.isSubset(of: pairedHostIDs.union(pending)) else {
                 return publish(.unavailable(.ambiguousSavedState))
-            }
+        }
+        var missingKeys = false
+        for record in records {
             do {
                 try await storage.custody.registerPublishedIdentity(record)
             } catch {
-                return publish(.unavailable(.keyUnavailable))
+                // A missing key for one Mac must leave My Macs available for
+                // local forget and must not block another independent Mac.
+                missingKeys = true
             }
-            guard routeHostIDs == [record.hostID] else {
+        }
+        self.storage = storage
+        if records.count > 1 || missingKeys { return publish(.macLibrary) }
+        if let record = records.first {
+            guard routeHostIDs.contains(record.hostID) else {
                 self.storage = storage
                 return publish(
                     .pairedRouteConfigurationRequired(
@@ -156,10 +164,6 @@ public actor IOSClientReleaseBootstrapV1 {
             return publish(.paired(hostID: record.hostID))
         }
 
-        guard routeHostIDs.isEmpty else {
-            return publish(.unavailable(.ambiguousSavedState))
-        }
-
         self.storage = storage
         return publish(.unpaired)
     }
@@ -168,7 +172,7 @@ public actor IOSClientReleaseBootstrapV1 {
         -> IOSClientReleaseStorageV1?
     {
         switch snapshotValue.phase {
-        case .unpaired, .pairedRouteConfigurationRequired, .paired:
+        case .unpaired, .macLibrary, .pairedRouteConfigurationRequired, .paired:
             storage
         case .idle, .preparing, .unavailable, .closed:
             nil
@@ -246,6 +250,7 @@ package struct IOSClientReleaseStorageV1: Sendable {
     package let studyReportOwner: Stage3StudyLocalReportOwnerV1
     package let studyCapture: Stage3StudyLocalCaptureV1
     package let custody: SecurityClientIdentityKeyCustodyV0
+    package let macLibrary: AtomicFileClientMacLibraryStoreV1
 
     private let routeDirectory: URL
     private let fileManager: IOSClientReleaseFileManagerV1
@@ -290,6 +295,9 @@ package struct IOSClientReleaseStorageV1: Sendable {
             "stage3-study-report-v1",
             isDirectory: true
         )
+        let macLibraryDirectory = root.appendingPathComponent("mac-library-v1", isDirectory: true)
+        try Self.prepareDirectory(macLibraryDirectory, fileManager: fileManager, profile: profile)
+        macLibrary = try AtomicFileClientMacLibraryStoreV1(directory: macLibraryDirectory)
         try Self.prepareDirectory(identities, fileManager: fileManager, profile: profile)
         try Self.prepareDirectory(routes, fileManager: fileManager, profile: profile)
         try Self.prepareDirectory(studyReports, fileManager: fileManager, profile: profile)
@@ -375,6 +383,31 @@ package struct IOSClientReleaseStorageV1: Sendable {
             throw IOSClientReleaseStorageErrorV1.unsafeStorage
         }
         return result
+    }
+
+    /// Retry interrupted local forget operations. Pending hosts are fenced
+    /// from selection before touching their exact key pair and route catalog.
+    package func resumePendingMacRemovals() async throws {
+        var preferences = try await macLibrary.snapshot()
+        // Validate even tombstoned identities before deleting any key. A
+        // conflicting inventory must never delete another Mac's key reference.
+        _ = try preferences.visibleRecords(await pairedHosts.allRecords(), clientID: clientID)
+        for hostID in preferences.pendingRemovals {
+            do {
+                if let record = try await pairedHosts.pairedHost(hostID: hostID) {
+                    let identity = try ClientPreparedIdentityV0(pairingID: record.pairingID,
+                        clientID: record.clientID, sessionKey: record.sessionKey, approvalKey: record.approvalKey)
+                    try await custody.discardPreparedIdentity(identity)
+                    try await routes.remove(hostID: hostID)
+                    try await pairedHosts.remove(record)
+                } else { try await routes.remove(hostID: hostID) }
+                preferences.finishRemoval(hostID: hostID)
+                try await macLibrary.replace(preferences)
+            } catch {
+                // Preserve the durable fence and retry at next startup.
+                preferences = try await macLibrary.snapshot()
+            }
+        }
     }
 
     private static func prepareRoot(

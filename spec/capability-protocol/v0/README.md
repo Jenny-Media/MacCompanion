@@ -1,5 +1,9 @@
 # Mac Companion Capability Protocol v0.1
 
+Current normal VNC development composition: [standalone Screen Sharing client](direct-screen-sharing.md).
+The paired application protocol below is retained for compatibility and remains
+normative when that historical profile is used.
+
 Status: Stage 0 executable mini-RFC. This file is normative for the bundle-independent trust-kernel slice. Later changes require fixture-first review and an explicit compatibility decision.
 
 ## 1. Scope
@@ -25,6 +29,7 @@ v0.1 defines:
 - Client-side QR-secret/transcript/SAS/final-identity composition in `client-pairing.md`
 - Client-side scan/accept/pin/SAS/durable-publication presentation in `client-pairing-presentation.md`
 - Client-side private-key custody and atomic paired-host publication in `client-identity-publication.md`
+- Exact-host saved Mac selection and local removal in `client-mac-library.md`
 - Local device grant review and Interactive Control warning presentation in `local-authority-presentation.md`
 - Privacy-limited paged granted-capability discovery in `capability-discovery.md`
 - Independent schema-driven client Act orchestration and presentation in
@@ -38,6 +43,7 @@ v0.1 defines:
 - Atomic immutable registry/provider publication and replacement in
   `registry-publication.md`
 - One bounded desired-state macOS provider candidate in `native-audio-mute-provider.md`
+- Paired VNC desktop transport in `vnc-desktop-tunnel.md`
 - Authorization-epoch fencing
 - Pairing transcript construction
 - Replay and timeout profiles
@@ -141,9 +147,26 @@ The remote wire carries no client-supplied device name. During the verified SAS
 review, the Mac user chooses a local display name. The local decision binds
 that name, client ID, both public-key fingerprints, and transcript digest. The
 agent atomically consumes the pairing session and stores the locally chosen
-name, device keys, `activeMonitorOnly` state, grant revision 1, policy revision,
-authorization epoch 1, and minimal audit event. Pairing cannot directly create
-an Act or Control grant.
+name, device keys, initial authorization, grant revision 1, policy revision,
+authorization epoch 1, and minimal audit event. The remote-desktop MVP uses
+the locally disclosed `remoteDesktop` pairing profile: the Mac's approval
+explicitly allows screen viewing, pointer, keyboard, and eligible text input.
+That single transaction stores `activeGranted` and exactly
+`maccompanion.interactive.control`; it grants no Act-provider capabilities.
+The legacy `monitorOnly` profile remains readable and testable and stores
+`activeMonitorOnly` with no grants. Existing records are never expanded by
+an update or reconnect. A legacy device needs one explicit local Control
+upgrade, using the existing reviewed expansion contract.
+
+`pairing.complete` carries the actual committed initial state, either
+`activeGranted` or `activeMonitorOnly`, with epoch and grant revision 1.
+Exact-key pairing recovery may reproduce either unchanged initial record;
+for `activeGranted` it also requires exactly the fixed Control grant. It
+cannot recover changed, suspended, or revoked authority. The transcript,
+HMAC, session-key signature, SAS and recovery signature encodings remain
+unchanged and use the existing golden cryptographic vectors. A durable
+pairing grant does not itself create a live session: current session
+approval, visibility, OS permissions, revocation and input fences still apply.
 
 ## 8. Device authorization state machine
 

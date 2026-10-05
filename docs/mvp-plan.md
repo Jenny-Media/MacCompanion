@@ -1,5 +1,7 @@
 # Mac Companion Staged Validation Plan
 
+> Current scope: the [remote-desktop MVP decision](remote-desktop-mvp.md) supersedes the Observe/Act-first setup and equal-path positioning in this earlier plan.
+
 ## Objective
 
 Validate the riskiest platform, security, and product assumptions before expanding Mac Companion into a broad personal-Mac control platform.

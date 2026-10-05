@@ -1,0 +1,98 @@
+--- a/VideoDepacketizer.c
++++ b/VideoDepacketizer.c
+@@ -1,4 +1,7 @@
+ #include "Limelight-internal.h"
++#ifdef MACCOMPANION_NATIVE_SURFACE_EPOCH
++#include "CompanionNativeSurfaceEpoch.h"
++#endif
+ 
+ // Uncomment to test 3 byte Annex B start sequences with GFE
+ //#define FORCE_3_BYTE_START_SEQUENCES
+@@ -631,6 +634,18 @@
+ 
+         nalChainDataLength += entry->entry.length;
+ 
++#ifdef MACCOMPANION_NATIVE_SURFACE_EPOCH
++        // Keep parameter sets before the preserved prefix marker, while the
++        // picture-data concatenation still sees that marker before the picture.
++        if (entry->entry.bufferType != BUFFER_TYPE_PICDATA && nalChainHead) {
++            PLENTRY *position = &nalChainHead;
++            while (*position && (*position)->bufferType != BUFFER_TYPE_PICDATA) position = &(*position)->next;
++            entry->entry.next = *position;
++            *position = (PLENTRY)entry;
++            if (!entry->entry.next) nalChainTail = (PLENTRY)entry;
++            return;
++        }
++#endif
+         if (nalChainTail == NULL) {
+             LC_ASSERT(nalChainHead == NULL);
+             nalChainHead = nalChainTail = (PLENTRY)entry;
+@@ -643,11 +658,44 @@
+     }
+ }
+ 
++#ifdef MACCOMPANION_NATIVE_SURFACE_EPOCH
++// Called at both upstream prefix-stripping sites. Preserve only the indexed
++// epoch marker; ordinary SEI and AUD behavior stays unchanged. Duplicate
++// markers are kept so the adapter rejects them rather than accepting one.
++static void companionSkipPrefix(PBUFFER_DESC buffer) {
++    int start = buffer->offset;
++    bool sei = isSeiNal(buffer);
++    skipToNextNal(buffer);
++    CompanionNativeSurfaceEpoch epoch;
++    bool independent = false;
++    if (sei && CompanionNativeEpochInspect((const uint8_t *)buffer->data + start,
++          (size_t)(buffer->offset - start),
++          (NegotiatedVideoFormat & VIDEO_FORMAT_MASK_H265) != 0, &epoch, &independent) == 1 && !independent) {
++        queueFragment(NULL,buffer->data,start,buffer->offset - start);
++    }
++}
++static bool companionOnlyEpochPrefixes(void) {
++    for (PLENTRY entry = nalChainHead; entry; entry = entry->next) {
++        CompanionNativeSurfaceEpoch epoch;
++        bool independent = false;
++        if (entry->bufferType != BUFFER_TYPE_PICDATA || entry->length <= 0 ||
++            CompanionNativeEpochInspect((const uint8_t *)entry->data,(size_t)entry->length,
++              (NegotiatedVideoFormat & VIDEO_FORMAT_MASK_H265) != 0,&epoch,&independent) != 1 || independent) return false;
++    }
++    return true;
++}
++#endif
++
+ // Process an RTP Payload using the slow path that handles multiple NALUs per packet
+ static void processAvcHevcRtpPayloadSlow(PBUFFER_DESC currentPos, PLENTRY_INTERNAL* existingEntry) {
+     // We should not have any NALUs when processing the first packet in an IDR frame
++#ifdef MACCOMPANION_NATIVE_SURFACE_EPOCH
++    LC_ASSERT(companionOnlyEpochPrefixes());
++    LC_ASSERT((nalChainHead == NULL) == (nalChainTail == NULL));
++#else
+     LC_ASSERT(nalChainHead == NULL);
+     LC_ASSERT(nalChainTail == NULL);
++#endif
+ 
+     while (currentPos->length != 0) {
+         // Skip through any padding bytes
+@@ -659,7 +707,11 @@
+         // these on IDR frames, so the check in processRtpPayload() is not
+         // completely sufficient to handle that case.
+         while (isAccessUnitDelimiter(currentPos) || isSeiNal(currentPos)) {
++#ifdef MACCOMPANION_NATIVE_SURFACE_EPOCH
++            companionSkipPrefix(currentPos);
++#else
+             skipToNextNal(currentPos);
++#endif
+         }
+ 
+         int start = currentPos->offset;
+@@ -982,7 +1034,11 @@
+             // There may be one or more SEI NAL units prepended to the
+             // frame data *after* the (optional) AUD.
+             while (isSeiNal(&currentPos)) {
++#ifdef MACCOMPANION_NATIVE_SURFACE_EPOCH
++                companionSkipPrefix(&currentPos);
++#else
+                 skipToNextNal(&currentPos);
++#endif
+             }
+         }
+     }

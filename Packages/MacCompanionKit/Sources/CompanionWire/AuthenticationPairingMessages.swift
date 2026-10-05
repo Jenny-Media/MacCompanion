@@ -386,7 +386,7 @@ public struct PairingCompleteBody: WireBody {
     }
 
     public func validate() throws {
-        guard deviceState == .activeMonitorOnly,
+        guard deviceState == .activeMonitorOnly || deviceState == .activeGranted,
               authorizationEpoch.rawValue == 1,
               grantRevision.rawValue == 1,
               policyRevision.rawValue >= 1 else {

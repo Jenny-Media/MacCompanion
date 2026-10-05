@@ -1,14 +1,25 @@
+#if !MACCOMPANION_VNC_DEVELOPMENT
 import CompanionClientPlatform
 import CompanionClientUI
 import Foundation
+#endif
 import SwiftUI
 
 @main
 struct MacCompanionIOSApplication: App {
+    #if !MACCOMPANION_VNC_DEVELOPMENT
     @State private var application = Self.makeApplication()
 
     @MainActor
     private static func makeApplication() -> IOSClientReleaseApplicationV1 {
+        #if DEBUG && MACCOMPANION_VNC_DEVELOPMENT
+        #if DEBUG && targetEnvironment(simulator)
+        return IOSClientReleaseApplicationV1(simulatorDevelopmentNativeVideoAdapterFactory: nil,
+            desktopCredentialRemoval: { try DesktopCredentialStoreV1.remove($0) })
+        #else
+        return IOSClientReleaseApplicationV1(desktopCredentialRemoval: { try DesktopCredentialStoreV1.remove($0) })
+        #endif
+        #else
         #if DEBUG && MACCOMPANION_ADMITTED_NATIVE_DEVELOPMENT && canImport(CompanionMoonlightEngine)
         let factory: UIKitClientNativeVideoCompositionV1.AdapterFactory = { signer, route in
             MoonlightNativeLaunchAdapterV0(signer: signer, verifiedPrimaryRoute: route)
@@ -21,15 +32,22 @@ struct MacCompanionIOSApplication: App {
         #else
         return IOSClientReleaseApplicationV1()
         #endif
+        #endif
     }
 
+    #endif
     var body: some Scene {
         WindowGroup {
+            #if MACCOMPANION_VNC_DEVELOPMENT
+            DirectMacLibraryRootV1().directAppearance()
+            #else
             MacCompanionIOSRootView(application: application)
+            #endif
         }
     }
 }
 
+#if !MACCOMPANION_VNC_DEVELOPMENT
 private enum MacCompanionIOSSheet: String, Identifiable {
     case pairingScanner
     case studyReport
@@ -135,6 +153,7 @@ private struct MacCompanionIOSRootView: View {
                             Task { await application.receivePairingScan(value) }
                         }
                     )
+                    .toolbar { macLibraryToolbar }
                 }
             } else {
                 unavailable(
@@ -155,6 +174,7 @@ private struct MacCompanionIOSRootView: View {
                             }
                         }
                     )
+                    .toolbar { macLibraryToolbar }
                 }
             } else {
                 unavailable(
@@ -181,7 +201,15 @@ private struct MacCompanionIOSRootView: View {
                     .buttonStyle(.borderedProminent)
                 }
                 .navigationTitle("Mac Companion")
+                .toolbar { macLibraryToolbar }
             }
+
+        case .macLibrary:
+            ClientMacLibraryViewV1(macs: application.savedMacs, failed: application.macManagementFailed,
+                onConnect: { await application.selectMac($0) },
+                onPair: { await application.pairAnotherMac() },
+                onRename: { await application.renameMac($0, name: $1) },
+                onForget: { await application.forgetMac($0) })
 
         case .connecting:
             NavigationStack {
@@ -191,11 +219,19 @@ private struct MacCompanionIOSRootView: View {
 
         case .workspace:
             if let workspace = application.snapshot.workspace {
+                #if DEBUG && MACCOMPANION_VNC_DEVELOPMENT
+                VNCRemoteDesktopView(workspace: workspace,
+                    showMacs: { await application.showMacLibrary() })
+                    .ignoresSafeArea(.container, edges: .bottom)
+                    .id(workspace.id)
+                #else
                 MacCompanionIOSWorkspaceRoot(
                     workspace: workspace,
-                    onReconnect: { await application.reconnect() }
+                    onReconnect: { await application.reconnect() },
+                    onShowMacLibrary: { await application.showMacLibrary() }
                 )
                 .id(workspace.id)
+                #endif
             } else {
                 unavailable(
                     title: "Workspace unavailable",
@@ -238,6 +274,17 @@ private struct MacCompanionIOSRootView: View {
                 }
             }
             .navigationTitle("Mac Companion")
+            .toolbar { macLibraryToolbar }
+        }
+    }
+
+    @ToolbarContentBuilder
+    private var macLibraryToolbar: some ToolbarContent {
+        if !application.savedMacs.isEmpty {
+            ToolbarItem(placement: .topBarLeading) {
+                Button("My Macs") { Task { await application.showMacLibrary() } }
+                    .accessibilityIdentifier("my-macs")
+            }
         }
     }
 }
@@ -245,6 +292,7 @@ private struct MacCompanionIOSRootView: View {
 private struct MacCompanionIOSWorkspaceRoot: View {
     let workspace: IOSClientReleaseWorkspaceV1
     let onReconnect: @MainActor @Sendable () async -> Void
+    let onShowMacLibrary: @MainActor @Sendable () async -> Void
 
     @State private var model: ClientPrimaryWorkspaceModelV0?
     @State private var commandFailureShown = false
@@ -252,10 +300,12 @@ private struct MacCompanionIOSWorkspaceRoot: View {
 
     init(
         workspace: IOSClientReleaseWorkspaceV1,
-        onReconnect: @escaping @MainActor @Sendable () async -> Void
+        onReconnect: @escaping @MainActor @Sendable () async -> Void,
+        onShowMacLibrary: @escaping @MainActor @Sendable () async -> Void
     ) {
         self.workspace = workspace
         self.onReconnect = onReconnect
+        self.onShowMacLibrary = onShowMacLibrary
         _model = State(initialValue: try? ClientPrimaryWorkspaceModelV0(
             macName: workspace.macName,
             primaryState: workspace.primaryState,
@@ -278,6 +328,7 @@ private struct MacCompanionIOSWorkspaceRoot: View {
                         { mode, failure in try await factory(mode, failure) }
                     },
                     onReconnect: onReconnect,
+                    onShowMacLibrary: onShowMacLibrary,
                     onCommandFailure: { error in
                         commandFailureDetail = (error as? any ClientCommandFailurePresentingV0)?.commandFailureDetail
                             ?? "The request failed. Stop the failed session if that option is shown, then reconnect and try again."
@@ -310,7 +361,7 @@ private extension IOSClientReleaseApplicationFailureV1 {
         case .invalidInstallationIdentity:
             "The per-install device identity is invalid. No saved Mac was trusted."
         case .ambiguousSavedState:
-            "This build supports one paired Mac and found ambiguous protected local state."
+            "The saved Mac identities or connection settings conflict. No connection was started."
         case .protectedKeyUnavailable:
             "A saved Mac no longer matches this device’s protected keys. Pairing was not restored."
         case .routeConfigurationUnavailable:
@@ -322,3 +373,5 @@ private extension IOSClientReleaseApplicationFailureV1 {
         }
     }
 }
+
+#endif

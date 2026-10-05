@@ -38,6 +38,9 @@ public actor NetworkClientInteractiveRoleProductBindingV0 {
         UUID,
         NetworkClientInteractiveProductProgressV0
     ) -> Void
+    private var usesDesktopTunnel = false
+    public func useDesktopTunnel() { usesDesktopTunnel = true }
+
     private var pair: (any NetworkClientInteractiveRolePairOwningV0)?
     private var readyPair: NetworkClientInteractiveReadyRolePairV0?
     private var initialDesktop:
@@ -233,6 +236,7 @@ public actor NetworkClientInteractiveRoleProductBindingV0 {
         descriptor: AdaptiveSurfaceDescriptor,
         clientCertificateDER: Data,
         signer: any ClientSessionAuthenticationSigningV0,
+        streamContinuity: Bool = false,
         validateCertificate: @escaping @Sendable (Data) async throws -> Bool
     ) async throws -> ClientNativeVideoEnrolledSessionV0 {
         guard case let .active(sessionID) = state,
@@ -245,7 +249,7 @@ public actor NetworkClientInteractiveRoleProductBindingV0 {
             validateCertificate: validateCertificate)
         nativeEnrollment = candidate
         do {
-            let result = try await candidate.enroll(descriptor: descriptor, clientCertificateDER: clientCertificateDER)
+            let result = try await candidate.enroll(descriptor: descriptor, clientCertificateDER: clientCertificateDER, streamContinuity: streamContinuity)
             guard nativeEnrollment === candidate, self.connectionID == connectionID,
                   self.activationID == activationID, await candidate.isCurrent() else {
                 throw NetworkClientInteractiveInitialDesktopErrorV0.unavailable
@@ -255,6 +259,32 @@ public actor NetworkClientInteractiveRoleProductBindingV0 {
             if nativeEnrollment === candidate { nativeEnrollment = nil }
             await candidate.close()
             throw error
+        }
+    }
+
+    public func supportsNativeStreamContinuity() async -> Bool {
+        guard case .active = state, let owner = nativeEnrollment else { return false }
+        return await owner.supportsStreamContinuity()
+    }
+    public func retainNativeStream() async throws {
+        guard case let .active(sessionID) = state, let owner = nativeEnrollment, let connectionID, let activationID else {
+            throw NetworkClientInteractiveInitialDesktopErrorV0.unavailable
+        }
+        try await owner.retainStream()
+        guard nativeEnrollment === owner, state == .active(interactiveSessionID: sessionID), self.connectionID == connectionID,
+              self.activationID == activationID, await owner.isCurrent() else { throw NetworkClientInteractiveInitialDesktopErrorV0.unavailable }
+    }
+    public func replaceNativeSurface(descriptor: AdaptiveSurfaceDescriptor, clientCertificateDER: Data) async throws -> ClientNativeVideoEnrolledSessionV0 {
+        guard case let .active(sessionID) = state, descriptor.interactiveSessionID == sessionID, let owner = nativeEnrollment,
+              let connectionID, let activationID else { throw NetworkClientInteractiveInitialDesktopErrorV0.unavailable }
+        do {
+            let result = try await owner.replaceSurface(descriptor: descriptor, clientCertificateDER: clientCertificateDER)
+            guard nativeEnrollment === owner, state == .active(interactiveSessionID: sessionID), self.connectionID == connectionID,
+                  self.activationID == activationID, await owner.isCurrent() else { throw NetworkClientInteractiveInitialDesktopErrorV0.unavailable }
+            return result
+        } catch {
+            if nativeEnrollment === owner { nativeEnrollment = nil }
+            await owner.close(); throw error
         }
     }
 
@@ -419,6 +449,7 @@ public actor NetworkClientInteractiveRoleProductBindingV0 {
     private func accept(
         _ publication: NetworkClientControlPublicationV0
     ) async {
+        if usesDesktopTunnel { return }
         guard state != .closed, publication.hostID == hostID else { return }
         switch publication.event {
         case let .accepted(session, _):

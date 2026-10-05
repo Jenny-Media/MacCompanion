@@ -72,7 +72,12 @@ A 50 ms menu watchdog rechecks runtime and physical display while an operation
 exists. The original-deadline/parent-death process supervisor remains required.
 Retire is idempotent and exact; stale retire cannot touch a replacement backend.
 Retired instance IDs are bounded tombstones; unknown or reused operations fail
-closed. A retirement reply acknowledges joined cleanup, never grants authority.
+closed. Every waiter joining retirement observes both joined native cleanup and
+publication of the exact retired scope before returning. An in-flight health read
+for that scope that loses its permit during retirement returns inactive after
+the shared drain; it cannot turn expected selected-window invalidation into loss
+of the authenticated local control connection. Wrong scopes, malformed evidence,
+and non-health command failures keep their existing fail-closed behavior. A retirement reply acknowledges joined cleanup, never grants authority.
 Malformed/cross-operation receipts cannot publish a certificate or port.
 
 The managed profile disables native pairing, resume, application assets, Web UI,
@@ -118,3 +123,68 @@ The Agent joins any in-flight read-only health operation before presentation.
 Health readers during installation wait for that transition and then make a fresh
 health read; they must not report false activity merely because installation holds
 the single-flight local-command slot. Cancellation and retirement fence all joins.
+
+## Polled native activation
+
+An activate command may opt in with literal `pollActivation: true`. Its receipt
+may then contain literal `activationPending: true`, with no port, active flag,
+certificate, capture or input admission. Omission preserves the synchronous
+activate receipt. Pending is forbidden without the request opt-in, and false
+is forbidden for both fields. These fields are forbidden on other operations.
+
+The first polled command starts one owned activation worker. Subsequent exact
+backend/operation/scope commands observe that worker without starting another
+host. Completed activation returns the usual port receipt. Each local command
+returns promptly, leaving the serialized XPC lane available for execution-lease
+renewals. The existing 4-second receiver and 5-second sender command deadlines
+remain unchanged. The worker has one 15-second startup budget, capped by the
+original Control deadline; polling never extends either. Input remains paused.
+Stop, scope loss, worker failure or timeout fences the permit before cancelling
+and joining the worker and child. A late endpoint cannot revive a retired owner.
+
+## Retained child ownership extension
+
+The optional continuity path adds `retain`, `retainedHealth` and
+`prepareReplacement`. Legacy messages omit all new optional fields. Active
+health may carry only literal `streamContinuity: true` after complete adapter
+admission. Retain acknowledges only with `streamRetained: true` after revoking
+the installed posting authorization, releasing held input and receiving the
+owned child's serial pause receipt. Retained health has a required boolean
+`streamRetained`, and carries no certificate, endpoint, capture or input admission.
+
+Only prepareReplacement carries `previousBackendID` and `previousOperationID`,
+both different from its fresh backend/operation IDs, plus the same client DER
+field as prepare. The menu joins both predecessor IDs to its exact retained
+owner, and compares the new scope's original binding, registered key, menu
+generation, encoded canvas and original expiry against that owner. It resolves
+new physical metadata from the current acknowledged runtime. Preparing retains
+the host DER/process/port and remains capture/input paused until a fresh existing
+golden proof requests activate. Old-owner retirement cannot affect a child
+transferred to the new logical owner. Every receipt still echoes exact command,
+backend and operation IDs. No old presentation admission transfers.
+
+The retained watchdog checks original Control/primary/menu installation and
+deadline, independently of the old selected surface, during the bounded 15
+second handoff. Stop, grant/primary/menu loss, malformed/failed handoff, expiry
+and uncompleted replacement drain all retained resources. Unsupported adapters
+never advertise the extension and keep ordinary full replacement.
+
+## Local failure diagnostics
+
+Failure-only local diagnostics may name the closed command operation, the failed
+local stage, observed closed local phase and a closed rejection reason before
+the existing error is propagated.
+They carry no identity, scope, surface metadata, title, bounds, input, endpoint,
+credentials or arbitrary error description. An unrecognized error is reported
+only as `unclassified`. The indexed local-backend fixture declares the vocabulary.
+These observations confer no authority, cross no wire boundary and alter no
+rejection, cancellation, cleanup, deadline or input rule. The native posting path
+may distinguish missing, unsafe, stale or changed capture evidence before returning
+the same existing failure; no diagnostic substitutes for fresh evidence.
+
+Selected-surface lookup may report an indexed closed rejection code for local
+admission, pending/committed selection, exact scope or descriptor matching,
+expiry, selected geometry and the existing live window/application validation.
+The code names the failed check only. It includes no compared values, physical
+identities, dimensions, application identifiers or titles, and preserves the
+existing thrown error and validation order.

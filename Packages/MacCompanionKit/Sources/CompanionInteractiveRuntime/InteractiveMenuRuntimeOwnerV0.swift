@@ -4,6 +4,11 @@ import CompanionInteractiveShared
 import CompanionInteractiveWire
 import CryptoKit
 import Foundation
+import OSLog
+
+private let nativeMenuSnapshotLoggerV1 = Logger(
+    subsystem: "media.jenny.maccompanion.mac", category: "native-menu-snapshot"
+)
 
 public struct InteractiveRuntimeIndicatorSnapshotV0: Equatable, Sendable {
     public let menuAppGeneration: UUID
@@ -354,10 +359,39 @@ public actor InteractiveMenuRuntimeOwnerV0 {
     /// One actor read joins the acknowledged surface, active lease and visible
     /// receipt. The original session deadline survives renewable short leases.
     public func currentNativeVideoSnapshot(fence: InteractiveNativeVideoRequestFenceV0, nowMonotonicNanoseconds: UInt64) throws -> LocalInteractiveNativeRuntimeSnapshotV1? {
-        guard case let .active(active) = storage, active.surfaceAdmission == .ready else { return nil }
+        guard case let .active(active) = storage else {
+            nativeMenuSnapshotLoggerV1.error("native snapshot rejected reason=runtime-inactive")
+            return nil
+        }
+        guard active.surfaceAdmission == .ready else {
+            nativeMenuSnapshotLoggerV1.error("native snapshot rejected reason=surface-not-ready")
+            return nil
+        }
         let snapshot = try LocalInteractiveNativeRuntimeSnapshotV1(command: active.command, receipt: active.receipt, fence: fence)
-        guard snapshot.isCurrent(nowMonotonicNanoseconds: nowMonotonicNanoseconds) else { return nil }
+        guard snapshot.isCurrent(nowMonotonicNanoseconds: nowMonotonicNanoseconds) else {
+            nativeMenuSnapshotLoggerV1.error("native snapshot rejected reason=expired")
+            return nil
+        }
         return snapshot
+    }
+
+    /// Menu-local observation during a capture pause. The authenticated Agent
+    /// separately owns the original primary/key/grants; no surface or input
+    /// admission transfers through this selection-independent observation.
+    public func originalNativeControlIsCurrent(scope: LocalInteractiveNativeBackendScopeV1,
+        nowMonotonicNanoseconds now: UInt64) -> Bool {
+        guard case let .active(active) = storage,
+              scope.authorizationEpoch > 0,
+              active.command.lease.hostID == scope.hostID,
+              active.command.lease.interactiveSessionID == scope.interactiveSessionID,
+              active.command.lease.authorizationEpoch.rawValue == UInt64(scope.authorizationEpoch),
+              active.command.commandID == scope.controlGeneration,
+              active.receipt.menuAppGeneration == scope.menuAppGeneration,
+              active.receipt.indicatorVisible,
+              active.command.sessionDeadlineMonotonicNanoseconds / 1_000_000 == scope.expiresAtMonotonicMilliseconds,
+              now < active.command.sessionDeadlineMonotonicNanoseconds,
+              now < active.command.lease.expiresAtMonotonicNanoseconds else { return false }
+        return true
     }
 
     public func surfaceAdmissionState()

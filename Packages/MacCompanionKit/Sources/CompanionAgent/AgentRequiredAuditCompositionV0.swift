@@ -53,6 +53,7 @@ private struct AgentInventoryRefreshingPairingCommitterV1:
 /// Durable device/grant admission and required audit are deliberately absent:
 /// the startup composition binds those to its own reconciled stores.
 public struct AgentInteractivePlatformServicesV1: Sendable {
+    package let sessionConsentProfile: InteractiveSessionConsentProfileV1
     package let visibleAdmission:
         any VisibleInteractiveAdmissionReadingV0
     package let materials: any InteractiveSessionMaterialGeneratingV0
@@ -67,6 +68,7 @@ public struct AgentInteractivePlatformServicesV1: Sendable {
 
     public init(
         visibleAdmission: any VisibleInteractiveAdmissionReadingV0,
+        sessionConsentProfile: InteractiveSessionConsentProfileV1 = .freshUserPresence,
         materials: any InteractiveSessionMaterialGeneratingV0,
         runtime: any InteractiveSessionRuntimeOwningV0,
         mediaNegotiation:
@@ -77,6 +79,7 @@ public struct AgentInteractivePlatformServicesV1: Sendable {
         displaySelection:
             (any InteractiveDisplaySelectionDispatchingV1)? = nil
     ) {
+        self.sessionConsentProfile = sessionConsentProfile
         self.visibleAdmission = visibleAdmission
         self.materials = materials
         self.runtime = runtime
@@ -270,7 +273,8 @@ public struct AgentRequiredAuditCompositionV0: Sendable {
                 durableCommitter: securityStore,
                 localServices: localServices
             ),
-            auditWriter: pairingAuditWriter
+            auditWriter: pairingAuditWriter,
+            accessProfile: .remoteDesktop
         )
         let sessions = AgentLocalPairingSessionHandlerV0(
             authority: authority,
@@ -332,6 +336,7 @@ public struct AgentRequiredAuditCompositionV0: Sendable {
         }
         let interactive = InteractiveSessionWireDispatcherV0(
             admission: admission,
+            sessionConsentProfile: interactivePlatform.sessionConsentProfile,
             materials: interactivePlatform.materials,
             runtime: interactivePlatform.runtime,
             mediaNegotiation: interactivePlatform.mediaNegotiation,

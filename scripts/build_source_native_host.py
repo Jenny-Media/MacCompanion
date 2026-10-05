@@ -38,7 +38,9 @@ def main():
     selected_capture = ROOT / "Native/Host"
     selected_capture_inputs = {name: digest(selected_capture / name) for name in
                                ["CompanionSelectedCapture.h", "CompanionSelectedCapture.m",
-                                "CompanionSelectedCaptureContext.h", "CompanionSelectedCaptureContext.m"]}
+                                "CompanionSelectedCaptureContext.h", "CompanionSelectedCaptureContext.m",
+                                "CompanionSelectedCaptureHandoff.h", "CompanionSelectedCaptureHandoff.m",
+                                "CompanionNativeEpochAssociation.h", "../Client/CompanionNativeSurfaceEpoch.h"]}
     records = {}
     prefixes = []
     for name in LOCK["sources"]:

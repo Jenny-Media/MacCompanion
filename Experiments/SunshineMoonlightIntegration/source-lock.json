@@ -51,12 +51,17 @@
       "source": "Sunshine"
     },
     "sunshine-managed-enrollment.patch": {
-      "sha256": "7e96f028e88c8c87d6996931831f4dad67f65f93ec31ec02b6ada1b319fdbd9f",
+      "sha256": "c6bed0faedb4f8a8a3fadee6b60fd8e619934412ca5cdb4756632605533919e0",
       "source": "Sunshine"
     },
     "sunshine-selected-encoder-probe.patch": {
-      "sha256": "eca21bb6848e8e3cd01dc0bc2f05c7b38c6e7f80f72be8e0d507122155d2216d",
+      "sha256": "cc7cf910ba41da54e620d226c2e386515d72dac8a3bfb2470f203d08e183f944",
       "source": "Sunshine"
+    },
+    "moonlight-common-native-frame-epoch.patch": {
+      "sha256": "ec5cc91f2629296eaf0e5366ed27e8063142c836d28794b46f0c159d3577eb57",
+      "source": "moonlight-ios",
+      "copyOnlySubmodule": "moonlight-common/moonlight-common-c"
     }
   },
   "schema_version": 1,

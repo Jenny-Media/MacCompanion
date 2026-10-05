@@ -18,10 +18,19 @@ public protocol InteractiveNativeVideoNegotiatingV0: Sendable {
         -> InteractiveNativeVideoPresentationReceiptBodyV0
     func cancel(_ fence: InteractiveNativeVideoRequestFenceV0,
                 context: InteractiveSessionCommandContextV0) async throws
+    func retain(_ fence: InteractiveNativeVideoRequestFenceV0,
+                context: InteractiveSessionCommandContextV0) async throws -> Bool
+    func hasRetainedStream(context: InteractiveSessionCommandContextV0) async -> Bool
     func close(interactiveSessionID: UUID) async
 }
 
 public extension InteractiveNativeVideoNegotiatingV0 {
+    func retain(_ fence: InteractiveNativeVideoRequestFenceV0,
+                context: InteractiveSessionCommandContextV0) async throws -> Bool {
+        try await cancel(fence, context: context)
+        return false
+    }
+    func hasRetainedStream(context: InteractiveSessionCommandContextV0) async -> Bool { false }
     func present(_ request: InteractiveNativeVideoPresentationRequestBodyV0,
                  context: InteractiveSessionCommandContextV0, sessionPublicKeyX963: Data) async throws
         -> InteractiveNativeVideoPresentationReceiptBodyV0 {
@@ -34,37 +43,80 @@ public extension InteractiveNativeVideoNegotiatingV0 {
 public actor InteractiveNativeVideoPrimaryBridgeV0: InteractiveNativeVideoNegotiatingV0 {
     public typealias Factory = @Sendable (InteractiveNativeVideoRequestFenceV0,
         InteractiveSessionCommandContextV0, Data) async throws -> InteractiveNativeVideoEnrollmentCoordinatorV0
-    private enum Phase { case preparing, challenged, proving, active, presenting }
+    public typealias ReplacementFactory = @Sendable (InteractiveNativeVideoRequestFenceV0,
+        InteractiveSessionCommandContextV0, Data, InteractiveNativeVideoRetainedEnrollmentV1) async throws -> InteractiveNativeVideoEnrollmentCoordinatorV0
+    private enum Phase { case preparing, challenged, proving, active, presenting, retaining, retained }
     private struct Operation {
         let token: UUID
         let fence: InteractiveNativeVideoRequestFenceV0
         let context: InteractiveSessionCommandContextV0
         let key: Data
         let challengeID: WireUUID
+        let continuityRequested: Bool
+        var continuityAdmitted = false
         var rendererGeneration: Int64? = nil
         var phase: Phase
     }
     private let factory: Factory
+    private let replacementFactory: ReplacementFactory?
     private var operation: Operation?
     private var creation: Task<InteractiveNativeVideoEnrollmentCoordinatorV0, Error>?
     private var owner: InteractiveNativeVideoEnrollmentCoordinatorV0?
     private var drain: Task<Void, Never>?
     private var drainToken: UUID?
     private var lastCancelled: (InteractiveNativeVideoRequestFenceV0, InteractiveSessionCommandContextV0)?
+    private var predecessorOwner: InteractiveNativeVideoEnrollmentCoordinatorV0?
+    private var retentionWatchdog: Task<Void, Never>?
+    private var retentionToken: UUID?
 
-    public init(factory: @escaping Factory) { self.factory = factory }
+    public init(factory: @escaping Factory, replacementFactory: ReplacementFactory? = nil) {
+        self.factory = factory; self.replacementFactory = replacementFactory
+    }
 
     public func prepare(_ request: InteractiveNativeVideoEnrollmentRequestBodyV0,
                         challengeMessageID: WireUUID, context: InteractiveSessionCommandContextV0,
                         sessionPublicKeyX963: Data) async throws -> InteractiveNativeVideoEnrollmentChallengeBodyV0 {
-        guard operation == nil, creation == nil, owner == nil, drain == nil else {
+        guard creation == nil, drain == nil else {
             throw InteractiveNativeVideoCoordinatorFailureV0.invalidPhase
+        }
+        let retained: InteractiveNativeVideoRetainedEnrollmentV1?
+        if let previousFence = request.previousFence {
+            guard let previous = operation, previous.phase == .retained else {
+                // A delayed request from an older selection cannot drain the
+                // current replacement merely by naming its session.
+                throw InteractiveNativeVideoCoordinatorFailureV0.invalidPhase
+            }
+            guard previous.fence == previousFence, samePrimary(previous.context, context),
+                  previous.key == sessionPublicKeyX963, let owner, replacementFactory != nil else {
+                await close(interactiveSessionID: request.fence.interactiveSessionID.rawValue)
+                throw InteractiveNativeVideoCoordinatorFailureV0.authorizationLost
+            }
+            do { retained = try await owner.retainedEnrollment() }
+            catch { await close(interactiveSessionID: request.fence.interactiveSessionID.rawValue); throw error }
+            guard operation?.token == previous.token, drain == nil else {
+                throw InteractiveNativeVideoCoordinatorFailureV0.authorizationLost
+            }
+            predecessorOwner = owner
+            self.owner = nil
+        } else {
+            guard operation == nil, owner == nil else {
+                if operation?.phase == .retained {
+                    await close(interactiveSessionID: request.fence.interactiveSessionID.rawValue)
+                }
+                throw InteractiveNativeVideoCoordinatorFailureV0.invalidPhase
+            }
+            retained = nil
         }
         let token = UUID()
         operation = Operation(token: token, fence: request.fence, context: context, key: sessionPublicKeyX963,
-                              challengeID: challengeMessageID, phase: .preparing)
-        let factory = self.factory
-        let construction = Task { try await factory(request.fence, context, sessionPublicKeyX963) }
+                              challengeID: challengeMessageID, continuityRequested: request.streamContinuity == true, phase: .preparing)
+        let factory = self.factory, replacementFactory = self.replacementFactory
+        let construction = Task {
+            if let retained, let replacementFactory {
+                return try await replacementFactory(request.fence, context, sessionPublicKeyX963, retained)
+            }
+            return try await factory(request.fence, context, sessionPublicKeyX963)
+        }
         creation = construction
         var constructed: InteractiveNativeVideoEnrollmentCoordinatorV0?
         do {
@@ -80,6 +132,8 @@ public actor InteractiveNativeVideoPrimaryBridgeV0: InteractiveNativeVideoNegoti
             }
             let material = try await candidate.prepare(clientCertificateDER: clientDER)
             guard operation?.token == token, drain == nil else { throw InteractiveNativeVideoCoordinatorFailureV0.authorizationLost }
+            await predecessorOwner?.relinquishRetainedEnrollment()
+            predecessorOwner = nil
             operation?.phase = .challenged
             return try .init(fence: request.fence, controlGeneration: WireUUID(authority.binding.controlGeneration),
                 encodedWidth: UInt16(authority.surface.encodedWidth), encodedHeight: UInt16(authority.surface.encodedHeight),
@@ -110,12 +164,77 @@ public actor InteractiveNativeVideoPrimaryBridgeV0: InteractiveNativeVideoNegoti
             let endpoint = try await owner.activate(rawSignature: signature)
             guard operation?.token == current.token, drain == nil else { throw InteractiveNativeVideoCoordinatorFailureV0.authorizationLost }
             operation?.phase = .active
-            return try .init(fence: proof.fence, challengeMessageID: proof.challengeMessageID, portBase: endpoint.portBase)
+            var supported = false
+            if current.continuityRequested, replacementFactory != nil { supported = await owner.supportsStreamContinuity() }
+            guard operation?.token == current.token, drain == nil else { throw InteractiveNativeVideoCoordinatorFailureV0.authorizationLost }
+            retentionWatchdog?.cancel(); retentionWatchdog = nil; retentionToken = nil
+            operation?.continuityAdmitted = supported
+            return try .init(fence: proof.fence, challengeMessageID: proof.challengeMessageID,
+                portBase: endpoint.portBase, streamContinuity: supported ? true : nil)
         } catch {
             await owner.retire()
             if operation?.token == current.token { await close(interactiveSessionID: proof.fence.interactiveSessionID.rawValue) }
             throw error
         }
+    }
+
+    public func retain(_ fence: InteractiveNativeVideoRequestFenceV0,
+                       context: InteractiveSessionCommandContextV0) async throws -> Bool {
+        if let current = operation, current.phase == .retained,
+           current.fence == fence, samePrimary(current.context, context), let owner, drain == nil {
+            _ = try await owner.retainedEnrollment()
+            guard operation?.token == current.token, operation?.phase == .retained, drain == nil else {
+                throw InteractiveNativeVideoCoordinatorFailureV0.authorizationLost
+            }
+            return true // Exact retry does not extend the handoff deadline.
+        }
+        guard let current = operation, current.fence == fence, samePrimary(current.context, context),
+              current.phase == .active, current.rendererGeneration != nil, let owner, drain == nil else {
+            throw InteractiveNativeVideoCoordinatorFailureV0.authorizationLost
+        }
+        guard current.continuityAdmitted, replacementFactory != nil, await owner.supportsStreamContinuity() else {
+            try await cancel(fence, context: context)
+            return false
+        }
+        guard operation?.token == current.token, drain == nil else {
+            throw InteractiveNativeVideoCoordinatorFailureV0.authorizationLost
+        }
+        operation?.phase = .retaining
+        do {
+            try await owner.retainStream()
+            guard operation?.token == current.token, drain == nil else {
+                throw InteractiveNativeVideoCoordinatorFailureV0.authorizationLost
+            }
+            operation?.phase = .retained
+            let token = UUID()
+            retentionToken = token
+            retentionWatchdog = Task { [weak self] in
+                try? await Task.sleep(for: .seconds(15))
+                guard !Task.isCancelled, let self else { return }
+                await self.expireRetention(token: token, sessionID: fence.interactiveSessionID.rawValue)
+            }
+            return true
+        } catch {
+            if operation?.token == current.token { await close(interactiveSessionID: fence.interactiveSessionID.rawValue) }
+            throw error
+        }
+    }
+
+    public func hasRetainedStream(context: InteractiveSessionCommandContextV0) async -> Bool {
+        guard let current = operation, current.phase == .retained,
+              samePrimary(current.context, context), let owner, drain == nil else { return false }
+        do {
+            _ = try await owner.retainedEnrollment()
+            return operation?.token == current.token && operation?.phase == .retained && drain == nil
+        } catch {
+            if operation?.token == current.token { await close(interactiveSessionID: current.fence.interactiveSessionID.rawValue) }
+            return false
+        }
+    }
+
+    private func expireRetention(token: UUID, sessionID: UUID) async {
+        guard retentionToken == token else { return }
+        await close(interactiveSessionID: sessionID)
     }
 
     public func present(_ request: InteractiveNativeVideoPresentationRequestBodyV0,
@@ -178,11 +297,13 @@ public actor InteractiveNativeVideoPrimaryBridgeV0: InteractiveNativeVideoNegoti
         // Fence before waiting for factory work or native cleanup.
         lastCancelled = (closing.fence, closing.context)
         operation = nil
-        let pending = creation, current = owner
+        retentionWatchdog?.cancel(); retentionWatchdog = nil; retentionToken = nil
+        let pending = creation, current = owner, predecessor = predecessorOwner
         let task = Task {
             pending?.cancel()
             if let pending, let created = try? await pending.value { await created.retire() }
             await current?.retire()
+            await predecessor?.retire()
         }
         drain = task
         drainToken = closing.token
@@ -190,7 +311,7 @@ public actor InteractiveNativeVideoPrimaryBridgeV0: InteractiveNativeVideoNegoti
         if drainToken == closing.token { clearDrain() }
     }
 
-    private func clearDrain() { creation = nil; owner = nil; drain = nil; drainToken = nil }
+    private func clearDrain() { creation = nil; owner = nil; predecessorOwner = nil; drain = nil; drainToken = nil }
 
     private func samePrimary(_ a: InteractiveSessionCommandContextV0, _ b: InteractiveSessionCommandContextV0) -> Bool {
         a.deviceID == b.deviceID && a.clientID == b.clientID && a.primaryConnectionID == b.primaryConnectionID &&
