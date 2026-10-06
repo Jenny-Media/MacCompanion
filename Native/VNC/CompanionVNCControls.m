@@ -1,9 +1,11 @@
 #import "CompanionVNCControls.h"
+#import "CompanionVNCAdaptiveLayout.h"
 NSString *const CompanionVNCControlsHapticsPreference = @"direct-controls-haptics";
 @interface CompanionVNCControls ()
 @property UIButton *button;
 @property UIVisualEffectView *panel;
 @property UIScrollView *scroll;
+@property UILabel *nameLabel;
 @property NSMutableArray<UIButton *> *choices;
 @property NSArray<NSDictionary *> *items;
 @property UIButton *highlighted;
@@ -73,25 +75,52 @@ NSString *const CompanionVNCControlsHapticsPreference = @"direct-controls-haptic
     return hit == self ? (self.panel ? self : nil) : hit;
 }
 - (void)touchesEnded:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event { [self close]; }
+- (CGRect)activeDivision { return CompanionVNCActiveDivision(self); }
 - (void)layoutSubviews {
     [super layoutSubviews];
+    CGRect safe = UIEdgeInsetsInsetRect(self.bounds, self.safeAreaInsets), content = CGRectNull, input = CGRectNull;
+    CGRect available = safe;
+    available.size.height = MAX(0, available.size.height - self.bottomInset);
+    if (CompanionVNCTabletopRegions(safe, [self activeDivision], &content, &input)) {
+        CGRect lower = CGRectIntersection(available, input);
+        // A tall keyboard may consume the lower pane. Keep the menu reachable
+        // above the keyboard instead of pinning its button behind it.
+        if (!CGRectIsNull(lower) && lower.size.height >= 104) available = lower;
+    }
     self.button.bounds = CGRectMake(0,0,52,52);
-    self.button.center = CGPointMake(self.bounds.size.width - self.safeAreaInsets.right - 36,
-        self.bounds.size.height - self.safeAreaInsets.bottom - self.bottomInset - 26);
+    self.button.center = CGPointMake(MAX(CGRectGetMinX(available) + 26, CGRectGetMaxX(available) - 36),
+        MAX(CGRectGetMinY(available) + 26, CGRectGetMaxY(available) - 26));
     if (!self.panel) return;
-    CGFloat width = MIN(360, self.bounds.size.width - self.safeAreaInsets.left - self.safeAreaInsets.right - 24);
-    CGFloat contentHeight = 72 + 3 * 48 + (self.quickCount ? 36 + ceil(self.quickCount / 2.0) * 72 : 0) + 12;
-    CGFloat height = MIN(contentHeight, self.button.frame.origin.y - self.safeAreaInsets.top - 24);
-    CGRect rect = CGRectMake(CGRectGetMaxX(self.button.frame) - width, self.button.frame.origin.y - height - 12, width, MAX(48, height));
+    CGFloat width = MAX(0, MIN(360, available.size.width - 24));
+    CGFloat panelRoom = MAX(0, self.button.frame.origin.y - CGRectGetMinY(available) - 24);
+    BOOL largeText = UIContentSizeCategoryIsAccessibilityCategory(self.traitCollection.preferredContentSizeCategory)
+        || width < 280 || panelRoom < 208;
+    CGFloat headerHeight = MAX(44, ceil(self.nameLabel.font.lineHeight) + 16);
+    CGFloat tileHeight = MAX(64, ceil([UIFont preferredFontForTextStyle:UIFontTextStyleCaption1].lineHeight) * 2 + 28);
+    CGFloat categoryHeight = largeText ? MAX(64, tileHeight) : 64;
+    CGFloat headingHeight = MAX(32, ceil([UIFont preferredFontForTextStyle:UIFontTextStyleFootnote].lineHeight) + 8);
+    NSUInteger columns = largeText ? 1 : 2;
+    CGFloat categoryBody = largeText ? 3 * categoryHeight : 0;
+    CGFloat contentHeight = categoryBody + (self.quickCount ? headingHeight + ceil(self.quickCount / (CGFloat)columns) * (tileHeight + 8) + 8 : 0);
+    CGFloat fixedHeight = headerHeight + (largeText ? 8 : categoryHeight + 12);
+    CGFloat height = MIN(fixedHeight + contentHeight + 12, panelRoom);
+    CGRect rect = CGRectMake(MAX(CGRectGetMinX(available) + 12, CGRectGetMaxX(self.button.frame) - width), self.button.frame.origin.y - height - 12, width, height);
     self.panel.bounds = CGRectMake(0,0,rect.size.width,rect.size.height); self.panel.center = CGPointMake(CGRectGetMidX(rect),CGRectGetMidY(rect));
-    self.scroll.frame = self.panel.bounds; self.scroll.contentSize = CGSizeMake(width, contentHeight);
-    UILabel *name = (UILabel *)[self.scroll viewWithTag:1000]; name.frame = CGRectMake(16, 12, width - 32, 40);
-    UILabel *heading = (UILabel *)[self.scroll viewWithTag:1001]; heading.frame = CGRectMake(16, 72 + 3 * 48, width - 32, 28);
-    CGFloat tileWidth = (width - 28) / 2;
+    self.nameLabel.frame = CGRectMake(16, 8, MAX(0, width - 32), headerHeight - 16);
+    self.scroll.frame = CGRectMake(0, fixedHeight, width, MAX(0, height - fixedHeight - 12));
+    self.scroll.contentSize = CGSizeMake(width, contentHeight);
+    UILabel *heading = (UILabel *)[self.scroll viewWithTag:1001]; heading.frame = CGRectMake(16, categoryBody + 4, MAX(0, width - 32), headingHeight - 8);
+    CGFloat tileWidth = (width - (columns == 1 ? 16 : 28)) / columns;
     for (NSUInteger i = 0; i < self.choices.count; i++) {
+        UIView *parent = i < self.quickCount || largeText ? self.scroll : self.panel.contentView;
+        if (self.choices[i].superview != parent) [parent addSubview:self.choices[i]];
+        UIButtonConfiguration *configuration = self.choices[i].configuration;
+        configuration.imagePlacement = largeText ? NSDirectionalRectEdgeLeading : NSDirectionalRectEdgeTop;
+        self.choices[i].configuration = configuration;
         self.choices[i].frame = i < self.quickCount
-            ? CGRectMake(8 + (i % 2) * (tileWidth + 12), 72 + 3 * 48 + 36 + (ceil(self.quickCount / 2.0) - 1 - (i / 2)) * 72, tileWidth, 64)
-            : CGRectMake(8, 64 + (i - self.quickCount) * 48, width - 16, 44);
+            ? CGRectMake(8 + (i % columns) * (tileWidth + 12), categoryBody + headingHeight + (ceil(self.quickCount / (CGFloat)columns) - 1 - (i / columns)) * (tileHeight + 8), tileWidth, tileHeight)
+            : largeText ? CGRectMake(8, (i - self.quickCount) * categoryHeight, width - 16, categoryHeight)
+                       : CGRectMake(8 + (i - self.quickCount) * ((width - 16) / 3), headerHeight + 4, (width - 16) / 3, categoryHeight);
     }
 }
 - (void)toggle { if (self.panel) [self close]; else [self open]; }
@@ -112,9 +141,10 @@ NSString *const CompanionVNCControlsHapticsPreference = @"direct-controls-haptic
     else effect = [UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemMaterial];
     self.panel = [[UIVisualEffectView alloc] initWithEffect:effect]; self.panel.layer.cornerRadius = 24; self.panel.clipsToBounds = YES;
     self.panel.accessibilityIdentifier = @"session-control-panel";
-    self.scroll = [UIScrollView new]; [self.panel.contentView addSubview:self.scroll];
+    self.scroll = [UIScrollView new]; self.scroll.showsVerticalScrollIndicator = YES; [self.panel.contentView addSubview:self.scroll];
     UILabel *name = [UILabel new]; name.text = self.macName; name.font = [UIFont preferredFontForTextStyle:UIFontTextStyleHeadline];
-    name.numberOfLines = 1; name.tag = 1000; name.textColor = UIColor.labelColor; [self.scroll addSubview:name];
+    name.numberOfLines = 1; name.tag = 1000; name.textColor = UIColor.labelColor;
+    name.adjustsFontForContentSizeCategory = YES; self.nameLabel = name; [self.panel.contentView addSubview:name];
     UILabel *heading = [UILabel new]; heading.text = @"Quick Actions"; heading.tag = 1001;
     heading.font = [UIFont preferredFontForTextStyle:UIFontTextStyleFootnote]; heading.textColor = UIColor.secondaryLabelColor;
     heading.hidden = !self.quickCount; [self.scroll addSubview:heading];
@@ -127,11 +157,11 @@ NSString *const CompanionVNCControlsHapticsPreference = @"direct-controls-haptic
         config.image = [UIImage systemImageNamed:item[@"symbol"] ?: symbols[kind] ?: @"circle"];
         config.imagePadding = 12; config.contentInsets = NSDirectionalEdgeInsetsMake(8, 12, 8, 12);
         choice.configuration = config; choice.contentHorizontalAlignment = UIControlContentHorizontalAlignmentLeading;
-        if (i < self.quickCount) {
+        {
             config.imagePlacement = NSDirectionalRectEdgeTop; config.imagePadding = 4;
             config.contentInsets = NSDirectionalEdgeInsetsMake(4, 4, 4, 4);
             choice.contentHorizontalAlignment = UIControlContentHorizontalAlignmentCenter;
-            choice.backgroundColor = UIColor.secondarySystemFillColor; choice.layer.cornerRadius = 12;
+            choice.backgroundColor = i < self.quickCount ? UIColor.secondarySystemFillColor : UIColor.clearColor; choice.layer.cornerRadius = 12;
             config.titleTextAttributesTransformer = ^NSDictionary *(NSDictionary *attributes) {
                 NSMutableDictionary *result = [attributes mutableCopy]; result[NSFontAttributeName] = [UIFont preferredFontForTextStyle:UIFontTextStyleCaption1]; return result;
             };
@@ -140,7 +170,7 @@ NSString *const CompanionVNCControlsHapticsPreference = @"direct-controls-haptic
         }
         choice.tag = i; choice.accessibilityIdentifier = [@"session-action-" stringByAppendingString:kind];
         [choice addTarget:self action:@selector(chosen:) forControlEvents:UIControlEventTouchUpInside];
-        [self.scroll addSubview:choice]; [self.choices addObject:choice];
+        [(i < self.quickCount ? self.scroll : self.panel.contentView) addSubview:choice]; [self.choices addObject:choice];
     }
     [self insertSubview:self.panel belowSubview:self.button]; [self setNeedsLayout]; [self layoutIfNeeded];
     self.scroll.contentOffset = CGPointMake(0, MAX(0, self.scroll.contentSize.height - self.scroll.bounds.size.height));
@@ -158,10 +188,12 @@ NSString *const CompanionVNCControlsHapticsPreference = @"direct-controls-haptic
 - (void)slide:(UILongPressGestureRecognizer *)gesture {
     if (gesture.state == UIGestureRecognizerStateBegan) { [self pressDown]; [self open]; }
     if (gesture.state == UIGestureRecognizerStateCancelled || gesture.state == UIGestureRecognizerStateFailed) { [self close]; return; }
-    CGPoint point = [gesture locationInView:self.scroll];
     UIButton *target = nil;
-    if (self.panel && CGRectContainsPoint(self.scroll.bounds, point)) {
-        for (UIButton *choice in self.choices) if (choice.enabled && CGRectContainsPoint(choice.frame, point)) { target = choice; break; }
+    if (self.panel) {
+        for (UIButton *choice in self.choices) {
+            CGPoint point = [gesture locationInView:choice.superview];
+            if (choice.enabled && CGRectContainsPoint(choice.superview.bounds, point) && CGRectContainsPoint(choice.frame, point)) { target = choice; break; }
+        }
     }
     if (target != self.highlighted) {
         self.highlighted.backgroundColor = self.highlighted.tag < self.quickCount ? UIColor.secondarySystemFillColor : UIColor.clearColor;
@@ -179,7 +211,12 @@ NSString *const CompanionVNCControlsHapticsPreference = @"direct-controls-haptic
     if (closing && self.window) {
         [UIView animateWithDuration:.1 animations:^{ closing.alpha = 0; } completion:^(BOOL finished) { [closing removeFromSuperview]; }];
     } else { [closing removeFromSuperview]; }
-    self.panel = nil; self.scroll = nil; self.items = @[]; self.choices = nil; self.highlighted = nil;
+    self.panel = nil; self.scroll = nil; self.nameLabel = nil; self.items = @[]; self.choices = nil; self.highlighted = nil;
     self.button.accessibilityValue = @"Closed"; [self dimWhenIdle];
+}
+- (void)cancelSlideForLayoutChange {
+    if (self.slide.state == UIGestureRecognizerStateBegan || self.slide.state == UIGestureRecognizerStateChanged) {
+        self.slide.enabled = NO; self.slide.enabled = YES; [self close];
+    } else { [self setNeedsLayout]; }
 }
 @end

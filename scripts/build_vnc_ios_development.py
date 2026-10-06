@@ -113,6 +113,11 @@ def main():
     direct_info = plistlib.loads((ROOT / base['INFOPLIST_FILE']).read_bytes())
     direct_info['NSBonjourServices'] = ['_rfb._tcp']
     direct_info['NSSupportsLiveActivities'] = True
+    # WindowGroup needs scene lifecycle admission even when only one app scene
+    # is allowed. Keep additional app windows disabled until privacy and session
+    # ownership are ready for them; Split View still resizes this same scene.
+    direct_info['UIApplicationSceneManifest'] = {
+        'UIApplicationSupportsMultipleScenes': False, 'UISceneConfigurations': {}}
     direct_info['CFBundleURLTypes'] = [{'CFBundleURLName': 'Mac Companion Session', 'CFBundleURLSchemes': ['maccompanion-session']}]
     direct_info.pop('NSCameraUsageDescription', None)
     direct_info['NSFaceIDUsageDescription'] = 'Unlock Mac Companion to access your saved Macs and remote sessions.'

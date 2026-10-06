@@ -197,6 +197,12 @@ import UIKit
         XCTAssertTrue(access.trialIsActive)
         let purchase = try XCTUnwrap(store.allTransactions().first)
         try store.refundTransaction(identifier: purchase.identifier)
+        // Refund delivery is asynchronous. As in the lifetime refund test,
+        // allow Transaction.updates to refresh access before checking revocation.
+        for _ in 0..<200 {
+            if !access.hasPro { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
         await access.refresh()
         XCTAssertFalse(access.hasPro); XCTAssertNotNil(access.trial); XCTAssertFalse(access.canStartTrial)
         await access.startTrial(); XCTAssertFalse(access.hasPro)

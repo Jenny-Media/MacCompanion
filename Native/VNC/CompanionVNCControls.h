@@ -13,5 +13,6 @@ FOUNDATION_EXPORT NSString *const CompanionVNCControlsHapticsPreference;
 @property(nonatomic, copy, nullable) void (^actionHandler)(NSDictionary *);
 @property(nonatomic, copy, nullable) void (^openingHandler)(void);
 - (void)close;
+- (void)cancelSlideForLayoutChange;
 @end
 NS_ASSUME_NONNULL_END

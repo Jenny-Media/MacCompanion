@@ -3,6 +3,7 @@
 #import "CompanionVNCViewer.h"
 #import "CompanionVNCKeyboard.h"
 #import "CompanionVNCViewport.h"
+#import "CompanionVNCAdaptiveLayout.h"
 #import "CompanionVNCCursor.h"
 #import "CompanionVNCDisplayPicker.h"
 #import "CompanionVNCControls.h"
@@ -27,7 +28,22 @@
 @property UIScrollView *recoveryPanel;
 @property UIStackView *login;
 @property UIScrollView *loginScroll;
-@property UIStackView *loginFields, *progressRow, *toolbar;
+@property UIStackView *loginFields, *progressRow, *keyRow;
+@property UIStackView *loginIntro, *loginIdentity, *credentialColumns;
+@property UILabel *loginSubtitle;
+@property UIImageView *loginIcon;
+@property NSLayoutConstraint *loginIconHeight, *loginIconWidth, *loginTop, *loginBottom, *loginMaxWidth;
+@property BOOL foldedLogin;
+@property UIScrollView *toolbar;
+@property UIView *tabletopPad;
+@property UILabel *tabletopLabel;
+@property NSArray<UIGestureRecognizer *> *tabletopGestures;
+@property NSLayoutConstraint *tabletopCanvasBottom;
+@property BOOL tabletop, adaptingViewport;
+@property CGFloat layoutZoomRatio;
+@property CGPoint layoutCenter;
+@property CGRect layoutCrop;
+@property CGRect tabletopInputRegion;
 @property UILabel *progressLabel;
 @property UIActivityIndicatorView *spinner;
 @property CompanionVNCControls *controls;
@@ -184,7 +200,9 @@
     self.username.textContentType = UITextContentTypeUsername;
     self.username.accessibilityIdentifier = @"mac-login-username";
     self.password.accessibilityIdentifier = @"mac-login-password";
-    UIButton *visibility = [self button:@"Show Password" action:@selector(togglePassword)];
+    UIButton *visibility = [self button:@"" action:@selector(togglePassword)];
+    [visibility setImage:[UIImage systemImageNamed:@"eye"] forState:UIControlStateNormal]; visibility.accessibilityLabel = @"Show Password";
+    [visibility.widthAnchor constraintEqualToConstant:44].active = YES;
     visibility.accessibilityIdentifier = @"mac-login-visibility"; self.passwordVisibility = visibility;
     self.remember = [UISwitch new];
     UILabel *rememberLabel = [UILabel new]; rememberLabel.text = @"Save login for this Mac";
@@ -194,27 +212,41 @@
     credentialHelp.numberOfLines = 0; credentialHelp.font = [UIFont preferredFontForTextStyle:UIFontTextStyleFootnote]; credentialHelp.textColor = UIColor.secondaryLabelColor;
     UILabel *accountLabel = [UILabel new]; accountLabel.text = @"Mac account";
     UILabel *passwordLabel = [UILabel new]; passwordLabel.text = @"Password";
-    self.loginFields = [[UIStackView alloc] initWithArrangedSubviews:@[accountLabel, self.username, passwordLabel, self.password, visibility, saveRow, self.connect, credentialHelp]];
-    self.loginFields.axis = UILayoutConstraintAxisVertical; self.loginFields.spacing = 14;
+    UIStackView *account = [[UIStackView alloc] initWithArrangedSubviews:@[accountLabel, self.username]];
+    account.axis = UILayoutConstraintAxisVertical; account.spacing = 4;
+    UIStackView *passwordRow = [[UIStackView alloc] initWithArrangedSubviews:@[self.password, visibility]]; passwordRow.spacing = 4;
+    UIStackView *password = [[UIStackView alloc] initWithArrangedSubviews:@[passwordLabel, passwordRow]];
+    password.axis = UILayoutConstraintAxisVertical; password.spacing = 4;
+    self.credentialColumns = [[UIStackView alloc] initWithArrangedSubviews:@[account, password]];
+    self.credentialColumns.axis = UILayoutConstraintAxisVertical; self.credentialColumns.spacing = 10;
+    UIButton *cancel = [self button:@"Cancel" action:@selector(showMacs)]; cancel.accessibilityIdentifier = @"mac-login-cancel";
+    self.connect.backgroundColor = UIColor.systemBlueColor; [self.connect setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
+    UIStackView *actions = [[UIStackView alloc] initWithArrangedSubviews:@[cancel, self.connect]];
+    actions.spacing = 12; actions.distribution = UIStackViewDistributionFillEqually;
+    self.loginFields = [[UIStackView alloc] initWithArrangedSubviews:@[self.credentialColumns, saveRow]];
+    self.loginFields.axis = UILayoutConstraintAxisVertical; self.loginFields.spacing = 10;
     UIImageView *icon = [[UIImageView alloc] initWithImage:[UIImage systemImageNamed:@"desktopcomputer"]];
     icon.contentMode = UIViewContentModeScaleAspectFit; icon.tintColor = UIColor.systemBlueColor;
-    [icon.heightAnchor constraintEqualToConstant:56].active = YES;
+    self.loginIcon = icon; self.loginIconHeight = [icon.heightAnchor constraintEqualToConstant:40]; self.loginIconHeight.active = YES;
+    self.loginIconWidth = [icon.widthAnchor constraintEqualToConstant:28];
     UILabel *title = [UILabel new]; title.text = self.macName ?: @"Mac"; title.numberOfLines = 2;
     title.font = [UIFont preferredFontForTextStyle:UIFontTextStyleTitle1]; title.textAlignment = NSTextAlignmentCenter;
     UILabel *subtitle = [UILabel new]; subtitle.text = @"Sign in with your Mac account"; subtitle.textColor = UIColor.secondaryLabelColor; subtitle.textAlignment = NSTextAlignmentCenter;
+    subtitle.numberOfLines = 0; self.loginSubtitle = subtitle;
+    self.loginIdentity = [[UIStackView alloc] initWithArrangedSubviews:@[icon, title]]; self.loginIdentity.axis = UILayoutConstraintAxisVertical; self.loginIdentity.spacing = 8;
+    self.loginIntro = [[UIStackView alloc] initWithArrangedSubviews:@[self.loginIdentity, subtitle]];
+    self.loginIntro.axis = UILayoutConstraintAxisVertical; self.loginIntro.spacing = 8;
     self.spinner = [[UIActivityIndicatorView alloc] initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleMedium];
-    self.progressLabel = [UILabel new]; self.progressLabel.numberOfLines = 2;
+    self.progressLabel = [UILabel new]; self.progressLabel.numberOfLines = 0;
     self.progressRow = [[UIStackView alloc] initWithArrangedSubviews:@[self.spinner, self.progressLabel]];
     self.progressRow.spacing = 12;
-    [self.progressRow.heightAnchor constraintGreaterThanOrEqualToConstant:24].active = YES;
+    NSLayoutConstraint *progressHeight = [self.progressRow.heightAnchor constraintGreaterThanOrEqualToConstant:24]; progressHeight.priority = 750; progressHeight.active = YES;
     UILabel *notice = [UILabel new];
     notice.text = @"Use a trusted local network or your private VPN. Screen Sharing desktop and input traffic are not encrypted by this app.";
     notice.numberOfLines = 0; notice.font = [UIFont preferredFontForTextStyle:UIFontTextStyleFootnote]; notice.textColor = UIColor.secondaryLabelColor;
-    UIButton *cancel = [self button:@"Cancel" action:@selector(showMacs)];
-    cancel.accessibilityIdentifier = @"mac-login-cancel";
-    self.login = [[UIStackView alloc] initWithArrangedSubviews:@[icon, title, subtitle, self.progressRow, self.loginFields, notice, cancel]];
-    self.login.axis = UILayoutConstraintAxisVertical; self.login.spacing = 20;
-    self.login.layoutMargins = UIEdgeInsetsMake(24, 20, 24, 20); self.login.layoutMarginsRelativeArrangement = YES;
+    self.login = [[UIStackView alloc] initWithArrangedSubviews:@[self.loginIntro, self.progressRow, self.loginFields, actions, credentialHelp, notice]];
+    self.login.axis = UILayoutConstraintAxisVertical; self.login.spacing = 14;
+    self.login.layoutMargins = UIEdgeInsetsMake(20, 20, 20, 20); self.login.layoutMarginsRelativeArrangement = YES;
     self.login.backgroundColor = UIColor.secondarySystemBackgroundColor; self.login.layer.cornerRadius = 24;
     self.login.translatesAutoresizingMaskIntoConstraints = NO;
     self.loginScroll = [UIScrollView new]; self.loginScroll.translatesAutoresizingMaskIntoConstraints = NO;
@@ -236,14 +268,29 @@
             [key addGestureRecognizer:[[UILongPressGestureRecognizer alloc] initWithTarget:self action:@selector(singleModifier:)]];
         }
     }
-    UIStackView *toolbar = [[UIStackView alloc] initWithArrangedSubviews:keys];
-    toolbar.spacing = 4; toolbar.distribution = UIStackViewDistributionFillEqually;
-    self.toolbar = toolbar;
-    toolbar.translatesAutoresizingMaskIntoConstraints = NO; [self.view addSubview:toolbar];
+    UIStackView *row = [[UIStackView alloc] initWithArrangedSubviews:keys];
+    row.spacing = 4; row.distribution = UIStackViewDistributionFillEqually;
+    self.keyRow = row; row.translatesAutoresizingMaskIntoConstraints = NO;
+    UIScrollView *toolbar = [UIScrollView new]; self.toolbar = toolbar;
+    toolbar.showsHorizontalScrollIndicator = NO; toolbar.alwaysBounceHorizontal = NO;
+    toolbar.translatesAutoresizingMaskIntoConstraints = NO; [toolbar addSubview:row]; [self.view addSubview:toolbar];
+    NSLayoutConstraint *fill = [row.widthAnchor constraintEqualToAnchor:toolbar.frameLayoutGuide.widthAnchor]; fill.priority = 750;
+    self.loginTop = [self.loginScroll.topAnchor constraintEqualToAnchor:self.view.topAnchor];
+    self.loginBottom = [self.loginScroll.bottomAnchor constraintEqualToAnchor:self.view.topAnchor];
+    self.loginMaxWidth = [self.login.widthAnchor constraintLessThanOrEqualToConstant:440];
+    [NSLayoutConstraint activateConstraints:@[
+        [row.leadingAnchor constraintEqualToAnchor:toolbar.contentLayoutGuide.leadingAnchor],
+        [row.trailingAnchor constraintEqualToAnchor:toolbar.contentLayoutGuide.trailingAnchor],
+        [row.topAnchor constraintEqualToAnchor:toolbar.contentLayoutGuide.topAnchor],
+        [row.bottomAnchor constraintEqualToAnchor:toolbar.contentLayoutGuide.bottomAnchor],
+        [row.heightAnchor constraintEqualToAnchor:toolbar.frameLayoutGuide.heightAnchor],
+        [row.widthAnchor constraintGreaterThanOrEqualToConstant:332], fill,
+        [toolbar.heightAnchor constraintEqualToAnchor:row.heightAnchor]]];
     self.toolbarBottom = [toolbar.bottomAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.bottomAnchor constant:-4];
     [self.view addSubview:self.status]; [self.view addSubview:self.controls];
     self.canvasToolbarBottom = [self.canvas.bottomAnchor constraintEqualToAnchor:toolbar.topAnchor constant:-8];
     self.canvasFullscreenBottom = [self.canvas.bottomAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.bottomAnchor];
+    self.tabletopCanvasBottom = [self.canvas.bottomAnchor constraintEqualToAnchor:self.view.topAnchor];
     [NSLayoutConstraint activateConstraints:@[
         [self.status.topAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.topAnchor constant:8],
         [self.status.leadingAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.leadingAnchor constant:16],
@@ -252,21 +299,20 @@
         [toolbar.trailingAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.trailingAnchor constant:-68], self.toolbarBottom,
         [self.canvas.topAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.topAnchor constant:8],
         self.canvasToolbarBottom,
-        [self.canvas.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor],
-        [self.canvas.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor],
+        [self.canvas.leadingAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.leadingAnchor],
+        [self.canvas.trailingAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.trailingAnchor],
         [self.cursorOverlay.leadingAnchor constraintEqualToAnchor:self.canvas.leadingAnchor],
         [self.cursorOverlay.trailingAnchor constraintEqualToAnchor:self.canvas.trailingAnchor],
         [self.cursorOverlay.topAnchor constraintEqualToAnchor:self.canvas.topAnchor],
         [self.cursorOverlay.bottomAnchor constraintEqualToAnchor:self.canvas.bottomAnchor],
         [self.controls.topAnchor constraintEqualToAnchor:self.view.topAnchor], [self.controls.bottomAnchor constraintEqualToAnchor:self.view.bottomAnchor],
         [self.controls.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor], [self.controls.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor],
-        [self.loginScroll.topAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.topAnchor],
-        [self.loginScroll.bottomAnchor constraintEqualToAnchor:self.view.keyboardLayoutGuide.topAnchor],
-        [self.loginScroll.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor], [self.loginScroll.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor],
+        self.loginTop, self.loginBottom,
+        [self.loginScroll.leadingAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.leadingAnchor], [self.loginScroll.trailingAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.trailingAnchor],
         [self.login.topAnchor constraintEqualToAnchor:self.loginScroll.contentLayoutGuide.topAnchor constant:16],
         [self.login.bottomAnchor constraintEqualToAnchor:self.loginScroll.contentLayoutGuide.bottomAnchor constant:-16],
         [self.login.centerXAnchor constraintEqualToAnchor:self.loginScroll.centerXAnchor],
-        [self.login.widthAnchor constraintLessThanOrEqualToConstant:440],
+        self.loginMaxWidth,
         [self.login.widthAnchor constraintLessThanOrEqualToAnchor:self.loginScroll.frameLayoutGuide.widthAnchor constant:-32]
     ]];
     NSLayoutConstraint *cardWidth = [self.login.widthAnchor constraintEqualToAnchor:self.loginScroll.frameLayoutGuide.widthAnchor constant:-32]; cardWidth.priority = 750; cardWidth.active = YES;
@@ -278,6 +324,14 @@
     self.input.smartQuotesType = UITextSmartQuotesTypeNo; self.input.smartDashesType = UITextSmartDashesTypeNo;
     self.input.remoteDelete = ^{ [weak sendRemoteKey:0xff08]; };
     [self.view addSubview:self.input];
+    [self prepareTabletopPad];
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 270100
+    if (@available(iOS 27.1, *)) {
+        [self.view addInteraction:[[UIHingeInteraction alloc] initWithUpdateHandler:^(UIHingeInteraction *interaction, UIHingeInteractionUpdate *update) {
+            [weak.view setNeedsLayout]; // Query reserved regions when they change; never infer layout from angle.
+        }]];
+    }
+#endif
     NSNotificationCenter *center = NSNotificationCenter.defaultCenter;
     [center addObserver:self selector:@selector(keyboardFrame:) name:UIKeyboardWillChangeFrameNotification object:nil];
     self.displayViews = self.displayLayout[@"views"] ?: @[];
@@ -535,9 +589,9 @@
     CGFloat x = MAX(0, (scrollView.bounds.size.width - self.image.frame.size.width) / 2);
     CGFloat y = MAX(0, (scrollView.bounds.size.height - self.image.frame.size.height) / 2);
     self.image.center = CGPointMake(self.image.frame.size.width / 2 + x, self.image.frame.size.height / 2 + y);
-    [self updateCursor];
+    [self updateCursor]; [self rememberLayoutViewport];
 }
-- (void)scrollViewDidScroll:(UIScrollView *)scrollView { [self updateCursor]; }
+- (void)scrollViewDidScroll:(UIScrollView *)scrollView { [self updateCursor]; [self rememberLayoutViewport]; }
 - (void)scrollViewWillBeginDragging:(UIScrollView *)scrollView { if (scrollView == self.canvas) self.cursorFollowingSuspended = YES; }
 - (void)scrollViewWillBeginZooming:(UIScrollView *)scrollView withView:(UIView *)view { if (scrollView == self.canvas) self.cursorFollowingSuspended = YES; }
 - (void)fitDesktop {
@@ -546,6 +600,8 @@
     CGFloat fit = MIN(self.canvas.bounds.size.width / self.activeCrop.size.width, self.canvas.bounds.size.height / self.activeCrop.size.height);
     self.canvas.minimumZoomScale = fit; [self.canvas setZoomScale:fit animated:NO];
     self.canvas.contentOffset = CGPointZero; [self scrollViewDidZoom:self.canvas];
+    self.previousCanvasSize = self.canvas.bounds.size;
+    if (!self.adaptingViewport) [self rememberLayoutViewport];
 }
 - (CGPoint)viewportCenter {
     CGPoint point = [self.image convertPoint:CGPointMake(CGRectGetMidX(self.canvas.bounds), CGRectGetMidY(self.canvas.bounds)) fromView:self.canvas];
@@ -560,26 +616,113 @@
                                 MAX(0, MIN(self.canvas.contentSize.height - self.canvas.bounds.size.height, point.y - self.canvas.bounds.size.height / 2)));
     [self.canvas setContentOffset:offset animated:NO];
 }
+- (void)rememberLayoutViewport {
+    if (self.adaptingViewport || !CGSizeEqualToSize(self.canvas.bounds.size, self.previousCanvasSize)
+        || CGRectIsEmpty(self.activeCrop) || CGRectIsNull(self.activeCrop) || self.canvas.minimumZoomScale <= 0) return;
+    self.layoutZoomRatio = self.canvas.zoomScale / self.canvas.minimumZoomScale;
+    self.layoutCenter = [self viewportCenter]; self.layoutCrop = self.activeCrop;
+}
+- (void)viewWillLayoutSubviews {
+    [super viewWillLayoutSubviews];
+    CGRect safe = UIEdgeInsetsInsetRect(self.view.bounds, self.view.safeAreaInsets), content = CGRectNull, input = CGRectNull;
+    BOOL tabletop = !self.inputOnly && CompanionVNCTabletopRegions(safe, [self activeDivision], &content, &input);
+    CGRect loginRegion = safe;
+    loginRegion.size.height = MAX(0, loginRegion.size.height - self.keyboardOverlap);
+    BOOL lowerLogin = tabletop && CGRectGetMaxY(loginRegion) - input.origin.y >= 240;
+    if (tabletop) {
+        loginRegion = lowerLogin ? CGRectIntersection(loginRegion, input) : CGRectIntersection(loginRegion, content);
+    }
+    self.loginTop.constant = CGRectGetMinY(loginRegion);
+    self.loginBottom.constant = CGRectGetMaxY(loginRegion);
+    BOOL compact = (tabletop || loginRegion.size.height < 520) && !UIContentSizeCategoryIsAccessibilityCategory(self.traitCollection.preferredContentSizeCategory);
+    self.loginMaxWidth.constant = compact ? 720 : 440;
+    self.login.spacing = compact ? 8 : 14;
+    self.login.layoutMargins = compact ? UIEdgeInsetsMake(12,16,12,16) : UIEdgeInsetsMake(20,20,20,20);
+    self.credentialColumns.axis = compact && safe.size.width >= 520 ? UILayoutConstraintAxisHorizontal : UILayoutConstraintAxisVertical;
+    self.credentialColumns.distribution = self.credentialColumns.axis == UILayoutConstraintAxisHorizontal ? UIStackViewDistributionFillEqually : UIStackViewDistributionFill;
+    self.loginIdentity.axis = compact && !lowerLogin ? UILayoutConstraintAxisHorizontal : UILayoutConstraintAxisVertical;
+    self.loginIdentity.alignment = self.loginIdentity.axis == UILayoutConstraintAxisHorizontal ? UIStackViewAlignmentCenter : UIStackViewAlignmentFill;
+    self.loginIconHeight.constant = compact && !lowerLogin ? 28 : 40;
+    self.loginIconWidth.active = self.loginIdentity.axis == UILayoutConstraintAxisHorizontal;
+    self.loginSubtitle.hidden = compact && !lowerLogin;
+    if (lowerLogin != self.foldedLogin) {
+        self.foldedLogin = lowerLogin;
+        if (lowerLogin) {
+            [self.login removeArrangedSubview:self.loginIntro]; [self.loginIntro removeFromSuperview];
+            self.loginIntro.translatesAutoresizingMaskIntoConstraints = YES; [self.view addSubview:self.loginIntro];
+        } else {
+            [self.loginIntro removeFromSuperview]; self.loginIntro.translatesAutoresizingMaskIntoConstraints = NO;
+            [self.login insertArrangedSubview:self.loginIntro atIndex:0];
+        }
+    }
+    if (lowerLogin) {
+        CGFloat width = MIN(440, MAX(0, content.size.width - 40));
+        CGSize fitting = [self.loginIntro systemLayoutSizeFittingSize:CGSizeMake(width, UILayoutFittingCompressedSize.height) withHorizontalFittingPriority:UILayoutPriorityRequired verticalFittingPriority:UILayoutPriorityFittingSizeLevel];
+        self.loginIntro.frame = CGRectMake(CGRectGetMidX(content)-width/2, CGRectGetMidY(content)-fitting.height/2, width, fitting.height);
+        self.loginIntro.hidden = self.login.hidden;
+    } else self.loginIntro.hidden = NO;
+    self.tabletop = tabletop; self.tabletopInputRegion = tabletop ? input : CGRectNull;
+    CGFloat keyboardCeiling = CGRectGetMaxY(safe) - self.keyboardOverlap;
+    if (!self.fullscreen) keyboardCeiling -= MAX(44, self.toolbar.bounds.size.height) + 12;
+    self.tabletopCanvasBottom.constant = tabletop ? MIN(CGRectGetMaxY(content) - 8, keyboardCeiling) : 0;
+    self.canvasToolbarBottom.active = !tabletop && !self.fullscreen;
+    self.canvasFullscreenBottom.active = !tabletop && self.fullscreen;
+    self.tabletopCanvasBottom.active = tabletop;
+}
+- (CGRect)activeDivision { return CompanionVNCActiveDivision(self.view); }
 - (void)viewDidLayoutSubviews {
     [super viewDidLayoutSubviews];
+    self.tabletopPad.hidden = !self.tabletop || !self.login.hidden || self.recoveryPanel != nil;
+    if (self.tabletop) {
+        CGRect input = self.tabletopInputRegion;
+        CGFloat bottom = self.fullscreen ? CGRectGetMaxY(input) - self.keyboardOverlap - 68 : CGRectGetMinY(self.toolbar.frame) - 12;
+        self.tabletopPad.frame = CGRectMake(input.origin.x + 12, input.origin.y + 12, MAX(0, input.size.width - 24), MAX(0, bottom - input.origin.y - 12));
+        self.tabletopPad.hidden = self.tabletopPad.hidden || self.tabletopPad.bounds.size.height < 44;
+        self.tabletopLabel.frame = CGRectMake(20, 12, MAX(0, self.tabletopPad.bounds.size.width - 40), MAX(0, self.tabletopPad.bounds.size.height - 24));
+    }
     if (CGRectIsNull(self.activeCrop) || CGRectIsEmpty(self.activeCrop)) return;
-    BOOL wasFit = self.canvas.zoomScale <= self.canvas.minimumZoomScale * 1.01;
     CGSize size = self.canvas.bounds.size;
     if (size.width <= 0 || size.height <= 0) return;
-    self.canvas.minimumZoomScale = MIN(size.width / self.activeCrop.size.width, size.height / self.activeCrop.size.height);
     BOOL resized = !CGSizeEqualToSize(size, self.previousCanvasSize);
+    CGFloat ratio = self.layoutZoomRatio > 0 && CGRectEqualToRect(self.layoutCrop, self.activeCrop) ? self.layoutZoomRatio : 1;
+    CGPoint center = self.layoutCenter;
+    self.adaptingViewport = YES;
+    self.canvas.minimumZoomScale = MIN(size.width / self.activeCrop.size.width, size.height / self.activeCrop.size.height);
     if (resized) {
         self.previousCanvasSize = size; self.zoomGeneration++; self.smartZoomPending = NO;
+        [self releasePointer];
+        for (UIGestureRecognizer *gesture in [@[self.drag, self.hold, self.remoteScroll] arrayByAddingObjectsFromArray:self.tabletopGestures]) {
+            BOOL enabled = gesture.enabled; gesture.enabled = NO; gesture.enabled = enabled;
+        }
+        [self.controls cancelSlideForLayoutChange];
     }
     if (self.keyboardLayoutPending) {
         self.keyboardLayoutPending = NO;
         [self applyViewportRatio:self.keyboardLayoutRatio center:self.keyboardLayoutCenter];
     } else if (resized) {
         if (self.smartZoomed) [self.canvas zoomToRect:self.smartWindow animated:NO];
-        else if (wasFit) [self fitDesktop];
-        else [self scrollViewDidZoom:self.canvas];
+        else [self applyViewportRatio:ratio center:center];
     }
+    self.adaptingViewport = NO; [self rememberLayoutViewport];
     [self updateCursor];
+}
+- (void)prepareTabletopPad {
+    self.tabletopPad = [UIView new]; self.tabletopPad.backgroundColor = UIColor.secondarySystemBackgroundColor;
+    self.tabletopPad.layer.cornerRadius = 24; self.tabletopPad.hidden = YES;
+    self.tabletopPad.accessibilityIdentifier = @"tabletop-trackpad";
+    [self.view insertSubview:self.tabletopPad belowSubview:self.controls];
+    self.tabletopLabel = [UILabel new]; self.tabletopLabel.numberOfLines = 0; self.tabletopLabel.textAlignment = NSTextAlignmentCenter;
+    self.tabletopLabel.text = @"Trackpad\nTap to click · Hold to drag\nTwo fingers to scroll";
+    self.tabletopLabel.font = [UIFont preferredFontForTextStyle:UIFontTextStyleBody]; self.tabletopLabel.adjustsFontForContentSizeCategory = YES;
+    self.tabletopLabel.textColor = UIColor.secondaryLabelColor; [self.tabletopPad addSubview:self.tabletopLabel];
+    CompanionVNCTapGesture *tap = [[CompanionVNCTapGesture alloc] initWithTarget:self action:@selector(clickAt:)];
+    UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(dragAt:)]; pan.maximumNumberOfTouches = 1;
+    UILongPressGestureRecognizer *hold = [[UILongPressGestureRecognizer alloc] initWithTarget:self action:@selector(holdAt:)]; hold.minimumPressDuration = .35;
+    [pan requireGestureRecognizerToFail:hold]; [pan requireGestureRecognizerToFail:tap];
+    UIPanGestureRecognizer *scroll = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(scrollRemote:)];
+    scroll.minimumNumberOfTouches = 2; scroll.maximumNumberOfTouches = 2;
+    self.tabletopGestures = @[tap, pan, hold, scroll];
+    for (UIGestureRecognizer *gesture in self.tabletopGestures) [self.tabletopPad addGestureRecognizer:gesture];
 }
 - (void)chooseView {
     if (!self.framebufferSize.width) return;
@@ -619,7 +762,9 @@
 - (void)setTrackpadModeEnabled:(BOOL)enabled {
     [self releasePointer];
     // Cancel recognizers in progress before switching coordinate systems.
-    for (UIGestureRecognizer *gesture in @[self.drag, self.hold, self.remoteScroll]) { gesture.enabled = NO; gesture.enabled = YES; }
+    for (UIGestureRecognizer *gesture in [@[self.drag, self.hold, self.remoteScroll] arrayByAddingObjectsFromArray:self.tabletopGestures]) {
+        BOOL enabled = gesture.enabled; gesture.enabled = NO; gesture.enabled = enabled;
+    }
     self.controls.trackpad = enabled;
     if (self.inputModeHandler) self.inputModeHandler(enabled);
     self.trackpadMode = enabled; self.scrollRemainder = 0;
@@ -635,23 +780,23 @@
 }
 - (BOOL)pointerForGesture:(UIGestureRecognizer *)gesture point:(CGPoint *)p {
     if (CGRectIsNull(self.activeCrop) || CGRectIsEmpty(self.activeCrop)) return NO;
-    if (!self.trackpadMode) return CompanionVNCPointerPoint(self.activeCrop, [gesture locationInView:self.image], self.pointerHeld, p);
+    if (!self.trackpadMode && gesture.view != self.tabletopPad) return CompanionVNCPointerPoint(self.activeCrop, [gesture locationInView:self.image], self.pointerHeld, p);
     if (gesture.state == UIGestureRecognizerStateBegan) {
         self.trackpadOrigin = [self trackpadPointer]; self.trackpadTranslation = CGPointZero;
         self.cursorFollowingSuspended = NO;
     }
     CGPoint delta = CGPointZero;
-    if ([gesture isKindOfClass:UIPanGestureRecognizer.class]) delta = [(UIPanGestureRecognizer *)gesture translationInView:self.canvas];
+    if ([gesture isKindOfClass:UIPanGestureRecognizer.class]) delta = [(UIPanGestureRecognizer *)gesture translationInView:gesture.view ?: self.canvas];
     else if ([gesture isKindOfClass:UILongPressGestureRecognizer.class]) {
         // The overlay's origin stays fixed when auto-follow scrolls the canvas.
-        CGPoint location = [gesture locationInView:self.cursorOverlay];
+        CGPoint location = [gesture locationInView:gesture.view == self.tabletopPad ? self.tabletopPad : self.cursorOverlay];
         if (gesture.state == UIGestureRecognizerStateBegan) self.holdOrigin = location;
         delta = CGPointMake(location.x - self.holdOrigin.x, location.y - self.holdOrigin.y);
     }
     CGPoint step = CGPointMake(delta.x - self.trackpadTranslation.x, delta.y - self.trackpadTranslation.y);
     self.trackpadTranslation = delta;
     CGFloat velocity = 0;
-    if ([gesture isKindOfClass:UIPanGestureRecognizer.class]) { CGPoint v = [(UIPanGestureRecognizer *)gesture velocityInView:self.canvas]; velocity = hypot(v.x, v.y); }
+    if ([gesture isKindOfClass:UIPanGestureRecognizer.class]) { CGPoint v = [(UIPanGestureRecognizer *)gesture velocityInView:gesture.view ?: self.canvas]; velocity = hypot(v.x, v.y); }
     CGFloat backing = [self.displayLayout[@"backingScale"] doubleValue];
     if (!isfinite(backing) || backing < 1 || backing > 4) backing = 2;
     CGFloat speed = isfinite(self.pointerSpeed) && self.pointerSpeed > 0 ? MAX(.5, MIN(3, self.pointerSpeed)) : 1.5;
@@ -664,7 +809,7 @@
 }
 - (void)clickAt:(UIGestureRecognizer *)gesture {
     CGPoint p;
-    if (self.trackpadMode) { if (CGRectIsNull(self.activeCrop) || CGRectIsEmpty(self.activeCrop)) return; p = [self trackpadPointer]; }
+    if (self.trackpadMode || gesture.view == self.tabletopPad) { if (CGRectIsNull(self.activeCrop) || CGRectIsEmpty(self.activeCrop)) return; p = [self trackpadPointer]; }
     else if (!CompanionVNCPointerPoint(self.activeCrop, [gesture locationInView:self.image], false, &p)) return;
     [self clickPointer:p mask:1];
 }
@@ -689,8 +834,8 @@
     if (CGRectIsNull(self.activeCrop) || CGRectIsEmpty(self.activeCrop)) return;
     if (gesture.state == UIGestureRecognizerStateCancelled || gesture.state == UIGestureRecognizerStateFailed) { self.scrollRemainder = 0; return; }
     if (gesture.state == UIGestureRecognizerStateBegan) self.scrollRemainder = 0;
-    CGFloat delta = [gesture translationInView:self.canvas].y;
-    [gesture setTranslation:CGPointZero inView:self.canvas];
+    CGFloat delta = [gesture translationInView:gesture.view ?: self.canvas].y;
+    [gesture setTranslation:CGPointZero inView:gesture.view ?: self.canvas];
     self.scrollRemainder += delta;
     NSInteger steps = MIN(8, (NSInteger)(fabs(self.scrollRemainder) / 18));
     NSInteger mask = self.scrollRemainder > 0 ? 8 : 16;
@@ -704,7 +849,7 @@
     [self.session pointerX:point.x y:point.y mask:mask];
 }
 - (void)followTrackpadPointer:(CGPoint)point {
-    if (self.inputOnly || !self.followCursorEnabled || !self.trackpadMode || self.cursorFollowingSuspended
+    if (self.inputOnly || !self.followCursorEnabled || (!self.trackpadMode && !self.tabletop) || self.cursorFollowingSuspended
         || !self.foreground || self.exited || self.checkingResume || !self.login.hidden
         || self.presentedViewController || self.canvas.dragging || self.canvas.decelerating || self.canvas.zooming
         || self.canvas.zoomScale <= self.canvas.minimumZoomScale * 1.01) return;
@@ -879,7 +1024,10 @@
     self.loginFields.hidden = NO; self.loginFields.userInteractionEnabled = !progress;
     self.loginFields.alpha = progress ? .55 : 1;
     self.connect.hidden = self.recoveryController != nil;
-    self.progressRow.hidden = NO; self.spinner.hidden = !progress;
+    self.progressRow.hidden = !progress && !self.progressLabel.text.length; self.spinner.hidden = !progress;
+    // Let validation feedback fill the card width and grow vertically. A
+    // hidden spinner in a horizontal stack can retain a one-line label height.
+    self.progressRow.axis = progress ? UILayoutConstraintAxisHorizontal : UILayoutConstraintAxisVertical;
     if (progress) [self.spinner startAnimating]; else [self.spinner stopAnimating];
     self.controls.hidden = !self.loginScroll.hidden;
     self.toolbar.hidden = !self.loginScroll.hidden || self.fullscreen || self.recoveryPanel != nil;
@@ -903,7 +1051,7 @@
     if (!self.canvasToolbarBottom) return;
     CGFloat ratio = self.canvas.minimumZoomScale > 0 ? self.canvas.zoomScale / self.canvas.minimumZoomScale : 1;
     CGPoint center = [self viewportCenter];
-    self.canvasToolbarBottom.active = !self.fullscreen; self.canvasFullscreenBottom.active = self.fullscreen;
+    self.canvasToolbarBottom.active = !self.tabletop && !self.fullscreen; self.canvasFullscreenBottom.active = !self.tabletop && self.fullscreen;
     self.image.hidden = self.inputOnly; self.cursorOverlay.hidden = self.inputOnly;
     self.canvas.backgroundColor = self.inputOnly ? UIColor.systemBackgroundColor : UIColor.blackColor;
     self.trackpadHelp.hidden = !self.inputOnly || !self.login.hidden;
@@ -913,7 +1061,8 @@
 }
 - (void)togglePassword {
     self.password.secureTextEntry = !self.password.secureTextEntry;
-    [self.passwordVisibility setTitle:self.password.secureTextEntry ? @"Show Password" : @"Hide Password" forState:UIControlStateNormal];
+    [self.passwordVisibility setImage:[UIImage systemImageNamed:self.password.secureTextEntry ? @"eye" : @"eye.slash"] forState:UIControlStateNormal];
+    self.passwordVisibility.accessibilityLabel = self.password.secureTextEntry ? @"Show Password" : @"Hide Password";
 }
 - (void)restoreSavedDisplay {
     if (self.initialDisplayApplied || !self.restoredDisplayID || !self.displayViews.count || self.framebufferSize.height <= 0 || self.displayAspect <= 0) return;

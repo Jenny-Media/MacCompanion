@@ -96,17 +96,20 @@
         origin.x = floor(origin.x); origin.y = floor(origin.y);
         [viewer receivedCursor:nil hotspot:CGPointZero position:origin known:YES];
         CGFloat zoom = canvas.zoomScale; CGPoint offset = canvas.contentOffset;
+        // Move beyond the visible edge in portrait and landscape alike.
+        // A fixed 300-pixel movement can remain visible on a wide canvas.
+        CGFloat movement = MAX(300, ceil(canvas.bounds.size.width / zoom * .6));
         ControlsPan *pan = [ControlsPan new]; pan.sampleState = UIGestureRecognizerStateBegan; [viewer dragAt:pan];
         XCTAssertTrue(CGPointEqualToPoint(canvas.contentOffset,offset));
-        pan.sampleState = UIGestureRecognizerStateChanged; pan.delta = CGPointMake(150,0); [viewer dragAt:pan];
+        pan.sampleState = UIGestureRecognizerStateChanged; pan.delta = CGPointMake(movement / 2,0); [viewer dragAt:pan];
         XCTAssertGreaterThan(canvas.contentOffset.x,offset.x);
-        XCTAssertEqualObjects(session.pointers.lastObject[0],@(origin.x+300));
+        XCTAssertEqualObjects(session.pointers.lastObject[0],@(origin.x+movement));
         XCTAssertFalse(((UIView *)[viewer valueForKey:@"cursorIndicator"]).hidden);
         CGPoint moved = canvas.contentOffset;
         [viewer receivedCursor:nil hotspot:CGPointZero position:origin known:YES];
         XCTAssertTrue(CGPointEqualToPoint(canvas.contentOffset,moved)); // delayed server notification cannot pan
-        pan.delta = CGPointMake(170,0); [viewer dragAt:pan];
-        XCTAssertEqualObjects(session.pointers.lastObject[0],@(origin.x+340));
+        pan.delta = CGPointMake(movement / 2 + 20,0); [viewer dragAt:pan];
+        XCTAssertEqualObjects(session.pointers.lastObject[0],@(origin.x+movement+40));
         XCTAssertEqual(session.pointers.count,3); XCTAssertEqual(canvas.zoomScale,zoom);
         XCTAssertEqual([[viewer.session valueForKey:@"connections"] unsignedIntegerValue],0);
     }];
@@ -114,14 +117,15 @@
 - (void)testHeldDragUsesFixedCoordinatesWhileTheViewportFollows {
     [self withFollowViewer:^(CompanionVNCViewer *viewer, ControlsSession *session) {
         UIScrollView *canvas = [viewer valueForKey:@"canvas"];
+        CGFloat movement = MAX(300, ceil(canvas.bounds.size.width / canvas.zoomScale * .6));
         [viewer receivedCursor:nil hotspot:CGPointZero position:CGPointMake(800,800) known:YES];
         ControlsHold *hold = [ControlsHold new]; hold.reference = viewer.view; hold.point = CGPointMake(100,200);
         hold.sampleState = UIGestureRecognizerStateBegan; [viewer holdAt:hold]; CGPoint offset = canvas.contentOffset;
-        hold.sampleState = UIGestureRecognizerStateChanged; hold.point = CGPointMake(250,200); [viewer holdAt:hold];
-        XCTAssertGreaterThan(canvas.contentOffset.x,offset.x); XCTAssertEqualObjects(session.pointers.lastObject,(@[@1100,@800,@1]));
-        [viewer holdAt:hold]; XCTAssertEqualObjects(session.pointers.lastObject,(@[@1100,@800,@1]));
+        hold.sampleState = UIGestureRecognizerStateChanged; hold.point = CGPointMake(100 + movement / 2,200); [viewer holdAt:hold];
+        XCTAssertGreaterThan(canvas.contentOffset.x,offset.x); XCTAssertEqualObjects(session.pointers.lastObject,(@[@(800+movement),@800,@1]));
+        [viewer holdAt:hold]; XCTAssertEqualObjects(session.pointers.lastObject,(@[@(800+movement),@800,@1]));
         hold.sampleState = UIGestureRecognizerStateEnded; [viewer holdAt:hold];
-        XCTAssertEqualObjects(session.pointers.lastObject,(@[@1100,@800,@0])); XCTAssertEqual(session.pointers.count,4);
+        XCTAssertEqualObjects(session.pointers.lastObject,(@[@(800+movement),@800,@0])); XCTAssertEqual(session.pointers.count,4);
     }];
 }
 - (void)testFollowingRespectsManualViewportNavigationOptOutModeAndLifecycle {

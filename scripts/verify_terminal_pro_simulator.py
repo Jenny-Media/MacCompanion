@@ -62,6 +62,7 @@ def main():
     parser.add_argument('--build', type=Path, required=True)
     parser.add_argument('--simulator', required=True)
     parser.add_argument('--screenshots', action='store_true', help='Capture synthetic recovery screens in the hosted Simulator tests')
+    parser.add_argument('--duo-review', action='store_true', help='Run only the opt-in interactive, synthetic Duo comparison capture')
     args = parser.parse_args(); base = args.build.resolve()
     qa = base / 'QA'; qa.mkdir(exist_ok=True)
     spec = json.loads((base / 'project.json').read_text())
@@ -99,6 +100,8 @@ def main():
     spec['schemes']['DirectClientQA']['run'].update({'executable': 'MacCompanionIOS', 'macroExpansion': 'MacCompanionIOS', 'storeKitConfiguration': 'LifetimePro.storekit'})
     if args.screenshots:
         spec['schemes']['DirectClientQA']['run']['environmentVariables'] = {'MACCOMPANION_SCREENSHOT_REVIEW': '1'}
+    if args.duo_review:
+        spec['schemes']['DirectClientQA']['run']['environmentVariables'] = {'MACCOMPANION_DUO_REVIEW': '1'}
     spec_path = qa / 'project.json'; spec_path.write_text(json.dumps(spec, indent=2))
     run('/opt/homebrew/bin/xcodegen', 'generate', '--spec', spec_path, '--project', qa)
     lock = qa / 'DirectClientQA.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved'
@@ -108,9 +111,11 @@ def main():
         run('xcodebuild', '-project', qa / 'DirectClientQA.xcodeproj', '-scheme', 'DirectClientQA',
             '-destination', 'platform=iOS Simulator,id=' + args.simulator, '-derivedDataPath', base / 'DerivedData',
             '-onlyUsePackageVersionsFromResolvedFile', '-skipPackagePluginValidation', '-parallel-testing-enabled', 'NO',
+            *(['-only-testing:DirectClientTests/DuoComparisonTests/testInteractiveCapture'] if args.duo_review else []),
             '-resultBundlePath', qa / 'Results.xcresult', 'test', stdout=log, stderr=subprocess.STDOUT)
     container = subprocess.check_output(['xcrun', 'simctl', 'get_app_container', args.simulator, bundle, 'data'], text=True).strip()
-    verify_external(Path(container) / 'Documents/synthetic-key-interop')
+    if not args.duo_review:
+        verify_external(Path(container) / 'Documents/synthetic-key-interop')
     for name in ['synthetic-ed25519', 'synthetic-ed25519.pub', 'synthetic-rsa', 'synthetic-rsa.pub']:
         (qa / name).unlink(missing_ok=True)
     print('Direct client Simulator QA passed. Results:', qa / 'Results.xcresult')

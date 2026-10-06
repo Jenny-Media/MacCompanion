@@ -68,7 +68,8 @@ import Citadel
         let visibility = viewer.value(forKey: "passwordVisibility") as? UIButton
         _ = viewer.perform(NSSelectorFromString("togglePassword"))
         XCTAssertFalse(password?.isSecureTextEntry ?? true)
-        XCTAssertEqual(visibility?.title(for: .normal), "Hide Password")
+        XCTAssertEqual(visibility?.accessibilityLabel, "Hide Password")
+        XCTAssertNotNil(visibility?.image(for: .normal))
     }
 
 }

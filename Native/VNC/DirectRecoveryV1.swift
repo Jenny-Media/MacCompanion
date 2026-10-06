@@ -118,6 +118,7 @@ struct DirectRecoveryCard: View {
             }
         }.padding(17).frame(maxWidth: .infinity, alignment: .leading)
             .background(color.opacity(0.09), in: RoundedRectangle(cornerRadius: 18))
+            .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 18))
             .overlay(RoundedRectangle(cornerRadius: 18).stroke(color.opacity(0.17)))
             .accessibilityIdentifier("recovery-" + notice.reason.rawValue)
             .onAppear { UIAccessibility.post(notification: .announcement, argument: notice.title) }
