@@ -1,3 +1,17 @@
+## 2026-10-06 — Adaptive client internal TestFlight build 4 ready
+
+Source `ef90c1e` is committed and delivered as **1.0 (4)** to the existing
+Internal Testing group. App Store Connect confirms **Internal, Testing**, with
+one existing tester. What to Test and the unchanged standard-encryption /
+outside-France answers are saved. Required stable validation and both 121-test
+Simulator lanes pass, with five opt-in capture skips per lane.
+
+The archive uses Xcode 27.1 RC so guarded Duo APIs are included, while maintaining
+iOS 26.0 compatibility and the existing app/widget signing and Keychain groups.
+RC evidence remains provisional; exact-build physical acceptance, physical Duo
+and actual Split View remain separate. No external/public release occurred.
+See [adaptive TestFlight evidence](evidence/2026-10-06-adaptive-testflight.md).
+
 ## 2026-10-05 — Direct client internal TestFlight ready
 
 The normal direct iOS client is archived as `1.0 (1)` using stable Xcode 27.0,
