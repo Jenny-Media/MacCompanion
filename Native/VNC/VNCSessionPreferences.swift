@@ -44,7 +44,10 @@ struct VNCQuickAction: Codable, Identifiable, Equatable {
         [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: "media.jenny.maccompanion.direct-actions.v1",
          kSecAttrAccount as String: id.uuidString.lowercased(), kSecAttrSynchronizable as String: false]
     }
-    static func actions(_ id: UUID) -> [VNCQuickAction] { (try? readActions(id)) ?? VNCQuickAction.defaults }
+    static func actions(_ id: UUID) -> [VNCQuickAction] {
+        let saved = (try? readActions(id)) ?? VNCQuickAction.defaults
+        return DirectProAccess.shared.hasPro ? saved : saved.filter { $0.kind != .shortcut && $0.kind != .text }
+    }
     static func readActions(_ id: UUID) throws -> [VNCQuickAction] {
         var q = query(id); q[kSecReturnData as String] = true; q[kSecMatchLimit as String] = kSecMatchLimitOne
         var result: CFTypeRef?
@@ -79,21 +82,23 @@ struct VNCInputSettings: View {
     @State private var followCursor: Bool
     @State private var actions: [VNCQuickAction]
     @State private var editor: VNCQuickAction?
-    @State private var error: String?
+    @State private var issue: DirectRecoveryNotice?
     @State private var actionEditMode: EditMode = .inactive
-    private let actionsReadable: Bool
+    @State private var paywall = false
+    @State private var actionsReadable: Bool
     init(macID: UUID, changed: @escaping @MainActor () -> Void) {
         self.macID = macID; self.changed = changed
         _speed = State(initialValue: VNCSessionPreferences.speed(macID))
         _followCursor = State(initialValue: VNCSessionPreferences.followCursor(macID))
         let loaded = try? VNCSessionPreferences.readActions(macID)
-        actionsReadable = loaded != nil
+        _actionsReadable = State(initialValue: loaded != nil)
         _actions = State(initialValue: loaded ?? [])
     }
     var body: some View {
         NavigationStack {
             Form {
-                if !actionsReadable { Section { Text("Saved quick actions could not be read. They have been preserved. Unlock your iPhone and try again.").foregroundStyle(.secondary) } }
+                if !actionsReadable { Section { DirectRecoveryCard(notice: .make(.controlsUnavailable), primary: .init(title: "Retry", perform: reload)) } }
+                if let issue { Section { DirectRecoveryCard(notice: issue, primary: .init(title: "Retry Save", perform: save), secondary: .init(title: "Keep Editing", perform: { self.issue = nil })) } }
                 Section {
                     HStack { Text("Pointer Speed"); Spacer(); Text(speed, format: .number.precision(.fractionLength(1))).foregroundStyle(.secondary) }
                     Slider(value: $speed, in: 0.5...3, step: 0.1).accessibilityLabel("Pointer Speed")
@@ -125,7 +130,8 @@ struct VNCInputSettings: View {
                     }
                 } footer: {
                     Text("Use Reorder to arrange or remove actions. Press the controls button, slide to an action and release. Saved text is stored on this iPhone and sent as typing to the focused Mac field.")
-                }.disabled(!actionsReadable)
+                }.disabled(!actionsReadable || !DirectProAccess.shared.hasPro)
+                if !DirectProAccess.shared.hasPro { Section { Button("Customize Quick Actions with Pro") { paywall = true } } }
             }
             .navigationTitle("Input & Quick Actions").navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -135,14 +141,19 @@ struct VNCInputSettings: View {
             .sheet(item: $editor) { action in VNCActionEditor(action: action) { edited in
                 if let index = actions.firstIndex(where: { $0.id == edited.id }) { actions[index] = edited } else { actions.append(edited) }
             } }
+            .sheet(isPresented: $paywall) { DirectProView() }
             .environment(\.editMode, $actionEditMode)
-            .alert("Could Not Save", isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) { Button("OK") { error = nil } } message: { Text(error ?? "") }
+
         }
         .interactiveDismissDisabled()
     }
+    private func reload() {
+        do { actions = try VNCSessionPreferences.readActions(macID); actionsReadable = true; issue = nil }
+        catch { actionsReadable = false }
+    }
     private func save() {
-        do { try VNCSessionPreferences.saveActions(actions, mac: macID); VNCSessionPreferences.setSpeed(speed, mac: macID); VNCSessionPreferences.setFollowCursor(followCursor, mac: macID); changed(); dismiss() }
-        catch { self.error = "Quick actions could not be saved. Your previous actions are preserved." }
+        do { if DirectProAccess.shared.hasPro { try VNCSessionPreferences.saveActions(actions, mac: macID) }; VNCSessionPreferences.setSpeed(speed, mac: macID); VNCSessionPreferences.setFollowCursor(followCursor, mac: macID); changed(); dismiss() }
+        catch { issue = .make(.saveFailed) }
     }
 }
 
@@ -155,7 +166,9 @@ private struct VNCActionEditor: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section { TextField("Action Name", text: $action.title) }
+                Section { TextField("Action Name", text: $action.title)
+                    if !action.valid { Text("Use a name from 1 to 32 characters and a valid shortcut or saved text up to 256 characters.").font(.footnote).foregroundStyle(.secondary) }
+                }
                 if action.kind == .text {
                     Section {
                         TextEditor(text: $action.text).frame(minHeight: 140).accessibilityLabel("Saved Text")

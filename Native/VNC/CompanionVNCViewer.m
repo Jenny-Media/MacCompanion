@@ -8,6 +8,7 @@
 #import "CompanionVNCControls.h"
 #import "CompanionVNCTapGesture.h"
 #import "CompanionVNCMenu.h"
+#import "Mac_Companion-Swift.h"
 
 @interface CompanionRemoteTextInput : UITextView
 @property(nonatomic, copy) void (^remoteDelete)(void);
@@ -22,6 +23,8 @@
 @interface CompanionVNCViewer () <UIScrollViewDelegate, UITextViewDelegate>
 
 @property UITextField *host, *username, *password;
+@property UIViewController *recoveryController;
+@property UIScrollView *recoveryPanel;
 @property UIStackView *login;
 @property UIScrollView *loginScroll;
 @property UIStackView *loginFields, *progressRow, *toolbar;
@@ -32,7 +35,7 @@
 @property CGPoint trackpadTranslation;
 @property UISwitch *remember;
 @property UILabel *status;
-@property UIButton *connect, *views, *pan, *keyboardButton;
+@property UIButton *connect, *views, *pan, *keyboardButton, *passwordVisibility;
 @property UIScrollView *canvas;
 @property UIImageView *image;
 @property UIView *cursorOverlay, *cursorIndicator;
@@ -97,7 +100,7 @@
 - (UIButton *)button:(NSString *)title action:(SEL)action {
     UIButton *button = [UIButton buttonWithType:UIButtonTypeSystem];
     [button setTitle:title forState:UIControlStateNormal];
-    button.titleLabel.font = [UIFont systemFontOfSize:17 weight:UIFontWeightSemibold];
+    button.titleLabel.font = [UIFont preferredFontForTextStyle:UIFontTextStyleHeadline]; button.titleLabel.adjustsFontForContentSizeCategory = YES;
     button.backgroundColor = UIColor.secondarySystemBackgroundColor;
     button.layer.cornerRadius = 10;
     [button addTarget:self action:action forControlEvents:UIControlEventTouchUpInside];
@@ -109,7 +112,8 @@
     field.borderStyle = UITextBorderStyleRoundedRect;
     field.autocapitalizationType = UITextAutocapitalizationTypeNone;
     field.autocorrectionType = UITextAutocorrectionTypeNo;
-    [field.heightAnchor constraintEqualToConstant:48].active = YES;
+    field.font = [UIFont preferredFontForTextStyle:UIFontTextStyleBody]; field.adjustsFontForContentSizeCategory = YES;
+    [field.heightAnchor constraintGreaterThanOrEqualToConstant:48].active = YES;
     return field;
 }
 - (void)viewDidLoad {
@@ -181,14 +185,16 @@
     self.username.accessibilityIdentifier = @"mac-login-username";
     self.password.accessibilityIdentifier = @"mac-login-password";
     UIButton *visibility = [self button:@"Show Password" action:@selector(togglePassword)];
-    visibility.accessibilityIdentifier = @"mac-login-visibility";
+    visibility.accessibilityIdentifier = @"mac-login-visibility"; self.passwordVisibility = visibility;
     self.remember = [UISwitch new];
     UILabel *rememberLabel = [UILabel new]; rememberLabel.text = @"Save login for this Mac";
     UIStackView *saveRow = [[UIStackView alloc] initWithArrangedSubviews:@[rememberLabel, self.remember]];
     UILabel *credentialHelp = [UILabel new];
     credentialHelp.text = @"Choose this Mac’s login in Passwords or 1Password. Saved logins in Mac Companion are separate for each Mac.";
     credentialHelp.numberOfLines = 0; credentialHelp.font = [UIFont preferredFontForTextStyle:UIFontTextStyleFootnote]; credentialHelp.textColor = UIColor.secondaryLabelColor;
-    self.loginFields = [[UIStackView alloc] initWithArrangedSubviews:@[self.username, self.password, visibility, saveRow, self.connect, credentialHelp]];
+    UILabel *accountLabel = [UILabel new]; accountLabel.text = @"Mac account";
+    UILabel *passwordLabel = [UILabel new]; passwordLabel.text = @"Password";
+    self.loginFields = [[UIStackView alloc] initWithArrangedSubviews:@[accountLabel, self.username, passwordLabel, self.password, visibility, saveRow, self.connect, credentialHelp]];
     self.loginFields.axis = UILayoutConstraintAxisVertical; self.loginFields.spacing = 14;
     UIImageView *icon = [[UIImageView alloc] initWithImage:[UIImage systemImageNamed:@"desktopcomputer"]];
     icon.contentMode = UIViewContentModeScaleAspectFit; icon.tintColor = UIColor.systemBlueColor;
@@ -200,6 +206,7 @@
     self.progressLabel = [UILabel new]; self.progressLabel.numberOfLines = 2;
     self.progressRow = [[UIStackView alloc] initWithArrangedSubviews:@[self.spinner, self.progressLabel]];
     self.progressRow.spacing = 12;
+    [self.progressRow.heightAnchor constraintGreaterThanOrEqualToConstant:24].active = YES;
     UILabel *notice = [UILabel new];
     notice.text = @"Use a trusted local network or your private VPN. Screen Sharing desktop and input traffic are not encrypted by this app.";
     notice.numberOfLines = 0; notice.font = [UIFont preferredFontForTextStyle:UIFontTextStyleFootnote]; notice.textColor = UIColor.secondaryLabelColor;
@@ -253,7 +260,7 @@
         [self.cursorOverlay.bottomAnchor constraintEqualToAnchor:self.canvas.bottomAnchor],
         [self.controls.topAnchor constraintEqualToAnchor:self.view.topAnchor], [self.controls.bottomAnchor constraintEqualToAnchor:self.view.bottomAnchor],
         [self.controls.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor], [self.controls.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor],
-        [self.loginScroll.topAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.topAnchor constant:16],
+        [self.loginScroll.topAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.topAnchor],
         [self.loginScroll.bottomAnchor constraintEqualToAnchor:self.view.keyboardLayoutGuide.topAnchor],
         [self.loginScroll.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor], [self.loginScroll.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor],
         [self.login.topAnchor constraintEqualToAnchor:self.loginScroll.contentLayoutGuide.topAnchor constant:16],
@@ -284,6 +291,10 @@
     self.trackpadHelp.textColor = UIColor.secondaryLabelColor; self.trackpadHelp.userInteractionEnabled = NO;
     self.trackpadHelp.translatesAutoresizingMaskIntoConstraints = NO; [self.view insertSubview:self.trackpadHelp aboveSubview:self.canvas];
     [NSLayoutConstraint activateConstraints:@[[self.trackpadHelp.centerXAnchor constraintEqualToAnchor:self.canvas.centerXAnchor], [self.trackpadHelp.centerYAnchor constraintEqualToAnchor:self.canvas.centerYAnchor], [self.trackpadHelp.widthAnchor constraintLessThanOrEqualToAnchor:self.canvas.widthAnchor constant:-32]]];
+    for (UILabel *label in @[title, subtitle, accountLabel, passwordLabel, rememberLabel, self.progressLabel, credentialHelp, notice]) {
+        label.adjustsFontForContentSizeCategory = YES; label.numberOfLines = 0;
+        if (!label.font || label.font.pointSize == 17) label.font = [UIFont preferredFontForTextStyle:UIFontTextStyleBody];
+    }
     [self applyPresentation];
     [self setTrackpadModeEnabled:self.preferredTrackpad || self.inputOnly]; [self updateConnectionChrome];
     if (self.password.text.length) dispatch_async(dispatch_get_main_queue(), ^{ [weak start]; });
@@ -309,10 +320,10 @@
             if (!running && strong.disconnectHandler) strong.disconnectHandler();
             return;
         }
-        strong.status.text = state; strong.status.hidden = connected; strong.progressLabel.text = state;
+        strong.status.text = connected ? @"" : @"Connecting to Screen Sharing…"; strong.status.hidden = YES; strong.progressLabel.text = strong.status.text;
         if (connected) {
             strong.session.inputOnly = strong.inputOnly;
-            strong.image.alpha = 1;
+            [strong clearRecovery]; strong.image.alpha = 1;
             strong.checkingResume = NO; strong.reconnectWhenReady = NO; strong.resumeGeneration++;
             if (strong.sessionPhaseHandler) strong.sessionPhaseHandler(@"connected");
             if (strong.connectedHandler) strong.connectedHandler();
@@ -325,12 +336,14 @@
             [strong clearCursor]; [strong resetModifiers];
             if (strong.disconnectHandler) strong.disconnectHandler();
             if (strong.checkingResume) [strong reconnectAfterFailedResume];
-            else { strong.login.hidden = NO; if (strong.sessionPhaseHandler) strong.sessionPhaseHandler(@"ended"); }
+            else { [strong showRecoveryStage:[stats[@"failureStage"] integerValue]]; if (strong.sessionPhaseHandler) strong.sessionPhaseHandler(@"ended"); }
         }
         [strong updateConnectionChrome];
     };
 }
 - (void)start {
+    [self clearRecovery];
+    if (self.lastFramebuffer) { [self rememberViewport]; self.restoreViewportPending = YES; self.image.alpha = .45; }
     self.starting = YES; self.exited = NO;
     if (self.sessionPhaseHandler) self.sessionPhaseHandler(@"reconnecting");
     [self.view endEditing:YES]; self.status.text = @"Connecting to Screen Sharing…";
@@ -352,29 +365,55 @@
     self.image.image = nil; self.lastFramebuffer = nil; self.activeCrop = CGRectNull;
     UIApplication.sharedApplication.idleTimerDisabled = NO;
 }
+- (void)clearRecovery {
+    if (!self.recoveryController) return;
+    [self.recoveryController willMoveToParentViewController:nil];
+    [self.login removeArrangedSubview:self.recoveryController.view];
+    [self.recoveryController.view removeFromSuperview]; [self.recoveryController removeFromParentViewController];
+    self.recoveryController = nil; [self.recoveryPanel removeFromSuperview]; self.recoveryPanel = nil;
+}
+- (void)showRecoveryController:(UIViewController *)controller overFrame:(BOOL)overFrame {
+    [self clearRecovery]; self.recoveryController = controller; [self addChildViewController:controller];
+    controller.view.translatesAutoresizingMaskIntoConstraints = NO;
+    if (overFrame) {
+        self.login.hidden = YES; self.image.alpha = .4;
+        UIScrollView *panel = [UIScrollView new]; self.recoveryPanel = panel;
+        panel.translatesAutoresizingMaskIntoConstraints = NO; [self.view addSubview:panel]; [panel addSubview:controller.view];
+        [NSLayoutConstraint activateConstraints:@[
+            [panel.leadingAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.leadingAnchor constant:16],
+            [panel.trailingAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.trailingAnchor constant:-16],
+            [panel.bottomAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.bottomAnchor constant:-72],
+            [panel.heightAnchor constraintEqualToConstant:MIN(320, self.view.bounds.size.height * .5)],
+            [controller.view.leadingAnchor constraintEqualToAnchor:panel.contentLayoutGuide.leadingAnchor],
+            [controller.view.trailingAnchor constraintEqualToAnchor:panel.contentLayoutGuide.trailingAnchor],
+            [controller.view.topAnchor constraintEqualToAnchor:panel.contentLayoutGuide.topAnchor],
+            [controller.view.bottomAnchor constraintEqualToAnchor:panel.contentLayoutGuide.bottomAnchor],
+            [controller.view.widthAnchor constraintEqualToAnchor:panel.frameLayoutGuide.widthAnchor]]];
+    } else { self.login.hidden = NO; [self.login insertArrangedSubview:controller.view atIndex:3]; }
+    [controller didMoveToParentViewController:self]; self.progressLabel.text = @""; self.status.hidden = YES;
+    [self updateConnectionChrome];
+}
+- (void)editRecoveryLogin { [self clearRecovery]; self.login.hidden = NO; self.starting = NO; [self updateConnectionChrome]; [self.username becomeFirstResponder]; }
+- (void)showRecoveryStage:(NSInteger)stage {
+    __weak CompanionVNCViewer *weak = self;
+    UIViewController *card = [DirectRecoveryBridgeV1 desktopWithStage:stage hadFrame:self.lastFramebuffer != nil port:self.servicePort ?: 5900 retry:^{ [weak start]; } edit:^{ [weak editRecoveryLogin]; }];
+    [self showRecoveryController:card overFrame:self.lastFramebuffer != nil];
+}
 - (void)showConnectionFailure {
     self.starting = NO; self.checkingResume = NO; self.resumeGeneration++;
     if (self.sessionPhaseHandler) self.sessionPhaseHandler(@"ended");
-    [self clearCursor];
-    [self resetModifiers];
-    self.connect.enabled = YES; self.status.text = @"Desktop unavailable. Check Screen Sharing, then reconnect.";
-    self.progressLabel.text = self.status.text;
-    self.login.hidden = NO; self.image.image = nil; self.status.hidden = NO; [self updateConnectionChrome];
+    [self clearCursor]; [self resetModifiers]; self.connect.enabled = YES;
+    [self showRecoveryStage:0];
 }
 - (void)showInvalidLogin {
-    [self showConnectionFailure];
-    self.progressLabel.text = @"Enter your Mac account username and password (up to 63 UTF-8 bytes each).";
-    self.status.text = self.progressLabel.text;
+    [self clearRecovery]; self.starting = NO; self.connect.enabled = YES; self.login.hidden = NO;
+    self.progressLabel.text = @"Enter a Mac account and password, each no longer than 63 UTF-8 bytes. Your draft is kept.";
+    [self updateConnectionChrome];
 }
 - (void)showLoginRetentionFailure {
-    NSString *message = @"Could not update the saved login. Check device access and retry.";
-    if (self.session.connected) {
-        UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Saved Login Unavailable" message:message preferredStyle:UIAlertControllerStyleAlert];
-        [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
-        if (!self.presentedViewController) [self presentViewController:alert animated:YES completion:nil];
-    } else {
-        [self showConnectionFailure]; self.status.text = message; self.progressLabel.text = message;
-    }
+    __weak CompanionVNCViewer *weak = self;
+    if (!self.session.connected) { self.starting = NO; self.connect.enabled = YES; }
+    [self showRecoveryController:[DirectRecoveryBridgeV1 savedLoginWithConnected:self.session.connected done:^{ [weak clearRecovery]; weak.image.alpha = 1; [weak updateConnectionChrome]; }] overFrame:self.session.connected];
 }
 - (void)rememberViewport {
     self.resumeDisplayID = self.selectedDisplay[@"id"];
@@ -411,7 +450,7 @@
     [self.session resume];
     CompanionVNCSession *owner = self.session; NSUInteger generation = ++self.resumeGeneration;
     __weak CompanionVNCViewer *weak = self;
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 1500 * NSEC_PER_MSEC), dispatch_get_main_queue(), ^{
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 9000 * NSEC_PER_MSEC), dispatch_get_main_queue(), ^{
         CompanionVNCViewer *strong = weak;
         if (strong.foreground && !strong.exited && strong.checkingResume && strong.session == owner && strong.resumeGeneration == generation) {
             [owner stop]; if (strong.disconnectHandler) strong.disconnectHandler(); [strong reconnectAfterFailedResume];
@@ -826,12 +865,24 @@
 }
 - (void)updateConnectionChrome {
     BOOL progress = self.starting || (self.session.running && !self.lastFramebuffer);
-    self.loginScroll.hidden = self.login.hidden;
-    self.loginFields.hidden = progress;
-    self.progressRow.hidden = !progress && !self.progressLabel.text.length;
+    BOOL loginVisible = !self.login.hidden;
+    BOOL visibilityChanged = self.loginScroll.hidden == loginVisible;
+    void (^showChrome)(void) = ^{
+        self.loginScroll.hidden = !loginVisible;
+        self.canvas.hidden = loginVisible;
+        self.cursorOverlay.hidden = loginVisible || self.inputOnly;
+    };
+    if (visibilityChanged && self.view.window && !UIAccessibilityIsReduceMotionEnabled()) {
+        [UIView transitionWithView:self.view duration:.18 options:UIViewAnimationOptionTransitionCrossDissolve | UIViewAnimationOptionAllowUserInteraction animations:showChrome completion:nil];
+    } else { showChrome(); }
+    // Keep the card and fields in place while connecting; only their state changes.
+    self.loginFields.hidden = NO; self.loginFields.userInteractionEnabled = !progress;
+    self.loginFields.alpha = progress ? .55 : 1;
+    self.connect.hidden = self.recoveryController != nil;
+    self.progressRow.hidden = NO; self.spinner.hidden = !progress;
     if (progress) [self.spinner startAnimating]; else [self.spinner stopAnimating];
     self.controls.hidden = !self.loginScroll.hidden;
-    self.toolbar.hidden = !self.loginScroll.hidden || self.fullscreen;
+    self.toolbar.hidden = !self.loginScroll.hidden || self.fullscreen || self.recoveryPanel != nil;
     self.trackpadHelp.hidden = !self.loginScroll.hidden || !self.inputOnly;
     if (!self.loginScroll.hidden || (self.session.connected && !self.checkingResume)) self.status.hidden = YES;
 }
@@ -862,8 +913,7 @@
 }
 - (void)togglePassword {
     self.password.secureTextEntry = !self.password.secureTextEntry;
-    UIButton *button = (UIButton *)self.loginFields.arrangedSubviews[2];
-    [button setTitle:self.password.secureTextEntry ? @"Show Password" : @"Hide Password" forState:UIControlStateNormal];
+    [self.passwordVisibility setTitle:self.password.secureTextEntry ? @"Show Password" : @"Hide Password" forState:UIControlStateNormal];
 }
 - (void)restoreSavedDisplay {
     if (self.initialDisplayApplied || !self.restoredDisplayID || !self.displayViews.count || self.framebufferSize.height <= 0 || self.displayAspect <= 0) return;

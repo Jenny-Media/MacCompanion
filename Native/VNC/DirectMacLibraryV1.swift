@@ -43,7 +43,8 @@ struct DirectMacRecordV1: Codable, Identifiable, Equatable {
         guard (1...8).contains(hosts.count), (1...65535).contains(port), (1...65535).contains(sshPort), Set(hosts).count == hosts.count,
               hosts.allSatisfy({ !$0.isEmpty && $0.utf8.count <= 255 && $0.unicodeScalars.allSatisfy(allowed.contains) }),
               !label.isEmpty, label.count <= 80,
-              !label.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains) else { throw LibraryFailure.invalid }
+              // A bound method on this temporary CharacterSet misclassifies names under -O.
+              !label.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) else { throw LibraryFailure.invalid }
         return .init(id: id, name: label, addresses: hosts, port: port, sshPort: sshPort)
     }
     enum LibraryFailure: Error { case invalid }
@@ -56,12 +57,14 @@ enum DesktopCredentialStoreV1 {
          kSecAttrService as String: "media.jenny.maccompanion.direct-screen-sharing-login.v1",
          kSecAttrAccount as String: id.uuidString.lowercased(), kSecAttrSynchronizable as String: false]
     }
-    @MainActor static func read(_ id: UUID) -> Login? {
-        guard DirectAppLockV1.shared.canAccess else { return nil }
+    @MainActor static func read(_ id: UUID) -> Login? { try? readChecked(id) }
+    @MainActor static func readChecked(_ id: UUID) throws -> Login? {
+        guard DirectAppLockV1.shared.canAccess else { throw StoreFailure.unavailable }
         var q = query(id); q[kSecReturnData as String] = true; q[kSecMatchLimit as String] = kSecMatchLimitOne
-        var result: CFTypeRef?
-        guard SecItemCopyMatching(q as CFDictionary, &result) == errSecSuccess, let data = result as? Data else { return nil }
-        return try? JSONDecoder().decode(Login.self, from: data)
+        var result: CFTypeRef?; let status = SecItemCopyMatching(q as CFDictionary, &result)
+        if status == errSecItemNotFound { return nil }
+        guard status == errSecSuccess, let data = result as? Data else { throw StoreFailure.unavailable }
+        return try JSONDecoder().decode(Login.self, from: data)
     }
     static func save(_ login: Login, hostID: UUID) throws {
         let fields: [String: Any] = [kSecValueData as String: try JSONEncoder().encode(login),
@@ -82,16 +85,23 @@ enum DesktopCredentialStoreV1 {
     private struct File: Codable { var version = 3; var macs: [DirectMacRecordV1] }
     private(set) var macs: [DirectMacRecordV1] = []
     private(set) var readable = true
-    var failure: String?
+    var recovery: DirectRecoveryNotice?
+    var failure: String? {
+        get { recovery?.message }
+        set { recovery = newValue.map { .make(.saveFailed, message: $0) } }
+    }
     var localChange: ((UUID) -> Void)?
     private let url: URL
     private let removeLogin: (UUID) throws -> Void
     init(url: URL? = nil, removeLogin: @escaping (UUID) throws -> Void = DesktopCredentialStoreV1.remove) {
         self.url = url ?? URL.applicationSupportDirectory.appending(path: "direct-macs-v1.json")
         self.removeLogin = removeLogin
+        reload()
+    }
+    func reload() {
         do {
-            if FileManager.default.fileExists(atPath: self.url.path) {
-                let file = try JSONDecoder().decode(File.self, from: Data(contentsOf: self.url))
+            if FileManager.default.fileExists(atPath: url.path) {
+                let file = try JSONDecoder().decode(File.self, from: Data(contentsOf: url))
                 guard (1...3).contains(file.version), file.macs.count <= 64,
                       Set(file.macs.map(\.id)).count == file.macs.count else { throw DirectMacRecordV1.LibraryFailure.invalid }
                 for mac in file.macs {
@@ -99,7 +109,8 @@ enum DesktopCredentialStoreV1 {
                 }
                 macs = file.macs
             }
-        } catch { readable = false; failure = "Saved Macs could not be read. Your existing file has been preserved." }
+            readable = true; recovery = nil
+        } catch { readable = false; recovery = .make(.savedDataUnavailable, message: "Saved Macs couldn’t be read. Existing data is kept. Retry when device storage is available; unreadable data won’t be replaced.") }
     }
     func save(id: UUID?, name: String, address: String) -> Bool { save(id: id, name: name, addresses: [address]) }
     func save(id: UUID?, name: String, addresses: [String], port: Int = 5900, sshPort: Int? = nil) -> Bool {
@@ -124,11 +135,11 @@ enum DesktopCredentialStoreV1 {
             try removeLogin(mac.id)
             try TerminalSecretStore.remove(mac.id)
             try write(macs.filter { $0.id != mac.id }); localChange?(mac.id); VNCSessionPreferences.clear(mac.id)
-        } catch { failure = "Could not remove this Mac and its saved login. Please retry." }
+        } catch { recovery = .make(.removeFailed) }
     }
     func forgetLogin(_ mac: DirectMacRecordV1) {
         do { try removeLogin(mac.id); failure = nil }
-        catch { failure = "Could not forget this Mac’s saved login. Please retry." }
+        catch { recovery = .make(.removeFailed, message: "The saved Desktop login couldn’t be removed. Review it and retry.") }
     }
     func applyCloud(_ next: [DirectMacRecordV1]) throws {
         guard readable, next.count <= 64, Set(next.map(\.id)).count == next.count else { throw DirectCloudError.invalid }
@@ -142,7 +153,8 @@ enum DesktopCredentialStoreV1 {
 }
 
 struct DirectMacLibraryRootV1: View {
-    @State private var library = DirectMacLibraryV1()
+    @State private var library: DirectMacLibraryV1
+    init(library: DirectMacLibraryV1 = DirectMacLibraryV1()) { _library = State(initialValue: library) }
     @State private var selected: DirectMacRecordV1?
     @State private var inputOnly = false
     @State private var terminal: DirectMacRecordV1?
@@ -153,6 +165,9 @@ struct DirectMacLibraryRootV1: View {
     @State private var setup = false
     @State private var settings = false
     @State private var search = ""
+    @State private var pro = DirectProAccess.shared
+    @State private var paywall = false
+    @Environment(\.scenePhase) private var scenePhase
     private var visibleMacs: [DirectMacRecordV1] {
         library.macs.filter { search.isEmpty || $0.name.localizedCaseInsensitiveContains(search) || $0.addresses.contains { $0.localizedCaseInsensitiveContains(search) } }
             .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
@@ -161,7 +176,12 @@ struct DirectMacLibraryRootV1: View {
     var body: some View {
         NavigationStack {
             List {
-                if library.macs.isEmpty {
+                if let notice = library.recovery {
+                    Section { DirectRecoveryCard(notice: notice, primary: .init(title: "Retry", perform: { library.reload() }), secondary: .init(title: "Help", perform: { setup = true })) }
+                }
+                if !library.readable {
+                    Section { Text("Saved Macs are unavailable. Adding and editing are paused to protect the existing file.").foregroundStyle(.secondary) }
+                } else if library.macs.isEmpty {
                     Section {
                         VStack(spacing: 16) {
                             Image(systemName: "desktopcomputer").font(.system(size: 48)).foregroundStyle(.blue)
@@ -176,7 +196,7 @@ struct DirectMacLibraryRootV1: View {
                     Section {
                         ForEach(visibleMacs) { mac in
                             HStack(spacing: 12) {
-                                Button { inputOnly = false; selected = mac } label: {
+                                Button { open(mac, input: false, terminalMode: false) } label: {
                                     HStack(spacing: 14) {
                                         Image(systemName: "desktopcomputer").font(.title2).foregroundStyle(.blue)
                                             .frame(width: 44, height: 44).background(.blue.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
@@ -190,12 +210,13 @@ struct DirectMacLibraryRootV1: View {
                                 }.buttonStyle(.plain).accessibilityLabel("Connect to " + mac.name)
                                 Menu {
                                     Section("Connect") {
-                                        Button("Desktop", systemImage: "desktopcomputer") { inputOnly = false; selected = mac }
-                                        Button("Trackpad & Keyboard", systemImage: "rectangle.and.hand.point.up.left") { inputOnly = true; selected = mac }
-                                        Button("Terminal", systemImage: "terminal") { terminal = mac }
+                                        Button("Desktop", systemImage: "desktopcomputer") { open(mac, input: false, terminalMode: false) }
+                                        Button("Trackpad & Keyboard", systemImage: "rectangle.and.hand.point.up.left") { open(mac, input: true, terminalMode: false) }
+                                        Button("Terminal", systemImage: "terminal") { open(mac, input: false, terminalMode: true) }
                                     }
                                     Section("Manage Mac") {
-                                        Button("Edit Mac", systemImage: "pencil") { edit(mac) }
+                                        Button("Mac Settings", systemImage: "gearshape") { edit(mac) }
+                                        if !pro.hasPro { Button("Use as My Free Mac") { pro.chooseFreeMac(mac.id) } }
                                         Button("Remove Mac", systemImage: "trash", role: .destructive) { removing = mac }
                                     }
                                 } label: { Image(systemName: "ellipsis.circle").font(.title2).frame(width: 44, height: 44) }
@@ -226,19 +247,19 @@ struct DirectMacLibraryRootV1: View {
             .sheet(item: $editor) { selection in DirectMacEditorV1(mac: selection.mac, library: library) }
             .sheet(isPresented: $setup) { DirectMacSetupV1() }
             .sheet(isPresented: $settings) { DirectSessionSettingsV1() }
-            .alert("Saved Macs", isPresented: Binding(get: { library.failure != nil && editor == nil }, set: { if !$0 { library.failure = nil } })) {
-                Button("OK") { library.failure = nil }
-            } message: { Text(library.failure ?? "") }
+            .sheet(isPresented: $paywall) { DirectProView() }
+            .task { pro.start(); let keys = TerminalKeyLibrary(); keys.reload(macs: library.macs) }
+            .onChange(of: scenePhase) { _, phase in if phase == .active { Task { await pro.refresh() } } }
             .confirmationDialog("Remove this Mac and its saved login?", isPresented: Binding(get: { removing != nil }, set: { if !$0 { removing = nil } }), titleVisibility: .visible) {
                 Button("Remove Mac", role: .destructive) { if let removing { library.remove(removing) }; removing = nil }
             }
             .onOpenURL { url in
                 guard let id = RemoteSessionActivityAttributes.resumeMacID(from: url),
                       let mac = library.macs.first(where: { $0.id == id }), selected == nil else { return }
-                selected = mac
+                open(mac, input: false, terminalMode: false)
             }
             .fullScreenCover(item: $terminal) { mac in
-                DirectTerminalView(mac: mac, exit: { terminal = nil })
+                DirectTerminalView(mac: mac, macLibrary: library, exit: { terminal = nil })
             }
             .fullScreenCover(item: $selected) { mac in
                 VNCRemoteDesktopView(mac: mac, inputOnly: inputOnly, showMacs: { selected = nil })
@@ -250,10 +271,23 @@ struct DirectMacLibraryRootV1: View {
         .accessibilityHidden(!appLock.canAccess)
         .onAppear { appLock.install(); DirectCloudSyncV1.shared.attach(library) }
     }
-    private func edit(_ mac: DirectMacRecordV1?) { editor = EditorSelection(mac: mac) }
+    private func edit(_ mac: DirectMacRecordV1?) {
+        Task {
+            if !pro.ready { await pro.refresh() }
+            guard mac != nil || pro.canAddMac(count: library.macs.count) else { paywall = true; return }
+            editor = EditorSelection(mac: mac)
+        }
+    }
+    private func open(_ mac: DirectMacRecordV1, input: Bool, terminalMode: Bool) {
+        Task {
+            if !pro.ready { await pro.refresh() }
+            guard pro.canUseMac(mac.id, among: library.macs.map(\.id)) else { paywall = true; return }
+            if terminalMode { terminal = mac } else { inputOnly = input; selected = mac }
+        }
+    }
 }
 
-private struct DirectMacEditorV1: View {
+struct DirectMacEditorV1: View {
     @Environment(\.dismiss) private var dismiss
     let mac: DirectMacRecordV1?
     @Bindable var library: DirectMacLibraryV1
@@ -270,7 +304,21 @@ private struct DirectMacEditorV1: View {
     @State private var port: String
     @State private var sshPort: String
     @State private var advanced = false
-    @State private var keySettings = false
+    private enum SSHSheet: Identifiable {
+        case keys(DirectMacRecordV1), install(DirectMacRecordV1), manual(DirectMacRecordV1), login(DirectSavedLoginService), pro
+        var id: String { switch self { case .keys: "keys"; case .install: "install"; case .manual: "manual"; case .login(let service): "login-" + service.rawValue; case .pro: "pro" } }
+    }
+    @State private var sshSheet: SSHSheet?
+    @State private var selectedKeyName = "No SSH key selected"
+    @State private var selectedAccount = ""
+    private func refreshSelectedKey() {
+        guard let mac else { return }; let keys = TerminalKeyLibrary(); keys.reload(macs: library.macs)
+        do { let key = try TerminalKeyLibraryStore.selected(mac.id); selectedKeyName = key?.name ?? "No SSH key selected"; if let key { selectedAccount = key.key.username } else { selectedAccount = try TerminalSecretStore.login(mac.id)?.username ?? "" } } catch { selectedKeyName = "Saved key unavailable" }
+    }
+    private var draftMac: DirectMacRecordV1? {
+        guard let mac, let resolvedPort, let resolvedSSHPort else { return nil }
+        return try? .normalized(id: mac.id, name: name, addresses: addresses.map(\.address), port: resolvedPort, sshPort: resolvedSSHPort)
+    }
     @State private var addressEditMode: EditMode = .inactive
     init(mac: DirectMacRecordV1?, library: DirectMacLibraryV1) {
         self.mac = mac; self.library = library
@@ -295,7 +343,11 @@ private struct DirectMacEditorV1: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section("Mac") { TextField("Name", text: $name) }
+                if let notice = library.recovery { Section { DirectRecoveryCard(notice: notice, primary: .init(title: "Keep Editing", perform: { library.recovery = nil })) } }
+                Section("Mac") {
+                    TextField("Name", text: $name)
+                    if name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || name.count > 80 || name.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) { Text("Use a name from 1 to 80 characters, without control characters.").font(.footnote).foregroundStyle(.secondary) }
+                }
                 Section {
                     ForEach($addresses) { $draft in
                         VStack(alignment: .leading, spacing: 4) {
@@ -304,6 +356,7 @@ private struct DirectMacEditorV1: View {
                                 .textInputAutocapitalization(.never).autocorrectionDisabled().keyboardType(.asciiCapable)
                         }
                     }.onDelete { addresses.remove(atOffsets: $0) }.onMove { addresses.move(fromOffsets: $0, toOffset: $1) }
+                    if !valid { Text("Enter unique addresses for this Mac, a name, and valid ports before saving. An IP address or hostname goes here; enter the port under Advanced.").font(.footnote).foregroundStyle(.secondary) }
                     if addresses.count < 8 { Button("Add Address", systemImage: "plus") { addresses.append(Draft(address: "")) } }
                 } header: {
                     HStack {
@@ -328,22 +381,52 @@ private struct DirectMacEditorV1: View {
                     DisclosureGroup("Advanced", isExpanded: $advanced) {
                         TextField("5900 (default)", text: $port).keyboardType(.numberPad)
                             .accessibilityLabel("Port").accessibilityIdentifier("mac-port")
+                        if resolvedPort == nil { Text("Use a port from 1 to 65535, or leave it blank for 5900.").font(.footnote).foregroundStyle(.secondary) }
                         Text("Leave blank to use Screen Sharing port 5900.").font(.footnote).foregroundStyle(.secondary)
                         TextField("22 (default)", text: $sshPort).keyboardType(.numberPad).accessibilityLabel("SSH Port")
+                        if resolvedSSHPort == nil { Text("Use an SSH port from 1 to 65535, or leave it blank for 22.").font(.footnote).foregroundStyle(.secondary) }
                         Text("Leave SSH Port blank to use 22. Terminal requires Remote Login on your Mac.").font(.footnote).foregroundStyle(.secondary)
                     }
                 }
                 if let mac {
                     Section {
-                        Button("SSH Key", systemImage: "key") { keySettings = true }
+                        Label(selectedKeyName, systemImage: "key").font(.headline)
+                        LabeledContent("Account", value: selectedAccount.isEmpty ? "Choose during setup" : selectedAccount)
+                        Button("Choose SSH Key", systemImage: "key") { sshSheet = .keys(mac) }
+                        Button {
+                            guard DirectProAccess.shared.hasPro else { sshSheet = .pro; return }
+                            if let draft = draftMac { sshSheet = .install(draft) }
+                        } label: {
+                            HStack { Label("Set Up Key on This Mac", systemImage: "key.horizontal"); Spacer(); DirectProBadge() }
+                        }.disabled(!valid).accessibilityIdentifier("mac-install-ssh-key")
+                        Button("Manual Key Setup", systemImage: "doc.text") { sshSheet = .manual(draftMac ?? mac) }
+                    } header: { Text("Terminal Access") } footer: {
+                        Text("Selecting a key doesn’t add it to the Mac. Automatic setup requires Pro or an active trial; manual setup is free. Save address changes to keep them for future connections.")
+                    }
+                    Section {
+                        Button("Desktop Login", systemImage: "desktopcomputer") { sshSheet = .login(.desktop) }.accessibilityIdentifier("mac-edit-desktop-login")
+                        Button("Terminal Password Login", systemImage: "terminal") { sshSheet = .login(.terminal) }.accessibilityIdentifier("mac-edit-terminal-login")
+                    } header: { Text("Saved Logins") } footer: {
+                        Text("Edit the saved account and password for each service. Changes apply to your next connection; SSH key selection is kept.")
+                    }
+                    Section {
                         Button("Forget Desktop Login", systemImage: "key.slash", role: .destructive) { credentialAction = .desktop }
                         Button("Forget Terminal Login", systemImage: "terminal", role: .destructive) { credentialAction = .terminal }
                         Button("Forget SSH Server Key", systemImage: "checkmark.shield", role: .destructive) { credentialAction = .serverKey }
-                    } header: { Text("Saved Logins & Server Trust") }
+                    } header: { Text("Reset Login & Trust") }
                     footer: { Text("Address and port edits keep saved logins. Desktop and Terminal use separate logins for \(mac.name).") }
                 }
             }
-            .sheet(isPresented: $keySettings) { if let mac { TerminalKeySettings(mac: mac) } }
+            .sheet(item: $sshSheet, onDismiss: { refreshSelectedKey() }) { selection in
+                switch selection {
+                case .keys(let mac): TerminalKeySettings(mac: mac)
+                case .install(let mac): TerminalKeyInstallView(mac: mac, changed: { refreshSelectedKey() })
+                case .manual(let mac): TerminalManualKeySetupView(mac: mac)
+                case .login(let service): if let mac { DirectSavedLoginEditor(mac: mac, service: service) }
+                case .pro: DirectProView()
+                }
+            }
+            .task { refreshSelectedKey() }
             .environment(\.editMode, $addressEditMode)
             .onChange(of: addresses.count) { _, count in
                 if count < 2 { addressEditMode = .inactive }
@@ -353,13 +436,11 @@ private struct DirectMacEditorV1: View {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save") {
+                        if mac == nil && !DirectProAccess.shared.canAddMac(count: library.macs.count) { sshSheet = .pro; return }
                         if let resolvedPort, library.save(id: mac?.id, name: name, addresses: addresses.map(\.address), port: resolvedPort, sshPort: resolvedSSHPort) { dismiss() }
                     }.disabled(!valid)
                 }
             }
-            .alert("Saved Macs", isPresented: Binding(get: { library.failure != nil }, set: { if !$0 { library.failure = nil } })) {
-                Button("OK") { library.failure = nil }
-            } message: { Text(library.failure ?? "") }
             .confirmationDialog(credentialAction?.title ?? "Saved Login", isPresented: Binding(get: { credentialAction != nil }, set: { if !$0 { credentialAction = nil } }), titleVisibility: .visible, presenting: credentialAction) { action in
                 Button(action.title, role: .destructive) {
                     guard let mac else { return }
@@ -369,7 +450,7 @@ private struct DirectMacEditorV1: View {
                         case .terminal: try TerminalSecretStore.forgetLogin(mac.id)
                         case .serverKey: try TerminalSecretStore.forgetHostKey(mac.id)
                         }
-                    } catch { library.failure = "Could not remove the saved entry. It has been preserved. Unlock your iPhone and try again." }
+                    } catch { library.recovery = .make(.removeFailed, message: "The saved entry couldn’t be removed. Review the entry and retry; other logins are kept.") }
                     credentialAction = nil
                 }
             } message: { action in Text(action.detail) }
@@ -380,14 +461,21 @@ private struct DirectMacEditorV1: View {
 struct DirectSessionSettingsV1: View {
     @Environment(\.dismiss) private var dismiss
     @AppStorage(VNCSessionActivityController.preferenceKey) private var showSession = true
+    @AppStorage(CompanionVNCControlsHapticsPreference) private var controlsHaptics = true
     @State private var lock = DirectAppLockV1.shared
     @State private var cloud = DirectCloudSyncV1.shared
     @State private var enableCloud = false
     @State private var removeCloud = false
+    private enum SettingsSheet: String, Identifiable { case keys, pro; var id: String { rawValue } }
+    @State private var settingsSheet: SettingsSheet?
     @Environment(DirectAppearanceV1.self) private var appearance
     var body: some View {
         NavigationStack {
             Form {
+                Section("SSH & Pro") {
+                    Button("SSH Keys", systemImage: "key") { settingsSheet = .keys }.accessibilityIdentifier("settings-ssh-keys")
+                    Button(DirectProAccess.shared.accessTitle, systemImage: "sparkles") { settingsSheet = .pro }
+                }
                 Section("Appearance") {
                     Picker("App Appearance", selection: Binding(get: { appearance.app }, set: { appearance.app = $0 })) {
                         ForEach(DirectAppAppearance.allCases) { Text($0.title).tag($0) }
@@ -399,7 +487,9 @@ struct DirectSessionSettingsV1: View {
                 Section {
                     Toggle("Sync Saved Macs with iCloud", isOn: Binding(get: { cloud.enabled }, set: { if $0 { enableCloud = true } else { cloud.setEnabled(false) } }))
                         .disabled(cloud.busy).accessibilityIdentifier("icloud-library-toggle")
-                    Text(cloud.status).font(.footnote).foregroundStyle(.secondary)
+                    if let notice = cloud.recovery {
+                        DirectRecoveryCard(notice: notice, primary: .init(title: notice.reason == .cloudRemoval ? "Retry Removal" : "Retry", perform: { if notice.reason == .cloudRemoval { cloud.removeCloudCopies() } else { cloud.retry() } }))
+                    } else { Text(cloud.status).font(.footnote).foregroundStyle(.secondary) }
                     if cloud.enabled {
                         Button("Refresh iCloud", systemImage: "arrow.triangle.2.circlepath") { cloud.refresh() }.disabled(cloud.busy)
                         if cloud.busy { ProgressView("Refreshing Keychain…") }
@@ -421,9 +511,13 @@ struct DirectSessionSettingsV1: View {
                 Section {
                     Toggle("Show session in Dynamic Island", isOn: $showSession)
                         .accessibilityIdentifier("session-live-activity")
+                    Toggle("Controls Haptics", isOn: $controlsHaptics).accessibilityIdentifier("controls-haptics")
                 } header: { Text("Session") } footer: {
-                    Text("Show session status on Dynamic Island and the Lock Screen, with a quick way back to your Mac. Connection recovery works with this setting on or off.")
+                    Text("Dynamic Island shows session status and a quick way back. Controls Haptics adds light feedback when opening the menu or choosing an action; it confirms your selection, not completion on the Mac.")
                 }
+            }
+            .sheet(item: $settingsSheet) { selection in
+                switch selection { case .keys: TerminalKeySettings(); case .pro: DirectProView() }
             }
             .alert("Enable iCloud Sync?", isPresented: $enableCloud) {
                 Button("Enable Sync") { cloud.setEnabled(true) }; Button("Cancel", role: .cancel) {}

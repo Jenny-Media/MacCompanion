@@ -10,6 +10,11 @@
 @interface CompanionVNCControls (Testing)
 - (void)open;
 - (void)slide:(UILongPressGestureRecognizer *)gesture;
+- (void)pressDown;
+- (void)pressUp;
+- (void)chosen:(UIButton *)button;
+- (void)emitFeedback:(NSString *)kind;
+- (BOOL)reduceMotion;
 @end
 @interface CompanionVNCViewer (ControlsTesting)
 - (void)frame:(UIImage *)frame;
@@ -57,6 +62,14 @@
 - (void)keyEvents:(NSArray<NSDictionary *> *)events { [self.groups addObject:events]; }
 - (BOOL)tryKeyEvents:(NSArray<NSDictionary *> *)events { [self.groups addObject:events]; return YES; }
 - (void)pointerX:(NSInteger)x y:(NSInteger)y mask:(NSInteger)mask { [self.pointers addObject:@[@(x),@(y),@(mask)]]; }
+@end
+@interface FeedbackControls : CompanionVNCControls
+@property NSMutableArray<NSString *> *feedbackEvents;
+@property BOOL forceReducedMotion;
+@end
+@implementation FeedbackControls
+- (void)emitFeedback:(NSString *)kind { [self.feedbackEvents addObject:kind]; }
+- (BOOL)reduceMotion { return self.forceReducedMotion; }
 @end
 @interface SessionControlsTests : XCTestCase
 @end
@@ -288,6 +301,11 @@
         [[NSRunLoop mainRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:.35]];
         UINavigationController *navigation = (id)viewer.presentedViewController;
         XCTAssertTrue([navigation isKindOfClass:UINavigationController.class]);
+        // UIKit's presentation duration varies with the Simulator/toolchain.
+        NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:3];
+        while (navigation.transitionCoordinator && deadline.timeIntervalSinceNow > 0) {
+            [[NSRunLoop mainRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:.01]];
+        }
         CompanionVNCMenu *input = (id)navigation.topViewController; [input loadViewIfNeeded];
         [input tableView:input.tableView didSelectRowAtIndexPath:[NSIndexPath indexPathForRow:1 inSection:1]]; // Extra Keys
         [[NSRunLoop mainRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:.35]];
@@ -355,5 +373,32 @@
     int client = CompanionVNCConnectAddresses(@[@"203.0.113.1", @"127.0.0.1", @"127.0.0.2"], ntohs(address.sin_port), ^{ return NO; }, ^BOOL(int fd) { return YES; }, ^(NSUInteger index, NSUInteger count) { attempts++; }, &failure);
     XCTAssertGreaterThanOrEqual(client, 0); XCTAssertEqual(attempts, 2);
     if (client >= 0) close(client); close(listener);
+}
+- (void)testFeedbackMarksLocalSelectionOnlyAndOptOutKeepsSlideActions {
+    FeedbackControls *controls=[[FeedbackControls alloc] initWithFrame:CGRectMake(0,0,440,956)];
+    controls.feedbackEvents=[NSMutableArray new]; BOOL original=controls.hapticsEnabled; controls.hapticsEnabled=YES;
+    controls.quickActions=@[@{@"kind":@"mode",@"title":@"Switch Mode",@"enabled":@YES}];
+    __block NSUInteger calls=0;controls.actionHandler=^(NSDictionary *item){calls++;};
+    ControlsHold *gesture=[ControlsHold new];gesture.reference=controls;
+    gesture.sampleState=UIGestureRecognizerStateBegan;[controls slide:gesture];
+    UIButton *choice=[controls valueForKey:@"choices"][0];
+    gesture.point=[choice convertPoint:CGPointMake(CGRectGetMidX(choice.bounds),CGRectGetMidY(choice.bounds)) toView:controls];
+    gesture.sampleState=UIGestureRecognizerStateChanged;[controls slide:gesture];[controls slide:gesture];
+    XCTAssertEqualObjects(controls.feedbackEvents,(@[@"open",@"selection"]));XCTAssertEqual(calls,0);
+    gesture.sampleState=UIGestureRecognizerStateEnded;[controls slide:gesture];
+    XCTAssertEqualObjects(controls.feedbackEvents.lastObject,@"commit");XCTAssertEqual(calls,1);
+    [controls.feedbackEvents removeAllObjects];gesture.point=controls.button.center;gesture.sampleState=UIGestureRecognizerStateBegan;[controls slide:gesture];
+    gesture.sampleState=UIGestureRecognizerStateCancelled;[controls slide:gesture];
+    XCTAssertEqualObjects(controls.feedbackEvents,(@[@"open"]));XCTAssertEqual(calls,1);
+    controls.hapticsEnabled=NO;[controls.feedbackEvents removeAllObjects];[controls open];
+    [controls chosen:[controls valueForKey:@"choices"][0]];
+    XCTAssertEqual(calls,2);XCTAssertEqual(controls.feedbackEvents.count,0);controls.hapticsEnabled=original;
+}
+- (void)testReduceMotionSkipsCompressionAndCancelledPressRestoresButton {
+    FeedbackControls *controls=[[FeedbackControls alloc] initWithFrame:CGRectMake(0,0,440,956)];
+    controls.forceReducedMotion=YES;[controls pressDown];
+    XCTAssertTrue(CGAffineTransformIsIdentity(controls.button.transform));
+    controls.forceReducedMotion=NO;[controls pressDown];XCTAssertFalse(CGAffineTransformIsIdentity(controls.button.transform));
+    [controls close];XCTAssertTrue(CGAffineTransformIsIdentity(controls.button.transform));
 }
 @end

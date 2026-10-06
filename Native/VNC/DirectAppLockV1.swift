@@ -61,7 +61,7 @@ import UIKit
             Task { @MainActor in
                 guard let self, self.attempt == id else { return }
                 self.context = nil; self.authenticating = false
-                guard success, UIApplication.shared.applicationState != .background else { self.message = "Authentication cancelled. Tap Unlock to try again."; return }
+                guard success, UIApplication.shared.applicationState != .background else { self.message = "App locked. Tap Unlock to try again."; return }
                 self.allowed = true; self.hideCover()
                 NotificationCenter.default.post(name: Self.unlocked, object: nil)
             }

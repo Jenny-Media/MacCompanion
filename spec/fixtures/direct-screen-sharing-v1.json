@@ -304,7 +304,7 @@
     "newReply": "bounded version-5 layout parser"
   },
   "recoveryPolicy": {
-    "resumeDeadlineMilliseconds": 1500,
+    "resumeDeadlineMilliseconds": 9000,
     "backgroundCompletionDeadlineMilliseconds": 1000,
     "automaticReconnectAttempts": 1,
     "liveActivityDefaultEnabled": true,
@@ -788,6 +788,8 @@
     },
     "ssh": {
       "defaultPort": 22,
+      "automaticReadsBeforeParser": false,
+      "enableReadsAfterHandlersBeforeAuthentication": true,
       "authenticationAfterHostTrust": true,
       "changedKey": "reject",
       "publicRoute": "reject",
@@ -800,11 +802,36 @@
     },
     "sshKey": {
       "algorithm": "ssh-ed25519",
-      "privateKeyExport": false,
+      "privateKeyExport": "encrypted-after-device-authentication",
       "cloudPrivateKeys": false,
       "passwordFallback": false,
       "maximumImportBytes": 32768,
-      "maximumBcryptRounds": 128
+      "maximumBcryptRounds": 128,
+      "libraryIdentity": "key-uuid",
+      "maximumKeys": 256,
+      "usageRecommendation": "neutral",
+      "exportCipher": "aes256-ctr",
+      "exportKDF": "bcrypt",
+      "exportRounds": 32,
+      "migration": "preserve-legacy-until-durable-association",
+      "removeMacDeletesLibraryKey": false,
+      "installLocation": "individual-mac-settings",
+      "installationRequiresBootstrap": true,
+      "installationRetries": false,
+      "verificationBeforeSelection": true,
+      "importBounds": {
+        "bcryptRounds": [
+          1,
+          128
+        ],
+        "saltBytes": [
+          1,
+          64
+        ],
+        "allPaddingBytesChecked": true,
+        "fullPaddingBlockAccepted": true
+      },
+      "duplicateMatch": "actual-key-fields-before-comment"
     },
     "cloudLibrary": {
       "defaultEnabled": false,
@@ -834,6 +861,584 @@
           "winner": "remote"
         }
       ]
+    },
+    "terminalKeyboard": {
+      "numberRow": "always-when-keyboard-open",
+      "modifiers": "one-shot-with-explicit-lock",
+      "backgroundClearsModifiers": true,
+      "command": "local-actions",
+      "cases": [
+        {
+          "text": "c",
+          "ctrl": true,
+          "alt": false,
+          "expectedHex": "03"
+        },
+        {
+          "text": "d",
+          "ctrl": true,
+          "alt": false,
+          "expectedHex": "04"
+        },
+        {
+          "text": "z",
+          "ctrl": true,
+          "alt": false,
+          "expectedHex": "1a"
+        },
+        {
+          "text": "a",
+          "ctrl": false,
+          "alt": true,
+          "expectedHex": "1b61"
+        },
+        {
+          "text": "c",
+          "ctrl": true,
+          "alt": true,
+          "expectedHex": "1b03"
+        },
+        {
+          "text": "[",
+          "ctrl": true,
+          "alt": false,
+          "expectedHex": "1b"
+        },
+        {
+          "text": "7",
+          "ctrl": false,
+          "alt": false,
+          "expectedHex": "37"
+        },
+        {
+          "text": "1",
+          "shift": true,
+          "expectedHex": "21"
+        },
+        {
+          "text": "-",
+          "shift": true,
+          "expectedHex": "5f"
+        },
+        {
+          "text": "'",
+          "shift": true,
+          "expectedHex": "22"
+        }
+      ],
+      "backspaceConsumesOneShot": true,
+      "backspaceCases": [
+        {
+          "alt": true,
+          "expectedHex": "1b7f"
+        },
+        {
+          "ctrl": true,
+          "expectedHex": "08"
+        },
+        {
+          "alt": true,
+          "ctrl": true,
+          "expectedHex": "1b08"
+        }
+      ],
+      "groupedModifiedDeletion": "one-per-logical-call"
+    },
+    "lifetimePro": {
+      "productType": "non-consumable",
+      "freeMacs": 1,
+      "freeKeys": 1,
+      "freeSessionExpiry": false,
+      "deletesExcessData": false,
+      "requiresAccount": false,
+      "perSessionNetworkCheck": false,
+      "basicKeyboardPaid": false,
+      "privateKeyExportPaid": false,
+      "automaticInstallPaid": true,
+      "cases": [
+        {
+          "verified": true,
+          "matchingProduct": true,
+          "revoked": false,
+          "unlocked": true,
+          "nonConsumable": true
+        },
+        {
+          "verified": false,
+          "matchingProduct": true,
+          "revoked": false,
+          "unlocked": false,
+          "nonConsumable": true
+        },
+        {
+          "verified": true,
+          "matchingProduct": false,
+          "revoked": false,
+          "unlocked": false,
+          "nonConsumable": true
+        },
+        {
+          "verified": true,
+          "matchingProduct": true,
+          "revoked": true,
+          "unlocked": false,
+          "nonConsumable": true
+        },
+        {
+          "verified": true,
+          "matchingProduct": true,
+          "revoked": false,
+          "nonConsumable": false,
+          "unlocked": false
+        }
+      ],
+      "productID": "media.jenny.maccompanion.pro.lifetime",
+      "usBasePrice": "9.99",
+      "trial": {
+        "productID": "media.jenny.maccompanion.pro.trial14",
+        "displayName": "14-day Trial",
+        "productType": "non-consumable",
+        "price": "0.00",
+        "durationSeconds": 1209600,
+        "start": "verifiedOriginalPurchaseDate",
+        "automaticCharge": false,
+        "restoreResetsStart": false,
+        "expiryDeletesData": false,
+        "expiryEndsActiveSession": false,
+        "cases": [
+          {
+            "name": "start",
+            "verified": true,
+            "matchingProduct": true,
+            "nonConsumable": true,
+            "revoked": false,
+            "originalPurchaseTimestamp": 100,
+            "nowTimestamp": 100,
+            "active": true
+          },
+          {
+            "name": "lastSecond",
+            "verified": true,
+            "matchingProduct": true,
+            "nonConsumable": true,
+            "revoked": false,
+            "originalPurchaseTimestamp": 100,
+            "nowTimestamp": 1209699,
+            "active": true
+          },
+          {
+            "name": "expiry",
+            "verified": true,
+            "matchingProduct": true,
+            "nonConsumable": true,
+            "revoked": false,
+            "originalPurchaseTimestamp": 100,
+            "nowTimestamp": 1209700,
+            "active": false
+          },
+          {
+            "name": "expired",
+            "verified": true,
+            "matchingProduct": true,
+            "nonConsumable": true,
+            "revoked": false,
+            "originalPurchaseTimestamp": 100,
+            "nowTimestamp": 1209701,
+            "active": false
+          },
+          {
+            "name": "future",
+            "verified": true,
+            "matchingProduct": true,
+            "nonConsumable": true,
+            "revoked": false,
+            "originalPurchaseTimestamp": 100,
+            "nowTimestamp": 99,
+            "active": false
+          },
+          {
+            "name": "unverified",
+            "verified": false,
+            "matchingProduct": true,
+            "nonConsumable": true,
+            "revoked": false,
+            "originalPurchaseTimestamp": 100,
+            "nowTimestamp": 101,
+            "active": false
+          },
+          {
+            "name": "wrongProduct",
+            "verified": true,
+            "matchingProduct": false,
+            "nonConsumable": true,
+            "revoked": false,
+            "originalPurchaseTimestamp": 100,
+            "nowTimestamp": 101,
+            "active": false
+          },
+          {
+            "name": "subscription",
+            "verified": true,
+            "matchingProduct": true,
+            "nonConsumable": false,
+            "revoked": false,
+            "originalPurchaseTimestamp": 100,
+            "nowTimestamp": 101,
+            "active": false
+          },
+          {
+            "name": "revoked",
+            "verified": true,
+            "matchingProduct": true,
+            "nonConsumable": true,
+            "revoked": true,
+            "originalPurchaseTimestamp": 100,
+            "nowTimestamp": 101,
+            "active": false
+          }
+        ]
+      }
     }
+  },
+  "macLibraryNameCases": [
+    {
+      "id": "short-ascii",
+      "value": "M5",
+      "macValid": true,
+      "normalizedName": "M5",
+      "keyValid": true
+    },
+    {
+      "id": "words",
+      "value": "Office Mac",
+      "macValid": true,
+      "normalizedName": "Office Mac",
+      "keyValid": true
+    },
+    {
+      "id": "unicode",
+      "value": "\u5de5\u4f5c Mac",
+      "macValid": true,
+      "normalizedName": "\u5de5\u4f5c Mac",
+      "keyValid": true
+    },
+    {
+      "id": "emoji",
+      "value": "Mac \ud83d\udda5\ufe0f",
+      "macValid": true,
+      "normalizedName": "Mac \ud83d\udda5\ufe0f",
+      "keyValid": true
+    },
+    {
+      "id": "outer-spaces",
+      "value": " My Mac ",
+      "macValid": true,
+      "normalizedName": "My Mac",
+      "keyValid": true
+    },
+    {
+      "id": "empty",
+      "value": "",
+      "macValid": false,
+      "keyValid": false
+    },
+    {
+      "id": "spaces-only",
+      "value": "   ",
+      "macValid": false,
+      "keyValid": false
+    },
+    {
+      "id": "embedded-newline",
+      "value": "Office\nMac",
+      "macValid": false,
+      "keyValid": false
+    },
+    {
+      "id": "embedded-null",
+      "value": "Office\u0000Mac",
+      "macValid": false,
+      "keyValid": false
+    },
+    {
+      "id": "bidi-format",
+      "value": "Mac\u202e",
+      "macValid": false,
+      "keyValid": false
+    },
+    {
+      "id": "too-long",
+      "value": "MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM",
+      "macValid": false,
+      "keyValid": false
+    }
+  ],
+  "errorRecovery": {
+    "classifyVendorText": false,
+    "replayInput": false,
+    "replaySetupCommand": false,
+    "cases": [
+      {
+        "input": "unknown",
+        "keyLogin": true,
+        "reason": "terminalConnection"
+      },
+      {
+        "input": "authRejected",
+        "keyLogin": true,
+        "reason": "keyRejected"
+      },
+      {
+        "input": "authRejected",
+        "keyLogin": false,
+        "reason": "loginRejected"
+      },
+      {
+        "input": "unsupportedAuth",
+        "keyLogin": true,
+        "reason": "unsupportedConnection"
+      },
+      {
+        "input": "dns",
+        "keyLogin": true,
+        "reason": "addressNotFound"
+      },
+      {
+        "input": "tcp",
+        "keyLogin": true,
+        "reason": "macUnreachable"
+      },
+      {
+        "input": "changedKey",
+        "keyLogin": true,
+        "reason": "serverChanged"
+      },
+      {
+        "input": "rejectedTrust",
+        "keyLogin": true,
+        "reason": "connectionCancelled"
+      }
+    ],
+    "setupCases": [
+      {
+        "phase": "notSent",
+        "reason": "setupIncomplete",
+        "mayBeInstalled": false
+      },
+      {
+        "phase": "sent",
+        "reason": "setupUncertain",
+        "mayBeInstalled": true
+      },
+      {
+        "phase": "acknowledged",
+        "reason": "setupLoginUnverified",
+        "mayBeInstalled": true
+      },
+      {
+        "phase": "verified",
+        "reason": "setupPreferenceUnverified",
+        "mayBeInstalled": true
+      }
+    ],
+    "verificationOnly": {
+      "passwordRequests": 0,
+      "commands": 0,
+      "requiresHostTrust": true,
+      "associationOnlyAfterLogin": true
+    },
+    "desktopCases": [
+      {
+        "stage": 0,
+        "hadFrame": false,
+        "reason": "desktopUnavailable"
+      },
+      {
+        "stage": 0,
+        "hadFrame": true,
+        "reason": "desktopDisconnected"
+      },
+      {
+        "stage": 1,
+        "hadFrame": false,
+        "reason": "desktopUnavailable"
+      },
+      {
+        "stage": 2,
+        "hadFrame": false,
+        "reason": "unsupportedConnection"
+      },
+      {
+        "stage": 3,
+        "hadFrame": false,
+        "reason": "desktopUnavailable"
+      },
+      {
+        "stage": 4,
+        "hadFrame": false,
+        "reason": "desktopUnavailable"
+      },
+      {
+        "stage": 5,
+        "hadFrame": false,
+        "reason": "desktopUnavailable"
+      },
+      {
+        "stage": 6,
+        "hadFrame": false,
+        "reason": "desktopUnavailable"
+      },
+      {
+        "stage": 7,
+        "hadFrame": false,
+        "reason": "loginRejected"
+      },
+      {
+        "stage": 8,
+        "hadFrame": false,
+        "reason": "loginRejected"
+      },
+      {
+        "stage": 9,
+        "hadFrame": false,
+        "reason": "desktopUnavailable"
+      },
+      {
+        "stage": 10,
+        "hadFrame": false,
+        "reason": "addressNotFound"
+      },
+      {
+        "stage": 11,
+        "hadFrame": false,
+        "reason": "macUnreachable"
+      },
+      {
+        "stage": 100,
+        "hadFrame": false,
+        "reason": "desktopUnavailable"
+      },
+      {
+        "stage": 101,
+        "hadFrame": true,
+        "reason": "inputPaused"
+      }
+    ]
+  },
+  "frameReadinessPolicy": {
+    "metadataCountsAsPixels": false,
+    "coverageBitsPerPixel": 2,
+    "retryIntervalMilliseconds": 1000,
+    "maximumFullRefreshRetries": 2,
+    "baselineDeadlineMilliseconds": 8000,
+    "requiresCompleteBaseline": [
+      "initial",
+      "resize",
+      "resume",
+      "exit input-only",
+      "host layout change"
+    ],
+    "retainLastPresentedImage": true,
+    "layoutGapsAreRequired": false
+  },
+  "frameReadinessCases": [
+    {
+      "name": "metadata only",
+      "width": 200,
+      "height": 100,
+      "rectangles": [],
+      "ready": false
+    },
+    {
+      "name": "thin strip",
+      "width": 200,
+      "height": 100,
+      "rectangles": [
+        [
+          0,
+          0,
+          200,
+          2
+        ]
+      ],
+      "ready": false
+    },
+    {
+      "name": "overlapping strips",
+      "width": 200,
+      "height": 100,
+      "rectangles": [
+        [
+          0,
+          0,
+          200,
+          60
+        ],
+        [
+          0,
+          40,
+          200,
+          60
+        ]
+      ],
+      "ready": true
+    },
+    {
+      "name": "black pixels are valid",
+      "width": 2,
+      "height": 2,
+      "rectangles": [
+        [
+          0,
+          0,
+          2,
+          2
+        ]
+      ],
+      "ready": true
+    },
+    {
+      "name": "display gap",
+      "width": 6,
+      "height": 4,
+      "required": [
+        [
+          0,
+          0,
+          2,
+          2
+        ],
+        [
+          2,
+          2,
+          4,
+          2
+        ]
+      ],
+      "rectangles": [
+        [
+          0,
+          0,
+          2,
+          2
+        ],
+        [
+          2,
+          2,
+          4,
+          2
+        ]
+      ],
+      "ready": true
+    }
+  ],
+  "savedLoginEditing": {
+    "separateServices": true,
+    "explicitSave": true,
+    "connectOnSave": false,
+    "syncCredentials": false,
+    "clearDraftOnBackground": true,
+    "preserveOnReadOrWriteFailure": true,
+    "changesSelectedSSHKey": false
   }
 }

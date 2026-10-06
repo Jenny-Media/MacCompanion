@@ -28,7 +28,7 @@ import SwiftUI
     func testTerminalPaletteIsIndependentAndFollowsAppWhenSelectedWithoutNewSession() throws {
         let mac = try DirectMacRecordV1.normalized(name: "Synthetic Mac", addresses: ["127.0.0.1"])
         let session = DirectTerminalSession(mac: mac)
-        let controller = TerminalController(session: session)
+        let controller = TerminalController(session: session, customize: {})
         let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
         let window = UIWindow(windowScene: scene); window.overrideUserInterfaceStyle = .light
         window.rootViewController = controller; window.isHidden = false

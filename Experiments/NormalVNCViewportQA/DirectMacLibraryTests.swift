@@ -142,7 +142,7 @@ import SwiftUI
         XCTAssertFalse(VNCSessionPreferences.trackpad(second))
         let action = VNCQuickAction(title: "Test", kind: .text, text: "Synthetic text")
         try VNCSessionPreferences.saveActions([action], mac: first)
-        XCTAssertEqual(VNCSessionPreferences.actions(first), [action]); XCTAssertEqual(VNCSessionPreferences.actions(second).count, 3)
+        XCTAssertTrue(VNCSessionPreferences.actions(first).isEmpty); XCTAssertEqual(try VNCSessionPreferences.readActions(first), [action]); XCTAssertEqual(VNCSessionPreferences.actions(second).count, 3)
         XCTAssertFalse(VNCQuickAction(title: "Too long", kind: .text, text: String(repeating: "a", count: 257)).valid)
         XCTAssertThrowsError(try DirectMacRecordV1.normalized(name: "Mac", addresses: ["same.local", "same.local"]))
         XCTAssertThrowsError(try DirectMacRecordV1.normalized(name: "Mac", addresses: ["mac.local"], port: 0))

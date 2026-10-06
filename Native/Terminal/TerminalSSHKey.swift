@@ -4,7 +4,7 @@ import Crypto
 import Citadel
 import NIOSSH
 
-/// Private material stays in the device-only Keychain; only the public line is exportable.
+/// Private material stays in the device-only Keychain; private backups require authenticated encrypted export.
 struct TerminalSSHKey: Codable, Sendable {
     var seed: Data
     var username: String = ""

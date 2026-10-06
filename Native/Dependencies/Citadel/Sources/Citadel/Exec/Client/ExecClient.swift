@@ -75,6 +75,9 @@ final class TTYHandler: ChannelDuplexHandler {
             response.writeBuffer(&bytes)
             return
         case .stdErr:
+            guard errorBuffer.readableBytes + bytes.readableBytes <= maxResponseSize else {
+                isIgnoringInput = true; done.fail(CitadelError.commandOutputTooLarge); context.close(promise: nil); return
+            }
             errorBuffer.writeBuffer(&bytes)
         default:
             ()

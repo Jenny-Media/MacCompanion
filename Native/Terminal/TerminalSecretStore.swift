@@ -46,16 +46,15 @@ enum TerminalSecretStore {
     static func forgetLogin(_ id: UUID) throws { try remove(id, kind: "login") }
     static func forgetHostKey(_ id: UUID) throws { try remove(id, kind: "host-key") }
     @MainActor static func sshKey(_ id: UUID) throws -> TerminalSSHKey? {
-        guard DirectAppLockV1.shared.canAccess else { throw Failure.locked }
-        guard let data = try read(id, kind: "private-key") else { return nil }
-        let key = try JSONDecoder().decode(TerminalSSHKey.self, from: data); try key.validate(); return key
+        try TerminalKeyLibraryStore.selected(id)?.key
     }
     @MainActor static func saveKey(_ key: TerminalSSHKey, id: UUID) throws {
         guard DirectAppLockV1.shared.canAccess else { throw Failure.locked }
-        try key.validate(); _ = try sshKey(id); try write(JSONEncoder().encode(key), id: id, kind: "private-key")
+        try TerminalKeyLibraryStore.saveCompatible(key, macID: id)
     }
-    static func forgetKey(_ id: UUID) throws { try remove(id, kind: "private-key") }
-    static func remove(_ id: UUID) throws { try forgetLogin(id); try forgetHostKey(id); try forgetKey(id) }
+    static func removeLegacyKey(_ id: UUID) throws { try remove(id, kind: "private-key") }
+    @MainActor static func forgetKey(_ id: UUID) throws { try TerminalKeyLibraryStore.forgetAssociation(id) }
+    @MainActor static func remove(_ id: UUID) throws { try forgetLogin(id); try forgetHostKey(id); try forgetKey(id) }
     enum Failure: Error { case storage, locked, changedKey, rejectedKey, network }
 }
 #endif

@@ -1,4 +1,5 @@
 #import "CompanionVNCControls.h"
+NSString *const CompanionVNCControlsHapticsPreference = @"direct-controls-haptics";
 @interface CompanionVNCControls ()
 @property UIButton *button;
 @property UIVisualEffectView *panel;
@@ -8,6 +9,7 @@
 @property UIButton *highlighted;
 @property UILongPressGestureRecognizer *slide;
 @property UISelectionFeedbackGenerator *feedback;
+@property UIImpactFeedbackGenerator *impact;
 @property NSUInteger fadeGeneration;
 @property NSUInteger quickCount;
 @end
@@ -25,14 +27,33 @@
         _button.configuration = config; _button.accessibilityLabel = @"Session Controls";
         _button.accessibilityIdentifier = @"session-controls";
         _button.accessibilityHint = @"Tap to open. Hold, slide to an action, then release to choose.";
+        [_button addTarget:self action:@selector(pressDown) forControlEvents:UIControlEventTouchDown];
+        [_button addTarget:self action:@selector(pressUp) forControlEvents:UIControlEventTouchUpInside | UIControlEventTouchUpOutside | UIControlEventTouchCancel];
         [_button addTarget:self action:@selector(toggle) forControlEvents:UIControlEventTouchUpInside];
         [self addSubview:_button];
         _slide = [[UILongPressGestureRecognizer alloc] initWithTarget:self action:@selector(slide:)];
         _slide.minimumPressDuration = 0.12; _slide.allowableMovement = CGFLOAT_MAX;
         [_button addGestureRecognizer:_slide];
-        _feedback = [UISelectionFeedbackGenerator new];
+        _feedback = [UISelectionFeedbackGenerator new]; _impact = [[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleLight];
     }
     return self;
+}
+- (BOOL)hapticsEnabled { return [NSUserDefaults.standardUserDefaults objectForKey:CompanionVNCControlsHapticsPreference] == nil || [NSUserDefaults.standardUserDefaults boolForKey:CompanionVNCControlsHapticsPreference]; }
+- (void)setHapticsEnabled:(BOOL)value { [NSUserDefaults.standardUserDefaults setBool:value forKey:CompanionVNCControlsHapticsPreference]; }
+- (void)emitFeedback:(NSString *)kind {
+    if ([kind isEqualToString:@"selection"]) [self.feedback selectionChanged];
+    else [self.impact impactOccurredWithIntensity:[kind isEqualToString:@"open"] ? .55 : .35];
+}
+- (void)feedback:(NSString *)kind { if (self.hapticsEnabled) [self emitFeedback:kind]; }
+- (BOOL)reduceMotion { return UIAccessibilityIsReduceMotionEnabled(); }
+- (void)pressDown {
+    self.fadeGeneration++; self.button.alpha = 1;
+    if (self.hapticsEnabled) { [self.impact prepare]; [self.feedback prepare]; }
+    if (self.reduceMotion) return;
+    [UIView animateWithDuration:.1 delay:0 options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionAllowUserInteraction animations:^{ self.button.transform = CGAffineTransformMakeScale(.94,.94); } completion:nil];
+}
+- (void)pressUp {
+    [UIView animateWithDuration:self.reduceMotion ? 0 : .12 delay:0 options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionAllowUserInteraction animations:^{ self.button.transform = CGAffineTransformIdentity; } completion:nil];
 }
 - (void)setFullscreen:(BOOL)value {
     _fullscreen = value; self.button.alpha = 1; [self dimWhenIdle];
@@ -54,13 +75,15 @@
 - (void)touchesEnded:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event { [self close]; }
 - (void)layoutSubviews {
     [super layoutSubviews];
-    self.button.frame = CGRectMake(self.bounds.size.width - self.safeAreaInsets.right - 62,
-        self.bounds.size.height - self.safeAreaInsets.bottom - self.bottomInset - 52, 52, 52);
+    self.button.bounds = CGRectMake(0,0,52,52);
+    self.button.center = CGPointMake(self.bounds.size.width - self.safeAreaInsets.right - 36,
+        self.bounds.size.height - self.safeAreaInsets.bottom - self.bottomInset - 26);
     if (!self.panel) return;
     CGFloat width = MIN(360, self.bounds.size.width - self.safeAreaInsets.left - self.safeAreaInsets.right - 24);
     CGFloat contentHeight = 72 + 3 * 48 + (self.quickCount ? 36 + ceil(self.quickCount / 2.0) * 72 : 0) + 12;
     CGFloat height = MIN(contentHeight, self.button.frame.origin.y - self.safeAreaInsets.top - 24);
-    self.panel.frame = CGRectMake(CGRectGetMaxX(self.button.frame) - width, self.button.frame.origin.y - height - 12, width, MAX(48, height));
+    CGRect rect = CGRectMake(CGRectGetMaxX(self.button.frame) - width, self.button.frame.origin.y - height - 12, width, MAX(48, height));
+    self.panel.bounds = CGRectMake(0,0,rect.size.width,rect.size.height); self.panel.center = CGPointMake(CGRectGetMidX(rect),CGRectGetMidY(rect));
     self.scroll.frame = self.panel.bounds; self.scroll.contentSize = CGSizeMake(width, contentHeight);
     UILabel *name = (UILabel *)[self.scroll viewWithTag:1000]; name.frame = CGRectMake(16, 12, width - 32, 40);
     UILabel *heading = (UILabel *)[self.scroll viewWithTag:1001]; heading.frame = CGRectMake(16, 72 + 3 * 48, width - 32, 28);
@@ -122,13 +145,18 @@
     [self insertSubview:self.panel belowSubview:self.button]; [self setNeedsLayout]; [self layoutIfNeeded];
     self.scroll.contentOffset = CGPointMake(0, MAX(0, self.scroll.contentSize.height - self.scroll.bounds.size.height));
     self.button.accessibilityValue = @"Open";
+    [self feedback:@"open"];
+    self.panel.alpha = 0;
+    if (!self.reduceMotion) self.panel.transform = CGAffineTransformTranslate(CGAffineTransformMakeScale(.98,.98),0,4);
+    [UIView animateWithDuration:self.reduceMotion ? .1 : .18 delay:0 options:UIViewAnimationOptionAllowUserInteraction animations:^{ self.panel.alpha = 1; self.panel.transform = CGAffineTransformIdentity; } completion:nil];
 }
 - (void)chosen:(UIButton *)button {
-    NSDictionary *item = self.items[button.tag]; [self close];
+    if (!self.panel || !button.enabled || button.tag < 0 || (NSUInteger)button.tag >= self.items.count) return;
+    NSDictionary *item = self.items[button.tag]; [self feedback:@"commit"]; [self close];
     if (self.actionHandler) self.actionHandler(item);
 }
 - (void)slide:(UILongPressGestureRecognizer *)gesture {
-    if (gesture.state == UIGestureRecognizerStateBegan) { [self open]; [self.feedback prepare]; }
+    if (gesture.state == UIGestureRecognizerStateBegan) { [self pressDown]; [self open]; }
     if (gesture.state == UIGestureRecognizerStateCancelled || gesture.state == UIGestureRecognizerStateFailed) { [self close]; return; }
     CGPoint point = [gesture locationInView:self.scroll];
     UIButton *target = nil;
@@ -138,14 +166,20 @@
     if (target != self.highlighted) {
         self.highlighted.backgroundColor = self.highlighted.tag < self.quickCount ? UIColor.secondarySystemFillColor : UIColor.clearColor;
         self.highlighted = target; target.backgroundColor = [UIColor.systemBlueColor colorWithAlphaComponent:0.2];
-        target.layer.cornerRadius = 12; if (target) [self.feedback selectionChanged];
+        target.layer.cornerRadius = 12; if (target) [self feedback:@"selection"];
     }
     if (gesture.state == UIGestureRecognizerStateEnded) {
+        [self pressUp];
         if (target) [self chosen:target]; else [self close];
     }
 }
 - (void)close {
-    [self.panel removeFromSuperview]; self.panel = nil; self.scroll = nil; self.items = @[]; self.choices = nil; self.highlighted = nil;
+    [self pressUp];
+    UIVisualEffectView *closing = self.panel; closing.userInteractionEnabled = NO;
+    if (closing && self.window) {
+        [UIView animateWithDuration:.1 animations:^{ closing.alpha = 0; } completion:^(BOOL finished) { [closing removeFromSuperview]; }];
+    } else { [closing removeFromSuperview]; }
+    self.panel = nil; self.scroll = nil; self.items = @[]; self.choices = nil; self.highlighted = nil;
     self.button.accessibilityValue = @"Closed"; [self dimWhenIdle];
 }
 @end

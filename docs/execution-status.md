@@ -1,3 +1,66 @@
+## 2026-10-05 — Direct client internal TestFlight ready
+
+The normal direct iOS client is archived as `1.0 (1)` using stable Xcode 27.0,
+optimized without DEBUG, and signed with the existing Apple Distribution identity.
+The app and session widget use matching App Store profiles; exact identities,
+existing private Keychain groups, disabled debugging and deep signatures verify.
+Required stable repository validation passes after the archive script changes.
+
+Xcode Organizer confirms Uploaded to Apple using TestFlight Internal Only.
+The existing account holder is in the Internal Testing group with automatic
+distribution off. Apple processed build `f1be75fa-aba2-4423-aa3f-af02cefa6920`;
+What to Test is saved. The user confirmed the internal beta is outside France;
+the standard-encryption declaration and France No answer were saved. The group
+now has 1 tester and 1 build, with `1.0 (1)` marked Internal and Testing. The
+existing account holder is Invited; acceptance and physical TestFlight
+installation remain unconfirmed. OpenSSL's missing dSYM is an upload warning;
+app/widget symbols are present. No public release or external beta submission occurred and dependency
+release admission remains false. See
+[internal TestFlight evidence](evidence/2026-10-05-internal-testflight.md).
+
+## 2026-10-05 — App Store products, $9.99 Lifetime Pro and 14-day trial
+
+The existing iOS App ID is registered and Mac Companion's App Store Connect record
+6819496840 is created. Lifetime Pro (6819497277) has a saved US base price of
+$9.99; the separate free 14-day Trial (6819497930) is a zero-price non-consumable.
+Both have saved localization, availability, notes and purchase-screen review
+images. The basic app download is free. These are Prepare for Submission records,
+not live or approved purchases; no review submission or release occurred.
+
+The normal direct client supports explicit trial enrollment, verified original
+purchase-date expiry, restored history without restarting, revoked-trial exclusion
+and lifetime upgrade. No automatic billing or Mac helper is introduced. Stable
+full validation, 85 hosted Simulator tests, a separate capture test and the normal
+Simulator rebuild pass. The wrapper's post-test container lookup failed after the
+Simulator shut down, so its separate OpenSSH postcheck is not claimed as repeated.
+Physical installation of this trial change and App Store purchase acceptance remain
+pending. This supersedes earlier unregistered iOS/store-record statements.
+See [pricing, trial and review evidence](evidence/2026-10-05-lifetime-price-and-pro-trial.md).
+
+## 2026-10-05 — Named SSH keys, key setup, Terminal keyboard and Lifetime Pro
+
+The normal direct iOS client now has an independent named key library with neutral
+reuse, explicit per-Mac/account selections, migration and encrypted private backup.
+Install Key on This Mac is in each Mac's settings and verifies a fresh key login
+before selecting it. Terminal adds a persistent number row, one-shot/locked
+modifiers, navigation/function keys, custom Pro rows and local snippets. The
+permanent basic free tier and verified StoreKit non-consumable Lifetime Pro flow
+preserve existing excess records and active sessions. No Mac helper is introduced.
+
+82 hosted Simulator tests and independent OpenSSH/setup safety checks pass.
+Three independent code/screenshot reviews led to fixes for key selection,
+keyboard modifiers, setup duplicate detection, entitlement loading and form layout.
+An intermittent SSH startup hang was traced to reading the server banner before
+parser attachment; a deterministic regression verifies the corrected ordering.
+Eleven Simulator screenshots are captured outside Git. Required stable-Xcode
+repository validation passes. The normal Simulator and iPhone builds are refreshed
+after review. The development-signed app/widget pass deep signature and exact
+entitlement checks, and installation/launch succeed on iPhone 18 Pro Max (sequence
+8364), preserving the existing app and Keychain identity.
+Actual product creation/pricing/store review and
+physical feature acceptance remain separate; no public release occurred.
+See [implementation and verification evidence](evidence/2026-10-05-key-library-terminal-pro.md).
+
 ## 2026-10-05 — Expanded island curved-edge correction
 
 The physical screenshot of sequence 8348 showed that the remaining upper symbols

@@ -10,6 +10,7 @@ struct VNCRemoteDesktopView: UIViewControllerRepresentable {
     func makeUIViewController(context: Context) -> CompanionVNCViewer {
         let viewer = CompanionVNCViewer()
         viewer.macName = mac.name
+        viewer.servicePort = mac.port
         viewer.inputOnly = inputOnly
         viewer.preferenceID = mac.id.uuidString.lowercased()
         viewer.pointerSpeed = VNCSessionPreferences.speed(mac.id)

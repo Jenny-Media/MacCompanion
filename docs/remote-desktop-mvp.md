@@ -106,12 +106,54 @@ controls. Each remote session has one exit action returning to My Macs.
 
 ### SSH keys and optional iCloud library sync, 2026-10-05
 
-Terminal now offers Password or SSH Key login. Create an Ed25519 key or import an
-OpenSSH Ed25519 file, including bounded passphrase-protected imports. Copy only the
-public key for installation in the Mac account's authorized_keys. Private keys are
-kept in device-only Keychain, and existing SSH host verification remains required.
+Terminal offers Password or SSH Key login and a named key library. Create or import
+Ed25519 OpenSSH keys, rename them and choose a key per Mac/account. Sharing keys
+and choosing separate keys are both supported equally. Existing per-Mac keys migrate
+durably; removing a Mac clears its selection without deleting a library key.
+Public keys can be copied/exported. Private export requires fresh device-owner
+authentication and a nonempty passphrase, producing bcrypt/AES-256-CTR OpenSSH
+format. Private keys stay in device-only Keychain, and SSH host verification still
+precedes any authentication.
 RSA/ECDSA and hardware-backed keys are not yet supported. Desktop authentication is
 unchanged; SSH keys apply to Terminal only.
+
+Each saved Mac's settings contains **Install Key on This Mac**. The user chooses
+a target library key and authenticates with an existing password or working key.
+Setup appends only the public key to that account's `authorized_keys`, preserving
+other entries and options, rejecting unsafe links/ownership, enforcing private
+permissions and avoiding duplicate blobs. A fresh key-only login to the same
+verified SSH endpoint must succeed before the saved key selection changes.
+Timeout/cancellation never retries the remote command automatically; a partial
+installation may remain on the Mac. Nothing installs a Mac app or helper.
+
+### Terminal keyboard and lifetime Pro, 2026-10-05
+
+The software keyboard always includes a number row. Ctrl/Alt are one-shot on tap
+and explicitly locked on hold; Shift, navigation, function keys and common
+Ctrl-C/D/Z shortcuts are available in More. Modifiers reset on focus/session loss.
+Keys honor application-cursor mode. Pro adds a custom row and protected local
+snippets; snippets containing a newline can execute commands on explicit selection.
+
+The basic free tier has no session expiry: one saved Mac, one SSH key, Desktop,
+Trackpad & Keyboard, basic Terminal, standard keys/number row, multiple addresses,
+ports, displays and zoom. Security, accessibility and key import/export stay free.
+Lifetime Pro is one non-consumable purchase for multiple Macs/keys, automatic key
+setup and custom keys/actions/snippets. Existing extra records remain editable and
+exportable; users can choose the active free Mac/key without deleting data. A
+refund or entitlement change never terminates an active connection.
+
+The approved US base price is $9.99 for Lifetime Pro. An optional free non-consumable
+14-day Trial unlocks all Pro features for 14 days from its verified original purchase
+date. Restore/reinstall cannot reset it. There is no automatic charge or renewal;
+basic features remain free after expiry. The Pro screen shows the original end date
+and a separate localized lifetime upgrade price before the user starts the trial.
+
+StoreKit verifies the product and transaction type, handles restore and refunds,
+and reads local entitlements without a per-session online requirement. The checked
+in StoreKit configuration is synthetic local testing only. Real App Store Connect
+product approval and review remain separate distribution steps. App Store Connect
+now contains Mac Companion (6819496840), Lifetime Pro (6819497277) and 14-day Trial
+(6819497930); creation does not mean the purchases are approved or publicly available.
 
 iCloud sync is opt-in and defaults off per installation. A consent screen discloses
 the exact synced fields and reliance on Apple Account, trusted-device and iCloud

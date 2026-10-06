@@ -1,5 +1,6 @@
 #import "CompanionVNCSession.h"
 #import "CompanionVNCFramebufferBounds.h"
+#import "CompanionVNCCoverage.h"
 #import "CompanionVNCKeyboard.h"
 #import "CompanionVNCCursor.h"
 #import "CompanionVNCDirectConnection.h"
@@ -46,7 +47,12 @@ static void QuietLog(const char *format, ...) {
     NSInteger _failureStage, _credentialRequests;
     NSInteger _framebufferWidth, _framebufferHeight;
     BOOL _probeOnly;
-    BOOL _dirty, _extensionFailed, _layoutPending;
+    BOOL _dirty, _extensionFailed, _layoutPending, _metadataCallback, _baselinePresented;
+    CompanionVNCCoverage _coverage;
+    CompanionVNCDisplayLayout _coverageLayout;
+    BOOL _coverageLayoutValid;
+    double _baselineStarted, _lastFullRefresh;
+    NSUInteger _fullRefreshRetries, _receivedPixels, _expectedPixels;
     NSDictionary *_latestLayout;
     NSDictionary *_layoutDiagnostics;
     NSUInteger _layoutMessages;
@@ -61,7 +67,9 @@ static void QuietLog(const char *format, ...) {
 }
 - (rfbCredential *)credential:(int)type;
 - (rfbBool)allocate:(rfbClient *)client;
-- (void)updated;
+- (void)updatedX:(int)x y:(int)y width:(int)width height:(int)height;
+- (BOOL)resetBaseline:(rfbClient *)client;
+- (void)applyCoverageLayout:(rfbClient *)client;
 - (void)publishFrame:(rfbClient *)client;
 - (void)cursorShape:(rfbClient *)client x:(int)x y:(int)y width:(int)width height:(int)height bytesPerPixel:(int)bytes;
 - (rfbBool)cursorPosition:(rfbClient *)client x:(int)x y:(int)y;
@@ -78,7 +86,7 @@ static CompanionVNCSession *Owner(rfbClient *client) {
     return (__bridge CompanionVNCSession *)rfbClientGetClientData(client, &ownerTag);
 }
 static rfbBool Allocate(rfbClient *client) { return [Owner(client) allocate:client]; }
-static void Updated(rfbClient *client, int x, int y, int w, int h) { [Owner(client) updated]; }
+static void Updated(rfbClient *client, int x, int y, int w, int h) { [Owner(client) updatedX:x y:y width:w height:h]; }
 static rfbCredential *Credential(rfbClient *client, int type) { return [Owner(client) credential:type]; }
 static void CursorShape(rfbClient *client, int x, int y, int width, int height, int bytes) {
     [Owner(client) cursorShape:client x:x y:y width:width height:height bytesPerPixel:bytes];
@@ -94,6 +102,7 @@ static int layoutEncodings[] = {1101, 1105, 0};
 static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncodings, .handleEncoding = AppleLayout};
 
 @implementation CompanionVNCSession
+- (void)dealloc { free(_pixels); CompanionVNCCoverageFree(&_coverage); }
 - (instancetype)init {
     if ((self = [super init])) {
         _lock = [NSLock new]; _events = [NSMutableArray new]; _heldKeys = [NSMutableSet new];
@@ -155,7 +164,7 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
     [_lock lock];
     if (_running) { [_lock unlock]; if (socket >= 0) close(socket); return; }
     _running = YES; _stopping = NO; _overflow = NO; _framePending = NO; _cursorPending = NO; _layoutPending = NO; _latestLayout = nil; _inputReady = NO; _failureStage = 0;
-    _layoutDiagnostics = @{}; _layoutMessages = 0;
+    _layoutDiagnostics = @{}; _layoutMessages = 0; _baselinePresented = NO; _coverageLayoutValid = NO; _metadataCallback = NO;
     _paused = NO; _releaseInputRequested = NO; _resumeRequested = NO; _awaitingResumeFrame = NO; _presentationEpoch++;
     [_events removeAllObjects]; _queuedPointerMask = 0; _generation++; _connections++;
     NSInteger generation = _generation;
@@ -187,7 +196,7 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
             self->_extensionFailed = NO;
             self->_username = user; self->_password = password;
             rfbClient *client = rfbGetClient(8, 3, 4);
-            if (!client) { [self registerSocket:-1]; close(connection); [self finish:@"Client allocation failed"]; return; }
+            if (!client) { [self->_lock lock]; self->_failureStage = 100; [self->_lock unlock]; [self registerSocket:-1]; close(connection); [self finish:@"Client allocation failed"]; return; }
             [self configureClient:client]; client->sock = connection;
             uint32_t schemes[] = {rfbARD};
 
@@ -248,7 +257,17 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
             } else {
                 *requests |= bit; rfbClientSetUpdateRect(client, NULL);
             }
-            if (!inputOnly && (resume || modeChanged) && !SendFramebufferUpdateRequest(client, 0, 0, client->width, client->height, FALSE)) { healthy = NO; break; }
+            if (!inputOnly && (resume || modeChanged)) {
+                if (![self resetBaseline:client] || !SendFramebufferUpdateRequest(client, 0, 0, client->width, client->height, FALSE)) { healthy = NO; break; }
+            }
+            if (!inputOnly && !CompanionVNCCoverageReady(&self->_coverage)) {
+                double now = NSProcessInfo.processInfo.systemUptime;
+                if (now - self->_baselineStarted >= 8) { [self->_lock lock]; self->_failureStage = 102; [self->_lock unlock]; healthy = NO; break; }
+                if (self->_fullRefreshRetries < 2 && now - self->_lastFullRefresh >= 1) {
+                    if (!SendFramebufferUpdateRequest(client, 0, 0, client->width, client->height, FALSE)) { healthy = NO; break; }
+                    [self->_lock lock]; self->_fullRefreshRetries++; [self->_lock unlock]; self->_lastFullRefresh = now;
+                }
+            }
             for (NSDictionary *event in events) {
                 [self->_lock lock]; BOOL acceptsInput = self->_inputReady && !self->_paused && !self->_stopping; [self->_lock unlock];
                 if (!acceptsInput) break;
@@ -276,7 +295,8 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
     [self->_heldKeys removeAllObjects];
     SendPointerEvent(client, (int)self->_lastX, (int)self->_lastY, 0);
     [self registerSocket:-1]; rfbClientCleanup(client);
-    [self finish:self->_overflow ? @"Input queue full; disconnected safely" : healthy ? @"Disconnected" : @"Connection ended — reconnect"];
+    if (self->_overflow) { [self->_lock lock]; self->_failureStage = 101; [self->_lock unlock]; }
+    [self finish:self->_overflow ? @"Input queue full; disconnected safely" : self->_failureStage == 102 ? @"Desktop did not finish loading — reconnect" : healthy ? @"Disconnected" : @"Connection ended — reconnect"];
 
 }
 - (void)configureClient:(rfbClient *)client {
@@ -295,7 +315,7 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
 }
 - (void)finish:(NSString *)state {
     [self registerSocket:-1];
-    free(_pixels); _pixels = NULL; _username = nil; _password = nil;
+    free(_pixels); _pixels = NULL; CompanionVNCCoverageFree(&_coverage); _username = nil; _password = nil;
     _cursorImage = nil; _cursorPositionKnown = NO; _cursorDirty = NO;
     [_lock lock]; _running = NO; _inputReady = NO; [_events removeAllObjects]; [_lock unlock];
     [self report:state];
@@ -319,17 +339,42 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
     if (!CompanionVNCFramebufferByteCount(client->width, client->height, &bytes)) { protocolFailure = 9; return FALSE; }
     uint8_t *pixels = calloc(1, (size_t)bytes);
     if (!pixels) return FALSE;
+    if (![self resetBaseline:client]) { free(pixels); return FALSE; }
     free(_pixels); _pixels = pixels; client->frameBuffer = pixels;
     protocolStage = 5;
     [_lock lock]; _resizes++; [_lock unlock]; _dirty = NO;
     _cursorImage = nil; _cursorHotspot = CGPointZero; _cursorPositionKnown = NO; _cursorDirty = YES;
     return TRUE;
 }
-- (void)updated { _dirty = YES; [_lock lock]; _updates++; [_lock unlock]; }
+- (BOOL)resetBaseline:(rfbClient *)client {
+    if (!CompanionVNCCoverageReset(&_coverage, client->width, client->height)) return NO;
+    _baselineStarted = _lastFullRefresh = NSProcessInfo.processInfo.systemUptime;
+    _dirty = NO;
+    [_lock lock]; _fullRefreshRetries = 0; _baselinePresented = NO; _presentationEpoch++; [_lock unlock];
+    [self applyCoverageLayout:client]; return YES;
+}
+- (void)applyCoverageLayout:(rfbClient *)client {
+    // Only exact backing geometry can omit gaps. Unknown/scaled layouts keep full coverage.
+    CompanionVNCCoverageClearRequirements(&_coverage);
+    if (_coverageLayoutValid && _coverageLayout.width == client->width && _coverageLayout.height == client->height) {
+        for (NSUInteger i = 0; i < _coverageLayout.count; i++) {
+            CompanionVNCDisplay d = _coverageLayout.displays[i];
+            CompanionVNCCoverageRect(&_coverage, d.x, d.y, d.width, d.height, true);
+        }
+    } else { CompanionVNCCoverageRect(&_coverage,0,0,client->width,client->height,true); }
+    [_lock lock]; _receivedPixels = _coverage.received; _expectedPixels = _coverage.expected; [_lock unlock];
+}
+- (void)updatedX:(int)x y:(int)y width:(int)width height:(int)height {
+    if (_metadataCallback) { _metadataCallback = NO; return; }
+    if (!CompanionVNCCoverageReady(&_coverage)) CompanionVNCCoverageRect(&_coverage, x, y, width, height, false);
+    _dirty = YES;
+    [_lock lock]; _updates++; _receivedPixels = _coverage.received; _expectedPixels = _coverage.expected; [_lock unlock];
+}
 - (rfbBool)displayLayout:(rfbClient *)client {
     return [self displayLayout:client encoding:1105];
 }
 - (rfbBool)displayLayout:(rfbClient *)client encoding:(int)encoding {
+    _metadataCallback = YES;
     uint8_t prefix[2];
     if (!ReadFromRFBServer(client, (char *)prefix, 2)) { _extensionFailed = YES; return TRUE; }
     size_t length = CompanionVNCBE16(prefix);
@@ -359,6 +404,12 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
     }
     [_lock lock]; _layoutMessages++; _layoutDiagnostics = geometry; [_lock unlock];
     if (encoding == 1101) { [self report:@"Connected"]; return TRUE; }
+    BOOL changed = _coverageLayoutValid && (!parsed || _coverageLayout.width != decoded.width || _coverageLayout.height != decoded.height || _coverageLayout.count != decoded.count || memcmp(_coverageLayout.displays, decoded.displays, sizeof(CompanionVNCDisplay) * decoded.count) != 0);
+    _coverageLayoutValid = parsed; if (parsed) _coverageLayout = decoded;
+    if (changed && _coverage.seen) {
+        // Hot-plug/rearrangement also retires the old baseline without blanking its image.
+        if (![self resetBaseline:client] || !SendFramebufferUpdateRequest(client,0,0,client->width,client->height,FALSE)) _extensionFailed = YES;
+    } else { [self applyCoverageLayout:client]; }
     if (parsed) {
         aspect = (CGFloat)decoded.width / decoded.height;
         for (NSUInteger i = 0; i < decoded.count; i++) {
@@ -421,7 +472,7 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
 }
 - (void)publishFrame:(rfbClient *)client {
     double now = NSProcessInfo.processInfo.systemUptime;
-    if (!_dirty || now - _lastFrame < 1.0 / 30) return;
+    if (!_dirty || !CompanionVNCCoverageReady(&_coverage) || now - _lastFrame < 1.0 / 30) return;
     [_lock lock];
     if (_framePending || _stopping || _paused || _inputOnly) { [_lock unlock]; return; }
     _framePending = YES; NSInteger generation = _generation; NSUInteger epoch = _presentationEpoch; [_lock unlock];
@@ -438,11 +489,11 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
         if (generation == self->_generation) self->_framePending = NO; [self->_lock unlock];
         if (valid && frame && self.frameHandler) self.frameHandler(frame);
         if (valid && frame) {
-            [self->_lock lock]; self->_presentedFrames++;
+            [self->_lock lock]; BOOL firstBaseline = !self->_baselinePresented; self->_baselinePresented = YES; self->_presentedFrames++;
             BOOL resumed = self->_awaitingResumeFrame;
             if (resumed) { self->_resumeFrames++; self->_awaitingResumeFrame = NO; self->_inputReady = YES; }
             [self->_lock unlock];
-            if (resumed || self->_presentedFrames == 1) [self report:@"Connected"];
+            if (resumed || firstBaseline) [self report:@"Connected"];
         }
     });
     if (_presentedFrames > 0 && _updates % 30 == 0) [self report:@"Connected"];
@@ -450,10 +501,11 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
 - (void)report:(NSString *)state {
     // No endpoints, names, credentials, pixels, or typed content in diagnostics.
     [_lock lock];
-    if ([state isEqualToString:@"Connected"] && (_paused || _awaitingResumeFrame || _presentedFrames == 0)) { [_lock unlock]; return; }
+    if ([state isEqualToString:@"Connected"] && (_paused || _awaitingResumeFrame || !_baselinePresented)) { [_lock unlock]; return; }
     NSInteger generation = _generation; NSUInteger epoch = _presentationEpoch; BOOL intermediate = _running;
     NSDictionary *stats = @{@"connectionStarts": @(_connections), @"updateRects": @(_updates),
         @"framebufferAllocations": @(_resizes), @"inputEvents": @(_inputs), @"viewChanges": @(_viewChanges), @"presentedFrames": @(_presentedFrames),
+        @"baselineReady": @(_baselinePresented), @"baselineReceivedPixels": @(_receivedPixels), @"baselineExpectedPixels": @(_expectedPixels), @"fullRefreshRetries": @(_fullRefreshRetries),
         @"failureStage": @(_failureStage), @"credentialRequests": @(_credentialRequests), @"handshakeStage": @(protocolStage),
         @"framebufferWidth": @(_framebufferWidth), @"framebufferHeight": @(_framebufferHeight),
         @"displayLayoutMessages": @(_layoutMessages), @"displayLayout": _layoutDiagnostics ?: @{},

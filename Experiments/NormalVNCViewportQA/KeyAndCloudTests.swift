@@ -50,7 +50,7 @@ private final class MemoryCloud: DirectCloudTransport, @unchecked Sendable {
         XCTAssertTrue(library.save(id: id, name: "Synthetic", address: "mac.local")); try TerminalSecretStore.saveKey(key, id: id)
         XCTAssertTrue(library.save(id: id, name: "Renamed", addresses: ["100.100.1.2", "mac.local"]))
         XCTAssertEqual(try TerminalSecretStore.sshKey(id)?.seed, key.seed)
-        let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: "media.jenny.maccompanion.ssh-private-key.v1", kSecAttrAccount as String: id.uuidString.lowercased(), kSecAttrSynchronizable as String: kSecAttrSynchronizableAny, kSecReturnAttributes as String: true]
+        let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: "media.jenny.maccompanion.ssh-key-library-v2.v1", kSecAttrAccount as String: "00000000-0000-0000-0000-000000000002", kSecAttrSynchronizable as String: kSecAttrSynchronizableAny, kSecReturnAttributes as String: true]
         var result: CFTypeRef?; XCTAssertEqual(SecItemCopyMatching(query as CFDictionary, &result), errSecSuccess)
         let attributes = try XCTUnwrap(result as? [String: Any])
         XCTAssertEqual(attributes[kSecAttrAccessible as String] as? String, kSecAttrAccessibleWhenUnlockedThisDeviceOnly as String)
@@ -119,6 +119,6 @@ private final class MemoryCloud: DirectCloudTransport, @unchecked Sendable {
         try transport.write(Data("corrupt".utf8), account: "synthetic-corrupt")
         let cloud = DirectCloudSyncV1(defaults: defaults, url: folder.appending(path: "journal.json"), transport: transport, writerID: UUID())
         cloud.attach(library); cloud.setEnabled(true); try await wait(cloud)
-        XCTAssertEqual(library.macs, before); XCTAssertTrue(cloud.status.contains("Could not")); cloud.setEnabled(false)
+        XCTAssertEqual(library.macs, before); XCTAssertEqual(cloud.recovery?.reason, .cloudUnavailable); cloud.setEnabled(false)
     }
 }

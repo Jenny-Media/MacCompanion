@@ -2,6 +2,7 @@
 #import "CompanionVNCSession.h"
 NS_ASSUME_NONNULL_BEGIN
 @interface CompanionVNCViewer : UIViewController
+@property(nonatomic) NSInteger servicePort;
 @property(nonatomic) BOOL fullscreen;
 @property(nonatomic) BOOL inputOnly;
 @property(nonatomic, copy) void (^presentationHandler)(BOOL fullscreen);

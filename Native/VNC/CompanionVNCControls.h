@@ -1,10 +1,12 @@
 #import <UIKit/UIKit.h>
 NS_ASSUME_NONNULL_BEGIN
+FOUNDATION_EXPORT NSString *const CompanionVNCControlsHapticsPreference;
 /// Locally captured tap/press-and-slide chrome, independent of remote gestures.
 @interface CompanionVNCControls : UIView
 @property(nonatomic, copy) NSString *macName;
 @property(nonatomic, copy) NSArray<NSDictionary *> *quickActions;
 @property(nonatomic) BOOL trackpad;
+@property(nonatomic) BOOL hapticsEnabled;
 @property(nonatomic) BOOL fullscreen, inputOnly;
 @property(nonatomic) CGFloat bottomInset;
 @property(nonatomic, readonly) UIButton *button;

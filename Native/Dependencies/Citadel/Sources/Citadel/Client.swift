@@ -178,6 +178,11 @@ public final class SSHClient {
         let session = try await channel.eventLoop.flatSubmit {
             SSHClientSession.addHandlers(on: channel, inboundChannelHandler: inboundChannelHandler, settings: settings)
         }.flatMap {
+            // Callers pause reads before registering an existing socket so an early
+            // banner cannot be discarded. Resume only after every handler exists,
+            // before waiting for the peer's version, key exchange and authentication.
+            channel.setOption(ChannelOptions.autoRead, value: true)
+        }.flatMap {
             channel.pipeline.handler(type: NIOSSHHandler.self).flatMap { sshHandler in
                 channel.pipeline.handler(type: ClientHandshakeHandler.self).flatMap { handshakeHandler in
                     handshakeHandler.authenticated.map {

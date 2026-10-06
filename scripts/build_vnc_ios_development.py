@@ -149,6 +149,12 @@ def main():
     package_lock = args.output / 'NormalVNCDevelopment.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved'
     package_lock.parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(ROOT / 'Native/Terminal/Package.resolved', package_lock)
+    with (args.output / 'resolve.log').open('w') as log:
+        run('xcodebuild', '-project', args.output / 'NormalVNCDevelopment.xcodeproj', '-scheme', 'MacCompanionIOS',
+            '-derivedDataPath', args.output / 'DerivedData', '-onlyUsePackageVersionsFromResolvedFile',
+            '-resolvePackageDependencies', stdout=log, stderr=subprocess.STDOUT)
+    from prepare_swiftterm_build_tool import prepare
+    prepare(args.output / 'DerivedData')
     with (args.output / 'build.log').open('w') as log:
         run('xcodebuild', '-project', args.output / 'NormalVNCDevelopment.xcodeproj', '-scheme', 'MacCompanionIOS',
             '-configuration', 'Debug', '-sdk', args.sdk,

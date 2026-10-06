@@ -373,11 +373,48 @@ nor a third party can access them. No telemetry or account data is declared
 merely as future intent, and no diagnostics upload occurs without an explicit
 later design and a prior privacy-policy/manifest revision.
 
-### Commercialization hypothesis
+### Direct-client commercialization decision, 2026-10-05
 
-The no-account, no-relay architecture does not yet justify a recurring subscription. The working hypothesis is a free Mac host and iOS client with one non-consumable **Mac Companion Pro** purchase for convenience and advanced official-client features. Exact pricing, free limits, Family Sharing, and Pro features remain TestFlight experiments rather than release-baseline decisions.
+The current MVP is one iOS client using built-in macOS Screen Sharing/Remote Login,
+with no Mac Companion host/helper. The approved model is a permanent basic free
+tier and one non-consumable **Lifetime Pro** purchase, with no subscription/account.
+Free includes one Mac, one SSH key, unlimited session duration, Desktop/input/basic
+Terminal, standard keyboard/number row, key import/export and connection/display
+preferences. Pro adds multiple Macs/keys, remote public-key setup and custom
+keyboard/actions/snippets. Extra existing records are preserved, with an explicit
+choice of active free Mac/key; entitlement changes do not end active sessions.
+StoreKit's verified current entitlements, updates and explicit Restore Purchases
+control access. Local StoreKit testing does not activate a real store product.
+The user approved a US base price of $9.99 and a free 14-day Pro trial. Apple
+App Review guideline 3.1.1 permits a separate zero-price non-consumable named
+14-day Trial for a non-subscription app. Its verified original purchase date anchors
+expiry; restoring/reinstalling does not restart it. There is no automatic charge
+or renewal. Basic access and saved data remain after expiry. The app displays the
+localized lifetime price and expiring functionality before explicit trial enrollment.
 
-Encryption, device identity, consent, visibility, safe fallback, suspension, revocation, accessibility support, and essential diagnostics are never paywalled. Pairing and host grants do not trust StoreKit state. If a feature is commercialized, the official iOS client checks purchase entitlement when requesting it while the Mac independently enforces authorization and safe hardware, thermal, and bandwidth ceilings. Because the source is intended to be public, commercial value comes from official App Store distribution, Jenny Media signing and entitlements, updates, compatibility work, support, and brand trust rather than pretending that client-side feature gating is an unbreakable security boundary.
+App Store Connect app 6819496840 uses the existing iOS identifier
+media.jenny.maccompanion.ios, registered under the already-confirmed team.
+Lifetime Pro is product 6819497277 (media.jenny.maccompanion.pro.lifetime);
+14-day Trial is 6819497930 (media.jenny.maccompanion.pro.trial14). Family Sharing
+remains off. First purchases require an app-version review and are not live merely
+because the records and price schedules are saved. The local StoreKit configuration
+uses $9.99/$0.00 only for testing.
+
+Security and accessibility are never paywalled. macOS account authorization and SSH
+host-key trust remain independent of StoreKit. Existing legacy pairing/grants stay
+inactive in the direct client. Client commerce gates are not a security boundary;
+official distribution, updates, compatibility and support provide commercial value.
+
+### Direct-client internal TestFlight decision, 2026-10-05
+
+The user authorized the current normal direct iOS client for internal TestFlight
+and their existing App Store Connect account as an internal tester. This permits
+Apple distribution signing/provisioning for the existing app and session widget,
+and an optimized internal archive. Use Xcode's TestFlight Internal Only method
+(`testFlightInternalTestingOnly = true`) so this artifact cannot be reused for
+external testing or App Store release. Keep the dependency report's
+`releaseAdmitted = false`; public release admission and review remain separate.
+No new Mac component, developer user, API key or signing private key is required.
 
 ## 8. Release pipeline and evidence
 

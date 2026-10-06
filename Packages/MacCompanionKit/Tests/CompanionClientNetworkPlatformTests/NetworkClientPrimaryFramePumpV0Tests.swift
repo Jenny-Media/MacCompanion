@@ -2056,7 +2056,9 @@ func primaryProductCandidatePublishesOnlyAfterExactSelection(kind: EndpointKind,
         terminals: base.terminals
     )
     try await authenticateNetworkClientPump(harness)
-    for _ in 0..<1_000 where await bridge.currentActChannel() == nil {
+    // The bridge publishes its channels before its asynchronous authentication
+    // callback returns to the pump and announces readiness. Wait for that signal.
+    for _ in 0..<1_000 where base.ready.count == 0 {
         try? await Task.sleep(nanoseconds: 1_000_000)
     }
     let channel = try #require(await bridge.currentActChannel())

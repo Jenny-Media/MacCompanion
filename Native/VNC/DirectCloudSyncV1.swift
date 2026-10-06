@@ -104,7 +104,9 @@ struct DirectCloudKeychain: DirectCloudTransport {
     private let defaults: UserDefaults
     private let url: URL
     private let transport: any DirectCloudTransport
-    private let writer: UUID
+    private var writer: UUID
+    private let injectedWriter: UUID?
+    var recovery: DirectRecoveryNotice?
     private var versions: [DirectCloudVersion] = []
     private var readable = true
     private weak var library: DirectMacLibraryV1?
@@ -129,7 +131,7 @@ struct DirectCloudKeychain: DirectCloudTransport {
                 } else { try TerminalSecretStore.write(Data(resolvedWriter.uuidString.utf8), id: identity, kind: "sync-writer") }
             } catch { identityReadable = false }
         }
-        writer = resolvedWriter
+        injectedWriter = writerID; writer = resolvedWriter
         enabled = defaults.bool(forKey: Self.enabledKey)
         do {
             if FileManager.default.fileExists(atPath: self.url.path) {
@@ -139,8 +141,32 @@ struct DirectCloudKeychain: DirectCloudTransport {
                 guard journal.schema == 1 else { throw DirectCloudError.invalid }
                 versions = try DirectCloudVersion.merge([], journal.versions)
             }
-        } catch { readable = false; status = "Sync history could not be read. Existing data was preserved." }
-        if !identityReadable { readable = false; status = "This device’s sync identity is unavailable. Unlock and reopen the app; existing data was preserved." }
+        } catch { readable = false; recovery = .make(.cloudUnavailable, message: "Sync history couldn’t be read. Existing history and local Macs are kept. Retry when device storage is available.") }
+        if !identityReadable { readable = false; recovery = .make(.cloudUnavailable, message: "This device’s sync identity couldn’t be read. Existing data is kept. Retry when device storage is available.") }
+    }
+    func retry() {
+        guard !busy, DirectAppLockV1.shared.canAccess else { return }
+        if !readable {
+            do {
+                let identity = UUID(uuidString: "00000000-0000-0000-0000-000000000001")!
+                var resolved = writer
+                if let injectedWriter { resolved = injectedWriter }
+                else if let bytes = try TerminalSecretStore.read(identity, kind: "sync-writer") {
+                    guard let text = String(data: bytes, encoding: .utf8), let id = UUID(uuidString: text) else { throw DirectCloudError.storage }; resolved = id
+                } else { try TerminalSecretStore.write(Data(resolved.uuidString.utf8), id: identity, kind: "sync-writer") }
+                var restored: [DirectCloudVersion] = []
+                if FileManager.default.fileExists(atPath: url.path) {
+                    let file = try FileHandle(forReadingFrom: url); defer { try? file.close() }
+                    let data = try file.read(upToCount: 2_097_153) ?? Data(); guard data.count <= 2_097_152 else { throw DirectCloudError.invalid }
+                    let journal = try JSONDecoder().decode(Journal.self, from: data)
+                    guard journal.schema == 1 else { throw DirectCloudError.invalid }
+                    restored = try DirectCloudVersion.merge([], journal.versions)
+                }
+                writer = resolved; versions = restored; readable = true
+                if let library { for mac in library.macs where !versions.contains(where: { $0.id == mac.id && $0.writer == writer }) { localChange(mac.id) } }
+            } catch { recovery = .make(.cloudUnavailable, message: "Sync data is still unavailable. Local Macs and the existing history are kept."); return }
+        }
+        recovery = nil; refresh()
     }
     func attach(_ library: DirectMacLibraryV1) {
         let firstAttachment = self.library == nil
@@ -183,7 +209,7 @@ struct DirectCloudKeychain: DirectCloudTransport {
             let value = DirectCloudVersion(id: id, writer: writer, revision: (versions.map(\.revision).max() ?? 0) + 1, mac: mac, preferences: mac.map { DirectCloudPreferences(mac: $0.id) })
             try persist(DirectCloudVersion.merge(versions.filter { $0.account != value.account }, [value]))
             refresh()
-        } catch { status = "Could not record a sync change. Local Macs are kept." }
+        } catch { recovery = .make(.cloudUnavailable, message: "The sync change couldn’t be saved. Local Macs are kept. Retry after checking device storage.") }
     }
     func refresh() {
         guard enabled, !busy, readable, DirectAppLockV1.shared.canAccess, UIApplication.shared.applicationState == .active, let library, library.readable else { return }
@@ -213,10 +239,10 @@ struct DirectCloudKeychain: DirectCloudTransport {
                     try await Task.detached { try transport.write(bytes, account: account) }.value
                 }
                 if enabled, generation == id {
-                    status = "Saved to the syncing Keychain. Apple manages delivery; cross-device completion is not confirmed here."
+                    recovery = nil; status = "Saved to the syncing Keychain. Apple manages delivery; cross-device completion is not confirmed here."
                     if versions != merged { busy = false; refresh() }
                 }
-            } catch { if generation == id { status = "Could not refresh iCloud Keychain. Local Macs are kept. Unlock this device and check iCloud Passwords & Keychain settings, then retry." } }
+            } catch { if generation == id { recovery = .make(.cloudUnavailable) } }
         }
     }
     func removeCloudCopies() {
@@ -227,8 +253,8 @@ struct DirectCloudKeychain: DirectCloudTransport {
             do {
                 try await Task.detached { try transport.removeAll() }.value
                 try persist([])
-                status = "Cloud copy removal requested. Sync is off; local Macs are kept. Apple manages propagation to other devices."
-            } catch { status = "Could not remove iCloud copies. Sync is off; local data is kept. Retry when Keychain is available." }
+                recovery = nil; status = "Cloud copy removal requested. Sync is off; local Macs are kept. Apple manages propagation to other devices."
+            } catch { recovery = .make(.cloudRemoval) }
         }
     }
 }

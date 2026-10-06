@@ -1,0 +1,46 @@
+{
+  "identifier": "36A42DCC-07C7-4B2B-89D9-4A7D8C1EAC40",
+  "nonRenewingSubscriptions": [],
+  "products": [
+    {
+      "displayPrice": "9.99",
+      "familyShareable": false,
+      "internalID": "87054820",
+      "localizations": [
+        {
+          "description": "Multiple Macs, named SSH keys, remote key setup and custom terminal controls. Local testing only.",
+          "displayName": "Lifetime Pro",
+          "locale": "en_US"
+        }
+      ],
+      "productID": "media.jenny.maccompanion.pro.lifetime",
+      "referenceName": "Lifetime Pro (Local Test Only)",
+      "type": "NonConsumable"
+    },
+    {
+      "displayPrice": "0.00",
+      "familyShareable": false,
+      "internalID": "87054821",
+      "localizations": [
+        {
+          "description": "Try all Pro features for 14 days. Basic features stay free. No automatic charge. Local testing only.",
+          "displayName": "14-day Trial",
+          "locale": "en_US"
+        }
+      ],
+      "productID": "media.jenny.maccompanion.pro.trial14",
+      "referenceName": "14-day Trial (Local Test Only)",
+      "type": "NonConsumable"
+    }
+  ],
+  "settings": {
+    "_failTransactionsEnabled": false,
+    "_locale": "en_US",
+    "_storefront": "USA"
+  },
+  "subscriptionGroups": [],
+  "version": {
+    "major": 3,
+    "minor": 0
+  }
+}

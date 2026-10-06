@@ -136,9 +136,68 @@ extension Curve25519.Signing.PrivateKey: ByteBufferConvertible {
         
         return string
     }
+
+    /// Standard OpenSSH Ed25519 export: bcrypt KDF and AES-256-CTR.
+    /// Uses the same library primitives as the importer; no custom key format.
+    public func makeEncryptedSSHRepresentation(passphrase: String, comment: String = "") throws -> String {
+        guard !passphrase.isEmpty, passphrase.utf8.count <= 4096, comment.utf8.count <= 320 else {
+            throw OpenSSH.KeyError.missingDecryptionKey
+        }
+        let allocator = ByteBufferAllocator(), cipher = OpenSSH.Cipher.aes256ctr
+        var salt = allocator.buffer(capacity: 16)
+        salt.writeBytes((0..<16).map { _ in UInt8.random(in: .min ... .max) })
+        let saltBytes = salt
+        var options = allocator.buffer(capacity: 24)
+        options.writeSSHString(&salt); options.writeInteger(UInt32(32))
+        var buffer = allocator.buffer(capacity: 512)
+        buffer.writeString("openssh-key-v1"); buffer.writeInteger(UInt8(0))
+        buffer.writeSSHString(cipher.rawValue); buffer.writeSSHString("bcrypt"); buffer.writeSSHString(&options)
+        buffer.writeInteger(UInt32(1))
+        var publicBuffer = allocator.buffer(capacity: 64)
+        publicBuffer.writeSSHString("ssh-ed25519"); publicBuffer.writeSSHString(publicKey.rawRepresentation)
+        buffer.writeSSHString(&publicBuffer)
+        var privateBuffer = allocator.buffer(capacity: 160)
+        let check = UInt32.random(in: .min ... .max)
+        privateBuffer.writeInteger(check); privateBuffer.writeInteger(check)
+        privateBuffer.writeSSHString("ssh-ed25519"); write(to: &privateBuffer)
+        privateBuffer.writeSSHString(comment)
+        let padding = cipher.blockSize - privateBuffer.readableBytes % cipher.blockSize
+        for value in 1...padding { privateBuffer.writeInteger(UInt8(value)) }
+        try OpenSSH.KDF.bcrypt(salt: saltBytes, iterations: 32).withKeyAndIV(
+            cipher: cipher, basedOnDecryptionKey: Data(passphrase.utf8)
+        ) { key, iv in
+            try privateBuffer.encryptAES256CTR(key: key, iv: iv)
+        }
+        buffer.writeSSHString(&privateBuffer)
+        let encoded = buffer.readData(length: buffer.readableBytes)!.base64EncodedString()
+        let lines = stride(from: 0, to: encoded.count, by: 70).map { offset in
+            String(encoded.dropFirst(offset).prefix(70))
+        }.joined(separator: "\n")
+        return ("-----BEGIN OPENSSH " + "PRIVATE KEY-----\n") + lines + "\n" + ("-----END OPENSSH " + "PRIVATE KEY-----\n")
+    }
 }
 
 extension ByteBuffer {
+    mutating func encryptAES256CTR(key: [UInt8], iv: [UInt8]) throws {
+        guard key.count == 32, iv.count == 16, readableBytes % 16 == 0,
+              let context = CCryptoBoringSSL_EVP_CIPHER_CTX_new() else { throw OpenSSH.KeyError.cryptoError }
+        defer { CCryptoBoringSSL_EVP_CIPHER_CTX_free(context) }
+        guard CCryptoBoringSSL_EVP_CipherInit(context, CCryptoBoringSSL_EVP_aes_256_ctr(), key, iv, 1) == 1 else {
+            throw OpenSSH.KeyError.cryptoError
+        }
+        try withUnsafeMutableReadableBytes { raw in
+            let bytes = raw.bindMemory(to: UInt8.self)
+            guard let start = bytes.baseAddress else { throw OpenSSH.KeyError.cryptoError }
+            try withUnsafeTemporaryAllocation(of: UInt8.self, capacity: 16) { block in
+                for offset in stride(from: 0, to: bytes.count, by: 16) {
+                    guard CCryptoBoringSSL_EVP_Cipher(context, block.baseAddress!, start + offset, 16) == 1 else {
+                        throw OpenSSH.KeyError.cryptoError
+                    }
+                    (start + offset).update(from: block.baseAddress!, count: 16)
+                }
+            }
+        }
+    }
     mutating func decryptAES(
         cipher: OpaquePointer,
         key: [UInt8],
@@ -392,7 +451,7 @@ extension OpenSSH.PrivateKey {
         let paddingLength = privateKeyBuffer.readableBytes
         
         guard
-            paddingLength < cipher.blockSize,
+            paddingLength <= cipher.blockSize,
             let padding = privateKeyBuffer.readBytes(length: paddingLength)
         else {
             throw InvalidOpenSSHKey.invalidPadding
@@ -402,7 +461,7 @@ extension OpenSSH.PrivateKey {
             return
         }
         
-        for i in 1..<paddingLength {
+        for i in 1...paddingLength {
             guard padding[i - 1] == UInt8(i) else {
                 throw InvalidOpenSSHKey.invalidPadding
             }
@@ -443,7 +502,8 @@ extension OpenSSH.KDF {
             guard
                 let salt = options.readSSHBuffer(),
                 let rounds: UInt32 = options.readInteger(),
-                rounds < 32
+                (1...128).contains(rounds),
+                (1...64).contains(salt.readableBytes), options.readableBytes == 0
             else {
                 throw InvalidOpenSSHKey.invalidOrUnsupportedBCryptConfig
             }

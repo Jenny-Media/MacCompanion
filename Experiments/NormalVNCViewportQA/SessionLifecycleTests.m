@@ -41,7 +41,7 @@
     [self waitForExpectations:@[premature] timeout:.05];
     XCTestExpectation *fresh = [self expectationWithDescription:@"Fresh frame permits connected status"];
     session.stateHandler = ^(NSString *state, NSDictionary *stats) { XCTAssertEqualObjects(state,@"Connected"); [fresh fulfill]; };
-    [session setValue:@NO forKey:@"awaitingResumeFrame"]; [session report:@"Connected"];
+    [session setValue:@NO forKey:@"awaitingResumeFrame"]; [session setValue:@YES forKey:@"baselinePresented"]; [session report:@"Connected"];
     [self waitForExpectations:@[fresh] timeout:1]; session.stateHandler = nil; [session setValue:@NO forKey:@"running"];
 }
 - (NSDictionary *)profile {
@@ -101,7 +101,7 @@
     CompanionVNCSession *session = [CompanionVNCSession new];
     rfbClient *client = rfbGetClient(8, 3, 4); client->width = 2; client->height = 2;
     [session allocate:client]; [session setValue:@YES forKey:@"running"]; [session setValue:@YES forKey:@"inputReady"];
-    [session setValue:@YES forKey:@"dirty"];
+    [session configureClient:client]; client->GotFrameBufferUpdate(client,0,0,2,2);
     XCTestExpectation *stale = [self expectationWithDescription:@"Pre-pause frame is rejected"]; stale.inverted = YES;
     session.frameHandler = ^(UIImage *image) { [stale fulfill]; };
     [session publishFrame:client]; [session pauseWithCompletion:nil]; [session resume];
@@ -131,7 +131,7 @@
         if (ready.boolValue) {
             XCTestExpectation *timeout = [self expectationWithDescription:@"Resume deadline"];
             dispatch_after(dispatch_time(DISPATCH_TIME_NOW, ([policy[@"resumeDeadlineMilliseconds"] integerValue] + 100) * NSEC_PER_MSEC), dispatch_get_main_queue(), ^{ [timeout fulfill]; });
-            [self waitForExpectations:@[timeout] timeout:2];
+            [self waitForExpectations:@[timeout] timeout:[policy[@"resumeDeadlineMilliseconds"] doubleValue] / 1000 + 1];
         }
         XCTAssertEqual(attempts, 1); [viewer foregrounded]; XCTAssertEqual(attempts, 1); [viewer stopViewer];
     }

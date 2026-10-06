@@ -50,6 +50,13 @@ shared-endpoint note in the editor; it must not block saving or combine records.
 Write atomically before publishing in-memory changes. Read failure is visible
 and never silently overwrites an existing unreadable library.
 
+Mac labels are trimmed, nonempty, at most 80 characters and contain no Unicode
+control/format scalars. Named SSH keys use the same control/format rejection.
+Ordinary ASCII and Unicode labels MUST retain identical acceptance in Debug and
+optimized internal-distribution builds; optimization must not mark valid saved
+records unreadable. Validate the actual native predicates in both configurations
+against the indexed name cases. Preserve UUIDs, logins and the existing file.
+
 The Add/Edit Mac form exposes editable fields directly. Address reordering uses
 a Reorder/Done control within Connection Addresses when multiple addresses exist;
 the navigation bar contains Cancel and Save. An empty or whitespace-only port
@@ -115,7 +122,7 @@ ending immediately on completion
 or expiration; it does not maintain an idle connection or stream in the background.
 Foreground requests a full framebuffer on the same owner. Input remains blocked
 until a complete framebuffer arrives. If the socket fails or no framebuffer arrives
-within 1500 ms, retire it and make one automatic reconnect attempt. Do not loop
+within 9000 ms (allowing the bounded baseline refresh window), retire it and make one automatic reconnect attempt. Do not loop
 retries or overlap native owners. Background/foreground calls are idempotent.
 Preserve the selected display ID, relative zoom, viewport center and mouse mode;
 reapply only to matching dimensions and verified layout after reconnect. Changed
@@ -270,6 +277,10 @@ Use a pinned standard SSH implementation and a pinned terminal renderer. Validat
 and dial the exact sockaddr with the same private-route policy as Desktop, then run
 SSH over that connected channel. Only TCP failure may try another configured address;
 authentication, server-key rejection and SSH failures must not retry credentials.
+Disable automatic socket reads before registering the connected channel. Install the
+SSH parser and handshake handlers on its event loop, then enable reads before awaiting
+authentication. An early server banner must remain queued until the parser exists;
+UI scheduling must not discard bytes or delay the handshake until its timeout.
 
 Before any user authentication, compare the canonical OpenSSH host key. On first
 connection, show the SHA256 fingerprint and require explicit trust. A changed key
@@ -283,8 +294,78 @@ Remote OSC clipboard reads are denied and writes/URL launches require user actio
 
 ## SSH key login and opt-in iCloud library sync
 
-Terminal MAY authenticate with an Ed25519 user key using standard SSH public-key authentication. Keys are created using system cryptographic randomness or imported from a bounded OpenSSH document (maximum 32 KiB). Encrypted imports require their passphrase and bounded bcrypt work (1 through 128 rounds); decoding runs away from the UI actor. Invalid, unsupported, or mismatched key material MUST fail before opening a connection. There is no automatic password fallback. Host-key verification still precedes user authentication. The decoded private seed is stored only in the existing per-Mac, non-synchronizable, WhenUnlockedThisDeviceOnly Keychain. Private keys and passphrases MUST NOT appear in logs, fixtures, diagnostics, exports, or cloud library records. Only the public key can be copied. Removing the local key does not revoke a public key already installed on the Mac.
+Terminal MAY authenticate with an Ed25519 user key using standard SSH public-key authentication. Keys are created using system cryptographic randomness or imported from a bounded OpenSSH document (maximum 32 KiB). Encrypted imports require their passphrase and bounded bcrypt work (1 through 128 rounds); decoding runs away from the UI actor. Invalid, unsupported, or mismatched key material MUST fail before opening a connection. There is no automatic password fallback. Host-key verification still precedes user authentication.
+
+Named keys have stable UUIDs independent of Macs. A device-local library holds up to 256 keys and explicit per-Mac selected-key/account associations in the existing non-synchronizable, WhenUnlockedThisDeviceOnly Keychain group. Sharing one key across Macs and choosing separate keys are equally supported; the UI MUST NOT recommend either arrangement by default. Legacy per-Mac keys migrate idempotently, retaining the original entry until the new record and association are durably saved. Failed migration MUST preserve the original. Editing addresses or removing a Mac MUST NOT delete a library key used elsewhere. Deleting a key clears its local associations, requires confirmation, and does not claim remote revocation. Unreadable or malformed library data MUST NOT be overwritten.
+
+Private keys and passphrases MUST NOT appear in logs, fixtures, diagnostics, clipboard or cloud library records. Public keys can be copied/exported. Explicit private export requires fresh device-owner authentication, a nonempty passphrase, and a standard encrypted OpenSSH Ed25519 document (aes256-ctr with bcrypt, 32 rounds and fresh salt/check words). Export preparation runs off the UI actor, uses the pinned standard library primitives, and clears temporary documents when dismissed, locked or backgrounded. Plaintext private-key export is not offered. Validate interoperability against OpenSSH, not just the matching importer.
+
+The individual saved Mac settings page offers Install Key on This Mac. The user chooses a library key/account and explicitly supplies bootstrap password or an existing working key. Standard host verification precedes authentication. Installation sends only the public key to that account's ~/.ssh/authorized_keys, preserves all existing lines/options, rejects unsafe symlinks/file ownership, fixes private permissions, and avoids duplicating the same key even when its comment differs. Duplicate detection parses only the actual algorithm/blob fields after any quoted options, never trailing comments. It needs no helper, sudo or server configuration change. Do not automatically retry a command of uncertain outcome. Verify a fresh key-only SSH authentication before saving the selected key/account; retain the bootstrap login and report unverified installation if verification fails. Cancellation/background closes the connection and suppresses late success.
+
+Terminal keyboard accessories show a 1–0 number row whenever the software keyboard is open and standard Esc, Tab, Ctrl, Alt, arrows and additional navigation/function keys. Software modifiers apply once, including Backspace, then release; explicit long press locks them. Shift applies standard shifted symbols to the accessory number row. Legacy Ctrl-Backspace sends control-H and Alt prefixes Escape; enhanced keyboard mode uses its modifier parameter. IME composition deletion keeps the native text-input path. A grouped native range deletion produces only one Ctrl/Alt-modified deletion for the logical keypress; ordinary deletion retains the native count. Input is encoded as xterm data, respecting application cursor mode. Modifiers clear on keyboard dismissal, disconnect or background, and no input is replayed. Command shortcuts are local copy/paste actions, not fabricated remote macOS key events. Pro-only customization permits bounded layouts and saved snippets; the standard number/modifier rows remain free.
+
+## Lifetime Pro and permanent free access (2026-10-05)
+
+The official client has an optional lifetime non-consumable Pro product (`media.jenny.maccompanion.pro.lifetime`, US base price $9.99) and Restore Purchases. Verify StoreKit transactions, their product/type and revocation before unlocking. Resolve initial entitlements before denying paid actions. Listen for updates and read current entitlements without a custom account/server or per-session online purchase check. Cancelled, pending, unverified and unavailable purchases never unlock Pro or delete user data. Display StoreKit's localized price only when the product is available. The development StoreKit configuration is testing-only and never establishes App Store product availability.
+
+An explicit optional free non-consumable `media.jenny.maccompanion.pro.trial14`, displayed as **14-day Trial**, grants the same Pro features for exactly 1,209,600 seconds from its verified **original** purchase date. It MUST be priced zero before the app offers it. Explain the duration, expiring Pro features, permanent free tier and separate lifetime purchase before starting. There is no automatic billing or renewal. Restore, repeated purchase, another device and reinstall MUST NOT reset the original start date. Read verified trial history, including revoked transactions, to prevent offering a second trial; revoked trials grant no access. Unverified, wrong-product, wrong-type and future-dated transactions grant no trial access. Reevaluate expiry on foreground and with a bounded local deadline while running; no per-frame timer or server is needed. Local time is used offline and is not a tamper-resistant server clock. Lifetime access overrides trial expiry. Expiry/revocation preserves saved data, free selections and active connections.
+
+Free access has no session/time expiry: one saved Mac, one SSH key, Desktop, Trackpad & Keyboard, basic Terminal, local/private-VPN addresses, advanced ports, display selection/zoom, standard keyboard/number row, accessibility, app lock, server verification, diagnostics and key import/export. Pro adds multiple saved Macs, multiple named keys, automatic key installation, customized terminal rows, shortcuts and snippets. Existing extra Macs/keys are preserved for management/export/deletion when Pro is unavailable. A stable free selection remains usable; never terminate an active connection when entitlement changes. Purchasing/restoring unlocks preserved records. Commerce gates never grant SSH trust or change protocol authorization.
 
 iCloud library sync MUST default off on each installation and require explicit consent after a privacy disclosure. It uses synchronizable generic-password items in the app's existing Keychain access group, protected by iCloud Keychain; it does not introduce custom cryptography, a CloudKit container, or app authentication. Sync transports saved Mac UUIDs, names, ordered addresses, ports and non-content session preferences. Passwords, SSH private keys, accepted server keys, saved text, custom actions, app-unlock consent and the sync opt-in itself remain device-local. Cloud data never establishes server trust or opens a session.
 
 Each device writes its own bounded record versions, ordered by logical revision then device UUID. A validated newer tombstone suppresses a deleted Mac without deleting local credentials. Malformed, oversized, duplicate, unsupported or unreadable cloud data MUST preserve local records. Cloud work occurs only while opted in and the app is unlocked; refresh is performed on foreground and explicit request, never per input event. Local saves remain usable offline. Disabling stops reads and writes and retains local Macs and existing cloud copies. Deleting cloud copies is an explicit, separate operation with a warning to disable other devices first. The UI MUST distinguish local Keychain submission from confirmed delivery; it cannot report a successful multi-device sync without evidence.
+
+OpenSSH import and encrypted export accept bcrypt rounds 1 through 128 and salt lengths 1 through 64 after bounded preflight. All padding bytes must match the OpenSSH ascending sequence, allowing a complete cipher block of padding.
+
+## Error and recovery presentation, 2026-10-06
+
+Failures are classified by typed errors and known connection phases, never by
+matching vendor error text. Unknown failures remain unknown. Authentication
+rejection cannot establish that a public key is absent. Connection details are
+local bounded phase/service/settings values, excluding secrets, private keys,
+input, pixels and raw vendor output. Cancellation and pending purchases are
+neutral outcomes. Failed reads preserve data and must not appear as an empty
+library. Presentation does not change existing authentication or entitlements.
+
+Public-key setup records command-not-sent, command-sent, installation-acknowledged
+and login-verified phases. Cancellation/timeout never replays setup or input.
+An uncertain setup first offers Test Key Login: a fresh key-only authentication
+to the verified target, with no password fallback and no remote install command.
+Only verified login followed by durable key association reports success. A
+failed verification keeps the previous selection and saved password. A changed
+SSH server identity blocks authentication and remains an explicit independent
+verification decision. Free manual public-key copy/export remains available;
+automatic installation keeps its existing Pro/trial gate.
+
+The indexed direct-screen-sharing fixture defines recovery reason and setup
+outcome cases. Native recovery cards stay in context, preserve drafts and use
+explicit Retry/Reconnect actions. Desktop may restore a compatible viewport;
+Terminal reconnect opens a new shell and never restores or replays prior input.
+
+## Desktop baseline readiness, 2026-10-06
+
+Display metadata (1101/1105) MUST NOT mark pixels dirty or establish Desktop
+readiness. Initial allocation, resize, host layout changes, resume and leaving input-only mode require
+a complete baseline of decoded pixel rectangles before presenting a new image.
+Coverage uses two bounded bits per framebuffer pixel, within the existing 96 MiB
+framebuffer limit. Black pixels count as received pixels. Valid matching display
+geometry excludes only gaps between displays; unknown geometry requires the whole
+framebuffer. Overlapping rectangles count once. Retain the last presented image
+while waiting; queued images from an older allocation/lifecycle epoch are rejected.
+
+The existing initial nonincremental request remains. An incomplete baseline may
+request up to two additional nonincremental refreshes, at least one second apart.
+After eight seconds without a complete baseline, end with a recoverable desktop
+loading error. No infinite retries, content inspection, or input replay. Diagnostics
+contain only readiness, rectangle/pixel counts and refresh counts, never pixels.
+
+## Saved login editing
+
+Edit Mac offers separate Desktop and Terminal password-login editors. The current
+login stays in its existing device-local, non-synchronizable per-Mac/service
+Keychain item until explicit Save. Fields are masked/privacy-sensitive and drafts
+are cleared on dismissal/background. Editing does not connect, alter a Mac account
+password, change SSH trust, or change the selected key. Failed/unreadable Keychain
+reads block saving; failed writes preserve the draft and the previous saved item.
+Validation uses the existing service credential bounds.
