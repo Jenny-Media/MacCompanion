@@ -77,10 +77,30 @@ folder. Submission is not approval or external testing availability.
 
 ## Public-link scope still pending
 
-The earlier outside-France compliance answer is preserved. The user asks for
-advice about the effort of French distribution and has not yet decided its scope.
-The public link remains inactive while that scope is clarified; no French
-declaration has been filed or invented.
+The earlier outside-France compliance answer is preserved. After the discussion,
+the user explicitly requested **dropping France support**. The existing store
+availability had included all 175 countries or regions. Only France was deselected;
+the confirmation dialog specifically named France. The saved availability summary
+now reports **174 countries or regions** and its Europe table confirms
+**France: Not Available**. Screenshot evidence remains outside Git as
+`maccompanion-france-not-available-20261006.jpg` in this task's visualization folder.
+The app has not yet been released on the App Store. No French declaration has been
+filed, and no application encryption or source-bound archive input was changed.
+
+Lifetime Pro (`6819497277`) and 14-day Trial (`6819497930`) availability was also
+saved without France. After reloading each product, its form reports **174 of 175
+countries or regions selected**, Save is disabled, and the reopened country
+selector confirms France is unchecked. The product prices, base country,
+future-region setting and trial terms were preserved. Required stable-Xcode
+`bash scripts/validate.sh` passes; the log is outside Git at
+`/private/tmp/maccompanion-france-exclusion-validation-20261006.log`.
+
+The public link remains inactive because its UI has no country filter, and
+excluding France from the store does not prove that the beta link is regionally
+enforced. The owner was asked to choose controlled invitations for outside-France
+testers or a public link with an unenforced outside-France notice. The latter has
+not been assumed from the country exclusion request. The 100-tester draft and
+submitted build remain prepared.
 
 Current Apple guidance specifies a French encryption declaration for standard
 encryption outside the operating system **when distributing on the App Store in
@@ -90,10 +110,9 @@ TestFlight App Review. ANSSI distinguishes unrestricted use from supplying or
 importing encryption products, with exceptions depending on classification.
 Its current process is an online declaration, requesting company information,
 registration evidence (or a foreign equivalent) and product/technical documents.
-The shipped SSH/OpenSSL dependency graph is unchanged. The recommendation is to
-retain France as a planned market, confirm the applicable classification and
-prepare documentation; a French release may be deferred temporarily. No change
-to encryption or permanent removal of France is authorized by the discussion.
+The shipped SSH/OpenSSL dependency graph is unchanged. The earlier recommendation
+to retain France as a planned market is superseded by the subsequent explicit
+product-owner decision above.
 
 References:
 - https://developer.apple.com/help/app-store-connect/test-a-beta-version/invite-external-testers

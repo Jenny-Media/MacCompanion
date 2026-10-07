@@ -1,3 +1,24 @@
+## 2026-10-06 — France excluded from App Store distribution
+
+The product owner explicitly requested dropping France support. App Store Connect
+availability was changed from 175 to **174 countries or regions**, removing only
+France. Its Europe availability table confirms **France: Not Available**. The
+existing outside-France encryption answer remains applicable to the planned store
+release. The normal iOS app and its cryptography are unchanged; no new build is
+needed for this distribution setting.
+
+The **Lifetime Pro** and **14-day Trial** in-app products also exclude France.
+Both reloaded product pages report **174 of 175 countries or regions selected**;
+their availability selectors confirm France is unchecked. Product prices and
+trial terms are unchanged. Required stable-Xcode `bash scripts/validate.sh` passes
+for this records-only update.
+
+TestFlight public links expose device/OS criteria but no country filter. Store
+availability does not provide verified regional enforcement for this beta link.
+The prepared **100-tester** public link remains inactive pending the owner's choice
+of controlled outside-France invitations or an explicitly unfiltered public link.
+Build **1.0 (5)** has already been submitted to Beta App Review.
+
 ## 2026-10-06 — Build 5 uploaded for the authorized public beta
 
 Approved app changes are committed as `768708b`. Stable required validation passes;
