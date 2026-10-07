@@ -1,3 +1,16 @@
+## 2026-10-07 — Active Terminal menu and shared category clipping
+
+Installed build 14's preceding source is committed locally as `987c265`.
+Terminal's Session menu now keeps Connection Details, App Settings and Exit;
+saved-Mac settings retain account and SSH key configuration. The shared quick
+panel measures native button content at its actual width, fixing clipped View &
+Display and Keyboard & Input symbols and captions at enlarged text sizes.
+Required stable-Xcode validation and **12** focused hosted checks pass.
+Before/after geometry and synthetic screenshots verify both session modes;
+full-system captures verify the shorter Terminal menu in both palettes.
+See [menu and icon layout evidence](session-menu-icon-layout-20261007.md).
+This follow-up has not been installed on the physical iPhone or published.
+
 ## 2026-10-07 — Terminal number row is optional
 
 Keyboard & Input now includes a free Show Number Row choice, enabled by default.
@@ -10,8 +23,8 @@ Normal development **1.0 (14)** includes this choice, the persistent Terminal ba
 and above-button popovers. It is built, signed, installed and launched on iPhone
 18 Pro Max. All **577** source inputs, the signed binary, existing app/widget
 identities and private Keychain groups are verified. CoreDevice confirms build
-14 and installation sequence **9120**. Physical acceptance is pending; no commit,
-push or TestFlight publication occurred.
+14 and installation sequence **9120**. Source is committed as `987c265`.
+Physical acceptance is pending; no push or TestFlight publication occurred.
 
 ## 2026-10-07 — Terminal controls share a persistent modifier bar
 
@@ -24,7 +37,8 @@ focused hosted checks pass; **8** full-system synthetic Simulator captures verif
 both palettes and keyboard states. See the
 [persistent toolbar evidence](terminal-persistent-toolbar-20261007.md).
 This follow-up is included in installed normal development **1.0 (14)** above.
-Physical acceptance is pending; it has not been committed, pushed or published.
+Source is committed as `987c265`; physical acceptance remains pending. It has
+not been pushed or published.
 
 ## 2026-10-07 — Floating control menus open above the button
 
@@ -41,7 +55,8 @@ Simulator captures verify visible Desktop and Terminal placement, including
 the keyboard and both Terminal palettes. See the
 [floating menu audit](floating-menu-placement-20261007.md).
 This follow-up is included in installed normal development **1.0 (14)** above.
-Physical acceptance is pending; it has not been committed, pushed or published.
+Source is committed as `987c265`; physical acceptance remains pending. It has
+not been pushed or published.
 
 ## 2026-10-07 — Centered connection cards have clearer separation
 
@@ -62,7 +77,7 @@ Keychain identities. The first installation attempt could not acquire CoreDevice
 connectivity and power assertions. The user's authorized retry installed and
 launched the update on iPhone 18 Pro Max; CoreDevice confirms version/build and
 installation sequence **9104**. Physical acceptance remains pending. This
-follow-up has not been committed, pushed or published to TestFlight.
+follow-up is committed as `987c265` and has not been pushed or published to TestFlight.
 
 ## 2026-10-07 — Trackpad & Keyboard login matches Desktop
 
@@ -73,8 +88,8 @@ distinct focused hosted checks pass; synthetic captures verify both themes and
 large text. Normal development **1.0 (12)** is installed and launched on iPhone
 18 Pro Max, with all **577** source inputs, the signed binary, version/build and
 installation sequence **9088** verified. Physical acceptance remains pending.
-See [shared login evidence](input-only-login-20261007.md). This follow-up has not
-been committed, pushed or published to TestFlight.
+See [shared login evidence](input-only-login-20261007.md). This follow-up is
+committed as `987c265` and has not been pushed or published to TestFlight.
 
 ## 2026-10-07 — Native Remote Desktop scrolling accepted on iPhone
 

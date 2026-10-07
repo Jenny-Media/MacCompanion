@@ -142,9 +142,9 @@ import UIKit
             XCTAssertEqual(menu.navigationItem.rightBarButtonItem?.title, "Done")
             let panel = nav.view.convert(nav.view.bounds, to: controller.view)
             XCTAssertLessThanOrEqual(panel.maxY, controller.keyboardCeiling() + 1)
-            menu.tableView.scrollToRow(at: IndexPath(row: 0, section: 2), at: .bottom, animated: false)
+            menu.tableView.scrollToRow(at: IndexPath(row: 0, section: 1), at: .bottom, animated: false)
             menu.tableView.layoutIfNeeded()
-            let exit = menu.tableView.convert(menu.tableView.rectForRow(at: IndexPath(row: 0, section: 2)), to: nav.view)
+            let exit = menu.tableView.convert(menu.tableView.rectForRow(at: IndexPath(row: 0, section: 1)), to: nav.view)
             XCTAssertLessThanOrEqual(exit.maxY, nav.view.bounds.maxY + 1)
             // UIKit restores keyboard focus while dismissing the popover. Finish
             // that transition before the next iteration hides the keyboard.
@@ -292,7 +292,7 @@ import UIKit
         XCTAssertEqual(restored.keyboardBar.bounds.height, 60, accuracy: 1, "A closed keyboard keeps only the persistent modifier bar")
     }
 
-    func testSharedSessionMenuFitsContentAndKeySubmenuPreservesTerminal() async throws {
+    func testSessionMenuContainsOnlyActiveSessionActionsAndPreservesTerminal() async throws {
         let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
         let window = UIWindow(windowScene: scene); window.overrideUserInterfaceStyle = .light
         let mac = try DirectMacRecordV1.normalized(name: "Synthetic Terminal", addresses: ["studio.local"])
@@ -309,20 +309,15 @@ import UIKit
         for _ in 0..<100 where navigation.transitionCoordinator != nil { try await Task.sleep(for: .milliseconds(20)) }
         XCTAssertEqual(navigation.traitCollection.userInterfaceStyle, .dark, "Menus must follow the terminal palette even when the app is light")
         let items = menu.sections.flatMap { $0["items"] as? [[String: Any]] ?? [] }
+        XCTAssertEqual(items.compactMap { $0["kind"] as? String }, ["connectionInfo", "appSettings", "exit"])
         XCTAssertTrue(items.contains { $0["title"] as? String == "Exit to My Macs" && $0["destructive"] as? Bool == true })
-        menu.tableView(menu.tableView, didSelectRowAt: IndexPath(row: 1, section: 1))
-        try await Task.sleep(for: .milliseconds(500))
-        for _ in 0..<100 where navigation.transitionCoordinator != nil { try await Task.sleep(for: .milliseconds(20)) }
-        try await Task.sleep(for: .milliseconds(100))
-        let keys = try XCTUnwrap(navigation.topViewController as? CompanionVNCMenu)
-        XCTAssertEqual(navigation.viewControllers.count, 2)
-        XCTAssertLessThan(navigation.preferredContentSize.height, 350, "Three key actions should not reserve a full-size sheet")
-        let last = keys.tableView.rectForRow(at: IndexPath(row: 2, section: 0))
-        let visible = keys.tableView.convert(last, to: navigation.view)
+        XCTAssertEqual(navigation.viewControllers.count, 1)
+        XCTAssertLessThan(navigation.preferredContentSize.height, 350, "Three session actions should not reserve a full-size sheet")
+        let last = menu.tableView.rectForRow(at: IndexPath(row: 0, section: 1))
+        let visible = menu.tableView.convert(last, to: navigation.view)
         let bottomPadding = navigation.view.bounds.maxY - visible.maxY
         XCTAssertGreaterThanOrEqual(bottomPadding, 0, "The final action must be fully visible")
         XCTAssertLessThanOrEqual(bottomPadding, 32, "A short menu must end near its final action")
-        navigation.popViewController(animated: false)
         XCTAssertTrue(navigation.topViewController === menu)
         XCTAssertTrue(controller.session === session)
         XCTAssertTrue(String(decoding: controller.terminal.getTerminal().getBufferAsData(), as: UTF8.self).contains("Preserved across menus"))

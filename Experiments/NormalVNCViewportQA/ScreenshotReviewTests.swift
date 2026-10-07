@@ -520,17 +520,11 @@ import StoreKitTest
             let panel = try XCTUnwrap(terminal.controls.value(forKey: "panel") as? UIView)
             XCTAssertLessThanOrEqual(panel.frame.maxY, terminal.controls.button.frame.minY)
             save(window, name: "terminal-quick-actions" + suffix, folder: folder); terminal.controls.close()
-            for action in ["session", "inputMenu", "appearance", "sshKeys"] {
+            for action in ["session", "inputMenu", "appearance"] {
                 terminal.controls.actionHandler?(["kind": action])
                 try await verify(terminal, controls: terminal.controls, name: "terminal-" + action + suffix)
                 try await dismiss(terminal)
             }
-            // Navigation into SSH Keys retains the original button anchor.
-            terminal.controls.actionHandler?(["kind": "session"])
-            try await Task.sleep(for: .milliseconds(650))
-            terminal.controls.actionHandler?(["kind": "sshKeys"])
-            try await verify(terminal, controls: terminal.controls, name: "terminal-nested-sshKeys" + suffix)
-            try await dismiss(terminal)
         }
         window.endEditing(true); session.stop()
     }

@@ -458,15 +458,7 @@ private struct TerminalSurface: UIViewControllerRepresentable {
                 ["title": "Session", "items": [
                     ["kind": "connectionInfo", "title": "Connection Details", "symbol": "network"],
                     ["kind": "appSettings", "title": "App Settings", "symbol": "gearshape", "submenu": true]]],
-                ["title": "Mac", "items": [
-                    ["kind": "macSettings", "title": "Mac Settings", "symbol": "desktopcomputer", "submenu": true],
-                    ["kind": "sshKeys", "title": "SSH Keys", "symbol": "key", "submenu": true, "push": true]]],
                 ["title": "", "items": [["kind": "exit", "title": "Exit to My Macs", "symbol": "rectangle.portrait.and.arrow.right", "destructive": true]]]])
-        case "sshKeys":
-            presentControlsMenu("SSH Keys", sections: [["title": "", "items": [
-                ["kind": "keys", "title": "Choose or Manage Key", "symbol": "key", "submenu": true],
-                ["kind": "install", "title": "Set Up Key on This Mac", "symbol": "key.horizontal", "submenu": true],
-                ["kind": "manual", "title": "Manual Key Setup", "symbol": "list.bullet", "submenu": true]]]])
         case "connectionInfo":
             let message = ([session.mac.name, "SSH · Port \(session.mac.sshPort)"] + session.mac.addresses).joined(separator: "\n")
             let details = UIAlertController(title: "Connection Details", message: message, preferredStyle: .alert)

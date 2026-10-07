@@ -74,6 +74,56 @@
 @interface SessionControlsTests : XCTestCase
 @end
 @implementation SessionControlsTests
+- (void)testCategoryIconsAndLabelsFitAcrossTextSizesAndBothSessionModes {
+    UIWindowScene *scene = (id)UIApplication.sharedApplication.connectedScenes.anyObject;
+    UIWindow *previous = nil; for (UIWindow *w in scene.windows) if (w.isKeyWindow) previous = w;
+    UIWindow *window = [[UIWindow alloc] initWithWindowScene:scene];
+    UIViewController *holder = [UIViewController new]; window.rootViewController = holder; [window makeKeyAndVisible];
+    NSArray *categories = @[UIContentSizeCategoryLarge, UIContentSizeCategoryExtraExtraExtraLarge,
+        UIContentSizeCategoryAccessibilityMedium, UIContentSizeCategoryAccessibilityExtraExtraExtraLarge];
+    for (NSNumber *terminal in @[@NO, @YES]) for (NSString *category in categories) {
+        CompanionVNCControls *controls = [[CompanionVNCControls alloc] initWithFrame:CGRectMake(0,0,440,956)];
+        controls.traitOverrides.preferredContentSizeCategory = category;
+        controls.macName = @"Studio Mac";
+        controls.quickActions = @[@{@"kind":@"paste",@"title":@"Paste",@"enabled":@YES},
+            @{@"kind":@"interrupt",@"title":@"Ctrl-C",@"enabled":@YES}];
+        if (terminal.boolValue) controls.categoryActions = @[
+            @{@"kind":@"inputMenu",@"title":@"Keyboard & Input",@"symbol":@"keyboard"},
+            @{@"kind":@"appearance",@"title":@"Appearance",@"symbol":@"circle.lefthalf.filled"},
+            @{@"kind":@"session",@"title":@"Session",@"symbol":@"network"}];
+        [holder.view addSubview:controls]; [controls open];
+        for (NSValue *size in @[[NSValue valueWithCGSize:CGSizeMake(440,956)],
+                                [NSValue valueWithCGSize:CGSizeMake(320,640)],
+                                [NSValue valueWithCGSize:CGSizeMake(956,440)]]) {
+            controls.frame = (CGRect){CGPointZero,size.CGSizeValue};
+            [controls setNeedsLayout]; [controls layoutIfNeeded];
+            [controls.button layoutIfNeeded];
+            CGRect mainIcon = [controls.button.imageView convertRect:controls.button.imageView.bounds toView:controls.button];
+            XCTAssertTrue(CGRectContainsRect(controls.button.bounds,mainIcon),@"Main control must fit at %@",category);
+            for (UIButton *choice in [controls valueForKey:@"choices"]) {
+                [choice layoutIfNeeded];
+                CGRect image = [choice.imageView convertRect:choice.imageView.bounds toView:choice];
+                CGRect title = [choice.titleLabel convertRect:choice.titleLabel.bounds toView:choice];
+                NSString *context = [NSString stringWithFormat:@"%@ %@ %@ %@", terminal.boolValue ? @"Terminal" : @"Desktop", category, NSStringFromCGSize(size.CGSizeValue), choice.configuration.title];
+                XCTAssertGreaterThan(image.size.height,0,@"%@ icon must be present",context);
+                XCTAssertTrue(CGRectContainsRect(CGRectInset(choice.bounds,-.5,-.5),image),@"%@ icon %@ escapes %@",context,NSStringFromCGRect(image),NSStringFromCGRect(choice.bounds));
+                XCTAssertTrue(CGRectContainsRect(CGRectInset(choice.bounds,-.5,-.5),title),@"%@ title %@ escapes %@",context,NSStringFromCGRect(title),NSStringFromCGRect(choice.bounds));
+            }
+        }
+        controls.frame = CGRectMake(0,0,440,956); [controls setNeedsLayout]; [controls layoutIfNeeded];
+        XCTestExpectation *settled = [self expectationWithDescription:@"Panel animation completed"];
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW,.25*NSEC_PER_SEC),dispatch_get_main_queue(),^{ [settled fulfill]; });
+        [self waitForExpectations:@[settled] timeout:2];
+        UIImage *image = [[[UIGraphicsImageRenderer alloc] initWithSize:window.bounds.size] imageWithActions:^(UIGraphicsImageRendererContext *context) {
+            [window drawViewHierarchyInRect:window.bounds afterScreenUpdates:YES];
+        }];
+        XCTAttachment *attachment = [XCTAttachment attachmentWithImage:image];
+        attachment.name = [NSString stringWithFormat:@"%@-%@",terminal.boolValue ? @"terminal" : @"desktop",category];
+        attachment.lifetime = XCTAttachmentLifetimeKeepAlways; [self addAttachment:attachment];
+        [controls close]; [controls removeFromSuperview];
+    }
+    window.hidden = YES; window.rootViewController = nil; [previous makeKeyAndVisible];
+}
 - (void)testTerminalCategoriesSupportSlideCommitAndCancellationWithoutDesktopActions {
     CompanionVNCControls *controls = [[CompanionVNCControls alloc] initWithFrame:CGRectMake(0,0,440,956)];
     controls.categoryActions = @[@{@"kind":@"inputMenu",@"title":@"Keyboard & Input",@"symbol":@"keyboard"},

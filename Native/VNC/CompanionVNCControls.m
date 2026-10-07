@@ -25,6 +25,9 @@ NSString *const CompanionVNCControlsHapticsPreference = @"direct-controls-haptic
         if (@available(iOS 26.0, *)) config = [UIButtonConfiguration glassButtonConfiguration];
         else config = [UIButtonConfiguration grayButtonConfiguration];
         config.image = [UIImage systemImageNamed:@"ellipsis"];
+        // Keep the symbol inside this fixed 52-point control even at the
+        // largest text size; menu titles and actions still scale normally.
+        config.preferredSymbolConfigurationForImage = [UIImageSymbolConfiguration configurationWithPointSize:20 weight:UIImageSymbolWeightMedium];
         config.cornerStyle = UIButtonConfigurationCornerStyleCapsule;
         _button.configuration = config; _button.accessibilityLabel = @"Session Controls";
         _button.accessibilityIdentifier = @"session-controls";
@@ -100,11 +103,25 @@ NSString *const CompanionVNCControlsHapticsPreference = @"direct-controls-haptic
     BOOL largeText = UIContentSizeCategoryIsAccessibilityCategory(self.traitCollection.preferredContentSizeCategory)
         || width < 280 || panelRoom < 208;
     CGFloat headerHeight = MAX(44, ceil(self.nameLabel.font.lineHeight) + 16);
-    CGFloat tileHeight = MAX(64, ceil([UIFont preferredFontForTextStyle:UIFontTextStyleCaption1 compatibleWithTraitCollection:self.traitCollection].lineHeight) * 2 + 28);
-    CGFloat categoryHeight = largeText ? MAX(64, tileHeight) : 64;
     CGFloat headingHeight = MAX(32, ceil([UIFont preferredFontForTextStyle:UIFontTextStyleFootnote compatibleWithTraitCollection:self.traitCollection].lineHeight) + 8);
     NSUInteger columns = largeText ? 1 : 2;
     NSUInteger categoryCount = self.items.count - self.quickCount;
+    CGFloat tileWidth = (width - (columns == 1 ? 16 : 28)) / columns;
+    CGFloat categoryWidth = largeText ? width - 16 : (width - 16) / MAX(1, categoryCount);
+    CGFloat tileHeight = 64, categoryHeight = 64;
+    // Measure the configured native button at its actual width. Fixed-height
+    // tiles clip growing SF Symbols and wrapped titles at larger text sizes.
+    for (NSUInteger i = 0; i < self.choices.count; i++) {
+        UIButton *choice = self.choices[i];
+        UIButtonConfiguration *configuration = choice.configuration;
+        configuration.imagePlacement = largeText ? NSDirectionalRectEdgeLeading : NSDirectionalRectEdgeTop;
+        configuration.preferredSymbolConfigurationForImage = [UIImageSymbolConfiguration configurationWithFont:[UIFont preferredFontForTextStyle:UIFontTextStyleBody compatibleWithTraitCollection:self.traitCollection]];
+        configuration.titleLineBreakMode = NSLineBreakByWordWrapping;
+        choice.configuration = configuration; choice.titleLabel.numberOfLines = 0;
+        CGFloat fittingHeight = ceil([choice sizeThatFits:CGSizeMake(i < self.quickCount ? tileWidth : categoryWidth, CGFLOAT_MAX)].height);
+        if (i < self.quickCount) tileHeight = MAX(tileHeight, fittingHeight);
+        else categoryHeight = MAX(categoryHeight, fittingHeight);
+    }
     CGFloat categoryBody = largeText ? categoryCount * categoryHeight : 0;
     CGFloat contentHeight = categoryBody + (self.quickCount ? headingHeight + ceil(self.quickCount / (CGFloat)columns) * (tileHeight + 8) + 8 : 0);
     CGFloat fixedHeight = headerHeight + (largeText ? 8 : categoryHeight + 12);
@@ -115,13 +132,9 @@ NSString *const CompanionVNCControlsHapticsPreference = @"direct-controls-haptic
     self.scroll.frame = CGRectMake(0, fixedHeight, width, MAX(0, height - fixedHeight - 12));
     self.scroll.contentSize = CGSizeMake(width, contentHeight);
     UILabel *heading = (UILabel *)[self.scroll viewWithTag:1001]; heading.frame = CGRectMake(16, categoryBody + 4, MAX(0, width - 32), headingHeight - 8);
-    CGFloat tileWidth = (width - (columns == 1 ? 16 : 28)) / columns;
     for (NSUInteger i = 0; i < self.choices.count; i++) {
         UIView *parent = i < self.quickCount || largeText ? self.scroll : self.panel.contentView;
         if (self.choices[i].superview != parent) [parent addSubview:self.choices[i]];
-        UIButtonConfiguration *configuration = self.choices[i].configuration;
-        configuration.imagePlacement = largeText ? NSDirectionalRectEdgeLeading : NSDirectionalRectEdgeTop;
-        self.choices[i].configuration = configuration;
         self.choices[i].frame = i < self.quickCount
             ? CGRectMake(8 + (i % columns) * (tileWidth + 12), categoryBody + headingHeight + (ceil(self.quickCount / (CGFloat)columns) - 1 - (i / columns)) * (tileHeight + 8), tileWidth, tileHeight)
             : largeText ? CGRectMake(8, (i - self.quickCount) * categoryHeight, width - 16, categoryHeight)

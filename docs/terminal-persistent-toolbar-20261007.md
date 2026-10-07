@@ -107,4 +107,5 @@ are outside Git:
 - `/private/tmp/maccompanion-terminal-toolbar-20261007-launch.json`
 - `/private/tmp/maccompanion-terminal-toolbar-20261007-app-after.json`
 
-Physical acceptance is pending; no commit, push or TestFlight publication occurred.
+Source is committed locally as `987c265`. Physical acceptance is pending;
+no push or TestFlight publication occurred.
