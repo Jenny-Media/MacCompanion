@@ -24,6 +24,7 @@ import UIKit
         host.view.frame = CGRect(x: 0, y: 0, width: 900, height: 660)
         try await Task.sleep(for: .milliseconds(250))
         let original = fields(host.view); XCTAssertEqual(original.count, 2)
+        XCTAssertLessThan(try XCTUnwrap(original.last).bounds.height, 64, "The password field must use its text height, not stretch the connection sheet")
         let account = try XCTUnwrap(original.first)
         XCTAssertTrue(account.becomeFirstResponder())
         host.view.frame.size.height = 400; host.view.setNeedsLayout(); host.view.layoutIfNeeded()
@@ -66,17 +67,20 @@ import UIKit
         session.stop()
     }
 
-    func testFullscreenKeepsTerminalAndControlsMountedAndRecoveryRestoresNavigation() async throws {
+    func testHeaderlessTerminalPreservesBufferAndFloatingControlsAcrossRecovery() async throws {
         let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
         let window = UIWindow(windowScene: scene)
         let mac = try DirectMacRecordV1.normalized(name: "Synthetic Terminal", addresses: ["studio.local"])
         let session = DirectTerminalSession(mac: mac); session.connected = true
-        let host = UIHostingController(rootView: DirectTerminalView(mac: mac, session: session, fullscreen: true, exit: {}).directAppearance())
+        let host = UIHostingController(rootView: DirectTerminalView(mac: mac, session: session, exit: {}).directAppearance())
         window.rootViewController = host; window.makeKeyAndVisible()
         defer { window.isHidden = true; window.rootViewController = nil; session.stop() }
         try await Task.sleep(for: .milliseconds(300))
         func descendants(_ view: UIView) -> [UIView] { [view] + view.subviews.flatMap(descendants) }
         let terminal = try XCTUnwrap(descendants(host.view).compactMap { $0 as? SessionTerminalView }.first)
+        let controls = try XCTUnwrap(descendants(host.view).compactMap { $0 as? CompanionVNCControls }.first)
+        XCTAssertFalse(controls.isHidden)
+        XCTAssertNil(controls.hitTest(CGPoint(x: 10, y: 10), with: nil), "The floating overlay must not intercept terminal selection or scrolling")
         session.received?(Array("Fullscreen buffer survives\r\n".utf8))
         let navigation = try XCTUnwrap(host.children.compactMap { $0 as? UINavigationController }.first)
         XCTAssertTrue(navigation.isNavigationBarHidden)
@@ -84,6 +88,12 @@ import UIKit
         try await Task.sleep(for: .milliseconds(300))
         XCTAssertTrue(descendants(host.view).contains { $0 === terminal })
         XCTAssertTrue(String(decoding: terminal.getTerminal().getBufferAsData(), as: UTF8.self).contains("Fullscreen buffer survives"))
-        XCTAssertFalse(navigation.isNavigationBarHidden)
+        XCTAssertTrue(navigation.isNavigationBarHidden)
+        XCTAssertTrue(controls.isHidden)
+        XCTAssertFalse(terminal.isUserInteractionEnabled)
+        session.recovery = nil; session.connected = true
+        try await Task.sleep(for: .milliseconds(300))
+        XCTAssertFalse(controls.isHidden); XCTAssertTrue(terminal.isUserInteractionEnabled)
+        XCTAssertTrue(descendants(host.view).contains { $0 === terminal })
     }
 }

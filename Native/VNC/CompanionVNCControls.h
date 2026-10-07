@@ -5,6 +5,8 @@ FOUNDATION_EXPORT NSString *const CompanionVNCControlsHapticsPreference;
 @interface CompanionVNCControls : UIView
 @property(nonatomic, copy) NSString *macName;
 @property(nonatomic, copy) NSArray<NSDictionary *> *quickActions;
+/// Optional session-specific categories; nil retains the Desktop categories.
+@property(nonatomic, copy, nullable) NSArray<NSDictionary *> *categoryActions;
 @property(nonatomic) BOOL trackpad;
 @property(nonatomic) BOOL hapticsEnabled;
 @property(nonatomic) BOOL fullscreen, inputOnly;

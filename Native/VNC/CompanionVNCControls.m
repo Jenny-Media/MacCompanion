@@ -96,11 +96,12 @@ NSString *const CompanionVNCControlsHapticsPreference = @"direct-controls-haptic
     BOOL largeText = UIContentSizeCategoryIsAccessibilityCategory(self.traitCollection.preferredContentSizeCategory)
         || width < 280 || panelRoom < 208;
     CGFloat headerHeight = MAX(44, ceil(self.nameLabel.font.lineHeight) + 16);
-    CGFloat tileHeight = MAX(64, ceil([UIFont preferredFontForTextStyle:UIFontTextStyleCaption1].lineHeight) * 2 + 28);
+    CGFloat tileHeight = MAX(64, ceil([UIFont preferredFontForTextStyle:UIFontTextStyleCaption1 compatibleWithTraitCollection:self.traitCollection].lineHeight) * 2 + 28);
     CGFloat categoryHeight = largeText ? MAX(64, tileHeight) : 64;
-    CGFloat headingHeight = MAX(32, ceil([UIFont preferredFontForTextStyle:UIFontTextStyleFootnote].lineHeight) + 8);
+    CGFloat headingHeight = MAX(32, ceil([UIFont preferredFontForTextStyle:UIFontTextStyleFootnote compatibleWithTraitCollection:self.traitCollection].lineHeight) + 8);
     NSUInteger columns = largeText ? 1 : 2;
-    CGFloat categoryBody = largeText ? 3 * categoryHeight : 0;
+    NSUInteger categoryCount = self.items.count - self.quickCount;
+    CGFloat categoryBody = largeText ? categoryCount * categoryHeight : 0;
     CGFloat contentHeight = categoryBody + (self.quickCount ? headingHeight + ceil(self.quickCount / (CGFloat)columns) * (tileHeight + 8) + 8 : 0);
     CGFloat fixedHeight = headerHeight + (largeText ? 8 : categoryHeight + 12);
     CGFloat height = MIN(fixedHeight + contentHeight + 12, panelRoom);
@@ -120,7 +121,7 @@ NSString *const CompanionVNCControlsHapticsPreference = @"direct-controls-haptic
         self.choices[i].frame = i < self.quickCount
             ? CGRectMake(8 + (i % columns) * (tileWidth + 12), categoryBody + headingHeight + (ceil(self.quickCount / (CGFloat)columns) - 1 - (i / columns)) * (tileHeight + 8), tileWidth, tileHeight)
             : largeText ? CGRectMake(8, (i - self.quickCount) * categoryHeight, width - 16, categoryHeight)
-                       : CGRectMake(8 + (i - self.quickCount) * ((width - 16) / 3), headerHeight + 4, (width - 16) / 3, categoryHeight);
+                       : CGRectMake(8 + (i - self.quickCount) * ((width - 16) / MAX(1, categoryCount)), headerHeight + 4, (width - 16) / MAX(1, categoryCount), categoryHeight);
     }
 }
 - (void)toggle { if (self.panel) [self close]; else [self open]; }
@@ -131,7 +132,7 @@ NSString *const CompanionVNCControlsHapticsPreference = @"direct-controls-haptic
     NSMutableArray *items = [NSMutableArray new];
     for (NSDictionary *item in self.quickActions) if ([item[@"enabled"] boolValue]) [items addObject:item];
     self.quickCount = items.count;
-    [items addObjectsFromArray:@[
+    [items addObjectsFromArray:self.categoryActions ?: @[
         @{@"kind": @"viewMenu", @"title": @"View & Display", @"symbol": @"display.2"},
         @{@"kind": @"inputMenu", @"title": @"Keyboard & Input", @"symbol": @"keyboard"},
         @{@"kind": @"session", @"title": @"Session", @"symbol": @"network"}]];
@@ -142,11 +143,11 @@ NSString *const CompanionVNCControlsHapticsPreference = @"direct-controls-haptic
     self.panel = [[UIVisualEffectView alloc] initWithEffect:effect]; self.panel.layer.cornerRadius = 24; self.panel.clipsToBounds = YES;
     self.panel.accessibilityIdentifier = @"session-control-panel";
     self.scroll = [UIScrollView new]; self.scroll.showsVerticalScrollIndicator = YES; [self.panel.contentView addSubview:self.scroll];
-    UILabel *name = [UILabel new]; name.text = self.macName; name.font = [UIFont preferredFontForTextStyle:UIFontTextStyleHeadline];
+    UILabel *name = [UILabel new]; name.text = self.macName; name.font = [UIFont preferredFontForTextStyle:UIFontTextStyleHeadline compatibleWithTraitCollection:self.traitCollection];
     name.numberOfLines = 1; name.tag = 1000; name.textColor = UIColor.labelColor;
     name.adjustsFontForContentSizeCategory = YES; self.nameLabel = name; [self.panel.contentView addSubview:name];
     UILabel *heading = [UILabel new]; heading.text = @"Quick Actions"; heading.tag = 1001;
-    heading.font = [UIFont preferredFontForTextStyle:UIFontTextStyleFootnote]; heading.textColor = UIColor.secondaryLabelColor;
+    heading.font = [UIFont preferredFontForTextStyle:UIFontTextStyleFootnote compatibleWithTraitCollection:self.traitCollection]; heading.textColor = UIColor.secondaryLabelColor;
     heading.hidden = !self.quickCount; [self.scroll addSubview:heading];
     for (NSUInteger i = 0; i < items.count; i++) {
         NSDictionary *item = items[i]; NSString *kind = item[@"kind"];
@@ -159,11 +160,13 @@ NSString *const CompanionVNCControlsHapticsPreference = @"direct-controls-haptic
         choice.configuration = config; choice.contentHorizontalAlignment = UIControlContentHorizontalAlignmentLeading;
         {
             config.imagePlacement = NSDirectionalRectEdgeTop; config.imagePadding = 4;
+            config.preferredSymbolConfigurationForImage = [UIImageSymbolConfiguration configurationWithFont:[UIFont preferredFontForTextStyle:UIFontTextStyleBody compatibleWithTraitCollection:self.traitCollection]];
             config.contentInsets = NSDirectionalEdgeInsetsMake(4, 4, 4, 4);
             choice.contentHorizontalAlignment = UIControlContentHorizontalAlignmentCenter;
             choice.backgroundColor = i < self.quickCount ? UIColor.secondarySystemFillColor : UIColor.clearColor; choice.layer.cornerRadius = 12;
+            __weak CompanionVNCControls *weak = self;
             config.titleTextAttributesTransformer = ^NSDictionary *(NSDictionary *attributes) {
-                NSMutableDictionary *result = [attributes mutableCopy]; result[NSFontAttributeName] = [UIFont preferredFontForTextStyle:UIFontTextStyleCaption1]; return result;
+                NSMutableDictionary *result = [attributes mutableCopy]; result[NSFontAttributeName] = [UIFont preferredFontForTextStyle:UIFontTextStyleCaption1 compatibleWithTraitCollection:weak.traitCollection]; return result;
             };
             choice.configuration = config; choice.titleLabel.numberOfLines = 2; choice.titleLabel.textAlignment = NSTextAlignmentCenter;
             if (self.inputOnly && ([kind isEqual:@"fit"] || [kind isEqual:@"mode"])) choice.enabled = NO;

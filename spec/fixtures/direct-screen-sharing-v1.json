@@ -1322,6 +1322,16 @@
         "stage": 101,
         "hadFrame": true,
         "reason": "inputPaused"
+      },
+      {
+        "stage": 103,
+        "hadFrame": false,
+        "reason": "desktopUnavailable"
+      },
+      {
+        "stage": 103,
+        "hadFrame": true,
+        "reason": "desktopDisconnected"
       }
     ]
   },
@@ -1440,5 +1450,18 @@
     "clearDraftOnBackground": true,
     "preserveOnReadOrWriteFailure": true,
     "changesSelectedSSHKey": false
+  },
+  "desktopEncodingPolicy": {
+    "preferences": [
+      "zlib",
+      "hextile",
+      "raw"
+    ],
+    "notAdvertised": [
+      "zrle",
+      "zywrle"
+    ],
+    "decodeFailureStage": 103,
+    "invalidZRLETileHex": "ff"
   }
 }

@@ -1,3 +1,76 @@
+## 2026-10-06 — Approved Desktop and Terminal connection sheets
+
+The approved v2 entry design is implemented: a compact bottom sheet over a blurred
+saved-Mac context, shared identity header, grouped credentials, quiet Save login,
+one primary action, concise actual progress and inline recovery. Connection Details
+retains full explanations and fixed diagnostics. Saved-login automatic entry,
+SSH trust checks and headerless connected Terminal controls remain intact.
+Light/dark, keyboard, accessibility text and adaptive landscape layouts are covered.
+
+Stable normal Simulator build passes with 577 matching input hashes. The full
+hosted QA suite passes 129 tests with one intentional skip and no failures; a final
+10-test recovery/layout/capture run passes after the details-retention adjustment.
+Required stable validation, local comparison browser checks and final diff checks
+pass. Native screenshots stay outside Git. No iPhone install, commit or TestFlight
+upload occurred. See [approved-sheet evidence](evidence/2026-10-06-approved-connection-sheets.md).
+
+## 2026-10-06 — Concise login and headerless Terminal controls
+
+Saved Terminal login starts on entry with one eligible connection attempt;
+Desktop's automatic saved-login entry is preserved. Manual login has one Connect
+action; active attempts show progress and Cancel. Explanations remain in
+Details/Options. Connected Terminal has no top title/navigation bar and uses
+floating tap/press-and-slide controls above the software keyboard.
+
+Final stable normal Simulator build and hosted direct-client QA pass: 129 tests,
+one intentional skip, zero failures. Required stable validation and final diff
+checks pass. Synthetic light/dark/large-text views and the full Simulator system
+keyboard were inspected. No iPhone install, commit or TestFlight upload occurred.
+See [login and Terminal evidence](evidence/2026-10-06-login-terminal-controls.md).
+
+The host capture investigation is paused. Findings, source clues and the
+controlled follow-up plan are preserved in the
+[MacTools closed-lid handoff](evidence/2026-10-06-mactools-closed-lid-capture.md).
+
+## 2026-10-06 — Black desktop traced to closed-lid virtual-display capture
+
+The user confirms that opening M5's lid restores the desktop using the already
+installed local development build 5. Closed-lid Mac-side Screen Sharing image-read
+RPCs failed, and an independent capture-status probe delivered zero frames from
+the only active MacTools virtual display. With the lid open, the physical display
+is active, the same probe delivers 155 complete frames in five seconds, and the
+iPhone diagnostic reports 55 advancing desktop presentations without decode errors.
+
+This confirms the failing host configuration, while attribution between the
+virtual-display provider and macOS capture remains unresolved. Open-lid acceptance
+does not establish virtual-display-only or exact TestFlight-build reliability.
+The separately reproduced pinned ZRLE false-success defect is guarded in the local
+client, but that correction did not resolve this host capture failure. Stable
+validation, the focused complete 4K rendering regression and earlier hosted QA
+pass. No new Mac helper, host setting change or TestFlight upload occurred.
+See [black-desktop investigation](evidence/2026-10-06-black-desktop-decoder.md).
+
+The follow-up ran the same installed MacTools virtual-display helper with the
+lid open. ScreenCaptureKit delivered 10 complete / 146 idle callbacks, screenshot
+creation succeeded, and a separate diagnostic legacy stream delivered 10 complete
+callbacks. The helper's descriptor and Retina mode therefore work with an active
+physical display. MacTools' creation handshake and ongoing health check do not
+verify frame delivery. Earlier WindowServer logs show a display sleep/wake sequence
+at lid closure; transition-induced capture stalling remains the strongest hypothesis.
+A retained-display physical test delivered 81 complete frames with the lid closed,
+then lost its capture source exactly when WindowServer put the display to sleep.
+The display later became active again, but the terminated stream did not recover.
+The initial sample was already closed, and concurrent unrelated Simulator UI
+automation and additional display churn limit original-trigger attribution. The
+intended single-display pre-creation comparison remains unperformed.
+Temporary probe displays were removed; no MacTools/client source or installed
+app was changed. Exact internal macOS attribution remains unproven.
+Diagnostic compilation and syntax/diff checks pass. Two full validation attempts
+stopped at Swift temporary-object creation with `No space left on device`; unrelated
+files were preserved. After the physical probe, the current full stable-Xcode
+`bash scripts/validate.sh` rerun completed with exit status 0. This validates the
+diagnostic source, without claiming a MacTools repair or closed-lid reliability.
+
 ## 2026-10-06 — Adaptive client internal TestFlight build 4 ready
 
 Source `ef90c1e` is committed and delivered as **1.0 (4)** to the existing

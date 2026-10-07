@@ -40,6 +40,16 @@ import Citadel
         XCTAssertFalse((viewer.value(forKey: "loginFields") as? UIView)?.isHidden ?? true)
         viewer.stop()
     }
+    func testInlineDesktopErrorRetainsDiagnosticDetailsUntilLoginIsEdited() throws {
+        let viewer = CompanionVNCViewer(); viewer.servicePort = 5901; viewer.loadViewIfNeeded()
+        defer { viewer.stop() }
+        viewer.showRecoveryStage(7)
+        let details = try XCTUnwrap(viewer.value(forKey: "loginIssueDetails") as? String)
+        XCTAssertTrue(details.contains("allowed to use the sharing service"))
+        XCTAssertTrue(details.contains("Port: 5901")); XCTAssertTrue(details.contains("Stage: 7"))
+        _ = viewer.perform(NSSelectorFromString("loginEdited"))
+        XCTAssertNil(viewer.value(forKey: "loginIssueDetails"))
+    }
     func testSavedMacRetryRereadsWithoutReplacingMalformedData() throws {
         let folder = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
@@ -53,18 +63,23 @@ import Citadel
         try Data("{\"version\":3,\"macs\":[]}".utf8).write(to: url)
         library.reload(); XCTAssertTrue(library.readable); XCTAssertNil(library.recovery)
     }
-    func testLoginChromeHidesDesktopAndKeepsFieldsInPlaceDuringProgress() {
+    func testLoginProgressHidesFormAndRestoresTheSameDraftAfterValidationFailure() {
         let viewer = CompanionVNCViewer(); viewer.loadViewIfNeeded()
         defer { viewer.stop() }
         let canvas = viewer.value(forKey: "canvas") as? UIView
         let fields = viewer.value(forKey: "loginFields") as? UIView
         let login = viewer.value(forKey: "loginScroll") as? UIScrollView
+        let password = viewer.value(forKey: "password") as? UITextField
+        password?.text = "synthetic-draft-only"
         XCTAssertTrue(canvas?.isHidden == true)
         XCTAssertFalse(login?.isHidden ?? true)
         viewer.setValue(true, forKey: "starting")
         _ = viewer.perform(NSSelectorFromString("updateConnectionChrome"))
-        XCTAssertFalse(fields?.isHidden ?? true); XCTAssertFalse(fields?.isUserInteractionEnabled ?? true)
-        let password = viewer.value(forKey: "password") as? UITextField
+        XCTAssertTrue(fields?.isHidden == true); XCTAssertFalse(fields?.isUserInteractionEnabled ?? true)
+        viewer.showInvalidLogin()
+        XCTAssertFalse(fields?.isHidden ?? true)
+        XCTAssertTrue((viewer.value(forKey: "password") as? UITextField) === password)
+        XCTAssertEqual(password?.text, "synthetic-draft-only")
         let visibility = viewer.value(forKey: "passwordVisibility") as? UIButton
         _ = viewer.perform(NSSelectorFromString("togglePassword"))
         XCTAssertFalse(password?.isSecureTextEntry ?? true)

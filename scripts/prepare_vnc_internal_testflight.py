@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Prepare an optimized normal-client archive for internal TestFlight.
+"""Prepare an optimized normal-client archive for authorized TestFlight testing.
 
 Requires a completed device development build and its exact source/dependency
 evidence. Apple account signing/upload is a separate authorized action. This
-does not admit the development dependency graph for external/public release.
+does not admit the development dependency graph for production release.
+External beta preparation requires the explicit --external-beta option.
 """
 import argparse
 import hashlib
@@ -30,6 +31,7 @@ def main():
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--version', required=True)
     parser.add_argument('--build-number', type=int, required=True)
+    parser.add_argument('--external-beta', action='store_true', help='Prepare an explicitly authorized external beta; upload through App Store Connect, not Internal Only')
     parser.add_argument('--distribution-team')
     parser.add_argument('--distribution-certificate', help='Existing Apple Distribution certificate SHA-1')
     parser.add_argument('--app-profile', type=Path)
@@ -89,7 +91,7 @@ def main():
     if app['settings']['base']['PRODUCT_BUNDLE_IDENTIFIER'] != 'media.jenny.maccompanion.ios':
         raise SystemExit('Unexpected containing app identity.')
     # The existing composition selector is required to use the normal direct
-    # client; DEBUG is excluded from this optimized internal archive.
+    # client; DEBUG is excluded from this optimized TestFlight archive.
     app['settings']['base']['SWIFT_ACTIVE_COMPILATION_CONDITIONS'] = 'MACCOMPANION_VNC_DEVELOPMENT'
     app['settings']['base']['SKIP_INSTALL'] = 'NO'
     for action in spec['schemes']['MacCompanionIOS'].values():
@@ -130,13 +132,14 @@ def main():
                 raise SystemExit('Unexpected distribution entitlements: ' + bundle.name)
     (output / 'archive-report.json').write_text(json.dumps({
         'profile': 'maccompanion.direct-client-internal-testflight-archive.v1',
-        'internalTestingOnly': True, 'releaseAdmitted': False, 'signed': bool(profiles), 'uploaded': False,
+        'internalTestingOnly': not args.external_beta, 'releaseAdmitted': False, 'signed': bool(profiles), 'uploaded': False,
+        'sourceCommit': subprocess.check_output(['git', '-C', str(ROOT), 'rev-parse', 'HEAD'], text=True).strip(),
         'distributionProfileUUIDs': profiles,
         'archive': str(archive), 'version': args.version, 'build': args.build_number,
         'sourceBuildReportSHA256': digest(base / 'build-report.json'), 'inputs': report['inputs'],
         'normalApplicationBinarySHA256': digest(application / 'Mac Companion')
     }, indent=2))
-    print('Internal TestFlight archive prepared:', archive)
+    print(('External beta' if args.external_beta else 'Internal TestFlight') + ' archive prepared:', archive)
 
 
 if __name__ == '__main__':

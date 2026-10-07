@@ -56,7 +56,10 @@ packaging and physical reliability gates in `docs/execution-status.md` remain.
 
 ## Session controls follow-up
 
-The viewer uses a focused login/progress card until the desktop is ready. Healthy
+Desktop and Terminal use a compact, bottom-aligned connection sheet over a
+blurred passive saved-Mac list until connected. Reduce Transparency uses an opaque
+backdrop. A shared identity header, grouped credentials, quiet Save login and one
+full-width primary action keep entry focused. Healthy
 Connected text is hidden. Keyboard/modifier controls remain directly accessible,
 and a docked keyboard reduces the desktop viewport with the system animation.
 Dismissal restores the prior zoom/center when the display crop remains valid;
@@ -103,6 +106,24 @@ press-and-slide. Extra Keys groups editing, navigation and special keys; gesture
 help is separate. Input & Quick Actions uses a section-scoped Reorder control and
 Save/Cancel for all preference drafts. Terminal offers its own keyboard and color
 controls. Each remote session has one exit action returning to My Macs.
+
+Desktop and Terminal entry automatically start one connection attempt when a
+usable saved login is available. An incomplete login shows account fields and one
+Connect action. Active attempts show concise progress and Cancel; setup and
+connection explanations live in Connection Details. Login failures appear inline
+above retained fields; detailed explanations and fixed diagnostics remain available
+under Connection Details. Confirmed SSH-key rejection offers Set Up Key and Use
+Password without claiming that a missing public key is the only possible cause.
+The layout scrolls for the keyboard or large text and retains compact landscape
+credential columns. SSH identity verification still
+precedes authentication. Entry and trust-sheet dismissal never retry a failure
+automatically.
+
+Connected Terminal is headerless and keeps its emulator mounted across recovery
+and layout changes. Its floating controls support tap and press-and-slide, with
+Keyboard & Input, Appearance and Session categories. Quick actions include the
+keyboard toggle, Paste, Ctrl-C and Done. The number/modifier accessory remains
+available while typing; Fn opens extra keys and saved snippets.
 
 ### SSH keys and optional iCloud library sync, 2026-10-05
 

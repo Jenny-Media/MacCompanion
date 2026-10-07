@@ -25,14 +25,19 @@
 
 @property UITextField *host, *username, *password;
 @property UIViewController *recoveryController;
+@property(nonatomic, copy) NSString *loginIssueDetails;
+@property UIViewController *loginBackdrop;
 @property UIScrollView *recoveryPanel;
 @property UIStackView *login;
 @property UIScrollView *loginScroll;
 @property UIStackView *loginFields, *progressRow, *keyRow;
 @property UIStackView *loginIntro, *loginIdentity, *credentialColumns;
 @property UILabel *loginSubtitle;
+@property UIButton *loginDetails;
+@property UIButton *loginClose, *loginCancel;
 @property UIImageView *loginIcon;
 @property NSLayoutConstraint *loginIconHeight, *loginIconWidth, *loginTop, *loginBottom, *loginMaxWidth;
+@property NSLayoutConstraint *loginContentTop;
 @property BOOL foldedLogin;
 @property UIScrollView *toolbar;
 @property UIView *tabletopPad;
@@ -125,11 +130,11 @@
 }
 - (UITextField *)field:(NSString *)placeholder {
     UITextField *field = [UITextField new]; field.placeholder = placeholder;
-    field.borderStyle = UITextBorderStyleRoundedRect;
+    field.borderStyle = UITextBorderStyleNone;
     field.autocapitalizationType = UITextAutocapitalizationTypeNone;
     field.autocorrectionType = UITextAutocorrectionTypeNo;
     field.font = [UIFont preferredFontForTextStyle:UIFontTextStyleBody]; field.adjustsFontForContentSizeCategory = YES;
-    [field.heightAnchor constraintGreaterThanOrEqualToConstant:48].active = YES;
+    [field.heightAnchor constraintGreaterThanOrEqualToConstant:32].active = YES;
     return field;
 }
 - (void)viewDidLoad {
@@ -201,57 +206,84 @@
     self.username.accessibilityIdentifier = @"mac-login-username";
     self.password.accessibilityIdentifier = @"mac-login-password";
     UIButton *visibility = [self button:@"" action:@selector(togglePassword)];
+    [visibility setPreferredSymbolConfiguration:[UIImageSymbolConfiguration configurationWithPointSize:20] forImageInState:UIControlStateNormal];
     [visibility setImage:[UIImage systemImageNamed:@"eye"] forState:UIControlStateNormal]; visibility.accessibilityLabel = @"Show Password";
     [visibility.widthAnchor constraintEqualToConstant:44].active = YES;
     visibility.accessibilityIdentifier = @"mac-login-visibility"; self.passwordVisibility = visibility;
+    visibility.backgroundColor = UIColor.clearColor; visibility.tintColor = UIColor.secondaryLabelColor;
     self.remember = [UISwitch new];
-    UILabel *rememberLabel = [UILabel new]; rememberLabel.text = @"Save login for this Mac";
+    UILabel *rememberLabel = [UILabel new]; rememberLabel.text = @"Save login";
     UIStackView *saveRow = [[UIStackView alloc] initWithArrangedSubviews:@[rememberLabel, self.remember]];
-    UILabel *credentialHelp = [UILabel new];
-    credentialHelp.text = @"Choose this Mac’s login in Passwords or 1Password. Saved logins in Mac Companion are separate for each Mac.";
-    credentialHelp.numberOfLines = 0; credentialHelp.font = [UIFont preferredFontForTextStyle:UIFontTextStyleFootnote]; credentialHelp.textColor = UIColor.secondaryLabelColor;
+    saveRow.alignment = UIStackViewAlignmentCenter;
+    rememberLabel.font = [UIFont preferredFontForTextStyle:UIFontTextStyleSubheadline];
     UILabel *accountLabel = [UILabel new]; accountLabel.text = @"Mac account";
     UILabel *passwordLabel = [UILabel new]; passwordLabel.text = @"Password";
     UIStackView *account = [[UIStackView alloc] initWithArrangedSubviews:@[accountLabel, self.username]];
     account.axis = UILayoutConstraintAxisVertical; account.spacing = 4;
+    account.layoutMarginsRelativeArrangement = YES; account.layoutMargins = UIEdgeInsetsMake(12,14,12,14); account.backgroundColor = DirectConnectionBridge.fieldColor;
     UIStackView *passwordRow = [[UIStackView alloc] initWithArrangedSubviews:@[self.password, visibility]]; passwordRow.spacing = 4;
     UIStackView *password = [[UIStackView alloc] initWithArrangedSubviews:@[passwordLabel, passwordRow]];
     password.axis = UILayoutConstraintAxisVertical; password.spacing = 4;
+    password.layoutMarginsRelativeArrangement = YES; password.layoutMargins = UIEdgeInsetsMake(12,14,12,14); password.backgroundColor = DirectConnectionBridge.fieldColor;
+    for (UILabel *label in @[accountLabel, passwordLabel]) { label.font = [UIFont preferredFontForTextStyle:UIFontTextStyleCaption1]; label.textColor = UIColor.secondaryLabelColor; }
     self.credentialColumns = [[UIStackView alloc] initWithArrangedSubviews:@[account, password]];
-    self.credentialColumns.axis = UILayoutConstraintAxisVertical; self.credentialColumns.spacing = 10;
+    self.credentialColumns.axis = UILayoutConstraintAxisVertical; self.credentialColumns.spacing = 1;
+    self.credentialColumns.backgroundColor = [UIColor.separatorColor colorWithAlphaComponent:.25]; self.credentialColumns.layer.cornerRadius = 16; self.credentialColumns.clipsToBounds = YES;
     UIButton *cancel = [self button:@"Cancel" action:@selector(showMacs)]; cancel.accessibilityIdentifier = @"mac-login-cancel";
+    self.loginCancel = cancel; cancel.backgroundColor = DirectConnectionBridge.fieldColor; cancel.tintColor = UIColor.secondaryLabelColor; cancel.layer.cornerRadius = 16;
     self.connect.backgroundColor = UIColor.systemBlueColor; [self.connect setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
-    UIStackView *actions = [[UIStackView alloc] initWithArrangedSubviews:@[cancel, self.connect]];
-    actions.spacing = 12; actions.distribution = UIStackViewDistributionFillEqually;
+    self.connect.layer.cornerRadius = 16; self.connect.accessibilityIdentifier = @"mac-login-connect";
+    UIStackView *actions = [[UIStackView alloc] initWithArrangedSubviews:@[self.connect, cancel]];
+    actions.axis = UILayoutConstraintAxisVertical; actions.spacing = 0;
     self.loginFields = [[UIStackView alloc] initWithArrangedSubviews:@[self.credentialColumns, saveRow]];
-    self.loginFields.axis = UILayoutConstraintAxisVertical; self.loginFields.spacing = 10;
+    self.loginFields.axis = UILayoutConstraintAxisVertical; self.loginFields.spacing = 14;
     UIImageView *icon = [[UIImageView alloc] initWithImage:[UIImage systemImageNamed:@"desktopcomputer"]];
     icon.contentMode = UIViewContentModeScaleAspectFit; icon.tintColor = UIColor.systemBlueColor;
-    self.loginIcon = icon; self.loginIconHeight = [icon.heightAnchor constraintEqualToConstant:40]; self.loginIconHeight.active = YES;
-    self.loginIconWidth = [icon.widthAnchor constraintEqualToConstant:28];
+    self.loginIcon = icon;
+    UIView *tile = [UIView new]; tile.backgroundColor = [UIColor.systemBlueColor colorWithAlphaComponent:.10]; tile.layer.cornerRadius = 16;
+    icon.translatesAutoresizingMaskIntoConstraints = NO; [tile addSubview:icon];
+    [NSLayoutConstraint activateConstraints:@[[icon.centerXAnchor constraintEqualToAnchor:tile.centerXAnchor], [icon.centerYAnchor constraintEqualToAnchor:tile.centerYAnchor], [icon.widthAnchor constraintEqualToConstant:28], [icon.heightAnchor constraintEqualToConstant:28]]];
+    self.loginIconHeight = [tile.heightAnchor constraintEqualToConstant:52]; self.loginIconHeight.active = YES;
+    self.loginIconWidth = [tile.widthAnchor constraintEqualToConstant:52]; self.loginIconWidth.active = YES;
     UILabel *title = [UILabel new]; title.text = self.macName ?: @"Mac"; title.numberOfLines = 2;
-    title.font = [UIFont preferredFontForTextStyle:UIFontTextStyleTitle1]; title.textAlignment = NSTextAlignmentCenter;
-    UILabel *subtitle = [UILabel new]; subtitle.text = @"Sign in with your Mac account"; subtitle.textColor = UIColor.secondaryLabelColor; subtitle.textAlignment = NSTextAlignmentCenter;
+    title.font = [[UIFontMetrics metricsForTextStyle:UIFontTextStyleTitle3] scaledFontForFont:[UIFont systemFontOfSize:20 weight:UIFontWeightSemibold]]; title.textAlignment = NSTextAlignmentLeft;
+    UILabel *subtitle = [UILabel new]; subtitle.text = @"Desktop"; subtitle.textColor = UIColor.secondaryLabelColor; subtitle.font = [UIFont preferredFontForTextStyle:UIFontTextStyleSubheadline];
     subtitle.numberOfLines = 0; self.loginSubtitle = subtitle;
-    self.loginIdentity = [[UIStackView alloc] initWithArrangedSubviews:@[icon, title]]; self.loginIdentity.axis = UILayoutConstraintAxisVertical; self.loginIdentity.spacing = 8;
-    self.loginIntro = [[UIStackView alloc] initWithArrangedSubviews:@[self.loginIdentity, subtitle]];
-    self.loginIntro.axis = UILayoutConstraintAxisVertical; self.loginIntro.spacing = 8;
+    UIStackView *identityText = [[UIStackView alloc] initWithArrangedSubviews:@[title, subtitle]]; identityText.axis = UILayoutConstraintAxisVertical; identityText.spacing = 4;
+    self.loginClose = [self button:@"" action:@selector(showMacs)]; [self.loginClose setImage:[UIImage systemImageNamed:@"xmark"] forState:UIControlStateNormal];
+    [self.loginClose setPreferredSymbolConfiguration:[UIImageSymbolConfiguration configurationWithPointSize:18 weight:UIImageSymbolWeightMedium] forImageInState:UIControlStateNormal];
+    self.loginClose.accessibilityLabel = @"Cancel connection"; self.loginClose.accessibilityIdentifier = @"mac-login-close"; self.loginClose.tintColor = UIColor.secondaryLabelColor;
+    self.loginClose.layer.cornerRadius = 22; [self.loginClose.widthAnchor constraintEqualToConstant:44].active = YES;
+    self.loginIdentity = [[UIStackView alloc] initWithArrangedSubviews:@[tile, identityText, self.loginClose]]; self.loginIdentity.axis = UILayoutConstraintAxisHorizontal; self.loginIdentity.spacing = 12; self.loginIdentity.alignment = UIStackViewAlignmentCenter;
+    UIView *handleRow = [UIView new]; UIView *handle = [UIView new]; handle.backgroundColor = [UIColor.secondaryLabelColor colorWithAlphaComponent:.3]; handle.layer.cornerRadius = 2; handle.translatesAutoresizingMaskIntoConstraints = NO; [handleRow addSubview:handle];
+    [NSLayoutConstraint activateConstraints:@[[handleRow.heightAnchor constraintEqualToConstant:8], [handle.widthAnchor constraintEqualToConstant:34], [handle.heightAnchor constraintEqualToConstant:4], [handle.centerXAnchor constraintEqualToAnchor:handleRow.centerXAnchor], [handle.topAnchor constraintEqualToAnchor:handleRow.topAnchor]]];
+    self.loginIntro = [[UIStackView alloc] initWithArrangedSubviews:@[handleRow, self.loginIdentity]];
+    self.loginIntro.axis = UILayoutConstraintAxisVertical; self.loginIntro.spacing = 16;
     self.spinner = [[UIActivityIndicatorView alloc] initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleMedium];
     self.progressLabel = [UILabel new]; self.progressLabel.numberOfLines = 0;
+    self.progressLabel.font = [UIFont preferredFontForTextStyle:UIFontTextStyleSubheadline]; self.progressLabel.textAlignment = NSTextAlignmentCenter;
     self.progressRow = [[UIStackView alloc] initWithArrangedSubviews:@[self.spinner, self.progressLabel]];
-    self.progressRow.spacing = 12;
-    NSLayoutConstraint *progressHeight = [self.progressRow.heightAnchor constraintGreaterThanOrEqualToConstant:24]; progressHeight.priority = 750; progressHeight.active = YES;
-    UILabel *notice = [UILabel new];
-    notice.text = @"Use a trusted local network or your private VPN. Screen Sharing desktop and input traffic are not encrypted by this app.";
-    notice.numberOfLines = 0; notice.font = [UIFont preferredFontForTextStyle:UIFontTextStyleFootnote]; notice.textColor = UIColor.secondaryLabelColor;
-    self.login = [[UIStackView alloc] initWithArrangedSubviews:@[self.loginIntro, self.progressRow, self.loginFields, actions, credentialHelp, notice]];
-    self.login.axis = UILayoutConstraintAxisVertical; self.login.spacing = 14;
-    self.login.layoutMargins = UIEdgeInsetsMake(20, 20, 20, 20); self.login.layoutMarginsRelativeArrangement = YES;
-    self.login.backgroundColor = UIColor.secondarySystemBackgroundColor; self.login.layer.cornerRadius = 24;
+    self.progressRow.axis = UILayoutConstraintAxisVertical; self.progressRow.alignment = UIStackViewAlignmentCenter; self.progressRow.spacing = 16;
+    self.progressRow.layoutMarginsRelativeArrangement = YES; self.progressRow.layoutMargins = UIEdgeInsetsMake(24,0,24,0);
+    self.loginDetails = [self button:@"Connection Details" action:@selector(showLoginDetails)];
+    self.loginDetails.accessibilityIdentifier = @"mac-login-details";
+    self.loginDetails.backgroundColor = UIColor.clearColor; self.loginDetails.tintColor = UIColor.secondaryLabelColor; self.loginDetails.titleLabel.font = [UIFont preferredFontForTextStyle:UIFontTextStyleSubheadline];
+    [self.loginDetails setImage:[UIImage systemImageNamed:@"info.circle"] forState:UIControlStateNormal];
+    self.login = [[UIStackView alloc] initWithArrangedSubviews:@[self.loginIntro, self.progressRow, self.loginFields, actions, self.loginDetails]];
+    self.login.axis = UILayoutConstraintAxisVertical; self.login.spacing = 18;
+    self.login.layoutMargins = UIEdgeInsetsMake(12, 22, 20, 22); self.login.layoutMarginsRelativeArrangement = YES;
+    self.login.backgroundColor = DirectConnectionBridge.panelColor; self.login.layer.cornerRadius = 32;
     self.login.translatesAutoresizingMaskIntoConstraints = NO;
     self.loginScroll = [UIScrollView new]; self.loginScroll.translatesAutoresizingMaskIntoConstraints = NO;
-    self.loginScroll.backgroundColor = UIColor.systemBackgroundColor; self.loginScroll.keyboardDismissMode = UIScrollViewKeyboardDismissModeInteractive;
+    self.loginScroll.backgroundColor = UIColor.clearColor; self.loginScroll.keyboardDismissMode = UIScrollViewKeyboardDismissModeInteractive;
     [self.loginScroll addSubview:self.login]; [self.view addSubview:self.loginScroll];
+    self.loginBackdrop = [DirectConnectionBridge backgroundWithNames:self.connectionMacNames ?: @[self.macName ?: @"Mac"]];
+    [self addChildViewController:self.loginBackdrop]; self.loginBackdrop.view.translatesAutoresizingMaskIntoConstraints = NO;
+    [self.view insertSubview:self.loginBackdrop.view belowSubview:self.loginScroll];
+    [NSLayoutConstraint activateConstraints:@[[self.loginBackdrop.view.topAnchor constraintEqualToAnchor:self.view.topAnchor], [self.loginBackdrop.view.bottomAnchor constraintEqualToAnchor:self.view.bottomAnchor], [self.loginBackdrop.view.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor], [self.loginBackdrop.view.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor]]];
+    [self.loginBackdrop didMoveToParentViewController:self];
+    [self.username addTarget:self action:@selector(loginEdited) forControlEvents:UIControlEventEditingChanged];
+    [self.password addTarget:self action:@selector(loginEdited) forControlEvents:UIControlEventEditingChanged];
     NSMutableArray *keys = [NSMutableArray new];
     self.keyboardButton = [self button:@"" action:@selector(keyboard)];
     self.keyboardButton.accessibilityIdentifier = @"remote-keyboard-toggle";
@@ -278,6 +310,7 @@
     self.loginTop = [self.loginScroll.topAnchor constraintEqualToAnchor:self.view.topAnchor];
     self.loginBottom = [self.loginScroll.bottomAnchor constraintEqualToAnchor:self.view.topAnchor];
     self.loginMaxWidth = [self.login.widthAnchor constraintLessThanOrEqualToConstant:440];
+    self.loginContentTop = [self.login.topAnchor constraintEqualToAnchor:self.loginScroll.contentLayoutGuide.topAnchor constant:12];
     [NSLayoutConstraint activateConstraints:@[
         [row.leadingAnchor constraintEqualToAnchor:toolbar.contentLayoutGuide.leadingAnchor],
         [row.trailingAnchor constraintEqualToAnchor:toolbar.contentLayoutGuide.trailingAnchor],
@@ -309,8 +342,8 @@
         [self.controls.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor], [self.controls.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor],
         self.loginTop, self.loginBottom,
         [self.loginScroll.leadingAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.leadingAnchor], [self.loginScroll.trailingAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.trailingAnchor],
-        [self.login.topAnchor constraintEqualToAnchor:self.loginScroll.contentLayoutGuide.topAnchor constant:16],
-        [self.login.bottomAnchor constraintEqualToAnchor:self.loginScroll.contentLayoutGuide.bottomAnchor constant:-16],
+        self.loginContentTop,
+        [self.login.bottomAnchor constraintEqualToAnchor:self.loginScroll.contentLayoutGuide.bottomAnchor constant:-12],
         [self.login.centerXAnchor constraintEqualToAnchor:self.loginScroll.centerXAnchor],
         self.loginMaxWidth,
         [self.login.widthAnchor constraintLessThanOrEqualToAnchor:self.loginScroll.frameLayoutGuide.widthAnchor constant:-32]
@@ -345,7 +378,7 @@
     self.trackpadHelp.textColor = UIColor.secondaryLabelColor; self.trackpadHelp.userInteractionEnabled = NO;
     self.trackpadHelp.translatesAutoresizingMaskIntoConstraints = NO; [self.view insertSubview:self.trackpadHelp aboveSubview:self.canvas];
     [NSLayoutConstraint activateConstraints:@[[self.trackpadHelp.centerXAnchor constraintEqualToAnchor:self.canvas.centerXAnchor], [self.trackpadHelp.centerYAnchor constraintEqualToAnchor:self.canvas.centerYAnchor], [self.trackpadHelp.widthAnchor constraintLessThanOrEqualToAnchor:self.canvas.widthAnchor constant:-32]]];
-    for (UILabel *label in @[title, subtitle, accountLabel, passwordLabel, rememberLabel, self.progressLabel, credentialHelp, notice]) {
+    for (UILabel *label in @[title, subtitle, accountLabel, passwordLabel, rememberLabel, self.progressLabel]) {
         label.adjustsFontForContentSizeCategory = YES; label.numberOfLines = 0;
         if (!label.font || label.font.pointSize == 17) label.font = [UIFont preferredFontForTextStyle:UIFontTextStyleBody];
     }
@@ -366,12 +399,12 @@
     self.displayLayout = nil;
     self.session.stateHandler = ^(NSString *state, NSDictionary *stats) {
         CompanionVNCViewer *strong = weak; if (!strong || strong.session != owner) return;
-        if (strong.diagnosticHandler) strong.diagnosticHandler(stats);
         if (strong.exited) return;
         BOOL running = strong.session.running, connected = [state isEqualToString:@"Connected"] && strong.session.connected && strong.lastFramebuffer != nil;
         if (!strong.foreground) {
             strong.status.text = @"Paused · Return to resume";
             if (!running && strong.disconnectHandler) strong.disconnectHandler();
+            [strong reportDiagnostics:stats];
             return;
         }
         strong.status.text = connected ? @"" : @"Connecting to Screen Sharing…"; strong.status.hidden = YES; strong.progressLabel.text = strong.status.text;
@@ -393,7 +426,20 @@
             else { [strong showRecoveryStage:[stats[@"failureStage"] integerValue]]; if (strong.sessionPhaseHandler) strong.sessionPhaseHandler(@"ended"); }
         }
         [strong updateConnectionChrome];
+        [strong reportDiagnostics:stats];
     };
+}
+- (void)reportDiagnostics:(NSDictionary *)stats {
+    if (!self.diagnosticHandler) return;
+    NSMutableDictionary *diagnostics = [stats mutableCopy];
+    diagnostics[@"viewer"] = @{@"canvasWidth": @(self.canvas.bounds.size.width), @"canvasHeight": @(self.canvas.bounds.size.height),
+        @"imageWidth": @(self.image.bounds.size.width), @"imageHeight": @(self.image.bounds.size.height),
+        @"imageFrameX": @(self.image.frame.origin.x), @"imageFrameY": @(self.image.frame.origin.y),
+        @"imageFrameWidth": @(self.image.frame.size.width), @"imageFrameHeight": @(self.image.frame.size.height),
+        @"zoom": @(self.canvas.zoomScale), @"minimumZoom": @(self.canvas.minimumZoomScale),
+        @"offsetX": @(self.canvas.contentOffset.x), @"offsetY": @(self.canvas.contentOffset.y),
+        @"canvasHidden": @(self.canvas.hidden), @"imageHidden": @(self.image.hidden), @"hasImage": @(self.image.image != nil)};
+    self.diagnosticHandler(diagnostics);
 }
 - (void)start {
     [self clearRecovery];
@@ -407,6 +453,14 @@
 - (void)connectionAction {
     if (!self.session.running && !self.starting) [self start];
 }
+- (void)showLoginDetails {
+    NSString *message = @"Enable Screen Sharing in System Settings → General → Sharing on your Mac. Sign in with its Mac account.\n\nChoose this Mac’s login in Passwords or 1Password. Saved Desktop and Terminal logins are separate for each Mac.\n\nUse a trusted local network or your private VPN. Screen Sharing desktop and input traffic are not encrypted by this app.";
+    if (self.loginIssueDetails.length) message = [NSString stringWithFormat:@"%@\n\n%@", self.loginIssueDetails, message];
+    UIAlertController *details = [UIAlertController alertControllerWithTitle:@"Desktop Connection" message:message preferredStyle:UIAlertControllerStyleAlert];
+    [details addAction:[UIAlertAction actionWithTitle:@"Done" style:UIAlertActionStyleCancel handler:nil]];
+    [self presentViewController:details animated:YES completion:nil];
+}
+- (void)loginEdited { [self clearRecovery]; self.progressLabel.text = @""; [self updateConnectionChrome]; }
 - (void)showMacs { [self stopViewer]; if (self.macsHandler) self.macsHandler(); }
 - (void)stopViewer {
     [self.controls close]; self.starting = NO; self.exited = YES; self.reconnectWhenReady = NO; self.checkingResume = NO;
@@ -420,6 +474,7 @@
     UIApplication.sharedApplication.idleTimerDisabled = NO;
 }
 - (void)clearRecovery {
+    self.loginIssueDetails = nil;
     if (!self.recoveryController) return;
     [self.recoveryController willMoveToParentViewController:nil];
     [self.login removeArrangedSubview:self.recoveryController.view];
@@ -443,7 +498,7 @@
             [controller.view.topAnchor constraintEqualToAnchor:panel.contentLayoutGuide.topAnchor],
             [controller.view.bottomAnchor constraintEqualToAnchor:panel.contentLayoutGuide.bottomAnchor],
             [controller.view.widthAnchor constraintEqualToAnchor:panel.frameLayoutGuide.widthAnchor]]];
-    } else { self.login.hidden = NO; [self.login insertArrangedSubview:controller.view atIndex:3]; }
+    } else { self.login.hidden = NO; [self.login insertArrangedSubview:controller.view atIndex:2]; }
     [controller didMoveToParentViewController:self]; self.progressLabel.text = @""; self.status.hidden = YES;
     [self updateConnectionChrome];
 }
@@ -452,6 +507,7 @@
     __weak CompanionVNCViewer *weak = self;
     UIViewController *card = [DirectRecoveryBridgeV1 desktopWithStage:stage hadFrame:self.lastFramebuffer != nil port:self.servicePort ?: 5900 retry:^{ [weak start]; } edit:^{ [weak editRecoveryLogin]; }];
     [self showRecoveryController:card overFrame:self.lastFramebuffer != nil];
+    self.loginIssueDetails = [DirectRecoveryBridgeV1 desktopDetailsWithStage:stage hadFrame:self.lastFramebuffer != nil port:self.servicePort ?: 5900];
 }
 - (void)showConnectionFailure {
     self.starting = NO; self.checkingResume = NO; self.resumeGeneration++;
@@ -461,8 +517,7 @@
 }
 - (void)showInvalidLogin {
     [self clearRecovery]; self.starting = NO; self.connect.enabled = YES; self.login.hidden = NO;
-    self.progressLabel.text = @"Enter a Mac account and password, each no longer than 63 UTF-8 bytes. Your draft is kept.";
-    [self updateConnectionChrome];
+    [self showRecoveryController:[DirectConnectionBridge validation] overFrame:NO];
 }
 - (void)showLoginRetentionFailure {
     __weak CompanionVNCViewer *weak = self;
@@ -636,15 +691,16 @@
     self.loginBottom.constant = CGRectGetMaxY(loginRegion);
     BOOL compact = (tabletop || loginRegion.size.height < 520) && !UIContentSizeCategoryIsAccessibilityCategory(self.traitCollection.preferredContentSizeCategory);
     self.loginMaxWidth.constant = compact ? 720 : 440;
-    self.login.spacing = compact ? 8 : 14;
-    self.login.layoutMargins = compact ? UIEdgeInsetsMake(12,16,12,16) : UIEdgeInsetsMake(20,20,20,20);
+    self.login.spacing = compact ? 8 : 18;
+    self.login.layoutMargins = compact ? UIEdgeInsetsMake(10,16,12,16) : UIEdgeInsetsMake(12,22,20,22);
+    self.loginFields.spacing = compact ? 8 : 14;
+    self.loginIntro.spacing = compact ? 8 : 16;
     self.credentialColumns.axis = compact && safe.size.width >= 520 ? UILayoutConstraintAxisHorizontal : UILayoutConstraintAxisVertical;
     self.credentialColumns.distribution = self.credentialColumns.axis == UILayoutConstraintAxisHorizontal ? UIStackViewDistributionFillEqually : UIStackViewDistributionFill;
-    self.loginIdentity.axis = compact && !lowerLogin ? UILayoutConstraintAxisHorizontal : UILayoutConstraintAxisVertical;
-    self.loginIdentity.alignment = self.loginIdentity.axis == UILayoutConstraintAxisHorizontal ? UIStackViewAlignmentCenter : UIStackViewAlignmentFill;
-    self.loginIconHeight.constant = compact && !lowerLogin ? 28 : 40;
-    self.loginIconWidth.active = self.loginIdentity.axis == UILayoutConstraintAxisHorizontal;
-    self.loginSubtitle.hidden = compact && !lowerLogin;
+    self.loginIdentity.axis = UILayoutConstraintAxisHorizontal;
+    self.loginIdentity.alignment = UIStackViewAlignmentCenter;
+    self.loginIconHeight.constant = compact ? 40 : 52; self.loginIconWidth.constant = compact ? 40 : 52;
+    self.loginSubtitle.hidden = NO;
     if (lowerLogin != self.foldedLogin) {
         self.foldedLogin = lowerLogin;
         if (lowerLogin) {
@@ -661,6 +717,11 @@
         self.loginIntro.frame = CGRectMake(CGRectGetMidX(content)-width/2, CGRectGetMidY(content)-fitting.height/2, width, fitting.height);
         self.loginIntro.hidden = self.login.hidden;
     } else self.loginIntro.hidden = NO;
+    if (!self.login.hidden) {
+        CGFloat cardWidth = MIN(self.loginMaxWidth.constant, MAX(0, loginRegion.size.width - 32));
+        CGSize fitting = [self.login systemLayoutSizeFittingSize:CGSizeMake(cardWidth, UILayoutFittingCompressedSize.height) withHorizontalFittingPriority:UILayoutPriorityRequired verticalFittingPriority:UILayoutPriorityFittingSizeLevel];
+        self.loginContentTop.constant = MAX(12, loginRegion.size.height - fitting.height - 12);
+    }
     self.tabletop = tabletop; self.tabletopInputRegion = tabletop ? input : CGRectNull;
     CGFloat keyboardCeiling = CGRectGetMaxY(safe) - self.keyboardOverlap;
     if (!self.fullscreen) keyboardCeiling -= MAX(44, self.toolbar.bounds.size.height) + 12;
@@ -1014,25 +1075,33 @@
     BOOL visibilityChanged = self.loginScroll.hidden == loginVisible;
     void (^showChrome)(void) = ^{
         self.loginScroll.hidden = !loginVisible;
+        self.loginBackdrop.view.hidden = !loginVisible;
         self.canvas.hidden = loginVisible;
         self.cursorOverlay.hidden = loginVisible || self.inputOnly;
     };
     if (visibilityChanged && self.view.window && !UIAccessibilityIsReduceMotionEnabled()) {
         [UIView transitionWithView:self.view duration:.18 options:UIViewAnimationOptionTransitionCrossDissolve | UIViewAnimationOptionAllowUserInteraction animations:showChrome completion:nil];
     } else { showChrome(); }
-    // Keep the card and fields in place while connecting; only their state changes.
-    self.loginFields.hidden = NO; self.loginFields.userInteractionEnabled = !progress;
-    self.loginFields.alpha = progress ? .55 : 1;
-    self.connect.hidden = self.recoveryController != nil;
+    // Keep the fields mounted so editing retains identity, but give an active
+    // attempt one progress indicator and Cancel instead of disabled form chrome.
+    self.loginFields.hidden = progress;
+    self.loginFields.userInteractionEnabled = !progress;
+    self.loginDetails.hidden = progress;
+    self.connect.hidden = progress;
+    self.loginClose.hidden = progress; self.loginCancel.hidden = !progress;
+    self.connect.enabled = !progress && self.username.text.length > 0 && self.password.text.length > 0;
+    self.connect.alpha = self.connect.enabled ? 1 : .35;
+    [self.connect setTitle:self.recoveryController ? @"Try Again" : @"Connect" forState:UIControlStateNormal];
     self.progressRow.hidden = !progress && !self.progressLabel.text.length; self.spinner.hidden = !progress;
     // Let validation feedback fill the card width and grow vertically. A
     // hidden spinner in a horizontal stack can retain a one-line label height.
-    self.progressRow.axis = progress ? UILayoutConstraintAxisHorizontal : UILayoutConstraintAxisVertical;
+    self.progressRow.axis = UILayoutConstraintAxisVertical;
     if (progress) [self.spinner startAnimating]; else [self.spinner stopAnimating];
     self.controls.hidden = !self.loginScroll.hidden;
     self.toolbar.hidden = !self.loginScroll.hidden || self.fullscreen || self.recoveryPanel != nil;
     self.trackpadHelp.hidden = !self.loginScroll.hidden || !self.inputOnly;
     if (!self.loginScroll.hidden || (self.session.connected && !self.checkingResume)) self.status.hidden = YES;
+    [self.view setNeedsLayout];
 }
 - (void)setFullscreen:(BOOL)value {
     _fullscreen = value; if (self.isViewLoaded) [self applyPresentation];

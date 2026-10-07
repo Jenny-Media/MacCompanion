@@ -2,6 +2,16 @@
 #import "CompanionVNCAdaptiveLayout.h"
 #import "CompanionVNCViewer.h"
 #import "CompanionVNCControls.h"
+#import <rfb/rfbclient.h>
+#import <sys/socket.h>
+#import <unistd.h>
+#import <zlib.h>
+
+@interface CompanionVNCSession (AdaptiveFrameTesting)
+- (void)configureClient:(rfbClient *)client;
+- (rfbBool)allocate:(rfbClient *)client;
+- (void)publishFrame:(rfbClient *)client;
+@end
 
 @interface CompanionVNCControls (AdaptiveTesting)
 - (void)open;
@@ -55,6 +65,107 @@
 @interface AdaptiveLayoutTests : XCTestCase
 @end
 @implementation AdaptiveLayoutTests
+- (void)testDecodedFourKDesktopRendersThroughTheActualSessionAndViewer {
+    CompanionVNCViewer *viewer = [CompanionVNCViewer new]; [viewer loadViewIfNeeded];
+    UIWindowScene *scene = (id)UIApplication.sharedApplication.connectedScenes.anyObject;
+    UIWindow *previous = nil; for (UIWindow *w in scene.windows) if (w.isKeyWindow) previous = w;
+    UIWindow *window = [[UIWindow alloc] initWithWindowScene:scene]; window.rootViewController = viewer;
+    [window makeKeyAndVisible]; [window layoutIfNeeded];
+    CompanionVNCSession *session = viewer.session;
+    int pair[2]; XCTAssertEqual(socketpair(AF_UNIX, SOCK_STREAM, 0, pair), 0);
+    rfbClient *client = rfbGetClient(8,3,4); client->sock = pair[0]; client->width = 3840; client->height = 2160;
+    [session configureClient:client]; XCTAssertTrue([session allocate:client]);
+    [session setValue:@YES forKey:@"running"]; [session setValue:@YES forKey:@"inputReady"];
+    client->supportedMessages.client2server[0] |= 1 << rfbFramebufferUpdateRequest; rfbClientSetUpdateRect(client, NULL);
+    NSMutableData *raw = [NSMutableData dataWithLength:3840 * 2160 * 4];
+    uint8_t *bytes = raw.mutableBytes; for (NSUInteger i=0;i<raw.length;i+=4) bytes[i+2] = 255;
+    NSMutableData *compressed = [NSMutableData dataWithLength:compressBound(raw.length)]; z_stream stream = {0};
+    XCTAssertEqual(deflateInit(&stream, Z_DEFAULT_COMPRESSION), Z_OK);
+    stream.next_in = raw.mutableBytes; stream.avail_in = (uInt)raw.length;
+    stream.next_out = compressed.mutableBytes; stream.avail_out = (uInt)compressed.length;
+    XCTAssertEqual(deflate(&stream, Z_SYNC_FLUSH), Z_OK); NSUInteger length = compressed.length - stream.avail_out;
+    deflateEnd(&stream); compressed.length = length;
+    uint8_t header[] = {0,0,0,1,0,0,0,0,15,0,8,112,0,0,0,6};
+    uint8_t size[] = {(uint8_t)(length>>24),(uint8_t)(length>>16),(uint8_t)(length>>8),(uint8_t)length};
+    NSData *headerData=[NSData dataWithBytes:header length:sizeof(header)], *sizeData=[NSData dataWithBytes:size length:sizeof(size)];
+    int writer=pair[1];
+    XCTestExpectation *sent = [self expectationWithDescription:@"Synthetic 4K update sent"];
+    // A compressed 4K update can exceed the socket buffer. Feed it concurrently
+    // with the real decoder instead of blocking the test's main thread.
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0),^{
+        XCTAssertEqual(write(writer,headerData.bytes,headerData.length),headerData.length); XCTAssertEqual(write(writer,sizeData.bytes,sizeData.length),sizeData.length);
+        NSUInteger offset=0; while(offset<length) { ssize_t n=write(writer,(const uint8_t *)compressed.bytes+offset,length-offset); if(n<=0) break; offset+=(NSUInteger)n; }
+        XCTAssertEqual(offset,length); [sent fulfill];
+    });
+    XCTAssertTrue(HandleRFBServerMessage(client)); [self waitForExpectations:@[sent] timeout:2];
+    XCTAssertEqual(memcmp(client->frameBuffer,raw.bytes,raw.length),0);
+    XCTestExpectation *connected = [self expectationWithDescription:@"Decoded desktop reaches the normal viewer"];
+    void (^handler)(NSString *,NSDictionary *) = session.stateHandler;
+    session.stateHandler = ^(NSString *state,NSDictionary *stats) {
+        handler(state,stats); if ([state isEqualToString:@"Connected"]) [connected fulfill];
+    };
+    [session publishFrame:client]; [self waitForExpectations:@[connected] timeout:2];
+    [[NSRunLoop mainRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:.3]]; [window layoutIfNeeded];
+    UIScrollView *canvas = [viewer valueForKey:@"canvas"]; UIImageView *image = [viewer valueForKey:@"image"];
+    XCTAssertFalse(canvas.hidden); XCTAssertFalse(image.hidden); XCTAssertEqual(image.alpha,1);
+    UIGraphicsImageRendererFormat *format = [UIGraphicsImageRendererFormat defaultFormat]; format.scale=1; format.preferredRange=UIGraphicsImageRendererFormatRangeStandard;
+    UIImage *snapshot = [[[UIGraphicsImageRenderer alloc] initWithSize:canvas.bounds.size format:format] imageWithActions:^(UIGraphicsImageRendererContext *ctx) {
+        [canvas drawViewHierarchyInRect:(CGRect){CGPointZero,canvas.bounds.size} afterScreenUpdates:YES];
+    }];
+    size_t width=CGImageGetWidth(snapshot.CGImage),height=CGImageGetHeight(snapshot.CGImage);
+    NSMutableData *rendered=[NSMutableData dataWithLength:width*height*4]; CGColorSpaceRef colors=CGColorSpaceCreateDeviceRGB();
+    CGContextRef bitmap=CGBitmapContextCreate(rendered.mutableBytes,width,height,8,width*4,colors,kCGBitmapByteOrder32Big|kCGImageAlphaPremultipliedLast);
+    XCTAssertNotEqual(bitmap,NULL); CGContextDrawImage(bitmap,CGRectMake(0,0,width,height),snapshot.CGImage); CGContextRelease(bitmap); CGColorSpaceRelease(colors);
+    const uint8_t *rgb=rendered.bytes; NSUInteger red=0;
+    for (NSUInteger i=0;i+3<rendered.length;i+=4) if(rgb[i]>150 && rgb[i+1]<50 && rgb[i+2]<50) red++;
+    XCTAssertGreaterThan(red,5000,@"Actual BGRX network pixels must survive CGImage creation, cropping, zoom and login dismissal");
+    session.frameHandler=nil; session.stateHandler=nil; [session setValue:@NO forKey:@"running"];
+    client->frameBuffer=NULL; rfbClientCleanup(client); close(pair[1]); [viewer stopViewer];
+    window.hidden=YES; window.rootViewController=nil; [previous makeKeyAndVisible];
+}
+- (void)testFirstNetworkFrameRemainsVisibleWhenLoginDismissesBeforeOrAfterInitialLayout {
+    for (NSNumber *layoutFirst in @[@NO, @YES]) {
+        CompanionVNCViewer *viewer = [CompanionVNCViewer new];
+        [viewer loadViewIfNeeded];
+        UIWindowScene *scene = (id)UIApplication.sharedApplication.connectedScenes.anyObject;
+        UIWindow *previous = nil; for (UIWindow *w in scene.windows) if (w.isKeyWindow) previous = w;
+        UIWindow *window = [[UIWindow alloc] initWithWindowScene:scene]; window.rootViewController = viewer;
+        if (layoutFirst.boolValue) { [window makeKeyAndVisible]; [window layoutIfNeeded]; }
+        CompanionVNCSession *session = viewer.session;
+        __block NSDictionary *diagnostics;
+        viewer.diagnosticHandler = ^(NSDictionary *value) { diagnostics = value; };
+        [session setValue:@YES forKey:@"running"]; [session setValue:@YES forKey:@"inputReady"];
+        [session setValue:@YES forKey:@"baselinePresented"];
+        UIGraphicsImageRendererFormat *format = [UIGraphicsImageRendererFormat defaultFormat]; format.scale = 1; format.preferredRange = UIGraphicsImageRendererFormatRangeStandard;
+        UIImage *frame = [[[UIGraphicsImageRenderer alloc] initWithSize:CGSizeMake(4000,1200) format:format] imageWithActions:^(UIGraphicsImageRendererContext *ctx) {
+            [UIColor.redColor setFill]; UIRectFill(CGRectMake(0,0,4000,1200));
+        }];
+        session.frameHandler(frame); session.stateHandler(@"Connected", @{});
+        [window makeKeyAndVisible]; [window layoutIfNeeded];
+        [[NSRunLoop mainRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:.3]];
+        [window layoutIfNeeded];
+        UIScrollView *canvas = [viewer valueForKey:@"canvas"]; UIImageView *image = [viewer valueForKey:@"image"];
+        CGRect visibleImage = [image convertRect:image.bounds toView:canvas];
+        XCTAssertFalse(canvas.hidden); XCTAssertFalse(image.hidden); XCTAssertNotNil(image.image);
+        XCTAssertEqualObjects(diagnostics[@"viewer"][@"canvasHidden"],@NO);
+        XCTAssertEqualObjects(diagnostics[@"viewer"][@"hasImage"],@YES);
+        XCTAssertGreaterThan(CGRectIntersection(canvas.bounds,visibleImage).size.width,100);
+        XCTAssertGreaterThan(CGRectIntersection(canvas.bounds,visibleImage).size.height,50);
+        XCTAssertEqualWithAccuracy(canvas.zoomScale,canvas.minimumZoomScale,.001);
+        UIImage *snapshot = [[[UIGraphicsImageRenderer alloc] initWithSize:canvas.bounds.size format:format] imageWithActions:^(UIGraphicsImageRendererContext *ctx) {
+            [canvas drawViewHierarchyInRect:(CGRect){CGPointZero,canvas.bounds.size} afterScreenUpdates:YES];
+        }];
+        size_t width=CGImageGetWidth(snapshot.CGImage), height=CGImageGetHeight(snapshot.CGImage);
+        NSMutableData *pixels=[NSMutableData dataWithLength:width*height*4];CGColorSpaceRef colors=CGColorSpaceCreateDeviceRGB();
+        CGContextRef bitmap=CGBitmapContextCreate(pixels.mutableBytes,width,height,8,width*4,colors,kCGBitmapByteOrder32Big|kCGImageAlphaPremultipliedLast);
+        XCTAssertNotEqual(bitmap,NULL);CGContextDrawImage(bitmap,CGRectMake(0,0,width,height),snapshot.CGImage);CGContextRelease(bitmap);CGColorSpaceRelease(colors);
+        const uint8_t *bytes = pixels.bytes; NSUInteger colored = 0;
+        for (NSUInteger i=0;i+3<pixels.length;i+=4) if (bytes[i] > 150 && bytes[i+1] < 50 && bytes[i+2] < 50) colored++;
+        XCTAssertGreaterThan(colored,5000, @"The connected desktop must actually render pixels, including when a frame arrives before layout");
+        session.frameHandler = nil; session.stateHandler = nil; [session setValue:@NO forKey:@"running"];
+        [viewer stopViewer]; window.hidden = YES; window.rootViewController = nil; [previous makeKeyAndVisible];
+    }
+}
 - (UIImage *)frame {
     return [[[UIGraphicsImageRenderer alloc] initWithSize:CGSizeMake(1600,1000)] imageWithActions:^(UIGraphicsImageRendererContext *c) {
         [UIColor.blueColor setFill]; UIRectFill(CGRectMake(0,0,1600,1000));
@@ -154,13 +265,17 @@
     [viewer setValue:@YES forKey:@"starting"]; [viewer performSelector:@selector(updateConnectionChrome)]; [viewer.view layoutIfNeeded];
     XCTAssertFalse(((UIView *)[viewer valueForKey:@"progressRow"]).hidden);
     XCTAssertFalse(((UIView *)[viewer valueForKey:@"loginFields"]).userInteractionEnabled);
-    XCTAssertTrue(connect.superview.userInteractionEnabled); // Cancel shares this action row, outside disabled fields.
+    XCTAssertTrue(((UIView *)[viewer valueForKey:@"loginFields"]).hidden);
+    XCTAssertTrue(connect.hidden);
+    XCTAssertTrue(((UIView *)[viewer valueForKey:@"loginDetails"]).hidden);
+    UIButton *cancel = [viewer valueForKey:@"loginCancel"];
+    XCTAssertFalse(cancel.hidden); XCTAssertTrue(cancel.userInteractionEnabled);
+    XCTAssertTrue(((UIView *)[viewer valueForKey:@"loginClose"]).hidden);
     [viewer showInvalidLogin]; [viewer.view layoutIfNeeded];
-    XCTAssertFalse(((UIView *)[viewer valueForKey:@"progressRow"]).hidden);
-    XCTAssertTrue([((UILabel *)[viewer valueForKey:@"progressLabel"]).text containsString:@"Mac account and password"]);
-    UILabel *feedback = [viewer valueForKey:@"progressLabel"];
-    CGFloat fullHeight = [feedback sizeThatFits:CGSizeMake(feedback.bounds.size.width, CGFLOAT_MAX)].height;
-    XCTAssertGreaterThanOrEqual(feedback.bounds.size.height, fullHeight - 1);
+    XCTAssertTrue(((UIView *)[viewer valueForKey:@"progressRow"]).hidden);
+    XCTAssertNotNil([viewer valueForKey:@"recoveryController"]);
+    XCTAssertFalse(connect.hidden); XCTAssertTrue(cancel.hidden);
+    XCTAssertFalse(((UIView *)[viewer valueForKey:@"loginClose"]).hidden);
     [viewer stopViewer];
 }
 - (void)testFoldedLoginUsesOneRegionAndMovesAboveATallKeyboard {

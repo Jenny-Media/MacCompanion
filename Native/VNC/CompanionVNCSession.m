@@ -15,8 +15,12 @@
 static char ownerTag;
 static _Thread_local int protocolFailure;
 static _Thread_local int protocolStage;
+static _Thread_local BOOL decoderFailed;
 // Classify only upstream constant format strings. Never format or retain arguments.
 static void QuietLog(const char *format, ...) {
+    // Upstream 0.9.15's ZRLE tile failure logs this constant but returns TRUE.
+    // Never format its arguments or accept the resulting rectangle as pixels.
+    if (!strcmp(format, "ZRLE decoding failed (%d)\n")) decoderFailed = YES;
     if (!strncmp(format, "VNC server supports protocol version", 36)) protocolStage = 1;
     else if (!strcmp(format, "Selected Security Scheme %d\n")) protocolStage = 2;
     else if (!strcmp(format, "VNC authentication succeeded\n")) protocolStage = 4;
@@ -53,6 +57,7 @@ static void QuietLog(const char *format, ...) {
     BOOL _coverageLayoutValid;
     double _baselineStarted, _lastFullRefresh;
     NSUInteger _fullRefreshRetries, _receivedPixels, _expectedPixels;
+    NSUInteger _decoderFailures;
     NSDictionary *_latestLayout;
     NSDictionary *_layoutDiagnostics;
     NSUInteger _layoutMessages;
@@ -296,10 +301,11 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
     SendPointerEvent(client, (int)self->_lastX, (int)self->_lastY, 0);
     [self registerSocket:-1]; rfbClientCleanup(client);
     if (self->_overflow) { [self->_lock lock]; self->_failureStage = 101; [self->_lock unlock]; }
-    [self finish:self->_overflow ? @"Input queue full; disconnected safely" : self->_failureStage == 102 ? @"Desktop did not finish loading — reconnect" : healthy ? @"Disconnected" : @"Connection ended — reconnect"];
+    [self finish:self->_overflow ? @"Input queue full; disconnected safely" : self->_failureStage == 103 ? @"Desktop image could not be decoded — reconnect" : self->_failureStage == 102 ? @"Desktop did not finish loading — reconnect" : healthy ? @"Disconnected" : @"Connection ended — reconnect"];
 
 }
 - (void)configureClient:(rfbClient *)client {
+    decoderFailed = NO;
     rfbClientSetClientData(client, &ownerTag, (__bridge void *)self);
     free(client->serverHost);
     client->serverHost = strdup("selected-desktop"); client->listenSpecified = TRUE;
@@ -311,7 +317,7 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
     client->connectTimeout = 8; client->readTimeout = 8;
     client->format.redShift = 16; client->format.greenShift = 8; client->format.blueShift = 0;
     client->format.bigEndian = FALSE; client->format.depth = 24;
-    client->appData.encodingsString = "zrle zlib hextile raw";
+    client->appData.encodingsString = "zlib hextile raw";
 }
 - (void)finish:(NSString *)state {
     [self registerSocket:-1];
@@ -365,6 +371,11 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
     [_lock lock]; _receivedPixels = _coverage.received; _expectedPixels = _coverage.expected; [_lock unlock];
 }
 - (void)updatedX:(int)x y:(int)y width:(int)width height:(int)height {
+    if (decoderFailed) {
+        decoderFailed = NO; _extensionFailed = YES;
+        [_lock lock]; _decoderFailures++; _failureStage = 103; [_lock unlock];
+        return;
+    }
     if (_metadataCallback) { _metadataCallback = NO; return; }
     if (!CompanionVNCCoverageReady(&_coverage)) CompanionVNCCoverageRect(&_coverage, x, y, width, height, false);
     _dirty = YES;
@@ -472,7 +483,7 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
 }
 - (void)publishFrame:(rfbClient *)client {
     double now = NSProcessInfo.processInfo.systemUptime;
-    if (!_dirty || !CompanionVNCCoverageReady(&_coverage) || now - _lastFrame < 1.0 / 30) return;
+    if (_extensionFailed || !_dirty || !CompanionVNCCoverageReady(&_coverage) || now - _lastFrame < 1.0 / 30) return;
     [_lock lock];
     if (_framePending || _stopping || _paused || _inputOnly) { [_lock unlock]; return; }
     _framePending = YES; NSInteger generation = _generation; NSUInteger epoch = _presentationEpoch; [_lock unlock];
@@ -506,6 +517,7 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
     NSDictionary *stats = @{@"connectionStarts": @(_connections), @"updateRects": @(_updates),
         @"framebufferAllocations": @(_resizes), @"inputEvents": @(_inputs), @"viewChanges": @(_viewChanges), @"presentedFrames": @(_presentedFrames),
         @"baselineReady": @(_baselinePresented), @"baselineReceivedPixels": @(_receivedPixels), @"baselineExpectedPixels": @(_expectedPixels), @"fullRefreshRetries": @(_fullRefreshRetries),
+        @"decoderFailures": @(_decoderFailures),
         @"failureStage": @(_failureStage), @"credentialRequests": @(_credentialRequests), @"handshakeStage": @(protocolStage),
         @"framebufferWidth": @(_framebufferWidth), @"framebufferHeight": @(_framebufferHeight),
         @"displayLayoutMessages": @(_layoutMessages), @"displayLayout": _layoutDiagnostics ?: @{},

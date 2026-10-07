@@ -5,11 +5,13 @@ import UIKit
 struct VNCRemoteDesktopView: UIViewControllerRepresentable {
     let mac: DirectMacRecordV1
     var inputOnly = false
+    var connectionMacNames: [String] = []
     let showMacs: @MainActor () -> Void
     func makeCoordinator() -> Coordinator { Coordinator(mac: mac, showMacs: showMacs) }
     func makeUIViewController(context: Context) -> CompanionVNCViewer {
         let viewer = CompanionVNCViewer()
         viewer.macName = mac.name
+        viewer.connectionMacNames = connectionMacNames.isEmpty ? [mac.name] : connectionMacNames
         viewer.servicePort = mac.port
         viewer.inputOnly = inputOnly
         viewer.preferenceID = mac.id.uuidString.lowercased()

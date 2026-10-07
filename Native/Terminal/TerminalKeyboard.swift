@@ -122,7 +122,8 @@ struct TerminalKeyboardPreferences: Codable {
             controls.addArrangedSubview(value)
         }
         for key in [TerminalAccessoryKey.left, .down, .up, .right] { controls.addArrangedSubview(button(key.title) { [weak self] in self?.send(key) }) }
-        let more = button("•••") {}; more.showsMenuAsPrimaryAction = true
+        let more = button("Fn") {}; more.showsMenuAsPrimaryAction = true
+        more.accessibilityLabel = "Extra Terminal Keys"
         var menu = [UIMenu(title: "Navigation & Function Keys", children: TerminalAccessoryKey.allCases.filter { ![.escape, .tab, .left, .right, .up, .down].contains($0) }.map { key in UIAction(title: key.title) { [weak self] _ in self?.send(key) } }),
             UIMenu(title: "Shortcuts", children: [("Interrupt · Ctrl-C", "c"), ("End Input · Ctrl-D", "d"), ("Suspend · Ctrl-Z", "z")].map { title, text in UIAction(title: title) { [weak terminal] _ in terminal?.resetModifiers(); terminal?.send(data: TerminalKeyboardState.text(text, modifiers: .ctrl)[...]) } }),
             UIMenu(title: "Keyboard", children: [UIAction(title: "Shift for Next Key") { [weak self] _ in self?.toggle(.shift) }, UIAction(title: "Lock/Unlock Shift") { [weak self] _ in self?.terminal?.keyboardState.toggle(.shift, lock: true); self?.refresh() }, UIAction(title: "Copy Selection") { [weak terminal] _ in terminal?.copy(nil) }, UIAction(title: "Paste") { [weak terminal] _ in terminal?.resetModifiers(); terminal?.paste(nil) }, UIAction(title: "Customize Keys & Snippets") { [weak self] _ in self?.customize?() }, UIAction(title: "Hide Keyboard", image: UIImage(systemName: "keyboard.chevron.compact.down")) { [weak terminal] _ in _ = terminal?.resignFirstResponder() }])]

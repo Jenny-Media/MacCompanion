@@ -186,11 +186,24 @@ struct TerminalServerTrustView: View {
         default: return hadFrame ? .desktopDisconnected : .desktopUnavailable
         }
     }
-    @objc static func desktop(stage: Int, hadFrame: Bool, port: Int, retry: @escaping @MainActor @Sendable () -> Void, edit: @escaping @MainActor @Sendable () -> Void) -> UIViewController {
+    private static func desktopNotice(stage: Int, hadFrame: Bool, port: Int) -> DirectRecoveryNotice {
         let reason = desktopReason(stage: stage, hadFrame: hadFrame)
-        let notice = DirectRecoveryNotice.make(reason,
-            message: stage == 9 ? "This desktop exceeds the supported size limit. Reduce the Mac’s shared desktop size before retrying." : nil,
+        return DirectRecoveryNotice.make(reason,
+            message: stage == 103 ? "The desktop image couldn’t be decoded. Reconnect to request a fresh image. Your login and view settings are kept." : stage == 9 ? "This desktop exceeds the supported size limit. Reduce the Mac’s shared desktop size before retrying." : nil,
             details: [.init(name: "Service", value: "Screen Sharing"), .init(name: "Port", value: String(port)), .init(name: "Stage", value: String(stage))])
+    }
+    @objc static func desktopDetails(stage: Int, hadFrame: Bool, port: Int) -> String {
+        let notice = desktopNotice(stage: stage, hadFrame: hadFrame, port: port)
+        return ([notice.title, notice.message] + notice.details.map { "\($0.name): \($0.value)" }).joined(separator: "\n")
+    }
+    @objc static func desktop(stage: Int, hadFrame: Bool, port: Int, retry: @escaping @MainActor @Sendable () -> Void, edit: @escaping @MainActor @Sendable () -> Void) -> UIViewController {
+        let notice = desktopNotice(stage: stage, hadFrame: hadFrame, port: port)
+        let reason = notice.reason
+        if !hadFrame {
+            let controller = UIHostingController(rootView: DirectConnectionNotice(notice: notice).directAppearance())
+            controller.sizingOptions = .intrinsicContentSize; controller.view.backgroundColor = .clear
+            return controller
+        }
         let controller = UIHostingController(rootView: DirectRecoveryCard(notice: notice,
             primary: .init(title: reason == .loginRejected ? "Edit Login" : hadFrame ? "Reconnect" : "Try Again", perform: reason == .loginRejected ? edit : retry),
             secondary: reason == .loginRejected ? nil : .init(title: "Edit Login", perform: edit)).directAppearance())
@@ -199,6 +212,12 @@ struct TerminalServerTrustView: View {
         return controller
     }
     @objc static func savedLogin(connected: Bool, done: @escaping @MainActor @Sendable () -> Void) -> UIViewController {
+        if !connected {
+            let controller = UIHostingController(rootView: DirectConnectionNotice(notice: .make(.saveFailed,
+                message: "The login wasn’t saved, so this connection wasn’t started. Your fields are kept. Review device storage, then retry.")).directAppearance())
+            controller.sizingOptions = .intrinsicContentSize; controller.view.backgroundColor = .clear
+            return controller
+        }
         let controller = UIHostingController(rootView: DirectRecoveryCard(notice: .make(.saveFailed,
             message: connected ? "The desktop can still be used, but this login change wasn’t saved. Re-enter it next time if needed." : "The saved login couldn’t be updated, so this connection wasn’t started. Your fields are kept. Review the login and device storage, then retry."), primary: .init(title: connected ? "Continue" : "Review Login", perform: done)).directAppearance())
         controller.sizingOptions = .intrinsicContentSize; controller.view.backgroundColor = .clear

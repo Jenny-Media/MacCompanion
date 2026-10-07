@@ -262,7 +262,7 @@ struct DirectMacLibraryRootV1: View {
                 DirectTerminalView(mac: mac, macLibrary: library, exit: { terminal = nil })
             }
             .fullScreenCover(item: $selected) { mac in
-                VNCRemoteDesktopView(mac: mac, inputOnly: inputOnly, showMacs: { selected = nil })
+                VNCRemoteDesktopView(mac: mac, inputOnly: inputOnly, connectionMacNames: library.macs.map(\.name), showMacs: { selected = nil })
                     .ignoresSafeArea(.container, edges: .bottom)
             }
         }

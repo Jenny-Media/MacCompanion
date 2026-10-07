@@ -99,7 +99,7 @@ import SwiftUI
                 }
                 for screen in ["terminal", "terminal-keyboard", "terminal-fullscreen", "terminal-fullscreen-keyboard", "terminal-recovery"] where wants(screen) {
                     let session = DirectTerminalSession(mac: mac); session.connected = true
-                    let terminal = UIHostingController(rootView: DirectTerminalView(mac: mac, session: session, fullscreen: screen.contains("fullscreen"), exit: {}).directAppearance())
+                    let terminal = UIHostingController(rootView: DirectTerminalView(mac: mac, session: session, autoConnect: false, exit: {}).directAppearance())
                     window.rootViewController = terminal; window.makeKeyAndVisible(); await settle()
                     session.received?(Array("Mac Companion — synthetic preview\r\n\r\ndemo@studio ~ % git status\r\nOn branch main\r\nYour branch is up to date.\r\n\r\nnothing to commit, working tree clean\r\n\r\ndemo@studio ~ % ".utf8))
                     if screen.contains("keyboard") { session.toggleKeyboard?() }

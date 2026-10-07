@@ -1,4 +1,5 @@
 import XCTest
+import SwiftUI
 import Crypto
 import NIO
 import NIOSSH
@@ -80,6 +81,54 @@ private final class SSHEarlyReadProbe: ChannelInboundHandler, @unchecked Sendabl
     }
 }
 @MainActor final class TerminalIntegrationTests:XCTestCase {
+    func testSavedTerminalLoginStartsOnEntryAndRetainsTrustGateAndSingleAttempt() async throws {
+        let record = SSHTestRecord(), key = NIOSSHPrivateKey(ed25519Key: .init())
+        let server = try await server(record: record, key: key)
+        defer { _ = server.close() }
+        let mac = DirectMacRecordV1(id: UUID(), name: "Synthetic Saved Login", addresses: ["127.0.0.1"], sshPort: try XCTUnwrap(server.localAddress?.port))
+        try TerminalSecretStore.save(.init(username: "synthetic", password: "synthetic-only"), id: mac.id)
+        let session = DirectTerminalSession(mac: mac)
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let window = UIWindow(windowScene: scene)
+        let host = UIHostingController(rootView: DirectTerminalView(mac: mac, session: session, exit: {}).directAppearance())
+        window.rootViewController = host; window.makeKeyAndVisible()
+        defer { session.stop(); window.isHidden = true; window.rootViewController = nil; try? TerminalSecretStore.remove(mac.id) }
+        try await wait("saved login starts without tapping Connect") { session.trust != nil || session.recovery != nil }
+        XCTAssertNotNil(session.trust); XCTAssertEqual(record.passwordRequests, 0)
+        session.answerTrust(true)
+        try await wait("saved login authenticates after identity approval") { session.connected || session.recovery != nil }
+        XCTAssertTrue(session.connected, session.status); XCTAssertEqual(record.passwordRequests, 1)
+        try await Task.sleep(for: .milliseconds(400))
+        XCTAssertTrue(session.connected); XCTAssertEqual(record.passwordRequests, 1, "Trust-sheet dismissal must not trigger a second attempt")
+        func descendants(_ view: UIView) -> [UIView] { [view] + view.subviews.flatMap(descendants) }
+        let controls = try XCTUnwrap(descendants(host.view).compactMap { $0 as? CompanionVNCControls }.first)
+        controls.button.sendActions(for: .touchUpInside)
+        let interrupt = try XCTUnwrap(descendants(controls).first { $0.accessibilityIdentifier == "session-action-interrupt" } as? UIButton)
+        interrupt.sendActions(for: .touchUpInside)
+        try await wait("floating Ctrl-C reaches the PTY") { record.received.contains(3) }
+        XCTAssertEqual(record.passwordRequests, 1)
+    }
+    func testFailedSavedLoginRemainsVisibleWithoutAutomaticRetry() async throws {
+        let record = SSHTestRecord(), key = NIOSSHPrivateKey(ed25519Key: .init())
+        let server = try await server(record: record, key: key)
+        defer { _ = server.close() }
+        let mac = DirectMacRecordV1(id: UUID(), name: "Synthetic Rejected Login", addresses: ["127.0.0.1"], sshPort: try XCTUnwrap(server.localAddress?.port))
+        try TerminalSecretStore.save(.init(username: "synthetic", password: "wrong-synthetic-only"), id: mac.id)
+        try TerminalSecretStore.write(Data(String(openSSHPublicKey: key.publicKey).utf8), id: mac.id, kind: "host-key")
+        let session = DirectTerminalSession(mac: mac)
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let window = UIWindow(windowScene: scene)
+        window.rootViewController = UIHostingController(rootView: DirectTerminalView(mac: mac, session: session, exit: {}).directAppearance())
+        window.makeKeyAndVisible()
+        defer { session.stop(); window.isHidden = true; window.rootViewController = nil; try? TerminalSecretStore.remove(mac.id) }
+        try await wait("saved login rejection remains actionable") { session.recovery != nil }
+        XCTAssertFalse(session.connected); XCTAssertFalse(session.connecting)
+        XCTAssertEqual(session.recovery?.reason, .loginRejected)
+        XCTAssertEqual(record.passwordRequests, 1)
+        try await Task.sleep(for: .milliseconds(500))
+        XCTAssertEqual(session.recovery?.reason, .loginRejected); XCTAssertEqual(record.passwordRequests, 1)
+        XCTAssertEqual(try TerminalSecretStore.login(mac.id)?.password, "wrong-synthetic-only", "A failed attempt must not erase the saved login")
+    }
     func testConnectedSocketPreservesEarlyServerBannerUntilSSHHandlersExist() async throws {
         let url = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "direct-screen-sharing-v1", withExtension: "json"))
         let fixture = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])

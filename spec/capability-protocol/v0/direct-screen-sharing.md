@@ -82,6 +82,12 @@ Legacy pairing records and their Keychain entries are neither deleted nor reused
 ## Presentation and lifecycle
 
 One native RFB owner handles framebuffer updates and ordered pointer/key input.
+Prefer lossless Zlib, then Hextile and Raw pixel encodings. Do not advertise
+ZRLE or ZYWRLE with the pinned 0.9.15 decoder: its tile-error path can return
+success without filling the rectangle. A fixed-format decoder error must
+invalidate that update, prevent presentation and end with recovery stage 103.
+Never count a failed decode as baseline coverage or a successfully opened desktop.
+Valid fully black desktops remain valid; pixel color is not a readiness check.
 Reuse the existing framebuffer/cursor bounds and one-shot modifier contracts.
 Display/zoom/pan gestures do not reconnect RFB. The client advertises Apple Display Info (1101), then Display Layout (1105), using the
 pinned library extension interface. The legacy 1101 capability enables display-info
@@ -150,6 +156,9 @@ counters, framebuffer dimensions, display-message count, body length, version,
 header dimensions, declared count, parse success, and the two rectangle-coordinate
 sets from at most 32 records. Never retain the opaque body, endpoints, logins,
 pixels, titles or input content. This snapshot does not alter the connection.
+It may also include fixed decoder-failure counts and numeric viewer geometry,
+zoom, hidden-state and image-presence values to distinguish decoding from layout
+failures. No pixel samples or image-derived summaries are retained.
 
 ## Session interface and local preferences
 

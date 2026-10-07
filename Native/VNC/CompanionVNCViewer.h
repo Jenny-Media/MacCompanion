@@ -8,6 +8,7 @@ NS_ASSUME_NONNULL_BEGIN
 @property(nonatomic, copy) void (^presentationHandler)(BOOL fullscreen);
 @property(nonatomic, strong) CompanionVNCSession *session;
 @property(nonatomic, copy, nullable) NSString *macName;
+@property(nonatomic, copy, nullable) NSArray<NSString *> *connectionMacNames;
 @property(nonatomic, copy, nullable) NSString *preferenceID;
 @property(nonatomic) CGFloat pointerSpeed;
 @property(nonatomic) BOOL preferredTrackpad;
@@ -31,6 +32,7 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)stopViewer;
 - (void)prepareConnection;
 - (void)showConnectionFailure;
+- (void)showRecoveryStage:(NSInteger)stage;
 - (void)showInvalidLogin;
 - (void)showLoginRetentionFailure;
 - (void)background;

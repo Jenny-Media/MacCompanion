@@ -74,6 +74,24 @@
 @interface SessionControlsTests : XCTestCase
 @end
 @implementation SessionControlsTests
+- (void)testTerminalCategoriesSupportSlideCommitAndCancellationWithoutDesktopActions {
+    CompanionVNCControls *controls = [[CompanionVNCControls alloc] initWithFrame:CGRectMake(0,0,440,956)];
+    controls.categoryActions = @[@{@"kind":@"inputMenu",@"title":@"Keyboard & Input",@"symbol":@"keyboard"},
+        @{@"kind":@"appearance",@"title":@"Appearance",@"symbol":@"circle.lefthalf.filled"},
+        @{@"kind":@"session",@"title":@"Session",@"symbol":@"network"}];
+    controls.quickActions = @[@{@"kind":@"keyboard",@"title":@"Show Keyboard",@"enabled":@YES}];
+    __block NSMutableArray *committed = [NSMutableArray new]; controls.actionHandler = ^(NSDictionary *action) { [committed addObject:action[@"kind"]]; };
+    ControlsHold *gesture = [ControlsHold new]; gesture.reference = controls;
+    gesture.sampleState = UIGestureRecognizerStateBegan; [controls slide:gesture];
+    NSArray *choices = [controls valueForKey:@"choices"]; XCTAssertEqual(choices.count,4);
+    UIButton *appearance = choices[2];
+    gesture.point = [appearance convertPoint:CGPointMake(CGRectGetMidX(appearance.bounds),CGRectGetMidY(appearance.bounds)) toView:controls];
+    gesture.sampleState = UIGestureRecognizerStateChanged; [controls slide:gesture]; XCTAssertEqual(committed.count,0);
+    gesture.sampleState = UIGestureRecognizerStateEnded; [controls slide:gesture]; XCTAssertEqualObjects(committed,(@[@"appearance"]));
+    gesture.sampleState = UIGestureRecognizerStateBegan; [controls slide:gesture];
+    gesture.sampleState = UIGestureRecognizerStateCancelled; [controls slide:gesture]; XCTAssertEqual(committed.count,1);
+    XCTAssertNil([controls hitTest:CGPointMake(10,10) withEvent:nil]);
+}
 - (void)withFollowViewer:(void (^)(CompanionVNCViewer *, ControlsSession *))body {
     CompanionVNCViewer *viewer = [CompanionVNCViewer new]; [viewer loadViewIfNeeded]; viewer.pointerSpeed = 1;
     ControlsSession *session = [ControlsSession new]; session.pointers = [NSMutableArray new]; viewer.session = session;

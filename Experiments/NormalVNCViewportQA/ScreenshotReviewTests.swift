@@ -129,15 +129,64 @@ import StoreKitTest
         let window = UIWindow(windowScene: scene); window.windowLevel = .normal + 1
         let previous = DirectAppearanceV1.shared.app
         defer { window.isHidden = true; window.rootViewController = nil; DirectAppearanceV1.shared.app = previous }
-        for (name, style, appearance) in [("light", UIUserInterfaceStyle.light, DirectAppAppearance.light), ("dark", .dark, .dark)] {
+        for (name, style, appearance) in [("light", UIUserInterfaceStyle.light, DirectAppAppearance.light), ("dark", .dark, .dark), ("large", .light, .light)] {
             DirectAppearanceV1.shared.app = appearance
             let viewer = CompanionVNCViewer(); viewer.macName = "Living Room Mac"
+            viewer.connectionMacNames = ["Living Room Mac", "Studio Mac"]
+            if name == "large" { viewer.traitOverrides.preferredContentSizeCategory = .accessibilityExtraLarge }
             window.overrideUserInterfaceStyle = style; window.rootViewController = viewer; window.makeKeyAndVisible(); viewer.loadViewIfNeeded()
+            (viewer.value(forKey: "username") as? UITextField)?.text = "alex"
+            (viewer.value(forKey: "password") as? UITextField)?.text = "synthetic-only"
+            _ = viewer.perform(NSSelectorFromString("updateConnectionChrome"))
             try await Task.sleep(for: .milliseconds(300)); save(window,name:"login-" + name,folder:folder)
             viewer.setValue(true,forKey:"starting"); (viewer.value(forKey:"progressLabel") as? UILabel)?.text = "Opening desktop…"
             _ = viewer.perform(NSSelectorFromString("updateConnectionChrome"))
             try await Task.sleep(for: .milliseconds(300)); save(window,name:"connecting-" + name,folder:folder)
+            viewer.setValue(false, forKey: "starting"); viewer.showRecoveryStage(7)
+            try await Task.sleep(for: .milliseconds(300)); save(window, name: "login-error-" + name, folder: folder)
             viewer.stop()
+        }
+    }
+
+    func testCaptureCompactTerminalLoginProgressAndFloatingControls() async throws {
+        guard ProcessInfo.processInfo.environment["MACCOMPANION_SCREENSHOT_REVIEW"] == "1" else { throw XCTSkip("Opt-in Simulator screenshots only") }
+        let folder = URL.documentsDirectory.appending(path: "SessionUIScreens")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let keyboardReady = folder.appending(path: "keyboard-visible-ready")
+        try? FileManager.default.removeItem(at: keyboardReady)
+        defer { try? FileManager.default.removeItem(at: keyboardReady) }
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let window = UIWindow(windowScene: scene); window.windowLevel = .normal + 1
+        defer { window.isHidden = true; window.rootViewController = nil }
+        let mac = try DirectMacRecordV1.normalized(name: "Living Room Mac", addresses: ["studio.local"])
+        for (name, style, largeText) in [("light", UIUserInterfaceStyle.light, false), ("dark", .dark, false), ("large", .light, true)] {
+            let session = DirectTerminalSession(mac: mac)
+            let view = DirectTerminalView(mac: mac, session: session, autoConnect: false, exit: {})
+            await capture(view, name: "terminal-login-" + name, window: window, folder: folder, style: style, largeText: largeText)
+            session.connecting = true
+            try await Task.sleep(for: .milliseconds(300)); save(window, name: "terminal-progress-" + name, folder: folder)
+            session.connecting = false; session.connected = true
+            session.connected = false; session.recovery = .make(.loginRejected)
+            try await Task.sleep(for: .milliseconds(300)); save(window, name: "terminal-error-" + name, folder: folder)
+            session.recovery = .make(.keyRejected)
+            try await Task.sleep(for: .milliseconds(300)); save(window, name: "terminal-key-error-" + name, folder: folder)
+            session.recovery = nil; session.connected = true
+            try await Task.sleep(for: .milliseconds(300)); save(window, name: "terminal-connected-" + name, folder: folder)
+            func descendants(_ view: UIView) -> [UIView] { [view] + view.subviews.flatMap(descendants) }
+            let terminal = try XCTUnwrap(descendants(window).compactMap { $0 as? SessionTerminalView }.first)
+            terminal.feed(text: "demo@studio ~ % pwd\r\n/Users/demo\r\ndemo@studio ~ % ")
+            let controls = try XCTUnwrap(descendants(window).compactMap { $0 as? CompanionVNCControls }.first)
+            controls.button.sendActions(for: .touchUpInside)
+            try await Task.sleep(for: .milliseconds(300)); save(window, name: "terminal-controls-" + name, folder: folder)
+            controls.close(); _ = terminal.becomeFirstResponder()
+            try await Task.sleep(for: .milliseconds(500)); save(window, name: "terminal-keyboard-" + name, folder: folder)
+            if name == "dark" {
+                // A separate Simulator screenshot includes the system keyboard;
+                // drawHierarchy captures only this app window.
+                try Data().write(to: keyboardReady)
+                try await Task.sleep(for: .seconds(8))
+            }
+            _ = terminal.resignFirstResponder(); session.stop()
         }
     }
 
