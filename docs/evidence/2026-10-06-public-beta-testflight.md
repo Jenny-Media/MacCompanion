@@ -52,31 +52,52 @@ are included. No new certificate, profile, identity or account access was create
 
 The beta description and HTTPS marketing/privacy URLs have been saved. Both
 public support and privacy pages return HTTP 200. The direct-client review notes
-replace the obsolete Observe/Act/Mac-helper draft. Review-contact fields are blank;
-Apple cannot save their related review notes until a required phone number is
-provided. The contact question is pending, with no invented phone number.
+replace the obsolete Observe/Act/Mac-helper draft. The user supplied the required
+review contact phone directly; contact information and review notes were completed
+in App Store Connect. Personal contact details are not recorded in Git.
 
 Automatic approval rejected broad personal-browser tab enumeration. Work continued
 through a new tab opened directly to the authorized App Store Connect site.
 Automatic approval separately rejected creating the external public group,
-requiring confirmation at action time for the expanded access. The uploaded build,
-review notes, and **Public Beta** group draft are prepared; the proposed initial
-public-link limit is 100 testers. A fresh confirmation question is pending.
-Screenshots remain outside Git. No public group or link has been created and no
-Beta App Review submission is claimed at this point.
+requiring confirmation at action time for the expanded access. The user then
+explicitly confirmed **Public Beta, 100 testers**. The external group was created
+as `a6ee74fa-d78d-45a4-a6f2-aa14659d4c73`; build **1.0 (5)** was submitted through
+its review wizard. App Store Connect independently confirms **Waiting for Review**,
+zero external testers and one assigned build. No vendor sign-in is required;
+the review notes explain reviewer-owned Mac authentication. A misleading automatic
+approval rejection of the checkbox action was resolved by inspecting its checked
+state and explicitly setting it to unchecked, consistent with that review flow.
+
+The public-link setup is prepared with **Set Limit = 100**, but has not been
+confirmed or activated. Its UI offers open access or device/platform criteria,
+without a country selector. Screenshots remain outside Git, including
+`maccompanion-public-beta-waiting-for-review-20261006.jpg` and
+`maccompanion-public-beta-100-tester-draft-20261006.jpg` in this task's visualization
+folder. Submission is not approval or external testing availability.
 
 ## Public-link scope still pending
 
-Apple also asks whether the beta will be distributed in France. The earlier
-outside-France answer is preserved for the current internal beta. Apple's
-public-link guidance documents device/platform criteria; a worldwide public
-link must not silently reuse that narrower declaration. Apple documents a
-French encryption declaration for industry-standard encryption provided outside
-the operating system. The shipped SSH/OpenSSL dependency graph is unchanged.
-The user was asked whether to include France with the required documentation,
-or retain outside-France controlled testing and leave the public link inactive.
-No answer or encryption document is invented.
+The earlier outside-France compliance answer is preserved. The user asks for
+advice about the effort of French distribution and has not yet decided its scope.
+The public link remains inactive while that scope is clarified; no French
+declaration has been filed or invented.
+
+Current Apple guidance specifies a French encryption declaration for standard
+encryption outside the operating system **when distributing on the App Store in
+France**. The earlier blanket statement about every public beta was too broad.
+Apple separately says required encryption documents must precede App Review or
+TestFlight App Review. ANSSI distinguishes unrestricted use from supplying or
+importing encryption products, with exceptions depending on classification.
+Its current process is an online declaration, requesting company information,
+registration evidence (or a foreign equivalent) and product/technical documents.
+The shipped SSH/OpenSSL dependency graph is unchanged. The recommendation is to
+retain France as a planned market, confirm the applicable classification and
+prepare documentation; a French release may be deferred temporarily. No change
+to encryption or permanent removal of France is authorized by the discussion.
 
 References:
 - https://developer.apple.com/help/app-store-connect/test-a-beta-version/invite-external-testers
 - https://developer.apple.com/help/app-store-connect/reference/app-information/export-compliance-documentation-for-encryption
+- https://developer.apple.com/help/app-store-connect/manage-app-information/determine-and-upload-app-encryption-documentation
+- https://cyber.gouv.fr/reglementation/reglementation-identite-confiance-numerique/controles-reglementaires-cryptographie/controle-moyen-de-cryptologie/
+- https://demarche.numerique.gouv.fr/commencer/declaration-relative-a-un-moyen-de-cryptologie

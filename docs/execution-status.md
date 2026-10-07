@@ -8,13 +8,15 @@ the unchanged standard-encryption/outside-France declaration and focused testing
 notes are saved. The existing internal group confirms **1.0 (5), Testing**. The
 normal upload has Internal Only disabled for external review eligibility.
 
-The beta description and public website URLs are saved. Beta App Review contact
-information requires a phone number. Automatic approval also requires a fresh
-confirmation before creating the public group/link; the prepared Public Beta draft
-has a proposed initial limit of 100 testers. The public-link France
-distribution scope also needs a decision; the earlier narrower declaration cannot
-be silently widened. Those user questions are pending. No public link or Beta App
-Review submission is claimed. See
+The beta description, website URLs and user-supplied review contact are saved.
+After fresh user confirmation, **Public Beta** was created and **1.0 (5)** was
+submitted to Beta App Review. App Store Connect confirms **Waiting for Review**,
+zero external testers and one assigned build. The public-link limit is prepared
+as **100**, with activation pending the France scope discussion; no public link
+is active. Apple's French-document footnote specifically addresses App Store
+distribution in France; required encryption documents also precede beta review.
+France classification and documentation remain unresolved. Submission does not
+establish approval or public availability. See
 [public-beta evidence](evidence/2026-10-06-public-beta-testflight.md).
 
 ## 2026-10-06 — Approved Desktop and Terminal connection sheets
