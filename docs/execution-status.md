@@ -9,7 +9,12 @@ Required stable-Xcode validation and **12** focused hosted checks pass.
 Before/after geometry and synthetic screenshots verify both session modes;
 full-system captures verify the shorter Terminal menu in both palettes.
 See [menu and icon layout evidence](session-menu-icon-layout-20261007.md).
-This follow-up has not been installed on the physical iPhone or published.
+This follow-up is committed as `264d45f`. Normal development **1.0 (15)** is
+built, signed, installed and launched on iPhone 18 Pro Max. All **577** source
+inputs, the signed binary and retained app/widget and private Keychain identities
+are verified. CoreDevice confirms build 15, installation sequence **9128** and
+launch PID **16281**. Physical acceptance is pending; no TestFlight publication
+occurred.
 
 ## 2026-10-07 — Terminal number row is optional
 

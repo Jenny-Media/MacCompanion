@@ -48,5 +48,17 @@ Evidence stays outside Git:
 - `/private/tmp/maccompanion-session-menu-icons-20261007-validation.log`
 
 Installed development build 14's preceding source is committed as `987c265`.
-This menu/layout follow-up has Simulator verification and has not been installed
-on the physical iPhone or published to TestFlight.
+This menu/layout follow-up is committed as `264d45f`. Normal development **1.0
+(15)** is built, signed, installed and launched on iPhone 18 Pro Max. All 577
+source inputs and the signed binary are verified; the app/widget identities and
+private Keychain groups are retained. CoreDevice confirms build 15, installation
+sequence 9128 and launch PID 16281. Physical acceptance remains pending; this
+build has not been published to TestFlight.
+
+Installation evidence stays outside Git:
+
+- `/private/tmp/maccompanion-session-menu-icons-20261007-device/build-report.json`
+- `/private/tmp/maccompanion-session-menu-icons-20261007-signed/report.json`
+- `/private/tmp/maccompanion-session-menu-icons-20261007-install.json`
+- `/private/tmp/maccompanion-session-menu-icons-20261007-launch.json`
+- `/private/tmp/maccompanion-session-menu-icons-20261007-app-after.json`
