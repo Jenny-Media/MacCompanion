@@ -46,7 +46,10 @@ struct VNCRemoteDesktopView: UIViewControllerRepresentable {
         viewer.presentationHandler = { value in MainActor.assumeIsolated { VNCSessionPreferences.setFullscreen(value, mac: mac.id) } }
         viewer.preferredTrackpad = VNCSessionPreferences.trackpad(mac.id)
         viewer.followCursorEnabled = VNCSessionPreferences.followCursor(mac.id)
-        viewer.quickActions = VNCSessionPreferences.actions(mac.id).map(\.native)
+        viewer.quickActionsProvider = { onlyInput in
+            MainActor.assumeIsolated { VNCSessionPreferences.actions(onlyInput ? .trackpad : .desktop, legacyMac: mac.id) }.map(\.native)
+        }
+        viewer.quickActions = VNCSessionPreferences.actions(inputOnly ? .trackpad : .desktop, legacyMac: mac.id).map(\.native)
         viewer.settingsHandler = { [weak coordinator = context.coordinator] in
             MainActor.assumeIsolated { coordinator?.showInputSettings() }
         }
@@ -111,7 +114,9 @@ struct VNCRemoteDesktopView: UIViewControllerRepresentable {
             self.mac = mac; self.showMacs = showMacs; activity = VNCSessionActivityController(mac: mac)
         }
         func observeActivity() {
-            observers = [NotificationCenter.default.addObserver(forName: UIApplication.willResignActiveNotification, object: nil, queue: .main) { [weak self] _ in
+            observers = [NotificationCenter.default.addObserver(forName: VNCSessionPreferences.actionsChanged, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.refreshControls() }
+            }, NotificationCenter.default.addObserver(forName: UIApplication.willResignActiveNotification, object: nil, queue: .main) { [weak self] _ in
                 MainActor.assumeIsolated { self?.pause() }
             }, NotificationCenter.default.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
                 MainActor.assumeIsolated {
@@ -200,12 +205,16 @@ struct VNCRemoteDesktopView: UIViewControllerRepresentable {
                 }
             }
         }
+        func refreshControls() {
+            guard let viewer else { return }
+            viewer.quickActions = VNCSessionPreferences.actions(viewer.inputOnly ? .trackpad : .desktop, legacyMac: mac.id).map(\.native)
+        }
         func showInputSettings() {
             guard let viewer, viewer.presentedViewController == nil else { return }
-            let controller = UIHostingController(rootView: VNCInputSettings(macID: mac.id) { [weak viewer] in
+            let controller = UIHostingController(rootView: VNCInputSettings(macID: mac.id, mode: viewer.inputOnly ? .trackpad : .desktop) { [weak viewer] in
                 viewer?.pointerSpeed = VNCSessionPreferences.speed(self.mac.id)
                 viewer?.followCursorEnabled = VNCSessionPreferences.followCursor(self.mac.id)
-                viewer?.quickActions = VNCSessionPreferences.actions(self.mac.id).map(\.native)
+                self.refreshControls()
             }.directAppearance())
             controller.modalPresentationStyle = .pageSheet
             viewer.present(controller, animated: true)

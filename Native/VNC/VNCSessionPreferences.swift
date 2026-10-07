@@ -3,8 +3,26 @@ import Foundation
 import Security
 import SwiftUI
 
-struct VNCQuickAction: Codable, Identifiable, Equatable {
-    enum Kind: String, Codable, CaseIterable { case mode, fit, rightClick, shortcut, text }
+enum DirectControlMode: String, CaseIterable, Identifiable, Sendable {
+    case desktop, terminal, trackpad
+    var id: String { rawValue }
+    var title: String { switch self { case .desktop: "Desktop"; case .terminal: "Terminal"; case .trackpad: "Trackpad & Keyboard" } }
+    // Stable local Keychain accounts; these are control profiles, never Mac IDs.
+    var profileID: UUID { UUID(uuidString: "C063A810-0710-4000-8000-00000000000" + (self == .desktop ? "1" : self == .terminal ? "2" : "3"))! }
+    var defaults: [VNCQuickAction] {
+        switch self {
+        case .desktop: VNCQuickAction.defaults
+        case .trackpad: [.init(title: "Right Click", kind: .rightClick), .init(title: "Return", kind: .returnKey)]
+        case .terminal: [.init(title: "Paste", kind: .paste), .init(title: "Interrupt · Ctrl-C", kind: .interrupt)]
+        }
+    }
+    var builtIns: [VNCQuickAction] {
+        defaults + [.init(title: "Escape", kind: .escape), .init(title: "Tab", kind: .tab)] + (self == .trackpad ? [] : [.init(title: "Return", kind: .returnKey)])
+    }
+}
+
+struct VNCQuickAction: Codable, Identifiable, Equatable, Sendable {
+    enum Kind: String, Codable, CaseIterable, Sendable { case mode, fit, rightClick, shortcut, text, paste, interrupt, escape, tab, returnKey }
     var id: UUID = UUID()
     var title: String
     var kind: Kind
@@ -21,10 +39,23 @@ struct VNCQuickAction: Codable, Identifiable, Equatable {
             && text.unicodeScalars.count <= 256 && !text.unicodeScalars.contains(where: { $0.value == 0 })
             && (kind != .shortcut || keyValid) && (kind != .text || !text.isEmpty)
     }
-    var native: [String: Any] { ["id": id.uuidString, "title": title, "kind": kind.rawValue, "key": key, "modifiers": modifiers, "text": text, "enabled": enabled] }
+    func compatible(with mode: DirectControlMode) -> Bool {
+        if mode == .terminal { return ![.mode, .fit, .rightClick].contains(kind) && !modifiers.contains(0xffeb) && (kind != .text || !text.contains("\u{1b}")) }
+        return ![.paste, .interrupt].contains(kind) && (mode != .trackpad || ![.mode, .fit].contains(kind))
+    }
+    var symbol: String {
+        switch kind {
+        case .mode: "cursorarrow.motionlines"; case .fit: "arrow.down.right.and.arrow.up.left"
+        case .rightClick: "cursorarrow.click"; case .shortcut: "keyboard"; case .text: "text.quote"
+        case .paste: "document.on.clipboard"; case .interrupt: "stop.circle"
+        case .escape: "escape"; case .tab: "arrow.right.to.line"; case .returnKey: "return"
+        }
+    }
+    var native: [String: Any] { ["id": id.uuidString, "title": title, "kind": kind.rawValue, "symbol": symbol, "key": key, "modifiers": modifiers, "text": text, "enabled": enabled] }
 }
 
 @MainActor enum VNCSessionPreferences {
+    static let actionsChanged = Notification.Name("DirectControlActionsChanged")
     private static func changed(_ id: UUID) { NotificationCenter.default.post(name: DirectCloudSyncV1.preferenceChanged, object: id) }
     private static func prefix(_ id: UUID) -> String { "direct-session-\(id.uuidString.lowercased())-" }
     static func speed(_ id: UUID) -> Double {
@@ -48,11 +79,32 @@ struct VNCQuickAction: Codable, Identifiable, Equatable {
         let saved = (try? readActions(id)) ?? VNCQuickAction.defaults
         return DirectProAccess.shared.hasPro ? saved : saved.filter { $0.kind != .shortcut && $0.kind != .text }
     }
-    static func readActions(_ id: UUID) throws -> [VNCQuickAction] {
+    static func profileActions(_ mode: DirectControlMode, legacyMac: UUID? = nil) throws -> [VNCQuickAction] {
+        guard DirectAppLockV1.shared.canAccess else { throw CocoaError(.fileReadNoPermission) }
+        if let saved = try storedActions(mode.profileID) {
+            guard saved.filter({ $0.kind == .shortcut || $0.kind == .text }).count <= 12, saved.allSatisfy({ $0.compatible(with: mode) }) else { throw CocoaError(.fileReadCorruptFile) }
+            return saved
+        }
+        // Keep pre-existing Desktop customizations until a shared profile is saved.
+        if mode == .desktop, let legacyMac, let legacy = try storedActions(legacyMac) { return legacy }
+        return mode.defaults
+    }
+    static func actions(_ mode: DirectControlMode, legacyMac: UUID? = nil) -> [VNCQuickAction] {
+        let saved = (try? profileActions(mode, legacyMac: legacyMac)) ?? mode.defaults
+        return DirectProAccess.shared.hasPro ? saved : saved.filter { $0.kind != .shortcut && $0.kind != .text }
+    }
+    static func saveProfile(_ actions: [VNCQuickAction], mode: DirectControlMode) throws {
+        _ = try profileActions(mode)
+        guard actions.filter({ $0.kind == .shortcut || $0.kind == .text }).count <= 12, actions.allSatisfy({ $0.compatible(with: mode) }) else { throw CocoaError(.fileWriteUnknown) }
+        try saveActions(actions, mac: mode.profileID)
+        NotificationCenter.default.post(name: actionsChanged, object: mode)
+    }
+    static func readActions(_ id: UUID) throws -> [VNCQuickAction] { try storedActions(id) ?? VNCQuickAction.defaults }
+    private static func storedActions(_ id: UUID) throws -> [VNCQuickAction]? {
         var q = query(id); q[kSecReturnData as String] = true; q[kSecMatchLimit as String] = kSecMatchLimitOne
         var result: CFTypeRef?
         let status = SecItemCopyMatching(q as CFDictionary, &result)
-        if status == errSecItemNotFound { return VNCQuickAction.defaults }
+        if status == errSecItemNotFound { return nil }
         guard status == errSecSuccess, let data = result as? Data,
               let actions = try? JSONDecoder().decode([VNCQuickAction].self, from: data),
               actions.count <= 15, Set(actions.map(\.id)).count == actions.count, actions.allSatisfy(\.valid) else { throw CocoaError(.fileReadCorruptFile) }
@@ -76,7 +128,8 @@ struct VNCQuickAction: Codable, Identifiable, Equatable {
 
 struct VNCInputSettings: View {
     @Environment(\.dismiss) private var dismiss
-    let macID: UUID
+    let macID: UUID?
+    let mode: DirectControlMode
     let changed: @MainActor () -> Void
     @State private var speed: Double
     @State private var followCursor: Bool
@@ -86,11 +139,11 @@ struct VNCInputSettings: View {
     @State private var actionEditMode: EditMode = .inactive
     @State private var paywall = false
     @State private var actionsReadable: Bool
-    init(macID: UUID, changed: @escaping @MainActor () -> Void) {
-        self.macID = macID; self.changed = changed
-        _speed = State(initialValue: VNCSessionPreferences.speed(macID))
-        _followCursor = State(initialValue: VNCSessionPreferences.followCursor(macID))
-        let loaded = try? VNCSessionPreferences.readActions(macID)
+    init(macID: UUID? = nil, mode: DirectControlMode = .desktop, changed: @escaping @MainActor () -> Void = {}) {
+        self.macID = macID; self.mode = mode; self.changed = changed
+        _speed = State(initialValue: macID.map(VNCSessionPreferences.speed) ?? 1.5)
+        _followCursor = State(initialValue: macID.map(VNCSessionPreferences.followCursor) ?? true)
+        let loaded = try? VNCSessionPreferences.profileActions(mode, legacyMac: macID)
         _actionsReadable = State(initialValue: loaded != nil)
         _actions = State(initialValue: loaded ?? [])
     }
@@ -99,14 +152,18 @@ struct VNCInputSettings: View {
             Form {
                 if !actionsReadable { Section { DirectRecoveryCard(notice: .make(.controlsUnavailable), primary: .init(title: "Retry", perform: reload)) } }
                 if let issue { Section { DirectRecoveryCard(notice: issue, primary: .init(title: "Retry Save", perform: save), secondary: .init(title: "Keep Editing", perform: { self.issue = nil })) } }
-                Section {
-                    HStack { Text("Pointer Speed"); Spacer(); Text(speed, format: .number.precision(.fractionLength(1))).foregroundStyle(.secondary) }
-                    Slider(value: $speed, in: 0.5...3, step: 0.1).accessibilityLabel("Pointer Speed")
-                    Button("Reset to Default") { speed = 1.5 }
-                } footer: { Text("Slow movement stays precise. Faster swipes travel farther. Speed is saved for this Mac.") }
-                Section {
-                    Toggle("Follow Cursor", isOn: $followCursor).accessibilityIdentifier("follow-cursor-toggle")
-                } footer: { Text("In zoomed Trackpad mode, move the view to keep the cursor visible. Manual pan or zoom pauses following until your next trackpad movement. Saved for this Mac.") }
+                if macID != nil && mode != .terminal {
+                    Section {
+                        HStack { Text("Pointer Speed"); Spacer(); Text(speed, format: .number.precision(.fractionLength(1))).foregroundStyle(.secondary) }
+                        Slider(value: $speed, in: 0.5...3, step: 0.1).accessibilityLabel("Pointer Speed")
+                        Button("Reset to Default") { speed = 1.5 }
+                    } footer: { Text("Slow movement stays precise. Faster swipes travel farther. Speed is saved for this Mac.") }
+                    if mode == .desktop {
+                        Section {
+                            Toggle("Follow Cursor", isOn: $followCursor).accessibilityIdentifier("follow-cursor-toggle")
+                        } footer: { Text("In zoomed Trackpad mode, move the view to keep the cursor visible. Manual pan or zoom pauses following until your next trackpad movement. Saved for this Mac.") }
+                    }
+                }
                 Section {
                     ForEach($actions) { $action in
                         HStack {
@@ -116,29 +173,38 @@ struct VNCInputSettings: View {
                             }
                         }
                     }.onMove { actions.move(fromOffsets: $0, toOffset: $1) }.onDelete { actions.remove(atOffsets: $0) }
-                    if actions.filter({ $0.kind == .shortcut || $0.kind == .text }).count < 12 {
-                        Button("Add Shortcut", systemImage: "command") { editor = .init(title: "", kind: .shortcut, key: 0x63, modifiers: [0xffeb]) }
+                    if DirectProAccess.shared.hasPro && actions.count < 15 {
+                        Menu("Add Standard Action") {
+                            ForEach(mode.builtIns.filter { candidate in !actions.contains { $0.kind == candidate.kind } }) { candidate in
+                                Button(candidate.title, systemImage: candidate.symbol) { actions.append(candidate) }
+                            }
+                        }
+                    }
+                    if DirectProAccess.shared.hasPro && actions.count < 15 && actions.filter({ $0.kind == .shortcut || $0.kind == .text }).count < 12 {
+                        Button("Add Shortcut", systemImage: "keyboard") { editor = .init(title: "", kind: .shortcut, key: 0x63, modifiers: [mode == .terminal ? 0xffe3 : 0xffeb]) }
                         Button("Add Saved Text", systemImage: "text.quote") { editor = .init(title: "", kind: .text) }
                     }
-                    Button("Restore Default Actions") { actions = VNCQuickAction.defaults }
+                    if DirectProAccess.shared.hasPro { Button("Restore Default Actions") { actions = mode.defaults } }
                 } header: {
                     HStack {
                         Text("Quick Actions"); Spacer()
-                        Button(actionEditMode.isEditing ? "Done" : "Reorder") {
-                            withAnimation { actionEditMode = actionEditMode.isEditing ? .inactive : .active }
-                        }.textCase(nil).accessibilityIdentifier("quick-actions-reorder")
+                        if DirectProAccess.shared.hasPro {
+                            Button(actionEditMode.isEditing ? "Done" : "Reorder") {
+                                withAnimation { actionEditMode = actionEditMode.isEditing ? .inactive : .active }
+                            }.textCase(nil).accessibilityIdentifier("quick-actions-reorder")
+                        }
                     }
                 } footer: {
-                    Text("Use Reorder to arrange or remove actions. Press the controls button, slide to an action and release. Saved text is stored on this iPhone and sent as typing to the focused Mac field.")
+                    Text("Applies to all Macs in this mode. Saved text stays on this iPhone.")
                 }.disabled(!actionsReadable || !DirectProAccess.shared.hasPro)
                 if !DirectProAccess.shared.hasPro { Section { Button("Customize Quick Actions with Pro") { paywall = true } } }
             }
-            .navigationTitle("Input & Quick Actions").navigationBarTitleDisplayMode(.inline)
+            .navigationTitle(mode == .trackpad ? "Trackpad Controls" : mode.title + " Controls").navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
-                ToolbarItem(placement: .confirmationAction) { Button("Save") { save() }.disabled(!actionsReadable) }
+                ToolbarItem(placement: .confirmationAction) { Button("Save") { save() }.disabled(!actionsReadable || (!DirectProAccess.shared.hasPro && macID == nil)) }
             }
-            .sheet(item: $editor) { action in VNCActionEditor(action: action) { edited in
+            .sheet(item: $editor) { action in VNCActionEditor(action: action, mode: mode) { edited in
                 if let index = actions.firstIndex(where: { $0.id == edited.id }) { actions[index] = edited } else { actions.append(edited) }
             } }
             .sheet(isPresented: $paywall) { DirectProView() }
@@ -148,18 +214,25 @@ struct VNCInputSettings: View {
         .interactiveDismissDisabled()
     }
     private func reload() {
-        do { actions = try VNCSessionPreferences.readActions(macID); actionsReadable = true; issue = nil }
+        do { actions = try VNCSessionPreferences.profileActions(mode, legacyMac: macID); actionsReadable = true; issue = nil }
         catch { actionsReadable = false }
     }
     private func save() {
-        do { if DirectProAccess.shared.hasPro { try VNCSessionPreferences.saveActions(actions, mac: macID) }; VNCSessionPreferences.setSpeed(speed, mac: macID); VNCSessionPreferences.setFollowCursor(followCursor, mac: macID); changed(); dismiss() }
-        catch { issue = .make(.saveFailed) }
+        do {
+            if DirectProAccess.shared.hasPro { try VNCSessionPreferences.saveProfile(actions, mode: mode) }
+            if let macID, mode != .terminal {
+                VNCSessionPreferences.setSpeed(speed, mac: macID)
+                if mode == .desktop { VNCSessionPreferences.setFollowCursor(followCursor, mac: macID) }
+            }
+            changed(); dismiss()
+        } catch { issue = .make(.saveFailed) }
     }
 }
 
 private struct VNCActionEditor: View {
     @Environment(\.dismiss) private var dismiss
     @State var action: VNCQuickAction
+    let mode: DirectControlMode
     let save: (VNCQuickAction) -> Void
     @State private var letter = ""
     private let modifierKeys: [(String, UInt32)] = [("Shift", 0xffe1), ("Control", 0xffe3), ("Option", 0xffe9), ("Command", 0xffeb)]
@@ -167,16 +240,16 @@ private struct VNCActionEditor: View {
         NavigationStack {
             Form {
                 Section { TextField("Action Name", text: $action.title)
-                    if !action.valid { Text("Use a name from 1 to 32 characters and a valid shortcut or saved text up to 256 characters.").font(.footnote).foregroundStyle(.secondary) }
+                    if !action.valid || !action.compatible(with: mode) { Text("Use a name from 1 to 40 characters and a valid shortcut or saved text up to 256 characters.").font(.footnote).foregroundStyle(.secondary) }
                 }
                 if action.kind == .text {
                     Section {
-                        TextEditor(text: $action.text).frame(minHeight: 140).accessibilityLabel("Saved Text")
+                        TextEditor(text: $action.text).frame(minHeight: 140).accessibilityLabel("Saved Text").autocorrectionDisabled().textInputAutocapitalization(.never).privacySensitive()
                         Text("\(action.text.unicodeScalars.count)/256 characters").foregroundStyle(.secondary)
-                    } footer: { Text("Sent only when you select this action. Check the focused field on your Mac before sending.") }
+                    } footer: { Text(mode == .terminal ? "Sent to the active shell only when selected. A trailing newline can run a command." : "Sent only when you select this action. Check the focused field on your Mac before sending.") }
                 } else {
                     Section("Modifiers") {
-                        ForEach(modifierKeys, id: \.0) { title, key in
+                        ForEach(modifierKeys.filter { mode != .terminal || $0.1 != 0xffeb }, id: \.0) { title, key in
                             Toggle(title, isOn: Binding(get: { action.modifiers.contains(key) }, set: { enabled in
                                 action.modifiers.removeAll { $0 == key }; if enabled { action.modifiers.append(key) }
                             }))
@@ -195,7 +268,7 @@ private struct VNCActionEditor: View {
             .navigationTitle(action.kind == .text ? "Saved Text" : "Shortcut").navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
-                ToolbarItem(placement: .confirmationAction) { Button("Save") { save(action); dismiss() }.disabled(!action.valid) }
+                ToolbarItem(placement: .confirmationAction) { Button("Save") { save(action); dismiss() }.disabled(!action.valid || !action.compatible(with: mode)) }
             }
             .onAppear { if action.key < 0xff00, let scalar = UnicodeScalar(action.key) { letter = String(scalar) } }
         }

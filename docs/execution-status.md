@@ -1,3 +1,26 @@
+## 2026-10-07 — Mode control profiles, responsive scrolling and icon audit
+
+App Settings → Controls exposes Desktop, Terminal and Trackpad & Keyboard quick
+actions without a connected Mac. Session settings edit the same per-mode profile;
+existing per-Mac Desktop entries are preserved until a shared profile is saved.
+Customizations retain the existing Pro gate and private local Keychain storage.
+Both session menus now say Disconnect. Cancel retains system non-destructive
+styling. The icon audit checks 79 symbol names and clarifies session, information,
+fit, keyboard dismissal and shortcut meanings.
+
+Two-finger scrolling previously required 18 points per wheel tick. It now uses
+six, with bounded balanced events and no deferred replay. Pinch previously zoomed
+only the local desktop image, which is hidden in input-only mode; that unused
+recognizer is disabled and the guide explains its scope. Mac-app pinch behavior
+awaits the user's zoom-target clarification.
+
+Required stable-Xcode validation and **48** focused hosted checks pass. Sixteen
+synthetic captures cover offline free/Pro controls and category layouts; loopback
+SSH verifies configured input without reconnecting and stale Pro-action rejection.
+See the [controls, gesture and icon audit](controls-gesture-icon-audit-20261007.md).
+The iPhone remains on normal development **1.0 (15)**; these changes have not been
+installed, pushed or uploaded. Physical gesture acceptance remains pending.
+
 ## 2026-10-07 — Active Terminal menu and shared category clipping
 
 Installed build 14's preceding source is committed locally as `987c265`.

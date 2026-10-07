@@ -152,7 +152,7 @@ NSString *const CompanionVNCControlsHapticsPreference = @"direct-controls-haptic
     [items addObjectsFromArray:self.categoryActions ?: @[
         @{@"kind": @"viewMenu", @"title": @"View & Display", @"symbol": @"display.2"},
         @{@"kind": @"inputMenu", @"title": @"Keyboard & Input", @"symbol": @"keyboard"},
-        @{@"kind": @"session", @"title": @"Session", @"symbol": @"network"}]];
+        @{@"kind": @"session", @"title": @"Session", @"symbol": @"link"}]];
     self.items = items; self.choices = [NSMutableArray new];
     UIVisualEffect *effect;
     if (@available(iOS 26.0, *)) { UIGlassEffect *glass = [UIGlassEffect effectWithStyle:UIGlassEffectStyleRegular]; glass.interactive = YES; effect = glass; }
@@ -171,8 +171,9 @@ NSString *const CompanionVNCControlsHapticsPreference = @"direct-controls-haptic
         UIButton *choice = [UIButton buttonWithType:UIButtonTypeSystem];
         UIButtonConfiguration *config = [UIButtonConfiguration plainButtonConfiguration];
         config.title = [kind isEqual:@"mode"] ? (self.trackpad ? @"Switch to Pointer" : @"Switch to Trackpad") : item[@"title"];
-        NSDictionary *symbols = @{@"mode": @"cursorarrow.motionlines", @"fit": @"arrow.up.left.and.arrow.down.right", @"rightClick": @"computermouse", @"shortcut": @"command", @"text": @"text.quote"};
-        config.image = [UIImage systemImageNamed:item[@"symbol"] ?: symbols[kind] ?: @"circle"];
+        NSDictionary *symbols = @{@"mode": @"cursorarrow.motionlines", @"fit": @"arrow.down.right.and.arrow.up.left", @"rightClick": @"cursorarrow.click", @"shortcut": @"keyboard", @"text": @"text.quote"};
+        NSString *symbol = [kind isEqual:@"mode"] ? (self.trackpad ? @"cursorarrow" : @"cursorarrow.motionlines") : item[@"symbol"] ?: symbols[kind] ?: @"circle";
+        config.image = [UIImage systemImageNamed:symbol];
         config.imagePadding = 12; config.contentInsets = NSDirectionalEdgeInsetsMake(8, 12, 8, 12);
         choice.configuration = config; choice.contentHorizontalAlignment = UIControlContentHorizontalAlignmentLeading;
         {

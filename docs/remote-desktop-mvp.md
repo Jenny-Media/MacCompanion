@@ -82,7 +82,7 @@ accelerated independently of zoom. Restore the last per-Mac display only against
 verified current metadata. Custom quick actions support balanced shortcut chords
 and sending saved text as typing, with content held only in protected local Keychain.
 
-Follow Cursor defaults on per Mac and is configurable in Input & Quick Actions.
+Follow Cursor defaults on per Mac and is configurable in the session’s mode-specific Controls settings.
 In zoomed Trackpad mode, iPhone pointer movement and dragging pan the view only
 near its edges, retaining zoom and the selected display. Manual pan/pinch pauses
 following until the next trackpad gesture. Mac-originated cursor notifications
@@ -113,7 +113,7 @@ App Settings groups Appearance, Security and Session options.
 The floating session menu groups View & Display, Keyboard & Input and Session.
 Customizable quick actions stay nearest the controls button and support tap and
 press-and-slide. Extra Keys groups editing, navigation and special keys; gesture
-help is separate. Input & Quick Actions uses a section-scoped Reorder control and
+help is separate. Mode-specific Controls uses a section-scoped Reorder control and
 Save/Cancel for all preference drafts. Terminal offers its own keyboard and color
 controls. Its persistent modifier bar puts a keyboard toggle on the left and
 the shared controls button on the right, with scrolling middle keys on narrow
@@ -202,3 +202,25 @@ consent remain local. Foreground and explicit refresh merge bounded versions and
 tombstones, preserving local data on failure. Opting out preserves local Macs and
 existing cloud copies; removing cloud copies is a separate confirmed operation.
 The app distinguishes Keychain submission from actual cross-device delivery.
+
+### Control profiles and gesture audit, 2026-10-07
+
+App Settings → Controls exposes Desktop, Terminal and Trackpad & Keyboard before
+connecting. The matching session settings edit the same shared per-mode quick
+actions; pointer speed and Follow Cursor remain per Mac. Existing per-Mac Desktop
+quick actions are retained and used until the Desktop profile is saved. Custom
+actions remain Pro; basic connection, keyboard, pointer and scroll stay free.
+
+Session menus use Disconnect, an information symbol for Connection Details and
+consistent category symbols. Cancel keeps native non-destructive styling. Fit
+uses inward arrows; Hide Keyboard uses the keyboard-dismiss symbol. A right-click
+action keeps its explicit label, because a pointer glyph cannot identify a mouse
+button by itself. Keyboard is used for generic shortcuts, including Terminal
+shortcuts that do not have a remote Command modifier.
+
+Two-finger scrolling previously required 18 points per wheel tick; it now requires
+six, with at most eight balanced ticks per update and no deferred input. Pinching
+currently zooms the local Desktop image, not a Mac app. Input-only mode hides that
+image, so its local pinch recognizer is disabled and the guide explains the limit.
+Native Mac trackpad magnification is not transmitted by this direct RFB client.
+The user’s intended pinch behavior is still awaiting clarification.

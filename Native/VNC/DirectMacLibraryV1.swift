@@ -466,7 +466,7 @@ struct DirectSessionSettingsV1: View {
     @State private var cloud = DirectCloudSyncV1.shared
     @State private var enableCloud = false
     @State private var removeCloud = false
-    private enum SettingsSheet: String, Identifiable { case keys, pro; var id: String { rawValue } }
+    private enum SettingsSheet: String, Identifiable { case keys, pro, desktop, terminal, trackpad; var id: String { rawValue } }
     @State private var settingsSheet: SettingsSheet?
     @Environment(DirectAppearanceV1.self) private var appearance
     var body: some View {
@@ -475,6 +475,11 @@ struct DirectSessionSettingsV1: View {
                 Section("SSH & Pro") {
                     Button("SSH Keys", systemImage: "key") { settingsSheet = .keys }.accessibilityIdentifier("settings-ssh-keys")
                     Button(DirectProAccess.shared.accessTitle, systemImage: "sparkles") { settingsSheet = .pro }
+                }
+                Section("Controls") {
+                    Button("Desktop", systemImage: "desktopcomputer") { settingsSheet = .desktop }
+                    Button("Terminal", systemImage: "terminal") { settingsSheet = .terminal }
+                    Button("Trackpad & Keyboard", systemImage: "rectangle.and.hand.point.up.left") { settingsSheet = .trackpad }
                 }
                 Section("Appearance") {
                     Picker("App Appearance", selection: Binding(get: { appearance.app }, set: { appearance.app = $0 })) {
@@ -517,7 +522,12 @@ struct DirectSessionSettingsV1: View {
                 }
             }
             .sheet(item: $settingsSheet) { selection in
-                switch selection { case .keys: TerminalKeySettings(); case .pro: DirectProView() }
+                switch selection {
+                case .keys: TerminalKeySettings(); case .pro: DirectProView()
+                case .desktop: VNCInputSettings(mode: .desktop)
+                case .terminal: VNCInputSettings(mode: .terminal)
+                case .trackpad: VNCInputSettings(mode: .trackpad)
+                }
             }
             .alert("Enable iCloud Sync?", isPresented: $enableCloud) {
                 Button("Enable Sync") { cloud.setEnabled(true) }; Button("Cancel", role: .cancel) {}

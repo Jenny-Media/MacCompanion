@@ -48,6 +48,22 @@ struct TerminalKeyboardState {
     }
 }
 
+extension VNCQuickAction {
+    func terminalBytes(applicationCursor: Bool = false) -> [UInt8] {
+        guard kind == .shortcut, valid, compatible(with: .terminal) else { return [] }
+        var flags: TerminalModifiers = []
+        if modifiers.contains(0xffe1) { flags.insert(.shift) }
+        if modifiers.contains(0xffe3) { flags.insert(.ctrl) }
+        if modifiers.contains(0xffe9) { flags.insert(.alt) }
+        let special: [UInt32: TerminalAccessoryKey] = [0xff1b: .escape, 0xff09: .tab, 0xffff: .delete, 0xff51: .left, 0xff52: .up, 0xff53: .right, 0xff54: .down]
+        if key == 0xff08 { return TerminalKeyboardState.backspace(modifiers: flags) }
+        if let special = special[key] { return special.bytes(modifiers: flags, applicationCursor: applicationCursor) }
+        if key == 0xff0d { return TerminalKeyboardState.text("\r", modifiers: flags) }
+        guard let scalar = UnicodeScalar(key) else { return [] }
+        return TerminalKeyboardState.text(String(scalar), modifiers: flags)
+    }
+}
+
 enum TerminalAccessoryKey: String, Codable, CaseIterable, Identifiable {
     case escape, tab, up, down, left, right, home, end, pageUp, pageDown, delete, f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11, f12
     var id: String { rawValue }

@@ -310,7 +310,7 @@ import UIKit
         XCTAssertEqual(navigation.traitCollection.userInterfaceStyle, .dark, "Menus must follow the terminal palette even when the app is light")
         let items = menu.sections.flatMap { $0["items"] as? [[String: Any]] ?? [] }
         XCTAssertEqual(items.compactMap { $0["kind"] as? String }, ["connectionInfo", "appSettings", "exit"])
-        XCTAssertTrue(items.contains { $0["title"] as? String == "Exit to My Macs" && $0["destructive"] as? Bool == true })
+        XCTAssertTrue(items.contains { $0["title"] as? String == "Disconnect" && $0["destructive"] as? Bool == true })
         XCTAssertEqual(navigation.viewControllers.count, 1)
         XCTAssertLessThan(navigation.preferredContentSize.height, 350, "Three session actions should not reserve a full-size sheet")
         let last = menu.tableView.rectForRow(at: IndexPath(row: 0, section: 1))

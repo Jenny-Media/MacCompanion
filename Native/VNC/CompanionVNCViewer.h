@@ -15,6 +15,7 @@ NS_ASSUME_NONNULL_BEGIN
 @property(nonatomic) BOOL followCursorEnabled;
 @property(nonatomic, copy, nullable) NSNumber *restoredDisplayID;
 @property(nonatomic, copy) NSArray<NSDictionary *> *quickActions;
+@property(nonatomic, copy, nullable) NSArray<NSDictionary *> * (^quickActionsProvider)(BOOL inputOnly);
 @property(nonatomic, copy, nullable) void (^settingsHandler)(void);
 @property(nonatomic, copy, nullable) void (^appSettingsHandler)(void);
 @property(nonatomic, copy, nullable) void (^displaySelectionHandler)(NSNumber * _Nullable);

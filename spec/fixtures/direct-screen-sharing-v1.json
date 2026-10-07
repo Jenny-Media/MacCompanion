@@ -449,7 +449,25 @@
     "followCursorZoomedOnly": true,
     "followCursorServerUpdatesPan": false,
     "followCursorIdlePolling": false,
-    "followCursorReconnects": false
+    "followCursorReconnects": false,
+    "quickActionProfileScope": "mode",
+    "quickActionProfiles": [
+      "desktop",
+      "terminal",
+      "trackpad"
+    ],
+    "quickActionConfigurationRequiresConnection": false,
+    "terminalDefaultQuickActionKinds": [
+      "paste",
+      "interrupt"
+    ],
+    "trackpadDefaultQuickActionKinds": [
+      "rightClick",
+      "returnKey"
+    ],
+    "scrollPointsPerWheelTick": 6,
+    "scrollMaximumTicksPerUpdate": 8,
+    "scrollInputReplayedAfterGesture": false
   },
   "macLibraryPolicy": {
     "sharedEndpointAcrossRecordsAllowed": true,

@@ -163,7 +163,10 @@
         @{@"kind": @"fit", @"title": @"Fit View", @"enabled": @YES},
         @{@"kind": @"rightClick", @"title": @"Right Click", @"enabled": @YES}];
     self.controls.actionHandler = ^(NSDictionary *action) { [weak performControlAction:action]; };
-    self.controls.openingHandler = ^{ [weak releasePointer]; };
+    self.controls.openingHandler = ^{
+        [weak releasePointer];
+        if (weak.quickActionsProvider) weak.quickActions = weak.quickActionsProvider(weak.inputOnly);
+    };
     self.views = self.controls.button;
     self.status.translatesAutoresizingMaskIntoConstraints = NO;
     self.canvas = [UIScrollView new]; self.canvas.delegate = self; self.canvas.backgroundColor = UIColor.blackColor;
@@ -937,14 +940,20 @@
 - (void)scrollRemote:(UIPanGestureRecognizer *)gesture {
     if (CGRectIsNull(self.activeCrop) || CGRectIsEmpty(self.activeCrop)) return;
     if (gesture.state == UIGestureRecognizerStateCancelled || gesture.state == UIGestureRecognizerStateFailed) { self.scrollRemainder = 0; return; }
-    if (gesture.state == UIGestureRecognizerStateBegan) self.scrollRemainder = 0;
+    if (!self.foreground || self.exited || self.checkingResume || !self.session.connected) { self.scrollRemainder = 0; return; }
+    if (gesture.state == UIGestureRecognizerStateBegan) { [self releasePointer]; self.scrollRemainder = 0; }
     CGFloat delta = [gesture translationInView:gesture.view ?: self.canvas].y;
     [gesture setTranslation:CGPointZero inView:gesture.view ?: self.canvas];
-    self.scrollRemainder += delta;
-    NSInteger steps = MIN(8, (NSInteger)(fabs(self.scrollRemainder) / 18));
+    if (!isfinite(delta)) { self.scrollRemainder = 0; return; }
+    // RFB exposes discrete wheel ticks, not pixel scrolling. Six points per
+    // tick replaces the sluggish 18-point threshold, independent of image zoom.
+    // Bound each gesture update so a fast swipe cannot flood the input queue.
+    self.scrollRemainder = MAX(-48, MIN(48, self.scrollRemainder + delta));
+    NSInteger steps = (NSInteger)(fabs(self.scrollRemainder) / 6);
     NSInteger mask = self.scrollRemainder > 0 ? 8 : 16;
     for (NSInteger i = 0; i < steps; i++) { CGPoint p = [self trackpadPointer]; [self sendPointer:p mask:mask]; [self sendPointer:p mask:0]; }
-    self.scrollRemainder -= steps * 18 * (self.scrollRemainder > 0 ? 1 : -1);
+    self.scrollRemainder -= steps * 6 * (self.scrollRemainder > 0 ? 1 : -1);
+    if (gesture.state == UIGestureRecognizerStateEnded) self.scrollRemainder = 0;
 }
 - (void)sendPointer:(CGPoint)point mask:(NSInteger)mask {
     if (!self.foreground || self.exited || self.checkingResume) return;
@@ -1108,7 +1117,11 @@
     [self presentMenu:@"Function Keys" sections:@[@{@"title": @"F1–F12", @"items": items}]];
 }
 - (void)showGestureHelp {
-    UIAlertController *help = [UIAlertController alertControllerWithTitle:@"Gestures" message:@"Pointer: tap where you want to click.\nTrackpad: slide anywhere to move the cursor; scroll with two fingers.\n\nTap to click. Hold, then move to drag.\nPan the zoomed view with two fingers in Pointer or three in Trackpad.\nPinch to zoom. Double tap with two fingers to zoom in or fit.\n\nHold Session Controls, slide onto a quick action or category, then release. Slide away to cancel." preferredStyle:UIAlertControllerStyleAlert];
+    NSString *gestures = self.inputOnly
+        ? @"Slide anywhere to move the cursor. Tap to click. Hold, then move to drag. Scroll with two fingers.\n\nPinch zoom is available for the desktop image in Desktop mode; it does not zoom apps on your Mac."
+        : @"Pointer: tap where you want to click.\nTrackpad: slide anywhere to move the cursor; scroll with two fingers.\n\nTap to click. Hold, then move to drag.\nPan the zoomed view with two fingers in Pointer or three in Trackpad.\nPinch to zoom the desktop image. Double tap with two fingers to zoom in or fit.";
+    NSString *message = [gestures stringByAppendingString:@"\n\nHold Session Controls, slide onto a quick action or category, then release. Slide away to cancel."];
+    UIAlertController *help = [UIAlertController alertControllerWithTitle:@"Gestures" message:message preferredStyle:UIAlertControllerStyleAlert];
     [help addAction:[UIAlertAction actionWithTitle:@"Done" style:UIAlertActionStyleCancel handler:nil]];
     [self presentViewController:help animated:YES completion:nil];
 }
@@ -1167,6 +1180,7 @@
 }
 - (void)setInputOnly:(BOOL)value {
     _inputOnly = value;
+    if (self.quickActionsProvider) self.quickActions = self.quickActionsProvider(value);
     if (self.isViewLoaded) {
         [self releasePointer]; [self resetModifiers];
         if (self.session.connected) self.session.inputOnly = value;
@@ -1180,6 +1194,7 @@
     CGPoint center = [self viewportCenter];
     self.canvasToolbarBottom.active = !self.tabletop && !self.fullscreen; self.canvasFullscreenBottom.active = !self.tabletop && self.fullscreen;
     self.image.hidden = self.inputOnly; self.cursorOverlay.hidden = self.inputOnly;
+    self.canvas.pinchGestureRecognizer.enabled = !self.inputOnly;
     self.canvas.backgroundColor = self.inputOnly ? UIColor.systemBackgroundColor : UIColor.blackColor;
     self.trackpadHelp.hidden = !self.inputOnly || !self.login.hidden;
     self.controls.fullscreen = self.fullscreen; self.controls.inputOnly = self.inputOnly;
@@ -1223,11 +1238,20 @@
     if (!self.foreground || self.exited || self.checkingResume || !self.session.connected) {
         self.status.hidden = NO; self.status.text = @"Wait for the desktop to resume before sending input."; return;
     }
+    if ([kind isEqual:@"escape"]) { [self sendRemoteKey:0xff1b]; return; }
+    if ([kind isEqual:@"tab"]) { [self sendRemoteKey:0xff09]; return; }
+    if ([kind isEqual:@"returnKey"]) { [self sendRemoteKey:0xff0d]; return; }
     if ([kind isEqual:@"key"]) { [self sendRemoteKey:[action[@"key"] unsignedIntValue]]; return; }
     if ([kind isEqual:@"modifier"]) { [self.remoteKeyboard pressModifierAlone:[action[@"key"] unsignedIntValue]]; [self refreshModifiers]; return; }
     if ([kind isEqual:@"rightClick"]) {
         CGPoint p = [self trackpadPointer]; [self clickPointer:p mask:4];
     } else if ([kind isEqual:@"shortcut"] || [kind isEqual:@"text"]) {
+        if (self.quickActionsProvider) {
+            NSArray *current = self.quickActionsProvider(self.inputOnly);
+            BOOL available = NO;
+            for (NSDictionary *saved in current) if ([saved[@"id"] isEqual:action[@"id"]] && [saved[@"enabled"] boolValue]) { available = YES; break; }
+            if (!available) return;
+        }
         [self resetModifiers];
         NSMutableArray *events = [NSMutableArray new];
         CompanionVNCKeyboard *keyboard = [[CompanionVNCKeyboard alloc] initWithEvents:^(NSArray *group) { [events addObjectsFromArray:group]; }];
@@ -1259,10 +1283,10 @@
     [self presentMenu:@"View & Display" sections:@[
         @{@"title": @"Desktop", @"items": @[
             @{@"kind": @"displays", @"title": @"Choose Display", @"symbol": @"display.2", @"submenu": @YES, @"push": @YES, @"disabled": @(self.inputOnly)},
-            @{@"kind": @"fit", @"title": @"Fit View", @"symbol": @"arrow.up.left.and.arrow.down.right", @"disabled": @(self.inputOnly)}]},
+            @{@"kind": @"fit", @"title": @"Fit View", @"symbol": @"arrow.down.right.and.arrow.up.left", @"disabled": @(self.inputOnly)}]},
         @{@"title": @"Presentation", @"items": @[
-            @{@"kind": @"fullscreen", @"title": self.fullscreen ? @"Show Keyboard Bar" : @"Hide Keyboard Bar", @"symbol": self.fullscreen ? @"keyboard" : @"arrow.up.left.and.arrow.down.right"},
-            @{@"kind": @"inputOnly", @"title": self.inputOnly ? @"Show Desktop" : @"Trackpad & Keyboard Only", @"symbol": @"rectangle.and.hand.point.up.left", @"subtitle": self.inputOnly ? @"Resume desktop video" : @"Control your Mac without video"}]}]];
+            @{@"kind": @"fullscreen", @"title": self.fullscreen ? @"Show Keyboard Bar" : @"Hide Keyboard Bar", @"symbol": self.fullscreen ? @"keyboard" : @"keyboard.chevron.compact.down"},
+            @{@"kind": @"inputOnly", @"title": self.inputOnly ? @"Show Desktop" : @"Trackpad & Keyboard Only", @"symbol": self.inputOnly ? @"desktopcomputer" : @"rectangle.and.hand.point.up.left", @"subtitle": self.inputOnly ? @"Resume desktop video" : @"Control your Mac without video"}]}]];
 }
 - (void)showInputMenu {
     [self presentMenu:@"Keyboard & Input" sections:@[
@@ -1285,9 +1309,9 @@
 - (void)showSessionMenu {
     [self presentMenu:self.macName ?: @"Session" sections:@[
         @{@"title": @"Session", @"items": @[
-            @{@"kind": @"details", @"title": @"Connection Details", @"symbol": @"network"},
+            @{@"kind": @"details", @"title": @"Connection Details", @"symbol": @"info.circle"},
             @{@"kind": @"appSettings", @"title": @"App Settings", @"symbol": @"gearshape", @"submenu": @YES}]},
-        @{@"title": @"", @"items": @[@{@"kind": @"exit", @"title": @"Exit to My Macs", @"symbol": @"rectangle.portrait.and.arrow.right", @"destructive": @YES}]}]];
+        @{@"title": @"", @"items": @[@{@"kind": @"exit", @"title": @"Disconnect", @"symbol": @"xmark.circle", @"destructive": @YES}]}]];
 }
 
 @end

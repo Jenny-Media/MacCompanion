@@ -19,7 +19,7 @@ struct DirectTerminalView: View {
     @State private var loadedLogin = false
     private let autoConnect: Bool
     private enum Sheet: String, Identifiable {
-        case keys, install, manual, macSettings, appSettings, pro, keyboard, verifyGuide, connectionInfo, errorDetails
+        case keys, install, manual, macSettings, appSettings, pro, quickActions, keyboard, verifyGuide, connectionInfo, errorDetails
         var id: String { rawValue }
     }
     @State private var sheet: Sheet?
@@ -112,6 +112,7 @@ struct DirectTerminalView: View {
                     else { TerminalConnectionInfo(mac: mac) }
                 case .appSettings: DirectSessionSettingsV1()
                 case .pro: DirectProView()
+                case .quickActions: VNCInputSettings(mode: .terminal, changed: { session.reloadKeyboard?() })
                 case .keyboard: TerminalKeyboardSettings(macID: mac.id, changed: { session.reloadKeyboard?() })
                 case .verifyGuide: TerminalIdentityGuide(macName: mac.name)
                 case .connectionInfo: TerminalConnectionInfo(mac: mac)
@@ -139,6 +140,7 @@ struct DirectTerminalView: View {
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.willResignActiveNotification)) { _ in session.background() }
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in session.foreground() }
         .onReceive(NotificationCenter.default.publisher(for: DirectAppLockV1.unlocked)) { _ in session.foreground() }
+        .onReceive(NotificationCenter.default.publisher(for: VNCSessionPreferences.actionsChanged)) { _ in session.reloadKeyboard?() }
         .onReceive(NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification)) { _ in session.activity?.preferenceChanged() }
         .onReceive(NotificationCenter.default.publisher(for: RemoteSessionActivityActions.endRequested)) { notification in
             if let id = notification.object as? String, session.endActivity(id) { exit() }
@@ -152,6 +154,7 @@ struct DirectTerminalView: View {
         case "keys": sheet = .keys
         case "install": setupKey()
         case "manual": sheet = .manual
+        case "quickActions": sheet = .quickActions
         case "customize": sheet = .keyboard
         case "exit": session.stop(); exit()
         default: break
@@ -413,12 +416,13 @@ private struct TerminalSurface: UIViewControllerRepresentable {
         controls.categoryActions = [
             ["kind": "inputMenu", "title": "Keyboard & Input", "symbol": "keyboard"],
             ["kind": "appearance", "title": "Appearance", "symbol": "circle.lefthalf.filled"],
-            ["kind": "session", "title": "Session", "symbol": "network"]]
-        controls.actionHandler = { [weak self] item in self?.performControl(item["kind"] as? String ?? "") }
+            ["kind": "session", "title": "Session", "symbol": "link"]]
+        controls.actionHandler = { [weak self] item in self?.performQuickAction(item) }
+        controls.openingHandler = { [weak self] in self?.updateControls() }
         CompanionVNCObserveDivision(view)
         session.received = { [weak self] bytes in self?.terminal.feed(byteArray: bytes[...]) }
         configureKeyboard()
-        session.reloadKeyboard = { [weak self] in self?.configureKeyboard() }
+        session.reloadKeyboard = { [weak self] in self?.configureKeyboard(); self?.updateControls() }
         session.suspendInput = { [weak self] in self?.terminal.resetModifiers(); self?.controls.cancelSlideForLayoutChange(); self?.controls.close() }
         terminal.focusChanged = { [weak self, weak session] visible in session?.keyboardVisible = visible; self?.updateControls(); self?.view.setNeedsLayout() }
         keyboardBar.toggleKeyboard = { [weak session] in session?.toggleKeyboard?() }
@@ -437,9 +441,25 @@ private struct TerminalSurface: UIViewControllerRepresentable {
         keyboardBar.setKeyboardFocused(terminal.isFirstResponder)
         if !session.connected { controls.close() }
         controls.macName = session.mac.name
-        controls.quickActions = [
-            ["kind": "paste", "title": "Paste", "symbol": "document.on.clipboard", "enabled": true],
-            ["kind": "interrupt", "title": "Ctrl-C", "symbol": "stop.circle", "enabled": true]]
+        controls.quickActions = VNCSessionPreferences.actions(.terminal).map(\.native)
+    }
+    private func performQuickAction(_ item: [AnyHashable: Any]) {
+        guard session.connected, DirectAppLockV1.shared.canAccess else { return }
+        let kind = item["kind"] as? String ?? ""
+        if kind == "shortcut" || kind == "text" {
+            guard DirectProAccess.shared.hasPro,
+                  let id = item["id"] as? String,
+                  let saved = VNCSessionPreferences.actions(.terminal).first(where: { $0.id.uuidString == id && $0.enabled }),
+                  saved.compatible(with: .terminal) else { return }
+            terminal.resetModifiers()
+            if saved.kind == .text {
+                let text = terminal.getTerminal().bracketedPasteMode ? "\u{1b}[200~" + saved.text + "\u{1b}[201~" : saved.text
+                terminal.send(data: Array(text.utf8)[...])
+            } else {
+                terminal.send(data: saved.terminalBytes(applicationCursor: terminal.getTerminal().applicationCursor)[...])
+            }
+            terminal.keyboardBar?.refresh()
+        } else { performControl(kind) }
     }
     private func performControl(_ kind: String) {
         guard session.connected else { return }
@@ -447,6 +467,7 @@ private struct TerminalSurface: UIViewControllerRepresentable {
         case "inputMenu":
             presentControlsMenu("Keyboard & Input", sections: [["title": "Keyboard", "items": [
                 ["kind": "numberRow", "title": "Show Number Row", "symbol": "textformat.123", "selected": keyboardBar.showsNumberRow],
+                ["kind": "quickActions", "title": "Quick Actions", "symbol": "slider.horizontal.3", "submenu": true],
                 ["kind": "customize", "title": "Customize Keys & Snippets", "symbol": "slider.horizontal.3", "submenu": true]]]])
         case "appearance":
             let choices = DirectTerminalAppearance.allCases.map { value in
@@ -456,9 +477,9 @@ private struct TerminalSurface: UIViewControllerRepresentable {
         case "session":
             presentControlsMenu(session.mac.name, sections: [
                 ["title": "Session", "items": [
-                    ["kind": "connectionInfo", "title": "Connection Details", "symbol": "network"],
+                    ["kind": "connectionInfo", "title": "Connection Details", "symbol": "info.circle"],
                     ["kind": "appSettings", "title": "App Settings", "symbol": "gearshape", "submenu": true]]],
-                ["title": "", "items": [["kind": "exit", "title": "Exit to My Macs", "symbol": "rectangle.portrait.and.arrow.right", "destructive": true]]]])
+                ["title": "", "items": [["kind": "exit", "title": "Disconnect", "symbol": "xmark.circle", "destructive": true]]]])
         case "connectionInfo":
             let message = ([session.mac.name, "SSH · Port \(session.mac.sshPort)"] + session.mac.addresses).joined(separator: "\n")
             let details = UIAlertController(title: "Connection Details", message: message, preferredStyle: .alert)
@@ -471,6 +492,10 @@ private struct TerminalSurface: UIViewControllerRepresentable {
             defaults.set(keyboardBar.showsNumberRow, forKey: Self.numberRowPreference)
             view.setNeedsLayout()
         case "paste": terminal.resetModifiers(); terminal.paste(nil)
+        case "escape", "tab", "returnKey":
+            terminal.resetModifiers()
+            let bytes: [UInt8] = kind == "escape" ? [0x1b] : kind == "tab" ? [0x09] : [0x0d]
+            terminal.send(data: bytes[...]); terminal.keyboardBar?.refresh()
         case "interrupt":
             terminal.resetModifiers()
             terminal.send(data: TerminalKeyboardState.text("c", modifiers: .ctrl)[...])

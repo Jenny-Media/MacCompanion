@@ -170,11 +170,11 @@ Healthy sessions hide routine Connected text. Connection problems remain visible
 
 The keyboard/modifier strip remains directly available. One bottom-right glass
 controls button opens quick actions, Displays, Input and Session categories, with
-one Exit to My Macs action. Press-and-slide is a primary interaction: open while
+one Disconnect action. Press-and-slide is a primary interaction: open while
 held, highlight with haptics, commit only on release, cancel outside actions or
 when backgrounded. Capture those touches locally; no menu gesture becomes remote
 pointer input. Ordinary tap and accessibility actions provide equivalent access.
-Exit uses a deliberate tap. Panels stay inside safe areas and above the keyboard.
+Disconnect uses a deliberate tap. Panels stay inside safe areas and above the keyboard.
 The docked keyboard reduces the desktop viewport as well as raising controls.
 Fit follows the available area; zoomed views retain their relative zoom and
 center. Dismissal restores the pre-keyboard view when its crop remains valid;
@@ -203,6 +203,21 @@ notifications alone must not pan the viewport. Trackpad deltas, including held
 drag positions, use coordinates independent of viewport translation. Reuse the
 existing desktop image and update the scroll offset as pointer events arrive;
 do not add an idle polling loop, frame copies, input events or RFB reconnects.
+
+App Settings exposes separate Desktop, Terminal and Trackpad & Keyboard quick-action
+profiles without requiring a connected Mac. Session input settings use the same
+profiles. A saved profile applies to all Macs in that mode; old per-Mac Desktop
+content remains intact and is used until a Desktop profile is saved. Profile
+accounts are separate from Mac UUID accounts in the existing local Keychain service.
+Terminal profiles reject macOS Command chords and desktop-only actions; Terminal
+shortcuts use the existing xterm encoder and saved text uses bracketed paste when
+requested by the shell. Existing Pro customization and free standard controls remain.
+
+Two-finger trackpad scrolling uses the existing balanced RFB wheel masks: one tick
+per six points, at most eight ticks per gesture update. Keep fractional deltas;
+discard excess movement, canceled motion and remainder at the end. Never replay
+input after fingers stop or after a lifecycle transition. This changes local gesture
+sensitivity, not the wire format or authentication.
 
 Quick actions can be reordered, hidden and augmented with explicitly configured
 shortcut chords or saved text (at most 256 Unicode scalars). Store custom content

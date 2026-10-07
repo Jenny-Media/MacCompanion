@@ -34,6 +34,7 @@
 - (void)scrollViewWillBeginDragging:(UIScrollView *)scrollView;
 - (void)scrollViewWillBeginZooming:(UIScrollView *)scrollView withView:(UIView *)view;
 - (void)fitDesktop;
+- (void)scrollRemote:(UIPanGestureRecognizer *)gesture;
 @end
 @interface ControlsHold : UILongPressGestureRecognizer
 @property UIGestureRecognizerState sampleState;
@@ -90,7 +91,7 @@
         if (terminal.boolValue) controls.categoryActions = @[
             @{@"kind":@"inputMenu",@"title":@"Keyboard & Input",@"symbol":@"keyboard"},
             @{@"kind":@"appearance",@"title":@"Appearance",@"symbol":@"circle.lefthalf.filled"},
-            @{@"kind":@"session",@"title":@"Session",@"symbol":@"network"}];
+            @{@"kind":@"session",@"title":@"Session",@"symbol":@"link"}];
         [holder.view addSubview:controls]; [controls open];
         for (NSValue *size in @[[NSValue valueWithCGSize:CGSizeMake(440,956)],
                                 [NSValue valueWithCGSize:CGSizeMake(320,640)],
@@ -128,7 +129,7 @@
     CompanionVNCControls *controls = [[CompanionVNCControls alloc] initWithFrame:CGRectMake(0,0,440,956)];
     controls.categoryActions = @[@{@"kind":@"inputMenu",@"title":@"Keyboard & Input",@"symbol":@"keyboard"},
         @{@"kind":@"appearance",@"title":@"Appearance",@"symbol":@"circle.lefthalf.filled"},
-        @{@"kind":@"session",@"title":@"Session",@"symbol":@"network"}];
+        @{@"kind":@"session",@"title":@"Session",@"symbol":@"link"}];
     controls.quickActions = @[@{@"kind":@"keyboard",@"title":@"Show Keyboard",@"enabled":@YES}];
     __block NSMutableArray *committed = [NSMutableArray new]; controls.actionHandler = ^(NSDictionary *action) { [committed addObject:action[@"kind"]]; };
     ControlsHold *gesture = [ControlsHold new]; gesture.reference = controls;
@@ -156,6 +157,35 @@
     [viewer setTrackpadModeEnabled:YES]; [viewer applyViewportRatio:4 center:CGPointMake(.5,.5)];
     body(viewer, session);
     [viewer stopViewer]; window.hidden = YES; window.rootViewController = nil; [previous makeKeyAndVisible];
+}
+- (void)testTwoFingerScrollIsResponsiveBalancedAndBoundedWithoutMovingTheCursor {
+    [self withFollowViewer:^(CompanionVNCViewer *viewer, ControlsSession *session) {
+        viewer.inputOnly = YES;
+        UIScrollView *canvas = [viewer valueForKey:@"canvas"];
+        XCTAssertFalse(canvas.pinchGestureRecognizer.enabled, @"Hidden desktop image must not silently zoom in input-only mode");
+        viewer.inputOnly = NO; XCTAssertTrue(canvas.pinchGestureRecognizer.enabled);
+        viewer.inputOnly = YES;
+        [viewer receivedCursor:nil hotspot:CGPointZero position:CGPointMake(800,800) known:YES];
+        ControlsPan *pan = [ControlsPan new]; pan.sampleState = UIGestureRecognizerStateBegan;
+        [viewer scrollRemote:pan];
+        pan.sampleState = UIGestureRecognizerStateChanged; pan.delta = CGPointMake(0,5); [viewer scrollRemote:pan];
+        XCTAssertEqual(session.pointers.count,0);
+        pan.delta = CGPointMake(0,1); [viewer scrollRemote:pan];
+        XCTAssertEqualObjects(session.pointers,(@[@[@800,@800,@8],@[@800,@800,@0]]));
+        [session.pointers removeAllObjects]; pan.delta = CGPointMake(0,-18); [viewer scrollRemote:pan];
+        XCTAssertEqual(session.pointers.count,6, @"18 points should send three wheel ticks, not one");
+        for (NSUInteger i = 0; i < 6; i++) XCTAssertEqualObjects(session.pointers[i][2],i % 2 ? @0 : @16);
+        [session.pointers removeAllObjects]; pan.delta = CGPointMake(0,6000); [viewer scrollRemote:pan];
+        XCTAssertEqual(session.pointers.count,16, @"Cap one update at eight balanced ticks");
+        [session.pointers removeAllObjects]; pan.delta = CGPointZero; [viewer scrollRemote:pan];
+        XCTAssertEqual(session.pointers.count,0, @"Do not replay a large swipe after the fingers stop");
+        pan.delta = CGPointMake(0,5); [viewer scrollRemote:pan];
+        pan.sampleState = UIGestureRecognizerStateCancelled; [viewer scrollRemote:pan];
+        pan.sampleState = UIGestureRecognizerStateBegan; pan.delta = CGPointMake(0,1); [viewer scrollRemote:pan];
+        XCTAssertEqual(session.pointers.count,0, @"Cancel discards fractional motion");
+        [viewer background]; pan.delta = CGPointMake(0,18); [viewer scrollRemote:pan];
+        XCTAssertEqual(session.pointers.count,0, @"Never send scroll while backgrounded");
+    }];
 }
 - (void)testTrackpadFollowingKeepsCursorVisibleWithoutChangingMouseDeltasOrAddingEvents {
     [self withFollowViewer:^(CompanionVNCViewer *viewer, ControlsSession *session) {

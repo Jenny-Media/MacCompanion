@@ -1,5 +1,6 @@
 import XCTest
 import Security
+import StoreKitTest
 import SwiftUI
 @testable import Mac_Companion
 
@@ -20,6 +21,96 @@ import SwiftUI
         let attachment = XCTAttachment(image: image); attachment.name = "Synthetic Follow Cursor input settings"
         attachment.lifetime = .keepAlways; add(attachment)
         window.isHidden = true; window.rootViewController = nil; previous?.makeKeyAndVisible()
+    }
+    func testModeProfilesKeepLegacyActionsUntilSavedAndRemainIndependent() throws {
+        let policy = try XCTUnwrap(profile()["interfacePolicy"] as? [String: Any])
+        XCTAssertEqual(policy["quickActionProfileScope"] as? String, "mode")
+        XCTAssertEqual(policy["quickActionConfigurationRequiresConnection"] as? Bool, false)
+        XCTAssertEqual(DirectControlMode.allCases.map(\.rawValue), policy["quickActionProfiles"] as? [String])
+        XCTAssertEqual(DirectControlMode.terminal.defaults.map { $0.kind.rawValue }, policy["terminalDefaultQuickActionKinds"] as? [String])
+        XCTAssertEqual(DirectControlMode.trackpad.defaults.map { $0.kind.rawValue }, policy["trackpadDefaultQuickActionKinds"] as? [String])
+        let mac = UUID()
+        let desktopID = DirectControlMode.desktop.profileID, terminalID = DirectControlMode.terminal.profileID, trackpadID = DirectControlMode.trackpad.profileID
+        for id in [desktopID, terminalID, trackpadID] { VNCSessionPreferences.clear(id) }
+        defer { for id in [mac, desktopID, terminalID, trackpadID] { VNCSessionPreferences.clear(id) } }
+        let legacy = VNCQuickAction(title: "Legacy Shortcut", kind: .shortcut, key: 0x63, modifiers: [0xffeb])
+        try VNCSessionPreferences.saveActions([legacy], mac: mac)
+        XCTAssertEqual(try VNCSessionPreferences.profileActions(.desktop, legacyMac: mac), [legacy])
+        XCTAssertEqual(try VNCSessionPreferences.profileActions(.terminal).map(\.kind), [.paste, .interrupt])
+        XCTAssertEqual(try VNCSessionPreferences.profileActions(.trackpad, legacyMac: mac).map(\.kind), [.rightClick, .returnKey])
+        let shared = VNCQuickAction(title: "Fit", kind: .fit)
+        try VNCSessionPreferences.saveProfile([shared], mode: .desktop)
+        XCTAssertEqual(try VNCSessionPreferences.profileActions(.desktop, legacyMac: mac), [shared])
+        XCTAssertEqual(try VNCSessionPreferences.readActions(mac), [legacy], "Do not delete the legacy record")
+        XCTAssertEqual(try VNCSessionPreferences.profileActions(.terminal).map(\.kind), [.paste, .interrupt])
+        try VNCSessionPreferences.saveProfile([], mode: .terminal)
+        XCTAssertTrue(try VNCSessionPreferences.profileActions(.terminal).isEmpty, "An intentionally empty profile must not restore defaults")
+    }
+    func testQuickActionsRejectIncompatibleKeysAndProtectUnreadableProfiles() throws {
+        let mode = DirectControlMode.terminal, id = mode.profileID
+        VNCSessionPreferences.clear(id); defer { VNCSessionPreferences.clear(id) }
+        XCTAssertThrowsError(try VNCSessionPreferences.saveProfile([.init(title: "Fit", kind: .fit)], mode: mode))
+        XCTAssertThrowsError(try VNCSessionPreferences.saveProfile([.init(title: "Command", kind: .shortcut, key: 0x63, modifiers: [0xffeb])], mode: mode))
+        XCTAssertThrowsError(try VNCSessionPreferences.saveProfile([.init(title: "Unsafe text", kind: .text, text: "\u{1b}[A")], mode: mode))
+        let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: "media.jenny.maccompanion.direct-actions.v1", kSecAttrAccount as String: id.uuidString.lowercased(), kSecAttrSynchronizable as String: false, kSecValueData as String: Data("unreadable".utf8)]
+        XCTAssertEqual(SecItemAdd(query as CFDictionary, nil), errSecSuccess)
+        XCTAssertThrowsError(try VNCSessionPreferences.saveProfile(mode.defaults, mode: mode))
+        XCTAssertThrowsError(try VNCSessionPreferences.profileActions(mode))
+    }
+    func testTerminalQuickShortcutsUseShellEncodingAndNoRemoteCommandModifier() {
+        XCTAssertEqual(VNCQuickAction(title: "Interrupt", kind: .shortcut, key: 0x63, modifiers: [0xffe3]).terminalBytes(), [3])
+        XCTAssertEqual(VNCQuickAction(title: "Alt Left", kind: .shortcut, key: 0xff51, modifiers: [0xffe9]).terminalBytes(), Array("\u{1b}[1;3D".utf8))
+        XCTAssertEqual(VNCQuickAction(title: "Up", kind: .shortcut, key: 0xff52).terminalBytes(applicationCursor: true), Array("\u{1b}OA".utf8))
+        XCTAssertTrue(VNCQuickAction(title: "Command", kind: .shortcut, key: 0x63, modifiers: [0xffeb]).terminalBytes().isEmpty)
+    }
+    func testAllModeControlsCanBeConfiguredWithoutAConnectedMac() async throws {
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+        let previous = scene.windows.first(where: \.isKeyWindow)
+        let window = UIWindow(windowScene: scene)
+        defer { window.isHidden = true; window.rootViewController = nil; previous?.makeKeyAndVisible() }
+        let url = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "LifetimePro", withExtension: "storekit"))
+        let store = try SKTestSession(contentsOf: url); store.disableDialogs = true; store.clearTransactions()
+        defer { store.clearTransactions() }
+        let access = DirectProAccess.shared
+        await access.refresh()
+        for pro in [false, true] {
+            if pro {
+                _ = try await store.buyProduct(identifier: DirectProAccess.productID)
+                await access.refresh()
+                for _ in 0..<100 where !access.hasPro { try await Task.sleep(for: .milliseconds(10)) }
+                XCTAssertTrue(access.hasPro, "Synthetic StoreKit entitlement must be verified")
+            }
+            for mode in DirectControlMode.allCases {
+                let host = UIHostingController(rootView: VNCInputSettings(mode: mode).directAppearance())
+                window.rootViewController = host; window.makeKeyAndVisible(); window.layoutIfNeeded()
+                try await Task.sleep(for: .milliseconds(200))
+                XCTAssertNotNil(host.view.window)
+                let image = UIGraphicsImageRenderer(size: window.bounds.size).image { _ in window.drawHierarchy(in: window.bounds, afterScreenUpdates: true) }
+                let attachment = XCTAttachment(image: image); attachment.name = mode.rawValue + (pro ? "-pro" : "-free") + "-offline-controls"; attachment.lifetime = .keepAlways; add(attachment)
+            }
+        }
+        store.clearTransactions(); await access.refresh()
+        for _ in 0..<100 where access.hasPro { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertFalse(access.hasPro)
+    }
+    func testStoppedDesktopViewerDoesNotReceiveControlProfileUpdates() throws {
+        let mac = try DirectMacRecordV1.normalized(name: "Synthetic Mac", addresses: ["studio.local"])
+        let viewer = CompanionVNCViewer()
+        let coordinator = VNCRemoteDesktopView.Coordinator(mac: mac)
+        coordinator.viewer = viewer; coordinator.observeActivity()
+        defer { coordinator.stopObserving(); coordinator.activity.finish() }
+        viewer.quickActions = [["title": "Sentinel"]]
+        NotificationCenter.default.post(name: VNCSessionPreferences.actionsChanged, object: DirectControlMode.desktop)
+        XCTAssertNotEqual(viewer.quickActions.first?["title"] as? String, "Sentinel")
+        coordinator.stopObserving()
+        viewer.quickActions = [["title": "Sentinel"]]
+        NotificationCenter.default.post(name: VNCSessionPreferences.actionsChanged, object: DirectControlMode.desktop)
+        XCTAssertEqual(viewer.quickActions.first?["title"] as? String, "Sentinel")
+    }
+    func testAuditedAppSymbolsExistOnSupportedRuntime() throws {
+        guard let path = ProcessInfo.processInfo.environment["MACCOMPANION_ICON_AUDIT_PATH"] else { throw XCTSkip("Opt-in source inventory audit") }
+        let symbols = try JSONDecoder().decode([String: [String]].self, from: Data(contentsOf: URL(fileURLWithPath: path)))
+        for name in symbols.keys { XCTAssertNotNil(UIImage(systemName: name), "Missing SF Symbol: " + name) }
     }
     private func profile() throws -> [String: Any] {
         let url = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "direct-screen-sharing-v1", withExtension: "json"))

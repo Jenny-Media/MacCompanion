@@ -64,7 +64,7 @@ private struct TerminalSnippetEditor: View {
             Form {
                 TextField("Name", text: $value.name)
                 TextEditor(text: $value.text).font(.body.monospaced()).frame(minHeight: 160).autocorrectionDisabled().textInputAutocapitalization(.never).privacySensitive()
-                if !value.valid { Text("Enter a name from 1 to 32 characters and text from 1 byte to 4 KiB.").font(.footnote).foregroundStyle(.secondary) }
+                if !value.valid { Text("Enter a name from 1 to 40 characters and text from 1 byte to 4 KiB.").font(.footnote).foregroundStyle(.secondary) }
                 Text("Up to 4 KiB. Text is sent exactly as entered. Include a newline only if you want the shell to execute it.").font(.footnote).foregroundStyle(.secondary)
             }
             .navigationTitle("Terminal Snippet").navigationBarTitleDisplayMode(.inline)

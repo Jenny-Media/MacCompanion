@@ -1,5 +1,6 @@
 import XCTest
 import SwiftUI
+import StoreKitTest
 import Crypto
 import NIO
 import NIOSSH
@@ -129,6 +130,31 @@ private final class SSHEarlyReadProbe: ChannelInboundHandler, @unchecked Sendabl
         interrupt.sendActions(for: .touchUpInside)
         try await wait("floating Ctrl-C reaches the PTY") { record.received.contains(3) }
         XCTAssertEqual(record.passwordRequests, 1)
+        let url = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "LifetimePro", withExtension: "storekit"))
+        let store = try SKTestSession(contentsOf: url); store.disableDialogs = true; store.clearTransactions()
+        defer { store.clearTransactions(); VNCSessionPreferences.clear(DirectControlMode.terminal.profileID) }
+        let access = DirectProAccess.shared
+        _ = try await store.buyProduct(identifier: DirectProAccess.productID)
+        await access.refresh()
+        try await wait("synthetic StoreKit entitlement is verified") { access.hasPro }
+        let text = VNCQuickAction(title: "Synthetic action", kind: .text, text: "synthetic-action-only")
+        try VNCSessionPreferences.saveProfile([text], mode: .terminal)
+        controls.button.sendActions(for: .touchUpInside)
+        let custom = try XCTUnwrap(descendants(controls).first { $0.accessibilityIdentifier == "session-action-text" } as? UIButton)
+        custom.sendActions(for: .touchUpInside)
+        try await wait("configured Terminal text reaches the same PTY") { String(decoding: record.received, as: UTF8.self).contains(text.text) }
+        XCTAssertEqual(record.passwordRequests, 1, "Changing controls must not reconnect the shell")
+        try await wait("the completed action panel finishes closing") {
+            !descendants(controls).contains { $0.accessibilityIdentifier == "session-action-text" }
+        }
+        store.clearTransactions(); await access.refresh()
+        try await wait("cleared StoreKit entitlement retires Pro input") { !access.hasPro }
+        controls.button.sendActions(for: .touchUpInside)
+        XCTAssertFalse(descendants(controls).contains { $0.accessibilityIdentifier == "session-action-text" })
+        let count = record.received.count
+        controls.actionHandler?(text.native)
+        try await Task.sleep(for: .milliseconds(50))
+        XCTAssertEqual(record.received.count, count, "A stale Pro action cannot send input after entitlement ends")
     }
     func testFailedSavedLoginRemainsVisibleWithoutAutomaticRetry() async throws {
         let record = SSHTestRecord(), key = NIOSSHPrivateKey(ed25519Key: .init())
