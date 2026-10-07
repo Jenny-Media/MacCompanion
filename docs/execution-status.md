@@ -1,3 +1,22 @@
+## 2026-10-06 — Build 5 uploaded for the authorized public beta
+
+Approved app changes are committed as `768708b`. Stable required validation passes;
+the fresh device build and optimized signed **1.0 (5)** archive preserve all 577
+input hashes, existing identities, private Keychain groups and deep signatures.
+Xcode confirms normal App Store Connect upload success. Apple processed build 5;
+the unchanged standard-encryption/outside-France declaration and focused testing
+notes are saved. The existing internal group confirms **1.0 (5), Testing**. The
+normal upload has Internal Only disabled for external review eligibility.
+
+The beta description and public website URLs are saved. Beta App Review contact
+information requires a phone number. Automatic approval also requires a fresh
+confirmation before creating the public group/link; the prepared Public Beta draft
+has a proposed initial limit of 100 testers. The public-link France
+distribution scope also needs a decision; the earlier narrower declaration cannot
+be silently widened. Those user questions are pending. No public link or Beta App
+Review submission is claimed. See
+[public-beta evidence](evidence/2026-10-06-public-beta-testflight.md).
+
 ## 2026-10-06 — Approved Desktop and Terminal connection sheets
 
 The approved v2 entry design is implemented: a compact bottom sheet over a blurred
