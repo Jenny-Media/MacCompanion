@@ -27,6 +27,8 @@ NS_ASSUME_NONNULL_BEGIN
 @property(nonatomic, copy, nullable) void (^macsHandler)(void);
 @property(nonatomic, copy, nullable) void (^connectedHandler)(void);
 @property(nonatomic, copy, nullable) void (^sessionPhaseHandler)(NSString *);
+/// Local presentation only: the desktop canvas is visible instead of sign-in.
+@property(nonatomic, copy, nullable) void (^chromeHandler)(BOOL);
 @property(nonatomic, copy, nullable) void (^diagnosticHandler)(NSDictionary *);
 @property(nonatomic, copy, nullable) void (^windowBoundsHandler)(CGPoint, CGSize, void (^)(CGRect));
 - (void)stopViewer;

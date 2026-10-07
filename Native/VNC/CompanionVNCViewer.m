@@ -53,6 +53,7 @@
 @property UIActivityIndicatorView *spinner;
 @property CompanionVNCControls *controls;
 @property BOOL initialDisplayApplied;
+@property BOOL immersiveChrome;
 @property CGPoint trackpadTranslation;
 @property UISwitch *remember;
 @property UILabel *status;
@@ -100,6 +101,9 @@
 @end
 
 @implementation CompanionVNCViewer
+- (UIStatusBarStyle)preferredStatusBarStyle {
+    return self.immersiveChrome || self.traitCollection.userInterfaceStyle == UIUserInterfaceStyleDark ? UIStatusBarStyleLightContent : UIStatusBarStyleDarkContent;
+}
 - (instancetype)initWithNibName:(NSString *)nibNameOrNil bundle:(NSBundle *)nibBundleOrNil {
     if ((self = [super initWithNibName:nibNameOrNil bundle:nibBundleOrNil])) _followCursorEnabled = YES;
     return self;
@@ -255,9 +259,7 @@
     self.loginClose.accessibilityLabel = @"Cancel connection"; self.loginClose.accessibilityIdentifier = @"mac-login-close"; self.loginClose.tintColor = UIColor.secondaryLabelColor;
     self.loginClose.layer.cornerRadius = 22; [self.loginClose.widthAnchor constraintEqualToConstant:44].active = YES;
     self.loginIdentity = [[UIStackView alloc] initWithArrangedSubviews:@[tile, identityText, self.loginClose]]; self.loginIdentity.axis = UILayoutConstraintAxisHorizontal; self.loginIdentity.spacing = 12; self.loginIdentity.alignment = UIStackViewAlignmentCenter;
-    UIView *handleRow = [UIView new]; UIView *handle = [UIView new]; handle.backgroundColor = [UIColor.secondaryLabelColor colorWithAlphaComponent:.3]; handle.layer.cornerRadius = 2; handle.translatesAutoresizingMaskIntoConstraints = NO; [handleRow addSubview:handle];
-    [NSLayoutConstraint activateConstraints:@[[handleRow.heightAnchor constraintEqualToConstant:8], [handle.widthAnchor constraintEqualToConstant:34], [handle.heightAnchor constraintEqualToConstant:4], [handle.centerXAnchor constraintEqualToAnchor:handleRow.centerXAnchor], [handle.topAnchor constraintEqualToAnchor:handleRow.topAnchor]]];
-    self.loginIntro = [[UIStackView alloc] initWithArrangedSubviews:@[handleRow, self.loginIdentity]];
+    self.loginIntro = [[UIStackView alloc] initWithArrangedSubviews:@[self.loginIdentity]];
     self.loginIntro.axis = UILayoutConstraintAxisVertical; self.loginIntro.spacing = 16;
     self.spinner = [[UIActivityIndicatorView alloc] initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleMedium];
     self.progressLabel = [UILabel new]; self.progressLabel.numberOfLines = 0;
@@ -271,7 +273,7 @@
     [self.loginDetails setImage:[UIImage systemImageNamed:@"info.circle"] forState:UIControlStateNormal];
     self.login = [[UIStackView alloc] initWithArrangedSubviews:@[self.loginIntro, self.progressRow, self.loginFields, actions, self.loginDetails]];
     self.login.axis = UILayoutConstraintAxisVertical; self.login.spacing = 18;
-    self.login.layoutMargins = UIEdgeInsetsMake(12, 22, 20, 22); self.login.layoutMarginsRelativeArrangement = YES;
+    self.login.layoutMargins = UIEdgeInsetsMake(22, 22, 22, 22); self.login.layoutMarginsRelativeArrangement = YES;
     self.login.backgroundColor = DirectConnectionBridge.panelColor; self.login.layer.cornerRadius = 32;
     self.login.translatesAutoresizingMaskIntoConstraints = NO;
     self.loginScroll = [UIScrollView new]; self.loginScroll.translatesAutoresizingMaskIntoConstraints = NO;
@@ -454,7 +456,7 @@
     if (!self.session.running && !self.starting) [self start];
 }
 - (void)showLoginDetails {
-    NSString *message = @"Enable Screen Sharing in System Settings → General → Sharing on your Mac. Sign in with its Mac account.\n\nChoose this Mac’s login in Passwords or 1Password. Saved Desktop and Terminal logins are separate for each Mac.\n\nUse a trusted local network or your private VPN. Screen Sharing desktop and input traffic are not encrypted by this app.";
+    NSString *message = @"Sign in with your Mac account. Saved logins are separate for each Mac and service.\n\nUse a trusted local network or your private VPN. Screen Sharing desktop and input traffic are not encrypted by this app.";
     if (self.loginIssueDetails.length) message = [NSString stringWithFormat:@"%@\n\n%@", self.loginIssueDetails, message];
     UIAlertController *details = [UIAlertController alertControllerWithTitle:@"Desktop Connection" message:message preferredStyle:UIAlertControllerStyleAlert];
     [details addAction:[UIAlertAction actionWithTitle:@"Done" style:UIAlertActionStyleCancel handler:nil]];
@@ -692,7 +694,7 @@
     BOOL compact = (tabletop || loginRegion.size.height < 520) && !UIContentSizeCategoryIsAccessibilityCategory(self.traitCollection.preferredContentSizeCategory);
     self.loginMaxWidth.constant = compact ? 720 : 440;
     self.login.spacing = compact ? 8 : 18;
-    self.login.layoutMargins = compact ? UIEdgeInsetsMake(10,16,12,16) : UIEdgeInsetsMake(12,22,20,22);
+    self.login.layoutMargins = compact ? UIEdgeInsetsMake(16,16,16,16) : UIEdgeInsetsMake(22,22,22,22);
     self.loginFields.spacing = compact ? 8 : 14;
     self.loginIntro.spacing = compact ? 8 : 16;
     self.credentialColumns.axis = compact && safe.size.width >= 520 ? UILayoutConstraintAxisHorizontal : UILayoutConstraintAxisVertical;
@@ -720,7 +722,7 @@
     if (!self.login.hidden) {
         CGFloat cardWidth = MIN(self.loginMaxWidth.constant, MAX(0, loginRegion.size.width - 32));
         CGSize fitting = [self.login systemLayoutSizeFittingSize:CGSizeMake(cardWidth, UILayoutFittingCompressedSize.height) withHorizontalFittingPriority:UILayoutPriorityRequired verticalFittingPriority:UILayoutPriorityFittingSizeLevel];
-        self.loginContentTop.constant = MAX(12, loginRegion.size.height - fitting.height - 12);
+        self.loginContentTop.constant = MAX(12, (loginRegion.size.height - fitting.height) / 2);
     }
     self.tabletop = tabletop; self.tabletopInputRegion = tabletop ? input : CGRectNull;
     CGFloat keyboardCeiling = CGRectGetMaxY(safe) - self.keyboardOverlap;
@@ -1072,6 +1074,14 @@
 - (void)updateConnectionChrome {
     BOOL progress = self.starting || (self.session.running && !self.lastFramebuffer);
     BOOL loginVisible = !self.login.hidden;
+    BOOL immersive = !loginVisible && !self.inputOnly;
+    self.view.backgroundColor = immersive ? UIColor.blackColor : UIColor.systemBackgroundColor;
+    self.overrideUserInterfaceStyle = immersive ? UIUserInterfaceStyleDark : UIUserInterfaceStyleUnspecified;
+    if (self.immersiveChrome != immersive) {
+        self.immersiveChrome = immersive;
+        [self setNeedsStatusBarAppearanceUpdate];
+        if (self.chromeHandler) self.chromeHandler(immersive);
+    }
     BOOL visibilityChanged = self.loginScroll.hidden == loginVisible;
     void (^showChrome)(void) = ^{
         self.loginScroll.hidden = !loginVisible;
@@ -1194,10 +1204,7 @@
         }
     }
     if (self.presentedViewController) return;
-    UINavigationController *menu = [[UINavigationController alloc] initWithRootViewController:picker];
-    menu.modalPresentationStyle = UIModalPresentationPopover; menu.preferredContentSize = CGSizeMake(360, 480);
-    menu.popoverPresentationController.sourceView = self.views; menu.popoverPresentationController.sourceRect = self.views.bounds;
-    menu.popoverPresentationController.delegate = picker;
+    UINavigationController *menu = [CompanionVNCMenu navigationControllerForMenu:picker sourceView:self.views];
     [self presentViewController:menu animated:YES completion:nil];
 }
 - (void)showViewMenu {

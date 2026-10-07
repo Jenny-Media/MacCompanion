@@ -2,11 +2,31 @@
 import SwiftUI
 import UIKit
 
+/// Paint the hosting safe area with the same background as the native canvas.
+/// This also gives SwiftUI's presenting controller the matching status text style.
+struct DirectDesktopSessionView: View {
+    let mac: DirectMacRecordV1
+    var inputOnly = false
+    var connectionMacNames: [String] = []
+    let showMacs: @MainActor () -> Void
+    @State private var immersive = false
+    @State private var appearance = DirectAppearanceV1.shared
+    var body: some View {
+        ZStack {
+            (immersive ? Color.black : Color(uiColor: .systemBackground)).ignoresSafeArea()
+            VNCRemoteDesktopView(mac: mac, inputOnly: inputOnly, connectionMacNames: connectionMacNames,
+                                 showMacs: showMacs, chromeChanged: { immersive = $0 })
+        }
+        .preferredColorScheme(immersive ? .dark : appearance.app.colorScheme)
+    }
+}
+
 struct VNCRemoteDesktopView: UIViewControllerRepresentable {
     let mac: DirectMacRecordV1
     var inputOnly = false
     var connectionMacNames: [String] = []
     let showMacs: @MainActor () -> Void
+    var chromeChanged: @MainActor (Bool) -> Void = { _ in }
     func makeCoordinator() -> Coordinator { Coordinator(mac: mac, showMacs: showMacs) }
     func makeUIViewController(context: Context) -> CompanionVNCViewer {
         let viewer = CompanionVNCViewer()
@@ -14,6 +34,10 @@ struct VNCRemoteDesktopView: UIViewControllerRepresentable {
         viewer.connectionMacNames = connectionMacNames.isEmpty ? [mac.name] : connectionMacNames
         viewer.servicePort = mac.port
         viewer.inputOnly = inputOnly
+        viewer.chromeHandler = { value in
+            // Native state can change while SwiftUI mounts this controller.
+            Task { @MainActor in chromeChanged(value) }
+        }
         viewer.preferenceID = mac.id.uuidString.lowercased()
         viewer.pointerSpeed = VNCSessionPreferences.speed(mac.id)
         viewer.restoredDisplayID = VNCSessionPreferences.display(mac.id)

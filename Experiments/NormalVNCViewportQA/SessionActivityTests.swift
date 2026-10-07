@@ -100,11 +100,12 @@ private final class ActivityActionTestSession: CompanionVNCSession {
         let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
         let previous = scene.windows.first(where: \.isKeyWindow), window = UIWindow(windowScene: scene)
         defer { window.isHidden = true; window.rootViewController = nil; previous?.makeKeyAndVisible() }
+        for kind in [RemoteSessionActivityAttributes.Kind.desktop, .terminal] {
         for width: CGFloat in [280, 320, 368] {
             for size in [DynamicTypeSize.large, .xxxLarge, .accessibility3] {
                 let content = RemoteSessionExpandedContent(
-                    attributes: .init(macID: UUID(), macName: "A Mac With A Very Long User Assigned Name"),
-                    phase: .reconnecting, isStale: false, activityID: "synthetic")
+                    attributes: .init(macID: UUID(), macName: "A Mac With A Very Long User Assigned Name", kind: kind),
+                    phase: kind == .terminal ? .paused : .reconnecting, isStale: false, activityID: "synthetic")
                     .foregroundStyle(.white).preferredColorScheme(.dark)
                     .environment(\.dynamicTypeSize, size)
                 let controller = UIHostingController(rootView: content)
@@ -112,7 +113,7 @@ private final class ActivityActionTestSession: CompanionVNCSession {
                 window.rootViewController = controller; window.makeKeyAndVisible(); window.layoutIfNeeded()
                 let measured = controller.sizeThatFits(in: CGSize(width: width, height: 500))
                 // Leave room above this inset full-width region for the camera cutout.
-                XCTAssertLessThanOrEqual(measured.height, 132, "width=\(width), text=\(size), height=\(measured.height)")
+                XCTAssertLessThanOrEqual(measured.height, kind == .terminal ? 156 : 132, "width=\(width), text=\(size), height=\(measured.height)")
                 controller.view.frame = CGRect(x: 20, y: 100, width: width, height: measured.height)
                 controller.view.backgroundColor = .black
                 RunLoop.main.run(until: Date().addingTimeInterval(0.1))
@@ -120,9 +121,10 @@ private final class ActivityActionTestSession: CompanionVNCSession {
                     controller.view.drawHierarchy(in: controller.view.bounds, afterScreenUpdates: true)
                 }
                 let attachment = XCTAttachment(image: image)
-                attachment.name = "Expanded island \(Int(width)) \(size)"
+                attachment.name = "Expanded island \(kind) \(Int(width)) \(size)"
                 attachment.lifetime = .keepAlways; add(attachment)
             }
+        }
         }
     }
     func testStatusOptOutAndDismissalAreIndependentOfRecovery() async throws {
@@ -176,6 +178,15 @@ private final class ActivityActionTestSession: CompanionVNCSession {
         for c in try XCTUnwrap(fixture["resumeURLCases"] as? [[String: Any]]) {
             let link = try XCTUnwrap(URL(string: try XCTUnwrap(c["url"] as? String)))
             XCTAssertEqual(RemoteSessionActivityAttributes.resumeMacID(from: link) != nil, c["valid"] as? Bool)
+            if let kind = c["kind"] as? String { XCTAssertEqual(RemoteSessionActivityAttributes.resumeRoute(from: link)?.kind.rawValue, kind) }
         }
+    }
+    func testTerminalResumeAndOldDesktopActivityDecoding() throws {
+        let id = UUID(), terminal = RemoteSessionActivityAttributes(macID: id, macName: "Synthetic Terminal", kind: .terminal)
+        XCTAssertEqual(RemoteSessionActivityAttributes.resumeRoute(from: terminal.resumeURL), .init(macID: id, kind: .terminal))
+        let encoded = try JSONEncoder().encode(RemoteSessionActivityAttributes(macID: id, macName: "Legacy Desktop"))
+        let legacy = try JSONDecoder().decode(RemoteSessionActivityAttributes.self, from: encoded)
+        XCTAssertNil(legacy.kind)
+        XCTAssertEqual(RemoteSessionActivityAttributes.resumeRoute(from: legacy.resumeURL), .init(macID: id, kind: .desktop))
     }
 }

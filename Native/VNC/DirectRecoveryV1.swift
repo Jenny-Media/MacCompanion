@@ -49,7 +49,7 @@ struct DirectRecoveryNotice: Equatable, Sendable {
         case .exportCancelled: copy = ("Export cancelled", "No backup was exported. The original key is still available on this iPhone.", .information)
         case .exportFailed: copy = ("Backup wasn’t exported", "The backup couldn’t be prepared or saved. Your original key is kept; try exporting again.", .warning)
         case .controlsUnavailable: copy = ("Saved controls unavailable", "The app couldn’t read your custom controls. Existing data is kept; standard controls remain available where safe.", .warning)
-        case .cloudUnavailable: copy = ("iCloud Sync unavailable", "The app couldn’t access sync data. Local Macs and logins are kept. Check iCloud Passwords & Keychain, then retry.", .warning)
+        case .cloudUnavailable: copy = ("iCloud Sync unavailable", "The app couldn’t access sync data. Local Macs and logins are kept. Check iCloud Keychain in Settings, then retry.", .warning)
         case .cloudRemoval: copy = ("Cloud removal didn’t finish", "Sync is off and local data is kept. Some cloud copies may remain; retry removal when Keychain is available.", .warning)
         case .storeUnavailable: copy = ("App Store unavailable", "Some purchases couldn’t be loaded. Reload the store when internet access is available. Free features remain available.", .warning)
         case .purchasePending: copy = ("Purchase awaiting approval", "Apple hasn’t completed this purchase yet. Pro will unlock when a verified purchase is available. You don’t need to buy again.", .information)

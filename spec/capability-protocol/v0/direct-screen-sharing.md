@@ -226,11 +226,14 @@ connection. End immediately on Done, terminal failure or opt-out. A dismissed
 activity is not recreated for that session unless the user opts back in.
 Connected status has a short stale date; stale presentations show “Tap to resume”
 instead of promising a live socket. Paused status becomes stale after 15 minutes.
-Only the user-assigned Mac name, opaque saved Mac UUID and phase reach ActivityKit;
+Only the user-assigned Mac name, opaque saved Mac UUID, Desktop/Terminal kind and phase reach ActivityKit;
 no address, account login, pixels or input content. The resume URL accepts only
-maccompanion-session://resume/<UUID> for an existing saved record, with no query,
+maccompanion-session://resume/<UUID> or maccompanion-session://resume-terminal/<UUID>
+for an existing saved record, with no query,
 fragment or credentials. It opens the existing viewer when already selected;
-it cannot create an endpoint or start a parallel session. Activities left by a
+it cannot create an endpoint or start a parallel session. An already presented
+Desktop or Terminal is kept; a Terminal link cannot accidentally open Desktop.
+Old activities without a kind retain Desktop semantics. Activities left by a
 previous process are ended before starting a new one. No APNs or vendor server
 is added. Permanent extension identity/signing admission remains gated.
 
@@ -297,8 +300,25 @@ fails closed and requires forgetting the saved key in Edit Mac before reconnecti
 Never silently accept a changed key, and never use acceptAnything. Fingerprints hash
 the decoded SSH public-key wire blob, using SHA256/base64 without padding. The indexed
 synthetic vectors are authoritative. Save trust only on an explicit affirmative action.
-Open an xterm-256color PTY, forward bytes in order, propagate row/column resize, and
-close the SSH channel on exit/background. Never replay shell input on reconnection.
+Open an xterm-256color PTY, forward bytes in order and propagate row/column resize.
+Close on explicit exit or actual transport failure. Inactive/background transitions
+MUST retain an established SSH channel and PTY, pause automatic transport reads,
+clear armed modifiers and stop admitting input. An incomplete handshake or key
+installation still cancels on inactivity. A bounded UIKit background assertion
+finishes read-pause and Live Activity status updates, then ends within one second
+or on expiration; it MUST NOT maintain idle background runtime or polling.
+Output already in flight is kept only in a bounded 1 MiB memory buffer, never
+rendered while inactive/locked or written to disk. Overflow ends the session with
+an actionable error rather than dropping bytes. Foreground/unlock re-enables reads,
+flushes pending output in order and applies the latest PTY size to the same shell.
+Resume MUST wait for active app state and app unlock; late callbacks cannot revive
+a stopped/replaced session. No input is queued or replayed across this transition.
+Transport loss offers an explicit new shell; never silently reconnect SSH or imply
+that a replacement shell restores the prior process. Live Activities use the existing
+default-on opt-out setting, identify Terminal, and offer scoped Resume/End actions.
+Paused/stale wording MUST NOT promise an indefinitely live connection: iOS may
+suspend the app and the server/network may close SSH while it is away.
+Never replay shell input on reconnection.
 Remote OSC clipboard reads are denied and writes/URL launches require user action.
 
 ## SSH key login and opt-in iCloud library sync

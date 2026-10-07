@@ -367,6 +367,27 @@
     {
       "url": "https://resume/00000000-0000-0000-0000-000000000001",
       "valid": false
+    },
+    {
+      "url": "maccompanion-session://resume-terminal/00000000-0000-0000-0000-000000000001",
+      "valid": true,
+      "kind": "terminal"
+    },
+    {
+      "url": "maccompanion-session://resume-terminal/00000000-0000-0000-0000-000000000001?login=other",
+      "valid": false
+    },
+    {
+      "url": "maccompanion-session://resume-terminal/00000000-0000-0000-0000-000000000001#shell",
+      "valid": false
+    },
+    {
+      "url": "maccompanion-session://resume-terminal/not-a-uuid",
+      "valid": false
+    },
+    {
+      "url": "maccompanion-session://other/00000000-0000-0000-0000-000000000001",
+      "valid": false
     }
   ],
   "portCases": [
@@ -798,7 +819,19 @@
           "openSSH": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAABAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4f",
           "fingerprint": "SHA256:ZkAslGjFiUHdGf/WUL8rQvkib4PTvQatUV0OUQSncCA"
         }
-      ]
+      ],
+      "lifecycle": {
+        "retainEstablishedShellOnInactive": true,
+        "pauseTransportReads": true,
+        "backgroundInput": false,
+        "pendingOutputLimitBytes": 1048576,
+        "resumeRequiresAppUnlock": true,
+        "automaticReconnect": false,
+        "idleBackgroundAssertion": false,
+        "pauseCompletionDeadlineMilliseconds": 1000,
+        "cancelPendingHandshake": true,
+        "cancelKeyInstallation": true
+      }
     },
     "sshKey": {
       "algorithm": "ssh-ed25519",

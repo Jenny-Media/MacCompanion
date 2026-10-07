@@ -45,7 +45,7 @@ private struct TerminalWriter: @unchecked Sendable {
     func write(_ bytes: [UInt8]) async throws { try await value.write(ByteBuffer(bytes: bytes)) }
     func resize(columns: Int, rows: Int) async throws { try await value.changeSize(cols: columns, rows: rows, pixelWidth: 0, pixelHeight: 0) }
 }
-enum TerminalConnectionFailure: Error { case lookup, socket, setupResponse }
+enum TerminalConnectionFailure: Error, Equatable { case lookup, socket, setupResponse, pausedOutputLimit }
 
 private enum TerminalPTY {
     nonisolated static func run(client: SSHClient, columns: Int, rows: Int,
@@ -64,6 +64,20 @@ private enum TerminalPTY {
 }
 
 @MainActor @Observable final class DirectTerminalSession {
+    static let maximumPausedOutputBytes = 1_048_576
+    var suspendInput: (@MainActor () -> Void)?
+    private(set) var suspended = false
+    private(set) var activity: VNCSessionActivityController?
+    private var pausedOutput: [UInt8] = []
+    var pausedOutputByteCount: Int { pausedOutput.count }
+    private var pauseWork: Task<Void, Never>?
+    private var resumeWork: Task<Void, Never>?
+    private var pauseDeadline: Task<Void, Never>?
+    private var backgroundTask = UIBackgroundTaskIdentifier.invalid
+    private var lifecycleGeneration = UUID()
+    private var writeGeneration = UUID()
+    private let activityDefaults: UserDefaults
+    private let activityBackend: any RemoteSessionActivityBackend
     var reloadKeyboard: (@MainActor () -> Void)?
     var toggleKeyboard: (@MainActor () -> Void)?
     var keyboardVisible = false
@@ -90,7 +104,7 @@ private enum TerminalPTY {
             }
         }
         if let failure = error as? TerminalConnectionFailure {
-            switch failure { case .lookup: return .addressNotFound; case .socket: return .macUnreachable; case .setupResponse: return .terminalConnection }
+            switch failure { case .lookup: return .addressNotFound; case .socket: return .macUnreachable; case .setupResponse, .pausedOutputLimit: return .terminalConnection }
         }
         if let failure = error as? SSHClientError {
             switch failure {
@@ -150,7 +164,9 @@ private enum TerminalPTY {
     private var generation = UUID()
     private var columns = 80
     private var rows = 24
-    init(mac: DirectMacRecordV1) { self.mac = mac }
+    init(mac: DirectMacRecordV1, activityDefaults: UserDefaults = .standard, activityBackend: any RemoteSessionActivityBackend = ActivityKitSessionBackend()) {
+        self.mac = mac; self.activityDefaults = activityDefaults; self.activityBackend = activityBackend
+    }
     func updateMac(_ record: DirectMacRecordV1) { if record.id == mac.id { mac = record } }
     func connect(username: String, password: String, remember: Bool, key: TerminalSSHKey? = nil, installation: TerminalNamedKey? = nil, verificationOnly: Bool = false) {
         guard DirectAppLockV1.shared.canAccess, !connecting, !connected else { return }
@@ -205,11 +221,13 @@ private enum TerminalPTY {
                 else if remember { try TerminalSecretStore.save(.init(username: username, password: password), id: mac.id) }
                 self.phase = "Opening a new shell"
                 try await TerminalPTY.run(client: client, columns: columns, rows: rows, ready: { writer in
-                    guard self.generation == id else { throw CancellationError() }
-                    self.writer = writer; self.connected = true; self.connecting = false; self.status = "Connected"; self.phase = "Shell open"; self.recovery = nil
-                }, output: { bytes in
                     guard self.generation == id, DirectAppLockV1.shared.canAccess, UIApplication.shared.applicationState == .active else { throw CancellationError() }
-                    self.received?(bytes)
+                    self.writer = writer; self.connected = true; self.connecting = false; self.status = "Connected"; self.phase = "Shell open"; self.recovery = nil
+                    self.activity = VNCSessionActivityController(mac: self.mac, kind: .terminal, defaults: self.activityDefaults, backend: self.activityBackend)
+                    self.activity?.setPhase("connected")
+                }, output: { bytes in
+                    guard self.generation == id else { throw CancellationError() }
+                    try self.receiveOutput(bytes)
                 })
                 if generation == id { stop(); present(.terminalEnded) }
             } catch {
@@ -222,6 +240,8 @@ private enum TerminalPTY {
                     else { present(reason, stage: stage) }
                 } else if installation != nil && !verificationOnly {
                     presentSetupFailure(outcome, cause: reason, stage: stage)
+                } else if error as? TerminalConnectionFailure == .pausedOutputLimit {
+                    present(.terminalEnded, message: "The shell produced more output than could be kept while paused. Open a new shell to continue; previous input won’t be replayed.", stage: stage)
                 } else if wasConnected { present(.terminalEnded, message: "The SSH connection ended. Open a new shell to continue; previous input won’t be replayed.", stage: stage) }
                 else { present(reason, stage: stage) }
             }
@@ -277,33 +297,112 @@ private enum TerminalPTY {
         if !accepted, reply != nil { stop(); present(.connectionCancelled) }
     }
     func send(_ data: [UInt8]) {
-        guard connected, DirectAppLockV1.shared.canAccess, let writer, !data.isEmpty else { return }
+        guard connected, !suspended, DirectAppLockV1.shared.canAccess, UIApplication.shared.applicationState == .active, let writer, !data.isEmpty else { return }
         guard data.count <= 65536, queuedBytes + data.count <= 65536 else { stop(); present(.inputPaused); return }
-        queuedBytes += data.count; let id = generation; let previous = writeTail
+        queuedBytes += data.count; let id = generation, writeID = writeGeneration; let previous = writeTail
         writeTail = Task {
             await previous?.value
-            guard generation == id, !Task.isCancelled else { return }
-            do { try await writer.write(data); if generation == id { queuedBytes -= data.count } }
-            catch { if generation == id { stop(); present(.terminalEnded, message: "The connection ended while sending input. It won’t be replayed. Open a new shell to continue.") } }
+            guard generation == id, writeGeneration == writeID, !suspended, !Task.isCancelled, DirectAppLockV1.shared.canAccess, UIApplication.shared.applicationState == .active else { return }
+            do { try await writer.write(data); if generation == id && writeGeneration == writeID { queuedBytes -= data.count } }
+            catch { if generation == id && writeGeneration == writeID { stop(); present(.terminalEnded, message: "The connection ended while sending input. It won’t be replayed. Open a new shell to continue.") } }
         }
     }
     func resize(columns: Int, rows: Int) {
         self.columns = max(1, min(500, columns)); self.rows = max(1, min(500, rows))
-        guard let writer, connected else { return }; let cols = self.columns, rows = self.rows, id = generation
+        guard let writer, connected, !suspended, DirectAppLockV1.shared.canAccess, UIApplication.shared.applicationState == .active else { return }
+        let cols = self.columns, rows = self.rows, id = generation, writeID = writeGeneration
         let previous = writeTail
         writeTail = Task {
-            await previous?.value; guard generation == id else { return }
+            await previous?.value; guard generation == id, writeGeneration == writeID, !suspended, !Task.isCancelled,
+                DirectAppLockV1.shared.canAccess, UIApplication.shared.applicationState == .active else { return }
             do { try await writer.resize(columns: cols, rows: rows) }
-            catch { if generation == id { stop(); present(.terminalEnded, message: "The connection ended while resizing the Terminal. Open a new shell to continue.") } }
+            catch { if generation == id && writeGeneration == writeID { stop(); present(.terminalEnded, message: "The connection ended while resizing the Terminal. Open a new shell to continue.") } }
         }
     }
     func stop() {
+        lifecycleGeneration = UUID(); writeGeneration = UUID()
+        pauseWork?.cancel(); pauseWork = nil; resumeWork?.cancel(); resumeWork = nil; finishBackgroundWork()
+        suspended = false; pausedOutput.removeAll(keepingCapacity: false)
+        suspendInput?(); activity?.finish(); activity = nil
         generation = UUID(); let reply = trustReply; trustReply = nil; trust = nil; reply?.resume(returning: false); work?.cancel(); work = nil; writeTail?.cancel(); writeTail = nil
         socketOwner?.cancel(); socketOwner = nil
         let client = self.client, channel = self.channel; self.client = nil; self.channel = nil; writer = nil
         connected = false; connecting = false; queuedBytes = 0
         Task { try? await client?.close(); try? await channel?.close() }
     }
-    func background() { if connecting && settingUp { cancelConnection() } else { let active = connecting || connected; stop(); if active { present(.terminalEnded, message: "The SSH shell closed while the app was in the background. Open a new shell to continue; previous input won’t be replayed.") } } }
+    func receiveOutput(_ bytes: [UInt8]) throws {
+        guard !suspended, DirectAppLockV1.shared.canAccess, UIApplication.shared.applicationState == .active else {
+            if !suspended { background() }
+            guard bytes.count <= Self.maximumPausedOutputBytes - pausedOutput.count else { throw TerminalConnectionFailure.pausedOutputLimit }
+            pausedOutput.append(contentsOf: bytes); return
+        }
+        if !pausedOutput.isEmpty { let pending = pausedOutput; pausedOutput.removeAll(keepingCapacity: false); received?(pending) }
+        received?(bytes)
+    }
+    func background() {
+        if connecting { cancelConnection(); return }
+        guard connected, !suspended || resumeWork != nil else { return }
+        suspended = true; lifecycleGeneration = UUID(); let token = lifecycleGeneration
+        writeGeneration = UUID(); writeTail?.cancel(); writeTail = nil; queuedBytes = 0
+        resumeWork?.cancel(); resumeWork = nil; suspendInput?()
+        activity?.setForeground(false); activity?.setPhase("paused")
+        let readPause = channel?.setOption(ChannelOptions.autoRead, value: false)
+        backgroundTask = UIApplication.shared.beginBackgroundTask(withName: "Pause SSH session") { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self, self.lifecycleGeneration == token else { return }
+                self.finishBackgroundWork()
+            }
+        }
+        pauseWork = Task { [weak self] in
+            do { try await readPause?.get() } catch {
+                guard let self, self.lifecycleGeneration == token else { return }
+                self.stop(); self.present(.terminalEnded); return
+            }
+            guard let self, self.lifecycleGeneration == token else { return }
+            await self.activity?.waitForUpdates()
+            if self.lifecycleGeneration == token { self.finishBackgroundWork() }
+        }
+        pauseDeadline = Task { [weak self] in
+            do { try await Task.sleep(for: .seconds(1)) } catch { return }
+            guard let self, self.lifecycleGeneration == token else { return }
+            self.finishBackgroundWork()
+        }
+    }
+    func foreground() {
+        guard connected, DirectAppLockV1.shared.canAccess, UIApplication.shared.applicationState == .active else { return }
+        activity?.setForeground(true)
+        guard suspended else { activity?.setPhase("connected"); return }
+        guard resumeWork == nil else { return }
+        lifecycleGeneration = UUID(); let token = lifecycleGeneration, id = generation
+        finishBackgroundWork(); let previousPause = pauseWork
+        resumeWork = Task { [weak self] in
+            await previousPause?.value
+            guard let self else { return }
+            defer { if self.lifecycleGeneration == token { self.resumeWork = nil } }
+            guard self.generation == id, self.lifecycleGeneration == token,
+                  self.connected, DirectAppLockV1.shared.canAccess, UIApplication.shared.applicationState == .active else { return }
+            guard let channel = self.channel, channel.isActive else { self.stop(); self.present(.terminalEnded); return }
+            do {
+                try await channel.setOption(ChannelOptions.autoRead, value: true).get()
+                guard self.generation == id, self.lifecycleGeneration == token, DirectAppLockV1.shared.canAccess, UIApplication.shared.applicationState == .active else { return }
+                self.suspended = false; try self.receiveOutput([])
+                self.resize(columns: self.columns, rows: self.rows)
+                self.activity?.setPhase("connected")
+            } catch {
+                if self.generation == id && self.lifecycleGeneration == token { self.stop(); self.present(.terminalEnded) }
+            }
+        }
+    }
+    func endActivity(_ id: String) -> Bool {
+        guard activity?.ownsActivity(id) == true else { return false }
+        stop(); return true
+    }
+    func waitForLifecycleUpdates() async {
+        await pauseWork?.value; await resumeWork?.value; await activity?.waitForUpdates()
+    }
+    private func finishBackgroundWork() {
+        pauseDeadline?.cancel(); pauseDeadline = nil
+        if backgroundTask != .invalid { let task = backgroundTask; backgroundTask = .invalid; UIApplication.shared.endBackgroundTask(task) }
+    }
 }
 #endif

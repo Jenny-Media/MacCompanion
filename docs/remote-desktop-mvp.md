@@ -56,8 +56,9 @@ packaging and physical reliability gates in `docs/execution-status.md` remain.
 
 ## Session controls follow-up
 
-Desktop and Terminal use a compact, bottom-aligned connection sheet over a
-blurred passive saved-Mac list until connected. Reduce Transparency uses an opaque
+Desktop and Terminal use a compact connection card centered in the available
+region over a blurred passive saved-Mac list until connected. The card has no
+drag handle implying swipe dismissal. Reduce Transparency uses an opaque
 backdrop. A shared identity header, grouped credentials, quiet Save login and one
 full-width primary action keep entry focused. Healthy
 Connected text is hidden. Keyboard/modifier controls remain directly accessible,

@@ -39,7 +39,7 @@ struct RemoteSessionExpandedContent: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Image(systemName: "desktopcomputer")
+                Image(systemName: attributes.symbol)
                     .font(.body).foregroundStyle(.blue)
                     .accessibilityHidden(true)
                 Text(attributes.macName)
@@ -49,6 +49,10 @@ struct RemoteSessionExpandedContent: View {
                 Text(isStale ? "Paused" : phase.title)
                     .font(.caption).foregroundStyle(.secondary)
                     .lineLimit(1).fixedSize(horizontal: true, vertical: false)
+            }
+            if attributes.kind == .terminal {
+                Text(isStale ? "Resume to check SSH" : phase == .paused ? "SSH shell retained" : "Terminal session")
+                    .font(.caption).foregroundStyle(.secondary).lineLimit(1)
             }
             RemoteSessionActivityActionsView(resumeURL: attributes.resumeURL,
                 activityID: activityID, compact: true)
@@ -69,11 +73,15 @@ struct RemoteSessionActivityCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: 12) {
-                Image(systemName: "desktopcomputer").font(.title2).foregroundStyle(.blue)
+                Image(systemName: attributes.symbol).font(.title2).foregroundStyle(.blue)
                 VStack(alignment: .leading, spacing: 4) {
                     Text(attributes.macName).font(.headline).lineLimit(1)
                     Text(isStale ? "Paused · Tap to resume" : phase.title)
                         .font(.subheadline).foregroundStyle(.secondary)
+                    if attributes.kind == .terminal {
+                        Text(isStale ? "Resume to check SSH" : phase == .paused ? "Shell retained for your return" : "Terminal session")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
                 }
                 Spacer(minLength: 0)
             }

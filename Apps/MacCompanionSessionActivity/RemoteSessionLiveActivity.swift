@@ -30,7 +30,7 @@ struct RemoteSessionLiveActivity: Widget {
             } compactTrailing: {
                 phaseSymbol(context.state.phase, isStale: context.isStale)
             } minimal: {
-                Image(systemName: "desktopcomputer").foregroundStyle(.blue)
+                Image(systemName: context.attributes.symbol).foregroundStyle(.blue)
             }
             .widgetURL(context.attributes.resumeURL)
             .keylineTint(.blue)

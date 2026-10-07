@@ -44,9 +44,9 @@ import Foundation
     private var finished = false
     private var preferenceEnabled: Bool
     private var work: Task<Void, Never>?
-    init(mac: DirectMacRecordV1, defaults: UserDefaults = .standard, backend: any RemoteSessionActivityBackend = ActivityKitSessionBackend()) {
+    init(mac: DirectMacRecordV1, kind: RemoteSessionActivityAttributes.Kind = .desktop, defaults: UserDefaults = .standard, backend: any RemoteSessionActivityBackend = ActivityKitSessionBackend()) {
         self.defaults = defaults; self.backend = backend; self.preferenceEnabled = Self.enabled(in: defaults)
-        attributes = .init(macID: mac.id, macName: mac.name)
+        attributes = .init(macID: mac.id, macName: mac.name, kind: kind)
         // A process restart must not leave a previous socket labeled connected.
         let orphaned = backend.existingIDs()
         work = Task { for id in orphaned { await backend.end(id) } }

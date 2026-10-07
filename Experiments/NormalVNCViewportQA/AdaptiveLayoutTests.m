@@ -278,6 +278,16 @@
     XCTAssertFalse(((UIView *)[viewer valueForKey:@"loginClose"]).hidden);
     [viewer stopViewer];
 }
+- (void)testPortraitLoginAndProgressAreCenteredInTheAvailableRegion {
+    AdaptiveViewer *viewer = [AdaptiveViewer new]; viewer.division = CGRectNull; [viewer loadViewIfNeeded];
+    viewer.view.frame = CGRectMake(0,0,440,956); [viewer.view layoutIfNeeded];
+    UIView *card = [viewer valueForKey:@"login"]; UIScrollView *scroll = [viewer valueForKey:@"loginScroll"];
+    XCTAssertNotNil(card);
+    XCTAssertEqualWithAccuracy(CGRectGetMidY(card.frame), CGRectGetMidY(scroll.bounds), 2);
+    [viewer setValue:@YES forKey:@"starting"]; [viewer updateConnectionChrome]; [viewer.view layoutIfNeeded];
+    XCTAssertEqualWithAccuracy(CGRectGetMidY(card.frame), CGRectGetMidY(scroll.bounds), 2);
+    [viewer stopViewer];
+}
 - (void)testFoldedLoginUsesOneRegionAndMovesAboveATallKeyboard {
     AdaptiveViewer *viewer = [AdaptiveViewer new]; viewer.division = CGRectMake(0,465,669,20);
     [viewer loadViewIfNeeded]; viewer.view.frame = CGRectMake(0,0,669,951); [viewer.view layoutIfNeeded];

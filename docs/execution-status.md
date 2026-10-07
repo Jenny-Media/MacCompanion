@@ -1,3 +1,64 @@
+## 2026-10-07 — Native Terminal scrolling accepted on iPhone
+
+Terminal history now scrolls behind the status icons using UIKit's automatic
+scroll-edge effect. The custom fade is removed; initial output and sign-in stay
+below the icons, with the usable whole-row PTY grid and keyboard layout preserved.
+Required stable-Xcode validation and all **23** focused regressions pass. Eight
+synthetic full-system captures verify both palettes and keyboard states. The
+normal app and extension match all **577** build inputs and retain the existing
+app, widget and private Keychain identities.
+
+Local development **1.0 (10)** is installed and launched on iPhone 18 Pro Max;
+CoreDevice confirms build 10 and installation sequence **9072**. The user
+confirmed the native scrolling result with a physical screenshot. They also
+previously confirmed quick app switching retains the Terminal connection.
+The user requested a local commit; these follow-ups have not been published to
+TestFlight. See [native scroll-edge evidence](terminal-native-scroll-edge-20261007.md)
+and [Terminal lifecycle evidence](terminal-lifecycle-20261007.md).
+
+## 2026-10-07 — Terminal shell retention and whole-row viewport
+
+Established SSH shells now survive brief app switches: reads and input pause,
+foreground/unlock resumes the same PTY, and Dynamic Island offers Terminal Resume
+and scoped End actions. A repeated-switch resume race is covered and corrected.
+The viewport uses whole terminal rows with an eight-point gap below the status
+safe area, fixing partial first rows with the keyboard open or closed. Required
+stable validation passes, with **36** focused hosted Simulator checks and a final
+paused-Island layout check passing. Eight fresh synthetic system captures verify
+the terminal boundary and palettes. The final normal app and extension match all
+577 input hashes. Local development **1.0 (8)** is installed and launched on iPhone
+18 Pro Max (sequence **9056**), with version read-back and existing private app/
+widget identities verified. The user subsequently confirmed quick app switching
+works; the viewport was later refined as recorded above. iOS still controls
+longer background execution; Live Activities do not grant indefinite networking.
+See [Terminal lifecycle evidence](terminal-lifecycle-20261007.md).
+
+## 2026-10-07 — Physical screenshot layout corrections
+
+Session menu headings remain below the navigation bar, spacing fits actual rows,
+and a native Done control replaces the emphasized checkmark. Terminal reserves a
+controls dock outside output and uses one keyboard-avoidance owner. Desktop's
+status area and controls now match its black canvas, restoring the chosen app
+theme on sign-in. Stable required validation and all **44** focused Simulator
+checks pass. Eight fresh synthetic full-system captures verify the keyboard and
+status areas. The source-matched normal **1.0 (7)** development update is installed
+and launched on iPhone 18 Pro Max (sequence **8976**), with version/build read-back
+and the existing app/widget Keychain identities verified. Physical session
+acceptance remains pending. See [session UI polish](session-ui-polish-20261007.md).
+
+## 2026-10-07 — Consistent session controls and centered sign-in
+
+Terminal now has an immersive status area and keyboard palette. Desktop and
+Terminal share floating controls and content-sized category menus. Sign-in and
+progress cards are centered, and connection details use concise, provider-neutral
+copy. Stable required validation, the normal iOS Simulator build, and all **42**
+focused Simulator checks pass. See [session UI polish](session-ui-polish-20261007.md)
+for changes, test evidence and local capture locations. The source-matched,
+development-signed **1.0 (6)** update is installed and launched on iPhone 18 Pro
+Max (sequence 8968), retaining the existing app and private Keychain identities.
+Physical feature acceptance and TestFlight delivery of this checkpoint remain
+pending.
+
 ## 2026-10-06 — France excluded from App Store distribution
 
 The product owner explicitly requested dropping France support. App Store Connect

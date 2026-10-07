@@ -19,12 +19,17 @@ struct DirectTerminalView: View {
     @State private var loadedLogin = false
     private let autoConnect: Bool
     private enum Sheet: String, Identifiable {
-        case keys, install, manual, macSettings, appSettings, pro, keyboard, verifyGuide, connectionInfo, errorDetails, input, colors, session
+        case keys, install, manual, macSettings, appSettings, pro, keyboard, verifyGuide, connectionInfo, errorDetails
         var id: String { rawValue }
     }
     @State private var sheet: Sheet?
     @Environment(DirectAppearanceV1.self) private var appearance
     @Environment(\.dynamicTypeSize) private var dynamicType
+    @Environment(\.colorScheme) private var colorScheme
+    private var terminalScheme: ColorScheme? {
+        switch appearance.terminal { case .dark: .dark; case .light: .light; case .app: appearance.app.colorScheme }
+    }
+    private var terminalBackground: SwiftUI.Color { (terminalScheme ?? colorScheme) == .dark ? .black : .white }
     private var canConnect: Bool {
         !username.isEmpty && username.utf8.count <= 255 && !username.contains("\0") &&
         (useKey ? key != nil : !password.isEmpty && password.utf8.count <= 4096 && !password.contains("\0"))
@@ -82,8 +87,9 @@ struct DirectTerminalView: View {
     var body: some View {
         NavigationStack {
             ZStack {
-                Color(uiColor: .systemGroupedBackground).ignoresSafeArea()
+                (session.connected ? terminalBackground : Color(uiColor: .systemGroupedBackground)).ignoresSafeArea()
                 TerminalSurface(session: session, style: appearance.terminal.style(app: appearance.app), customize: { sheet = .keyboard }, action: handleControls)
+                    .ignoresSafeArea(.container, edges: session.connected ? .top : [])
                     .opacity(session.connected ? 1 : 0).allowsHitTesting(session.connected).accessibilityHidden(!session.connected)
                 if !session.connected {
                     DirectConnectionBackdrop(names: macLibrary?.macs.map(\.name) ?? [mac.name])
@@ -113,15 +119,17 @@ struct DirectTerminalView: View {
                     controlsSheet(title: "Connection Issue") {
                         if let notice = loginIssue ?? session.recovery { DirectRecoveryCard(notice: notice) }
                     }
-                case .input: controlsSheet(title: "Keyboard & Input") { terminalInputActions }
-                case .colors: controlsSheet(title: "Appearance") { terminalAppearanceActions }
-                case .session: controlsSheet(title: "Session") { terminalSessionActions }
                 }
             }
             .sheet(item: $session.trust) { request in
                 TerminalServerTrustView(macName: mac.name, fingerprint: request.fingerprint, answer: session.answerTrust)
             }
         }
+        // The native terminal owns keyboard avoidance through its layout guide.
+        // Keep SwiftUI from shrinking the same connected surface a second time;
+        // the sign-in card still uses SwiftUI's normal keyboard avoidance.
+        .ignoresSafeArea(.keyboard, edges: session.connected ? .bottom : [])
+        .preferredColorScheme(session.connected ? terminalScheme : appearance.app.colorScheme)
         .onAppear {
             guard !loadedLogin else { return }
             loadedLogin = true; loadLogin()
@@ -129,13 +137,23 @@ struct DirectTerminalView: View {
         }
         .onDisappear { session.stop() }
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.willResignActiveNotification)) { _ in session.background() }
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in session.foreground() }
+        .onReceive(NotificationCenter.default.publisher(for: DirectAppLockV1.unlocked)) { _ in session.foreground() }
+        .onReceive(NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification)) { _ in session.activity?.preferenceChanged() }
+        .onReceive(NotificationCenter.default.publisher(for: RemoteSessionActivityActions.endRequested)) { notification in
+            if let id = notification.object as? String, session.endActivity(id) { exit() }
+        }
     }
     private func handleControls(_ action: String) {
         switch action {
-        case "inputMenu": sheet = .input
-        case "appearance": sheet = .colors
-        case "session": sheet = .session
-        case "disconnect": session.stop(); exit()
+        case "connectionInfo": sheet = .connectionInfo
+        case "appSettings": sheet = .appSettings
+        case "macSettings": sheet = .macSettings
+        case "keys": sheet = .keys
+        case "install": setupKey()
+        case "manual": sheet = .manual
+        case "customize": sheet = .keyboard
+        case "exit": session.stop(); exit()
         default: break
         }
     }
@@ -145,37 +163,12 @@ struct DirectTerminalView: View {
                 .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { sheet = nil } } }
         }.presentationDetents([.medium, .large])
     }
-    @ViewBuilder private var terminalInputActions: some View {
-        Section("Keyboard") { Button("Customize Keys & Snippets", systemImage: "keyboard") { sheet = .keyboard } }
-    }
-    @ViewBuilder private var terminalSessionActions: some View {
-        Section {
-            Button("End Session", systemImage: "xmark") { session.stop(); exit() }
-            Button("Connection Details", systemImage: "info.circle") { sheet = .connectionInfo }
-        }
-        Section("Mac") {
-            Button("Choose or Manage Key", systemImage: "key") { sheet = .keys }
-            Button("Set Up Key on This Mac", systemImage: "key.horizontal") { setupKey() }
-            Button("Manual Key Setup", systemImage: "list.bullet") { sheet = .manual }
-            Button("Mac Settings", systemImage: "gearshape") { sheet = .macSettings }
-        }.disabled(session.connecting)
-    }
-    @ViewBuilder private var terminalAppearanceActions: some View {
-        Section {
-            Picker("Terminal Colors", selection: Binding(get: { appearance.terminal }, set: { appearance.terminal = $0 })) {
-                ForEach(DirectTerminalAppearance.allCases) { Text($0.title).tag($0) }
-            }
-            Button("App Settings", systemImage: "gearshape") { sheet = .appSettings }
-        }
-    }
     private var loginView: some View {
         GeometryReader { geometry in
             let compact = TerminalPresentationLayout.compactLogin(size: geometry.size, accessibility: dynamicType.isAccessibilitySize)
             ScrollView {
                 VStack(spacing: 0) {
-                    Spacer(minLength: 0)
                     VStack(spacing: compact ? 14 : 22) {
-                        Capsule().fill(.secondary.opacity(0.3)).frame(width: 34, height: 4).accessibilityHidden(true)
                         DirectConnectionIdentity(name: mac.name, service: "Terminal", symbol: "terminal", compact: compact,
                             cancel: session.connecting ? nil : { session.stop(); exit() })
                         loginForm(compact: compact)
@@ -183,7 +176,7 @@ struct DirectTerminalView: View {
                         .background(Color(uiColor: DirectConnectionStyle.panel), in: RoundedRectangle(cornerRadius: 32))
                         .overlay(RoundedRectangle(cornerRadius: 32).stroke(Color(uiColor: .separator).opacity(0.25)))
                         .frame(maxWidth: compact ? 720 : 440)
-                }.frame(minHeight: max(0, geometry.size.height - 20), alignment: .bottom)
+                }.frame(minHeight: max(0, geometry.size.height - 20), alignment: .center)
                     .frame(maxWidth: .infinity).padding(.horizontal, 12).padding(.vertical, 10)
             }.scrollBounceBehavior(.basedOnSize).scrollDismissesKeyboard(.interactively)
         }
@@ -317,7 +310,7 @@ private struct TerminalSurface: UIViewControllerRepresentable {
         controller.updateControls()
         controller.applyAppearance(style)
     }
-    static func dismantleUIViewController(_ controller: TerminalController, coordinator: ()) { controller.session.received = nil; controller.session.toggleKeyboard = nil; controller.session.reloadKeyboard = nil }
+    static func dismantleUIViewController(_ controller: TerminalController, coordinator: ()) { controller.session.received = nil; controller.session.toggleKeyboard = nil; controller.session.reloadKeyboard = nil; controller.session.suspendInput = nil }
 }
 
 @MainActor final class SessionTerminalView: TerminalView {
@@ -325,6 +318,20 @@ private struct TerminalSurface: UIViewControllerRepresentable {
     var keyboardState = TerminalKeyboardState()
     private var deletingModifiers: TerminalModifiers?
     private var deletionEncoded = false
+    // SwiftTerm pins short buffers to zero. With a canvas extending behind the
+    // status bar, that resting offset must include the leading scroll inset.
+    // Leave finger-driven scrolling and deceleration owned by UIScrollView.
+    override var contentOffset: CGPoint {
+        get { super.contentOffset }
+        set {
+            var offset = newValue
+            if contentInset.top > 0, contentSize.height > 0, offset.y == 0,
+               !isTracking, !isDecelerating, contentSize.height < bounds.height {
+                offset.y = max(-contentInset.top, contentSize.height - bounds.height)
+            }
+            super.contentOffset = offset
+        }
+    }
     func resetModifiers() { keyboardState.reset(); controlModifier = false; metaModifier = false; (inputAccessoryView as? TerminalKeyboardAccessory)?.refresh() }
     override func insertText(_ text: String) {
         let modifiers = keyboardState.consume()
@@ -361,6 +368,7 @@ private struct TerminalSurface: UIViewControllerRepresentable {
     let session: DirectTerminalSession
     let terminal = SessionTerminalView(frame: .zero)
     let controls = CompanionVNCControls()
+    private var reportedGrid: (columns: Int, rows: Int)?
     private var paletteIsDark: Bool?
     private var normalBottom: NSLayoutConstraint!
     private var foldedBottom: NSLayoutConstraint!
@@ -370,12 +378,19 @@ private struct TerminalSurface: UIViewControllerRepresentable {
         self.session = session; self.customize = customize; self.action = action; super.init(nibName: nil, bundle: nil)
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+    override var preferredStatusBarStyle: UIStatusBarStyle { paletteIsDark == true ? .lightContent : .darkContent }
     override func viewDidLoad() {
         super.viewDidLoad(); view.backgroundColor = .systemBackground
         terminal.terminalDelegate = self; terminal.translatesAutoresizingMaskIntoConstraints = false; view.addSubview(terminal)
-        normalBottom = terminal.bottomAnchor.constraint(equalTo: view.keyboardLayoutGuide.topAnchor)
+        // Keep a controls dock outside the terminal's rows. The same space is
+        // reserved above an onscreen keyboard and above the home indicator.
+        normalBottom = terminal.bottomAnchor.constraint(equalTo: view.keyboardLayoutGuide.topAnchor, constant: -68)
         foldedBottom = terminal.bottomAnchor.constraint(equalTo: view.topAnchor)
-        NSLayoutConstraint.activate([terminal.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor), normalBottom, terminal.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor), terminal.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor)])
+        terminal.contentInsetAdjustmentBehavior = .never
+        terminal.clipsToBounds = true
+        setContentScrollView(terminal, for: .top)
+        if #available(iOS 26, *) { terminal.topEdgeEffect.style = .automatic }
+        NSLayoutConstraint.activate([terminal.topAnchor.constraint(equalTo: view.topAnchor), normalBottom, terminal.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor), terminal.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor)])
         controls.translatesAutoresizingMaskIntoConstraints = false; view.addSubview(controls)
         NSLayoutConstraint.activate([controls.topAnchor.constraint(equalTo: view.topAnchor), controls.bottomAnchor.constraint(equalTo: view.bottomAnchor), controls.leadingAnchor.constraint(equalTo: view.leadingAnchor), controls.trailingAnchor.constraint(equalTo: view.trailingAnchor)])
         controls.button.accessibilityLabel = "Terminal Controls"
@@ -389,6 +404,7 @@ private struct TerminalSurface: UIViewControllerRepresentable {
         session.received = { [weak self] bytes in self?.terminal.feed(byteArray: bytes[...]) }
         configureKeyboard()
         session.reloadKeyboard = { [weak self] in self?.configureKeyboard() }
+        session.suspendInput = { [weak self] in self?.terminal.resetModifiers(); self?.controls.cancelSlideForLayoutChange(); self?.controls.close() }
         terminal.focusChanged = { [weak self, weak session] visible in session?.keyboardVisible = visible; self?.updateControls(); self?.view.setNeedsLayout() }
         session.toggleKeyboard = { [weak self] in
             guard let self else { return }
@@ -406,19 +422,61 @@ private struct TerminalSurface: UIViewControllerRepresentable {
         controls.quickActions = [
             ["kind": "keyboard", "title": session.keyboardVisible ? "Hide Keyboard" : "Show Keyboard", "symbol": session.keyboardVisible ? "keyboard.chevron.compact.down" : "keyboard", "enabled": true],
             ["kind": "paste", "title": "Paste", "symbol": "document.on.clipboard", "enabled": true],
-            ["kind": "interrupt", "title": "Ctrl-C", "symbol": "stop.circle", "enabled": true],
-            ["kind": "disconnect", "title": "Done", "symbol": "xmark", "enabled": true]]
+            ["kind": "interrupt", "title": "Ctrl-C", "symbol": "stop.circle", "enabled": true]]
     }
     private func performControl(_ kind: String) {
         guard session.connected else { return }
         switch kind {
+        case "inputMenu":
+            presentControlsMenu("Keyboard & Input", sections: [["title": "Keyboard", "items": [
+                ["kind": "keyboard", "title": session.keyboardVisible ? "Hide Keyboard" : "Show Keyboard", "symbol": session.keyboardVisible ? "keyboard.chevron.compact.down" : "keyboard"],
+                ["kind": "customize", "title": "Customize Keys & Snippets", "symbol": "slider.horizontal.3", "submenu": true]]]])
+        case "appearance":
+            let choices = DirectTerminalAppearance.allCases.map { value in
+                ["kind": "colors-" + value.rawValue, "title": value.title, "symbol": "circle.lefthalf.filled", "selected": DirectAppearanceV1.shared.terminal == value] as [String: Any]
+            }
+            presentControlsMenu("Appearance", sections: [["title": "Terminal Colors", "items": choices]])
+        case "session":
+            presentControlsMenu(session.mac.name, sections: [
+                ["title": "Session", "items": [
+                    ["kind": "connectionInfo", "title": "Connection Details", "symbol": "network"],
+                    ["kind": "appSettings", "title": "App Settings", "symbol": "gearshape", "submenu": true]]],
+                ["title": "Mac", "items": [
+                    ["kind": "macSettings", "title": "Mac Settings", "symbol": "desktopcomputer", "submenu": true],
+                    ["kind": "sshKeys", "title": "SSH Keys", "symbol": "key", "submenu": true, "push": true]]],
+                ["title": "", "items": [["kind": "exit", "title": "Exit to My Macs", "symbol": "rectangle.portrait.and.arrow.right", "destructive": true]]]])
+        case "sshKeys":
+            presentControlsMenu("SSH Keys", sections: [["title": "", "items": [
+                ["kind": "keys", "title": "Choose or Manage Key", "symbol": "key", "submenu": true],
+                ["kind": "install", "title": "Set Up Key on This Mac", "symbol": "key.horizontal", "submenu": true],
+                ["kind": "manual", "title": "Manual Key Setup", "symbol": "list.bullet", "submenu": true]]]])
+        case "connectionInfo":
+            let message = ([session.mac.name, "SSH · Port \(session.mac.sshPort)"] + session.mac.addresses).joined(separator: "\n")
+            let details = UIAlertController(title: "Connection Details", message: message, preferredStyle: .alert)
+            details.overrideUserInterfaceStyle = paletteIsDark == true ? .dark : .light
+            details.addAction(UIAlertAction(title: "Done", style: .cancel))
+            present(details, animated: true)
         case "keyboard": session.toggleKeyboard?()
         case "paste": terminal.resetModifiers(); terminal.paste(nil)
         case "interrupt":
             terminal.resetModifiers()
             terminal.send(data: TerminalKeyboardState.text("c", modifiers: .ctrl)[...])
             (terminal.inputAccessoryView as? TerminalKeyboardAccessory)?.refresh()
-        default: action(kind)
+        default:
+            if kind.hasPrefix("colors-"), let value = DirectTerminalAppearance(rawValue: String(kind.dropFirst(7))) {
+                DirectAppearanceV1.shared.terminal = value
+            } else { action(kind) }
+        }
+    }
+    private func presentControlsMenu(_ title: String, sections: [[String: Any]]) {
+        let menu = CompanionVNCMenu(); menu.title = title; menu.sections = sections
+        menu.selectionHandler = { [weak self] item in self?.performControl(item["kind"] as? String ?? "") }
+        if let navigation = presentedViewController as? UINavigationController, navigation.topViewController is CompanionVNCMenu {
+            navigation.pushViewController(menu, animated: true)
+        } else if presentedViewController == nil {
+            let navigation = CompanionVNCMenu.navigationController(for: menu, sourceView: controls.button)
+            navigation.overrideUserInterfaceStyle = paletteIsDark == true ? .dark : .light
+            present(navigation, animated: true)
         }
     }
     func activeDivision() -> CGRect { CompanionVNCActiveDivision(view) }
@@ -437,14 +495,35 @@ private struct TerminalSurface: UIViewControllerRepresentable {
         // A closed or hardware-only keyboard leaves the entire terminal usable.
         // Only an onscreen keyboard reserves the lower tabletop region.
         let reserveUpper = tabletop && ceiling < safe.maxY - 1
+        let cell = terminal.caretFrame.height
+        // SwiftUI can remove its top safe area from the native child. Use the
+        // physical window boundary to reserve entry text below system icons.
+        let top: CGFloat
+        if let window = view.window {
+            top = max(0, window.safeAreaInsets.top - view.convert(CGPoint.zero, to: window).y) + 8
+        } else { top = safe.minY + 8 }
+        if terminal.contentInset.top != top {
+            terminal.contentInset.top = top
+            terminal.verticalScrollIndicatorInsets.top = top
+        }
+        func wholeRowBottom(_ bottom: CGFloat) -> CGFloat {
+            guard cell > 0 else { return bottom }
+            return top + max(0, floor((bottom - top) / cell)) * cell
+        }
         if reserveUpper {
             normalBottom.isActive = false
-            foldedBottom.constant = max(safe.minY, min(content.maxY - 8, ceiling))
+            foldedBottom.constant = wholeRowBottom(max(top, min(content.maxY - 8, ceiling - 68)))
             foldedBottom.isActive = true
         } else {
             foldedBottom.isActive = false
+            normalBottom.constant = wholeRowBottom(ceiling - 68) - ceiling
             normalBottom.isActive = true
         }
+    }
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        let grid = terminal.getTerminal()
+        sizeChanged(source: terminal, newCols: grid.cols, newRows: grid.rows)
     }
     private func configureKeyboard() {
         let preferences: TerminalKeyboardPreferences
@@ -452,25 +531,43 @@ private struct TerminalSurface: UIViewControllerRepresentable {
         catch { preferences = .init(); session.controlsRecovery = .make(.controlsUnavailable, message: "Custom Terminal controls couldn’t be read. Existing data is kept; the standard keyboard remains available.") }
         terminal.resetModifiers()
         let accessory = TerminalKeyboardAccessory(terminal: terminal, preferences: preferences)
+        accessory.overrideUserInterfaceStyle = terminal.traitCollection.userInterfaceStyle
         accessory.customize = customize
         terminal.inputAccessoryView = accessory
         terminal.reloadInputViews()
     }
     func applyAppearance(_ style: UIUserInterfaceStyle) {
         loadViewIfNeeded()
+        if overrideUserInterfaceStyle != style { overrideUserInterfaceStyle = style }
+        if view.overrideUserInterfaceStyle != style { view.overrideUserInterfaceStyle = style }
         if terminal.overrideUserInterfaceStyle != style { terminal.overrideUserInterfaceStyle = style }
         updatePalette()
     }
     private func updatePalette() {
-        let dark = terminal.traitCollection.userInterfaceStyle == .dark
+        let style = terminal.overrideUserInterfaceStyle == .unspecified ? terminal.traitCollection.userInterfaceStyle : terminal.overrideUserInterfaceStyle
+        let dark = style == .dark
         guard paletteIsDark != dark else { return }; paletteIsDark = dark
         terminal.nativeBackgroundColor = dark ? .black : .white
+        view.backgroundColor = dark ? .black : .white
+        controls.overrideUserInterfaceStyle = dark ? .dark : .light
+        terminal.inputAccessoryView?.overrideUserInterfaceStyle = dark ? .dark : .light
+        setNeedsStatusBarAppearanceUpdate()
         terminal.nativeForegroundColor = dark ? .white : .black
         terminal.caretColor = .systemBlue; terminal.keyboardAppearance = dark ? .dark : .light
         if terminal.isFirstResponder { terminal.reloadInputViews() }
         terminal.setNeedsDisplay()
     }
-    func sizeChanged(source: TerminalView, newCols: Int, newRows: Int) { session.resize(columns: newCols, rows: newRows) }
+    func sizeChanged(source: TerminalView, newCols: Int, newRows: Int) {
+        let cell = source.caretFrame.height
+        guard cell > 0, source.bounds.height > source.contentInset.top else { return }
+        // Keep the interactive grid in the unobscured viewport. Extra space
+        // above it is for scrollback, not additional rows hidden by system UI.
+        let rows = max(2, Int(floor((source.bounds.height - source.contentInset.top) / cell)))
+        let grid = source.getTerminal()
+        if grid.rows != rows { grid.resize(cols: newCols, rows: rows); source.setNeedsDisplay() }
+        guard reportedGrid?.columns != newCols || reportedGrid?.rows != rows else { return }
+        reportedGrid = (newCols, rows); session.resize(columns: newCols, rows: rows)
+    }
     func send(source: TerminalView, data: ArraySlice<UInt8>) { session.send(terminal.encodeOutput(data)) }
     func setTerminalTitle(source: TerminalView, title: String) {}
     func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {}
@@ -502,14 +599,9 @@ struct TerminalConnectionInfo: View {
                     LabeledContent("SSH Port", value: String(mac.sshPort))
                     ForEach(mac.addresses, id: \.self) { Text($0).textSelection(.enabled) }
                 }
-                Section("Set Up Your Mac") {
-                    Text("Enable Remote Login in System Settings → General → Sharing. Use your Mac account password or an SSH key installed for that account.")
-                    Text("Desktop and Terminal save separate logins for each Mac. Choose this Mac’s login in Passwords or 1Password.")
-                }
-                Text("Change saved addresses and ports in My Macs → this Mac’s menu → Mac Settings.")
-            }.navigationTitle("Connection Settings").navigationBarTitleDisplayMode(.inline)
+            }.navigationTitle("Connection Details").navigationBarTitleDisplayMode(.inline)
                 .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
-        }
+        }.presentationDetents([.medium, .large])
     }
 }
 #endif

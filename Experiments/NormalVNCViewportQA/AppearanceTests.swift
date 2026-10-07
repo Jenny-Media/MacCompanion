@@ -3,6 +3,41 @@ import SwiftUI
 @testable import Mac_Companion
 
 @MainActor final class AppearanceTests: XCTestCase {
+    func testDesktopCanvasThemeReachesHostingSafeAreasAndRestoresLoginTheme() async throws {
+        let previous = DirectAppearanceV1.shared.app; DirectAppearanceV1.shared.app = .light
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let window = UIWindow(windowScene: scene); window.overrideUserInterfaceStyle = .light
+        let mac = try DirectMacRecordV1.normalized(name: "Synthetic Desktop", addresses: ["studio.local"])
+        let host = UIHostingController(rootView: DirectDesktopSessionView(mac: mac, showMacs: {}))
+        window.rootViewController = host; window.makeKeyAndVisible()
+        defer { window.isHidden = true; window.rootViewController = nil; DirectAppearanceV1.shared.app = previous }
+        try await Task.sleep(for: .milliseconds(300))
+        func controllers(_ root: UIViewController) -> [UIViewController] { [root] + root.children.flatMap(controllers) }
+        let viewer = try XCTUnwrap(controllers(host).compactMap { $0 as? CompanionVNCViewer }.first)
+        let owner = viewer.session
+        let login = try XCTUnwrap(viewer.value(forKey: "login") as? UIView)
+        login.isHidden = true; _ = viewer.perform(NSSelectorFromString("updateConnectionChrome"))
+        try await Task.sleep(for: .milliseconds(400)); window.layoutIfNeeded()
+        XCTAssertEqual(viewer.view.backgroundColor, .black)
+        XCTAssertEqual(viewer.preferredStatusBarStyle, .lightContent)
+        XCTAssertEqual(host.traitCollection.userInterfaceStyle, .dark)
+        XCTAssertEqual(DirectAppearanceV1.shared.app, .light, "Session chrome must not change the saved app theme")
+        // Sample only this synthetic host's solid corner, outside the native
+        // viewer's safe area. This checks the previous white status strip.
+        let image = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in window.drawHierarchy(in: window.bounds, afterScreenUpdates: true) }
+        let pixel = try XCTUnwrap(image.cgImage?.cropping(to: CGRect(x: 2, y: 2, width: 1, height: 1)))
+        var rgba = [UInt8](repeating: 0, count: 4)
+        let context = try XCTUnwrap(CGContext(data: &rgba, width: 1, height: 1, bitsPerComponent: 8, bytesPerRow: 4, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+        context.draw(pixel, in: CGRect(x: 0, y: 0, width: 1, height: 1))
+        XCTAssertLessThan(Int(rgba[0]) + Int(rgba[1]) + Int(rgba[2]), 20)
+        login.isHidden = false; _ = viewer.perform(NSSelectorFromString("updateConnectionChrome"))
+        try await Task.sleep(for: .milliseconds(300))
+        XCTAssertEqual(host.traitCollection.userInterfaceStyle, .light)
+        XCTAssertEqual(viewer.preferredStatusBarStyle, .darkContent)
+        XCTAssertTrue(viewer.session === owner)
+        viewer.stop()
+    }
+
     func testAppChoicePersistsAndUpdatesNativeWindowsWithoutReplacingViewerOrOwner() throws {
         let suite = "appearance-qa-" + UUID().uuidString
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
@@ -37,9 +72,16 @@ import SwiftUI
         XCTAssertEqual(controller.terminal.traitCollection.userInterfaceStyle, .dark)
         XCTAssertEqual(controller.terminal.nativeForegroundColor, .white)
         XCTAssertEqual(controller.terminal.nativeBackgroundColor, .black)
+        XCTAssertEqual(controller.view.backgroundColor, .black)
+        XCTAssertEqual(controller.preferredStatusBarStyle, .lightContent)
+        XCTAssertEqual(controller.controls.traitCollection.userInterfaceStyle, .dark)
+        XCTAssertEqual(controller.terminal.inputAccessoryView?.overrideUserInterfaceStyle, .dark)
         controller.applyAppearance(.light); window.layoutIfNeeded()
         XCTAssertEqual(controller.terminal.nativeForegroundColor, .black)
         XCTAssertEqual(controller.terminal.nativeBackgroundColor, .white)
+        XCTAssertEqual(controller.view.backgroundColor, .white)
+        XCTAssertEqual(controller.preferredStatusBarStyle, .darkContent)
+        XCTAssertEqual(controller.terminal.inputAccessoryView?.overrideUserInterfaceStyle, .light)
         controller.applyAppearance(.unspecified); window.overrideUserInterfaceStyle = .dark; window.layoutIfNeeded()
         XCTAssertEqual(controller.terminal.nativeBackgroundColor, .black)
         XCTAssertTrue(controller.session === session); XCTAssertFalse(session.connecting)

@@ -254,15 +254,15 @@ struct DirectMacLibraryRootV1: View {
                 Button("Remove Mac", role: .destructive) { if let removing { library.remove(removing) }; removing = nil }
             }
             .onOpenURL { url in
-                guard let id = RemoteSessionActivityAttributes.resumeMacID(from: url),
-                      let mac = library.macs.first(where: { $0.id == id }), selected == nil else { return }
-                open(mac, input: false, terminalMode: false)
+                guard let route = RemoteSessionActivityAttributes.resumeRoute(from: url),
+                      let mac = library.macs.first(where: { $0.id == route.macID }), selected == nil, terminal == nil else { return }
+                open(mac, input: false, terminalMode: route.kind == .terminal)
             }
             .fullScreenCover(item: $terminal) { mac in
                 DirectTerminalView(mac: mac, macLibrary: library, exit: { terminal = nil })
             }
             .fullScreenCover(item: $selected) { mac in
-                VNCRemoteDesktopView(mac: mac, inputOnly: inputOnly, connectionMacNames: library.macs.map(\.name), showMacs: { selected = nil })
+                DirectDesktopSessionView(mac: mac, inputOnly: inputOnly, connectionMacNames: library.macs.map(\.name), showMacs: { selected = nil })
                     .ignoresSafeArea(.container, edges: .bottom)
             }
         }
@@ -513,7 +513,7 @@ struct DirectSessionSettingsV1: View {
                         .accessibilityIdentifier("session-live-activity")
                     Toggle("Controls Haptics", isOn: $controlsHaptics).accessibilityIdentifier("controls-haptics")
                 } header: { Text("Session") } footer: {
-                    Text("Dynamic Island shows session status and a quick way back. Controls Haptics adds light feedback when opening the menu or choosing an action; it confirms your selection, not completion on the Mac.")
+                    Text("Dynamic Island shows Desktop or Terminal status with Resume and End actions. Terminal keeps the same shell during brief app switches; iOS may suspend networking while you’re away. Controls Haptics confirms a local menu selection.")
                 }
             }
             .sheet(item: $settingsSheet) { selection in
