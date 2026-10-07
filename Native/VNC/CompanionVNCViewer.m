@@ -69,6 +69,8 @@
 @property BOOL cursorFollowingSuspended;
 @property CompanionRemoteTextInput *input;
 @property NSLayoutConstraint *toolbarBottom, *canvasToolbarBottom, *canvasFullscreenBottom;
+@property NSLayoutConstraint *canvasTop;
+@property UIEdgeInsets previousCanvasInset;
 @property UILabel *trackpadHelp;
 @property UIGestureRecognizer *click;
 @property UIPanGestureRecognizer *drag, *remoteScroll;
@@ -167,6 +169,8 @@
     self.canvas = [UIScrollView new]; self.canvas.delegate = self; self.canvas.backgroundColor = UIColor.blackColor;
     self.canvas.translatesAutoresizingMaskIntoConstraints = NO; self.canvas.maximumZoomScale = 5;
     self.canvas.bounces = NO;
+    self.canvas.contentInsetAdjustmentBehavior = UIScrollViewContentInsetAdjustmentNever;
+    if (@available(iOS 26, *)) self.canvas.topEdgeEffect.style = UIScrollEdgeEffectStyle.automaticStyle;
     self.image = [UIImageView new]; self.image.userInteractionEnabled = YES;
     [self.canvas addSubview:self.image]; [self.view addSubview:self.canvas];
     self.cursorOverlay = [UIView new]; self.cursorOverlay.userInteractionEnabled = NO;
@@ -326,13 +330,14 @@
     self.canvasToolbarBottom = [self.canvas.bottomAnchor constraintEqualToAnchor:toolbar.topAnchor constant:-8];
     self.canvasFullscreenBottom = [self.canvas.bottomAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.bottomAnchor];
     self.tabletopCanvasBottom = [self.canvas.bottomAnchor constraintEqualToAnchor:self.view.topAnchor];
+    self.canvasTop = [self.canvas.topAnchor constraintEqualToAnchor:self.view.topAnchor constant:8];
     [NSLayoutConstraint activateConstraints:@[
         [self.status.topAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.topAnchor constant:8],
         [self.status.leadingAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.leadingAnchor constant:16],
         [self.status.trailingAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.trailingAnchor constant:-16],
         [toolbar.leadingAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.leadingAnchor constant:6],
         [toolbar.trailingAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.trailingAnchor constant:-68], self.toolbarBottom,
-        [self.canvas.topAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.topAnchor constant:8],
+        self.canvasTop,
         self.canvasToolbarBottom,
         [self.canvas.leadingAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.leadingAnchor],
         [self.canvas.trailingAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.trailingAnchor],
@@ -530,9 +535,7 @@
     self.resumeDisplayID = self.selectedDisplay[@"id"];
     self.resumeFramebufferSize = self.framebufferSize;
     self.resumeZoomRatio = self.canvas.minimumZoomScale > 0 ? self.canvas.zoomScale / self.canvas.minimumZoomScale : 1;
-    CGPoint point = [self.image convertPoint:CGPointMake(CGRectGetMidX(self.canvas.bounds), CGRectGetMidY(self.canvas.bounds)) fromView:self.canvas];
-    self.resumeCenter = CGPointMake(self.activeCrop.size.width > 0 ? point.x / self.activeCrop.size.width : .5,
-                                   self.activeCrop.size.height > 0 ? point.y / self.activeCrop.size.height : .5);
+    self.resumeCenter = CGRectIsEmpty(self.activeCrop) || CGRectIsNull(self.activeCrop) ? CGPointMake(.5, .5) : [self viewportCenter];
 }
 - (void)background { [self backgroundWithCompletion:nil]; }
 - (void)backgroundWithCompletion:(void (^)(void))completion {
@@ -583,14 +586,7 @@
     BOOL missing = self.resumeDisplayID && !display;
     [self selectDisplay:display]; self.resumeDisplayID = nil;
     if (missing || CGRectIsNull(self.activeCrop)) return;
-    CGFloat scale = MIN(self.canvas.maximumZoomScale, self.canvas.minimumZoomScale * MAX(1, self.resumeZoomRatio));
-    [self.canvas setZoomScale:scale animated:NO]; [self scrollViewDidZoom:self.canvas];
-    CGPoint center = CGPointMake(MAX(0, MIN(1, self.resumeCenter.x)) * self.activeCrop.size.width,
-                                MAX(0, MIN(1, self.resumeCenter.y)) * self.activeCrop.size.height);
-    CGPoint p = [self.image convertPoint:center toView:self.canvas];
-    CGPoint offset = CGPointMake(MAX(0, MIN(self.canvas.contentSize.width - self.canvas.bounds.size.width, p.x - self.canvas.bounds.size.width / 2)),
-                                MAX(0, MIN(self.canvas.contentSize.height - self.canvas.bounds.size.height, p.y - self.canvas.bounds.size.height / 2)));
-    [self.canvas setContentOffset:offset animated:NO];
+    [self applyViewportRatio:self.resumeZoomRatio center:self.resumeCenter];
 }
 - (void)resetModifiers {
     [self.remoteKeyboard reset]; [self refreshModifiers];
@@ -642,9 +638,21 @@
     [self.session viewChanged]; [self renderFramebuffer:YES];
 }
 - (UIView *)viewForZoomingInScrollView:(UIScrollView *)scrollView { return self.image; }
+- (CGRect)canvasViewportBounds {
+    // The canvas reaches behind system chrome; Fit and automatic cursor following
+    // use only the unobscured region. Panning remains owned by UIScrollView.
+    return UIEdgeInsetsInsetRect(self.canvas.bounds, self.canvas.contentInset);
+}
+- (CGPoint)clampedCanvasOffset:(CGPoint)offset {
+    UIEdgeInsets inset = self.canvas.contentInset;
+    CGFloat minX = -inset.left, minY = -inset.top;
+    return CGPointMake(MAX(minX, MIN(MAX(minX, self.canvas.contentSize.width - self.canvas.bounds.size.width + inset.right), offset.x)),
+                       MAX(minY, MIN(MAX(minY, self.canvas.contentSize.height - self.canvas.bounds.size.height + inset.bottom), offset.y)));
+}
 - (void)scrollViewDidZoom:(UIScrollView *)scrollView {
-    CGFloat x = MAX(0, (scrollView.bounds.size.width - self.image.frame.size.width) / 2);
-    CGFloat y = MAX(0, (scrollView.bounds.size.height - self.image.frame.size.height) / 2);
+    CGSize visible = [self canvasViewportBounds].size;
+    CGFloat x = MAX(0, (visible.width - self.image.frame.size.width) / 2);
+    CGFloat y = MAX(0, (visible.height - self.image.frame.size.height) / 2);
     self.image.center = CGPointMake(self.image.frame.size.width / 2 + x, self.image.frame.size.height / 2 + y);
     [self updateCursor]; [self rememberLayoutViewport];
 }
@@ -654,14 +662,18 @@
 - (void)fitDesktop {
     if (CGRectIsNull(self.activeCrop) || CGRectIsEmpty(self.activeCrop) || self.canvas.bounds.size.width <= 0 || self.canvas.bounds.size.height <= 0) return;
     self.smartZoomed = NO; self.smartZoomPending = NO; self.zoomGeneration++;
-    CGFloat fit = MIN(self.canvas.bounds.size.width / self.activeCrop.size.width, self.canvas.bounds.size.height / self.activeCrop.size.height);
+    CGSize visible = [self canvasViewportBounds].size;
+    if (visible.width <= 0 || visible.height <= 0) return;
+    CGFloat fit = MIN(visible.width / self.activeCrop.size.width, visible.height / self.activeCrop.size.height);
     self.canvas.minimumZoomScale = fit; [self.canvas setZoomScale:fit animated:NO];
-    self.canvas.contentOffset = CGPointZero; [self scrollViewDidZoom:self.canvas];
+    self.canvas.contentOffset = CGPointMake(-self.canvas.contentInset.left, -self.canvas.contentInset.top); [self scrollViewDidZoom:self.canvas];
     self.previousCanvasSize = self.canvas.bounds.size;
+    self.previousCanvasInset = self.canvas.contentInset;
     if (!self.adaptingViewport) [self rememberLayoutViewport];
 }
 - (CGPoint)viewportCenter {
-    CGPoint point = [self.image convertPoint:CGPointMake(CGRectGetMidX(self.canvas.bounds), CGRectGetMidY(self.canvas.bounds)) fromView:self.canvas];
+    CGRect visible = [self canvasViewportBounds];
+    CGPoint point = [self.image convertPoint:CGPointMake(CGRectGetMidX(visible), CGRectGetMidY(visible)) fromView:self.canvas];
     return CGPointMake(MAX(0, MIN(1, point.x / self.activeCrop.size.width)), MAX(0, MIN(1, point.y / self.activeCrop.size.height)));
 }
 - (void)applyViewportRatio:(CGFloat)ratio center:(CGPoint)center {
@@ -669,12 +681,14 @@
     CGFloat scale = MIN(self.canvas.maximumZoomScale, self.canvas.minimumZoomScale * MAX(1, ratio));
     [self.canvas setZoomScale:scale animated:NO]; [self scrollViewDidZoom:self.canvas];
     CGPoint point = [self.image convertPoint:CGPointMake(center.x * self.activeCrop.size.width, center.y * self.activeCrop.size.height) toView:self.canvas];
-    CGPoint offset = CGPointMake(MAX(0, MIN(self.canvas.contentSize.width - self.canvas.bounds.size.width, point.x - self.canvas.bounds.size.width / 2)),
-                                MAX(0, MIN(self.canvas.contentSize.height - self.canvas.bounds.size.height, point.y - self.canvas.bounds.size.height / 2)));
-    [self.canvas setContentOffset:offset animated:NO];
+    CGSize visible = [self canvasViewportBounds].size;
+    CGPoint offset = CGPointMake(point.x - self.canvas.contentInset.left - visible.width / 2,
+                                point.y - self.canvas.contentInset.top - visible.height / 2);
+    [self.canvas setContentOffset:[self clampedCanvasOffset:offset] animated:NO];
 }
 - (void)rememberLayoutViewport {
     if (self.adaptingViewport || !CGSizeEqualToSize(self.canvas.bounds.size, self.previousCanvasSize)
+        || !UIEdgeInsetsEqualToEdgeInsets(self.canvas.contentInset, self.previousCanvasInset)
         || CGRectIsEmpty(self.activeCrop) || CGRectIsNull(self.activeCrop) || self.canvas.minimumZoomScale <= 0) return;
     self.layoutZoomRatio = self.canvas.zoomScale / self.canvas.minimumZoomScale;
     self.layoutCenter = [self viewportCenter]; self.layoutCrop = self.activeCrop;
@@ -682,6 +696,18 @@
 - (void)viewWillLayoutSubviews {
     [super viewWillLayoutSubviews];
     CGRect safe = UIEdgeInsetsInsetRect(self.view.bounds, self.view.safeAreaInsets), content = CGRectNull, input = CGRectNull;
+    self.canvasTop.constant = self.immersiveChrome ? 0 : CGRectGetMinY(safe) + 8;
+    CGFloat leading = 0;
+    if (self.immersiveChrome) {
+        UIWindow *window = self.view.window;
+        leading = window ? MAX(0, window.safeAreaInsets.top - [self.view convertPoint:CGPointZero toView:window].y) + 8 : CGRectGetMinY(safe) + 8;
+    }
+    if (self.canvas.contentInset.top != leading) {
+        self.adaptingViewport = YES;
+        self.canvas.contentInset = UIEdgeInsetsMake(leading, 0, 0, 0);
+        self.canvas.verticalScrollIndicatorInsets = self.canvas.contentInset;
+        self.adaptingViewport = NO;
+    }
     BOOL tabletop = !self.inputOnly && CompanionVNCTabletopRegions(safe, [self activeDivision], &content, &input);
     CGRect loginRegion = safe;
     loginRegion.size.height = MAX(0, loginRegion.size.height - self.keyboardOverlap);
@@ -746,13 +772,17 @@
     if (CGRectIsNull(self.activeCrop) || CGRectIsEmpty(self.activeCrop)) return;
     CGSize size = self.canvas.bounds.size;
     if (size.width <= 0 || size.height <= 0) return;
-    BOOL resized = !CGSizeEqualToSize(size, self.previousCanvasSize);
+    BOOL resized = !CGSizeEqualToSize(size, self.previousCanvasSize)
+        || !UIEdgeInsetsEqualToEdgeInsets(self.canvas.contentInset, self.previousCanvasInset);
     CGFloat ratio = self.layoutZoomRatio > 0 && CGRectEqualToRect(self.layoutCrop, self.activeCrop) ? self.layoutZoomRatio : 1;
     CGPoint center = self.layoutCenter;
     self.adaptingViewport = YES;
-    self.canvas.minimumZoomScale = MIN(size.width / self.activeCrop.size.width, size.height / self.activeCrop.size.height);
+    CGSize visible = [self canvasViewportBounds].size;
+    if (visible.width <= 0 || visible.height <= 0) { self.adaptingViewport = NO; return; }
+    self.canvas.minimumZoomScale = MIN(visible.width / self.activeCrop.size.width, visible.height / self.activeCrop.size.height);
     if (resized) {
         self.previousCanvasSize = size; self.zoomGeneration++; self.smartZoomPending = NO;
+        self.previousCanvasInset = self.canvas.contentInset;
         [self releasePointer];
         for (UIGestureRecognizer *gesture in [@[self.drag, self.hold, self.remoteScroll] arrayByAddingObjectsFromArray:self.tabletopGestures]) {
             BOOL enabled = gesture.enabled; gesture.enabled = NO; gesture.enabled = enabled;
@@ -919,7 +949,10 @@
     CGPoint local = CGPointZero;
     if (!self.image.image || !CompanionVNCCursorLocalPoint(self.activeCrop, point, &local)) return;
     CGPoint anchor = [self.image convertPoint:local toView:self.canvas];
-    CGPoint offset = CompanionVNCFollowOffset(self.canvas.contentSize, self.canvas.bounds, anchor);
+    CGRect visible = [self canvasViewportBounds];
+    CGPoint offset = CompanionVNCFollowOffset(self.canvas.contentSize, visible, anchor);
+    offset.x -= self.canvas.contentInset.left; offset.y -= self.canvas.contentInset.top;
+    offset = [self clampedCanvasOffset:offset];
     if (CGPointEqualToPoint(offset, self.canvas.contentOffset)) return;
     self.smartZoomed = NO; self.smartZoomPending = NO; self.zoomGeneration++;
     // Gesture-paced offset updates avoid queued animations and idle timers.
@@ -1079,6 +1112,8 @@
     self.overrideUserInterfaceStyle = immersive ? UIUserInterfaceStyleDark : UIUserInterfaceStyleUnspecified;
     if (self.immersiveChrome != immersive) {
         self.immersiveChrome = immersive;
+        [self setContentScrollView:immersive ? self.canvas : nil forEdge:NSDirectionalRectEdgeTop];
+        [self.view setNeedsLayout];
         [self setNeedsStatusBarAppearanceUpdate];
         if (self.chromeHandler) self.chromeHandler(immersive);
     }

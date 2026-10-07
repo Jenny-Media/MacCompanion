@@ -3,6 +3,74 @@ import SwiftUI
 @testable import Mac_Companion
 
 @MainActor final class AppearanceTests: XCTestCase {
+    func testDesktopReachesStatusAreaButFitAndRestoredViewportUseUnobscuredCanvas() async throws {
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let window = UIWindow(windowScene: scene)
+        let mac = try DirectMacRecordV1.normalized(name: "Synthetic Desktop", addresses: ["studio.local"])
+        let host = UIHostingController(rootView: DirectDesktopSessionView(mac: mac, showMacs: {}))
+        window.rootViewController = host; window.makeKeyAndVisible()
+        defer { window.endEditing(true); window.isHidden = true; window.rootViewController = nil }
+        func controllers(_ root: UIViewController) -> [UIViewController] { [root] + root.children.flatMap(controllers) }
+        try await Task.sleep(for: .milliseconds(300))
+        let viewer = try XCTUnwrap(controllers(host).compactMap { $0 as? CompanionVNCViewer }.first)
+        defer { viewer.stop() }
+        let login = try XCTUnwrap(viewer.value(forKey: "login") as? UIView)
+        let image = try XCTUnwrap(viewer.value(forKey: "image") as? UIImageView)
+        let canvas = try XCTUnwrap(viewer.value(forKey: "canvas") as? UIScrollView)
+        let frame = UIGraphicsImageRenderer(size: CGSize(width: 800, height: 1800)).image { context in
+            UIColor.white.setFill(); context.fill(CGRect(x: 0, y: 0, width: 800, height: 1800))
+        }
+        _ = viewer.perform(NSSelectorFromString("frame:"), with: frame)
+        login.isHidden = true; _ = viewer.perform(NSSelectorFromString("updateConnectionChrome"))
+        try await Task.sleep(for: .milliseconds(400)); window.layoutIfNeeded()
+        XCTAssertEqual(canvas.convert(canvas.bounds, to: window).minY, 0, accuracy: 0.5)
+        XCTAssertEqual(canvas.contentInset.top, window.safeAreaInsets.top + 8, accuracy: 0.5)
+        if #available(iOS 26, *) { XCTAssertEqual(canvas.topEdgeEffect.style, .automatic) }
+        _ = viewer.perform(NSSelectorFromString("fitDesktop"))
+        let fitted = image.convert(image.bounds, to: window)
+        XCTAssertGreaterThanOrEqual(fitted.minY, window.safeAreaInsets.top + 8 - 0.5)
+        XCTAssertLessThanOrEqual(fitted.maxY, canvas.convert(canvas.bounds, to: window).maxY + 0.5)
+        let owner = viewer.session
+        canvas.setZoomScale(canvas.minimumZoomScale * 2, animated: false)
+        canvas.setContentOffset(CGPoint(x: 100, y: 120), animated: false)
+        window.layoutIfNeeded()
+        XCTAssertLessThan(image.convert(image.bounds, to: window).minY, 0, "A zoomed desktop must pan behind status icons")
+        _ = viewer.perform(NSSelectorFromString("rememberViewport"))
+        let center = try XCTUnwrap(viewer.value(forKey: "resumeCenter") as? NSValue).cgPointValue
+        let ratio = try XCTUnwrap(viewer.value(forKey: "resumeZoomRatio") as? NSNumber).doubleValue
+        viewer.fullscreen = true; window.layoutIfNeeded()
+        try await Task.sleep(for: .milliseconds(100))
+        _ = viewer.perform(NSSelectorFromString("rememberViewport"))
+        let restored = try XCTUnwrap(viewer.value(forKey: "resumeCenter") as? NSValue).cgPointValue
+        XCTAssertEqual(restored.x, center.x, accuracy: 0.01)
+        XCTAssertEqual(restored.y, center.y, accuracy: 0.01)
+        XCTAssertEqual(try XCTUnwrap(viewer.value(forKey: "resumeZoomRatio") as? NSNumber).doubleValue, ratio, accuracy: 0.01)
+        XCTAssertTrue(viewer.session === owner)
+        _ = viewer.perform(NSSelectorFromString("keyboard"))
+        try await Task.sleep(for: .milliseconds(600)); window.layoutIfNeeded()
+        _ = viewer.perform(NSSelectorFromString("rememberViewport"))
+        let keyboardCenter = try XCTUnwrap(viewer.value(forKey: "resumeCenter") as? NSValue).cgPointValue
+        XCTAssertEqual(keyboardCenter.x, center.x, accuracy: 0.01)
+        XCTAssertEqual(keyboardCenter.y, center.y, accuracy: 0.01)
+        XCTAssertEqual(try XCTUnwrap(viewer.value(forKey: "resumeZoomRatio") as? NSNumber).doubleValue, ratio, accuracy: 0.01)
+        _ = viewer.perform(NSSelectorFromString("keyboard"))
+        try await Task.sleep(for: .milliseconds(400)); window.layoutIfNeeded()
+        _ = viewer.perform(NSSelectorFromString("rememberViewport"))
+        let closedCenter = try XCTUnwrap(viewer.value(forKey: "resumeCenter") as? NSValue).cgPointValue
+        XCTAssertEqual(closedCenter.x, center.x, accuracy: 0.01)
+        XCTAssertEqual(closedCenter.y, center.y, accuracy: 0.01)
+        viewer.inputOnly = true; window.layoutIfNeeded()
+        try await Task.sleep(for: .milliseconds(200)); window.layoutIfNeeded()
+        XCTAssertEqual(canvas.contentInset.top, 0)
+        XCTAssertTrue(image.isHidden)
+        XCTAssertGreaterThanOrEqual(viewer.view.convert(CGPoint.zero, to: window).y, window.safeAreaInsets.top - 0.5)
+        viewer.inputOnly = false; login.isHidden = false
+        _ = viewer.perform(NSSelectorFromString("updateConnectionChrome"))
+        try await Task.sleep(for: .milliseconds(200)); window.layoutIfNeeded()
+        XCTAssertEqual(canvas.contentInset.top, 0)
+        XCTAssertGreaterThanOrEqual(login.convert(login.bounds, to: window).minY, window.safeAreaInsets.top - 0.5)
+    }
+
     func testDesktopCanvasThemeReachesHostingSafeAreasAndRestoresLoginTheme() async throws {
         let previous = DirectAppearanceV1.shared.app; DirectAppearanceV1.shared.app = .light
         let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)

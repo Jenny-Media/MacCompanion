@@ -16,6 +16,7 @@ struct DirectDesktopSessionView: View {
             (immersive ? Color.black : Color(uiColor: .systemBackground)).ignoresSafeArea()
             VNCRemoteDesktopView(mac: mac, inputOnly: inputOnly, connectionMacNames: connectionMacNames,
                                  showMacs: showMacs, chromeChanged: { immersive = $0 })
+                .ignoresSafeArea(.container, edges: immersive ? .top : [])
         }
         .preferredColorScheme(immersive ? .dark : appearance.app.colorScheme)
     }

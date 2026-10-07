@@ -5,6 +5,60 @@ import StoreKitTest
 
 /// Opt-in, hosted Simulator captures. Synthetic records never enter a release target.
 @MainActor final class ScreenshotReviewTests: XCTestCase {
+    func testCaptureImmersiveDesktop() async throws {
+        guard ProcessInfo.processInfo.environment["MACCOMPANION_SCREENSHOT_REVIEW"] == "1" else { throw XCTSkip("Opt-in synthetic screenshots only") }
+        let folder = URL.documentsDirectory.appending(path: "ImmersiveDesktop")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let ready = folder.appending(path: "ready")
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let window = UIWindow(windowScene: scene); window.windowLevel = .normal + 1
+        let appearance = DirectAppearanceV1.shared, previous = appearance.app
+        defer {
+            window.endEditing(true); window.isHidden = true; window.rootViewController = nil
+            appearance.app = previous; try? FileManager.default.removeItem(at: ready)
+        }
+        appearance.app = .light
+        let mac = try DirectMacRecordV1.normalized(name: "Studio Mac", addresses: ["studio.local"])
+        let host = UIHostingController(rootView: DirectDesktopSessionView(mac: mac, showMacs: {}))
+        window.rootViewController = host; window.makeKeyAndVisible()
+        func controllers(_ root: UIViewController) -> [UIViewController] { [root] + root.children.flatMap(controllers) }
+        func capture(_ name: String) async throws {
+            save(window, name: name, folder: folder)
+            try Data(name.utf8).write(to: ready, options: .atomic)
+            try await Task.sleep(for: .seconds(2)); try? FileManager.default.removeItem(at: ready)
+        }
+        try await Task.sleep(for: .milliseconds(400)); try await capture("login")
+        let viewer = try XCTUnwrap(controllers(host).compactMap { $0 as? CompanionVNCViewer }.first)
+        defer { viewer.stop() }
+        let canvas = try XCTUnwrap(viewer.value(forKey: "canvas") as? UIScrollView)
+        let login = try XCTUnwrap(viewer.value(forKey: "login") as? UIView)
+        for dark in [false, true] {
+            let frame = UIGraphicsImageRenderer(size: CGSize(width: 1200, height: 1800)).image { context in
+                (dark ? UIColor.black : UIColor.white).setFill(); context.fill(CGRect(x: 0, y: 0, width: 1200, height: 1800))
+                let ink = dark ? UIColor.white : UIColor.black
+                for row in 0..<36 {
+                    ("Desktop row \(row + 1) · Studio Mac" as NSString).draw(at: CGPoint(x: 24, y: row * 50 + 8), withAttributes: [.font: UIFont.systemFont(ofSize: 30), .foregroundColor: ink])
+                }
+            }
+            _ = viewer.perform(NSSelectorFromString("frame:"), with: frame)
+            login.isHidden = true; _ = viewer.perform(NSSelectorFromString("updateConnectionChrome"))
+            try await Task.sleep(for: .milliseconds(400)); window.layoutIfNeeded()
+            _ = viewer.perform(NSSelectorFromString("fitDesktop"))
+            let name = dark ? "dark" : "light"
+            try await capture("fit-" + name)
+            canvas.setZoomScale(canvas.minimumZoomScale * 2, animated: false)
+            canvas.setContentOffset(CGPoint(x: 0, y: 120), animated: false)
+            try await Task.sleep(for: .milliseconds(300)); try await capture("pan-" + name)
+        }
+        _ = viewer.perform(NSSelectorFromString("keyboard"))
+        try await Task.sleep(for: .milliseconds(600)); try await capture("keyboard")
+        _ = viewer.perform(NSSelectorFromString("showSessionMenu"))
+        try await Task.sleep(for: .milliseconds(500)); try await capture("menu")
+        viewer.dismiss(animated: false); window.endEditing(true)
+        viewer.fullscreen = true; window.layoutIfNeeded()
+        try await Task.sleep(for: .milliseconds(400)); try await capture("controls-hidden")
+    }
+
     func testCaptureImmersiveTerminalEntryAndScrollback() async throws {
         guard ProcessInfo.processInfo.environment["MACCOMPANION_SCREENSHOT_REVIEW"] == "1" else { throw XCTSkip("Opt-in synthetic screenshots only") }
         let folder = URL.documentsDirectory.appending(path: "ImmersiveTerminal")

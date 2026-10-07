@@ -1,3 +1,20 @@
+## 2026-10-07 — Native Remote Desktop scrolling accepted on iPhone
+
+The connected desktop canvas now reaches the top screen edge and pans behind
+status icons using UIKit's automatic scroll-edge treatment, matching Terminal.
+Fit Display, sign-in and input-only mode retain unobscured content. Keyboard
+resizing, cursor following and restored zoom/center share inset-aware viewport
+geometry. Required stable-Xcode validation and **45** distinct focused hosted
+checks pass; eight synthetic full-system captures remain outside Git.
+
+Normal development **1.0 (11)** is built and signed with all **577** inputs and
+the signed binary verified. It is installed and launched on iPhone 18 Pro Max;
+CoreDevice confirms build 11 and installation sequence **9080**. The first attempt
+could not acquire connectivity and power assertions; the user's later authorized
+retry succeeded. The user confirmed the desktop result looks good and requested
+a local commit. This follow-up has not been pushed or uploaded to TestFlight.
+See [desktop scrolling evidence](desktop-immersive-scrolling-20261007.md).
+
 ## 2026-10-07 — Native Terminal scrolling accepted on iPhone
 
 Terminal history now scrolls behind the status icons using UIKit's automatic

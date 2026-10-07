@@ -61,7 +61,10 @@ region over a blurred passive saved-Mac list until connected. The card has no
 drag handle implying swipe dismissal. Reduce Transparency uses an opaque
 backdrop. A shared identity header, grouped credentials, quiet Save login and one
 full-width primary action keep entry focused. Healthy
-Connected text is hidden. Keyboard/modifier controls remain directly accessible,
+Connected text is hidden. The desktop pans behind the status icons with UIKit's
+native scroll-edge treatment; Fit uses the unobscured region to keep the full
+selected display reachable. Sign-in and input-only mode retain safe-area layout.
+Keyboard/modifier controls remain directly accessible,
 and a docked keyboard reduces the desktop viewport with the system animation.
 Dismissal restores the prior zoom/center when the display crop remains valid;
 the keyboard button reflects Show Keyboard or Hide Keyboard.
