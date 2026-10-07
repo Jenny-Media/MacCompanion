@@ -173,8 +173,7 @@ struct DirectTerminalView: View {
                             cancel: session.connecting ? nil : { session.stop(); exit() })
                         loginForm(compact: compact)
                     }.padding(compact ? 16 : 22)
-                        .background(Color(uiColor: DirectConnectionStyle.panel), in: RoundedRectangle(cornerRadius: 32))
-                        .overlay(RoundedRectangle(cornerRadius: 32).stroke(Color(uiColor: .separator).opacity(0.25)))
+                        .directConnectionCardSurface()
                         .frame(maxWidth: compact ? 720 : 440)
                 }.frame(minHeight: max(0, geometry.size.height - 20), alignment: .center)
                     .frame(maxWidth: .infinity).padding(.horizontal, 12).padding(.vertical, 10)
@@ -185,14 +184,15 @@ struct DirectTerminalView: View {
         VStack(alignment: .leading, spacing: compact ? 12 : 16) {
             if session.connecting {
                 VStack(spacing: 16) {
-                    ProgressView().controlSize(.large)
+                    ProgressView().controlSize(.regular)
                     Text(session.phase == "Ready" ? "Connecting to Terminal…" : session.phase + "…")
                         .font(.subheadline.weight(.medium)).multilineTextAlignment(.center)
                         .accessibilityIdentifier("terminal-status")
                 }.frame(maxWidth: .infinity, minHeight: compact ? 84 : 124)
-                Button("Cancel") { session.stop(); exit() }.font(.body.weight(.semibold)).frame(maxWidth: .infinity, minHeight: 48)
-                    .background(Color(uiColor: DirectConnectionStyle.field), in: RoundedRectangle(cornerRadius: 16))
-                    .buttonStyle(.plain).foregroundStyle(.secondary).accessibilityIdentifier("terminal-login-cancel")
+                Button { session.stop(); exit() } label: {
+                    Text("Cancel").font(.body.weight(.semibold)).frame(maxWidth: .infinity, minHeight: 32)
+                }.buttonStyle(.bordered).buttonBorderShape(.roundedRectangle(radius: 16)).controlSize(.regular)
+                    .tint(.blue).accessibilityIdentifier("terminal-login-cancel")
             } else {
                 let authentication = dynamicType.isAccessibilitySize ? AnyLayout(VStackLayout(alignment: .leading, spacing: 4)) : AnyLayout(HStackLayout())
                 authentication {
@@ -316,6 +316,7 @@ private struct TerminalSurface: UIViewControllerRepresentable {
 @MainActor final class SessionTerminalView: TerminalView {
     var focusChanged: ((Bool) -> Void)?
     var keyboardState = TerminalKeyboardState()
+    weak var keyboardBar: TerminalKeyboardBar?
     private var deletingModifiers: TerminalModifiers?
     private var deletionEncoded = false
     // SwiftTerm pins short buffers to zero. With a canvas extending behind the
@@ -332,20 +333,20 @@ private struct TerminalSurface: UIViewControllerRepresentable {
             super.contentOffset = offset
         }
     }
-    func resetModifiers() { keyboardState.reset(); controlModifier = false; metaModifier = false; (inputAccessoryView as? TerminalKeyboardAccessory)?.refresh() }
+    func resetModifiers() { keyboardState.reset(); controlModifier = false; metaModifier = false; keyboardBar?.refresh() }
     override func insertText(_ text: String) {
         let modifiers = keyboardState.consume()
         if modifiers.isEmpty { super.insertText(text) }
         else if getTerminal().keyboardEnhancementFlags.isEmpty { send(data: TerminalKeyboardState.text(text, modifiers: modifiers)[...]) }
         else { controlModifier = modifiers.contains(.ctrl); metaModifier = modifiers.contains(.alt); super.insertText(modifiers.contains(.shift) ? TerminalKeyboardState.shifted(text) : text) }
-        (inputAccessoryView as? TerminalKeyboardAccessory)?.refresh()
+        keyboardBar?.refresh()
     }
     override func deleteBackward() {
         let modifiers = keyboardState.consume()
         let ordinary = modifiers.isEmpty || (modifiers == .shift && getTerminal().keyboardEnhancementFlags.isEmpty)
         deletingModifiers = ordinary || markedTextRange != nil ? nil : modifiers
         deletionEncoded = false
-        defer { deletingModifiers = nil; deletionEncoded = false; (inputAccessoryView as? TerminalKeyboardAccessory)?.refresh() }
+        defer { deletingModifiers = nil; deletionEncoded = false; keyboardBar?.refresh() }
         // Keep SwiftTerm's UITextInput/IME bookkeeping; transform only its outbound deletion.
         super.deleteBackward()
     }
@@ -365,26 +366,39 @@ private struct TerminalSurface: UIViewControllerRepresentable {
 }
 
 @MainActor class TerminalController: UIViewController, @preconcurrency TerminalViewDelegate {
+    static let numberRowPreference = "direct-terminal-number-row"
     let session: DirectTerminalSession
     let terminal = SessionTerminalView(frame: .zero)
     let controls = CompanionVNCControls()
+    lazy var keyboardBar = TerminalKeyboardBar(terminal: terminal, preferences: .init())
     private var reportedGrid: (columns: Int, rows: Int)?
     private var paletteIsDark: Bool?
     private var normalBottom: NSLayoutConstraint!
     private var foldedBottom: NSLayoutConstraint!
     private let customize: @MainActor () -> Void
     private let action: @MainActor (String) -> Void
-    init(session: DirectTerminalSession, customize: @escaping @MainActor () -> Void, action: @escaping @MainActor (String) -> Void = { _ in }) {
-        self.session = session; self.customize = customize; self.action = action; super.init(nibName: nil, bundle: nil)
+    private let defaults: UserDefaults
+    init(session: DirectTerminalSession, customize: @escaping @MainActor () -> Void, action: @escaping @MainActor (String) -> Void = { _ in }, defaults: UserDefaults = .standard) {
+        self.session = session; self.customize = customize; self.action = action; self.defaults = defaults
+        super.init(nibName: nil, bundle: nil)
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
     override var preferredStatusBarStyle: UIStatusBarStyle { paletteIsDark == true ? .lightContent : .darkContent }
     override func viewDidLoad() {
         super.viewDidLoad(); view.backgroundColor = .systemBackground
         terminal.terminalDelegate = self; terminal.translatesAutoresizingMaskIntoConstraints = false; view.addSubview(terminal)
-        // Keep a controls dock outside the terminal's rows. The same space is
-        // reserved above an onscreen keyboard and above the home indicator.
-        normalBottom = terminal.bottomAnchor.constraint(equalTo: view.keyboardLayoutGuide.topAnchor, constant: -68)
+        // The persistent toolbar owns the only bottom control space. No
+        // additional row is reserved for the shared menu button.
+        keyboardBar.showsNumberRow = defaults.object(forKey: Self.numberRowPreference) == nil || defaults.bool(forKey: Self.numberRowPreference)
+        view.addSubview(keyboardBar)
+        terminal.keyboardBar = keyboardBar
+        terminal.inputAccessoryView = nil
+        NSLayoutConstraint.activate([
+            keyboardBar.bottomAnchor.constraint(equalTo: view.keyboardLayoutGuide.topAnchor),
+            keyboardBar.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor),
+            keyboardBar.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor)
+        ])
+        normalBottom = terminal.bottomAnchor.constraint(equalTo: view.keyboardLayoutGuide.topAnchor, constant: -keyboardBar.height)
         foldedBottom = terminal.bottomAnchor.constraint(equalTo: view.topAnchor)
         terminal.contentInsetAdjustmentBehavior = .never
         terminal.clipsToBounds = true
@@ -393,6 +407,7 @@ private struct TerminalSurface: UIViewControllerRepresentable {
         NSLayoutConstraint.activate([terminal.topAnchor.constraint(equalTo: view.topAnchor), normalBottom, terminal.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor), terminal.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor)])
         controls.translatesAutoresizingMaskIntoConstraints = false; view.addSubview(controls)
         NSLayoutConstraint.activate([controls.topAnchor.constraint(equalTo: view.topAnchor), controls.bottomAnchor.constraint(equalTo: view.bottomAnchor), controls.leadingAnchor.constraint(equalTo: view.leadingAnchor), controls.trailingAnchor.constraint(equalTo: view.trailingAnchor)])
+        controls.buttonAnchorView = keyboardBar.menuAnchor
         controls.button.accessibilityLabel = "Terminal Controls"
         controls.button.accessibilityIdentifier = "terminal-controls"
         controls.categoryActions = [
@@ -406,6 +421,7 @@ private struct TerminalSurface: UIViewControllerRepresentable {
         session.reloadKeyboard = { [weak self] in self?.configureKeyboard() }
         session.suspendInput = { [weak self] in self?.terminal.resetModifiers(); self?.controls.cancelSlideForLayoutChange(); self?.controls.close() }
         terminal.focusChanged = { [weak self, weak session] visible in session?.keyboardVisible = visible; self?.updateControls(); self?.view.setNeedsLayout() }
+        keyboardBar.toggleKeyboard = { [weak session] in session?.toggleKeyboard?() }
         session.toggleKeyboard = { [weak self] in
             guard let self else { return }
             if terminal.isFirstResponder { _ = terminal.resignFirstResponder() }
@@ -417,10 +433,11 @@ private struct TerminalSurface: UIViewControllerRepresentable {
     }
     func updateControls() {
         controls.isHidden = !session.connected
+        keyboardBar.isHidden = !session.connected
+        keyboardBar.setKeyboardFocused(terminal.isFirstResponder)
         if !session.connected { controls.close() }
         controls.macName = session.mac.name
         controls.quickActions = [
-            ["kind": "keyboard", "title": session.keyboardVisible ? "Hide Keyboard" : "Show Keyboard", "symbol": session.keyboardVisible ? "keyboard.chevron.compact.down" : "keyboard", "enabled": true],
             ["kind": "paste", "title": "Paste", "symbol": "document.on.clipboard", "enabled": true],
             ["kind": "interrupt", "title": "Ctrl-C", "symbol": "stop.circle", "enabled": true]]
     }
@@ -429,7 +446,7 @@ private struct TerminalSurface: UIViewControllerRepresentable {
         switch kind {
         case "inputMenu":
             presentControlsMenu("Keyboard & Input", sections: [["title": "Keyboard", "items": [
-                ["kind": "keyboard", "title": session.keyboardVisible ? "Hide Keyboard" : "Show Keyboard", "symbol": session.keyboardVisible ? "keyboard.chevron.compact.down" : "keyboard"],
+                ["kind": "numberRow", "title": "Show Number Row", "symbol": "textformat.123", "selected": keyboardBar.showsNumberRow],
                 ["kind": "customize", "title": "Customize Keys & Snippets", "symbol": "slider.horizontal.3", "submenu": true]]]])
         case "appearance":
             let choices = DirectTerminalAppearance.allCases.map { value in
@@ -457,11 +474,15 @@ private struct TerminalSurface: UIViewControllerRepresentable {
             details.addAction(UIAlertAction(title: "Done", style: .cancel))
             present(details, animated: true)
         case "keyboard": session.toggleKeyboard?()
+        case "numberRow":
+            keyboardBar.showsNumberRow.toggle()
+            defaults.set(keyboardBar.showsNumberRow, forKey: Self.numberRowPreference)
+            view.setNeedsLayout()
         case "paste": terminal.resetModifiers(); terminal.paste(nil)
         case "interrupt":
             terminal.resetModifiers()
             terminal.send(data: TerminalKeyboardState.text("c", modifiers: .ctrl)[...])
-            (terminal.inputAccessoryView as? TerminalKeyboardAccessory)?.refresh()
+            terminal.keyboardBar?.refresh()
         default:
             if kind.hasPrefix("colors-"), let value = DirectTerminalAppearance(rawValue: String(kind.dropFirst(7))) {
                 DirectAppearanceV1.shared.terminal = value
@@ -490,11 +511,18 @@ private struct TerminalSurface: UIViewControllerRepresentable {
         var content = CGRect.null, input = CGRect.null
         let tabletop = CompanionVNCTabletopRegions(safe, activeDivision(), &content, &input)
         let ceiling = keyboardCeiling()
-        let inset = max(8, safe.maxY - ceiling + 8)
+        // A hosting controller can already end at the keyboard's top. Compare
+        // against the physical window so that this still reveals the number row.
+        let restingBottom = view.window.map { window in
+            view.convert(CGPoint(x: 0, y: window.bounds.maxY - window.safeAreaInsets.bottom), from: window).y
+        } ?? safe.maxY
+        let softwareKeyboard = ceiling < restingBottom - 1
+        keyboardBar.setSoftwareKeyboardVisible(softwareKeyboard)
+        let inset = max(0, safe.maxY - ceiling)
         if controls.bottomInset != inset { controls.cancelSlideForLayoutChange(); controls.bottomInset = inset; controls.setNeedsLayout() }
         // A closed or hardware-only keyboard leaves the entire terminal usable.
         // Only an onscreen keyboard reserves the lower tabletop region.
-        let reserveUpper = tabletop && ceiling < safe.maxY - 1
+        let reserveUpper = tabletop && softwareKeyboard
         let cell = terminal.caretFrame.height
         // SwiftUI can remove its top safe area from the native child. Use the
         // physical window boundary to reserve entry text below system icons.
@@ -512,16 +540,18 @@ private struct TerminalSurface: UIViewControllerRepresentable {
         }
         if reserveUpper {
             normalBottom.isActive = false
-            foldedBottom.constant = wholeRowBottom(max(top, min(content.maxY - 8, ceiling - 68)))
+            foldedBottom.constant = wholeRowBottom(max(top, min(content.maxY - 8, ceiling - keyboardBar.height)))
             foldedBottom.isActive = true
         } else {
             foldedBottom.isActive = false
-            normalBottom.constant = wholeRowBottom(ceiling - 68) - ceiling
+            normalBottom.constant = wholeRowBottom(ceiling - keyboardBar.height) - ceiling
             normalBottom.isActive = true
         }
     }
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
+        keyboardBar.layoutIfNeeded()
+        controls.setNeedsLayout(); controls.layoutIfNeeded()
         let grid = terminal.getTerminal()
         sizeChanged(source: terminal, newCols: grid.cols, newRows: grid.rows)
     }
@@ -530,11 +560,9 @@ private struct TerminalSurface: UIViewControllerRepresentable {
         do { preferences = try TerminalKeyboardPreferences.load(session.mac.id); session.controlsRecovery = nil }
         catch { preferences = .init(); session.controlsRecovery = .make(.controlsUnavailable, message: "Custom Terminal controls couldn’t be read. Existing data is kept; the standard keyboard remains available.") }
         terminal.resetModifiers()
-        let accessory = TerminalKeyboardAccessory(terminal: terminal, preferences: preferences)
-        accessory.overrideUserInterfaceStyle = terminal.traitCollection.userInterfaceStyle
-        accessory.customize = customize
-        terminal.inputAccessoryView = accessory
-        terminal.reloadInputViews()
+        keyboardBar.configure(preferences)
+        keyboardBar.customize = customize
+        view.setNeedsLayout()
     }
     func applyAppearance(_ style: UIUserInterfaceStyle) {
         loadViewIfNeeded()
@@ -550,7 +578,7 @@ private struct TerminalSurface: UIViewControllerRepresentable {
         terminal.nativeBackgroundColor = dark ? .black : .white
         view.backgroundColor = dark ? .black : .white
         controls.overrideUserInterfaceStyle = dark ? .dark : .light
-        terminal.inputAccessoryView?.overrideUserInterfaceStyle = dark ? .dark : .light
+        keyboardBar.overrideUserInterfaceStyle = dark ? .dark : .light
         setNeedsStatusBarAppearanceUpdate()
         terminal.nativeForegroundColor = dark ? .white : .black
         terminal.caretColor = .systemBlue; terminal.keyboardAppearance = dark ? .dark : .light

@@ -329,9 +329,19 @@
             [[NSRunLoop mainRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:.01]];
         }
         CompanionVNCMenu *input = (id)navigation.topViewController; [input loadViewIfNeeded];
+        XCTAssertEqual(navigation.popoverPresentationController.arrowDirection,UIPopoverArrowDirectionDown);
+        UIButton *anchor = ((CompanionVNCControls *)[viewer valueForKey:@"controls"]).button;
+        CGRect popup = [navigation.view convertRect:navigation.view.bounds toView:viewer.view];
+        CGRect button = [anchor convertRect:anchor.bounds toView:viewer.view];
+        XCTAssertLessThanOrEqual(CGRectGetMaxY(popup),CGRectGetMinY(button) + 1);
         [input tableView:input.tableView didSelectRowAtIndexPath:[NSIndexPath indexPathForRow:1 inSection:1]]; // Extra Keys
         [[NSRunLoop mainRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:.35]];
+        deadline = [NSDate dateWithTimeIntervalSinceNow:3];
+        while (navigation.transitionCoordinator && deadline.timeIntervalSinceNow > 0) {
+            [[NSRunLoop mainRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:.01]];
+        }
         XCTAssertEqual(navigation.viewControllers.count,2);
+        XCTAssertEqual(navigation.popoverPresentationController.arrowDirection,UIPopoverArrowDirectionDown);
         [navigation popViewControllerAnimated:NO]; XCTAssertEqual(navigation.topViewController,input);
         XCTAssertEqual(viewer.session,owner); XCTAssertEqual(owner.groups.count,0);
         [viewer dismissViewControllerAnimated:NO completion:nil];

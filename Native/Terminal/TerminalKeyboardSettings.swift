@@ -20,7 +20,7 @@ struct TerminalKeyboardSettings: View {
         NavigationStack {
             Form {
                 Section {
-                    Text("The number row and standard Ctrl/Alt/navigation keys are always available. Pro adds a custom row and saved snippets.").foregroundStyle(.secondary)
+                    Text("Standard keys are free. Pro adds a custom row and saved snippets.").foregroundStyle(.secondary)
                     if !pro.hasPro { Button("Unlock Lifetime Pro") { paywall = true } }
                 }
                 Section("Custom Row · Up to 8 Keys") {

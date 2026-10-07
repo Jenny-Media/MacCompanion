@@ -103,7 +103,7 @@ import UIKit
         XCTAssertThrowsError(try TerminalKeyboardPreferences(keys: [.f1, .f1]).save(id))
         XCTAssertEqual(try TerminalKeyboardPreferences.load(id).keys, prefs.keys)
         let terminal = SessionTerminalView(frame: .zero)
-        let accessory = TerminalKeyboardAccessory(terminal: terminal, preferences: .init())
+        let accessory = TerminalKeyboardBar(terminal: terminal, preferences: .init())
         let numbers = accessory.subviews.compactMap { $0 as? UIStackView }.first?.arrangedSubviews.first as? UIStackView
         XCTAssertEqual(numbers?.arrangedSubviews.compactMap { ($0 as? UIButton)?.configuration?.title }, ["1","2","3","4","5","6","7","8","9","0"])
         terminal.keyboardState.toggle(.ctrl); terminal.insertText("c"); XCTAssertTrue(terminal.keyboardState.active.isEmpty)

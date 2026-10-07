@@ -5,16 +5,45 @@ import UIKit
 /// Shared presentation only; connection ownership and server trust stay in their
 /// existing controllers. Names are a passive view of the saved Mac list.
 enum DirectConnectionStyle {
-    static let panel = UIColor { $0.userInterfaceStyle == .dark
-        ? UIColor(red: 0.094, green: 0.11, blue: 0.133, alpha: 1)
-        : UIColor(red: 0.973, green: 0.977, blue: 0.985, alpha: 1) }
-    static let field = UIColor { $0.userInterfaceStyle == .dark
-        ? UIColor(red: 0.141, green: 0.161, blue: 0.188, alpha: 1) : .white }
+    // Resolve an elevated system surface even inside our custom presentation.
+    static let panel = UIColor { traits in
+        UIColor.systemBackground.resolvedColor(with: traits.modifyingTraits { $0.userInterfaceLevel = .elevated })
+    }
+    static let field = UIColor.tertiarySystemGroupedBackground
+    static let border = UIColor { traits in
+        traits.accessibilityContrast == .high
+            ? UIColor.opaqueSeparator.resolvedColor(with: traits)
+            : UIColor.separator.resolvedColor(with: traits).withAlphaComponent(0.20)
+    }
+    static let cornerRadius: CGFloat = 32
+    static let shadowRadius: CGFloat = 24
+    static let shadowOffset = CGSize(width: 0, height: 10)
+    static func shadowOpacity(dark: Bool) -> Float { dark ? 0.28 : 0.14 }
+    static func dimmingOpacity(dark: Bool) -> Double { dark ? 0.32 : 0.16 }
+}
+
+private struct DirectConnectionCardSurface: ViewModifier {
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.colorSchemeContrast) private var contrast
+    func body(content: Content) -> some View {
+        let shape = RoundedRectangle(cornerRadius: DirectConnectionStyle.cornerRadius)
+        content.background(Color(uiColor: DirectConnectionStyle.panel), in: shape)
+            .overlay(shape.strokeBorder(contrast == .increased
+                ? Color(uiColor: .opaqueSeparator) : Color(uiColor: DirectConnectionStyle.border), lineWidth: 1))
+            .shadow(color: .black.opacity(Double(DirectConnectionStyle.shadowOpacity(dark: colorScheme == .dark))),
+                    radius: DirectConnectionStyle.shadowRadius,
+                    x: DirectConnectionStyle.shadowOffset.width, y: DirectConnectionStyle.shadowOffset.height)
+    }
+}
+
+extension View {
+    func directConnectionCardSurface() -> some View { modifier(DirectConnectionCardSurface()) }
 }
 
 struct DirectConnectionBackdrop: View {
     let names: [String]
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Environment(\.colorScheme) private var colorScheme
     var body: some View {
         ZStack {
             Color(uiColor: .systemGroupedBackground).ignoresSafeArea()
@@ -31,8 +60,8 @@ struct DirectConnectionBackdrop: View {
                     }
                     Spacer()
                 }.padding(.horizontal, 24).padding(.top, 30).blur(radius: 6)
-                Color(uiColor: .systemGroupedBackground).opacity(0.36).ignoresSafeArea()
             }
+            Color.black.opacity(DirectConnectionStyle.dimmingOpacity(dark: colorScheme == .dark)).ignoresSafeArea()
         }.allowsHitTesting(false).accessibilityHidden(true)
     }
 }
@@ -128,6 +157,18 @@ struct DirectConnectionPasswordField: UIViewRepresentable {
 @objc(DirectConnectionBridge) @MainActor final class DirectConnectionBridge: NSObject {
     @objc static var panelColor: UIColor { DirectConnectionStyle.panel }
     @objc static var fieldColor: UIColor { DirectConnectionStyle.field }
+    @objc static func styleCard(_ view: UIView) {
+        let traits = view.traitCollection
+        view.backgroundColor = DirectConnectionStyle.panel
+        view.layer.cornerRadius = DirectConnectionStyle.cornerRadius
+        view.layer.borderWidth = 1
+        view.layer.borderColor = DirectConnectionStyle.border.resolvedColor(with: traits).cgColor
+        view.layer.shadowColor = UIColor.black.cgColor
+        view.layer.shadowOpacity = DirectConnectionStyle.shadowOpacity(dark: traits.userInterfaceStyle == .dark)
+        view.layer.shadowRadius = DirectConnectionStyle.shadowRadius
+        view.layer.shadowOffset = DirectConnectionStyle.shadowOffset
+        view.layer.shadowPath = UIBezierPath(roundedRect: view.bounds, cornerRadius: DirectConnectionStyle.cornerRadius).cgPath
+    }
     @objc static func background(names: [String]) -> UIViewController {
         let host = UIHostingController(rootView: DirectConnectionBackdrop(names: names).directAppearance())
         host.view.backgroundColor = .clear; host.view.isUserInteractionEnabled = false

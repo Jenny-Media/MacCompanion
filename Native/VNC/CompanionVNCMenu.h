@@ -6,5 +6,6 @@ NS_ASSUME_NONNULL_BEGIN
 @property(nonatomic, copy) NSArray<NSDictionary *> *sections;
 @property(nonatomic, copy, nullable) void (^selectionHandler)(NSDictionary *);
 + (UINavigationController *)navigationControllerForMenu:(CompanionVNCMenu *)menu sourceView:(UIView *)sourceView;
++ (UINavigationController *)navigationControllerForContent:(UIViewController<UIPopoverPresentationControllerDelegate> *)content sourceView:(UIView *)sourceView;
 @end
 NS_ASSUME_NONNULL_END

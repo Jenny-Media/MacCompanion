@@ -15,16 +15,23 @@ static void *CompanionMenuContentSizeContext = &CompanionMenuContentSizeContext;
     return self;
 }
 + (UINavigationController *)navigationControllerForMenu:(CompanionVNCMenu *)menu sourceView:(UIView *)sourceView {
-    UINavigationController *navigation = [[UINavigationController alloc] initWithRootViewController:menu];
-    navigation.modalPresentationStyle = UIModalPresentationPopover;
-    navigation.overrideUserInterfaceStyle = sourceView.traitCollection.userInterfaceStyle;
-    navigation.navigationBar.prefersLargeTitles = NO;
+    UINavigationController *navigation = [self navigationControllerForContent:menu sourceView:sourceView];
     NSUInteger rows = 0;
     for (NSDictionary *section in menu.sections) rows += [section[@"items"] count];
     navigation.preferredContentSize = CGSizeMake(360, 16 + rows * 54 + menu.sections.count * 32);
+    return navigation;
+}
++ (UINavigationController *)navigationControllerForContent:(UIViewController<UIPopoverPresentationControllerDelegate> *)content sourceView:(UIView *)sourceView {
+    UINavigationController *navigation = [[UINavigationController alloc] initWithRootViewController:content];
+    navigation.modalPresentationStyle = UIModalPresentationPopover;
+    navigation.overrideUserInterfaceStyle = sourceView.traitCollection.userInterfaceStyle;
+    navigation.navigationBar.prefersLargeTitles = NO;
     navigation.popoverPresentationController.sourceView = sourceView;
     navigation.popoverPresentationController.sourceRect = sourceView.bounds;
-    navigation.popoverPresentationController.delegate = menu;
+    // The controls button sits at the lower edge. Point down toward it so all
+    // menus grow above it; UIKit still owns fitting and keyboard avoidance.
+    navigation.popoverPresentationController.permittedArrowDirections = UIPopoverArrowDirectionDown;
+    navigation.popoverPresentationController.delegate = content;
     return navigation;
 }
 - (void)viewDidLoad {

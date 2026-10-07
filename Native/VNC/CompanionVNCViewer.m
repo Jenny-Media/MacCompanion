@@ -238,7 +238,16 @@
     self.credentialColumns.axis = UILayoutConstraintAxisVertical; self.credentialColumns.spacing = 1;
     self.credentialColumns.backgroundColor = [UIColor.separatorColor colorWithAlphaComponent:.25]; self.credentialColumns.layer.cornerRadius = 16; self.credentialColumns.clipsToBounds = YES;
     UIButton *cancel = [self button:@"Cancel" action:@selector(showMacs)]; cancel.accessibilityIdentifier = @"mac-login-cancel";
-    self.loginCancel = cancel; cancel.backgroundColor = DirectConnectionBridge.fieldColor; cancel.tintColor = UIColor.secondaryLabelColor; cancel.layer.cornerRadius = 16;
+    self.loginCancel = cancel; cancel.backgroundColor = UIColor.clearColor; cancel.tintColor = UIColor.systemBlueColor;
+    UIButtonConfiguration *cancelStyle = UIButtonConfiguration.tintedButtonConfiguration;
+    cancelStyle.title = @"Cancel"; cancelStyle.baseForegroundColor = UIColor.systemBlueColor;
+    cancelStyle.background.cornerRadius = 16;
+    cancelStyle.titleTextAttributesTransformer = ^NSDictionary *(NSDictionary *attributes) {
+        NSMutableDictionary *result = [attributes mutableCopy];
+        result[NSFontAttributeName] = [UIFont preferredFontForTextStyle:UIFontTextStyleHeadline]; return result;
+    };
+    cancel.configuration = cancelStyle;
+    [cancel.heightAnchor constraintGreaterThanOrEqualToConstant:48].active = YES;
     self.connect.backgroundColor = UIColor.systemBlueColor; [self.connect setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
     self.connect.layer.cornerRadius = 16; self.connect.accessibilityIdentifier = @"mac-login-connect";
     UIStackView *actions = [[UIStackView alloc] initWithArrangedSubviews:@[self.connect, cancel]];
@@ -278,7 +287,9 @@
     self.login = [[UIStackView alloc] initWithArrangedSubviews:@[self.loginIntro, self.progressRow, self.loginFields, actions, self.loginDetails]];
     self.login.axis = UILayoutConstraintAxisVertical; self.login.spacing = 18;
     self.login.layoutMargins = UIEdgeInsetsMake(22, 22, 22, 22); self.login.layoutMarginsRelativeArrangement = YES;
-    self.login.backgroundColor = DirectConnectionBridge.panelColor; self.login.layer.cornerRadius = 32;
+    [DirectConnectionBridge styleCard:self.login];
+    [self registerForTraitChanges:@[UITraitUserInterfaceStyle.class, UITraitUserInterfaceLevel.class, UITraitAccessibilityContrast.class]
+                     withHandler:^(id<UITraitEnvironment> environment, UITraitCollection *previous) { [DirectConnectionBridge styleCard:weak.login]; }];
     self.login.translatesAutoresizingMaskIntoConstraints = NO;
     self.loginScroll = [UIScrollView new]; self.loginScroll.translatesAutoresizingMaskIntoConstraints = NO;
     self.loginScroll.backgroundColor = UIColor.clearColor; self.loginScroll.keyboardDismissMode = UIScrollViewKeyboardDismissModeInteractive;
@@ -708,16 +719,19 @@
         self.canvas.verticalScrollIndicatorInsets = self.canvas.contentInset;
         self.adaptingViewport = NO;
     }
-    BOOL tabletop = !self.inputOnly && CompanionVNCTabletopRegions(safe, [self activeDivision], &content, &input);
+    // Both Screen Sharing modes use the same login layout. Only the connected
+    // desktop needs a separate tabletop video region and input surface.
+    BOOL divided = CompanionVNCTabletopRegions(safe, [self activeDivision], &content, &input);
+    BOOL tabletop = !self.inputOnly && divided;
     CGRect loginRegion = safe;
     loginRegion.size.height = MAX(0, loginRegion.size.height - self.keyboardOverlap);
-    BOOL lowerLogin = tabletop && CGRectGetMaxY(loginRegion) - input.origin.y >= 240;
-    if (tabletop) {
+    BOOL lowerLogin = divided && CGRectGetMaxY(loginRegion) - input.origin.y >= 240;
+    if (divided) {
         loginRegion = lowerLogin ? CGRectIntersection(loginRegion, input) : CGRectIntersection(loginRegion, content);
     }
     self.loginTop.constant = CGRectGetMinY(loginRegion);
     self.loginBottom.constant = CGRectGetMaxY(loginRegion);
-    BOOL compact = (tabletop || loginRegion.size.height < 520) && !UIContentSizeCategoryIsAccessibilityCategory(self.traitCollection.preferredContentSizeCategory);
+    BOOL compact = (divided || loginRegion.size.height < 520) && !UIContentSizeCategoryIsAccessibilityCategory(self.traitCollection.preferredContentSizeCategory);
     self.loginMaxWidth.constant = compact ? 720 : 440;
     self.login.spacing = compact ? 8 : 18;
     self.login.layoutMargins = compact ? UIEdgeInsetsMake(16,16,16,16) : UIEdgeInsetsMake(22,22,22,22);
@@ -761,6 +775,7 @@
 - (CGRect)activeDivision { return CompanionVNCActiveDivision(self.view); }
 - (void)viewDidLayoutSubviews {
     [super viewDidLayoutSubviews];
+    [DirectConnectionBridge styleCard:self.login];
     self.tabletopPad.hidden = !self.tabletop || !self.login.hidden || self.recoveryPanel != nil;
     if (self.tabletop) {
         CGRect input = self.tabletopInputRegion;
@@ -837,12 +852,8 @@
             [navigation pushViewController:picker animated:YES]; return;
         }
     }
-    UINavigationController *menu = [[UINavigationController alloc] initWithRootViewController:picker];
-    menu.modalPresentationStyle = UIModalPresentationPopover;
+    UINavigationController *menu = [CompanionVNCMenu navigationControllerForContent:picker sourceView:self.views];
     menu.preferredContentSize = CGSizeMake(360, MIN(520, 116 + 72 * (picker.displays.count + 1)));
-    menu.popoverPresentationController.sourceView = self.views;
-    menu.popoverPresentationController.sourceRect = self.views.bounds;
-    menu.popoverPresentationController.delegate = picker;
     [self presentViewController:menu animated:YES completion:nil];
 }
 - (void)updateDisplayPicker {
@@ -1105,6 +1116,8 @@
     _quickActions = [quickActions copy]; self.controls.quickActions = quickActions;
 }
 - (void)updateConnectionChrome {
+    self.loginSubtitle.text = self.inputOnly ? @"Trackpad & Keyboard" : @"Desktop";
+    self.loginIcon.image = [UIImage systemImageNamed:self.inputOnly ? @"rectangle.and.hand.point.up.left" : @"desktopcomputer"];
     BOOL progress = self.starting || (self.session.running && !self.lastFramebuffer);
     BOOL loginVisible = !self.login.hidden;
     BOOL immersive = !loginVisible && !self.inputOnly;

@@ -1,3 +1,81 @@
+## 2026-10-07 — Terminal number row is optional
+
+Keyboard & Input now includes a free Show Number Row choice, enabled by default.
+It applies immediately, returns 48 points to output when hidden, and is remembered
+for future sessions. The persistent modifier bar and independent custom-key row
+are retained. Required stable-Xcode validation and **11** focused hosted checks
+pass; **4** full-system synthetic Simulator captures verify row and menu states.
+See the [number-row follow-up](terminal-persistent-toolbar-20261007.md#follow-up-optional-number-row).
+Normal development **1.0 (14)** includes this choice, the persistent Terminal bar
+and above-button popovers. It is built, signed, installed and launched on iPhone
+18 Pro Max. All **577** source inputs, the signed binary, existing app/widget
+identities and private Keychain groups are verified. CoreDevice confirms build
+14 and installation sequence **9120**. Physical acceptance is pending; no commit,
+push or TestFlight publication occurred.
+
+## 2026-10-07 — Terminal controls share a persistent modifier bar
+
+Terminal now keeps keyboard and menu buttons at the ends of one persistent
+modifier bar. The middle keys scroll on narrow screens, numbers appear while
+the software keyboard is open, and the separate 68-point button dock is removed.
+The keyboard toggle is directly on the bar; the shared menu interactions and
+above-button placement are retained. Required stable-Xcode validation and **13**
+focused hosted checks pass; **8** full-system synthetic Simulator captures verify
+both palettes and keyboard states. See the
+[persistent toolbar evidence](terminal-persistent-toolbar-20261007.md).
+This follow-up is included in installed normal development **1.0 (14)** above.
+Physical acceptance is pending; it has not been committed, pushed or published.
+
+## 2026-10-07 — Floating control menus open above the button
+
+Desktop, Trackpad & Keyboard and Terminal now share one native popover setup
+that places button-anchored menus above the controls button. The display picker
+uses the same setup, and pushed submenus retain the original anchor. UIKit owns
+fitting, scrolling and keyboard avoidance. The existing press-and-slide panel
+already opens above the button.
+
+Required stable-Xcode validation and **8** distinct focused hosted checks pass.
+An opt-in synthetic sweep verifies **34** menu/panel states, including keyboard
+open/closed geometry and reachability of the last action. **8** full-system
+Simulator captures verify visible Desktop and Terminal placement, including
+the keyboard and both Terminal palettes. See the
+[floating menu audit](floating-menu-placement-20261007.md).
+This follow-up is included in installed normal development **1.0 (14)** above.
+Physical acceptance is pending; it has not been committed, pushed or published.
+
+## 2026-10-07 — Centered connection cards have clearer separation
+
+Desktop, Trackpad & Keyboard and Terminal now share an elevated system surface,
+adaptive edge, soft shadow and theme-aware dimming over the passive saved-Mac
+backdrop. Progress Cancel uses a native blue treatment and remains available.
+The centered placement and connection behavior are preserved.
+
+Required stable-Xcode validation and **8** focused hosted checks pass. **36**
+synthetic app-window captures cover login, progress and recovery across both
+themes, large text and increased contrast. The existing opaque Reduce
+Transparency fallback is preserved in code; its rendering still needs a device
+check because the Simulator did not expose the enabled setting to UIKit.
+See [connection card evidence](connection-card-separation-20261007.md).
+Normal development **1.0 (13)** is built and signed with all **577** source inputs
+and the signed binary verified, retaining the existing app/widget and private
+Keychain identities. The first installation attempt could not acquire CoreDevice
+connectivity and power assertions. The user's authorized retry installed and
+launched the update on iPhone 18 Pro Max; CoreDevice confirms version/build and
+installation sequence **9104**. Physical acceptance remains pending. This
+follow-up has not been committed, pushed or published to TestFlight.
+
+## 2026-10-07 — Trackpad & Keyboard login matches Desktop
+
+Trackpad & Keyboard now identifies its mode in Desktop's shared centered sign-in
+card. Both modes share adaptive login, progress and recovery placement, including
+folded-screen keyboard avoidance. Required stable-Xcode validation and **30**
+distinct focused hosted checks pass; synthetic captures verify both themes and
+large text. Normal development **1.0 (12)** is installed and launched on iPhone
+18 Pro Max, with all **577** source inputs, the signed binary, version/build and
+installation sequence **9088** verified. Physical acceptance remains pending.
+See [shared login evidence](input-only-login-20261007.md). This follow-up has not
+been committed, pushed or published to TestFlight.
+
 ## 2026-10-07 — Native Remote Desktop scrolling accepted on iPhone
 
 The connected desktop canvas now reaches the top screen edge and pans behind

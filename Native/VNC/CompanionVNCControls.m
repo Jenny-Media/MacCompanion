@@ -90,6 +90,10 @@ NSString *const CompanionVNCControlsHapticsPreference = @"direct-controls-haptic
     self.button.bounds = CGRectMake(0,0,52,52);
     self.button.center = CGPointMake(MAX(CGRectGetMinX(available) + 26, CGRectGetMaxX(available) - 36),
         MAX(CGRectGetMinY(available) + 26, CGRectGetMaxY(available) - 26));
+    if (self.buttonAnchorView.superview) {
+        CGRect slot = [self.buttonAnchorView convertRect:self.buttonAnchorView.bounds toView:self];
+        self.button.center = CGPointMake(CGRectGetMidX(slot), CGRectGetMidY(slot));
+    }
     if (!self.panel) return;
     CGFloat width = MAX(0, MIN(360, available.size.width - 24));
     CGFloat panelRoom = MAX(0, self.button.frame.origin.y - CGRectGetMinY(available) - 24);

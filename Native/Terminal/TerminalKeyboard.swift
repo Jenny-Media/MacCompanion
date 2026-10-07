@@ -99,21 +99,67 @@ struct TerminalKeyboardPreferences: Codable {
     }
 }
 
-@MainActor final class TerminalKeyboardAccessory: UIInputView {
+@MainActor final class TerminalKeyboardBar: UIView {
     weak var terminal: SessionTerminalView?
     var customize: (() -> Void)?
     private let rows = UIStackView()
     private var modifierButtons: [(UIButton, TerminalModifiers)] = []
-    private var height: CGFloat = 100
+    let keyboardButton = UIButton(type: .system)
+    let menuAnchor = UIView()
+    let keyScroll = UIScrollView()
+    private let numbers = UIStackView()
+    private let custom = UIStackView()
+    private let more = UIButton(type: .system)
+    var toggleKeyboard: (() -> Void)?
+    private var softwareKeyboardVisible = false
+    private var hasCustomKeys = false
+    var showsNumberRow = true {
+        didSet { if oldValue != showsNumberRow { updateRows() } }
+    }
+    var height: CGFloat { 60 + (softwareKeyboardVisible ? (showsNumberRow ? 48 : 0) + (hasCustomKeys ? 48 : 0) : 0) }
     init(terminal: SessionTerminalView, preferences: TerminalKeyboardPreferences) {
         self.terminal = terminal
-        super.init(frame: CGRect(x: 0, y: 0, width: 390, height: 100), inputViewStyle: .keyboard)
+        super.init(frame: .zero)
+        accessibilityIdentifier = "terminal-keyboard-bar"
         translatesAutoresizingMaskIntoConstraints = false
-        rows.axis = .vertical; rows.distribution = .fillEqually; rows.spacing = 4; rows.translatesAutoresizingMaskIntoConstraints = false
+        rows.axis = .vertical; rows.spacing = 4; rows.translatesAutoresizingMaskIntoConstraints = false
         addSubview(rows)
         NSLayoutConstraint.activate([rows.topAnchor.constraint(equalTo: topAnchor, constant: 4), rows.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -4), rows.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 4), rows.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -4)])
-        let numbers = row(); for number in ["1","2","3","4","5","6","7","8","9","0"] { numbers.addArrangedSubview(button(number) { [weak terminal] in terminal?.insertText(number) }) }
-        let controls = row()
+        for number in ["1","2","3","4","5","6","7","8","9","0"] { numbers.addArrangedSubview(button(number) { [weak terminal] in terminal?.insertText(number) }) }
+        for row in [numbers, custom] {
+            row.axis = .horizontal; row.distribution = .fillEqually; row.spacing = 3
+            rows.addArrangedSubview(row)
+            let height = row.heightAnchor.constraint(equalToConstant: 44); height.priority = .init(999); height.isActive = true
+            row.isHidden = true
+        }
+        numbers.accessibilityIdentifier = "terminal-number-row"
+        var keyboardConfiguration = UIButton.Configuration.gray()
+        keyboardConfiguration.image = UIImage(systemName: "keyboard")
+        keyboardConfiguration.cornerStyle = .medium
+        keyboardButton.configuration = keyboardConfiguration
+        keyboardButton.accessibilityIdentifier = "terminal-keyboard-toggle"
+        keyboardButton.addAction(UIAction { [weak self] _ in self?.toggleKeyboard?() }, for: .touchUpInside)
+        keyScroll.showsHorizontalScrollIndicator = false
+        keyScroll.accessibilityIdentifier = "terminal-modifier-keys"
+        keyScroll.translatesAutoresizingMaskIntoConstraints = false
+        let controls = UIStackView(); controls.axis = .horizontal; controls.distribution = .fillEqually; controls.spacing = 3
+        controls.translatesAutoresizingMaskIntoConstraints = false; keyScroll.addSubview(controls)
+        menuAnchor.isUserInteractionEnabled = false
+        let bar = UIStackView(arrangedSubviews: [keyboardButton, keyScroll, menuAnchor]); bar.spacing = 4
+        rows.addArrangedSubview(bar)
+        let fill = controls.widthAnchor.constraint(equalTo: keyScroll.frameLayoutGuide.widthAnchor); fill.priority = .init(750)
+        NSLayoutConstraint.activate([
+            fill,
+            bar.heightAnchor.constraint(equalToConstant: 52),
+            keyboardButton.widthAnchor.constraint(equalToConstant: 48), menuAnchor.widthAnchor.constraint(equalToConstant: 52),
+            controls.leadingAnchor.constraint(equalTo: keyScroll.contentLayoutGuide.leadingAnchor),
+            controls.trailingAnchor.constraint(equalTo: keyScroll.contentLayoutGuide.trailingAnchor),
+            controls.topAnchor.constraint(equalTo: keyScroll.contentLayoutGuide.topAnchor),
+            controls.bottomAnchor.constraint(equalTo: keyScroll.contentLayoutGuide.bottomAnchor),
+            controls.heightAnchor.constraint(equalTo: keyScroll.frameLayoutGuide.heightAnchor),
+            controls.widthAnchor.constraint(greaterThanOrEqualTo: keyScroll.frameLayoutGuide.widthAnchor),
+            controls.widthAnchor.constraint(greaterThanOrEqualToConstant: 9 * 44 + 8 * 3)
+        ])
         controls.addArrangedSubview(button("Esc") { [weak self] in self?.send(.escape) })
         controls.addArrangedSubview(button("Tab") { [weak self] in self?.send(.tab) })
         for (title, modifier) in [("Ctrl", TerminalModifiers.ctrl), ("Alt", .alt)] {
@@ -122,11 +168,17 @@ struct TerminalKeyboardPreferences: Codable {
             controls.addArrangedSubview(value)
         }
         for key in [TerminalAccessoryKey.left, .down, .up, .right] { controls.addArrangedSubview(button(key.title) { [weak self] in self?.send(key) }) }
-        let more = button("Fn") {}; more.showsMenuAsPrimaryAction = true
+        more.configuration = button("Fn", action: {}).configuration
+        more.showsMenuAsPrimaryAction = true
+        controls.addArrangedSubview(more)
+        configure(preferences)
+        refresh()
+    }
+    func configure(_ preferences: TerminalKeyboardPreferences) {
         more.accessibilityLabel = "Extra Terminal Keys"
         var menu = [UIMenu(title: "Navigation & Function Keys", children: TerminalAccessoryKey.allCases.filter { ![.escape, .tab, .left, .right, .up, .down].contains($0) }.map { key in UIAction(title: key.title) { [weak self] _ in self?.send(key) } }),
             UIMenu(title: "Shortcuts", children: [("Interrupt · Ctrl-C", "c"), ("End Input · Ctrl-D", "d"), ("Suspend · Ctrl-Z", "z")].map { title, text in UIAction(title: title) { [weak terminal] _ in terminal?.resetModifiers(); terminal?.send(data: TerminalKeyboardState.text(text, modifiers: .ctrl)[...]) } }),
-            UIMenu(title: "Keyboard", children: [UIAction(title: "Shift for Next Key") { [weak self] _ in self?.toggle(.shift) }, UIAction(title: "Lock/Unlock Shift") { [weak self] _ in self?.terminal?.keyboardState.toggle(.shift, lock: true); self?.refresh() }, UIAction(title: "Copy Selection") { [weak terminal] _ in terminal?.copy(nil) }, UIAction(title: "Paste") { [weak terminal] _ in terminal?.resetModifiers(); terminal?.paste(nil) }, UIAction(title: "Customize Keys & Snippets") { [weak self] _ in self?.customize?() }, UIAction(title: "Hide Keyboard", image: UIImage(systemName: "keyboard.chevron.compact.down")) { [weak terminal] _ in _ = terminal?.resignFirstResponder() }])]
+            UIMenu(title: "Keyboard", children: [UIAction(title: "Shift for Next Key") { [weak self] _ in self?.toggle(.shift) }, UIAction(title: "Lock/Unlock Shift") { [weak self] _ in self?.terminal?.keyboardState.toggle(.shift, lock: true); self?.refresh() }, UIAction(title: "Copy Selection") { [weak terminal] _ in terminal?.copy(nil) }, UIAction(title: "Paste") { [weak terminal] _ in terminal?.resetModifiers(); terminal?.paste(nil) }, UIAction(title: "Customize Keys & Snippets") { [weak self] _ in self?.customize?() }])]
         if DirectProAccess.shared.hasPro, !preferences.snippets.isEmpty {
             menu.insert(UIMenu(title: "Saved Snippets", children: preferences.snippets.map { snippet in UIAction(title: snippet.name) { [weak terminal] _ in
                 guard DirectProAccess.shared.hasPro, let terminal else { return }; terminal.resetModifiers()
@@ -134,15 +186,29 @@ struct TerminalKeyboardPreferences: Codable {
                 terminal.send(data: Array(text.utf8)[...])
             } }), at: 1)
         }
-        more.menu = UIMenu(children: menu); controls.addArrangedSubview(more)
-        if DirectProAccess.shared.hasPro, !preferences.keys.isEmpty {
-            let custom = row(); height = 148; frame.size.height = height
+        more.menu = UIMenu(children: menu)
+        for key in custom.arrangedSubviews { custom.removeArrangedSubview(key); key.removeFromSuperview() }
+        hasCustomKeys = DirectProAccess.shared.hasPro && !preferences.keys.isEmpty
+        if hasCustomKeys {
             for key in preferences.keys { custom.addArrangedSubview(button(key.title) { [weak self] in guard DirectProAccess.shared.hasPro else { return }; self?.send(key) }) }
         }
+        updateRows()
+    }
+    func setSoftwareKeyboardVisible(_ visible: Bool) {
+        guard softwareKeyboardVisible != visible else { return }
+        softwareKeyboardVisible = visible; updateRows()
+    }
+    func setKeyboardFocused(_ focused: Bool) {
+        keyboardButton.accessibilityLabel = focused ? "Hide Keyboard" : "Show Keyboard"
+        keyboardButton.configuration?.image = UIImage(systemName: focused ? "keyboard.chevron.compact.down" : "keyboard")
+    }
+    private func updateRows() {
+        numbers.isHidden = !softwareKeyboardVisible || !showsNumberRow
+        custom.isHidden = !softwareKeyboardVisible || !hasCustomKeys
+        invalidateIntrinsicContentSize(); setNeedsLayout()
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
     override var intrinsicContentSize: CGSize { CGSize(width: UIView.noIntrinsicMetric, height: height) }
-    private func row() -> UIStackView { let row = UIStackView(); row.axis = .horizontal; row.distribution = .fillEqually; row.spacing = 3; rows.addArrangedSubview(row); return row }
     private func button(_ title: String, action: @escaping () -> Void) -> UIButton {
         let button = UIButton(type: .system)
         var configuration = UIButton.Configuration.gray(); configuration.title = title; configuration.cornerStyle = .medium

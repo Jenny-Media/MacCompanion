@@ -32,6 +32,7 @@
 @end
 @interface CompanionVNCViewer (AdditionsTesting)
 - (void)frame:(UIImage *)image;
+- (void)updateConnectionChrome;
 @end
 @interface ClientAdditionsTests : XCTestCase
 @end
@@ -72,6 +73,8 @@
     viewer.view.frame = CGRectMake(0,0,440,956); [viewer.view layoutIfNeeded];
     UIImage *image = [[[UIGraphicsImageRenderer alloc] initWithSize:CGSizeMake(800,600)] imageWithActions:^(UIGraphicsImageRendererContext *context) { [UIColor.blueColor setFill]; UIRectFill(CGRectMake(0,0,800,600)); }];
     [viewer frame:image]; [[viewer valueForKey:@"login"] setHidden:YES];
+    // Measure connected geometry after its native status-area layout settles.
+    [viewer updateConnectionChrome]; [viewer.view layoutIfNeeded];
     UIScrollView *canvas = [viewer valueForKey:@"canvas"]; CGFloat before = canvas.bounds.size.height;
     CompanionVNCSession *owner = viewer.session;
     viewer.fullscreen = YES; [viewer.view layoutIfNeeded];

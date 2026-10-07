@@ -279,25 +279,43 @@
     [viewer stopViewer];
 }
 - (void)testPortraitLoginAndProgressAreCenteredInTheAvailableRegion {
-    AdaptiveViewer *viewer = [AdaptiveViewer new]; viewer.division = CGRectNull; [viewer loadViewIfNeeded];
-    viewer.view.frame = CGRectMake(0,0,440,956); [viewer.view layoutIfNeeded];
-    UIView *card = [viewer valueForKey:@"login"]; UIScrollView *scroll = [viewer valueForKey:@"loginScroll"];
-    XCTAssertNotNil(card);
-    XCTAssertEqualWithAccuracy(CGRectGetMidY(card.frame), CGRectGetMidY(scroll.bounds), 2);
-    [viewer setValue:@YES forKey:@"starting"]; [viewer updateConnectionChrome]; [viewer.view layoutIfNeeded];
-    XCTAssertEqualWithAccuracy(CGRectGetMidY(card.frame), CGRectGetMidY(scroll.bounds), 2);
-    [viewer stopViewer];
+    for (NSNumber *inputOnly in @[@NO, @YES]) {
+        AdaptiveViewer *viewer = [AdaptiveViewer new]; viewer.division = CGRectNull; [viewer loadViewIfNeeded];
+        viewer.inputOnly = inputOnly.boolValue;
+        viewer.view.frame = CGRectMake(0,0,440,956); [viewer.view layoutIfNeeded];
+        UIView *card = [viewer valueForKey:@"login"]; UIScrollView *scroll = [viewer valueForKey:@"loginScroll"];
+        UITextField *password = [viewer valueForKey:@"password"]; password.text = @"synthetic-draft-only";
+        CompanionVNCSession *owner = viewer.session;
+        XCTAssertNotNil(card);
+        XCTAssertEqualObjects(((UILabel *)[viewer valueForKey:@"loginSubtitle"]).text, inputOnly.boolValue ? @"Trackpad & Keyboard" : @"Desktop");
+        XCTAssertTrue(((UIView *)[viewer valueForKey:@"trackpadHelp"]).hidden);
+        XCTAssertEqualWithAccuracy(CGRectGetMidY(card.frame), CGRectGetMidY(scroll.bounds), 2);
+        [viewer setValue:@YES forKey:@"starting"]; [viewer updateConnectionChrome]; [viewer.view layoutIfNeeded];
+        XCTAssertEqualWithAccuracy(CGRectGetMidY(card.frame), CGRectGetMidY(scroll.bounds), 2);
+        XCTAssertTrue(((UIView *)[viewer valueForKey:@"loginFields"]).hidden);
+        XCTAssertFalse(((UIView *)[viewer valueForKey:@"loginCancel"]).hidden);
+        [viewer showInvalidLogin]; [viewer.view layoutIfNeeded];
+        XCTAssertFalse(((UIView *)[viewer valueForKey:@"loginFields"]).hidden);
+        XCTAssertEqual([viewer valueForKey:@"password"], password);
+        XCTAssertEqualObjects(password.text, @"synthetic-draft-only");
+        XCTAssertEqual(viewer.session, owner);
+        [viewer stopViewer];
+    }
 }
 - (void)testFoldedLoginUsesOneRegionAndMovesAboveATallKeyboard {
-    AdaptiveViewer *viewer = [AdaptiveViewer new]; viewer.division = CGRectMake(0,465,669,20);
-    [viewer loadViewIfNeeded]; viewer.view.frame = CGRectMake(0,0,669,951); [viewer.view layoutIfNeeded];
-    UIScrollView *login = [viewer valueForKey:@"loginScroll"]; UIView *intro = [viewer valueForKey:@"loginIntro"];
-    XCTAssertGreaterThanOrEqual(login.frame.origin.y,485); XCTAssertLessThanOrEqual(CGRectGetMaxY(intro.frame),465);
-    CompanionVNCSession *owner = viewer.session;
-    [viewer setValue:@600 forKey:@"keyboardOverlap"]; [viewer.view setNeedsLayout]; [viewer.view layoutIfNeeded];
-    XCTAssertLessThanOrEqual(CGRectGetMaxY(login.frame),351); XCTAssertGreaterThan(login.frame.size.height,0);
-    XCTAssertEqual(viewer.session,owner); XCTAssertEqual(intro.superview,[viewer valueForKey:@"login"]);
-    [viewer stopViewer];
+    for (NSNumber *inputOnly in @[@NO, @YES]) {
+        AdaptiveViewer *viewer = [AdaptiveViewer new]; viewer.division = CGRectMake(0,465,669,20);
+        viewer.inputOnly = inputOnly.boolValue;
+        [viewer loadViewIfNeeded]; viewer.view.frame = CGRectMake(0,0,669,951); [viewer.view layoutIfNeeded];
+        UIScrollView *login = [viewer valueForKey:@"loginScroll"]; UIView *intro = [viewer valueForKey:@"loginIntro"];
+        XCTAssertGreaterThanOrEqual(login.frame.origin.y,485); XCTAssertLessThanOrEqual(CGRectGetMaxY(intro.frame),465);
+        CompanionVNCSession *owner = viewer.session;
+        [viewer setValue:@600 forKey:@"keyboardOverlap"]; [viewer.view setNeedsLayout]; [viewer.view layoutIfNeeded];
+        XCTAssertLessThanOrEqual(CGRectGetMaxY(login.frame),351); XCTAssertGreaterThan(login.frame.size.height,0);
+        XCTAssertEqual(viewer.session,owner); XCTAssertEqual(intro.superview,[viewer valueForKey:@"login"]);
+        XCTAssertEqual([[viewer valueForKey:@"tabletop"] boolValue], !inputOnly.boolValue, @"Only the connected desktop uses split video/input regions");
+        [viewer stopViewer];
+    }
 }
 - (void)testMenuHeaderAndCategoriesRemainVisibleWhenQuickActionsScroll {
     CompanionVNCControls *controls = [[CompanionVNCControls alloc] initWithFrame:CGRectMake(0,0,678,432)];

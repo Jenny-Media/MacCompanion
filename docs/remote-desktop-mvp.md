@@ -60,8 +60,12 @@ Desktop and Terminal use a compact connection card centered in the available
 region over a blurred passive saved-Mac list until connected. The card has no
 drag handle implying swipe dismissal. Reduce Transparency uses an opaque
 backdrop. A shared identity header, grouped credentials, quiet Save login and one
-full-width primary action keep entry focused. Healthy
-Connected text is hidden. The desktop pans behind the status icons with UIKit's
+full-width primary action keep entry focused. Desktop and Trackpad & Keyboard
+share this card and its adaptive layout, including folded-screen keyboard
+avoidance; the header identifies the selected mode.
+All three modes use an elevated system surface, adaptive edge and soft shadow
+over a theme-aware dimmed backdrop. Progress Cancel uses native blue styling.
+Healthy Connected text is hidden. The desktop pans behind the status icons with UIKit's
 native scroll-edge treatment; Fit uses the unobscured region to keep the full
 selected display reachable. Sign-in and input-only mode retain safe-area layout.
 Keyboard/modifier controls remain directly accessible,
@@ -69,7 +73,9 @@ and a docked keyboard reduces the desktop viewport with the system animation.
 Dismissal restores the prior zoom/center when the display crop remains valid;
 the keyboard button reflects Show Keyboard or Hide Keyboard.
 One floating controls button provides structured Displays, Input and Session
-actions. Press-and-slide opens while held, highlights actions and commits on release;
+actions. Its category and picker popovers open above the button, with pushed
+submenus retaining the same anchor and long menus scrolling when space is limited.
+Press-and-slide opens while held, highlights actions and commits on release;
 menu touches are captured locally and cancellation never sends input. Tap and
 accessibility equivalents remain available. Trackpad speed is adjustable and
 accelerated independently of zoom. Restore the last per-Mac display only against
@@ -109,7 +115,13 @@ Customizable quick actions stay nearest the controls button and support tap and
 press-and-slide. Extra Keys groups editing, navigation and special keys; gesture
 help is separate. Input & Quick Actions uses a section-scoped Reorder control and
 Save/Cancel for all preference drafts. Terminal offers its own keyboard and color
-controls. Each remote session has one exit action returning to My Macs.
+controls. Its persistent modifier bar puts a keyboard toggle on the left and
+the shared controls button on the right, with scrolling middle keys on narrow
+screens. Number and admitted custom-key rows appear while the software keyboard
+is open. Keyboard & Input has a free Show Number Row choice, default On, which
+applies immediately and is remembered across sessions. The separate button dock
+and menu-based keyboard toggle are removed.
+Each remote session has one exit action returning to My Macs.
 
 Desktop and Terminal entry automatically start one connection attempt when a
 usable saved login is available. An incomplete login shows account fields and one
@@ -153,7 +165,7 @@ installation may remain on the Mac. Nothing installs a Mac app or helper.
 
 ### Terminal keyboard and lifetime Pro, 2026-10-05
 
-The software keyboard always includes a number row. Ctrl/Alt are one-shot on tap
+The software keyboard includes an optional number row, enabled by default. Ctrl/Alt are one-shot on tap
 and explicitly locked on hold; Shift, navigation, function keys and common
 Ctrl-C/D/Z shortcuts are available in More. Modifiers reset on focus/session loss.
 Keys honor application-cursor mode. Pro adds a custom row and protected local

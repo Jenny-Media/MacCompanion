@@ -99,8 +99,9 @@ import UIKit
             let button = controller.controls.button.convert(controller.controls.button.bounds, to: window)
             let terminal = controller.terminal.convert(controller.terminal.bounds, to: window)
             let keyboard = window.convert(keyboardFrame.frame, from: window.screen.coordinateSpace)
+            XCTAssertEqual(controller.keyboardBar.bounds.height, 108, accuracy: 1, "The number row must remain visible in the SwiftUI host")
             XCTAssertGreaterThan(keyboard.height, 100, "The real software keyboard must be visible")
-            XCTAssertEqual(button.maxY, keyboard.minY - 8, accuracy: 2, "SwiftUI and UIKit must avoid the keyboard once")
+            XCTAssertEqual(button.maxY, keyboard.minY - 4, accuracy: 2, "SwiftUI and UIKit must avoid the keyboard once")
             XCTAssertLessThanOrEqual(terminal.maxY + 4, button.minY)
             XCTAssertTrue(controller.terminal.isFirstResponder)
             XCTAssertTrue(controllers(host).contains { $0 === controller }, "Changing colors must preserve the controller")
@@ -122,8 +123,13 @@ import UIKit
             else { _ = controller.terminal.resignFirstResponder() }
             try await Task.sleep(for: .milliseconds(500)); controller.view.layoutIfNeeded()
             let button = controller.controls.button.convert(controller.controls.button.bounds, to: controller.view)
+            let toolbar = controller.keyboardBar.convert(controller.keyboardBar.bounds, to: controller.view)
             XCTAssertLessThanOrEqual(controller.terminal.frame.maxY + 4, button.minY, "The control must never cover a terminal row")
             XCTAssertLessThanOrEqual(button.maxY, controller.keyboardCeiling(), "The dock must stay above the keyboard")
+            XCTAssertTrue(toolbar.contains(button), "The menu button must occupy the modifier bar")
+            XCTAssertLessThan(toolbar.minY - controller.terminal.frame.maxY, controller.terminal.caretFrame.height + 1, "Only whole-row rounding may separate output from the toolbar")
+            XCTAssertEqual(toolbar.height, keyboard ? 108 : 60, accuracy: 1, "Keyboard requested: \(keyboard); first responder: \(controller.terminal.isFirstResponder); ceiling: \(controller.keyboardCeiling())")
+            XCTAssertNil(controller.terminal.inputAccessoryView, "A second accessory would duplicate the toolbar and keyboard avoidance")
             if !keyboard { continue }
             XCTAssertLessThan(controller.keyboardCeiling(), controller.view.bounds.height - 100)
             controller.controls.actionHandler?(["kind": "session"])
@@ -140,9 +146,150 @@ import UIKit
             menu.tableView.layoutIfNeeded()
             let exit = menu.tableView.convert(menu.tableView.rectForRow(at: IndexPath(row: 0, section: 2)), to: nav.view)
             XCTAssertLessThanOrEqual(exit.maxY, nav.view.bounds.maxY + 1)
-            controller.dismiss(animated: false)
+            // UIKit restores keyboard focus while dismissing the popover. Finish
+            // that transition before the next iteration hides the keyboard.
+            await withCheckedContinuation { (completion: CheckedContinuation<Void, Never>) in
+                controller.dismiss(animated: false) { completion.resume() }
+            }
         }
         XCTAssertTrue(String(decoding: controller.terminal.getTerminal().getBufferAsData(), as: UTF8.self).contains("rightmost columns"))
+    }
+
+    func testPersistentBarTogglesKeyboardAndKeepsFixedControlsWithScrollableKeys() async throws {
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let window = UIWindow(windowScene: scene)
+        let mac = try DirectMacRecordV1.normalized(name: "Synthetic Terminal", addresses: ["studio.local"])
+        let session = DirectTerminalSession(mac: mac); session.connected = true
+        let controller = TerminalController(session: session, customize: {})
+        window.rootViewController = controller; window.makeKeyAndVisible()
+        defer { window.endEditing(true); window.isHidden = true; window.rootViewController = nil; session.stop() }
+        controller.terminal.feed(text: "Preserved while toggling the toolbar keyboard\r\n")
+        try await Task.sleep(for: .milliseconds(350)); window.layoutIfNeeded()
+        let toolbar = controller.keyboardBar
+        XCTAssertFalse(toolbar.isHidden)
+        XCTAssertEqual(toolbar.keyboardButton.accessibilityLabel, "Show Keyboard")
+        XCTAssertFalse(controller.controls.quickActions.contains { $0["kind"] as? String == "keyboard" })
+        let originalRows = controller.terminal.getTerminal().rows
+        toolbar.keyboardButton.sendActions(for: .touchUpInside)
+        try await Task.sleep(for: .milliseconds(550)); window.layoutIfNeeded()
+        XCTAssertTrue(controller.terminal.isFirstResponder)
+        XCTAssertEqual(toolbar.keyboardButton.accessibilityLabel, "Hide Keyboard")
+        XCTAssertLessThan(controller.terminal.getTerminal().rows, originalRows)
+        toolbar.keyboardButton.sendActions(for: .touchUpInside)
+        try await Task.sleep(for: .milliseconds(550)); window.layoutIfNeeded()
+        XCTAssertFalse(controller.terminal.isFirstResponder)
+        XCTAssertEqual(toolbar.keyboardButton.accessibilityLabel, "Show Keyboard")
+        XCTAssertFalse(toolbar.isHidden)
+        XCTAssertEqual(controller.terminal.getTerminal().rows, originalRows)
+        XCTAssertTrue(String(decoding: controller.terminal.getTerminal().getBufferAsData(), as: UTF8.self).contains("toggling the toolbar keyboard"))
+
+        // A narrow toolbar keeps both end controls reachable without shrinking
+        // the terminal keys; the existing Fn menu remains reachable by scrolling.
+        let narrow = TerminalKeyboardBar(terminal: controller.terminal, preferences: .init())
+        narrow.translatesAutoresizingMaskIntoConstraints = true
+        narrow.frame = CGRect(x: 0, y: 0, width: 320, height: 60); controller.view.addSubview(narrow)
+        narrow.layoutIfNeeded()
+        let keyboardFrame = narrow.keyboardButton.convert(narrow.keyboardButton.bounds, to: narrow)
+        let anchorFrame = narrow.menuAnchor.convert(narrow.menuAnchor.bounds, to: narrow)
+        XCTAssertTrue(narrow.bounds.contains(keyboardFrame)); XCTAssertTrue(narrow.bounds.contains(anchorFrame))
+        XCTAssertGreaterThan(narrow.keyScroll.contentSize.width, narrow.keyScroll.bounds.width)
+        let keys = try XCTUnwrap(narrow.keyScroll.subviews.compactMap { $0 as? UIStackView }.first)
+        for key in keys.arrangedSubviews { XCTAssertGreaterThanOrEqual(key.bounds.width, 44) }
+        narrow.keyScroll.setContentOffset(CGPoint(x: narrow.keyScroll.contentSize.width - narrow.keyScroll.bounds.width, y: 0), animated: false)
+        let fn = try XCTUnwrap(keys.arrangedSubviews.last as? UIButton)
+        XCTAssertTrue(narrow.keyScroll.bounds.contains(fn.convert(fn.bounds, to: narrow.keyScroll)))
+        func titles(_ menu: UIMenu) -> [String] { menu.children.flatMap { item in (item as? UIMenu).map(titles) ?? [item.title] } }
+        XCTAssertFalse(titles(try XCTUnwrap(fn.menu)).contains("Hide Keyboard"))
+        narrow.removeFromSuperview()
+    }
+
+    func testNumberRowMenuAppliesImmediatelyAndRestoresAcrossSessions() async throws {
+        let suite = "TerminalNumberRowQA-" + UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let window = UIWindow(windowScene: scene); window.windowLevel = .normal + 1
+        let mac = try DirectMacRecordV1.normalized(name: "Studio Mac", addresses: ["studio.local"])
+        let session = DirectTerminalSession(mac: mac); session.connected = true
+        var customizationRequested = false
+        let controller = TerminalController(session: session, customize: { customizationRequested = true }, defaults: defaults)
+        window.rootViewController = controller; window.makeKeyAndVisible(); controller.applyAppearance(.light)
+        let folder = URL.documentsDirectory.appending(path: "TerminalNumberRow")
+        let ready = folder.appending(path: "ready")
+        defer {
+            window.endEditing(true); window.isHidden = true; window.rootViewController = nil; session.stop()
+            defaults.removePersistentDomain(forName: suite); try? FileManager.default.removeItem(at: ready)
+        }
+        func capture(_ name: String) async throws {
+            guard ProcessInfo.processInfo.environment["MACCOMPANION_SCREENSHOT_REVIEW"] == "1" else { return }
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            try Data(name.utf8).write(to: ready, options: .atomic)
+            try await Task.sleep(for: .seconds(2)); try? FileManager.default.removeItem(at: ready)
+        }
+        func inputMenu(_ owner: TerminalController) async throws -> CompanionVNCMenu {
+            owner.controls.actionHandler?(["kind": "inputMenu"])
+            try await Task.sleep(for: .milliseconds(550))
+            let navigation = try XCTUnwrap(owner.presentedViewController as? UINavigationController)
+            return try XCTUnwrap(navigation.topViewController as? CompanionVNCMenu)
+        }
+        func numberRow(_ bar: TerminalKeyboardBar) throws -> UIView {
+            func descendants(_ view: UIView) -> [UIView] { [view] + view.subviews.flatMap(descendants) }
+            return try XCTUnwrap(descendants(bar).first { $0.accessibilityIdentifier == "terminal-number-row" })
+        }
+        try await Task.sleep(for: .milliseconds(350))
+        controller.terminal.feed(text: "Welcome to Studio Mac\r\n" + (1...40).map { "Synthetic output row \($0)\r\n" }.joined() + "demo@studio ~ % ")
+        XCTAssertTrue(controller.keyboardBar.showsNumberRow, "New installations retain the number row")
+        XCTAssertTrue(controller.terminal.becomeFirstResponder())
+        try await Task.sleep(for: .milliseconds(550)); window.layoutIfNeeded()
+        XCTAssertEqual(controller.keyboardBar.bounds.height, 108, accuracy: 1)
+        let rowsWithNumbers = controller.terminal.getTerminal().rows
+        try await capture("number-row-on")
+        let menu = try await inputMenu(controller)
+        let path = IndexPath(row: 0, section: 0)
+        let checked = menu.tableView(menu.tableView, cellForRowAt: path)
+        XCTAssertEqual(checked.accessibilityIdentifier, "session-menu-numberRow")
+        XCTAssertEqual(checked.accessoryType, .checkmark)
+        XCTAssertTrue(checked.accessibilityTraits.contains(.selected))
+        XCTAssertFalse(checked.accessibilityTraits.contains(.notEnabled))
+        XCTAssertNotNil((checked.contentConfiguration as? UIListContentConfiguration)?.image)
+        try await capture("number-row-menu-on")
+        menu.tableView(menu.tableView, didSelectRowAt: path)
+        try await Task.sleep(for: .milliseconds(650)); window.layoutIfNeeded()
+        XCTAssertFalse(controller.keyboardBar.showsNumberRow)
+        XCTAssertTrue(try numberRow(controller.keyboardBar).isHidden)
+        XCTAssertEqual(controller.keyboardBar.bounds.height, 60, accuracy: 1)
+        XCTAssertGreaterThan(controller.terminal.getTerminal().rows, rowsWithNumbers, "Hiding numbers must return space to the PTY")
+        XCTAssertTrue(controller.terminal.isFirstResponder)
+        XCTAssertTrue(session.connected); XCTAssertTrue(controller.session === session)
+        XCTAssertFalse(controller.keyboardBar.isHidden); XCTAssertFalse(controller.controls.isHidden)
+        XCTAssertEqual(defaults.object(forKey: TerminalController.numberRowPreference) as? Bool, false)
+        XCTAssertFalse(customizationRequested, "This free layout choice must not open Pro customization")
+        XCTAssertTrue(String(decoding: controller.terminal.getTerminal().getBufferAsData(), as: UTF8.self).contains("Synthetic output row"))
+        try await capture("number-row-off")
+        let uncheckedMenu = try await inputMenu(controller)
+        let unchecked = uncheckedMenu.tableView(uncheckedMenu.tableView, cellForRowAt: path)
+        XCTAssertEqual(unchecked.accessoryType, .none); XCTAssertFalse(unchecked.accessibilityTraits.contains(.selected))
+        try await capture("number-row-menu-off")
+        controller.dismiss(animated: false); _ = controller.terminal.resignFirstResponder()
+
+        // A new session controller reads the persisted choice without changing
+        // the protected per-Mac custom-key preferences or requiring Pro.
+        let restored = TerminalController(session: session, customize: {}, defaults: defaults)
+        window.rootViewController = restored
+        try await Task.sleep(for: .milliseconds(350)); window.layoutIfNeeded()
+        XCTAssertFalse(restored.keyboardBar.showsNumberRow)
+        XCTAssertTrue(restored.terminal.becomeFirstResponder())
+        try await Task.sleep(for: .milliseconds(550)); window.layoutIfNeeded()
+        XCTAssertEqual(restored.keyboardBar.bounds.height, 60, accuracy: 1)
+        let restoredMenu = try await inputMenu(restored)
+        restoredMenu.tableView(restoredMenu.tableView, didSelectRowAt: path)
+        try await Task.sleep(for: .milliseconds(650)); window.layoutIfNeeded()
+        XCTAssertEqual(restored.keyboardBar.bounds.height, 108, accuracy: 1)
+        XCTAssertFalse(try numberRow(restored.keyboardBar).isHidden)
+        XCTAssertTrue(defaults.bool(forKey: TerminalController.numberRowPreference))
+        _ = restored.terminal.resignFirstResponder()
+        try await Task.sleep(for: .milliseconds(550)); window.layoutIfNeeded()
+        restored.controls.actionHandler?(["kind": "numberRow"]); window.layoutIfNeeded()
+        XCTAssertEqual(restored.keyboardBar.bounds.height, 60, accuracy: 1, "A closed keyboard keeps only the persistent modifier bar")
     }
 
     func testSharedSessionMenuFitsContentAndKeySubmenuPreservesTerminal() async throws {
@@ -260,10 +407,12 @@ import UIKit
         XCTAssertTrue(String(decoding: terminal.getTerminal().getBufferAsData(), as: UTF8.self).contains("Fullscreen buffer survives"))
         XCTAssertTrue(navigation.isNavigationBarHidden)
         XCTAssertTrue(controls.isHidden)
+        XCTAssertTrue(terminal.keyboardBar?.isHidden == true)
         XCTAssertFalse(terminal.isUserInteractionEnabled)
         session.recovery = nil; session.connected = true
         try await Task.sleep(for: .milliseconds(300))
         XCTAssertFalse(controls.isHidden); XCTAssertTrue(terminal.isUserInteractionEnabled)
+        XCTAssertTrue(terminal.keyboardBar?.isHidden == false)
         XCTAssertTrue(descendants(host.view).contains { $0 === terminal })
     }
 }
