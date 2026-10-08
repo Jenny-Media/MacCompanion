@@ -15,8 +15,10 @@ concurrency:
 jobs:
   trust-kernel:
     name: Trust kernel (unsigned)
-    runs-on: macos-26
+    runs-on: xcode-27
     timeout-minutes: 15
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_27.0.app/Contents/Developer
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
@@ -27,6 +29,7 @@ jobs:
       - name: Record toolchain
         run: |
           xcodebuild -version
+          xcodebuild -version | rg --fixed-strings --line-regexp 'Build version 27A266a'
           xcrun swift --version
           xcodegen --version
       - name: Validate specifications and package
