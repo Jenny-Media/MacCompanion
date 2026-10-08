@@ -75,6 +75,78 @@
 @interface SessionControlsTests : XCTestCase
 @end
 @implementation SessionControlsTests
+- (void)testShortMenuScrollsHeaderAndKeepsEveryActionReachable {
+    for (NSString *category in @[UIContentSizeCategoryLarge, UIContentSizeCategoryAccessibilityExtraExtraExtraLarge]) {
+        CompanionVNCControls *controls = [[CompanionVNCControls alloc] initWithFrame:CGRectMake(0,0,402,874)];
+        controls.traitOverrides.preferredContentSizeCategory = category;
+        controls.macName = @"Studio Mac";
+        controls.quickActions = @[@{@"kind":@"paste",@"title":@"Paste",@"enabled":@YES},
+                                  @{@"kind":@"interrupt",@"title":@"Ctrl-C",@"enabled":@YES}];
+        [controls open];
+        for (NSNumber *usable in @[@120, @160, @208, @874, @120]) {
+            controls.bottomInset = 874 - usable.doubleValue;
+            [controls setNeedsLayout]; [controls layoutIfNeeded];
+            UIScrollView *scroll = [controls valueForKey:@"scroll"];
+            UIVisualEffectView *panel = [controls valueForKey:@"panel"];
+            XCTAssertGreaterThan(scroll.bounds.size.height, 0, @"%@ at %@ pt must retain actions",category,usable);
+            XCTAssertGreaterThanOrEqual(panel.frame.origin.y, 0);
+            XCTAssertLessThanOrEqual(CGRectGetMaxY(panel.frame), controls.button.frame.origin.y);
+            if (usable.doubleValue == 120) XCTAssertEqual(((UILabel *)[controls valueForKey:@"nameLabel"]).superview, scroll);
+            for (UIButton *choice in [controls valueForKey:@"choices"]) {
+                if (choice.superview == scroll) {
+                    scroll.contentOffset = CGPointMake(0, MIN(MAX(0, CGRectGetMidY(choice.frame) - scroll.bounds.size.height / 2), MAX(0, scroll.contentSize.height - scroll.bounds.size.height)));
+                    XCTAssertFalse(CGRectIsEmpty(CGRectIntersection(choice.frame, scroll.bounds)), @"%@ must scroll into view",choice.configuration.title);
+                } else XCTAssertTrue(CGRectContainsRect(panel.contentView.bounds,choice.frame));
+            }
+        }
+        [controls close];
+    }
+}
+- (void)testIntermediateTextSizeKeepsScrollingCategoriesSeparatedAndTouchable {
+    UIWindowScene *scene = (id)UIApplication.sharedApplication.connectedScenes.anyObject;
+    UIWindow *previous = nil; for (UIWindow *w in scene.windows) if (w.isKeyWindow) previous = w;
+    UIWindow *window = [[UIWindow alloc] initWithWindowScene:scene];
+    UIViewController *holder = [UIViewController new]; window.rootViewController = holder; [window makeKeyAndVisible];
+    CompanionVNCControls *controls = [[CompanionVNCControls alloc] initWithFrame:CGRectMake(0,0,320,874)];
+    controls.traitOverrides.preferredContentSizeCategory = UIContentSizeCategoryExtraExtraExtraLarge;
+    controls.quickActions = @[@{@"kind":@"paste",@"title":@"Paste",@"enabled":@YES},
+                              @{@"kind":@"interrupt",@"title":@"Ctrl-C",@"enabled":@YES}];
+    [holder.view addSubview:controls]; [controls open];
+    [[NSRunLoop mainRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:.25]];
+    for (UIButton *choice in [controls valueForKey:@"choices"]) [choice layoutIfNeeded];
+    for (NSNumber *room in @[@208, @216, @220, @300, @208]) {
+        controls.bottomInset = 874 - controls.safeAreaInsets.top - controls.safeAreaInsets.bottom - (room.doubleValue + 76);
+        [controls setNeedsLayout]; [controls layoutIfNeeded];
+        UIScrollView *scroll = [controls valueForKey:@"scroll"];
+        UILabel *name = [controls valueForKey:@"nameLabel"];
+        UILabel *heading = (UILabel *)[scroll viewWithTag:1001];
+        NSArray<UIButton *> *choices = [controls valueForKey:@"choices"];
+        if (room.doubleValue == 208) XCTAssertEqual(name.superview, scroll, @"This boundary must exercise scrolling without an accessibility category");
+        if (name.superview == scroll) {
+            for (UIButton *choice in choices) {
+                XCTAssertEqual(choice.superview, scroll, @"Categories must join a scrolling header");
+                XCTAssertFalse(CGRectIntersectsRect(choice.frame, heading.frame), @"%@ overlaps Quick Actions", choice.configuration.title);
+            }
+            for (NSUInteger i = 0; i < choices.count; i++) for (NSUInteger j = i + 1; j < choices.count; j++) {
+                CGRect overlap = CGRectIntersection(choices[i].frame, choices[j].frame);
+                XCTAssertTrue(CGRectIsNull(overlap) || overlap.size.width < .5 || overlap.size.height < .5,
+                    @"%@ %@ overlaps %@ %@", choices[i].configuration.title, NSStringFromCGRect(choices[i].frame), choices[j].configuration.title, NSStringFromCGRect(choices[j].frame));
+            }
+        }
+        for (UIButton *choice in choices) {
+            if (choice.superview == scroll) {
+                scroll.contentOffset = CGPointMake(0, MIN(MAX(0, CGRectGetMidY(choice.frame) - scroll.bounds.size.height / 2), MAX(0, scroll.contentSize.height - scroll.bounds.size.height)));
+            }
+            CGRect visible = CGRectIntersection(choice.frame, choice.superview.bounds);
+            XCTAssertFalse(CGRectIsEmpty(visible));
+            CGPoint point = [choice.superview convertPoint:CGPointMake(CGRectGetMidX(visible), CGRectGetMidY(visible)) toView:controls];
+            UIView *hit = [controls hitTest:point withEvent:nil];
+            XCTAssertTrue(hit == choice || [hit isDescendantOfView:choice], @"%@ must receive touches at %@ pt", choice.configuration.title, room);
+        }
+    }
+    [controls close];
+    window.hidden = YES; window.rootViewController = nil; [previous makeKeyAndVisible];
+}
 - (void)testCategoryIconsAndLabelsFitAcrossTextSizesAndBothSessionModes {
     UIWindowScene *scene = (id)UIApplication.sharedApplication.connectedScenes.anyObject;
     UIWindow *previous = nil; for (UIWindow *w in scene.windows) if (w.isKeyWindow) previous = w;

@@ -108,7 +108,7 @@ NSString *const CompanionVNCControlsHapticsPreference = @"direct-controls-haptic
     NSUInteger categoryCount = self.items.count - self.quickCount;
     CGFloat tileWidth = (width - (columns == 1 ? 16 : 28)) / columns;
     CGFloat categoryWidth = largeText ? width - 16 : (width - 16) / MAX(1, categoryCount);
-    CGFloat tileHeight = 64, categoryHeight = 64;
+    CGFloat tileHeight = largeText ? 44 : 64, categoryHeight = largeText ? 44 : 64;
     // Measure the configured native button at its actual width. Fixed-height
     // tiles clip growing SF Symbols and wrapped titles at larger text sizes.
     for (NSUInteger i = 0; i < self.choices.count; i++) {
@@ -122,23 +122,30 @@ NSString *const CompanionVNCControlsHapticsPreference = @"direct-controls-haptic
         if (i < self.quickCount) tileHeight = MAX(tileHeight, fittingHeight);
         else categoryHeight = MAX(categoryHeight, fittingHeight);
     }
-    CGFloat categoryBody = largeText ? categoryCount * categoryHeight : 0;
-    CGFloat contentHeight = categoryBody + (self.quickCount ? headingHeight + ceil(self.quickCount / (CGFloat)columns) * (tileHeight + 8) + 8 : 0);
     CGFloat fixedHeight = headerHeight + (largeText ? 8 : categoryHeight + 12);
+    // When a fixed header would consume the action viewport, scroll it too.
+    BOOL scrollingHeader = panelRoom < fixedHeight + MIN(tileHeight, categoryHeight) + 12;
+    CGFloat scrollHeaderHeight = scrollingHeader ? headerHeight + 8 : 0;
+    BOOL scrollingCategories = largeText || scrollingHeader;
+    CGFloat categoryBody = largeText ? categoryCount * categoryHeight : (scrollingHeader && categoryCount ? categoryHeight + 8 : 0);
+    CGFloat contentHeight = scrollHeaderHeight + categoryBody + (self.quickCount ? headingHeight + ceil(self.quickCount / (CGFloat)columns) * (tileHeight + 8) + 8 : 0);
+    if (scrollingHeader) fixedHeight = 0;
     CGFloat height = MIN(fixedHeight + contentHeight + 12, panelRoom);
     CGRect rect = CGRectMake(MAX(CGRectGetMinX(available) + 12, CGRectGetMaxX(self.button.frame) - width), self.button.frame.origin.y - height - 12, width, height);
     self.panel.bounds = CGRectMake(0,0,rect.size.width,rect.size.height); self.panel.center = CGPointMake(CGRectGetMidX(rect),CGRectGetMidY(rect));
+    UIView *nameParent = scrollingHeader ? self.scroll : self.panel.contentView;
+    if (self.nameLabel.superview != nameParent) [nameParent addSubview:self.nameLabel];
     self.nameLabel.frame = CGRectMake(16, 8, MAX(0, width - 32), headerHeight - 16);
-    self.scroll.frame = CGRectMake(0, fixedHeight, width, MAX(0, height - fixedHeight - 12));
+    self.scroll.frame = CGRectMake(0, fixedHeight, width, MAX(0, height - fixedHeight - (scrollingHeader ? 0 : 12)));
     self.scroll.contentSize = CGSizeMake(width, contentHeight);
-    UILabel *heading = (UILabel *)[self.scroll viewWithTag:1001]; heading.frame = CGRectMake(16, categoryBody + 4, MAX(0, width - 32), headingHeight - 8);
+    UILabel *heading = (UILabel *)[self.scroll viewWithTag:1001]; heading.frame = CGRectMake(16, scrollHeaderHeight + categoryBody + 4, MAX(0, width - 32), headingHeight - 8);
     for (NSUInteger i = 0; i < self.choices.count; i++) {
-        UIView *parent = i < self.quickCount || largeText ? self.scroll : self.panel.contentView;
+        UIView *parent = i < self.quickCount || scrollingCategories ? self.scroll : self.panel.contentView;
         if (self.choices[i].superview != parent) [parent addSubview:self.choices[i]];
         self.choices[i].frame = i < self.quickCount
-            ? CGRectMake(8 + (i % columns) * (tileWidth + 12), categoryBody + headingHeight + (ceil(self.quickCount / (CGFloat)columns) - 1 - (i / columns)) * (tileHeight + 8), tileWidth, tileHeight)
-            : largeText ? CGRectMake(8, (i - self.quickCount) * categoryHeight, width - 16, categoryHeight)
-                       : CGRectMake(8 + (i - self.quickCount) * ((width - 16) / MAX(1, categoryCount)), headerHeight + 4, (width - 16) / MAX(1, categoryCount), categoryHeight);
+            ? CGRectMake(8 + (i % columns) * (tileWidth + 12), scrollHeaderHeight + categoryBody + headingHeight + (ceil(self.quickCount / (CGFloat)columns) - 1 - (i / columns)) * (tileHeight + 8), tileWidth, tileHeight)
+            : largeText ? CGRectMake(8, scrollHeaderHeight + (i - self.quickCount) * categoryHeight, width - 16, categoryHeight)
+                       : CGRectMake(8 + (i - self.quickCount) * ((width - 16) / MAX(1, categoryCount)), scrollingHeader ? scrollHeaderHeight : headerHeight + 4, (width - 16) / MAX(1, categoryCount), categoryHeight);
     }
 }
 - (void)toggle { if (self.panel) [self close]; else [self open]; }
@@ -165,6 +172,7 @@ NSString *const CompanionVNCControlsHapticsPreference = @"direct-controls-haptic
     name.adjustsFontForContentSizeCategory = YES; self.nameLabel = name; [self.panel.contentView addSubview:name];
     UILabel *heading = [UILabel new]; heading.text = @"Quick Actions"; heading.tag = 1001;
     heading.font = [UIFont preferredFontForTextStyle:UIFontTextStyleFootnote compatibleWithTraitCollection:self.traitCollection]; heading.textColor = UIColor.secondaryLabelColor;
+    heading.adjustsFontForContentSizeCategory = YES;
     heading.hidden = !self.quickCount; [self.scroll addSubview:heading];
     for (NSUInteger i = 0; i < items.count; i++) {
         NSDictionary *item = items[i]; NSString *kind = item[@"kind"];

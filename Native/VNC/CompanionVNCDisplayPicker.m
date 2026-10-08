@@ -11,6 +11,9 @@
     self.navigationItem.rightBarButtonItem = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemDone target:self action:@selector(done)];
     self.tableView.rowHeight = UITableViewAutomaticDimension;
     self.tableView.estimatedRowHeight = 72;
+    [self registerForTraitChanges:@[UITraitPreferredContentSizeCategory.class] withHandler:^(CompanionVNCDisplayPicker *picker, UITraitCollection *previous) {
+        [picker.tableView reloadData];
+    }];
     self.preferredContentSize = CGSizeMake(360, MIN(520, 116 + 72 * (self.displays.count + 1)));
 }
 - (void)done { [self dismissViewControllerAnimated:YES completion:nil]; }
@@ -62,9 +65,10 @@
         content.secondaryText = [NSString stringWithFormat:@"%@ × %@", display[@"pixelWidth"], display[@"pixelHeight"]];
     }
     content.image = [self arrangementForID:display[@"id"]];
-    content.imageProperties.maximumSize = CGSizeMake(80, 44);
+    BOOL largeText = UIContentSizeCategoryIsAccessibilityCategory(self.traitCollection.preferredContentSizeCategory);
+    content.imageProperties.maximumSize = largeText ? CGSizeMake(40, 28) : CGSizeMake(80, 44);
     content.imageToTextPadding = 16;
-    content.textProperties.numberOfLines = 1;
+    content.textProperties.numberOfLines = 0;
     cell.contentConfiguration = content;
     BOOL selected = display ? [display[@"id"] isEqual:self.selectedID] : self.selectedID == nil;
     cell.accessoryType = selected ? UITableViewCellAccessoryCheckmark : UITableViewCellAccessoryNone;

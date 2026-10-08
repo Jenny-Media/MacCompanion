@@ -149,6 +149,12 @@ private enum TerminalPTY {
         if settingUp { presentSetupFailure(outcome, stage: "Cancelled · " + stage) }
         else { present(.connectionCancelled, message: "The connection was cancelled. Your login fields are kept.", stage: stage) }
     }
+    /// Cancel an active setup and keep its outcome visible before the sheet closes.
+    func requestSetupDismissal() -> Bool {
+        if connecting { cancelConnection(); return false }
+        stop()
+        return true
+    }
     func testKeyLogin(username: String, target: TerminalNamedKey) {
         connect(username: username, password: "", remember: false, installation: target, verificationOnly: true)
     }

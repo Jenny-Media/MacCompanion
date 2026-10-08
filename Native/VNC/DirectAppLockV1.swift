@@ -86,13 +86,18 @@ private struct DirectUnlockCover: View {
     var body: some View {
         ZStack {
             Color(uiColor: .systemBackground).ignoresSafeArea()
-            VStack(spacing: 18) {
-                Image(systemName: "lock.fill").font(.largeTitle)
-                Text("Mac Companion").font(.title2.bold())
-                Text(lock.message).multilineTextAlignment(.center).foregroundStyle(.secondary)
-                if lock.authenticating { ProgressView() }
-                else { Button("Unlock", systemImage: "faceid") { lock.authenticate() }.buttonStyle(.glassProminent).accessibilityIdentifier("app-unlock") }
-            }.padding(32).frame(maxWidth: 340).glassEffect(.regular, in: .rect(cornerRadius: 28))
+            GeometryReader { geometry in
+                ScrollView {
+                    VStack(spacing: 18) {
+                        Image(systemName: "lock.fill").font(.largeTitle)
+                        Text("Mac Companion").font(.title2.bold()).fixedSize(horizontal: false, vertical: true)
+                        Text(lock.message).multilineTextAlignment(.center).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                        if lock.authenticating { ProgressView() }
+                        else { Button("Unlock", systemImage: "faceid") { lock.authenticate() }.buttonStyle(.glassProminent).accessibilityIdentifier("app-unlock") }
+                    }.padding(32).frame(maxWidth: 340).glassEffect(.regular, in: .rect(cornerRadius: 28))
+                        .padding(16).frame(maxWidth: .infinity, minHeight: geometry.size.height)
+                }.scrollBounceBehavior(.basedOnSize)
+            }
         }.accessibilityIdentifier("app-privacy-cover")
     }
 }

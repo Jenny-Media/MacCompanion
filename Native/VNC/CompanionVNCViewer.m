@@ -157,7 +157,8 @@
     __weak CompanionVNCViewer *weak = self;
     self.remoteKeyboard = [[CompanionVNCKeyboard alloc] initWithEvents:^(NSArray<NSDictionary *> *events) { [weak.session keyEvents:events]; }];
     self.status = [UILabel new]; self.status.text = @"macOS Screen Sharing · local network";
-    self.status.font = [UIFont systemFontOfSize:12];
+    self.status.font = [[UIFontMetrics metricsForTextStyle:UIFontTextStyleCaption1] scaledFontForFont:[UIFont systemFontOfSize:12]];
+    self.status.adjustsFontForContentSizeCategory = YES;
     self.status.backgroundColor = UIColor.secondarySystemBackgroundColor; self.status.layer.cornerRadius = 8; self.status.clipsToBounds = YES;
     self.status.textColor = UIColor.secondaryLabelColor; self.status.numberOfLines = 2;
     self.connect = [self button:@"Connect" action:@selector(connectionAction)];

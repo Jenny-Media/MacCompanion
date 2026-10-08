@@ -303,8 +303,10 @@ private struct VNCActionEditor: View {
                     Section("Key") {
                         TextField("Letter or symbol", text: $letter).textInputAutocapitalization(.never).autocorrectionDisabled()
                             .onChange(of: letter) { _, text in if text.unicodeScalars.count == 1, let value = text.unicodeScalars.first?.value { action.key = value } else { action.key = 0 } }
-                        Picker("Special Key", selection: $action.key) {
-                            Text("Character").tag(action.key < 0xff00 ? action.key : 0)
+                        Picker("Special Key", selection: Binding(get: { action.key < 0xff00 ? 0 : action.key }, set: { key in
+                            action.key = key == 0 && letter.unicodeScalars.count == 1 ? letter.unicodeScalars.first!.value : key
+                        })) {
+                            Text("Character").tag(UInt32(0))
                             ForEach([("Escape", UInt32(0xff1b)), ("Tab", 0xff09), ("Return", 0xff0d), ("Backspace", 0xff08), ("Delete", 0xffff), ("Left", 0xff51), ("Up", 0xff52), ("Right", 0xff53), ("Down", 0xff54)], id: \.1) { title, key in Text(title).tag(key) }
                         }
                     }

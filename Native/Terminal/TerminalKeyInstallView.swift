@@ -112,13 +112,19 @@ struct TerminalKeyInstallView: View {
                 }
             }
             .navigationTitle("Set Up SSH Key").navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Done") { session.stop(); if session.installedKey != nil { changed() }; dismiss() } } }
+            .toolbar { ToolbarItem(placement: .cancellationAction) { Button(session.connecting ? "Cancel Setup" : "Done") {
+                password = ""
+                guard session.requestSetupDismissal() else { return }
+                if session.installedKey != nil { changed() }
+                dismiss()
+            } } }
+            .interactiveDismissDisabled(session.connecting)
             .sheet(isPresented: $identityGuide) { TerminalIdentityGuide(macName: mac.name) }
             .sheet(isPresented: $manual) { TerminalManualKeySetupView(mac: mac, keyID: selectedKeyID) }
             .sheet(isPresented: $pro) { DirectProView() }
             .sheet(item: $session.trust) { request in TerminalServerTrustView(macName: mac.name, fingerprint: request.fingerprint, answer: session.answerTrust) }
             .onAppear { load() }
-            .onDisappear { password = ""; session.stop() }
+            .onDisappear { password = ""; if session.connecting { session.cancelConnection() } else { session.stop() } }
             .onReceive(NotificationCenter.default.publisher(for: UIApplication.didEnterBackgroundNotification)) { _ in password = ""; session.background() }
         }
     }
@@ -166,6 +172,7 @@ struct TerminalManualKeySetupView: View {
             }.navigationTitle("Manual Key Setup").navigationBarTitleDisplayMode(.inline)
                 .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
                 .onAppear { library.reload(macs: [mac]); selectedID = keyID ?? (try? TerminalKeyLibraryStore.selected(mac.id))?.id }
+                .onChange(of: selectedID) { _, _ in copied = false }
         }
     }
 }

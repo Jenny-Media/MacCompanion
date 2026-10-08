@@ -301,13 +301,36 @@ private final class SSHEarlyReadProbe: ChannelInboundHandler, @unchecked Sendabl
         session.connect(username: "synthetic", password: "synthetic-only", remember: false, installation: entry)
         try await wait("setup trust") { session.trust != nil }; session.answerTrust(true)
         try await wait("unacknowledged command") { record.commands == 1 }
-        session.cancelConnection()
+        XCTAssertFalse(session.requestSetupDismissal(), "Done must keep the cancellation outcome on screen")
         XCTAssertEqual(session.recovery?.reason, .setupUncertain); XCTAssertNil(try TerminalKeyLibraryStore.selected(mac.id))
+        XCTAssertFalse(session.connecting)
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertEqual(record.commands, 1, "Cancellation must not replay the installation")
         session.testKeyLogin(username: "synthetic", target: entry)
         try await wait("verification only after cancel") { !session.connecting }
         XCTAssertEqual(session.installedKey, keyID, session.status)
         XCTAssertEqual(record.commands, 1); XCTAssertEqual(record.passwordRequests, 1)
         try await server.close()
+    }
+    func testSetupDoneBeforeTrustCancelsWithoutInstallationAndRequiresASecondDismissal() async throws {
+        let record = SSHTestRecord(), target = TerminalSSHKey.create()
+        let entry = TerminalNamedKey(id: UUID(), name: "Cancelled Before Trust", key: target)
+        let server = try await server(record: record, key: NIOSSHPrivateKey(ed25519Key: .init()))
+        defer { _ = server.close() }
+        let mac = DirectMacRecordV1(id: UUID(), name: "Cancelled Before Trust", addresses: ["127.0.0.1"], sshPort: try XCTUnwrap(server.localAddress?.port))
+        let session = DirectTerminalSession(mac: mac)
+        defer { session.stop(); try? TerminalSecretStore.remove(mac.id) }
+        session.connect(username: "synthetic", password: "synthetic-only", remember: false, installation: entry)
+        try await wait("setup trust") { session.trust != nil }
+        XCTAssertFalse(session.requestSetupDismissal())
+        XCTAssertEqual(session.recovery?.reason, .setupIncomplete)
+        XCTAssertFalse(session.connecting); XCTAssertNil(session.trust)
+        session.answerTrust(true)
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertEqual(record.commands, 0); XCTAssertEqual(record.passwordRequests, 0)
+        XCTAssertNil(try TerminalKeyLibraryStore.selected(mac.id))
+        XCTAssertTrue(session.requestSetupDismissal(), "The user may close after reviewing the cancelled outcome")
+        XCTAssertEqual(session.recovery?.reason, .setupIncomplete)
     }
     private func server(record:SSHTestRecord,key:NIOSSHPrivateKey, publicKey: NIOSSHPublicKey? = nil) async throws -> Channel {
         let auth=SSHTestAuth(record, publicKey: publicKey)
