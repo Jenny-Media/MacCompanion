@@ -9,7 +9,10 @@ app/widget/Keychain identities are verified. The stable Xcode 27.0 device build,
 37 focused Simulator cases (plus the final five feedback cases), repository
 validation and diff checks pass. The signing/install/source-binding reports stay
 outside Git under `/private/tmp/maccompanion-trackpad-feedback-20261008-*`.
-Haptic feel and real-finger acceptance remain the user's physical checks.
+On 2026-10-08, the user confirmed that pinch, two-finger scrolling and Scroll
+Speed adjustment work on the installed iPhone build. This is physical acceptance
+for those gestures on the tested Mac; broader macOS compatibility and haptic
+feel were not separately reported.
 This is a local development installation; no TestFlight upload was requested.
 
 ## 2026-10-08 — Trackpad touch feedback
