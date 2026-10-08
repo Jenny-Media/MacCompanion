@@ -48,4 +48,29 @@ static inline size_t CompanionVNCMagnificationPacket(CompanionVNCMagnification *
     *state = (CompanionVNCMagnification){phase != 4, x, y};
     return size;
 }
+
+// Precise scroll fields are in Mac points; preserve fractional motion in 16.16.
+typedef struct { bool active; int x, y; } CompanionVNCScroll;
+static inline size_t CompanionVNCScrollPacket(CompanionVNCScroll *state, unsigned phase,
+    double dx, double dy, int x, int y, int width, int height, uint8_t *out, size_t capacity) {
+    if (!state || !out || !isfinite(dx) || !isfinite(dy) || fabs(dx) > 2048 || fabs(dy) > 2048
+        || (phase != 1 && phase != 2 && phase != 4) || (phase != 2 && (dx != 0 || dy != 0))
+        || (phase == 1 ? state->active : !state->active)
+        || width <= 0 || height <= 0 || width > 16384 || height > 16384 || capacity < 58) return 0;
+    if (phase != 1) { x = state->x; y = state->y; }
+    if (x < 0 || y < 0 || x >= width || y >= height) return 0;
+    uint8_t packet[58] = {0}; packet[0] = 0x17;
+    CompanionVNCGestureBE(packet + 2, 54, 2);
+    uint8_t *p = packet + 4;
+    CompanionVNCGestureBE(p, 1, 2); CompanionVNCGestureBE(p + 2, 11, 2);
+    CompanionVNCGestureBE(p + 10, (uint32_t)(int32_t)llround(dx * 65536), 4);
+    CompanionVNCGestureBE(p + 14, (uint32_t)(int32_t)llround(dy * 65536), 4);
+    CompanionVNCGestureBE(p + 22, (uint32_t)(int32_t)llround(dx), 4);
+    CompanionVNCGestureBE(p + 26, (uint32_t)(int32_t)llround(dy), 4);
+    CompanionVNCGestureBE(p + 34, phase, 4);
+    CompanionVNCGestureBE(p + 42, 1, 4); CompanionVNCGestureBE(p + 46, 2, 4);
+    CompanionVNCGestureBE(p + 50, x, 2); CompanionVNCGestureBE(p + 52, y, 2);
+    memcpy(out, packet, sizeof(packet)); *state = (CompanionVNCScroll){phase != 4, x, y};
+    return sizeof(packet);
+}
 #endif

@@ -73,8 +73,12 @@ static void QuietLog(const char *format, ...) {
     NSInteger _lastX, _lastY;
     NSInteger _queuedPointerMask;
     BOOL _appleGestureServer, _nativeGestureLayout, _queuedMagnification;
-    NSUInteger _magnificationEpoch, _sentMagnificationEpoch;
+    NSUInteger _gestureEpoch, _sentMagnificationEpoch;
     CompanionVNCMagnification _sentMagnification;
+    BOOL _queuedScroll;
+    CompanionVNCScroll _sentScroll;
+    NSUInteger _sentScrollEpoch;
+    int _scrollWidth, _scrollHeight;
     int _magnificationWidth, _magnificationHeight;
     UIImage *_cursorImage;
     CGPoint _cursorHotspot, _cursorPosition;
@@ -94,9 +98,11 @@ static void QuietLog(const char *format, ...) {
 - (void)beginSocket:(int)socket addresses:(NSArray<NSString *> *)addresses port:(NSInteger)port user:(NSString *)user password:(NSString *)password;
 - (BOOL)registerSocket:(int)socket;
 - (void)processConnectedClient:(rfbClient *)client;
-- (void)cancelMagnificationLocked;
+- (void)cancelNativeGesturesLocked;
 - (BOOL)releaseMagnification:(rfbClient *)client;
 - (BOOL)sendMagnificationEvent:(NSDictionary *)event client:(rfbClient *)client;
+- (BOOL)releaseScroll:(rfbClient *)client;
+- (BOOL)sendScrollEvent:(NSDictionary *)event client:(rfbClient *)client;
 - (rfbBool)displayLayout:(rfbClient *)client;
 - (rfbBool)displayLayout:(rfbClient *)client encoding:(int)encoding;
 @end
@@ -137,34 +143,35 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
 - (BOOL)connected { [_lock lock]; BOOL ready = _running && _inputReady && !_paused && !_stopping; [_lock unlock]; return ready; }
 - (BOOL)inputOnly { [_lock lock]; BOOL value = _inputOnly; [_lock unlock]; return value; }
 - (void)setInputOnly:(BOOL)value {
-    [_lock lock]; if (_inputOnly != value) { [self cancelMagnificationLocked]; _inputOnly = value; _modeChanged = YES; _presentationEpoch++; }
+    [_lock lock]; if (_inputOnly != value) { [self cancelNativeGesturesLocked]; _inputOnly = value; _modeChanged = YES; _presentationEpoch++; }
     [_lock unlock]; dispatch_semaphore_signal(_wake);
 }
 - (BOOL)nativeMagnificationSupported {
     [_lock lock]; BOOL supported = _appleGestureServer && _nativeGestureLayout; [_lock unlock]; return supported;
 }
+- (BOOL)nativeScrollingSupported { return self.nativeMagnificationSupported; }
 // Called under the queue lock. Copied events are retired by the same epoch.
-- (void)cancelMagnificationLocked {
-    _magnificationEpoch++; _queuedMagnification = NO;
-    NSIndexSet *gestures = [_events indexesOfObjectsPassingTest:^BOOL(NSDictionary *event, NSUInteger index, BOOL *stop) { return event[@"magnifyPhase"] != nil; }];
+- (void)cancelNativeGesturesLocked {
+    _gestureEpoch++; _queuedMagnification = NO; _queuedScroll = NO;
+    NSIndexSet *gestures = [_events indexesOfObjectsPassingTest:^BOOL(NSDictionary *event, NSUInteger index, BOOL *stop) { return event[@"magnifyPhase"] != nil || event[@"scrollPhase"] != nil; }];
     [_events removeObjectsAtIndexes:gestures];
 }
-- (void)cancelMagnification {
-    [_lock lock]; [self cancelMagnificationLocked]; [_lock unlock]; dispatch_semaphore_signal(_wake);
+- (void)cancelNativeGestures {
+    [_lock lock]; [self cancelNativeGesturesLocked]; [_lock unlock]; dispatch_semaphore_signal(_wake);
 }
 - (BOOL)queueMagnification:(unsigned)phase delta:(double)delta x:(NSInteger)x y:(NSInteger)y {
     [_lock lock];
     BOOL ready = _running && _inputReady && _inputOnly && !_paused && !_stopping && !_overflow
         && _appleGestureServer && _nativeGestureLayout;
     BOOL valid = isfinite(delta) && fabs(delta) <= .5 && (phase == 2 || delta == 0)
-        && (phase == 1 ? !_queuedMagnification && x >= 0 && y >= 0 && x < _framebufferWidth && y < _framebufferHeight : _queuedMagnification);
+        && (phase == 1 ? !_queuedMagnification && !_queuedScroll && x >= 0 && y >= 0 && x < _framebufferWidth && y < _framebufferHeight : _queuedMagnification);
     BOOL accepted = ready && valid && _events.count < 512;
     if (accepted) {
-        [_events addObject:@{@"magnifyPhase": @(phase), @"delta": @(delta), @"x": @(x), @"y": @(y), @"gestureEpoch": @(_magnificationEpoch)}];
+        [_events addObject:@{@"magnifyPhase": @(phase), @"delta": @(delta), @"x": @(x), @"y": @(y), @"gestureEpoch": @(_gestureEpoch)}];
         _queuedMagnification = phase != CompanionVNCMagnifyEnded;
     } else if (phase != CompanionVNCMagnifyBegan || (ready && _events.count >= 512)) {
         // End delivery cannot depend on finding space in a full input queue.
-        [self cancelMagnificationLocked];
+        [self cancelNativeGesturesLocked];
     }
     [_lock unlock]; dispatch_semaphore_signal(_wake); return accepted;
 }
@@ -179,7 +186,7 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
 }
 - (BOOL)sendMagnificationEvent:(NSDictionary *)event client:(rfbClient *)client {
     NSUInteger epoch = [event[@"gestureEpoch"] unsignedIntegerValue];
-    [_lock lock]; BOOL valid = epoch == _magnificationEpoch && _inputOnly && _inputReady && !_paused && !_stopping
+    [_lock lock]; BOOL valid = epoch == _gestureEpoch && _inputOnly && _inputReady && !_paused && !_stopping
         && _appleGestureServer && _nativeGestureLayout; [_lock unlock];
     if (!valid) return YES; // A discarded event cannot start or resume a gesture.
     unsigned phase = [event[@"magnifyPhase"] unsignedIntValue];
@@ -190,6 +197,45 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
     uint8_t bytes[52]; size_t count = CompanionVNCMagnificationPacket(&_sentMagnification, phase, [event[@"delta"] doubleValue],
         [event[@"x"] intValue], [event[@"y"] intValue], _magnificationWidth, _magnificationHeight, bytes, sizeof(bytes));
     // The state marks begin before writing so even a failed partial group gets a release attempt.
+    return count && WriteToRFBServer(client, (char *)bytes, (unsigned int)count);
+}
+- (BOOL)queueScroll:(unsigned)phase dx:(double)dx dy:(double)dy x:(NSInteger)x y:(NSInteger)y {
+    [_lock lock];
+    BOOL ready = _running && _inputReady && !_paused && !_stopping && !_overflow
+        && _appleGestureServer && _nativeGestureLayout;
+    BOOL valid = (phase == 1 || phase == 2 || phase == 4) && isfinite(dx) && isfinite(dy)
+        && fabs(dx) <= 2048 && fabs(dy) <= 2048 && (phase == 2 || (dx == 0 && dy == 0))
+        && (phase == 1 ? !_queuedScroll && !_queuedMagnification && x >= 0 && y >= 0
+            && x < _framebufferWidth && y < _framebufferHeight : _queuedScroll);
+    BOOL accepted = ready && valid && _events.count < 512;
+    if (accepted) {
+        [_events addObject:@{@"scrollPhase": @(phase), @"dx": @(dx), @"dy": @(dy), @"x": @(x), @"y": @(y), @"gestureEpoch": @(_gestureEpoch)}];
+        _queuedScroll = phase != 4;
+    } else if (phase != 1 || (ready && _events.count >= 512)) [self cancelNativeGesturesLocked];
+    [_lock unlock]; dispatch_semaphore_signal(_wake); return accepted;
+}
+- (BOOL)beginScrollX:(NSInteger)x y:(NSInteger)y { return [self queueScroll:1 dx:0 dy:0 x:x y:y]; }
+- (BOOL)changeScrollX:(double)dx y:(double)dy { return [self queueScroll:2 dx:dx dy:dy x:0 y:0]; }
+- (void)endScroll { (void)[self queueScroll:4 dx:0 dy:0 x:0 y:0]; }
+- (BOOL)releaseScroll:(rfbClient *)client {
+    if (!_sentScroll.active) return YES;
+    uint8_t bytes[58]; size_t count = CompanionVNCScrollPacket(&_sentScroll, 4, 0, 0, 0, 0,
+        _scrollWidth, _scrollHeight, bytes, sizeof(bytes));
+    return count && WriteToRFBServer(client, (char *)bytes, (unsigned int)count);
+}
+- (BOOL)sendScrollEvent:(NSDictionary *)event client:(rfbClient *)client {
+    NSUInteger epoch = [event[@"gestureEpoch"] unsignedIntegerValue];
+    [_lock lock]; BOOL valid = epoch == _gestureEpoch && _inputReady && !_paused && !_stopping
+        && _appleGestureServer && _nativeGestureLayout; [_lock unlock];
+    if (!valid) return YES;
+    unsigned phase = [event[@"scrollPhase"] unsignedIntValue];
+    if (phase == 1) {
+        if (![self releaseScroll:client]) return NO;
+        _scrollWidth = client->width; _scrollHeight = client->height; _sentScrollEpoch = epoch;
+    } else if (!_sentScroll.active || _sentScrollEpoch != epoch) return YES;
+    uint8_t bytes[58]; size_t count = CompanionVNCScrollPacket(&_sentScroll, phase,
+        [event[@"dx"] doubleValue], [event[@"dy"] doubleValue], [event[@"x"] intValue], [event[@"y"] intValue],
+        _scrollWidth, _scrollHeight, bytes, sizeof(bytes));
     return count && WriteToRFBServer(client, (char *)bytes, (unsigned int)count);
 }
 - (BOOL)tryClickX:(NSInteger)x y:(NSInteger)y mask:(NSInteger)mask {
@@ -203,7 +249,7 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
 - (void)pauseWithCompletion:(void (^)(void))completion {
     [_lock lock];
     if (!_running || !_inputReady || _stopping || _paused) { [_lock unlock]; if (completion) completion(); return; }
-    [self cancelMagnificationLocked];
+    [self cancelNativeGesturesLocked];
     _paused = YES; _pauses++; _inputReady = NO; _releaseInputRequested = YES; _presentationEpoch++;
     [_events removeAllObjects]; _queuedPointerMask = 0; _pauseCompletion = [completion copy];
     [_lock unlock]; dispatch_semaphore_signal(_wake);
@@ -235,8 +281,8 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
 - (void)beginSocket:(int)socket addresses:(NSArray<NSString *> *)addresses port:(NSInteger)port user:(NSString *)user password:(NSString *)password {
     [_lock lock];
     if (_running) { [_lock unlock]; if (socket >= 0) close(socket); return; }
-    [self cancelMagnificationLocked]; _appleGestureServer = NO; _nativeGestureLayout = NO;
-    _sentMagnification = (CompanionVNCMagnification){0};
+    [self cancelNativeGesturesLocked]; _appleGestureServer = NO; _nativeGestureLayout = NO;
+    _sentMagnification = (CompanionVNCMagnification){0}; _sentScroll = (CompanionVNCScroll){0};
     _running = YES; _stopping = NO; _overflow = NO; _framePending = NO; _cursorPending = NO; _layoutPending = NO; _latestLayout = nil; _inputReady = NO; _failureStage = 0;
     _layoutDiagnostics = @{}; _layoutMessages = 0; _baselinePresented = NO; _coverageLayoutValid = NO; _metadataCallback = NO;
     _paused = NO; _releaseInputRequested = NO; _resumeRequested = NO; _awaitingResumeFrame = NO; _presentationEpoch++;
@@ -306,12 +352,15 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
             self->_releaseInputRequested = NO; self->_resumeRequested = NO;
             void (^completion)(void) = release ? self->_pauseCompletion : nil;
             if (release) self->_pauseCompletion = nil;
-            NSUInteger gestureEpoch = self->_magnificationEpoch;
+            NSUInteger gestureEpoch = self->_gestureEpoch;
             NSArray *events = [self->_events copy]; [self->_events removeAllObjects];
             [self->_lock unlock];
             if (stopping) break;
             if (self->_sentMagnification.active && (release || paused || !inputOnly || gestureEpoch != self->_sentMagnificationEpoch)) {
                 healthy = [self releaseMagnification:client]; if (!healthy) break;
+            }
+            if (self->_sentScroll.active && (release || paused || gestureEpoch != self->_sentScrollEpoch)) {
+                healthy = [self releaseScroll:client]; if (!healthy) break;
             }
             if (release) {
                 for (NSNumber *key in self->_heldKeys) if (!SendKeyEvent(client, key.unsignedIntValue, FALSE)) healthy = NO;
@@ -351,6 +400,8 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
                 if (!acceptsInput) break;
                 if (event[@"magnifyPhase"]) {
                     healthy = [self sendMagnificationEvent:event client:client];
+                } else if (event[@"scrollPhase"]) {
+                    healthy = [self sendScrollEvent:event client:client];
                 } else if (event[@"key"]) {
                     uint32_t key = [event[@"key"] unsignedIntValue]; BOOL down = [event[@"down"] boolValue];
                     healthy = SendKeyEvent(client, key, down);
@@ -371,7 +422,7 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
         }
     }
     // A disconnect cancels queued input and releases every gesture/key/button actually sent.
-    [self releaseMagnification:client];
+    [self releaseMagnification:client]; [self releaseScroll:client];
     for (NSNumber *key in self->_heldKeys) SendKeyEvent(client, key.unsignedIntValue, FALSE);
     [self->_heldKeys removeAllObjects];
     SendPointerEvent(client, (int)self->_lastX, (int)self->_lastY, 0);
@@ -399,7 +450,7 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
     [self registerSocket:-1];
     free(_pixels); _pixels = NULL; CompanionVNCCoverageFree(&_coverage); _username = nil; _password = nil;
     _cursorImage = nil; _cursorPositionKnown = NO; _cursorDirty = NO;
-    [_lock lock]; [self cancelMagnificationLocked]; _appleGestureServer = NO; _nativeGestureLayout = NO; _running = NO; _inputReady = NO; [_events removeAllObjects]; [_lock unlock];
+    [_lock lock]; [self cancelNativeGesturesLocked]; _appleGestureServer = NO; _nativeGestureLayout = NO; _running = NO; _inputReady = NO; [_events removeAllObjects]; [_lock unlock];
     [self report:state];
 }
 - (rfbCredential *)credential:(int)type {
@@ -416,7 +467,7 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
     return credential;
 }
 - (rfbBool)allocate:(rfbClient *)client {
-    [_lock lock]; [self cancelMagnificationLocked];
+    [_lock lock]; [self cancelNativeGesturesLocked];
     _framebufferWidth = client->width; _framebufferHeight = client->height;
     _nativeGestureLayout = CompanionVNCNativeGesturesSupported(YES, _coverageLayoutValid, client->width, client->height, _coverageLayout.width, _coverageLayout.height);
     [_lock unlock];
@@ -498,7 +549,7 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
     _coverageLayoutValid = parsed; if (parsed) _coverageLayout = decoded;
     [_lock lock];
     BOOL gestureLayout = CompanionVNCNativeGesturesSupported(YES, parsed, client->width, client->height, parsed ? decoded.width : 0, parsed ? decoded.height : 0);
-    if (changed || _nativeGestureLayout != gestureLayout) [self cancelMagnificationLocked];
+    if (changed || _nativeGestureLayout != gestureLayout) [self cancelNativeGesturesLocked];
     _nativeGestureLayout = gestureLayout; [_lock unlock];
     if (changed && _coverage.seen) {
         // Hot-plug/rearrangement also retires the old baseline without blanking its image.
@@ -613,7 +664,7 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
     });
 }
 - (void)stop {
-    [_lock lock]; [self cancelMagnificationLocked]; _stopping = YES; _presentationEpoch++; [_events removeAllObjects]; NSInteger generation = _generation;
+    [_lock lock]; [self cancelNativeGesturesLocked]; _stopping = YES; _presentationEpoch++; [_events removeAllObjects]; NSInteger generation = _generation;
     void (^completion)(void) = _pauseCompletion; _pauseCompletion = nil;
     if (!_inputReady && _socket >= 0) shutdown(_socket, SHUT_RDWR);
     [_lock unlock];

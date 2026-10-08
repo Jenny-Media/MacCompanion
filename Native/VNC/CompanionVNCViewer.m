@@ -8,6 +8,7 @@
 #import "CompanionVNCDisplayPicker.h"
 #import "CompanionVNCControls.h"
 #import "CompanionVNCTapGesture.h"
+#import "CompanionVNCTrackpadFeedback.h"
 #import "CompanionVNCMenu.h"
 #import "Mac_Companion-Swift.h"
 
@@ -72,6 +73,7 @@
 @property NSLayoutConstraint *canvasTop;
 @property UIEdgeInsets previousCanvasInset;
 @property UILabel *trackpadHelp;
+@property CompanionVNCTrackpadFeedback *trackpadFeedback, *tabletopFeedback;
 @property UIGestureRecognizer *click;
 @property UIPanGestureRecognizer *drag, *remoteScroll;
 @property UIPinchGestureRecognizer *remotePinch;
@@ -79,6 +81,8 @@
 @property UILongPressGestureRecognizer *hold;
 @property CGPoint trackpadOrigin, holdOrigin;
 @property CGFloat scrollRemainder;
+@property CGPoint scrollFraction;
+@property BOOL scrollingActive, scrollUsesNative, scrollGestureActive;
 @property NSArray *displayViews;
 @property CGFloat displayAspect;
 @property CGSize framebufferSize;
@@ -109,7 +113,7 @@
     return self.immersiveChrome || self.traitCollection.userInterfaceStyle == UIUserInterfaceStyleDark ? UIStatusBarStyleLightContent : UIStatusBarStyleDarkContent;
 }
 - (instancetype)initWithNibName:(NSString *)nibNameOrNil bundle:(NSBundle *)nibBundleOrNil {
-    if ((self = [super initWithNibName:nibNameOrNil bundle:nibBundleOrNil])) _followCursorEnabled = YES;
+    if ((self = [super initWithNibName:nibNameOrNil bundle:nibBundleOrNil])) { _followCursorEnabled = YES; _scrollSpeed = 1; _showsTouchPoints = YES; _trackpadHapticsEnabled = YES; }
     return self;
 }
 - (void)setDisplayLayout:(NSDictionary *)displayLayout {
@@ -166,7 +170,7 @@
         @{@"kind": @"rightClick", @"title": @"Right Click", @"enabled": @YES}];
     self.controls.actionHandler = ^(NSDictionary *action) { [weak performControlAction:action]; };
     self.controls.openingHandler = ^{
-        [weak releasePointer];
+        [weak releasePointer]; [weak cancelTrackpadTouches];
         if (weak.quickActionsProvider) weak.quickActions = weak.quickActionsProvider(weak.inputOnly);
     };
     self.views = self.controls.button;
@@ -384,6 +388,7 @@
     self.input.remoteDelete = ^{ [weak sendRemoteKey:0xff08]; };
     [self.view addSubview:self.input];
     [self prepareTabletopPad];
+    [self prepareTrackpadFeedback];
 #if __IPHONE_OS_VERSION_MAX_ALLOWED >= 270100
     if (@available(iOS 27.1, *)) {
         [self.view addInteraction:[[UIHingeInteraction alloc] initWithUpdateHandler:^(UIHingeInteraction *interaction, UIHingeInteractionUpdate *update) {
@@ -494,6 +499,7 @@
     self.keyboardViewportSaved = NO; self.keyboardLayoutPending = NO;
     if (self.sessionPhaseHandler) self.sessionPhaseHandler(@"ended");
     [self releasePointer]; self.zoomGeneration++; self.smartZoomed = NO; self.smartZoomPending = NO;
+    [self updateTrackpadFeedback];
     [self clearCursor];
     [self.view endEditing:YES]; [self.session stop]; [self resetModifiers];
     self.image.image = nil; self.lastFramebuffer = nil; self.activeCrop = CGRectNull;
@@ -561,6 +567,7 @@
     if (!self.foreground || self.exited) { if (completion) completion(); return; }
     self.reconnectWhenReady = self.session.running || self.starting;
     self.foreground = NO; self.image.alpha = .45; self.resumeGeneration++; self.checkingResume = NO;
+    [self updateTrackpadFeedback];
     [self.controls close]; [self rememberViewport]; [self releasePointer]; [self resetModifiers]; [self clearCursor];
     self.zoomGeneration++; self.smartZoomPending = NO;
     [self.view endEditing:YES]; UIApplication.sharedApplication.idleTimerDisabled = NO;
@@ -792,6 +799,7 @@
         self.tabletopPad.hidden = self.tabletopPad.hidden || self.tabletopPad.bounds.size.height < 44;
         self.tabletopLabel.frame = CGRectMake(20, 12, MAX(0, self.tabletopPad.bounds.size.width - 40), MAX(0, self.tabletopPad.bounds.size.height - 24));
     }
+    [self updateTrackpadFeedback];
     if (CGRectIsNull(self.activeCrop) || CGRectIsEmpty(self.activeCrop)) return;
     CGSize size = self.canvas.bounds.size;
     if (size.width <= 0 || size.height <= 0) return;
@@ -807,6 +815,7 @@
         self.previousCanvasSize = size; self.zoomGeneration++; self.smartZoomPending = NO;
         self.previousCanvasInset = self.canvas.contentInset;
         [self releasePointer];
+        [self cancelTrackpadTouches];
         for (UIGestureRecognizer *gesture in [@[self.drag, self.hold, self.remoteScroll, self.remotePinch] arrayByAddingObjectsFromArray:self.tabletopGestures]) {
             BOOL enabled = gesture.enabled; gesture.enabled = NO; gesture.enabled = enabled;
         }
@@ -840,6 +849,47 @@
     self.tabletopGestures = @[tap, pan, hold, scroll];
     for (UIGestureRecognizer *gesture in self.tabletopGestures) [self.tabletopPad addGestureRecognizer:gesture];
 }
+- (void)prepareTrackpadFeedback {
+    self.trackpadFeedback = [[CompanionVNCTrackpadFeedback alloc] initWithSurface:self.canvas];
+    self.trackpadFeedback.translatesAutoresizingMaskIntoConstraints = NO;
+    [self.view insertSubview:self.trackpadFeedback aboveSubview:self.cursorOverlay];
+    [NSLayoutConstraint activateConstraints:@[
+        [self.trackpadFeedback.leadingAnchor constraintEqualToAnchor:self.canvas.leadingAnchor],
+        [self.trackpadFeedback.trailingAnchor constraintEqualToAnchor:self.canvas.trailingAnchor],
+        [self.trackpadFeedback.topAnchor constraintEqualToAnchor:self.canvas.topAnchor],
+        [self.trackpadFeedback.bottomAnchor constraintEqualToAnchor:self.canvas.bottomAnchor]]];
+    self.tabletopFeedback = [[CompanionVNCTrackpadFeedback alloc] initWithSurface:self.tabletopPad];
+    self.tabletopFeedback.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+    self.tabletopFeedback.frame = self.tabletopPad.bounds; [self.tabletopPad addSubview:self.tabletopFeedback];
+    __weak CompanionVNCViewer *weak = self;
+    for (CompanionVNCTrackpadFeedback *feedback in @[self.trackpadFeedback, self.tabletopFeedback]) {
+        feedback.touchesAllowed = ^BOOL {
+            CompanionVNCViewer *viewer = weak;
+            return viewer && viewer.foreground && !viewer.exited && !viewer.checkingResume && viewer.session.connected
+                && viewer.login.hidden && !viewer.recoveryController && !viewer.presentedViewController;
+        };
+    }
+    [self updateTrackpadFeedback];
+}
+- (void)setShowsTouchPoints:(BOOL)value { _showsTouchPoints = value; [self updateTrackpadFeedback]; }
+- (void)setTrackpadHapticsEnabled:(BOOL)value { _trackpadHapticsEnabled = value; [self updateTrackpadFeedback]; }
+- (void)updateTrackpadFeedback {
+    BOOL ready = self.foreground && !self.exited && !self.checkingResume && self.session.connected
+        && self.login.hidden && !self.recoveryController;
+    self.trackpadFeedback.showsTouchPoints = self.showsTouchPoints;
+    self.tabletopFeedback.showsTouchPoints = self.showsTouchPoints;
+    self.trackpadFeedback.hapticsEnabled = self.trackpadHapticsEnabled;
+    self.tabletopFeedback.hapticsEnabled = self.trackpadHapticsEnabled;
+    self.trackpadFeedback.active = ready && self.trackpadMode && !self.canvas.hidden;
+    self.tabletopFeedback.active = ready && !self.tabletopPad.hidden;
+}
+- (void)cancelTrackpadTouches { [self.trackpadFeedback cancelTouches]; [self.tabletopFeedback cancelTouches]; }
+- (CompanionVNCTrackpadFeedback *)feedbackForGesture:(UIGestureRecognizer *)gesture {
+    return gesture.view == self.tabletopPad ? self.tabletopFeedback : (self.trackpadMode ? self.trackpadFeedback : nil);
+}
+- (void)presentViewController:(UIViewController *)controller animated:(BOOL)animated completion:(void (^)(void))completion {
+    [self cancelTrackpadTouches]; [super presentViewController:controller animated:animated completion:completion];
+}
 - (void)chooseView {
     if (!self.framebufferSize.width) return;
     CompanionVNCDisplayPicker *picker = [CompanionVNCDisplayPicker new];
@@ -872,7 +922,7 @@
 }
 - (void)chooseInputMode { [self showInputMenu]; }
 - (void)setTrackpadModeEnabled:(BOOL)enabled {
-    [self releasePointer];
+    [self releasePointer]; [self cancelTrackpadTouches];
     // Cancel recognizers in progress before switching coordinate systems.
     for (UIGestureRecognizer *gesture in [@[self.drag, self.hold, self.remoteScroll, self.remotePinch] arrayByAddingObjectsFromArray:self.tabletopGestures]) {
         BOOL enabled = gesture.enabled; gesture.enabled = NO; gesture.enabled = enabled;
@@ -880,6 +930,7 @@
     self.controls.trackpad = enabled;
     if (self.inputModeHandler) self.inputModeHandler(enabled);
     self.trackpadMode = enabled; self.scrollRemainder = 0;
+    [self updateTrackpadFeedback];
     self.remoteScroll.enabled = enabled;
     self.canvas.panGestureRecognizer.minimumNumberOfTouches = enabled ? 3 : 2;
     [self.pan setTitle:enabled ? @"Trackpad ▾" : @"Pointer ▾" forState:UIControlStateNormal];
@@ -923,13 +974,17 @@
     CGPoint p;
     if (self.trackpadMode || gesture.view == self.tabletopPad) { if (CGRectIsNull(self.activeCrop) || CGRectIsEmpty(self.activeCrop)) return; p = [self trackpadPointer]; }
     else if (!CompanionVNCPointerPoint(self.activeCrop, [gesture locationInView:self.image], false, &p)) return;
-    [self clickPointer:p mask:1];
+    if ([self clickPointer:p mask:1]) {
+        CompanionVNCTrackpadFeedback *feedback = [self feedbackForGesture:gesture];
+        [feedback clickAtPoint:[gesture locationInView:feedback]];
+    }
 }
-- (void)clickPointer:(CGPoint)p mask:(NSInteger)mask {
+- (BOOL)clickPointer:(CGPoint)p mask:(NSInteger)mask {
     if (!self.foreground || self.exited || self.checkingResume || ![self.session tryClickX:p.x y:p.y mask:mask]) {
-        self.status.hidden = NO; self.status.text = @"Click not sent. Wait for your Mac to resume."; return;
+        self.status.hidden = NO; self.status.text = @"Click not sent. Wait for your Mac to resume."; return NO;
     }
     self.cursorPosition = p; self.cursorPositionKnown = YES; [self updateCursor];
+    return YES;
 }
 - (void)dragAt:(UIPanGestureRecognizer *)gesture {
     CGPoint p; if (![self pointerForGesture:gesture point:&p]) { [self releasePointer]; return; }
@@ -941,6 +996,7 @@
     BOOL held = gesture.state == UIGestureRecognizerStateBegan || gesture.state == UIGestureRecognizerStateChanged;
     if (held) [self followTrackpadPointer:p];
     self.lastPointer = p; self.pointerHeld = held; [self sendPointer:p mask:held ? 1 : 0];
+    [[self feedbackForGesture:gesture] setDragging:held && self.foreground && !self.exited && !self.checkingResume && self.session.connected];
 }
 - (void)pinchRemote:(UIPinchGestureRecognizer *)gesture {
     if (gesture.state == UIGestureRecognizerStateEnded) {
@@ -949,7 +1005,7 @@
     }
     if (gesture.state == UIGestureRecognizerStateCancelled || gesture.state == UIGestureRecognizerStateFailed
         || !self.inputOnly || !self.foreground || self.exited || self.checkingResume || !self.session.connected) {
-        [self.session cancelMagnification]; self.magnificationActive = NO; return;
+        [self.session cancelNativeGestures]; self.magnificationActive = NO; return;
     }
     if (gesture.state == UIGestureRecognizerStateBegan) {
         [self releasePointer];
@@ -966,26 +1022,53 @@
     if (!self.magnificationActive) return;
     if (!isfinite(scale) || scale <= 0 || fabs(scale - 1) > .5
         || (scale != 1 && ![self.session changeMagnification:scale - 1])) {
-        [self.session cancelMagnification]; self.magnificationActive = NO;
+        [self.session cancelNativeGestures]; self.magnificationActive = NO;
     }
 }
 - (void)scrollRemote:(UIPanGestureRecognizer *)gesture {
-    if (CGRectIsNull(self.activeCrop) || CGRectIsEmpty(self.activeCrop)) return;
-    if (gesture.state == UIGestureRecognizerStateCancelled || gesture.state == UIGestureRecognizerStateFailed) { self.scrollRemainder = 0; return; }
-    if (!self.foreground || self.exited || self.checkingResume || !self.session.connected) { self.scrollRemainder = 0; return; }
-    if (gesture.state == UIGestureRecognizerStateBegan) { [self releasePointer]; self.scrollRemainder = 0; }
-    CGFloat delta = [gesture translationInView:gesture.view ?: self.canvas].y;
+    BOOL ended = gesture.state == UIGestureRecognizerStateEnded;
+    if (gesture.state == UIGestureRecognizerStateCancelled || gesture.state == UIGestureRecognizerStateFailed
+        || CGRectIsNull(self.activeCrop) || CGRectIsEmpty(self.activeCrop)
+        || !self.foreground || self.exited || self.checkingResume || !self.session.connected) {
+        [self.session cancelNativeGestures]; self.scrollingActive = NO; self.scrollUsesNative = NO; self.scrollGestureActive = NO; self.scrollRemainder = 0; self.scrollFraction = CGPointZero; return;
+    }
+    if (gesture.state == UIGestureRecognizerStateBegan) {
+        [self releasePointer]; self.scrollRemainder = 0; self.scrollFraction = CGPointZero; self.scrollGestureActive = YES;
+        self.scrollUsesNative = self.session.nativeScrollingSupported;
+        if (self.scrollUsesNative) {
+            CGPoint anchor = [self trackpadPointer];
+            self.scrollingActive = [self.session beginScrollX:anchor.x y:anchor.y];
+        }
+    }
+    if (!self.scrollGestureActive) return;
+    CGPoint delta = [gesture translationInView:gesture.view ?: self.canvas];
     [gesture setTranslation:CGPointZero inView:gesture.view ?: self.canvas];
-    if (!isfinite(delta)) { self.scrollRemainder = 0; return; }
-    // RFB exposes discrete wheel ticks, not pixel scrolling. Six points per
-    // tick replaces the sluggish 18-point threshold, independent of image zoom.
-    // Bound each gesture update so a fast swipe cannot flood the input queue.
-    self.scrollRemainder = MAX(-48, MIN(48, self.scrollRemainder + delta));
+    if (!isfinite(delta.x) || !isfinite(delta.y)) {
+        [self.session cancelNativeGestures]; self.scrollingActive = NO; self.scrollGestureActive = NO; self.scrollRemainder = 0; self.scrollFraction = CGPointZero; return;
+    }
+    CGFloat speed = isfinite(self.scrollSpeed) ? MAX(.25, MIN(4, self.scrollSpeed)) : 1;
+    if (self.scrollUsesNative) {
+        // Mac point deltas, independent of local image zoom or Retina scale.
+        // A single bounded packet carries the full two-axis update, not many ticks.
+        double x = MAX(-2048, MIN(2048, delta.x * 3 * speed + self.scrollFraction.x));
+        double y = MAX(-2048, MIN(2048, delta.y * 3 * speed + self.scrollFraction.y));
+        double dx = round(x), dy = round(y);
+        // CG point fields are whole points. Carry fractions to the next update
+        // so slow movement is neither lost nor rounded up on every sample.
+        self.scrollFraction = CGPointMake(x - dx, y - dy);
+        if (self.scrollingActive && (dx != 0 || dy != 0) && ![self.session changeScrollX:dx y:dy]) {
+            [self.session cancelNativeGestures]; self.scrollingActive = NO;
+        }
+        if (ended) { if (self.scrollingActive) [self.session endScroll]; self.scrollingActive = NO; self.scrollUsesNative = NO; self.scrollGestureActive = NO; }
+        return;
+    }
+    // Unknown hosts keep standard RFB wheel input. Never guess an extension.
+    self.scrollRemainder = MAX(-48, MIN(48, self.scrollRemainder + delta.y * speed));
     NSInteger steps = (NSInteger)(fabs(self.scrollRemainder) / 6);
     NSInteger mask = self.scrollRemainder > 0 ? 8 : 16;
     for (NSInteger i = 0; i < steps; i++) { CGPoint p = [self trackpadPointer]; [self sendPointer:p mask:mask]; [self sendPointer:p mask:0]; }
     self.scrollRemainder -= steps * 6 * (self.scrollRemainder > 0 ? 1 : -1);
-    if (gesture.state == UIGestureRecognizerStateEnded) self.scrollRemainder = 0;
+    if (ended) { self.scrollRemainder = 0; self.scrollGestureActive = NO; }
 }
 - (void)sendPointer:(CGPoint)point mask:(NSInteger)mask {
     if (!self.foreground || self.exited || self.checkingResume) return;
@@ -1036,7 +1119,9 @@
     self.fallbackCursor.frame = self.cursorIndicator.bounds; [CATransaction commit];
 }
 - (void)releasePointer {
-    [self.session cancelMagnification]; self.magnificationActive = NO;
+    [self.trackpadFeedback setDragging:NO]; [self.tabletopFeedback setDragging:NO];
+    [self.session cancelNativeGestures]; self.magnificationActive = NO;
+    self.scrollingActive = NO; self.scrollUsesNative = NO; self.scrollGestureActive = NO; self.scrollRemainder = 0; self.scrollFraction = CGPointZero;
     if (self.pointerHeld) [self.session pointerX:self.lastPointer.x y:self.lastPointer.y mask:0];
     self.pointerHeld = NO;
 }
@@ -1186,6 +1271,7 @@
     if (visibilityChanged && self.view.window && !UIAccessibilityIsReduceMotionEnabled()) {
         [UIView transitionWithView:self.view duration:.18 options:UIViewAnimationOptionTransitionCrossDissolve | UIViewAnimationOptionAllowUserInteraction animations:showChrome completion:nil];
     } else { showChrome(); }
+    [self updateTrackpadFeedback];
     // Keep the fields mounted so editing retains identity, but give an active
     // attempt one progress indicator and Cancel instead of disabled form chrome.
     self.loginFields.hidden = progress;
@@ -1215,7 +1301,7 @@
     _inputOnly = value;
     if (self.quickActionsProvider) self.quickActions = self.quickActionsProvider(value);
     if (self.isViewLoaded) {
-        [self releasePointer]; [self resetModifiers];
+        [self releasePointer]; [self cancelTrackpadTouches]; [self resetModifiers];
         if (self.session.connected) self.session.inputOnly = value;
         if (value) [self setTrackpadModeEnabled:YES];
         [self applyPresentation];

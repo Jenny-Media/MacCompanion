@@ -213,3 +213,39 @@ Two-finger scrolling retains the existing wheel path in this build.
 The user confirmed native pinch works in installed build 17 and authorized its
 source commit. Two-finger scrolling was reported too slow to use and remains a
 separate follow-up.
+
+## Precise scrolling follow-up
+
+The installed Apple client `_RFBPostScrollWheelEvent` emits opcode 0x17, a 54-byte
+version-1 kind-11 payload. The installed agent uses horizontal fields before
+vertical fields, with line, fixed-16.16 and point deltas, CG scroll/momentum
+phases, count and continuous flag bit 1 (value 2). Its legacy pointer-wheel path
+calls CGEventCreateScrollWheelEvent with unit 0 (pixel), so sparse wheel ticks
+can produce very small movement. These are static implementation observations
+on the same macOS beta, not a measured scroll rate or compatibility promise.
+
+The loopback comparison authenticated and completed socket writes, but did not
+record corresponding native scroll or magnification delivery on this session.
+This establishes neither precise-scroll delivery nor lack of server support.
+A diagnostic-only attempt to handle unsolicited ZRLE baseline data without a
+framebuffer crashed in HandleZRLETile24. The corrected source advertises Raw and
+discards bounded responses without retaining, decoding or rendering their
+contents. It still did not prove scroll delivery. Temporary debugger observations
+stay outside Git; no debugger or Mac helper enters the iPhone targets.
+
+The next iPhone candidate sends one bounded precise event per update, preserves
+both axes and small-motion fractions, and uses three Mac scroll points per phone
+point by default. Scroll Speed is adjustable from 0.25x to 4x independently of
+Pointer Speed, shared by Desktop/Trackpad and available without a connected Mac.
+The Apple banner/auth/layout gate and ARD-30 authentication remain unchanged.
+Unknown hosts retain balanced standard wheel input. Native delivery and perceived
+scroll speed on the physical iPhone remain acceptance gates.
+
+Development **1.0 (18)** is installed and launched on the physical iPhone. Stable
+Xcode builds, required repository validation, 18 indexed scroll vectors, 17
+magnification vectors, repeated encoder lifecycles and focused owner/viewer/
+settings tests pass. All 578 release-source inputs were checked at signing and
+installation. The final native gesture tests also cover accumulated fractional
+motion, both axes, bounded fast swipes and independent live speed changes.
+These checks do not replace the user’s physical scroll acceptance. Pinch is
+already committed; this scrolling follow-up remains uncommitted.

@@ -181,10 +181,55 @@ by agent-originated AppKit magnification on the research Mac. See
 Released macOS compatibility and Preview/Photos acceptance remain separate gates.
 No experiment or Mac helper is linked into the iOS app.
 
+## Optional precise two-finger scrolling
+
+Desktop Trackpad and Trackpad & Keyboard mode may forward continuous scroll
+through the same conservative Apple banner, ARD-30 and display-layout gate above.
+Pinch remains input-only; scrolling is allowed with or without desktop capture.
+This optional extension is derived from installed Apple binaries, not an Apple
+published protocol guarantee. Unknown hosts retain balanced standard wheel input.
+
+Each scroll is one 58-byte message: opcode `0x17`, header flags zero, uint16
+payload length **54**, then this big-endian payload, with offsets from its start:
+
+| Offset | Field |
+| --- | --- |
+| 0 / 2 | uint16 version **1** / kind **11** |
+| 4 / 6 / 8 | int16 line deltas X / Y / Z, all zero |
+| 10 / 14 / 18 | int32 signed 16.16 fixed deltas X / Y / Z |
+| 22 / 26 / 30 | int32 point deltas X / Y / Z |
+| 34 / 38 | uint32 raw CG scroll phase / momentum phase |
+| 42 / 46 | uint32 scroll count **1** / flags **2** (continuous bit 1) |
+| 50 / 52 | uint16 framebuffer cursor x / y |
+
+X is horizontal and Y vertical. Z is zero. Deltas are finite, bounded to
+[-2048, 2048] per axis per update. Fixed deltas are rounded to signed 16.16;
+point deltas round to the nearest whole point. Began/changed/ended use raw CG
+phases **1/2/4**; began/ended deltas and momentum are zero. There are no outer
+magnification touch boundaries. Keep the cursor anchor fixed for the gesture.
+Reject invalid phases, transitions, coordinates, or output capacity without
+changing encoder state or output. One scroll may be active at a time.
+
+Use three Mac scroll points per phone point at the default Scroll Speed (1×).
+The global local-device multiplier is 0.25×–4×, independent of pointer speed,
+image zoom and display backing scale. The viewer carries fractional movement
+between updates so rounding to whole CG point deltas preserves total motion.
+Discard fractions at gesture end/cancel. It applies in both Desktop and Trackpad,
+including settings opened without a connected Mac. Unsupported hosts use the
+existing six-phone-point wheel threshold scaled by this multiplier and retain
+the eight-tick per-update bound. No synthetic momentum is sent.
+
+Scroll events use the same owner queue and cancellation epoch as magnification.
+Cancellation, invalid input, opening controls, mode/crop/layout changes, pause,
+queue pressure and disconnect retire copied and pending scroll changes and end
+any delivered sequence. Scroll survives no pause or reconnect. Live delivery
+measurements and compatibility limits are recorded in the experiment evidence.
+No new authentication, Mac helper or release dependency is introduced.
+
 ## Authoritative fixtures
 
 `spec/fixtures/manifest.json` indexes `direct-screen-sharing-v1.json`. It contains
-numeric endpoint, login, version-5 Apple display-layout and native magnification
+numeric endpoint, login, version-5 Apple display-layout and native magnification/scroll
 packet/lifecycle boundary cases for
 the actual native helpers. One layout presentation is pending at a time; newer
 metadata replaces the pending value rather than growing a callback queue. No

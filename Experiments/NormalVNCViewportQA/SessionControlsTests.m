@@ -158,7 +158,7 @@
     body(viewer, session);
     [viewer stopViewer]; window.hidden = YES; window.rootViewController = nil; [previous makeKeyAndVisible];
 }
-- (void)testTwoFingerScrollIsResponsiveBalancedAndBoundedWithoutMovingTheCursor {
+- (void)testUnsupportedHostsKeepBalancedBoundedWheelScrollingWithoutMovingTheCursor {
     [self withFollowViewer:^(CompanionVNCViewer *viewer, ControlsSession *session) {
         viewer.inputOnly = YES;
         UIScrollView *canvas = [viewer valueForKey:@"canvas"];

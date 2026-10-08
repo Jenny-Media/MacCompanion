@@ -12,7 +12,11 @@
 - (BOOL)beginMagnificationX:(NSInteger)x y:(NSInteger)y;
 - (BOOL)changeMagnification:(double)delta;
 - (void)endMagnification;
-- (void)cancelMagnification;
+- (void)cancelNativeGestures;
+@property(nonatomic, readonly) BOOL nativeScrollingSupported;
+- (BOOL)beginScrollX:(NSInteger)x y:(NSInteger)y;
+- (BOOL)changeScrollX:(double)dx y:(double)dy;
+- (void)endScroll;
 - (BOOL)tryClickX:(NSInteger)x y:(NSInteger)y mask:(NSInteger)mask;
 - (void)pauseWithCompletion:(void (^)(void))completion;
 - (void)resume;

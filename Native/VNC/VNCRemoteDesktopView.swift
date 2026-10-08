@@ -41,6 +41,9 @@ struct VNCRemoteDesktopView: UIViewControllerRepresentable {
         }
         viewer.preferenceID = mac.id.uuidString.lowercased()
         viewer.pointerSpeed = VNCSessionPreferences.speed(mac.id)
+        viewer.scrollSpeed = VNCSessionPreferences.scrollSpeed
+        viewer.showsTouchPoints = VNCSessionPreferences.showsTouchPoints
+        viewer.trackpadHapticsEnabled = VNCSessionPreferences.trackpadHaptics
         viewer.restoredDisplayID = VNCSessionPreferences.display(mac.id)
         viewer.fullscreen = VNCSessionPreferences.fullscreen(mac.id)
         viewer.presentationHandler = { value in MainActor.assumeIsolated { VNCSessionPreferences.setFullscreen(value, mac: mac.id) } }
@@ -114,7 +117,14 @@ struct VNCRemoteDesktopView: UIViewControllerRepresentable {
             self.mac = mac; self.showMacs = showMacs; activity = VNCSessionActivityController(mac: mac)
         }
         func observeActivity() {
-            observers = [NotificationCenter.default.addObserver(forName: VNCSessionPreferences.actionsChanged, object: nil, queue: .main) { [weak self] _ in
+            observers = [NotificationCenter.default.addObserver(forName: VNCSessionPreferences.scrollSpeedChanged, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.viewer?.scrollSpeed = VNCSessionPreferences.scrollSpeed }
+            }, NotificationCenter.default.addObserver(forName: VNCSessionPreferences.trackpadFeedbackChanged, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    self?.viewer?.showsTouchPoints = VNCSessionPreferences.showsTouchPoints
+                    self?.viewer?.trackpadHapticsEnabled = VNCSessionPreferences.trackpadHaptics
+                }
+            }, NotificationCenter.default.addObserver(forName: VNCSessionPreferences.actionsChanged, object: nil, queue: .main) { [weak self] _ in
                 MainActor.assumeIsolated { self?.refreshControls() }
             }, NotificationCenter.default.addObserver(forName: UIApplication.willResignActiveNotification, object: nil, queue: .main) { [weak self] _ in
                 MainActor.assumeIsolated { self?.pause() }

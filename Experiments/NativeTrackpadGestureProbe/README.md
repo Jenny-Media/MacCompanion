@@ -97,3 +97,20 @@ cancellation, multiple-display coordinates, app behavior and compatibility.
 Then update the normative
 specification and the existing authoritative fixture index before production
 wire changes. Do not create a second fixture corpus in this experiment.
+
+## Scroll comparison mode
+
+Launch with `--scroll`; `verify-scroll` repeats on its retained login. It sends
+three standard wheel-up ticks followed by a native kind-11 began/change/change/end
+sequence (horizontal/vertical +12/+24, then -12/-24). The receiver logs only its
+own numeric scroll properties during this bounded verification, including phase,
+precision and source PID. Match that PID to ScreensharingAgent. Successful writes
+alone do not establish delivery. Physical local scroll must not satisfy the proof.
+
+The probe now advertises only Raw and discards bounded unsolicited server updates
+without decoding, rendering or storing their contents. macOS may send a baseline
+even for a zero-area request. An earlier diagnostic attempted normal decoding
+without allocating an image buffer and crashed; this was an experiment error.
+The standalone probe is closed after verification, so it cannot interfere with
+physical iPhone testing. Current scroll runtime acceptance remains open; see the
+evidence note. No debug-injected observer is part of this source or the iOS app.

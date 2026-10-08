@@ -154,11 +154,11 @@
       "valid": false
     },
     {
-      "value": "ééééééééééééééééééééééééééééééé",
+      "value": "\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9",
       "valid": true
     },
     {
-      "value": "éééééééééééééééééééééééééééééééé",
+      "value": "\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9",
       "valid": false
     },
     {
@@ -1168,16 +1168,16 @@
     },
     {
       "id": "unicode",
-      "value": "工作 Mac",
+      "value": "\u5de5\u4f5c Mac",
       "macValid": true,
-      "normalizedName": "工作 Mac",
+      "normalizedName": "\u5de5\u4f5c Mac",
       "keyValid": true
     },
     {
       "id": "emoji",
-      "value": "Mac 🖥️",
+      "value": "Mac \ud83d\udda5\ufe0f",
       "macValid": true,
-      "normalizedName": "Mac 🖥️",
+      "normalizedName": "Mac \ud83d\udda5\ufe0f",
       "keyValid": true
     },
     {
@@ -1213,7 +1213,7 @@
     },
     {
       "id": "bidi-format",
-      "value": "Mac‮",
+      "value": "Mac\u202e",
       "macValid": false,
       "keyValid": false
     },
@@ -1766,6 +1766,242 @@
       "backingWidth": 0,
       "backingHeight": 0,
       "valid": false
+    }
+  ],
+  "nativeScrollCases": [
+    {
+      "name": "begin-precise-scroll",
+      "phase": 1,
+      "dx": 0,
+      "dy": 0,
+      "x": 1000,
+      "y": 600,
+      "width": 3024,
+      "height": 1964,
+      "active": false,
+      "valid": true,
+      "hex": "170000360001000b0000000000000000000000000000000000000000000000000000000000000000000100000000000000010000000203e80258"
+    },
+    {
+      "name": "positive-two-axis-change",
+      "phase": 2,
+      "dx": 12,
+      "dy": 24,
+      "x": 1000,
+      "y": 600,
+      "width": 3024,
+      "height": 1964,
+      "active": true,
+      "valid": true,
+      "hex": "170000360001000b000000000000000c000000180000000000000000000c00000018000000000000000200000000000000010000000203e80258"
+    },
+    {
+      "name": "negative-two-axis-change",
+      "phase": 2,
+      "dx": -12,
+      "dy": -24,
+      "x": 1000,
+      "y": 600,
+      "width": 3024,
+      "height": 1964,
+      "active": true,
+      "valid": true,
+      "hex": "170000360001000b000000000000fff40000ffe8000000000000fffffff4ffffffe8000000000000000200000000000000010000000203e80258"
+    },
+    {
+      "name": "end-precise-scroll",
+      "phase": 4,
+      "dx": 0,
+      "dy": 0,
+      "x": 1000,
+      "y": 600,
+      "width": 3024,
+      "height": 1964,
+      "active": true,
+      "valid": true,
+      "hex": "170000360001000b0000000000000000000000000000000000000000000000000000000000000000000400000000000000010000000203e80258"
+    },
+    {
+      "name": "fractional-scroll",
+      "phase": 2,
+      "dx": 0.25,
+      "dy": -0.25,
+      "x": 1000,
+      "y": 600,
+      "width": 3024,
+      "height": 1964,
+      "active": true,
+      "valid": true,
+      "hex": "170000360001000b00000000000000004000ffffc000000000000000000000000000000000000000000200000000000000010000000203e80258"
+    },
+    {
+      "name": "bounded-fast-swipe",
+      "phase": 2,
+      "dx": 2048,
+      "dy": -2048,
+      "x": 1000,
+      "y": 600,
+      "width": 3024,
+      "height": 1964,
+      "active": true,
+      "valid": true,
+      "hex": "170000360001000b00000000000008000000f80000000000000000000800fffff800000000000000000200000000000000010000000203e80258"
+    },
+    {
+      "name": "last-pixel",
+      "phase": 1,
+      "dx": 0,
+      "dy": 0,
+      "x": 16383,
+      "y": 16383,
+      "width": 16384,
+      "height": 16384,
+      "active": false,
+      "valid": true,
+      "hex": "170000360001000b000000000000000000000000000000000000000000000000000000000000000000010000000000000001000000023fff3fff"
+    },
+    {
+      "name": "begin-twice",
+      "phase": 1,
+      "dx": 0,
+      "dy": 0,
+      "x": 1000,
+      "y": 600,
+      "width": 3024,
+      "height": 1964,
+      "active": true,
+      "valid": false,
+      "hex": ""
+    },
+    {
+      "name": "change-before-begin",
+      "phase": 2,
+      "dx": 1,
+      "dy": 1,
+      "x": 1000,
+      "y": 600,
+      "width": 3024,
+      "height": 1964,
+      "active": false,
+      "valid": false,
+      "hex": ""
+    },
+    {
+      "name": "end-before-begin",
+      "phase": 4,
+      "dx": 0,
+      "dy": 0,
+      "x": 1000,
+      "y": 600,
+      "width": 3024,
+      "height": 1964,
+      "active": false,
+      "valid": false,
+      "hex": ""
+    },
+    {
+      "name": "wrong-phase",
+      "phase": 8,
+      "dx": 0,
+      "dy": 0,
+      "x": 1000,
+      "y": 600,
+      "width": 3024,
+      "height": 1964,
+      "active": true,
+      "valid": false,
+      "hex": ""
+    },
+    {
+      "name": "begin-with-delta",
+      "phase": 1,
+      "dx": 0,
+      "dy": 1,
+      "x": 1000,
+      "y": 600,
+      "width": 3024,
+      "height": 1964,
+      "active": false,
+      "valid": false,
+      "hex": ""
+    },
+    {
+      "name": "end-with-delta",
+      "phase": 4,
+      "dx": 0,
+      "dy": 1,
+      "x": 1000,
+      "y": 600,
+      "width": 3024,
+      "height": 1964,
+      "active": true,
+      "valid": false,
+      "hex": ""
+    },
+    {
+      "name": "excessive-delta",
+      "phase": 2,
+      "dx": 0,
+      "dy": 2049,
+      "x": 1000,
+      "y": 600,
+      "width": 3024,
+      "height": 1964,
+      "active": true,
+      "valid": false,
+      "hex": ""
+    },
+    {
+      "name": "negative-anchor",
+      "phase": 1,
+      "dx": 0,
+      "dy": 0,
+      "x": -1,
+      "y": 600,
+      "width": 3024,
+      "height": 1964,
+      "active": false,
+      "valid": false,
+      "hex": ""
+    },
+    {
+      "name": "outside-anchor",
+      "phase": 1,
+      "dx": 0,
+      "dy": 0,
+      "x": 3024,
+      "y": 600,
+      "width": 3024,
+      "height": 1964,
+      "active": false,
+      "valid": false,
+      "hex": ""
+    },
+    {
+      "name": "invalid-framebuffer",
+      "phase": 1,
+      "dx": 0,
+      "dy": 0,
+      "x": 1000,
+      "y": 600,
+      "width": 0,
+      "height": 1964,
+      "active": false,
+      "valid": false,
+      "hex": ""
+    },
+    {
+      "name": "oversized-framebuffer",
+      "phase": 1,
+      "dx": 0,
+      "dy": 0,
+      "x": 1000,
+      "y": 600,
+      "width": 16385,
+      "height": 1964,
+      "active": false,
+      "valid": false,
+      "hex": ""
     }
   ]
 }

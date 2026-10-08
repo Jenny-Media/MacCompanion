@@ -45,7 +45,9 @@ static BOOL IsNetworkMagnification(NSEvent *event) {
 @interface GestureReceiver : NSView
 @property double scale;
 @property NSUInteger received;
-@property BOOL verifying;
+@property BOOL verifying, scrollVerifying;
+@property NSUInteger scrollReceived;
+@property double scrollTotalX, scrollTotalY;
 @property(copy) void (^result)(NSString *);
 @end
 @implementation GestureReceiver
@@ -61,6 +63,21 @@ static BOOL IsNetworkMagnification(NSEvent *event) {
                               90 * self.scale, 90 * self.scale);
     [NSColor.systemBlueColor setFill];
     [[NSBezierPath bezierPathWithRoundedRect:square xRadius:12 yRadius:12] fill];
+}
+- (void)scrollWheel:(NSEvent *)event {
+    if (!self.scrollVerifying || event.type != NSEventTypeScrollWheel ||
+        CGEventGetIntegerValueField(event.CGEvent, kCGEventSourceUnixProcessID) <= 0) return;
+    self.scrollReceived++; self.scrollTotalX += event.scrollingDeltaX; self.scrollTotalY += event.scrollingDeltaY;
+    printf("NATIVE_SCROLL count=%lu phase=%lu precise=%d x=%.3f y=%.3f source_pid=%lld pointX=%lld pointY=%lld fixedX=%lld fixedY=%lld\n",
+        (unsigned long)self.scrollReceived, (unsigned long)event.phase, event.hasPreciseScrollingDeltas,
+        event.scrollingDeltaX, event.scrollingDeltaY,
+        (long long)CGEventGetIntegerValueField(event.CGEvent, kCGEventSourceUnixProcessID),
+        (long long)CGEventGetIntegerValueField(event.CGEvent, kCGScrollWheelEventPointDeltaAxis2),
+        (long long)CGEventGetIntegerValueField(event.CGEvent, kCGScrollWheelEventPointDeltaAxis1),
+        (long long)CGEventGetIntegerValueField(event.CGEvent, kCGScrollWheelEventFixedPtDeltaAxis2),
+        (long long)CGEventGetIntegerValueField(event.CGEvent, kCGScrollWheelEventFixedPtDeltaAxis1)); fflush(stdout);
+    if (self.result) self.result([NSString stringWithFormat:@"Received %lu native scroll events · x %.1f / y %.1f",
+        (unsigned long)self.scrollReceived, self.scrollTotalX, self.scrollTotalY]);
 }
 - (void)magnifyWithEvent:(NSEvent *)event {
     // A physical pinch on this Mac must not satisfy the network-delivery proof.
@@ -83,6 +100,7 @@ static BOOL IsNetworkMagnification(NSEvent *event) {
 
 @interface Probe : NSObject <NSApplicationDelegate, NSWindowDelegate>
 @property NSWindow *window;
+@property BOOL scrollProbe;
 @property NSTextField *user, *status;
 @property NSSecureTextField *password;
 @property NSButton *connect, *test;
@@ -131,9 +149,68 @@ static BOOL SendMagnification(rfbClient *client, uint16_t version, double delta,
     return SendPayload(client, body);
 }
 
+static BOOL SendPreciseScroll(rfbClient *client, int32_t dx, int32_t dy, uint32_t phase, uint16_t x, uint16_t y) {
+    NSMutableData *body = [NSMutableData data];
+    Append16(body, 1); Append16(body, 11);
+    // Apple orders these fields horizontal, vertical, then unused third axis.
+    Append16(body, 0); Append16(body, 0); Append16(body, 0);
+    Append32(body, (uint32_t)(dx * 65536)); Append32(body, (uint32_t)(dy * 65536)); Append32(body, 0);
+    Append32(body, (uint32_t)dx); Append32(body, (uint32_t)dy); Append32(body, 0);
+    Append32(body, phase); Append32(body, 0); Append32(body, 1); Append32(body, 2); // precise flag bit 1
+    Append16(body, x); Append16(body, y);
+    return SendPayload(client, body);
+}
+
+// The server may send an unsolicited baseline even for a zero-area request.
+// Advertise only Raw, then discard bounded responses without allocating/decoding
+// a desktop image. Keeping the receive side moving avoids a blocked server writer.
+static BOOL DiscardBytes(rfbClient *client, size_t count) {
+    if (count > 256u * 1024u * 1024u) return NO;
+    char scratch[4096];
+    while (count) { unsigned n = (unsigned)MIN(count, sizeof(scratch));
+        if (!ReadFromRFBServer(client,scratch,n)) return NO;
+        memset(scratch,0,sizeof(scratch)); count -= n;
+    }
+    return YES;
+}
+static BOOL DiscardResponse(rfbClient *client) {
+    uint8_t type; if (!ReadFromRFBServer(client,(char *)&type,1)) return NO;
+    if (type == 0) {
+        uint8_t header[3]; if (!ReadFromRFBServer(client,(char *)header,3)) return NO;
+        unsigned rectangles=((unsigned)header[1]<<8)|header[2];
+        if (rectangles > 4096) return NO;
+        for (unsigned i=0;i<rectangles;i++) {
+            uint8_t rect[12]; if (!ReadFromRFBServer(client,(char *)rect,12)) return NO;
+            unsigned w=((unsigned)rect[4]<<8)|rect[5], h=((unsigned)rect[6]<<8)|rect[7];
+            uint32_t encoding=((uint32_t)rect[8]<<24)|((uint32_t)rect[9]<<16)|((uint32_t)rect[10]<<8)|rect[11];
+            if (encoding == 0 && w<=16384 && h<=16384) { if (!DiscardBytes(client,(size_t)w*h*4)) return NO; }
+            else if (encoding == rfbEncodingNewFBSize) { client->width=w; client->height=h; }
+            else if (encoding == rfbEncodingLastRect) break;
+            else return NO;
+        }
+        return YES;
+    }
+    if (type == 2) return YES; // Bell; no content.
+    if (type == 3) {
+        uint8_t header[7]; if (!ReadFromRFBServer(client,(char *)header,7)) return NO;
+        uint32_t count=((uint32_t)header[3]<<24)|((uint32_t)header[4]<<16)|((uint32_t)header[5]<<8)|header[6];
+        return count<=256*1024 && DiscardBytes(client,count); // Never retain clipboard data.
+    }
+    return NO;
+}
+static BOOL DrainResponses(rfbClient *client) {
+    double start=NSProcessInfo.processInfo.systemUptime;
+    for (unsigned i=0;i<16 && NSProcessInfo.processInfo.systemUptime-start<4;i++) {
+        int ready=WaitForMessage(client,20000); if (ready<0) return NO; if (!ready) break;
+        if (!DiscardResponse(client)) return NO;
+    }
+    return YES;
+}
+
 @implementation Probe
 - (void)applicationDidFinishLaunching:(NSNotification *)notification {
     self.queue = dispatch_queue_create("native-gesture-loopback", DISPATCH_QUEUE_SERIAL);
+    self.scrollProbe = [NSProcessInfo.processInfo.arguments containsObject:@"--scroll"];
     self.wireVersion = 2; // Matches the installed Apple client's magnification sender.
     rfbClientLog = QuietLog; rfbClientErr = QuietLog;
     self.window = [[NSWindow alloc] initWithContentRect:NSMakeRect(0, 0, 560, 490)
@@ -144,7 +221,7 @@ static BOOL SendMagnification(rfbClient *client, uint16_t version, double delta,
     NSTextField *heading = [NSTextField labelWithString:@"Built-in Screen Sharing · loopback only"];
     heading.frame = NSMakeRect(24, 444, 512, 24); [content addSubview:heading];
     NSTextField *explanation = [NSTextField wrappingLabelWithString:
-        @"Sign in to this Mac to send one small pinch to the blue test square. Credentials are not saved. No screenshots or terminal input are collected."];
+        self.scrollProbe ? @"Sign in to compare three wheel ticks with a small precise scroll in this test view. Credentials are not saved. No screenshots or terminal input are collected." : @"Sign in to this Mac to send one small pinch to the blue test square. Credentials are not saved. No screenshots or terminal input are collected."];
     explanation.frame = NSMakeRect(24, 382, 512, 52); [content addSubview:explanation];
     self.user = [[NSTextField alloc] initWithFrame:NSMakeRect(24, 344, 248, 28)];
     self.user.placeholderString = @"Mac account"; self.user.stringValue = NSUserName();
@@ -168,11 +245,12 @@ static BOOL SendMagnification(rfbClient *client, uint16_t version, double delta,
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
         char command[32];
         while (fgets(command, sizeof(command), stdin)) {
-            if (!strcmp(command, "verify-v1\n") || !strcmp(command, "verify-v2\n")) {
+            if (!strcmp(command, "verify-v1\n") || !strcmp(command, "verify-v2\n") || !strcmp(command, "verify-scroll\n")) {
+                BOOL scroll = !strcmp(command, "verify-scroll\n");
                 NSInteger version = !strcmp(command, "verify-v2\n") ? 2 : 1;
                 dispatch_async(dispatch_get_main_queue(), ^{
                     if (!self.test.enabled) return;
-                    self.wireVersion = version;
+                    self.wireVersion = version; self.scrollProbe = scroll;
                     [self.window makeKeyAndOrderFront:nil]; [NSApp activateIgnoringOtherApps:YES];
                     [self testAction:nil];
                 });
@@ -214,7 +292,13 @@ static BOOL SendMagnification(rfbClient *client, uint16_t version, double delta,
                 client->width = client->si.framebufferWidth; client->height = client->si.framebufferHeight;
                 // Complete normal client format/encoding setup. A zero-area update
                 // runs the server's control-availability path without requesting pixels.
-                success = SetFormatAndEncodings(client) && SendFramebufferUpdateRequest(client, 0, 0, 0, 0, FALSE);
+                // Use one plain Raw encoding so unsolicited pixels can be discarded
+                // as bytes, never decoded or retained by this feasibility probe.
+                const char rawOnly[] = {2,0,0,1,0,0,0,0};
+                success = SetFormatAndEncodings(client) && WriteToRFBServer(client,rawOnly,sizeof(rawOnly))
+                    && SendFramebufferUpdateRequest(client, 0, 0, 0, 0, FALSE);
+                [NSThread sleepForTimeInterval:.3];
+                success = success && DrainResponses(client);
             }
             if (!success) rfbClientCleanup(client);
         }
@@ -231,13 +315,14 @@ static BOOL SendMagnification(rfbClient *client, uint16_t version, double delta,
 - (void)testAction:(id)sender {
     [self.window makeFirstResponder:self.receiver];
     appMagnifyCount = 0;
-    self.receiver.verifying = YES;
+    self.receiver.verifying = !self.scrollProbe; self.receiver.scrollVerifying = self.scrollProbe;
+    self.receiver.scrollReceived = 0; self.receiver.scrollTotalX = 0; self.receiver.scrollTotalY = 0;
     self.receiver.received = 0; self.receiver.scale = 1; self.receiver.needsDisplay = YES;
     self.test.enabled = NO;
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, NSEC_PER_SEC), dispatch_get_main_queue(), ^{
         // Never deliver the probe gesture while another app or window is active.
         if (!NSApp.active || NSApp.keyWindow != self.window) {
-            self.receiver.verifying = NO;
+            self.receiver.verifying = NO; self.receiver.scrollVerifying = NO;
             self.status.stringValue = @"Verification cancelled because the probe is no longer active.";
             self.test.enabled = YES; return;
         }
@@ -253,7 +338,7 @@ static BOOL SendMagnification(rfbClient *client, uint16_t version, double delta,
         CGFloat primaryHeight = NSScreen.screens.firstObject.frame.size.height;
         CGFloat primaryWidth = NSScreen.screens.firstObject.frame.size.width;
         CGFloat top = primaryHeight - point.y;
-        self.status.stringValue = @"Sending a bounded pinch to the test square…";
+        self.status.stringValue = self.scrollProbe ? @"Comparing wheel and precise scroll…" : @"Sending a bounded pinch to the test square…";
         dispatch_async(self.queue, ^{
             rfbClient *client = self.client;
             CGFloat actualX = client ? point.x * client->width / primaryWidth : -1;
@@ -263,7 +348,7 @@ static BOOL SendMagnification(rfbClient *client, uint16_t version, double delta,
             }
             uint16_t x = (uint16_t)actualX, y = (uint16_t)actualY;
             uint16_t version = (uint16_t)self.wireVersion;
-            BOOL success = SendFramebufferUpdateRequest(client, 0, 0, 0, 0, FALSE) &&
+            BOOL success = DrainResponses(client) && SendFramebufferUpdateRequest(client, 0, 0, 0, 0, FALSE) &&
                 SendPointerEvent(client, x, y, 0);
             // First check ordinary input reaches this same view. No click or key.
             dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 150 * NSEC_PER_MSEC), dispatch_get_main_queue(), ^{
@@ -272,6 +357,27 @@ static BOOL SendMagnification(rfbClient *client, uint16_t version, double delta,
                 printf("POINTER_REACHED_OWN_VIEW %s\n", reached ? "YES" : "NO"); fflush(stdout);
             });
             [NSThread sleepForTimeInterval:.25];
+            if (self.scrollProbe) {
+                printf("SCROLL_LEGACY_BEGIN\n"); fflush(stdout);
+                for (int i=0; success && i<3; i++) {
+                    success = SendPointerEvent(client,x,y,8) && SendPointerEvent(client,x,y,0);
+                    [NSThread sleepForTimeInterval:.08];
+                }
+                [NSThread sleepForTimeInterval:.4];
+                printf("SCROLL_PRECISE_BEGIN\n"); fflush(stdout);
+                success = success && SendPreciseScroll(client,0,0,1,x,y);
+                [NSThread sleepForTimeInterval:.08];
+                success = success && SendPreciseScroll(client,12,24,2,x,y);
+                [NSThread sleepForTimeInterval:.08];
+                success = success && SendPreciseScroll(client,-12,-24,2,x,y);
+                BOOL ended = SendPreciseScroll(client,0,0,4,x,y);
+                printf("SCROLL_SEND %s\n",success && ended ? "OK" : "FAILED"); fflush(stdout);
+                dispatch_after(dispatch_time(DISPATCH_TIME_NOW,NSEC_PER_SEC),dispatch_get_main_queue(), ^{
+                    self.receiver.scrollVerifying = NO; self.test.enabled = YES;
+                    if (!self.receiver.scrollReceived) self.status.stringValue = @"No native scroll received. Delivery is not proven.";
+                });
+                return;
+            }
             success = success && SendBoundary(client, 1, x, y);
             success = success && SendMagnification(client, version, 0, 1, x, y);
             for (int i = 0; success && i < 3; i++) {

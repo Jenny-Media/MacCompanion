@@ -11,6 +11,9 @@ NS_ASSUME_NONNULL_BEGIN
 @property(nonatomic, copy, nullable) NSArray<NSString *> *connectionMacNames;
 @property(nonatomic, copy, nullable) NSString *preferenceID;
 @property(nonatomic) CGFloat pointerSpeed;
+@property(nonatomic) CGFloat scrollSpeed;
+@property(nonatomic) BOOL showsTouchPoints;
+@property(nonatomic) BOOL trackpadHapticsEnabled;
 @property(nonatomic) BOOL preferredTrackpad;
 @property(nonatomic) BOOL followCursorEnabled;
 @property(nonatomic, copy, nullable) NSNumber *restoredDisplayID;

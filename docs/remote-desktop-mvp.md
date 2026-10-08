@@ -89,6 +89,20 @@ following until the next trackpad gesture. Mac-originated cursor notifications
 do not move the view. Following uses the existing image and gesture-paced scroll
 offset updates, with no idle polling, helper or connection change.
 
+### Trackpad touch feedback, 2026-10-08
+
+Trackpad & Keyboard, Desktop Trackpad and the tabletop input pad share soft
+finger rings that follow touch immediately and fade on lift. An admitted tap
+pulses once with a light system haptic; hold-to-drag strengthens the ring and
+plays one distinct haptic when the drag engages. Movement, scrolling and pinch
+use visual feedback without continuous haptics. Feedback describes local input
+recognition, not a remote execution receipt. Global Show Touch Points and
+Trackpad Haptics choices default on and can be saved independently in Desktop
+or Trackpad Controls, before connecting or during a session. Menu haptics retain
+their separate preference. Reduce Motion replaces the expanding tap pulse with
+a fade. Feedback clears on cancellation, mode/layout changes, menu presentation,
+sign-in, background and disconnect. No touch positions are persisted.
+
 ### Approved client additions, 2026-10-05
 
 The user approved optional local Face ID/passcode app unlock, fullscreen controls,

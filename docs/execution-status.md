@@ -1,3 +1,69 @@
+## 2026-10-08 — Build 19 installed on iPhone
+
+The user authorized installation, commit and push of the precise-scroll and
+trackpad-feedback updates. Normal development **1.0 (19)** is signed with the
+existing identities, installed and launched on the connected iPhone 18 Pro Max.
+CoreDevice confirms version 1.0, build 19, installation sequence **9376** and
+launch PID **18233**. All **580** application source inputs and the existing
+app/widget/Keychain identities are verified. The stable Xcode 27.0 device build,
+37 focused Simulator cases (plus the final five feedback cases), repository
+validation and diff checks pass. The signing/install/source-binding reports stay
+outside Git under `/private/tmp/maccompanion-trackpad-feedback-20261008-*`.
+Haptic feel and real-finger acceptance remain the user's physical checks.
+This is a local development installation; no TestFlight upload was requested.
+
+## 2026-10-08 — Trackpad touch feedback
+
+The approved feedback is implemented across Trackpad & Keyboard, Desktop
+Trackpad and the tabletop pad: soft per-finger rings, one light haptic and pulse
+for an admitted tap, and one medium haptic with a stronger ring when a held drag
+engages. A passive observer cannot prevent the existing input recognizers;
+scroll and pinch receive visual feedback without repeated haptics. Mode/layout,
+menu, recovery, background and disconnect paths clear feedback. Reduce Motion
+uses a fade without pulse expansion. Touch locations are transient and never
+persisted or sent by the feedback component.
+
+Independent global Show Touch Points and Trackpad Haptics choices default on,
+are available offline in Desktop/Trackpad Controls, retain Save/Cancel drafts,
+and update connected viewers when saved. Menu haptics remain independent.
+
+Stable Xcode **27.0 (27A266a)** builds successfully. All **37** focused feedback,
+settings, native gesture and session control tests pass; the final five feedback
+tests pass again after a compiler-warning fix and capture synthetic light/dark
+screenshots for visual inspection. `bash scripts/validate.sh` and `git diff
+--check` pass. Build/test logs and screenshots are outside Git under
+`/private/tmp/maccompanion-trackpad-feedback-20261008-*`; final results are
+`/private/tmp/maccompanion-precise-scroll-20261007-simulator/QA/TrackpadFeedbackFinalResults.xcresult`.
+Haptic feel and real-finger acceptance remain physical iPhone checks. This update
+was uncommitted and awaiting installation at this checkpoint; the later build 19
+installation is recorded above.
+
+## 2026-10-07 — scrolling follow-up to verified pinch
+
+Native pinch is committed as `d36571d`; the user confirmed installed build 17
+works. The scrolling follow-up is a separate uncommitted candidate: optional
+Apple precise two-axis scrolling with lifecycle cancellation and a global,
+independent 0.25x–4x Scroll Speed control, accessible offline and in-session.
+Normative wire fields and indexed golden vectors were updated before the native
+encoder. Standard wheel input remains the unsupported-host fallback. Direct
+built-in Screen Sharing and ARD-30 authentication are unchanged; no Mac helper
+or new production dependency was added.
+
+Stable Xcode 27.0 device/Simulator builds pass. Across focused runs, 44 tests
+passed; the final nine native gesture tests were rerun after fractional-motion
+handling changed. Indexed validation checks 18 scroll and 17 magnification wire
+vectors plus 100 repeated encoder lifecycles each. `bash scripts/validate.sh` and
+`git diff --check` pass. Development build **1.0 (18)** is signed, installed and
+launched on the connected iPhone; CoreDevice read-back confirms it, installation
+sequence 9368, and all 578 source inputs were verified. No push or TestFlight
+upload occurred. Perceived scroll speed and native delivery still need the user’s
+physical check; scrolling remains uncommitted.
+
+The isolated scroll probe authenticated but did not prove native delivery on
+its loopback session. A temporary diagnostic decoder error was corrected to
+discard unsolicited responses without rendering or retaining images. Physical
+iPhone scroll behavior and released macOS compatibility remain acceptance gates.
+
 ## 2026-10-07 — Native Mac-app pinch in Trackpad & Keyboard mode
 
 Three complete native magnification sequences passed on a retained authenticated

@@ -56,6 +56,28 @@ struct VNCQuickAction: Codable, Identifiable, Equatable, Sendable {
 
 @MainActor enum VNCSessionPreferences {
     static let actionsChanged = Notification.Name("DirectControlActionsChanged")
+    static let scrollSpeedChanged = Notification.Name("DirectScrollSpeedChanged")
+    static let scrollSpeedKey = "direct-controls-scroll-speed"
+    static let trackpadFeedbackChanged = Notification.Name("DirectTrackpadFeedbackChanged")
+    static let touchPointsKey = "direct-controls-trackpad-touch-points"
+    static let trackpadHapticsKey = "direct-controls-trackpad-haptics"
+    static var showsTouchPoints: Bool { UserDefaults.standard.object(forKey: touchPointsKey) as? Bool ?? true }
+    static var trackpadHaptics: Bool { UserDefaults.standard.object(forKey: trackpadHapticsKey) as? Bool ?? true }
+    static func setTrackpadFeedback(showsTouchPoints: Bool, haptics: Bool) {
+        UserDefaults.standard.set(showsTouchPoints, forKey: touchPointsKey)
+        UserDefaults.standard.set(haptics, forKey: trackpadHapticsKey)
+        NotificationCenter.default.post(name: trackpadFeedbackChanged, object: nil)
+    }
+    static let scrollSpeedRange = 0.25...4.0
+    static var scrollSpeed: Double {
+        let value = UserDefaults.standard.object(forKey: scrollSpeedKey) as? Double ?? 1
+        return value.isFinite ? min(scrollSpeedRange.upperBound, max(scrollSpeedRange.lowerBound, value)) : 1
+    }
+    static func setScrollSpeed(_ value: Double) {
+        guard value.isFinite else { return }
+        UserDefaults.standard.set(min(scrollSpeedRange.upperBound, max(scrollSpeedRange.lowerBound, value)), forKey: scrollSpeedKey)
+        NotificationCenter.default.post(name: scrollSpeedChanged, object: nil)
+    }
     private static func changed(_ id: UUID) { NotificationCenter.default.post(name: DirectCloudSyncV1.preferenceChanged, object: id) }
     private static func prefix(_ id: UUID) -> String { "direct-session-\(id.uuidString.lowercased())-" }
     static func speed(_ id: UUID) -> Double {
@@ -132,6 +154,9 @@ struct VNCInputSettings: View {
     let mode: DirectControlMode
     let changed: @MainActor () -> Void
     @State private var speed: Double
+    @State private var scrollSpeed: Double
+    @State private var showsTouchPoints: Bool
+    @State private var trackpadHaptics: Bool
     @State private var followCursor: Bool
     @State private var actions: [VNCQuickAction]
     @State private var editor: VNCQuickAction?
@@ -141,6 +166,9 @@ struct VNCInputSettings: View {
     @State private var actionsReadable: Bool
     init(macID: UUID? = nil, mode: DirectControlMode = .desktop, changed: @escaping @MainActor () -> Void = {}) {
         self.macID = macID; self.mode = mode; self.changed = changed
+        _scrollSpeed = State(initialValue: VNCSessionPreferences.scrollSpeed)
+        _showsTouchPoints = State(initialValue: VNCSessionPreferences.showsTouchPoints)
+        _trackpadHaptics = State(initialValue: VNCSessionPreferences.trackpadHaptics)
         _speed = State(initialValue: macID.map(VNCSessionPreferences.speed) ?? 1.5)
         _followCursor = State(initialValue: macID.map(VNCSessionPreferences.followCursor) ?? true)
         let loaded = try? VNCSessionPreferences.profileActions(mode, legacyMac: macID)
@@ -163,6 +191,19 @@ struct VNCInputSettings: View {
                             Toggle("Follow Cursor", isOn: $followCursor).accessibilityIdentifier("follow-cursor-toggle")
                         } footer: { Text("In zoomed Trackpad mode, move the view to keep the cursor visible. Manual pan or zoom pauses following until your next trackpad movement. Saved for this Mac.") }
                     }
+                }
+                if mode != .terminal {
+                    Section {
+                        HStack { Text("Scroll Speed"); Spacer(); Text(scrollSpeed.formatted(.number.precision(.fractionLength(0...2))) + "×").foregroundStyle(.secondary) }
+                        Slider(value: $scrollSpeed, in: VNCSessionPreferences.scrollSpeedRange, step: 0.25)
+                            .accessibilityLabel("Scroll Speed").accessibilityIdentifier("scroll-speed-slider")
+                        Button("Reset to Default") { scrollSpeed = 1 }
+                    } footer: { Text("Two-finger scrolling in Desktop and Trackpad. Applies to all Macs.") }
+                    Section {
+                        Toggle("Show Touch Points", isOn: $showsTouchPoints).accessibilityIdentifier("trackpad-touch-points-toggle")
+                        Toggle("Trackpad Haptics", isOn: $trackpadHaptics).accessibilityIdentifier("trackpad-haptics-toggle")
+                    } header: { Text("Touch Feedback") }
+                    footer: { Text("Touch rings and tap or drag feedback. Applies to all trackpad surfaces.") }
                 }
                 Section {
                     ForEach($actions) { $action in
@@ -202,7 +243,7 @@ struct VNCInputSettings: View {
             .navigationTitle(mode == .trackpad ? "Trackpad Controls" : mode.title + " Controls").navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
-                ToolbarItem(placement: .confirmationAction) { Button("Save") { save() }.disabled(!actionsReadable || (!DirectProAccess.shared.hasPro && macID == nil)) }
+                ToolbarItem(placement: .confirmationAction) { Button("Save") { save() }.disabled(!actionsReadable || (!DirectProAccess.shared.hasPro && macID == nil && mode == .terminal)) }
             }
             .sheet(item: $editor) { action in VNCActionEditor(action: action, mode: mode) { edited in
                 if let index = actions.firstIndex(where: { $0.id == edited.id }) { actions[index] = edited } else { actions.append(edited) }
@@ -223,6 +264,10 @@ struct VNCInputSettings: View {
             if let macID, mode != .terminal {
                 VNCSessionPreferences.setSpeed(speed, mac: macID)
                 if mode == .desktop { VNCSessionPreferences.setFollowCursor(followCursor, mac: macID) }
+            }
+            if mode != .terminal {
+                VNCSessionPreferences.setScrollSpeed(scrollSpeed)
+                VNCSessionPreferences.setTrackpadFeedback(showsTouchPoints: showsTouchPoints, haptics: trackpadHaptics)
             }
             changed(); dismiss()
         } catch { issue = .make(.saveFailed) }
