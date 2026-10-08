@@ -50,10 +50,10 @@ enum TerminalConnectionFailure: Error, Equatable { case lookup, socket, setupRes
 private enum TerminalPTY {
     nonisolated static func run(client: SSHClient, columns: Int, rows: Int,
         ready: @escaping @MainActor @Sendable (TerminalWriter) throws -> Void,
-        output: @escaping @MainActor @Sendable ([UInt8]) throws -> Void) async throws {
+        output: @escaping @MainActor @Sendable ([UInt8]) throws -> Void) async throws -> Int? {
         let request = SSHChannelRequestEvent.PseudoTerminalRequest(wantReply: true, term: "xterm-256color",
             terminalCharacterWidth: columns, terminalRowHeight: rows, terminalPixelWidth: 0, terminalPixelHeight: 0, terminalModes: .init([.ECHO: 1]))
-        try await client.withPTY(request) { stream, writer in
+        return try await client.withPTY(request) { stream, writer in
             try await ready(TerminalWriter(value: writer))
             for try await item in stream {
                 try Task.checkCancellation()
@@ -86,6 +86,7 @@ private enum TerminalPTY {
     var status = "Sign in to Remote Login"
     var connecting = false
     var connected = false
+    private(set) var completedNormally = false
     var trust: TrustRequest?
     var installedKey: UUID?
     var recovery: DirectRecoveryNotice?
@@ -226,7 +227,7 @@ private enum TerminalPTY {
                 if var key { key.username = username; try TerminalSecretStore.saveKey(key, id: mac.id) }
                 else if remember { try TerminalSecretStore.save(.init(username: username, password: password), id: mac.id) }
                 self.phase = "Opening a new shell"
-                try await TerminalPTY.run(client: client, columns: columns, rows: rows, ready: { writer in
+                let exitStatus = try await TerminalPTY.run(client: client, columns: columns, rows: rows, ready: { writer in
                     guard self.generation == id, DirectAppLockV1.shared.canAccess, UIApplication.shared.applicationState == .active else { throw CancellationError() }
                     self.writer = writer; self.connected = true; self.connecting = false; self.status = "Connected"; self.phase = "Shell open"; self.recovery = nil
                     self.activity = VNCSessionActivityController(mac: self.mac, kind: .terminal, defaults: self.activityDefaults, backend: self.activityBackend)
@@ -235,7 +236,10 @@ private enum TerminalPTY {
                     guard self.generation == id else { throw CancellationError() }
                     try self.receiveOutput(bytes)
                 })
-                if generation == id { stop(); present(.terminalEnded) }
+                guard generation == id else { return }
+                stop()
+                if exitStatus == 0 { completedNormally = true }
+                else { present(.terminalEnded, message: "The connection closed unexpectedly. Open a new shell to continue.") }
             } catch {
                 guard generation == id else { return }
                 let stage = phase, outcome = setupPhase, wasConnected = connected
@@ -248,7 +252,12 @@ private enum TerminalPTY {
                     presentSetupFailure(outcome, cause: reason, stage: stage)
                 } else if error as? TerminalConnectionFailure == .pausedOutputLimit {
                     present(.terminalEnded, message: "The shell produced more output than could be kept while paused. Open a new shell to continue; previous input won’t be replayed.", stage: stage)
-                } else if wasConnected { present(.terminalEnded, message: "The SSH connection ended. Open a new shell to continue; previous input won’t be replayed.", stage: stage) }
+                } else if wasConnected {
+                    let message = error is SSHClient.CommandFailed ? "The shell ended with an error. Open a new shell to continue."
+                        : error is SSHClient.CommandSignalled ? "The shell was interrupted. Open a new shell to continue."
+                        : "The connection was lost. Open a new shell to continue."
+                    present(.terminalEnded, message: message, stage: stage)
+                }
                 else { present(reason, stage: stage) }
             }
         }
@@ -333,7 +342,7 @@ private enum TerminalPTY {
         generation = UUID(); let reply = trustReply; trustReply = nil; trust = nil; reply?.resume(returning: false); work?.cancel(); work = nil; writeTail?.cancel(); writeTail = nil
         socketOwner?.cancel(); socketOwner = nil
         let client = self.client, channel = self.channel; self.client = nil; self.channel = nil; writer = nil
-        connected = false; connecting = false; queuedBytes = 0
+        connected = false; connecting = false; completedNormally = false; queuedBytes = 0
         Task { try? await client?.close(); try? await channel?.close() }
     }
     func receiveOutput(_ bytes: [UInt8]) throws {

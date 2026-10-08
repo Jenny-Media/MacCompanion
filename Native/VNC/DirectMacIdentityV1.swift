@@ -9,8 +9,9 @@ enum DirectMacConnection: String, Codable, CaseIterable, Identifiable {
         switch self { case .desktop: "Desktop"; case .terminal: "Terminal"; case .trackpad: "Trackpad & Keyboard" }
     }
     var symbol: String {
-        switch self { case .desktop: "desktopcomputer"; case .terminal: "terminal"; case .trackpad: "rectangle.and.hand.point.up.left" }
+        switch self { case .desktop: "macwindow"; case .terminal: "terminal"; case .trackpad: "rectangle.and.hand.point.up.left" }
     }
+    var actionTitle: String { "Open " + title }
     var inputOnly: Bool { self == .trackpad }
     var terminalMode: Bool { self == .terminal }
 }

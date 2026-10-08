@@ -3,24 +3,61 @@ import SwiftUI
 import SwiftTerm
 import UIKit
 
+enum TerminalLoginMethod: String, CaseIterable, Identifiable {
+    case password = "Password", sshKey = "SSH Key"
+    var id: String { rawValue }
+}
+struct TerminalLoginSelection {
+    private(set) var method = TerminalLoginMethod.password
+    var username = ""
+    private var passwordUsername = ""
+    private var keyUsername = ""
+    mutating func select(_ method: TerminalLoginMethod) {
+        if self.method == .sshKey { keyUsername = username } else { passwordUsername = username }
+        self.method = method
+        let account = method == .sshKey ? keyUsername : passwordUsername
+        if !account.isEmpty { username = account }
+    }
+    mutating func loadPasswordAccount(_ account: String) {
+        passwordUsername = account
+        if method == .password { username = account }
+    }
+    mutating func loadKeyAccount(_ account: String?, preferSelected: Bool) {
+        keyUsername = account ?? ""
+        if preferSelected && account != nil {
+            if method == .password { passwordUsername = username }
+            method = .sshKey
+        }
+        if method == .sshKey, !keyUsername.isEmpty { username = keyUsername }
+    }
+}
+
 struct DirectTerminalView: View {
     private var mac: DirectMacRecordV1 { session.mac }
     let macLibrary: DirectMacLibraryV1?
     let exit: @MainActor () -> Void
     @State private var session: DirectTerminalSession
-    @State private var username = ""
+    @State private var login = TerminalLoginSelection()
+    private var username: String { get { login.username } nonmutating set { login.username = newValue } }
     @State private var password = ""
     @State private var remember = false
     @State private var passwordVisible = false
     @State private var loginIssue: DirectRecoveryNotice?
     @State private var key: TerminalSSHKey?
     @State private var keyName = ""
-    @State private var useKey = false
+    private var useKey: Bool { login.method == .sshKey }
     @State private var loadedLogin = false
     private let autoConnect: Bool
-    private enum Sheet: String, Identifiable {
-        case keys, install, manual, macSettings, appSettings, pro, quickActions, keyboard, verifyGuide, connectionInfo, errorDetails
-        var id: String { rawValue }
+    private enum Sheet: Identifiable {
+        case keys, install, manual, macSettings, appSettings, pro, quickActions, keyboard, verifyGuide, connectionInfo
+        case errorDetails(DirectRecoveryNotice)
+        var id: String {
+            switch self {
+            case .keys: "keys"; case .install: "install"; case .manual: "manual"; case .macSettings: "macSettings"
+            case .appSettings: "appSettings"; case .pro: "pro"; case .quickActions: "quickActions"; case .keyboard: "keyboard"
+            case .verifyGuide: "verifyGuide"; case .connectionInfo: "connectionInfo"; case .errorDetails: "errorDetails"
+            }
+        }
     }
     @State private var sheet: Sheet?
     @Environment(DirectAppearanceV1.self) private var appearance
@@ -49,18 +86,26 @@ struct DirectTerminalView: View {
         loginIssue = nil
         session.connect(username: username, password: useKey ? "" : password, remember: !useKey && remember, key: useKey ? key : nil)
     }
-    private func loadKey() {
+    private func loadKey(preferSelected: Bool = false) {
         do {
             let selected = try TerminalKeyLibraryStore.selected(mac.id)
-            key = selected?.key; keyName = selected?.name ?? ""; useKey = selected != nil
-            if let key, !key.username.isEmpty { username = key.username }
+            key = selected?.key; keyName = selected?.name ?? ""
+            login.loadKeyAccount(selected?.key.username, preferSelected: preferSelected)
         } catch { loginIssue = .make(.savedDataUnavailable, message: "The selected SSH key couldn’t be read. Existing keys are kept.") }
     }
     private func loadLogin() {
         loginIssue = nil
-        do { if let login = try TerminalSecretStore.login(mac.id) { username = login.username; password = login.password; remember = true } }
+        do { if let saved = try TerminalSecretStore.login(mac.id) { login.loadPasswordAccount(saved.username); password = saved.password; remember = true } }
         catch { loginIssue = .make(.savedDataUnavailable, message: "The saved Terminal login couldn’t be read. Existing data is kept.") }
-        loadKey()
+        loadKey(preferSelected: !loadedLogin)
+    }
+    private func selectLoginMethod(_ method: TerminalLoginMethod) {
+        login.select(method)
+        session.clearRecovery()
+    }
+    private func returnAfterNormalExit() {
+        guard session.completedNormally, DirectAppLockV1.shared.canAccess, UIApplication.shared.applicationState == .active else { return }
+        session.stop(); exit()
     }
     private func setupKey() {
         Task {
@@ -80,9 +125,8 @@ struct DirectTerminalView: View {
         }
     }
     private func secondaryAction(_ notice: DirectRecoveryNotice) -> DirectRecoveryAction? {
-        if notice.reason == .keyRejected { return .init(title: "Use Password", symbol: "person.badge.key") { useKey = false; session.clearRecovery() } }
-        if [.serverChanged, .connectionCancelled, .savedDataUnavailable].contains(notice.reason) { return nil }
-        return .init(title: "Connection Settings", symbol: "gearshape") { sheet = .macSettings }
+        if notice.reason == .keyRejected { return .init(title: "Use Password", symbol: "person.badge.key") { selectLoginMethod(.password) } }
+        return nil
     }
     var body: some View {
         NavigationStack {
@@ -91,7 +135,7 @@ struct DirectTerminalView: View {
                 TerminalSurface(session: session, style: appearance.terminal.style(app: appearance.app), customize: { sheet = .keyboard }, action: handleControls)
                     .ignoresSafeArea(.container, edges: session.connected ? .top : [])
                     .opacity(session.connected ? 1 : 0).allowsHitTesting(session.connected).accessibilityHidden(!session.connected)
-                if !session.connected {
+                if !session.connected && !session.completedNormally {
                     DirectConnectionBackdrop(names: macLibrary?.macs.map(\.name) ?? [mac.name])
                     loginView
                 }
@@ -104,8 +148,8 @@ struct DirectTerminalView: View {
             .toolbar(.hidden, for: .navigationBar)
             .sheet(item: $sheet, onDismiss: { if let updated = macLibrary?.macs.first(where: { $0.id == mac.id }) { session.updateMac(updated) } }) { destination in
                 switch destination {
-                case .keys: TerminalKeySettings(mac: mac, changed: { loadKey(); session.clearRecovery() })
-                case .install: TerminalKeyInstallView(mac: mac, initialUsername: username, changed: { loadKey(); session.clearRecovery() })
+                case .keys: TerminalKeySettings(mac: mac, changed: { loadKey(preferSelected: true); session.clearRecovery() })
+                case .install: TerminalKeyInstallView(mac: mac, initialUsername: username, changed: { loadKey(preferSelected: true); session.clearRecovery() })
                 case .manual: TerminalManualKeySetupView(mac: mac)
                 case .macSettings:
                     if let macLibrary { DirectMacEditorV1(mac: mac, library: macLibrary) }
@@ -116,10 +160,7 @@ struct DirectTerminalView: View {
                 case .keyboard: TerminalKeyboardSettings(macID: mac.id, changed: { session.reloadKeyboard?() })
                 case .verifyGuide: TerminalIdentityGuide(macName: mac.name)
                 case .connectionInfo: TerminalConnectionInfo(mac: mac)
-                case .errorDetails:
-                    controlsSheet(title: "Connection Issue") {
-                        if let notice = loginIssue ?? session.recovery { DirectRecoveryCard(notice: notice) }
-                    }
+                case .errorDetails(let notice): TerminalConnectionIssueView(notice: notice)
                 }
             }
             .sheet(item: $session.trust) { request in
@@ -133,13 +174,14 @@ struct DirectTerminalView: View {
         .preferredColorScheme(session.connected ? terminalScheme : appearance.app.colorScheme)
         .onAppear {
             guard !loadedLogin else { return }
-            loadedLogin = true; loadLogin()
+            loadLogin(); loadedLogin = true
             if autoConnect && loginIssue == nil && session.recovery == nil { connect() }
         }
         .onDisappear { session.stop() }
+        .onChange(of: session.completedNormally) { _, _ in returnAfterNormalExit() }
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.willResignActiveNotification)) { _ in session.background() }
-        .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in session.foreground() }
-        .onReceive(NotificationCenter.default.publisher(for: DirectAppLockV1.unlocked)) { _ in session.foreground() }
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in returnAfterNormalExit(); session.foreground() }
+        .onReceive(NotificationCenter.default.publisher(for: DirectAppLockV1.unlocked)) { _ in returnAfterNormalExit(); session.foreground() }
         .onReceive(NotificationCenter.default.publisher(for: VNCSessionPreferences.actionsChanged)) { _ in session.reloadKeyboard?() }
         .onReceive(NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification)) { _ in session.activity?.preferenceChanged() }
         .onReceive(NotificationCenter.default.publisher(for: RemoteSessionActivityActions.endRequested)) { notification in
@@ -159,12 +201,6 @@ struct DirectTerminalView: View {
         case "exit": session.stop(); exit()
         default: break
         }
-    }
-    private func controlsSheet<Content: View>(title: String, @ViewBuilder content: () -> Content) -> some View {
-        NavigationStack {
-            Form { content() }.navigationTitle(title).navigationBarTitleDisplayMode(.inline)
-                .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { sheet = nil } } }
-        }.presentationDetents([.medium, .large])
     }
     private var loginView: some View {
         GeometryReader { geometry in
@@ -196,15 +232,21 @@ struct DirectTerminalView: View {
                     Text("Cancel").font(.body.weight(.semibold)).frame(maxWidth: .infinity, minHeight: 32)
                 }.buttonStyle(.bordered).buttonBorderShape(.roundedRectangle(radius: 16)).controlSize(.regular)
                     .tint(.blue).accessibilityIdentifier("terminal-login-cancel")
+            } else if let notice = session.recovery, loginIssue == nil,
+                      [.terminalEnded, .inputPaused, .terminalConnection, .addressNotFound, .macUnreachable].contains(notice.reason), canConnect {
+                DirectConnectionNotice(notice: notice)
+                let action = recoveryAction(notice)
+                connectionButton(action.title, symbol: action.symbol, perform: action.perform)
+                detailsButton(notice: notice)
             } else {
                 let authentication = dynamicType.isAccessibilitySize ? AnyLayout(VStackLayout(alignment: .leading, spacing: 4)) : AnyLayout(HStackLayout())
                 authentication {
                     Text("Sign in with").foregroundStyle(.secondary)
                     if !dynamicType.isAccessibilitySize { Spacer() }
-                    Menu {
-                        Button("Password") { useKey = false; session.clearRecovery() }
-                        Button("SSH Key") { useKey = true; session.clearRecovery() }
-                    } label: { HStack(spacing: 6) { Text(useKey ? "SSH Key" : "Password").fontWeight(.semibold).fixedSize(horizontal: true, vertical: false); Image(systemName: "chevron.down").font(.system(size: 12, weight: .semibold)) }.foregroundStyle(.primary).frame(minHeight: 44) }.tint(.primary)
+                    Picker("Sign in with", selection: Binding(get: { login.method }, set: selectLoginMethod)) {
+                        ForEach(TerminalLoginMethod.allCases) { Text($0.rawValue).tag($0) }
+                    }.pickerStyle(.menu).labelsHidden().tint(.primary)
+                        .accessibilityIdentifier("terminal-login-method")
                 }.font(.subheadline)
                 let notice = loginIssue ?? session.recovery
                 if let notice { DirectConnectionNotice(notice: notice) }
@@ -227,16 +269,21 @@ struct DirectTerminalView: View {
                         Button(secondary.title, action: secondary.perform).font(.subheadline).foregroundStyle(.secondary).frame(maxWidth: .infinity, minHeight: 44)
                     }
                 } else { connectionButton("Connect", enabled: canConnect, perform: connect) }
-                Menu {
-                    Button("Connection Details", systemImage: "info.circle") { sheet = .connectionInfo }
-                    if notice != nil { Button("Error Details", systemImage: "exclamationmark.circle") { sheet = .errorDetails } }
-                    Button("Mac Settings", systemImage: "gearshape") { sheet = .macSettings }
-                    Button("Choose or Manage SSH Key", systemImage: "key") { sheet = .keys }
-                    Button("Set Up Key on This Mac", systemImage: "key.horizontal", action: setupKey).accessibilityIdentifier("terminal-setup-ssh-key")
-                    Button("Manual Key Setup", systemImage: "list.bullet") { sheet = .manual }
-                } label: { Label("Connection Details", systemImage: "info.circle").font(.subheadline).foregroundStyle(.secondary).frame(maxWidth: .infinity, minHeight: 44) }
-                    .tint(.secondary).accessibilityIdentifier("terminal-login-details")
+                detailsButton(notice: notice)
             }
+        }
+    }
+    @ViewBuilder private func detailsButton(notice: DirectRecoveryNotice?) -> some View {
+        if let notice {
+            if !notice.details.isEmpty {
+                Button { sheet = .errorDetails(notice) } label: {
+                    Label("Issue Details", systemImage: "info.circle").font(.subheadline).frame(maxWidth: .infinity, minHeight: 44)
+                }.accessibilityIdentifier("terminal-login-details")
+            }
+        } else {
+            Button { sheet = .connectionInfo } label: {
+                Label("Connection Details", systemImage: "info.circle").font(.subheadline).frame(maxWidth: .infinity, minHeight: 44)
+            }.accessibilityIdentifier("terminal-login-details")
         }
     }
     private func connectionButton(_ title: String, symbol: String? = nil, enabled: Bool = true, perform: @escaping () -> Void) -> some View {
@@ -272,6 +319,29 @@ struct DirectTerminalView: View {
         }.padding(14).frame(maxWidth: .infinity, alignment: .leading)
             .background(Color(uiColor: DirectConnectionStyle.field), in: RoundedRectangle(cornerRadius: 16))
             .overlay(RoundedRectangle(cornerRadius: 16).stroke(Color(uiColor: .separator).opacity(0.25)))
+    }
+}
+
+struct TerminalConnectionIssueView: View {
+    let notice: DirectRecoveryNotice
+    @Environment(\.dismiss) private var dismiss
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    Text(notice.title).font(.headline)
+                    Text(notice.message).accessibilityIdentifier("terminal-issue-message")
+                }
+                if !notice.details.isEmpty {
+                    Section("Details") {
+                        ForEach(Array(notice.details.enumerated()), id: \.offset) { offset, detail in
+                            LabeledContent(detail.name, value: detail.value).accessibilityIdentifier("terminal-issue-detail-\(offset)")
+                        }
+                    }
+                }
+            }.navigationTitle("Connection Issue").navigationBarTitleDisplayMode(.inline)
+                .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
+        }.presentationDetents([.medium, .large])
     }
 }
 

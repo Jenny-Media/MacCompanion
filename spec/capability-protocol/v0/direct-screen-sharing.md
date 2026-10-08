@@ -424,7 +424,29 @@ default-on opt-out setting, identify Terminal, and offer scoped Resume/End actio
 Paused/stale wording MUST NOT promise an indefinitely live connection: iOS may
 suspend the app and the server/network may close SSH while it is away.
 Never replay shell input on reconnection.
+Retain the SSH server's exit status or exit signal until PTY output has drained.
+Only a reported exit status of zero, followed by channel closure without a transport
+error, returns to My Macs and ends the session's Live Activity. Nonzero status,
+exit signal, missing status, and transport failure offer explicit recovery instead.
+Never infer shell completion by inspecting typed input. Completion from an old
+session cannot dismiss a replacement session; navigation waits for app unlock and
+active foreground state. Recovery with retained credentials offers a new shell
+without replaying input or claiming to restore the previous process. Ordinary
+connection failures do not offer Change Login; authentication failures retain
+editable credentials and the Password/SSH Key choice. Issue Details appears only
+with additional safe details, and captures the notice when tapped so subsequent
+session changes cannot empty or replace the presented issue.
 Remote OSC clipboard reads are denied and writes/URL launches require user action.
+
+My Macs uses the leading icon for detected hardware. Name, plain Open Desktop,
+Open Terminal or Open Trackpad & Keyboard text, and address share one text column.
+The hardware badge and sole trailing menu control center vertically against that
+column; the row has no connection-action icon or disclosure chevron. Text wraps
+at larger sizes. Desktop's menu item uses a window symbol distinct from hardware.
+Library file version 5 persists manual array order. Older files initially retain
+the previous alphabetical presentation. Reordering preserves record UUIDs, logins,
+server trust, and the selected free Mac. Order is local to each device: cloud
+metadata merges preserve surviving local positions and append new records.
 
 ## SSH key login and opt-in iCloud library sync
 
@@ -512,7 +534,14 @@ to eight seconds and 128 service instances, only while foreground and unlocked.
 It resolves service hosts and numeric addresses for presentation matching only.
 It never dials, imports addresses, changes ports, authenticates, or selects a Mac.
 Permission denial, missing advertisements and resolution failures preserve manual
-setup and the last detected metadata. Refresh is explicit or on foreground entry.
+setup and the last detected metadata. Reuse persisted metadata on launch,
+foreground entry and ordinary editor entry. Automatic detection runs only for a
+new Mac's valid addresses or edited address/service-port endpoints, with input
+debouncing. Saving before that debounce completes still starts the bounded scan.
+An unchanged draft does not repeatedly scan. Refresh Mac Details in the editor
+and pull-to-refresh in My Macs explicitly refresh metadata, including previously
+unknown models and renamed Macs. Foreground/unlock resumes no automatic scan;
+inactivity still cancels an active scan without publishing partial results.
 
 Match only exact normalized configured hostnames or numeric addresses, with the
 corresponding saved Screen Sharing/SSH port. Do not match by display name, substring,

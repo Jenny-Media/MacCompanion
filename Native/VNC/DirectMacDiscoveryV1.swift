@@ -17,8 +17,8 @@ import UIKit
     @ObservationIgnored private var models: [String: String] = [:]
     @ObservationIgnored private var deadline: Task<Void, Never>?
 
-    func start() {
-        guard !scanning, DirectAppLockV1.shared.canAccess, UIApplication.shared.applicationState == .active else { return }
+    @discardableResult func start() -> Bool {
+        guard !scanning, DirectAppLockV1.shared.canAccess, UIApplication.shared.applicationState == .active else { return false }
         stop()
         identities = []; resolved = [:]; models = [:]; unavailable = false; scanning = true
         for type in ["_rfb._tcp.", "_ssh._tcp."] {
@@ -31,6 +31,7 @@ import UIKit
             guard !Task.isCancelled else { return }
             self?.finish()
         }
+        return true
     }
     func stop() {
         deadline?.cancel(); deadline = nil; scanning = false

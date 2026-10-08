@@ -109,7 +109,7 @@ enum DesktopCredentialStoreV1 {
 }
 
 @MainActor @Observable final class DirectMacLibraryV1 {
-    private struct File: Codable { var version = 4; var macs: [DirectMacRecordV1] }
+    private struct File: Codable { var version = 5; var macs: [DirectMacRecordV1] }
     private(set) var macs: [DirectMacRecordV1] = []
     private(set) var readable = true
     var recovery: DirectRecoveryNotice?
@@ -134,12 +134,12 @@ enum DesktopCredentialStoreV1 {
         do {
             if FileManager.default.fileExists(atPath: url.path) {
                 let file = try JSONDecoder().decode(File.self, from: Data(contentsOf: url))
-                guard (1...4).contains(file.version), file.macs.count <= 64,
+                guard (1...5).contains(file.version), file.macs.count <= 64,
                       Set(file.macs.map(\.id)).count == file.macs.count else { throw DirectMacRecordV1.LibraryFailure.invalid }
                 for mac in file.macs {
                     _ = try mac.validated()
                 }
-                macs = file.macs
+                macs = file.version < 5 ? file.macs.sorted(by: Self.alphabetical) : file.macs
             }
             readable = true; recovery = nil
         } catch { readable = false; recovery = .make(.savedDataUnavailable, message: "Saved Macs couldn’t be read. Existing data is kept. Retry when device storage is available; unreadable data won’t be replaced.") }
@@ -197,7 +197,23 @@ enum DesktopCredentialStoreV1 {
     func applyCloud(_ next: [DirectMacRecordV1]) throws {
         guard readable, next.count <= 64, Set(next.map(\.id)).count == next.count else { throw DirectCloudError.invalid }
         try next.forEach { _ = try $0.validated() }
-        if next != macs { try write(next) }
+        let records = Dictionary(uniqueKeysWithValues: next.map { ($0.id, $0) })
+        let existingIDs = Set(macs.map(\.id))
+        let ordered = macs.compactMap { records[$0.id] } + next.filter { !existingIDs.contains($0.id) }.sorted(by: Self.alphabetical)
+        if ordered != macs { try write(ordered) }
+    }
+    private static func alphabetical(_ lhs: DirectMacRecordV1, _ rhs: DirectMacRecordV1) -> Bool {
+        let comparison = lhs.name.localizedStandardCompare(rhs.name)
+        return comparison == .orderedSame ? lhs.id.uuidString < rhs.id.uuidString : comparison == .orderedAscending
+    }
+    @discardableResult func move(fromOffsets offsets: IndexSet, toOffset destination: Int) -> Bool {
+        guard readable, !offsets.isEmpty, offsets.allSatisfy({ macs.indices.contains($0) }),
+              (0...macs.count).contains(destination) else { return false }
+        let moving = offsets.map { macs[$0] }
+        var next = macs.enumerated().filter { !offsets.contains($0.offset) }.map(\.element)
+        next.insert(contentsOf: moving, at: destination - offsets.filter { $0 < destination }.count)
+        do { try write(next); return true }
+        catch { failure = "The new order couldn’t be saved. Your previous order is kept."; return false }
     }
     private func write(_ next: [DirectMacRecordV1]) throws {
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -219,12 +235,13 @@ struct DirectMacLibraryRootV1: View {
     @State private var setup = false
     @State private var settings = false
     @State private var search = ""
+    @State private var editMode: EditMode = .inactive
     @State private var pro = DirectProAccess.shared
     @State private var paywall = false
+    @ScaledMetric(relativeTo: .title2) private var menuIconSize = 22
     @Environment(\.scenePhase) private var scenePhase
     private var visibleMacs: [DirectMacRecordV1] {
         library.macs.filter { search.isEmpty || $0.name.localizedCaseInsensitiveContains(search) || $0.addresses.contains { $0.localizedCaseInsensitiveContains(search) } }
-            .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
     }
 
     var body: some View {
@@ -251,40 +268,37 @@ struct DirectMacLibraryRootV1: View {
                         ForEach(visibleMacs) { mac in
                             HStack(spacing: 12) {
                                 Button { open(mac, input: mac.preferredConnection.inputOnly, terminalMode: mac.preferredConnection.terminalMode) } label: {
-                                    HStack(spacing: 14) {
-                                        Image(systemName: mac.family.symbol).font(.title2).foregroundStyle(.blue)
-                                            .frame(width: 44, height: 44).background(.blue.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
-                                        VStack(alignment: .leading, spacing: 4) {
-                                            Text(mac.name).font(.headline).foregroundStyle(.primary)
-                                            Label(mac.preferredConnection.title, systemImage: mac.preferredConnection.symbol)
-                                                .font(.caption).foregroundStyle(.secondary)
-                                            Text(mac.addresses.count > 1 ? "\(mac.address) · \(mac.addresses.count) addresses" : mac.address).font(.subheadline).foregroundStyle(.secondary)
+                                    DirectMacListRowLabel(mac: mac)
+                                }.buttonStyle(.plain).disabled(editMode.isEditing)
+                                    .accessibilityLabel("Connect to " + mac.name + " using " + mac.preferredConnection.title)
+                                    .accessibilityHint(mac.family.title)
+                                if !editMode.isEditing {
+                                    Menu {
+                                        Section("Connect") {
+                                            Button("Desktop", systemImage: DirectMacConnection.desktop.symbol) { open(mac, input: false, terminalMode: false) }
+                                            Button("Trackpad & Keyboard", systemImage: "rectangle.and.hand.point.up.left") { open(mac, input: true, terminalMode: false) }
+                                            Button("Terminal", systemImage: "terminal") { open(mac, input: false, terminalMode: true) }
                                         }
-                                        Spacer(minLength: 0)
-                                        Image(systemName: "chevron.right").font(.caption.bold()).foregroundStyle(.tertiary)
-                                    }.contentShape(Rectangle())
-                                }.buttonStyle(.plain).accessibilityLabel("Connect to " + mac.name + " using " + mac.preferredConnection.title)
-                                Menu {
-                                    Section("Connect") {
-                                        Button("Desktop", systemImage: "desktopcomputer") { open(mac, input: false, terminalMode: false) }
-                                        Button("Trackpad & Keyboard", systemImage: "rectangle.and.hand.point.up.left") { open(mac, input: true, terminalMode: false) }
-                                        Button("Terminal", systemImage: "terminal") { open(mac, input: false, terminalMode: true) }
-                                    }
-                                    Section("Manage Mac") {
-                                        Button("Mac Settings", systemImage: "gearshape") { edit(mac) }
-                                        if !pro.hasPro { Button("Use as My Free Mac") { pro.chooseFreeMac(mac.id) } }
-                                        Button("Remove Mac", systemImage: "trash", role: .destructive) { removing = mac }
-                                    }
-                                } label: { Image(systemName: "ellipsis.circle").font(.title2).frame(width: 44, height: 44) }
-                                    .accessibilityLabel("Manage " + mac.name)
+                                        Section("Manage Mac") {
+                                            Button("Mac Settings", systemImage: "gearshape") { edit(mac) }
+                                            if !pro.hasPro { Button("Use as My Free Mac") { pro.chooseFreeMac(mac.id) } }
+                                            Button("Remove Mac", systemImage: "trash", role: .destructive) { removing = mac }
+                                        }
+                                    } label: { Image(systemName: "ellipsis.circle").font(.system(size: min(menuIconSize, 32))).frame(width: 44, height: 44) }
+                                        .accessibilityLabel("Manage " + mac.name)
+                                }
                             }.padding(.vertical, 4)
                                 .swipeActions {
                                     Button("Remove", role: .destructive) { removing = mac }
                                     Button("Edit") { edit(mac) }.tint(.blue)
                                 }
-                        }
+                        }.onMove { offsets, destination in
+                            guard search.isEmpty else { return }
+                            if let first = library.macs.first { _ = pro.canUseMac(first.id, among: library.macs.map(\.id)) }
+                            library.move(fromOffsets: offsets, toOffset: destination)
+                        }.moveDisabled(!search.isEmpty)
                         if visibleMacs.isEmpty { Text("No matching Macs").foregroundStyle(.secondary) }
-                    } footer: { Text("Tap a Mac to open its preferred connection. Change Open on Tap in Mac Settings, or choose a mode from its menu.") }
+                    } footer: { Text(editMode.isEditing ? "Drag the handles to reorder your Macs." : "Tap a Mac to open its preferred connection. Change Open on Tap in Mac Settings, or choose a mode from its menu.") }
                 }
                 Section {
                     Button("App Settings", systemImage: "gearshape") { settings = true }
@@ -295,25 +309,34 @@ struct DirectMacLibraryRootV1: View {
             }
             .navigationTitle("My Macs")
             .searchable(text: $search, prompt: "Find a Mac")
+            .onChange(of: search) { _, value in if !value.isEmpty { editMode = .inactive } }
             .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    if library.readable && library.macs.count > 1 {
+                        Button(editMode.isEditing ? "Done" : "Edit") {
+                            withAnimation { editMode = editMode.isEditing ? .inactive : .active }
+                        }.disabled(!search.isEmpty).accessibilityIdentifier("macs-edit-order")
+                    }
+                }
                 ToolbarItem(placement: .primaryAction) {
                     Button("Add Mac", systemImage: "plus") { edit(nil) }.disabled(!library.readable)
                 }
             }
+            .environment(\.editMode, $editMode)
             .sheet(item: $editor) { selection in DirectMacEditorV1(mac: selection.mac, library: library) }
             .sheet(isPresented: $setup) { DirectMacSetupV1() }
             .sheet(isPresented: $settings) { DirectSessionSettingsV1() }
             .sheet(isPresented: $paywall) { DirectProView() }
-            .task { pro.start(); let keys = TerminalKeyLibrary(); keys.reload(macs: library.macs); library.discovery.start() }
+            .task { pro.start(); let keys = TerminalKeyLibrary(); keys.reload(macs: library.macs) }
             .refreshable {
                 library.discovery.start()
                 while library.discovery.scanning && !Task.isCancelled { try? await Task.sleep(for: .milliseconds(100)) }
             }
             .onChange(of: appLock.canAccess) { _, unlocked in
-                if unlocked && scenePhase == .active { library.discovery.start() } else { library.discovery.stop() }
+                if !unlocked { library.discovery.stop() }
             }
             .onChange(of: scenePhase) { _, phase in
-                if phase == .active { library.discovery.start(); Task { await pro.refresh() } }
+                if phase == .active { Task { await pro.refresh() } }
                 else { library.discovery.stop() }
             }
             .onDisappear { library.discovery.stop() }
@@ -389,6 +412,7 @@ struct DirectMacEditorV1: View {
         return try? .normalized(id: mac.id, name: name, addresses: addresses.map(\.address), port: resolvedPort, sshPort: resolvedSSHPort)
     }
     @State private var addressEditMode: EditMode = .inactive
+    @State private var lastAutomaticDiscoveryKey: String?
     init(mac: DirectMacRecordV1?, library: DirectMacLibraryV1) {
         self.mac = mac; self.library = library
         _name = State(initialValue: mac?.name ?? "My Mac")
@@ -414,6 +438,16 @@ struct DirectMacEditorV1: View {
         return Set(addresses.map { $0.address.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }) == Set(mac.addresses)
             && resolvedPort == mac.port && resolvedSSHPort == mac.sshPort
     }
+    private var discoveryKey: String? {
+        guard let resolvedPort, let resolvedSSHPort,
+              let record = try? DirectMacRecordV1.normalized(name: "Mac", addresses: addresses.map(\.address), port: resolvedPort, sshPort: resolvedSSHPort) else { return nil }
+        return record.addresses.sorted().joined(separator: "|") + "|\(record.port)|\(record.sshPort)"
+    }
+    private var automaticDiscoveryKey: String? { sameSavedEndpoints ? nil : discoveryKey }
+    private func startAutomaticDiscovery() {
+        guard let key = automaticDiscoveryKey, key != lastAutomaticDiscoveryKey else { return }
+        if library.discovery.scanning || library.discovery.start() { lastAutomaticDiscoveryKey = key }
+    }
     private var detectedName: String? { detectedIdentity?.name ?? (sameSavedEndpoints ? mac?.detectedName : nil) }
     private var detectedModel: String? { detectedIdentity?.modelIdentifier ?? (sameSavedEndpoints ? mac?.modelIdentifier : nil) }
     private var sharedNames: String? {
@@ -436,11 +470,21 @@ struct DirectMacEditorV1: View {
                     LabeledContent("Mac Type") {
                         Label(detectedModel == nil ? "Not detected" : DirectMacFamily.detect(detectedModel).title,
                               systemImage: DirectMacFamily.detect(detectedModel).symbol)
+                            .labelStyle(.titleAndIcon)
                     }
-                    if library.discovery.scanning { ProgressView("Detecting Mac details…").font(.footnote) }
+                    if library.discovery.scanning {
+                        HStack(spacing: 8) {
+                            ProgressView().progressViewStyle(.circular)
+                            Text("Detecting Mac details…").font(.footnote).foregroundStyle(.secondary)
+                        }
+                    }
+                    Button("Refresh Mac Details", systemImage: "arrow.clockwise") {
+                        if library.discovery.start() { lastAutomaticDiscoveryKey = automaticDiscoveryKey }
+                    }.disabled(discoveryKey == nil || library.discovery.scanning)
+                        .accessibilityIdentifier("mac-refresh-details")
                     Text(library.discovery.unavailable
-                        ? "Local discovery is unavailable. Allow Local Network access in Settings to detect your Mac. You can still enter a name and address."
-                        : "Name and type detection uses your Mac’s local network advertisements. If unavailable, your saved name and icon are kept. Entering a custom name turns off automatic naming.")
+                        ? "Local discovery is unavailable. Allow Local Network access in Settings to refresh."
+                        : "Details are saved. Refresh to check for changes.")
                         .font(.footnote).foregroundStyle(.secondary)
                     if name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || name.count > 80 || name.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) { Text("Use a name from 1 to 80 characters, without control characters.").font(.footnote).foregroundStyle(.secondary) }
                 }
@@ -531,7 +575,13 @@ struct DirectMacEditorV1: View {
                 case .pro: DirectProView()
                 }
             }
-            .task { refreshSelectedKey(); library.discovery.start() }
+            .task { refreshSelectedKey() }
+            .task(id: automaticDiscoveryKey) {
+                guard automaticDiscoveryKey != nil else { return }
+                do { try await Task.sleep(for: .milliseconds(500)) } catch { return }
+                guard !Task.isCancelled else { return }
+                startAutomaticDiscovery()
+            }
             .onChange(of: detectedName) { _, detected in if usesAutomaticName, let detected { name = detected } }
             .onChange(of: usesAutomaticName) { _, automatic in if automatic, let detectedName { name = detectedName } }
             .environment(\.editMode, $addressEditMode)
@@ -544,7 +594,7 @@ struct DirectMacEditorV1: View {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save") {
                         if mac == nil && !DirectProAccess.shared.canAddMac(count: library.macs.count) { sshSheet = .pro; return }
-                        if let resolvedPort, library.save(id: mac?.id, name: name, addresses: addresses.map(\.address), port: resolvedPort, sshPort: resolvedSSHPort, usesAutomaticName: usesAutomaticName, preferredConnection: preferredConnection) { dismiss() }
+                        if let resolvedPort, library.save(id: mac?.id, name: name, addresses: addresses.map(\.address), port: resolvedPort, sshPort: resolvedSSHPort, usesAutomaticName: usesAutomaticName, preferredConnection: preferredConnection) { startAutomaticDiscovery(); dismiss() }
                     }.disabled(!valid)
                 }
             }
@@ -645,6 +695,35 @@ struct DirectSessionSettingsV1: View {
             .navigationTitle("App Settings").navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
         }
+    }
+}
+
+struct DirectMacListRowLabel: View {
+    let mac: DirectMacRecordV1
+    @ScaledMetric(relativeTo: .title2) private var hardwareIconSize = 22
+    @ScaledMetric(relativeTo: .title2) private var badgeSize = 44
+
+    private var hardwareIcon: some View {
+        Image(systemName: mac.family.symbol).font(.system(size: min(hardwareIconSize, 32))).foregroundStyle(.blue)
+            .frame(width: min(badgeSize, 60), height: min(badgeSize, 60))
+            .background(.blue.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
+            .accessibilityHidden(true)
+    }
+    private var name: some View { Text(mac.name).font(.headline).foregroundStyle(.primary).fixedSize(horizontal: false, vertical: true) }
+    private var action: some View {
+        Text(mac.preferredConnection.actionTitle).font(.caption).foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+    private var address: some View {
+        Text(mac.addresses.count > 1 ? "\(mac.address) · \(mac.addresses.count) addresses" : mac.address)
+            .font(.subheadline).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+    }
+    var body: some View {
+        HStack(spacing: 14) {
+            hardwareIcon
+            VStack(alignment: .leading, spacing: 4) { name; action; address }
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }.frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
     }
 }
 

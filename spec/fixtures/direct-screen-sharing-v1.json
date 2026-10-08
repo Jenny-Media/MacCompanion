@@ -474,7 +474,16 @@
     "duplicateAddressWithinRecordAllowed": false,
     "credentialScope": "macUUID",
     "forgetLoginDeletesCredential": true,
-    "removeRecordDeletesCredential": true
+    "removeRecordDeletesCredential": true,
+    "fileVersion": 5,
+    "orderScope": "device",
+    "legacyOrder": "alphabetical",
+    "leadingIcon": "hardware",
+    "connectionModeLabel": "actionText",
+    "cloudMergePreservesOrder": true,
+    "metadataRefresh": "explicitOrEndpointEdit",
+    "refreshOnForeground": false,
+    "refreshOnEditorEntry": false
   },
   "macLibraryEditCases": [
     {
@@ -2357,5 +2366,78 @@
       "expectedDetectedName": "Earlier Detected",
       "expectedModel": "Mac13,1"
     }
-  ]
+  ],
+  "terminalEndCases": [
+    {
+      "name": "normalExit",
+      "exitStatus": 0,
+      "exitSignal": null,
+      "transportFailed": false,
+      "currentSession": true,
+      "returnToMacs": true
+    },
+    {
+      "name": "nonzeroExit",
+      "exitStatus": 1,
+      "exitSignal": null,
+      "transportFailed": false,
+      "currentSession": true,
+      "returnToMacs": false
+    },
+    {
+      "name": "signalled",
+      "exitStatus": null,
+      "exitSignal": "TERM",
+      "transportFailed": false,
+      "currentSession": true,
+      "returnToMacs": false
+    },
+    {
+      "name": "unexplainedClose",
+      "exitStatus": null,
+      "exitSignal": null,
+      "transportFailed": false,
+      "currentSession": true,
+      "returnToMacs": false
+    },
+    {
+      "name": "transportLossAfterStatus",
+      "exitStatus": 0,
+      "exitSignal": null,
+      "transportFailed": true,
+      "currentSession": true,
+      "returnToMacs": false
+    },
+    {
+      "name": "staleCompletion",
+      "exitStatus": 0,
+      "exitSignal": null,
+      "transportFailed": false,
+      "currentSession": false,
+      "returnToMacs": false
+    }
+  ],
+  "connectionActionCases": [
+    {
+      "mode": "desktop",
+      "title": "Open Desktop",
+      "symbol": "macwindow"
+    },
+    {
+      "mode": "terminal",
+      "title": "Open Terminal",
+      "symbol": "terminal"
+    },
+    {
+      "mode": "trackpad",
+      "title": "Open Trackpad & Keyboard",
+      "symbol": "rectangle.and.hand.point.up.left"
+    }
+  ],
+  "terminalRecoveryPresentation": {
+    "changeLoginForTransportFailure": false,
+    "authenticationFieldsForLoginFailure": true,
+    "issueDetailsRequiresAdditionalDetails": true,
+    "issueDetailsSnapshot": "onTap"
+  }
 }

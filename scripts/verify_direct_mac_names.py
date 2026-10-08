@@ -21,7 +21,7 @@ start = key_source.index('static func validName(')
 end = key_source.index('\n        }', start) + len('\n        }')
 key_name = key_source[start:end]
 checks = r'''
-struct LibraryFile: Codable { var version = 4; var macs: [DirectMacRecordV1] }
+struct LibraryFile: Codable { var version = 5; var macs: [DirectMacRecordV1] }
 let data = try Data(contentsOf: URL(fileURLWithPath: CommandLine.arguments[1]))
 let profile = try JSONSerialization.jsonObject(with: data) as! [String: Any]
 let vectors = profile["macLibraryNameCases"] as! [[String: Any]]
@@ -39,7 +39,7 @@ for (index, vector) in vectors.enumerated() {
     }
 }
 let decoded = try JSONDecoder().decode(LibraryFile.self, from: JSONEncoder().encode(LibraryFile(macs: records)))
-guard decoded.version == 4, decoded.macs == records else { exit(1) }
+guard decoded.version == 5, decoded.macs == records else { exit(1) }
 for mac in decoded.macs {
     guard try mac.validated() == mac else { exit(1) }
 }
@@ -115,7 +115,7 @@ print("Mac identity matching, icon families, legacy migration and all tap destin
     precondition(library.macs[0].detectedName == nil && library.macs[0].modelIdentifier == nil)
     precondition(library.macs[0].preferredConnection == .trackpad)
     let envelope = try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as! [String: Any]
-    precondition(envelope["version"] as! Int == 4 && changes.allSatisfy { $0 == macID } && removed.isEmpty)
+    precondition(envelope["version"] as! Int == 5 && changes.allSatisfy { $0 == macID } && removed.isEmpty)
     var corrupt = envelope
     var macs = corrupt["macs"] as! [[String: Any]]
     macs[0]["modelIdentifier"] = "invalid\nmodel"; corrupt["macs"] = macs

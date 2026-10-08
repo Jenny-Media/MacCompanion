@@ -1,9 +1,59 @@
 import XCTest
 import UIKit
+import SwiftUI
 @testable import Mac_Companion
 
 @MainActor final class UIReadabilityTests: XCTestCase {
     private func descendants(_ view: UIView) -> [UIView] { [view] + view.subviews.flatMap(descendants) }
+    func testLoginMethodKeepsSeparateAccountsAndDoesNotResetOnKeyReload() {
+        var selection = TerminalLoginSelection()
+        selection.loadPasswordAccount("synthetic-password-account")
+        selection.loadKeyAccount("synthetic-key-account", preferSelected: true)
+        XCTAssertEqual(selection.method, .sshKey); XCTAssertEqual(selection.username, "synthetic-key-account")
+        selection.select(.password)
+        XCTAssertEqual(selection.username, "synthetic-password-account")
+        selection.username = "edited-password-account"
+        selection.loadKeyAccount("updated-key-account", preferSelected: false)
+        XCTAssertEqual(selection.method, .password); XCTAssertEqual(selection.username, "edited-password-account")
+        selection.select(.sshKey); XCTAssertEqual(selection.username, "updated-key-account")
+        selection.select(.password); XCTAssertEqual(selection.username, "edited-password-account")
+    }
+    func testRecoveryCardWithRetainedLoginRendersWithoutTheFullSignInForm() async throws {
+        let mac = try DirectMacRecordV1.normalized(name: "Synthetic Mac", address: "synthetic.local")
+        try TerminalSecretStore.save(.init(username: "synthetic", password: "synthetic-only"), id: mac.id)
+        let session = DirectTerminalSession(mac: mac)
+        session.recovery = .make(.terminalEnded, message: "The connection was lost. Open a new shell to continue.")
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let previous = scene.windows.first(where: \.isKeyWindow), window = UIWindow(windowScene: scene)
+        window.rootViewController = UIHostingController(rootView: DirectTerminalView(mac: mac, session: session, autoConnect: false, exit: {}).directAppearance())
+        window.makeKeyAndVisible()
+        defer { session.stop(); window.isHidden = true; window.rootViewController = nil; previous?.makeKeyAndVisible(); try? TerminalSecretStore.remove(mac.id) }
+        try await Task.sleep(for: .milliseconds(300)); window.layoutIfNeeded()
+        XCTAssertNotNil(window.rootViewController?.view.window)
+        XCTAssertEqual(session.recovery?.reason, .terminalEnded); XCTAssertFalse(session.connecting)
+        let image = UIGraphicsImageRenderer(size: window.bounds.size).image { _ in window.drawHierarchy(in: window.bounds, afterScreenUpdates: true) }
+        let attachment = XCTAttachment(image: image); attachment.name = "compact-synthetic-terminal-recovery"; attachment.lifetime = .keepAlways; add(attachment)
+    }
+    func testMacTypeRowDoesNotReserveAnExpandedIconHeight() async throws {
+        let folder = URL.temporaryDirectory.appending(path: UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let library = DirectMacLibraryV1(url: folder.appending(path: "macs.json"))
+        XCTAssertTrue(library.save(id: nil, name: "Synthetic Laptop", address: "synthetic.local"))
+        library.updateDetectedMetadata([.init(name: "Synthetic Laptop", host: "synthetic.local", addresses: ["synthetic.local"], port: 5900, connection: .desktop, modelIdentifier: "MacBookPro18,1")])
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let previous = scene.windows.first(where: \.isKeyWindow), window = UIWindow(windowScene: scene)
+        window.rootViewController = UIHostingController(rootView: DirectMacEditorV1(mac: library.macs[0], library: library).directAppearance())
+        window.makeKeyAndVisible()
+        defer { library.discovery.stop(); window.isHidden = true; window.rootViewController = nil; previous?.makeKeyAndVisible() }
+        try await Task.sleep(for: .milliseconds(700)); window.layoutIfNeeded()
+        XCTAssertFalse(library.discovery.scanning, "Opening saved Mac settings must reuse cached metadata")
+        let list = try XCTUnwrap(descendants(window).compactMap { $0 as? UICollectionView }.first)
+        let initialCells = list.visibleCells.filter { list.indexPath(for: $0)?.section == 0 }
+        XCTAssertGreaterThanOrEqual(initialCells.count, 4)
+        for cell in initialCells { XCTAssertLessThan(cell.bounds.height, 180, "The Mac Type icon must not stretch its form row") }
+        let image = UIGraphicsImageRenderer(size: window.bounds.size).image { _ in window.drawHierarchy(in: window.bounds, afterScreenUpdates: true) }
+        let attachment = XCTAttachment(image: image); attachment.name = "compact-synthetic-mac-editor"; attachment.lifetime = .keepAlways; add(attachment)
+    }
     func testTerminalKeysGrowAndRemainScrollableWhenTextSizeChanges() throws {
         let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
         let window = UIWindow(windowScene: scene), holder = UIViewController()
