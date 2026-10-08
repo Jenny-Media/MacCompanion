@@ -8,6 +8,11 @@
 @property(nonatomic, readonly) BOOL running;
 @property(nonatomic, readonly) BOOL connected;
 @property(nonatomic) BOOL inputOnly;
+@property(nonatomic, readonly) BOOL nativeMagnificationSupported;
+- (BOOL)beginMagnificationX:(NSInteger)x y:(NSInteger)y;
+- (BOOL)changeMagnification:(double)delta;
+- (void)endMagnification;
+- (void)cancelMagnification;
 - (BOOL)tryClickX:(NSInteger)x y:(NSInteger)y mask:(NSInteger)mask;
 - (void)pauseWithCompletion:(void (^)(void))completion;
 - (void)resume;

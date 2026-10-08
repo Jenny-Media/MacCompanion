@@ -154,11 +154,11 @@
       "valid": false
     },
     {
-      "value": "\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9",
+      "value": "ééééééééééééééééééééééééééééééé",
       "valid": true
     },
     {
-      "value": "\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9",
+      "value": "éééééééééééééééééééééééééééééééé",
       "valid": false
     },
     {
@@ -1168,16 +1168,16 @@
     },
     {
       "id": "unicode",
-      "value": "\u5de5\u4f5c Mac",
+      "value": "工作 Mac",
       "macValid": true,
-      "normalizedName": "\u5de5\u4f5c Mac",
+      "normalizedName": "工作 Mac",
       "keyValid": true
     },
     {
       "id": "emoji",
-      "value": "Mac \ud83d\udda5\ufe0f",
+      "value": "Mac 🖥️",
       "macValid": true,
-      "normalizedName": "Mac \ud83d\udda5\ufe0f",
+      "normalizedName": "Mac 🖥️",
       "keyValid": true
     },
     {
@@ -1213,7 +1213,7 @@
     },
     {
       "id": "bidi-format",
-      "value": "Mac\u202e",
+      "value": "Mac‮",
       "macValid": false,
       "keyValid": false
     },
@@ -1514,5 +1514,258 @@
     ],
     "decodeFailureStage": 103,
     "invalidZRLETileHex": "ff"
-  }
+  },
+  "nativeMagnificationCases": [
+    {
+      "name": "begin-touch-v1-and-magnify-v2",
+      "phase": 1,
+      "delta": 0,
+      "x": 1000,
+      "y": 600,
+      "width": 3024,
+      "height": 1964,
+      "active": false,
+      "valid": true,
+      "hex": "1700000c000100010000000303e802581700002000020003000000000000000003e8025800000000000000010000000000000004"
+    },
+    {
+      "name": "positive-change",
+      "phase": 2,
+      "delta": 0.05,
+      "x": 1000,
+      "y": 600,
+      "width": 3024,
+      "height": 1964,
+      "active": true,
+      "valid": true,
+      "hex": "17000020000200033fa999999999999a03e8025800000000000000020000000000000004"
+    },
+    {
+      "name": "negative-change",
+      "phase": 2,
+      "delta": -0.05,
+      "x": 1000,
+      "y": 600,
+      "width": 3024,
+      "height": 1964,
+      "active": true,
+      "valid": true,
+      "hex": "1700002000020003bfa999999999999a03e8025800000000000000020000000000000004"
+    },
+    {
+      "name": "end-magnify-v2-and-touch-v1",
+      "phase": 4,
+      "delta": 0,
+      "x": 1000,
+      "y": 600,
+      "width": 3024,
+      "height": 1964,
+      "active": true,
+      "valid": true,
+      "hex": "1700002000020003000000000000000003e80258000000000000000400000000000000041700000c000100020000000303e80258"
+    },
+    {
+      "name": "last-pixel",
+      "phase": 1,
+      "delta": 0,
+      "x": 16383,
+      "y": 16383,
+      "width": 16384,
+      "height": 16384,
+      "active": false,
+      "valid": true,
+      "hex": "1700000c00010001000000033fff3fff170000200002000300000000000000003fff3fff00000000000000010000000000000004"
+    },
+    {
+      "name": "begin-twice",
+      "phase": 1,
+      "delta": 0,
+      "x": 1,
+      "y": 1,
+      "width": 10,
+      "height": 10,
+      "active": true,
+      "valid": false,
+      "hex": ""
+    },
+    {
+      "name": "change-without-begin",
+      "phase": 2,
+      "delta": 0.1,
+      "x": 1,
+      "y": 1,
+      "width": 10,
+      "height": 10,
+      "active": false,
+      "valid": false,
+      "hex": ""
+    },
+    {
+      "name": "end-without-begin",
+      "phase": 4,
+      "delta": 0,
+      "x": 1,
+      "y": 1,
+      "width": 10,
+      "height": 10,
+      "active": false,
+      "valid": false,
+      "hex": ""
+    },
+    {
+      "name": "appkit-ended-is-not-cg-ended",
+      "phase": 8,
+      "delta": 0,
+      "x": 1,
+      "y": 1,
+      "width": 10,
+      "height": 10,
+      "active": true,
+      "valid": false,
+      "hex": ""
+    },
+    {
+      "name": "nonzero-begin",
+      "phase": 1,
+      "delta": 0.1,
+      "x": 1,
+      "y": 1,
+      "width": 10,
+      "height": 10,
+      "active": false,
+      "valid": false,
+      "hex": ""
+    },
+    {
+      "name": "nonzero-end",
+      "phase": 4,
+      "delta": 0.1,
+      "x": 1,
+      "y": 1,
+      "width": 10,
+      "height": 10,
+      "active": true,
+      "valid": false,
+      "hex": ""
+    },
+    {
+      "name": "excess-delta",
+      "phase": 2,
+      "delta": 0.51,
+      "x": 1,
+      "y": 1,
+      "width": 10,
+      "height": 10,
+      "active": true,
+      "valid": false,
+      "hex": ""
+    },
+    {
+      "name": "zero-width",
+      "phase": 1,
+      "delta": 0,
+      "x": 0,
+      "y": 0,
+      "width": 0,
+      "height": 10,
+      "active": false,
+      "valid": false,
+      "hex": ""
+    },
+    {
+      "name": "excess-width",
+      "phase": 1,
+      "delta": 0,
+      "x": 1,
+      "y": 1,
+      "width": 16385,
+      "height": 10,
+      "active": false,
+      "valid": false,
+      "hex": ""
+    },
+    {
+      "name": "x-outside",
+      "phase": 1,
+      "delta": 0,
+      "x": 10,
+      "y": 1,
+      "width": 10,
+      "height": 10,
+      "active": false,
+      "valid": false,
+      "hex": ""
+    },
+    {
+      "name": "negative-x",
+      "phase": 1,
+      "delta": 0,
+      "x": -1,
+      "y": 1,
+      "width": 10,
+      "height": 10,
+      "active": false,
+      "valid": false,
+      "hex": ""
+    },
+    {
+      "name": "y-outside",
+      "phase": 1,
+      "delta": 0,
+      "x": 1,
+      "y": 10,
+      "width": 10,
+      "height": 10,
+      "active": false,
+      "valid": false,
+      "hex": ""
+    }
+  ],
+  "nativeGestureSupportCases": [
+    {
+      "apple889": true,
+      "layoutValid": true,
+      "width": 3024,
+      "height": 1964,
+      "backingWidth": 3024,
+      "backingHeight": 1964,
+      "valid": true
+    },
+    {
+      "apple889": false,
+      "layoutValid": true,
+      "width": 3024,
+      "height": 1964,
+      "backingWidth": 3024,
+      "backingHeight": 1964,
+      "valid": false
+    },
+    {
+      "apple889": true,
+      "layoutValid": false,
+      "width": 3024,
+      "height": 1964,
+      "backingWidth": 3024,
+      "backingHeight": 1964,
+      "valid": false
+    },
+    {
+      "apple889": true,
+      "layoutValid": true,
+      "width": 1512,
+      "height": 982,
+      "backingWidth": 3024,
+      "backingHeight": 1964,
+      "valid": false
+    },
+    {
+      "apple889": true,
+      "layoutValid": true,
+      "width": 0,
+      "height": 0,
+      "backingWidth": 0,
+      "backingHeight": 0,
+      "valid": false
+    }
+  ]
 }

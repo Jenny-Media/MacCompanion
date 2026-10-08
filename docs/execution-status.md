@@ -1,3 +1,27 @@
+## 2026-10-07 — Native Mac-app pinch in Trackpad & Keyboard mode
+
+Three complete native magnification sequences passed on a retained authenticated
+loopback session, from Apple's built-in ScreensharingAgent to an AppKit view.
+The direct iPhone client now forwards input-only pinch with the verified v1
+boundaries and v2 magnification phases; Desktop image zoom stays local. Server
+banner and exact verified layout gate the optional extension. Cancellation,
+queue pressure, controls, mode/crop changes, pause and exit retire pending input
+and release an active gesture on the existing RFB owner. No Mac helper or zoom
+shortcut substitution is added. The normative direct profile and sole indexed
+fixtures were updated first.
+
+Stable Xcode 27.0 repository validation, 17 focused hosted tests and 17 native
+packet vectors plus 100 repeated encoder lifecycles pass. Normal development
+**1.0 (17)** is built, signed, installed and launched on iPhone 18 Pro Max; all
+**578** source inputs and existing app/widget/Keychain identities are verified.
+CoreDevice confirms build 17, installation sequence **9352** and launch PID
+**17704**. The user confirmed pinch works on the physical iPhone and authorized
+its source commit. Separate results for both Preview and Photos were not recorded.
+Two-finger scroll
+still uses the existing wheel path; Apple's precise-scroll lead remains research.
+Released macOS compatibility is unverified. No push or upload occurred.
+See [native gesture evidence](../Experiments/NativeTrackpadGestureProbe/EVIDENCE.md).
+
 ## 2026-10-07 — Mode control profiles, responsive scrolling and icon audit
 
 App Settings → Controls exposes Desktop, Terminal and Trackpad & Keyboard quick
@@ -18,8 +42,12 @@ Required stable-Xcode validation and **48** focused hosted checks pass. Sixteen
 synthetic captures cover offline free/Pro controls and category layouts; loopback
 SSH verifies configured input without reconnecting and stale Pro-action rejection.
 See the [controls, gesture and icon audit](controls-gesture-icon-audit-20261007.md).
-The iPhone remains on normal development **1.0 (15)**; these changes have not been
-installed, pushed or uploaded. Physical gesture acceptance remains pending.
+Source is committed as `dc5fae3`. Normal development **1.0 (16)** is built,
+signed, installed and launched on iPhone 18 Pro Max. All **577** source inputs,
+the signed binary and existing app/widget and private Keychain identities are
+verified. CoreDevice confirms build 16, installation sequence **9136** and launch
+PID **16779**. Physical gesture acceptance remains pending; no push or upload
+occurred.
 
 ## 2026-10-07 — Active Terminal menu and shared category clipping
 

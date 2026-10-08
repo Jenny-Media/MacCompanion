@@ -74,6 +74,8 @@
 @property UILabel *trackpadHelp;
 @property UIGestureRecognizer *click;
 @property UIPanGestureRecognizer *drag, *remoteScroll;
+@property UIPinchGestureRecognizer *remotePinch;
+@property BOOL magnificationActive;
 @property UILongPressGestureRecognizer *hold;
 @property CGPoint trackpadOrigin, holdOrigin;
 @property CGFloat scrollRemainder;
@@ -204,6 +206,9 @@
     self.remoteScroll.minimumNumberOfTouches = 2; self.remoteScroll.maximumNumberOfTouches = 2;
     self.remoteScroll.enabled = NO;
     [self.canvas addGestureRecognizer:self.remoteScroll];
+    self.remotePinch = [[UIPinchGestureRecognizer alloc] initWithTarget:self action:@selector(pinchRemote:)];
+    self.remotePinch.enabled = self.inputOnly;
+    [self.canvas addGestureRecognizer:self.remotePinch];
     UITapGestureRecognizer *smart = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(smartZoom:)];
     smart.numberOfTapsRequired = 2; smart.numberOfTouchesRequired = 2;
     [self.canvas addGestureRecognizer:smart];
@@ -802,7 +807,7 @@
         self.previousCanvasSize = size; self.zoomGeneration++; self.smartZoomPending = NO;
         self.previousCanvasInset = self.canvas.contentInset;
         [self releasePointer];
-        for (UIGestureRecognizer *gesture in [@[self.drag, self.hold, self.remoteScroll] arrayByAddingObjectsFromArray:self.tabletopGestures]) {
+        for (UIGestureRecognizer *gesture in [@[self.drag, self.hold, self.remoteScroll, self.remotePinch] arrayByAddingObjectsFromArray:self.tabletopGestures]) {
             BOOL enabled = gesture.enabled; gesture.enabled = NO; gesture.enabled = enabled;
         }
         [self.controls cancelSlideForLayoutChange];
@@ -869,7 +874,7 @@
 - (void)setTrackpadModeEnabled:(BOOL)enabled {
     [self releasePointer];
     // Cancel recognizers in progress before switching coordinate systems.
-    for (UIGestureRecognizer *gesture in [@[self.drag, self.hold, self.remoteScroll] arrayByAddingObjectsFromArray:self.tabletopGestures]) {
+    for (UIGestureRecognizer *gesture in [@[self.drag, self.hold, self.remoteScroll, self.remotePinch] arrayByAddingObjectsFromArray:self.tabletopGestures]) {
         BOOL enabled = gesture.enabled; gesture.enabled = NO; gesture.enabled = enabled;
     }
     self.controls.trackpad = enabled;
@@ -936,6 +941,33 @@
     BOOL held = gesture.state == UIGestureRecognizerStateBegan || gesture.state == UIGestureRecognizerStateChanged;
     if (held) [self followTrackpadPointer:p];
     self.lastPointer = p; self.pointerHeld = held; [self sendPointer:p mask:held ? 1 : 0];
+}
+- (void)pinchRemote:(UIPinchGestureRecognizer *)gesture {
+    if (gesture.state == UIGestureRecognizerStateEnded) {
+        if (self.magnificationActive) [self.session endMagnification];
+        self.magnificationActive = NO; return;
+    }
+    if (gesture.state == UIGestureRecognizerStateCancelled || gesture.state == UIGestureRecognizerStateFailed
+        || !self.inputOnly || !self.foreground || self.exited || self.checkingResume || !self.session.connected) {
+        [self.session cancelMagnification]; self.magnificationActive = NO; return;
+    }
+    if (gesture.state == UIGestureRecognizerStateBegan) {
+        [self releasePointer];
+        if (CGRectIsNull(self.activeCrop) || CGRectIsEmpty(self.activeCrop)) return;
+        CGPoint anchor = [self trackpadPointer];
+        self.magnificationActive = [self.session beginMagnificationX:anchor.x y:anchor.y];
+        if (!self.magnificationActive && !self.session.nativeMagnificationSupported) {
+            self.status.hidden = NO; self.status.text = @"Native pinch is unavailable for this connection.";
+        }
+    }
+    // UIPinch scale is relative to its last reset. Use incremental magnification,
+    // keeping the Mac cursor anchor fixed and rejecting invalid recognizer values.
+    double scale = gesture.scale; gesture.scale = 1;
+    if (!self.magnificationActive) return;
+    if (!isfinite(scale) || scale <= 0 || fabs(scale - 1) > .5
+        || (scale != 1 && ![self.session changeMagnification:scale - 1])) {
+        [self.session cancelMagnification]; self.magnificationActive = NO;
+    }
 }
 - (void)scrollRemote:(UIPanGestureRecognizer *)gesture {
     if (CGRectIsNull(self.activeCrop) || CGRectIsEmpty(self.activeCrop)) return;
@@ -1004,6 +1036,7 @@
     self.fallbackCursor.frame = self.cursorIndicator.bounds; [CATransaction commit];
 }
 - (void)releasePointer {
+    [self.session cancelMagnification]; self.magnificationActive = NO;
     if (self.pointerHeld) [self.session pointerX:self.lastPointer.x y:self.lastPointer.y mask:0];
     self.pointerHeld = NO;
 }
@@ -1118,7 +1151,7 @@
 }
 - (void)showGestureHelp {
     NSString *gestures = self.inputOnly
-        ? @"Slide anywhere to move the cursor. Tap to click. Hold, then move to drag. Scroll with two fingers.\n\nPinch zoom is available for the desktop image in Desktop mode; it does not zoom apps on your Mac."
+        ? [@"Slide anywhere to move the cursor. Tap to click. Hold, then move to drag. Scroll with two fingers.\n\n" stringByAppendingString:self.session.nativeMagnificationSupported ? @"Pinch to zoom the app on your Mac at the cursor." : @"Native pinch is unavailable for this connection."]
         : @"Pointer: tap where you want to click.\nTrackpad: slide anywhere to move the cursor; scroll with two fingers.\n\nTap to click. Hold, then move to drag.\nPan the zoomed view with two fingers in Pointer or three in Trackpad.\nPinch to zoom the desktop image. Double tap with two fingers to zoom in or fit.";
     NSString *message = [gestures stringByAppendingString:@"\n\nHold Session Controls, slide onto a quick action or category, then release. Slide away to cancel."];
     UIAlertController *help = [UIAlertController alertControllerWithTitle:@"Gestures" message:message preferredStyle:UIAlertControllerStyleAlert];
@@ -1195,6 +1228,7 @@
     self.canvasToolbarBottom.active = !self.tabletop && !self.fullscreen; self.canvasFullscreenBottom.active = !self.tabletop && self.fullscreen;
     self.image.hidden = self.inputOnly; self.cursorOverlay.hidden = self.inputOnly;
     self.canvas.pinchGestureRecognizer.enabled = !self.inputOnly;
+    self.remotePinch.enabled = self.inputOnly;
     self.canvas.backgroundColor = self.inputOnly ? UIColor.systemBackgroundColor : UIColor.blackColor;
     self.trackpadHelp.hidden = !self.inputOnly || !self.login.hidden;
     self.controls.fullscreen = self.fullscreen; self.controls.inputOnly = self.inputOnly;

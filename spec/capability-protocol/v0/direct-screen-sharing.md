@@ -115,7 +115,8 @@ fit. Normal clicks continue to control the Mac.
 Pointer mode uses absolute finger positioning; Trackpad uses relative movement
 independent of finger location. Tap clicks, hold-and-move drags, two-finger
 movement scrolls in Trackpad. Three fingers pan the local canvas in Trackpad;
-two fingers pan it in Pointer. Pinch and two-finger double tap stay local.
+two fingers pan it in Pointer. Desktop pinch and two-finger double tap stay local.
+Trackpad & Keyboard mode can send optional native magnification as specified below.
 Changing modes, crops, backgrounding, cancellation and exit release held buttons.
 One Done action disconnects and returns to My Macs; no separate active-session
 Disconnect button is presented. Explicit exit does not reconnect automatically. Background cancels a pending
@@ -137,10 +138,54 @@ available after the automatic attempt fails.
 Returning to My Macs permanently retires that viewer. Late native frame, cursor
 and status callbacks cannot revive a stopped or replaced connection.
 
+## Optional native magnification in Trackpad & Keyboard mode
+
+The direct client may forward pinch to the Mac app at the remote cursor, using
+Apple's observed event extension. Desktop pinch continues to zoom the local
+image. Native magnification requires the original server banner `RFB 003.889`,
+the existing successful ARD-30 login, and a valid version-5 display layout whose
+backing dimensions exactly match the current framebuffer. This is conservative
+compatibility gating, not an authenticated capability or an Apple compatibility
+promise. Unknown hosts/layouts send no extension and no zoom shortcuts. Display
+resize or replacement retires pending gestures and reevaluates this gate.
+
+The sole RFB owner sends these bounded messages in the existing input order.
+All multibyte fields are big endian. Each has opcode `0x17`, flags zero and a
+uint16 payload length. Begin/end boundaries use a 12-byte payload: uint16
+version **1**, uint16 kind **1** (begin) or **2** (end), uint32 AppKit touch subtype
+**3**, then uint16 framebuffer x/y. Magnification uses a 32-byte payload:
+uint16 version **2**, uint16 kind **3**, IEEE-754 double delta, uint16 x/y,
+uint64 raw CG phase and uint64 magnification mask **4**. Raw phases are
+**1/2/4** (began/changed/ended), distinct from AppKit phase values 1/4/8.
+
+A gesture sends a begin boundary and a zero-delta began magnification, finite
+incremental changed deltas in [-0.5, 0.5], then a zero-delta ended magnification
+and an end boundary. Begin/end groups are atomic in the input queue. Use
+`currentScale / previousScale - 1`, with a positive finite scale, and preserve
+a fixed cursor anchor inside the verified framebuffer for the whole gesture.
+Reject malformed phases, coordinates or deltas without partial packets or
+state changes. Ordinary pointer and key messages keep their existing semantics.
+
+Only one pinch is active at a time. Pending gesture events carry a cancellation
+epoch; events already copied by the owner must also check it before delivery.
+Cancellation, controls opening, mode/crop/layout changes, background pause and
+exit discard pending gestures and end any gesture actually begun. Queue pressure
+cancels the gesture rather than dropping its end. No change or end can begin a
+new gesture, and no stale pinch is replayed after resume/reconnect. If writing a
+boundary fails, retire the connection; never retry the partially written group.
+A disconnected socket cannot guarantee delivery of its final release.
+
+The wire layout is derived from the installed Apple client/server and verified
+by agent-originated AppKit magnification on the research Mac. See
+`Experiments/NativeTrackpadGestureProbe/EVIDENCE.md` for the evidence boundary.
+Released macOS compatibility and Preview/Photos acceptance remain separate gates.
+No experiment or Mac helper is linked into the iOS app.
+
 ## Authoritative fixtures
 
 `spec/fixtures/manifest.json` indexes `direct-screen-sharing-v1.json`. It contains
-numeric endpoint, login and version-5 Apple display-layout boundary cases for
+numeric endpoint, login, version-5 Apple display-layout and native magnification
+packet/lifecycle boundary cases for
 the actual native helpers. One layout presentation is pending at a time; newer
 metadata replaces the pending value rather than growing a callback queue. No
 synthetic server, no-auth path or test credentials are linked into the app.

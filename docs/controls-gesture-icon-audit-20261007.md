@@ -56,4 +56,14 @@ Evidence is outside Git:
 
 The free/Pro settings and largest-text category captures were visually reviewed. Earlier test runs caught synthetic StoreKit setup and menu-animation timing mistakes; the final tests wait for verified entitlement changes and closing-panel retirement. The passing SSH test still emits NIOSSH Sendable warnings and a background-publishing warning; this audit does not establish a cause for the latter.
 
-Physical acceptance of the new scroll sensitivity is separate; the current installed iPhone app is still build 15. Mac-app pinch behavior remains pending the user's zoom-target clarification. No upload or publication is included in this change.
+Source is committed as `dc5fae3`. Normal development **1.0 (16)** is built, signed, installed and launched on iPhone 18 Pro Max. All 577 source inputs and the signed binary are verified, retaining the existing app/widget identities and private Keychain groups. CoreDevice confirms build 16, installation sequence 9136 and launch PID 16779.
+
+Installation evidence stays outside Git:
+
+- `/private/tmp/maccompanion-controls-gestures-20261007-device/build-report.json`
+- `/private/tmp/maccompanion-controls-gestures-20261007-signed/report.json`
+- `/private/tmp/maccompanion-controls-gestures-20261007-install.json`
+- `/private/tmp/maccompanion-controls-gestures-20261007-launch.json`
+- `/private/tmp/maccompanion-controls-gestures-20261007-app-after.json`
+
+Physical acceptance of the new scroll sensitivity remains pending. Mac-app pinch behavior remains pending the user's zoom-target clarification. No push, upload or publication is included in this change.
