@@ -154,11 +154,11 @@
       "valid": false
     },
     {
-      "value": "\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9",
+      "value": "ééééééééééééééééééééééééééééééé",
       "valid": true
     },
     {
-      "value": "\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9",
+      "value": "éééééééééééééééééééééééééééééééé",
       "valid": false
     },
     {
@@ -1168,16 +1168,16 @@
     },
     {
       "id": "unicode",
-      "value": "\u5de5\u4f5c Mac",
+      "value": "工作 Mac",
       "macValid": true,
-      "normalizedName": "\u5de5\u4f5c Mac",
+      "normalizedName": "工作 Mac",
       "keyValid": true
     },
     {
       "id": "emoji",
-      "value": "Mac \ud83d\udda5\ufe0f",
+      "value": "Mac 🖥️",
       "macValid": true,
-      "normalizedName": "Mac \ud83d\udda5\ufe0f",
+      "normalizedName": "Mac 🖥️",
       "keyValid": true
     },
     {
@@ -1213,7 +1213,7 @@
     },
     {
       "id": "bidi-format",
-      "value": "Mac\u202e",
+      "value": "Mac‮",
       "macValid": false,
       "keyValid": false
     },
@@ -2002,6 +2002,360 @@
       "active": false,
       "valid": false,
       "hex": ""
+    }
+  ],
+  "macIdentityPolicy": {
+    "bonjourServices": [
+      "_rfb._tcp",
+      "_ssh._tcp",
+      "_device-info._tcp"
+    ],
+    "domain": "local.",
+    "scanSeconds": 8,
+    "maximumServices": 128,
+    "metadataOnly": true,
+    "existingNamesRemainCustom": true,
+    "newRecordsUseAutomaticNames": true,
+    "libraryVersion": 4,
+    "defaultConnection": "desktop"
+  },
+  "macModelCases": [
+    {
+      "model": "MacBookPro18,3",
+      "family": "macBookPro",
+      "symbol": "laptopcomputer"
+    },
+    {
+      "model": "MacBookAir10,1",
+      "family": "macBookAir",
+      "symbol": "laptopcomputer"
+    },
+    {
+      "model": "MacBook10,1",
+      "family": "macBook",
+      "symbol": "laptopcomputer"
+    },
+    {
+      "model": "iMac21,1",
+      "family": "iMac",
+      "symbol": "desktopcomputer"
+    },
+    {
+      "model": "iMacPro1,1",
+      "family": "iMac",
+      "symbol": "desktopcomputer"
+    },
+    {
+      "model": "Macmini9,1",
+      "family": "macMini",
+      "symbol": "macmini"
+    },
+    {
+      "model": "MacPro7,1",
+      "family": "macPro",
+      "symbol": "macpro.gen3"
+    },
+    {
+      "model": "Mac14,2",
+      "family": "macBookAir",
+      "symbol": "laptopcomputer"
+    },
+    {
+      "model": "Mac16,6",
+      "family": "macBookPro",
+      "symbol": "laptopcomputer"
+    },
+    {
+      "model": "Mac16,10",
+      "family": "macMini",
+      "symbol": "macmini"
+    },
+    {
+      "model": "Mac16,9",
+      "family": "macStudio",
+      "symbol": "macstudio"
+    },
+    {
+      "model": "Mac16,3",
+      "family": "iMac",
+      "symbol": "desktopcomputer"
+    },
+    {
+      "model": "Mac14,8",
+      "family": "macPro",
+      "symbol": "macpro.gen3"
+    },
+    {
+      "model": "Mac17,14",
+      "family": "macStudio",
+      "symbol": "macstudio"
+    },
+    {
+      "model": "Mac18,5",
+      "family": "macMini",
+      "symbol": "macmini"
+    },
+    {
+      "model": "Mac99,99",
+      "family": "unknown",
+      "symbol": "desktopcomputer"
+    },
+    {
+      "model": "MysteryMachine",
+      "family": "unknown",
+      "symbol": "desktopcomputer"
+    },
+    {
+      "model": "MacBookProFake",
+      "family": "unknown",
+      "symbol": "desktopcomputer"
+    },
+    {
+      "model": "",
+      "family": "unknown",
+      "symbol": "desktopcomputer"
+    }
+  ],
+  "macDetectedNameCases": [
+    {
+      "value": "  Studio Mac  ",
+      "normalized": "Studio Mac"
+    },
+    {
+      "value": "开发 Mac",
+      "normalized": "开发 Mac"
+    },
+    {
+      "value": "",
+      "normalized": null
+    },
+    {
+      "value": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "normalized": null
+    },
+    {
+      "value": "Mac\nName",
+      "normalized": null
+    },
+    {
+      "value": "Mac‮Name",
+      "normalized": null
+    }
+  ],
+  "macMetadataMatchCases": [
+    {
+      "configured": [
+        "studio.local"
+      ],
+      "host": "studio.local.",
+      "resolved": [],
+      "savedPort": 5900,
+      "servicePort": 5900,
+      "matches": true
+    },
+    {
+      "configured": [
+        "192.168.1.10"
+      ],
+      "host": "studio.local.",
+      "resolved": [
+        "192.168.1.10"
+      ],
+      "savedPort": 5900,
+      "servicePort": 5900,
+      "matches": true
+    },
+    {
+      "configured": [
+        "fe80:0:0:0:0:0:0:1%en0"
+      ],
+      "host": "studio.local.",
+      "resolved": [
+        "fe80::1%en0"
+      ],
+      "savedPort": 5900,
+      "servicePort": 5900,
+      "matches": true
+    },
+    {
+      "configured": [
+        "100.64.0.10"
+      ],
+      "host": "studio.local.",
+      "resolved": [
+        "192.168.1.10"
+      ],
+      "savedPort": 5900,
+      "servicePort": 5900,
+      "matches": false
+    },
+    {
+      "configured": [
+        "studio.local"
+      ],
+      "host": "another.local.",
+      "resolved": [
+        "192.168.1.10"
+      ],
+      "savedPort": 5900,
+      "servicePort": 5900,
+      "matches": false
+    },
+    {
+      "configured": [
+        "studio.local"
+      ],
+      "host": "studio.local.",
+      "resolved": [],
+      "savedPort": 5901,
+      "servicePort": 5900,
+      "matches": false
+    },
+    {
+      "configured": [
+        "studio.local.evil"
+      ],
+      "host": "studio.local.",
+      "resolved": [],
+      "savedPort": 5900,
+      "servicePort": 5900,
+      "matches": false
+    }
+  ],
+  "macTapDestinationCases": [
+    {
+      "stored": null,
+      "destination": "desktop",
+      "inputOnly": false,
+      "terminal": false
+    },
+    {
+      "stored": "desktop",
+      "destination": "desktop",
+      "inputOnly": false,
+      "terminal": false
+    },
+    {
+      "stored": "terminal",
+      "destination": "terminal",
+      "inputOnly": false,
+      "terminal": true
+    },
+    {
+      "stored": "trackpad",
+      "destination": "trackpad",
+      "inputOnly": true,
+      "terminal": false
+    }
+  ],
+  "macDiscoveryLifecycleCases": [
+    {
+      "id": "ambiguous-automatic-save-during-scan",
+      "automatic": true,
+      "priorMetadata": true,
+      "services": [
+        {
+          "name": "First Mac",
+          "host": "a.local.",
+          "address": "192.168.1.10",
+          "model": "Mac16,10"
+        },
+        {
+          "name": "Second Mac",
+          "host": "b.local.",
+          "address": "192.168.1.10",
+          "model": "Mac14,2"
+        }
+      ],
+      "saveAfterFirst": true,
+      "cancel": false,
+      "expectedName": "Earlier Detected",
+      "expectedDetectedName": "Earlier Detected",
+      "expectedModel": "Mac13,1"
+    },
+    {
+      "id": "ambiguous-reverse-order",
+      "automatic": true,
+      "priorMetadata": true,
+      "services": [
+        {
+          "name": "Second Mac",
+          "host": "b.local.",
+          "address": "192.168.1.10",
+          "model": "Mac14,2"
+        },
+        {
+          "name": "First Mac",
+          "host": "a.local.",
+          "address": "192.168.1.10",
+          "model": "Mac16,10"
+        }
+      ],
+      "saveAfterFirst": true,
+      "cancel": false,
+      "expectedName": "Earlier Detected",
+      "expectedDetectedName": "Earlier Detected",
+      "expectedModel": "Mac13,1"
+    },
+    {
+      "id": "ambiguous-custom-name",
+      "automatic": false,
+      "priorMetadata": true,
+      "services": [
+        {
+          "name": "First Mac",
+          "host": "a.local.",
+          "address": "192.168.1.10",
+          "model": "Mac16,10"
+        },
+        {
+          "name": "Second Mac",
+          "host": "b.local.",
+          "address": "192.168.1.10",
+          "model": "Mac14,2"
+        }
+      ],
+      "saveAfterFirst": false,
+      "cancel": false,
+      "expectedName": "Custom Name",
+      "expectedDetectedName": "Earlier Detected",
+      "expectedModel": "Mac13,1"
+    },
+    {
+      "id": "unambiguous-completed-scan",
+      "automatic": true,
+      "priorMetadata": false,
+      "services": [
+        {
+          "name": "First Mac",
+          "host": "a.local.",
+          "address": "192.168.1.10",
+          "model": "Mac16,10"
+        }
+      ],
+      "saveAfterFirst": true,
+      "cancel": false,
+      "expectedName": "First Mac",
+      "expectedDetectedName": "First Mac",
+      "expectedModel": "Mac16,10"
+    },
+    {
+      "id": "cancelled-partial-scan",
+      "automatic": true,
+      "priorMetadata": true,
+      "services": [
+        {
+          "name": "First Mac",
+          "host": "a.local.",
+          "address": "192.168.1.10",
+          "model": "Mac16,10"
+        }
+      ],
+      "saveAfterFirst": true,
+      "cancel": true,
+      "expectedName": "Earlier Detected",
+      "expectedDetectedName": "Earlier Detected",
+      "expectedModel": "Mac13,1"
     }
   ]
 }

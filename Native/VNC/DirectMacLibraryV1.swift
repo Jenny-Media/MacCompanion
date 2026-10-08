@@ -10,8 +10,13 @@ struct DirectMacRecordV1: Codable, Identifiable, Equatable {
     var addresses: [String]
     var port: Int
     var sshPort: Int = 22
+    var usesAutomaticName = false
+    var detectedName: String?
+    var modelIdentifier: String?
+    var preferredConnection: DirectMacConnection = .desktop
+    var family: DirectMacFamily { .detect(modelIdentifier) }
     var address: String { addresses.first ?? "" }
-    private enum CodingKeys: String, CodingKey { case id, name, address, addresses, port, sshPort }
+    private enum CodingKeys: String, CodingKey { case id, name, address, addresses, port, sshPort, usesAutomaticName, detectedName, modelIdentifier, preferredConnection }
     init(id: UUID, name: String, addresses: [String], port: Int = 5900, sshPort: Int = 22) {
         self.id = id; self.name = name; self.addresses = addresses; self.port = port; self.sshPort = sshPort
     }
@@ -21,11 +26,18 @@ struct DirectMacRecordV1: Codable, Identifiable, Equatable {
         addresses = try c.decodeIfPresent([String].self, forKey: .addresses) ?? [c.decode(String.self, forKey: .address)]
         port = try c.decodeIfPresent(Int.self, forKey: .port) ?? 5900
         sshPort = try c.decodeIfPresent(Int.self, forKey: .sshPort) ?? 22
+        usesAutomaticName = try c.decodeIfPresent(Bool.self, forKey: .usesAutomaticName) ?? false
+        detectedName = try c.decodeIfPresent(String.self, forKey: .detectedName)
+        modelIdentifier = try c.decodeIfPresent(String.self, forKey: .modelIdentifier)
+        preferredConnection = try c.decodeIfPresent(DirectMacConnection.self, forKey: .preferredConnection) ?? .desktop
     }
     func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encode(id, forKey: .id); try c.encode(name, forKey: .name)
         try c.encode(addresses, forKey: .addresses); try c.encode(port, forKey: .port); try c.encode(sshPort, forKey: .sshPort)
+        try c.encode(usesAutomaticName, forKey: .usesAutomaticName)
+        try c.encodeIfPresent(detectedName, forKey: .detectedName); try c.encodeIfPresent(modelIdentifier, forKey: .modelIdentifier)
+        try c.encode(preferredConnection, forKey: .preferredConnection)
     }
     static func normalized(id: UUID = UUID(), name: String, address: String) throws -> Self {
         try normalized(id: id, name: name, addresses: [address])
@@ -46,6 +58,21 @@ struct DirectMacRecordV1: Codable, Identifiable, Equatable {
               // A bound method on this temporary CharacterSet misclassifies names under -O.
               !label.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) else { throw LibraryFailure.invalid }
         return .init(id: id, name: label, addresses: hosts, port: port, sshPort: sshPort)
+    }
+    func validated() throws -> Self {
+        let base = try Self.normalized(id: id, name: name, addresses: addresses, port: port, sshPort: sshPort)
+        guard base.name == name, base.addresses == addresses,
+              detectedName.map({ DirectMacDetectedIdentity.cleanName($0) == $0 }) ?? true,
+              modelIdentifier.map({ DirectMacDetectedIdentity.cleanModel($0) == $0 }) ?? true else { throw LibraryFailure.invalid }
+        return self
+    }
+    func applying(_ identity: DirectMacDetectedIdentity) -> Self {
+        guard identity.matches(self), let detected = DirectMacDetectedIdentity.cleanName(identity.name) else { return self }
+        var next = self
+        next.detectedName = detected
+        if usesAutomaticName { next.name = detected }
+        if let model = identity.modelIdentifier.flatMap(DirectMacDetectedIdentity.cleanModel) { next.modelIdentifier = model }
+        return next
     }
     enum LibraryFailure: Error { case invalid }
 }
@@ -82,7 +109,7 @@ enum DesktopCredentialStoreV1 {
 }
 
 @MainActor @Observable final class DirectMacLibraryV1 {
-    private struct File: Codable { var version = 3; var macs: [DirectMacRecordV1] }
+    private struct File: Codable { var version = 4; var macs: [DirectMacRecordV1] }
     private(set) var macs: [DirectMacRecordV1] = []
     private(set) var readable = true
     var recovery: DirectRecoveryNotice?
@@ -91,21 +118,26 @@ enum DesktopCredentialStoreV1 {
         set { recovery = newValue.map { .make(.saveFailed, message: $0) } }
     }
     var localChange: ((UUID) -> Void)?
+    let discovery = DirectMacDiscoveryV1()
     private let url: URL
     private let removeLogin: (UUID) throws -> Void
     init(url: URL? = nil, removeLogin: @escaping (UUID) throws -> Void = DesktopCredentialStoreV1.remove) {
         self.url = url ?? URL.applicationSupportDirectory.appending(path: "direct-macs-v1.json")
         self.removeLogin = removeLogin
         reload()
+        discovery.updated = { [weak self] in
+            guard let self else { return }
+            self.updateDetectedMetadata(self.discovery.identities)
+        }
     }
     func reload() {
         do {
             if FileManager.default.fileExists(atPath: url.path) {
                 let file = try JSONDecoder().decode(File.self, from: Data(contentsOf: url))
-                guard (1...3).contains(file.version), file.macs.count <= 64,
+                guard (1...4).contains(file.version), file.macs.count <= 64,
                       Set(file.macs.map(\.id)).count == file.macs.count else { throw DirectMacRecordV1.LibraryFailure.invalid }
                 for mac in file.macs {
-                    guard try DirectMacRecordV1.normalized(id: mac.id, name: mac.name, addresses: mac.addresses, port: mac.port, sshPort: mac.sshPort) == mac else { throw DirectMacRecordV1.LibraryFailure.invalid }
+                    _ = try mac.validated()
                 }
                 macs = file.macs
             }
@@ -113,16 +145,37 @@ enum DesktopCredentialStoreV1 {
         } catch { readable = false; recovery = .make(.savedDataUnavailable, message: "Saved Macs couldn’t be read. Existing data is kept. Retry when device storage is available; unreadable data won’t be replaced.") }
     }
     func save(id: UUID?, name: String, address: String) -> Bool { save(id: id, name: name, addresses: [address]) }
-    func save(id: UUID?, name: String, addresses: [String], port: Int = 5900, sshPort: Int? = nil) -> Bool {
+    func save(id: UUID?, name: String, addresses: [String], port: Int = 5900, sshPort: Int? = nil,
+              usesAutomaticName: Bool? = nil, preferredConnection: DirectMacConnection? = nil) -> Bool {
         do {
             guard readable else { return false }
-            let record = try DirectMacRecordV1.normalized(id: id ?? UUID(), name: name, addresses: addresses, port: port, sshPort: sshPort ?? macs.first(where: { $0.id == id })?.sshPort ?? 22)
+            let old = macs.first { $0.id == id }
+            var record = try DirectMacRecordV1.normalized(id: id ?? UUID(), name: name, addresses: addresses, port: port, sshPort: sshPort ?? old?.sshPort ?? 22)
+            record.usesAutomaticName = usesAutomaticName ?? (old?.name == record.name ? old?.usesAutomaticName : false) ?? false
+            record.preferredConnection = preferredConnection ?? old?.preferredConnection ?? .desktop
+            if let old, Set(old.addresses) == Set(record.addresses), old.port == record.port, old.sshPort == record.sshPort {
+                record.detectedName = old.detectedName; record.modelIdentifier = old.modelIdentifier
+            }
+            if record.usesAutomaticName, let detected = record.detectedName { record.name = detected }
+            if let identity = DirectMacDetectedIdentity.match(record, in: discovery.identities) { record = record.applying(identity) }
+            _ = try record.validated()
             var next = macs
             if let index = next.firstIndex(where: { $0.id == record.id }) {
                 next[index] = record
             } else { guard next.count < 64 else { failure = "You can save up to 64 Macs."; return false }; next.append(record) }
             try write(next); localChange?(record.id); return true
         } catch { failure = "Could not save this Mac. Use a name, unique local/VPN addresses and a port from 1 to 65535."; return false }
+    }
+    func updateDetectedMetadata(_ identities: [DirectMacDetectedIdentity]) {
+        guard readable else { return }
+        let next = macs.map { mac in
+            DirectMacDetectedIdentity.match(mac, in: identities).map { mac.applying($0) } ?? mac
+        }
+        guard next != macs else { return }
+        do {
+            let changed = zip(macs, next).filter { $0 != $1 }.map { $1.id }
+            try write(next); changed.forEach { localChange?($0) }
+        } catch { failure = "Detected Mac details couldn’t be saved. Your saved Macs are kept." }
     }
     func sharingEndpoint(addresses: [String], port: Int, excluding id: UUID?) -> [DirectMacRecordV1] {
         let routes = Set(addresses.map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() })
@@ -143,6 +196,7 @@ enum DesktopCredentialStoreV1 {
     }
     func applyCloud(_ next: [DirectMacRecordV1]) throws {
         guard readable, next.count <= 64, Set(next.map(\.id)).count == next.count else { throw DirectCloudError.invalid }
+        try next.forEach { _ = try $0.validated() }
         if next != macs { try write(next) }
     }
     private func write(_ next: [DirectMacRecordV1]) throws {
@@ -196,18 +250,20 @@ struct DirectMacLibraryRootV1: View {
                     Section {
                         ForEach(visibleMacs) { mac in
                             HStack(spacing: 12) {
-                                Button { open(mac, input: false, terminalMode: false) } label: {
+                                Button { open(mac, input: mac.preferredConnection.inputOnly, terminalMode: mac.preferredConnection.terminalMode) } label: {
                                     HStack(spacing: 14) {
-                                        Image(systemName: "desktopcomputer").font(.title2).foregroundStyle(.blue)
+                                        Image(systemName: mac.family.symbol).font(.title2).foregroundStyle(.blue)
                                             .frame(width: 44, height: 44).background(.blue.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
                                         VStack(alignment: .leading, spacing: 4) {
                                             Text(mac.name).font(.headline).foregroundStyle(.primary)
+                                            Label(mac.preferredConnection.title, systemImage: mac.preferredConnection.symbol)
+                                                .font(.caption).foregroundStyle(.secondary)
                                             Text(mac.addresses.count > 1 ? "\(mac.address) · \(mac.addresses.count) addresses" : mac.address).font(.subheadline).foregroundStyle(.secondary)
                                         }
                                         Spacer(minLength: 0)
                                         Image(systemName: "chevron.right").font(.caption.bold()).foregroundStyle(.tertiary)
                                     }.contentShape(Rectangle())
-                                }.buttonStyle(.plain).accessibilityLabel("Connect to " + mac.name)
+                                }.buttonStyle(.plain).accessibilityLabel("Connect to " + mac.name + " using " + mac.preferredConnection.title)
                                 Menu {
                                     Section("Connect") {
                                         Button("Desktop", systemImage: "desktopcomputer") { open(mac, input: false, terminalMode: false) }
@@ -228,7 +284,7 @@ struct DirectMacLibraryRootV1: View {
                                 }
                         }
                         if visibleMacs.isEmpty { Text("No matching Macs").foregroundStyle(.secondary) }
-                    } footer: { Text("Tap a Mac for Desktop. Its menu also offers Terminal, Trackpad & Keyboard, and Mac settings.") }
+                    } footer: { Text("Tap a Mac to open its preferred connection. Change Open on Tap in Mac Settings, or choose a mode from its menu.") }
                 }
                 Section {
                     Button("App Settings", systemImage: "gearshape") { settings = true }
@@ -248,8 +304,19 @@ struct DirectMacLibraryRootV1: View {
             .sheet(isPresented: $setup) { DirectMacSetupV1() }
             .sheet(isPresented: $settings) { DirectSessionSettingsV1() }
             .sheet(isPresented: $paywall) { DirectProView() }
-            .task { pro.start(); let keys = TerminalKeyLibrary(); keys.reload(macs: library.macs) }
-            .onChange(of: scenePhase) { _, phase in if phase == .active { Task { await pro.refresh() } } }
+            .task { pro.start(); let keys = TerminalKeyLibrary(); keys.reload(macs: library.macs); library.discovery.start() }
+            .refreshable {
+                library.discovery.start()
+                while library.discovery.scanning && !Task.isCancelled { try? await Task.sleep(for: .milliseconds(100)) }
+            }
+            .onChange(of: appLock.canAccess) { _, unlocked in
+                if unlocked && scenePhase == .active { library.discovery.start() } else { library.discovery.stop() }
+            }
+            .onChange(of: scenePhase) { _, phase in
+                if phase == .active { library.discovery.start(); Task { await pro.refresh() } }
+                else { library.discovery.stop() }
+            }
+            .onDisappear { library.discovery.stop() }
             .confirmationDialog("Remove this Mac and its saved login?", isPresented: Binding(get: { removing != nil }, set: { if !$0 { removing = nil } }), titleVisibility: .visible) {
                 Button("Remove Mac", role: .destructive) { if let removing { library.remove(removing) }; removing = nil }
             }
@@ -293,6 +360,8 @@ struct DirectMacEditorV1: View {
     @Bindable var library: DirectMacLibraryV1
     private struct Draft: Identifiable { let id = UUID(); var address: String }
     @State private var name: String
+    @State private var usesAutomaticName: Bool
+    @State private var preferredConnection: DirectMacConnection
     @State private var credentialAction: CredentialAction?
     private enum CredentialAction: String, Identifiable {
         case desktop, terminal, serverKey
@@ -323,6 +392,8 @@ struct DirectMacEditorV1: View {
     init(mac: DirectMacRecordV1?, library: DirectMacLibraryV1) {
         self.mac = mac; self.library = library
         _name = State(initialValue: mac?.name ?? "My Mac")
+        _usesAutomaticName = State(initialValue: mac?.usesAutomaticName ?? true)
+        _preferredConnection = State(initialValue: mac?.preferredConnection ?? .desktop)
         _addresses = State(initialValue: (mac?.addresses ?? [""]).map { Draft(address: $0) })
         _sshPort = State(initialValue: mac.map { $0.sshPort == 22 ? "" : String($0.sshPort) } ?? "")
         _port = State(initialValue: mac.map { $0.port == 5900 ? "" : String($0.port) } ?? "")
@@ -333,6 +404,18 @@ struct DirectMacEditorV1: View {
         guard let resolvedSSHPort, let resolvedPort else { return false }
         return (try? DirectMacRecordV1.normalized(name: name, addresses: addresses.map(\.address), port: resolvedPort, sshPort: resolvedSSHPort)) != nil
     }
+    private var detectedIdentity: DirectMacDetectedIdentity? {
+        guard let resolvedPort, let resolvedSSHPort,
+              let record = try? DirectMacRecordV1.normalized(name: "Mac", addresses: addresses.map(\.address), port: resolvedPort, sshPort: resolvedSSHPort) else { return nil }
+        return DirectMacDetectedIdentity.match(record, in: library.discovery.identities)
+    }
+    private var sameSavedEndpoints: Bool {
+        guard let mac else { return false }
+        return Set(addresses.map { $0.address.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }) == Set(mac.addresses)
+            && resolvedPort == mac.port && resolvedSSHPort == mac.sshPort
+    }
+    private var detectedName: String? { detectedIdentity?.name ?? (sameSavedEndpoints ? mac?.detectedName : nil) }
+    private var detectedModel: String? { detectedIdentity?.modelIdentifier ?? (sameSavedEndpoints ? mac?.modelIdentifier : nil) }
     private var sharedNames: String? {
         guard let resolvedPort else { return nil }
         let shared = library.sharingEndpoint(addresses: addresses.map(\.address), port: resolvedPort, excluding: mac?.id)
@@ -345,8 +428,30 @@ struct DirectMacEditorV1: View {
             Form {
                 if let notice = library.recovery { Section { DirectRecoveryCard(notice: notice, primary: .init(title: "Keep Editing", perform: { library.recovery = nil })) } }
                 Section("Mac") {
-                    TextField("Name", text: $name)
+                    TextField("Name", text: Binding(get: { name }, set: { name = $0; usesAutomaticName = false }))
+                        .accessibilityIdentifier("mac-name")
+                    Toggle("Use Detected Name", isOn: $usesAutomaticName)
+                        .accessibilityIdentifier("mac-use-detected-name")
+                    if let detectedName { LabeledContent("Detected Name", value: detectedName) }
+                    LabeledContent("Mac Type") {
+                        Label(detectedModel == nil ? "Not detected" : DirectMacFamily.detect(detectedModel).title,
+                              systemImage: DirectMacFamily.detect(detectedModel).symbol)
+                    }
+                    if library.discovery.scanning { ProgressView("Detecting Mac details…").font(.footnote) }
+                    Text(library.discovery.unavailable
+                        ? "Local discovery is unavailable. Allow Local Network access in Settings to detect your Mac. You can still enter a name and address."
+                        : "Name and type detection uses your Mac’s local network advertisements. If unavailable, your saved name and icon are kept. Entering a custom name turns off automatic naming.")
+                        .font(.footnote).foregroundStyle(.secondary)
                     if name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || name.count > 80 || name.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) { Text("Use a name from 1 to 80 characters, without control characters.").font(.footnote).foregroundStyle(.secondary) }
+                }
+                Section {
+                    Picker("Open on Tap", selection: $preferredConnection) {
+                        ForEach(DirectMacConnection.allCases) { connection in
+                            Label(connection.title, systemImage: connection.symbol).tag(connection)
+                        }
+                    }.accessibilityIdentifier("mac-open-on-tap")
+                } footer: {
+                    Text("Choose what opens when you tap this Mac in My Macs. You can always choose another mode from its menu.")
                 }
                 Section {
                     ForEach($addresses) { $draft in
@@ -426,7 +531,9 @@ struct DirectMacEditorV1: View {
                 case .pro: DirectProView()
                 }
             }
-            .task { refreshSelectedKey() }
+            .task { refreshSelectedKey(); library.discovery.start() }
+            .onChange(of: detectedName) { _, detected in if usesAutomaticName, let detected { name = detected } }
+            .onChange(of: usesAutomaticName) { _, automatic in if automatic, let detectedName { name = detectedName } }
             .environment(\.editMode, $addressEditMode)
             .onChange(of: addresses.count) { _, count in
                 if count < 2 { addressEditMode = .inactive }
@@ -437,7 +544,7 @@ struct DirectMacEditorV1: View {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save") {
                         if mac == nil && !DirectProAccess.shared.canAddMac(count: library.macs.count) { sshSheet = .pro; return }
-                        if let resolvedPort, library.save(id: mac?.id, name: name, addresses: addresses.map(\.address), port: resolvedPort, sshPort: resolvedSSHPort) { dismiss() }
+                        if let resolvedPort, library.save(id: mac?.id, name: name, addresses: addresses.map(\.address), port: resolvedPort, sshPort: resolvedSSHPort, usesAutomaticName: usesAutomaticName, preferredConnection: preferredConnection) { dismiss() }
                     }.disabled(!valid)
                 }
             }

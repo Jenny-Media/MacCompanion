@@ -238,3 +238,16 @@ currently zooms the local Desktop image, not a Mac app. Input-only mode hides th
 image, so its local pinch recognizer is disabled and the guide explains the limit.
 Native Mac trackpad magnification is not transmitted by this direct RFB client.
 The user’s intended pinch behavior is still awaiting clarification.
+
+### Mac identity and connection defaults, 2026-10-08
+
+My Macs detects the advertised computer name and machine family on the local
+network and uses a matching Mac icon. Add/Edit Mac offers Use Detected Name; custom
+names remain supported and existing names are preserved. No metadata advertisement
+means the saved fallback name and generic icon remain available, including VPN-only
+connections. Pull to refresh retries local discovery. Detection installs nothing
+and does not connect or change saved routes.
+
+Open on Tap in each Mac's settings chooses Desktop (default), Terminal or
+Trackpad & Keyboard. The Connect menu still opens any mode directly. These settings
+are free and participate in the existing optional iCloud library sync.

@@ -503,3 +503,57 @@ are cleared on dismissal/background. Editing does not connect, alter a Mac accou
 password, change SSH trust, or change the selected key. Failed/unreadable Keychain
 reads block saving; failed writes preserve the draft and the previous saved item.
 Validation uses the existing service credential bounds.
+
+## Mac identity presentation and tap destination, 2026-10-08
+
+The direct client may browse `_rfb._tcp` and `_ssh._tcp` in `local.` and query
+the same instance's `_device-info._tcp` TXT `model` value. Discovery is bounded
+to eight seconds and 128 service instances, only while foreground and unlocked.
+It resolves service hosts and numeric addresses for presentation matching only.
+It never dials, imports addresses, changes ports, authenticates, or selects a Mac.
+Permission denial, missing advertisements and resolution failures preserve manual
+setup and the last detected metadata. Refresh is explicit or on foreground entry.
+
+Match only exact normalized configured hostnames or numeric addresses, with the
+corresponding saved Screen Sharing/SSH port. Do not match by display name, substring,
+or guessed hostname. Multiple distinct matching hosts are ambiguous and cannot
+update a record. Publish metadata only after the bounded scan completes; partial
+resolutions cannot change saved metadata or an editor's automatic name, including
+Save during a scan. Cancelled scans cannot publish partial results. Prefer the
+Screen Sharing service name over SSH for the same host.
+TXT model data is associated with its exact service instance and domain; it is
+bounded to 128 ASCII model characters. Names are trimmed, bounded to 80 characters
+and reject control/format characters. These values are untrusted presentation
+metadata, never peer identity, authentication, grants, or proof of a Mac model.
+
+New Macs use automatic names by default, with My Mac as an editable fallback.
+Existing records retain custom names and opt into Use Detected Name explicitly.
+Changing a name disables automatic naming. Detection may update a custom record's
+model and detected name but cannot replace its custom name. Unknown models retain
+a generic Mac icon. Recognized model families use MacBook, iMac, Mac mini,
+Mac Studio or Mac Pro symbols; opaque Apple model IDs use a bounded reviewed table.
+Address/service-port edits invalidate previously detected metadata.
+
+Each record saves Open on Tap as Desktop (default), Terminal, or Trackpad &
+Keyboard. Row taps open that destination using existing entitlement, login, SSH
+trust and connection behavior. The explicit Connect menu overrides it for that
+one opening; it does not change the saved default. Session resume URLs retain
+their explicit destination. Changing this preference does not start a connection.
+
+Library version 4 adds usesAutomaticName, detectedName, modelIdentifier and
+preferredConnection with backward-compatible decoding of versions 1–3. Missing
+fields mean custom naming, no detected metadata, and Desktop. Invalid fields
+block replacement of stored data. Edits, automatic metadata saves, and optional
+iCloud sync retain each record's UUID, separate saved credentials and preferences.
+Opt-in sync disclosure includes detected names/models and tap destinations.
+The existing indexed direct-screen-sharing fixture defines these cases.
+
+Opaque model mappings are based on Apple's model identification references:
+[MacBook Pro](https://support.apple.com/en-us/108052),
+[MacBook Air](https://support.apple.com/en-us/102869),
+[iMac](https://support.apple.com/en-us/108054),
+[Mac mini](https://support.apple.com/en-us/102852),
+[Mac Studio](https://support.apple.com/en-us/102231), and
+[Mac Pro](https://support.apple.com/en-us/102887).
+Bonjour privacy declarations follow Apple's
+[TN3179](https://developer.apple.com/documentation/technotes/tn3179-understanding-local-network-privacy).

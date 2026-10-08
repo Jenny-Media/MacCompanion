@@ -111,7 +111,7 @@ def main():
         'LIBRARY_SEARCH_PATHS': [str(build)], 'ARCHS': 'arm64', 'ONLY_ACTIVE_ARCH': 'YES', 'OTHER_LDFLAGS': ['$(inherited)', '-lz']})
     import plistlib
     direct_info = plistlib.loads((ROOT / base['INFOPLIST_FILE']).read_bytes())
-    direct_info['NSBonjourServices'] = ['_rfb._tcp']
+    direct_info['NSBonjourServices'] = ['_rfb._tcp', '_ssh._tcp', '_device-info._tcp']
     direct_info['NSSupportsLiveActivities'] = True
     # WindowGroup needs scene lifecycle admission even when only one app scene
     # is allowed. Keep additional app windows disabled until privacy and session
