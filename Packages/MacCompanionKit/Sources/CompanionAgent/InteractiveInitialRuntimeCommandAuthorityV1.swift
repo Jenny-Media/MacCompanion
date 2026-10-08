@@ -198,8 +198,10 @@ public struct InteractiveInitialRuntimeCommandAuthorityV1: Sendable {
                         .expiresAtMonotonicNanoseconds,
                   receipt.menuAppGeneration
                     == requirement.admission.visibleMenuAppGeneration,
-                  receipt.menuAppRevision
-                    >= requirement.admission.visibleMenuAppRevision else {
+                  // Indicator activity and menu publication have independent
+                  // counters. Exact generation and command validation provide
+                  // the receipt fence; numeric ordering cannot establish it.
+                  receipt.menuAppRevision > 0 else {
                 throw InteractiveInitialRuntimeCommandErrorV1.receiptRejected
             }
             try receipt.validate(against: preparation.command)

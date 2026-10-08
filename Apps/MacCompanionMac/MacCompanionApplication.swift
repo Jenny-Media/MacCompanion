@@ -177,6 +177,13 @@ private final class MacCompanionApplicationDelegate:
         self.updates = updates
         self.authenticatedAgentBuild = authenticatedAgentBuild
         self.updateAgentReactivation = updateAgentReactivation
+        #if DEBUG
+        let desktopEngine: MacInteractiveDesktopEngineV1 = .screenSharing
+        let nativeBackendFactory: MacInteractiveNativeBackendFactoryV1? = nil
+        #else
+        let desktopEngine: MacInteractiveDesktopEngineV1 = .nativeCapture
+        let nativeBackendFactory = try? MacBundledNativeHostDevelopmentV1.factoryIfPresent(in: Bundle.main.bundleURL)
+        #endif
         let product = MacCompanionProductApplicationV1(
             agentRegistration: loginRoles.agentRaw,
             setup: setup,
@@ -190,7 +197,9 @@ private final class MacCompanionApplicationDelegate:
             dashboardFactory: {
                 MacCompanionDashboardApplicationV1(
                     interactiveIndicator: interactiveIndicator,
-                    agentBuildLifetime: authenticatedAgentBuild
+                    agentBuildLifetime: authenticatedAgentBuild,
+                    desktopEngine: desktopEngine,
+                    nativeBackendFactory: nativeBackendFactory
                 )
             }
         )
@@ -635,7 +644,7 @@ private struct MacCompanionRemoteAccessSetupView: View {
         case .failed(.agentCleanup):
             "The setup-only login item could not be removed. Review Login Items before trying again."
         case .failed:
-            "The attempt failed closed before readiness. You can retry without granting Observe, Act, or Control."
+            "Setup did not reach readiness. You can retry before pairing a device."
         case .outcomeUnknown:
             "The enable command may have reached durable storage, so Mac Companion kept the Agent registered and will reconcile instead of guessing."
         }
@@ -663,8 +672,8 @@ private struct MacCompanionRemoteAccessSetupView: View {
                 "Connections use your local network or a private route you configure."
             )
             setupFact(
-                "Separate permissions",
-                "Observe, approved actions, screen viewing, mouse, and keyboard remain independently granted."
+                "Pair once for remote access",
+                "Pairing allows screen viewing, pointer, and keyboard access. macOS permissions are set up on this Mac."
             )
             setupFact(
                 "Your Mac stays authoritative",

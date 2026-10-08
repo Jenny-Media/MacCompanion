@@ -345,6 +345,17 @@ private func waitForNetworkClientSentCount(
     return io.sent
 }
 
+private func waitForNetworkClientCondition(
+    _ condition: @Sendable () -> Bool
+) async throws -> Bool {
+    let deadline = ContinuousClock.now.advanced(by: .seconds(2))
+    while !condition() {
+        guard ContinuousClock.now < deadline else { return false }
+        try await Task.sleep(for: .milliseconds(1))
+    }
+    return true
+}
+
 private func waitForNetworkClientPendingReceive(
     _ io: NetworkClientFakeFrameIOV0
 ) async -> Bool {
@@ -397,6 +408,7 @@ private func authenticateNetworkClientPump(
             hostFingerprint: WireFingerprint(harness.fingerprint)
         )
     )
+    try #require(await waitForNetworkClientPendingReceive(harness.io))
     harness.io.deliver(
         try LengthPrefixedFrameDecoder.encode(WireCodec.encode(challenge))
     )
@@ -421,6 +433,7 @@ private func authenticateNetworkClientPump(
             serverTimeUnixMilliseconds: 2_003
         )
     )
+    try #require(await waitForNetworkClientPendingReceive(harness.io))
     harness.io.deliver(
         try LengthPrefixedFrameDecoder.encode(WireCodec.encode(description))
     )
@@ -594,6 +607,7 @@ private func networkClientSPKI() throws -> Data {
     )
     #expect(hello.messageID == harness.helloMessageID)
 
+    try #require(await waitForNetworkClientPendingReceive(harness.io))
     harness.io.deliver(Data([0, 0, 0, 0]))
 
     #expect(
@@ -673,26 +687,30 @@ private func networkClientSPKI() throws -> Data {
     )
     try await authenticateNetworkClientPump(harness)
     let sent = await waitForNetworkClientSentCount(base.io, 3)
+    try #require(sent.count == 3)
     let ping = try decodeNetworkClientSentFrame(
         sent[2],
         as: KeepalivePingBodyV0.self
     )
     #expect(ping.messageID == keepaliveID)
+    // Observing the send does not mean its deadline task has started yet.
+    try #require(try await waitForNetworkClientCondition { sleep.callCount == 2 })
     let pong = try WireEnvelope(
         messageID: WireUUID(UUID()),
         correlationID: ping.messageID,
         sentAtUnixMilliseconds: 2_011,
         body: KeepalivePongBodyV0()
     )
+    try #require(await waitForNetworkClientPendingReceive(base.io))
     base.io.deliver(
         try LengthPrefixedFrameDecoder.encode(WireCodec.encode(pong))
     )
-    for _ in 0..<100 where sleep.callCount < 2 {
-        try? await Task.sleep(nanoseconds: 1_000_000)
-    }
-    #expect(sleep.callCount == 2)
+    // The pong cancels that deadline and starts a fresh idle timer.
+    try #require(try await waitForNetworkClientCondition { sleep.callCount == 3 })
+    #expect(sleep.callCount == 3)
     #expect(await base.terminals.values.isEmpty)
     #expect(await base.session.phase == .authenticated)
+    await pump.cancel()
 }
 
 @Test func clientPumpMissingKeepalivePongIsClassifiedSeparately() async throws {
@@ -751,6 +769,7 @@ private func networkClientSPKI() throws -> Data {
         )
     )
 
+    try #require(await waitForNetworkClientPendingReceive(harness.io))
     harness.io.deliver(
         try LengthPrefixedFrameDecoder.encode(try WireCodec.encode(denial))
     )
@@ -769,6 +788,7 @@ private func networkClientSPKI() throws -> Data {
     let harness = try makeNetworkClientPumpHarness()
     try await harness.pump.beginOnVerifiedReadyConnection(harness.start)
 
+    try #require(await waitForNetworkClientPendingReceive(harness.io))
     harness.io.deliver(nil, failed: true)
     #expect(
         await waitForNetworkClientPumpTerminal(harness.terminals)
@@ -813,6 +833,8 @@ private func networkClientSPKI() throws -> Data {
     let initialSends = await waitForNetworkClientSentCount(harness.io, 3)
     #expect(initialSends.count == 3)
     #expect(harness.authenticated.values.count == 1)
+    // The initial route send precedes the separate readiness callback.
+    try #require(try await waitForNetworkClientCondition { harness.ready.count == 1 })
     #expect(harness.ready.count == 1)
     #expect(harness.authenticated.values.first?.hostID == harness.hostID)
     let observation = try decodeNetworkClientSentFrame(
@@ -824,7 +846,7 @@ private func networkClientSPKI() throws -> Data {
     #expect(observation.body.routeClass == .privateDNS)
     #expect(observation.body.observationSequence == 1)
 
-    #expect(await waitForNetworkClientPendingReceive(harness.io))
+    try #require(await waitForNetworkClientPendingReceive(harness.io))
     let unrelatedResponse = try WireEnvelope(
         messageID: WireUUID(UUID()),
         correlationID: nil,
@@ -832,6 +854,7 @@ private func networkClientSPKI() throws -> Data {
         body: StatusSnapshotRequestBody()
     )
     let unrelatedData = try WireCodec.encode(unrelatedResponse)
+    try #require(await waitForNetworkClientPendingReceive(harness.io))
     harness.io.deliver(
         try LengthPrefixedFrameDecoder.encode(unrelatedData)
     )
@@ -840,7 +863,7 @@ private func networkClientSPKI() throws -> Data {
             == [unrelatedData]
     )
 
-    #expect(await waitForNetworkClientPendingReceive(harness.io))
+    try #require(await waitForNetworkClientPendingReceive(harness.io))
     let acknowledgement = try WireEnvelope(
         messageID: WireUUID(UUID()),
         correlationID: observation.messageID,
@@ -852,6 +875,7 @@ private func networkClientSPKI() throws -> Data {
             observationSequence: observation.body.observationSequence
         )
     )
+    try #require(await waitForNetworkClientPendingReceive(harness.io))
     harness.io.deliver(
         try LengthPrefixedFrameDecoder.encode(WireCodec.encode(acknowledgement))
     )
@@ -1090,7 +1114,7 @@ private struct NetworkClientOperationApprovalSignerV0:
 private struct NetworkClientInteractiveApprovalSignerV0:
     ClientInteractiveApprovalSigningV0
 {
-    func signAfterUserPresence(_ input: Data) async throws -> Data {
+    func signSessionChallenge(_ input: Data) async throws -> Data {
         Data(repeating: 0x78, count: 64)
     }
 }
@@ -1276,7 +1300,36 @@ private func networkClientAcceptedControlSession(
     )
 }
 
-@Test func primaryProductCandidatePublishesOnlyAfterExactSelection()
+@Test func nativeRouteMeasurementRejectsNamesAndServiceEndpoints() throws {
+    let port = try #require(NWEndpoint.Port(rawValue: 47474))
+    #expect(NetworkClientRouteAttemptV0.numericRemoteIPAddress(nil) == nil)
+    #expect(NetworkClientRouteAttemptV0.numericRemoteIPAddress(.hostPort(host: "mac.example", port: port)) == nil)
+    #expect(NetworkClientRouteAttemptV0.numericRemoteIPAddress(.service(name: "Mac", type: "_maccompanion._tcp", domain: "local", interface: nil)) == nil)
+    #expect(NetworkClientRouteAttemptV0.numericRemoteIPAddress(.hostPort(host: "192.168.1.20", port: port)) == "192.168.1.20")
+    #expect(NetworkClientRouteAttemptV0.numericRemoteIPAddress(.hostPort(host: "2001:db8::20", port: port)) == "2001:db8::20")
+}
+
+@Test func nativeMeasuredIPv4RouteExcludesInterfaceDebugAnnotation() throws {
+    var root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+    while !FileManager.default.fileExists(atPath: root.appendingPathComponent("spec/fixtures/manifest.json").path) {
+        let parent = root.deletingLastPathComponent()
+        try #require(parent != root)
+        root = parent
+    }
+    let fixture = try #require(JSONSerialization.jsonObject(with: Data(contentsOf:
+        root.appendingPathComponent("spec/fixtures/valid/native-client-launch-admission.json"))) as? [String: Any])
+    let cases = try #require(fixture["measuredIPv4Routes"] as? [[String: String]])
+    let port = try #require(NWEndpoint.Port(rawValue: 47474))
+    for vector in cases {
+        let input = try #require(vector["input"]), expected = try #require(vector["expected"])
+        let address = try #require(IPv4Address(input))
+        if input.contains("%") { #expect(address.debugDescription.contains("%")) }
+        #expect(NetworkClientRouteAttemptV0.numericRemoteIPAddress(.hostPort(host: .ipv4(address), port: port)) == expected)
+    }
+}
+
+@Test(arguments: EndpointKind.allCases, [false, true])
+func primaryProductCandidatePublishesOnlyAfterExactSelection(kind: EndpointKind, measured: Bool)
     async throws
 {
     let base = try makeNetworkClientPumpHarness()
@@ -1298,13 +1351,23 @@ private func networkClientAcceptedControlSession(
         deviceID: base.deviceID,
         fingerprint: base.fingerprint
     )
+    let value: String = switch kind {
+    case .ipv4: "192.168.1.20"
+    case .ipv6: "2001:db8::20"
+    case .dns: "mac.example"
+    case .bonjour: "testmac._maccompanion._tcp.local."
+    }
+    let configuredNativeAddress = kind == .ipv4 || kind == .ipv6 ? value : nil
+    let measuredAddress = measured ? "192.168.1.21" : nil
+    let nativeAddress = measuredAddress ?? configuredNativeAddress
     let selectedEndpoint = try EndpointCandidate(
-        kind: .ipv4,
-        value: "192.168.1.20",
+        kind: kind,
+        value: value,
         port: 47_474
     )
     let candidate = NetworkClientPrimaryProductCandidateV0(
         endpoint: selectedEndpoint,
+        measuredRemoteIPAddress: measuredAddress,
         authenticatedRouteClass: .lan,
         configuration: NetworkClientPrimaryProductConfigurationV0(
             pairedHost: pairedHost,
@@ -1372,6 +1435,7 @@ private func networkClientAcceptedControlSession(
     #expect(observePublications.values.isEmpty)
     #expect(applicationState.snapshot().availability == .disconnected)
     #expect(applicationState.snapshot().revision == 0)
+    #expect(applicationState.currentAuthenticatedNativeIPAddress(primaryConnectionID: Data(repeating: 0x11, count: 16)) == nil)
     await #expect(
         throws: NetworkClientPrimaryApplicationCommandErrorV0.unavailable
     ) {
@@ -1389,6 +1453,8 @@ private func networkClientAcceptedControlSession(
     #expect(applicationState.snapshot().authenticatedRouteClass == .lan)
     #expect(applicationState.snapshot().revision == 1)
     #expect(applicationState.snapshot().controlChannel != nil)
+    #expect(applicationState.currentAuthenticatedNativeIPAddress(primaryConnectionID: session.connectionID) == nativeAddress)
+    #expect(applicationState.currentAuthenticatedNativeIPAddress(primaryConnectionID: Data(repeating: 0x22, count: 16)) == nil)
     #expect(applicationState.snapshot().controlState == .inactive)
 
     let controlSubmitted = try await applicationState
@@ -1422,7 +1488,7 @@ private func networkClientAcceptedControlSession(
             nextAfterCapabilityID: nil
         )
     )
-    #expect(await waitForNetworkClientPendingReceive(base.io))
+    try #require(await waitForNetworkClientPendingReceive(base.io))
     base.io.deliver(
         try LengthPrefixedFrameDecoder.encode(WireCodec.encode(catalogResponse))
     )
@@ -1464,7 +1530,7 @@ private func networkClientAcceptedControlSession(
             )
         )
     )
-    #expect(await waitForNetworkClientPendingReceive(base.io))
+    try #require(await waitForNetworkClientPendingReceive(base.io))
     base.io.deliver(
         try LengthPrefixedFrameDecoder.encode(WireCodec.encode(response))
     )
@@ -1525,6 +1591,7 @@ private func networkClientAcceptedControlSession(
     applicationState.productEvents.primarySelected(
         NetworkClientPrimaryProductSelectionV0(
             endpoint: selection.endpoint,
+            measuredRemoteIPAddress: nil,
             authenticatedRouteClass: .privateDNS,
             authenticatedSession: replacementSession,
             observeChannel: selection.observeChannel,
@@ -1537,6 +1604,8 @@ private func networkClientAcceptedControlSession(
     #expect(applicationState.snapshot().authenticatedRouteClass == .privateDNS)
     #expect(applicationState.snapshot().observedStatus == nil)
     #expect(applicationState.snapshot().revision == 6)
+    #expect(applicationState.currentAuthenticatedNativeIPAddress(primaryConnectionID: session.connectionID) == nil)
+    #expect(applicationState.currentAuthenticatedNativeIPAddress(primaryConnectionID: replacementConnectionID) == configuredNativeAddress)
 
     let acceptedControl = try networkClientAcceptedControlSession(
         primary: replacementSession
@@ -1748,6 +1817,7 @@ private func networkClientAcceptedControlSession(
     #expect(applicationState.snapshot().availability == .disconnected)
     #expect(applicationState.snapshot().authenticatedRouteClass == nil)
     #expect(applicationState.snapshot().revision == 19)
+    #expect(applicationState.currentAuthenticatedNativeIPAddress(primaryConnectionID: replacementConnectionID) == nil)
     #expect(selectedTerminations.terminations.count == 2)
     var updateIterator = applicationState.updates.makeAsyncIterator()
     #expect(await updateIterator.next()?.revision == 19)
@@ -1928,7 +1998,7 @@ private func networkClientAcceptedControlSession(
             )
         )
     )
-    #expect(await waitForNetworkClientPendingReceive(base.io))
+    try #require(await waitForNetworkClientPendingReceive(base.io))
     base.io.deliver(
         try LengthPrefixedFrameDecoder.encode(WireCodec.encode(response))
     )
@@ -2002,7 +2072,9 @@ private func networkClientAcceptedControlSession(
         terminals: base.terminals
     )
     try await authenticateNetworkClientPump(harness)
-    for _ in 0..<1_000 where await bridge.currentActChannel() == nil {
+    // The bridge publishes its channels before its asynchronous authentication
+    // callback returns to the pump and announces readiness. Wait for that signal.
+    for _ in 0..<1_000 where base.ready.count == 0 {
         try? await Task.sleep(nanoseconds: 1_000_000)
     }
     let channel = try #require(await bridge.currentActChannel())
@@ -2026,7 +2098,7 @@ private func networkClientAcceptedControlSession(
             nextAfterCapabilityID: nil
         )
     )
-    #expect(await waitForNetworkClientPendingReceive(base.io))
+    try #require(await waitForNetworkClientPendingReceive(base.io))
     base.io.deliver(
         try LengthPrefixedFrameDecoder.encode(WireCodec.encode(response))
     )
@@ -2068,7 +2140,7 @@ private func networkClientAcceptedControlSession(
             )
         )
     )
-    #expect(await waitForNetworkClientPendingReceive(base.io))
+    try #require(await waitForNetworkClientPendingReceive(base.io))
     base.io.deliver(
         try LengthPrefixedFrameDecoder.encode(WireCodec.encode(statusResponse))
     )

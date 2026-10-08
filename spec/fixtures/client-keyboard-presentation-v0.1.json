@@ -1,0 +1,11 @@
+{
+  "profile": "maccompanion.client-keyboard-presentation.v0.1",
+  "cases": [
+    "opens-before-input-admission",
+    "stays-visible-while-input-paused",
+    "paused-commit-is-discarded",
+    "replacement-does-not-replay-paused-commit",
+    "modifier-clears-on-pause",
+    "retirement-dismisses-keyboard"
+  ]
+}

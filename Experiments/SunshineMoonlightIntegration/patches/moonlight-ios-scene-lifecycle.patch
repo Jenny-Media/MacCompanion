@@ -1,0 +1,82 @@
+diff --git a/Limelight/AppDelegate.m b/Limelight/AppDelegate.m
+index 5db73f5..ca40c30 100644
+--- a/Limelight/AppDelegate.m
++++ b/Limelight/AppDelegate.m
+@@ -212,3 +212,37 @@ static NSString* DB_NAME = @"Limelight_iOS.sqlite";
+ }
+ 
+ @end
++
++#if !TARGET_OS_TV
++// The reference client uses one scene. MacCompanion owns its own scene when
++// the streaming engine is embedded in the normal application.
++@interface MoonlightSceneDelegate : UIResponder <UIWindowSceneDelegate>
++@property (strong, nonatomic) UIWindow *window;
++@end
++
++@implementation MoonlightSceneDelegate
++- (void)scene:(UIScene *)scene willConnectToSession:(UISceneSession *)session options:(UISceneConnectionOptions *)options {
++    if (![scene isKindOfClass:[UIWindowScene class]]) {
++        return;
++    }
++    AppDelegate *delegate = (AppDelegate *)UIApplication.sharedApplication.delegate;
++    if (options.shortcutItem != nil) {
++        delegate.pcUuidToLoad = options.shortcutItem.userInfo[@"UUID"];
++    }
++    NSString *storyboardName = UIDevice.currentDevice.userInterfaceIdiom == UIUserInterfaceIdiomPad ? @"iPad" : @"iPhone";
++    self.window = [[UIWindow alloc] initWithWindowScene:(UIWindowScene *)scene];
++    self.window.rootViewController = [[UIStoryboard storyboardWithName:storyboardName bundle:nil] instantiateInitialViewController];
++    delegate.window = self.window;
++    [self.window makeKeyAndVisible];
++}
++
++- (void)windowScene:(UIWindowScene *)windowScene performActionForShortcutItem:(UIApplicationShortcutItem *)shortcutItem completionHandler:(void (^)(BOOL))completionHandler {
++    AppDelegate *delegate = (AppDelegate *)UIApplication.sharedApplication.delegate;
++    [delegate application:UIApplication.sharedApplication performActionForShortcutItem:shortcutItem completionHandler:completionHandler];
++}
++
++- (void)sceneDidEnterBackground:(UIScene *)scene {
++    [(AppDelegate *)UIApplication.sharedApplication.delegate saveContext];
++}
++@end
++#endif
+diff --git a/Limelight/Limelight-Info.plist b/Limelight/Limelight-Info.plist
+index 963c433..03e94e4 100644
+--- a/Limelight/Limelight-Info.plist
++++ b/Limelight/Limelight-Info.plist
+@@ -62,10 +62,6 @@
+ 	<true/>
+ 	<key>UILaunchStoryboardName</key>
+ 	<string>Launch Screen</string>
+-	<key>UIMainStoryboardFile</key>
+-	<string>iPhone</string>
+-	<key>UIMainStoryboardFile~ipad</key>
+-	<string>iPad</string>
+ 	<key>UIRequiredDeviceCapabilities</key>
+ 	<array>
+ 		<string>armv7</string>
+@@ -86,5 +82,24 @@
+ 	</array>
+ 	<key>UIViewControllerBasedStatusBarAppearance</key>
+ 	<false/>
++	<key>UIApplicationSceneManifest</key>
++	<dict>
++		<key>UIApplicationSupportsMultipleScenes</key>
++		<false/>
++		<key>UISceneConfigurations</key>
++		<dict>
++			<key>UIWindowSceneSessionRoleApplication</key>
++			<array>
++				<dict>
++					<key>UISceneConfigurationName</key>
++					<string>Moonlight</string>
++					<key>UISceneClassName</key>
++					<string>UIWindowScene</string>
++					<key>UISceneDelegateClassName</key>
++					<string>MoonlightSceneDelegate</string>
++				</dict>
++			</array>
++		</dict>
++	</dict>
+ </dict>
+ </plist>

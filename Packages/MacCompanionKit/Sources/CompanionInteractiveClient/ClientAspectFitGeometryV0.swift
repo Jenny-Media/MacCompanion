@@ -1,6 +1,24 @@
 import Foundation
+import CompanionInteractiveShared
 
 public enum ClientAspectFitGeometryV0 {
+    /// Projects source pixels inside an encoded frame and then inside the
+    /// viewport. Both sets of padding remain outside the input mapper.
+    public static func nativeContentRect(
+        viewport: ClientInputRectV0,
+        geometry: InteractiveNativeVideoContentGeometryV0
+    ) throws -> ClientInputRectV0 {
+        let frame = try contentRect(viewport: viewport,
+            encodedWidth: UInt16(geometry.encodedWidth), encodedHeight: UInt16(geometry.encodedHeight))
+        let width = min(frame.width, frame.width * (geometry.contentWidth / Double(geometry.encodedWidth)))
+        let height = min(frame.height, frame.height * (geometry.contentHeight / Double(geometry.encodedHeight)))
+        let x = min(frame.x + frame.width - width,
+            max(frame.x, frame.x + frame.width * (geometry.contentX / Double(geometry.encodedWidth))))
+        let y = min(frame.y + frame.height - height,
+            max(frame.y, frame.y + frame.height * (geometry.contentY / Double(geometry.encodedHeight))))
+        return try .init(x: x, y: y, width: width, height: height)
+    }
+
     public static func contentRect(
         viewport: ClientInputRectV0,
         encodedWidth: UInt16,

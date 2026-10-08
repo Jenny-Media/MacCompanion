@@ -23,7 +23,9 @@ from platform_signing_fixed_tools import (
 )
 
 
-TOOL_PATH = "/Applications/Xcode-beta.app/Contents/Developer/usr/bin/notarytool"
+TOOL_PATH = "/Applications/Xcode.app/Contents/Developer/usr/bin/notarytool"
+if not Path(TOOL_PATH).exists():
+    TOOL_PATH = "/Applications/Xcode-beta.app/Contents/Developer/usr/bin/notarytool"
 PROFILE = "MacCompanion Release Notary"
 SUBMISSION_ID = "12345678-1234-1234-1234-123456789abc"
 
@@ -321,4 +323,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

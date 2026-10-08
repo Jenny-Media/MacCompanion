@@ -2,8 +2,9 @@
 
 Policy status: draft for written legal review before external publication.
 
-The Apache License 2.0 grants copyright and patent permissions for the source
-code. It does not grant permission to use Jenny Media LLC's trade names,
+The GNU General Public License version 3 governs combined product distribution;
+file-specific terms remain as described in `LICENSING.md`. The source license
+does not grant permission to use Jenny Media LLC's trade names,
 trademarks, service marks, product names, logos, app icons, signing identity, or
 other brand features except for reasonable and customary statements describing
 the origin of the software.
@@ -24,7 +25,7 @@ You may use the word marks, in plain text and only as much as needed, to:
 - describe compatibility with or an integration for Mac Companion;
 - link to this repository or discuss, review, criticize, or teach about the
   project; and
-- reproduce attribution required by the Apache License and `NOTICE` file.
+- reproduce attribution required by applicable source licenses and `NOTICE`.
 
 These uses must be truthful, must not imply endorsement, sponsorship, official
 status, or affiliation, and must not use Jenny Media logos, app icons, trade

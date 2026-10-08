@@ -1,0 +1,41 @@
+{
+  "profile": "Mac Companion local XPC Interactive WebRTC negotiation v0.1",
+  "maximumPayloadBytes": 4096,
+  "maximumInFlightCommandsPerGeneration": 1,
+  "receiverOperationTimeoutMilliseconds": 4000,
+  "senderReplyTimeoutMilliseconds": 5000,
+  "commands": [
+    {
+      "kind": "runtime.interactive.webrtc.offer",
+      "authorizationMethod": "applyInteractiveSurface",
+      "requestPayloadType": "LocalInteractiveWebRTCOfferCommandV1",
+      "successKind": "runtime.interactive.webrtc.offer.ack",
+      "successPayloadType": "LocalInteractiveWebRTCOfferReceiptV1"
+    },
+    {
+      "kind": "runtime.interactive.webrtc.answer",
+      "authorizationMethod": "applyInteractiveSurface",
+      "requestPayloadType": "LocalInteractiveWebRTCAnswerCommandV1",
+      "successKind": "runtime.interactive.webrtc.answer.ack",
+      "successPayloadType": null
+    },
+    {
+      "kind": "runtime.interactive.webrtc.close",
+      "authorizationMethod": "applyInteractiveSurface",
+      "requestPayloadType": "LocalInteractiveWebRTCCloseCommandV1",
+      "successKind": "runtime.interactive.webrtc.close.ack",
+      "successPayloadType": null
+    }
+  ],
+  "rules": [
+    "only the exact authenticated and ready menu generation receives a command",
+    "the existing Interactive lease and WebRTC commands share the one-command-in-flight generation gate",
+    "offer and answer recheck the active Control lease, session, epoch, surface and revisions before and after every suspension",
+    "offer receipt SDP and fingerprint are bound to the exact command ID and fence",
+    "a remote-valid SDP larger than the local 4096-byte canonical payload bound is rejected before disclosure",
+    "close is idempotent only for its exact Control session; stale close cannot retire a replacement session",
+    "revocation, expiry, Stop, local peer loss or Agent generation loss closes peer and capture before old callbacks can present",
+    "no command carries pixels, input, a credential, a private key or an arbitrary diagnostic string",
+    "malformed, ambiguous, timed out, cancelled or cross-kind traffic ends the generation and Control fails closed"
+  ]
+}

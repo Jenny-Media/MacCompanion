@@ -1,5 +1,7 @@
 # Mac Companion Staged Validation Plan
 
+> Current scope: the [remote-desktop MVP decision](remote-desktop-mvp.md) supersedes the Observe/Act-first setup and equal-path positioning in this earlier plan.
+
 ## Objective
 
 Validate the riskiest platform, security, and product assumptions before expanding Mac Companion into a broad personal-Mac control platform.
@@ -18,7 +20,7 @@ This workstream runs alongside Stage 0 and does not block isolated platform spik
 
 - Use **Mac Companion** as the working product and iPhone/iPad app name, **Mac Companion Agent** for the installed Mac component, and **Monitor and control your Mac** as the proposed App Store subtitle.
 - Complete written trademark review and reserve the App Store name before public branding, marketing domains, paid naming work, or external launch. Company-controlled bundle identifiers use stable role-based identifiers and do not wait for public-name reservation.
-- Prepare Apache-2.0 licensing and a separate Mac Companion/Jenny Media trademark policy, both subject to legal review. Use GitHub private vulnerability reporting initially and hold further pushes and external contributions until the license, trademark, security, full-history, and provider-protection gates are complete.
+- Use GPL-3.0 for combined product distribution following the 2026-09-26 owner decision, retaining applicable Apache-2.0 and upstream notices as described in `LICENSING.md`. Prepare corresponding source delivery and a separate Mac Companion/Jenny Media trademark policy, subject to distribution review. Use GitHub private vulnerability reporting initially and hold further pushes and external contributions until the license, trademark, security, full-history, and provider-protection gates are complete.
 - Build a task-level competitor matrix for Helm, Cuevello, MacReacher, Apperture, Tomaco, CommandDeck, Shellcove, generic screen sharing, and SSH. Compare pairing, time to first frame, LAN and private-route behavior, app/window focus, keyboard and touch behavior, nonvisual actions, permission onboarding, recovery, privacy, pricing, and support boundaries.
 - Use owners of logged-in personal Macs who want private, no-relay remote operation as the beachhead hypothesis. Define representative Observe, Act, and Control jobs without assuming that every user needs all three in every session.
 - Dogfood repeated jobs such as checking a build, inspecting Simulator, operating Terminal or Xcode, checking Mac health, running one bounded action, recovering from a modal dialog, and reconnecting over Tailscale. Record every return to the physical Mac and why it was necessary.

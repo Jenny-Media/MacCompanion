@@ -1,0 +1,596 @@
+{
+  "profile": "Mac Companion private selected capture context v0.1",
+  "nativeAppWindowEnrollmentAdmitted": true,
+  "physicalIdentifiersCrossAgentIPC": false,
+  "physicalIdentifiersReachOwnedChildOnly": true,
+  "nowMonotonicNanoseconds": 1000000000,
+  "windowContext": {
+    "profile": "maccompanion.selected-capture-context.v0.1",
+    "operationID": "AAAAAAAA-BBBB-4CCC-8DDD-EEEEEEEEEEEE",
+    "kind": "window",
+    "displayID": 1,
+    "windowID": 42,
+    "processID": 123,
+    "bundleIdentifier": "test.selected",
+    "processLaunchMilliseconds": 1000,
+    "expiresAtMonotonicNanoseconds": 31000000000,
+    "boundsX": -320,
+    "boundsY": 40,
+    "boundsWidth": 320,
+    "boundsHeight": 180,
+    "backingScale": 2,
+    "sourcePixelWidth": 640,
+    "sourcePixelHeight": 360,
+    "encodedWidth": 640,
+    "encodedHeight": 360
+  },
+  "rules": [
+    "canonical closed record at most 4096 bytes",
+    "private directory owner mode 0700 and regular single-link file owner mode 0600 without symlinks",
+    "parent resolves existing private root with POSIX realpath child rejects literal symlink aliases such as /tmp",
+    "exact managed operation display encoded mode and original Control bound",
+    "parent matches existing full native authority public key and geometry before emission",
+    "positive current process launch instance and exact live owner bounds rotation scale",
+    "window uses independent filter application uses app-only padded clipped crop",
+    "malformed expired replaced resized or unsafe selection has no Desktop fallback",
+    "permission preflight only no permission prompt or independent approval",
+    "backend owner treats absent selected object as Desktop only for an active Desktop descriptor",
+    "App and Window require acknowledged replacement then fresh native enrollment and context",
+    "old renderer identity operation and input authorization cannot cross the replacement"
+  ],
+  "captureDisplayCases": [
+    {
+      "kind": "desktop",
+      "leasePhysicalDisplayID": 1,
+      "capturePhysicalDisplayID": 1
+    },
+    {
+      "kind": "window",
+      "leasePhysicalDisplayID": 1,
+      "selectedPhysicalDisplayID": 1,
+      "capturePhysicalDisplayID": 1
+    },
+    {
+      "kind": "window",
+      "leasePhysicalDisplayID": 1,
+      "selectedPhysicalDisplayID": 2,
+      "capturePhysicalDisplayID": 2
+    },
+    {
+      "kind": "application",
+      "leasePhysicalDisplayID": 1,
+      "selectedPhysicalDisplayID": 1,
+      "capturePhysicalDisplayID": 1
+    },
+    {
+      "kind": "application",
+      "leasePhysicalDisplayID": 1,
+      "selectedPhysicalDisplayID": 2,
+      "denied": true
+    },
+    {
+      "kind": "desktop",
+      "leasePhysicalDisplayID": 1,
+      "selectedPhysicalDisplayID": 2,
+      "denied": true
+    },
+    {
+      "kind": "window",
+      "leasePhysicalDisplayID": 1,
+      "denied": true
+    },
+    {
+      "kind": "window",
+      "leasePhysicalDisplayID": 0,
+      "selectedPhysicalDisplayID": 2,
+      "denied": true
+    },
+    {
+      "kind": "window",
+      "leasePhysicalDisplayID": 1,
+      "selectedPhysicalDisplayID": 0,
+      "denied": true
+    }
+  ],
+  "childDiagnosticCases": [
+    {
+      "lines": [
+        "selected-capture-context-error=12",
+        "selected-capture-stream-error=4",
+        "selected-capture-sample-rejected=7"
+      ],
+      "codes": [
+        "selected-capture-context-error=12",
+        "selected-capture-sample-rejected=7",
+        "selected-capture-stream-error=4"
+      ]
+    },
+    {
+      "lines": [
+        "selected-capture-sample-rejected=65",
+        "selected-capture-sample-rejected=65"
+      ],
+      "codes": [
+        "selected-capture-sample-rejected=65"
+      ]
+    },
+    {
+      "lines": [
+        "other log text",
+        "selected-capture-stream-error=999",
+        "selected-capture-sample-rejected=7 extra",
+        "prefix selected-capture-context-error=12",
+        "selected-capture-context-error=012"
+      ],
+      "codes": []
+    },
+    {
+      "lines": [
+        "[timestamp]: Error: Couldn't find any working encoder matching [videotoolbox]"
+      ],
+      "codes": [
+        "no-working-encoder"
+      ]
+    },
+    {
+      "lines": [
+        "selected-capture-validation-error=1",
+        "selected-capture-validation-error=2",
+        "selected-capture-validation-error=3",
+        "selected-capture-validation-error=4",
+        "selected-capture-validation-error=5",
+        "selected-capture-validation-error=6",
+        "selected-capture-validation-error=7",
+        "selected-capture-validation-error=8",
+        "selected-capture-validation-error=9",
+        "selected-capture-validation-error=10",
+        "selected-capture-validation-error=11",
+        "selected-capture-validation-error=12",
+        "selected-capture-handoff-error=1",
+        "selected-capture-handoff-error=2",
+        "selected-capture-handoff-error=3",
+        "selected-capture-handoff-error=4",
+        "selected-capture-handoff-error=5",
+        "selected-capture-handoff-error=6",
+        "selected-capture-handoff-error=7",
+        "selected-capture-handoff-error=8",
+        "selected-capture-handoff-error=9",
+        "selected-capture-handoff-error=10",
+        "selected-capture-handoff-error=11",
+        "selected-capture-handoff-error=12",
+        "selected-capture-handoff-error=13"
+      ],
+      "codes": [
+        "selected-capture-handoff-error=1",
+        "selected-capture-handoff-error=10",
+        "selected-capture-handoff-error=11",
+        "selected-capture-handoff-error=12",
+        "selected-capture-handoff-error=13",
+        "selected-capture-handoff-error=2",
+        "selected-capture-handoff-error=3",
+        "selected-capture-handoff-error=4",
+        "selected-capture-handoff-error=5",
+        "selected-capture-handoff-error=6",
+        "selected-capture-handoff-error=7",
+        "selected-capture-handoff-error=8",
+        "selected-capture-handoff-error=9",
+        "selected-capture-validation-error=1",
+        "selected-capture-validation-error=10",
+        "selected-capture-validation-error=11",
+        "selected-capture-validation-error=12",
+        "selected-capture-validation-error=2",
+        "selected-capture-validation-error=3",
+        "selected-capture-validation-error=4",
+        "selected-capture-validation-error=5",
+        "selected-capture-validation-error=6",
+        "selected-capture-validation-error=7",
+        "selected-capture-validation-error=8",
+        "selected-capture-validation-error=9"
+      ]
+    },
+    {
+      "lines": [
+        "selected-capture-validation-error=0",
+        "selected-capture-validation-error=13",
+        "selected-capture-validation-error=01",
+        "selected-capture-validation-error=10 private",
+        "selected-capture-handoff-error=0",
+        "selected-capture-handoff-error=14",
+        "selected-capture-handoff-error=01",
+        "selected-capture-handoff-error=9 private"
+      ],
+      "codes": []
+    },
+    {
+      "lines": [
+        "selected-capture-placement-discarded=1",
+        "selected-capture-placement-discarded=2",
+        "selected-capture-stream-error=9",
+        "selected-capture-placement-discarded=3",
+        "selected-capture-placement-discarded=01",
+        "selected-capture-placement-discarded=1 extra",
+        "selected-capture-stream-error=7",
+        "selected-capture-stream-error=8"
+      ],
+      "codes": [
+        "selected-capture-placement-discarded=1",
+        "selected-capture-placement-discarded=2",
+        "selected-capture-stream-error=7",
+        "selected-capture-stream-error=8",
+        "selected-capture-stream-error=9"
+      ]
+    }
+  ],
+  "pickerWindowCases": [
+    {
+      "onScreen": true,
+      "layer": 0,
+      "width": 800,
+      "height": 500,
+      "scale": 2,
+      "selectable": true
+    },
+    {
+      "onScreen": true,
+      "layer": 0,
+      "width": 160,
+      "height": 120,
+      "scale": 2,
+      "selectable": true
+    },
+    {
+      "onScreen": true,
+      "layer": 0,
+      "width": 159,
+      "height": 120,
+      "scale": 2,
+      "selectable": false
+    },
+    {
+      "onScreen": true,
+      "layer": 0,
+      "width": 800,
+      "height": 50,
+      "scale": 2,
+      "selectable": false
+    },
+    {
+      "onScreen": false,
+      "layer": 0,
+      "width": 800,
+      "height": 500,
+      "scale": 2,
+      "selectable": false
+    },
+    {
+      "onScreen": true,
+      "layer": 25,
+      "width": 800,
+      "height": 500,
+      "scale": 2,
+      "selectable": false
+    },
+    {
+      "onScreen": true,
+      "layer": 0,
+      "width": 800,
+      "height": 500,
+      "scale": 0,
+      "selectable": false
+    },
+    {
+      "onScreen": true,
+      "layer": 0,
+      "width": 0,
+      "height": 500,
+      "scale": 2,
+      "selectable": false
+    }
+  ],
+  "pickerTitleCases": [
+    {
+      "input": "Example note",
+      "title": "Example note"
+    },
+    {
+      "input": "  First\nsecond\tline  ",
+      "title": "First second line"
+    },
+    {
+      "input": "\u202etitle\u2066",
+      "title": "title"
+    },
+    {
+      "input": "",
+      "title": null
+    },
+    {
+      "input": "\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9",
+      "title": "\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9"
+    }
+  ],
+  "capturePlacementCases": [
+    {
+      "sourceWidth": 640,
+      "sourceHeight": 360,
+      "encodedWidth": 320,
+      "encodedHeight": 240,
+      "destinationRect": [
+        0.0,
+        30.0,
+        320.0,
+        180.0
+      ]
+    },
+    {
+      "sourceWidth": 2560,
+      "sourceHeight": 1036,
+      "encodedWidth": 1920,
+      "encodedHeight": 776,
+      "destinationRect": [
+        1.2355212355213325,
+        0.0,
+        1917.5289575289573,
+        776.0
+      ]
+    },
+    {
+      "sourceWidth": 1036,
+      "sourceHeight": 2560,
+      "encodedWidth": 484,
+      "encodedHeight": 1200,
+      "destinationRect": [
+        0.0,
+        2.007722007722009,
+        484.0,
+        1195.984555984556
+      ]
+    }
+  ],
+  "applicationCropCases": [
+    {
+      "name": "main-window-only",
+      "displayBounds": [
+        0,
+        0,
+        1920,
+        1080
+      ],
+      "processID": 7,
+      "windows": [
+        {
+          "processID": 7,
+          "layer": 0,
+          "onScreen": true,
+          "bounds": [
+            100,
+            80,
+            800,
+            600
+          ]
+        }
+      ],
+      "crop": [
+        76,
+        56,
+        848,
+        648
+      ]
+    },
+    {
+      "name": "finder-background-and-overlay-excluded",
+      "displayBounds": [
+        0,
+        0,
+        1920,
+        1080
+      ],
+      "processID": 7,
+      "windows": [
+        {
+          "processID": 7,
+          "layer": -2147483623,
+          "onScreen": true,
+          "bounds": [
+            0,
+            0,
+            1920,
+            1080
+          ]
+        },
+        {
+          "processID": 7,
+          "layer": 24,
+          "onScreen": true,
+          "bounds": [
+            0,
+            0,
+            1920,
+            1080
+          ]
+        },
+        {
+          "processID": 7,
+          "layer": 0,
+          "onScreen": true,
+          "bounds": [
+            100,
+            80,
+            800,
+            600
+          ]
+        },
+        {
+          "processID": 8,
+          "layer": 0,
+          "onScreen": true,
+          "bounds": [
+            0,
+            0,
+            1920,
+            1080
+          ]
+        },
+        {
+          "processID": 7,
+          "layer": 0,
+          "onScreen": false,
+          "bounds": [
+            0,
+            0,
+            1920,
+            1080
+          ]
+        }
+      ],
+      "crop": [
+        76,
+        56,
+        848,
+        648
+      ]
+    },
+    {
+      "name": "no-main-window",
+      "displayBounds": [
+        0,
+        0,
+        1920,
+        1080
+      ],
+      "processID": 7,
+      "windows": [
+        {
+          "processID": 7,
+          "layer": -2147483623,
+          "onScreen": true,
+          "bounds": [
+            0,
+            0,
+            1920,
+            1080
+          ]
+        }
+      ],
+      "crop": null
+    }
+  ],
+  "retiredHealthRules": [
+    "only complete matching backend operation and scope can observe inactive retirement",
+    "inactive health has no evidence input certificate or port",
+    "retirement joins child before inactivity and retains at most 64 bindings",
+    "old inactive observation cannot retire a newer backend"
+  ],
+  "windowContinuityContext": {
+    "profile": "maccompanion.selected-capture-context.v0.2",
+    "operationID": "AAAAAAAA-BBBB-4CCC-8DDD-EEEEEEEEEEEE",
+    "kind": "window",
+    "displayID": 1,
+    "windowID": 42,
+    "processID": 123,
+    "bundleIdentifier": "test.selected",
+    "processLaunchMilliseconds": 1000,
+    "expiresAtMonotonicNanoseconds": 31000000000,
+    "boundsX": -320,
+    "boundsY": 40,
+    "boundsWidth": 320,
+    "boundsHeight": 180,
+    "backingScale": 2,
+    "sourcePixelWidth": 640,
+    "sourcePixelHeight": 360,
+    "encodedWidth": 640,
+    "encodedHeight": 360,
+    "frameEpochHex": "d5e7c93a1da94bf28f2b09a1de105a511111111122224333844455555555555500000000000000020000000000000003"
+  },
+  "desktopContinuityContext": {
+    "profile": "maccompanion.selected-capture-context.v0.2",
+    "operationID": "AAAAAAAA-BBBB-4CCC-8DDD-EEEEEEEEEEEE",
+    "kind": "desktop",
+    "displayID": 1,
+    "windowID": 0,
+    "processID": 0,
+    "bundleIdentifier": "",
+    "processLaunchMilliseconds": 0,
+    "expiresAtMonotonicNanoseconds": 31000000000,
+    "boundsX": 0,
+    "boundsY": 0,
+    "boundsWidth": 320,
+    "boundsHeight": 180,
+    "backingScale": 2,
+    "sourcePixelWidth": 640,
+    "sourcePixelHeight": 360,
+    "encodedWidth": 640,
+    "encodedHeight": 360,
+    "frameEpochHex": "d5e7c93a1da94bf28f2b09a1de105a511111111122224333844455555555555500000000000000020000000000000003"
+  },
+  "continuityContextCases": [
+    "legacy-desktop-stays-rejected",
+    "desktop-requires-empty-process-scope",
+    "exact-captured-epoch-required",
+    "canvas-and-original-deadline-stay-fixed"
+  ],
+  "desktopNativePixelCases": [
+    {
+      "id": "retina-ultrawide",
+      "logical": [
+        2560,
+        1067
+      ],
+      "cgPixels": [
+        2560,
+        1067
+      ],
+      "nativePixels": [
+        5120,
+        2134
+      ],
+      "backingScale": 2
+    },
+    {
+      "id": "retina-built-in",
+      "logical": [
+        1512,
+        982
+      ],
+      "cgPixels": [
+        1512,
+        982
+      ],
+      "nativePixels": [
+        3024,
+        1964
+      ],
+      "backingScale": 2
+    },
+    {
+      "id": "ordinary-one-to-one",
+      "logical": [
+        1920,
+        1080
+      ],
+      "cgPixels": [
+        1920,
+        1080
+      ],
+      "nativePixels": [
+        1920,
+        1080
+      ],
+      "backingScale": 1
+    }
+  ],
+  "childValidationReasons": [
+    "expiry",
+    "display-activity-or-rotation",
+    "display-bounds",
+    "display-mode",
+    "desktop-geometry",
+    "selected-backing-scale",
+    "process-identity",
+    "window-inventory",
+    "window-identity-or-visibility",
+    "window-geometry",
+    "window-display",
+    "application-geometry"
+  ]
+}

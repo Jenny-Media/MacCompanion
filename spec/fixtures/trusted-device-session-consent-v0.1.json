@@ -1,0 +1,19 @@
+{
+  "profile": "Mac Companion trusted-device remote desktop session consent v0.1",
+  "normalProduct": "trustedDevice",
+  "legacyCompatibility": "freshUserPresence",
+  "goldenVector": "crypto/interactive-v0.1.json",
+  "signingInput": "interactiveApprovalSigningInput unchanged",
+  "rules": [
+    "trustedDevice uses only the paired nonexportable session key without biometric prompt",
+    "freshUserPresence uses only the presence-bound approval key",
+    "fixed Remote Control grant and active device state required",
+    "profile is immutable product composition and cannot be supplied over wire",
+    "no cross-key fallback",
+    "exact host pin primary connection request effects display epoch and revisions required",
+    "fresh one-use monotonic-bound challenge for every session",
+    "revocation missing key wrong key and stale challenge never start a session",
+    "existing Control-enabled pairings retain keys and grants",
+    "legacy monitor-only pairing requires one-time local upgrade"
+  ]
+}

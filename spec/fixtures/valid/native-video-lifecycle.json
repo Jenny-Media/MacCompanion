@@ -1,0 +1,271 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "display-after-frame",
+      "steps": [
+        "begin",
+        "connected",
+        "frame",
+        "input"
+      ],
+      "expect": [
+        "connecting",
+        "connected",
+        "displaying",
+        "disabled"
+      ]
+    },
+    {
+      "id": "no-replacement-before-drain",
+      "steps": [
+        "begin",
+        "begin",
+        "stop",
+        "begin",
+        "drain",
+        "begin"
+      ],
+      "expect": [
+        "connecting",
+        "reject",
+        "draining",
+        "reject",
+        "retired",
+        "reject"
+      ]
+    },
+    {
+      "id": "replacement-after-failure",
+      "steps": [
+        "begin",
+        "fail",
+        "begin",
+        "drain",
+        "begin",
+        "oldFrame",
+        "connected",
+        "frame"
+      ],
+      "expect": [
+        "connecting",
+        "failed",
+        "reject",
+        "retired",
+        "connecting",
+        "reject",
+        "connected",
+        "displaying"
+      ]
+    },
+    {
+      "id": "stop-before-frame",
+      "steps": [
+        "begin",
+        "stop",
+        "frame",
+        "drain"
+      ],
+      "expect": [
+        "connecting",
+        "draining",
+        "reject",
+        "retired"
+      ]
+    },
+    {
+      "id": "expiry-at-boundary",
+      "steps": [
+        "begin",
+        "expire",
+        "frame",
+        "begin"
+      ],
+      "expect": [
+        "connecting",
+        "failed",
+        "reject",
+        "reject"
+      ]
+    },
+    {
+      "id": "revocation",
+      "steps": [
+        "begin",
+        "connected",
+        "frame",
+        "revoke",
+        "frame"
+      ],
+      "expect": [
+        "connecting",
+        "connected",
+        "displaying",
+        "failed",
+        "reject"
+      ]
+    },
+    {
+      "id": "surface-mismatch",
+      "steps": [
+        "begin",
+        "connected",
+        "wrongSurface"
+      ],
+      "expect": [
+        "connecting",
+        "connected",
+        "failed"
+      ]
+    },
+    {
+      "id": "dimension-mismatch",
+      "steps": [
+        "begin",
+        "connected",
+        "wrongDimensions"
+      ],
+      "expect": [
+        "connecting",
+        "connected",
+        "failed"
+      ]
+    },
+    {
+      "id": "frame-before-connected",
+      "steps": [
+        "begin",
+        "frame",
+        "connected",
+        "frame"
+      ],
+      "expect": [
+        "connecting",
+        "reject",
+        "connected",
+        "displaying"
+      ]
+    },
+    {
+      "id": "stale-failure-after-replacement",
+      "steps": [
+        "begin",
+        "fail",
+        "drain",
+        "begin",
+        "oldFailure",
+        "connected",
+        "frame"
+      ],
+      "expect": [
+        "connecting",
+        "failed",
+        "retired",
+        "connecting",
+        "reject",
+        "connected",
+        "displaying"
+      ]
+    },
+    {
+      "id": "input-only-after-separate-admission",
+      "steps": [
+        "begin",
+        "admitInput",
+        "connected",
+        "frame",
+        "input",
+        "admitInput",
+        "input",
+        "stop",
+        "input"
+      ],
+      "expect": [
+        "connecting",
+        "reject",
+        "connected",
+        "displaying",
+        "disabled",
+        "admit",
+        "enabled",
+        "draining",
+        "disabled"
+      ]
+    },
+    {
+      "id": "input-admission-revoked-with-authority",
+      "steps": [
+        "begin",
+        "connected",
+        "frame",
+        "admitInput",
+        "revoke",
+        "input"
+      ],
+      "expect": [
+        "connecting",
+        "connected",
+        "displaying",
+        "admit",
+        "failed",
+        "disabled"
+      ]
+    },
+    {
+      "id": "input-admission-cannot-survive-failure-retry",
+      "steps": [
+        "begin",
+        "connected",
+        "frame",
+        "admitInput",
+        "fail",
+        "input",
+        "drain",
+        "begin",
+        "connected",
+        "frame",
+        "oldInputAdmission",
+        "input"
+      ],
+      "expect": [
+        "connecting",
+        "connected",
+        "displaying",
+        "admit",
+        "failed",
+        "disabled",
+        "retired",
+        "connecting",
+        "connected",
+        "displaying",
+        "reject",
+        "disabled"
+      ]
+    },
+    {
+      "id": "background-does-not-resume-current-generation",
+      "steps": [
+        "begin",
+        "connected",
+        "frame",
+        "admitInput",
+        "background",
+        "input",
+        "frame",
+        "admitInput",
+        "input"
+      ],
+      "expect": [
+        "connecting",
+        "connected",
+        "displaying",
+        "admit",
+        "failed",
+        "disabled",
+        "reject",
+        "reject",
+        "disabled"
+      ]
+    }
+  ]
+}

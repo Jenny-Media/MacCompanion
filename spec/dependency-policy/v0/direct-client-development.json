@@ -1,0 +1,9 @@
+{
+  "profile": "maccompanion.direct-client-development-dependencies.v1",
+  "releaseAdmitted": false,
+  "vendorPackage": "Native/Dependencies/Citadel",
+  "sourceLockPath": "Native/Terminal/source-lock.json",
+  "sourceLockSHA256": "d41327c41a9c51e64d82e475199ebeed0ac951f98f7c9c0e76b846c5d47dbaee",
+  "resolvedLockfilePath": "Native/Terminal/Package.resolved",
+  "resolvedLockfileSHA256": "29b3df8602d0787d62a02e930de45b40f6a7644e9b6c5ccd2cd3d368aa5dc1c2"
+}

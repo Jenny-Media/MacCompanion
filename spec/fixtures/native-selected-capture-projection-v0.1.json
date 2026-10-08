@@ -1,0 +1,32 @@
+{
+  "profile": "Mac Companion selected native capture projection v0.1",
+  "projectionOnly": true,
+  "nativeAppWindowEnrollmentAdmitted": false,
+  "physicalIdentifiersCrossIPC": false,
+  "cases": [
+    {
+      "logicalWidth": 1280,
+      "logicalHeight": 720,
+      "backingScale": 1,
+      "capturePixelWidth": 1280,
+      "capturePixelHeight": 720
+    },
+    {
+      "logicalWidth": 1280,
+      "logicalHeight": 720,
+      "backingScale": 2,
+      "capturePixelWidth": 2560,
+      "capturePixelHeight": 1440
+    }
+  ],
+  "rules": [
+    "match exact current descriptor and native scope",
+    "retain only the committed ScreenCaptureKit surface",
+    "pending taken invalidated and expired selections are unavailable",
+    "window bounds and local activation identity must agree",
+    "application local activation identity must agree",
+    "derive source pixels from selected bounds and backing scale",
+    "nonfinite nonpositive oversized rotated or mismatched geometry is unavailable",
+    "projection is neither actual sample evidence nor native input admission"
+  ]
+}

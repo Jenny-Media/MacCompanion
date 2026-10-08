@@ -1,0 +1,2007 @@
+{
+  "profile": "maccompanion.direct-screen-sharing.v1",
+  "port": 5900,
+  "authentication": [
+    30
+  ],
+  "addressCases": [
+    {
+      "address": "10.1.2.3",
+      "scope": 0,
+      "valid": true
+    },
+    {
+      "address": "172.16.0.1",
+      "scope": 0,
+      "valid": true
+    },
+    {
+      "address": "172.31.255.254",
+      "scope": 0,
+      "valid": true
+    },
+    {
+      "address": "172.32.0.1",
+      "scope": 0,
+      "valid": false
+    },
+    {
+      "address": "192.168.4.2",
+      "scope": 0,
+      "valid": true
+    },
+    {
+      "address": "169.254.2.3",
+      "scope": 0,
+      "valid": true
+    },
+    {
+      "address": "127.0.0.1",
+      "scope": 0,
+      "valid": true
+    },
+    {
+      "address": "0.0.0.0",
+      "scope": 0,
+      "valid": false
+    },
+    {
+      "address": "255.255.255.255",
+      "scope": 0,
+      "valid": false
+    },
+    {
+      "address": "224.0.0.1",
+      "scope": 0,
+      "valid": false
+    },
+    {
+      "address": "8.8.8.8",
+      "scope": 0,
+      "valid": false
+    },
+    {
+      "address": "::1",
+      "scope": 0,
+      "valid": true
+    },
+    {
+      "address": "::",
+      "scope": 0,
+      "valid": false
+    },
+    {
+      "address": "fd12::42",
+      "scope": 0,
+      "valid": true
+    },
+    {
+      "address": "fc00::1",
+      "scope": 0,
+      "valid": true
+    },
+    {
+      "address": "ff02::1",
+      "scope": 0,
+      "valid": false
+    },
+    {
+      "address": "2001:4860:4860::8888",
+      "scope": 0,
+      "valid": false
+    },
+    {
+      "address": "::ffff:192.168.1.2",
+      "scope": 0,
+      "valid": true
+    },
+    {
+      "address": "::ffff:8.8.8.8",
+      "scope": 0,
+      "valid": false
+    },
+    {
+      "address": "fe80::1",
+      "scope": 0,
+      "valid": false
+    },
+    {
+      "address": "fe80::1",
+      "scope": 4,
+      "valid": true
+    },
+    {
+      "address": "100.63.255.255",
+      "scope": 0,
+      "valid": false
+    },
+    {
+      "address": "100.64.0.0",
+      "scope": 0,
+      "valid": true
+    },
+    {
+      "address": "100.127.255.255",
+      "scope": 0,
+      "valid": true
+    },
+    {
+      "address": "100.128.0.0",
+      "scope": 0,
+      "valid": false
+    },
+    {
+      "address": "::ffff:100.100.20.30",
+      "scope": 0,
+      "valid": true
+    }
+  ],
+  "loginCases": [
+    {
+      "value": "test-user",
+      "valid": true
+    },
+    {
+      "value": "",
+      "valid": false
+    },
+    {
+      "value": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "valid": true
+    },
+    {
+      "value": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "valid": false
+    },
+    {
+      "value": "\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9",
+      "valid": true
+    },
+    {
+      "value": "\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9",
+      "valid": false
+    },
+    {
+      "value": "a\u0000b",
+      "valid": false
+    }
+  ],
+  "displayLayoutCases": [
+    {
+      "name": "two unequal displays",
+      "bodyHex": "00050fe8042b0fe8042bffffffff0000000000023ff00000000000003ff0000000000000000000010000000003d605e80000000003d605e800000000000000000000000000000000000000003ff00000000000003ff000000000000000000002000005e8042b0fe8000005e8042b0fe80000000000000000000000000000000000000000",
+      "valid": true,
+      "backing": [
+        4072,
+        1067
+      ],
+      "screens": [
+        [
+          1,
+          0,
+          0,
+          1512,
+          982
+        ],
+        [
+          2,
+          1512,
+          0,
+          4072,
+          1067
+        ]
+      ]
+    },
+    {
+      "name": "opaque trailing fields",
+      "bodyHex": "00050fe8042b0fe8042bffffffff0000000000023ff00000000000003ff0000000000000000000010000000003d605e80000000003d605e800000000000000000000000000000000000000003ff00000000000003ff000000000000000000002000005e8042b0fe8000005e8042b0fe8000000000000000000000000000000000000000000000000",
+      "valid": true,
+      "backing": [
+        4072,
+        1067
+      ],
+      "screens": [
+        [
+          1,
+          0,
+          0,
+          1512,
+          982
+        ],
+        [
+          2,
+          1512,
+          0,
+          4072,
+          1067
+        ]
+      ]
+    },
+    {
+      "name": "truncated header",
+      "bodyHex": "00050fe8042b0fe8042bffffffff0000000000",
+      "valid": false
+    },
+    {
+      "name": "truncated record",
+      "bodyHex": "00050fe8042b0fe8042bffffffff0000000000023ff00000000000003ff0000000000000000000010000000003d605e80000000003d605e800000000000000000000000000000000000000003ff00000000000003ff000000000000000000002000005e8042b0fe8000005e8042b0fe800000000000000000000000000000000000000",
+      "valid": false
+    },
+    {
+      "name": "unknown version",
+      "bodyHex": "00060fe8042b0fe8042bffffffff0000000000023ff00000000000003ff0000000000000000000010000000003d605e80000000003d605e800000000000000000000000000000000000000003ff00000000000003ff000000000000000000002000005e8042b0fe8000005e8042b0fe80000000000000000000000000000000000000000",
+      "valid": false
+    },
+    {
+      "name": "no displays",
+      "bodyHex": "00050fe8042b0fe8042bffffffff000000000000",
+      "valid": false
+    },
+    {
+      "name": "duplicate IDs",
+      "bodyHex": "00050fe8042b0fe8042bffffffff0000000000023ff00000000000003ff0000000000000000000010000000003d605e80000000003d605e800000000000000000000000000000000000000003ff00000000000003ff000000000000000000001000005e8042b0fe8000005e8042b0fe80000000000000000000000000000000000000000",
+      "valid": false
+    },
+    {
+      "name": "outside backing",
+      "bodyHex": "00050fa0042b0fa0042bffffffff0000000000023ff00000000000003ff0000000000000000000010000000003d605e80000000003d605e800000000000000000000000000000000000000003ff00000000000003ff000000000000000000002000005e8042b0fe8000005e8042b0fe80000000000000000000000000000000000000000",
+      "valid": false
+    },
+    {
+      "name": "degenerate display",
+      "bodyHex": "00050fe8042b0fe8042bffffffff0000000000013ff00000000000003ff0000000000000000000010000000003d600000000000003d600000000000000000000000000000000000000000000",
+      "valid": false
+    },
+    {
+      "name": "unbounded backing",
+      "bodyHex": "00054e20042b4e20042bffffffff0000000000023ff00000000000003ff0000000000000000000010000000003d605e80000000003d605e800000000000000000000000000000000000000003ff00000000000003ff000000000000000000002000005e8042b0fe8000005e8042b0fe80000000000000000000000000000000000000000",
+      "valid": false
+    },
+    {
+      "name": "too many displays",
+      "bodyHex": "00050fe8042b0fe8042bffffffff0000000000213ff00000000000003ff0000000000000000000000000000003d605e80000000003d605e800000000000000000000000000000000000000003ff00000000000003ff0000000000000000000010000000003d605e80000000003d605e800000000000000000000000000000000000000003ff00000000000003ff0000000000000000000020000000003d605e80000000003d605e800000000000000000000000000000000000000003ff00000000000003ff0000000000000000000030000000003d605e80000000003d605e800000000000000000000000000000000000000003ff00000000000003ff0000000000000000000040000000003d605e80000000003d605e800000000000000000000000000000000000000003ff00000000000003ff0000000000000000000050000000003d605e80000000003d605e800000000000000000000000000000000000000003ff00000000000003ff0000000000000000000060000000003d605e80000000003d605e800000000000000000000000000000000000000003ff00000000000003ff0000000000000000000070000000003d605e80000000003d605e800000000000000000000000000000000000000003ff00000000000003ff0000000000000000000080000000003d605e80000000003d605e800000000000000000000000000000000000000003ff00000000000003ff0000000000000000000090000000003d605e80000000003d605e800000000000000000000000000000000000000003ff00000000000003ff00000000000000000000a0000000003d605e80000000003d605e800000000000000000000000000000000000000003ff00000000000003ff00000000000000000000b0000000003d605e80000000003d605e800000000000000000000000000000000000000003ff00000000000003ff00000000000000000000c0000000003d605e80000000003d605e800000000000000000000000000000000000000003ff00000000000003ff00000000000000000000d0000000003d605e80000000003d605e800000000000000000000000000000000000000003ff00000000000003ff00000000000000000000e0000000003d605e80000000003d605e800000000000000000000000000000000000000003ff00000000000003ff00000000000000000000f0000000003d605e80000000003d605e800000000000000000000000000000000000000003ff00000000000003ff0000000000000000000100000000003d605e80000000003d605e800000000000000000000000000000000000000003ff00000000000003ff0000000000000000000110000000003d605e80000000003d605e800000000000000000000000000000000000000003ff00000000000003ff0000000000000000000120000000003d605e80000000003d605e800000000000000000000000000000000000000003ff00000000000003ff0000000000000000000130000000003d605e80000000003d605e800000000000000000000000000000000000000003ff00000000000003ff0000000000000000000140000000003d605e80000000003d605e800000000000000000000000000000000000000003ff00000000000003ff0000000000000000000150000000003d605e80000000003d605e800000000000000000000000000000000000000003ff00000000000003ff0000000000000000000160000000003d605e80000000003d605e800000000000000000000000000000000000000003ff00000000000003ff0000000000000000000170000000003d605e80000000003d605e800000000000000000000000000000000000000003ff00000000000003ff0000000000000000000180000000003d605e80000000003d605e800000000000000000000000000000000000000003ff00000000000003ff0000000000000000000190000000003d605e80000000003d605e800000000000000000000000000000000000000003ff00000000000003ff00000000000000000001a0000000003d605e80000000003d605e800000000000000000000000000000000000000003ff00000000000003ff00000000000000000001b0000000003d605e80000000003d605e800000000000000000000000000000000000000003ff00000000000003ff00000000000000000001c0000000003d605e80000000003d605e800000000000000000000000000000000000000003ff00000000000003ff00000000000000000001d0000000003d605e80000000003d605e800000000000000000000000000000000000000003ff00000000000003ff00000000000000000001e0000000003d605e80000000003d605e800000000000000000000000000000000000000003ff00000000000003ff00000000000000000001f0000000003d605e80000000003d605e800000000000000000000000000000000000000003ff00000000000003ff0000000000000000000200000000003d605e80000000003d605e80000000000000000000000000000000000000000",
+      "valid": false
+    },
+    {
+      "name": "mirror rectangles",
+      "bodyHex": "00050fe8042b0fe8042bffffffff0000000000033ff00000000000003ff0000000000000000000010000000003d605e80000000003d605e800000000000000000000000000000000000000003ff00000000000003ff000000000000000000002000005e8042b0fe8000005e8042b0fe800000000000000000000000000000000000000003ff00000000000003ff0000000000000000000030000000003d605e80000000003d605e80000000000000000000000000000000000000000",
+      "valid": true,
+      "backing": [
+        4072,
+        1067
+      ],
+      "screens": [
+        [
+          1,
+          0,
+          0,
+          1512,
+          982
+        ],
+        [
+          2,
+          1512,
+          0,
+          4072,
+          1067
+        ],
+        [
+          3,
+          0,
+          0,
+          1512,
+          982
+        ]
+      ]
+    }
+  ],
+  "displayMetadataNegotiation": {
+    "requiredEncodingsInOrder": [
+      1101,
+      1105
+    ],
+    "legacyReply": "consume length-prefixed body without applying geometry",
+    "newReply": "bounded version-5 layout parser"
+  },
+  "recoveryPolicy": {
+    "resumeDeadlineMilliseconds": 9000,
+    "backgroundCompletionDeadlineMilliseconds": 1000,
+    "automaticReconnectAttempts": 1,
+    "liveActivityDefaultEnabled": true,
+    "connectedStatusStaleSeconds": 60,
+    "pausedStatusStaleSeconds": 900
+  },
+  "lifecycleCases": [
+    {
+      "name": "background established",
+      "retainsSocket": true,
+      "allowsInput": false,
+      "phase": "paused"
+    },
+    {
+      "name": "healthy foreground resume",
+      "retainsSocket": true,
+      "allowsInputBeforeFrame": false,
+      "allowsInputAfterFrame": true,
+      "phase": "connected"
+    },
+    {
+      "name": "background handshake",
+      "retainsSocket": false,
+      "reconnectOnReturn": true
+    },
+    {
+      "name": "failed resume",
+      "retainsSocket": false,
+      "automaticReconnectAttempts": 1,
+      "preservesViewport": true
+    },
+    {
+      "name": "explicit exit",
+      "automaticReconnectAttempts": 0,
+      "endsActivity": true
+    },
+    {
+      "name": "activity opt out",
+      "endsActivity": true,
+      "changesConnection": false
+    }
+  ],
+  "resumeURLCases": [
+    {
+      "url": "maccompanion-session://resume/00000000-0000-0000-0000-000000000001",
+      "valid": true
+    },
+    {
+      "url": "maccompanion-session://resume/not-a-uuid",
+      "valid": false
+    },
+    {
+      "url": "maccompanion-session://resume/00000000-0000-0000-0000-000000000001?address=other.local",
+      "valid": false
+    },
+    {
+      "url": "maccompanion-session://resume/00000000-0000-0000-0000-000000000001#login",
+      "valid": false
+    },
+    {
+      "url": "https://resume/00000000-0000-0000-0000-000000000001",
+      "valid": false
+    },
+    {
+      "url": "maccompanion-session://resume-terminal/00000000-0000-0000-0000-000000000001",
+      "valid": true,
+      "kind": "terminal"
+    },
+    {
+      "url": "maccompanion-session://resume-terminal/00000000-0000-0000-0000-000000000001?login=other",
+      "valid": false
+    },
+    {
+      "url": "maccompanion-session://resume-terminal/00000000-0000-0000-0000-000000000001#shell",
+      "valid": false
+    },
+    {
+      "url": "maccompanion-session://resume-terminal/not-a-uuid",
+      "valid": false
+    },
+    {
+      "url": "maccompanion-session://other/00000000-0000-0000-0000-000000000001",
+      "valid": false
+    }
+  ],
+  "portCases": [
+    {
+      "port": 0,
+      "valid": false
+    },
+    {
+      "port": 1,
+      "valid": true
+    },
+    {
+      "port": 5900,
+      "valid": true
+    },
+    {
+      "port": 5901,
+      "valid": true
+    },
+    {
+      "port": 65535,
+      "valid": true
+    },
+    {
+      "port": 65536,
+      "valid": false
+    },
+    {
+      "port": -1,
+      "valid": false
+    }
+  ],
+  "routePolicy": {
+    "maximumAddresses": 8,
+    "defaultPort": 5900,
+    "multipleAddressPhaseMilliseconds": 2000,
+    "totalMilliseconds": 16000,
+    "fallbackAfterTCPFailure": true,
+    "fallbackAfterAuthenticationFailure": false
+  },
+  "interfacePolicy": {
+    "minimumSpeed": 0.5,
+    "maximumSpeed": 3,
+    "defaultSpeed": 1.5,
+    "maximumSavedTextScalars": 256,
+    "maximumCustomActions": 12,
+    "pressSlideCommitsOnRelease": true,
+    "pressSlideExitAllowed": false,
+    "resumeDisplayRequiresVerifiedLayout": true,
+    "customActionQueueAtomic": true,
+    "customActionQueueBusyDisconnects": false,
+    "keyboardAvoidsDesktopOverlap": true,
+    "keyboardDismissRestoresViewport": true,
+    "keyboardReflowReconnects": false,
+    "keyboardButtonReflectsInputFocus": true,
+    "followCursorDefault": true,
+    "followCursorScope": "macUUID",
+    "followCursorTrackpadOnly": true,
+    "followCursorZoomedOnly": true,
+    "followCursorServerUpdatesPan": false,
+    "followCursorIdlePolling": false,
+    "followCursorReconnects": false,
+    "quickActionProfileScope": "mode",
+    "quickActionProfiles": [
+      "desktop",
+      "terminal",
+      "trackpad"
+    ],
+    "quickActionConfigurationRequiresConnection": false,
+    "terminalDefaultQuickActionKinds": [
+      "paste",
+      "interrupt"
+    ],
+    "trackpadDefaultQuickActionKinds": [
+      "rightClick",
+      "returnKey"
+    ],
+    "scrollPointsPerWheelTick": 6,
+    "scrollMaximumTicksPerUpdate": 8,
+    "scrollInputReplayedAfterGesture": false
+  },
+  "macLibraryPolicy": {
+    "sharedEndpointAcrossRecordsAllowed": true,
+    "duplicateAddressWithinRecordAllowed": false,
+    "credentialScope": "macUUID",
+    "forgetLoginDeletesCredential": true,
+    "removeRecordDeletesCredential": true
+  },
+  "macLibraryEditCases": [
+    {
+      "name": "addAlternateAddress",
+      "before": [
+        "first.local"
+      ],
+      "after": [
+        "first.local",
+        "100.100.20.30"
+      ],
+      "beforePort": 5900,
+      "afterPort": 5900,
+      "retainsLogin": true
+    },
+    {
+      "name": "replaceAddress",
+      "before": [
+        "first.local"
+      ],
+      "after": [
+        "changed.local"
+      ],
+      "beforePort": 5900,
+      "afterPort": 5900,
+      "retainsLogin": true
+    },
+    {
+      "name": "removeAlternateAddress",
+      "before": [
+        "first.local",
+        "100.100.20.30"
+      ],
+      "after": [
+        "first.local"
+      ],
+      "beforePort": 5900,
+      "afterPort": 5900,
+      "retainsLogin": true
+    },
+    {
+      "name": "reorderAddresses",
+      "before": [
+        "first.local",
+        "100.100.20.30"
+      ],
+      "after": [
+        "100.100.20.30",
+        "first.local"
+      ],
+      "beforePort": 5900,
+      "afterPort": 5900,
+      "retainsLogin": true
+    },
+    {
+      "name": "changePort",
+      "before": [
+        "first.local"
+      ],
+      "after": [
+        "first.local"
+      ],
+      "beforePort": 5900,
+      "afterPort": 5901,
+      "retainsLogin": true
+    }
+  ],
+  "followCursorCases": [
+    {
+      "name": "insideMargin",
+      "content": [
+        1600,
+        1200
+      ],
+      "viewport": [
+        400,
+        300,
+        400,
+        300
+      ],
+      "cursor": [
+        600,
+        450
+      ],
+      "offset": [
+        400,
+        300
+      ]
+    },
+    {
+      "name": "rightAndBottom",
+      "content": [
+        1600,
+        1200
+      ],
+      "viewport": [
+        400,
+        300,
+        400,
+        300
+      ],
+      "cursor": [
+        800,
+        600
+      ],
+      "offset": [
+        448,
+        336
+      ]
+    },
+    {
+      "name": "leftAndTop",
+      "content": [
+        1600,
+        1200
+      ],
+      "viewport": [
+        400,
+        300,
+        400,
+        300
+      ],
+      "cursor": [
+        400,
+        300
+      ],
+      "offset": [
+        352,
+        264
+      ]
+    },
+    {
+      "name": "clampAtOrigin",
+      "content": [
+        1600,
+        1200
+      ],
+      "viewport": [
+        0,
+        0,
+        400,
+        300
+      ],
+      "cursor": [
+        0,
+        0
+      ],
+      "offset": [
+        0,
+        0
+      ]
+    },
+    {
+      "name": "clampAtFarEdge",
+      "content": [
+        1600,
+        1200
+      ],
+      "viewport": [
+        1200,
+        900,
+        400,
+        300
+      ],
+      "cursor": [
+        1599,
+        1199
+      ],
+      "offset": [
+        1200,
+        900
+      ]
+    },
+    {
+      "name": "letterboxedAxis",
+      "content": [
+        200,
+        1200
+      ],
+      "viewport": [
+        0,
+        300,
+        400,
+        300
+      ],
+      "cursor": [
+        180,
+        600
+      ],
+      "offset": [
+        0,
+        336
+      ]
+    },
+    {
+      "name": "keyboardReducedViewport",
+      "content": [
+        1600,
+        1200
+      ],
+      "viewport": [
+        400,
+        300,
+        400,
+        180
+      ],
+      "cursor": [
+        600,
+        500
+      ],
+      "offset": [
+        400,
+        341.6
+      ]
+    },
+    {
+      "name": "zeroViewportPreserved",
+      "content": [
+        1600,
+        1200
+      ],
+      "viewport": [
+        400,
+        300,
+        0,
+        300
+      ],
+      "cursor": [
+        600,
+        600
+      ],
+      "offset": [
+        400,
+        300
+      ]
+    }
+  ],
+  "editorPortCases": [
+    {
+      "text": "",
+      "resolvedPort": 5900
+    },
+    {
+      "text": " \t\n ",
+      "resolvedPort": 5900
+    },
+    {
+      "text": "5900",
+      "resolvedPort": 5900
+    },
+    {
+      "text": " 5901 ",
+      "resolvedPort": 5901
+    },
+    {
+      "text": "1",
+      "resolvedPort": 1
+    },
+    {
+      "text": "65535",
+      "resolvedPort": 65535
+    },
+    {
+      "text": "0",
+      "resolvedPort": null
+    },
+    {
+      "text": "65536",
+      "resolvedPort": null
+    },
+    {
+      "text": "-1",
+      "resolvedPort": null
+    },
+    {
+      "text": "port",
+      "resolvedPort": null
+    },
+    {
+      "text": "5900.0",
+      "resolvedPort": null
+    },
+    {
+      "text": "99999999999999999999999999",
+      "resolvedPort": null
+    }
+  ],
+  "liveActivityActionPolicy": {
+    "compactShowsMacName": true,
+    "expandedActions": [
+      "resume",
+      "endSession"
+    ],
+    "endTargets": "activityID",
+    "endOpensApp": false,
+    "endStartsConnection": false,
+    "endReadsLogin": false,
+    "endAfterProcessExit": "dismissMatchingActivityOnly"
+  },
+  "liveActivityEndCases": [
+    {
+      "name": "current activity",
+      "currentID": "current",
+      "requestedID": "current",
+      "endsViewer": true
+    },
+    {
+      "name": "retired activity for same Mac",
+      "currentID": "replacement",
+      "requestedID": "retired",
+      "endsViewer": false
+    },
+    {
+      "name": "other activity",
+      "currentID": "current",
+      "requestedID": "other",
+      "endsViewer": false
+    },
+    {
+      "name": "repeated action after exit",
+      "currentID": null,
+      "requestedID": "current",
+      "endsViewer": false
+    }
+  ],
+  "clientAdditions": {
+    "appLock": {
+      "defaultEnabled": false,
+      "policy": "deviceOwnerAuthentication",
+      "backgroundRevokesAccess": true,
+      "promptInactiveRelocks": false
+    },
+    "fullscreen": {
+      "reconnect": false,
+      "restoreControlsAvailable": true
+    },
+    "inputOnly": {
+      "foregroundInput": true,
+      "regularFramebufferRequests": false,
+      "backgroundInput": false
+    },
+    "pointerTap": {
+      "maxDriftPoints": 18,
+      "maxDurationSeconds": 0.3,
+      "atomicEvents": [
+        1,
+        0
+      ],
+      "automaticRetry": false
+    },
+    "ssh": {
+      "defaultPort": 22,
+      "automaticReadsBeforeParser": false,
+      "enableReadsAfterHandlersBeforeAuthentication": true,
+      "authenticationAfterHostTrust": true,
+      "changedKey": "reject",
+      "publicRoute": "reject",
+      "keyVectors": [
+        {
+          "openSSH": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAABAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4f",
+          "fingerprint": "SHA256:ZkAslGjFiUHdGf/WUL8rQvkib4PTvQatUV0OUQSncCA"
+        }
+      ],
+      "lifecycle": {
+        "retainEstablishedShellOnInactive": true,
+        "pauseTransportReads": true,
+        "backgroundInput": false,
+        "pendingOutputLimitBytes": 1048576,
+        "resumeRequiresAppUnlock": true,
+        "automaticReconnect": false,
+        "idleBackgroundAssertion": false,
+        "pauseCompletionDeadlineMilliseconds": 1000,
+        "cancelPendingHandshake": true,
+        "cancelKeyInstallation": true
+      }
+    },
+    "sshKey": {
+      "algorithm": "ssh-ed25519",
+      "privateKeyExport": "encrypted-after-device-authentication",
+      "cloudPrivateKeys": false,
+      "passwordFallback": false,
+      "maximumImportBytes": 32768,
+      "maximumBcryptRounds": 128,
+      "libraryIdentity": "key-uuid",
+      "maximumKeys": 256,
+      "usageRecommendation": "neutral",
+      "exportCipher": "aes256-ctr",
+      "exportKDF": "bcrypt",
+      "exportRounds": 32,
+      "migration": "preserve-legacy-until-durable-association",
+      "removeMacDeletesLibraryKey": false,
+      "installLocation": "individual-mac-settings",
+      "installationRequiresBootstrap": true,
+      "installationRetries": false,
+      "verificationBeforeSelection": true,
+      "importBounds": {
+        "bcryptRounds": [
+          1,
+          128
+        ],
+        "saltBytes": [
+          1,
+          64
+        ],
+        "allPaddingBytesChecked": true,
+        "fullPaddingBlockAccepted": true
+      },
+      "duplicateMatch": "actual-key-fields-before-comment"
+    },
+    "cloudLibrary": {
+      "defaultEnabled": false,
+      "transport": "icloud-keychain",
+      "secretsIncluded": false,
+      "remoteTrustIncluded": false,
+      "disableRetainsCloudCopy": true,
+      "maximumRecords": 64,
+      "maximumVersions": 512,
+      "mergeCases": [
+        {
+          "localRevision": 2,
+          "remoteRevision": 1,
+          "remoteDeleted": true,
+          "winner": "local"
+        },
+        {
+          "localRevision": 1,
+          "remoteRevision": 2,
+          "remoteDeleted": true,
+          "winner": "remote"
+        },
+        {
+          "localRevision": 1,
+          "remoteRevision": 2,
+          "remoteDeleted": false,
+          "winner": "remote"
+        }
+      ]
+    },
+    "terminalKeyboard": {
+      "numberRow": "always-when-keyboard-open",
+      "modifiers": "one-shot-with-explicit-lock",
+      "backgroundClearsModifiers": true,
+      "command": "local-actions",
+      "cases": [
+        {
+          "text": "c",
+          "ctrl": true,
+          "alt": false,
+          "expectedHex": "03"
+        },
+        {
+          "text": "d",
+          "ctrl": true,
+          "alt": false,
+          "expectedHex": "04"
+        },
+        {
+          "text": "z",
+          "ctrl": true,
+          "alt": false,
+          "expectedHex": "1a"
+        },
+        {
+          "text": "a",
+          "ctrl": false,
+          "alt": true,
+          "expectedHex": "1b61"
+        },
+        {
+          "text": "c",
+          "ctrl": true,
+          "alt": true,
+          "expectedHex": "1b03"
+        },
+        {
+          "text": "[",
+          "ctrl": true,
+          "alt": false,
+          "expectedHex": "1b"
+        },
+        {
+          "text": "7",
+          "ctrl": false,
+          "alt": false,
+          "expectedHex": "37"
+        },
+        {
+          "text": "1",
+          "shift": true,
+          "expectedHex": "21"
+        },
+        {
+          "text": "-",
+          "shift": true,
+          "expectedHex": "5f"
+        },
+        {
+          "text": "'",
+          "shift": true,
+          "expectedHex": "22"
+        }
+      ],
+      "backspaceConsumesOneShot": true,
+      "backspaceCases": [
+        {
+          "alt": true,
+          "expectedHex": "1b7f"
+        },
+        {
+          "ctrl": true,
+          "expectedHex": "08"
+        },
+        {
+          "alt": true,
+          "ctrl": true,
+          "expectedHex": "1b08"
+        }
+      ],
+      "groupedModifiedDeletion": "one-per-logical-call"
+    },
+    "lifetimePro": {
+      "productType": "non-consumable",
+      "freeMacs": 1,
+      "freeKeys": 1,
+      "freeSessionExpiry": false,
+      "deletesExcessData": false,
+      "requiresAccount": false,
+      "perSessionNetworkCheck": false,
+      "basicKeyboardPaid": false,
+      "privateKeyExportPaid": false,
+      "automaticInstallPaid": true,
+      "cases": [
+        {
+          "verified": true,
+          "matchingProduct": true,
+          "revoked": false,
+          "unlocked": true,
+          "nonConsumable": true
+        },
+        {
+          "verified": false,
+          "matchingProduct": true,
+          "revoked": false,
+          "unlocked": false,
+          "nonConsumable": true
+        },
+        {
+          "verified": true,
+          "matchingProduct": false,
+          "revoked": false,
+          "unlocked": false,
+          "nonConsumable": true
+        },
+        {
+          "verified": true,
+          "matchingProduct": true,
+          "revoked": true,
+          "unlocked": false,
+          "nonConsumable": true
+        },
+        {
+          "verified": true,
+          "matchingProduct": true,
+          "revoked": false,
+          "nonConsumable": false,
+          "unlocked": false
+        }
+      ],
+      "productID": "media.jenny.maccompanion.pro.lifetime",
+      "usBasePrice": "9.99",
+      "trial": {
+        "productID": "media.jenny.maccompanion.pro.trial14",
+        "displayName": "14-day Trial",
+        "productType": "non-consumable",
+        "price": "0.00",
+        "durationSeconds": 1209600,
+        "start": "verifiedOriginalPurchaseDate",
+        "automaticCharge": false,
+        "restoreResetsStart": false,
+        "expiryDeletesData": false,
+        "expiryEndsActiveSession": false,
+        "cases": [
+          {
+            "name": "start",
+            "verified": true,
+            "matchingProduct": true,
+            "nonConsumable": true,
+            "revoked": false,
+            "originalPurchaseTimestamp": 100,
+            "nowTimestamp": 100,
+            "active": true
+          },
+          {
+            "name": "lastSecond",
+            "verified": true,
+            "matchingProduct": true,
+            "nonConsumable": true,
+            "revoked": false,
+            "originalPurchaseTimestamp": 100,
+            "nowTimestamp": 1209699,
+            "active": true
+          },
+          {
+            "name": "expiry",
+            "verified": true,
+            "matchingProduct": true,
+            "nonConsumable": true,
+            "revoked": false,
+            "originalPurchaseTimestamp": 100,
+            "nowTimestamp": 1209700,
+            "active": false
+          },
+          {
+            "name": "expired",
+            "verified": true,
+            "matchingProduct": true,
+            "nonConsumable": true,
+            "revoked": false,
+            "originalPurchaseTimestamp": 100,
+            "nowTimestamp": 1209701,
+            "active": false
+          },
+          {
+            "name": "future",
+            "verified": true,
+            "matchingProduct": true,
+            "nonConsumable": true,
+            "revoked": false,
+            "originalPurchaseTimestamp": 100,
+            "nowTimestamp": 99,
+            "active": false
+          },
+          {
+            "name": "unverified",
+            "verified": false,
+            "matchingProduct": true,
+            "nonConsumable": true,
+            "revoked": false,
+            "originalPurchaseTimestamp": 100,
+            "nowTimestamp": 101,
+            "active": false
+          },
+          {
+            "name": "wrongProduct",
+            "verified": true,
+            "matchingProduct": false,
+            "nonConsumable": true,
+            "revoked": false,
+            "originalPurchaseTimestamp": 100,
+            "nowTimestamp": 101,
+            "active": false
+          },
+          {
+            "name": "subscription",
+            "verified": true,
+            "matchingProduct": true,
+            "nonConsumable": false,
+            "revoked": false,
+            "originalPurchaseTimestamp": 100,
+            "nowTimestamp": 101,
+            "active": false
+          },
+          {
+            "name": "revoked",
+            "verified": true,
+            "matchingProduct": true,
+            "nonConsumable": true,
+            "revoked": true,
+            "originalPurchaseTimestamp": 100,
+            "nowTimestamp": 101,
+            "active": false
+          }
+        ]
+      }
+    }
+  },
+  "macLibraryNameCases": [
+    {
+      "id": "short-ascii",
+      "value": "M5",
+      "macValid": true,
+      "normalizedName": "M5",
+      "keyValid": true
+    },
+    {
+      "id": "words",
+      "value": "Office Mac",
+      "macValid": true,
+      "normalizedName": "Office Mac",
+      "keyValid": true
+    },
+    {
+      "id": "unicode",
+      "value": "\u5de5\u4f5c Mac",
+      "macValid": true,
+      "normalizedName": "\u5de5\u4f5c Mac",
+      "keyValid": true
+    },
+    {
+      "id": "emoji",
+      "value": "Mac \ud83d\udda5\ufe0f",
+      "macValid": true,
+      "normalizedName": "Mac \ud83d\udda5\ufe0f",
+      "keyValid": true
+    },
+    {
+      "id": "outer-spaces",
+      "value": " My Mac ",
+      "macValid": true,
+      "normalizedName": "My Mac",
+      "keyValid": true
+    },
+    {
+      "id": "empty",
+      "value": "",
+      "macValid": false,
+      "keyValid": false
+    },
+    {
+      "id": "spaces-only",
+      "value": "   ",
+      "macValid": false,
+      "keyValid": false
+    },
+    {
+      "id": "embedded-newline",
+      "value": "Office\nMac",
+      "macValid": false,
+      "keyValid": false
+    },
+    {
+      "id": "embedded-null",
+      "value": "Office\u0000Mac",
+      "macValid": false,
+      "keyValid": false
+    },
+    {
+      "id": "bidi-format",
+      "value": "Mac\u202e",
+      "macValid": false,
+      "keyValid": false
+    },
+    {
+      "id": "too-long",
+      "value": "MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM",
+      "macValid": false,
+      "keyValid": false
+    }
+  ],
+  "errorRecovery": {
+    "classifyVendorText": false,
+    "replayInput": false,
+    "replaySetupCommand": false,
+    "cases": [
+      {
+        "input": "unknown",
+        "keyLogin": true,
+        "reason": "terminalConnection"
+      },
+      {
+        "input": "authRejected",
+        "keyLogin": true,
+        "reason": "keyRejected"
+      },
+      {
+        "input": "authRejected",
+        "keyLogin": false,
+        "reason": "loginRejected"
+      },
+      {
+        "input": "unsupportedAuth",
+        "keyLogin": true,
+        "reason": "unsupportedConnection"
+      },
+      {
+        "input": "dns",
+        "keyLogin": true,
+        "reason": "addressNotFound"
+      },
+      {
+        "input": "tcp",
+        "keyLogin": true,
+        "reason": "macUnreachable"
+      },
+      {
+        "input": "changedKey",
+        "keyLogin": true,
+        "reason": "serverChanged"
+      },
+      {
+        "input": "rejectedTrust",
+        "keyLogin": true,
+        "reason": "connectionCancelled"
+      }
+    ],
+    "setupCases": [
+      {
+        "phase": "notSent",
+        "reason": "setupIncomplete",
+        "mayBeInstalled": false
+      },
+      {
+        "phase": "sent",
+        "reason": "setupUncertain",
+        "mayBeInstalled": true
+      },
+      {
+        "phase": "acknowledged",
+        "reason": "setupLoginUnverified",
+        "mayBeInstalled": true
+      },
+      {
+        "phase": "verified",
+        "reason": "setupPreferenceUnverified",
+        "mayBeInstalled": true
+      }
+    ],
+    "verificationOnly": {
+      "passwordRequests": 0,
+      "commands": 0,
+      "requiresHostTrust": true,
+      "associationOnlyAfterLogin": true
+    },
+    "desktopCases": [
+      {
+        "stage": 0,
+        "hadFrame": false,
+        "reason": "desktopUnavailable"
+      },
+      {
+        "stage": 0,
+        "hadFrame": true,
+        "reason": "desktopDisconnected"
+      },
+      {
+        "stage": 1,
+        "hadFrame": false,
+        "reason": "desktopUnavailable"
+      },
+      {
+        "stage": 2,
+        "hadFrame": false,
+        "reason": "unsupportedConnection"
+      },
+      {
+        "stage": 3,
+        "hadFrame": false,
+        "reason": "desktopUnavailable"
+      },
+      {
+        "stage": 4,
+        "hadFrame": false,
+        "reason": "desktopUnavailable"
+      },
+      {
+        "stage": 5,
+        "hadFrame": false,
+        "reason": "desktopUnavailable"
+      },
+      {
+        "stage": 6,
+        "hadFrame": false,
+        "reason": "desktopUnavailable"
+      },
+      {
+        "stage": 7,
+        "hadFrame": false,
+        "reason": "loginRejected"
+      },
+      {
+        "stage": 8,
+        "hadFrame": false,
+        "reason": "loginRejected"
+      },
+      {
+        "stage": 9,
+        "hadFrame": false,
+        "reason": "desktopUnavailable"
+      },
+      {
+        "stage": 10,
+        "hadFrame": false,
+        "reason": "addressNotFound"
+      },
+      {
+        "stage": 11,
+        "hadFrame": false,
+        "reason": "macUnreachable"
+      },
+      {
+        "stage": 100,
+        "hadFrame": false,
+        "reason": "desktopUnavailable"
+      },
+      {
+        "stage": 101,
+        "hadFrame": true,
+        "reason": "inputPaused"
+      },
+      {
+        "stage": 103,
+        "hadFrame": false,
+        "reason": "desktopUnavailable"
+      },
+      {
+        "stage": 103,
+        "hadFrame": true,
+        "reason": "desktopDisconnected"
+      }
+    ]
+  },
+  "frameReadinessPolicy": {
+    "metadataCountsAsPixels": false,
+    "coverageBitsPerPixel": 2,
+    "retryIntervalMilliseconds": 1000,
+    "maximumFullRefreshRetries": 2,
+    "baselineDeadlineMilliseconds": 8000,
+    "requiresCompleteBaseline": [
+      "initial",
+      "resize",
+      "resume",
+      "exit input-only",
+      "host layout change"
+    ],
+    "retainLastPresentedImage": true,
+    "layoutGapsAreRequired": false
+  },
+  "frameReadinessCases": [
+    {
+      "name": "metadata only",
+      "width": 200,
+      "height": 100,
+      "rectangles": [],
+      "ready": false
+    },
+    {
+      "name": "thin strip",
+      "width": 200,
+      "height": 100,
+      "rectangles": [
+        [
+          0,
+          0,
+          200,
+          2
+        ]
+      ],
+      "ready": false
+    },
+    {
+      "name": "overlapping strips",
+      "width": 200,
+      "height": 100,
+      "rectangles": [
+        [
+          0,
+          0,
+          200,
+          60
+        ],
+        [
+          0,
+          40,
+          200,
+          60
+        ]
+      ],
+      "ready": true
+    },
+    {
+      "name": "black pixels are valid",
+      "width": 2,
+      "height": 2,
+      "rectangles": [
+        [
+          0,
+          0,
+          2,
+          2
+        ]
+      ],
+      "ready": true
+    },
+    {
+      "name": "display gap",
+      "width": 6,
+      "height": 4,
+      "required": [
+        [
+          0,
+          0,
+          2,
+          2
+        ],
+        [
+          2,
+          2,
+          4,
+          2
+        ]
+      ],
+      "rectangles": [
+        [
+          0,
+          0,
+          2,
+          2
+        ],
+        [
+          2,
+          2,
+          4,
+          2
+        ]
+      ],
+      "ready": true
+    }
+  ],
+  "savedLoginEditing": {
+    "separateServices": true,
+    "explicitSave": true,
+    "connectOnSave": false,
+    "syncCredentials": false,
+    "clearDraftOnBackground": true,
+    "preserveOnReadOrWriteFailure": true,
+    "changesSelectedSSHKey": false
+  },
+  "desktopEncodingPolicy": {
+    "preferences": [
+      "zlib",
+      "hextile",
+      "raw"
+    ],
+    "notAdvertised": [
+      "zrle",
+      "zywrle"
+    ],
+    "decodeFailureStage": 103,
+    "invalidZRLETileHex": "ff"
+  },
+  "nativeMagnificationCases": [
+    {
+      "name": "begin-touch-v1-and-magnify-v2",
+      "phase": 1,
+      "delta": 0,
+      "x": 1000,
+      "y": 600,
+      "width": 3024,
+      "height": 1964,
+      "active": false,
+      "valid": true,
+      "hex": "1700000c000100010000000303e802581700002000020003000000000000000003e8025800000000000000010000000000000004"
+    },
+    {
+      "name": "positive-change",
+      "phase": 2,
+      "delta": 0.05,
+      "x": 1000,
+      "y": 600,
+      "width": 3024,
+      "height": 1964,
+      "active": true,
+      "valid": true,
+      "hex": "17000020000200033fa999999999999a03e8025800000000000000020000000000000004"
+    },
+    {
+      "name": "negative-change",
+      "phase": 2,
+      "delta": -0.05,
+      "x": 1000,
+      "y": 600,
+      "width": 3024,
+      "height": 1964,
+      "active": true,
+      "valid": true,
+      "hex": "1700002000020003bfa999999999999a03e8025800000000000000020000000000000004"
+    },
+    {
+      "name": "end-magnify-v2-and-touch-v1",
+      "phase": 4,
+      "delta": 0,
+      "x": 1000,
+      "y": 600,
+      "width": 3024,
+      "height": 1964,
+      "active": true,
+      "valid": true,
+      "hex": "1700002000020003000000000000000003e80258000000000000000400000000000000041700000c000100020000000303e80258"
+    },
+    {
+      "name": "last-pixel",
+      "phase": 1,
+      "delta": 0,
+      "x": 16383,
+      "y": 16383,
+      "width": 16384,
+      "height": 16384,
+      "active": false,
+      "valid": true,
+      "hex": "1700000c00010001000000033fff3fff170000200002000300000000000000003fff3fff00000000000000010000000000000004"
+    },
+    {
+      "name": "begin-twice",
+      "phase": 1,
+      "delta": 0,
+      "x": 1,
+      "y": 1,
+      "width": 10,
+      "height": 10,
+      "active": true,
+      "valid": false,
+      "hex": ""
+    },
+    {
+      "name": "change-without-begin",
+      "phase": 2,
+      "delta": 0.1,
+      "x": 1,
+      "y": 1,
+      "width": 10,
+      "height": 10,
+      "active": false,
+      "valid": false,
+      "hex": ""
+    },
+    {
+      "name": "end-without-begin",
+      "phase": 4,
+      "delta": 0,
+      "x": 1,
+      "y": 1,
+      "width": 10,
+      "height": 10,
+      "active": false,
+      "valid": false,
+      "hex": ""
+    },
+    {
+      "name": "appkit-ended-is-not-cg-ended",
+      "phase": 8,
+      "delta": 0,
+      "x": 1,
+      "y": 1,
+      "width": 10,
+      "height": 10,
+      "active": true,
+      "valid": false,
+      "hex": ""
+    },
+    {
+      "name": "nonzero-begin",
+      "phase": 1,
+      "delta": 0.1,
+      "x": 1,
+      "y": 1,
+      "width": 10,
+      "height": 10,
+      "active": false,
+      "valid": false,
+      "hex": ""
+    },
+    {
+      "name": "nonzero-end",
+      "phase": 4,
+      "delta": 0.1,
+      "x": 1,
+      "y": 1,
+      "width": 10,
+      "height": 10,
+      "active": true,
+      "valid": false,
+      "hex": ""
+    },
+    {
+      "name": "excess-delta",
+      "phase": 2,
+      "delta": 0.51,
+      "x": 1,
+      "y": 1,
+      "width": 10,
+      "height": 10,
+      "active": true,
+      "valid": false,
+      "hex": ""
+    },
+    {
+      "name": "zero-width",
+      "phase": 1,
+      "delta": 0,
+      "x": 0,
+      "y": 0,
+      "width": 0,
+      "height": 10,
+      "active": false,
+      "valid": false,
+      "hex": ""
+    },
+    {
+      "name": "excess-width",
+      "phase": 1,
+      "delta": 0,
+      "x": 1,
+      "y": 1,
+      "width": 16385,
+      "height": 10,
+      "active": false,
+      "valid": false,
+      "hex": ""
+    },
+    {
+      "name": "x-outside",
+      "phase": 1,
+      "delta": 0,
+      "x": 10,
+      "y": 1,
+      "width": 10,
+      "height": 10,
+      "active": false,
+      "valid": false,
+      "hex": ""
+    },
+    {
+      "name": "negative-x",
+      "phase": 1,
+      "delta": 0,
+      "x": -1,
+      "y": 1,
+      "width": 10,
+      "height": 10,
+      "active": false,
+      "valid": false,
+      "hex": ""
+    },
+    {
+      "name": "y-outside",
+      "phase": 1,
+      "delta": 0,
+      "x": 1,
+      "y": 10,
+      "width": 10,
+      "height": 10,
+      "active": false,
+      "valid": false,
+      "hex": ""
+    }
+  ],
+  "nativeGestureSupportCases": [
+    {
+      "apple889": true,
+      "layoutValid": true,
+      "width": 3024,
+      "height": 1964,
+      "backingWidth": 3024,
+      "backingHeight": 1964,
+      "valid": true
+    },
+    {
+      "apple889": false,
+      "layoutValid": true,
+      "width": 3024,
+      "height": 1964,
+      "backingWidth": 3024,
+      "backingHeight": 1964,
+      "valid": false
+    },
+    {
+      "apple889": true,
+      "layoutValid": false,
+      "width": 3024,
+      "height": 1964,
+      "backingWidth": 3024,
+      "backingHeight": 1964,
+      "valid": false
+    },
+    {
+      "apple889": true,
+      "layoutValid": true,
+      "width": 1512,
+      "height": 982,
+      "backingWidth": 3024,
+      "backingHeight": 1964,
+      "valid": false
+    },
+    {
+      "apple889": true,
+      "layoutValid": true,
+      "width": 0,
+      "height": 0,
+      "backingWidth": 0,
+      "backingHeight": 0,
+      "valid": false
+    }
+  ],
+  "nativeScrollCases": [
+    {
+      "name": "begin-precise-scroll",
+      "phase": 1,
+      "dx": 0,
+      "dy": 0,
+      "x": 1000,
+      "y": 600,
+      "width": 3024,
+      "height": 1964,
+      "active": false,
+      "valid": true,
+      "hex": "170000360001000b0000000000000000000000000000000000000000000000000000000000000000000100000000000000010000000203e80258"
+    },
+    {
+      "name": "positive-two-axis-change",
+      "phase": 2,
+      "dx": 12,
+      "dy": 24,
+      "x": 1000,
+      "y": 600,
+      "width": 3024,
+      "height": 1964,
+      "active": true,
+      "valid": true,
+      "hex": "170000360001000b000000000000000c000000180000000000000000000c00000018000000000000000200000000000000010000000203e80258"
+    },
+    {
+      "name": "negative-two-axis-change",
+      "phase": 2,
+      "dx": -12,
+      "dy": -24,
+      "x": 1000,
+      "y": 600,
+      "width": 3024,
+      "height": 1964,
+      "active": true,
+      "valid": true,
+      "hex": "170000360001000b000000000000fff40000ffe8000000000000fffffff4ffffffe8000000000000000200000000000000010000000203e80258"
+    },
+    {
+      "name": "end-precise-scroll",
+      "phase": 4,
+      "dx": 0,
+      "dy": 0,
+      "x": 1000,
+      "y": 600,
+      "width": 3024,
+      "height": 1964,
+      "active": true,
+      "valid": true,
+      "hex": "170000360001000b0000000000000000000000000000000000000000000000000000000000000000000400000000000000010000000203e80258"
+    },
+    {
+      "name": "fractional-scroll",
+      "phase": 2,
+      "dx": 0.25,
+      "dy": -0.25,
+      "x": 1000,
+      "y": 600,
+      "width": 3024,
+      "height": 1964,
+      "active": true,
+      "valid": true,
+      "hex": "170000360001000b00000000000000004000ffffc000000000000000000000000000000000000000000200000000000000010000000203e80258"
+    },
+    {
+      "name": "bounded-fast-swipe",
+      "phase": 2,
+      "dx": 2048,
+      "dy": -2048,
+      "x": 1000,
+      "y": 600,
+      "width": 3024,
+      "height": 1964,
+      "active": true,
+      "valid": true,
+      "hex": "170000360001000b00000000000008000000f80000000000000000000800fffff800000000000000000200000000000000010000000203e80258"
+    },
+    {
+      "name": "last-pixel",
+      "phase": 1,
+      "dx": 0,
+      "dy": 0,
+      "x": 16383,
+      "y": 16383,
+      "width": 16384,
+      "height": 16384,
+      "active": false,
+      "valid": true,
+      "hex": "170000360001000b000000000000000000000000000000000000000000000000000000000000000000010000000000000001000000023fff3fff"
+    },
+    {
+      "name": "begin-twice",
+      "phase": 1,
+      "dx": 0,
+      "dy": 0,
+      "x": 1000,
+      "y": 600,
+      "width": 3024,
+      "height": 1964,
+      "active": true,
+      "valid": false,
+      "hex": ""
+    },
+    {
+      "name": "change-before-begin",
+      "phase": 2,
+      "dx": 1,
+      "dy": 1,
+      "x": 1000,
+      "y": 600,
+      "width": 3024,
+      "height": 1964,
+      "active": false,
+      "valid": false,
+      "hex": ""
+    },
+    {
+      "name": "end-before-begin",
+      "phase": 4,
+      "dx": 0,
+      "dy": 0,
+      "x": 1000,
+      "y": 600,
+      "width": 3024,
+      "height": 1964,
+      "active": false,
+      "valid": false,
+      "hex": ""
+    },
+    {
+      "name": "wrong-phase",
+      "phase": 8,
+      "dx": 0,
+      "dy": 0,
+      "x": 1000,
+      "y": 600,
+      "width": 3024,
+      "height": 1964,
+      "active": true,
+      "valid": false,
+      "hex": ""
+    },
+    {
+      "name": "begin-with-delta",
+      "phase": 1,
+      "dx": 0,
+      "dy": 1,
+      "x": 1000,
+      "y": 600,
+      "width": 3024,
+      "height": 1964,
+      "active": false,
+      "valid": false,
+      "hex": ""
+    },
+    {
+      "name": "end-with-delta",
+      "phase": 4,
+      "dx": 0,
+      "dy": 1,
+      "x": 1000,
+      "y": 600,
+      "width": 3024,
+      "height": 1964,
+      "active": true,
+      "valid": false,
+      "hex": ""
+    },
+    {
+      "name": "excessive-delta",
+      "phase": 2,
+      "dx": 0,
+      "dy": 2049,
+      "x": 1000,
+      "y": 600,
+      "width": 3024,
+      "height": 1964,
+      "active": true,
+      "valid": false,
+      "hex": ""
+    },
+    {
+      "name": "negative-anchor",
+      "phase": 1,
+      "dx": 0,
+      "dy": 0,
+      "x": -1,
+      "y": 600,
+      "width": 3024,
+      "height": 1964,
+      "active": false,
+      "valid": false,
+      "hex": ""
+    },
+    {
+      "name": "outside-anchor",
+      "phase": 1,
+      "dx": 0,
+      "dy": 0,
+      "x": 3024,
+      "y": 600,
+      "width": 3024,
+      "height": 1964,
+      "active": false,
+      "valid": false,
+      "hex": ""
+    },
+    {
+      "name": "invalid-framebuffer",
+      "phase": 1,
+      "dx": 0,
+      "dy": 0,
+      "x": 1000,
+      "y": 600,
+      "width": 0,
+      "height": 1964,
+      "active": false,
+      "valid": false,
+      "hex": ""
+    },
+    {
+      "name": "oversized-framebuffer",
+      "phase": 1,
+      "dx": 0,
+      "dy": 0,
+      "x": 1000,
+      "y": 600,
+      "width": 16385,
+      "height": 1964,
+      "active": false,
+      "valid": false,
+      "hex": ""
+    }
+  ]
+}

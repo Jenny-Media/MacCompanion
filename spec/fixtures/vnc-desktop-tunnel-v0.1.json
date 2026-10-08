@@ -1,0 +1,1738 @@
+{
+  "profile": "Paired VNC desktop tunnel v0.1",
+  "goldenAuthentication": "crypto/v0.1.json",
+  "goldenControl": "crypto/interactive-v0.1.json",
+  "destination": {
+    "host": "127.0.0.1",
+    "port": 5900
+  },
+  "maximumChunkBytes": 16384,
+  "idleRevalidationMilliseconds": 200,
+  "cases": [
+    {
+      "name": "current-paired-control",
+      "allowed": true
+    },
+    {
+      "name": "monitor-only",
+      "allowed": false
+    },
+    {
+      "name": "other-primary",
+      "allowed": false
+    },
+    {
+      "name": "stale-epoch",
+      "allowed": false
+    },
+    {
+      "name": "revoked-device",
+      "allowed": false
+    },
+    {
+      "name": "mac-stop",
+      "allowed": false
+    },
+    {
+      "name": "expired-lease",
+      "allowed": false
+    },
+    {
+      "name": "missing-keyboard-effect",
+      "allowed": false
+    },
+    {
+      "name": "missing-pointer-effect",
+      "allowed": false
+    },
+    {
+      "name": "retired-runtime",
+      "allowed": false
+    },
+    {
+      "name": "remote-destination",
+      "allowed": false
+    },
+    {
+      "name": "replayed-sequence",
+      "allowed": false
+    },
+    {
+      "name": "stale-tunnel",
+      "allowed": false
+    }
+  ],
+  "framebufferLimits": {
+    "maximumDimension": 16384,
+    "maximumBytes": 100663296,
+    "maximumPendingFrames": 1
+  },
+  "framebufferCases": [
+    {
+      "width": 8144,
+      "height": 2134,
+      "allowed": true
+    },
+    {
+      "width": 8192,
+      "height": 3072,
+      "allowed": true
+    },
+    {
+      "width": 8192,
+      "height": 3073,
+      "allowed": false
+    },
+    {
+      "width": 16384,
+      "height": 1,
+      "allowed": true
+    },
+    {
+      "width": 16385,
+      "height": 1,
+      "allowed": false
+    },
+    {
+      "width": 0,
+      "height": 2134,
+      "allowed": false
+    },
+    {
+      "width": -1,
+      "height": 100,
+      "allowed": false
+    },
+    {
+      "width": 16384,
+      "height": 16384,
+      "allowed": false
+    }
+  ],
+  "hostRuntime": {
+    "profile": "screen-sharing-development",
+    "legacyCaptureStarts": 0,
+    "legacyMediaPublications": 0,
+    "nativeBackendAvailable": false,
+    "existingLeaseAndIndicatorRequired": true,
+    "viewportChangesReconnect": false
+  },
+  "hostRuntimeCases": [
+    {
+      "name": "current-desktop-lease",
+      "allowed": true
+    },
+    {
+      "name": "screen-permission-denied",
+      "allowed": false
+    },
+    {
+      "name": "duplicate-active-install",
+      "allowed": false
+    },
+    {
+      "name": "exact-renewal",
+      "allowed": true
+    },
+    {
+      "name": "stale-renewal",
+      "allowed": false
+    },
+    {
+      "name": "renewal-after-stop",
+      "allowed": false
+    }
+  ],
+  "keyboardCases": [
+    {
+      "name": "modifier-arm-has-no-remote-hold",
+      "actions": [
+        {
+          "kind": "modifier",
+          "key": 65515
+        }
+      ],
+      "events": [],
+      "armed": [
+        65515
+      ]
+    },
+    {
+      "name": "command-shortcut-auto-release",
+      "actions": [
+        {
+          "kind": "modifier",
+          "key": 65515
+        },
+        {
+          "kind": "key",
+          "key": 120
+        },
+        {
+          "kind": "key",
+          "key": 121
+        }
+      ],
+      "events": [
+        {
+          "key": 65515,
+          "down": true
+        },
+        {
+          "key": 120,
+          "down": true
+        },
+        {
+          "key": 120,
+          "down": false
+        },
+        {
+          "key": 65515,
+          "down": false
+        },
+        {
+          "key": 121,
+          "down": true
+        },
+        {
+          "key": 121,
+          "down": false
+        }
+      ],
+      "armed": []
+    },
+    {
+      "name": "multi-modifier-reverse-release",
+      "actions": [
+        {
+          "kind": "modifier",
+          "key": 65515
+        },
+        {
+          "kind": "modifier",
+          "key": 65505
+        },
+        {
+          "kind": "key",
+          "key": 120
+        }
+      ],
+      "events": [
+        {
+          "key": 65505,
+          "down": true
+        },
+        {
+          "key": 65515,
+          "down": true
+        },
+        {
+          "key": 120,
+          "down": true
+        },
+        {
+          "key": 120,
+          "down": false
+        },
+        {
+          "key": 65515,
+          "down": false
+        },
+        {
+          "key": 65505,
+          "down": false
+        }
+      ],
+      "armed": []
+    },
+    {
+      "name": "toggle-off-before-key",
+      "actions": [
+        {
+          "kind": "modifier",
+          "key": 65507
+        },
+        {
+          "kind": "modifier",
+          "key": 65507
+        },
+        {
+          "kind": "key",
+          "key": 120
+        }
+      ],
+      "events": [
+        {
+          "key": 120,
+          "down": true
+        },
+        {
+          "key": 120,
+          "down": false
+        }
+      ],
+      "armed": []
+    },
+    {
+      "name": "standalone-shift",
+      "actions": [
+        {
+          "kind": "alone",
+          "key": 65505
+        }
+      ],
+      "events": [
+        {
+          "key": 65505,
+          "down": true
+        },
+        {
+          "key": 65505,
+          "down": false
+        }
+      ],
+      "armed": []
+    },
+    {
+      "name": "standalone-clears-other-selection",
+      "actions": [
+        {
+          "kind": "modifier",
+          "key": 65515
+        },
+        {
+          "kind": "alone",
+          "key": 65505
+        },
+        {
+          "kind": "key",
+          "key": 120
+        }
+      ],
+      "events": [
+        {
+          "key": 65505,
+          "down": true
+        },
+        {
+          "key": 65505,
+          "down": false
+        },
+        {
+          "key": 120,
+          "down": true
+        },
+        {
+          "key": 120,
+          "down": false
+        }
+      ],
+      "armed": []
+    },
+    {
+      "name": "standalone-control-option-command",
+      "actions": [
+        {
+          "kind": "alone",
+          "key": 65507
+        },
+        {
+          "kind": "alone",
+          "key": 65513
+        },
+        {
+          "kind": "alone",
+          "key": 65515
+        }
+      ],
+      "events": [
+        {
+          "key": 65507,
+          "down": true
+        },
+        {
+          "key": 65507,
+          "down": false
+        },
+        {
+          "key": 65513,
+          "down": true
+        },
+        {
+          "key": 65513,
+          "down": false
+        },
+        {
+          "key": 65515,
+          "down": true
+        },
+        {
+          "key": 65515,
+          "down": false
+        }
+      ],
+      "armed": []
+    },
+    {
+      "name": "reset-does-not-transfer-modifier",
+      "actions": [
+        {
+          "kind": "modifier",
+          "key": 65513
+        },
+        {
+          "kind": "reset"
+        },
+        {
+          "kind": "key",
+          "key": 120
+        }
+      ],
+      "events": [
+        {
+          "key": 120,
+          "down": true
+        },
+        {
+          "key": 120,
+          "down": false
+        }
+      ],
+      "armed": []
+    },
+    {
+      "name": "first-scalar-consumes-modifier",
+      "actions": [
+        {
+          "kind": "modifier",
+          "key": 65515
+        },
+        {
+          "kind": "text",
+          "scalars": [
+            120,
+            121
+          ]
+        }
+      ],
+      "events": [
+        {
+          "key": 65515,
+          "down": true
+        },
+        {
+          "key": 120,
+          "down": true
+        },
+        {
+          "key": 120,
+          "down": false
+        },
+        {
+          "key": 65515,
+          "down": false
+        },
+        {
+          "key": 121,
+          "down": true
+        },
+        {
+          "key": 121,
+          "down": false
+        }
+      ],
+      "armed": []
+    },
+    {
+      "name": "unicode-and-return",
+      "actions": [
+        {
+          "kind": "text",
+          "scalars": [
+            128578,
+            10
+          ]
+        }
+      ],
+      "events": [
+        {
+          "key": 16905794,
+          "down": true
+        },
+        {
+          "key": 16905794,
+          "down": false
+        },
+        {
+          "key": 65293,
+          "down": true
+        },
+        {
+          "key": 65293,
+          "down": false
+        }
+      ],
+      "armed": []
+    },
+    {
+      "name": "empty-commit-preserves-selection",
+      "actions": [
+        {
+          "kind": "modifier",
+          "key": 65505
+        },
+        {
+          "kind": "text",
+          "scalars": []
+        }
+      ],
+      "events": [],
+      "armed": [
+        65505
+      ]
+    },
+    {
+      "name": "reject-non-modifier-selection",
+      "actions": [
+        {
+          "kind": "modifier",
+          "key": 120
+        },
+        {
+          "kind": "alone",
+          "key": 120
+        }
+      ],
+      "events": [],
+      "armed": []
+    },
+    {
+      "name": "escape-consumes-modifier",
+      "actions": [
+        {
+          "kind": "modifier",
+          "key": 65507
+        },
+        {
+          "kind": "key",
+          "key": 65307
+        }
+      ],
+      "events": [
+        {
+          "key": 65507,
+          "down": true
+        },
+        {
+          "key": 65307,
+          "down": true
+        },
+        {
+          "key": 65307,
+          "down": false
+        },
+        {
+          "key": 65507,
+          "down": false
+        }
+      ],
+      "armed": []
+    },
+    {
+      "name": "tab-consumes-modifier",
+      "actions": [
+        {
+          "kind": "modifier",
+          "key": 65507
+        },
+        {
+          "kind": "key",
+          "key": 65289
+        }
+      ],
+      "events": [
+        {
+          "key": 65507,
+          "down": true
+        },
+        {
+          "key": 65289,
+          "down": true
+        },
+        {
+          "key": 65289,
+          "down": false
+        },
+        {
+          "key": 65507,
+          "down": false
+        }
+      ],
+      "armed": []
+    },
+    {
+      "name": "return-consumes-modifier",
+      "actions": [
+        {
+          "kind": "modifier",
+          "key": 65507
+        },
+        {
+          "kind": "key",
+          "key": 65293
+        }
+      ],
+      "events": [
+        {
+          "key": 65507,
+          "down": true
+        },
+        {
+          "key": 65293,
+          "down": true
+        },
+        {
+          "key": 65293,
+          "down": false
+        },
+        {
+          "key": 65507,
+          "down": false
+        }
+      ],
+      "armed": []
+    },
+    {
+      "name": "backspace-consumes-modifier",
+      "actions": [
+        {
+          "kind": "modifier",
+          "key": 65507
+        },
+        {
+          "kind": "key",
+          "key": 65288
+        }
+      ],
+      "events": [
+        {
+          "key": 65507,
+          "down": true
+        },
+        {
+          "key": 65288,
+          "down": true
+        },
+        {
+          "key": 65288,
+          "down": false
+        },
+        {
+          "key": 65507,
+          "down": false
+        }
+      ],
+      "armed": []
+    },
+    {
+      "name": "arrow-consumes-modifier",
+      "actions": [
+        {
+          "kind": "modifier",
+          "key": 65507
+        },
+        {
+          "kind": "key",
+          "key": 65362
+        }
+      ],
+      "events": [
+        {
+          "key": 65507,
+          "down": true
+        },
+        {
+          "key": 65362,
+          "down": true
+        },
+        {
+          "key": 65362,
+          "down": false
+        },
+        {
+          "key": 65507,
+          "down": false
+        }
+      ],
+      "armed": []
+    }
+  ],
+  "keyboardQueueCases": [
+    {
+      "capacity": 512,
+      "queued": 508,
+      "incoming": 4,
+      "allowed": true
+    },
+    {
+      "capacity": 512,
+      "queued": 509,
+      "incoming": 4,
+      "allowed": false
+    },
+    {
+      "capacity": 512,
+      "queued": 512,
+      "incoming": 2,
+      "allowed": false
+    },
+    {
+      "capacity": 512,
+      "queued": 0,
+      "incoming": 10,
+      "allowed": true
+    }
+  ],
+  "viewportCases": [
+    {
+      "name": "all-displays",
+      "framebuffer": [
+        8144,
+        2134
+      ],
+      "aspect": 3.81630740393627,
+      "selected": false,
+      "normalized": [
+        0,
+        0,
+        1,
+        1
+      ],
+      "rect": [
+        0,
+        0,
+        8144,
+        2134
+      ]
+    },
+    {
+      "name": "main-display-crop",
+      "framebuffer": [
+        8144,
+        2134
+      ],
+      "aspect": 3.81630740393627,
+      "selected": true,
+      "normalized": [
+        0.3713163064833006,
+        0,
+        0.6286836935166994,
+        1
+      ],
+      "rect": [
+        3024,
+        0,
+        5120,
+        2134
+      ]
+    },
+    {
+      "name": "left-display-crop",
+      "framebuffer": [
+        8144,
+        2134
+      ],
+      "aspect": 3.81630740393627,
+      "selected": true,
+      "normalized": [
+        0,
+        0.07966260543580131,
+        0.3713163064833006,
+        0.9203373945641987
+      ],
+      "rect": [
+        0,
+        170,
+        3024,
+        1964
+      ]
+    },
+    {
+      "name": "scaled-framebuffer",
+      "framebuffer": [
+        4072,
+        1067
+      ],
+      "aspect": 3.81630740393627,
+      "selected": true,
+      "normalized": [
+        0.3713163064833006,
+        0,
+        0.6286836935166994,
+        1
+      ],
+      "rect": [
+        1512,
+        0,
+        2560,
+        1067
+      ]
+    },
+    {
+      "name": "mismatched-layout-no-fallback",
+      "framebuffer": [
+        5120,
+        2134
+      ],
+      "aspect": 3.81630740393627,
+      "selected": true,
+      "normalized": [
+        0.3713163064833006,
+        0,
+        0.6286836935166994,
+        1
+      ],
+      "rect": null
+    },
+    {
+      "name": "invalid-zero-width",
+      "framebuffer": [
+        8144,
+        2134
+      ],
+      "aspect": 3.81630740393627,
+      "selected": true,
+      "normalized": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "rect": null
+    },
+    {
+      "name": "out-of-bounds-crop",
+      "framebuffer": [
+        8144,
+        2134
+      ],
+      "aspect": 3.81630740393627,
+      "selected": true,
+      "normalized": [
+        0.9,
+        0,
+        0.2,
+        1
+      ],
+      "rect": null
+    },
+    {
+      "name": "no-framebuffer",
+      "framebuffer": [
+        0,
+        0
+      ],
+      "aspect": 1,
+      "selected": false,
+      "normalized": [
+        0,
+        0,
+        1,
+        1
+      ],
+      "rect": null
+    }
+  ],
+  "viewportPointerCases": [
+    {
+      "name": "main-origin",
+      "rect": [
+        3024,
+        0,
+        5120,
+        2134
+      ],
+      "point": [
+        0,
+        0
+      ],
+      "clamp": false,
+      "mapped": [
+        3024,
+        0
+      ]
+    },
+    {
+      "name": "main-center",
+      "rect": [
+        3024,
+        0,
+        5120,
+        2134
+      ],
+      "point": [
+        2560,
+        1067
+      ],
+      "clamp": false,
+      "mapped": [
+        5584,
+        1067
+      ]
+    },
+    {
+      "name": "left-origin",
+      "rect": [
+        0,
+        170,
+        3024,
+        1964
+      ],
+      "point": [
+        0,
+        0
+      ],
+      "clamp": false,
+      "mapped": [
+        0,
+        170
+      ]
+    },
+    {
+      "name": "tap-outside-rejected",
+      "rect": [
+        3024,
+        0,
+        5120,
+        2134
+      ],
+      "point": [
+        -1,
+        100
+      ],
+      "clamp": false,
+      "mapped": null
+    },
+    {
+      "name": "tap-right-edge-rejected",
+      "rect": [
+        3024,
+        0,
+        5120,
+        2134
+      ],
+      "point": [
+        5120,
+        100
+      ],
+      "clamp": false,
+      "mapped": null
+    },
+    {
+      "name": "drag-clamps-left",
+      "rect": [
+        3024,
+        0,
+        5120,
+        2134
+      ],
+      "point": [
+        -20,
+        100
+      ],
+      "clamp": true,
+      "mapped": [
+        3024,
+        100
+      ]
+    },
+    {
+      "name": "drag-clamps-right-bottom",
+      "rect": [
+        3024,
+        0,
+        5120,
+        2134
+      ],
+      "point": [
+        6000,
+        3000
+      ],
+      "clamp": true,
+      "mapped": [
+        8143,
+        2133
+      ]
+    }
+  ],
+  "windowQueryCases": [
+    {
+      "name": "inside-main",
+      "sequence": 1,
+      "point": [
+        5584,
+        1067
+      ],
+      "framebuffer": [
+        8144,
+        2134
+      ],
+      "rect": [
+        3500,
+        300,
+        1800,
+        1200
+      ],
+      "allowed": true
+    },
+    {
+      "name": "no-window",
+      "sequence": 7,
+      "point": [
+        0,
+        0
+      ],
+      "framebuffer": [
+        8144,
+        2134
+      ],
+      "rect": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "allowed": true
+    },
+    {
+      "name": "outside-point",
+      "sequence": 1,
+      "point": [
+        8144,
+        0
+      ],
+      "framebuffer": [
+        8144,
+        2134
+      ],
+      "rect": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "allowed": false
+    },
+    {
+      "name": "zero-size",
+      "sequence": 1,
+      "point": [
+        0,
+        0
+      ],
+      "framebuffer": [
+        0,
+        2134
+      ],
+      "rect": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "allowed": false
+    },
+    {
+      "name": "bad-window-rect",
+      "sequence": 1,
+      "point": [
+        10,
+        10
+      ],
+      "framebuffer": [
+        8144,
+        2134
+      ],
+      "rect": [
+        8000,
+        0,
+        512,
+        100
+      ],
+      "allowed": false
+    }
+  ],
+  "windowFitCases": [
+    {
+      "crop": [
+        3024,
+        0,
+        5120,
+        2134
+      ],
+      "window": [
+        3500,
+        300,
+        1800,
+        1200
+      ],
+      "local": [
+        476,
+        300,
+        1800,
+        1200
+      ]
+    },
+    {
+      "crop": [
+        3024,
+        0,
+        5120,
+        2134
+      ],
+      "window": [
+        2800,
+        100,
+        1000,
+        800
+      ],
+      "local": [
+        0,
+        100,
+        776,
+        800
+      ]
+    },
+    {
+      "crop": [
+        3024,
+        0,
+        5120,
+        2134
+      ],
+      "window": [
+        0,
+        0,
+        1000,
+        800
+      ],
+      "local": null
+    }
+  ],
+  "windowProjectionCases": [
+    {
+      "name": "topmost-overlap",
+      "desktop": [
+        -1512,
+        0,
+        4072,
+        1067
+      ],
+      "point": [
+        4224,
+        1067
+      ],
+      "framebuffer": [
+        8144,
+        2134
+      ],
+      "windows": [
+        [
+          100,
+          150,
+          900,
+          600
+        ],
+        [
+          0,
+          0,
+          2000,
+          1000
+        ]
+      ],
+      "rect": [
+        3224,
+        300,
+        1800,
+        1200
+      ]
+    },
+    {
+      "name": "desktop-no-window",
+      "desktop": [
+        -1512,
+        0,
+        4072,
+        1067
+      ],
+      "point": [
+        0,
+        0
+      ],
+      "framebuffer": [
+        8144,
+        2134
+      ],
+      "windows": [
+        [
+          100,
+          150,
+          900,
+          600
+        ]
+      ],
+      "rect": [
+        0,
+        0,
+        0,
+        0
+      ]
+    },
+    {
+      "name": "mismatched-aspect",
+      "desktop": [
+        -1512,
+        0,
+        4072,
+        1067
+      ],
+      "point": [
+        100,
+        100
+      ],
+      "framebuffer": [
+        5120,
+        2134
+      ],
+      "windows": [
+        [
+          -1512,
+          0,
+          4072,
+          1067
+        ]
+      ],
+      "rect": [
+        0,
+        0,
+        0,
+        0
+      ]
+    },
+    {
+      "name": "clipped-window",
+      "desktop": [
+        0,
+        0,
+        1000,
+        500
+      ],
+      "point": [
+        10,
+        10
+      ],
+      "framebuffer": [
+        2000,
+        1000
+      ],
+      "windows": [
+        [
+          -50,
+          -10,
+          400,
+          200
+        ]
+      ],
+      "rect": [
+        0,
+        0,
+        700,
+        380
+      ]
+    }
+  ],
+  "cursorPixelCases": [
+    {
+      "name": "opaque-and-transparent",
+      "size": [
+        2,
+        1
+      ],
+      "bytesPerPixel": 4,
+      "hotspot": [
+        1,
+        0
+      ],
+      "source": [
+        3,
+        2,
+        1,
+        0,
+        30,
+        20,
+        10,
+        0
+      ],
+      "mask": [
+        1,
+        0
+      ],
+      "rgba": [
+        1,
+        2,
+        3,
+        255,
+        0,
+        0,
+        0,
+        0
+      ]
+    },
+    {
+      "name": "masked-second-pixel",
+      "size": [
+        2,
+        1
+      ],
+      "bytesPerPixel": 4,
+      "hotspot": [
+        0,
+        0
+      ],
+      "source": [
+        255,
+        0,
+        0,
+        0,
+        0,
+        255,
+        255,
+        0
+      ],
+      "mask": [
+        0,
+        1
+      ],
+      "rgba": [
+        0,
+        0,
+        0,
+        0,
+        255,
+        255,
+        0,
+        255
+      ]
+    },
+    {
+      "name": "zero-shape",
+      "size": [
+        0,
+        1
+      ],
+      "bytesPerPixel": 4,
+      "hotspot": [
+        0,
+        0
+      ],
+      "source": [],
+      "mask": [],
+      "rgba": null
+    },
+    {
+      "name": "oversized-shape",
+      "size": [
+        257,
+        1
+      ],
+      "bytesPerPixel": 4,
+      "hotspot": [
+        0,
+        0
+      ],
+      "source": [],
+      "mask": [],
+      "rgba": null
+    },
+    {
+      "name": "unsupported-pixel-format",
+      "size": [
+        1,
+        1
+      ],
+      "bytesPerPixel": 2,
+      "hotspot": [
+        0,
+        0
+      ],
+      "source": [
+        1,
+        2
+      ],
+      "mask": [
+        1
+      ],
+      "rgba": null
+    },
+    {
+      "name": "invalid-hotspot",
+      "size": [
+        1,
+        1
+      ],
+      "bytesPerPixel": 4,
+      "hotspot": [
+        1,
+        0
+      ],
+      "source": [
+        1,
+        2,
+        3,
+        0
+      ],
+      "mask": [
+        1
+      ],
+      "rgba": null
+    },
+    {
+      "name": "short-source",
+      "size": [
+        1,
+        1
+      ],
+      "bytesPerPixel": 4,
+      "hotspot": [
+        0,
+        0
+      ],
+      "source": [
+        1,
+        2,
+        3
+      ],
+      "mask": [
+        1
+      ],
+      "rgba": null
+    },
+    {
+      "name": "short-mask",
+      "size": [
+        1,
+        1
+      ],
+      "bytesPerPixel": 4,
+      "hotspot": [
+        0,
+        0
+      ],
+      "source": [
+        1,
+        2,
+        3,
+        0
+      ],
+      "mask": [],
+      "rgba": null
+    }
+  ],
+  "cursorPositionCases": [
+    {
+      "name": "main-crop-offset",
+      "crop": [
+        3024,
+        0,
+        5120,
+        2134
+      ],
+      "point": [
+        5584,
+        1067
+      ],
+      "local": [
+        2560,
+        1067
+      ]
+    },
+    {
+      "name": "other-display-hidden",
+      "crop": [
+        3024,
+        0,
+        5120,
+        2134
+      ],
+      "point": [
+        1000,
+        1000
+      ],
+      "local": null
+    },
+    {
+      "name": "right-edge-hidden",
+      "crop": [
+        3024,
+        0,
+        5120,
+        2134
+      ],
+      "point": [
+        8144,
+        100
+      ],
+      "local": null
+    },
+    {
+      "name": "left-crop-offset",
+      "crop": [
+        0,
+        170,
+        3024,
+        1964
+      ],
+      "point": [
+        100,
+        200
+      ],
+      "local": [
+        100,
+        30
+      ]
+    },
+    {
+      "name": "invalid-crop-hidden",
+      "crop": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "point": [
+        0,
+        0
+      ],
+      "local": null
+    }
+  ],
+  "cursorScreenCases": [
+    {
+      "name": "minimum-readable-shape",
+      "anchor": [
+        100,
+        100
+      ],
+      "size": [
+        16,
+        24
+      ],
+      "hotspot": [
+        1,
+        2
+      ],
+      "zoom": 0.1,
+      "rect": [
+        99,
+        98,
+        16,
+        24
+      ]
+    },
+    {
+      "name": "retina-native-shape",
+      "anchor": [
+        200,
+        100
+      ],
+      "size": [
+        32,
+        48
+      ],
+      "hotspot": [
+        2,
+        4
+      ],
+      "zoom": 1,
+      "rect": [
+        198,
+        96,
+        32,
+        48
+      ]
+    },
+    {
+      "name": "zoom-size-cap",
+      "anchor": [
+        200,
+        100
+      ],
+      "size": [
+        32,
+        32
+      ],
+      "hotspot": [
+        2,
+        2
+      ],
+      "zoom": 5,
+      "rect": [
+        196,
+        96,
+        64,
+        64
+      ]
+    },
+    {
+      "name": "thin-cursor-preserves-aspect",
+      "anchor": [
+        100,
+        100
+      ],
+      "size": [
+        4,
+        48
+      ],
+      "hotspot": [
+        2,
+        24
+      ],
+      "zoom": 0.1,
+      "rect": [
+        99,
+        88,
+        2,
+        24
+      ]
+    },
+    {
+      "name": "invalid-hotspot",
+      "anchor": [
+        100,
+        100
+      ],
+      "size": [
+        16,
+        24
+      ],
+      "hotspot": [
+        16,
+        2
+      ],
+      "zoom": 1,
+      "rect": null
+    }
+  ],
+  "smartZoomCases": [
+    {
+      "name": "portrait-fit-twice",
+      "cropSize": [
+        5120,
+        2134
+      ],
+      "canvasSize": [
+        440,
+        800
+      ],
+      "point": [
+        2560,
+        1067
+      ],
+      "minimumZoom": 0.0859375,
+      "maximumZoom": 5,
+      "rect": [
+        1280,
+        0,
+        2560,
+        2134
+      ]
+    },
+    {
+      "name": "tap-left-edge",
+      "cropSize": [
+        5120,
+        2134
+      ],
+      "canvasSize": [
+        440,
+        800
+      ],
+      "point": [
+        0,
+        100
+      ],
+      "minimumZoom": 0.0859375,
+      "maximumZoom": 5,
+      "rect": [
+        0,
+        0,
+        2560,
+        2134
+      ]
+    },
+    {
+      "name": "tap-right-edge",
+      "cropSize": [
+        5120,
+        2134
+      ],
+      "canvasSize": [
+        440,
+        800
+      ],
+      "point": [
+        5119,
+        100
+      ],
+      "minimumZoom": 0.0859375,
+      "maximumZoom": 5,
+      "rect": [
+        2560,
+        0,
+        2560,
+        2134
+      ]
+    },
+    {
+      "name": "landscape-fit-twice",
+      "cropSize": [
+        1000,
+        1000
+      ],
+      "canvasSize": [
+        800,
+        400
+      ],
+      "point": [
+        500,
+        500
+      ],
+      "minimumZoom": 0.4,
+      "maximumZoom": 5,
+      "rect": [
+        0,
+        250,
+        1000,
+        500
+      ]
+    },
+    {
+      "name": "invalid-canvas",
+      "cropSize": [
+        1000,
+        1000
+      ],
+      "canvasSize": [
+        0,
+        400
+      ],
+      "point": [
+        500,
+        500
+      ],
+      "minimumZoom": 0.4,
+      "maximumZoom": 5,
+      "rect": null
+    }
+  ]
+}

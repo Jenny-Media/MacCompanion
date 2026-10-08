@@ -253,6 +253,9 @@ public final class MacCompanionDashboardApplicationV1 {
     @ObservationIgnored
     private let productFactory: ProductFactory
     @ObservationIgnored
+    private let beforeUnavailableReplacement:
+        (@MainActor () async -> Void)?
+    @ObservationIgnored
     private let commandProxy: MacCompanionPairingCommandProxyV1?
     @ObservationIgnored
     private let stateRelay: MacCompanionDashboardStateRelayV1
@@ -320,7 +323,9 @@ public final class MacCompanionDashboardApplicationV1 {
     /// the authenticated local-XPC lifecycle and an Agent-issued lease.
     public convenience init(
         interactiveIndicator: MacInteractiveActivityIndicatorV1,
-        agentBuildLifetime: MacAuthenticatedAgentBuildLifetimeV0 = .init()
+        agentBuildLifetime: MacAuthenticatedAgentBuildLifetimeV0 = .init(),
+        desktopEngine: MacInteractiveDesktopEngineV1 = .nativeCapture,
+        nativeBackendFactory: MacInteractiveNativeBackendFactoryV1? = nil
     ) {
         let displaySelection = try?
             MacInteractiveOpaqueDisplaySelectionV1()
@@ -328,7 +333,8 @@ public final class MacCompanionDashboardApplicationV1 {
            let composition = try?
             MacInteractiveControlRuntimeCompositionV1.make(
                 indicator: interactiveIndicator,
-                displaySelection: displaySelection
+                displaySelection: displaySelection,
+                engine: desktopEngine
             ) {
             self.init(
                 interactiveRuntime: composition.runtime,
@@ -336,7 +342,18 @@ public final class MacCompanionDashboardApplicationV1 {
                 agentBuildLifetime: agentBuildLifetime,
                 interactiveMediaQueue: composition.mediaQueue,
                 interactiveDisplaySelection: displaySelection,
-                interactiveSurfaceTargets: composition.surfaceTargets
+                interactiveSurfaceTargets: composition.surfaceTargets,
+                nativeBackendFactory: nativeBackendFactory,
+                recoveryCompositionFactory: {
+                    guard interactiveIndicator.phase == .inactive else {
+                        return nil
+                    }
+                    return try? MacInteractiveControlRuntimeCompositionV1.make(
+                        indicator: interactiveIndicator,
+                        displaySelection: displaySelection,
+                        engine: desktopEngine
+                    )
+                }
             )
         } else {
             self.init(
@@ -347,7 +364,18 @@ public final class MacCompanionDashboardApplicationV1 {
                 interactiveIndicator: interactiveIndicator,
                 agentBuildLifetime: agentBuildLifetime,
                 interactiveMediaQueue: nil,
-                interactiveDisplaySelection: displaySelection
+                interactiveDisplaySelection: displaySelection,
+                recoveryCompositionFactory: {
+                    guard let displaySelection,
+                          interactiveIndicator.phase == .inactive else {
+                        return nil
+                    }
+                    return try? MacInteractiveControlRuntimeCompositionV1.make(
+                        indicator: interactiveIndicator,
+                        displaySelection: displaySelection,
+                        engine: desktopEngine
+                    )
+                }
             )
         }
     }
@@ -360,31 +388,39 @@ public final class MacCompanionDashboardApplicationV1 {
         interactiveDisplaySelection providedDisplaySelection:
             MacInteractiveOpaqueDisplaySelectionV1? = nil,
         interactiveSurfaceTargets:
-            MacInteractiveSurfaceTargetOwnerV1? = nil
+            MacInteractiveSurfaceTargetOwnerV1? = nil,
+        nativeBackendFactory: MacInteractiveNativeBackendFactoryV1? = nil,
+        recoveryCompositionFactory:
+            (@MainActor () -> MacInteractiveControlRuntimeCompositionV1?)? = nil
     ) {
         let interactiveDisplaySelection = providedDisplaySelection
             ?? (try? MacInteractiveOpaqueDisplaySelectionV1())
         let displayAdmissionProxy = MacCompanionDisplayAdmissionProxyV1()
-        let interactiveLeaseHandler:
-            (any MacLocalXPCInteractiveLeaseHandlingV1)?
-        let interactiveInputHandler:
-            (any MacLocalXPCInteractiveInputHandlingV1)?
-        if let interactiveRuntime, let interactiveDisplaySelection {
+        func makeInteractiveHandler(
+            runtime: InteractiveMenuRuntimeOwnerV0?,
+            surfaceTargets: MacInteractiveSurfaceTargetOwnerV1?
+        ) -> MacInteractiveLeaseRuntimeAdapterV1? {
+            guard let runtime, let interactiveDisplaySelection else {
+                return nil
+            }
             let desktop = MacInteractiveInitialDesktopPreparerV1(
                 displaySelection: interactiveDisplaySelection,
-                surfaceTargets: interactiveSurfaceTargets
+                surfaceTargets: surfaceTargets
             )
-            let handler = MacInteractiveLeaseRuntimeAdapterV1(
-                runtime: interactiveRuntime,
+            return MacInteractiveLeaseRuntimeAdapterV1(
+                runtime: runtime,
                 desktop: desktop,
-                surfaceTargets: interactiveSurfaceTargets,
+                surfaceTargets: surfaceTargets,
                 displaySelection: interactiveDisplaySelection,
                 updateSelectedDisplay: { selectedDisplayID in
                     try await displayAdmissionProxy.update(selectedDisplayID)
-                }
+                },
+                nativeBackendFactory: nativeBackendFactory
             )
-            interactiveLeaseHandler = handler
-            interactiveInputHandler = handler
+        }
+        func installStopAction(
+            _ handler: MacInteractiveLeaseRuntimeAdapterV1?
+        ) {
             interactiveIndicator?.installStopAction { [weak handler] in
                 guard let handler else {
                     throw MacInteractiveActivityIndicatorErrorV1
@@ -392,10 +428,12 @@ public final class MacCompanionDashboardApplicationV1 {
                 }
                 try await handler.stopInteractiveControlLocally()
             }
-        } else {
-            interactiveLeaseHandler = nil
-            interactiveInputHandler = nil
         }
+        var currentHandler = makeInteractiveHandler(
+            runtime: interactiveRuntime,
+            surfaceTargets: interactiveSurfaceTargets
+        )
+        installStopAction(currentHandler)
         let dashboardRelay = MacCompanionDashboardStateRelayV1()
         let menuAppGeneration = interactiveIndicator?
             .admissionMenuAppGeneration ?? UUID()
@@ -435,8 +473,8 @@ public final class MacCompanionDashboardApplicationV1 {
             agentBuildLifetime: agentBuildLifetime,
             pairingReviews: reviewOwner,
             hostIdentityRecovery: recoveryOwner,
-            interactiveLeaseHandler: interactiveLeaseHandler,
-            interactiveInputHandler: interactiveInputHandler,
+            interactiveLeaseHandler: currentHandler,
+            interactiveInputHandler: currentHandler,
             interactiveMediaQueue: interactiveMediaQueue,
             menuAppGeneration: menuAppGeneration,
             selectedDisplayID: interactiveDisplaySelection?
@@ -446,19 +484,41 @@ public final class MacCompanionDashboardApplicationV1 {
         self.init(
             product: product,
             productFactory: {
+                let replacementRuntime: InteractiveMenuRuntimeOwnerV0?
+                let replacementQueue: BoundedInteractiveMediaQueueV0?
+                let replacementTargets: MacInteractiveSurfaceTargetOwnerV1?
+                if let recoveryCompositionFactory {
+                    let composition = recoveryCompositionFactory()
+                    replacementRuntime = composition?.runtime
+                    replacementQueue = composition?.mediaQueue
+                    replacementTargets = composition?.surfaceTargets
+                } else {
+                    replacementRuntime = interactiveRuntime
+                    replacementQueue = interactiveMediaQueue
+                    replacementTargets = nil
+                }
+                let replacementHandler = makeInteractiveHandler(
+                    runtime: replacementRuntime,
+                    surfaceTargets: replacementTargets
+                )
+                currentHandler = replacementHandler
+                installStopAction(replacementHandler)
                 let replacement = MacLocalXPCDashboardProductV1(
                     owner: dashboardOwner,
                     pairingReviews: reviewOwner,
                     hostIdentityRecovery: recoveryOwner,
-                    interactiveLeaseHandler: interactiveLeaseHandler,
-                    interactiveInputHandler: interactiveInputHandler,
-                    interactiveMediaQueue: interactiveMediaQueue,
+                    interactiveLeaseHandler: replacementHandler,
+                    interactiveInputHandler: replacementHandler,
+                    interactiveMediaQueue: replacementQueue,
                     menuAppGeneration: menuAppGeneration,
                     selectedDisplayID: interactiveDisplaySelection?
                         .opaqueSelectedDisplayID()
                 )
                 displayAdmissionProxy.install(replacement)
                 return replacement
+            },
+            beforeUnavailableReplacement: {
+                await currentHandler?.invalidateAgentAuthority()
             },
             commandProxy: commandProxy,
             stateRelay: dashboardRelay,
@@ -477,6 +537,8 @@ public final class MacCompanionDashboardApplicationV1 {
         productFactory: @escaping (
             MacAgentDashboardApplicationOwnerV0
         ) -> any MacCompanionDashboardProductV1,
+        beforeUnavailableReplacement:
+            (@MainActor () async -> Void)? = nil,
         wallNowUnixMilliseconds: @escaping @Sendable () -> Int64 = {
             Int64((Date().timeIntervalSince1970 * 1_000).rounded(.down))
         }
@@ -489,6 +551,7 @@ public final class MacCompanionDashboardApplicationV1 {
         self.init(
             product: productFactory(owner),
             productFactory: { productFactory(owner) },
+            beforeUnavailableReplacement: beforeUnavailableReplacement,
             commandProxy: nil,
             stateRelay: relay,
             pairingOwner: nil,
@@ -544,6 +607,8 @@ public final class MacCompanionDashboardApplicationV1 {
     private init(
         product: any MacCompanionDashboardProductV1,
         productFactory: @escaping ProductFactory,
+        beforeUnavailableReplacement:
+            (@MainActor () async -> Void)? = nil,
         commandProxy: MacCompanionPairingCommandProxyV1?,
         stateRelay: MacCompanionDashboardStateRelayV1,
         pairingOwner: MacPairingApplicationOwnerV0?,
@@ -560,6 +625,7 @@ public final class MacCompanionDashboardApplicationV1 {
     ) {
         self.product = product
         self.productFactory = productFactory
+        self.beforeUnavailableReplacement = beforeUnavailableReplacement
         self.commandProxy = commandProxy
         self.stateRelay = stateRelay
         self.pairingRelay = pairingRelay
@@ -945,6 +1011,7 @@ public final class MacCompanionDashboardApplicationV1 {
         defer { unavailableRecoveryInProgress = false }
 
         await unavailableProduct.finish()
+        await beforeUnavailableReplacement?()
         guard phase == .active, product === unavailableProduct,
               source == .unavailable else {
             return .notCompleted

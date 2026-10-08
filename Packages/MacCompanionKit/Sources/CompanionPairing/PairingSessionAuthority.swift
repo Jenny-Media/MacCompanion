@@ -118,19 +118,22 @@ public struct CompletedPairing: Equatable, Sendable {
     public let clientID: UUID
     public let displayName: DeviceDisplayName
     public let policyRevision: PolicyRevision
+    public let deviceState: DeviceAuthorizationState
 
     public init(
         pairingID: UUID,
         deviceID: UUID,
         clientID: UUID,
         displayName: DeviceDisplayName,
-        policyRevision: PolicyRevision
+        policyRevision: PolicyRevision,
+        deviceState: DeviceAuthorizationState = .activeMonitorOnly
     ) {
         self.pairingID = pairingID
         self.deviceID = deviceID
         self.clientID = clientID
         self.displayName = displayName
         self.policyRevision = policyRevision
+        self.deviceState = deviceState
     }
 }
 
@@ -172,15 +175,18 @@ public actor PairingSessionAuthority {
 
     private let committer: any PairingCommitter
     private let auditWriter: (any PairingAuditWritingV0)?
+    private let accessProfile: PairingAccessProfileV1
     private var sessions: [UUID: Session] = [:]
     private var tombstones: [UUID: Tombstone] = [:]
 
     public init(
         committer: any PairingCommitter,
-        auditWriter: (any PairingAuditWritingV0)? = nil
+        auditWriter: (any PairingAuditWritingV0)? = nil,
+        accessProfile: PairingAccessProfileV1 = .monitorOnly
     ) {
         self.committer = committer
         self.auditWriter = auditWriter
+        self.accessProfile = accessProfile
     }
 
     public func createSession(
@@ -413,7 +419,7 @@ public actor PairingSessionAuthority {
                 sessionPublicKeyX963: binding.sessionPublicKeyX963,
                 approvalPublicKeyX963: binding.approvalPublicKeyX963,
                 authorization: DeviceAuthorization(
-                    state: .activeMonitorOnly,
+                    state: accessProfile.initialState,
                     authorizationEpoch: .init(rawValue: 1),
                     grantRevision: .init(rawValue: 1)
                 ),
@@ -454,7 +460,8 @@ public actor PairingSessionAuthority {
             deviceID: deviceID,
             clientID: binding.clientID,
             displayName: displayName,
-            policyRevision: policyRevision
+            policyRevision: policyRevision,
+            deviceState: record.authorization.state
         )
     }
 

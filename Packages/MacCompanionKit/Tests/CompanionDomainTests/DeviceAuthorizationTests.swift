@@ -1,7 +1,7 @@
 import CompanionDomain
 import Testing
 
-@Test func pairingAlwaysStartsMonitorOnly() throws {
+@Test func legacyPairingStartsMonitorOnly() throws {
     let pending = try DeviceAuthorization().applying(.startPairing)
     let active = try pending.applying(.commitMonitorOnlyPairing)
 
@@ -41,4 +41,16 @@ import Testing
     #expect(throws: RevisionError.exhausted) {
         try revision.advanced()
     }
+}
+
+@Test func desktopPairingStartsGrantedAtInitialFenceAndCanBeRevoked() throws {
+    let paired = try DeviceAuthorization()
+        .applying(.startPairing)
+        .applying(.commitRemoteDesktopPairing)
+    #expect(paired.state == .activeGranted)
+    #expect(paired.authorizationEpoch.rawValue == 1)
+    #expect(paired.grantRevision.rawValue == 1)
+    let revoked = try paired.applying(.revoke)
+    #expect(!revoked.state.canAuthenticate)
+    #expect(revoked.authorizationEpoch.rawValue == 2)
 }

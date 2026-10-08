@@ -14,6 +14,9 @@ ROOT = Path(__file__).resolve().parent.parent
 OFFICIAL_APACHE_2_SHA256 = (
     "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
 )
+OFFICIAL_GPL_3_SHA256 = (
+    "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986"
+)
 
 REQUIRED_TEXT: dict[str, tuple[str, ...]] = {
     "NOTICE": (
@@ -23,7 +26,7 @@ REQUIRED_TEXT: dict[str, tuple[str, ...]] = {
     ),
     "TRADEMARKS.md": (
         "draft for written legal review",
-        "The Apache License 2.0",
+        "The GNU General Public License version 3",
         "does not grant permission",
         "Modified builds and forks",
         "distinct product",
@@ -40,7 +43,7 @@ REQUIRED_TEXT: dict[str, tuple[str, ...]] = {
     ),
     "CONTRIBUTING.md": (
         "not yet ready to accept external contributions",
-        "available under Apache-2.0",
+        "available under GPL-3.0-only",
         "Developer Certificate of Origin",
         "Do not add a `Signed-off-by` line yet",
         "Follow `SECURITY.md`",
@@ -53,11 +56,18 @@ REQUIRED_TEXT: dict[str, tuple[str, ...]] = {
         "external contribution intake",
     ),
     "README.md": (
-        "[Apache-2.0 license](LICENSE)",
+        "[GPL-3.0 license](LICENSE)",
+        "[Licensing and retained Apache notices](LICENSING.md)",
         "[Trademark policy](TRADEMARKS.md)",
         "[Security policy](SECURITY.md)",
         "[Contribution hold](CONTRIBUTING.md)",
         "[Community code of conduct](CODE_OF_CONDUCT.md)",
+    ),
+    "LICENSING.md": (
+        "New Mac Companion contributions use GPL-3.0-only",
+        "Existing code previously offered under Apache-2.0 retains that permission",
+        "corresponding-source delivery arrangement",
+        "does not reopen external contribution intake",
     ),
 }
 
@@ -84,8 +94,11 @@ def read_regular_file(relative_path: str) -> bytes:
 def main() -> None:
     license_bytes = read_regular_file("LICENSE")
     license_digest = hashlib.sha256(license_bytes).hexdigest()
-    if license_digest != OFFICIAL_APACHE_2_SHA256:
-        fail("LICENSE is not the byte-exact official Apache-2.0 text")
+    if license_digest != OFFICIAL_GPL_3_SHA256:
+        fail("LICENSE is not the byte-exact GPL-3.0 text")
+    apache_bytes = read_regular_file("LICENSES/Apache-2.0.txt")
+    if hashlib.sha256(apache_bytes).hexdigest() != OFFICIAL_APACHE_2_SHA256:
+        fail("retained Apache-2.0 text does not match the original license")
 
     for relative_path, required_fragments in REQUIRED_TEXT.items():
         raw = read_regular_file(relative_path)

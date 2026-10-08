@@ -1,0 +1,20 @@
+{
+  "version": {
+    "major": 0,
+    "minor": 1
+  },
+  "messageID": "018f0000-0000-7000-8000-000000002005",
+  "correlationID": "018f0000-0000-7000-8000-000000002003",
+  "channel": "command",
+  "kind": "pairing.complete",
+  "sentAtUnixMilliseconds": 1787198401040,
+  "body": {
+    "hostID": "018f1000-0000-7000-8000-000000000001",
+    "deviceID": "018f2100-0000-7000-8000-000000000001",
+    "deviceState": "activeGranted",
+    "authorizationEpoch": 1,
+    "grantRevision": 1,
+    "policyRevision": 1,
+    "hostFingerprint": "808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9f"
+  }
+}

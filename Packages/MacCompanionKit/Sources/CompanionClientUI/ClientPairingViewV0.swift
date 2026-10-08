@@ -10,6 +10,9 @@ public struct ClientPairingViewV0: View {
     private let onCancel: () -> Void
     private let onRetry: () -> Void
     private let onDone: () -> Void
+    private let onPastePairingCode: ((String) -> Void)?
+    @State private var enteringCode = false
+    @State private var pairingCode = ""
 
     public init(
         presentation: PairingClientPresentation,
@@ -17,7 +20,8 @@ public struct ClientPairingViewV0: View {
         onAcceptPreview: @escaping () -> Void,
         onCancel: @escaping () -> Void,
         onRetry: @escaping () -> Void,
-        onDone: @escaping () -> Void
+        onDone: @escaping () -> Void,
+        onPastePairingCode: ((String) -> Void)? = nil
     ) {
         surface = ClientPairingSurfaceV0(presentation: presentation)
         self.onScan = onScan
@@ -25,6 +29,7 @@ public struct ClientPairingViewV0: View {
         self.onCancel = onCancel
         self.onRetry = onRetry
         self.onDone = onDone
+        self.onPastePairingCode = onPastePairingCode
     }
 
     public var body: some View {
@@ -41,6 +46,34 @@ public struct ClientPairingViewV0: View {
             .frame(maxWidth: .infinity)
         }
         .navigationTitle("Connect to Mac")
+        .sheet(isPresented: $enteringCode, onDismiss: { pairingCode = "" }) {
+            NavigationStack {
+                Form {
+                    Text("Paste or enter the complete pairing code from your Mac.")
+                        .foregroundStyle(.secondary)
+                    TextEditor(text: $pairingCode)
+                        .frame(minHeight: 160)
+                        .accessibilityLabel("Pairing Code")
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                }
+                .navigationTitle("Enter Pairing Code")
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("Cancel") { pairingCode = ""; enteringCode = false }
+                    }
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("Use Code") {
+                            let value = pairingCode
+                            pairingCode = ""
+                            enteringCode = false
+                            onPastePairingCode?(value)
+                        }
+                        .disabled(pairingCode.isEmpty)
+                    }
+                }
+            }
+        }
     }
 
     @ViewBuilder
@@ -55,6 +88,13 @@ public struct ClientPairingViewV0: View {
                 onScan()
             }
             .buttonStyle(.borderedProminent)
+            if onPastePairingCode != nil {
+                Button("Enter Pairing Code", systemImage: "text.cursor") {
+                    pairingCode = ""
+                    enteringCode = true
+                }
+                .buttonStyle(.bordered)
+            }
 
         case let .preview(preview):
             heading(

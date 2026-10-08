@@ -1,0 +1,20 @@
+{
+  "profile": "maccompanion.native-video-content-geometry.v0.1",
+  "cases": [
+    {"id":"full-frame", "encoded":[1280,720], "capture":[1920,1080], "logical":[1920,1080], "viewport":[0,0,390,844], "content":[0,312.3125,390,219.375]},
+    {"id":"encoded-top-bottom-padding", "encoded":[1280,960], "capture":[1920,1080], "logical":[1920,1080], "viewport":[0,0,390,844], "content":[0,312.3125,390,219.375]},
+    {"id":"encoded-left-right-padding", "encoded":[1280,720], "capture":[1080,1920], "logical":[1080,1920], "viewport":[0,0,390,844], "content":[133.30078125,312.3125,123.3984375,219.375]},
+    {"id":"retina-chroma-rounding", "encoded":[1920,800], "capture":[5120,2134], "logical":[2560,1067], "viewport":[0,0,390,844], "content":[0.060918463,340.75,389.878163074,162.5]},
+    {"id":"offset-viewport", "encoded":[1280,960], "capture":[1920,1080], "logical":[1920,1080], "viewport":[20,30,400,300], "content":[20,67.5,400,225]}
+  ],
+  "rejectedDimensions": [
+    {"encoded":[319,720], "capture":[1920,1080], "logical":[1920,1080]},
+    {"encoded":[1280,239], "capture":[1920,1080], "logical":[1920,1080]},
+    {"encoded":[8193,720], "capture":[1920,1080], "logical":[1920,1080]},
+    {"encoded":[1280,8193], "capture":[1920,1080], "logical":[1920,1080]},
+    {"encoded":[1280,720], "capture":[0,1080], "logical":[1920,1080]},
+    {"encoded":[1280,720], "capture":[1920,32769], "logical":[1920,1080]},
+    {"encoded":[1280,720], "capture":[1920,1080], "logical":[0,1080]},
+    {"encoded":[1280,720], "capture":[1920,1080], "logical":[1920,4294967296]}
+  ]
+}

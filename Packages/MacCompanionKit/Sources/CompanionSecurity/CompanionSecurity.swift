@@ -226,6 +226,71 @@ public enum CompanionSecurityV0 {
         return publicKey.isValidSignature(signature, for: signingInput)
     }
 
+    /// Candidate enrollment attestation construction. A valid signature is
+    /// not Control, certificate registration, or native input admission.
+    /// Runtime owners must additionally enforce exact session and single-use
+    /// challenge/deadline gates described by the normative profile.
+    public static func nativeVideoEnrollmentSigningInput(
+        hostID: UUID, hostFingerprint: Data, clientID: UUID,
+        primaryConnectionID: Data, interactiveSessionID: UUID,
+        authorizationEpoch: UInt64, grantRevision: UInt64, policyRevision: UInt64,
+        streamGeneration: UUID, surfaceID: UUID,
+        surfaceRevision: UInt64, coordinateSpaceRevision: UInt64,
+        encodedWidth: UInt16, encodedHeight: UInt16,
+        clientCertificateSHA256: Data, hostCertificateSHA256: Data,
+        hostChallenge: Data, issuedAtUnixMilliseconds: UInt64,
+        expiresAtUnixMilliseconds: UInt64
+    ) throws -> Data {
+        for (field, bytes, length) in [
+            ("hostFingerprint", hostFingerprint, 32),
+            ("primaryConnectionID", primaryConnectionID, 16),
+            ("clientCertificateSHA256", clientCertificateSHA256, 32),
+            ("hostCertificateSHA256", hostCertificateSHA256, 32),
+            ("hostChallenge", hostChallenge, 32),
+        ] { try requireLength(bytes, field: field, expected: length) }
+        for (field, value) in [
+            ("authorizationEpoch", authorizationEpoch), ("grantRevision", grantRevision),
+            ("policyRevision", policyRevision), ("surfaceRevision", surfaceRevision),
+            ("coordinateSpaceRevision", coordinateSpaceRevision),
+            ("issuedAtUnixMilliseconds", issuedAtUnixMilliseconds),
+            ("expiresAtUnixMilliseconds", expiresAtUnixMilliseconds),
+        ] {
+            guard value > 0, value <= 9_007_199_254_740_991 else {
+                throw CompanionSecurityError.invalidValue(field: field)
+            }
+        }
+        guard (320...8192).contains(encodedWidth), (240...8192).contains(encodedHeight) else {
+            throw CompanionSecurityError.invalidValue(field: "encodedDimensions")
+        }
+        guard expiresAtUnixMilliseconds > issuedAtUnixMilliseconds,
+              expiresAtUnixMilliseconds - issuedAtUnixMilliseconds <= 15_000 else {
+            throw CompanionSecurityError.invalidValue(field: "enrollmentExpiry")
+        }
+        var input = Data("MacCompanion/NativeVideoEnrollment/v0.1".utf8)
+        input.append(lengthPrefixed(uuidBytes(hostID)))
+        input.append(lengthPrefixed(hostFingerprint))
+        input.append(lengthPrefixed(uuidBytes(clientID)))
+        input.append(lengthPrefixed(primaryConnectionID))
+        input.append(lengthPrefixed(uuidBytes(interactiveSessionID)))
+        input.append(u64BE(authorizationEpoch))
+        input.append(u64BE(grantRevision))
+        input.append(u64BE(policyRevision))
+        input.append(lengthPrefixed(uuidBytes(streamGeneration)))
+        input.append(lengthPrefixed(uuidBytes(surfaceID)))
+        input.append(u64BE(surfaceRevision))
+        input.append(u64BE(coordinateSpaceRevision))
+        input.append(u16BE(encodedWidth))
+        input.append(u16BE(encodedHeight))
+        input.append(lengthPrefixed(clientCertificateSHA256))
+        input.append(lengthPrefixed(hostCertificateSHA256))
+        input.append(lengthPrefixed(hostChallenge))
+        input.append(u64BE(issuedAtUnixMilliseconds))
+        input.append(u64BE(expiresAtUnixMilliseconds))
+        input.append(u16BE(0))
+        input.append(u16BE(1))
+        return input
+    }
+
     public static func validateSigningPublicKey(_ publicKeyX963: Data) throws {
         try validatePublicKey(publicKeyX963)
     }

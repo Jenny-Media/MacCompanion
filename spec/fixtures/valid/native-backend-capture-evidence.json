@@ -1,0 +1,42 @@
+{
+  "profile": "maccompanion.native-capture-evidence-conformance.v0.1",
+  "record": {
+    "profile": "maccompanion.native-capture-evidence.v0.1",
+    "operationID": "00000000-0000-4000-8000-000000000101",
+    "monotonicNanoseconds": 10000000000,
+    "sampleSequence": 1,
+    "capturePixelWidth": 5120,
+    "capturePixelHeight": 2134,
+    "encodedWidth": 1920,
+    "encodedHeight": 800,
+    "formatWidth": 1920,
+    "formatHeight": 800,
+    "cleanX": 0,
+    "cleanY": 0,
+    "cleanWidth": 1920,
+    "cleanHeight": 800,
+    "aspectFitConfigured": true
+  },
+  "expectedGeometry": {
+    "encodedWidth": 1920,
+    "encodedHeight": 800,
+    "capturePixelWidth": 5120,
+    "capturePixelHeight": 2134,
+    "logicalWidthPoints": 2560,
+    "logicalHeightPoints": 1067
+  },
+  "nowMonotonicNanoseconds": 10500000000,
+  "maximumAgeNanoseconds": 2000000000,
+  "cases": [
+    "exact-current-operation-and-geometry",
+    "different-operation-denied",
+    "different-encoded-or-format-size-denied",
+    "different-source-mode-denied",
+    "partial-clean-aperture-denied",
+    "non-aspect-fit-denied",
+    "stale-or-future-observation-denied",
+    "unknown-or-missing-field-denied",
+    "oversized-record-denied",
+    "sample-evidence-is-not-client-presentation"
+  ]
+}

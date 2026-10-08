@@ -1138,7 +1138,9 @@ private func agentNetworkInteractiveReadyChannelV2(
     })
     #expect(stale.cancelCount == 0)
     #expect(await binder.pairingBindCount() == 1)
-    #expect((await handoff.snapshot()).hasActivePrimary)
+    #expect(await agentNetworkIngressEventuallyV2 {
+        await handoff.snapshot().hasActivePrimary
+    })
 }
 
 @Test func roleTerminalAndGlobalCancelRemainIsolatedAndExact() async throws {

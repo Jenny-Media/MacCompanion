@@ -21,6 +21,7 @@ public enum ClientPrimaryLiveControlPhaseV0: Equatable, Sendable {
 public enum ClientPrimaryLiveControlErrorV0: Error, Equatable, Sendable {
     case activationDeadlineExceeded
     case unavailable
+    case viewTransitionInProgress
 }
 
 @available(iOS 17.0, *)
@@ -28,6 +29,8 @@ public enum ClientPrimaryLiveControlErrorV0: Error, Equatable, Sendable {
 public protocol ClientPrimaryLiveControlProductV0: AnyObject {
     var descriptor: AdaptiveSurfaceDescriptor { get }
     var surface: UIKitClientLiveSurfaceViewV0 { get }
+    func observeVideoRecovery(_ changed: @escaping @MainActor (Bool) -> Void)
+    func observeSurfaceTransition(_ changed: @escaping @MainActor (Bool, String?) -> Void)
     func refreshPrimaryState() async -> Bool
     func activationFailedOrClosed() async -> Bool
     func requestSurfaceTargets() async throws
@@ -53,6 +56,15 @@ public protocol ClientPrimaryLiveControlProductV0: AnyObject {
 
 @available(iOS 17.0, *)
 extension ClientPrimaryLiveControlProductV0 {
+    public func observeSurfaceTransition(_ changed: @escaping @MainActor (Bool, String?) -> Void) {
+        changed(false, nil)
+    }
+    public func observeVideoRecovery(
+        _ changed: @escaping @MainActor (Bool) -> Void
+    ) {
+        changed(false)
+    }
+
     public func showWiderContext() async {
         surface.resetVisualZoom(animated: true)
     }
@@ -83,16 +95,24 @@ public final class ClientPrimaryLiveControlCoordinatorV0: ObservableObject {
         ClientInputInteractionModeV0,
         @escaping Failure
     ) async throws -> any ClientPrimaryLiveControlProductV0
+    public typealias FailureRetirementFactory = @MainActor @Sendable () async
+        -> (@Sendable () async -> Void)?
 
     @Published public private(set) var phase:
         ClientPrimaryLiveControlPhaseV0 = .idle
     @Published public private(set) var product:
         (any ClientPrimaryLiveControlProductV0)?
+    @Published public private(set) var videoRequiresRestart = false
+    @Published public private(set) var isViewTransitioning = false
+    @Published public private(set) var viewTransitionMessage: String?
 
     private let productFactory: ProductFactory
+    private let failureRetirementFactory: FailureRetirementFactory
     private let failure: Failure
+    private var failureRetirement: (@Sendable () async -> Void)?
     private var activationTask: Task<Void, Never>?
     private var productGeneration = UUID()
+    private var selectionID: UUID?
 
     public init(
         roles: NetworkClientInteractiveRoleProductBindingV0,
@@ -105,14 +125,19 @@ public final class ClientPrimaryLiveControlCoordinatorV0: ObservableObject {
                 failure: productFailure
             )
         }
+        failureRetirementFactory = {
+            await roles.makeFailedSessionRetirement()
+        }
         self.failure = failure
     }
 
     public init(
         productFactory: @escaping ProductFactory,
+        failureRetirementFactory: @escaping FailureRetirementFactory = { nil },
         failure: @escaping Failure = { _ in }
     ) {
         self.productFactory = productFactory
+        self.failureRetirementFactory = failureRetirementFactory
         self.failure = failure
     }
 
@@ -128,6 +153,9 @@ public final class ClientPrimaryLiveControlCoordinatorV0: ObservableObject {
         activationTask?.cancel()
         productGeneration = UUID()
         let generation = productGeneration
+        videoRequiresRestart = false
+        isViewTransitioning = false
+        viewTransitionMessage = nil
         phase = .preparing
         activationTask = Task { [weak self] in
             await self?.prepare(mode: mode, generation: generation)
@@ -157,16 +185,28 @@ public final class ClientPrimaryLiveControlCoordinatorV0: ObservableObject {
     }
 
     public func selectDisplay(_ displayID: UUID) async throws {
+        guard selectionID == nil, !isViewTransitioning else {
+            throw ClientPrimaryLiveControlErrorV0.viewTransitionInProgress
+        }
         guard phase == .active, let product else {
             throw ClientPrimaryLiveControlErrorV0.unavailable
         }
         phase = .awaitingVerifiedFrame
+        let selectionID = UUID()
+        self.selectionID = selectionID
+        defer { if self.selectionID == selectionID { self.selectionID = nil } }
         do {
             try await product.selectDisplay(displayID)
+            try await awaitViewPresentation(of: product)
             guard self.product === product else {
                 throw ClientPrimaryLiveControlErrorV0.unavailable
             }
             phase = .active
+        } catch is CancellationError {
+            // The product already fenced input. Background recovery owns the
+            // fresh presentation; local cancellation must not end Control.
+            if self.product === product, phase == .awaitingVerifiedFrame { phase = .active }
+            throw CancellationError()
         } catch {
             if self.product === product { fail(error) }
             throw error
@@ -219,19 +259,29 @@ public final class ClientPrimaryLiveControlCoordinatorV0: ObservableObject {
     }
 
     public func selectSurface(_ choice: ClientSurfaceChoiceV0) async throws {
+        guard selectionID == nil, !isViewTransitioning else {
+            throw ClientPrimaryLiveControlErrorV0.viewTransitionInProgress
+        }
         guard phase == .active, let product else {
             throw ClientPrimaryLiveControlErrorV0.unavailable
         }
         phase = .awaitingVerifiedFrame
+        let selectionID = UUID()
+        self.selectionID = selectionID
+        defer { if self.selectionID == selectionID { self.selectionID = nil } }
         do {
             try await product.selectSurface(
                 kind: choice.kind,
                 targetToken: choice.targetToken
             )
+            try await awaitViewPresentation(of: product)
             guard self.product === product else {
                 throw ClientPrimaryLiveControlErrorV0.unavailable
             }
             phase = .active
+        } catch is CancellationError {
+            if self.product === product, phase == .awaitingVerifiedFrame { phase = .active }
+            throw CancellationError()
         } catch {
             if self.product === product { fail(error) }
             throw error
@@ -243,15 +293,21 @@ public final class ClientPrimaryLiveControlCoordinatorV0: ObservableObject {
     ) {
         switch mode {
         case .active:
-            if product != nil, phase != .active { phase = .active }
+            if product != nil, phase != .active, selectionID == nil, !isViewTransitioning {
+                phase = .active
+            }
         case .ending:
-            guard phase != .ending else { return }
+            guard phase != .ending, phase != .failed else { return }
             productGeneration = UUID()
             activationTask?.cancel()
             activationTask = nil
             product?.surface.setInputEnabled(false)
             phase = .ending
-        case .endFailed, .preparationFailed, .rejected, .unavailable,
+        case .preparationFailed:
+            if phase != .failed && phase != .closed {
+                fail(ClientPrimaryLiveControlErrorV0.unavailable)
+            }
+        case .endFailed, .rejected, .unavailable,
              .grantRequired:
             activationTask?.cancel()
             activationTask = nil
@@ -271,11 +327,26 @@ public final class ClientPrimaryLiveControlCoordinatorV0: ObservableObject {
         retireLocalProduct(as: .closed)
     }
 
+    private func awaitViewPresentation(of expected: any ClientPrimaryLiveControlProductV0) async throws {
+        let deadline = ContinuousClock.now + .seconds(15)
+        while isViewTransitioning {
+            try Task.checkCancellation()
+            guard product === expected, phase != .ending, phase != .failed, phase != .closed,
+                  !videoRequiresRestart, ContinuousClock.now < deadline,
+                  !(await expected.activationFailedOrClosed()) else {
+                throw ClientPrimaryLiveControlErrorV0.unavailable
+            }
+            try await Task.sleep(for: .milliseconds(25))
+        }
+    }
+
     private func retireLocalProduct(
         as terminalPhase: ClientPrimaryLiveControlPhaseV0
     ) {
         guard product != nil || phase != terminalPhase else { return }
         productGeneration = UUID()
+        selectionID = nil
+        failureRetirement = nil
         let retiring = product
         product = nil
         phase = terminalPhase
@@ -287,6 +358,9 @@ public final class ClientPrimaryLiveControlCoordinatorV0: ObservableObject {
         generation: UUID
     ) async {
         do {
+            let retirement = await failureRetirementFactory()
+            guard productGeneration == generation, !Task.isCancelled else { return }
+            failureRetirement = retirement
             let value = try await
                 productFactory(
                     mode,
@@ -300,6 +374,15 @@ public final class ClientPrimaryLiveControlCoordinatorV0: ObservableObject {
                 return
             }
             product = value
+            value.observeVideoRecovery { [weak self] required in
+                guard let self, self.productGeneration == generation else { return }
+                self.videoRequiresRestart = required
+            }
+            value.observeSurfaceTransition { [weak self] busy, message in
+                guard let self, self.productGeneration == generation else { return }
+                self.isViewTransitioning = busy
+                self.viewTransitionMessage = message
+            }
             phase = .awaitingVerifiedFrame
 
             // The primary request tracker owns the protocol deadline. This
@@ -340,9 +423,14 @@ public final class ClientPrimaryLiveControlCoordinatorV0: ObservableObject {
         activationTask?.cancel()
         activationTask = nil
         let retiring = product
+        let retirement = failureRetirement
+        failureRetirement = nil
+        retiring?.surface.setInputEnabled(false)
+        retiring?.surface.hideSoftwareKeyboard()
         product = nil
         phase = .failed
         Task {
+            await retirement?()
             await retiring?.close()
             _ = await retiring?.refreshPrimaryState()
         }
@@ -356,9 +444,23 @@ public final class ClientPrimaryLiveControlCoordinatorV0: ObservableObject {
 private struct ClientPrimaryInitialDesktopSurfaceV0: UIViewRepresentable {
     let product: any ClientPrimaryLiveControlProductV0
     let mode: ClientInputInteractionModeV0
+    let viewState: ClientPrimaryLiveControlViewStateV0
+    let keyboardModifiers: InteractiveModifierMask
 
     func makeUIView(context: Context) -> UIKitClientLiveSurfaceViewV0 {
-        product.surface
+        let view = product.surface
+        view.useExternalSoftwareKeyboardBar()
+        view.onSoftwareKeyboardVisibilityChanged = { [weak viewState] visible in
+            viewState?.softwareKeyboardVisible = visible
+            viewState?.keyboardInputNotice = nil
+        }
+        view.onSoftwareKeyboardInputOmitted = { [weak viewState] in
+            viewState?.keyboardInputNotice = "This character couldn’t be sent with the Mac’s current keyboard access."
+        }
+        view.onSoftwareKeyboardModifiersCleared = { [weak viewState] in
+            viewState?.remoteKeyboardModifiers = []
+        }
+        return view
     }
 
     func updateUIView(
@@ -366,6 +468,7 @@ private struct ClientPrimaryInitialDesktopSurfaceV0: UIViewRepresentable {
         context: Context
     ) {
         view.setMode(mode)
+        view.setSoftwareKeyboardModifiers(keyboardModifiers)
         view.setEncodedDimensions(
             width: product.descriptor.encodedWidth,
             height: product.descriptor.encodedHeight
@@ -378,12 +481,17 @@ private struct ClientPrimaryInitialDesktopSurfaceV0: UIViewRepresentable {
 @available(iOS 17.0, *)
 @MainActor
 private final class ClientPrimaryLiveControlViewStateV0: ObservableObject {
+    enum OptionsDestination { case display, surface, shortcuts, composer, study }
     @Published var mode = ClientInputInteractionModeV0.trackpad
     @Published var stopSubmitted = false
+    @Published var showingSessionOptions = false
+    var optionsDestination: OptionsDestination?
     @Published var showingSurfacePicker = false
     @Published var surfaceCandidates:
         [InteractiveSurfaceTargetCandidateV0] = []
     @Published var surfaceRequestInFlight = false
+    @Published var surfaceCatalogNeedsRefresh = false
+    var surfaceCatalogGeneration = UUID()
     @Published var displayCatalog:
         InteractiveDisplayCatalogResponseBodyV1?
     @Published var displayRequestInFlight = false
@@ -393,9 +501,11 @@ private final class ClientPrimaryLiveControlViewStateV0: ObservableObject {
     @Published var automaticSmartZoomEnabled = true
     @Published var showingRemoteKeyboard = false
     @Published var remoteKeyboardModifiers: InteractiveModifierMask = []
+    @Published var softwareKeyboardVisible = false
     @Published var textComposer: ClientNativeTextComposerPresentationV0?
     @Published var keyboardPreparationInFlight = false
-    @Published var showingKeyboardFocusHelp = false
+    @Published var showingComposerFocusHelp = false
+    @Published var keyboardInputNotice: String?
     @Published var showingStudyJob = false
     @Published var studyJobInFlight = false
     @Published var studyJobRecorded = false
@@ -404,6 +514,7 @@ private final class ClientPrimaryLiveControlViewStateV0: ObservableObject {
     var studyControlAccumulator = ClientStage3StudyControlAccumulatorV1()
     var studyControlSurfaceKind = InteractiveSurfaceKind.desktop
     var studyControlIsActive = false
+    var restoreKeyboardAfterViewPicker = false
     var surfaceSelectionInFlight = false
     var pendingTextPresentation: ClientPendingTextPresentationV0?
 
@@ -422,226 +533,6 @@ private struct ClientNativeTextComposerPresentationV0:
 {
     let binding: SurfaceInputFence
     var id: UUID { binding.focusToken ?? binding.surfaceID }
-}
-
-@available(iOS 17.0, *)
-private struct ClientSharedDisplayPickerV0: View {
-    let catalog: InteractiveDisplayCatalogResponseBodyV1?
-    let requestInFlight: Bool
-    let pendingDisplayID: UUID?
-    let statusMessage: String?
-    let onSelect: (UUID) -> Void
-    let onRefresh: () -> Void
-    let onCancel: () -> Void
-
-    var body: some View {
-        NavigationStack {
-            GeometryReader { proxy in
-                ScrollView {
-                    VStack(spacing: 20) {
-                        if let catalog {
-                            ClientSharedDisplayTopologyV0(
-                                catalog: catalog,
-                                requestInFlight: requestInFlight,
-                                pendingDisplayID: pendingDisplayID,
-                                onSelect: onSelect
-                            )
-                            .frame(
-                                maxWidth: .infinity,
-                                minHeight: 320
-                            )
-                            .frame(height: max(320, proxy.size.height * 0.62))
-
-                            Text(
-                                "Tap a display to share it. The blue display is currently showing."
-                            )
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                            .multilineTextAlignment(.center)
-                        } else if requestInFlight {
-                            VStack(spacing: 12) {
-                                ProgressView()
-                                Text("Loading displays…")
-                                    .foregroundStyle(.secondary)
-                            }
-                            .frame(maxWidth: .infinity, minHeight: 320)
-                            .accessibilityIdentifier("Shared Displays Loading")
-                        } else {
-                            ContentUnavailableView(
-                                "Displays unavailable",
-                                systemImage: "display.trianglebadge.exclamationmark",
-                                description: Text(
-                                    "Refresh to ask the connected Mac for its current displays."
-                                )
-                            )
-                            .frame(maxWidth: .infinity, minHeight: 320)
-                        }
-
-                        if let statusMessage {
-                            Label(
-                                statusMessage,
-                                systemImage: "exclamationmark.triangle"
-                            )
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                            .accessibilityIdentifier("Shared Displays Status")
-                        }
-
-                        Button(
-                            requestInFlight ? "Refreshing…" : "Refresh Displays",
-                            systemImage: "arrow.clockwise",
-                            action: onRefresh
-                        )
-                        .buttonStyle(.bordered)
-                        .accessibilityIdentifier("Refresh Shared Displays")
-                        .disabled(requestInFlight || pendingDisplayID != nil)
-
-                        Text(
-                            "Mac Companion shares one display at a time and does not rearrange your Mac displays."
-                        )
-                        .font(.caption)
-                        .foregroundStyle(.tertiary)
-                        .multilineTextAlignment(.center)
-                    }
-                    .frame(maxWidth: .infinity)
-                    .padding()
-                }
-            }
-            .navigationTitle("Choose Display")
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Done", action: onCancel)
-                }
-            }
-        }
-    }
-}
-
-@available(iOS 17.0, *)
-private struct ClientSharedDisplayTopologyV0: View {
-    let catalog: InteractiveDisplayCatalogResponseBodyV1
-    let requestInFlight: Bool
-    let pendingDisplayID: UUID?
-    let onSelect: (UUID) -> Void
-
-    var body: some View {
-        GeometryReader { proxy in
-            if let layout = ClientSharedDisplayTopologyGeometryV0(
-                displays: catalog.displays,
-                canvasSize: proxy.size
-            ) {
-                ZStack(alignment: .topLeading) {
-                    ForEach(orderedDisplays) { display in
-                        if let frame = layout.framesByDisplayID[display.id] {
-                            Button {
-                                guard display.displayID
-                                    != catalog.selectedDisplayID else { return }
-                                onSelect(display.id)
-                            } label: {
-                                ClientSharedDisplayTileV0(
-                                    display: display,
-                                    isShowing: display.displayID
-                                        == catalog.selectedDisplayID,
-                                    isPending: display.id == pendingDisplayID
-                                )
-                            }
-                            .buttonStyle(.plain)
-                            .frame(width: frame.width, height: frame.height)
-                            .offset(x: frame.minX, y: frame.minY)
-                            .disabled(
-                                pendingDisplayID != nil
-                                    || requestInFlight
-                            )
-                            .accessibilityIdentifier(
-                                "Shared Display \(display.ordinal)"
-                            )
-                            .accessibilityLabel(displayName(display))
-                            .accessibilityValue(
-                                display.id == pendingDisplayID
-                                    ? "Switching"
-                                    : display.displayID
-                                        == catalog.selectedDisplayID
-                                        ? "Showing" : "Available"
-                            )
-                        }
-                    }
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(
-                    Color.secondary.opacity(0.08),
-                    in: RoundedRectangle(cornerRadius: 18)
-                )
-            }
-        }
-    }
-
-    private var orderedDisplays: [InteractiveDisplayCandidateV1] {
-        catalog.displays.sorted {
-            let lhsSelected = $0.displayID == catalog.selectedDisplayID
-            let rhsSelected = $1.displayID == catalog.selectedDisplayID
-            if lhsSelected != rhsSelected { return !lhsSelected }
-            return $0.ordinal < $1.ordinal
-        }
-    }
-
-    private func displayName(_ display: InteractiveDisplayCandidateV1) -> String {
-        display.isMain ? "Main Display" : "Display \(display.ordinal)"
-    }
-}
-
-@available(iOS 17.0, *)
-private struct ClientSharedDisplayTileV0: View {
-    let display: InteractiveDisplayCandidateV1
-    let isShowing: Bool
-    let isPending: Bool
-
-    var body: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: 12)
-                .fill(
-                    isShowing
-                        ? Color.accentColor.opacity(0.20)
-                        : Color(uiColor: .secondarySystemBackground)
-                )
-            RoundedRectangle(cornerRadius: 12)
-                .strokeBorder(
-                    isShowing ? Color.accentColor : Color.secondary.opacity(0.6),
-                    lineWidth: isShowing ? 3 : 1
-                )
-
-            VStack(spacing: 5) {
-                HStack(spacing: 5) {
-                    Image(systemName: display.isMain ? "display" : "display.2")
-                    Text(display.isMain
-                         ? "Main Display"
-                         : "Display \(display.ordinal)")
-                }
-                .font(.subheadline.weight(.semibold))
-                .lineLimit(1)
-
-                Text("\(display.pixelWidth) × \(display.pixelHeight)")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-
-                if isPending {
-                    HStack(spacing: 5) {
-                        ProgressView()
-                            .controlSize(.mini)
-                        Text("Switching…")
-                    }
-                    .font(.caption2.weight(.medium))
-                    .foregroundStyle(.secondary)
-                } else if isShowing {
-                    Label("Showing", systemImage: "checkmark.circle.fill")
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(.tint)
-                }
-            }
-            .padding(8)
-        }
-        .contentShape(RoundedRectangle(cornerRadius: 12))
-    }
 }
 
 @available(iOS 17.0, *)
@@ -946,73 +837,6 @@ private struct ClientRemoteKeyboardViewV0: View {
     }
 }
 
-@available(iOS 17.0, *)
-private struct ClientRemoteQuickActionsBarV0: View {
-    let keyboardPreparationInFlight: Bool
-    let keyboardDisabled: Bool
-    let stopSubmitted: Bool
-    let stopDisabled: Bool
-    let onKeyboard: () -> Void
-    let onShortcut: (ClientRemoteShortcutV0) -> Void
-    let onMore: () -> Void
-    let onStop: () -> Void
-
-    var body: some View {
-        HStack(spacing: 8) {
-            Button("Keyboard", systemImage: "keyboard", action: onKeyboard)
-                .labelStyle(.iconOnly)
-                .buttonStyle(.bordered)
-                .disabled(keyboardDisabled)
-                .accessibilityIdentifier("Remote Keyboard")
-                .overlay {
-                    if keyboardPreparationInFlight {
-                        ProgressView().controlSize(.small)
-                    }
-                }
-
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
-                    ForEach(ClientRemoteShortcutCatalogV0.quick) { shortcut in
-                        Button(
-                            shortcut.label,
-                            systemImage: shortcut.systemImage
-                        ) {
-                            onShortcut(shortcut)
-                        }
-                        .buttonStyle(.bordered)
-                        .fixedSize()
-                        .accessibilityIdentifier(
-                            "Remote shortcut \(shortcut.id)"
-                        )
-                    }
-                    Button(
-                        "Shortcuts",
-                        systemImage: "command",
-                        action: onMore
-                    )
-                        .buttonStyle(.bordered)
-                        .fixedSize()
-                        .accessibilityIdentifier("All remote shortcuts")
-                }
-            }
-
-            Button(
-                stopSubmitted ? "Stopping…" : "Stop",
-                systemImage: "stop.circle.fill",
-                role: .destructive,
-                action: onStop
-            )
-            .labelStyle(.iconOnly)
-            .buttonStyle(.bordered)
-            .disabled(stopDisabled)
-            .accessibilityIdentifier("Stop Remote Control bottom")
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
-        .background(.ultraThinMaterial)
-    }
-}
-
 /// A phone-local composing surface for one exact verified Mac text focus. It
 /// never displays or reads the Mac field value; only the uncommitted local
 /// draft exists here, and it is sent once under the original focus fence.
@@ -1223,13 +1047,44 @@ public struct ClientPrimaryLiveControlViewV0: View {
                 if let product = coordinator.product {
                     ClientPrimaryInitialDesktopSurfaceV0(
                         product: product,
-                        mode: viewState.mode
+                        mode: viewState.mode,
+                        viewState: viewState,
+                        keyboardModifiers: viewState.remoteKeyboardModifiers
                     )
+                    .allowsHitTesting(!coordinator.videoRequiresRestart && !coordinator.isViewTransitioning)
+                    if coordinator.isViewTransitioning {
+                        ProgressView(coordinator.viewTransitionMessage ?? "Switching view…")
+                            .tint(.white).foregroundStyle(.white)
+                            .padding().background(.black.opacity(0.8), in: Capsule())
+                            .accessibilityIdentifier("Remote view switching")
+                    } else if let message = coordinator.viewTransitionMessage {
+                        VStack {
+                            Spacer()
+                            Text(message).font(.footnote).foregroundStyle(.white)
+                                .padding().background(.black.opacity(0.8), in: Capsule())
+                        }.padding()
+                    }
+                    if coordinator.videoRequiresRestart {
+                        ContentUnavailableView(
+                            "Remote Control needs to restart",
+                            systemImage: "display.trianglebadge.exclamationmark",
+                            description: Text(
+                                "Tap Stop, then request Remote Control again to resume."
+                            )
+                        )
+                        .foregroundStyle(.white)
+                        .background(Color.black)
+                        .accessibilityIdentifier("Remote Control restart required")
+                    }
                 } else if coordinator.phase == .failed {
                     ContentUnavailableView(
                         "Remote Control unavailable",
                         systemImage: "display.trianglebadge.exclamationmark",
-                        description: Text(control.detail)
+                        description: Text(
+                            "The selected view stopped streaming. Close this screen "
+                                + "and request Remote Control again. You can then "
+                                + "choose Desktop or another window."
+                        )
                     )
                     .foregroundStyle(.white)
                 } else {
@@ -1241,122 +1096,43 @@ public struct ClientPrimaryLiveControlViewV0: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .clipped()
 
-            if coordinator.phase == .active {
-                ClientRemoteQuickActionsBarV0(
-                    keyboardPreparationInFlight:
-                        viewState.keyboardPreparationInFlight,
-                    keyboardDisabled:
-                        viewState.keyboardPreparationInFlight
-                            || viewState.surfaceSelectionInFlight,
-                    stopSubmitted: viewState.stopSubmitted,
-                    stopDisabled: viewState.stopSubmitted || !canStop,
-                    onKeyboard: toggleSoftwareKeyboard,
-                    onShortcut: sendRemoteShortcut,
-                    onMore: showRemoteKeyboard,
-                    onStop: stopRemoteControl
-                )
-            }
         }
         .background(Color.black.ignoresSafeArea())
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            ClientRemoteSessionBarV0(
+                modifiers: $viewState.remoteKeyboardModifiers,
+                keyboardVisible: viewState.softwareKeyboardVisible,
+                keyboardDisabled: coordinator.product == nil || viewState.stopSubmitted
+                    || coordinator.phase == .failed || coordinator.phase == .ending || coordinator.phase == .closed,
+                disabled: coordinator.phase != .active || coordinator.videoRequiresRestart || coordinator.isViewTransitioning
+                    || viewState.surfaceSelectionInFlight || viewState.displaySelectionInFlight,
+                onKeyboard: toggleSoftwareKeyboard,
+                onKey: sendRemoteKey,
+                onOptions: showSessionOptions
+            )
+        }
+        .overlay(alignment: .bottom) {
+            if let notice = viewState.keyboardInputNotice {
+                Text(notice).font(.caption).foregroundStyle(.white)
+                    .padding(10).background(.black.opacity(0.8), in: RoundedRectangle(cornerRadius: 8))
+                    .padding(.bottom, 66).allowsHitTesting(false)
+                    .accessibilityIdentifier("Keyboard input notice")
+            }
+        }
         .navigationTitle(macName)
         .navigationBarTitleDisplayMode(.inline)
+        .navigationBarBackButtonHidden(true)
         .toolbarBackground(.black.opacity(0.75), for: .navigationBar)
         .toolbarColorScheme(.dark, for: .navigationBar)
         .toolbar {
             ToolbarItem(placement: .topBarLeading) {
-                Picker("Pointer mode", selection: $viewState.mode) {
-                    Text("Touch").tag(
-                        ClientInputInteractionModeV0.directTouch
-                    )
-                    Text("Trackpad").tag(
-                        ClientInputInteractionModeV0.trackpad
-                    )
+                Button(canStop ? "Stop Remote Control" : "Close Remote Control", systemImage: "xmark") {
+                    if canStop { stopRemoteControl() }
+                    else { coordinator.closeLocalProduct(); dismiss() }
                 }
-                .pickerStyle(.menu)
-                .accessibilityIdentifier("Pointer mode")
-                .disabled(
-                    coordinator.phase != .active
-                )
-            }
-            ToolbarItem(placement: .topBarTrailing) {
-                Button {
-                    viewState.showingDisplayPicker = true
-                    refreshDisplays(reportFailure: true)
-                } label: {
-                    Label(currentDisplayLabel, systemImage: "display.2")
-                }
-                .accessibilityIdentifier("Shared Display")
-                .disabled(
-                    coordinator.phase != .active
-                        || viewState.displaySelectionInFlight
-                )
-            }
-            ToolbarItem(placement: .topBarTrailing) {
-                Menu(
-                    "More",
-                    systemImage: "ellipsis.circle"
-                ) {
-                    Button("Choose Surface", systemImage: "rectangle.stack") {
-                        requestSurfaceTargets(showPicker: true)
-                    }
-                    .disabled(
-                        viewState.surfaceRequestInFlight
-                    )
-                    Toggle(
-                        "Zoom to Focus Automatically",
-                        isOn: $viewState.automaticSmartZoomEnabled
-                    )
-                    Button(
-                        "Fit Screen",
-                        systemImage: "arrow.down.right.and.arrow.up.left",
-                        action: fitScreen
-                    )
-                    Button(
-                        "Resume Smart Zoom",
-                        systemImage: "scope",
-                        action: resumeSmartZoom
-                    )
-                    Divider()
-                    Button("Keys & Shortcuts", systemImage: "command") {
-                        showRemoteKeyboard()
-                    }
-                    .disabled(
-                        viewState.surfaceSelectionInFlight
-                    )
-                    Button("Record Test Job", systemImage: "checklist") {
-                        viewState.studyJobRecorded = false
-                        viewState.showingStudyJob = true
-                    }
-                    .disabled(
-                        viewState.studyJobInFlight
-                            || viewState.surfaceSelectionInFlight
-                    )
-                    Divider()
-                    // UIKit can cover the bottom toolbar with its software
-                    // keyboard. Keep the existing Stop action reachable above it.
-                    Button(
-                        viewState.stopSubmitted ? "Stopping…" : "Stop Remote Control",
-                        systemImage: "stop.circle.fill",
-                        role: .destructive,
-                        action: stopRemoteControl
-                    )
-                    .disabled(viewState.stopSubmitted || !canStop)
-                }
-                .disabled(coordinator.phase != .active)
-            }
-            ToolbarItem(placement: .topBarTrailing) {
-                // Keep safety Stop directly reachable while UIKit's software
-                // keyboard covers the bottom toolbar. A transient Menu action
-                // is not reliably activatable while the text input session owns
-                // focus, and Stop must not depend on dismissing that keyboard.
-                Button(
-                    viewState.stopSubmitted ? "Stopping…" : "Stop Remote Control",
-                    systemImage: "stop.circle.fill",
-                    role: .destructive,
-                    action: stopRemoteControl
-                )
-                .accessibilityIdentifier("Stop Remote Control top")
-                .disabled(viewState.stopSubmitted || !canStop)
+                    .labelStyle(.iconOnly)
+                    .accessibilityIdentifier("Stop Remote Control")
+                    .disabled(viewState.stopSubmitted || (!canStop && coordinator.phase != .failed))
             }
         }
         .onAppear {
@@ -1385,7 +1161,43 @@ public struct ClientPrimaryLiveControlViewV0: View {
             }
         }
         .onChange(of: coordinator.phase) { _, value in
+            if value == .failed || value == .ending || value == .closed {
+                viewState.showingRemoteKeyboard = false
+                viewState.showingSurfacePicker = false
+                viewState.showingDisplayPicker = false
+                viewState.showingSessionOptions = false
+                viewState.optionsDestination = nil
+                viewState.textComposer = nil
+                viewState.pendingTextPresentation = nil
+                viewState.remoteKeyboardModifiers = []
+                coordinator.product?.surface.hideSoftwareKeyboard()
+            }
             synchronizeStudyControlTiming()
+        }
+        .onChange(of: coordinator.videoRequiresRestart) { _, required in
+            guard required else { return }
+            viewState.showingRemoteKeyboard = false
+            viewState.showingDisplayPicker = false
+            viewState.textComposer = nil
+            viewState.pendingTextPresentation = nil
+        }
+        .onChange(of: coordinator.isViewTransitioning) { _, busy in
+            if busy {
+                // Inventory tokens are bound to the surface being replaced.
+                // Keep an open picker fenced through fresh presentation and
+                // the subsequent inventory read, including a late old read.
+                viewState.surfaceCatalogGeneration = UUID()
+                if viewState.showingSurfacePicker || viewState.surfaceRequestInFlight {
+                    viewState.surfaceCatalogNeedsRefresh = true
+                }
+            } else if coordinator.phase == .active {
+                if viewState.showingSurfacePicker && !viewState.surfaceSelectionInFlight {
+                    requestSurfaceTargets(showPicker: false)
+                }
+                if viewState.showingDisplayPicker && !viewState.displaySelectionInFlight {
+                    refreshDisplays(reportFailure: true)
+                }
+            }
         }
         .onChange(of: viewState.showingStudyJob) { _, value in
             if value {
@@ -1410,9 +1222,26 @@ public struct ClientPrimaryLiveControlViewV0: View {
                 break
             }
         }
-        .sheet(isPresented: $viewState.showingSurfacePicker) {
+        .sheet(isPresented: $viewState.showingSessionOptions, onDismiss: finishSessionOptions) {
+            NavigationStack {
+                Form { sessionOptions }
+                    .navigationTitle("Session Options")
+                    .navigationBarTitleDisplayMode(.inline)
+                    .toolbar {
+                        ToolbarItem(placement: .confirmationAction) {
+                            Button("Done") { viewState.showingSessionOptions = false }
+                        }
+                    }
+            }
+            .presentationDetents([.medium, .large])
+            .presentationDragIndicator(.visible)
+        }
+        .sheet(isPresented: $viewState.showingSurfacePicker, onDismiss: restoreKeyboardAfterViewPicker) {
             ClientSurfacePickerViewV0(
                 candidates: viewState.surfaceCandidates,
+                isBusy: coordinator.isViewTransitioning || viewState.surfaceRequestInFlight
+                    || viewState.surfaceCatalogNeedsRefresh,
+                statusMessage: coordinator.viewTransitionMessage,
                 onSelect: selectSurface,
                 onRefresh: {
                     requestSurfaceTargets(showPicker: false)
@@ -1423,12 +1252,15 @@ public struct ClientPrimaryLiveControlViewV0: View {
             )
             .interactiveDismissDisabled(viewState.surfaceRequestInFlight)
         }
-        .fullScreenCover(isPresented: $viewState.showingDisplayPicker) {
+        // Preserve the admitted renderer's visible window hierarchy while
+        // choosing a display. A full-screen cover can detach or hide it and
+        // correctly trigger the native owner's irreversible presentation fence.
+        .sheet(isPresented: $viewState.showingDisplayPicker, onDismiss: restoreKeyboardAfterViewPicker) {
             ClientSharedDisplayPickerV0(
                 catalog: viewState.displayCatalog,
-                requestInFlight: viewState.displayRequestInFlight,
+                requestInFlight: viewState.displayRequestInFlight || coordinator.isViewTransitioning,
                 pendingDisplayID: viewState.pendingDisplayID,
-                statusMessage: viewState.displayStatusMessage,
+                statusMessage: coordinator.viewTransitionMessage ?? viewState.displayStatusMessage,
                 onSelect: { displayID in
                     selectDisplay(displayID)
                 },
@@ -1485,15 +1317,14 @@ public struct ClientPrimaryLiveControlViewV0: View {
             .presentationDragIndicator(.visible)
         }
         .alert(
-            "Keyboard input unavailable",
-            isPresented: $viewState.showingKeyboardFocusHelp
+            "Text composer unavailable",
+            isPresented: $viewState.showingComposerFocusHelp
         ) {
             Button("OK", role: .cancel) {}
         } message: {
             Text(
-                "This surface does not currently allow text input, or macOS "
-                    + "positively identified a secure field. Remote keys and "
-                    + "shortcuts remain available when Keyboard access is granted."
+                "Choose an editable text field to use the composer. "
+                    + "The keyboard and shortcuts remain available."
             )
         }
         .onDisappear {
@@ -1509,6 +1340,89 @@ public struct ClientPrimaryLiveControlViewV0: View {
                     return
                 }
             }
+        }
+    }
+
+    @ViewBuilder
+    private var sessionOptions: some View {
+        Button("Shared Display", systemImage: "display.2") {
+            leaveSessionOptions(for: .display)
+        }
+        .accessibilityIdentifier("Shared Display")
+        .disabled(viewState.displaySelectionInFlight)
+        Button("Choose Surface", systemImage: "rectangle.stack") {
+            leaveSessionOptions(for: .surface)
+        }
+        .accessibilityIdentifier("Choose Surface")
+        .disabled(viewState.surfaceRequestInFlight)
+        Picker("Pointer mode", selection: $viewState.mode) {
+            Text("Touch").tag(ClientInputInteractionModeV0.directTouch)
+            Text("Trackpad").tag(ClientInputInteractionModeV0.trackpad)
+        }
+        .accessibilityIdentifier("Pointer mode")
+        Divider()
+        Button("Keys & Shortcuts", systemImage: "command") { leaveSessionOptions(for: .shortcuts) }
+            .accessibilityIdentifier("All remote shortcuts")
+        if let descriptor = coordinator.product?.descriptor,
+           descriptor.kind == .focusedRegion,
+           descriptor.focus?.category == .text,
+           descriptor.focus?.editable == true,
+           descriptor.focus?.secure == false {
+            Button("Compose Text", systemImage: "square.and.pencil") { leaveSessionOptions(for: .composer) }
+                .disabled(viewState.keyboardPreparationInFlight)
+        }
+        Button("Fit Screen", systemImage: "arrow.down.right.and.arrow.up.left", action: fitScreen)
+        Toggle("Zoom to Focus Automatically", isOn: $viewState.automaticSmartZoomEnabled)
+        Button("Resume Smart Zoom", systemImage: "scope", action: resumeSmartZoom)
+        #if DEBUG
+        Divider()
+        Button("Record Test Job", systemImage: "checklist") {
+            leaveSessionOptions(for: .study)
+        }
+        .disabled(viewState.studyJobInFlight)
+        #endif
+    }
+
+    private func showSessionOptions() {
+        guard coordinator.phase == .active, !coordinator.isViewTransitioning else { return }
+        viewState.optionsDestination = nil
+        viewState.restoreKeyboardAfterViewPicker = coordinator.product?.surface.isSoftwareKeyboardVisible == true
+        coordinator.product?.surface.hideSoftwareKeyboard()
+        viewState.showingSessionOptions = true
+    }
+
+    private func leaveSessionOptions(for destination: ClientPrimaryLiveControlViewStateV0.OptionsDestination) {
+        viewState.optionsDestination = destination
+        viewState.showingSessionOptions = false
+    }
+
+    private func finishSessionOptions() {
+        let destination = viewState.optionsDestination
+        viewState.optionsDestination = nil
+        guard coordinator.phase == .active, !viewState.stopSubmitted else {
+            viewState.restoreKeyboardAfterViewPicker = false
+            return
+        }
+        // Present the next sheet only after options dismissal completes. This
+        // avoids competing UIKit presentations and preserves the native view.
+        switch destination {
+        case .display:
+            viewState.showingDisplayPicker = true
+            refreshDisplays(reportFailure: true)
+        case .surface:
+            requestSurfaceTargets(showPicker: true)
+        case .shortcuts:
+            viewState.restoreKeyboardAfterViewPicker = false
+            showRemoteKeyboard()
+        case .composer:
+            viewState.restoreKeyboardAfterViewPicker = false
+            prepareTextComposer()
+        case .study:
+            viewState.restoreKeyboardAfterViewPicker = false
+            viewState.studyJobRecorded = false
+            viewState.showingStudyJob = true
+        case nil:
+            restoreKeyboardAfterViewPicker()
         }
     }
 
@@ -1568,10 +1482,12 @@ public struct ClientPrimaryLiveControlViewV0: View {
 
     private func selectDisplay(_ displayID: UUID) {
         guard coordinator.phase == .active,
+              !coordinator.isViewTransitioning,
               !viewState.displaySelectionInFlight,
               viewState.displayCatalog?.selectedDisplayID.rawValue
                 != displayID else { return }
         pauseStudyControlTiming()
+        viewState.remoteKeyboardModifiers = []
         viewState.pendingDisplayID = displayID
         viewState.displayStatusMessage = nil
         Task {
@@ -1583,12 +1499,21 @@ public struct ClientPrimaryLiveControlViewV0: View {
                 synchronizeStudyControlTiming()
             } catch {
                 viewState.pendingDisplayID = nil
+                guard !(error is CancellationError) else { return }
                 viewState.displayStatusMessage =
                     "Couldn’t confirm the display switch. Try again."
                 synchronizeStudyControlTiming()
                 onCommandFailure(error)
             }
         }
+    }
+
+    private func restoreKeyboardAfterViewPicker() {
+        guard viewState.restoreKeyboardAfterViewPicker else { return }
+        viewState.restoreKeyboardAfterViewPicker = false
+        guard coordinator.phase == .active || coordinator.phase == .awaitingVerifiedFrame,
+              !viewState.stopSubmitted else { return }
+        coordinator.product?.surface.showSoftwareKeyboard()
     }
 
     private func fitScreen() {
@@ -1633,14 +1558,36 @@ public struct ClientPrimaryLiveControlViewV0: View {
 
     private func requestSurfaceTargets(showPicker: Bool) {
         guard !viewState.surfaceRequestInFlight else { return }
+        guard !coordinator.isViewTransitioning else {
+            viewState.surfaceCatalogNeedsRefresh = true
+            if showPicker { viewState.showingSurfacePicker = true }
+            return
+        }
+        IOSClientRuntimeDiagnosticLogV0.record("view-picker.requested")
         viewState.surfaceRequestInFlight = true
+        let generation = viewState.surfaceCatalogGeneration
+        if showPicker {
+            viewState.restoreKeyboardAfterViewPicker = viewState.restoreKeyboardAfterViewPicker
+                || coordinator.product?.surface.isSoftwareKeyboardVisible == true
+        }
         Task {
             do {
-                viewState.surfaceCandidates = try await coordinator
-                    .requestSurfaceTargets()
+                let candidates = try await coordinator.requestSurfaceTargets()
+                guard generation == viewState.surfaceCatalogGeneration else {
+                    finishObsoleteSurfaceInventory(showPicker: showPicker)
+                    return
+                }
+                viewState.surfaceCandidates = candidates
+                viewState.surfaceCatalogNeedsRefresh = false
                 viewState.surfaceRequestInFlight = false
                 if showPicker { viewState.showingSurfacePicker = true }
+                IOSClientRuntimeDiagnosticLogV0.record("view-picker.ready")
             } catch {
+                guard generation == viewState.surfaceCatalogGeneration else {
+                    finishObsoleteSurfaceInventory(showPicker: showPicker)
+                    return
+                }
+                IOSClientRuntimeDiagnosticLogV0.record("view-picker.failed", error: error)
                 viewState.surfaceRequestInFlight = false
                 viewState.showingSurfacePicker = false
                 onCommandFailure(error)
@@ -1648,9 +1595,19 @@ public struct ClientPrimaryLiveControlViewV0: View {
         }
     }
 
+    private func finishObsoleteSurfaceInventory(showPicker: Bool) {
+        viewState.surfaceRequestInFlight = false
+        guard coordinator.phase == .active, !viewState.stopSubmitted else { return }
+        if viewState.showingSurfacePicker || showPicker {
+            requestSurfaceTargets(showPicker: showPicker)
+        }
+    }
+
     private func selectSurface(_ choice: ClientSurfaceChoiceV0) {
-        guard !viewState.surfaceRequestInFlight else { return }
+        guard coordinator.phase == .active, !coordinator.isViewTransitioning,
+              !viewState.surfaceRequestInFlight, !viewState.surfaceCatalogNeedsRefresh else { return }
         pauseStudyControlTiming()
+        viewState.remoteKeyboardModifiers = []
         viewState.surfaceSelectionInFlight = true
         viewState.surfaceRequestInFlight = true
         Task {
@@ -1665,6 +1622,7 @@ public struct ClientPrimaryLiveControlViewV0: View {
                 viewState.surfaceSelectionInFlight = false
                 viewState.surfaceRequestInFlight = false
                 viewState.showingSurfacePicker = false
+                guard !(error is CancellationError) else { return }
                 onCommandFailure(error)
             }
         }
@@ -1685,6 +1643,7 @@ public struct ClientPrimaryLiveControlViewV0: View {
             action,
             modifiers: modifiers
         )
+        viewState.remoteKeyboardModifiers = []
     }
 
     private func sendRemoteShortcut(_ shortcut: ClientRemoteShortcutV0) {
@@ -1708,35 +1667,26 @@ public struct ClientPrimaryLiveControlViewV0: View {
     }
 
     private func prepareSoftwareKeyboard(dismissingShortcuts: Bool) {
+        // Opening local UI has no Text, focus, or renderer preflight. Delivery
+        // still requires current admitted Control/Keyboard authority.
+        if dismissingShortcuts {
+            viewState.pendingTextPresentation = .directKeyboard
+            viewState.showingRemoteKeyboard = false
+        } else {
+            presentTextPresentation(.directKeyboard)
+        }
+    }
+
+    private func prepareTextComposer() {
         guard !viewState.keyboardPreparationInFlight else { return }
         viewState.keyboardPreparationInFlight = true
         Task {
+            defer { viewState.keyboardPreparationInFlight = false }
             do {
-                let composerBinding = try await coordinator
-                    .prepareNativeTextComposer()
-                let presentation: ClientPendingTextPresentationV0?
-                if let composerBinding {
-                    presentation = .composer(composerBinding)
-                } else if try await coordinator.prepareTextInput() {
-                    presentation = .directKeyboard
-                } else {
-                    presentation = nil
-                }
-                viewState.keyboardPreparationInFlight = false
-                if let presentation {
-                    if dismissingShortcuts {
-                        viewState.pendingTextPresentation = presentation
-                        viewState.showingRemoteKeyboard = false
-                    } else {
-                        presentTextPresentation(presentation)
-                    }
-                } else {
-                    viewState.showingKeyboardFocusHelp = true
-                }
-            } catch {
-                viewState.keyboardPreparationInFlight = false
-                onCommandFailure(error)
-            }
+                if let binding = try await coordinator.prepareNativeTextComposer() {
+                    presentTextPresentation(.composer(binding))
+                } else { viewState.showingComposerFocusHelp = true }
+            } catch { onCommandFailure(error) }
         }
     }
 
@@ -1756,7 +1706,7 @@ public struct ClientPrimaryLiveControlViewV0: View {
                 binding: binding
             )
         case .directKeyboard:
-            coordinator.product?.surface.toggleSoftwareKeyboard()
+            coordinator.product?.surface.showSoftwareKeyboard()
         }
     }
 

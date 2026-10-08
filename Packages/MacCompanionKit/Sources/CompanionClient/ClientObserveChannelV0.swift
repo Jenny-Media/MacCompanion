@@ -7,15 +7,20 @@ public struct ClientObserveChannelEnvironmentV0: Sendable {
     public let makeMessageID: @Sendable () throws -> WireUUID
     public let wallNowUnixMilliseconds: @Sendable () -> Int64
     public let monotonicNowMilliseconds: @Sendable () -> Int64
+    public let statusReservationSleep: @Sendable () async throws -> Void
 
     public init(
         makeMessageID: @escaping @Sendable () throws -> WireUUID,
         wallNowUnixMilliseconds: @escaping @Sendable () -> Int64,
-        monotonicNowMilliseconds: @escaping @Sendable () -> Int64
+        monotonicNowMilliseconds: @escaping @Sendable () -> Int64,
+        statusReservationSleep: @escaping @Sendable () async throws -> Void = {
+            try await Task.sleep(nanoseconds: 10_000_000_000)
+        }
     ) {
         self.makeMessageID = makeMessageID
         self.wallNowUnixMilliseconds = wallNowUnixMilliseconds
         self.monotonicNowMilliseconds = monotonicNowMilliseconds
+        self.statusReservationSleep = statusReservationSleep
     }
 
     public static let live = Self(
@@ -81,6 +86,7 @@ public enum ClientObserveChannelErrorV0: Error, Equatable, Sendable {
     case invalidConfiguration
     case invalidState(ClientObserveChannelStateV0)
     case statusRequestPending
+    case statusWaitTimedOut
     case invalidClock
     case duplicateMessageID
     case sendFailed
@@ -106,11 +112,19 @@ public actor ClientObserveChannelV0: ClientPrimaryReplyReceivingV0 {
         let startedAtMonotonicMilliseconds: Int64
     }
 
+    private struct ReservedStatusRefresh {
+        let id: UUID
+        var continuation: CheckedContinuation<Void, any Error>?
+    }
+
     private let sender: any ClientAuthenticatedCommandSendingV1
     private let environment: ClientObserveChannelEnvironmentV0
     private let publish: @Sendable (ClientObserveChannelEventV0) -> Void
     private var pendingStatus: PendingStatus?
     private var pendingLivenessMessageID: WireUUID?
+    private var reservedStatusRefresh: ReservedStatusRefresh?
+    private var reservedStatusTimeout: Task<Void, Never>?
+    var hasReservedStatusRefresh: Bool { reservedStatusRefresh != nil }
     private var pendingAuditMessageID: WireUUID?
     private var generation: UInt64 = 0
     private var issuedMessageIDs: [WireUUID] = []
@@ -137,9 +151,35 @@ public actor ClientObserveChannelV0: ClientPrimaryReplyReceivingV0 {
 
     public func requestStatus() async throws {
         try requireReady()
-        guard pendingStatus == nil, pendingLivenessMessageID == nil else {
+        guard pendingStatus == nil, reservedStatusRefresh == nil else {
             throw ClientObserveChannelErrorV0.statusRequestPending
         }
+        if pendingLivenessMessageID != nil {
+            let id = UUID()
+            let expectedGeneration = generation
+            defer {
+                if reservedStatusRefresh?.id == id { reservedStatusRefresh = nil }
+            }
+            try await withTaskCancellationHandler {
+                try await withCheckedThrowingContinuation { continuation in
+                    reservedStatusRefresh = .init(id: id, continuation: continuation)
+                    let sleep = environment.statusReservationSleep
+                    reservedStatusTimeout = Task { [weak self] in
+                        try? await sleep()
+                        guard !Task.isCancelled else { return }
+                        await self?.expireReservedStatusRefresh(id: id)
+                    }
+                }
+            } onCancel: { [weak self] in
+                Task { await self?.cancelReservedStatusRefresh(id: id) }
+            }
+            try Task.checkCancellation()
+            try requireReady()
+            guard generation == expectedGeneration else {
+                throw ClientObserveChannelErrorV0.invalidState(state)
+            }
+        }
+        try Task.checkCancellation()
         let messageID = try nextMessageID()
         let started = try monotonicNow()
         let frame = try WireCodec.encode(WireEnvelope(
@@ -175,7 +215,8 @@ public actor ClientObserveChannelV0: ClientPrimaryReplyReceivingV0 {
     /// reply kind, replay, and connection-generation fences.
     public func requestLivenessStatus() async throws {
         try requireReady()
-        guard pendingStatus == nil, pendingLivenessMessageID == nil else {
+        guard pendingStatus == nil, pendingLivenessMessageID == nil,
+              reservedStatusRefresh == nil else {
             throw ClientObserveChannelErrorV0.statusRequestPending
         }
         let messageID = try nextMessageID()
@@ -194,6 +235,7 @@ public actor ClientObserveChannelV0: ClientPrimaryReplyReceivingV0 {
                 throw ClientObserveChannelErrorV0.invalidState(state)
             }
             pendingLivenessMessageID = nil
+            finishReservedStatusRefresh(error: ClientObserveChannelErrorV0.sendFailed)
             throw ClientObserveChannelErrorV0.sendFailed
         }
         guard state == .ready, generation == expectedGeneration else {
@@ -277,6 +319,10 @@ public actor ClientObserveChannelV0: ClientPrimaryReplyReceivingV0 {
         state = .invalidated
         pendingStatus = nil
         pendingLivenessMessageID = nil
+        finishReservedStatusRefresh(
+            error: ClientObserveChannelErrorV0.invalidState(.invalidated)
+        )
+        reservedStatusRefresh = nil
         pendingAuditMessageID = nil
         auditPager.invalidate()
     }
@@ -302,7 +348,7 @@ public actor ClientObserveChannelV0: ClientPrimaryReplyReceivingV0 {
                 throw ClientObserveChannelErrorV0.hostMismatch
             }
             self.pendingLivenessMessageID = nil
-            return ClientPrimaryPreparedReplyV0()
+            return prepareLivenessCompletion()
         }
         guard let pendingStatus else {
             throw ClientObserveChannelErrorV0.invalidCorrelation
@@ -388,7 +434,7 @@ public actor ClientObserveChannelV0: ClientPrimaryReplyReceivingV0 {
         let request: ClientObserveRequestKindV0
         if response.correlationID == pendingLivenessMessageID {
             pendingLivenessMessageID = nil
-            return ClientPrimaryPreparedReplyV0()
+            return prepareLivenessCompletion()
         } else if response.correlationID == pendingStatus?.messageID {
             pendingStatus = nil
             request = .status
@@ -412,6 +458,43 @@ public actor ClientObserveChannelV0: ClientPrimaryReplyReceivingV0 {
         guard state == .ready else {
             throw ClientObserveChannelErrorV0.invalidState(state)
         }
+    }
+
+    private func prepareLivenessCompletion() -> ClientPrimaryPreparedReplyV0 {
+        guard let id = reservedStatusRefresh?.id else {
+            return ClientPrimaryPreparedReplyV0()
+        }
+        let expectedGeneration = generation
+        return ClientPrimaryPreparedReplyV0 { [weak self] in
+            Task { await self?.commitLivenessCompletion(id: id, generation: expectedGeneration) }
+        }
+    }
+
+    private func commitLivenessCompletion(id: UUID, generation: UInt64) {
+        guard state == .ready, self.generation == generation,
+              reservedStatusRefresh?.id == id else { return }
+        finishReservedStatusRefresh(error: nil)
+    }
+
+    private func cancelReservedStatusRefresh(id: UUID) {
+        guard reservedStatusRefresh?.id == id else { return }
+        finishReservedStatusRefresh(error: CancellationError())
+    }
+
+    private func expireReservedStatusRefresh(id: UUID) {
+        guard reservedStatusRefresh?.id == id else { return }
+        finishReservedStatusRefresh(error: ClientObserveChannelErrorV0.statusWaitTimedOut)
+    }
+
+    private func finishReservedStatusRefresh(error: (any Error)?) {
+        guard let continuation = reservedStatusRefresh?.continuation else { return }
+        reservedStatusTimeout?.cancel()
+        reservedStatusTimeout = nil
+        // Keep the reservation until its caller resumes. Another heartbeat
+        // must not overtake the manual intent during that actor suspension.
+        reservedStatusRefresh?.continuation = nil
+        if let error { continuation.resume(throwing: error) }
+        else { continuation.resume() }
     }
 
     private func nextMessageID() throws -> WireUUID {

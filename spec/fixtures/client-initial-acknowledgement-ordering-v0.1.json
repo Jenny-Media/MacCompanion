@@ -1,0 +1,16 @@
+{
+  "profile": "Mac Companion client initial acknowledgement ordering v0.1",
+  "maximumInitialAcknowledgements": 1,
+  "rules": [
+    "exact admitted clean frame receipt is required",
+    "pending acknowledgement state is published before send can suspend",
+    "exact correlated host reply may commit before send completes",
+    "send completion cannot overwrite a committed reply",
+    "send completion cannot resurrect invalidated closed or replaced ownership",
+    "concurrent renderer callbacks cannot enqueue another pending acknowledgement",
+    "local product enters awaiting acknowledgement before sending",
+    "only committed host acknowledgement enables input",
+    "send failure remains terminal",
+    "wire and signature inputs are unchanged"
+  ]
+}

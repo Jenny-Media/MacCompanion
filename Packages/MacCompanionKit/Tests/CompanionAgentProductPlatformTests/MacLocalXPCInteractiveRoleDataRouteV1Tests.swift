@@ -214,4 +214,72 @@ private func interactiveRoleDataPairV1(
         _ = try await consumer.value
     }
 }
+
+private func retirementMediaHeader(_ pair: AgentInteractiveReadyRolePairV0) throws -> MediaRecordHeader {
+    try .init(type: .discontinuity, payloadLength: 0,
+        interactiveSessionID: pair.interactiveSessionID, authorizationEpoch: pair.authorizationEpoch,
+        surfaceID: UUID(), surfaceRevision: .init(rawValue: 1), coordinateSpaceRevision: .init(rawValue: 1),
+        mediaSequence: 1, presentationTimeNanoseconds: 0, encodedWidth: 0, encodedHeight: 0)
+}
+
+@available(macOS 26.0, *)
+@Test func retiredRoleMediaIsDischargedWithoutReachingReplacementPair() async throws {
+    let route = MacLocalXPCInteractiveRoleDataRouteV1()
+    try await route.bind(generation: 1, input: InteractiveRoleDataInputSenderV1())
+    let old = try interactiveRoleDataPairV1(sessionID: UUID(), epoch: .init(rawValue: 1))
+    let fresh = try interactiveRoleDataPairV1(sessionID: UUID(), epoch: .init(rawValue: 1))
+    let oldHeader = try retirementMediaHeader(old), freshHeader = try retirementMediaHeader(fresh)
+    // Establish the exact old source, then put its next publication in flight.
+    let first = Task { try await route.nextInteractiveMediaRecord(pair: old) }
+    try await route.publishInteractiveMedia(header: oldHeader, payload: Data(), transportGeneration: 1)
+    _ = try await first.value
+    let pending = Task { try await route.publishInteractiveMedia(header: oldHeader, payload: Data(), transportGeneration: 1) }
+    try await Task.sleep(for: .milliseconds(20))
+    await route.retireInteractiveMedia(pair: old)
+    try await pending.value
+    let completion = InteractiveRoleDataCompletionV1()
+    let replacement = Task {
+        let record = try await route.nextInteractiveMediaRecord(pair: fresh)
+        await completion.complete()
+        return record
+    }
+    try await Task.sleep(for: .milliseconds(20))
+    try await route.publishInteractiveMedia(header: oldHeader, payload: Data(), transportGeneration: 1)
+    await route.retireInteractiveMedia(pair: old)
+    #expect(!(await completion.completed))
+    let foreign = try interactiveRoleDataPairV1(sessionID: UUID(), epoch: .init(rawValue: 1))
+    await #expect(throws: MacLocalXPCInteractiveRoleDataRouteErrorV1.pairMismatch) {
+        try await route.publishInteractiveMedia(header: retirementMediaHeader(foreign), payload: Data(), transportGeneration: 1)
+    }
+    try await route.publishInteractiveMedia(header: freshHeader, payload: Data(), transportGeneration: 1)
+    #expect(try await replacement.value?.header == freshHeader)
+    await route.invalidate(generation: 1)
+}
+
+@available(macOS 26.0, *)
+@Test func menuGenerationReplacementClearsRetiredMediaExceptions() async throws {
+    let route = MacLocalXPCInteractiveRoleDataRouteV1()
+    let input = InteractiveRoleDataInputSenderV1()
+    try await route.bind(generation: 1, input: input)
+    let old = try interactiveRoleDataPairV1(sessionID: UUID(), epoch: .init(rawValue: 1))
+    let oldHeader = try retirementMediaHeader(old)
+    let first = Task { try await route.nextInteractiveMediaRecord(pair: old) }
+    try await route.publishInteractiveMedia(header: oldHeader, payload: Data(), transportGeneration: 1)
+    _ = try await first.value
+    await route.retireInteractiveMedia(pair: old)
+    await route.invalidate(generation: 1)
+    try await route.bind(generation: 2, input: input)
+    let fresh = try interactiveRoleDataPairV1(sessionID: UUID(), epoch: .init(rawValue: 2))
+    let freshHeader = try retirementMediaHeader(fresh)
+    let replacement = Task { try await route.nextInteractiveMediaRecord(pair: fresh) }
+    try await Task.sleep(for: .milliseconds(20))
+    await route.retireInteractiveMedia(pair: old)
+    await #expect(throws: MacLocalXPCInteractiveRoleDataRouteErrorV1.pairMismatch) {
+        try await route.publishInteractiveMedia(header: oldHeader, payload: Data(), transportGeneration: 2)
+    }
+    try await route.publishInteractiveMedia(header: freshHeader, payload: Data(), transportGeneration: 2)
+    #expect(try await replacement.value?.header == freshHeader)
+    await route.invalidate(generation: 2)
+}
+
 #endif

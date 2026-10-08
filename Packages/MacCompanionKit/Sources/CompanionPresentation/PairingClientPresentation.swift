@@ -273,7 +273,7 @@ public struct PairingClientPresentation: Equatable, Sendable {
             throw PairingClientPresentationError.pairingMismatch
         }
         guard verifiedApproval?.pairingID == host.pairingID,
-              host.deviceState == .activeMonitorOnly,
+              host.deviceState == .activeMonitorOnly || host.deviceState == .activeGranted,
               host.authorizationEpoch.rawValue == 1,
               host.grantRevision.rawValue == 1 else {
             throw PairingClientPresentationError.invalidVerifiedCompletion

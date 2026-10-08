@@ -470,7 +470,7 @@ private func codecDesktopDescriptor()
     }
 }
 
-@Test func surfaceTargetReceiptMaximalNamesRemainWithinXPCBound() throws {
+@Test func surfaceTargetReceiptPreservesCandidatesAfterFirstEight() throws {
     let command = try LocalInteractiveSurfaceTargetsCommandV1(
         commandID: UUID(),
         interactiveSessionID: codecSessionID,
@@ -502,11 +502,46 @@ private func codecDesktopDescriptor()
     )
     let encoded = try LocalInteractiveLeaseWireCodecV1
         .encodeSurfaceTargetsReceipt(receipt)
-    #expect(receipt.candidates.count == 8)
-    #expect(encoded.count <= LocalInteractiveLeaseWireCodecV1.maximumEncodedBytes)
+    #expect(receipt.candidates.count == 9)
+    #expect(receipt.candidates.map(\.targetToken)
+        == candidates.map(\.targetToken))
+    #expect(encoded.count <= LocalInteractiveLeaseWireCodecV1.maximumSurfaceTargetsReceiptBytes)
     try LocalInteractiveLeaseWireCodecV1
         .decodeSurfaceTargetsReceipt(encoded)
         .validate(against: command)
+}
+
+@Test func oversizedSurfaceTargetReceiptFailsWithoutTruncation() throws {
+    let name = String(repeating: "\"", count: 128)
+    let candidates = try (0..<AdaptiveSurfaceTargetInventoryV0.maximumCandidates)
+        .map { _ in
+            let token = UUID()
+            return try AdaptiveSurfaceTargetCandidateV0(
+                targetToken: token,
+                kind: .window,
+                applicationToken: UUID(),
+                applicationName: name,
+                windowOrdinal: 1,
+                currentWindowAvailable: true,
+                windowTitle: name
+            )
+        }
+    let snapshot = try AdaptiveSurfaceTargetInventorySnapshotV0(
+        interactiveSessionID: codecSessionID,
+        authorizationEpoch: .init(rawValue: 4),
+        revision: 1,
+        createdAtMonotonicMilliseconds: 1_000,
+        expiresAtMonotonicMilliseconds: 11_000,
+        candidates: candidates
+    )
+    let receipt = try LocalInteractiveSurfaceTargetsReceiptV1(
+        correlationID: UUID(),
+        snapshot: snapshot
+    )
+    #expect(receipt.candidates.count == candidates.count)
+    #expect(throws: LocalInteractiveLeaseWireCodecErrorV1.payloadTooLarge) {
+        try LocalInteractiveLeaseWireCodecV1.encodeSurfaceTargetsReceipt(receipt)
+    }
 }
 
 @Test func interactiveLeaseCodecRejectsNoncanonicalUnknownAndOversizedData()

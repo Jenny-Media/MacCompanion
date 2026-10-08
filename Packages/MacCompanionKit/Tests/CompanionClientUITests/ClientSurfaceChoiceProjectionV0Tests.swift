@@ -12,7 +12,8 @@ private func surfaceUICandidate(
     kind: InteractiveSurfaceKind,
     targetToken: UUID,
     ordinal: Int64?,
-    available: Bool = true
+    available: Bool = true,
+    title: String? = nil
 ) throws -> InteractiveSurfaceTargetCandidateV0 {
     try .init(
         targetToken: .init(targetToken),
@@ -20,7 +21,8 @@ private func surfaceUICandidate(
         applicationToken: .init(surfaceUIAppToken),
         applicationName: "Notes",
         windowOrdinal: ordinal,
-        currentWindowAvailable: available
+        currentWindowAvailable: available,
+        windowTitle: title
     )
 }
 
@@ -43,7 +45,7 @@ private func surfaceUICandidate(
     #expect(choices[1].windowOrdinal == nil)
 }
 
-@Test func windowChoiceUsesOrdinalInsteadOfAWindowTitle() throws {
+@Test func windowChoiceRetainsOrdinalAsFallback() throws {
     let choices = ClientSurfaceChoiceProjectionV0.make(candidates: [
         try surfaceUICandidate(
             kind: .window,
@@ -57,7 +59,7 @@ private func surfaceUICandidate(
     #expect(choices[1].targetToken == surfaceUIWindowToken)
 }
 
-@Test func unavailableTargetRemainsVisibleButDisabledByProjection() throws {
+@Test func unavailableTargetIsOmittedFromPicker() throws {
     let choices = ClientSurfaceChoiceProjectionV0.make(candidates: [
         try surfaceUICandidate(
             kind: .window,
@@ -66,5 +68,37 @@ private func surfaceUICandidate(
             available: false
         ),
     ])
-    #expect(choices[1].available == false)
+    #expect(choices == [.desktop])
+}
+
+@Test func windowChoiceCarriesBoundedTitleForSearchAndSelection() throws {
+    let choices = ClientSurfaceChoiceProjectionV0.make(candidates: [
+        try surfaceUICandidate(kind: .window, targetToken: surfaceUIWindowToken,
+            ordinal: 1, title: "Example note"),
+    ])
+    #expect(choices[1].windowTitle == "Example note")
+    #expect(choices[1].targetToken == surfaceUIWindowToken)
+}
+
+@Test func appWindowChoicesUseOpaqueAssociationAndOmitUnavailableWindows() throws {
+    let otherApp = UUID()
+    let secondWindow = UUID()
+    let otherWindow = try InteractiveSurfaceTargetCandidateV0(
+        targetToken: .init(UUID()), kind: .window, applicationToken: .init(otherApp),
+        applicationName: "Notes", windowOrdinal: 1, currentWindowAvailable: true
+    )
+    let windows = ClientSurfaceChoiceProjectionV0.windows(
+        forApplication: surfaceUIAppToken,
+        candidates: [
+            try surfaceUICandidate(kind: .application, targetToken: surfaceUIAppToken, ordinal: nil),
+            try surfaceUICandidate(kind: .window, targetToken: surfaceUIWindowToken,
+                ordinal: 1, title: "First note"),
+            otherWindow,
+            try surfaceUICandidate(kind: .window, targetToken: UUID(), ordinal: 2, available: false),
+            try surfaceUICandidate(kind: .window, targetToken: secondWindow,
+                ordinal: 3, title: "Second note"),
+        ]
+    )
+    #expect(windows.map(\.targetToken) == [surfaceUIWindowToken, secondWindow])
+    #expect(windows.allSatisfy { $0.kind == .window })
 }

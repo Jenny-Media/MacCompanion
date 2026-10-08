@@ -78,7 +78,7 @@ public struct MacPairingReviewViewV0: View {
 
     public var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("Confirm this device")
+            Text("Pair and allow remote access")
                 .font(.title2.weight(.semibold))
 
             Text("Compare this code with the one shown on the device. Approve only if they match.")
@@ -89,6 +89,10 @@ public struct MacPairingReviewViewV0: View {
                 .textSelection(.disabled)
                 .accessibilityLabel("Pairing comparison code")
                 .accessibilityValue(projection.authenticationString)
+
+            Text("Pairing allows this device to view your Mac’s screen and control its pointer, keyboard, and text input. It can reconnect without a session confirmation and stays trusted until you remove it in Devices. You can stop an active session from either app.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
 
             TextField("For example, Jenny’s iPhone", text: Binding(
                 get: { projection.deviceNameDraft },
@@ -122,7 +126,7 @@ public struct MacPairingReviewViewV0: View {
                         perform(.decline)
                     }
                     Spacer()
-                    Button("Approve Device") { perform(.approve) }
+                    Button("Pair & Allow Remote Access") { perform(.approve) }
                         .buttonStyle(.borderedProminent)
                         .disabled(projection.draftIssue != nil)
                 }

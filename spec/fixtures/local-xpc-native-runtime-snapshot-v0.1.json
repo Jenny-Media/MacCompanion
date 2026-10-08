@@ -1,0 +1,106 @@
+{
+  "profile": "maccompanion.local-native-runtime-snapshot.v0.1",
+  "maximumPayloadBytes": 4096,
+  "maximumInFlightCommandsPerGeneration": 1,
+  "receiverOperationTimeoutMilliseconds": 4000,
+  "senderReplyTimeoutMilliseconds": 5000,
+  "commands": [
+    {
+      "kind": "runtime.interactive.native.snapshot",
+      "authorizationMethod": "applyInteractiveSurface",
+      "requestPayloadType": "LocalInteractiveNativeSnapshotCommandV1",
+      "successKind": "runtime.interactive.native.snapshot.ack",
+      "successPayloadType": "LocalInteractiveNativeSnapshotReceiptV1"
+    }
+  ],
+  "cases": [
+    "acknowledged-desktop-application-window-only",
+    "atomic-command-and-visible-receipt",
+    "original-deadline-survives-renewal",
+    "expired-lease-denied",
+    "expired-session-denied",
+    "wrong-command-correlation-denied",
+    "wrong-fence-denied",
+    "wrong-primary-denied",
+    "menu-generation-loss-during-await-denied",
+    "noncanonical-payload-denied",
+    "missing-backend-fails-closed",
+    "logical-bounds-from-acknowledged-descriptor",
+    "logical-bounds-and-rotation-survive-renewal",
+    "encoded-only-receipt-denied",
+    "invalid-logical-dimensions-denied",
+    "unknown-rotation-denied",
+    "agent-projection-retains-logical-bounds-and-rotation",
+    "logical-geometry-change-during-backend-construction-denied",
+    "acknowledged-surface-kind-required",
+    "application-and-window-require-ready-replacement-and-current-menu-target",
+    "client-native-enrollment-after-app-or-window-replacement-requires-the-exact-acknowledged-current-surface-and-original-control-deadline",
+    "focused-region-or-unknown-kind-denied",
+    "selected-kind-without-current-menu-target-denied",
+    "current-runtime-receipt-after-indicator-revision-advance-accepted",
+    "changed-menu-admission-during-native-read-denied",
+    "independent-positive-publication-and-activity-revisions-accepted",
+    "zero-activity-revision-denied",
+    "wrong-menu-generation-despite-positive-revisions-denied"
+  ],
+  "requiredGeometryFields": [
+    "encodedWidth",
+    "encodedHeight",
+    "logicalWidthPoints",
+    "logicalHeightPoints",
+    "rotation"
+  ],
+  "requiredSurfaceKindField": "surfaceKind",
+  "nativeCaptureSurfaceKinds": [
+    "desktop",
+    "application",
+    "window"
+  ],
+  "currentlyAdmittedSurfaceKinds": [
+    "desktop",
+    "application",
+    "window"
+  ],
+  "logicalDimensionRange": [
+    1,
+    4294967295
+  ],
+  "rotations": [
+    0,
+    90,
+    180,
+    270
+  ],
+  "independentRevisionCases": [
+    {
+      "publicationRevision": 1,
+      "activityRevision": 3,
+      "menuGenerationMatches": true,
+      "accepted": true
+    },
+    {
+      "publicationRevision": 3,
+      "activityRevision": 1,
+      "menuGenerationMatches": true,
+      "accepted": true
+    },
+    {
+      "publicationRevision": 21,
+      "activityRevision": 1,
+      "menuGenerationMatches": true,
+      "accepted": true
+    },
+    {
+      "publicationRevision": 3,
+      "activityRevision": 0,
+      "menuGenerationMatches": true,
+      "accepted": false
+    },
+    {
+      "publicationRevision": 3,
+      "activityRevision": 1,
+      "menuGenerationMatches": false,
+      "accepted": false
+    }
+  ]
+}

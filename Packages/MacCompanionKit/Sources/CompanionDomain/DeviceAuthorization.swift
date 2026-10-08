@@ -15,6 +15,7 @@ public enum DeviceAuthorizationEvent: String, Codable, CaseIterable, Sendable {
     case startPairing
     case pairingFailed
     case commitMonitorOnlyPairing
+    case commitRemoteDesktopPairing
     case expandGrant
     case replaceGrant
     case reduceToMonitorOnly
@@ -61,6 +62,13 @@ public struct DeviceAuthorization: Codable, Equatable, Sendable {
         case (.pairingPending, .commitMonitorOnlyPairing):
             return Self(
                 state: .activeMonitorOnly,
+                authorizationEpoch: .init(rawValue: 1),
+                grantRevision: .init(rawValue: 1)
+            )
+
+        case (.pairingPending, .commitRemoteDesktopPairing):
+            return Self(
+                state: .activeGranted,
                 authorizationEpoch: .init(rawValue: 1),
                 grantRevision: .init(rawValue: 1)
             )

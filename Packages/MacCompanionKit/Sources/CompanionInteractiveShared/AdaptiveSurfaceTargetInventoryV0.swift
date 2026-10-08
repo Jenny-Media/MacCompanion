@@ -28,6 +28,7 @@ public struct AdaptiveSurfaceTargetObservationV0: Equatable, Sendable {
     public let kind: AdaptiveSurfaceTargetObservationKindV0
     public let applicationSourceReference: UUID
     public let applicationName: String
+    public let windowTitle: String?
     public let currentWindowAvailable: Bool
     /// Menu-local ordering input only. It is never copied into a candidate.
     public let localSortOrder: UInt64
@@ -38,17 +39,20 @@ public struct AdaptiveSurfaceTargetObservationV0: Equatable, Sendable {
         applicationSourceReference: UUID,
         applicationName: String,
         currentWindowAvailable: Bool,
-        localSortOrder: UInt64 = 0
+        localSortOrder: UInt64 = 0,
+        windowTitle: String? = nil
     ) throws {
         self.sourceReference = sourceReference
         self.kind = kind
         self.applicationSourceReference = applicationSourceReference
         self.applicationName = applicationName
+        self.windowTitle = windowTitle
         self.currentWindowAvailable = currentWindowAvailable
         self.localSortOrder = localSortOrder
         try Self.validateName(applicationName)
+        try Self.validateWindowTitle(windowTitle)
         if kind == .application {
-            guard sourceReference == applicationSourceReference else {
+            guard sourceReference == applicationSourceReference, windowTitle == nil else {
                 throw AdaptiveSurfaceTargetInventoryErrorV0.invalidObservation
             }
         } else {
@@ -56,6 +60,36 @@ public struct AdaptiveSurfaceTargetObservationV0: Equatable, Sendable {
                 throw AdaptiveSurfaceTargetInventoryErrorV0.invalidObservation
             }
         }
+    }
+
+    public static func validateWindowTitle(_ value: String?) throws {
+        guard let value else { return }
+        guard !value.isEmpty, value.utf8.count <= 128,
+              value.unicodeScalars.allSatisfy({ scalar in
+                  !CharacterSet.controlCharacters.contains(scalar)
+                      && scalar.value != 0x2028 && scalar.value != 0x2029
+                      && !(0x202a...0x202e).contains(scalar.value)
+                      && !(0x2066...0x2069).contains(scalar.value)
+              }) else { throw AdaptiveSurfaceTargetInventoryErrorV0.invalidObservation }
+    }
+
+    public static func sanitizedWindowTitle(_ raw: String?) -> String? {
+        guard let raw else { return nil }
+        let scalars = raw.unicodeScalars.filter {
+            CharacterSet.whitespacesAndNewlines.contains($0)
+                || (!CharacterSet.controlCharacters.contains($0)
+                    && !(0x202a...0x202e).contains($0.value)
+                    && !(0x2066...0x2069).contains($0.value))
+        }
+        let normalized = String(String.UnicodeScalarView(scalars))
+            .components(separatedBy: .whitespacesAndNewlines)
+            .filter { !$0.isEmpty }.joined(separator: " ")
+        var title = ""
+        for character in normalized {
+            guard title.utf8.count + String(character).utf8.count <= 128 else { break }
+            title.append(character)
+        }
+        return title.isEmpty ? nil : title
     }
 
     static func validateName(_ value: String) throws {
@@ -77,6 +111,7 @@ public struct AdaptiveSurfaceTargetCandidateV0: Equatable, Sendable {
     public let kind: InteractiveSurfaceKind
     public let applicationToken: UUID
     public let applicationName: String
+    public let windowTitle: String?
     public let windowOrdinal: UInt8?
     public let currentWindowAvailable: Bool
 
@@ -86,19 +121,22 @@ public struct AdaptiveSurfaceTargetCandidateV0: Equatable, Sendable {
         applicationToken: UUID,
         applicationName: String,
         windowOrdinal: UInt8?,
-        currentWindowAvailable: Bool
+        currentWindowAvailable: Bool,
+        windowTitle: String? = nil
     ) throws {
         self.targetToken = targetToken
         self.kind = kind
         self.applicationToken = applicationToken
         self.applicationName = applicationName
+        self.windowTitle = windowTitle
         self.windowOrdinal = windowOrdinal
         self.currentWindowAvailable = currentWindowAvailable
         try AdaptiveSurfaceTargetObservationV0.validateName(applicationName)
+        try AdaptiveSurfaceTargetObservationV0.validateWindowTitle(windowTitle)
         switch kind {
         case .application:
             guard targetToken == applicationToken,
-                  windowOrdinal == nil else {
+                  windowOrdinal == nil, windowTitle == nil else {
                 throw AdaptiveSurfaceTargetInventoryErrorV0.invalidObservation
             }
         case .window:
@@ -170,7 +208,7 @@ public struct AdaptiveSurfaceTargetInventoryV0: Sendable {
     public static let maximumApplications = 64
     public static let maximumWindowsPerApplication = 64
     public static let maximumCandidates = 192
-    public static let maximumLifetimeMilliseconds: Int64 = 10_000
+    public static let maximumLifetimeMilliseconds: Int64 = 120_000
 
     private struct Entry: Sendable {
         let candidate: AdaptiveSurfaceTargetCandidateV0
@@ -273,7 +311,8 @@ public struct AdaptiveSurfaceTargetInventoryV0: Sendable {
                     applicationName: application.applicationName,
                     windowOrdinal: UInt8(offset + 1),
                     currentWindowAvailable:
-                        window.currentWindowAvailable
+                        window.currentWindowAvailable,
+                    windowTitle: window.windowTitle
                 )
                 newEntries[windowToken] = Entry(
                     candidate: candidate,

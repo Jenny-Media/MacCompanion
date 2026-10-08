@@ -57,9 +57,11 @@ the same prepare inputs returns the same command; conflicting reuse fails.
 
 An install receipt is accepted only while the prepared lease is current and
 only when its command/lease/session/display binding, indicator, and ready
-classes validate. Its menu-app generation must equal the admitted generation,
-and its revision must be at least the admitted revision. Another generation or
-an older revision is teardown-required, not retryable success.
+classes validate. Its menu-app generation must equal the admitted generation and
+its activity revision must be positive. Activity and authenticated menu
+publication revisions are independent counters and cannot be ordered against
+each other. Another generation, zero activity revision, or a stale exact
+command/lease/session/display binding requires teardown.
 
 Successful receipt consumption advances the retained session from `starting`
 to `activeUnlocked`. The installed bootstrap, including both role credentials,

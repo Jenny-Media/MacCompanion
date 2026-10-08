@@ -66,7 +66,8 @@ public struct SQLiteInteractiveSessionAdmissionReaderV0:
             visibleMenuAppAvailable: before.visibleMenuAppAvailable,
             visibleMenuAppGeneration: before.generation,
             visibleMenuAppRevision: before.revision,
-            selectedDisplayID: before.selectedDisplayID
+            selectedDisplayID: before.selectedDisplayID,
+            sessionPublicKeyX963: durable.device.sessionPublicKeyX963
         )
     }
 }

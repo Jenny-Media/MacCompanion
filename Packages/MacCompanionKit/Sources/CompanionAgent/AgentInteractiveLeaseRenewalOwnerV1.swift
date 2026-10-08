@@ -105,6 +105,10 @@ public actor AgentInteractiveLeaseRenewalOwnerV1:
         self.sleep = sleep
     }
 
+    public func desktopAccessCurrent(sessionID: UUID, primaryConnectionID: Data) async -> Bool {
+        await runtime.desktopAccessCurrent(sessionID: sessionID, primaryConnectionID: primaryConnectionID)
+    }
+
     public func install(
         _ bootstrap: InteractiveSessionBootstrap,
         requirement: InteractiveSessionRuntimeRequirementV0

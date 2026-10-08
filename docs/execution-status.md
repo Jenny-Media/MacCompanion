@@ -1,4 +1,1448 @@
+## 2026-10-08 — Build 19 installed on iPhone
+
+The user authorized installation, commit and push of the precise-scroll and
+trackpad-feedback updates. Normal development **1.0 (19)** is signed with the
+existing identities, installed and launched on the connected iPhone 18 Pro Max.
+CoreDevice confirms version 1.0, build 19, installation sequence **9376** and
+launch PID **18233**. All **580** application source inputs and the existing
+app/widget/Keychain identities are verified. The stable Xcode 27.0 device build,
+37 focused Simulator cases (plus the final five feedback cases), repository
+validation and diff checks pass. The signing/install/source-binding reports stay
+outside Git under `/private/tmp/maccompanion-trackpad-feedback-20261008-*`.
+On 2026-10-08, the user confirmed that pinch, two-finger scrolling and Scroll
+Speed adjustment work on the installed iPhone build. This is physical acceptance
+for those gestures on the tested Mac; broader macOS compatibility and haptic
+feel were not separately reported.
+This is a local development installation; no TestFlight upload was requested.
+
+## 2026-10-08 — Trackpad touch feedback
+
+The approved feedback is implemented across Trackpad & Keyboard, Desktop
+Trackpad and the tabletop pad: soft per-finger rings, one light haptic and pulse
+for an admitted tap, and one medium haptic with a stronger ring when a held drag
+engages. A passive observer cannot prevent the existing input recognizers;
+scroll and pinch receive visual feedback without repeated haptics. Mode/layout,
+menu, recovery, background and disconnect paths clear feedback. Reduce Motion
+uses a fade without pulse expansion. Touch locations are transient and never
+persisted or sent by the feedback component.
+
+Independent global Show Touch Points and Trackpad Haptics choices default on,
+are available offline in Desktop/Trackpad Controls, retain Save/Cancel drafts,
+and update connected viewers when saved. Menu haptics remain independent.
+
+Stable Xcode **27.0 (27A266a)** builds successfully. All **37** focused feedback,
+settings, native gesture and session control tests pass; the final five feedback
+tests pass again after a compiler-warning fix and capture synthetic light/dark
+screenshots for visual inspection. `bash scripts/validate.sh` and `git diff
+--check` pass. Build/test logs and screenshots are outside Git under
+`/private/tmp/maccompanion-trackpad-feedback-20261008-*`; final results are
+`/private/tmp/maccompanion-precise-scroll-20261007-simulator/QA/TrackpadFeedbackFinalResults.xcresult`.
+Haptic feel and real-finger acceptance remain physical iPhone checks. This update
+was uncommitted and awaiting installation at this checkpoint; the later build 19
+installation is recorded above.
+
+## 2026-10-07 — scrolling follow-up to verified pinch
+
+Native pinch is committed as `d36571d`; the user confirmed installed build 17
+works. The scrolling follow-up is a separate uncommitted candidate: optional
+Apple precise two-axis scrolling with lifecycle cancellation and a global,
+independent 0.25x–4x Scroll Speed control, accessible offline and in-session.
+Normative wire fields and indexed golden vectors were updated before the native
+encoder. Standard wheel input remains the unsupported-host fallback. Direct
+built-in Screen Sharing and ARD-30 authentication are unchanged; no Mac helper
+or new production dependency was added.
+
+Stable Xcode 27.0 device/Simulator builds pass. Across focused runs, 44 tests
+passed; the final nine native gesture tests were rerun after fractional-motion
+handling changed. Indexed validation checks 18 scroll and 17 magnification wire
+vectors plus 100 repeated encoder lifecycles each. `bash scripts/validate.sh` and
+`git diff --check` pass. Development build **1.0 (18)** is signed, installed and
+launched on the connected iPhone; CoreDevice read-back confirms it, installation
+sequence 9368, and all 578 source inputs were verified. No push or TestFlight
+upload occurred. Perceived scroll speed and native delivery still need the user’s
+physical check; scrolling remains uncommitted.
+
+The isolated scroll probe authenticated but did not prove native delivery on
+its loopback session. A temporary diagnostic decoder error was corrected to
+discard unsolicited responses without rendering or retaining images. Physical
+iPhone scroll behavior and released macOS compatibility remain acceptance gates.
+
+## 2026-10-07 — Native Mac-app pinch in Trackpad & Keyboard mode
+
+Three complete native magnification sequences passed on a retained authenticated
+loopback session, from Apple's built-in ScreensharingAgent to an AppKit view.
+The direct iPhone client now forwards input-only pinch with the verified v1
+boundaries and v2 magnification phases; Desktop image zoom stays local. Server
+banner and exact verified layout gate the optional extension. Cancellation,
+queue pressure, controls, mode/crop changes, pause and exit retire pending input
+and release an active gesture on the existing RFB owner. No Mac helper or zoom
+shortcut substitution is added. The normative direct profile and sole indexed
+fixtures were updated first.
+
+Stable Xcode 27.0 repository validation, 17 focused hosted tests and 17 native
+packet vectors plus 100 repeated encoder lifecycles pass. Normal development
+**1.0 (17)** is built, signed, installed and launched on iPhone 18 Pro Max; all
+**578** source inputs and existing app/widget/Keychain identities are verified.
+CoreDevice confirms build 17, installation sequence **9352** and launch PID
+**17704**. The user confirmed pinch works on the physical iPhone and authorized
+its source commit. Separate results for both Preview and Photos were not recorded.
+Two-finger scroll
+still uses the existing wheel path; Apple's precise-scroll lead remains research.
+Released macOS compatibility is unverified. No push or upload occurred.
+See [native gesture evidence](../Experiments/NativeTrackpadGestureProbe/EVIDENCE.md).
+
+## 2026-10-07 — Mode control profiles, responsive scrolling and icon audit
+
+App Settings → Controls exposes Desktop, Terminal and Trackpad & Keyboard quick
+actions without a connected Mac. Session settings edit the same per-mode profile;
+existing per-Mac Desktop entries are preserved until a shared profile is saved.
+Customizations retain the existing Pro gate and private local Keychain storage.
+Both session menus now say Disconnect. Cancel retains system non-destructive
+styling. The icon audit checks 79 symbol names and clarifies session, information,
+fit, keyboard dismissal and shortcut meanings.
+
+Two-finger scrolling previously required 18 points per wheel tick. It now uses
+six, with bounded balanced events and no deferred replay. Pinch previously zoomed
+only the local desktop image, which is hidden in input-only mode; that unused
+recognizer is disabled and the guide explains its scope. Mac-app pinch behavior
+awaits the user's zoom-target clarification.
+
+Required stable-Xcode validation and **48** focused hosted checks pass. Sixteen
+synthetic captures cover offline free/Pro controls and category layouts; loopback
+SSH verifies configured input without reconnecting and stale Pro-action rejection.
+See the [controls, gesture and icon audit](controls-gesture-icon-audit-20261007.md).
+Source is committed as `dc5fae3`. Normal development **1.0 (16)** is built,
+signed, installed and launched on iPhone 18 Pro Max. All **577** source inputs,
+the signed binary and existing app/widget and private Keychain identities are
+verified. CoreDevice confirms build 16, installation sequence **9136** and launch
+PID **16779**. Physical gesture acceptance remains pending; no push or upload
+occurred.
+
+## 2026-10-07 — Active Terminal menu and shared category clipping
+
+Installed build 14's preceding source is committed locally as `987c265`.
+Terminal's Session menu now keeps Connection Details, App Settings and Exit;
+saved-Mac settings retain account and SSH key configuration. The shared quick
+panel measures native button content at its actual width, fixing clipped View &
+Display and Keyboard & Input symbols and captions at enlarged text sizes.
+Required stable-Xcode validation and **12** focused hosted checks pass.
+Before/after geometry and synthetic screenshots verify both session modes;
+full-system captures verify the shorter Terminal menu in both palettes.
+See [menu and icon layout evidence](session-menu-icon-layout-20261007.md).
+This follow-up is committed as `264d45f`. Normal development **1.0 (15)** is
+built, signed, installed and launched on iPhone 18 Pro Max. All **577** source
+inputs, the signed binary and retained app/widget and private Keychain identities
+are verified. CoreDevice confirms build 15, installation sequence **9128** and
+launch PID **16281**. Physical acceptance is pending; no TestFlight publication
+occurred.
+
+## 2026-10-07 — Terminal number row is optional
+
+Keyboard & Input now includes a free Show Number Row choice, enabled by default.
+It applies immediately, returns 48 points to output when hidden, and is remembered
+for future sessions. The persistent modifier bar and independent custom-key row
+are retained. Required stable-Xcode validation and **11** focused hosted checks
+pass; **4** full-system synthetic Simulator captures verify row and menu states.
+See the [number-row follow-up](terminal-persistent-toolbar-20261007.md#follow-up-optional-number-row).
+Normal development **1.0 (14)** includes this choice, the persistent Terminal bar
+and above-button popovers. It is built, signed, installed and launched on iPhone
+18 Pro Max. All **577** source inputs, the signed binary, existing app/widget
+identities and private Keychain groups are verified. CoreDevice confirms build
+14 and installation sequence **9120**. Source is committed as `987c265`.
+Physical acceptance is pending; no push or TestFlight publication occurred.
+
+## 2026-10-07 — Terminal controls share a persistent modifier bar
+
+Terminal now keeps keyboard and menu buttons at the ends of one persistent
+modifier bar. The middle keys scroll on narrow screens, numbers appear while
+the software keyboard is open, and the separate 68-point button dock is removed.
+The keyboard toggle is directly on the bar; the shared menu interactions and
+above-button placement are retained. Required stable-Xcode validation and **13**
+focused hosted checks pass; **8** full-system synthetic Simulator captures verify
+both palettes and keyboard states. See the
+[persistent toolbar evidence](terminal-persistent-toolbar-20261007.md).
+This follow-up is included in installed normal development **1.0 (14)** above.
+Source is committed as `987c265`; physical acceptance remains pending. It has
+not been pushed or published.
+
+## 2026-10-07 — Floating control menus open above the button
+
+Desktop, Trackpad & Keyboard and Terminal now share one native popover setup
+that places button-anchored menus above the controls button. The display picker
+uses the same setup, and pushed submenus retain the original anchor. UIKit owns
+fitting, scrolling and keyboard avoidance. The existing press-and-slide panel
+already opens above the button.
+
+Required stable-Xcode validation and **8** distinct focused hosted checks pass.
+An opt-in synthetic sweep verifies **34** menu/panel states, including keyboard
+open/closed geometry and reachability of the last action. **8** full-system
+Simulator captures verify visible Desktop and Terminal placement, including
+the keyboard and both Terminal palettes. See the
+[floating menu audit](floating-menu-placement-20261007.md).
+This follow-up is included in installed normal development **1.0 (14)** above.
+Source is committed as `987c265`; physical acceptance remains pending. It has
+not been pushed or published.
+
+## 2026-10-07 — Centered connection cards have clearer separation
+
+Desktop, Trackpad & Keyboard and Terminal now share an elevated system surface,
+adaptive edge, soft shadow and theme-aware dimming over the passive saved-Mac
+backdrop. Progress Cancel uses a native blue treatment and remains available.
+The centered placement and connection behavior are preserved.
+
+Required stable-Xcode validation and **8** focused hosted checks pass. **36**
+synthetic app-window captures cover login, progress and recovery across both
+themes, large text and increased contrast. The existing opaque Reduce
+Transparency fallback is preserved in code; its rendering still needs a device
+check because the Simulator did not expose the enabled setting to UIKit.
+See [connection card evidence](connection-card-separation-20261007.md).
+Normal development **1.0 (13)** is built and signed with all **577** source inputs
+and the signed binary verified, retaining the existing app/widget and private
+Keychain identities. The first installation attempt could not acquire CoreDevice
+connectivity and power assertions. The user's authorized retry installed and
+launched the update on iPhone 18 Pro Max; CoreDevice confirms version/build and
+installation sequence **9104**. Physical acceptance remains pending. This
+follow-up is committed as `987c265` and has not been pushed or published to TestFlight.
+
+## 2026-10-07 — Trackpad & Keyboard login matches Desktop
+
+Trackpad & Keyboard now identifies its mode in Desktop's shared centered sign-in
+card. Both modes share adaptive login, progress and recovery placement, including
+folded-screen keyboard avoidance. Required stable-Xcode validation and **30**
+distinct focused hosted checks pass; synthetic captures verify both themes and
+large text. Normal development **1.0 (12)** is installed and launched on iPhone
+18 Pro Max, with all **577** source inputs, the signed binary, version/build and
+installation sequence **9088** verified. Physical acceptance remains pending.
+See [shared login evidence](input-only-login-20261007.md). This follow-up is
+committed as `987c265` and has not been pushed or published to TestFlight.
+
+## 2026-10-07 — Native Remote Desktop scrolling accepted on iPhone
+
+The connected desktop canvas now reaches the top screen edge and pans behind
+status icons using UIKit's automatic scroll-edge treatment, matching Terminal.
+Fit Display, sign-in and input-only mode retain unobscured content. Keyboard
+resizing, cursor following and restored zoom/center share inset-aware viewport
+geometry. Required stable-Xcode validation and **45** distinct focused hosted
+checks pass; eight synthetic full-system captures remain outside Git.
+
+Normal development **1.0 (11)** is built and signed with all **577** inputs and
+the signed binary verified. It is installed and launched on iPhone 18 Pro Max;
+CoreDevice confirms build 11 and installation sequence **9080**. The first attempt
+could not acquire connectivity and power assertions; the user's later authorized
+retry succeeded. The user confirmed the desktop result looks good and requested
+a local commit. This follow-up has not been pushed or uploaded to TestFlight.
+See [desktop scrolling evidence](desktop-immersive-scrolling-20261007.md).
+
+## 2026-10-07 — Native Terminal scrolling accepted on iPhone
+
+Terminal history now scrolls behind the status icons using UIKit's automatic
+scroll-edge effect. The custom fade is removed; initial output and sign-in stay
+below the icons, with the usable whole-row PTY grid and keyboard layout preserved.
+Required stable-Xcode validation and all **23** focused regressions pass. Eight
+synthetic full-system captures verify both palettes and keyboard states. The
+normal app and extension match all **577** build inputs and retain the existing
+app, widget and private Keychain identities.
+
+Local development **1.0 (10)** is installed and launched on iPhone 18 Pro Max;
+CoreDevice confirms build 10 and installation sequence **9072**. The user
+confirmed the native scrolling result with a physical screenshot. They also
+previously confirmed quick app switching retains the Terminal connection.
+The user requested a local commit; these follow-ups have not been published to
+TestFlight. See [native scroll-edge evidence](terminal-native-scroll-edge-20261007.md)
+and [Terminal lifecycle evidence](terminal-lifecycle-20261007.md).
+
+## 2026-10-07 — Terminal shell retention and whole-row viewport
+
+Established SSH shells now survive brief app switches: reads and input pause,
+foreground/unlock resumes the same PTY, and Dynamic Island offers Terminal Resume
+and scoped End actions. A repeated-switch resume race is covered and corrected.
+The viewport uses whole terminal rows with an eight-point gap below the status
+safe area, fixing partial first rows with the keyboard open or closed. Required
+stable validation passes, with **36** focused hosted Simulator checks and a final
+paused-Island layout check passing. Eight fresh synthetic system captures verify
+the terminal boundary and palettes. The final normal app and extension match all
+577 input hashes. Local development **1.0 (8)** is installed and launched on iPhone
+18 Pro Max (sequence **9056**), with version read-back and existing private app/
+widget identities verified. The user subsequently confirmed quick app switching
+works; the viewport was later refined as recorded above. iOS still controls
+longer background execution; Live Activities do not grant indefinite networking.
+See [Terminal lifecycle evidence](terminal-lifecycle-20261007.md).
+
+## 2026-10-07 — Physical screenshot layout corrections
+
+Session menu headings remain below the navigation bar, spacing fits actual rows,
+and a native Done control replaces the emphasized checkmark. Terminal reserves a
+controls dock outside output and uses one keyboard-avoidance owner. Desktop's
+status area and controls now match its black canvas, restoring the chosen app
+theme on sign-in. Stable required validation and all **44** focused Simulator
+checks pass. Eight fresh synthetic full-system captures verify the keyboard and
+status areas. The source-matched normal **1.0 (7)** development update is installed
+and launched on iPhone 18 Pro Max (sequence **8976**), with version/build read-back
+and the existing app/widget Keychain identities verified. Physical session
+acceptance remains pending. See [session UI polish](session-ui-polish-20261007.md).
+
+## 2026-10-07 — Consistent session controls and centered sign-in
+
+Terminal now has an immersive status area and keyboard palette. Desktop and
+Terminal share floating controls and content-sized category menus. Sign-in and
+progress cards are centered, and connection details use concise, provider-neutral
+copy. Stable required validation, the normal iOS Simulator build, and all **42**
+focused Simulator checks pass. See [session UI polish](session-ui-polish-20261007.md)
+for changes, test evidence and local capture locations. The source-matched,
+development-signed **1.0 (6)** update is installed and launched on iPhone 18 Pro
+Max (sequence 8968), retaining the existing app and private Keychain identities.
+Physical feature acceptance and TestFlight delivery of this checkpoint remain
+pending.
+
+## 2026-10-06 — France excluded from App Store distribution
+
+The product owner explicitly requested dropping France support. App Store Connect
+availability was changed from 175 to **174 countries or regions**, removing only
+France. Its Europe availability table confirms **France: Not Available**. The
+existing outside-France encryption answer remains applicable to the planned store
+release. The normal iOS app and its cryptography are unchanged; no new build is
+needed for this distribution setting.
+
+The **Lifetime Pro** and **14-day Trial** in-app products also exclude France.
+Both reloaded product pages report **174 of 175 countries or regions selected**;
+their availability selectors confirm France is unchecked. Product prices and
+trial terms are unchanged. Required stable-Xcode `bash scripts/validate.sh` passes
+for this records-only update.
+
+TestFlight public links expose device/OS criteria but no country filter. Store
+availability does not provide verified regional enforcement for this beta link.
+The prepared **100-tester** public link remains inactive pending the owner's choice
+of controlled outside-France invitations or an explicitly unfiltered public link.
+Build **1.0 (5)** has already been submitted to Beta App Review.
+
+## 2026-10-06 — Build 5 uploaded for the authorized public beta
+
+Approved app changes are committed as `768708b`. Stable required validation passes;
+the fresh device build and optimized signed **1.0 (5)** archive preserve all 577
+input hashes, existing identities, private Keychain groups and deep signatures.
+Xcode confirms normal App Store Connect upload success. Apple processed build 5;
+the unchanged standard-encryption/outside-France declaration and focused testing
+notes are saved. The existing internal group confirms **1.0 (5), Testing**. The
+normal upload has Internal Only disabled for external review eligibility.
+
+The beta description, website URLs and user-supplied review contact are saved.
+After fresh user confirmation, **Public Beta** was created and **1.0 (5)** was
+submitted to Beta App Review. App Store Connect confirms **Waiting for Review**,
+zero external testers and one assigned build. The public-link limit is prepared
+as **100**, with activation pending the France scope discussion; no public link
+is active. Apple's French-document footnote specifically addresses App Store
+distribution in France; required encryption documents also precede beta review.
+France classification and documentation remain unresolved. Submission does not
+establish approval or public availability. See
+[public-beta evidence](evidence/2026-10-06-public-beta-testflight.md).
+
+## 2026-10-06 — Approved Desktop and Terminal connection sheets
+
+The approved v2 entry design is implemented: a compact bottom sheet over a blurred
+saved-Mac context, shared identity header, grouped credentials, quiet Save login,
+one primary action, concise actual progress and inline recovery. Connection Details
+retains full explanations and fixed diagnostics. Saved-login automatic entry,
+SSH trust checks and headerless connected Terminal controls remain intact.
+Light/dark, keyboard, accessibility text and adaptive landscape layouts are covered.
+
+Stable normal Simulator build passes with 577 matching input hashes. The full
+hosted QA suite passes 129 tests with one intentional skip and no failures; a final
+10-test recovery/layout/capture run passes after the details-retention adjustment.
+Required stable validation, local comparison browser checks and final diff checks
+pass. Native screenshots stay outside Git. No iPhone install, commit or TestFlight
+upload occurred. See [approved-sheet evidence](evidence/2026-10-06-approved-connection-sheets.md).
+
+## 2026-10-06 — Concise login and headerless Terminal controls
+
+Saved Terminal login starts on entry with one eligible connection attempt;
+Desktop's automatic saved-login entry is preserved. Manual login has one Connect
+action; active attempts show progress and Cancel. Explanations remain in
+Details/Options. Connected Terminal has no top title/navigation bar and uses
+floating tap/press-and-slide controls above the software keyboard.
+
+Final stable normal Simulator build and hosted direct-client QA pass: 129 tests,
+one intentional skip, zero failures. Required stable validation and final diff
+checks pass. Synthetic light/dark/large-text views and the full Simulator system
+keyboard were inspected. No iPhone install, commit or TestFlight upload occurred.
+See [login and Terminal evidence](evidence/2026-10-06-login-terminal-controls.md).
+
+The host capture investigation is paused. Findings, source clues and the
+controlled follow-up plan are preserved in the
+[MacTools closed-lid handoff](evidence/2026-10-06-mactools-closed-lid-capture.md).
+
+## 2026-10-06 — Black desktop traced to closed-lid virtual-display capture
+
+The user confirms that opening M5's lid restores the desktop using the already
+installed local development build 5. Closed-lid Mac-side Screen Sharing image-read
+RPCs failed, and an independent capture-status probe delivered zero frames from
+the only active MacTools virtual display. With the lid open, the physical display
+is active, the same probe delivers 155 complete frames in five seconds, and the
+iPhone diagnostic reports 55 advancing desktop presentations without decode errors.
+
+This confirms the failing host configuration, while attribution between the
+virtual-display provider and macOS capture remains unresolved. Open-lid acceptance
+does not establish virtual-display-only or exact TestFlight-build reliability.
+The separately reproduced pinned ZRLE false-success defect is guarded in the local
+client, but that correction did not resolve this host capture failure. Stable
+validation, the focused complete 4K rendering regression and earlier hosted QA
+pass. No new Mac helper, host setting change or TestFlight upload occurred.
+See [black-desktop investigation](evidence/2026-10-06-black-desktop-decoder.md).
+
+The follow-up ran the same installed MacTools virtual-display helper with the
+lid open. ScreenCaptureKit delivered 10 complete / 146 idle callbacks, screenshot
+creation succeeded, and a separate diagnostic legacy stream delivered 10 complete
+callbacks. The helper's descriptor and Retina mode therefore work with an active
+physical display. MacTools' creation handshake and ongoing health check do not
+verify frame delivery. Earlier WindowServer logs show a display sleep/wake sequence
+at lid closure; transition-induced capture stalling remains the strongest hypothesis.
+A retained-display physical test delivered 81 complete frames with the lid closed,
+then lost its capture source exactly when WindowServer put the display to sleep.
+The display later became active again, but the terminated stream did not recover.
+The initial sample was already closed, and concurrent unrelated Simulator UI
+automation and additional display churn limit original-trigger attribution. The
+intended single-display pre-creation comparison remains unperformed.
+Temporary probe displays were removed; no MacTools/client source or installed
+app was changed. Exact internal macOS attribution remains unproven.
+Diagnostic compilation and syntax/diff checks pass. Two full validation attempts
+stopped at Swift temporary-object creation with `No space left on device`; unrelated
+files were preserved. After the physical probe, the current full stable-Xcode
+`bash scripts/validate.sh` rerun completed with exit status 0. This validates the
+diagnostic source, without claiming a MacTools repair or closed-lid reliability.
+
+## 2026-10-06 — Adaptive client internal TestFlight build 4 ready
+
+Source `ef90c1e` is committed and delivered as **1.0 (4)** to the existing
+Internal Testing group. App Store Connect confirms **Internal, Testing**, with
+one existing tester. What to Test and the unchanged standard-encryption /
+outside-France answers are saved. Required stable validation and both 121-test
+Simulator lanes pass, with five opt-in capture skips per lane.
+
+The archive uses Xcode 27.1 RC so guarded Duo APIs are included, while maintaining
+iOS 26.0 compatibility and the existing app/widget signing and Keychain groups.
+RC evidence remains provisional; exact-build physical acceptance, physical Duo
+and actual Split View remain separate. No external/public release occurred.
+See [adaptive TestFlight evidence](evidence/2026-10-06-adaptive-testflight.md).
+
+## 2026-10-05 — Direct client internal TestFlight ready
+
+The normal direct iOS client is archived as `1.0 (1)` using stable Xcode 27.0,
+optimized without DEBUG, and signed with the existing Apple Distribution identity.
+The app and session widget use matching App Store profiles; exact identities,
+existing private Keychain groups, disabled debugging and deep signatures verify.
+Required stable repository validation passes after the archive script changes.
+
+Xcode Organizer confirms Uploaded to Apple using TestFlight Internal Only.
+The existing account holder is in the Internal Testing group with automatic
+distribution off. Apple processed build `f1be75fa-aba2-4423-aa3f-af02cefa6920`;
+What to Test is saved. The user confirmed the internal beta is outside France;
+the standard-encryption declaration and France No answer were saved. The group
+now has 1 tester and 1 build, with `1.0 (1)` marked Internal and Testing. The
+existing account holder is Invited; acceptance and physical TestFlight
+installation remain unconfirmed. OpenSSL's missing dSYM is an upload warning;
+app/widget symbols are present. No public release or external beta submission occurred and dependency
+release admission remains false. See
+[internal TestFlight evidence](evidence/2026-10-05-internal-testflight.md).
+
+## 2026-10-05 — App Store products, $9.99 Lifetime Pro and 14-day trial
+
+The existing iOS App ID is registered and Mac Companion's App Store Connect record
+6819496840 is created. Lifetime Pro (6819497277) has a saved US base price of
+$9.99; the separate free 14-day Trial (6819497930) is a zero-price non-consumable.
+Both have saved localization, availability, notes and purchase-screen review
+images. The basic app download is free. These are Prepare for Submission records,
+not live or approved purchases; no review submission or release occurred.
+
+The normal direct client supports explicit trial enrollment, verified original
+purchase-date expiry, restored history without restarting, revoked-trial exclusion
+and lifetime upgrade. No automatic billing or Mac helper is introduced. Stable
+full validation, 85 hosted Simulator tests, a separate capture test and the normal
+Simulator rebuild pass. The wrapper's post-test container lookup failed after the
+Simulator shut down, so its separate OpenSSH postcheck is not claimed as repeated.
+Physical installation of this trial change and App Store purchase acceptance remain
+pending. This supersedes earlier unregistered iOS/store-record statements.
+See [pricing, trial and review evidence](evidence/2026-10-05-lifetime-price-and-pro-trial.md).
+
+## 2026-10-05 — Named SSH keys, key setup, Terminal keyboard and Lifetime Pro
+
+The normal direct iOS client now has an independent named key library with neutral
+reuse, explicit per-Mac/account selections, migration and encrypted private backup.
+Install Key on This Mac is in each Mac's settings and verifies a fresh key login
+before selecting it. Terminal adds a persistent number row, one-shot/locked
+modifiers, navigation/function keys, custom Pro rows and local snippets. The
+permanent basic free tier and verified StoreKit non-consumable Lifetime Pro flow
+preserve existing excess records and active sessions. No Mac helper is introduced.
+
+82 hosted Simulator tests and independent OpenSSH/setup safety checks pass.
+Three independent code/screenshot reviews led to fixes for key selection,
+keyboard modifiers, setup duplicate detection, entitlement loading and form layout.
+An intermittent SSH startup hang was traced to reading the server banner before
+parser attachment; a deterministic regression verifies the corrected ordering.
+Eleven Simulator screenshots are captured outside Git. Required stable-Xcode
+repository validation passes. The normal Simulator and iPhone builds are refreshed
+after review. The development-signed app/widget pass deep signature and exact
+entitlement checks, and installation/launch succeed on iPhone 18 Pro Max (sequence
+8364), preserving the existing app and Keychain identity.
+Actual product creation/pricing/store review and
+physical feature acceptance remain separate; no public release occurred.
+See [implementation and verification evidence](evidence/2026-10-05-key-library-terminal-pro.md).
+
+## 2026-10-05 — Expanded island curved-edge correction
+
+The physical screenshot of sequence 8348 showed that the remaining upper symbols
+were clipped by the curved mask. Expanded content now uses only the inset bottom
+region: desktop symbol, Mac name and phase share the header below the camera,
+followed by Resume and End. Compact/minimal presentation is unchanged. Eight
+hosted session tests, narrow/larger-text render checks, required stable-Xcode
+validation and normal device build/signing checks pass. Installed and launched
+on iPhone 18 Pro Max, sequence 8356. The user confirms the expanded layout works,
+passing physical acceptance for the reported clipping issue. See
+[edge evidence](evidence/2026-10-05-island-edge-insets.md).
+
+## 2026-10-05 — Expanded Dynamic Island layout
+
+Expanded status and Mac identity now use the full-width region below the camera;
+small symbols occupy the narrow top regions. The name allows two lines and the
+compact actions say Resume and End, retaining the full End Session accessible
+label. Narrow widths and larger text fit within the bottom-region height budget.
+Eight hosted session tests, required stable-Xcode validation and normal device
+build/signing checks pass. Installed and launched on iPhone 18 Pro Max, sequence
+8348. Actual physical expanded-island visual acceptance remains separate; the
+Simulator registered the activity but did not visibly expand it. See
+[layout evidence](evidence/2026-10-05-island-expanded-layout.md).
+
+## 2026-10-05 — SSH keys and optional iCloud sync
+
+Terminal now offers Ed25519 key creation, encrypted OpenSSH import and public-key
+installation instructions. Private keys remain device-only; server trust still
+precedes authentication with no password fallback. iCloud library sync is opt-in,
+default off, using the existing Keychain access group with explicit privacy consent
+and separate cloud-copy deletion. Passwords, private keys, server trust and saved
+text remain local. 73 hosted Simulator tests, full stable-Xcode validation, normal
+physical build and deep signing checks pass. The finished update is installed on
+iPhone 18 Pro Max (sequence 8332); automatic launch was denied because the phone
+was locked. Actual cross-device cloud delivery and physical
+key-login acceptance are separate. See [evidence](evidence/2026-10-05-ssh-keys-icloud-sync.md).
+
+## 2026-10-05 — Appearance and menu organization
+
+System/Light/Dark app appearance, independent Terminal colors, adaptive login and
+native controls, grouped Mac/session menus, native submenu/back navigation and
+section-scoped preference editing are implemented. 65 hosted Simulator tests and
+required full repository validation pass. Normal device build and signature checks
+pass; the completed update is installed on iPhone 18 Pro Max (sequence 8324).
+Post-install launch was denied because the phone was locked; physical acceptance
+is separate. See [audit evidence](evidence/2026-10-05-appearance-menu-audit.md).
+
+## 2026-10-05 — Client unlock, Terminal and input modes
+
+All five authorized features are implemented in the normal direct iOS development
+composition: optional Face ID/passcode app unlock, fullscreen keyboard-bar hiding,
+SSH Terminal, atomic Pointer taps and Trackpad & Keyboard without video. No Mac
+helper or legacy services start. 61 hosted Simulator tests and stable-toolchain full
+validation pass. Final device build and deep signing verification pass. The completed update is
+installed on iPhone 18 Pro Max (database sequence 8308). Physical acceptance remains
+separate; details are recorded in
+[evidence](evidence/2026-10-05-client-access-terminal-input-modes.md).
+
 # Mac Companion Execution and Blocker Ledger
+
+## Current Dynamic Island identity and End Session — 2026-10-05
+
+Compact presentation shows the Mac name and a phase symbol. Expanded/Lock Screen
+presentation shows the name, phase, Resume and End Session. The background-only
+Live Activity intent targets the unique current activity ID and shares the app's
+deliberate exit path. Retired or repeated actions cannot end a replacement viewer;
+an orphaned activity is dismissed without starting a connection. Opt-out and
+recovery policies remain intact; no Mac helper or ongoing background mode is added.
+
+Fifty hosted Simulator tests, rendered shared card checks, required stable-Xcode
+validation, normal device build and source/signature/intent metadata verification
+pass. The update is installed and opened on iPhone 18 Pro Max (sequence 8292),
+preserving app data. Physical island layout and action delivery acceptance remain
+pending. See [island action evidence](evidence/2026-10-05-island-session-actions.md).
+
+## Current Mac editor clarity and default port — 2026-10-05
+
+The Add/Edit Mac toolbar now contains Cancel and Save. Address-only Reorder/Done
+is scoped to the Connection Addresses heading and shown for multiple addresses.
+Clearing Port now resolves to 5900 for validation, shared-address information and
+persistence; invalid nonempty ports remain rejected. Default placeholder/help
+explain the behavior, and custom ports remain editable without forgetting login.
+
+Forty-six hosted Simulator tests, rendered editor checks, required stable-Xcode
+validation, normal device build and source/signature verification pass. The update
+is installed on iPhone 18 Pro Max (sequence 8284), preserving app data. Automatic
+launch is denied because the phone is locked; physical editor acceptance remains
+pending. See [editor evidence](evidence/2026-10-05-editor-default-port.md).
+
+## Current Follow Cursor adjustment — 2026-10-05
+
+Zoomed Trackpad mode now pans near the viewport edges to keep iPhone-originated
+mouse movement/dragging visible, preserving zoom and the selected display crop.
+Manual pan/pinch suspends following until the next trackpad gesture. Keyboard
+resizing uses the current available viewport. Delayed server cursor updates do
+not move the view. Held dragging uses fixed overlay coordinates to avoid feeding
+automatic pan back into mouse movement. Follow Cursor defaults on per Mac and
+has an opt-out in Input & Quick Actions. It adds no idle polling, frame copies,
+input events, network requests, reconnect or Mac helper.
+
+Forty-four hosted tests and eight indexed geometry cases pass. The settings
+opt-out is checked in a rendered Simulator view. The normal iPhone build and
+source/signature verification pass; the update is installed on iPhone 18 Pro Max
+(sequence 8204), preserving app data. Required stable-Xcode validation and
+automatic launch pass. The user confirms Follow Cursor works well on the installed
+iPhone update, passing the basic physical behavior/feel check. Sustained corner
+cases and measured energy/frame-time overhead remain unverified. See
+[Follow Cursor evidence](evidence/2026-10-05-follow-cursor.md).
+
+## Current keyboard viewport adjustment — 2026-10-04
+
+A docked keyboard now reduces the desktop viewport and raises the keyboard strip
+and floating controls using the system animation. Fit follows available space;
+zoomed views retain relative zoom/center, and dismissal restores the prior view
+when its display crop remains valid. Display/framebuffer changes invalidate stale
+restoration. The keyboard button switches to a down-chevron keyboard symbol and
+Hide Keyboard accessible label while input owns focus. No RFB reconnect, Mac
+desktop resize or helper is involved.
+
+Thirty-nine hosted tests pass, including actual UIKit viewport/first-responder
+checks. Required stable-Xcode validation, the normal device build and
+source/signature verification pass; the update
+is installed and launched on iPhone 18 Pro Max (sequence 8196), preserving app
+data. Physical keyboard acceptance is pending. See
+[keyboard viewport evidence](evidence/2026-10-04-keyboard-viewport.md).
+
+## Current saved-login and shared-address correction — 2026-10-04
+
+Address/port edits now preserve the saved login for that Mac UUID. Cross-record
+endpoint sharing is allowed and displays an informational editor note; accounts
+remain isolated by UUID. Only explicit Forget Saved Login, retention opt-out or
+record removal delete the credential. This supersedes the route-edit deletion
+policy in the prior session-interface update. Previously deleted logins require
+one new entry; they cannot be recovered by this correction.
+
+Thirty-six hosted tests, rendered Simulator duplicate-address saving, required
+stable-Xcode validation, the normal iPhone build and signature/source verification
+pass. Installation initially fails with CoreDevice 4016 while the phone's trusted
+developer tunnel is unavailable. After the user unlocks iPhone 18 Pro Max, the
+retry installs successfully (sequence 8188), preserving app data. The correction's
+credential/address behavior still needs physical acceptance. See
+[login-retention evidence](evidence/2026-10-04-library-login-retention.md).
+
+## Current session interface and private VPN routes — 2026-10-04
+
+The direct iOS client now supports 1–8 ordered addresses per Mac and an advanced
+port setting. Version-1 saved Macs migrate without changing their UUID/login;
+fallback ends at the first TCP success and never retries authentication on a
+different address. The previous IPv4 filter incorrectly rejected Tailscale's
+100.64.0.0/10 range. The corrected filter retains public-address rejection and
+exact resolved-sockaddr connection. The user confirms Tailscale IPv4 now works
+on the installed iPhone update.
+
+The login identifies the selected Mac, keeps native AutoFill and per-Mac saved
+credentials, and shows actual progress until a fresh desktop frame. A healthy
+session has no routine Connected label. One bottom-right native glass button
+offers primary press-and-slide quick actions and categorized controls, with
+deliberate Exit to My Macs. The keyboard strip stays directly available. Pointer
+speed/acceleration is adjustable per Mac; mode and a verified display selection
+are remembered. Custom shortcuts/text are device-local per-Mac Keychain entries;
+unreadable entries remain preserved. Atomic custom-action queue admission cannot
+disconnect or partially send an action when the queue is busy.
+
+Thirty-three hosted tests and required stable-Xcode validation pass. Rendered
+login, address/advanced-port editor, synthetic controls and display picker checks
+pass. The normal device build matches 480 source input hashes; signatures,
+existing Keychain group and ActivityKit extension verify. The update is installed
+and launched on iPhone 18 Pro Max (installation sequence 8180), preserving app
+data. The user confirms the requested IPv4 connection and press-slide menu test
+works. Automatic route fallback, credential-manager selection across machines,
+custom actions, speed/display restoration and sustained physical reliability
+remain for physical acceptance. No Mac helper is added. See
+[session interface evidence](evidence/2026-10-04-session-interface-private-routes.md).
+
+## Current direct session recovery and optional status — 2026-10-04
+
+The established direct RFB connection now pauses its owner on inactivity instead
+of closing immediately. It releases input, sleeps without frame processing, and
+requests a full refresh on foreground return. A failed/1500-ms resume makes one
+replacement attempt, preserving verified display, zoom, viewport center and
+mouse mode. Pending handshakes still cancel; Done permanently retires the viewer.
+A one-second bounded UIKit task finishes input release and the paused status;
+there is no perpetual background streaming or execution mode.
+
+The generated normal iOS development app includes an optional ActivityKit session
+extension. My Macs > Session Settings defaults “Show session in Dynamic Island”
+on; opt-out and dismissal are respected independently of recovery. It publishes
+Connected, Paused or Reconnecting and resumes only a saved Mac. No Mac helper,
+new authentication, relay/APNs or permanent release identity is added.
+
+Twenty-two hosted tests pass, including actual native same-socket pause/resume
+and actual ActivityKit start/update/end. The rendered settings UI and persisted
+toggle pass Simulator checks. Required stable validation and the normal device
+build pass. The matching signed update/extension are installed and launched on
+iPhone 18 Pro Max, preserving app data and its existing Keychain group. The user
+confirms short background return through Dynamic Island resumes the desktop with
+display and zoom preserved. Fixed device counters show one connection start,
+two retained resumes and two resume frames, with failure stage zero. Long
+background/lock/process-termination recovery, input after return and sustained
+physical reliability remain pending. See [session recovery evidence](evidence/2026-10-04-session-recovery-live-activity.md).
+
+## Current standalone-client UX follow-up — 2026-10-04
+
+The user confirms the installed standalone app works. The next update adds
+bounded Apple VNC display-layout decoding directly in the iPhone session,
+without a Mac helper or a reconnect. Individual display crops remain conditional
+on compatible metadata; malformed/unknown layout returns to All Displays and
+cannot blank a working framebuffer. Twelve native/Swift hosted tests pass,
+including stream framing, stale metadata, relative trackpad motion, drag release
+and selected-display updates. Required stable validation passes. Twelve
+authoritative display-layout boundary
+cases join the existing endpoint/login fixture.
+
+The viewer offers only Pointer and Trackpad, hold-to-drag in both, and one Done
+action to disconnect and return to My Macs. The searchable Mac library has a
+visible manage menu, labeled editor, login removal, an empty state and a separate
+setup guide. The matching source-built, signed update is installed on iPhone 18
+Pro Max with its data and signing group preserved. Automatic launch is denied
+because the phone is locked. Live display detection and physical gesture
+acceptance remain pending. See [client UX evidence](evidence/2026-10-04-direct-client-ux.md).
+
+## Current standalone-client migration — 2026-10-04
+
+The product owner chose one iOS app and built-in macOS Screen Sharing, with no
+optional helper. The normal VNC development app now starts a direct My Macs
+library and native RFB connection; it does not create the legacy identity,
+pairing, primary, Control lease or Agent/tunnel runtime. Saved login uses a
+separate direct Keychain service with existing signing groups unchanged.
+
+The Mac app and launchd Agent were stopped. Built-in Screen Sharing still
+responds; an actual native connector in Simulator reads its RFB greeting without
+credentials or pixel/input requests. Nine hosted tests pass: direct greeting,
+no-auth rejection, stalled-handshake cancellation, old-owner status fencing,
+multiple-Mac persistence/deletion, damaged-file preservation and existing
+viewport/cursor tests. The actual direct library UI builds and opens in Simulator.
+There are 133 indexed fixtures, including 21 endpoint and seven login boundaries.
+
+At the initial standalone checkpoint, exact window fitting and individual-display
+selection were deferred; the UX follow-up above adds bounded display metadata. ARD login
+protects credentials but does not encrypt desktop/input traffic or pin the host;
+the development setup discloses this. Secure transport and public release remain
+open gates. Full stable validation and the matching signed iPhone build/install pass. The
+Add Mac editor was corrected after UI verification found stale sheet state; the
+actual add/save/open-login flow now passes in Simulator. Automatic phone launch
+is denied because it is locked. Physical sustained acceptance remains pending.
+See [standalone-client evidence](evidence/2026-10-04-direct-screen-sharing.md).
+
+## Historical paired-host migration checkpoints
+
+Latest migration: [normal-app VNC integration evidence](evidence/2026-10-04-vnc-integration.md).
+VNC is integrated in the normal development apps over the existing authenticated
+TLS primary, retaining pairing and current Control lease checks. Both final
+updates are signed and installed. The bounded Retina allocation correction
+presents nine physical video frames. A separate unused legacy media publication
+then reaches its three-second XPC deadline and retires the host. A VNC-specific
+lease adapter removes that producer with existing lease, indicator and Stop
+checks preserved. Its final stable validation and Mac build pass; the signed
+correction is installed. The user confirms at least 30 seconds of visible desktop
+on the iPhone 18 Pro Max. Content-free logs corroborate 406 frames, six local view
+changes on one VNC connection and four successful lease renewals over about 37
+seconds, without the old capture producer or publication timeout. This passes a
+short sustained-playback check. Selected app/window viewing, physical interaction
+and recovery/soak acceptance and permanent release admission remain open.
+
+Keyboard follow-up: basic input is physically confirmed. Toolbar modifiers were
+persistent remote key-downs and never released after a shortcut. The iPhone
+correction sends one-shot balanced chords, clears selection and provides a
+standalone modifier press by holding the button, plus More > Shift only.
+Seventeen indexed keyboard cases, four atomic queue bounds, required stable
+validation and the normal iPhone build pass. The signed normal iPhone update is
+installed with existing pairing and Keychain entitlements preserved. Physical
+modifier and standalone Shift acceptance remain pending.
+
+Viewport follow-up: display selection previously zoomed the full desktop without
+limiting its canvas. The normal viewer now crops both the image and scrollable
+canvas to the selected display, translating and bounding pointer coordinates.
+Two-finger double tap fits the topmost visible Mac window at that point; repeating
+it returns to the full selected display. The bounded window metadata query uses
+the existing authenticated Desktop tunnel and current Control checks, leaving
+VNC connected. Stable required validation passes with 132 indexed fixtures, and
+normal Mac/iPhone builds pass. A hosted actual-viewer Simulator test passes crop,
+input mapping, window fitting, stale replies and 60 display changes. Final
+source review also reproduces a send-order race when the primary sender
+suspends: window metadata can overtake input or RFB data. Client and host sends
+are now serialized in stream order, with queued-write retirement and per-chunk
+close guards. The suspended-send and greeting-only host regressions pass. Matching
+signed updates are installed on both normal apps with pairing/signing preserved;
+the updated Mac app and Agent run. The iPhone is locked, so automatic launch is
+denied. Physical confinement, native window-hit/gesture acceptance and the
+remaining interaction/recovery/soak gates remain pending.
+
+Cursor/toggle follow-up: LibVNCClient remote cursor support was disabled, no
+shape/position handlers were installed and UIKit had no local pointer overlay.
+The session now requests standard RFB cursor updates and bounds/converts masked
+cursor pixels; the viewer shows immediate local pointer feedback, aligns native
+hotspots through crop/zoom/pan and fences cursor delivery after Stop. Two-finger
+double tap returns to fit after any zoom, including manual pinch. From fit it
+prefers the window under the tap, with a two-times-fit fallback for an empty or
+full-size target. Three hosted actual-viewer/session Simulator tests, indexed
+cursor/zoom cases, required stable validation and the normal iPhone build pass.
+The signed correction is installed on the iPhone 18 Pro Max, preserving pairing
+and Keychain groups. Real server cursor and physical gesture acceptance remain
+pending. The existing Mac Companion app/Agent supplies pairing, the encrypted
+tunnel and session/Stop controls; built-in macOS Screen Sharing supplies the
+desktop and input engine.
+
+Latest physical investigation: [view-switch failure evidence](evidence/2026-10-04-native-physical-switch-failure.md).
+The latest affected-phone attempt completes three retained switches, then
+disconnects before the fourth replacement presents video. The native child
+reports exact content-placement rejection (sample stage 7, stream error 6),
+before watchdog cleanup; both capture and the original permit remain current.
+A native regression reproduces those same codes. Normative fixture-backed
+bounded placement discard repairs that path: mismatched frames confer no video
+or input readiness, the first matching frame closes the interval, and Stop,
+revocation and a two-second no-sample timeout remain enforced. Native regression
+coverage, final required stable validation and the normal Mac build pass. The
+rebuilt source host is signed with its exact catalog pinned. The first staging
+attempt exposes unsigned Xcode Debug implementation libraries at launch; that
+packaging defect is corrected by verifying/signing every normal Mach-O before
+its containing bundle. The corrected normal Mac update is installed and
+launched, with main app, Agent and existing listener ready. Existing pairing,
+signing and the compatible physical iPhone client are retained. Physical
+repeated-switch acceptance remains pending. This is a
+specific initiating check, not evidence that the separate earlier lookup/input
+failures or overall physical reliability are resolved.
+
+Earlier attempts: the affected phone's journal and installed Mac logs establish an input rejection
+after a completed switch and native preparation failure during a later switch.
+Both retire the complete Control session. The underlying rejecting checks are
+not yet established. A diagnostic-only signed Mac update is installed with
+pairing and signing preserved; required stable validation passes on rerun.
+The user's next attempt completes four retained switches, then fails in the Mac
+selected-surface lookup during `prepareReplacement`, before native preparation.
+The exact subcheck is still merged into `local.unavailable`; a refined diagnostic
+candidate names existing admission, scope, geometry and live-window checks.
+Its focused tests, required stable validation and normal Mac build pass; it is
+signed, installed and launched with existing pairing and signing preserved.
+Mirroring subsequently connects. Two direct attempts fail before any switch in
+native TLS startup (code 2). A local probe reproduces an IPv4 route-format defect:
+interface debug text includes a percent suffix rejected by the numeric parser.
+Normative fixture-backed reconstruction from the exact IPv4 bytes repairs that
+boundary; certificate validation, pairing and IPv6 handling remain unchanged.
+Focused regressions, required stable validation and matching normal Mac/iPhone
+builds pass. Both updates are signed and installed with existing pairing/signing
+preserved; the new Mac app and Agent listener run. Mirroring reconnects and
+physical startup passes: verified launch, advancing video for approximately
+220 seconds and input admission. The earlier native TLS code-2 failure does
+not recur, but the prior actual endpoint text was not recorded. Mirroring
+does not activate the client toolbar, so no switch is performed in that run;
+a direct phone attempt is requested to capture the refined rejection check.
+Backgrounding then returns to the authenticated workspace; that observation
+is not counted as successful Control resume. The switching root cause remains
+unresolved in that earlier attempt. The earlier Simulator campaign does not establish physical
+reliability or production readiness.
+
+Latest reliability work: [implementation and acceptance ledger](evidence/2026-10-03-native-reliability.md)
+and [measured plan](native-reliability-plan.md). Complete transition fencing and
+content-free timing are implemented. A normal Simulator run measured 22 switches
+at 4,658 ms p95 on the previously installed reconnection path. Retained native
+connection ownership is now connected in source across the normal adapters.
+The first three live candidates failed initial startup, exposing a Retina pixel
+mismatch, a four-second XPC activation deadline collision and a stopped encoder
+probe handoff. The native bridge regression passes after joined retirement.
+A Mac restart interrupted the fourth run and cleared raw temporary evidence;
+the recorded ledger distinguishes those summaries from fresh checks.
+The rebuilt environment now starts video. Its first retained display switch
+failed because the native depacketizer stripped the selected-surface marker.
+The admitted source-copy patch and actual H.264/HEVC parser regressions repair
+that path; a premature old input-readiness callback is also fenced. The new
+live candidate passed four retained switches. Its two longer campaigns failed
+after 25 and 19 successes; neither meets acceptance. Deterministic regressions
+then exposed and repaired an atomic command/receipt read race. The repaired
+source passes normal Mac/device/Simulator builds and required full stable
+validation with 125 indexed fixtures. Its 200-switch retest failed after 101
+successful retained switches, with native disconnect preceding a failed-owner
+transfer. The initiating disconnect remains unresolved. Resize recovery passes
+under the original Control session. A new candidate rechecks renderer state
+after asynchronous capability probing and adds fixed, content-free native
+terminal reasons. Its 23 native engine/adapter tests, required final stable
+validation and four-switch/six-presentation retained journey pass. Its full
+campaign also passes 202 retained switches and 204 advancing presentations,
+with exactly two host/video starts for two Control sessions and complete cleanup.
+Median is 691 ms and p95 1,526 ms in Simulator; physical timing is unverified.
+A remaining preflight busy-state ordering gap was reproduced with suspended
+probe tests and repaired. All 27 native tests, required stable validation and
+the six-presentation resize recovery journey pass on the final source. Final
+matching updates are installed and launched, preserving pairing identities.
+Background/network recovery passes six advancing presentations. The final-source
+UI journey completed 202 switches, but failed its evidence gate because the
+collector cached a relocated Simulator container path and missed log rotation.
+A separate supplementary diagnostic assessment preserves 202 complete switches
+and 204 advancing presentations, with p95 1,126 ms; the original failure remains.
+The collector repair passes six regressions, stable validation and a normal live
+smoke that records one actual container relocation. Selected-window closure and
+movement each recover Desktop/input under the same Control. A one-minute
+Desktop hold survives a visibly verified Finder full-screen Space round trip;
+ordinary multi-Desktop cycling remains pending. The new final-source 200-switch
+campaign failed after 144 completed retained switches: fresh video appeared,
+then the server terminated before input admission on the next switch. Its
+complete journal covers an actual container relocation and atomic rotation.
+Cleanup and original Simulator restoration pass. The initiating server
+termination is under investigation; the repeated-switch gate remains open.
+An independent deterministic backend-watcher race also retires healthy completed
+retention after a suspended phase check. Normative fixture-backed local lifecycle
+generation fencing repairs it; both healthy-retention and actual-Control-loss
+regressions pass. Required stable validation and both SDK/all normal builds pass.
+That earlier watcher-fix update was installed on both normal apps. iOS refused
+launch while the affected phone was locked. Its complete 200-switch campaign fails after
+63 retained switches and one successful fresh Desktop recovery; the following
+retained Window handoff times out without a new presentation. The Mac process
+watchdog reports failed Control/capture validation with the deadline still valid.
+All cleanup passes. A diagnostic-only follow-up classifies the exact local
+validation failure; the watcher phase repair alone does not resolve reliability.
+That follow-up also fails after 151 retained switches: the native child reports
+selection-predicate failure before the Mac watchdog, then fresh Desktop recovery
+succeeds. XCTest fails when the keyboard does not return during that unexpected
+recovery. The complete journal and all cleanup pass; successful transition traces
+do not erase the terminal loss. An expanded controlled resize/reselection test
+passes seven advancing presentations and reuses the recovered host for the next
+Window. Earlier native selection/handoff classifiers are now implemented with
+indexed closed vocabulary and passing native contract tests; their source-bound
+diagnostic rebuild and required stable validation pass. That source then fails
+a controlled resize: an exact health command escapes retirement as unavailable,
+invalidates local XPC and cancels Desktop recovery through primary teardown.
+A gated regression reproduces the shared-drain publication race in 32/32 attempts.
+Publishing retired ownership inside the shared task repairs all 32; wrong-scope,
+malformed-evidence and stale-retire checks remain passing. Open pickers now show
+recovery and disable ignored choices while preserving Cancel. The new normal
+Simulator build passes. An open-picker follow-up exposed stale surface-bound
+inventory after recovery; the UI now refreshes that inventory before enabling
+selection. Final stable validation, both SDKs and all normal builds pass. The
+complete resize/reselection journey passes seven advancing presentations and
+four retained handoffs with recovered-host reuse. The final-source repeated-switch
+gate passes 202 retained transitions and 204 advancing presentations with exactly
+one host/native connection per Control session and complete rotated/relocated
+journal cleanup. Both normal updates are installed with existing pairing/signing
+preserved. Mac app and Agent listener run; iOS refuses launch while the phone is
+locked. Final-source movement/reselection and background/network recovery pass;
+selected-window closure also recovers Desktop/input under the original Control
+and passes cleanup. A one-minute final-source Desktop hold passes, but its
+Mission Control automation times out before an actual Space change is observed;
+that run does not establish Spaces acceptance. Simulator median is 912 ms and p95
+1,180 ms, still above the latency target.
+Physical acceptance, one-hour session, ordinary multi-Desktop Spaces and native
+Sunshine/Moonlight comparison remain open.
+A missing Mac development profile previously prevented
+Agent execution; the existing compatible profile restored launch. At that earlier
+checkpoint both Mac processes and the iPhone process launched. Physical playback
+and long-session/recovery acceptance remain pending.
+iPhone Mirroring needs the user's first-time setup
+for the affected phone. Acceptance is in progress; the app is not production ready.
+
+Latest product checkpoint: [remote-desktop MVP and pairing access](evidence/2026-10-03-remote-desktop-mvp.md).
+The product owner chose one remote-desktop pairing flow and no per-session
+Face ID/Touch ID confirmation. Observe and Act are removed from the main phone
+workspace and website. New normal-app pairing atomically includes fixed
+screen/input authority with disclosed Mac consent. Both normal apps select the
+explicit trusted-device session profile and use the existing protected paired
+session key for a fresh bound challenge; there is no cross-key fallback or
+new wire-controlled policy. Existing Control-enabled devices retain their
+keys/grants and need no re-pairing. Monitor-only devices retain their one-time
+local upgrade. Stop, revocation, OS permissions and session/input fencing remain.
+The missed initial granted-pairing client completion check is fixed. New golden
+vectors and signing/grant regressions pass. Two existing network test-harness
+scheduling assumptions were corrected without changing product networking.
+Required full stable Xcode 27.0 validation passes with 123 indexed fixtures.
+The focused normal Simulator journey passes fresh pairing, durable restart,
+two native video/input sessions and Stop/key/state cleanup. Signed normal
+Mac/Agent and iPhone 18 Pro Max updates are installed and launched, with existing
+identities and native package retained. Local website preview is ready at
+`http://127.0.0.1:4173/`. The extended Shared Display journey from the earlier
+checkpoint stopped at an undelivered picker tap; view switching, physical
+acceptance and production release gates remain pending. All changes remain
+local and uncommitted.
+
+## 2026-09-26 streaming engine and licensing decision
+
+Latest branding checkpoint: [shared artwork and local website preview](evidence/2026-10-03-branding-local-preview.md).
+The approved Linked screens artwork is integrated into both normal app targets
+and the local website. Stable validation with 121 fixtures and all three normal
+Mac/device/Simulator builds pass. Signed updates are installed on the Mac and
+iPhone 18 Pro Max with existing pairing identities and entitlements retained.
+The Mac launches and the normal Simulator renders its entry screen; physical
+iPhone launch awaits unlock. The local website preview is ready, with responsive
+layout and working feature tabs and FAQ. No public deployment or release occurred.
+
+Latest keyboard checkpoint: [keyboard availability and installation](evidence/2026-10-03-keyboard-availability.md).
+The local iOS keyboard opens throughout approved Control without Text/focus
+preflight and remains available across view pauses. Delivery stays fenced until
+fresh native presentation; paused commits and local composition are discarded.
+Pickers restore an already-open keyboard. Unicode Text keeps its existing grant
+and secure-focus checks; supported physical-key fallback remains under Keyboard
+authority. Seven UIKit/coordinator tests, the five-presentation normal paired
+Simulator switch journey and stable validation with 121 fixtures pass. Signed
+normal Mac and iPhone 18 Pro Max updates are installed with existing pairing
+identities and entitlements retained. Physical acceptance and connection reuse
+remain pending.
+
+Latest foreground recovery checkpoint: [foreground recovery and setup latency](evidence/2026-10-03-native-foreground-recovery.md).
+Short background returns can make one fresh Desktop/native enrollment under
+the exact still-current original Control approval and expiry. Old preparation,
+renderer, enrollment and pending view selection drain before fresh admission.
+Temporary inactive states fence input without retiring video. Canceled view
+selection preserves Control; genuine primary loss exposes workspace recovery.
+Asynchronous certificate commands and early inert client identity preparation
+remove setup stalls. The normal Simulator foreground journey passes six native
+presentations, three background recoveries including a held selection,
+network-loss/reconnect, explicit Control restart, input and cleanup. Six UIKit
+coordinator tests and both normal iOS/Mac builds pass. Separate display and
+Window switches measure 2.2–3.1 seconds; normal switching still reconnects.
+Required final stable validation passes with 120 fixtures. Signed normal Mac
+and iPhone 18 Pro Max updates are installed and launched with existing pairing
+and entitlements preserved. Complete connection reuse, physical acceptance and production
+distribution gates remain open.
+
+Latest input/view recovery checkpoint: [input, Finder and resize recovery](evidence/2026-10-02-input-switch-finder-resize-recovery.md).
+One ordered and paced input worker coalesces pending cursor motion, fences old
+geometry, and preserves button/key order. Native replacement stays opaque until
+a fresh frame. Finder App crops consistently exclude background/overlay windows.
+Exact retired native health is non-authorizing and leaves current Control usable.
+A resized selected Window now gets one foreground Desktop recovery under fresh
+primary Control and the original expiry, with new presentation acknowledgement.
+Eight focused tests, 14 renderer lifecycle tests and required full stable Xcode
+27.0 validation pass with 118 indexed fixtures. The normal Simulator resize
+journey passes six native presentations, current-session Desktop recovery,
+input, Stop/restart and cleanup. A second stale-picker disappearance journey
+passes five presentations and keyboard/modifier/shortcut/pointer delivery.
+The earlier failed live run exhausted disk space; its cleanup passed and only
+completed disposable build caches were pruned before the successful rerun.
+Signed normal Mac/Agent and iPhone 18 Pro Max updates are installed with existing
+identities, entitlements, pairing and data retained. Physical Finder/resize/input
+acceptance and latency measurement remain pending. Seamless resize tracking,
+All Displays, the older permit-retirement/-102 trace, updated corresponding-source
+closure, everyday acceptance and production distribution gates remain open.
+
+Previous picker/capture checkpoint: [useful picker and centered Window capture](evidence/2026-10-02-picker-and-centered-window-capture.md).
+The user reports intermittent return to the workspace and unhelpful picker rows.
+A metadata-only probe reproduces the Window code-7 failure: platform output is
+at the top-left while the admitted geometry expects centered fractional padding.
+Explicit output placement fixes that measured mismatch without relaxing sample
+checks. Titles are bounded transient Control-only metadata, helper/unavailable
+choices are omitted, and exactly bound disappeared sources can acknowledge a
+fresh Desktop replacement. Runtime failure keeps visible recovery guidance until
+closed. Before/after placement regressions, all 118 fixtures, full stable Xcode
+27.0 validation, both native SDKs, 12 lifecycle tests and normal app builds pass.
+The signed Mac/Agent update with the new pinned host catalog is installed and
+listening; the signed normal iPhone update is installed and launched on the
+verified iPhone 18 Pro Max, with the existing pairing retained.
+The new normal-app Simulator journey fails during disposable-service setup before
+pairing; Window streaming/disappearance acceptance is unverified for this
+candidate. The separate physical permit-retirement/-102 trace, physical retry,
+everyday acceptance and production distribution gates remain open.
+
+Previous physical App/Window checkpoint: [native launch investigation](evidence/2026-10-02-native-app-switch-investigation.md).
+The user reports display switching now works, but App/Window switching still
+fails. The physical trace reaches acknowledged capture, native enrollment and
+server/application-list validation, then fails native launch response parsing.
+The underlying capture/encoder cause is not yet established. Animated and static
+selected App normal Simulator journeys both pass with five fresh presentations.
+Bounded fixed capture diagnostics now survive owned-child cleanup; indexed
+vocabulary/file-safety tests and full stable Xcode 27.0 validation with all 118
+fixtures pass. The signed diagnostic Mac update is installed and its existing
+Agent listener is verified; the iPhone remains on the preceding repair build.
+A physical repeat is requested. App/Window failure remains unresolved, and
+everyday acceptance and production release gates remain open.
+
+Latest replacement reliability checkpoint: [native Window and repeated view repair](evidence/2026-10-02-native-window-and-replacement-repair.md).
+The physical iPhone reports Window failure and blank video after display changes.
+Matched content-free traces reproduce a reset rejection during replacement
+preparation; inspection also finds native Window capture incorrectly restricted
+to the Desktop's display. Normative specs and indexed fixtures precede both
+repairs. Before/after regressions, all 118 fixtures, full stable Xcode 27.0
+validation, both native SDKs and 12 lifecycle tests pass. The expanded normal-app
+Simulator journey deliberately places the Window on another physical display
+and passes both display switches, Window/input, Stop/start and cleanup with five
+fresh presentations. Signed normal Mac and iPhone 18 Pro Max updates are
+installed and launched with existing identities and pairing. Physical retry
+confirmation remains pending; everyday and production release gates remain open.
+
+Latest interface checkpoint: [compact remote session controls](evidence/2026-10-02-compact-remote-session-ui.md).
+Choose Display contains its topology and provides readable selection rows. One
+bar above the native keyboard exposes Escape, Tab and one-shot modifiers; one
+Close/Stop replaces duplicate navigation/Stop controls. Indexed chord vectors,
+both native SDKs, 12 embedded lifecycle tests, full stable Xcode 27.0 validation,
+and the normal-app Simulator display/window/input/Stop journey pass. Private
+screenshots were inspected. The signed normal update is installed on the iPhone
+18 Pro Max with existing identity/data; launch was denied because the phone was
+locked. Physical UI/input confirmation remains pending. All Displays has an
+explicit capture/input plan and is not implemented. Everyday acceptance and
+production release gates remain open.
+
+Latest Shared Display checkpoint: [native display recovery](evidence/2026-10-02-shared-display-native-recovery.md).
+The iPhone 18 Pro Max report is reproduced in the normal Simulator app. Shared
+Display now preserves the visible renderer with a sheet. Fresh display enrollment
+also exposed an invalid ordering comparison between independent authenticated
+menu publication and Control activity counters. Normative specs and indexed
+fixtures precede both corrected runtime guards; exact authority bindings remain
+enforced. Before/after regressions, both native SDK builds, 16 lifecycle tests,
+and full stable Xcode 27.0 validation pass. The expanded normal-client journey
+passes both display replacements, selected Window/input, Stop/start and cleanup
+with five fresh presentations. Signed normal Mac and iPhone 18 Pro Max updates
+are installed and launched with existing identities. On 2026-10-02 local the user
+confirms the repaired Shared Display flow works on the physical iPhone 18 Pro Max.
+Production release and elapsed acceptance gates remain open.
+
+Latest usability and source checkpoint: [enrollment ownership and frozen-source
+preparation](evidence/2026-10-01-native-owner-usability-and-source-preparation.md).
+The App/Window picker searches privacy-limited names/ordinals. A deterministic
+regression proves an old enrollment owner's post-join compensation could cancel
+a fresh reservation; scoped local ownership and completed-cancel publication
+repair it without changing wire/signature/grant semantics. The 18 ordering cases,
+both SDK builds, installed signed iPhone 17 Pro Max update, and full stable Xcode
+27.0 validation with 118 fixtures pass. Ten normal-app Simulator sessions pass
+after compilation finishes. An earlier run lost local XPC after a media reply
+timeout under concurrent source rebuilds; its cause remains unproven. The frozen
+current source archive reconstructs runtime/codecs/Web/host/both client SDKs and
+a portable host package. Separate normal-client App and Window selection pass
+against that archive-built host with three fresh presentations and input
+delivery in each journey. The three-session normal-client background/primary-cut
+recovery journey also passes against the archive host. Physical input approval,
+the loaded-session stall,
+native Release admission, distribution profiles, source delivery review,
+notarization, and the final acceptance/elapsed soak gates remain open.
+
+Latest physical reliability checkpoint: [installed enrollment and route
+repair](evidence/2026-10-01-installed-native-enrollment-and-route-repair.md).
+The user's iPhone 17 Pro Max authenticates using its saved pair. Physical testing
+reproduced a bundled OpenSSL lookup into a missing developer build tree; the
+signed installed Mac now explicitly uses its catalog-bound configuration.
+Enrollment and managed-host startup then completed, exposing a missing measured
+numeric route for DNS/Bonjour primaries. The client now retains the exact verified
+transport's numeric address, with selection/replacement/termination fences.
+Regression tests, 116 fixtures and full validation on stable Xcode 27.0 pass.
+The final signed normal iOS native build is installed on the iPhone 17 Pro Max.
+User Touch ID approval enabled physical tracing. The primary selected IPv6 while
+the managed host listened only on IPv4; the signed installed development Mac
+now uses dual-stack listeners. Real native video ran for more than four minutes;
+Stop retired the host and preserved authentication. A fresh second session
+exposed native admission incorrectly requiring equality between the advancing
+activity receipt revision and unchanged menu publication revision. The correction
+is installed; its regression fails before and passes after the change, with all
+11 native bridge tests and final full repository validation passing. Physical
+Stop/start on the same primary now passes without re-pairing or reconnecting;
+the second session streamed for more than 21 minutes. The App shortcut switched
+the Mac application. Failed-product retirement now targets the captured exact
+session/primary, rejects stale and duplicate Stop, and uses terminal UI text.
+The 18 ordering cases, concurrent retirement regression and five iOS coordinator
+tests pass. Physical backgrounding exposed a hidden legacy bootstrap decoder
+failure; foreground authenticated reconnect passes. Native construction now
+suppresses legacy decoding after verified bootstrap acknowledgement while
+retaining media admission and replacement bootstrap gates. A fresh physical session
+verifies that suppression, advancing native video and background retirement without
+the hidden decoder failure. Foreground saved-pair authentication passes after the
+ten-second background grace expires. Native display selection exposed an existing
+active-owner rejection; exact-session failed-product Stop physically passes for
+that failure. The display drain/replacement correction is signed and installed;
+the physical display switch now passes with fresh native presentation input
+admission and advancing video, without reconnect or pairing. All four selected
+native/legacy App/Display ordering cases pass. Real pointer/text/modifiers and
+selected App/Window focus remain pending. The signed normal iOS client
+containing the background and display recovery repairs is
+installed on the physical iPhone 17 Pro Max; the saved pair authenticates after
+installation. Final stable-Xcode validation passes with 118 indexed fixtures.
+
+Latest installed Mac recovery checkpoint: [Agent entitlement preservation and
+real dashboard reconnect](evidence/2026-09-28-agent-entitlement-preservation-and-installed-recovery.md).
+The development stager now retains the Agent's required signed Keychain
+entitlement; a fresh signed normal Mac app is installed. Its window shows Agent
+ready, private listener listening and Control allowed, and returns to that
+state after the Agent is restarted without replacing the dashboard process.
+The normal iOS QA Simulator is unpaired to this installed Mac. The paired
+physical iPhone app launches, but its Remote Control request showed the
+generic **Command did not complete** alert. Content-free Agent audit events
+show an earlier approved session remained active during six subsequent
+requests from the same device; the host's active-session guard likely rejected
+them. The initial session failure remains unexplained. Physical video and
+input acceptance remain open.
+
+Latest Mac dashboard recovery checkpoint: [fresh Control composition after
+local XPC replacement](evidence/2026-09-28-dashboard-fresh-runtime-recovery.md).
+The normal dashboard now awaits old adapter invalidation and constructs fresh
+Control runtime, queue and capture owners for its replacement connection only
+after the persistent indicator is inactive. Focused tests and stable validation
+pass. This source checkpoint preceded the corrected signed installation above;
+native playback remains unverified.
+
+Latest Control reliability checkpoint: [normal app session soak and iPhone update](evidence/2026-09-28-native-session-soak-and-device-refresh.md). The updated normal iOS app is installed on the paired iPhone 18 Pro Max. Two ten-session Simulator soaks, a 30-minute Control hold, and another ten-session run with 120 immediate post-Stop status reads pass. A disposable test bridge now waits for its prior response socket to close; the cause of one earlier intermittent Stop-status EOF is still unproven. Repository validation passes with 116 fixtures. Physical playback remains unverified while device launch is unavailable.
+
+Latest repeated Window/Desktop checkpoint: [normal app transition soak](evidence/2026-09-28-window-transition-soak.md). Exact correlation routing fixes the Control exit when display refresh overlaps surface inventory. The paired normal iPhone Simulator app passes 20 Window/Desktop transitions and 22 native presentations across two Control sessions, with keyboard, pointer, modifiers and shortcuts. The updated normal iOS native build is installed on the paired iPhone 18 Pro Max; iOS refused launch while locked. The signed normal Mac Debug app from the [earlier installation checkpoint](evidence/2026-09-28-normal-native-installed-candidates.md) remains installed. Physical launch, installed Mac TCC continuity, real input and LAN playback remain unverified. Stable validation with 116 fixtures passes.
+
+Latest normal native App and Window checkpoint: [selected-target playback in the normal iOS Simulator app](evidence/2026-09-28-normal-native-app-window-simulator.md). Separate paired UI journeys now pass again on the current iOS source: real App and Window selection, selected native playback, keyboard, pointer and Shift+Tab delivery, Stop and fresh Control, with three native presentations each. Exact-key cleanup, host retirement and original Simulator app/data restoration pass. The Mac peer is disposable with substituted human consent and synthetic final input. Viewport bitrate, current corresponding-source assembly, installed Mac GUI/TCC and paired LAN/physical acceptance remain open.
+
+Previous native surface switch: [Desktop reselection in the normal iOS Simulator app](evidence/2026-09-27-normal-native-desktop-reselection.md). The old native permit now drains only an exact retired reset, and the client blanks old-surface rendering during replacement. A full paired UI journey passes a fresh Desktop presentation and input admission after selection, keyboard/pointer/Shift+Tab/Copy, Stop, then a third presentation in a new Control session. The exact-key cleanup test, host retirement and original Simulator app/data restoration pass. The Mac peer is disposable with substituted human consent and synthetic final input.
+
+Latest normal recovery fix: [initial acknowledgement ordering](evidence/2026-09-27-initial-acknowledgement-ordering.md). A real-channel reproduction rejects an early valid host reply before the fix. Pending state is now stored before sending; send completion preserves the committed reply and current ownership. Eighteen primary-channel and eight activation cases pass. The new normal Simulator candidate passes its complete three-session journey, including the previously failed second session, background restart guidance, inputs, Stop, disconnect/Reconnect and a third fresh session. Exact-key cleanup, host retirement and original Simulator app/data restoration pass. Both SDK/normal builds and stable validation with 112 fixtures pass. Native App/Window capture, viewport bitrate, current source assembly, installed Mac GUI/TCC and paired LAN/physical acceptance remain open.
+
+Latest Observe reliability candidate: [manual refresh and liveness ordering](evidence/2026-09-27-observe-refresh-liveness-priority.md). A reproduced manual refresh collision with a pending automatic status check is fixed through one bounded local reservation, router-committed release, separate fresh request and visible refresh progress. Thirteen Observe tests, both SDK/normal builds and stable validation with 111 fixtures pass. The complete normal Simulator journey fails on the second Control session's initial screen receipt, after first-session background/Stop/status checks pass. Cleanup and original Simulator app/data restoration pass. The new candidate does not inherit earlier native recovery acceptance; overlapping initial render callbacks are the next investigation.
+
+Latest normal recovery checkpoint: [normal iOS Simulator background and reconnect](evidence/2026-09-27-normal-native-recovery-simulator.md). The normal root passes three native sessions with keyboard, pointer, Shift+Tab, Copy, real background input fencing, explicit restart and host-induced primary connection loss/reconnect without pairing again. The final candidate shows clear restart guidance, disables unavailable controls and preserves Stop after foreground return. Host retirement, exact-key cleanup and original Simulator app/data restoration pass; both SDK builds and stable validation with 110 fixtures pass. One earlier post-background status command failure remains unexplained, with content-free diagnostics now enabled. Installed Mac GUI/TCC, paired LAN/physical, native App/Window capture, visible-area bitrate and current source assembly remain open.
+
+Latest normal native Control checkpoint: [normal iOS Simulator sessions](evidence/2026-09-27-normal-native-control-simulator.md). The normal iOS app pairs, configures/reopens its saved route, obtains a separate Control grant and passes two native presentation/input-admission sessions with iOS keyboard, pointer, Shift+Tab, Copy and Stop/restart against the disposable signed Mac host. Observe remains authenticated after Stop. One UI and one exact-key cleanup test pass; host cleanup and original Simulator app/data restoration pass. Final input remains synthetic and human Mac consent is substituted. Normal background/connection recovery, installed Mac GUI/TCC, paired LAN/physical, native App/Window capture, visible-area bitrate and current source assembly remain open.
+
+Latest normal workspace checkpoint: [completed pairing and restart](evidence/2026-09-27-normal-paired-workspace-and-restart.md). The normal Simulator app completes live pairing with explicit disposable Mac test consent, saves its public pair, configures a private route and reads live status. Reopening reuses the saved pair/route, authenticates and reads live status again. Observe-only permission remains separate from Control. One UI test and one exact-key cleanup test pass; host cleanup, original app/data restoration and stable validation with 110 fixtures pass. Normal native Control, installed Mac GUI/TCC, paired LAN and physical acceptance remain next.
+
+Latest normal live pairing checkpoint: [Simulator Keychain and live pairing](evidence/2026-09-27-normal-simulator-keychain-and-live-pairing.md). The missing Simulator Keychain entitlement caused identity preparation to fail before TLS. Xcode-packaged development entitlements now resolve it with original approval requirements preserved. A real normal-app test reaches verified comparison over live pinned TLS, then cancels with no Mac approval or paired state; disposable host cleanup passes. Both SDK builds, compiled device exclusion and stable validation with 110 fixtures pass. Completed pairing, normal primary/Control and installed Mac/LAN/physical acceptance remain next.
+
+Latest normal Simulator checkpoint: [normal bootstrap and code entry](evidence/2026-09-27-normal-simulator-bootstrap-and-code-entry.md). The normal admitted Debug Simulator app now reaches pairing using isolated development storage/software-backed custody; physical/default protection and approval presence remain. Standard code entry, invalid rejection, unverified preview and cancellation pass a real normal-app UI test. Both SDK/framework/normal builds, compiled device exclusion and stable validation with 110 fixtures pass. Completed pairing, normal LAN/Control, physical custody and installation remain open.
+
+Latest network listener checkpoint: [managed IPv4 access](evidence/2026-09-27-managed-native-ipv4-listener.md). Normal Mac Debug now selects trusted IPv4-interface native listening after existing Control enrollment. The live non-loopback host probe passes certificate isolation, encrypted launch, downgrade denial, sealed routes and network listener retirement. Stable validation, the normal Mac build, fresh signed staging and four rebuilt-host Simulator video/control/recovery sessions with the IPv4 listener pass. The Simulator primary remains loopback and final input synthetic. The staged app is not installed or launched. Full normal paired LAN/physical acceptance remains open.
+
+Latest network prerequisite: [mandatory managed encryption](evidence/2026-09-27-managed-native-encryption.md). The production backend now requires upstream LAN/WAN transport encryption. Live rejection of missing/zero encrypted-RTSP support and plaintext RTSP, valid encrypted launch, certificate isolation and revocation cleanup pass. Stable repository validation and four fresh visible Simulator sessions with controls, recovery and cleanup also pass. Final input remains synthetic. That checkpoint retained loopback; the subsequent managed IPv4 listener checkpoint records the network change. Normal installed/paired and physical acceptance remain open.
+
+Latest client source-rebuild checkpoint: [extracted client rebuild](evidence/2026-09-27-extracted-native-client-rebuild.md).
+Both historical client SDKs rebuild from the pinned packet using its frozen builder
+and verified source-built OpenSSL. Twelve dedicated Simulator component tests,
+six framework inventories and immutable source/dependency readback pass. This
+historical adapter contains its original reference probe and is not admitted as
+the current normal-app candidate. Current source snapshot assembly and matched
+current host/client acceptance remain next; corresponding-source completion and
+installed normal-app/physical acceptance remain open.
+
+Latest archive-package checkpoint: [rebuilt portable host](evidence/2026-09-27-archive-rebuilt-portable-host.md).
+The archive-rebuilt host now has a distinct verified development package with ten
+native binaries, rebuilt OpenSSL, source-bound production supervisor and complete
+linked-library notices. Relocation without search overrides, credential CLI,
+tamper rejection and stable validation pass. Historical package verification is
+preserved. Fresh live acceptance is recorded separately; no permanent catalog or
+installed app was changed. Full client source reconstruction/current source
+assembly and normal paired/physical acceptance remain open.
+
+Latest host source-rebuild checkpoint: [extracted Sunshine rebuild](evidence/2026-09-27-extracted-native-host-rebuild.md).
+Sunshine now rebuilds from the pinned source packet with the rebuilt runtime/codecs,
+local Boost/JSON archives and all 193 offline npm inputs. Final link/readback and
+stable validation pass: 25 static inputs, seven runtime libraries and 82 Web assets.
+The version command passes with explicit verified development library paths; the
+unbundled default loader lacks miniupnpc resolution. Portable packaging, startup
+and fresh video acceptance remain next, alongside client source reconstruction and
+current corresponding-source assembly. Installed apps are unchanged.
+
+Latest codec source-rebuild checkpoint: [extracted native codec rebuild](evidence/2026-09-27-extracted-native-codec-rebuild.md).
+All seven host codec libraries now rebuild from the explicitly pinned source
+packet with 183 installed files and inspected macOS 26.0 deployment commands.
+Archive-specific tag/version adaptations are recorded in a separate working copy;
+the retained payload remains unchanged and an incorrect source pin is rejected.
+These are fresh artifacts, without new playback acceptance. Full Sunshine/client
+reconstruction and corresponding-source assembly remain open. The running installed
+Mac app and separate Sunshine app were left intact.
+
+Latest normal iOS selection checkpoint: [production client adapters and normal app build](evidence/2026-09-27-normal-ios-native-development.md).
+First-party video/TLS/launch adapters now live under `Native/Client`; the default
+SDK excludes the reference surface probe. The normal root selects these adapters
+in an explicit Debug-only development project with verified engine artifacts.
+Both SDK builds, twelve component tests, six-framework inventory, normal app
+builds for both SDKs and stable repository validation pass. The normal app was
+installed and launched only in the dedicated Simulator. It stops before pairing:
+its required file-protection attribute is absent there. No storage/key-custody
+requirement was relaxed. Normal paired Control acceptance, signed Mac GUI/TCC
+continuity, installation on physical devices and real input remain open.
+
+Latest normal Mac selection checkpoint: [bundled native selection](evidence/2026-09-27-normal-mac-bundled-native-selection.md).
+The normal Mac root now supplies the development factory when its signed containing
+bundle has the exact compiled catalog and complete admitted host inventory. The
+normal Debug build, resource rejection tests, signed normal app staging and actual
+production factory selection pass. Release does not select this authority. The
+installed Mac app is unchanged; normal paired GUI/session acceptance,
+TCC continuity, installation and real input/physical acceptance remain open.
+
+Latest resource-construction checkpoint: [production supervisor package](evidence/2026-09-27-production-supervisor-package.md).
+The new portable host contains a source-bound production supervisor built for macOS
+26 with the explicit stable SDK. Closed provenance, dependency/signature checks and
+four tamper-rejection checks pass, followed by signed app-owned native launch,
+renewals and Stop, and four visible sessions in the dedicated Simulator. The first
+Simulator run lost its Agent before pairing; the sequential rerun passes and both
+reports are retained. Normal containing-app resource/factory selection, installation,
+real input and physical acceptance remain open.
+
+Latest production Mac wrapper checkpoint: [managed-host promotion](evidence/2026-09-27-production-managed-host-wrapper.md).
+The process/enrollment implementations now live in the normal Mac platform module,
+with experimental aliases and an explicit artifact-validating factory. The finite
+supervisor has a production source path. Real lifecycle tests, the normal Mac
+Debug build, iPhone SDK build and signed app-owned native launch/renewal/Stop pass.
+Default native factories, foreign artifact admission and installed normal-app
+acceptance remain open; this checkpoint does not claim physical or real input
+acceptance.
+
+Latest Mac process checkpoint: [native menu app privacy attribution](evidence/2026-09-27-native-menu-app-tcc-attribution.md).
+Fresh TCC traces show earlier command-line capture attributed to Codex. A real
+signed app launched through macOS attributes the native child to MacCompanion.
+A Developer ID requirement mismatched the installed development grant; the exact
+installed Apple Development requirement produces allowed ScreenCapture records
+and passes native launch, two renewals, Stop/Observe and cleanup. The runner now
+verifies and reports the actual portable host/TLS inputs and rejects invalid
+signing references with cleanup. [ADR-0003](adr/0003-managed-native-video-process.md)
+records the measured development arrangement. Permanent dependency/signature/
+privacy admission and normal factory selection remain open; no installed normal
+native app, physical iPhone or real input acceptance is claimed.
+
+Latest normal-app wiring checkpoint: [iPhone native composition hook](evidence/2026-09-27-normal-app-native-composition-hook.md).
+The normal workspace now forwards an optional native Control factory, with a
+paired-host signer and current-primary route reader. The Simulator harness uses
+this shared construction. Both native SDK builds, twelve component tests,
+six-framework inventory and the normal iPhone Simulator build pass. A background
+retirement regression in the first extraction was corrected; the final four live
+sessions pass with controls, background/route recovery, Stop/Observe and cleanup.
+Input effects remain synthetic. Default native factories remain unset; production
+host identity/capture/TCC and dependency admission precede selecting the engine
+in both normal apps. Installation and physical/system-input acceptance remain open.
+
+Latest source-delivery checkpoint: [native candidate source-input archive](evidence/2026-09-27-native-candidate-source-inputs.md).
+A file-bound archive retains 42 pinned source components, 17,355 files/symlinks,
+six verified source archives and the exact Mac/iPhone/Simulator build bindings.
+Safe extraction, full readback, changed-source rejection and stable validation
+pass. The [extracted dependency and offline Web UI checkpoint](evidence/2026-09-27-extracted-native-source-dependency-rebuild.md) now proves six rebuilt dependency configurations and an offline install/build using all 193 npm archives. Full native source reconstruction/rebuild and assembled corresponding-source delivery remain open; completion and permanent admission remain false.
+
+Latest integration checkpoint: [source-built portable native host](evidence/2026-09-27-source-built-portable-native-host.md).
+The four source-built runtime dependencies and seven codec libraries now feed
+a verified portable development package. The x265 assembly deployment warning
+is repaired; every inspected codec object targets macOS 26.0. Signature/integrity,
+relocation/startup/credential checks and stable validation with 109 fixtures pass.
+Four live Simulator sessions pass with video, keyboard/modifiers/shortcuts,
+pointer, background/reconnect recovery, Stop, Observe and cleanup. Input effects
+remain synthetic behind the real native permit. Complete transitive source and
+permanent process/TCC admission, normal-app composition, installation and physical
+system-input acceptance remain open. Physical macOS 26 runtime compatibility has
+not been tested.
+
+Previous live integration evidence: [portable native host development package](evidence/2026-09-27-portable-native-host-package.md).
+The packaged host now carries all six linked runtime dylibs, its certificate CLI
+and process supervisor. Loader-relative references, strict signatures, file/symlink
+integrity and construction provenance are verified. Relocation/startup/credential
+checks pass and a changed dependency is rejected. Four live native Simulator
+sessions pass through this package with controls, background revocation, route-loss
+recovery, Stop/restart, fresh Observe and cleanup verified. The client retains its
+source-built OpenSSL candidate. Host/transitive source/build provenance and permanent
+process/TCC admission remain next, followed by normal-app composition and signed
+installation. Ad-hoc development signatures and a synthetic input sink do not
+prove actual system input, LAN, installed-product or physical behavior. Native
+focused App/Window capture and visible-area bitrate remain open.
+
+The owner approved developing both apps around Sunshine and Moonlight and
+accepted GPL licensing. The [integration plan](sunshine-moonlight-integration-plan.md)
+now governs this engine migration. Combined distribution uses GPL-3.0 with
+retained Apache-2.0 and upstream notices under `../LICENSING.md`. This supersedes
+the Apache-only product direction in the historical entries below. Corresponding
+source, exact dependency admission, process/TCC ownership, session/input fences,
+Apple distribution review, and existing release gates still require evidence.
+Disposable upstream experiments remain outside permanent targets. This decision
+does not admit new wire/security semantics or change Observe/Act/Control grants.
+
+Implementation checkpoint: [Sunshine/Moonlight foundation](evidence/2026-09-26-sunshine-moonlight-foundation.md).
+Pinned source-built host and reference client reached a decoded Desktop frame
+on the dedicated Simulator with audio explicitly disabled. The experimental
+video component builds for Simulator and iPhone and passes four native lifecycle
+tests; its process supervisor passes four real-process tests. These components
+remain under `Experiments/`. Normal-app composition, credential enrollment,
+dependency/TCC admission, physical installation, and device acceptance are open.
+The user's existing installed host configuration was not used by the experiment.
+
+Simulator follow-up: [extracted-engine live playback and teardown](evidence/2026-09-26-simulator-embedded-moonlight.md)
+now proves two decoded-frame/Stop/drain sequences through the extracted framework
+in the reference client, including a fresh stream after teardown. Required server
+codec metadata and real network-failure coverage were repaired; the final native
+suite passed four tests and repository validation exited 0. This remains a
+reference-client experiment; normal MacCompanion composition is still open.
+
+Native-owner follow-up: [normal UIKit owner and enrollment verifier](evidence/2026-09-26-native-video-owner-and-enrollment.md)
+adds a production native surface/owner and Desktop injection hook, exact decoded
+geometry, immediate blanking and drained Stop, golden enrollment signing, and
+a single-use host attestation verifier. Twelve native tests passed; ten reference
+frame/Stop checks and a fresh final packaged check passed with native input
+disabled. Both unsigned SDK components and their complete framework inventory
+are available. Authenticated certificate registration, normal managed host
+startup, native input presentation admission, automatic normal-app composition,
+signed installation, and physical acceptance remain unfinished. This checkpoint
+does not claim the requested usable engine replacement is complete.
+
+Managed-host follow-up: [local enrollment and managed startup](evidence/2026-09-26-managed-native-host-enrollment.md)
+adds production host and client attestation owners and an isolated experimental
+Sunshine backend. Golden-vector, startup race, key-custody cancellation, exact
+certificate admission, port conflict, revocation, and private-state cleanup
+checks passed. The normal authenticated primary records, native client launch,
+presentation/input admission, permanent process/dependency gates, normal-app
+composition, signed installation, and physical acceptance remain open.
+
+Primary-enrollment follow-up: [authenticated Control enrollment routing](evidence/2026-09-26-native-video-primary-enrollment.md)
+adds closed indexed request/challenge/proof/ready/cancel records, optional normal
+host dispatch, store-bound native runtime composition, client correlated waits,
+and a role-owned enrollment session. Stop/late-result, display-mismatch, and
+durable-grant-loss checks pass; stable repository validation and both SDK builds
+pass. Native TLS/launch, the concrete Mac runtime provider, automatic UIKit
+startup, native presentation/input admission, packaging/TCC, signed installation,
+and physical acceptance remain open. The normal apps do not yet automatically
+select native video.
+
+Native-client follow-up: [in-memory TLS, launch adapter and normal startup hook](evidence/2026-09-26-native-client-tls-launch.md)
+adds temporary native identity creation, exact host pin/client-key possession,
+bounded HTTPS and XML, sole-Desktop/encrypted-route launch construction, joined
+TLS/video/enrollment retirement, and optional automatic UIKit preparation after
+initial Desktop acknowledgement. Eight real TLS cases, actual enrolled-client
+Sunshine metadata access, fifteen Simulator component tests and both SDK builds
+pass. The concrete Mac runtime provider, sealed phone-facing host, dependency/
+TCC packaging, complete live native startup/presentation, normal app configuration,
+signed installation and physical acceptance remain open.
+
+Managed-profile follow-up: [sealed managed native host](evidence/2026-09-27-sealed-managed-native-host.md)
+adds a local managed profile that disables upstream administration/plaintext
+listeners and native pair/resume/appasset routes, and preserves the configured
+native runtime across normal Mac bootstrap. Actual admitted-client/forbidden-route
+and listener checks, eight TLS cases, fifteen Simulator checks, both SDK builds
+and stable repository validation pass. All artifacts match one source snapshot.
+The host remains loopback-only; authenticated Mac runtime construction, normal-app
+composition, native presentation/input, packaging and installation remain open.
+
+Runtime-snapshot follow-up: [authenticated native runtime projection](evidence/2026-09-27-authenticated-native-runtime-snapshot.md)
+adds atomic acknowledged-Desktop projection, bounded generation-bound local XPC
+snapshot records, concrete Mac route mapping and active-primary/menu-generation
+checks before and after runtime/backend suspensions, plus immediate native
+admission retirement during pending Stop. Nine focused checks, final stable
+repository validation, fifteen native Simulator checks, both SDK builds and
+matching host/TLS probes pass. The normal Control regression also passed three
+UI journeys and five pairing checks; full native XPC/enrollment is still unproved. Menu-owned backend operations, approved physical display resolution,
+automatic client composition, native presentation/input and installation remain open.
+
+
+Menu-backend follow-up: [menu-owned native host operations](evidence/2026-09-27-menu-owned-native-backend.md)
+adds bounded backend records on the authenticated local route, an inert Agent
+proxy, acknowledged-runtime/physical-display joins, a menu-owned factory seam,
+and joined cleanup with early Stop admission fencing. Four menu lifecycle and
+two proxy cancellation/correlation checks pass, along with final stable repository
+validation, fifteen native Simulator checks, three normal Control journeys, five
+pairing regressions and both SDK builds. All native artifacts match one source
+snapshot. The actual managed Sunshine host
+passes through the production proxy/menu owner using an explicitly in-process
+record bridge. Complete authenticated native XPC/primary startup, automatic
+client composition, native presentation/input, packaging and installation remain
+open. The default normal app has no admitted experimental host factory.
+
+Real-menu launch follow-up: [production menu admission and native launch](evidence/2026-09-27-real-menu-native-launch.md)
+replaces the synthetic acknowledged snapshot in the managed host probe with the
+production menu runtime. Unacknowledged preparation is rejected; actual menu Stop
+retires the host. The in-memory admitted client completes a real sole-Desktop
+HTTPS launch and the shared iOS parser verifies its encrypted stream address.
+Authenticated local XPC/primary enrollment, decoded normal-app playback, native
+input, packaging and installation remain open. Platform bootstrap effects are
+explicit substitutes and this probe does not claim phone presentation.
+
+Authenticated-native follow-up: [signed primary/XPC launch and renewal continuity](evidence/2026-09-27-authenticated-native-launch-and-renewal.md)
+now joins real production pairing, authenticated primary Control, signed local
+XPC and the managed host. It repairs native two-hour/four-hour limit mismatches,
+a shadowed runtime snapshot read, and premature retirement at descriptor freshness
+expiry. Native enrollment, mutual TLS Desktop launch, continuity across two Control
+renewals, joined Stop cleanup and same-primary Observe all pass. Stable validation,
+both SDK builds, fifteen native Simulator checks, three normal Control journeys,
+five pairing checks, eight TLS checks and managed host admission pass at one
+source snapshot. Visible decoded native playback in
+the normal client, native presentation/input, permanent dependency/TCC packaging,
+installation and physical acceptance remain open.
 
 Status date: 2026-09-08
 
@@ -1127,3 +2571,120 @@ human-visible checkpoints.
 ## Blocker handling rule
 
 Every blocked item records its affected artifact, evidence needed to unblock it, and parallel work. The project is not globally blocked while any safe in-scope lane remains active or ready. A later-stage capability is complete only with passing exit evidence or an explicit evidence-backed `no-go` or `deferred` disposition.
+
+Production-wrapper acceptance update: both factory rejection tests, stable repository validation, the refreshed six-framework inventory and four visible native Simulator sessions pass. Keyboard/modifier/shortcut/pointer delivery, background and route recovery, Stop/Observe and cleanup remain verified through the synthetic final input sink. See the [production wrapper evidence](evidence/2026-09-27-production-managed-host-wrapper.md) for exact source and report bindings. Signed normal-root selection, the final packaged supervisor, installation and actual input/physical acceptance remain next.
+
+Normal iOS promotion regression acceptance: four visible native sessions passed
+with typing/modifiers/shortcuts/pointer, background and route recovery,
+Stop/restart and fresh Observe; cleanup was verified. These use the promoted
+adapters in the signed harness with substituted custody/consent and synthetic
+final input. The [normal iOS evidence](evidence/2026-09-27-normal-ios-native-development.md)
+retains exact reports and the separate normal app storage limitation.
+
+Archive-package fresh acceptance update: four visible native Simulator sessions
+passed against the exact archive-rebuilt package with video, keyboard/modifiers/
+shortcuts/pointer, background and route recovery, Stop/restart, fresh Observe and
+verified cleanup. The [rebuilt package evidence](evidence/2026-09-27-archive-rebuilt-portable-host.md)
+retains the report and source/package bindings. Final input effects are synthetic;
+normal installed-app and physical acceptance remain open.
+
+Selected capture prerequisite: [App/Window geometry and retained selection](evidence/2026-09-27-native-selected-capture-projection.md)
+is implemented with exact scope/lease checks, selected bounds/backing scale and
+menu-local ScreenCaptureKit objects. Focused tests and stable validation with
+113 fixtures pass. Native App/Window capture is still unavailable: the managed
+Sunshine implementation and runtime/client gates remain Desktop-only. Continue
+with isolated selected-surface capture and actual sample evidence, then rebuilt
+normal Simulator acceptance. No physical or installed normal Mac result is
+claimed by this checkpoint.
+
+Selected capture API checkpoint: the [native stream adapter and Sunshine API](evidence/2026-09-27-native-selected-stream-adapter.md)
+pass fifteen component lifecycle/sample cases, three bridge conditions and a
+complete source-built host compile/link/readback. A real descriptor double-close
+found during validation is repaired in both local stores; all 131 Agent platform
+tests pass. Final stable validation with 114 fixtures passes. Per-operation selected-surface
+handoff and actual capture evidence remain next; normal runtime/client enrollment
+is still Desktop-only, and App/Window playback has not been accepted.
+
+Selected capture process handoff checkpoint: the [managed selected capture context](evidence/2026-09-27-managed-selected-capture-context.md)
+binds the committed menu target to one private operation and makes the source-built
+Sunshine child revalidate its exact process/window, bounds, scale and expiry.
+Unsafe records and changed targets fail closed without Desktop fallback. The
+source-pinned disposable host compiles/links both first-party ARC classes;
+focused native/Swift tests and stable validation with 115 fixtures pass.
+Normal backend/runtime/client gates are still Desktop-only. Actual selected
+frames, fresh normal Simulator playback, viewport bitrate, current source
+assembly and installed/physical acceptance remain open.
+
+Selected App/Window live capture checkpoint: the [signed Mac probe](evidence/2026-09-27-selected-app-window-live-capture.md)
+receives real Window and App frames through a private operation context and the
+first-party ScreenCaptureKit adapter. The live test exposed and fixed a retained
+color crash plus legitimate sample resampling and tiny timestamp skew. The
+normal Mac backend owner now routes an exact current selection into the native
+factory; 23 focused Swift cases and 17 native sample cases pass, and the final
+source-built host links the capture classes. This proves the capture component,
+not normal child playback: normal runtime/client transition and native
+re-enrollment remain Desktop-only, with fresh Simulator, installed Mac and
+physical acceptance still pending.
+
+Selected capture admission safety: the same [live capture checkpoint](evidence/2026-09-27-selected-app-window-live-capture.md)
+now binds the acknowledged surface kind into the canonical local native snapshot.
+Receipt decoding still admits Desktop only; the backend owner requires a matching
+menu-selected object for any future App/Window admission. Focused backend and
+snapshot rejection tests pass. Normal App/Window playback remains pending.
+
+Native session reliability checkpoint: the [normal app soak and iPhone update](evidence/2026-09-28-native-session-soak-and-device-refresh.md)
+repairs an early display catalog/selection reply hang. The exact updated normal
+iOS source passes two ten-session Simulator Control start/Stop soaks and a
+30-minute single-session Simulator hold with continuing host video and input.
+A disposable bridge handoff adjustment also passes ten sessions followed by
+another ten sessions with 120 immediate post-Stop status reads, idle capture
+and media cleanup, and Simulator restoration. Stable validation passes with
+116 fixtures. An earlier repeat-run Stop-status transport failure remains an
+intermittent risk because its exact cause is unproven. The updated development
+iOS app is installed on the paired iPhone 18 Pro Max, but iOS denied launch
+while the phone was locked. Physical playback, actual Mac input, installed Mac
+GUI capture, viewport bitrate and release gates remain open.
+
+Normal Control toolbar recheck: the [current Simulator evidence](evidence/2026-09-28-normal-native-app-window-simulator.md#shortcut-and-control-toolbar-recheck)
+records the simulator-only setup warning leaving paired Control controls
+touchable. Fresh normal-app Desktop, selected App, and selected Window paired
+Simulator journeys each pass Copy, Shift+Tab, keyboard and pointer delivery,
+three native presentations, Stop/restart, key cleanup, host cleanup and
+Simulator restoration. The required Xcode 27.0 validation passes with 116
+indexed fixtures. The physical iPhone remained locked at the attempted launch;
+installed-app playback, real Mac input, installed Mac GUI capture, viewport
+bitrate and release acceptance remain open.
+
+Native client continuity checkpoint: the [one-minute frame-progress evidence](evidence/2026-09-28-native-frame-continuity.md)
+adds a content-free, Debug-only count of picture samples accepted by the iOS
+display layer. A paired normal-app Simulator hold passed six rising host media
+checks and 20 client progress checkpoints with no stalled checkpoint, despite
+four Sunshine IDR-request errors. A current-source selected Window journey
+also passed with client frame progress. Full validation passes with 116 indexed
+fixtures. The matching normal iOS development app was signed and installed in
+place on the paired iPhone; device inventory confirms it. The phone was locked
+at the attempted launch, so physical playback, actual Mac input, installed Mac
+GUI capture, bandwidth/latency and viewport bitrate remain open.
+
+Selected Window disappearance checkpoint: the [normal-app recovery journey](evidence/2026-09-28-selected-window-close-recovery.md)
+closes a disposable selected Window during native playback. The paired iOS
+Simulator app shows a failed-session recovery action with Remote Keyboard
+disabled; tapping it restores the ability to request Control. The signed Mac
+backend invalidates its local endpoint and terminates the managed video host.
+One final UI journey, client-key cleanup, host cleanup, and Simulator-state
+restoration pass. This adds selected Window loss recovery evidence, while
+physical playback, real input, installed Mac GUI capture, bandwidth/latency,
+and viewport bitrate remain open.
+
+Selected Window geometry checkpoint: the [move and resize recovery evidence](evidence/2026-09-28-selected-window-geometry-recovery.md)
+adds disposable, ready-synchronized Window geometry changes. Move, resize,
+and the synchronized close regression each pass normal paired iOS Simulator
+fail-closed recovery with old keyboard authority disabled and a usable
+failed-session Stop action. A replacement signed disposable Mac menu now passes
+the stronger fresh-stream restart check after resize, including sustained
+frame progress and a clean final Stop. Installed Mac dashboard recovery and
+physical iPhone playback remain unverified.
+Automatic geometry re-enrollment also remains unverified.
+Two no-delay rapid Stop runs after the restarted keyboard enabled also pass
+clean backend retirement, but an earlier run lost the local test endpoint at
+this step. Intermittent teardown behavior remains open.

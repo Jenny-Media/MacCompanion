@@ -16,6 +16,7 @@ public enum IOSClientReleaseApplicationPhaseV1:
     case idle
     case preparing
     case pairing
+    case macLibrary
     case routeSetup
     case routeSetupDeferred
     case connecting
@@ -48,6 +49,8 @@ public struct IOSClientReleaseWorkspaceV1: Identifiable {
     public let primaryState: NetworkClientPrimaryApplicationStateV0
     public let interactiveRoles:
         NetworkClientInteractiveRoleProductBindingV0
+    public let initialDesktopProductFactory:
+        UIKitClientNativeVideoCompositionV1.ProductFactory?
     public let studyCapture: Stage3StudyLocalCaptureV1
     public let studyCaptureFailure:
         @MainActor @Sendable () -> Void
@@ -59,6 +62,8 @@ public struct IOSClientReleaseWorkspaceV1: Identifiable {
         primaryState: NetworkClientPrimaryApplicationStateV0,
         interactiveRoles:
             NetworkClientInteractiveRoleProductBindingV0,
+        initialDesktopProductFactory:
+            UIKitClientNativeVideoCompositionV1.ProductFactory? = nil,
         studyCapture: Stage3StudyLocalCaptureV1,
         studyCaptureFailure:
             @escaping @MainActor @Sendable () -> Void
@@ -68,6 +73,7 @@ public struct IOSClientReleaseWorkspaceV1: Identifiable {
         self.macName = macName
         self.primaryState = primaryState
         self.interactiveRoles = interactiveRoles
+        self.initialDesktopProductFactory = initialDesktopProductFactory
         self.studyCapture = studyCapture
         self.studyCaptureFailure = studyCaptureFailure
     }
@@ -124,23 +130,49 @@ public final class IOSClientReleaseApplicationV1 {
         Stage3StudyLocalReportOwnerV1?
     public private(set) var studyCapture: Stage3StudyLocalCaptureV1?
     public private(set) var studyCaptureFailed = false
+    public private(set) var savedMacs: [ClientSavedMacV1] = []
+    public private(set) var macManagementFailed = false
 
     private var bootstrap: IOSClientReleaseBootstrapV1?
     private var storage: IOSClientReleaseStorageV1?
     private var pairingOwner: ClientPairingApplicationOwnerV0?
+    private var pairingGeneration: UUID?
     private var routePlan: ClientConfiguredRouteBootstrapPlanV1?
     private var networkProduct: UIKitClientConfiguredRouteNetworkProductV1?
+    private var networkGeneration: UUID?
+    private var networkDrain: Task<Void, Never>?
     private var transitionInProgress = false
     private var studyPairingStartedAtMilliseconds: Int64?
+    private let nativeVideoAdapterFactory:
+        UIKitClientNativeVideoCompositionV1.AdapterFactory?
+    private let desktopCredentialRemoval: @Sendable (UUID) throws -> Void
+    private let bootstrapFactory: @Sendable () -> IOSClientReleaseBootstrapV1
 
-    public init() {}
+    public init(
+        nativeVideoAdapterFactory: UIKitClientNativeVideoCompositionV1.AdapterFactory? = nil,
+        desktopCredentialRemoval: @escaping @Sendable (UUID) throws -> Void = { _ in }
+    ) {
+        self.desktopCredentialRemoval = desktopCredentialRemoval
+        self.nativeVideoAdapterFactory = nativeVideoAdapterFactory
+        bootstrapFactory = { IOSClientReleaseBootstrapV1() }
+    }
+
+    #if DEBUG && targetEnvironment(simulator)
+    public init(simulatorDevelopmentNativeVideoAdapterFactory:
+        UIKitClientNativeVideoCompositionV1.AdapterFactory?,
+        desktopCredentialRemoval: @escaping @Sendable (UUID) throws -> Void = { _ in }) {
+        self.desktopCredentialRemoval = desktopCredentialRemoval
+        nativeVideoAdapterFactory = simulatorDevelopmentNativeVideoAdapterFactory
+        bootstrapFactory = { IOSClientReleaseBootstrapV1(simulatorDevelopment: ()) }
+    }
+    #endif
 
     public func start() async {
         guard !transitionInProgress else { return }
         switch snapshot.phase {
         case .idle, .unavailable:
             break
-        case .preparing, .pairing, .routeSetup, .routeSetupDeferred,
+        case .preparing, .pairing, .macLibrary, .routeSetup, .routeSetupDeferred,
              .connecting, .workspace, .closed:
             return
         }
@@ -148,7 +180,7 @@ public final class IOSClientReleaseApplicationV1 {
         publish(phase: .preparing)
         defer { transitionInProgress = false }
 
-        let bootstrap = IOSClientReleaseBootstrapV1()
+        let bootstrap = bootstrapFactory()
         self.bootstrap = bootstrap
         let bootstrapSnapshot = await bootstrap.start()
         guard let storage = await bootstrap
@@ -162,10 +194,13 @@ public final class IOSClientReleaseApplicationV1 {
         self.storage = storage
         studyReportOwner = storage.studyReportOwner
         studyCapture = storage.studyCapture
+        guard await refreshMacLibrary(storage: storage) else { return }
 
         switch bootstrapSnapshot.phase {
         case .unpaired:
             preparePairing(storage: storage)
+        case .macLibrary:
+            publish(phase: .macLibrary)
         case let .pairedRouteConfigurationRequired(hostID):
             await prepareRouteSetup(
                 expectedHostID: hostID,
@@ -216,7 +251,7 @@ public final class IOSClientReleaseApplicationV1 {
         transitionInProgress = true
         defer { transitionInProgress = false }
         await prepareRouteSetup(
-            expectedHostID: nil,
+            expectedHostID: snapshot.pairing?.pairedHost?.hostID,
             storage: storage,
             beginImmediately: true
         )
@@ -309,6 +344,89 @@ public final class IOSClientReleaseApplicationV1 {
         transitionInProgress = false
     }
 
+    public func showMacLibrary() async {
+        guard !transitionInProgress, let storage, snapshot.phase != .closed else { return }
+        transitionInProgress = true
+        defer { transitionInProgress = false }
+        await retireOwnedProducts()
+        routePlan = nil
+        guard await refreshMacLibrary(storage: storage) else { return }
+        publish(phase: .macLibrary)
+    }
+
+    public func pairAnotherMac() async {
+        guard snapshot.phase == .macLibrary, !transitionInProgress, let storage else { return }
+        transitionInProgress = true
+        defer { transitionInProgress = false }
+        await retireOwnedProducts()
+        preparePairing(storage: storage)
+    }
+
+    public func selectMac(_ hostID: UUID) async {
+        guard snapshot.phase == .macLibrary, !transitionInProgress, let storage,
+              savedMacs.contains(where: { $0.hostID == hostID }) else { return }
+        transitionInProgress = true
+        defer { transitionInProgress = false }
+        await retireOwnedProducts()
+        publish(phase: .connecting)
+        do {
+            guard !(try await storage.macLibrary.snapshot()).pendingRemovals.contains(hostID),
+                  let record = try await storage.pairedHosts.pairedHost(hostID: hostID),
+                  record.clientID == storage.clientID else { throw ClientMacLibraryErrorV1.conflictingInventory }
+            try await storage.custody.registerPublishedIdentity(record)
+            if try await storage.routes.snapshot(hostID: hostID) == nil {
+                await prepareRouteSetup(expectedHostID: hostID, storage: storage, beginImmediately: true)
+            } else { await prepareWorkspace(expectedHostID: hostID, storage: storage) }
+        } catch {
+            macManagementFailed = true
+            publish(phase: .macLibrary)
+        }
+    }
+
+    public func renameMac(_ hostID: UUID, name: String) async {
+        guard snapshot.phase == .macLibrary, !transitionInProgress, let storage,
+              savedMacs.contains(where: { $0.hostID == hostID }) else { return }
+        transitionInProgress = true
+        defer { transitionInProgress = false }
+        do {
+            var preferences = try await storage.macLibrary.snapshot()
+            try preferences.rename(hostID: hostID, name: name)
+            try await storage.macLibrary.replace(preferences)
+            _ = await refreshMacLibrary(storage: storage)
+        } catch { macManagementFailed = true }
+    }
+
+    public func forgetMac(_ hostID: UUID) async {
+        guard snapshot.phase == .macLibrary, !transitionInProgress, let storage,
+              savedMacs.contains(where: { $0.hostID == hostID }) else { return }
+        transitionInProgress = true
+        defer { transitionInProgress = false }
+        await retireOwnedProducts()
+        do {
+            try desktopCredentialRemoval(hostID)
+            var preferences = try await storage.macLibrary.snapshot()
+            preferences.beginRemoval(hostID: hostID)
+            try await storage.macLibrary.replace(preferences)
+            try await storage.resumePendingMacRemovals()
+            _ = await refreshMacLibrary(storage: storage)
+            macManagementFailed = try await storage.macLibrary.snapshot().pendingRemovals.contains(hostID)
+            if savedMacs.isEmpty, !macManagementFailed { preparePairing(storage: storage) }
+        } catch { macManagementFailed = true }
+    }
+
+    private func refreshMacLibrary(storage: IOSClientReleaseStorageV1) async -> Bool {
+        do {
+            let preferences = try await storage.macLibrary.snapshot()
+            savedMacs = try preferences.library(records: await storage.pairedHosts.allRecords(),
+                clientID: storage.clientID, configuredHostIDs: storage.storedRouteHostIDs())
+            macManagementFailed = false
+            return true
+        } catch {
+            publish(phase: .unavailable, failure: .protectedStorageUnavailable)
+            return false
+        }
+    }
+
     public func finish() async {
         guard snapshot.phase != .closed else { return }
         transitionInProgress = true
@@ -326,6 +444,8 @@ public final class IOSClientReleaseApplicationV1 {
 
     private func preparePairing(storage: IOSClientReleaseStorageV1) {
         do {
+            let generation = UUID()
+            pairingGeneration = generation
             let owner = try NetworkClientPairingApplicationCompositionV0
                 .makeOwner(
                     clientID: storage.clientID,
@@ -339,6 +459,7 @@ public final class IOSClientReleaseApplicationV1 {
                     ),
                     stateChanged: { [weak self] presentation in
                         await MainActor.run {
+                            guard self?.pairingGeneration == generation else { return }
                             self?.pairingDidChange(presentation)
                         }
                     }
@@ -410,15 +531,18 @@ public final class IOSClientReleaseApplicationV1 {
             )
             return
         }
-        guard records.count == 1, let record = records.first,
+        let pending = (try? await storage.macLibrary.snapshot())?.pendingRemovals
+        guard let expectedHostID,
+              let record = records.first(where: { $0.hostID == expectedHostID }),
               record.clientID == storage.clientID,
-              expectedHostID.map({ $0 == record.hostID }) ?? true else {
+              pending?.contains(record.hostID) == false else {
             publish(
                 phase: .unavailable,
                 failure: .ambiguousSavedState
             )
             return
         }
+        guard await refreshMacLibrary(storage: storage) else { return }
         let plan = ClientConfiguredRouteBootstrapPlanV1(
             pairedHost: record
         )
@@ -447,8 +571,25 @@ public final class IOSClientReleaseApplicationV1 {
                 || snapshot.phase == .preparing else { return }
         publish(phase: .connecting)
         do {
+            // Only native composition needs an additional session signer.
+            // Resolve it from this workspace's exact durable paired host, using
+            // the same protected custody as the normal primary connection.
+            let nativeSigner: (any ClientSessionAuthenticationSigningV0)?
+            if nativeVideoAdapterFactory != nil {
+                guard let record = try await storage.pairedHosts.pairedHost(hostID: expectedHostID),
+                      record.hostID == expectedHostID,
+                      record.clientID == storage.clientID else {
+                    throw IOSClientNativeVideoCompositionErrorV1.pairedHostUnavailable
+                }
+                nativeSigner = try ClientCustodiedSessionSignerV0(
+                    custody: storage.custody, sessionKey: record.sessionKey
+                )
+            } else {
+                nativeSigner = nil
+            }
             let runtime = NetworkClientReconnectRuntimeV1(
                 custody: storage.custody,
+                sessionConsentProfile: .trustedDevice,
                 clock: Self.clock,
                 verificationQueue: DispatchQueue(
                     label: "media.jenny.maccompanion.ios.primary.verify"
@@ -461,6 +602,8 @@ public final class IOSClientReleaseApplicationV1 {
                     UInt16.random(in: 8_000 ... 12_000)
                 }
             )
+            let generation = UUID()
+            networkGeneration = generation
             let product = try await
                 UIKitClientConfiguredRouteNetworkProductFactoryV1.make(
                     hostID: expectedHostID,
@@ -468,12 +611,16 @@ public final class IOSClientReleaseApplicationV1 {
                     routes: storage.routes,
                     runtime: runtime,
                     failure: { [weak self] _ in
-                        self?.networkDidFail()
+                        self?.networkDidFail(generation: generation)
                     }
             )
             do {
                 try await product.applicationOwner.start()
+                guard networkGeneration == generation, snapshot.phase == .connecting else {
+                    throw IOSClientNativeVideoCompositionErrorV1.pairedHostUnavailable
+                }
             } catch {
+                await product.applicationOwner.stop()
                 await product.interactiveRoles.close()
                 await product.lifecycle.close()
                 throw error
@@ -484,9 +631,17 @@ public final class IOSClientReleaseApplicationV1 {
                 phase: .workspace,
                 workspace: IOSClientReleaseWorkspaceV1(
                     hostID: expectedHostID,
-                    macName: "Mac",
+                    macName: savedMacs.first(where: { $0.hostID == expectedHostID })?.name ?? "Mac",
                     primaryState: product.primaryState,
                     interactiveRoles: product.interactiveRoles,
+                    initialDesktopProductFactory: nativeSigner.flatMap { signer in
+                        nativeVideoAdapterFactory.map { factory in
+                            UIKitClientNativeVideoCompositionV1.productFactory(
+                                signer: signer, primaryState: product.primaryState,
+                                roles: product.interactiveRoles, adapterFactory: factory
+                            )
+                        }
+                    },
                     studyCapture: storage.studyCapture,
                     studyCaptureFailure: { [weak self] in
                         self?.studyCaptureFailed = true
@@ -501,27 +656,37 @@ public final class IOSClientReleaseApplicationV1 {
         }
     }
 
-    private func networkDidFail() {
+    private func networkDidFail(generation: UUID) {
+        guard generation == networkGeneration else { return }
         guard snapshot.phase == .workspace || snapshot.phase == .connecting
         else { return }
         let product = networkProduct
         networkProduct = nil
+        networkGeneration = nil
         publish(
             phase: .unavailable,
             failure: .networkCompositionUnavailable
         )
-        Task {
+        networkDrain = Task {
+            await product?.applicationOwner.stop()
             await product?.interactiveRoles.close()
             await product?.lifecycle.close()
         }
     }
 
     private func retireOwnedProducts() async {
+        networkGeneration = nil
+        pairingGeneration = nil
+        if let networkDrain {
+            await networkDrain.value
+            self.networkDrain = nil
+        }
         if let pairingOwner { await pairingOwner.cancel() }
         pairingOwner = nil
         if let networkProduct {
             await networkProduct.applicationOwner.stop()
             await networkProduct.interactiveRoles.close()
+            await networkProduct.lifecycle.close()
         }
         networkProduct = nil
     }
@@ -638,5 +803,8 @@ public final class IOSClientReleaseApplicationV1 {
         let value = DispatchTime.now().uptimeNanoseconds / 1_000_000
         return value <= UInt64(Int64.max) ? Int64(value) : -1
     }
+}
+private enum IOSClientNativeVideoCompositionErrorV1: Error {
+    case pairedHostUnavailable
 }
 #endif

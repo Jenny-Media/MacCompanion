@@ -1,0 +1,131 @@
+diff --git a/src/video.cpp b/src/video.cpp
+index 843a19a..4d7df3b 100644
+--- a/src/video.cpp
++++ b/src/video.cpp
+@@ -7,6 +7,7 @@
+ #include <array>
+ #include <atomic>
+ #include <bitset>
++#include <cstdlib>
+ #include <list>
+ #include <thread>
+ #include <utility>
+@@ -35,6 +36,9 @@ extern "C" {
+ #include "platform/common.h"
+ #include "sync.h"
+ #include "video.h"
++#ifdef MACCOMPANION_SELECTED_CAPTURE_ADAPTER
++#include "CompanionNativeEpochAssociation.h"
++#endif
+
+ #ifdef _WIN32
+ extern "C" {
+@@ -430,6 +434,10 @@ namespace video {
+   class avcodec_encode_session_t: public encode_session_t {
+   public:
+     avcodec_encode_session_t() = default;
++#ifdef MACCOMPANION_SELECTED_CAPTURE_ADAPTER
++    CompanionNativeEpochAssociation native_epoch_queue {};
++    std::optional<std::array<uint8_t,48>> native_capture_epoch, native_submitted_epoch;
++#endif
+
+     /**
+      * @brief Initialize an FFmpeg encode session and its hardware encode device.
+@@ -478,6 +486,11 @@ namespace video {
+       vps = std::move(other.vps);
+
+       inject = other.inject;
++#ifdef MACCOMPANION_SELECTED_CAPTURE_ADAPTER
++      native_epoch_queue = other.native_epoch_queue;
++      native_capture_epoch = std::move(other.native_capture_epoch);
++      native_submitted_epoch = std::move(other.native_submitted_epoch);
++#endif
+
+       return *this;
+     }
+@@ -492,7 +505,14 @@ namespace video {
+       if (!device) {
+         return -1;
+       }
+-      return device->convert(img);
++      int result = device->convert(img);
++#ifdef MACCOMPANION_SELECTED_CAPTURE_ADAPTER
++      if (!result) {
++        native_capture_epoch = img.native_surface_epoch;
++        if (native_epoch_queue.continuityStarted && !native_capture_epoch) return -1;
++      }
++#endif
++      return result;
+     }
+
+     /**
+@@ -1832,6 +1852,19 @@ namespace video {
+     auto &sps = session.sps;
+     auto &vps = session.vps;
+
++#ifdef MACCOMPANION_SELECTED_CAPTURE_ADAPTER
++    const auto &captured_epoch = session.native_capture_epoch;
++    // Capability probes have no streaming channel and repeatedly submit PTS 1.
++    // They must not establish client handoff metadata or alter legacy output.
++    bool native_packet_epochs = channel_data && (captured_epoch || session.native_epoch_queue.continuityStarted);
++    if (native_packet_epochs && !CompanionNativeEpochAssociate(&session.native_epoch_queue,frame_nr,
++          captured_epoch ? captured_epoch->data() : nullptr,captured_epoch ? captured_epoch->size() : 0)) return -1;
++    if (native_packet_epochs && captured_epoch && captured_epoch != session.native_submitted_epoch) {
++      // Every new capture epoch begins independently. Set this immediately
++      // before submission; request_normal_frame() cannot erase the boundary.
++      session.request_idr_frame();
++    }
++#endif
+     // send the frame to the encoder
+     auto ret = avcodec_send_frame(ctx.get(), frame);
+     if (ret < 0) {
+@@ -1841,6 +1874,9 @@ namespace video {
+       return -1;
+     }
+
++#ifdef MACCOMPANION_SELECTED_CAPTURE_ADAPTER
++    if (native_packet_epochs) session.native_submitted_epoch = captured_epoch;
++#endif
+     while (ret >= 0) {
+       auto packet = std::make_unique<packet_raw_avcodec>();
+       auto av_packet = packet.get()->av_packet;
+@@ -1889,6 +1925,23 @@ namespace video {
+         packet->frame_timestamp = frame_timestamp;
+       }
+
++#ifdef MACCOMPANION_SELECTED_CAPTURE_ADAPTER
++      CompanionNativeSurfaceEpoch packet_epoch;
++      bool marked = false;
++      if (native_packet_epochs && !CompanionNativeEpochTake(&session.native_epoch_queue,av_packet->pts,&packet_epoch,&marked)) return -1;
++      if (marked) {
++        if (ctx->codec_id != AV_CODEC_ID_H264 && ctx->codec_id != AV_CODEC_ID_HEVC) return -1;
++        uint8_t prefix[96];
++        size_t prefix_size = CompanionNativeEpochSEI(&packet_epoch,ctx->codec_id == AV_CODEC_ID_HEVC,prefix,sizeof(prefix));
++        if (!prefix_size || av_packet->size < 0 || av_packet->size > 67108864-(int)prefix_size) return -1;
++        int old_size = av_packet->size;
++        if (av_grow_packet(av_packet,(int)prefix_size) < 0) return -1;
++        // Grow preserves packet PTS, flags and side data. Queued packets use
++        // their submitted PTS association, never the current selected epoch.
++        std::memmove(av_packet->data+prefix_size,av_packet->data,(size_t)old_size);
++        std::memcpy(av_packet->data,prefix,prefix_size);
++      }
++#endif
+       packet->replacements = &session.replacements;
+       packet->channel_data = channel_data;
+       packets->raise(std::move(packet));
+@@ -3090,6 +3143,15 @@ namespace video {
+     if (!disp) {
+       return false;
+     }
++#ifdef MACCOMPANION_SELECTED_CAPTURE_ADAPTER
++    // The managed selected capture is fixed to the client's admitted mode.
++    // Sunshine's normal 1920x1080 capability probe would ask it for a frame
++    // with different dimensions and incorrectly reject VideoToolbox.
++    if (std::getenv("MACCOMPANION_NATIVE_SELECTION_PATH")) {
++      config_max_ref_frames.width = config_autoselect.width = disp->width;
++      config_max_ref_frames.height = config_autoselect.height = disp->height;
++    }
++#endif
+     if (!disp->is_codec_supported(encoder.h264.name, config_autoselect)) {
+       fg.disable();
+       BOOST_LOG(info) << "Encoder ["sv << encoder.name << "] is not supported on this GPU"sv;

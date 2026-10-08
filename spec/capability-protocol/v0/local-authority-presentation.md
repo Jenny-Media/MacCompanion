@@ -79,6 +79,16 @@ audit-token or designated-requirement authentication.
 
 ## Capability grant expansion
 
+The remote-desktop MVP includes the fixed Control grant in the explicit local
+pairing approval. The pairing sheet must disclose screen viewing, pointer,
+keyboard and eligible text access before its approval button, and explain
+that the device remains trusted until removed. New pairings do not present a
+second grant-expansion step. Observe and Act are deferred product paths and
+are not presented as MVP setup choices. The existing Control expansion UI is
+retained solely for legacy pairings which lack Control; an update cannot
+silently expand those devices. The following expansion contract remains
+applicable to that upgrade and future separately scoped capabilities.
+
 One grant-expansion review is bound to exactly one random review ID, device ID, and its locally confirmed `DeviceDisplayName`. The request contains a nonempty, duplicate-free set of validated local registry descriptors not already in the device's current grants, plus current authorization epoch, grant revision, and policy revision.
 
 Each requested capability retains its bounded English title and summary for identification and all declared effect facts individually:
@@ -118,14 +128,14 @@ authorization and grant revisions, and closes current primary-session ingress
 until durable convergence and the closed local status fact are complete. An
 all-granted status must not be represented as review failure. A newly granted
 device must reconnect
-and still complete the separate fresh-presence, one-session Interactive
+and still complete the profile-selected signed, one-session Interactive
 approval before capture or input can start.
 
 ## Interactive Control warning
 
 The visible Mac warning is separately bound to the locally named device, request ID, approval ID, selected display, approval expiry, and exact closed effects: view screen, move pointer, press keyboard keys, and insert eligible text. View is mandatory and text requires keyboard.
 
-This warning does not create or expand a durable grant. It does not substitute for the phone's fresh-presence approval signature. It identifies an awaiting, starting, active, paused, ending, or ended one-session request and always provides a local stop intent. The stop intent carries the device and shown name, request/approval IDs, and session ID when one exists and maps without loss to `LocalInteractiveStopCommandV0`; only an exact receipt proving both remote-authority end and runtime teardown can close the warning.
+This warning does not create or expand a durable grant. It does not substitute for the phone's profile-selected session-start signature. It identifies an awaiting, starting, active, paused, ending, or ended one-session request and always provides a local stop intent. The stop intent carries the device and shown name, request/approval IDs, and session ID when one exists and maps without loss to `LocalInteractiveStopCommandV0`; only an exact receipt proving both remote-authority end and runtime teardown can close the warning.
 
 `CompanionMacUI` must continue distinguishing the durable Interactive Control grant, the fresh phone approval for one session, the visible local warning, and the active capture/input indicator. None implies shell, files, clipboard, audio, provider execution, or autonomous authority.
 

@@ -142,6 +142,17 @@ private final class RuntimeInputPosterProbe:
             posted.append(envelope)
         }
     }
+    func postInteractiveInput(_ envelope: InteractiveInputEnvelope,
+        nativeAuthorization: InteractiveRuntimeNativeInputPostingAuthorizationV0,
+        beforeDeadlineNanoseconds: UInt64) async throws {
+        try await nativeAuthorization.perform(envelope, beforeDeadlineNanoseconds: beforeDeadlineNanoseconds) {
+            try self.lock.withLock {
+                if self.shouldFail { throw RuntimeProbeError.injected(.start) }
+                self.posted.append(envelope)
+            }
+        }
+    }
+
 }
 
 private final class RuntimeMediaQueueProbe:
@@ -251,7 +262,8 @@ private func runtimeMediaHeader(
     sequence: UInt64,
     payloadLength: UInt32 = 6,
     type: MediaRecordType = .videoAccessUnit,
-    cleanKeyframe: Bool = false
+    cleanKeyframe: Bool = false,
+    encodedWidth: UInt16 = 100, encodedHeight: UInt16 = 100
 ) throws -> MediaRecordHeader {
     try MediaRecordHeader(
         type: type,
@@ -266,8 +278,8 @@ private func runtimeMediaHeader(
         ),
         mediaSequence: sequence,
         presentationTimeNanoseconds: sequence * 1_000,
-        encodedWidth: type == .discontinuity || type == .end ? 0 : 100,
-        encodedHeight: type == .discontinuity || type == .end ? 0 : 100
+        encodedWidth: type == .discontinuity || type == .end ? 0 : encodedWidth,
+        encodedHeight: type == .discontinuity || type == .end ? 0 : encodedHeight
     )
 }
 
@@ -300,7 +312,10 @@ private func runtimeLease(
 
 private func runtimeSurfaceDescriptor(
     lease: InteractiveExecutionLease,
-    kind: InteractiveSurfaceKind = .desktop
+    kind: InteractiveSurfaceKind = .desktop,
+    encodedWidth: UInt16 = 100, encodedHeight: UInt16 = 100,
+    applicationToken: UUID? = nil, windowToken: UUID? = nil,
+    rotation: SurfaceRotation = .degrees0
 ) throws -> AdaptiveSurfaceDescriptor {
     try AdaptiveSurfaceDescriptor(
         interactiveSessionID: lease.interactiveSessionID,
@@ -311,10 +326,13 @@ private func runtimeSurfaceDescriptor(
         coordinateSpaceRevision: .init(
             rawValue: lease.coordinateRevision.rawValue
         ),
-        encodedWidth: 100,
-        encodedHeight: 100,
+        applicationToken: applicationToken,
+        windowToken: windowToken,
+        encodedWidth: encodedWidth,
+        encodedHeight: encodedHeight,
         logicalWidthPoints: 100,
         logicalHeightPoints: 100,
+        rotation: rotation,
         interactionClasses: Set(lease.allowedInteractionClasses),
         privacyProfile: .visualOnly,
         metadataFields: [],
@@ -382,7 +400,8 @@ private func installAndActivateInitial(
         lease: command.lease,
         sequence: 1,
         payloadLength: UInt32(runtimeDecoderConfiguration.count),
-        type: .decoderConfiguration
+        type: .decoderConfiguration,
+        encodedWidth: command.surfaceDescriptor.encodedWidth, encodedHeight: command.surfaceDescriptor.encodedHeight
     )
     try await owner.publishMedia(
         InteractiveRuntimeMediaActionV0(
@@ -397,7 +416,8 @@ private func installAndActivateInitial(
         lease: command.lease,
         sequence: 2,
         type: .videoAccessUnit,
-        cleanKeyframe: true
+        cleanKeyframe: true,
+        encodedWidth: command.surfaceDescriptor.encodedWidth, encodedHeight: command.surfaceDescriptor.encodedHeight
     )
     try await owner.publishMedia(
         InteractiveRuntimeMediaActionV0(
@@ -1066,9 +1086,17 @@ private func installAndActivateInitial(
             descriptor.coordinateSpaceRevision
     )
 
+    let nativeFence = try InteractiveNativeVideoRequestFenceV0(interactiveSessionID: .init(current.interactiveSessionID),
+        authorizationEpoch: current.authorizationEpoch, negotiationID: .init(UUID()), peerGeneration: 1,
+        surfaceID: .init(current.surfaceID), surfaceRevision: Int64(current.surfaceRevision.rawValue),
+        coordinateSpaceRevision: Int64(current.coordinateRevision.rawValue))
+    await #expect(throws: LocalInteractiveNativeSnapshotErrorV1.unavailable) {
+        try await owner.currentNativeVideoSnapshot(fence: nativeFence, nowMonotonicNanoseconds: 4_400)
+    }
     #expect(try await owner.pauseInputForFocusChange(snapshot))
     #expect(try await owner.pauseInputForFocusChange(snapshot))
     #expect(await owner.surfaceAdmissionState() == .focusPaused)
+    #expect(try await owner.currentNativeVideoSnapshot(fence: nativeFence, nowMonotonicNanoseconds: 4_400) == nil)
     await #expect(throws: InteractiveMenuRuntimeErrorV0.bindingMismatch) {
         try await owner.postInput(
             InteractiveRuntimeInputActionV0(
@@ -1579,4 +1607,444 @@ private func installAndActivateInitial(
             payload: Data([0, 0, 0, 2, 0x41])
         )
     }
+}
+
+private func nativeRuntimeCommand(kind: InteractiveSurfaceKind = .desktop, rotation: SurfaceRotation = .degrees0) throws -> InteractiveRuntimeInstallCommandV0 {
+    let lease = try runtimeLease()
+    return try .init(commandID: UUID(), lease: lease, deviceDisplayName: .init("Native QA"),
+        surfaceDescriptor: runtimeSurfaceDescriptor(lease: lease, kind: kind, encodedWidth: 320, encodedHeight: 240, rotation: rotation),
+        sessionDeadlineMonotonicNanoseconds: 10_000)
+}
+private func nativeRuntimeFence(_ command: InteractiveRuntimeInstallCommandV0) throws -> InteractiveNativeVideoRequestFenceV0 {
+    try .init(interactiveSessionID: .init(command.lease.interactiveSessionID),
+        authorizationEpoch: command.lease.authorizationEpoch, negotiationID: .init(UUID()), peerGeneration: 1, surfaceID: .init(command.lease.surfaceID),
+        surfaceRevision: Int64(command.lease.surfaceRevision.rawValue),
+        coordinateSpaceRevision: Int64(command.lease.coordinateRevision.rawValue))
+}
+
+@Test func nativeInputPauseRejectsInputEffectsAndSurvivesRenewal() async throws {
+    let effects = RuntimeEffectsProbe(readyClasses: [.view, .pointer, .keyboard, .text])
+    let poster = RuntimeInputPosterProbe()
+    let owner = runtimeOwner(probe: effects, poster: poster)
+    let lease = try runtimeLease(allowedClasses: [.view, .pointer, .keyboard, .text])
+    let command = try InteractiveRuntimeInstallCommandV0(commandID: UUID(), lease: lease,
+        deviceDisplayName: .init("Native QA"),
+        surfaceDescriptor: runtimeSurfaceDescriptor(lease: lease, kind: .desktop, encodedWidth: 320, encodedHeight: 240),
+        sessionDeadlineMonotonicNanoseconds: 10_000)
+    let fence = try nativeRuntimeFence(command)
+    _ = try await installAndActivateInitial(owner, command: command)
+    let first = try runtimeInput(lease: lease)
+    try await owner.postInputEnvelope(first, nowMonotonicNanoseconds: 2_040)
+    try await owner.pauseInputForNativePresentation(fence: fence, nowMonotonicNanoseconds: 2_050)
+    try await owner.pauseInputForNativePresentation(fence: fence, nowMonotonicNanoseconds: 2_051)
+    #expect(await effects.events().filter { $0 == .release }.count == 1)
+    #expect(try await owner.currentNativeVideoSnapshot(fence: fence, nowMonotonicNanoseconds: 2_060) != nil)
+    let replacement = try runtimeLease(allowedClasses: [.view, .pointer, .keyboard, .text],
+        renewalCounter: 1, issuedAt: 4_000, expiresAt: 8_000)
+    try await owner.renew(.init(commandID: UUID(), previousLeaseID: lease.leaseID, replacement: replacement),
+        nowMonotonicNanoseconds: 4_000)
+    let payloads: [InteractiveInputPayload] = [
+        .pointerMove(x: 1, y: 1), .button(button: .primary, transition: .down),
+        .scroll(unit: .pixel, deltaX: 1, deltaY: 1),
+        .physicalKey(usage: 0x04, transition: .down, modifiers: []),
+        .modifiers([]), .text(String(UnicodeScalar(65)))
+    ]
+    for payload in payloads {
+        let envelope = try runtimeInput(lease: replacement, payload: payload, sequence: 2)
+        await #expect(throws: InteractiveMenuRuntimeErrorV0.surfaceNotAcknowledged) {
+            try await owner.postInputEnvelope(envelope, nowMonotonicNanoseconds: 5_000)
+        }
+        let action = try InteractiveRuntimeInputActionV0(commandID: UUID(), fence: runtimeFence(lease: replacement), envelope: envelope)
+        await #expect(throws: InteractiveMenuRuntimeErrorV0.surfaceNotAcknowledged) {
+            try await owner.postInput(action, nowMonotonicNanoseconds: 5_000)
+        }
+    }
+    #expect(poster.postedInputs() == [first])
+    _ = try await owner.revoke(revokeCommand(lease: replacement))
+    let fresh = try nativeRuntimeCommand()
+    _ = try await installAndActivateInitial(owner, command: fresh)
+    let next = try runtimeInput(lease: fresh.lease)
+    try await owner.postInputEnvelope(next, nowMonotonicNanoseconds: 2_040)
+    #expect(poster.postedInputs() == [first, next])
+}
+
+@Test func nativeInputPauseRejectsWrongFenceAndReleaseFailureDrains() async throws {
+    let effects = RuntimeEffectsProbe(failOnce: [.release])
+    let owner = runtimeOwner(probe: effects)
+    let command = try nativeRuntimeCommand()
+    _ = try await installAndActivateInitial(owner, command: command)
+    let valid = try nativeRuntimeFence(command)
+    let wrong = try InteractiveNativeVideoRequestFenceV0(interactiveSessionID: valid.interactiveSessionID,
+        authorizationEpoch: valid.authorizationEpoch, negotiationID: valid.negotiationID,
+        peerGeneration: valid.peerGeneration, surfaceID: .init(UUID()),
+        surfaceRevision: valid.surfaceRevision, coordinateSpaceRevision: valid.coordinateSpaceRevision)
+    await #expect(throws: LocalInteractiveNativeSnapshotErrorV1.bindingMismatch) {
+        try await owner.pauseInputForNativePresentation(fence: wrong, nowMonotonicNanoseconds: 2_050)
+    }
+    #expect(await effects.events() == [.show, .start])
+    await #expect(throws: InteractiveMenuRuntimeErrorV0.platformActionFailed) {
+        try await owner.pauseInputForNativePresentation(fence: valid, nowMonotonicNanoseconds: 2_050)
+    }
+    #expect(await owner.state() == .idle)
+    #expect(await effects.events() == [.show, .start, .release, .release, .stop, .blank, .clear])
+}
+
+@Test(arguments: SurfaceRotation.allCases) func nativeSnapshotRequiresAcknowledgedDesktopAndExactFence(rotation: SurfaceRotation) async throws {
+    let owner = runtimeOwner(probe: RuntimeEffectsProbe())
+    let command = try nativeRuntimeCommand(rotation: rotation)
+    let fence = try nativeRuntimeFence(command)
+    _ = try await owner.install(command, nowMonotonicNanoseconds: 2_000)
+    #expect(try await owner.currentNativeVideoSnapshot(fence: fence, nowMonotonicNanoseconds: 2_000) == nil)
+    _ = try await installAndActivateInitial(owner, command: command)
+    let value = try #require(await owner.currentNativeVideoSnapshot(fence: fence, nowMonotonicNanoseconds: 2_050))
+    #expect(value.controlGeneration == command.commandID)
+    #expect(value.selectedDisplayID == command.lease.selectedDisplayID)
+    #expect(value.surfaceKind == .desktop)
+    #expect(value.encodedWidth == 320 && value.encodedHeight == 240)
+    #expect(value.logicalWidthPoints == command.surfaceDescriptor.logicalWidthPoints)
+    #expect(value.logicalHeightPoints == command.surfaceDescriptor.logicalHeightPoints)
+    #expect(value.rotation == command.surfaceDescriptor.rotation)
+    #expect(value.logicalWidthPoints != value.encodedWidth)
+    let wrong = try InteractiveNativeVideoRequestFenceV0(interactiveSessionID: fence.interactiveSessionID, authorizationEpoch: fence.authorizationEpoch,
+        negotiationID: fence.negotiationID, peerGeneration: fence.peerGeneration,
+        surfaceID: .init(UUID()), surfaceRevision: fence.surfaceRevision,
+        coordinateSpaceRevision: fence.coordinateSpaceRevision)
+    await #expect(throws: LocalInteractiveNativeSnapshotErrorV1.bindingMismatch) {
+        try await owner.currentNativeVideoSnapshot(fence: wrong, nowMonotonicNanoseconds: 2_050)
+    }
+    #expect(try await owner.currentNativeVideoSnapshot(fence: fence, nowMonotonicNanoseconds: 5_000) == nil)
+    _ = try await owner.revoke(revokeCommand(lease: command.lease))
+    #expect(try await owner.currentNativeVideoSnapshot(fence: fence, nowMonotonicNanoseconds: 2_050) == nil)
+}
+
+@Test func nativeSnapshotRenewalKeepsOriginalDeadlineAndGeneration() async throws {
+    let owner = runtimeOwner(probe: RuntimeEffectsProbe())
+    let command = try nativeRuntimeCommand()
+    let fence = try nativeRuntimeFence(command)
+    _ = try await installAndActivateInitial(owner, command: command)
+    let before = try #require(await owner.currentNativeVideoSnapshot(fence: fence, nowMonotonicNanoseconds: 2_050))
+    let replacement = try runtimeLease(renewalCounter: 1, issuedAt: 4_000, expiresAt: 8_000)
+    try await owner.renew(.init(commandID: UUID(), previousLeaseID: command.lease.leaseID, replacement: replacement), nowMonotonicNanoseconds: 4_000)
+    let after = try #require(await owner.currentNativeVideoSnapshot(fence: fence, nowMonotonicNanoseconds: 5_000))
+    #expect(after.leaseExpiresAtMonotonicNanoseconds == 8_000)
+    #expect(after.sessionDeadlineMonotonicNanoseconds == before.sessionDeadlineMonotonicNanoseconds)
+    #expect(after.controlGeneration == before.controlGeneration)
+    #expect(after.menuAppGeneration == before.menuAppGeneration)
+    #expect(after.menuAppRevision == before.menuAppRevision)
+    #expect(after.logicalWidthPoints == before.logicalWidthPoints)
+    #expect(after.logicalHeightPoints == before.logicalHeightPoints)
+    #expect(after.rotation == before.rotation)
+    #expect(after.surfaceKind == before.surfaceKind)
+}
+
+@Test(arguments: [InteractiveSurfaceKind.application, .window])
+func nativeSnapshotRequiresAcknowledgedSelectedReplacement(kind: InteractiveSurfaceKind) async throws {
+    let owner = runtimeOwner(probe: RuntimeEffectsProbe(readyClasses: [.view, .pointer]))
+    let initial = try nativeRuntimeCommand()
+    _ = try await installAndActivateInitial(owner, command: initial)
+    let replacement = try runtimeLease(leaseID: UUID(), surfaceID: UUID(), surfaceRevision: 6,
+        coordinateRevision: 9, renewalCounter: 1, issuedAt: 3_000, expiresAt: 7_000)
+    let descriptor = try runtimeSurfaceDescriptor(lease: replacement, kind: kind,
+        encodedWidth: 320, encodedHeight: 240, applicationToken: UUID(),
+        windowToken: kind == .window ? UUID() : nil)
+    let transition = try InteractiveRuntimeSurfaceTransitionCommandV0(commandID: UUID(),
+        previousLeaseID: initial.lease.leaseID, replacement: replacement, descriptor: descriptor)
+    _ = try await owner.prepareSurfaceTransition(transition, nowMonotonicNanoseconds: 4_000)
+    let replacementCommand = try InteractiveRuntimeInstallCommandV0(commandID: initial.commandID,
+        lease: replacement, deviceDisplayName: initial.deviceDisplayName,
+        surfaceDescriptor: descriptor, sessionDeadlineMonotonicNanoseconds: initial.sessionDeadlineMonotonicNanoseconds)
+    let fence = try nativeRuntimeFence(replacementCommand)
+    #expect(try await owner.currentNativeVideoSnapshot(fence: fence, nowMonotonicNanoseconds: 4_001) == nil)
+    let discontinuity = try runtimeMediaHeader(lease: replacement, sequence: 3,
+        payloadLength: 0, type: .discontinuity)
+    try await owner.publishMedia(.init(commandID: UUID(), fence: runtimeFence(lease: replacement),
+        header: discontinuity, payload: Data()), nowMonotonicNanoseconds: 4_100)
+    let configuration = try runtimeMediaHeader(lease: replacement, sequence: 4,
+        payloadLength: UInt32(runtimeDecoderConfiguration.count), type: .decoderConfiguration,
+        encodedWidth: 320, encodedHeight: 240)
+    try await owner.publishMedia(.init(commandID: UUID(), fence: runtimeFence(lease: replacement),
+        header: configuration, payload: runtimeDecoderConfiguration), nowMonotonicNanoseconds: 4_200)
+    let clean = try runtimeMediaHeader(lease: replacement, sequence: 5,
+        type: .videoAccessUnit, cleanKeyframe: true, encodedWidth: 320, encodedHeight: 240)
+    try await owner.publishMedia(.init(commandID: UUID(), fence: runtimeFence(lease: replacement),
+        header: clean, payload: Data([0, 0, 0, 2, 0x65, 0])), nowMonotonicNanoseconds: 4_300)
+    #expect(try await owner.currentNativeVideoSnapshot(fence: fence, nowMonotonicNanoseconds: 4_301) == nil)
+    _ = try await owner.acknowledgeSurface(.init(commandID: UUID(), transitionCommandID: transition.commandID,
+        leaseID: replacement.leaseID, interactiveSessionID: replacement.interactiveSessionID,
+        surfaceID: replacement.surfaceID, surfaceRevision: replacement.surfaceRevision,
+        coordinateRevision: replacement.coordinateRevision, readyMediaSequence: 5),
+        nowMonotonicNanoseconds: 4_400)
+    let snapshot = try #require(await owner.currentNativeVideoSnapshot(fence: fence,
+        nowMonotonicNanoseconds: 4_401))
+    #expect(snapshot.surfaceKind == kind)
+    #expect(snapshot.fence.surfaceID.rawValue == replacement.surfaceID)
+    #expect(snapshot.controlGeneration == initial.commandID)
+    #expect(snapshot.sessionDeadlineMonotonicNanoseconds == initial.sessionDeadlineMonotonicNanoseconds)
+}
+
+@Test func nativeSnapshotCodecRejectsCrossCorrelationAndUnknownFields() async throws {
+    let owner = runtimeOwner(probe: RuntimeEffectsProbe())
+    let command = try nativeRuntimeCommand()
+    let fence = try nativeRuntimeFence(command)
+    _ = try await installAndActivateInitial(owner, command: command)
+    let value = try #require(await owner.currentNativeVideoSnapshot(fence: fence, nowMonotonicNanoseconds: 2_050))
+    let request = try LocalInteractiveNativeSnapshotCommandV1(commandID: UUID(), fence: fence)
+    let receipt = try LocalInteractiveNativeSnapshotReceiptV1(correlationID: request.commandID, snapshot: value)
+    let encoded = try LocalInteractiveLeaseWireCodecV1.encodeNativeSnapshotReceipt(receipt)
+    #expect(encoded.count <= 4096)
+    let decoded = try LocalInteractiveLeaseWireCodecV1.decodeNativeSnapshotReceipt(encoded)
+    try decoded.validate(against: request)
+    #expect(decoded == receipt)
+    let original = try #require(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+    for field in ["logicalWidthPoints", "logicalHeightPoints", "rotation", "surfaceKind"] {
+        var object = original
+        var snapshot = try #require(object["snapshot"] as? [String: Any])
+        snapshot.removeValue(forKey: field)
+        object["snapshot"] = snapshot
+        let missing = try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys, .withoutEscapingSlashes])
+        #expect(throws: LocalInteractiveLeaseWireCodecErrorV1.invalidPayload) {
+            try LocalInteractiveLeaseWireCodecV1.decodeNativeSnapshotReceipt(missing)
+        }
+    }
+    for (field, bad) in [("logicalWidthPoints", 0), ("logicalHeightPoints", 0)] {
+        var object = original
+        var snapshot = try #require(object["snapshot"] as? [String: Any])
+        snapshot[field] = bad
+        object["snapshot"] = snapshot
+        let invalid = try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys, .withoutEscapingSlashes])
+        #expect(throws: LocalInteractiveNativeSnapshotErrorV1.bindingMismatch) {
+            try LocalInteractiveLeaseWireCodecV1.decodeNativeSnapshotReceipt(invalid)
+        }
+    }
+    for (field, bad) in [("rotation", 45), ("logicalWidthPoints", 4294967296), ("logicalHeightPoints", -1)] {
+        var object = original
+        var snapshot = try #require(object["snapshot"] as? [String: Any])
+        snapshot[field] = bad
+        object["snapshot"] = snapshot
+        let invalid = try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys, .withoutEscapingSlashes])
+        #expect(throws: LocalInteractiveLeaseWireCodecErrorV1.invalidPayload) {
+            try LocalInteractiveLeaseWireCodecV1.decodeNativeSnapshotReceipt(invalid)
+        }
+    }
+    for kind in ["application", "window"] {
+        var object = original
+        var snapshot = try #require(object["snapshot"] as? [String: Any])
+        snapshot["surfaceKind"] = kind
+        object["snapshot"] = snapshot
+        let replacement = try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys, .withoutEscapingSlashes])
+        let admitted = try LocalInteractiveLeaseWireCodecV1.decodeNativeSnapshotReceipt(replacement)
+        #expect(admitted.snapshot.surfaceKind.rawValue == kind)
+    }
+    for kind in ["focusedRegion"] {
+        var object = original
+        var snapshot = try #require(object["snapshot"] as? [String: Any])
+        snapshot["surfaceKind"] = kind
+        object["snapshot"] = snapshot
+        let invalid = try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys, .withoutEscapingSlashes])
+        #expect(throws: LocalInteractiveNativeSnapshotErrorV1.bindingMismatch) {
+            try LocalInteractiveLeaseWireCodecV1.decodeNativeSnapshotReceipt(invalid)
+        }
+    }
+    var unknown = original
+    var snapshot = try #require(unknown["snapshot"] as? [String: Any])
+    snapshot["surfaceKind"] = "other"
+    unknown["snapshot"] = snapshot
+    let invalidKind = try JSONSerialization.data(withJSONObject: unknown, options: [.sortedKeys, .withoutEscapingSlashes])
+    #expect(throws: LocalInteractiveLeaseWireCodecErrorV1.invalidPayload) {
+        try LocalInteractiveLeaseWireCodecV1.decodeNativeSnapshotReceipt(invalidKind)
+    }
+    #expect(throws: LocalInteractiveNativeSnapshotErrorV1.bindingMismatch) {
+        try decoded.validate(against: .init(commandID: UUID(), fence: fence))
+    }
+    var object = try #require(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+    object["physicalDisplayID"] = 1
+    let ambiguous = try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys, .withoutEscapingSlashes])
+    #expect(throws: LocalInteractiveLeaseWireCodecErrorV1.self) {
+        try LocalInteractiveLeaseWireCodecV1.decodeNativeSnapshotReceipt(ambiguous)
+    }
+}
+
+private final class RuntimeNativeClock: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value: UInt64 = 2_000_000_000
+    func read() -> UInt64 { lock.withLock { value } }
+    func set(_ value: UInt64) { lock.withLock { self.value = value } }
+}
+private func runtimeNativePostingCommand() throws -> InteractiveRuntimeInstallCommandV0 {
+    let lease = try runtimeLease(allowedClasses: [.view, .pointer, .keyboard, .text],
+        issuedAt: 1_000_000_000, expiresAt: 5_000_000_000)
+    return try .init(commandID: UUID(), lease: lease, deviceDisplayName: .init("Native QA"),
+        surfaceDescriptor: runtimeSurfaceDescriptor(lease: lease, kind: .desktop, encodedWidth: 320, encodedHeight: 240),
+        sessionDeadlineMonotonicNanoseconds: 10_000_000_000)
+}
+private func runtimeNativePostingAuthorization(_ command: InteractiveRuntimeInstallCommandV0,
+    clock: RuntimeNativeClock, generation: UUID? = nil, width: Int = 320) throws -> InteractiveRuntimeNativeInputPostingAuthorizationV0 {
+    let lease = command.lease
+    let binding = try InteractiveNativeVideoBindingV0(hostID: lease.hostID, hostFingerprint: Data(repeating: 1, count: 32),
+        clientID: lease.deviceID, primaryConnectionID: Data(repeating: 2, count: 16),
+        interactiveSessionID: lease.interactiveSessionID, authorizationEpoch: Int64(lease.authorizationEpoch.rawValue),
+        grantRevision: 1, policyRevision: 1, controlGeneration: generation ?? command.commandID,
+        expiresAtMonotonicMilliseconds: command.sessionDeadlineMonotonicNanoseconds / 1_000_000)
+    let surface = try InteractiveNativeVideoSurfaceV0(surfaceID: lease.surfaceID,
+        surfaceRevision: Int64(lease.surfaceRevision.rawValue), coordinateSpaceRevision: Int64(lease.coordinateRevision.rawValue),
+        encodedWidth: width, encodedHeight: 240)
+    return .init(binding: binding, surface: surface, monotonicNanoseconds: { clock.read() }) { _, batch in try batch() }
+}
+
+@Test func nativeRuntimeInstallationRequiresExactPauseAndOriginalControlGeometry() async throws {
+    for mismatch in ["pause", "fence", "generation", "geometry", "revoked"] {
+        let effects = RuntimeEffectsProbe(readyClasses: [.view, .pointer, .keyboard, .text]), poster = RuntimeInputPosterProbe()
+        let owner = runtimeOwner(probe: effects, poster: poster), command = try runtimeNativePostingCommand()
+        let fence = try nativeRuntimeFence(command), clock = RuntimeNativeClock()
+        _ = try await installAndActivateInitial(owner, command: command, now: 2_000_000_000)
+        if mismatch != "pause" { try await owner.pauseInputForNativePresentation(fence: fence, nowMonotonicNanoseconds: clock.read()) }
+        let authorization = try runtimeNativePostingAuthorization(command, clock: clock,
+            generation: mismatch == "generation" ? UUID() : nil, width: mismatch == "geometry" ? 640 : 320)
+        if mismatch == "revoked" { authorization.revoke() }
+        await #expect(throws: (any Error).self) {
+            try await owner.installNativeInputAuthorization(authorization,
+                fence: mismatch == "fence" ? nativeRuntimeFence(command) : fence, nowMonotonicNanoseconds: clock.read())
+        }
+        #expect(poster.postedInputs().isEmpty)
+    }
+}
+
+@Test func nativeRuntimePermitPostsControlsThroughRenewalAndRepauseRevokesCopies() async throws {
+    let effects = RuntimeEffectsProbe(readyClasses: [.view, .pointer, .keyboard, .text]), poster = RuntimeInputPosterProbe()
+    let owner = runtimeOwner(probe: effects, poster: poster), command = try runtimeNativePostingCommand()
+    let fence = try nativeRuntimeFence(command), clock = RuntimeNativeClock()
+    _ = try await installAndActivateInitial(owner, command: command, now: clock.read())
+    try await owner.pauseInputForNativePresentation(fence: fence, nowMonotonicNanoseconds: clock.read())
+    let authorization = try runtimeNativePostingAuthorization(command, clock: clock)
+    try await owner.installNativeInputAuthorization(authorization, fence: fence, nowMonotonicNanoseconds: clock.read())
+    await #expect(throws: InteractiveMenuRuntimeErrorV0.surfaceNotAcknowledged) {
+        try await owner.installNativeInputAuthorization(authorization, fence: fence, nowMonotonicNanoseconds: clock.read())
+    }
+    let payloads: [InteractiveInputPayload] = [.pointerMove(x: 1, y: 1), .modifiers([]),
+        .physicalKey(usage: 0x04, transition: .down, modifiers: []), .text("A"), .reset]
+    for (index, payload) in payloads.enumerated() {
+        try await owner.postInputEnvelope(runtimeInput(lease: command.lease, payload: payload, sequence: UInt64(index + 1)),
+            nowMonotonicNanoseconds: clock.read())
+    }
+    let replacement = try runtimeLease(allowedClasses: [.view, .pointer, .keyboard, .text], renewalCounter: 1,
+        issuedAt: 4_000_000_000, expiresAt: 8_000_000_000)
+    clock.set(4_000_000_000)
+    try await owner.renew(.init(commandID: UUID(), previousLeaseID: command.lease.leaseID, replacement: replacement),
+        nowMonotonicNanoseconds: clock.read())
+    clock.set(6_000_000_000)
+    let renewedInput = try runtimeInput(lease: replacement, sequence: 6)
+    try await owner.postInputEnvelope(renewedInput, nowMonotonicNanoseconds: clock.read())
+    #expect(poster.postedInputs().count == 6)
+    try await owner.pauseInputForNativePresentation(fence: fence, nowMonotonicNanoseconds: clock.read())
+    #expect(authorization.isRevoked)
+    await #expect(throws: (any Error).self) {
+        try await authorization.perform(renewedInput, beforeDeadlineNanoseconds: 8_000_000_000) {
+            Issue.record("Revoked retained permit posted input")
+        }
+    }
+    await #expect(throws: InteractiveMenuRuntimeErrorV0.surfaceNotAcknowledged) {
+        try await owner.postInputEnvelope(runtimeInput(lease: replacement, sequence: 7), nowMonotonicNanoseconds: clock.read())
+    }
+    #expect(await effects.events().filter { $0 == .release }.count == 2)
+}
+
+@Test func nativeRuntimeTerminationRevokesRetainedPostingAuthorization() async throws {
+    let effects = RuntimeEffectsProbe(readyClasses: [.view, .pointer, .keyboard, .text])
+    let owner = runtimeOwner(probe: effects), command = try runtimeNativePostingCommand(), clock = RuntimeNativeClock()
+    let fence = try nativeRuntimeFence(command), authorization = try runtimeNativePostingAuthorization(command, clock: clock)
+    _ = try await installAndActivateInitial(owner, command: command, now: clock.read())
+    try await owner.pauseInputForNativePresentation(fence: fence, nowMonotonicNanoseconds: clock.read())
+    try await owner.installNativeInputAuthorization(authorization, fence: fence, nowMonotonicNanoseconds: clock.read())
+    _ = try await owner.revoke(revokeCommand(lease: command.lease))
+    #expect(authorization.isRevoked)
+    await #expect(throws: (any Error).self) {
+        try await owner.installNativeInputAuthorization(authorization, fence: fence, nowMonotonicNanoseconds: clock.read())
+    }
+}
+
+@Test func pausedNativePreparationDrainsOnlyExactCurrentResetFromIndexedCases() async throws {
+    var root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+    while !FileManager.default.fileExists(atPath: root.appendingPathComponent("spec/fixtures/manifest.json").path) {
+        let parent = root.deletingLastPathComponent()
+        try #require(parent != root)
+        root = parent
+    }
+    let fixture = try #require(JSONSerialization.jsonObject(with: Data(contentsOf:
+        root.appendingPathComponent("spec/fixtures/valid/native-input-posting.json"))) as? [String: Any])
+    for row in try #require(fixture["pausedResetCases"] as? [[String: Any]]) {
+        let effects = RuntimeEffectsProbe(readyClasses: [.view, .pointer, .keyboard, .text])
+        let poster = RuntimeInputPosterProbe(), owner = runtimeOwner(probe: effects, poster: poster)
+        let command = try runtimeNativePostingCommand(), clock = RuntimeNativeClock()
+        let fence = try nativeRuntimeFence(command)
+        _ = try await installAndActivateInitial(owner, command: command, now: clock.read())
+        try await owner.pauseInputForNativePresentation(fence: fence, nowMonotonicNanoseconds: clock.read())
+        if row["authorization"] as? String == "revoked" {
+            let authorization = try runtimeNativePostingAuthorization(command, clock: clock)
+            try await owner.installNativeInputAuthorization(authorization, fence: fence, nowMonotonicNanoseconds: clock.read())
+            authorization.revoke()
+        }
+        await #expect(throws: InteractiveMenuRuntimeErrorV0.surfaceNotAcknowledged) {
+            try await owner.postInputEnvelope(try runtimeInput(lease: command.lease), nowMonotonicNanoseconds: clock.read())
+        }
+        let stale = try runtimeLease(allowedClasses: [.view, .pointer, .keyboard, .text], surfaceID: UUID())
+        await #expect(throws: (any Error).self) {
+            try await owner.postInputEnvelope(try runtimeInput(lease: stale, payload: .reset), nowMonotonicNanoseconds: clock.read())
+        }
+        let reset = try runtimeInput(lease: command.lease, payload: .reset)
+        try await owner.postInputEnvelope(reset, nowMonotonicNanoseconds: clock.read())
+        try await owner.postInputEnvelope(reset, nowMonotonicNanoseconds: clock.read())
+        #expect(poster.postedInputs().count == (row["expectedPostedInputs"] as? Int))
+        #expect(await effects.events().filter { $0 == .release }.count == (row["expectedReleaseCount"] as? Int))
+        await #expect(throws: InteractiveMenuRuntimeErrorV0.surfaceNotAcknowledged) {
+            try await owner.postInputEnvelope(try runtimeInput(lease: command.lease, sequence: 2), nowMonotonicNanoseconds: clock.read())
+        }
+    }
+}
+
+@Test func revokedNativePermitDrainsOnlyExactCurrentReset() async throws {
+    let effects = RuntimeEffectsProbe(readyClasses: [.view, .pointer, .keyboard, .text])
+    let poster = RuntimeInputPosterProbe()
+    let owner = runtimeOwner(probe: effects, poster: poster)
+    let command = try runtimeNativePostingCommand(), clock = RuntimeNativeClock()
+    let fence = try nativeRuntimeFence(command)
+    let authorization = try runtimeNativePostingAuthorization(command, clock: clock)
+    _ = try await installAndActivateInitial(owner, command: command, now: clock.read())
+    try await owner.pauseInputForNativePresentation(fence: fence, nowMonotonicNanoseconds: clock.read())
+    try await owner.installNativeInputAuthorization(authorization, fence: fence, nowMonotonicNanoseconds: clock.read())
+    authorization.revoke()
+
+    let reset = try runtimeInput(lease: command.lease, payload: .reset)
+    await #expect(throws: InteractiveMenuRuntimeErrorV0.surfaceNotAcknowledged) {
+        try await owner.postInputEnvelope(try runtimeInput(lease: command.lease),
+            nowMonotonicNanoseconds: clock.read())
+    }
+    try await owner.postInputEnvelope(reset, nowMonotonicNanoseconds: clock.read())
+    try await owner.postInputEnvelope(reset, nowMonotonicNanoseconds: clock.read())
+    #expect(poster.postedInputs().isEmpty)
+    #expect(await effects.events().filter { $0 == .release }.count == 2)
+    await #expect(throws: InteractiveMenuRuntimeErrorV0.surfaceNotAcknowledged) {
+        try await owner.postInputEnvelope(try runtimeInput(lease: command.lease, sequence: 2),
+            nowMonotonicNanoseconds: clock.read())
+    }
+}
+
+@Test func nativeRuntimeSurfaceTransitionRevokesOldPermitBeforeCapturePreparation() async throws {
+    let effects = RuntimeEffectsProbe(readyClasses: [.view, .pointer, .keyboard, .text])
+    let poster = RuntimeInputPosterProbe(), owner = runtimeOwner(probe: effects, poster: poster)
+    let command = try runtimeNativePostingCommand(), clock = RuntimeNativeClock(), fence = try nativeRuntimeFence(command)
+    let authorization = try runtimeNativePostingAuthorization(command, clock: clock)
+    _ = try await installAndActivateInitial(owner, command: command, now: clock.read())
+    try await owner.pauseInputForNativePresentation(fence: fence, nowMonotonicNanoseconds: clock.read())
+    try await owner.installNativeInputAuthorization(authorization, fence: fence, nowMonotonicNanoseconds: clock.read())
+    let replacement = try runtimeLease(allowedClasses: [.view, .pointer, .keyboard, .text], surfaceID: UUID(),
+        surfaceRevision: 6, coordinateRevision: 9, renewalCounter: 1, issuedAt: 3_000_000_000, expiresAt: 7_000_000_000)
+    _ = try await owner.prepareSurfaceTransition(runtimeSurfaceTransition(current: command.lease, replacement: replacement),
+        nowMonotonicNanoseconds: 3_000_000_000)
+    #expect(authorization.isRevoked)
+    try await owner.postInputEnvelope(
+        try runtimeInput(lease: command.lease, payload: .reset),
+        nowMonotonicNanoseconds: 3_000_000_001
+    )
+    #expect(await effects.events().contains(.prepare))
+    #expect(poster.postedInputs().isEmpty)
 }

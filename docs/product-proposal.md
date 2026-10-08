@@ -1,5 +1,7 @@
 # Mac Companion Product Proposal
 
+> Current scope: the [remote-desktop MVP decision](remote-desktop-mvp.md) supersedes the Observe/Act-first setup and equal-path positioning in this earlier plan.
+
 ## Summary
 
 Mac Companion is a private companion for checking, operating, and directly controlling personal Macs from a native iPhone or iPad app without a Mac Companion account or vendor-operated network relay.

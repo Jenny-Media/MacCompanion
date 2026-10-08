@@ -103,6 +103,19 @@ public struct NetworkClientRouteAttemptConfigurationV0: Sendable {
 public struct NetworkClientRouteAttemptV0: DialRouteAttemptingV0, Sendable {
     private let configuration: NetworkClientRouteAttemptConfigurationV0
 
+    package static func numericRemoteIPAddress(_ endpoint: NWEndpoint?) -> String? {
+        guard case let .hostPort(host, _) = endpoint else { return nil }
+        switch host {
+        // A measured endpoint may carry an interface, whose debug form adds
+        // "%en0" even to IPv4. Reconstruct from the exact four bytes so the
+        // native inet_pton parser receives numeric address text only.
+        case let .ipv4(address): return IPv4Address(address.rawValue)?.debugDescription
+        case let .ipv6(address): return address.debugDescription
+        case .name: return nil
+        @unknown default: return nil
+        }
+    }
+
     package init(configuration: NetworkClientRouteAttemptConfigurationV0) {
         self.configuration = configuration
     }
@@ -206,6 +219,7 @@ public struct NetworkClientRouteAttemptV0: DialRouteAttemptingV0, Sendable {
             let productCandidate = configuration.primaryProduct.map {
                 NetworkClientPrimaryProductCandidateV0(
                     endpoint: attempt.endpoint,
+                    measuredRemoteIPAddress: Self.numericRemoteIPAddress(connection.currentPath?.remoteEndpoint),
                     authenticatedRouteClass: authenticatedRouteClass,
                     configuration: $0
                 )

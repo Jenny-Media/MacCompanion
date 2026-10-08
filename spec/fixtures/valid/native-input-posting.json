@@ -1,0 +1,141 @@
+{
+  "profile": "maccompanion.native-input-posting.v0.1",
+  "cases": [
+    "exact-current-payload-posts-once",
+    "wrong-session-epoch-surface-revisions-denied",
+    "original-control-expiry-at-callback-denied",
+    "short-lease-expiry-after-window-activation-denied",
+    "cancel-before-callback-denied",
+    "callback-after-executor-return-denied",
+    "duplicate-callback-cannot-post-twice",
+    "executor-without-post-denied",
+    "suppressed-post-failure-cannot-report-success",
+    "unsupported-adapter-fails-closed",
+    "native-runtime-pause-remains-latched",
+    "runtime-install-requires-exact-paused-desktop",
+    "runtime-install-joins-original-control-and-geometry",
+    "runtime-install-cannot-replace-current-permit",
+    "runtime-renewal-retains-native-posting-and-original-deadline",
+    "runtime-repause-and-termination-revoke-retained-permit",
+    "revoked-native-permit-drains-exact-next-sequence-reset-only",
+    "retired-surface-reset-drains-after-native-revocation"
+  ],
+  "nativeSurface": {
+    "encodedWidth": 1280,
+    "encodedHeight": 720
+  },
+  "softwareKeyboardCases": [
+    {
+      "text": "a",
+      "modifierMask": 8,
+      "usage": 4,
+      "effectiveModifierMask": 8
+    },
+    {
+      "text": "C",
+      "modifierMask": 8,
+      "usage": 6,
+      "effectiveModifierMask": 10
+    },
+    {
+      "text": "a",
+      "modifierMask": 1,
+      "usage": 4,
+      "effectiveModifierMask": 1
+    },
+    {
+      "text": "7",
+      "modifierMask": 4,
+      "usage": 36,
+      "effectiveModifierMask": 4
+    },
+    {
+      "text": "!",
+      "modifierMask": 8,
+      "usage": 30,
+      "effectiveModifierMask": 10
+    },
+    {
+      "text": " ",
+      "modifierMask": 2,
+      "usage": 44,
+      "effectiveModifierMask": 2
+    },
+    {
+      "text": "é",
+      "modifierMask": 0,
+      "unicodeText": "é"
+    },
+    {
+      "text": "你好",
+      "modifierMask": 0,
+      "unicodeText": "你好"
+    },
+    {
+      "text": "é",
+      "modifierMask": 8,
+      "omitted": true
+    },
+    {
+      "text": "hello",
+      "modifierMask": 8,
+      "omitted": true
+    },
+    {
+      "text": "a",
+      "modifierMask": 0,
+      "allowsUnicodeText": false,
+      "physicalKeys": [
+        {
+          "usage": 4,
+          "modifierMask": 0
+        }
+      ]
+    },
+    {
+      "text": "C!",
+      "modifierMask": 0,
+      "allowsUnicodeText": false,
+      "physicalKeys": [
+        {
+          "usage": 6,
+          "modifierMask": 2
+        },
+        {
+          "usage": 30,
+          "modifierMask": 2
+        }
+      ]
+    },
+    {
+      "text": "aé",
+      "modifierMask": 0,
+      "allowsUnicodeText": false,
+      "omitted": true
+    },
+    {
+      "text": "你好",
+      "modifierMask": 0,
+      "allowsUnicodeText": false,
+      "omitted": true
+    },
+    {
+      "text": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "modifierMask": 0,
+      "allowsUnicodeText": false,
+      "omitted": true
+    }
+  ],
+  "pausedResetCases": [
+    {
+      "authorization": "absent",
+      "expectedPostedInputs": 0,
+      "expectedReleaseCount": 2
+    },
+    {
+      "authorization": "revoked",
+      "expectedPostedInputs": 0,
+      "expectedReleaseCount": 2
+    }
+  ]
+}

@@ -121,6 +121,26 @@ static const char MCLocalXPCInteractiveDisplaySelectKind[] =
     "runtime.interactive.display.select";
 static const char MCLocalXPCInteractiveDisplaySelectAcknowledgementKind[] =
     "runtime.interactive.display.select.ack";
+static const char MCLocalXPCInteractiveNativeBackendKind[] =
+    "runtime.interactive.native.backend";
+static const char MCLocalXPCInteractiveNativeBackendAcknowledgementKind[] =
+    "runtime.interactive.native.backend.ack";
+static const char MCLocalXPCInteractiveNativeSnapshotKind[] =
+    "runtime.interactive.native.snapshot";
+static const char MCLocalXPCInteractiveNativeSnapshotAcknowledgementKind[] =
+    "runtime.interactive.native.snapshot.ack";
+static const char MCLocalXPCInteractiveWebRTCOfferKind[] =
+    "runtime.interactive.webrtc.offer";
+static const char MCLocalXPCInteractiveWebRTCOfferAcknowledgementKind[] =
+    "runtime.interactive.webrtc.offer.ack";
+static const char MCLocalXPCInteractiveWebRTCAnswerKind[] =
+    "runtime.interactive.webrtc.answer";
+static const char MCLocalXPCInteractiveWebRTCAnswerAcknowledgementKind[] =
+    "runtime.interactive.webrtc.answer.ack";
+static const char MCLocalXPCInteractiveWebRTCCloseKind[] =
+    "runtime.interactive.webrtc.close";
+static const char MCLocalXPCInteractiveWebRTCCloseAcknowledgementKind[] =
+    "runtime.interactive.webrtc.close.ack";
 static const char MCLocalXPCInteractiveAdmissionPublicationKind[] =
     "runtime.interactive.admission.publish";
 static const char MCLocalXPCInteractiveAdmissionAcknowledgementKind[] =
@@ -284,6 +304,16 @@ static const char * _Nullable MCLocalXPCInteractiveLeaseRequestKind(
         return MCLocalXPCInteractiveDisplayCatalogKind;
     case MCLocalXPCInteractiveLeaseCommandDisplaySelect:
         return MCLocalXPCInteractiveDisplaySelectKind;
+    case MCLocalXPCInteractiveLeaseCommandNativeBackend:
+        return MCLocalXPCInteractiveNativeBackendKind;
+    case MCLocalXPCInteractiveLeaseCommandNativeSnapshot:
+        return MCLocalXPCInteractiveNativeSnapshotKind;
+    case MCLocalXPCInteractiveLeaseCommandWebRTCOffer:
+        return MCLocalXPCInteractiveWebRTCOfferKind;
+    case MCLocalXPCInteractiveLeaseCommandWebRTCAnswer:
+        return MCLocalXPCInteractiveWebRTCAnswerKind;
+    case MCLocalXPCInteractiveLeaseCommandWebRTCClose:
+        return MCLocalXPCInteractiveWebRTCCloseKind;
     }
     return NULL;
 }
@@ -316,6 +346,16 @@ static const char * _Nullable MCLocalXPCInteractiveLeaseAcknowledgementKind(
         return MCLocalXPCInteractiveDisplayCatalogAcknowledgementKind;
     case MCLocalXPCInteractiveLeaseCommandDisplaySelect:
         return MCLocalXPCInteractiveDisplaySelectAcknowledgementKind;
+    case MCLocalXPCInteractiveLeaseCommandNativeBackend:
+        return MCLocalXPCInteractiveNativeBackendAcknowledgementKind;
+    case MCLocalXPCInteractiveLeaseCommandNativeSnapshot:
+        return MCLocalXPCInteractiveNativeSnapshotAcknowledgementKind;
+    case MCLocalXPCInteractiveLeaseCommandWebRTCOffer:
+        return MCLocalXPCInteractiveWebRTCOfferAcknowledgementKind;
+    case MCLocalXPCInteractiveLeaseCommandWebRTCAnswer:
+        return MCLocalXPCInteractiveWebRTCAnswerAcknowledgementKind;
+    case MCLocalXPCInteractiveLeaseCommandWebRTCClose:
+        return MCLocalXPCInteractiveWebRTCCloseAcknowledgementKind;
     }
     return NULL;
 }
@@ -333,7 +373,18 @@ static bool MCLocalXPCInteractiveLeaseReplyCarriesPayload(
         || kind == MCLocalXPCInteractiveLeaseCommandSurfaceFailure
         || kind == MCLocalXPCInteractiveLeaseCommandFocusSnapshot
         || kind == MCLocalXPCInteractiveLeaseCommandDisplayCatalog
-        || kind == MCLocalXPCInteractiveLeaseCommandDisplaySelect;
+        || kind == MCLocalXPCInteractiveLeaseCommandDisplaySelect
+        || kind == MCLocalXPCInteractiveLeaseCommandWebRTCOffer
+        || kind == MCLocalXPCInteractiveLeaseCommandNativeSnapshot
+        || kind == MCLocalXPCInteractiveLeaseCommandNativeBackend;
+}
+
+static size_t MCLocalXPCInteractiveLeaseReplyMaximumPayloadBytes(
+    MCLocalXPCInteractiveLeaseCommandKind kind
+) {
+    return kind == MCLocalXPCInteractiveLeaseCommandSurfaceTargets
+        ? MCLocalXPCMaximumInteractiveSurfaceTargetsReplyBytes
+        : MCLocalXPCMaximumInteractiveLeasePayloadBytes;
 }
 
 static void MCLocalXPCReleaseError(xpc_rich_error_t error) {
@@ -1124,6 +1175,11 @@ bool MCLocalXPCMessageGetExactInteractiveLeaseCommand(
         MCLocalXPCInteractiveLeaseCommandFocusSnapshot,
         MCLocalXPCInteractiveLeaseCommandDisplayCatalog,
         MCLocalXPCInteractiveLeaseCommandDisplaySelect,
+        MCLocalXPCInteractiveLeaseCommandNativeBackend,
+        MCLocalXPCInteractiveLeaseCommandNativeSnapshot,
+        MCLocalXPCInteractiveLeaseCommandWebRTCOffer,
+        MCLocalXPCInteractiveLeaseCommandWebRTCAnswer,
+        MCLocalXPCInteractiveLeaseCommandWebRTCClose,
     };
     for (size_t index = 0;
          index < sizeof(kinds) / sizeof(kinds[0]);
@@ -1891,6 +1947,11 @@ bool MCLocalXPCExactMessageParserSelfTest(void) {
         MCLocalXPCInteractiveLeaseCommandFocusSnapshot,
         MCLocalXPCInteractiveLeaseCommandDisplayCatalog,
         MCLocalXPCInteractiveLeaseCommandDisplaySelect,
+        MCLocalXPCInteractiveLeaseCommandNativeBackend,
+        MCLocalXPCInteractiveLeaseCommandNativeSnapshot,
+        MCLocalXPCInteractiveLeaseCommandWebRTCOffer,
+        MCLocalXPCInteractiveLeaseCommandWebRTCAnswer,
+        MCLocalXPCInteractiveLeaseCommandWebRTCClose,
     };
     for (size_t index = 0;
          index < sizeof(lease_kinds) / sizeof(lease_kinds[0]);
@@ -3196,7 +3257,7 @@ MCLocalXPCResult MCLocalXPCSessionReplyToInteractiveLeaseCommandSuccess(
             acknowledgement_kind,
             payload,
             payload_length,
-            MCLocalXPCMaximumInteractiveLeasePayloadBytes
+            MCLocalXPCInteractiveLeaseReplyMaximumPayloadBytes(kind)
         );
     }
     if (payload != NULL || payload_length != 0) {
@@ -3259,7 +3320,7 @@ MCLocalXPCResult MCLocalXPCSessionSendInteractiveLeaseCommand(
             if (MCLocalXPCMessageGetExactData(
                     reply,
                     acknowledgement_kind,
-                    MCLocalXPCMaximumInteractiveLeasePayloadBytes,
+                    MCLocalXPCInteractiveLeaseReplyMaximumPayloadBytes(kind),
                     &reply_payload,
                     &reply_payload_length
                 )) {

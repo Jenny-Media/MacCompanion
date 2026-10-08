@@ -22,7 +22,7 @@ private let clientSecurityCredential = Data((0xe0...0xff).map(UInt8.init))
 private struct ClientPresenceSigner: ClientInteractiveApprovalSigningV0 {
     let key: P256.Signing.PrivateKey
 
-    func signAfterUserPresence(_ input: Data) async throws -> Data {
+    func signSessionChallenge(_ input: Data) async throws -> Data {
         try key.signature(for: input).rawRepresentation
     }
 }

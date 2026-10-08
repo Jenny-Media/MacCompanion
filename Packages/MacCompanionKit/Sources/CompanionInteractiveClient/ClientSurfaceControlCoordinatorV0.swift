@@ -507,11 +507,12 @@ public struct ClientSurfaceControlCoordinatorV0: Sendable {
             let exactRequestedTarget =
                 descriptor.kind == pendingSelection.requestedKind
                 && descriptor.focus == pendingSelection.requestedFocus
-            let safeDesktopFocusFallback =
-                pendingSelection.requestedKind == .focusedRegion
+            let safeDesktopFallback =
+                [.focusedRegion, .application, .window].contains(pendingSelection.requestedKind)
                 && descriptor.kind == .desktop
                 && descriptor.focus == nil
-            guard (exactRequestedTarget || safeDesktopFocusFallback),
+                && descriptor.applicationToken == nil && descriptor.windowToken == nil
+            guard (exactRequestedTarget || safeDesktopFallback),
                   descriptor.surfaceRevision == expectedSurfaceRevision,
                   descriptor.coordinateSpaceRevision
                     == expectedCoordinateRevision,

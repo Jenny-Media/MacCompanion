@@ -3,6 +3,11 @@ import CompanionInteractiveShared
 import CompanionInteractiveWire
 import CompanionWire
 import Foundation
+import OSLog
+
+private let nativeBindingSnapshotLoggerV1 = Logger(
+    subsystem: "media.jenny.maccompanion.agent", category: "native-binding-snapshot"
+)
 
 public enum AgentInteractiveRuntimeBindingAuthorityErrorV1:
     Error,
@@ -34,6 +39,8 @@ public enum AgentInteractiveRuntimeBindingAuthorityStateV1:
 /// pending-install fences are forwarded before joining that chain.
 public actor AgentInteractiveRuntimeBindingAuthorityV1:
     InteractiveSessionRuntimeOwningV0,
+    InteractiveWebRTCNegotiatingV0,
+    InteractiveNativeVideoRuntimeProvidingV0,
     HostInteractiveChannelAuthenticatingV0,
     InteractiveSurfaceControlDispatchingV0,
     InteractiveDisplaySelectionDispatchingV1
@@ -47,9 +54,12 @@ public actor AgentInteractiveRuntimeBindingAuthorityV1:
             (any InteractiveSurfaceControlDispatchingV0)?
         let displayControl:
             (any InteractiveDisplaySelectionDispatchingV1)?
+        let mediaNegotiation:
+            (any InteractiveWebRTCNegotiatingV0)?
+        let nativeRuntime: (any InteractiveNativeVideoRuntimeProvidingV0)?
     }
 
-    private struct Active: Sendable {
+    private struct Active: Equatable, Sendable {
         let generation: UInt64
         let interactiveSessionID: UUID
         let primaryConnectionID: Data
@@ -57,6 +67,9 @@ public actor AgentInteractiveRuntimeBindingAuthorityV1:
 
     private var bound: Bound?
     private var active: Active?
+    private var nativeRetiring: Active?
+    private var nativeSnapshot: (generation: UInt64, value: InteractiveNativeVideoRuntimeSnapshotV0)?
+    private var nativeControlBinding: (generation: UInt64, value: InteractiveNativeVideoBindingV0)?
     private struct PendingInstall {
         let token: UUID
         let binding: Active
@@ -82,6 +95,145 @@ public actor AgentInteractiveRuntimeBindingAuthorityV1:
         return .unavailable
     }
 
+    public func snapshot(fence: InteractiveNativeVideoRequestFenceV0,
+        context: InteractiveSessionCommandContextV0) async throws -> InteractiveNativeVideoRuntimeSnapshotV0? {
+        nativeSnapshot = nil
+        guard !terminal, let selected = bound, let installed = active,
+              installed.generation == selected.generation, nativeRetiring != installed,
+              installed.interactiveSessionID == fence.interactiveSessionID.rawValue,
+              installed.primaryConnectionID == context.primaryConnectionID,
+              let runtime = selected.nativeRuntime else {
+            nativeBindingSnapshotLoggerV1.error("native snapshot rejected reason=installed-binding-unavailable")
+            return nil
+        }
+        guard let value = try await runtime.snapshot(fence: fence, context: context) else {
+            nativeBindingSnapshotLoggerV1.error("native snapshot rejected reason=menu-snapshot-unavailable")
+            return nil
+        }
+        guard !Task.isCancelled,
+              !terminal, bound?.generation == selected.generation, active == installed, nativeRetiring != installed,
+              value.binding.primaryConnectionID == installed.primaryConnectionID,
+              value.binding.interactiveSessionID == installed.interactiveSessionID else {
+            nativeBindingSnapshotLoggerV1.error("native snapshot rejected reason=installed-binding-changed")
+            return nil
+        }
+        nativeSnapshot = (selected.generation, value)
+        return value
+    }
+
+    public func makeBackend(snapshot: InteractiveNativeVideoRuntimeSnapshotV0) async throws -> any InteractiveNativeVideoEnrollmentBackendV0 {
+        guard !terminal, let selected = bound, let installed = active,
+              installed.generation == selected.generation, nativeRetiring != installed,
+              installed.primaryConnectionID == snapshot.binding.primaryConnectionID,
+              installed.interactiveSessionID == snapshot.binding.interactiveSessionID,
+              nativeSnapshot?.generation == selected.generation, nativeSnapshot?.value == snapshot,
+              let runtime = selected.nativeRuntime else { throw AgentInteractiveRuntimeBindingAuthorityErrorV1.unavailable }
+        let backend = try await runtime.makeBackend(snapshot: snapshot)
+        guard !Task.isCancelled, !terminal, bound?.generation == selected.generation, active == installed, nativeRetiring != installed,
+              nativeSnapshot?.generation == selected.generation, nativeSnapshot?.value == snapshot else {
+            throw AgentInteractiveRuntimeBindingAuthorityErrorV1.unavailable
+        }
+        nativeControlBinding = (selected.generation, snapshot.binding)
+        return backend
+    }
+
+    public func retainedControlIsCurrent(binding: InteractiveNativeVideoBindingV0,
+        context: InteractiveSessionCommandContextV0) async -> Bool {
+        guard !terminal, let selected = bound, let installed = active,
+              installed.generation == selected.generation, nativeRetiring != installed,
+              installed.interactiveSessionID == binding.interactiveSessionID,
+              installed.primaryConnectionID == binding.primaryConnectionID,
+              nativeControlBinding?.generation == selected.generation, nativeControlBinding?.value == binding,
+              binding.hostID == context.hostID, binding.hostFingerprint == context.hostFingerprint,
+              binding.clientID == context.clientID, binding.primaryConnectionID == context.primaryConnectionID,
+              binding.authorizationEpoch == Int64(context.authorizationEpoch.rawValue),
+              binding.grantRevision == Int64(context.grantRevision.rawValue),
+              binding.policyRevision == Int64(context.policyRevision.rawValue),
+              DispatchTime.now().uptimeNanoseconds / 1_000_000 < binding.expiresAtMonotonicMilliseconds else { return false }
+        return true
+    }
+
+    public func makeReplacementBackend(snapshot: InteractiveNativeVideoRuntimeSnapshotV0,
+        retained: InteractiveNativeVideoRetainedEnrollmentV1) async throws -> any InteractiveNativeVideoEnrollmentBackendV0 {
+        guard !terminal, let selected = bound, let installed = active,
+              installed.generation == selected.generation, nativeRetiring != installed,
+              installed.primaryConnectionID == snapshot.binding.primaryConnectionID,
+              installed.interactiveSessionID == snapshot.binding.interactiveSessionID,
+              nativeControlBinding?.generation == selected.generation,
+              nativeControlBinding?.value == retained.authority.binding,
+              snapshot.binding == retained.authority.binding,
+              nativeSnapshot?.generation == selected.generation, nativeSnapshot?.value == snapshot,
+              let runtime = selected.nativeRuntime else { throw AgentInteractiveRuntimeBindingAuthorityErrorV1.unavailable }
+        let backend = try await runtime.makeReplacementBackend(snapshot: snapshot, retained: retained)
+        guard !Task.isCancelled, !terminal, bound?.generation == selected.generation, active == installed, nativeRetiring != installed,
+              nativeControlBinding?.generation == selected.generation, nativeControlBinding?.value == snapshot.binding,
+              nativeSnapshot?.generation == selected.generation, nativeSnapshot?.value == snapshot else {
+            throw AgentInteractiveRuntimeBindingAuthorityErrorV1.unavailable
+        }
+        return backend
+    }
+
+    public func makeOffer(
+        fence: InteractiveWebRTCNegotiationFenceV0,
+        context: InteractiveSessionCommandContextV0
+    ) async throws -> InteractiveWebRTCOfferBodyV0 {
+        guard !terminal,
+              let selected = bound,
+              let installed = active,
+              installed.generation == selected.generation,
+              installed.interactiveSessionID
+                == fence.interactiveSessionID.rawValue,
+              installed.primaryConnectionID == context.primaryConnectionID,
+              let media = selected.mediaNegotiation else {
+            throw AgentInteractiveRuntimeBindingAuthorityErrorV1.unavailable
+        }
+        let offer = try await media.makeOffer(
+            fence: fence, context: context
+        )
+        guard !terminal,
+              bound?.generation == selected.generation,
+              active == installed,
+              offer.fence == fence else {
+            await media.close(
+                interactiveSessionID: fence.interactiveSessionID.rawValue
+            )
+            throw AgentInteractiveRuntimeBindingAuthorityErrorV1.unavailable
+        }
+        return offer
+    }
+
+    public func acceptAnswer(
+        _ answer: InteractiveWebRTCAnswerBodyV0,
+        context: InteractiveSessionCommandContextV0
+    ) async throws {
+        guard !terminal,
+              let selected = bound,
+              let installed = active,
+              installed.generation == selected.generation,
+              installed.interactiveSessionID
+                == answer.fence.interactiveSessionID.rawValue,
+              installed.primaryConnectionID == context.primaryConnectionID,
+              let media = selected.mediaNegotiation else {
+            throw AgentInteractiveRuntimeBindingAuthorityErrorV1.unavailable
+        }
+        try await media.acceptAnswer(answer, context: context)
+        guard !terminal,
+              bound?.generation == selected.generation,
+              active == installed else {
+            await media.close(
+                interactiveSessionID:
+                    answer.fence.interactiveSessionID.rawValue
+            )
+            throw AgentInteractiveRuntimeBindingAuthorityErrorV1.unavailable
+        }
+    }
+
+    public func close(interactiveSessionID: UUID) async {
+        await bound?.mediaNegotiation?.close(
+            interactiveSessionID: interactiveSessionID
+        )
+    }
+
     public func bind(
         runtime: any InteractiveSessionRuntimeOwningV0,
         generation: UInt64
@@ -91,6 +243,7 @@ public actor AgentInteractiveRuntimeBindingAuthorityV1:
             channelAuthenticator: nil,
             surfaceControl: nil,
             displayControl: nil,
+            mediaNegotiation: nil,
             generation: generation
         )
     }
@@ -103,6 +256,9 @@ public actor AgentInteractiveRuntimeBindingAuthorityV1:
             (any InteractiveSurfaceControlDispatchingV0)? = nil,
         displayControl:
             (any InteractiveDisplaySelectionDispatchingV1)? = nil,
+        mediaNegotiation:
+            (any InteractiveWebRTCNegotiatingV0)? = nil,
+        nativeRuntime: (any InteractiveNativeVideoRuntimeProvidingV0)? = nil,
         generation: UInt64
     ) async throws {
         let predecessor = sequencingTail
@@ -113,6 +269,8 @@ public actor AgentInteractiveRuntimeBindingAuthorityV1:
                 channelAuthenticator: channelAuthenticator,
                 surfaceControl: surfaceControl,
                 displayControl: displayControl,
+                mediaNegotiation: mediaNegotiation,
+                nativeRuntime: nativeRuntime,
                 generation: generation
             )
         }
@@ -380,6 +538,7 @@ public actor AgentInteractiveRuntimeBindingAuthorityV1:
 
     @discardableResult
     public func invalidate(generation: UInt64) async -> Bool {
+        if active?.generation == generation { nativeRetiring = active; nativeSnapshot = nil }
         let fence = pendingInstall?.binding.generation == generation
             ? fencePendingInstall(reason: .menuAppUnavailable) : nil
         let predecessor = sequencingTail
@@ -393,6 +552,8 @@ public actor AgentInteractiveRuntimeBindingAuthorityV1:
     }
 
     public func finish() async {
+        nativeRetiring = active
+        nativeSnapshot = nil
         let fence = fencePendingInstall(reason: .menuAppUnavailable)
         let predecessor = sequencingTail
         let operation = Task { [self] in
@@ -402,6 +563,14 @@ public actor AgentInteractiveRuntimeBindingAuthorityV1:
         }
         sequencingTail = operation
         await operation.value
+    }
+
+    public func desktopAccessCurrent(sessionID: UUID, primaryConnectionID: Data) async -> Bool {
+        guard !terminal, let selected = bound, let installed = active,
+              installed.generation == selected.generation, nativeRetiring != installed,
+              installed.interactiveSessionID == sessionID, installed.primaryConnectionID == primaryConnectionID else { return false }
+        let allowed = await selected.runtime.desktopAccessCurrent(sessionID: sessionID, primaryConnectionID: primaryConnectionID)
+        return allowed && !terminal && bound?.generation == selected.generation && active == installed && nativeRetiring != installed
     }
 
     public func install(
@@ -436,6 +605,12 @@ public actor AgentInteractiveRuntimeBindingAuthorityV1:
         primaryConnectionID: Data,
         reason: InteractiveSessionEndReason
     ) async {
+        if let installed = active, installed.interactiveSessionID == interactiveSessionID,
+           installed.primaryConnectionID == primaryConnectionID {
+            // Native admission fences before queued or platform cleanup waits.
+            nativeRetiring = installed
+            nativeSnapshot = nil
+        }
         let matchesPending = pendingInstall?.binding.interactiveSessionID == interactiveSessionID
             && pendingInstall?.binding.primaryConnectionID == primaryConnectionID
         let fence = matchesPending ? fencePendingInstall(reason: reason) : nil
@@ -461,6 +636,9 @@ public actor AgentInteractiveRuntimeBindingAuthorityV1:
             (any InteractiveSurfaceControlDispatchingV0)?,
         displayControl:
             (any InteractiveDisplaySelectionDispatchingV1)?,
+        mediaNegotiation:
+            (any InteractiveWebRTCNegotiatingV0)?,
+        nativeRuntime: (any InteractiveNativeVideoRuntimeProvidingV0)?,
         generation: UInt64
     ) throws {
         guard !terminal else {
@@ -488,7 +666,9 @@ public actor AgentInteractiveRuntimeBindingAuthorityV1:
             runtime: runtime,
             channelAuthenticator: channelAuthenticator,
             surfaceControl: surfaceControl,
-            displayControl: displayControl
+            displayControl: displayControl,
+            mediaNegotiation: mediaNegotiation,
+            nativeRuntime: nativeRuntime
         )
     }
 
@@ -516,6 +696,8 @@ public actor AgentInteractiveRuntimeBindingAuthorityV1:
             await fence.value
             throw AgentInteractiveRuntimeBindingAuthorityErrorV1.unavailable
         }
+        nativeRetiring = nil
+        nativeSnapshot = nil
         active = Active(
             generation: selected.generation,
             interactiveSessionID: sessionID,

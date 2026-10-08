@@ -13,57 +13,49 @@ public struct ClientPrimaryWorkspaceViewV0: View {
     @StateObject private var liveControl:
         ClientPrimaryLiveControlCoordinatorV0
     @State private var liveControlPresented = false
-    private let onSelectAction: (CapabilityDiscoveryDescriptorV1) -> Void
     private let onCommandFailure:
         @MainActor @Sendable (any Error) -> Void
     private let onReconnect: @MainActor @Sendable () async -> Void
+    private let onShowMacLibrary: @MainActor @Sendable () async -> Void
 
     public init(
         macName: String,
         model: ClientPrimaryWorkspaceModelV0,
         interactiveRoles: NetworkClientInteractiveRoleProductBindingV0,
+        liveProductFactory: ClientPrimaryLiveControlCoordinatorV0.ProductFactory? = nil,
         onSelectAction: @escaping (
             CapabilityDiscoveryDescriptorV1
         ) -> Void,
         onReconnect: @escaping @MainActor @Sendable () async -> Void = {},
+        onShowMacLibrary: @escaping @MainActor @Sendable () async -> Void = {},
         onCommandFailure: @escaping @MainActor @Sendable
             (any Error) -> Void = { _ in }
     ) {
         self.macName = macName
         _model = ObservedObject(wrappedValue: model)
-        _liveControl = StateObject(wrappedValue:
+        let coordinator = liveProductFactory.map {
             ClientPrimaryLiveControlCoordinatorV0(
-                roles: interactiveRoles,
+                productFactory: $0,
+                failureRetirementFactory: {
+                    await interactiveRoles.makeFailedSessionRetirement()
+                },
                 failure: onCommandFailure
             )
-        )
-        self.onSelectAction = onSelectAction
+        } ?? ClientPrimaryLiveControlCoordinatorV0(roles: interactiveRoles, failure: onCommandFailure)
+        _liveControl = StateObject(wrappedValue: coordinator)
         self.onReconnect = onReconnect
+        self.onShowMacLibrary = onShowMacLibrary
         self.onCommandFailure = onCommandFailure
     }
 
     public var body: some View {
         NavigationStack {
             List {
-                Section("Observe") {
-                    NavigationLink("Mac Status") {
-                        ClientObserveViewV0(
-                            projection: model.projection.observe,
-                            onRefreshStatus: refreshStatus,
-                            onLoadActivity: loadActivity,
-                            onLoadOlderActivity: loadActivity,
-                            onRecordStudyJob: { category in
-                                _ = try await model.recordObserveStudyJob(
-                                    category: category
-                                )
-                            },
-                            onCommandFailure: onCommandFailure
-                        )
-                    }
+                Section("Connection") {
                     Label(
                         model.projection.connected
                             ? "Authenticated connection"
-                            : "Last-known information only",
+                            : "Mac disconnected",
                         systemImage: model.projection.connected
                             ? "checkmark.shield"
                             : "wifi.exclamationmark"
@@ -76,16 +68,7 @@ public struct ClientPrimaryWorkspaceViewV0: View {
                     }
                 }
 
-                Section("Act") {
-                    NavigationLink("Approved Actions") {
-                        approvedActionsDestination
-                    }
-                    Text("Approved Actions use bounded grants and do not start Remote Control.")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                }
-
-                Section("Control") {
+                Section("Remote Control") {
                     controlEntry
                     Text(model.projection.control.detail)
                         .font(.footnote)
@@ -93,6 +76,14 @@ public struct ClientPrimaryWorkspaceViewV0: View {
                 }
             }
             .navigationTitle(macName)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("My Macs", systemImage: "desktopcomputer") {
+                        Task { await onShowMacLibrary() }
+                    }
+                    .accessibilityIdentifier("my-macs")
+                }
+            }
             .navigationDestination(isPresented: $liveControlPresented) {
                 liveControlDestination
             }
@@ -115,48 +106,14 @@ public struct ClientPrimaryWorkspaceViewV0: View {
                 liveControlPresented = false
             }
         }
-    }
-
-    @ViewBuilder
-    private var approvedActionsDestination: some View {
-        if let catalog = model.projection.approvedActions {
-            ClientApprovedActionsViewV1(
-                macName: macName,
-                catalog: catalog,
-                onSelect: onSelectAction,
-                onReload: reloadActions
-            )
-        } else {
-            ContentUnavailableView(
-                "Approved Actions unavailable",
-                systemImage: "checklist.unchecked",
-                description: Text(
-                    model.projection.connected
-                        ? "Reload the authenticated granted-action catalog."
-                        : "Reconnect to load actions granted by this Mac."
-                )
-            )
-            .navigationTitle("Approved Actions")
-            .toolbar {
-                if model.projection.connected {
-                    Button("Reload", systemImage: "arrow.clockwise") {
-                        reloadActions()
-                    }
-                }
-            }
+        .onReceive(model.$projection.map { $0.connected }.removeDuplicates()) { connected in
+            // A stream failure under a live primary keeps its recovery screen.
+            // Once that authenticated primary ends, expose the workspace's
+            // Reconnect action instead of stranding the user in that screen.
+            guard !connected, liveControlPresented else { return }
+            liveControl.closeLocalProduct()
+            liveControlPresented = false
         }
-    }
-
-    private func refreshStatus() {
-        perform { try await model.refreshStatus() }
-    }
-
-    private func loadActivity() {
-        perform { try await model.loadNextActivityPage() }
-    }
-
-    private func reloadActions() {
-        perform { try await model.reloadApprovedActions() }
     }
 
     @ViewBuilder
@@ -231,7 +188,8 @@ public struct ClientPrimaryWorkspaceViewV0: View {
     private func shouldDismissLiveControl(
         for mode: ClientControlWorkspaceModeV0
     ) -> Bool {
-        switch mode {
+        guard liveControl.phase != .failed else { return false }
+        return switch mode {
         case .ready, .rejected, .preparationFailed, .endFailed,
              .unavailable, .grantRequired:
             true
@@ -246,7 +204,13 @@ public struct ClientPrimaryWorkspaceViewV0: View {
     ) {
         Task {
             do { try await command() }
-            catch { onCommandFailure(error) }
+            catch {
+                IOSClientRuntimeDiagnosticLogV0.record(
+                    "ui.workspace.command.terminal",
+                    error: error
+                )
+                onCommandFailure(error)
+            }
         }
     }
 }

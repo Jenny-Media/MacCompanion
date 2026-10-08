@@ -1,6 +1,7 @@
 import CompanionClient
 import CompanionInteractiveClient
 import Foundation
+import CompanionWire
 
 public enum NetworkClientPrimaryRouterBridgeErrorV0:
     Error,
@@ -40,6 +41,7 @@ public actor NetworkClientPrimaryRouterBridgeV0:
 
     private var pump: NetworkClientPrimaryFramePumpV0?
     private var sendFrame: (@Sendable (Data) async throws -> Void)?
+    private var desktop: NetworkClientDesktopTunnelV1?
     private var router: ClientPrimaryCommandRouterV0?
     private var observeChannel: ClientObserveChannelV0?
     private var actChannel: ClientActChannelV1?
@@ -160,6 +162,10 @@ public actor NetworkClientPrimaryRouterBridgeV0:
             }
             controlChannel = nil
         }
+        desktop = NetworkClientDesktopTunnelV1(send: { [weak self] data in
+            guard let self else { throw NetworkClientPrimaryRouterBridgeErrorV0.unavailable }
+            try await self.sendAuthenticatedCommand(data)
+        })
         try await router.activate()
         guard !invalidated else {
             await router.invalidate()
@@ -175,7 +181,10 @@ public actor NetworkClientPrimaryRouterBridgeV0:
         guard !invalidated, let router else {
             throw NetworkClientPrimaryRouterBridgeErrorV0.unavailable
         }
-        try await router.receive(frame)
+        if try WireCodec.messageKind(from: frame) == .desktopTunnelEvent {
+            guard let desktop else { throw NetworkClientPrimaryRouterBridgeErrorV0.unavailable }
+            try await desktop.receive(frame)
+        } else { try await router.receive(frame) }
     }
 
     public func sendAuthenticatedCommand(_ frame: Data) async throws {
@@ -184,6 +193,8 @@ public actor NetworkClientPrimaryRouterBridgeV0:
         }
         try await sendFrame(frame)
     }
+
+    public func currentDesktopTunnel() -> NetworkClientDesktopTunnelV1? { desktop }
 
     public func currentRouter() -> ClientPrimaryCommandRouterV0? { router }
     public func currentObserveChannel() -> ClientObserveChannelV0? {
@@ -198,6 +209,8 @@ public actor NetworkClientPrimaryRouterBridgeV0:
     public func primaryTerminated() async {
         guard !invalidated else { return }
         invalidated = true
+        await desktop?.invalidate()
+        desktop = nil
         let router = self.router
         self.router = nil
         observeChannel = nil
@@ -212,6 +225,8 @@ public actor NetworkClientPrimaryRouterBridgeV0:
     public func cancel() async {
         guard !invalidated else { return }
         invalidated = true
+        await desktop?.invalidate()
+        desktop = nil
         let router = self.router
         let pump = self.pump
         self.router = nil

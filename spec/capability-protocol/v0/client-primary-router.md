@@ -97,6 +97,12 @@ An `error` is routed by correlation, never guessed from its body or current UI
 screen. Unknown correlation, duplicate reply message ID, wrong reply kind,
 deadline expiry, a missing receiver, malformed generic metadata, or a receiver
 decode failure invalidates the whole router and all lane receivers.
+Within the Interactive Control receiver, a pending display-catalog or
+display-selection request consumes only a reply whose `correlationID` equals
+that request's message ID. Other registered Interactive Control requests,
+including surface-target inventory, may complete while display refresh is
+pending. Each response still undergoes its own exact body, phase, sequence,
+and correlation checks; an unmatched response fails closed.
 
 ## Product lanes
 
@@ -163,10 +169,10 @@ owner. The request-submitted state is connection-scoped and is published only
 after transport enqueue succeeds.
 
 The Control receiver delegates challenge and acceptance validation to the
-normative Interactive client authority. A valid approval challenge may expose
-only the approval-key adapter for the closed
-`startInteractiveControl` presence reason. The adapter signs only after fresh
-OS-backed user presence, sends `interactive.session.approve` through the same
+normative Interactive client authority. A valid challenge may expose only the immutable profile-selected signer.
+The adapter signs with the explicit session consent profile: normal trusted-device
+remote desktop uses the paired session key without fresh presence; the legacy
+profile retains fresh OS-backed presence through its approval key. It sends `interactive.session.approve` through the same
 Control lane, and publishes approval-submitted state only after that enqueue
 succeeds. Local user-presence cancellation, protected-key unavailability, or a
 local signing failure becomes a typed local Control result and closes only that

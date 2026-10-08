@@ -1,5 +1,7 @@
 import CompanionClient
 import CompanionInteractiveClient
+import CompanionInteractiveShared
+import CompanionInteractiveWire
 import Foundation
 
 public enum NetworkClientInteractiveRoleProductStateV0:
@@ -36,6 +38,9 @@ public actor NetworkClientInteractiveRoleProductBindingV0 {
         UUID,
         NetworkClientInteractiveProductProgressV0
     ) -> Void
+    private var usesDesktopTunnel = false
+    public func useDesktopTunnel() { usesDesktopTunnel = true }
+
     private var pair: (any NetworkClientInteractiveRolePairOwningV0)?
     private var readyPair: NetworkClientInteractiveReadyRolePairV0?
     private var initialDesktop:
@@ -46,6 +51,20 @@ public actor NetworkClientInteractiveRoleProductBindingV0 {
     private var automaticFocusHandler:
         (@Sendable (ClientSurfaceFocusEventV0) async throws -> Void)?
     private var pendingFocusPublication: NetworkClientFocusPublicationV0?
+    private var nativeEnrollment: ClientNativeVideoEnrollmentSessionV0?
+    private var webRTC:
+        ClientWebRTCNegotiationCoordinatorV0?
+
+    private var currentInteractiveSessionID: UUID? {
+        switch state {
+        case .connecting(let id), .roleChannelsReady(let id),
+             .initialSurfacePreparing(let id), .active(let id),
+             .ending(let id), .failed(let id):
+            id
+        case .inactive, .closed:
+            nil
+        }
+    }
 
     package init(
         hostID: UUID,
@@ -123,6 +142,176 @@ public actor NetworkClientInteractiveRoleProductBindingV0 {
         guard state != .closed else { return }
         await retirePair()
         state = .closed
+    }
+
+    /// Capture before product construction. The returned action never looks up
+    /// a later selected primary or takes its session ID from mutable UI state.
+    public func makeFailedSessionRetirement()
+        -> (@Sendable () async -> Void)?
+    {
+        guard let sessionID = currentInteractiveSessionID,
+              let connectionID, let channel = channelFactory(),
+              channel.primary.hostID == hostID,
+              channel.primary.primaryConnectionID == connectionID else {
+            return nil
+        }
+        return {
+            do {
+                _ = try await channel.endSession(
+                    expectedInteractiveSessionID: sessionID
+                )
+                IOSClientRuntimeDiagnosticLogV0.record(
+                    "interactive.failed-product.end-submitted"
+                )
+            } catch {
+                IOSClientRuntimeDiagnosticLogV0.record(
+                    "interactive.failed-product.end-unavailable", error: error
+                )
+            }
+        }
+    }
+
+    /// Starts the candidate video peer on the selected authenticated primary.
+    /// The caller supplies a peer whose renderer blanks on close. This never
+    /// promotes Control or enables input; the existing visible-frame gate
+    /// remains authoritative until WebRTC has its own receipt profile.
+    public func startWebRTC(
+        descriptor: AdaptiveSurfaceDescriptor,
+        peer: any ClientWebRTCVideoPeerV0
+    ) async throws {
+        let expectedConnectionID = connectionID
+        let expectedActivationID = activationID
+        let sessionID: UUID
+        switch state {
+        case .initialSurfacePreparing(let id), .active(let id):
+            sessionID = id
+        default:
+            await peer.close()
+            throw NetworkClientInteractiveInitialDesktopErrorV0.unavailable
+        }
+        guard descriptor.interactiveSessionID == sessionID,
+              let channel = channelFactory(),
+              expectedConnectionID != nil,
+              expectedActivationID != nil else {
+            await peer.close()
+            throw NetworkClientInteractiveInitialDesktopErrorV0.unavailable
+        }
+        let candidate = ClientWebRTCNegotiationCoordinatorV0(
+            signaling: channel
+        )
+        let previous = webRTC
+        webRTC = candidate
+        await previous?.close()
+        do {
+            try await candidate.start(descriptor: descriptor, peer: peer)
+            guard webRTC === candidate,
+                  connectionID == expectedConnectionID,
+                  activationID == expectedActivationID else {
+                await candidate.close()
+                throw NetworkClientInteractiveInitialDesktopErrorV0.unavailable
+            }
+        } catch {
+            if webRTC === candidate { webRTC = nil }
+            await candidate.close()
+            throw error
+        }
+    }
+
+    @discardableResult
+    public func acknowledgeNativePresentation(nativeGeneration: Int64, encodedWidth: UInt16, encodedHeight: UInt16) async throws -> InteractiveNativeVideoPresentationReceiptBodyV0 {
+        guard case let .active(sessionID) = state, let owner = nativeEnrollment,
+              let connectionID, let activationID else { throw NetworkClientInteractiveInitialDesktopErrorV0.unavailable }
+        let receipt = try await owner.acknowledgePresentation(nativeGeneration: nativeGeneration,
+            encodedWidth: encodedWidth, encodedHeight: encodedHeight)
+        guard nativeEnrollment === owner, state == .active(interactiveSessionID: sessionID),
+              self.connectionID == connectionID, self.activationID == activationID, await owner.isCurrent() else {
+            throw NetworkClientInteractiveInitialDesktopErrorV0.unavailable
+        }
+        return receipt
+    }
+
+    /// Uses the selected primary's existing session-key custody. Platform TLS
+    /// identity/launch and the native renderer remain separately admitted seams.
+    public func enrollNativeVideo(
+        descriptor: AdaptiveSurfaceDescriptor,
+        clientCertificateDER: Data,
+        signer: any ClientSessionAuthenticationSigningV0,
+        streamContinuity: Bool = false,
+        validateCertificate: @escaping @Sendable (Data) async throws -> Bool
+    ) async throws -> ClientNativeVideoEnrolledSessionV0 {
+        guard case let .active(sessionID) = state,
+              descriptor.interactiveSessionID == sessionID,
+              nativeEnrollment == nil, let channel = channelFactory(),
+              let connectionID, let activationID else {
+            throw NetworkClientInteractiveInitialDesktopErrorV0.unavailable
+        }
+        let candidate = ClientNativeVideoEnrollmentSessionV0(channel: channel, signer: signer,
+            validateCertificate: validateCertificate)
+        nativeEnrollment = candidate
+        do {
+            let result = try await candidate.enroll(descriptor: descriptor, clientCertificateDER: clientCertificateDER, streamContinuity: streamContinuity)
+            guard nativeEnrollment === candidate, self.connectionID == connectionID,
+                  self.activationID == activationID, await candidate.isCurrent() else {
+                throw NetworkClientInteractiveInitialDesktopErrorV0.unavailable
+            }
+            return result
+        } catch {
+            if nativeEnrollment === candidate { nativeEnrollment = nil }
+            await candidate.close()
+            throw error
+        }
+    }
+
+    public func supportsNativeStreamContinuity() async -> Bool {
+        guard case .active = state, let owner = nativeEnrollment else { return false }
+        return await owner.supportsStreamContinuity()
+    }
+    public func retainNativeStream() async throws {
+        guard case let .active(sessionID) = state, let owner = nativeEnrollment, let connectionID, let activationID else {
+            throw NetworkClientInteractiveInitialDesktopErrorV0.unavailable
+        }
+        try await owner.retainStream()
+        guard nativeEnrollment === owner, state == .active(interactiveSessionID: sessionID), self.connectionID == connectionID,
+              self.activationID == activationID, await owner.isCurrent() else { throw NetworkClientInteractiveInitialDesktopErrorV0.unavailable }
+    }
+    public func replaceNativeSurface(descriptor: AdaptiveSurfaceDescriptor, clientCertificateDER: Data) async throws -> ClientNativeVideoEnrolledSessionV0 {
+        guard case let .active(sessionID) = state, descriptor.interactiveSessionID == sessionID, let owner = nativeEnrollment,
+              let connectionID, let activationID else { throw NetworkClientInteractiveInitialDesktopErrorV0.unavailable }
+        do {
+            let result = try await owner.replaceSurface(descriptor: descriptor, clientCertificateDER: clientCertificateDER)
+            guard nativeEnrollment === owner, state == .active(interactiveSessionID: sessionID), self.connectionID == connectionID,
+                  self.activationID == activationID, await owner.isCurrent() else { throw NetworkClientInteractiveInitialDesktopErrorV0.unavailable }
+            return result
+        } catch {
+            if nativeEnrollment === owner { nativeEnrollment = nil }
+            await owner.close(); throw error
+        }
+    }
+
+    public func isNativeVideoEnrollmentCurrent() async -> Bool {
+        guard let nativeEnrollment else { return false }
+        return await nativeEnrollment.isCurrent()
+    }
+
+    public func currentNativeControlBinding() async -> InteractiveNativeVideoBindingV0? {
+        guard case let .active(sessionID) = state, let channel = channelFactory(),
+              let expectedConnection = connectionID, let expectedActivation = activationID else { return nil }
+        let binding = await channel.currentNativeControlBinding()
+        guard state == .active(interactiveSessionID: sessionID), connectionID == expectedConnection,
+              activationID == expectedActivation, binding?.interactiveSessionID == sessionID else { return nil }
+        return binding
+    }
+
+    public func stopNativeVideoEnrollment() async {
+        let retiring = nativeEnrollment
+        nativeEnrollment = nil
+        await retiring?.close()
+    }
+
+    public func stopWebRTC() async {
+        let retiring = webRTC
+        webRTC = nil
+        await retiring?.close()
     }
 
     public func startInitialDesktop(
@@ -260,6 +449,7 @@ public actor NetworkClientInteractiveRoleProductBindingV0 {
     private func accept(
         _ publication: NetworkClientControlPublicationV0
     ) async {
+        if usesDesktopTunnel { return }
         guard state != .closed, publication.hostID == hostID else { return }
         switch publication.event {
         case let .accepted(session, _):
@@ -269,11 +459,14 @@ public actor NetworkClientInteractiveRoleProductBindingV0 {
             )
         case let .endSubmitted(interactiveSessionID, _):
             if connectionID == publication.connectionID {
-                await retirePair()
-                connectionID = publication.connectionID
+                if case .connecting = state {
+                    await retirePair()
+                    connectionID = publication.connectionID
+                }
                 state = .ending(
                     interactiveSessionID: interactiveSessionID
                 )
+                await initialDesktop?.beginEnding()
             }
         case .ended:
             if connectionID == publication.connectionID {
@@ -293,6 +486,20 @@ public actor NetworkClientInteractiveRoleProductBindingV0 {
             if connectionID == publication.connectionID {
                 await retirePair()
                 state = .inactive
+            }
+        case let .mediaOffer(offer):
+            guard connectionID == publication.connectionID,
+                  offer.body.fence.interactiveSessionID.rawValue
+                    == currentInteractiveSessionID else { return }
+            await webRTC?.receiveOffer(offer)
+        case let .mediaReady(ready):
+            guard connectionID == publication.connectionID,
+                  ready.body.fence.interactiveSessionID.rawValue
+                    == currentInteractiveSessionID else { return }
+            await webRTC?.receiveReady(ready)
+        case .mediaRejected:
+            if connectionID == publication.connectionID {
+                await webRTC?.reject()
             }
         }
     }
@@ -405,8 +612,11 @@ public actor NetworkClientInteractiveRoleProductBindingV0 {
         guard state != .closed,
               hostID == self.hostID,
               connectionID == self.connectionID else { return }
+        IOSClientRuntimeDiagnosticLogV0.record("interactive.roles.primary-terminated")
         connectTask?.cancel()
         connectTask = nil
+        await webRTC?.close()
+        webRTC = nil
         await initialDesktop?.close()
         initialDesktop = nil
         await pair?.primaryTerminated(
@@ -440,8 +650,11 @@ public actor NetworkClientInteractiveRoleProductBindingV0 {
     ) async {
         guard self.activationID == activationID,
               self.connectionID == connectionID else { return }
+        IOSClientRuntimeDiagnosticLogV0.record("interactive.roles.initial-desktop-failed")
         failInitialSurfaceIfCurrent(activationID: activationID,
             interactiveSessionID: interactiveSessionID, connectionID: connectionID)
+        await webRTC?.close()
+        webRTC = nil
         self.activationID = nil
         initialDesktop = nil
         automaticFocusHandler = nil
@@ -460,9 +673,18 @@ public actor NetworkClientInteractiveRoleProductBindingV0 {
     ) {
         state = value
         progressPublisher(connectionID, interactiveSessionID, progress)
+        if case .failed = value, let retirement = makeFailedSessionRetirement() {
+            Task { await retirement() }
+        }
     }
 
     private func retirePair() async {
+        let native = nativeEnrollment
+        nativeEnrollment = nil
+        activationID = nil
+        await native?.close()
+        await webRTC?.close()
+        webRTC = nil
         activationID = nil
         automaticFocusHandler = nil
         pendingFocusPublication = nil

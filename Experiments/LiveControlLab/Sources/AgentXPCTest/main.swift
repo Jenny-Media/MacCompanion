@@ -175,10 +175,11 @@ private actor StatusReader: MacLocalXPCStatusReadingV1 {
     static func client(testID: UUID, mode: String) async throws {
         let events = Events<MacLocalXPCClientEventV1>()
         let surfaces = ProbePresentationSurface()
-        let interactive = mode == "presentation-simulator"
-            ? try ProbeInteractiveMenu(scenario: .simulator)
+        let nativeSimulator = mode.hasPrefix("presentation-native-simulator")
+        let interactive = mode == "presentation-simulator" || nativeSimulator
+            ? try ProbeInteractiveMenu(scenario: nativeSimulator ? (mode.hasSuffix("-continuous") ? .nativeContinuous : .native) : .simulator)
             : mode.hasPrefix("presentation-control")
-            ? try ProbeInteractiveMenu(scenario: mode == "presentation-control-admission-race" ? .admissionRace
+            ? try ProbeInteractiveMenu(scenario: mode == "presentation-control-native" ? .native : mode == "presentation-control-admission-race" ? .admissionRace
                 : mode == "presentation-control-menu-loss" ? .menuLoss
                 : mode == "presentation-control-revoke" ? .revoke
                 : mode == "presentation-control-revocation-race" ? .revocationRace : .lifecycle) : nil
@@ -223,7 +224,21 @@ private actor StatusReader: MacLocalXPCStatusReadingV1 {
             return
         }
         guard try await events.next() == .menuReadyAcknowledged else { throw ProbeError.unexpectedEvent }
-        if mode == "presentation-simulator" {
+        if mode == "presentation-wait-listener" {
+            let deadline = ContinuousClock.now + .seconds(8)
+            while ContinuousClock.now < deadline {
+                client.readAgentStatus()
+                let status = try await events.next()
+                if case let .agentStatus(_, snapshot) = status, snapshot.networkState == .listening {
+                    emit("production-listener-readiness-verified")
+                    return
+                }
+                guard case .agentStatus = status else { throw ProbeError.unexpectedEvent }
+                try await Task.sleep(for: .milliseconds(50))
+            }
+            throw ProbeError.timeout
+        }
+        if mode == "presentation-simulator" || nativeSimulator || mode == "presentation-control-native" {
             guard let interactive else { throw ProbeError.unexpectedEvent }
             // Debug-only equivalent of the shipping one-record-at-a-time menu
             // drain. Every record still crosses the signed local-XPC method
@@ -246,6 +261,9 @@ private actor StatusReader: MacLocalXPCStatusReadingV1 {
                     }
                 }
             }
+        }
+        if mode == "presentation-simulator" || nativeSimulator {
+            guard let interactive else { throw ProbeError.unexpectedEvent }
             try await ProbeSimulatorMenu.run(testID: testID, menu: client, surfaces: surfaces,
                 interactive: interactive,
                 status: {

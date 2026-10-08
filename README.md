@@ -1,10 +1,29 @@
 # Mac Companion
 
-Mac Companion is a native iPhone and iPad companion for checking, operating, and directly controlling a personal Mac through a standalone macOS agent.
+Latest streaming checkpoint: [source-built portable native host](docs/evidence/2026-09-27-source-built-portable-native-host.md). Codec deployment inspection, portable package/signature/integrity checks, relocation/credential checks, stable validation and four live native Simulator sessions pass. Video, keyboard/modifiers/shortcuts, pointer and background/reconnect recovery are verified through the development package. Complete transitive source admission, permanent process/TCC ownership, normal-app composition, actual Mac input and physical installation remain pending.
 
-The product is local-first and policy-driven, with three first-class paths: **Observe** current state, **Act** through bounded capabilities, and **Control** through an adaptive remote desktop. Control is the flagship capability, but it is not required for status checks or approved actions. Inside a control session, Mac Companion can move from the full desktop to a phone-readable application, window, or focused region while preserving the desktop as an escape hatch. It is not a general shell, arbitrary file browser, vendor relay, or hidden agent. The Mac remains the final authority, and active remote use is visible and audited.
+Mac Companion is a native iPhone remote desktop client and macOS host. The first product has one journey: install both apps, pair once on the Mac, then connect to view and control a display or window with pointer, keyboard, and shortcuts.
+
+The [remote-desktop MVP decision](docs/remote-desktop-mvp.md) supersedes the earlier three-path product design. Observe and Act are deferred from the main app and website. Pairing explicitly grants the fixed remote-desktop scope; OS permissions, authenticated connections, device removal, and the visible Stop control remain required. Older evidence below describes historical checkpoints rather than the current product scope.
 
 > **Name decision:** **Mac Companion** is the implementation name and intended public product name, with the proposed App Store subtitle **Monitor and control your Mac**. The installed Mac component is **Mac Companion Agent**. Company-controlled bundle identifiers may be registered independently of the public name, while public launch still requires written trademark review and App Store name reservation.
+
+## Current development product
+
+The MVP is a single iOS remote desktop app connecting directly to built-in macOS
+Screen Sharing. No Mac Companion host/helper installation is required. Enable
+Screen Sharing once, add the Mac’s local address in My Macs and use its allowed
+Mac account login. Login retention is optional in the iPhone Keychain.
+
+The direct development build bypasses the historical paired host/Agent runtime.
+It retains keyboard/modifiers, cursor, pan and tap-centered zoom. Exact window
+fitting and automatic individual-display selection are deferred. This profile
+is local-network-only and does not encrypt desktop/input transport; secure
+transport, physical reliability and public release admission remain open.
+
+See [current MVP](docs/remote-desktop-mvp.md) and
+[direct connection contract](spec/capability-protocol/v0/direct-screen-sharing.md).
+The architecture sections below describe the retained historical implementation.
 
 ## Product position
 
@@ -15,7 +34,7 @@ Mac Companion is a private control companion for personal Macs, especially alway
 - Clear paired, connected, viewing, and controlling states
 - Understandable local audit history
 - Direct local or user-managed private-network connectivity
-- Three independently useful paths: Observe, Act, and Control
+- One pairing for the remote-desktop experience
 - First-class Interactive Control for live screen, mouse, and keyboard access
 - Adaptive Remote Surfaces: App Focus, Window Focus, and Smart Zoom instead of forcing every visual task through a scaled desktop
 - A provider model that can expose MacTools and other canonical capabilities without exposing arbitrary internals
@@ -40,7 +59,8 @@ Mac Companion is a private control companion for personal Macs, especially alway
 
 ## Documents
 
-- [Apache-2.0 license](LICENSE)
+- [GPL-3.0 license](LICENSE)
+- [Licensing and retained Apache notices](LICENSING.md)
 - [Trademark policy](TRADEMARKS.md)
 - [Security policy](SECURITY.md)
 - [Contribution hold](CONTRIBUTING.md)
@@ -52,6 +72,7 @@ Mac Companion is a private control companion for personal Macs, especially alway
 - [Interactive Control specification](docs/interactive-control-spec.md)
 - [Adaptive Remote Surfaces](docs/adaptive-remote-surfaces.md)
 - [MVP plan](docs/mvp-plan.md)
+- [Sunshine and Moonlight integration plan](docs/sunshine-moonlight-integration-plan.md)
 - [Distribution plan](docs/distribution-plan.md)
 - [External TestFlight review package](docs/testflight-review-package.md)
 - [Implementation orchestration](docs/implementation-orchestration.md)

@@ -1,0 +1,255 @@
+#if os(iOS) && MACCOMPANION_VNC_DEVELOPMENT
+import SwiftUI
+import UniformTypeIdentifiers
+import UIKit
+import LocalAuthentication
+import Crypto
+import Citadel
+
+struct SSHKeyDocument: FileDocument {
+    static let readableContentTypes: [UTType] = [.data, .plainText]
+    var data: Data
+    init(data: Data) { self.data = data }
+    init(configuration: ReadConfiguration) throws { data = configuration.file.regularFileContents ?? Data() }
+    func fileWrapper(configuration: WriteConfiguration) throws -> FileWrapper { FileWrapper(regularFileWithContents: data) }
+}
+
+struct TerminalKeySettings: View {
+    var mac: DirectMacRecordV1? = nil
+    var changed: @MainActor () -> Void = {}
+    @Environment(\.dismiss) private var dismiss
+    @State private var library = TerminalKeyLibrary()
+    @State private var pro = DirectProAccess.shared
+    private enum Sheet: String, Identifiable { case create, importKey, pro; var id: String { rawValue } }
+    @State private var sheet: Sheet?
+    var body: some View {
+        NavigationStack {
+            List {
+                if let mac {
+                    Section {
+                        Button("Use Password Login", systemImage: "person.badge.key") {
+                            library.perform { try TerminalKeyLibraryStore.forgetAssociation(mac.id) }; changed()
+                        }
+                    } footer: { Text("Select a key below for \(mac.name). Keys can be used with any of your Macs.") }
+                }
+                Section("SSH Keys") {
+                    ForEach(library.keys) { entry in
+                        VStack(alignment: .leading, spacing: 8) {
+                            NavigationLink {
+                                TerminalKeyDetail(entry: entry, library: library, changed: changed)
+                            } label: { VStack(alignment: .leading, spacing: 4) {
+                                HStack {
+                                    Label(entry.name, systemImage: "key")
+                                    if library.associations.contains(where: { $0.macID == mac?.id && $0.keyID == entry.id }) { Image(systemName: "checkmark.circle.fill").foregroundStyle(.blue) }
+                                }
+                                Text(entry.key.fingerprint).font(.caption.monospaced()).foregroundStyle(.secondary).lineLimit(1)
+                            } }
+                            if let mac {
+                                let selected = library.associations.contains { $0.macID == mac.id && $0.keyID == entry.id }
+                                if selected { Label("Selected for \(mac.name)", systemImage: "checkmark").font(.subheadline).foregroundStyle(.secondary) }
+                                else { Button("Use for \(mac.name)") { select(entry, for: mac) }.buttonStyle(.borderless).disabled(!pro.ready) }
+                            }
+                        }
+                    }
+                    if library.keys.isEmpty && library.readable { Text("Create or import a key, then choose it for a Mac.").foregroundStyle(.secondary) }
+                }
+                Section {
+                    Button("Create Key", systemImage: "plus") { sheet = pro.canAddKey(count: library.keys.count) ? .create : .pro }
+                    Button("Import Key", systemImage: "square.and.arrow.down") { sheet = pro.canAddKey(count: library.keys.count) ? .importKey : .pro }
+                }.disabled(!library.readable || !pro.ready)
+                if let notice = library.recovery { Section { DirectRecoveryCard(notice: notice, primary: .init(title: "Retry") { reload() }) }.listRowInsets(EdgeInsets()).listRowBackground(Color.clear) }
+                Section {
+                    Text("Selecting or importing a key doesn’t add it to a Mac. Use that Mac’s Terminal Access settings to install its public key. Private keys stay in this iPhone’s Keychain and are excluded from iCloud sync.")
+                }.font(.footnote).foregroundStyle(.secondary)
+            }
+            .navigationTitle("SSH Keys").navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
+            .sheet(item: $sheet) { destination in
+                switch destination {
+                case .create, .importKey:
+                    TerminalKeyComposer(importing: destination == .importKey) { key, name in
+                        guard pro.canAddKey(count: library.keys.count) else { sheet = .pro; return false }
+                        let saved = library.perform {
+                            let id = try TerminalKeyLibraryStore.add(key, name: name)
+                            if let mac { try TerminalKeyLibraryStore.associate(id, macID: mac.id, username: "") }
+                        }
+                        if saved { changed() }; return saved
+                    }
+                case .pro: DirectProView()
+                }
+            }
+            .onAppear { reload(); pro.start() }
+        }
+    }
+    private func reload() { library.reload(macs: mac.map { [$0] } ?? []) }
+    private func select(_ entry: TerminalNamedKey, for mac: DirectMacRecordV1) {
+        guard pro.ready else { return }
+        guard pro.canUseKey(entry.id, among: library.keys.map(\.id)) else { sheet = .pro; return }
+        library.perform {
+            let username = library.associations.first(where: { $0.macID == mac.id })?.username ?? ""
+            try TerminalKeyLibraryStore.associate(entry.id, macID: mac.id, username: username)
+        }; changed()
+    }
+}
+
+struct TerminalKeyComposer: View {
+    let importing: Bool
+    let save: @MainActor (TerminalSSHKey, String) -> Bool
+    @Environment(\.dismiss) private var dismiss
+    @State private var name = ""
+    @State private var passphrase = ""
+    @State private var picking = false
+    @State private var busy = false
+    @State private var issue: DirectRecoveryNotice?
+    @State private var generation = UUID()
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Key Name") { TextField("Name", text: $name).autocorrectionDisabled()
+                    if !valid { Text("Use a name from 1 to 80 characters, without control characters.").font(.footnote).foregroundStyle(.secondary) }
+                }
+                if importing {
+                    Section {
+                        SecureField("Import passphrase, if encrypted", text: $passphrase).textContentType(nil).privacySensitive()
+                        Button("Import from Files") { picking = true }.disabled(!valid || busy)
+                        PasteButton(payloadType: String.self) { values in if let text = values.first { decode(text) } }.disabled(!valid || busy)
+                    } footer: { Text("Ed25519 OpenSSH keys only, up to 32 KiB. Import passphrases are used once and never saved.") }
+                } else {
+                    Section { Button("Create Ed25519 Key") { if save(.create(), name) { dismiss() } else { issue = .make(.saveFailed, message: "The key couldn’t be saved. Keep this form open and try again.") } }.disabled(!valid || busy) }
+                }
+                if busy { ProgressView("Importing…") }
+                if let issue { DirectRecoveryCard(notice: issue) }
+            }
+            .navigationTitle(importing ? "Import SSH Key" : "Create SSH Key").navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } } }
+            .fileImporter(isPresented: $picking, allowedContentTypes: [.data, .plainText]) { result in
+                do {
+                    let url = try result.get(), access = url.startAccessingSecurityScopedResource()
+                    defer { if access { url.stopAccessingSecurityScopedResource() } }
+                    let file = try FileHandle(forReadingFrom: url); defer { try? file.close() }
+                    let bytes = try file.read(upToCount: 32769) ?? Data()
+                    guard bytes.count <= 32768 else { throw TerminalSSHKey.KeyFailure.tooLarge }; guard let text = String(data: bytes, encoding: .utf8) else { throw TerminalSSHKey.KeyFailure.invalid }
+                    decode(text)
+                } catch {
+                    if !DirectCancellation.isCancellation(error) { issue = importNotice(error) }
+                }
+            }
+            .onDisappear { generation = UUID(); passphrase = "" }
+            .onReceive(NotificationCenter.default.publisher(for: UIApplication.willResignActiveNotification)) { _ in generation = UUID(); passphrase = ""; busy = false }
+        }
+    }
+    private func importNotice(_ error: Error) -> DirectRecoveryNotice {
+        guard let failure = error as? TerminalSSHKey.KeyFailure else { return .make(.importInvalid, message: "The file couldn’t be read. Choose another Ed25519 OpenSSH key, up to 32 KiB.") }
+        switch failure {
+        case .invalid: return .make(.importInvalid)
+        case .unsupported: return .make(.importUnsupported)
+        case .tooLarge: return .make(.importTooLarge)
+        case .passphrase: return .make(.importUnlock)
+        case .workLimit: return .make(.importWorkLimit)
+        }
+    }
+    private var valid: Bool { TerminalKeyLibraryStore.Library.validName(name) }
+    private func decode(_ text: String) {
+        guard valid, !busy, DirectAppLockV1.shared.canAccess else { return }
+        busy = true; let token = generation, secret = passphrase; passphrase = ""
+        Task {
+            let result = await Task.detached(priority: .userInitiated) { Result { try TerminalSSHKey.importOpenSSH(text, passphrase: secret) } }.value
+            guard token == generation, DirectAppLockV1.shared.canAccess else { return }; busy = false
+            switch result {
+            case .success(let key): if save(key, name) { dismiss() } else { issue = .make(.saveFailed, message: "The key couldn’t be saved. Keep this form open and try again.") }
+            case .failure(let failure): issue = importNotice(failure)
+            }
+        }
+    }
+}
+
+struct TerminalKeyDetail: View {
+    let entry: TerminalNamedKey
+    @Bindable var library: TerminalKeyLibrary
+    let changed: @MainActor () -> Void
+    @Environment(\.dismiss) private var dismiss
+    @State private var name: String
+    @State private var passphrase = ""
+    @State private var confirmPassphrase = ""
+    @State private var privateExport = false
+    @State private var exportData: Data?
+    @State private var exportFilename = "ssh-key.pub"
+    @State private var exporting = false
+    @State private var busy = false
+    @State private var deleting = false
+    @State private var issue: DirectRecoveryNotice?
+    @State private var generation = UUID()
+    @State private var authentication: LAContext?
+    init(entry: TerminalNamedKey, library: TerminalKeyLibrary, changed: @escaping @MainActor () -> Void) {
+        self.entry = entry; self.library = library; self.changed = changed; _name = State(initialValue: entry.name)
+    }
+    var body: some View {
+        Form {
+            if let notice = library.recovery { DirectRecoveryCard(notice: notice, primary: .init(title: "Review Keys", perform: { library.reload() })) }
+            Section("Key") {
+                TextField("Name", text: $name)
+                Button("Save Name") { library.perform { try TerminalKeyLibraryStore.rename(entry.id, name: name) }; changed() }
+                    .disabled(!TerminalKeyLibraryStore.Library.validName(name))
+                Text(entry.key.fingerprint).font(.caption.monospaced()).textSelection(.enabled)
+                Text("Used by \(library.associations.filter { $0.keyID == entry.id }.count) saved Mac(s)").foregroundStyle(.secondary)
+                if !DirectProAccess.shared.hasPro { Button("Use as My Free Key") { DirectProAccess.shared.chooseFreeKey(entry.id); changed() } }
+            }
+            Section("Public Key") {
+                Button("Copy Public Key") { UIPasteboard.general.string = publicLine }
+                Button("Export Public Key") { exportFilename = filename + ".pub"; exportData = Data((publicLine + "\n").utf8); exporting = true }
+            }
+            Section {
+                Toggle("Export Encrypted Private Key", isOn: $privateExport)
+                if privateExport {
+                    SecureField("Export passphrase", text: $passphrase).textContentType(nil).privacySensitive()
+                    SecureField("Confirm passphrase", text: $confirmPassphrase).textContentType(nil).privacySensitive()
+                    Button("Authenticate & Export") { exportPrivate() }.disabled(busy || passphrase.isEmpty || passphrase != confirmPassphrase || passphrase.utf8.count > 4096)
+                    if !passphrase.isEmpty && passphrase != confirmPassphrase { Text("The passphrases must match.").font(.footnote).foregroundStyle(.secondary) }
+                    if passphrase.utf8.count > 4096 { Text("Use a passphrase up to 4 KiB.").font(.footnote).foregroundStyle(.secondary) }
+                    if busy { ProgressView("Preparing encrypted key…") }
+                }
+            } header: { Text("Private Key Backup") } footer: { Text("Exports use passphrase-encrypted OpenSSH format and require Face ID or your passcode. Keep the file and passphrase safe; a forgotten passphrase cannot be recovered.") }
+            if let issue { DirectRecoveryCard(notice: issue) }
+            Section {
+                Button("Delete Key from This iPhone", role: .destructive) { deleting = true }
+            } footer: { Text("This clears local selections. It does not remove the public key or revoke access on your Macs.") }
+        }
+        .navigationTitle("SSH Key").navigationBarTitleDisplayMode(.inline)
+        .fileExporter(isPresented: $exporting, document: exportData.map(SSHKeyDocument.init(data:)), contentType: .data, defaultFilename: exportFilename) { result in
+            if case .failure(let error) = result { issue = .make(DirectCancellation.isCancellation(error) ? .exportCancelled : .exportFailed) }
+            exportData = nil; passphrase = ""; confirmPassphrase = ""
+        }
+        .confirmationDialog("Delete this key and its local selections?", isPresented: $deleting, titleVisibility: .visible) {
+            Button("Delete Key", role: .destructive) { library.perform { try TerminalKeyLibraryStore.delete(entry.id) }; changed(); if library.error == nil { dismiss() } }
+        }
+        .onDisappear { clearExport() }
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.willResignActiveNotification)) { _ in
+            // A system authentication prompt temporarily resigns active without backgrounding.
+            passphrase = ""; confirmPassphrase = ""
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.didEnterBackgroundNotification)) { _ in clearExport() }
+    }
+    private var publicLine: String { entry.key.publicKey + " mac-companion-" + entry.id.uuidString.lowercased() }
+    private var filename: String { "ssh-" + entry.id.uuidString.lowercased() }
+    private func clearExport() { generation = UUID(); authentication?.invalidate(); authentication = nil; exportData = nil; exporting = false; passphrase = ""; confirmPassphrase = ""; busy = false }
+    private func exportPrivate() {
+        guard !busy, DirectAppLockV1.shared.canAccess else { return }
+        let token = generation, secret = passphrase, context = LAContext()
+        authentication = context; busy = true; issue = nil; passphrase = ""; confirmPassphrase = ""
+        Task {
+            do {
+                guard try await context.evaluatePolicy(.deviceOwnerAuthentication, localizedReason: "Export this SSH private key in encrypted form.") else { throw CancellationError() }
+                guard token == generation, DirectAppLockV1.shared.canAccess,
+                      let current = try TerminalKeyLibraryStore.load().keys.first(where: { $0.id == entry.id }) else { throw CancellationError() }
+                let data = try await Task.detached(priority: .userInitiated) {
+                    let key = try Curve25519.Signing.PrivateKey(rawRepresentation: current.key.seed)
+                    return Data(try key.makeEncryptedSSHRepresentation(passphrase: secret, comment: current.name).utf8)
+                }.value
+                guard token == generation, DirectAppLockV1.shared.canAccess else { return }
+                exportFilename = filename; exportData = data; exporting = true
+            } catch { if token == generation { self.issue = .make(DirectCancellation.isCancellation(error) ? .exportCancelled : .exportFailed) } }
+            if token == generation { busy = false; authentication = nil }
+        }
+    }
+}
+#endif

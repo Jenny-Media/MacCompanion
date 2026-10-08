@@ -2,7 +2,10 @@
 import CompanionAgent
 import CompanionDomain
 import CompanionIPC
+import CompanionInteractiveHost
 import CompanionInteractiveShared
+import CompanionInteractiveWire
+import CompanionWire
 @testable import CompanionAgentProductPlatform
 import CompanionLocalXPCPlatform
 import Foundation
@@ -17,6 +20,7 @@ private actor InteractiveMenuRouteSenderV1:
 {
     let receipt: LocalInteractiveInitialDesktopPreparedReceiptV1
     let focusReceipt: LocalInteractiveFocusSnapshotReceiptV1?
+    let nativeSnapshot: LocalInteractiveNativeRuntimeSnapshotV1?
     private var commandsStorage:
         [LocalInteractiveInitialDesktopPreparationCommandV1] = []
     private var focusCommandsStorage:
@@ -24,10 +28,17 @@ private actor InteractiveMenuRouteSenderV1:
 
     init(
         receipt: LocalInteractiveInitialDesktopPreparedReceiptV1,
-        focusReceipt: LocalInteractiveFocusSnapshotReceiptV1? = nil
+        focusReceipt: LocalInteractiveFocusSnapshotReceiptV1? = nil,
+        nativeSnapshot: LocalInteractiveNativeRuntimeSnapshotV1? = nil
     ) {
         self.receipt = receipt
         self.focusReceipt = focusReceipt
+        self.nativeSnapshot = nativeSnapshot
+    }
+
+    func nativeRuntimeSnapshot(_ command: LocalInteractiveNativeSnapshotCommandV1) throws -> LocalInteractiveNativeSnapshotReceiptV1 {
+        guard let nativeSnapshot else { throw InteractiveMenuRouteProbeErrorV1.unavailable }
+        return try .init(correlationID: command.commandID, snapshot: nativeSnapshot)
     }
 
     func prepareInitialInteractiveDesktop(
@@ -334,5 +345,47 @@ private actor SerializingInteractiveMenuRouteSenderV1:
     _ = try await focus.value
     try await renew.value
     #expect(await sender.didStartRenewal())
+}
+
+@available(macOS 26.0, *)
+@Test func nativeMenuRouteUsesAcknowledgedOriginalDeadlineAndTrustedPrimaryContext() async throws {
+    let now = DispatchTime.now().uptimeNanoseconds
+    let hostID = UUID(), deviceID = UUID(), sessionID = UUID(), displayID = UUID(), surfaceID = UUID()
+    let descriptor = try AdaptiveSurfaceDescriptor(interactiveSessionID: sessionID, authorizationEpoch: .init(rawValue: 4),
+        surfaceID: surfaceID, kind: .desktop, surfaceRevision: .init(rawValue: 1), coordinateSpaceRevision: .init(rawValue: 1),
+        encodedWidth: 1280, encodedHeight: 720, logicalWidthPoints: 2560, logicalHeightPoints: 1440, rotation: .degrees90,
+        interactionClasses: [.view, .pointer], privacyProfile: .visualOnly, metadataFields: [],
+        createdAtMonotonicMilliseconds: 1, expiresAtMonotonicMilliseconds: 12_000)
+    let lease = try InteractiveExecutionLease(leaseID: UUID(), hostID: hostID, deviceID: deviceID, interactiveSessionID: sessionID,
+        authorizationEpoch: .init(rawValue: 4), selectedDisplayID: displayID, surfaceID: surfaceID,
+        surfaceRevision: .init(rawValue: 1), coordinateRevision: .init(rawValue: 1), allowedInteractionClasses: [.view, .pointer],
+        renewalCounter: 0, issuedAtMonotonicNanoseconds: now, expiresAtMonotonicNanoseconds: now + 5_000_000_000)
+    let install = try InteractiveRuntimeInstallCommandV0(commandID: UUID(), lease: lease, deviceDisplayName: .init("Native QA"),
+        surfaceDescriptor: descriptor, sessionDeadlineMonotonicNanoseconds: now + 60_000_000_000)
+    let installed = try InteractiveRuntimeInstallReceiptV0(correlationID: install.commandID, leaseID: lease.leaseID,
+        interactiveSessionID: sessionID, selectedDisplayID: displayID, menuAppGeneration: UUID(), menuAppRevision: 9,
+        readyInteractionClasses: [.view, .pointer], indicatorVisible: true)
+    let fence = try InteractiveNativeVideoRequestFenceV0(interactiveSessionID: .init(sessionID), authorizationEpoch: .init(rawValue: 4),
+        negotiationID: .init(UUID()), peerGeneration: 1, surfaceID: .init(surfaceID), surfaceRevision: 1, coordinateSpaceRevision: 1)
+    let projection = try LocalInteractiveNativeRuntimeSnapshotV1(command: install, receipt: installed, fence: fence)
+    let prepared = try LocalInteractiveInitialDesktopPreparedReceiptV1(correlationID: UUID(), descriptor: descriptor)
+    let sender = InteractiveMenuRouteSenderV1(receipt: prepared, nativeSnapshot: projection)
+    let route = MacLocalXPCInteractiveMenuRuntimeRouteV1(sender: sender)
+    let context = try InteractiveSessionCommandContextV0(deviceID: deviceID, clientID: UUID(), deviceState: .activeGranted,
+        authorizationEpoch: .init(rawValue: 4), grantRevision: .init(rawValue: 5), policyRevision: .init(rawValue: 6),
+        primaryConnectionID: Data(repeating: 2, count: 16), hostID: hostID, hostFingerprint: Data(repeating: 3, count: 32),
+        hostState: .userSessionActive, wallNowUnixMilliseconds: 1_724_000_000_000, monotonicNowMilliseconds: now / 1_000_000)
+    let value = try #require(await route.snapshot(fence: fence, context: context))
+    #expect(value.logicalWidthPoints == 2560 && value.logicalHeightPoints == 1440)
+    #expect(value.rotation == .degrees90)
+    #expect(Int(value.logicalWidthPoints) != value.surface.encodedWidth)
+    #expect(value.binding.controlGeneration == install.commandID)
+    #expect(value.binding.expiresAtMonotonicMilliseconds == install.sessionDeadlineMonotonicNanoseconds / 1_000_000)
+    #expect(value.binding.expiresAtMonotonicMilliseconds > lease.expiresAtMonotonicNanoseconds / 1_000_000)
+    #expect(value.binding.clientID == context.clientID && value.binding.primaryConnectionID == context.primaryConnectionID)
+    #expect(value.binding.hostFingerprint == context.hostFingerprint)
+    #expect(value.selectedDisplayID == displayID && value.visibleMenuAppGeneration == installed.menuAppGeneration)
+    let backend = try await route.makeBackend(snapshot: value)
+    #expect(await backend.isActive(operationID: UUID()) == false)
 }
 #endif

@@ -1,9 +1,10 @@
 # Contributing to Mac Companion
 
 Mac Companion is not yet ready to accept external contributions. The source is
-available under Apache-2.0 while Jenny Media LLC completes written legal review
-of the license, `NOTICE`, contribution terms, trademark policy, code of conduct,
-and private vulnerability-reporting route.
+available under the licensing terms in `LICENSING.md`. New contributions are
+intended to be available under GPL-3.0-only while Jenny Media LLC completes
+written legal review of the license, `NOTICE`, contribution terms, trademark
+policy, code of conduct, and private vulnerability-reporting route.
 
 Please do not submit pull requests until this notice is replaced by an approved
 contribution policy. The intended policy uses Developer Certificate of Origin

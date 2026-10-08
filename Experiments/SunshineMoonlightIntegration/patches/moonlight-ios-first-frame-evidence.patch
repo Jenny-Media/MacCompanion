@@ -1,0 +1,18 @@
+diff --git a/Limelight/ViewControllers/StreamFrameViewController.m b/Limelight/ViewControllers/StreamFrameViewController.m
+index a4c8f34..49db881 100644
+--- a/Limelight/ViewControllers/StreamFrameViewController.m
++++ b/Limelight/ViewControllers/StreamFrameViewController.m
+@@ -621,6 +621,13 @@
+ }
+ 
+ - (void) videoContentShown {
++    Log(LOG_I, @"MacCompanion reference: first decoded video frame displayed");
++    if (getenv("MACCOMPANION_REFERENCE_AUTO_STOP") != NULL) {
++        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 2 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
++            Log(LOG_I, @"MacCompanion embedded: reference controller requested Stop");
++            [self returnToMainFrame];
++        });
++    }
+     [_spinner stopAnimating];
+     [self.view setBackgroundColor:[UIColor blackColor]];
+ }

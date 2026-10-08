@@ -90,6 +90,11 @@ package actor NetworkClientInteractiveMediaRecordPumpV0 {
             }
             throw NetworkClientInteractiveMediaRecordPumpErrorV0.cancelled
         } catch {
+            if let reason = error as? NetworkClientInteractiveMediaRecordPumpErrorV0 {
+                IOSClientRuntimeDiagnosticLogV0.record(
+                    "interactive.media-pump.reason.\(reason)"
+                )
+            }
             IOSClientRuntimeDiagnosticLogV0.record(
                 "interactive.media-pump.terminal",
                 error: error

@@ -1,0 +1,248 @@
+{
+  "profile": "maccompanion.local-native-backend.v0.1",
+  "maximumPayloadBytes": 4096,
+  "maximumInFlightCommandsPerGeneration": 1,
+  "receiverOperationTimeoutMilliseconds": 4000,
+  "senderReplyTimeoutMilliseconds": 5000,
+  "commands": [
+    {
+      "kind": "runtime.interactive.native.backend",
+      "authorizationMethod": "applyInteractiveSurface",
+      "requestPayloadType": "LocalInteractiveNativeBackendCommandV1",
+      "successKind": "runtime.interactive.native.backend.ack",
+      "successPayloadType": "LocalInteractiveNativeBackendReceiptV1"
+    }
+  ],
+  "operations": [
+    "prepare",
+    "activate",
+    "health",
+    "present",
+    "retire",
+    "retain",
+    "retainedHealth",
+    "prepareReplacement"
+  ],
+  "cases": [
+    "prepare-has-no-listener",
+    "golden-proof-before-activate",
+    "exact-opaque-display-resolves-only-in-menu",
+    "current-acknowledged-desktop-required",
+    "wrong-scope-denied",
+    "single-operation-reserved-before-await",
+    "late-factory-retired-and-joined",
+    "stop-fences-permit-before-drain",
+    "original-deadline-preserved",
+    "revocation-watchdog-drains",
+    "stale-retire-cannot-touch-replacement",
+    "cross-operation-receipt-denied",
+    "canonical-public-der-only",
+    "oversized-local-envelope-denied",
+    "native-input-paused-before-factory",
+    "native-pause-exact-fence-required",
+    "native-pause-release-failure-drains-runtime",
+    "native-pause-replay-does-not-repeat-release",
+    "native-pause-renewal-cannot-restore-input",
+    "native-pause-retirement-cannot-restore-legacy-input",
+    "logical-geometry-scope-required",
+    "logical-geometry-scope-mismatch-denied",
+    "capture-mode-pixels-distinct-from-logical-bounds",
+    "missing-capture-mode-denied",
+    "rotated-native-capture-not-admitted",
+    "capture-geometry-retained-before-factory",
+    "capture-geometry-change-during-factory-drains",
+    "capture-geometry-loss-watchdog-revokes-permit",
+    "same-operation-health-readers-share-one-command",
+    "retirement-fences-shared-health-before-drain",
+    "late-shared-health-cannot-revive-retired-operation",
+    "present-fields-required-and-otherwise-forbidden",
+    "present-receipt-echoes-generation-challenge-and-input-admission",
+    "present-joins-current-active-backend-and-fresh-sample",
+    "present-installs-exact-paused-runtime-posting-primitive",
+    "present-repeat-cannot-replace-or-revive-revoked-primitive",
+    "present-cancellation-revokes-before-drain",
+    "health-during-presentation-joins-then-reinspects"
+  ],
+  "requiredGeometryFields": [
+    "encodedWidth",
+    "encodedHeight",
+    "logicalWidthPoints",
+    "logicalHeightPoints",
+    "rotation"
+  ],
+  "logicalDimensionRange": [
+    1,
+    4294967295
+  ],
+  "rotations": [
+    0,
+    90,
+    180,
+    270
+  ],
+  "continuityCases": [
+    "capability-omitted-until-complete-adapter-admitted",
+    "retain-revokes-posting-before-child-pause-ack",
+    "retained-health-rechecks-original-control-without-old-surface",
+    "replacement-binds-exact-predecessor-ids-original-binding-key-canvas",
+    "late-predecessor-retire-cannot-drain-transferred-child",
+    "stop-grant-loss-and-retained-timeout-join-child"
+  ],
+  "activationPolling": {
+    "maximumStartupMilliseconds": 15000,
+    "pollIntervalMilliseconds": 100,
+    "cases": [
+      "literal-true-opt-in-only-on-activate",
+      "pending-receipt-forbids-endpoint-and-input",
+      "pending-without-opt-in-denied",
+      "one-worker-across-repeated-exact-polls",
+      "lease-renewal-lane-available-during-startup",
+      "stop-fences-and-joins-worker-before-late-endpoint",
+      "worker-failure-and-original-deadline-drain",
+      "polling-cannot-extend-startup-budget",
+      "backend-readiness-shares-elapsed-startup-budget-not-attempt-count"
+    ]
+  },
+  "retirementPublicationCases": [
+    "in-flight-health-loses-capture-during-watchdog-retirement-returns-inactive",
+    "all-retirement-waiters-observe-published-exact-scope",
+    "retired-health-wrong-operation-remains-denied"
+  ],
+  "failureDiagnostics": {
+    "profile": "maccompanion.local-native-failure-diagnostics.v1",
+    "failureOnly": true,
+    "arbitraryErrorDescriptionAllowed": false,
+    "unknownReason": "unclassified",
+    "stages": [
+      "initial-check",
+      "pause-input",
+      "resolve-display",
+      "read-selection",
+      "read-snapshot",
+      "snapshot-validation",
+      "selection-validation",
+      "measure-geometry",
+      "bind-capture",
+      "configure-replacement",
+      "backend-prepare",
+      "activation-worker",
+      "input-activation",
+      "native-post",
+      "event-construction",
+      "command-admission",
+      "input-adapter"
+    ],
+    "reasons": {
+      "local": [
+        "invalidMaterial",
+        "bindingMismatch",
+        "unavailable"
+      ],
+      "input": [
+        "alreadyConfigured",
+        "unavailable",
+        "permissionDenied",
+        "bindingMismatch",
+        "eventConstructionFailed"
+      ],
+      "constructor": [
+        "invalidDisplayBounds",
+        "invalidCursorPosition",
+        "cursorOutsideSelectedDisplay",
+        "geometryFenceMismatch",
+        "eventCreationFailed"
+      ],
+      "activation": [
+        "invalidTarget",
+        "activationFailed",
+        "verificationFailed"
+      ],
+      "posting": [
+        "bindingMismatch",
+        "expired",
+        "unavailable",
+        "notPosted"
+      ],
+      "backend": [
+        "invalidPhase",
+        "invalidCertificate",
+        "startupFailed",
+        "invalidPath"
+      ],
+      "handoff": [
+        "invalidDirectory",
+        "unavailable",
+        "invalidRecord",
+        "timedOut"
+      ],
+      "evidence": [
+        "invalidPayload",
+        "bindingMismatch",
+        "notCurrent"
+      ]
+    },
+    "captureEvidence": [
+      "not-active",
+      "file-absent",
+      "empty-file",
+      "unsafe-file",
+      "short-read",
+      "malformed-evidence",
+      "evidence-validation",
+      "evidence-not-current",
+      "owner-changed"
+    ],
+    "phases": [
+      "idle",
+      "preparing",
+      "prepared",
+      "activating",
+      "active",
+      "retaining",
+      "retained"
+    ],
+    "selectionRejections": [
+      "admissionClosedBeforeSelection",
+      "admissionClosedAfterSelection",
+      "pendingSelection",
+      "uncommittedSelection",
+      "activeAbsent",
+      "leaseAbsent",
+      "hostMismatch",
+      "sessionMismatch",
+      "authorizationMismatch",
+      "displayMismatch",
+      "surfaceMismatch",
+      "surfaceRevisionMismatch",
+      "coordinateRevisionMismatch",
+      "encodedWidthMismatch",
+      "encodedHeightMismatch",
+      "logicalWidthMismatch",
+      "logicalHeightMismatch",
+      "rotationMismatch",
+      "leaseExpired",
+      "controlExpired",
+      "desktopSurfaceMismatch",
+      "unsupportedKind",
+      "selectedSurfaceAbsent",
+      "selectedDescriptorMismatch",
+      "geometryScopeMismatch",
+      "activationTargetInvalid",
+      "geometryInvalid",
+      "captureWindowDisplay",
+      "captureApplicationDisplay",
+      "captureKind",
+      "captureApplicationIdentity",
+      "captureScale",
+      "liveExpired",
+      "liveDisplay",
+      "liveApplication",
+      "liveScale",
+      "liveWindowInventory",
+      "liveWindowIdentity",
+      "liveWindowGeometry",
+      "liveWindowDisplay",
+      "liveApplicationGeometry"
+    ]
+  }
+}

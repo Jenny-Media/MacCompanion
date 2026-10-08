@@ -64,7 +64,8 @@ private func dispatcherSnapshot(
     visible: Bool = true,
     displayID: UUID? = dispatcherDisplayID,
     grantRevision: UInt64 = 5,
-    visibleRevision: UInt64 = 1
+    visibleRevision: UInt64 = 1,
+    sessionPublicKeyX963: Data? = nil
 ) throws -> InteractiveSessionAdmissionSnapshotV0 {
     try InteractiveSessionAdmissionSnapshotV0(
         deviceID: dispatcherDeviceID,
@@ -81,7 +82,8 @@ private func dispatcherSnapshot(
             uuidString: "019b7300-0000-7000-8000-000000000001"
         )!,
         visibleMenuAppRevision: visibleRevision,
-        selectedDisplayID: displayID
+        selectedDisplayID: displayID,
+        sessionPublicKeyX963: sessionPublicKeyX963
     )
 }
 
@@ -198,6 +200,9 @@ private actor DispatcherRuntime: InteractiveSessionRuntimeOwningV0 {
     private let failInstall: Bool
     private(set) var installed: [InteractiveSessionBootstrap] = []
     private(set) var terminations: [Termination] = []
+    func desktopAccessCurrent(sessionID: UUID, primaryConnectionID: Data) -> Bool {
+        sessionID == dispatcherSessionID && primaryConnectionID == dispatcherConnectionID && !installed.isEmpty && terminations.isEmpty
+    }
 
     init(failInstall: Bool = false) {
         self.failInstall = failInstall
@@ -222,6 +227,78 @@ private actor DispatcherRuntime: InteractiveSessionRuntimeOwningV0 {
             reason: reason
         ))
     }
+}
+
+private actor DesktopRetirementCounterV1 {
+    var count = 0
+    func retired() { count += 1 }
+}
+@Test func desktopTunnelRetiresOnPrimaryLossAndCannotRebindRetiredSession() async throws {
+    let flow = try await pendingDispatcherFlow()
+    _ = try await flow.dispatcher.dispatch(requestJSON: WireCodec.encode(try dispatcherProof(for: flow.challenge)),
+        context: dispatcherContext(monotonicNow: 1_010), responseMessageID: WireUUID(UUID()))
+    try await flow.dispatcher.authorizeDesktop(sessionID: dispatcherSessionID, context: dispatcherContext(monotonicNow: 1_011))
+    let counter = DesktopRetirementCounterV1()
+    try await flow.dispatcher.bindDesktopRetirement(sessionID: dispatcherSessionID, primaryConnectionID: dispatcherConnectionID,
+        action: { await counter.retired() })
+    await #expect(throws: (any Error).self) {
+        try await flow.dispatcher.authorizeDesktop(sessionID: UUID(), context: dispatcherContext(monotonicNow: 1_012))
+    }
+    await flow.dispatcher.primarySessionClosed(primaryConnectionID: dispatcherConnectionID)
+    #expect(await counter.count == 1)
+    #expect(await flow.runtime.terminations.count == 1)
+    await flow.dispatcher.primarySessionClosed(primaryConnectionID: dispatcherConnectionID)
+    #expect(await counter.count == 1)
+    await #expect(throws: (any Error).self) {
+        try await flow.dispatcher.bindDesktopRetirement(sessionID: dispatcherSessionID, primaryConnectionID: dispatcherConnectionID,
+            action: { await counter.retired() })
+    }
+}
+
+private actor DispatcherWebRTCMedia: InteractiveWebRTCNegotiatingV0 {
+    private(set) var offerCount = 0
+    private(set) var answerCount = 0
+    private(set) var closed: [UUID] = []
+
+    func makeOffer(
+        fence: InteractiveWebRTCNegotiationFenceV0,
+        context: InteractiveSessionCommandContextV0
+    ) async throws -> InteractiveWebRTCOfferBodyV0 {
+        offerCount += 1
+        return try InteractiveWebRTCOfferBodyV0(
+            fence: fence, sdp: dispatcherSDP("11"),
+            dtlsFingerprintHex: String(repeating: "11", count: 32)
+        )
+    }
+
+    func acceptAnswer(
+        _ answer: InteractiveWebRTCAnswerBodyV0,
+        context: InteractiveSessionCommandContextV0
+    ) async throws {
+        answerCount += 1
+    }
+
+    func close(interactiveSessionID: UUID) async {
+        closed.append(interactiveSessionID)
+    }
+}
+
+private func dispatcherSDP(_ byte: String) -> String {
+    let fingerprint = Array(repeating: byte, count: 32).joined(separator: ":")
+    return "v=0\r\no=- 1 1 IN IP4 0.0.0.0\r\ns=-\r\nt=0 0\r\n"
+        + "a=fingerprint:sha-256 \(fingerprint)\r\n"
+        + "a=candidate:1 1 udp 1 192.0.2.1 5000 typ host\r\n"
+        + "a=end-of-candidates\r\n"
+}
+
+private func dispatcherMediaFence() throws -> InteractiveWebRTCNegotiationFenceV0 {
+    try InteractiveWebRTCNegotiationFenceV0(
+        interactiveSessionID: WireUUID(dispatcherSessionID),
+        authorizationEpoch: .init(rawValue: 4),
+        negotiationID: WireUUID(UUID()), peerGeneration: 1,
+        surfaceID: WireUUID(dispatcherDisplayID),
+        surfaceRevision: 1, coordinateSpaceRevision: 1
+    )
 }
 
 private actor DispatcherSurfaceControl:
@@ -431,8 +508,11 @@ private struct PendingDispatcherFlow {
 
 private func pendingDispatcherFlow(
     snapshots: [InteractiveSessionAdmissionSnapshotV0?]? = nil,
+    sessionConsentProfile: InteractiveSessionConsentProfileV1 = .freshUserPresence,
     materials: DispatcherMaterials = DispatcherMaterials(),
     runtime: DispatcherRuntime = DispatcherRuntime(),
+    mediaNegotiation: (any InteractiveWebRTCNegotiatingV0)? = nil,
+    nativeNegotiation: (any InteractiveNativeVideoNegotiatingV0)? = nil,
     surfaceControl:
         (any InteractiveSurfaceControlDispatchingV0)? = nil,
     auditWriter: (any InteractiveAuditWritingV0)? = nil,
@@ -444,8 +524,11 @@ private func pendingDispatcherFlow(
     )
     let dispatcher = InteractiveSessionWireDispatcherV0(
         admission: admission,
+        sessionConsentProfile: sessionConsentProfile,
         materials: materials,
         runtime: runtime,
+        mediaNegotiation: mediaNegotiation,
+        nativeNegotiation: nativeNegotiation,
         surfaceControl: surfaceControl,
         auditWriter: auditWriter,
         auditWallClock: auditWallClock
@@ -476,6 +559,145 @@ private func pendingDispatcherFlow(
         request: request,
         challenge: challenge
     )
+}
+
+@Test func dispatcherWebRTCSignalingUsesActivePrimaryAndStopFence() async throws {
+    let media = DispatcherWebRTCMedia()
+    let flow = try await pendingDispatcherFlow(mediaNegotiation: media)
+    _ = try await flow.dispatcher.dispatch(
+        requestJSON: WireCodec.encode(try dispatcherProof(for: flow.challenge)),
+        context: dispatcherContext(monotonicNow: 1_010),
+        responseMessageID: WireUUID(UUID())
+    )
+    let fence = try dispatcherMediaFence()
+    let offerRequest = try WireEnvelope(
+        messageID: WireUUID(UUID()), correlationID: nil,
+        sentAtUnixMilliseconds: 1_724_000_000_020,
+        body: try InteractiveWebRTCOfferRequestBodyV0(fence: fence)
+    )
+    let wrongPrimary = try await flow.dispatcher.dispatch(
+        requestJSON: WireCodec.encode(offerRequest),
+        context: dispatcherContext(
+            monotonicNow: 1_019,
+            primaryConnectionID: Data(repeating: 0x99, count: 16)
+        ),
+        responseMessageID: WireUUID(UUID())
+    )
+    _ = try WireCodec.decode(
+        WireEnvelope<ProtocolErrorResponseBody>.self,
+        from: wrongPrimary
+    )
+    #expect(await media.offerCount == 0)
+    let offerData = try await flow.dispatcher.dispatch(
+        requestJSON: WireCodec.encode(offerRequest),
+        context: dispatcherContext(monotonicNow: 1_020),
+        responseMessageID: WireUUID(UUID())
+    )
+    let offer = try WireCodec.decode(
+        WireEnvelope<InteractiveWebRTCOfferBodyV0>.self,
+        from: offerData
+    )
+    #expect(offer.correlationID == offerRequest.messageID)
+    #expect(offer.body.fence == fence)
+
+    let answer = try WireEnvelope(
+        messageID: WireUUID(UUID()), correlationID: nil,
+        sentAtUnixMilliseconds: 1_724_000_000_021,
+        body: try InteractiveWebRTCAnswerBodyV0(
+            fence: fence, offerMessageID: offer.messageID,
+            sdp: dispatcherSDP("22"),
+            dtlsFingerprintHex: String(repeating: "22", count: 32)
+        )
+    )
+    let readyData = try await flow.dispatcher.dispatch(
+        requestJSON: WireCodec.encode(answer),
+        context: dispatcherContext(monotonicNow: 1_030),
+        responseMessageID: WireUUID(UUID())
+    )
+    let ready = try WireCodec.decode(
+        WireEnvelope<InteractiveWebRTCReadyBodyV0>.self,
+        from: readyData
+    )
+    #expect(ready.correlationID == answer.messageID)
+    #expect(ready.body.offerMessageID == offer.messageID)
+    #expect(await media.offerCount == 1)
+    #expect(await media.answerCount == 1)
+    let duplicate = try await flow.dispatcher.dispatch(
+        requestJSON: WireCodec.encode(answer),
+        context: dispatcherContext(monotonicNow: 1_031),
+        responseMessageID: WireUUID(UUID())
+    )
+    _ = try WireCodec.decode(
+        WireEnvelope<ProtocolErrorResponseBody>.self,
+        from: duplicate
+    )
+    #expect(await media.answerCount == 1)
+
+    let laterFence = try InteractiveWebRTCNegotiationFenceV0(
+        interactiveSessionID: WireUUID(dispatcherSessionID),
+        authorizationEpoch: .init(rawValue: 4),
+        negotiationID: WireUUID(UUID()), peerGeneration: 2,
+        surfaceID: WireUUID(dispatcherDisplayID),
+        surfaceRevision: 1, coordinateSpaceRevision: 1
+    )
+    let laterRequest = try WireEnvelope(
+        messageID: WireUUID(UUID()), correlationID: nil,
+        sentAtUnixMilliseconds: 1_724_000_000_022,
+        body: try InteractiveWebRTCOfferRequestBodyV0(fence: laterFence)
+    )
+    let laterOfferData = try await flow.dispatcher.dispatch(
+        requestJSON: WireCodec.encode(laterRequest),
+        context: dispatcherContext(monotonicNow: 1_040),
+        responseMessageID: WireUUID(UUID())
+    )
+    let laterOffer = try WireCodec.decode(
+        WireEnvelope<InteractiveWebRTCOfferBodyV0>.self,
+        from: laterOfferData
+    )
+    let expiredAnswer = try WireEnvelope(
+        messageID: WireUUID(UUID()), correlationID: nil,
+        sentAtUnixMilliseconds: 1_724_000_000_023,
+        body: try InteractiveWebRTCAnswerBodyV0(
+            fence: laterFence, offerMessageID: laterOffer.messageID,
+            sdp: dispatcherSDP("22"),
+            dtlsFingerprintHex: String(repeating: "22", count: 32)
+        )
+    )
+    let expired = try await flow.dispatcher.dispatch(
+        requestJSON: WireCodec.encode(expiredAnswer),
+        context: dispatcherContext(monotonicNow: 11_040),
+        responseMessageID: WireUUID(UUID())
+    )
+    _ = try WireCodec.decode(
+        WireEnvelope<ProtocolErrorResponseBody>.self,
+        from: expired
+    )
+    #expect(await media.answerCount == 1)
+
+    let stop = try WireEnvelope(
+        messageID: WireUUID(UUID()), correlationID: nil,
+        sentAtUnixMilliseconds: 1_724_000_000_022,
+        body: try InteractiveSessionEndBodyV0(
+            interactiveSessionID: WireUUID(dispatcherSessionID),
+            authorizationEpoch: .init(rawValue: 4)
+        )
+    )
+    _ = try await flow.dispatcher.dispatch(
+        requestJSON: WireCodec.encode(stop),
+        context: dispatcherContext(monotonicNow: 11_041),
+        responseMessageID: WireUUID(UUID())
+    )
+    #expect(await media.closed == [dispatcherSessionID])
+    let rejected = try await flow.dispatcher.dispatch(
+        requestJSON: WireCodec.encode(offerRequest),
+        context: dispatcherContext(monotonicNow: 11_050),
+        responseMessageID: WireUUID(UUID())
+    )
+    _ = try WireCodec.decode(
+        WireEnvelope<ProtocolErrorResponseBody>.self,
+        from: rejected
+    )
+    #expect(await media.offerCount == 2)
 }
 
 @Test func dispatcherRoutesInitialAndReplacementSurfaceOnlyInsideActiveSession()
@@ -633,9 +855,10 @@ private func pendingDispatcherFlow(
 }
 
 private func dispatcherProof(
-    for challenge: WireEnvelope<InteractiveApprovalChallengeBody>
+    for challenge: WireEnvelope<InteractiveApprovalChallengeBody>,
+    key: P256.Signing.PrivateKey? = nil
 ) throws -> WireEnvelope<InteractiveApprovalProofBody> {
-    let signature = try dispatcherApprovalKey().signature(
+    let signature = try (key ?? dispatcherApprovalKey()).signature(
         for: challenge.body.signingInput(version: challenge.version)
     ).rawRepresentation
     return try WireEnvelope(
@@ -802,8 +1025,12 @@ private func dispatcherProof(
     let surfaceControl = DispatcherSurfaceControl(onClosed: {
         #expect(await runtime.terminations.count == 1)
     })
+    let native = DispatcherNativeVideo(onClosed: {
+        #expect(await runtime.terminations.count == 1)
+    })
     let flow = try await pendingDispatcherFlow(
         runtime: runtime,
+        nativeNegotiation: native,
         surfaceControl: surfaceControl
     )
     let proof = try dispatcherProof(for: flow.challenge)
@@ -840,6 +1067,7 @@ private func dispatcherProof(
     #expect(ended.body.endedAtUnixMilliseconds == 1_724_000_000_020)
     #expect(await flow.dispatcher.activeInteractiveSessionID == nil)
     #expect(await surfaceControl.closeCount == 1)
+    #expect(await native.closes == 1)
     #expect(await flow.runtime.terminations == [
         .init(
             sessionID: dispatcherSessionID,
@@ -1496,5 +1724,126 @@ private func dispatcherProof(
     ).body.code == "auth.invalidProof")
     #expect(await runtime.liveSessionIDs.isEmpty)
     #expect(await runtime.logicalTerminationCount == 1)
+    #expect(await dispatcher.activeInteractiveSessionID == nil)
+}
+
+/// Routing/admission double only; the primary bridge's indexed golden tests
+/// exercise actual certificate-digest and signature admission separately.
+private actor DispatcherNativeVideo: InteractiveNativeVideoNegotiatingV0 {
+    private(set) var preparations = 0, launches = 0, cancellations = 0, closes = 0
+    private(set) var receivedKey: Data?
+    private var lastFence: InteractiveNativeVideoRequestFenceV0?
+    private var lastChallengeID: WireUUID?
+    private let onClosed: (@Sendable () async -> Void)?
+    init(onClosed: (@Sendable () async -> Void)? = nil) { self.onClosed = onClosed }
+    func prepare(_ request: InteractiveNativeVideoEnrollmentRequestBodyV0, challengeMessageID: WireUUID,
+                 context: InteractiveSessionCommandContextV0, sessionPublicKeyX963: Data) async throws -> InteractiveNativeVideoEnrollmentChallengeBodyV0 {
+        preparations += 1; receivedKey = sessionPublicKeyX963; lastFence = request.fence; lastChallengeID = challengeMessageID
+        return try .init(fence: request.fence, controlGeneration: WireUUID(UUID()),
+            encodedWidth: 1280, encodedHeight: 720, hostCertificateDERBase64: Data([1]).base64EncodedString(),
+            hostChallengeBase64: Data(repeating: 1, count: 32).base64EncodedString(), signingInputBase64: Data([1]).base64EncodedString(),
+            issuedAtUnixMilliseconds: 1724000000000, expiresAtUnixMilliseconds: 1724000015000)
+    }
+    func activate(_ proof: InteractiveNativeVideoEnrollmentProofBodyV0, context: InteractiveSessionCommandContextV0,
+                  sessionPublicKeyX963: Data) async throws -> InteractiveNativeVideoReadyBodyV0 {
+        guard lastFence == proof.fence, lastChallengeID == proof.challengeMessageID else { throw DispatcherTestError.installFailed }
+        launches += 1
+        return try .init(fence: proof.fence, challengeMessageID: proof.challengeMessageID, portBase: 58989)
+    }
+    func cancel(_ fence: InteractiveNativeVideoRequestFenceV0, context: InteractiveSessionCommandContextV0) async throws { cancellations += 1; lastFence = nil }
+    func close(interactiveSessionID: UUID) async {
+        closes += 1; lastFence = nil
+        await onClosed?()
+    }
+}
+
+@Test func dispatcherNativeEnrollmentRequiresDurableSessionKeyAndEndsWithControl() async throws {
+    let key = try P256.Signing.PrivateKey(rawRepresentation: Data(repeating: 0, count: 31) + Data([1])).publicKey.x963Representation
+    for hasKey in [false, true] {
+        let native = DispatcherNativeVideo()
+        let flow = try await pendingDispatcherFlow(snapshots: [dispatcherSnapshot(sessionPublicKeyX963: hasKey ? key : nil)], nativeNegotiation: native)
+        _ = try await flow.dispatcher.dispatch(requestJSON: WireCodec.encode(try dispatcherProof(for: flow.challenge)),
+            context: dispatcherContext(monotonicNow: 1010), responseMessageID: WireUUID(UUID()))
+        let fence = try InteractiveNativeVideoRequestFenceV0(interactiveSessionID: WireUUID(dispatcherSessionID), authorizationEpoch: .init(rawValue: 4),
+            negotiationID: WireUUID(UUID()), peerGeneration: 1, surfaceID: WireUUID(dispatcherDisplayID), surfaceRevision: 1, coordinateSpaceRevision: 1)
+        let request = try WireEnvelope(messageID: WireUUID(UUID()), correlationID: nil, sentAtUnixMilliseconds: 1724000000020,
+            body: InteractiveNativeVideoEnrollmentRequestBodyV0(fence: fence, clientCertificateDERBase64: Data([1]).base64EncodedString()))
+        let challengeID = WireUUID(UUID())
+        let response = try await flow.dispatcher.dispatch(requestJSON: WireCodec.encode(request), context: dispatcherContext(monotonicNow: 1020), responseMessageID: challengeID)
+        if hasKey {
+            let challenge = try WireCodec.decode(WireEnvelope<InteractiveNativeVideoEnrollmentChallengeBodyV0>.self, from: response)
+            #expect(challenge.correlationID == request.messageID)
+            #expect(await native.receivedKey == key)
+            let proof = try WireEnvelope(messageID: WireUUID(UUID()), correlationID: nil, sentAtUnixMilliseconds: 1724000000021,
+                body: InteractiveNativeVideoEnrollmentProofBodyV0(fence: fence, challengeMessageID: challengeID, signatureBase64: Data(repeating: 1, count: 64).base64EncodedString()))
+            let readyFrame = try await flow.dispatcher.dispatch(requestJSON: WireCodec.encode(proof), context: dispatcherContext(monotonicNow: 1021), responseMessageID: WireUUID(UUID()))
+            let ready = try WireCodec.decode(WireEnvelope<InteractiveNativeVideoReadyBodyV0>.self, from: readyFrame)
+            #expect(ready.correlationID == proof.messageID)
+            #expect(ready.body.challengeMessageID == challengeID)
+            #expect(await native.launches == 1)
+        } else {
+            _ = try WireCodec.decode(WireEnvelope<ProtocolErrorResponseBody>.self, from: response)
+            #expect(await native.preparations == 0)
+        }
+        await flow.dispatcher.primarySessionClosed(primaryConnectionID: dispatcherConnectionID)
+        #expect(await native.closes == 1)
+        #expect(await flow.dispatcher.activeInteractiveSessionID == nil)
+    }
+}
+
+@Test func trustedSessionStartAcceptsOnlyPairedSessionKey() async throws {
+    var scalar = Data(repeating: 0, count: 32)
+    scalar[31] = 1
+    let key = try P256.Signing.PrivateKey(rawRepresentation: scalar)
+    let snapshot = try dispatcherSnapshot(sessionPublicKeyX963: key.publicKey.x963Representation)
+    let trusted = try await pendingDispatcherFlow(snapshots: [snapshot], sessionConsentProfile: .trustedDevice)
+    let proof = try dispatcherProof(for: trusted.challenge, key: key)
+    let response = try await trusted.dispatcher.dispatch(
+        requestJSON: WireCodec.encode(proof), context: dispatcherContext(monotonicNow: 1_010),
+        responseMessageID: WireUUID(UUID())
+    )
+    #expect(try WireCodec.messageKind(from: response) == .interactiveSessionAccepted)
+    #expect(await trusted.dispatcher.activeInteractiveSessionID != nil)
+    await trusted.dispatcher.primarySessionClosed()
+
+    let wrong = try await pendingDispatcherFlow(snapshots: [snapshot], sessionConsentProfile: .trustedDevice)
+    let wrongResponse = try await wrong.dispatcher.dispatch(
+        requestJSON: WireCodec.encode(dispatcherProof(for: wrong.challenge)),
+        context: dispatcherContext(monotonicNow: 1_010), responseMessageID: WireUUID(UUID())
+    )
+    #expect(try WireCodec.messageKind(from: wrongResponse) == .error)
+    #expect(await wrong.dispatcher.activeInteractiveSessionID == nil)
+
+    let changedKey = try dispatcherSnapshot(sessionPublicKeyX963: P256.Signing.PrivateKey().publicKey.x963Representation)
+    let stale = try await pendingDispatcherFlow(snapshots: [snapshot, changedKey], sessionConsentProfile: .trustedDevice)
+    let staleResponse = try await stale.dispatcher.dispatch(
+        requestJSON: WireCodec.encode(dispatcherProof(for: stale.challenge, key: key)),
+        context: dispatcherContext(monotonicNow: 1_010), responseMessageID: WireUUID(UUID())
+    )
+    #expect(try WireCodec.messageKind(from: staleResponse) == .error)
+    #expect(await stale.dispatcher.activeInteractiveSessionID == nil)
+}
+
+@Test(arguments: [true, false])
+func trustedSessionStartRequiresFixedGrantAndPairedSessionKey(missingKey: Bool) async throws {
+    let request = try WireEnvelope(
+        messageID: WireUUID(UUID()), correlationID: nil,
+        sentAtUnixMilliseconds: 1_724_000_000_000,
+        body: InteractiveSessionRequestBody(effects: [.view])
+    )
+    let snapshot = try dispatcherSnapshot(
+        grants: missingKey ? [InteractiveControlCapabilityV0.identifier] : [],
+        sessionPublicKeyX963: missingKey ? nil : P256.Signing.PrivateKey().publicKey.x963Representation
+    )
+    let dispatcher = InteractiveSessionWireDispatcherV0(
+        admission: DispatcherAdmission([snapshot]), sessionConsentProfile: .trustedDevice,
+        materials: DispatcherMaterials(), runtime: DispatcherRuntime()
+    )
+    let response = try await dispatcher.dispatch(
+        requestJSON: WireCodec.encode(request), context: dispatcherContext(),
+        responseMessageID: WireUUID(UUID())
+    )
+    #expect(try WireCodec.messageKind(from: response) == .error)
+    #expect(await dispatcher.hasPendingApproval == false)
     #expect(await dispatcher.activeInteractiveSessionID == nil)
 }

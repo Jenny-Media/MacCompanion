@@ -91,7 +91,8 @@ private func selectedResponse(
 private func targetInventoryResponse(
     requestMessageID: WireUUID,
     targetToken: WireUUID,
-    serverSequence: Int64 = 1
+    serverSequence: Int64 = 1,
+    validForMilliseconds: Int64 = 100
 ) throws -> Data {
     try WireCodec.encode(WireEnvelope(
         messageID: WireUUID(UUID()),
@@ -101,7 +102,7 @@ private func targetInventoryResponse(
             interactiveSessionID: WireUUID(controlSessionID),
             authorizationEpoch: .init(rawValue: 4),
             inventoryRevision: 1,
-            validForMilliseconds: 100,
+            validForMilliseconds: validForMilliseconds,
             candidates: [
                 try InteractiveSurfaceTargetCandidateV0(
                     targetToken: targetToken,
@@ -565,6 +566,41 @@ private func focusedControlDescriptor(
     }
 }
 
+@Test func clientCanSelectAfterScrollingLongInventory() throws {
+    let initial = try controlDescriptor(
+        surfaceID: controlInitialSurfaceID,
+        revision: 1,
+        coordinateRevision: 1
+    )
+    var coordinator = try ClientSurfaceControlCoordinatorV0(
+        acknowledgedDescriptor: initial,
+        sessionAllowedInteractionClasses: [.view, .pointer, .keyboard]
+    )
+    let requestID = WireUUID(UUID())
+    let targetToken = WireUUID(UUID())
+    _ = try coordinator.makeTargetInventoryRequest(
+        messageID: requestID,
+        sentAtUnixMilliseconds: 1_000
+    )
+    _ = try coordinator.receiveTargetInventory(
+        targetInventoryResponse(
+            requestMessageID: requestID,
+            targetToken: targetToken,
+            validForMilliseconds: 120_000
+        ),
+        clientMonotonicNowMilliseconds: 200
+    )
+    let selection = try coordinator.beginSelection(
+        targetKind: .application,
+        targetToken: targetToken,
+        resetMessageID: WireUUID(UUID()),
+        requestMessageID: WireUUID(UUID()),
+        sentAtUnixMilliseconds: 1_002,
+        clientMonotonicMilliseconds: 20_200
+    )
+    #expect(!selection.requestJSON.isEmpty)
+}
+
 @Test func clientSurfaceControlRequiresResetMediaProofAndExactHostAck() throws {
     let initial = try controlDescriptor(
         surfaceID: controlInitialSurfaceID,
@@ -819,4 +855,32 @@ private func focusedControlDescriptor(
         )
     }
     #expect(coordinator.phase == .closed)
+}
+
+@Test(arguments: [InteractiveSurfaceKind.application, .window])
+func selectedAppOrWindowAcceptsAcknowledgedDesktopRecovery(kind: InteractiveSurfaceKind) throws {
+    var coordinator = try ClientSurfaceControlCoordinatorV0(acknowledgedDescriptor:
+        controlDescriptor(surfaceID: controlInitialSurfaceID, revision: 1, coordinateRevision: 1),
+        sessionAllowedInteractionClasses: [.view, .pointer, .keyboard])
+    let inventoryID = WireUUID(UUID()), app = WireUUID(UUID()), window = WireUUID(UUID())
+    _ = try coordinator.makeTargetInventoryRequest(messageID: inventoryID, sentAtUnixMilliseconds: 1_000)
+    _ = try coordinator.receiveTargetInventory(WireCodec.encode(WireEnvelope(
+        messageID: WireUUID(UUID()), correlationID: inventoryID, sentAtUnixMilliseconds: 1_001,
+        body: InteractiveSurfaceTargetsResponseBodyV0(interactiveSessionID: WireUUID(controlSessionID),
+            authorizationEpoch: .init(rawValue: 4), inventoryRevision: 1, validForMilliseconds: 100,
+            candidates: [
+                InteractiveSurfaceTargetCandidateV0(targetToken: app, kind: .application, applicationToken: app,
+                    applicationName: "Notes", windowOrdinal: nil, currentWindowAvailable: true),
+                InteractiveSurfaceTargetCandidateV0(targetToken: window, kind: .window, applicationToken: app,
+                    applicationName: "Notes", windowOrdinal: 1, currentWindowAvailable: true, windowTitle: "Example note"),
+            ], sequence: 1))), clientMonotonicNowMilliseconds: 200)
+    let selectionID = WireUUID(UUID())
+    _ = try coordinator.beginSelection(targetKind: kind, targetToken: kind == .application ? app : window,
+        resetMessageID: WireUUID(UUID()), requestMessageID: selectionID,
+        sentAtUnixMilliseconds: 1_002, clientMonotonicMilliseconds: 201)
+    let desktop = try coordinator.receiveSelected(selectedResponse(requestMessageID: selectionID,
+        descriptor: controlDescriptor(surfaceID: controlReplacementSurfaceID, revision: 2, coordinateRevision: 2),
+        transitionID: WireUUID(UUID()), serverSequence: 2), clientMonotonicNowMilliseconds: 202)
+    #expect(desktop.kind == .desktop && desktop.applicationToken == nil && desktop.windowToken == nil)
+    #expect(coordinator.phase == .awaitingMedia)
 }

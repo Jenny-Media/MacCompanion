@@ -1,0 +1,164 @@
+{
+  "downloads": {
+    "boost": {
+      "sha256": "67acec02d0d118b5de9eb441f5fb707b3a1cdd884be00ca24b9a73c995511f74",
+      "url": "https://github.com/boostorg/boost/releases/download/boost-1.89.0/boost-1.89.0-cmake.tar.xz"
+    },
+    "ios_openssl": {
+      "sha256": "41d034ea1c075bfa74048e851358a550996c286de8230d1df39f137b06235c87",
+      "url": "https://github.com/krzyzanowskim/OpenSSL/releases/download/3.3.2000/OpenSSL.xcframework.zip"
+    },
+    "ios_openssl_source": {
+      "license": "Apache-2.0",
+      "sha256": "a8f84a39918ec6415ce765d9b429d313ba97b8143169c172e734b9514464f5b2",
+      "upstreamSource": "https://openssl-library.org/source/",
+      "url": "https://github.com/openssl/openssl/releases/download/openssl-3.5.8/openssl-3.5.8.tar.gz",
+      "version": "3.5.8"
+    },
+    "macos_ffmpeg": {
+      "build_deps_revision": "a1fe2841cbc0d8c4501a1006d2d1cb88f219cc8c",
+      "sha256": "dac277b307498011e747019941e794514b2824ef73a574fec33f0cf85fbcd291",
+      "url": "https://github.com/LizardByte/build-deps/releases/download/v2026.910.121303/Darwin-arm64-ffmpeg.tar.gz"
+    },
+    "nlohmann_json": {
+      "sha256": "d6c65aca6b1ed68e7a182f4757257b107ae403032760ed6ef121c9d55e81757d",
+      "url": "https://github.com/nlohmann/json/releases/download/v3.11.3/json.tar.xz"
+    }
+  },
+  "patches": {
+    "moonlight-ios-embedded-renderer.patch": {
+      "sha256": "59dfd5cd57d0903515edf5d0add700a387cee75010cd94c5d1c1a071ff64fe89",
+      "source": "moonlight-ios"
+    },
+    "moonlight-ios-first-frame-evidence.patch": {
+      "sha256": "6063b971ba3dd93083e2e9a5728a3a0efb1eca06c6f9aaab35d32a28f55c3cc5",
+      "source": "moonlight-ios"
+    },
+    "moonlight-ios-reference-silent-audio.patch": {
+      "sha256": "768e160f52efd825f5e4838882524f57559c68e01069586e2e82a07c5df7a206",
+      "source": "moonlight-ios"
+    },
+    "moonlight-ios-scene-lifecycle.patch": {
+      "sha256": "c884b8f5380cee032d88c03d215eeb4bfb88caa5cfe3867509a46d38ef1b820b",
+      "source": "moonlight-ios"
+    },
+    "moonlight-ios-stream-log-redaction.patch": {
+      "sha256": "8cad366ea4493fef49d51614954264102e086db50a0863fbb17ac893855b39aa",
+      "source": "moonlight-ios"
+    },
+    "sunshine-macos-isolated-state.patch": {
+      "sha256": "2327fa44a50611e710aa6b70282d3e00841b96eb78bf76af6c2940cbc0de7a80",
+      "source": "Sunshine"
+    },
+    "sunshine-managed-enrollment.patch": {
+      "sha256": "c6bed0faedb4f8a8a3fadee6b60fd8e619934412ca5cdb4756632605533919e0",
+      "source": "Sunshine"
+    },
+    "sunshine-selected-encoder-probe.patch": {
+      "sha256": "cc7cf910ba41da54e620d226c2e386515d72dac8a3bfb2470f203d08e183f944",
+      "source": "Sunshine"
+    },
+    "moonlight-common-native-frame-epoch.patch": {
+      "sha256": "ec5cc91f2629296eaf0e5366ed27e8063142c836d28794b46f0c159d3577eb57",
+      "source": "moonlight-ios",
+      "copyOnlySubmodule": "moonlight-common/moonlight-common-c"
+    }
+  },
+  "schema_version": 1,
+  "sources": {
+    "Sunshine": {
+      "license_files_sha256": {
+        "LICENSE": "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986"
+      },
+      "revision": "63d35f702ee9e362e43263742981836ec0710384",
+      "submodules": {
+        "third-party/Simple-Web-Server": "546895a93a29062bb178367b46c7afb72da9881e",
+        "third-party/TPCircularBuffer": "cc520397504bb72bc6df79ff03eb72988a6dc50d",
+        "third-party/build-deps": "a1fe2841cbc0d8c4501a1006d2d1cb88f219cc8c",
+        "third-party/build-deps/third-party/FFmpeg/AMF": "eadd00804d5f7e5cd8c85d540073198312870776",
+        "third-party/build-deps/third-party/FFmpeg/FFmpeg": "bf1b838f2ab88b4f8fd83443325c782ea0e0f7fa",
+        "third-party/build-deps/third-party/FFmpeg/SVT-AV1": "9292ec8e32bce26f781f277ec8739b53426c4300",
+        "third-party/build-deps/third-party/FFmpeg/Vulkan-Headers": "ee2ec5fd83dafce291024683b50dc89219333076",
+        "third-party/build-deps/third-party/FFmpeg/Vulkan-Loader": "b8b96a2862bff1eed468e602d43f706beae89cf1",
+        "third-party/build-deps/third-party/FFmpeg/x264": "b35605ace3ddf7c1a5d67a2eb553f034aef41d55",
+        "third-party/build-deps/third-party/FFmpeg/x265_git": "1d117bed4747758b51bd2c124d738527e30392cb",
+        "third-party/doxyconfig": "419127bad87f49b2d45fa957ea7302abbb49c01f",
+        "third-party/doxyconfig/doxygen-awesome-css": "46483f1e5a70ffb9ecd3b82d0a1cd1b24edf13da",
+        "third-party/libdisplaydevice": "6e9722f89103320c948dc1199066c9e17a69e88a",
+        "third-party/libdisplaydevice/third-party/doxyconfig": "e552f7c9f00cd0cf24764a37d0905935b3d2c188",
+        "third-party/libdisplaydevice/third-party/doxyconfig/doxygen-awesome-css": "d52eafe3e9303399fda15661f3d7bb8fe3d7eabc",
+        "third-party/libdisplaydevice/third-party/lizardbyte-common": "06cd442b808f02f1674f3192a84d25b9a503c482",
+        "third-party/libdisplaydevice/third-party/lizardbyte-common/third-party/doxyconfig": "e552f7c9f00cd0cf24764a37d0905935b3d2c188",
+        "third-party/libdisplaydevice/third-party/lizardbyte-common/third-party/doxyconfig/doxygen-awesome-css": "d52eafe3e9303399fda15661f3d7bb8fe3d7eabc",
+        "third-party/libdisplaydevice/third-party/lizardbyte-common/third-party/googletest": "52eb8108c5bdec04579160ae17225d66034bd723",
+        "third-party/libvirtualhid": "53e1a949fc0784af716b782ddfa6c647cafd1f05",
+        "third-party/libvirtualhid/third-party/doxyconfig": "419127bad87f49b2d45fa957ea7302abbb49c01f",
+        "third-party/libvirtualhid/third-party/doxyconfig/doxygen-awesome-css": "46483f1e5a70ffb9ecd3b82d0a1cd1b24edf13da",
+        "third-party/libvirtualhid/third-party/lizardbyte-common": "f9d91e1d29b7473f58e43acde4579da4e56c4abe",
+        "third-party/libvirtualhid/third-party/lizardbyte-common/third-party/doxyconfig": "b87f7e4e1dcd8a31c9a550cd7702b7420d89efac",
+        "third-party/libvirtualhid/third-party/lizardbyte-common/third-party/doxyconfig/doxygen-awesome-css": "24c4f966e375ed92e9805e075177d34a9849a43e",
+        "third-party/libvirtualhid/third-party/lizardbyte-common/third-party/googletest": "f8d7d77c06936315286eb55f8de22cd23c188571",
+        "third-party/lizardbyte-common": "f9d91e1d29b7473f58e43acde4579da4e56c4abe",
+        "third-party/lizardbyte-common/third-party/doxyconfig": "b87f7e4e1dcd8a31c9a550cd7702b7420d89efac",
+        "third-party/lizardbyte-common/third-party/doxyconfig/doxygen-awesome-css": "24c4f966e375ed92e9805e075177d34a9849a43e",
+        "third-party/lizardbyte-common/third-party/googletest": "f8d7d77c06936315286eb55f8de22cd23c188571",
+        "third-party/moonlight-common-c": "62e066388f1a1b133e0bee947b9a374311a3354b",
+        "third-party/moonlight-common-c/enet": "aca87840b57f045a1f7f9299e4b1b9b8e2a5e2f1",
+        "third-party/moonlight-common-c/nanors": "b1e3c22ca0cdc0bb83e3cd6ed1a2fc77869ed99a",
+        "third-party/tray": "c329d9fd0d39dfb47f0f2fb5467e1db2e8a1d623",
+        "third-party/tray/third-party/doxyconfig": "b87f7e4e1dcd8a31c9a550cd7702b7420d89efac",
+        "third-party/tray/third-party/doxyconfig/doxygen-awesome-css": "24c4f966e375ed92e9805e075177d34a9849a43e",
+        "third-party/tray/third-party/lizardbyte-common": "f9d91e1d29b7473f58e43acde4579da4e56c4abe",
+        "third-party/tray/third-party/lizardbyte-common/third-party/doxyconfig": "b87f7e4e1dcd8a31c9a550cd7702b7420d89efac",
+        "third-party/tray/third-party/lizardbyte-common/third-party/doxyconfig/doxygen-awesome-css": "24c4f966e375ed92e9805e075177d34a9849a43e",
+        "third-party/tray/third-party/lizardbyte-common/third-party/googletest": "f8d7d77c06936315286eb55f8de22cd23c188571"
+      },
+      "url": "https://github.com/LizardByte/Sunshine.git",
+      "vendored_artifacts_sha256": {},
+      "version": "v2026.914.233613"
+    },
+    "moonlight-ios": {
+      "license_files_sha256": {
+        "LICENSE.txt": "8ceb4b9ee5adedde47b31e975c1d90c73ad27b6b165a1dcd80c7c545eb65b903"
+      },
+      "revision": "85af0f75622bb2636481afda8b0fc5cc33d5956e",
+      "submodules": {
+        "X1Kit": "6e842ae9d5a21916d7c9693c7385d1ac672bc4fa",
+        "moonlight-common/moonlight-common-c": "48d7f1ace168d07dad339718f1350979545f15d2",
+        "moonlight-common/moonlight-common-c/enet": "0032f5e750bda820fb90b25f99af65fc07ca978a"
+      },
+      "url": "https://github.com/moonlight-stream/moonlight-ios.git",
+      "vendored_artifacts_sha256": {
+        "libs/FFmpeg/lib/iOS-Sim/libavcodec.a": "318fd5ca480e69d95d98dd26d53f38c7a020de0958bed505a801a12bdd9550cc",
+        "libs/FFmpeg/lib/iOS-Sim/libavformat.a": "0aa7ff175f943d7f1722bf51c5ca72f8d69208338e950f15c9a0321b495bd84c",
+        "libs/FFmpeg/lib/iOS-Sim/libavutil.a": "3caab4eea739d5a2f8e0de6a9144e27feb7b840606e9cdead7836feece4e12d6",
+        "libs/FFmpeg/lib/iOS/libavcodec.a": "6e9c99a06a9d4bd64634f487a3265eca15d956d59804f28ec64e3899312d86e4",
+        "libs/FFmpeg/lib/iOS/libavformat.a": "7a881ad35ae365806a446f194267ac761f3a6e52c65e00edc9f840b6a6388051",
+        "libs/FFmpeg/lib/iOS/libavutil.a": "c6d210e33c59f0cffadcc3825504a6a2bc4855934fec6aee3591f2be3398065a",
+        "libs/FFmpeg/lib/tvOS-Sim/libavcodec.a": "2cff2bc2c6bb3538d0e480c1bae1ea81eaee8421becd18c9e031d6b863ae5f14",
+        "libs/FFmpeg/lib/tvOS-Sim/libavformat.a": "9d0dbb6080cd4dcdcb68a9dbf6fdbbdace3ffe6d6a3e8c729db68832005ca9ef",
+        "libs/FFmpeg/lib/tvOS-Sim/libavutil.a": "7226f796025e7b00a43a8286490a5ed4d08162ba26585d38774e5222a8b41b42",
+        "libs/FFmpeg/lib/tvOS/libavcodec.a": "e2d076305df91637c65137ae58278f4e19c6e6764f8f6611c7e40f538c0e954a",
+        "libs/FFmpeg/lib/tvOS/libavformat.a": "1f1a6230d78194b4103b18b85397182adb1a3ce25e337b5937038bbcea476484",
+        "libs/FFmpeg/lib/tvOS/libavutil.a": "8dfc839e59d302abc617d3c80b45ccf4d4e52103b325bf4fd36fab0d9391a0cf",
+        "libs/SDL2/lib/iOS-Sim/libSDL2.a": "a68b763366f4d603180232227d086acc05575467e5012040dea776bd45cee91f",
+        "libs/SDL2/lib/iOS/libSDL2.a": "8794ed9b30bfa9cf7992ca971a7ca86365cf4a575f44e83516d4969619b1c345",
+        "libs/SDL2/lib/tvOS-Sim/libSDL2.a": "dffae42d16159c3eedf43aa8931ef35bd074d24d0efafcdb8604d7a7079e1c91",
+        "libs/SDL2/lib/tvOS/libSDL2.a": "03a7ad43107de430d3cee27b450eefa45ea68f7854989c6505942bc119359395",
+        "libs/opus/lib/iOS-Sim/libopus.a": "3296f7c993aba55396ba0e9efcd9cd12dc3c092c906d4af3de60a6fa74c2b32d",
+        "libs/opus/lib/iOS/libopus.a": "a2fbb2ac4e2c11177c6a8ec696c5e3a097527811c58f49afde70edd60dacb213",
+        "libs/opus/lib/tvOS-Sim/libopus.a": "f935480c8a0d91a6365a6731493a3ff91c3d451d3339a2dfe6a89e120a6f7e1e",
+        "libs/opus/lib/tvOS/libopus.a": "ac1dd3d9a80987283f3baeff2a4a3b249611c155a46ed8fb739e45822034b777"
+      },
+      "version": "9.0.2"
+    },
+    "openssl-package": {
+      "license_files_sha256": {},
+      "revision": "b9eb055fdf73e595cb4b9f665d13dc85975bf80a",
+      "submodules": {},
+      "url": "https://github.com/krzyzanowskim/OpenSSL-Package.git",
+      "vendored_artifacts_sha256": {},
+      "version": "3.3.2000"
+    }
+  }
+}

@@ -42,7 +42,8 @@ private final class UIKitClientKeyboardAccessoryV0: UIInputView {
     ) {
         self.submit = submit
         self.dismissKeyboard = dismissKeyboard
-        super.init(frame: .zero, inputViewStyle: .keyboard)
+        super.init(frame: CGRect(x: 0, y: 0, width: 0, height: 44), inputViewStyle: .keyboard)
+        allowsSelfSizing = true
 
         keyControl.selectedSegmentIndex = UISegmentedControl.noSegment
         keyControl.addTarget(
@@ -132,13 +133,17 @@ private final class UIKitClientKeyboardProxyV0:
 {
     private static let sentinel = "\u{2060}"
     private let submit: (ClientKeyboardActionV0) -> Void
+    private let visibilityChanged: (Bool) -> Void
+    private var discardingComposition = false
     private lazy var keyboardAccessory = UIKitClientKeyboardAccessoryV0(
         submit: { [weak self] action in self?.submit(action) },
         dismissKeyboard: { [weak self] in self?.resignFirstResponder() }
     )
 
-    init(submit: @escaping (ClientKeyboardActionV0) -> Void) {
+    init(submit: @escaping (ClientKeyboardActionV0) -> Void,
+         visibilityChanged: @escaping (Bool) -> Void) {
         self.submit = submit
+        self.visibilityChanged = visibilityChanged
         super.init(frame: .zero)
         delegate = self
         text = Self.sentinel
@@ -165,8 +170,19 @@ private final class UIKitClientKeyboardProxyV0:
     override func becomeFirstResponder() -> Bool {
         restoreSentinel()
         let becameFirstResponder = super.becomeFirstResponder()
-        if becameFirstResponder { restoreSentinel() }
+        if becameFirstResponder {
+            restoreSentinel()
+            visibilityChanged(true)
+        }
         return becameFirstResponder
+    }
+
+    @discardableResult
+    override func resignFirstResponder() -> Bool {
+        discardComposition()
+        let resigned = super.resignFirstResponder()
+        if resigned { visibilityChanged(false) }
+        return resigned
     }
 
     func textField(
@@ -174,7 +190,7 @@ private final class UIKitClientKeyboardProxyV0:
         shouldChangeCharactersIn range: NSRange,
         replacementString string: String
     ) -> Bool {
-        guard textField === self else { return false }
+        guard textField === self, !discardingComposition else { return false }
         defer { restoreSentinel() }
         if string.isEmpty {
             submit(.deleteBackward)
@@ -187,10 +203,18 @@ private final class UIKitClientKeyboardProxyV0:
     }
 
     func textFieldShouldReturn(_ textField: UITextField) -> Bool {
-        guard textField === self else { return false }
+        guard textField === self, !discardingComposition else { return false }
         submit(.returnKey)
         restoreSentinel()
         return false
+    }
+
+    func discardComposition() {
+        guard !discardingComposition else { return }
+        discardingComposition = true
+        defer { discardingComposition = false }
+        unmarkText()
+        restoreSentinel()
     }
 
     private func restoreSentinel() {
@@ -208,6 +232,13 @@ public final class UIKitClientLiveSurfaceViewV0:
     UIGestureRecognizerDelegate
 {
     public let videoView = UIKitClientVideoSurfaceViewV0(frame: .zero)
+    private var webRTCVideoView: UIView?
+    private var nativeVideoView: UIView?
+    private var nativeReplacementCover: UIView?
+    package var isNativeReplacementCovered: Bool { nativeReplacementCover != nil }
+    private var nativeContentGeometry: InteractiveNativeVideoContentGeometryV0?
+    private var nativeInputCurrent: (@MainActor () -> Bool)?
+    private var canDispatchInput: Bool { inputEnabled && !hasUnverifiedExternalVideo }
 
     private var mapper: ClientViewportInputMapperV0?
     private var mode: ClientInputInteractionModeV0
@@ -225,9 +256,18 @@ public final class UIKitClientLiveSurfaceViewV0:
     private var dragLastLocation: CGPoint?
     private var onZoomOutPastFit: (() -> Void)?
     private var onManualViewportChange: (() -> Void)?
-    private lazy var keyboardProxy = UIKitClientKeyboardProxyV0 {
-        [weak self] action in self?.submitKeyboardAction(action)
-    }
+    private lazy var keyboardProxy = UIKitClientKeyboardProxyV0(
+        submit: { [weak self] action in self?.submitKeyboardAction(action) },
+        visibilityChanged: { [weak self] visible in
+            guard let self else { return }
+            if !visible { self.clearSoftwareKeyboardModifiers() }
+            self.onSoftwareKeyboardVisibilityChanged?(visible)
+        }
+    )
+    private var softwareKeyboardModifiers: InteractiveModifierMask = []
+    public var onSoftwareKeyboardVisibilityChanged: ((Bool) -> Void)?
+    public var onSoftwareKeyboardInputOmitted: (() -> Void)?
+    public var onSoftwareKeyboardModifiersCleared: (() -> Void)?
     private let onPayloads: ([InteractiveInputPayload]) -> Void
     private let onFailure: (UIKitClientLiveSurfaceFailureV0) -> Void
 
@@ -278,6 +318,11 @@ public final class UIKitClientLiveSurfaceViewV0:
     public func setEncodedDimensions(width: UInt16, height: UInt16) {
         guard encodedWidth != width || encodedHeight != height else { return }
         resetMapper()
+        if nativeVideoView != nil {
+            nativeContentGeometry = nil
+            nativeInputCurrent = nil
+            setInputEnabled(false)
+        }
         encodedWidth = width
         encodedHeight = height
         resetVisualZoomState()
@@ -285,33 +330,139 @@ public final class UIKitClientLiveSurfaceViewV0:
     }
 
     public func setInputEnabled(_ value: Bool) {
+        if value, hasUnverifiedExternalVideo { return }
+        // Local keyboard presentation is independent of remote input admission.
+        // Discard composition on both sides of a pause; never replay old drafts.
+        let changed = inputEnabled != value
+        if changed || !value {
+            inputEnabled = false
+            keyboardProxy.discardComposition()
+        }
+        inputEnabled = value
         if !value {
-            keyboardProxy.resignFirstResponder()
+            clearSoftwareKeyboardModifiers()
             resetMapper()
             resetVisualZoomState()
         }
-        guard inputEnabled != value else { return }
-        inputEnabled = value
-        isUserInteractionEnabled = value
+        // Disabling the container also resigns its text responder. Keep local
+        // keyboard UI alive; recognizers and every delivery path stay fenced.
+        isUserInteractionEnabled = true
+        gestureRecognizers?.forEach { $0.isEnabled = value }
         if value { setNeedsLayout() }
     }
 
     public func resetInputAndBlank() {
-        keyboardProxy.resignFirstResponder()
+        inputEnabled = false
+        hideSoftwareKeyboard()
         resetMapper()
         resetVisualZoomState()
         inputEnabled = false
         isUserInteractionEnabled = false
         videoView.blank()
+        removeWebRTCVideoView()
+        removeNativeVideoView()
+        endNativeReplacement()
+    }
+
+    /// A constant opaque boundary during replacement prevents bootstrap
+    /// frames from flashing through between drained native owners.
+    package func beginNativeReplacement() {
+        guard nativeReplacementCover == nil else { return }
+        let cover = UIView(frame: bounds)
+        cover.backgroundColor = .black
+        cover.isOpaque = true
+        cover.isUserInteractionEnabled = false
+        cover.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        addSubview(cover)
+        nativeReplacementCover = cover
+    }
+
+    package func revealNativeReplacement(expectedView: UIView) {
+        guard nativeVideoView === expectedView else { return }
+        endNativeReplacement()
+    }
+
+    private func endNativeReplacement() {
+        nativeReplacementCover?.removeFromSuperview()
+        nativeReplacementCover = nil
+    }
+
+    /// The WebRTC receiver is installed only for the current negotiated peer.
+    /// Its own frame sink reveals the view after the first admitted frame.
+    public func installWebRTCVideoView(_ view: UIView) {
+        guard nativeVideoView == nil else { return }
+        removeWebRTCVideoView()
+        setInputEnabled(false)
+        view.frame = videoView.bounds
+        view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        view.isHidden = true
+        videoView.addSubview(view)
+        webRTCVideoView = view
+    }
+
+    public var hasUnverifiedWebRTCVideo: Bool {
+        webRTCVideoView != nil
+    }
+
+    public var hasUnverifiedExternalVideo: Bool {
+        webRTCVideoView != nil || (nativeVideoView != nil && nativeInputCurrent?() != true)
+    }
+
+    /// An injected native driver owns decoding. This slot remains input-disabled
+    /// until a native presentation proof is admitted by the Control authority.
+    @discardableResult
+    public func installNativeVideoView(_ view: UIView) -> Bool {
+        guard webRTCVideoView == nil, nativeVideoView == nil else { return false }
+        setInputEnabled(false)
+        view.frame = videoView.bounds
+        view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        view.isHidden = true
+        videoView.addSubview(view)
+        nativeVideoView = view
+        return true
+    }
+
+    package func stageNativeInputGeometry(_ geometry: InteractiveNativeVideoContentGeometryV0,
+        expectedView: UIView, isCurrent: @escaping @MainActor () -> Bool) throws {
+        guard nativeVideoView === expectedView, webRTCVideoView == nil,
+              geometry.encodedWidth == Int(encodedWidth), geometry.encodedHeight == Int(encodedHeight) else {
+            throw UIKitClientLiveSurfaceFailureV0.invalidGeometry
+        }
+        resetMapper()
+        nativeContentGeometry = geometry; nativeInputCurrent = isCurrent
+    }
+    package func clearNativeInputAdmission(_ expectedView: UIView) {
+        guard nativeVideoView === expectedView else { return }
+        nativeContentGeometry = nil; nativeInputCurrent = nil
+        setInputEnabled(false)
+    }
+
+    public func removeNativeVideoView(_ expected: UIView? = nil) {
+        if let expected, nativeVideoView !== expected { return }
+        nativeContentGeometry = nil; nativeInputCurrent = nil
+        nativeVideoView?.isHidden = true
+        nativeVideoView?.removeFromSuperview()
+        nativeVideoView = nil
+    }
+
+    public func removeWebRTCVideoView(_ expected: UIView? = nil) {
+        if let expected, webRTCVideoView !== expected { return }
+        webRTCVideoView?.removeFromSuperview()
+        webRTCVideoView = nil
     }
 
     public func toggleSoftwareKeyboard() {
-        guard inputEnabled else { return }
+        guard window != nil else { return }
         if keyboardProxy.isFirstResponder {
             keyboardProxy.resignFirstResponder()
         } else {
-            _ = keyboardProxy.becomeFirstResponder()
+            showSoftwareKeyboard()
         }
+    }
+
+    public func showSoftwareKeyboard() {
+        guard window != nil, !keyboardProxy.isFirstResponder else { return }
+        _ = keyboardProxy.becomeFirstResponder()
     }
 
     public var isSoftwareKeyboardVisible: Bool {
@@ -320,6 +471,26 @@ public final class UIKitClientLiveSurfaceViewV0:
 
     public func hideSoftwareKeyboard() {
         keyboardProxy.resignFirstResponder()
+        keyboardProxy.discardComposition()
+        clearSoftwareKeyboardModifiers()
+    }
+
+    /// The normal session owns a single bar above the system keyboard. Other
+    /// embedders keep the existing UIKit accessory unless they opt into it.
+    public func useExternalSoftwareKeyboardBar() {
+        guard keyboardProxy.inputAccessoryView != nil else { return }
+        keyboardProxy.inputAccessoryView = nil
+        if keyboardProxy.isFirstResponder { keyboardProxy.reloadInputViews() }
+    }
+
+    public func setSoftwareKeyboardModifiers(_ modifiers: InteractiveModifierMask) {
+        softwareKeyboardModifiers = modifiers
+    }
+
+    private func clearSoftwareKeyboardModifiers() {
+        guard !softwareKeyboardModifiers.isEmpty else { return }
+        softwareKeyboardModifiers = []
+        onSoftwareKeyboardModifiersCleared?()
     }
 
     public var isVisuallyZoomed: Bool {
@@ -340,7 +511,7 @@ public final class UIKitClientLiveSurfaceViewV0:
         on bounds: NormalizedSurfaceRect,
         animated: Bool = true
     ) -> Bool {
-        guard inputEnabled, self.bounds.width > 0, self.bounds.height > 0,
+        guard canDispatchInput, self.bounds.width > 0, self.bounds.height > 0,
               encodedWidth > 0, encodedHeight > 0 else {
             IOSClientRuntimeDiagnosticLogV0.record(
                 "ui.automatic-visual-zoom.deferred-geometry"
@@ -384,7 +555,7 @@ public final class UIKitClientLiveSurfaceViewV0:
     }
 
     private func rebuildMapperForCurrentGeometry() {
-        guard inputEnabled, bounds.width > 0, bounds.height > 0,
+        guard canDispatchInput, bounds.width > 0, bounds.height > 0,
               encodedWidth > 0, encodedHeight > 0 else { return }
         do {
             let viewport = try ClientInputRectV0(
@@ -393,11 +564,13 @@ public final class UIKitClientLiveSurfaceViewV0:
                 width: Double(bounds.width),
                 height: Double(bounds.height)
             )
-            let content = try ClientAspectFitGeometryV0.contentRect(
-                viewport: viewport,
-                encodedWidth: encodedWidth,
-                encodedHeight: encodedHeight
-            )
+            let content: ClientInputRectV0
+            if let nativeContentGeometry {
+                content = try ClientAspectFitGeometryV0.nativeContentRect(viewport: viewport, geometry: nativeContentGeometry)
+            } else {
+                content = try ClientAspectFitGeometryV0.contentRect(viewport: viewport,
+                    encodedWidth: encodedWidth, encodedHeight: encodedHeight)
+            }
             if mapper?.viewport != viewport || mapper?.content != content {
                 resetMapper()
                 mapper = try ClientViewportInputMapperV0(
@@ -486,7 +659,7 @@ public final class UIKitClientLiveSurfaceViewV0:
     public override func gestureRecognizerShouldBegin(
         _ gestureRecognizer: UIGestureRecognizer
     ) -> Bool {
-        guard inputEnabled else { return false }
+        guard canDispatchInput else { return false }
         if gestureRecognizer === visualZoomPinchRecognizer {
             return true
         }
@@ -673,7 +846,7 @@ public final class UIKitClientLiveSurfaceViewV0:
     @objc private func visualZoomPinched(
         _ recognizer: UIPinchGestureRecognizer
     ) {
-        guard inputEnabled else { return }
+        guard canDispatchInput else { return }
         do {
             if recognizer.state == .began {
                 resetMapper()
@@ -713,7 +886,7 @@ public final class UIKitClientLiveSurfaceViewV0:
     @objc private func visualZoomPanned(
         _ recognizer: UIPanGestureRecognizer
     ) {
-        guard inputEnabled,
+        guard canDispatchInput,
               UIKitClientVisualZoomGesturePolicyV0.twoFingerPanDestination(
                 visualZoomScale: visualZoomScale
               ) == .localViewport,
@@ -878,7 +1051,7 @@ public final class UIKitClientLiveSurfaceViewV0:
         _ body: (inout ClientViewportInputMapperV0) throws
             -> [InteractiveInputPayload]
     ) {
-        guard inputEnabled, var mapper else { return }
+        guard canDispatchInput, var mapper else { return }
         do {
             let payloads = try body(&mapper)
             self.mapper = mapper
@@ -910,7 +1083,7 @@ public final class UIKitClientLiveSurfaceViewV0:
         _ action: ClientKeyboardActionV0,
         modifiers: InteractiveModifierMask = []
     ) {
-        guard inputEnabled else { return }
+        guard canDispatchInput else { return }
         do { emit(try action.payloads(modifiers: modifiers)) }
         catch {
             setInputEnabled(false)
@@ -919,11 +1092,17 @@ public final class UIKitClientLiveSurfaceViewV0:
     }
 
     private func submitKeyboardAction(_ action: ClientKeyboardActionV0) {
-        sendKeyboardAction(action)
+        defer { clearSoftwareKeyboardModifiers() }
+        guard canDispatchInput else { return }
+        do { emit(try action.softwareKeyboardPayloads(modifiers: softwareKeyboardModifiers)) }
+        catch {
+            setInputEnabled(false)
+            onFailure(.invalidGesture)
+        }
     }
 
     private func emit(_ payloads: [InteractiveInputPayload]) {
-        guard !payloads.isEmpty else { return }
+        guard canDispatchInput, !payloads.isEmpty else { return }
         onPayloads(payloads)
     }
 }

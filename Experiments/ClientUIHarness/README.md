@@ -20,7 +20,8 @@ The harness exercises:
   freshness and history-gap presentation;
 - a schema-driven Approved Actions catalog and typed synthetic result that
   never opens Remote Control; and
-- privacy-limited application/window surface selection.
+- privacy-limited application/window surface selection, including a window
+  chooser before selecting an app with several windows.
 
 Its seven closed-mode UI tests traverse every listed screen through the accessibility
 hierarchy, changes the host projection from Ready to No Network, proves one

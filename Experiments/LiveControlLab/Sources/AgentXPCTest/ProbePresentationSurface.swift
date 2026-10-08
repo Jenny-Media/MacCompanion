@@ -22,8 +22,8 @@ actor ProbePresentationSurface: LocalPairingReviewSurfaceV0, LocalHostIdentityRe
     private var events: [Event] = []
     func presentLocalPairingReview(_ review: LocalPairingReviewV0) { events.append(.presented(review)) }
     func withdrawLocalPairingReview(reviewID: UUID) { events.append(.withdrawn(reviewID)) }
-    func next() async throws -> Event {
-        let deadline = ContinuousClock.now + .seconds(12)
+    func next(timeout: Duration = .seconds(12)) async throws -> Event {
+        let deadline = ContinuousClock.now + timeout
         while ContinuousClock.now < deadline {
             if !events.isEmpty { return events.removeFirst() }
             try await Task.sleep(for: .milliseconds(10))

@@ -202,16 +202,19 @@ public actor AtomicFileMacRemoteAccessIntentStoreV1:
             if descriptor >= 0 { close(descriptor) }
             throw MacRemoteAccessIntentStoreErrorV1.ioFailure
         }
-        lockDescriptor = descriptor
+        // Transfer ownership only after validation; a throwing initialized
+        // actor otherwise closes once here and again from deinit.
+        let checkedDirectory = self.directory
+        let checkedDestination = destination
         do {
             try Self.withExclusiveLock(descriptor: descriptor) {
                 try Self.recoverPendingFiles(
-                    in: self.directory,
+                    in: checkedDirectory,
                     fileManager: fileManager
                 )
                 try Self.validateDirectoryContents(
-                    self.directory,
-                    destination: destination,
+                    checkedDirectory,
+                    destination: checkedDestination,
                     fileManager: fileManager
                 )
             }
@@ -219,6 +222,7 @@ public actor AtomicFileMacRemoteAccessIntentStoreV1:
             close(descriptor)
             throw error
         }
+        lockDescriptor = descriptor
     }
 
     deinit { close(lockDescriptor) }

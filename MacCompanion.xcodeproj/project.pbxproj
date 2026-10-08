@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		052B5B7085A7533CA206BB2C /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A57807FD71C9D18AFD22DAE4 /* Assets.xcassets */; };
 		0E2DF059ED8CEBC5A7CD8A8E /* MacCompanionUpdateAgentReactivationCompositionV0.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8CBD8D6F13B604C4CBBAFF21 /* MacCompanionUpdateAgentReactivationCompositionV0.swift */; };
 		27DDDA85154EA314BCA29BC3 /* MacCompanionSparkleUserDriverV0.swift in Sources */ = {isa = PBXBuildFile; fileRef = 091FBCCB2C78C6909D0AF377 /* MacCompanionSparkleUserDriverV0.swift */; };
 		281D3C00B605BF825BFCA0F4 /* CompanionLocalXPCPlatform in Frameworks */ = {isa = PBXBuildFile; productRef = D80FDE8AEECB694B58AE4155 /* CompanionLocalXPCPlatform */; };
@@ -16,6 +17,7 @@
 		766C4BE8703736B3332F625B /* CompanionMacApp in Frameworks */ = {isa = PBXBuildFile; productRef = 4E6E2C3ED3D78E6AD3075740 /* CompanionMacApp */; };
 		7C52EF7713040BA0D1AF04BB /* CompanionMacApplicationPlatform in Frameworks */ = {isa = PBXBuildFile; productRef = 45997269355B0A95903CEC2D /* CompanionMacApplicationPlatform */; };
 		846BE6F9115ED668392FBB03 /* CompanionLifecycle in Frameworks */ = {isa = PBXBuildFile; productRef = 33CCA70A90ABD1AFD33CD323 /* CompanionLifecycle */; };
+		8B81B54F1C144A81CA7E1888 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = AB326490483A9811D60CA92B /* Assets.xcassets */; };
 		93E7B570024E550FBF0C40FC /* MacCompanionAgent.app in Embed Dependencies */ = {isa = PBXBuildFile; fileRef = 64F3FDF790D288F6AA7FF926 /* MacCompanionAgent.app */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		9EA787566F61B8172FB4B367 /* CompanionAgentApplicationPlatform in Frameworks */ = {isa = PBXBuildFile; productRef = 712A36891FC0D3BAA4856A09 /* CompanionAgentApplicationPlatform */; };
 		9F43847B9D5B96A777822ADF /* CompanionClientPlatform in Frameworks */ = {isa = PBXBuildFile; productRef = 4AF885F65654DFE0BC148A93 /* CompanionClientPlatform */; };
@@ -81,7 +83,9 @@
 		9224B6E6FD7914BF9ACCABD3 /* MacCompanionApplication.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacCompanionApplication.swift; sourceTree = "<group>"; };
 		943C9B58FF652CF6598652AE /* MacCompanionIOS.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = MacCompanionIOS.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		A4F604F15E0382A43D678F69 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
+		A57807FD71C9D18AFD22DAE4 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		AA87F8A3795BEC0C4AAE31F2 /* media.jenny.maccompanion.agent.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = media.jenny.maccompanion.agent.plist; sourceTree = "<group>"; };
+		AB326490483A9811D60CA92B /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		ACDC9CD0AAA32C73DC844846 /* MacCompanion.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = MacCompanion.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		E3A4E4B39A8D630C7C685681 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		F2BDA9AE141E2A20CEFA5619 /* MacCompanionSparkleAdapterV0.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacCompanionSparkleAdapterV0.swift; sourceTree = "<group>"; };
@@ -145,6 +149,7 @@
 			isa = PBXGroup;
 			children = (
 				4E18300EDAD82C05188961B9 /* LaunchAgents */,
+				A57807FD71C9D18AFD22DAE4 /* Assets.xcassets */,
 				2943C5F3784DF1F502859C89 /* Info.plist */,
 				9224B6E6FD7914BF9ACCABD3 /* MacCompanionApplication.swift */,
 				177DD5F7DF123EE9E1BD7675 /* MacCompanionLoginRoleComposition.swift */,
@@ -235,6 +240,7 @@
 		E09F7DFA9FB58168CB4B6A59 /* MacCompanionIOS */ = {
 			isa = PBXGroup;
 			children = (
+				AB326490483A9811D60CA92B /* Assets.xcassets */,
 				E3A4E4B39A8D630C7C685681 /* Info.plist */,
 				0D7D684A6CC729FA8ED1E813 /* MacCompanionIOSApplication.swift */,
 			);
@@ -375,6 +381,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				052B5B7085A7533CA206BB2C /* Assets.xcassets in Resources */,
 				D8290859ACAA145A04CA0ED1 /* PrivacyInfo.xcprivacy in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -383,6 +390,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				8B81B54F1C144A81CA7E1888 /* Assets.xcassets in Resources */,
 				3E9471AA38A0125DFE6B1B3B /* PrivacyInfo.xcprivacy in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

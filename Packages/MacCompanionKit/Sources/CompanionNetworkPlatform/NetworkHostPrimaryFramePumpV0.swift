@@ -231,6 +231,7 @@ public actor NetworkHostPrimaryFramePumpV0 {
     private var executionResponses: [UUID: Task<Void, Never>] = [:]
     private var sendTail: Task<Void, Error>?
     private var deadlineTask: Task<Void, Never>?
+    private var desktop: NetworkHostDesktopTunnelV1?
     private var classifiedActivationContinuation:
         CheckedContinuation<Void, Error>?
 
@@ -452,7 +453,9 @@ public actor NetworkHostPrimaryFramePumpV0 {
                 for frame in frames {
                     guard !stopped else { return }
                     let kind = try WireCodec.messageKind(from: frame)
-                    if (kind == .operationInvoke || kind == .operationApprove), await session.phase == .ready {
+                    if kind == .desktopTunnel {
+                        try await receiveDesktop(frame)
+                    } else if (kind == .operationInvoke || kind == .operationApprove), await session.phase == .ready {
                         guard executionResponses.count < Self.maximumConcurrentExecutions else {
                             throw TransportGuardError.inFlightLimitReached(Self.maximumConcurrentExecutions)
                         }
@@ -480,6 +483,49 @@ public actor NetworkHostPrimaryFramePumpV0 {
                 "primary pump failed error=\(String(describing: error), privacy: .public)"
             )
             await stop(reason: .protocolOrSessionFailure)
+        }
+    }
+
+    private func authorizeDesktop(sessionID: UUID, request: Data? = nil, retirement: (@Sendable () async -> Void)? = nil) async throws {
+        guard !stopped else { throw NetworkHostPrimaryFramePumpErrorV0.connectionClosed }
+        let current = context()
+        try await session.authorizeDesktop(sessionID: sessionID, request: request,
+            contextHostState: current.hostState, wallNowUnixMilliseconds: current.wallNowUnixMilliseconds,
+            monotonicNowMilliseconds: current.monotonicNowMilliseconds, retirement: retirement)
+        guard !stopped else { throw NetworkHostPrimaryFramePumpErrorV0.connectionClosed }
+    }
+
+    private func emitDesktop(_ body: DesktopTunnelBodyV1) async throws {
+        guard !stopped else { throw NetworkHostPrimaryFramePumpErrorV0.connectionClosed }
+        let current = context()
+        let frame = try WireCodec.encode(WireEnvelope(messageID: current.responseMessageID,
+            correlationID: nil, channel: .events, sentAtUnixMilliseconds: current.wallNowUnixMilliseconds,
+            body: DesktopTunnelEventBodyV1(body)))
+        try await send(LengthPrefixedFrameDecoder.encode(frame))
+    }
+
+    private func receiveDesktop(_ frame: Data) async throws {
+        let body = try WireCodec.decode(WireEnvelope<DesktopTunnelBodyV1>.self, from: frame).body
+        try await authorizeDesktop(sessionID: body.interactiveSessionID.rawValue, request: frame)
+        if body.operation == .open {
+            if let desktop { await desktop.close() }
+            let tunnel = NetworkHostDesktopTunnelV1(body: body,
+                authorize: { [weak self] in
+                    guard let self else { throw NetworkHostPrimaryFramePumpErrorV0.connectionClosed }
+                    try await self.authorizeDesktop(sessionID: body.interactiveSessionID.rawValue)
+                }, emit: { [weak self] value in
+                    guard let self else { throw NetworkHostPrimaryFramePumpErrorV0.connectionClosed }
+                    try await self.emitDesktop(value)
+                })
+            desktop = tunnel
+            do {
+                try await authorizeDesktop(sessionID: body.interactiveSessionID.rawValue,
+                    retirement: { [weak tunnel] in await tunnel?.close() })
+                try await tunnel.start()
+            } catch { await tunnel.close() }
+        } else {
+            guard let desktop else { throw NetworkHostPrimaryFramePumpErrorV0.invalidConfiguration }
+            try await desktop.receive(body)
         }
     }
 
@@ -522,6 +568,9 @@ public actor NetworkHostPrimaryFramePumpV0 {
     ) async {
         guard !stopped else { return }
         stopped = true
+        let closingDesktop = desktop
+        desktop = nil
+        await closingDesktop?.close()
         for task in executionResponses.values { task.cancel() }
         executionResponses.removeAll()
         sendTail?.cancel()

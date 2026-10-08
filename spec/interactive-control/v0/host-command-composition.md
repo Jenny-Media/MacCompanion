@@ -32,10 +32,13 @@ against the same durable/visible authorities before publishing runtime state.
 The production material generator uses Security.framework system randomness for approval IDs, challenges, session/channel IDs, and distinct role credentials. The production pre-admission reader brackets one atomic SQLite device/grant snapshot with identical visible-menu-app generation/revision snapshots; a changing IPC-visible state yields no admission. Neither replaces the runtime installer's final revalidation.
 
 The successful admission snapshot retains that exact nonzero visible-menu-app
-generation and revision. Runtime installation accepts no receipt unless it
-comes from the same generation and a revision at least as new as the admitted
-revision; discarding this fence or accepting another process generation would
-turn menu availability into an unauthenticated time-of-check hint.
+generation and publication revision. Runtime installation accepts no receipt
+unless it comes from the same generation, has a positive activity revision and
+matches the exact current install command, lease, session and display. Activity
+and publication revisions are independent counters; numeric comparison between
+them cannot establish freshness. The complete admission publication is still
+revalidated unchanged around installation, and a different process generation
+or stale command binding remains denied.
 
 The v0.1 Interactive Control capability ID is exactly `maccompanion.interactive.control`. A request is eligible only for an `activeGranted` device with that exact grant, exact authorization/grant/policy revisions, an active console session, a visible available menu app, and a selected display. Failure returns only the closed `policy.denied` error.
 

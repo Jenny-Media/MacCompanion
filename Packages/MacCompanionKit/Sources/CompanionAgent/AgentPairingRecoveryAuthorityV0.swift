@@ -32,10 +32,16 @@ public struct AgentPairingRecoveryChallengeV0: Equatable, Sendable {
 public struct AgentRecoveredPairingV0: Equatable, Sendable {
     public let deviceID: UUID
     public let policyRevision: PolicyRevision
+    public let deviceState: DeviceAuthorizationState
 
-    public init(deviceID: UUID, policyRevision: PolicyRevision) {
+    public init(
+        deviceID: UUID,
+        policyRevision: PolicyRevision,
+        deviceState: DeviceAuthorizationState = .activeMonitorOnly
+    ) {
         self.deviceID = deviceID
         self.policyRevision = policyRevision
+        self.deviceState = deviceState
     }
 }
 
@@ -92,7 +98,7 @@ public struct UnavailableAgentHostPairingRecoveryAuthorityV0:
 }
 
 /// Durable exact-key recovery authority. It can only reproduce an already
-/// committed Monitor Only pairing and has no mutation or local-approval API.
+/// committed initial pairing and has no mutation or local-approval API.
 public struct SQLiteAgentHostPairingRecoveryAuthorityV0:
     AgentHostPairingRecoveryAuthorityV0, Sendable
 {
@@ -170,7 +176,8 @@ public struct SQLiteAgentHostPairingRecoveryAuthorityV0:
         }
         return AgentRecoveredPairingV0(
             deviceID: record.deviceID,
-            policyRevision: record.policyRevision
+            policyRevision: record.policyRevision,
+            deviceState: record.authorization.state
         )
     }
 
@@ -187,10 +194,17 @@ public struct SQLiteAgentHostPairingRecoveryAuthorityV0:
         record.clientID == clientID,
         record.sessionPublicKeyX963 == sessionPublicKeyX963,
         record.approvalPublicKeyX963 == approvalPublicKeyX963,
-        record.authorization.state == .activeMonitorOnly,
+        record.authorization.state == .activeMonitorOnly
+            || record.authorization.state == .activeGranted,
         record.authorization.authorizationEpoch.rawValue == 1,
         record.authorization.grantRevision.rawValue == 1,
         record.revokedAtUnixMilliseconds == nil else {
+            throw AgentPairingRecoveryErrorV0.unavailable
+        }
+        let grants = try await store.deviceGrants(record.deviceID)
+        let expected = record.authorization.state == .activeGranted
+            ? [PairingAccessProfileV1.remoteDesktopCapabilityID] : []
+        guard grants.capabilityIDs == expected else {
             throw AgentPairingRecoveryErrorV0.unavailable
         }
         return record

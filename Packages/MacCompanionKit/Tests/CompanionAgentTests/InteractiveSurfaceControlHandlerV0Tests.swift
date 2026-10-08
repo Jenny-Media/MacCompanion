@@ -774,3 +774,25 @@ private func handlerSelection(sequence: Int64 = 1) throws
     }
     #expect(await route.acknowledgementCount == 0)
 }
+
+@Test(arguments: [InteractiveSurfaceKind.application, .window])
+func agentSurfaceHandlerPreservesSessionOnExplicitDesktopRecovery(kind: InteractiveSurfaceKind) async throws {
+    let (handler, _, route) = try makeHandler()
+    let selected = try await handler.select(InteractiveSurfaceSelectBodyV0(
+        interactiveSessionID: WireUUID(handlerSessionID), authorizationEpoch: .init(rawValue: 4),
+        currentSurfaceID: WireUUID(handlerInitialSurfaceID), expectedSurfaceRevision: .init(rawValue: 1),
+        expectedCoordinateSpaceRevision: .init(rawValue: 1), targetKind: kind,
+        targetToken: WireUUID(UUID()), sequence: 1), context: handlerContext())
+    #expect(selected.descriptor.kind == .desktop)
+    #expect(await route.prepareCount == 1)
+    #expect(await route.acknowledgementCount == 0)
+    #expect(await route.terminationCount == 0)
+    _ = try await handler.acknowledge(InteractiveSurfaceAcknowledgementBodyV0(
+        interactiveSessionID: selected.descriptor.interactiveSessionID,
+        authorizationEpoch: selected.descriptor.authorizationEpoch, transitionID: selected.transitionID,
+        surfaceID: selected.descriptor.surfaceID, surfaceRevision: selected.descriptor.surfaceRevision,
+        coordinateSpaceRevision: selected.descriptor.coordinateSpaceRevision,
+        readyMediaSequence: 5, sequence: 2), context: handlerContext(monotonicNowMilliseconds: 2_100))
+    #expect(await route.acknowledgementCount == 1)
+    #expect(await route.terminationCount == 0)
+}

@@ -6,9 +6,15 @@ repository_root="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$repository_root"
 
 python3 scripts/validate_fixtures.py
+python3 scripts/verify_vnc_framebuffer_bounds.py
+python3 scripts/verify_vnc_keyboard.py
+python3 scripts/verify_vnc_viewport.py
+python3 scripts/verify_vnc_direct.py
+python3 scripts/verify_direct_mac_names.py
 python3 scripts/validate_ci.py
 python3 scripts/validate_open_source_policy.py
 python3 scripts/validate_repository_material.py
+python3 scripts/verify_direct_client_dependencies.py
 python3 scripts/validate_dependency_policy.py
 python3 scripts/validate_update_policy.py
 python3 scripts/validate_permanent_apple_targets.py
@@ -44,6 +50,8 @@ python3 scripts/validate_agent_xpc_isolation.py
 python3 scripts/verify_agent_startup_stress.py --self-test
 python3 scripts/validate_simulator_report.py
 python3 scripts/validate_performance_acceptance.py
+python3 scripts/report_native_view_transitions.py --self-test
+python3 scripts/native_diagnostic_journal.py
 python3 scripts/validate_prephysical_completion_audit.py
 
 swift_arguments=(test --package-path Packages/MacCompanionKit)
@@ -188,4 +196,5 @@ xpc_probe_flags=(
   Packages/MacCompanionKit/Sources/CompanionLocalXPCPlatformC/CompanionLocalXPCPlatformC.c
 
 bash -n Experiments/LocalXPCIdentityProbe/run.sh
+python3 scripts/verify_native_selected_capture.py
 git diff --check

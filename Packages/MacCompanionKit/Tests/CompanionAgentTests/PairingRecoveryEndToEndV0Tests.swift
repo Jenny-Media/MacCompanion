@@ -83,7 +83,8 @@ private struct RecoveryE2EUnusedPublisherV0:
     func withdrawHostPairingReview(reviewID: UUID) async {}
 }
 
-@Test func lostPairingCompletionRecoversExactDurableDeviceEndToEnd() async throws {
+@Test(arguments: [false, true])
+func lostPairingCompletionRecoversExactDurableDeviceEndToEnd(remoteDesktop: Bool) async throws {
     let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
         "maccompanion-pairing-recovery-e2e-\(UUID())",
         isDirectory: true
@@ -123,7 +124,7 @@ private struct RecoveryE2EUnusedPublisherV0:
     )
     let authorization = try DeviceAuthorization()
         .applying(.startPairing)
-        .applying(.commitMonitorOnlyPairing)
+        .applying(remoteDesktop ? .commitRemoteDesktopPairing : .commitMonitorOnlyPairing)
     try await store.commitPairing(
         pairingID: pairingID,
         record: StoredDeviceRecord(
@@ -232,7 +233,7 @@ private struct RecoveryE2EUnusedPublisherV0:
 
     #expect(pairedHost.hostID == hostID)
     #expect(pairedHost.deviceID == deviceID)
-    #expect(pairedHost.deviceState == .activeMonitorOnly)
+    #expect(pairedHost.deviceState == authorization.state)
     #expect(pairedHost.authorizationEpoch.rawValue == 1)
     #expect(pairedHost.grantRevision.rawValue == 1)
     #expect(pairedHost.policyRevision.rawValue == 7)
@@ -270,5 +271,5 @@ private struct RecoveryE2EUnusedPublisherV0:
     )
     #expect(principal.deviceID == deviceID)
     #expect(principal.clientID == clientID)
-    #expect(principal.deviceState == .activeMonitorOnly)
+    #expect(principal.deviceState == authorization.state)
 }

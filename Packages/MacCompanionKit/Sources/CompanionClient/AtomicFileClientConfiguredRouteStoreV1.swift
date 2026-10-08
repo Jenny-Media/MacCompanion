@@ -222,6 +222,16 @@ public actor AtomicFileClientConfiguredRouteStoreV1:
         }
     }
 
+    public func remove(hostID: UUID) async throws {
+        try withExclusiveLock {
+            _ = try visibleRecordURLs()
+            let url = recordURL(hostID: hostID)
+            guard try loadSnapshot(at: url, expectedHostID: hostID) != nil else { return }
+            try fileManager.removeItem(at: url)
+            try Self.synchronizeDirectory(directory)
+        }
+    }
+
     private func replaceAtomicallyLocked(
         _ value: ClientConfiguredRouteCatalogSnapshotV1,
         expectedRevision: UInt64?

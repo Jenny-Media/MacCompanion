@@ -18,6 +18,7 @@ public enum IOSClientReleaseBootstrapPhaseV1: Equatable, Sendable {
     case idle
     case preparing
     case unpaired
+    case macLibrary
     case pairedRouteConfigurationRequired(hostID: UUID)
     case paired(hostID: UUID)
     case unavailable(IOSClientReleaseBootstrapFailureV1)
@@ -57,6 +58,12 @@ public actor IOSClientReleaseBootstrapV1 {
         storageFactory = { try IOSClientReleaseStorageV1.systemDefault() }
     }
 
+    #if DEBUG && targetEnvironment(simulator)
+    public init(simulatorDevelopment: Void) {
+        storageFactory = { try IOSClientReleaseStorageV1.systemDefault(profile: .simulatorDevelopment) }
+    }
+    #endif
+
     package init(
         storageFactory: @escaping @Sendable () throws
             -> IOSClientReleaseStorageV1
@@ -74,7 +81,7 @@ public actor IOSClientReleaseBootstrapV1 {
         switch snapshotValue.phase {
         case .idle, .unavailable:
             break
-        case .preparing, .unpaired, .pairedRouteConfigurationRequired,
+        case .preparing, .unpaired, .macLibrary, .pairedRouteConfigurationRequired,
              .paired, .closed:
             return snapshotValue
         }
@@ -99,12 +106,11 @@ public actor IOSClientReleaseBootstrapV1 {
 
         let records: [ClientDurablePairedHostV0]
         do {
-            records = try await storage.pairedHosts.allRecords()
+            try await storage.resumePendingMacRemovals()
+            let preferences = try await storage.macLibrary.snapshot()
+            records = try preferences.visibleRecords(await storage.pairedHosts.allRecords(), clientID: storage.clientID)
         } catch {
             return publish(.unavailable(.storageUnavailable))
-        }
-        guard records.count <= 1 else {
-            return publish(.unavailable(.ambiguousSavedState))
         }
         guard records.allSatisfy({ $0.clientID == storage.clientID }) else {
             return publish(.unavailable(.invalidInstallationIdentity))
@@ -117,17 +123,25 @@ public actor IOSClientReleaseBootstrapV1 {
             return publish(.unavailable(.storageUnavailable))
         }
 
-        if let record = records.first {
-            guard routeHostIDs.isEmpty || routeHostIDs == [record.hostID]
-            else {
+        let pairedHostIDs = Set(records.map(\.hostID))
+        let pending = (try? await storage.macLibrary.snapshot())?.pendingRemovals ?? []
+        guard routeHostIDs.isSubset(of: pairedHostIDs.union(pending)) else {
                 return publish(.unavailable(.ambiguousSavedState))
-            }
+        }
+        var missingKeys = false
+        for record in records {
             do {
                 try await storage.custody.registerPublishedIdentity(record)
             } catch {
-                return publish(.unavailable(.keyUnavailable))
+                // A missing key for one Mac must leave My Macs available for
+                // local forget and must not block another independent Mac.
+                missingKeys = true
             }
-            guard routeHostIDs == [record.hostID] else {
+        }
+        self.storage = storage
+        if records.count > 1 || missingKeys { return publish(.macLibrary) }
+        if let record = records.first {
+            guard routeHostIDs.contains(record.hostID) else {
                 self.storage = storage
                 return publish(
                     .pairedRouteConfigurationRequired(
@@ -150,10 +164,6 @@ public actor IOSClientReleaseBootstrapV1 {
             return publish(.paired(hostID: record.hostID))
         }
 
-        guard routeHostIDs.isEmpty else {
-            return publish(.unavailable(.ambiguousSavedState))
-        }
-
         self.storage = storage
         return publish(.unpaired)
     }
@@ -162,7 +172,7 @@ public actor IOSClientReleaseBootstrapV1 {
         -> IOSClientReleaseStorageV1?
     {
         switch snapshotValue.phase {
-        case .unpaired, .pairedRouteConfigurationRequired, .paired:
+        case .unpaired, .macLibrary, .pairedRouteConfigurationRequired, .paired:
             storage
         case .idle, .preparing, .unavailable, .closed:
             nil
@@ -209,6 +219,23 @@ private struct IOSClientReleaseFileManagerV1: @unchecked Sendable {
     }
 }
 
+package enum IOSClientStorageProfileV1: Sendable {
+    case device
+    #if DEBUG && targetEnvironment(simulator)
+    case simulatorDevelopment
+    #endif
+
+    var requiresDeviceProtection: Bool { self == .device }
+    var components: [String] {
+        requiresDeviceProtection ? IOSClientReleaseStorageV1.applicationSupportComponents
+            : ["dev.maccompanion.simulator", "iOS", "v1"]
+    }
+    var keyTagPrefix: String {
+        requiresDeviceProtection ? IOSClientReleaseStorageV1.applicationTagPrefix
+            : "dev.maccompanion.simulator.identity.v1"
+    }
+}
+
 package struct IOSClientReleaseStorageV1: Sendable {
     package static let applicationSupportComponents = [
         "media.jenny.maccompanion", "iOS", "v1",
@@ -223,11 +250,12 @@ package struct IOSClientReleaseStorageV1: Sendable {
     package let studyReportOwner: Stage3StudyLocalReportOwnerV1
     package let studyCapture: Stage3StudyLocalCaptureV1
     package let custody: SecurityClientIdentityKeyCustodyV0
+    package let macLibrary: AtomicFileClientMacLibraryStoreV1
 
     private let routeDirectory: URL
     private let fileManager: IOSClientReleaseFileManagerV1
 
-    package static func systemDefault() throws
+    package static func systemDefault(profile: IOSClientStorageProfileV1 = .device) throws
         -> IOSClientReleaseStorageV1
     {
         let base: URL
@@ -242,17 +270,18 @@ package struct IOSClientReleaseStorageV1: Sendable {
             throw IOSClientReleaseStorageErrorV1.invalidBaseDirectory
         }
         return try IOSClientReleaseStorageV1(
-            baseApplicationSupportDirectory: base
+            baseApplicationSupportDirectory: base, profile: profile
         )
     }
 
     package init(
         baseApplicationSupportDirectory base: URL,
-        fileManager: FileManager = .default
+        fileManager: FileManager = .default,
+        profile: IOSClientStorageProfileV1 = .device
     ) throws {
         let root = try Self.prepareRoot(
             beneath: base,
-            fileManager: fileManager
+            fileManager: fileManager, profile: profile
         )
         let identities = root.appendingPathComponent(
             "paired-hosts-v1",
@@ -266,9 +295,12 @@ package struct IOSClientReleaseStorageV1: Sendable {
             "stage3-study-report-v1",
             isDirectory: true
         )
-        try Self.prepareDirectory(identities, fileManager: fileManager)
-        try Self.prepareDirectory(routes, fileManager: fileManager)
-        try Self.prepareDirectory(studyReports, fileManager: fileManager)
+        let macLibraryDirectory = root.appendingPathComponent("mac-library-v1", isDirectory: true)
+        try Self.prepareDirectory(macLibraryDirectory, fileManager: fileManager, profile: profile)
+        macLibrary = try AtomicFileClientMacLibraryStoreV1(directory: macLibraryDirectory)
+        try Self.prepareDirectory(identities, fileManager: fileManager, profile: profile)
+        try Self.prepareDirectory(routes, fileManager: fileManager, profile: profile)
+        try Self.prepareDirectory(studyReports, fileManager: fileManager, profile: profile)
         routeDirectory = routes
         self.fileManager = try IOSClientReleaseFileManagerV1(fileManager)
 
@@ -278,7 +310,7 @@ package struct IOSClientReleaseStorageV1: Sendable {
         )
         clientID = try Self.loadOrCreateClientID(
             at: installation,
-            fileManager: fileManager
+            fileManager: fileManager, profile: profile
         )
         pairedHosts = try AtomicFileClientPairedHostStoreV0(
             directory: identities
@@ -298,7 +330,8 @@ package struct IOSClientReleaseStorageV1: Sendable {
         )
         custody = SecurityClientIdentityKeyCustodyV0(
             configuration: try SecurityClientKeyCustodyConfigurationV0(
-                applicationTagPrefix: Self.applicationTagPrefix,
+                applicationTagPrefix: profile.keyTagPrefix,
+                requireSecureEnclave: profile.requiresDeviceProtection,
                 prompts: SecurityClientPresencePromptsV0(
                     pairNewMac: "Confirm pairing this iPhone or iPad with your Mac.",
                     approveOperation: "Approve this bounded action on your Mac.",
@@ -307,7 +340,7 @@ package struct IOSClientReleaseStorageV1: Sendable {
                 )
             )
         )
-        try Self.protectTree(root, fileManager: fileManager)
+        try Self.protectTree(root, fileManager: fileManager, profile: profile)
     }
 
     package func storedRouteHostIDs() throws -> Set<UUID> {
@@ -352,25 +385,50 @@ package struct IOSClientReleaseStorageV1: Sendable {
         return result
     }
 
+    /// Retry interrupted local forget operations. Pending hosts are fenced
+    /// from selection before touching their exact key pair and route catalog.
+    package func resumePendingMacRemovals() async throws {
+        var preferences = try await macLibrary.snapshot()
+        // Validate even tombstoned identities before deleting any key. A
+        // conflicting inventory must never delete another Mac's key reference.
+        _ = try preferences.visibleRecords(await pairedHosts.allRecords(), clientID: clientID)
+        for hostID in preferences.pendingRemovals {
+            do {
+                if let record = try await pairedHosts.pairedHost(hostID: hostID) {
+                    let identity = try ClientPreparedIdentityV0(pairingID: record.pairingID,
+                        clientID: record.clientID, sessionKey: record.sessionKey, approvalKey: record.approvalKey)
+                    try await custody.discardPreparedIdentity(identity)
+                    try await routes.remove(hostID: hostID)
+                    try await pairedHosts.remove(record)
+                } else { try await routes.remove(hostID: hostID) }
+                preferences.finishRemoval(hostID: hostID)
+                try await macLibrary.replace(preferences)
+            } catch {
+                // Preserve the durable fence and retry at next startup.
+                preferences = try await macLibrary.snapshot()
+            }
+        }
+    }
+
     private static func prepareRoot(
         beneath base: URL,
-        fileManager: FileManager
+        fileManager: FileManager, profile: IOSClientStorageProfileV1
     ) throws -> URL {
         guard base.isFileURL else {
             throw IOSClientReleaseStorageErrorV1.invalidBaseDirectory
         }
         var current = base.standardizedFileURL
         try validateDirectory(current, fileManager: fileManager)
-        for component in applicationSupportComponents {
+        for component in profile.components {
             current.appendPathComponent(component, isDirectory: true)
-            try prepareDirectory(current, fileManager: fileManager)
+            try prepareDirectory(current, fileManager: fileManager, profile: profile)
         }
         return current
     }
 
     private static func prepareDirectory(
         _ directory: URL,
-        fileManager: FileManager
+        fileManager: FileManager, profile: IOSClientStorageProfileV1
     ) throws {
         var isDirectory: ObjCBool = false
         if fileManager.fileExists(
@@ -401,7 +459,7 @@ package struct IOSClientReleaseStorageV1: Sendable {
                 throw IOSClientReleaseStorageErrorV1.ioFailure
             }
         }
-        try applyProtection(to: directory, fileManager: fileManager)
+        try applyProtection(to: directory, fileManager: fileManager, profile: profile)
     }
 
     private static func validateDirectory(
@@ -424,7 +482,7 @@ package struct IOSClientReleaseStorageV1: Sendable {
 
     private static func loadOrCreateClientID(
         at url: URL,
-        fileManager: FileManager
+        fileManager: FileManager, profile: IOSClientStorageProfileV1
     ) throws -> UUID {
         if fileManager.fileExists(atPath: url.path) {
             return try decodeClientID(Data(contentsOf: url))
@@ -437,7 +495,7 @@ package struct IOSClientReleaseStorageV1: Sendable {
         )
         do {
             try data.write(to: temporary, options: .withoutOverwriting)
-            try applyProtection(to: temporary, fileManager: fileManager)
+            try applyProtection(to: temporary, fileManager: fileManager, profile: profile)
             try synchronizeFile(temporary)
             guard renamex_np(
                 temporary.path,
@@ -490,7 +548,7 @@ package struct IOSClientReleaseStorageV1: Sendable {
 
     private static func protectTree(
         _ root: URL,
-        fileManager: FileManager
+        fileManager: FileManager, profile: IOSClientStorageProfileV1
     ) throws {
         let enumerator = fileManager.enumerator(
             at: root,
@@ -502,7 +560,7 @@ package struct IOSClientReleaseStorageV1: Sendable {
         guard let enumerator else {
             throw IOSClientReleaseStorageErrorV1.ioFailure
         }
-        try applyProtection(to: root, fileManager: fileManager)
+        try applyProtection(to: root, fileManager: fileManager, profile: profile)
         for case let entry as URL in enumerator {
             let values = try entry.resourceValues(forKeys: [
                 .isDirectoryKey, .isRegularFileKey, .isSymbolicLinkKey,
@@ -512,13 +570,13 @@ package struct IOSClientReleaseStorageV1: Sendable {
                     || values.isRegularFile == true else {
                 throw IOSClientReleaseStorageErrorV1.unsafeStorage
             }
-            try applyProtection(to: entry, fileManager: fileManager)
+            try applyProtection(to: entry, fileManager: fileManager, profile: profile)
         }
     }
 
     private static func applyProtection(
         to url: URL,
-        fileManager: FileManager
+        fileManager: FileManager, profile: IOSClientStorageProfileV1
     ) throws {
         do {
             let resourceValues = try url.resourceValues(forKeys: [
@@ -548,8 +606,9 @@ package struct IOSClientReleaseStorageV1: Sendable {
             let attributes = try fileManager.attributesOfItem(
                 atPath: url.path
             )
-            guard attributes[.protectionKey] as? FileProtectionType
-                    == .completeUntilFirstUserAuthentication,
+            guard (!profile.requiresDeviceProtection ||
+                    attributes[.protectionKey] as? FileProtectionType == .completeUntilFirstUserAuthentication),
+                  (attributes[.posixPermissions] as? NSNumber)?.intValue == permissions.intValue,
                   try mutable.resourceValues(
                     forKeys: [.isExcludedFromBackupKey]
                   ).isExcludedFromBackup == true else {

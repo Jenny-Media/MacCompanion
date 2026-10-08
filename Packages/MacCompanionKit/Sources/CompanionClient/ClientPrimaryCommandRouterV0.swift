@@ -314,6 +314,8 @@ public actor ClientPrimaryCommandRouterV0 {
             .interactiveDisplaySelect,
             .interactiveSessionRequest, .interactiveSessionApprove,
             .interactiveSessionEnd,
+            .interactiveMediaOfferRequest, .interactiveMediaAnswer,
+             .nativeEnrollRequest, .nativeEnrollProof, .nativePresentRequest, .nativeCancel,
             .interactiveInitialSurfaceRequest,
             .interactiveInitialSurfaceAcknowledgement,
             .interactiveSurfaceTargetsRequest, .interactiveSurfaceSelect,

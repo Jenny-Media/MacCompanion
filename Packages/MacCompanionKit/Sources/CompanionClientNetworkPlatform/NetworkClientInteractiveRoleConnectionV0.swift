@@ -120,7 +120,13 @@ package struct NetworkClientInteractiveReadyRoleConnectionV0: Sendable {
         try await sendOperation(value)
     }
 
-    package func cancel() async { await cancelOperation() }
+    package func cancel() async {
+        IOSClientRuntimeDiagnosticLogV0.record(
+            role == .media ? "interactive.media-role.local-cancel"
+                : "interactive.input-role.local-cancel"
+        )
+        await cancelOperation()
+    }
 }
 
 package protocol NetworkClientInteractiveRoleConnectingV0: Sendable {

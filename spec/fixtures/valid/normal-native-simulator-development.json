@@ -1,0 +1,13 @@
+{
+  "profile": "maccompanion.normal-native-simulator-development.v0.1",
+  "cases": [
+    "selector-debug-simulator-only",
+    "default-bootstrap-requires-device-protection",
+    "simulator-storage-and-key-tags-isolated",
+    "simulator-requires-private-permissions-and-backup-exclusion",
+    "existing-pairing-and-approval-semantics-preserved",
+    "physical-and-release-cannot-select-simulator-bootstrap",
+    "normal-ui-identifies-simulator-development",
+    "xcode-simulated-keychain-entitlement-development-only"
+  ]
+}

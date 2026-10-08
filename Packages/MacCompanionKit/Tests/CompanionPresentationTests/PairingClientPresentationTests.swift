@@ -60,7 +60,8 @@ private func pairingPresentationApproval(
 
 private func pairingPresentationHost(
     pairingID: UUID = presentationPairingID,
-    hostID: UUID = presentationHostID
+    hostID: UUID = presentationHostID,
+    state: DeviceAuthorizationState = .activeMonitorOnly
 ) -> ClientPairedHostV0 {
     ClientPairedHostV0(
         pairingID: pairingID,
@@ -69,7 +70,7 @@ private func pairingPresentationHost(
         deviceID: presentationDeviceID,
         hostFingerprint: presentationFingerprint,
         endpoints: (try! pairingPresentationQR()).endpoints,
-        deviceState: .activeMonitorOnly,
+        deviceState: state,
         authorizationEpoch: .init(rawValue: 1),
         grantRevision: .init(rawValue: 1),
         policyRevision: .init(rawValue: 7)
@@ -217,9 +218,10 @@ private func verifiedPairingPresentation() throws -> PairingClientPresentation {
     }
 }
 
-@Test func verifiedCompletionIsNotPairedUntilExactDurableCommit() throws {
+@Test(arguments: [false, true])
+func verifiedCompletionIsNotPairedUntilExactDurableCommit(remoteDesktop: Bool) throws {
     var value = try verifiedPairingPresentation()
-    let host = pairingPresentationHost()
+    let host = pairingPresentationHost(state: remoteDesktop ? .activeGranted : .activeMonitorOnly)
     let commitID = UUID()
     let intent = try value.receiveVerifiedCompletion(
         requestID: presentationRequestID,
@@ -244,7 +246,7 @@ private func verifiedPairingPresentation() throws -> PairingClientPresentation {
     #expect(value.phase == .paired)
     #expect(value.pairedHost?.hostID == presentationHostID)
     #expect(value.pairedHost?.deviceID == presentationDeviceID)
-    #expect(value.pairedHost?.access == .activeMonitorOnly)
+    #expect(value.pairedHost?.access == host.deviceState)
     #expect(value.preview == nil)
 }
 

@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Mac Companion — Error & Recovery Mockups</title>
+  <link rel="stylesheet" href="mockups.css">
+  <script src="mockups.js" defer></script>
+</head>
+<body>
+  <header class="review-header">
+    <a class="wordmark" href="index.html"><span class="brand-mark">▣</span> Mac Companion</a>
+    <span class="review-label">Error & recovery · Design review</span>
+    <div class="review-controls"><button id="theme">Dark mode</button><button id="type">Large text</button><a href="board.html">Overview ↗</a></div>
+  </header>
+  <main class="workbench">
+    <aside class="scenario-nav">
+      <p class="eyebrow">MOCKUPS FIRST</p>
+      <h1>A clear next step.</h1>
+      <p class="intro">Stay in context. Explain what happened. Make recovery easy to find.</p>
+      <label for="scenario">Review a state</label>
+      <select id="scenario"></select>
+      <div id="scenario-list"></div>
+      <a class="audit-link" href="../2026-10-06-error-recovery-audit.md">Full source audit ↗</a>
+    </aside>
+    <section class="preview" aria-label="Interactive iPhone mockup">
+      <div class="phone">
+        <div class="statusbar"><span>9:41</span><span class="island"></span><span class="status-symbols">▮▮▮ &nbsp;◔ &nbsp;▰</span></div>
+        <div id="screen" class="app-screen"></div>
+        <div class="home-indicator"></div>
+      </div>
+      <p class="preview-caption">Synthetic content · Interactive design prototype</p>
+    </section>
+    <aside class="review-notes">
+      <div class="proposal-badge">PROPOSED UI</div>
+      <h2 id="note-title"></h2>
+      <p id="note-body"></p>
+      <div class="note-rule"></div>
+      <h3>What changes</h3>
+      <ul id="note-points"></ul>
+      <div class="constraint" id="note-constraint"></div>
+      <p class="demo-disclaimer">Every action is a demonstration. This page never contacts a Mac, reads credentials, changes settings, purchases anything or copies keys.</p>
+    </aside>
+  </main>
+  <div id="demo-toast" role="status" hidden></div>
+</body>
+</html>

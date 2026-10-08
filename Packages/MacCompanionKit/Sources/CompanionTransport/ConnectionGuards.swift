@@ -159,6 +159,12 @@ public struct InFlightCommandTracker: Sendable {
         ],
         .interactiveSessionApprove: [.interactiveSessionAccepted, .error],
         .interactiveSessionEnd: [.interactiveSessionEnded, .error],
+        .interactiveMediaOfferRequest: [.interactiveMediaOffer, .error],
+        .interactiveMediaAnswer: [.interactiveMediaReady, .error],
+        .nativeEnrollRequest: [.nativeEnrollChallenge, .error],
+        .nativeEnrollProof: [.nativeReady, .error],
+        .nativeCancel: [.nativeCancelled, .error],
+        .nativePresentRequest: [.nativePresentReceipt, .error],
         .interactiveDisplayCatalogRequest: [
             .interactiveDisplayCatalogResponse, .error,
         ],

@@ -53,10 +53,14 @@ private struct AgentInventoryRefreshingPairingCommitterV1:
 /// Durable device/grant admission and required audit are deliberately absent:
 /// the startup composition binds those to its own reconciled stores.
 public struct AgentInteractivePlatformServicesV1: Sendable {
+    package let sessionConsentProfile: InteractiveSessionConsentProfileV1
     package let visibleAdmission:
         any VisibleInteractiveAdmissionReadingV0
     package let materials: any InteractiveSessionMaterialGeneratingV0
     package let runtime: any InteractiveSessionRuntimeOwningV0
+    package let mediaNegotiation:
+        (any InteractiveWebRTCNegotiatingV0)?
+    package let nativeRuntime: (any InteractiveNativeVideoRuntimeProvidingV0)?
     package let surfaceControl:
         (any InteractiveSurfaceControlDispatchingV0)?
     package let displaySelection:
@@ -64,16 +68,23 @@ public struct AgentInteractivePlatformServicesV1: Sendable {
 
     public init(
         visibleAdmission: any VisibleInteractiveAdmissionReadingV0,
+        sessionConsentProfile: InteractiveSessionConsentProfileV1 = .freshUserPresence,
         materials: any InteractiveSessionMaterialGeneratingV0,
         runtime: any InteractiveSessionRuntimeOwningV0,
+        mediaNegotiation:
+            (any InteractiveWebRTCNegotiatingV0)? = nil,
+        nativeRuntime: (any InteractiveNativeVideoRuntimeProvidingV0)? = nil,
         surfaceControl:
             (any InteractiveSurfaceControlDispatchingV0)? = nil,
         displaySelection:
             (any InteractiveDisplaySelectionDispatchingV1)? = nil
     ) {
+        self.sessionConsentProfile = sessionConsentProfile
         self.visibleAdmission = visibleAdmission
         self.materials = materials
         self.runtime = runtime
+        self.mediaNegotiation = mediaNegotiation
+        self.nativeRuntime = nativeRuntime
         self.surfaceControl = surfaceControl
         self.displaySelection = displaySelection
     }
@@ -262,7 +273,8 @@ public struct AgentRequiredAuditCompositionV0: Sendable {
                 durableCommitter: securityStore,
                 localServices: localServices
             ),
-            auditWriter: pairingAuditWriter
+            auditWriter: pairingAuditWriter,
+            accessProfile: .remoteDesktop
         )
         let sessions = AgentLocalPairingSessionHandlerV0(
             authority: authority,
@@ -316,13 +328,19 @@ public struct AgentRequiredAuditCompositionV0: Sendable {
             throw AgentRequiredAuditCompositionErrorV1
                 .hostIdentityUnavailable
         }
+        let admission = SQLiteInteractiveSessionAdmissionReaderV0(
+            store: securityStore, visible: interactivePlatform.visibleAdmission
+        )
+        let native = interactivePlatform.nativeRuntime.map {
+            InteractiveNativeVideoRuntimeCompositionV0(admission: admission, runtime: $0).bridge()
+        }
         let interactive = InteractiveSessionWireDispatcherV0(
-            admission: SQLiteInteractiveSessionAdmissionReaderV0(
-                store: securityStore,
-                visible: interactivePlatform.visibleAdmission
-            ),
+            admission: admission,
+            sessionConsentProfile: interactivePlatform.sessionConsentProfile,
             materials: interactivePlatform.materials,
             runtime: interactivePlatform.runtime,
+            mediaNegotiation: interactivePlatform.mediaNegotiation,
+            nativeNegotiation: native,
             surfaceControl: interactivePlatform.surfaceControl,
             displaySelection: interactivePlatform.displaySelection,
             auditWriter: interactiveAuditWriter

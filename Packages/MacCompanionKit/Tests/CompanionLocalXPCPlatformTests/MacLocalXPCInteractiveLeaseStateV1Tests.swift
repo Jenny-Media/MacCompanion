@@ -102,5 +102,37 @@ import Testing
     #expect(gate.active == nil)
     let staleFinish = gate.finish(renewal!)
     #expect(!staleFinish)
+
+    let rebound = gate.bind(generation: 12)
+    #expect(rebound)
+    let native = gate.begin(generation: 12, kind: .nativeSnapshot, permitted: true)
+    #expect(native != nil)
+    #expect(gate.begin(generation: 12, kind: .renew, permitted: true) == nil)
+    let finishedNative = gate.finish(native!)
+    #expect(finishedNative)
+    let offer = gate.begin(
+        generation: 12,
+        kind: .webRTCOffer,
+        permitted: true
+    )
+    #expect(offer != nil)
+    let overlappingAnswer = gate.begin(
+        generation: 12,
+        kind: .webRTCAnswer,
+        permitted: true
+    )
+    #expect(overlappingAnswer == nil)
+    let finishedOffer = gate.finish(offer!)
+    #expect(finishedOffer)
+    let answer = gate.begin(
+        generation: 12,
+        kind: .webRTCAnswer,
+        permitted: true
+    )
+    #expect(answer != nil)
+    let invalidated = gate.invalidate(generation: 12)
+    #expect(invalidated == answer)
+    let staleAnswer = gate.finish(answer!)
+    #expect(!staleAnswer)
 }
 #endif

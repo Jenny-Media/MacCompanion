@@ -361,6 +361,74 @@ func unavailableAutomaticallyReplacesOneShotProductAndStartsFreshGeneration()
 
 @Test
 @available(macOS 26.0, *)
+func unavailableReplacementAwaitsOldRuntimeCleanupBeforeConstructingProduct()
+    async throws
+{
+    let registry = DashboardApplicationProductRegistryV1()
+    let cleanupGate = DashboardApplicationOneShotGateV1()
+    defer { cleanupGate.signal() }
+    let application = await MainActor.run {
+        MacCompanionDashboardApplicationV1(
+            productFactory: { owner in
+                let product = DashboardApplicationTestProductV1(
+                    owner: owner,
+                    retryOutcome: .notCompleted
+                )
+                registry.append(product)
+                return product
+            },
+            beforeUnavailableReplacement: {
+                await cleanupGate.wait()
+            }
+        )
+    }
+    let first = try #require(registry.snapshot().first)
+    try await application.start()
+    try await first.publishConnectionUnavailable()
+
+    for _ in 0..<200 where !cleanupGate.hasEntered() {
+        try await Task.sleep(for: .milliseconds(5))
+    }
+    try #require(cleanupGate.hasEntered())
+    #expect(first.snapshot() == (1, 1, 1))
+    #expect(registry.snapshot().count == 1)
+
+    cleanupGate.signal()
+    for _ in 0..<200 where registry.snapshot().count == 1 {
+        try await Task.sleep(for: .milliseconds(5))
+    }
+    let replacement = try #require(registry.snapshot().last)
+    #expect(replacement !== first)
+    #expect(replacement.snapshot() == (1, 0, 0))
+    await application.finish()
+}
+
+@Test
+@available(macOS 26.0, *)
+func interactiveRecoveryCompositionOwnsFreshRuntimeQueueAndCaptureTargets()
+    async throws
+{
+    let indicator = await MainActor.run { MacInteractiveActivityIndicatorV1() }
+    let selection = try MacInteractiveOpaqueDisplaySelectionV1(
+        physicalDisplayID: 1,
+        opaqueID: UUID(),
+        isDisplayOnline: { $0 == 1 }
+    )
+    let first = try MacInteractiveControlRuntimeCompositionV1.make(
+        indicator: indicator,
+        displaySelection: selection
+    )
+    let replacement = try MacInteractiveControlRuntimeCompositionV1.make(
+        indicator: indicator,
+        displaySelection: selection
+    )
+    #expect(first.runtime !== replacement.runtime)
+    #expect(first.mediaQueue !== replacement.mediaQueue)
+    #expect(first.surfaceTargets !== replacement.surfaceTargets)
+}
+
+@Test
+@available(macOS 26.0, *)
 func pairingStateRelayRemainsAliveForApplicationLifetime() async throws {
     let (application, product): (
         MacCompanionDashboardApplicationV1,

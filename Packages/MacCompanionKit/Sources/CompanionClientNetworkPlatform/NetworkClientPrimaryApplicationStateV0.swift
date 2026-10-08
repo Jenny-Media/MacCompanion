@@ -142,10 +142,12 @@ public final class NetworkClientPrimaryApplicationStateV0:
         var revision: UInt64 = 0
         var session: ClientAuthenticatedSessionV0?
         var selectedEndpoint: EndpointCandidate?
+        var measuredRemoteIPAddress: String?
         var authenticatedRouteClass:
             NetworkClientAuthenticatedRouteClassV1?
         var observeChannel: ClientObserveChannelV0?
         var actChannel: ClientActChannelV1?
+        var desktopTunnel: NetworkClientDesktopTunnelV1?
         var controlChannel: ClientInteractivePrimaryChannelV0?
         var observedStatus: ClientObservedStatusV0?
         var latestAuditPage: AuditListResponseBodyV1?
@@ -210,6 +212,19 @@ public final class NetworkClientPrimaryApplicationStateV0:
         lock.lock()
         defer { lock.unlock() }
         return storage.droppedStaleEventCount
+    }
+
+    /// Numeric route of this exact authenticated selected primary. This read
+    /// creates no Control authority and never resolves host names again.
+    public func currentAuthenticatedNativeIPAddress(primaryConnectionID: Data) -> String? {
+        lock.lock()
+        defer { lock.unlock() }
+        guard primaryConnectionID.count == 16,
+              storage.session?.connectionID == primaryConnectionID else { return nil }
+        if let measured = storage.measuredRemoteIPAddress { return measured }
+        guard let endpoint = storage.selectedEndpoint,
+              endpoint.kind == .ipv4 || endpoint.kind == .ipv6 else { return nil }
+        return endpoint.value
     }
 
     package func acceptedControlSessionForRoleChannelComposition()
@@ -289,6 +304,11 @@ public final class NetworkClientPrimaryApplicationStateV0:
         guard advanceRevision() else { return }
         storage.controlState = next
         continuation.yield(makeSnapshot(storage))
+    }
+
+    public func currentDesktopTunnel() -> NetworkClientDesktopTunnelV1? {
+        lock.lock(); defer { lock.unlock() }
+        return storage.session == nil ? nil : storage.desktopTunnel
     }
 
     public func refreshStatus() async throws {
@@ -438,9 +458,11 @@ public final class NetworkClientPrimaryApplicationStateV0:
         guard advanceRevision() else { return }
         storage.session = session
         storage.selectedEndpoint = value.endpoint
+        storage.measuredRemoteIPAddress = value.measuredRemoteIPAddress
         storage.authenticatedRouteClass = value.authenticatedRouteClass
         storage.observeChannel = value.observeChannel
         storage.actChannel = value.actChannel
+        storage.desktopTunnel = value.desktopTunnel
         storage.controlChannel = value.controlChannel
         storage.observedStatus = nil
         storage.latestAuditPage = nil
@@ -466,10 +488,12 @@ public final class NetworkClientPrimaryApplicationStateV0:
         }
         storage.session = nil
         storage.selectedEndpoint = nil
+        storage.measuredRemoteIPAddress = nil
         storage.authenticatedRouteClass = nil
         storage.observeChannel = nil
         storage.actChannel = nil
         storage.controlChannel = nil
+        storage.desktopTunnel = nil
         storage.statusError = nil
         storage.auditError = nil
         storage.latestObserveErrorRequest = nil
@@ -616,6 +640,10 @@ public final class NetworkClientPrimaryApplicationStateV0:
         case let .remoteRejected(error):
             storage.controlState = .remoteRejected(error)
             storage.acceptedControlSession = nil
+        case .mediaOffer, .mediaReady, .mediaRejected:
+            // Media negotiation has its own product owner. It does not change
+            // Control grants or the workspace's session state.
+            break
         }
         continuation.yield(makeSnapshot(storage))
     }
@@ -731,6 +759,14 @@ public final class NetworkClientPrimaryApplicationStateV0:
         case .requestSubmitted, .approvalFailed, .approvalSubmitted, .accepted,
              .remoteRejected:
             return true
+        case let .mediaOffer(offer):
+            return storage.acceptedControlSession?.interactiveSessionID
+                == offer.body.fence.interactiveSessionID.rawValue
+        case let .mediaReady(ready):
+            return storage.acceptedControlSession?.interactiveSessionID
+                == ready.body.fence.interactiveSessionID.rawValue
+        case .mediaRejected:
+            return storage.acceptedControlSession != nil
         }
     }
 

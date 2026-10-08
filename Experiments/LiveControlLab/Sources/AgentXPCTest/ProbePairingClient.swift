@@ -2,6 +2,7 @@
 #error("Disposable real pairing client is macOS Debug only")
 #endif
 import CompanionClient
+import CompanionInteractiveShared
 import CompanionClientApp
 import CompanionClientNetworkPlatform
 import CompanionIPC
@@ -178,7 +179,7 @@ enum ProbePairingClient {
             emit("durable-revocation-replay-verified")
         }
         if let interactive {
-            if interactive.scenario == .lifecycle || interactive.scenario == .revocationRace {
+            if interactive.scenario == .lifecycle || interactive.scenario == .revocationRace || interactive.scenario == .native {
                 let priorGrants = interactive.scenario == .lifecycle ? [NativeAudioMuteCapabilityV1.capabilityID] : []
                 let declined = try await menu.makeInteractiveControlGrantReview(.init(commandID: UUID(), requestedAtUnixMilliseconds: wall()))
                 guard declined.deviceID == record.deviceID, declined.currentGrantIDs == priorGrants else { throw Failure.unexpectedReview }
@@ -276,7 +277,7 @@ enum ProbePairingClient {
             }
             if let interactive {
                 try await control(network: network, menu: menu, interactive: interactive,
-                    deviceID: record.deviceID, directory: directory, emit: emit)
+                    deviceID: record.deviceID, directory: directory, signer: try ClientCustodiedSessionSignerV0(custody: custody, sessionKey: record.sessionKey), emit: emit)
             }
             await network.interactiveRoles.close()
             await network.binding.close()
@@ -290,7 +291,7 @@ enum ProbePairingClient {
     @available(macOS 26.0, *)
     private static func control(network: NetworkClientConfiguredRouteApplicationProductV1,
         menu: MacLocalXPCClientV1, interactive: ProbeInteractiveMenu,
-        deviceID: UUID, directory: URL,
+        deviceID: UUID, directory: URL, signer: any ClientSessionAuthenticationSigningV0,
         emit: @escaping @Sendable (String) -> Void) async throws {
         let primaryID = network.primaryState.snapshot().connectionID
         if interactive.scenario == .admissionRace || interactive.scenario == .revocationRace {
@@ -380,6 +381,11 @@ enum ProbePairingClient {
         }
         guard ready else { throw Failure.notConnected }
         emit("production-lease-and-role-authentication-verified")
+        var nativeSession: (retire: @Sendable () -> Void, verify: @Sendable () async throws -> Void)?
+        defer { nativeSession?.retire() }
+        if interactive.scenario == .native {
+            nativeSession = try await ProbeNativeFlow.run(network: network, signer: signer, emit: emit)
+        }
         if interactive.scenario == .revoke {
             let abandoned: LocalDeviceRevocationCommandV0 = try readPrivate(directory.appendingPathComponent("abandoned-revocation-review.json"))
             do { _ = try await menu.revokeDevice(abandoned); throw Failure.unexpectedReview }
@@ -445,6 +451,10 @@ enum ProbePairingClient {
         }
         guard await interactive.effects.snapshot().renewed >= 2 else { throw Failure.notConnected }
         emit("production-signed-lease-renewal-verified")
+        if let nativeSession {
+            try await nativeSession.verify()
+            emit("native-enrollment-survives-lease-renewals")
+        }
         _ = try await network.primaryState.endInteractiveControl()
         let stopDeadline = ContinuousClock.now + .seconds(5)
         while network.primaryState.snapshot().controlState != .inactive, ContinuousClock.now < stopDeadline {
@@ -457,6 +467,7 @@ enum ProbePairingClient {
               stopped.started == 1, stopped.stopped == 1,
               stopped.released >= 1, stopped.blanked >= 1, stopped.cleared >= 1 else { throw Failure.notConnected }
         try await observeAfterControl(network, emit: emit)
+        if interactive.scenario == .native { try ProbeNativeFlow.requireCleanup(); emit("native-host-stop-cleanup-verified") }
         emit("production-stop-preserves-observe-verified")
     }
 

@@ -46,6 +46,11 @@ typedef enum : int32_t {
     MCLocalXPCInteractiveLeaseCommandFocusSnapshot = 9,
     MCLocalXPCInteractiveLeaseCommandDisplayCatalog = 10,
     MCLocalXPCInteractiveLeaseCommandDisplaySelect = 11,
+    MCLocalXPCInteractiveLeaseCommandWebRTCOffer = 12,
+    MCLocalXPCInteractiveLeaseCommandWebRTCAnswer = 13,
+    MCLocalXPCInteractiveLeaseCommandWebRTCClose = 14,
+    MCLocalXPCInteractiveLeaseCommandNativeSnapshot = 15,
+    MCLocalXPCInteractiveLeaseCommandNativeBackend = 16,
 } MCLocalXPCInteractiveLeaseCommandKind;
 typedef struct MCLocalXPCListener *MCLocalXPCListenerRef;
 typedef struct MCLocalXPCSession *MCLocalXPCSessionRef;
@@ -103,6 +108,7 @@ enum {
     MCLocalXPCMaximumMenuPresentationPayloadBytes = 4096,
     MCLocalXPCMaximumMenuPairingCommandPayloadBytes = 4096,
     MCLocalXPCMaximumInteractiveLeasePayloadBytes = 4096,
+    MCLocalXPCMaximumInteractiveSurfaceTargetsReplyBytes = 65536,
     MCLocalXPCMaximumInteractiveAdmissionPayloadBytes = 4096,
     MCLocalXPCMaximumInteractiveInputPayloadBytes = 65536,
     MCLocalXPCInteractiveMediaHeaderBytes = 96,

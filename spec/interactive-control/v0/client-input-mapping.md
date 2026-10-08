@@ -89,28 +89,44 @@ snapshot so no toolbar action leaves a remote modifier held. Physical keys and
 shortcuts require Keyboard authority but do not require an input field or focus
 token.
 
-The separate software-keyboard path may emit bounded Unicode `text`. It never
-uses the clipboard. The input producer remains responsible for denying text
-unless the exact acknowledged focus is non-secure and authorized for text.
+Opening or closing the iOS keyboard is local UI throughout an approved Control
+session. Desktop, a missing input field, unavailable Text authority, and a
+positively identified secure field do not prevent the keyboard from opening.
+This presentation does not admit input or acquire another grant.
 
-For an exact acknowledged Focused Region whose verified focus category is
-`text`, `editable` is true, and `secure` is false, the iOS client may offer a
-phone-local composer. The composer reads no Mac value and retains only the
-uncommitted local draft. Sending emits one bounded `text` payload under the
-surface, coordinate, focus-token, and focus-revision fence captured when the
+Unmodified software-keyboard commits use bounded Unicode `text` when the current
+acknowledged surface and latest admitted focus permit Text. Otherwise, supported
+ASCII commits of at most 32 characters use balanced physical-key pairs under the existing Keyboard grant,
+including secure fields where macOS permits physical key delivery. The mapping
+uses the existing USB HID key positions and Shift for uppercase/punctuation;
+the Mac keyboard layout determines the resulting characters. An unsupported
+commit is omitted as a whole with a local notice. Text remains independently
+subject to Keyboard + Text authority and secure-focus refusal; the keyboard
+never uses the clipboard or synthesizes Unicode text into a secure field.
+
+The compact keyboard bar may arm a local modifier snapshot for the next key.
+With modifiers armed, one supported ASCII key uses the balanced physical-key
+chord path. An unmappable or multi-character modified commit emits nothing and
+must never silently become unmodified text. Modifier selection itself emits no
+remote held-key state. The local selection clears after a key, keyboard dismissal,
+surface replacement, input retirement, or Stop.
+
+During view replacement the keyboard remains visible, while all input delivery
+is paused until the replacement is visibly rendered and acknowledged. Pending
+local composition is discarded at both pause and resumption; commits made during
+the pause are dropped and never replayed on the new surface. Background entry,
+Stop, or terminal retirement dismisses the keyboard and clears local composition.
+
+A separate optional Compose Text action may offer a phone-local composer for an
+exact acknowledged Focused Region whose verified focus category is `text`,
+`editable` is true, and `secure` is false. Requesting this composer may apply the
+latest admitted focus event, but ordinary keyboard presentation performs no
+focus transition or Text preflight. The composer reads no Mac value and retains
+only the uncommitted local draft. Sending emits one bounded `text` payload under
+the surface, coordinate, focus-token, and focus-revision fence captured when the
 composer opened. Any pending focus event or changed fence rejects the draft
 locally. The user may switch to direct keystroke input without exposing a Mac
 field value.
-
-Opening the remote-keyboard controls is local UI and does not perform a focus
-transition. Requesting text input first attempts the verified local composer,
-including one automatic application of the latest admitted focus event. The
-composer may appear only after the replacement is visibly rendered,
-acknowledged, and input is active on that exact focus token and revision. If no
-eligible composer binding exists, the client falls back to the direct iOS
-keystroke bridge when the acknowledged surface still authorizes non-secure
-Text input. Physical keys and shortcuts remain independently available under
-Keyboard authority.
 
 ## Acceptance
 

@@ -1,0 +1,13 @@
+diff --git a/Limelight/Network/HttpManager.m b/Limelight/Network/HttpManager.m
+index 39bd354..8e05657 100644
+--- a/Limelight/Network/HttpManager.m
++++ b/Limelight/Network/HttpManager.m
+@@ -281,7 +281,7 @@
+                            config.gamepadMask, config.gamepadMask,
+                            !config.multiController ? 1 : 0,
+                            LiGetLaunchUrlQueryParameters()];
+-    Log(LOG_I, @"Requesting: %@", urlString);
++    Log(LOG_I, @"Requesting stream operation: %@", verb);
+     // This blocks while the app is launching
+     return [self createRequestFromString:urlString timeout:LONG_TIMEOUT_SEC];
+ }

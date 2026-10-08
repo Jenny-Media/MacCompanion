@@ -173,7 +173,7 @@ final class SignedAgentJourneyUITests: XCTestCase {
         XCTAssertEqual(XCTWaiter.wait(for: [directText], timeout: 10), .completed)
 
         let activePrimary = app.staticTexts["Journey primary"].label
-        let stop = app.buttons["Stop Remote Control top"]
+        let stop = app.buttons["Stop Remote Control"]
         XCTAssertTrue(stop.waitForExistence(timeout: 5))
         XCTAssertTrue(stop.isHittable)
         stop.tap()
@@ -474,7 +474,7 @@ final class ClientUIHarnessUITests: XCTestCase {
             bottomStop.tap()
             return
         }
-        let topStop = app.buttons["Stop Remote Control top"]
+        let topStop = app.buttons["Stop Remote Control"]
         XCTAssertTrue(topStop.waitForExistence(timeout: 3))
         XCTAssertTrue(topStop.isHittable)
         topStop.tap()
@@ -1044,7 +1044,7 @@ final class ClientUIHarnessUITests: XCTestCase {
             // Exercise teardown while the iOS keyboard and a focused surface
             // are owned. Abrupt loss must also clear both before reconnecting.
             let termination = app.buttons[
-                cycle.isMultiple(of: 2) ? "Stop Remote Control top" : "Lab Drop"
+                cycle.isMultiple(of: 2) ? "Stop Remote Control" : "Lab Drop"
             ]
             XCTAssertTrue(termination.waitForExistence(timeout: 3))
             XCTAssertTrue(termination.isHittable, "Stop must stay reachable with the keyboard open")
@@ -1259,9 +1259,33 @@ final class ClientUIHarnessUITests: XCTestCase {
         revealButton("Choose Mac View").tap()
         XCTAssertTrue(app.navigationBars["Choose Mac View"].waitForExistence(timeout: 2))
         XCTAssertTrue(app.buttons["Desktop"].isHittable)
-        XCTAssertTrue(app.buttons["Notes, Application Focus"].isHittable)
-        XCTAssertTrue(app.staticTexts["Window 2"].exists)
-        XCTAssertTrue(app.staticTexts["Unavailable"].exists)
+        XCTAssertTrue(app.buttons["Surface Application 018F8000-0000-7000-8000-000000000001"].isHittable)
+        XCTAssertTrue(app.staticTexts["Second note"].exists)
+        XCTAssertFalse(app.staticTexts["Unavailable"].exists)
+    }
+
+    @MainActor
+    func testAppSelectionChoosesWindowBeforeChangingSurface() throws {
+        launchHarness()
+        revealButton("Choose Mac View").tap()
+        let application = app.buttons["Surface Application 018F8000-0000-7000-8000-000000000001"]
+        XCTAssertTrue(application.waitForExistence(timeout: 3))
+        application.tap()
+        XCTAssertTrue(app.navigationBars["Notes"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.staticTexts["No surface selected."].exists)
+        XCTAssertTrue(app.staticTexts["First note"].exists)
+        XCTAssertTrue(app.staticTexts["Second note"].exists)
+        XCTAssertFalse(app.staticTexts["Safari"].exists)
+        XCTAssertTrue(app.staticTexts["All App Windows"].exists)
+
+        app.buttons["Surface Window 018F8100-0000-7000-8000-000000000004"].tap()
+        XCTAssertTrue(app.staticTexts["Selected window; no session started."].waitForExistence(timeout: 3))
+
+        app.buttons["Refresh"].tap()
+        XCTAssertTrue(app.navigationBars["Choose Mac View"].waitForExistence(timeout: 3))
+        application.tap()
+        app.buttons["All App Windows, On the selected display"].tap()
+        XCTAssertTrue(app.staticTexts["Selected application; no session started."].waitForExistence(timeout: 3))
     }
 
     @MainActor

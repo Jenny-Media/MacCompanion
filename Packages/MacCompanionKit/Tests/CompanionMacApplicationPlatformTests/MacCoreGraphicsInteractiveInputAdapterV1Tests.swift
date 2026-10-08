@@ -2,6 +2,7 @@
 import CompanionDomain
 import CompanionHostPlatform
 import CompanionIPC
+import CompanionInteractiveRuntime
 import CompanionInteractiveShared
 import CompanionInteractiveWire
 @testable import CompanionMacApplicationPlatform
@@ -483,4 +484,175 @@ private final class InputActivationProbeV1 {
     #expect(permission.calls() == 1)
     adapter.retireConfiguration()
 }
+private final class NativePostClockV1: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value: UInt64 = 1_000_000_000
+    func read() -> UInt64 { lock.withLock { value } }
+    func set(_ next: UInt64) { lock.withLock { value = next } }
+}
+private actor NativePostGateV1 {
+    var entered = false
+    var waiter: CheckedContinuation<Void, Never>?
+    func pause() async { entered = true; await withCheckedContinuation { waiter = $0 } }
+    func release() { waiter?.resume(); waiter = nil }
+    func hasEntered() -> Bool { entered }
+}
+private final class NativeEscapedPostV1: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value: InteractiveRuntimeNativeInputPostingAuthorizationV0.Batch?
+    func store(_ body: @escaping InteractiveRuntimeNativeInputPostingAuthorizationV0.Batch) { lock.withLock { value = body } }
+    func run() throws { let body = lock.withLock { value }; try body?() }
+}
+private func nativePostAuthorizationV1(_ command: InteractiveRuntimeInstallCommandV0,
+    clock: NativePostClockV1, sessionID: UUID? = nil,
+    executor: @escaping InteractiveRuntimeNativeInputPostingAuthorizationV0.Executor) throws
+    -> InteractiveRuntimeNativeInputPostingAuthorizationV0 {
+    var root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+    while !FileManager.default.fileExists(atPath: root.appendingPathComponent("spec/fixtures/manifest.json").path) {
+        let parent = root.deletingLastPathComponent(); guard parent != root else { throw CocoaError(.fileNoSuchFile) }; root = parent
+    }
+    let path = "valid/native-input-posting.json"
+    let index = try JSONSerialization.jsonObject(with: Data(contentsOf: root.appendingPathComponent("spec/fixtures/manifest.json"))) as! [String: Any]
+    guard (index["fixtures"] as! [[String: Any]]).filter({ $0["path"] as? String == path }).count == 1 else { throw CocoaError(.fileNoSuchFile) }
+    let fixture = try JSONSerialization.jsonObject(with: Data(contentsOf: root.appendingPathComponent("spec/fixtures/" + path))) as! [String: Any]
+    let frame = fixture["nativeSurface"] as! [String: Int]
+    let lease = command.lease
+    let binding = try InteractiveNativeVideoBindingV0(hostID: lease.hostID, hostFingerprint: Data(repeating: 1, count: 32),
+        clientID: UUID(), primaryConnectionID: Data(repeating: 2, count: 16), interactiveSessionID: sessionID ?? lease.interactiveSessionID,
+        authorizationEpoch: Int64(lease.authorizationEpoch.rawValue), grantRevision: 1, policyRevision: 1,
+        controlGeneration: UUID(), expiresAtMonotonicMilliseconds: command.sessionDeadlineMonotonicNanoseconds / 1_000_000)
+    let surface = try InteractiveNativeVideoSurfaceV0(surfaceID: lease.surfaceID, surfaceRevision: Int64(lease.surfaceRevision.rawValue),
+        coordinateSpaceRevision: Int64(lease.coordinateRevision.rawValue), encodedWidth: frame["encodedWidth"]!,
+        encodedHeight: frame["encodedHeight"]!)
+    return .init(binding: binding, surface: surface, monotonicNanoseconds: { clock.read() }, postWhileBackendCurrent: executor)
+}
+
+@available(macOS 26.0, *)
+@Test func nativePostingChecksScopeAndBothDeadlinesAtTheFinalCallback() async throws {
+    for condition in ["valid", "shortLease", "originalDeadline", "wrongSession"] {
+        let permission = InputPermissionProbeV1(true), sink = InputEventSinkV1(), clock = NativePostClockV1()
+        let command = try inputInstallCommandV1(), adapter = inputAdapterV1(permission: permission, sink: sink)
+        _ = try adapter.configure(command: command, physicalDisplayID: 7)
+        let authorization = try nativePostAuthorizationV1(command, clock: clock,
+            sessionID: condition == "wrongSession" ? UUID() : nil) { _, body in
+                if condition == "shortLease" { clock.set(5_000_000_000) }
+                if condition == "originalDeadline" { clock.set(6_000_000_000) }
+                try body()
+            }
+        let envelope = try inputEnvelopeV1(command: command, payload: .pointerMove(x: 100, y: 100))
+        let deadline: UInt64 = condition == "originalDeadline" ? 10_000_000_000 : 5_000_000_000
+        if condition == "valid" {
+            try await adapter.postInteractiveInput(envelope, nativeAuthorization: authorization, beforeDeadlineNanoseconds: deadline)
+            #expect(sink.snapshots().count == 1)
+        } else {
+            await #expect(throws: (any Error).self) {
+                try await adapter.postInteractiveInput(envelope, nativeAuthorization: authorization, beforeDeadlineNanoseconds: deadline)
+            }
+            #expect(sink.snapshots().isEmpty)
+        }
+    }
+}
+
+@available(macOS 26.0, *)
+@Test func nativePostingCannotEscapeOrRepeatTheBoundedBatch() async throws {
+    for condition in ["escape", "duplicate", "noPost", "suppressedFailure"] {
+        let permission = InputPermissionProbeV1(true), sink = InputEventSinkV1(), clock = NativePostClockV1()
+        let command = try inputInstallCommandV1(), adapter = inputAdapterV1(permission: permission, sink: sink), escaped = NativeEscapedPostV1()
+        _ = try adapter.configure(command: command, physicalDisplayID: 7)
+        if condition == "suppressedFailure" { sink.setRejects(true) }
+        let authorization = try nativePostAuthorizationV1(command, clock: clock) { _, body in
+            if condition == "escape" { escaped.store(body); return }
+            if condition == "noPost" { return }
+            if condition == "suppressedFailure" { try? body(); return }
+            try body(); try? body()
+        }
+        let envelope = try inputEnvelopeV1(command: command, payload: .pointerMove(x: 100, y: 100))
+        if condition == "duplicate" {
+            try await adapter.postInteractiveInput(envelope, nativeAuthorization: authorization, beforeDeadlineNanoseconds: 5_000_000_000)
+            #expect(sink.snapshots().count == 1)
+        } else {
+            await #expect(throws: (any Error).self) {
+                try await adapter.postInteractiveInput(envelope, nativeAuthorization: authorization, beforeDeadlineNanoseconds: 5_000_000_000)
+            }
+            if condition == "escape" { #expect(throws: (any Error).self) { try escaped.run() } }
+            #expect(sink.snapshots().isEmpty)
+        }
+    }
+}
+
+@available(macOS 26.0, *)
+@Test func nativePostingCancellationBeforeBackendInspectionCompletesPostsNothing() async throws {
+    let permission = InputPermissionProbeV1(true), sink = InputEventSinkV1(), clock = NativePostClockV1(), gate = NativePostGateV1()
+    let command = try inputInstallCommandV1(), adapter = inputAdapterV1(permission: permission, sink: sink)
+    _ = try adapter.configure(command: command, physicalDisplayID: 7)
+    let authorization = try nativePostAuthorizationV1(command, clock: clock) { _, body in await gate.pause(); try body() }
+    let envelope = try inputEnvelopeV1(command: command, payload: .pointerMove(x: 100, y: 100))
+    let task = Task { try await adapter.postInteractiveInput(envelope, nativeAuthorization: authorization, beforeDeadlineNanoseconds: 5_000_000_000) }
+    while await !gate.hasEntered() { await Task.yield() }
+    task.cancel(); await gate.release()
+    await #expect(throws: (any Error).self) { try await task.value }
+    #expect(sink.snapshots().isEmpty)
+}
+
+@available(macOS 26.0, *)
+@Test func nativePostingRevocationWhileBackendInspectionSuspendsPostsNothing() async throws {
+    let permission = InputPermissionProbeV1(true), sink = InputEventSinkV1(), clock = NativePostClockV1(), gate = NativePostGateV1()
+    let command = try inputInstallCommandV1(), adapter = inputAdapterV1(permission: permission, sink: sink)
+    _ = try adapter.configure(command: command, physicalDisplayID: 7)
+    let authorization = try nativePostAuthorizationV1(command, clock: clock) { _, body in await gate.pause(); try body() }
+    let retained = authorization
+    let envelope = try inputEnvelopeV1(command: command, payload: .pointerMove(x: 100, y: 100))
+    let task = Task { try await adapter.postInteractiveInput(envelope, nativeAuthorization: retained, beforeDeadlineNanoseconds: 5_000_000_000) }
+    while await !gate.hasEntered() { await Task.yield() }
+    authorization.revoke()
+    await gate.release()
+    await #expect(throws: (any Error).self) { try await task.value }
+    #expect(retained.isRevoked)
+    #expect(sink.snapshots().isEmpty)
+}
+
+@available(macOS 26.0, *)
+@Test func nativePostingRejectsExpiryAndBackendLossAcrossWindowActivation() async throws {
+    for loss in ["lease", "backend"] {
+        let permission = InputPermissionProbeV1(true), backend = InputPermissionProbeV1(true)
+        let sink = InputEventSinkV1(), clock = NativePostClockV1(), attempts = InputPermissionProbeV1(false)
+        let activator = MacInteractiveSelectedSurfaceActivatorV1(performActivation: { _ in true },
+            verifyActivation: { _ in attempts.read() }, maximumVerificationAttempts: 2,
+            wait: {
+                if loss == "lease" { clock.set(5_000_000_000) }
+                else { backend.set(false) }
+                attempts.set(true)
+            })
+        let adapter = inputAdapterV1(permission: permission, sink: sink, surfaceActivator: activator)
+        let command = try inputInstallCommandV1(kind: .application)
+        _ = try adapter.configure(command: command, physicalDisplayID: 7,
+            activationTarget: .application(processID: 42, bundleIdentifier: "example.target"))
+        let authorization = try nativePostAuthorizationV1(command, clock: clock) { _, body in
+            guard backend.read() else { throw InteractiveRuntimeNativeInputPostingErrorV0.unavailable }
+            try body()
+        }
+        let envelope = try inputEnvelopeV1(command: command, payload: .button(button: .primary, transition: .down))
+        await #expect(throws: (any Error).self) {
+            try await adapter.postInteractiveInput(envelope, nativeAuthorization: authorization, beforeDeadlineNanoseconds: 5_000_000_000)
+        }
+        #expect(attempts.calls() == 2)
+        #expect(sink.snapshots().isEmpty)
+    }
+}
+
+private final class NativeUnsupportedPosterV1: InteractiveRuntimeInputPostingV0, @unchecked Sendable {
+    let called = InputPermissionProbeV1(false)
+    func postInteractiveInput(_ envelope: InteractiveInputEnvelope) async throws { called.set(true) }
+}
+@available(macOS 26.0, *)
+@Test func nativePostingUnsupportedAdapterCannotFallThroughToLegacyPosting() async throws {
+    let poster = NativeUnsupportedPosterV1(), command = try inputInstallCommandV1(), clock = NativePostClockV1()
+    let authorization = try nativePostAuthorizationV1(command, clock: clock) { _, body in try body() }
+    let envelope = try inputEnvelopeV1(command: command, payload: .pointerMove(x: 100, y: 100))
+    await #expect(throws: InteractiveRuntimeNativeInputPostingErrorV0.unavailable) {
+        try await poster.postInteractiveInput(envelope, nativeAuthorization: authorization, beforeDeadlineNanoseconds: 5_000_000_000)
+    }
+    #expect(poster.called.read() == false)
+}
+
 #endif

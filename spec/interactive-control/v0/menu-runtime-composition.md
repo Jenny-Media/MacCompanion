@@ -82,6 +82,26 @@ Surface replacement is a separate Agent-issued local command and cannot be repre
 
 The runtime serializes a surface replacement before later input, media, renewal, revoke, or expiry work. It denies input immediately, releases every held input transition, and asks the capture adapter to suppress output and prepare the exact replacement source. Only after both effects succeed does it install the replacement lease and return a correlated prepared receipt. Preparation failure invokes full safety teardown because partial capture/filter state cannot be rolled back safely. Exact replay returns the original receipt without repeating effects; conflicting command reuse fails closed.
 
+On Stop, lease/runtime revocation fences input and stops the legacy producer
+before awaiting native backend or WebRTC retirement. Native admission is also
+fenced before these cleanup waits. The Stop receipt still joins all engine
+cleanup; engine retirement must not defer the runtime's input/capture fence.
+
+Native backend preparation adds an independent input pause after exact
+acknowledged-Desktop validation and before backend factory work. The serialized
+runtime latches the pause before releasing held input. Release failure uses full
+safety teardown. The pause is preserved across renewal, native backend failure,
+retirement and legacy media acknowledgements; every input class, including reset,
+is denied without posting while native presentation is pending. After an installed
+native posting permit is revoked during backend retirement, the runtime may drain
+one exact next-sequence `reset` for the still-current acknowledged surface. It
+revalidates the current lease, session, epoch, surface, revisions, focus and
+deadline, releases held input, and records only reliability progress. It never
+posts through the revoked permit, reopens native input, or admits another input
+class. If surface preparation overtakes that reset, the existing one-shot retired
+fence rule drains it instead. A fresh Control install begins without this pause.
+Native presentation acknowledgement remains a separate admission requirement.
+
 A prepared surface admits no input. Its media state accepts only a gap-free discontinuity under the replacement fence, then exact decoder configuration, then a clean access unit with matching dimensions. Delta video, old-fence media, configuration before discontinuity, or a second discontinuity is terminal. The runtime records the clean access-unit sequence and remains input-paused. A separate Agent-issued acknowledgement must correlate the transition command, replacement lease, complete surface fence including exact focus token/revision when the descriptor has focus, and that exact ready media sequence. Exact replay is effect-free. Only then does the runtime resume input admission. Renewal may extend the current replacement lease but cannot change or bypass its prepared/media/acknowledgement phase.
 
 Every input action contains the already validated remote envelope plus a local execution fence. The menu runtime requires exact session, authorization epoch, surface, surface revision, and coordinate-revision agreement between them, then validates the full host/device/session/epoch/display/surface/revision lease and its current monotonic lifetime. Pointer, button, and scroll require `pointer`; physical-key and modifier events require `keyboard`; text requires `text`; reset widens no class but still requires the current lease. The bounded synchronous platform post occurs in that same serialized actor turn. Renewal, revoke, expiry, or IPC invalidation therefore cannot interleave between the last local lease check and the platform call. A denied or failed post returns no success and is never retried implicitly.
@@ -152,6 +172,18 @@ indicator only after all three preceding safety effects are proven complete:
 An acknowledged revoke returns success only after all four effects succeed and the receipt exactly matches the command, lease, and session. Exact replay returns the prior receipt without repeating effects. A partially failed cleanup retains content-free completion bits, denies new installs and renewals, and retries only incomplete effects. The indicator remains visible while input release, capture stop, or frame blanking is uncertain. It never claims idle or successful teardown while a step remains uncertain.
 
 The menu-app composition root schedules expiry at the exact monotonic deadline published by the owner. Successful install arms that deadline and successful renewal atomically replaces it. Each scheduled callback is bound to one private token and exact deadline; cancellation or a stale callback cannot expire a replacement lease. An early callback reschedules only the remaining monotonic duration. At or after the exact deadline it terminates without waiting for Agent acknowledgement. Successful revoke, local stop, and authenticated Agent-IPC invalidation disarm the timer before teardown. None of these paths depends on receiving another IPC byte, media frame, input event, or wall-clock tick from the Agent.
+
+After authenticated local-XPC generation loss, the old native-admission gate
+remains closed. A same-process dashboard connection replacement first withdraws
+the old receiver and awaits exact old runtime/adapter invalidation. It may
+construct a fresh runtime, queue, input adapter, surface-target owner, and
+native-admission gate only when the persistent indicator is inactive after
+cleanup. Uncertain cleanup leaves Control unavailable. A new transport begins
+visible-admission publication at revision 1; it may retain the process-lifetime
+menu UUID, while a replacement process must use a new UUID. The replacement
+does not restore a prior session, input authority, capture, or media. Another
+Control request requires the existing durable grant, current authenticated
+primary connection, and a fresh Agent-issued lease and presentation admission.
 
 Install failure runs the same four-step cleanup because an asynchronous platform call may have partially succeeded before returning an error. If cleanup completes, install returns a closed failure and the owner becomes idle. If cleanup remains uncertain, the owner enters safety-recovery-required denial.
 

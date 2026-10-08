@@ -81,11 +81,13 @@ private actor SuspendingPairingCommitter: PairingCommitter {
 
 private func authorityThroughProof(
     committer: any PairingCommitter,
-    auditWriter: (any PairingAuditWritingV0)? = nil
+    auditWriter: (any PairingAuditWritingV0)? = nil,
+    accessProfile: PairingAccessProfileV1 = .monitorOnly
 ) async throws -> (PairingSessionAuthority, PairingApprovalContext) {
     let authority = PairingSessionAuthority(
         committer: committer,
-        auditWriter: auditWriter
+        auditWriter: auditWriter,
+        accessProfile: accessProfile
     )
     let advertisement = try await authority.createSession(
         pairingID: pairingID,
@@ -586,4 +588,30 @@ private extension Data {
         text.append(String(repeating: "=", count: (4 - text.count % 4) % 4))
         self = Data(base64Encoded: text)!
     }
+}
+
+@Test func goldenPairingRemoteDesktopProfileCommitsFixedInitialAuthority() async throws {
+    let committer = RecordingCommitter()
+    let (authority, context) = try await authorityThroughProof(
+        committer: committer,
+        accessProfile: .remoteDesktop
+    )
+    #expect(context.transcriptDigest == transcriptDigest)
+    #expect(context.authenticationString == "23F-6F5")
+    let completed = try await authority.decideApproval(
+        pairingID: pairingID,
+        approvedTranscriptDigest: transcriptDigest,
+        approved: true,
+        deviceID: deviceID,
+        displayName: pairingDisplayName,
+        policyRevision: .init(rawValue: 1),
+        wallNowUnixMilliseconds: 1_787_198_401_000,
+        monotonicNowMilliseconds: 1_030
+    )
+    #expect(completed.deviceState == .activeGranted)
+    let commits = await committer.commits
+    #expect(commits.count == 1)
+    #expect(commits.first?.1.authorization.state == .activeGranted)
+    #expect(commits.first?.1.authorization.authorizationEpoch.rawValue == 1)
+    #expect(commits.first?.1.authorization.grantRevision.rawValue == 1)
 }
