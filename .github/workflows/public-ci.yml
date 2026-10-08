@@ -25,12 +25,13 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - name: Install validation tools
-        run: brew install xcodegen
+        run: brew install xcodegen ripgrep
       - name: Record toolchain
         run: |
           xcodebuild -version
           xcodebuild -version | rg --fixed-strings --line-regexp 'Build version 27A266a'
           xcrun swift --version
           xcodegen --version
+          rg --version
       - name: Validate specifications and package
         run: bash scripts/validate.sh
