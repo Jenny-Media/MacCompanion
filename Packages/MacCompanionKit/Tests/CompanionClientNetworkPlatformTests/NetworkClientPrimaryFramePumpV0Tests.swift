@@ -345,6 +345,17 @@ private func waitForNetworkClientSentCount(
     return io.sent
 }
 
+private func waitForNetworkClientCondition(
+    _ condition: @Sendable () -> Bool
+) async throws -> Bool {
+    let deadline = ContinuousClock.now.advanced(by: .seconds(2))
+    while !condition() {
+        guard ContinuousClock.now < deadline else { return false }
+        try await Task.sleep(for: .milliseconds(1))
+    }
+    return true
+}
+
 private func waitForNetworkClientPendingReceive(
     _ io: NetworkClientFakeFrameIOV0
 ) async -> Bool {
@@ -676,11 +687,14 @@ private func networkClientSPKI() throws -> Data {
     )
     try await authenticateNetworkClientPump(harness)
     let sent = await waitForNetworkClientSentCount(base.io, 3)
+    try #require(sent.count == 3)
     let ping = try decodeNetworkClientSentFrame(
         sent[2],
         as: KeepalivePingBodyV0.self
     )
     #expect(ping.messageID == keepaliveID)
+    // Observing the send does not mean its deadline task has started yet.
+    try #require(try await waitForNetworkClientCondition { sleep.callCount == 2 })
     let pong = try WireEnvelope(
         messageID: WireUUID(UUID()),
         correlationID: ping.messageID,
@@ -691,12 +705,12 @@ private func networkClientSPKI() throws -> Data {
     base.io.deliver(
         try LengthPrefixedFrameDecoder.encode(WireCodec.encode(pong))
     )
-    for _ in 0..<100 where sleep.callCount < 2 {
-        try? await Task.sleep(nanoseconds: 1_000_000)
-    }
-    #expect(sleep.callCount == 2)
+    // The pong cancels that deadline and starts a fresh idle timer.
+    try #require(try await waitForNetworkClientCondition { sleep.callCount == 3 })
+    #expect(sleep.callCount == 3)
     #expect(await base.terminals.values.isEmpty)
     #expect(await base.session.phase == .authenticated)
+    await pump.cancel()
 }
 
 @Test func clientPumpMissingKeepalivePongIsClassifiedSeparately() async throws {
@@ -819,6 +833,8 @@ private func networkClientSPKI() throws -> Data {
     let initialSends = await waitForNetworkClientSentCount(harness.io, 3)
     #expect(initialSends.count == 3)
     #expect(harness.authenticated.values.count == 1)
+    // The initial route send precedes the separate readiness callback.
+    try #require(try await waitForNetworkClientCondition { harness.ready.count == 1 })
     #expect(harness.ready.count == 1)
     #expect(harness.authenticated.values.first?.hostID == harness.hostID)
     let observation = try decodeNetworkClientSentFrame(
