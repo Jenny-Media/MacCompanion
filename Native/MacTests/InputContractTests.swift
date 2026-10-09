@@ -6,6 +6,11 @@ import Foundation
         let data = try Data(contentsOf: URL(fileURLWithPath: CommandLine.arguments[1]))
         let fixture = try JSONSerialization.jsonObject(with: data) as! [String: Any]
         var count = 0
+        for value in fixture["terminalMouseReports"] as! [[String: Any]] {
+            let bytes = (value["bytes"] as! [Int]).map(UInt8.init)
+            precondition(MacTerminalMouseReport.contains(bytes[...]) == value["mouse"] as! Bool)
+            count += 1
+        }
         for value in fixture["keyMapping"] as! [[String: Int]] {
             precondition(MacVNCKeyboardState.keysym(code: UInt16(value["keyCode"]!), characters: "") == UInt32(value["keysym"]!))
             count += 1

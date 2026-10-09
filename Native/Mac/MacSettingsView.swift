@@ -63,18 +63,21 @@ struct MacSettingsView: View {
                     case .terminal: VNCInputSettings(mode: .terminal)
                     case .trackpad: VNCInputSettings(mode: .trackpad)
                     }
-                }.frame(minWidth: 520, minHeight: 520).directAppearance()
+                }.frame(minWidth: 520, minHeight: 520).directAppearance().modifier(MacSheetPrivacyCover())
             }
             .alert("Enable iCloud Sync?", isPresented: $enableCloud) {
-                Button("Enable Sync") { cloud.setEnabled(true) }
+                Button("Enable Sync") { if lock.canAccess { cloud.setEnabled(true) } }
                 Button("Cancel", role: .cancel) {}
             } message: { Text(DirectCloudSyncV1.disclosure) }
             .confirmationDialog("Remove saved Mac copies from iCloud?", isPresented: $removeCloud, titleVisibility: .visible) {
-                Button("Turn Off Sync & Remove Cloud Copies", role: .destructive) { cloud.removeCloudCopies() }
+                Button("Turn Off Sync & Remove Cloud Copies", role: .destructive) { if lock.canAccess { cloud.removeCloudCopies() } }
             } message: {
                 Text("Local Macs and logins stay on this device. Turn off sync on your other devices first; otherwise they may upload the saved Macs again. Apple manages when removal reaches other devices.")
             }
             .directAppearance().modifier(MacPrivacyCover())
+            .onChange(of: lock.canAccess) { _, allowed in
+                if !allowed { sheet = nil; enableCloud = false; removeCloud = false }
+            }
     }
 }
 #endif

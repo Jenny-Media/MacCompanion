@@ -96,6 +96,35 @@
     "inputAdmissionFailure": "retire own connection without replay",
     "replacementLayout": "await current connection metadata"
   },
+  "privacy": {
+    "lockedSheetContent": "remove sensitive subtree and nested editors",
+    "lockedSettingsMutation": "reject",
+    "lockedEstablishedVNC": "retain connection and suppress input",
+    "lockedInitialVNC": "retire connection without saving login",
+    "terminalSemanticPromptClick": "disabled; no delayed cursor-key input after focus loss"
+  },
+  "terminalInputAdmission": [
+    {
+      "keyWindow": false,
+      "terminalResponder": false,
+      "admitted": false
+    },
+    {
+      "keyWindow": false,
+      "terminalResponder": true,
+      "admitted": false
+    },
+    {
+      "keyWindow": true,
+      "terminalResponder": false,
+      "admitted": false
+    },
+    {
+      "keyWindow": true,
+      "terminalResponder": true,
+      "admitted": true
+    }
+  ],
   "cloud": {
     "format": "DirectCloudVersion.schema=1",
     "service": "media.jenny.maccompanion.cloud-library.v1",
@@ -116,5 +145,191 @@
     "focusLoss": "discard without commit",
     "physicalShortcuts": "balanced key events",
     "document": "no remote text query"
-  }
+  },
+  "terminalMouseReports": [
+    {
+      "bytes": [
+        27,
+        91,
+        60,
+        54,
+        52,
+        59,
+        49,
+        50,
+        59,
+        50,
+        49,
+        77
+      ],
+      "mouse": true
+    },
+    {
+      "bytes": [
+        27,
+        91,
+        60,
+        51,
+        53,
+        59,
+        49,
+        50,
+        59,
+        50,
+        49,
+        77
+      ],
+      "mouse": true
+    },
+    {
+      "bytes": [
+        27,
+        91,
+        60,
+        48,
+        59,
+        49,
+        50,
+        59,
+        50,
+        49,
+        109
+      ],
+      "mouse": true
+    },
+    {
+      "bytes": [
+        27,
+        91,
+        57,
+        54,
+        59,
+        49,
+        50,
+        59,
+        50,
+        49,
+        77
+      ],
+      "mouse": true
+    },
+    {
+      "bytes": [
+        27,
+        91,
+        77,
+        96,
+        44,
+        53
+      ],
+      "mouse": true
+    },
+    {
+      "bytes": [
+        27,
+        91,
+        77,
+        96,
+        194,
+        150,
+        53
+      ],
+      "mouse": true
+    },
+    {
+      "bytes": [
+        155,
+        60,
+        54,
+        52,
+        59,
+        49,
+        50,
+        59,
+        50,
+        49,
+        77
+      ],
+      "mouse": true
+    },
+    {
+      "bytes": [
+        155,
+        77,
+        96,
+        44,
+        53
+      ],
+      "mouse": true
+    },
+    {
+      "bytes": [
+        27,
+        91,
+        63,
+        49,
+        59,
+        50,
+        99
+      ],
+      "mouse": false
+    },
+    {
+      "bytes": [
+        27,
+        91,
+        50,
+        59,
+        51,
+        82
+      ],
+      "mouse": false
+    },
+    {
+      "bytes": [
+        27,
+        91,
+        73
+      ],
+      "mouse": false
+    },
+    {
+      "bytes": [
+        27,
+        91,
+        60,
+        48,
+        59,
+        49,
+        50,
+        77
+      ],
+      "mouse": false
+    },
+    {
+      "bytes": [
+        27,
+        91,
+        60,
+        48,
+        59,
+        59,
+        50,
+        77
+      ],
+      "mouse": false
+    },
+    {
+      "bytes": [
+        27,
+        91,
+        77
+      ],
+      "mouse": false
+    },
+    {
+      "bytes": [],
+      "mouse": false
+    }
+  ]
 }

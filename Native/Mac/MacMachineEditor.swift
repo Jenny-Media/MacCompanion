@@ -67,24 +67,30 @@ struct MacMachineEditor: View {
                     ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
                     ToolbarItem(placement: .confirmationAction) {
                         Button("Save") {
+                            guard DirectAppLockV1.shared.canAccess else { return }
                             if library.save(id: mac?.id, name: name, addresses: hosts, port: Int(desktopPort) ?? 5900,
                                 sshPort: Int(terminalPort), usesAutomaticName: automatic, preferredConnection: preferred) { dismiss() }
                         }.disabled(!valid).accessibilityIdentifier("mac-save-machine")
                     }
                 }
                 .sheet(item: $sheet) { item in
-                    switch item {
-                    case .keys: MacSSHKeyManager(mac: mac)
-                    case .install: if let mac { TerminalKeyInstallView(mac: mac).frame(minWidth: 520, minHeight: 500) }
-                    }
+                    Group {
+                        switch item {
+                        case .keys: MacSSHKeyManager(mac: mac)
+                        case .install: if let mac { TerminalKeyInstallView(mac: mac).frame(minWidth: 520, minHeight: 500) }
+                        }
+                    }.modifier(MacSheetPrivacyCover())
                 }
                 .confirmationDialog("Forget this saved login or trust record on this Mac?", isPresented: Binding(get: { forgetting != nil }, set: { if !$0 { forgetting = nil } }), titleVisibility: .visible) {
                     Button("Forget", role: .destructive) { forget() }
                 }
         }.frame(width: 550, height: 600)
+            .onChange(of: DirectAppLockV1.shared.canAccess) { _, allowed in
+                if !allowed { sheet = nil; forgetting = nil }
+            }
     }
     private func forget() {
-        guard let mac, let forgetting else { return }
+        guard DirectAppLockV1.shared.canAccess, let mac, let forgetting else { return }
         do {
             switch forgetting {
             case .desktop: try DesktopCredentialStoreV1.remove(mac.id)

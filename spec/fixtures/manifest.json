@@ -807,7 +807,7 @@
       "path": "native-macos-client-v1.json",
       "kind": "client.nativeMac.v1",
       "expect": "valid",
-      "canonicalSHA256": "7eb7c6ac60ff3d975915ec2a1f49dde17911164270c90a45a892036f4d9d906e"
+      "canonicalSHA256": "413c2559a9dd9f8e4c748760f3969921b4065a9f626a4ba9f4135b188209bace"
     }
   ]
 }

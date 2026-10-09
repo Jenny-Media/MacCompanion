@@ -33,15 +33,21 @@ struct MacVNCDisplay: Identifiable {
     private var closed = false
     private var pendingLogin: DesktopCredentialStoreV1.Login?
     private let removeSavedLogin: (UUID) throws -> Void
-    init(mac: DirectMacRecordV1, inputOnly: Bool, removeSavedLogin: @escaping (UUID) throws -> Void = DesktopCredentialStoreV1.remove) {
+    private let makeTransport: () -> CompanionVNCSession
+    private let canAccess: () -> Bool
+    init(mac: DirectMacRecordV1, inputOnly: Bool, removeSavedLogin: @escaping (UUID) throws -> Void = DesktopCredentialStoreV1.remove,
+         makeTransport: @escaping () -> CompanionVNCSession = { CompanionVNCSession() },
+         canAccess: @escaping () -> Bool = { DirectAppLockV1.shared.canAccess }) {
         self.mac = mac; self.inputOnly = inputOnly
         self.removeSavedLogin = removeSavedLogin
+        self.makeTransport = makeTransport
+        self.canAccess = canAccess
         selectedID = VNCSessionPreferences.display(mac.id)?.uint32Value
         trackpad = inputOnly || VNCSessionPreferences.trackpad(mac.id)
         pointerSpeed = VNCSessionPreferences.speed(mac.id)
         followCursor = VNCSessionPreferences.followCursor(mac.id)
     }
-    var canInput: Bool { connected && !closed && DirectAppLockV1.shared.canAccess && transport?.connected == true }
+    var canInput: Bool { connected && !closed && canAccess() && transport?.connected == true }
     var crop: CGRect {
         let full = CGRect(origin: .zero, size: framebuffer)
         guard framebuffer.height > 0, layoutAspect > 0,
@@ -53,7 +59,7 @@ struct MacVNCDisplay: Identifiable {
                       height: round(rect.maxY * framebuffer.height) - round(rect.minY * framebuffer.height))
     }
     func connect(username: String, password: String, remember: Bool) {
-        guard !closed, !connecting, DirectAppLockV1.shared.canAccess, !username.isEmpty, !password.isEmpty else { return }
+        guard !closed, !connecting, canAccess(), !username.isEmpty, !password.isEmpty else { return }
         do { try MacLoginPolicy.prepareVNC(username: username, password: password, remember: remember, macID: mac.id, remove: removeSavedLogin) }
         catch MacLoginPolicy.Failure.invalidLogin {
             recovery = .make(.loginRejected, message: "Enter a Mac account and password of 1–63 UTF-8 bytes per field, with no NUL characters."); return
@@ -61,7 +67,7 @@ struct MacVNCDisplay: Identifiable {
             recovery = .make(.removeFailed, message: "The old saved Desktop login couldn’t be removed. This connection wasn’t started. Retry when local Keychain is available."); return
         }
         retire(); let token = UUID(); generation = token
-        let next = CompanionVNCSession(); transport = next; next.inputOnly = inputOnly
+        let next = makeTransport(); transport = next; next.inputOnly = inputOnly
         connecting = true; recovery = nil; status = "Connecting…"
         pendingLogin = remember ? .init(username: username, password: password) : nil
         next.frameHandler = { [weak self, weak next] image in
@@ -98,8 +104,8 @@ struct MacVNCDisplay: Identifiable {
                 self.framebuffer = CGSize(width: (counters?["framebufferWidth"] as? NSNumber)?.doubleValue ?? 0,
                                           height: (counters?["framebufferHeight"] as? NSNumber)?.doubleValue ?? 0)
                 if state == "Connected" {
-                    guard DirectAppLockV1.shared.canAccess else { self.disconnect(); return }
                     let first = !self.connected
+                    guard !first || self.canAccess() else { self.disconnect(); return }
                     self.connected = true; self.connecting = false
                     if first {
                         self.cursorPosition = CGPoint(x: self.crop.midX, y: self.crop.midY)

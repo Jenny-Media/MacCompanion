@@ -82,7 +82,8 @@ def main():
     spec['schemes'] = {'NativeMacClientQA': {
         'build': {'targets': {'MacCompanion': 'all', 'NativeClientTests': 'all'}},
         'test': {'config': 'Debug', 'macroExpansion': 'MacCompanion',
-                 'environmentVariables': {'MACCOMPANION_DIRECT_DATA_DIRECTORY': str(qa / 'app-data')},
+                 'environmentVariables': {'MACCOMPANION_DIRECT_DATA_DIRECTORY': str(qa / 'app-data'),
+                                          'MACCOMPANION_NATIVE_FIXTURE_DIRECTORY': str(ROOT / 'spec/fixtures')},
                  'targets': [{'name': 'NativeClientTests', 'parallelizable': False}]}}}
     if args.ui:
         # The UI runner is sandboxed by Xcode. Its synthetic SSH fixture binds

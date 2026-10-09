@@ -99,23 +99,29 @@ struct MacMachineLibraryView: View {
             }
         }
         .sheet(item: $sheet) { item in
-            switch item {
-            case .add: MacMachineEditor(library: library)
-            case .edit(let mac): MacMachineEditor(library: library, mac: mac)
-            case .pro: DirectProView().frame(minWidth: 480, minHeight: 460)
-            }
+            Group {
+                switch item {
+                case .add: MacMachineEditor(library: library)
+                case .edit(let mac): MacMachineEditor(library: library, mac: mac)
+                case .pro: DirectProView().frame(minWidth: 480, minHeight: 460)
+                }
+            }.modifier(MacSheetPrivacyCover())
         }
         .confirmationDialog("Remove this Mac and its local saved login?", isPresented: Binding(get: { removing != nil }, set: { if !$0 { removing = nil } }), titleVisibility: .visible) {
-            Button("Remove Mac", role: .destructive) { if let removing { library.remove(removing) }; removing = nil }
+            Button("Remove Mac", role: .destructive) { if DirectAppLockV1.shared.canAccess, let removing { library.remove(removing) }; removing = nil }
+        }
+        .onChange(of: DirectAppLockV1.shared.canAccess) { _, allowed in
+            if !allowed { sheet = nil; removing = nil }
         }
     }
     private func move(_ mac: DirectMacRecordV1, down: Bool) {
-        guard let i = library.macs.firstIndex(where: { $0.id == mac.id }) else { return }
+        guard DirectAppLockV1.shared.canAccess, let i = library.macs.firstIndex(where: { $0.id == mac.id }) else { return }
         _ = library.move(fromOffsets: IndexSet(integer: i), toOffset: down ? i + 2 : i - 1)
     }
     private func add() {
         Task {
             if !DirectProAccess.shared.ready { await DirectProAccess.shared.refresh() }
+            guard DirectAppLockV1.shared.canAccess else { return }
             sheet = DirectProAccess.shared.canAddMac(count: library.macs.count) ? .add : .pro
         }
     }
@@ -155,7 +161,10 @@ struct MacSessionWindow: View {
             }
         }.id(request.id).directAppearance().modifier(MacPrivacyCover())
             .task { await admit() }
-            .sheet(isPresented: $pro, onDismiss: { Task { await admit() } }) { DirectProView().frame(minWidth: 480, minHeight: 460) }
+            .sheet(isPresented: $pro, onDismiss: { Task { await admit() } }) {
+                DirectProView().frame(minWidth: 480, minHeight: 460).modifier(MacSheetPrivacyCover())
+            }
+            .onChange(of: DirectAppLockV1.shared.canAccess) { _, allowed in if !allowed { pro = false } }
     }
     private func admit() async {
         guard !admitted else { return }
@@ -178,6 +187,22 @@ struct MacPrivacyCover: ViewModifier {
                     .accessibilityIdentifier("mac-app-privacy-cover")
             }
         }.onAppear { lock.install() }
+    }
+}
+
+// Unlike the window cover, a sheet removes its sensitive subtree on lock.
+// This also tears down nested presentations and their cached editor state.
+struct MacSheetPrivacyContent<Content: View>: View {
+    let canAccess: Bool
+    let content: Content
+    var body: some View { Group { if canAccess { content } } }
+}
+
+struct MacSheetPrivacyCover: ViewModifier {
+    @State private var lock = DirectAppLockV1.shared
+    func body(content: Content) -> some View {
+        MacSheetPrivacyContent(canAccess: lock.canAccess, content: content)
+            .frame(minWidth: 380, minHeight: 260).modifier(MacPrivacyCover())
     }
 }
 #endif

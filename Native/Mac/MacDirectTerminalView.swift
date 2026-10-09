@@ -117,11 +117,11 @@ struct MacDirectTerminalView: View {
                 case .identity: TerminalIdentityGuide(macName: mac.name)
                 case .pro: DirectProView()
                 }
-            }.frame(minWidth: 520, minHeight: 520)
+            }.frame(minWidth: 520, minHeight: 520).modifier(MacSheetPrivacyCover())
         }
         .sheet(item: Binding(get: { session.trust }, set: { if $0 == nil { session.answerTrust(false) } })) { request in
             TerminalServerTrustView(macName: mac.name, fingerprint: request.fingerprint) { session.answerTrust($0) }
-                .frame(width: 480, height: 410)
+                .frame(width: 480, height: 410).modifier(MacSheetPrivacyCover())
         }
         .background(MacWindowLifetime { closed = true; password = ""; session.stop(); MacConnectionRegistry.shared.remove(sessionID) }.frame(width: 0, height: 0))
         .background(MacWindowReader(handle: window).frame(width: 0, height: 0))
@@ -131,7 +131,7 @@ struct MacDirectTerminalView: View {
         .onReceive(NotificationCenter.default.publisher(for: VNCSessionPreferences.actionsChanged)) { _ in loadControls() }
         .onChange(of: session.connected) { _, connected in if connected { password = "" } }
         .onChange(of: DirectAppLockV1.shared.canAccess) { _, allowed in
-            if !allowed { password = ""; session.background() }
+            if !allowed { sheet = nil; password = ""; session.background() }
             else { session.foreground(); if loadedInitialLogin { loadLogin(); loadControls() } else { loadInitialLogin() } }
         }
     }
@@ -252,6 +252,14 @@ struct MacTerminalSurface: NSViewRepresentable {
 }
 
 @MainActor final class MacRemoteTerminalSurface: TerminalView {
+    override init(frame: CGRect, font: NSFont?) {
+        super.init(frame: frame, font: font)
+        getTerminal().semanticPromptClickBehavior = .disabled
+    }
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        getTerminal().semanticPromptClickBehavior = .disabled
+    }
     weak var session: DirectTerminalSession?
     var wasConnecting = false
     private var inputMonitor: Any?
@@ -261,13 +269,27 @@ struct MacTerminalSurface: NSViewRepresentable {
     // terminal protocol responses generated while a window is in the background.
     func installInputGate() {
         guard inputMonitor == nil else { return }
-        inputMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp, .flagsChanged]) { [weak self] event in
+        inputMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp, .flagsChanged, .scrollWheel, .mouseMoved]) { [weak self] event in
             let admitted = MainActor.assumeIsolated {
-                guard let self, event.window === self.window, self.window?.firstResponder === self else { return true }
-                return self.admitsInput
+                guard let self else { return true }
+                return self.filterInputEvent(event) != nil
             }
             return admitted ? event : nil
         }
+    }
+    func filterInputEvent(_ event: NSEvent) -> NSEvent? {
+        guard let window, event.window === window else { return event }
+        if [.keyDown, .keyUp, .flagsChanged].contains(event.type) {
+            guard window.firstResponder === self else { return event }
+        } else {
+            // A wheel event can target an inactive window without changing its
+            // first responder. Hit-test the actual surface so this monitor does
+            // not swallow scrolling or pointer events in another control.
+            guard let content = window.contentView else { return event }
+            let point = content.superview?.convert(event.locationInWindow, from: nil) ?? event.locationInWindow
+            guard let target = content.hitTest(point), target === self || target.isDescendant(of: self) else { return event }
+        }
+        return admitsInput ? event : nil
     }
     func detachInputGate() { if let inputMonitor { NSEvent.removeMonitor(inputMonitor) }; inputMonitor = nil }
     private var admitsAction: Bool { session?.connected == true && DirectAppLockV1.shared.canAccess && window?.isKeyWindow == true }
@@ -295,5 +317,17 @@ struct MacTerminalSurface: NSViewRepresentable {
     }
     override func insertText(_ insertString: Any, replacementRange: NSRange) { guard admitsInput else { return }; super.insertText(insertString, replacementRange: replacementRange) }
     override func paste(_ sender: Any) { guard admitsInput else { return }; super.paste(sender) }
+    override func mouseDown(with event: NSEvent) {
+        guard admitsAction else { return }
+        window?.makeFirstResponder(self)
+        guard admitsInput else { return }
+        super.mouseDown(with: event)
+    }
+    override func mouseUp(with event: NSEvent) { guard admitsInput else { return }; super.mouseUp(with: event) }
+    override func mouseDragged(with event: NSEvent) { guard admitsInput else { return }; super.mouseDragged(with: event) }
+    override func send(source: Terminal, data: ArraySlice<UInt8>) {
+        guard admitsInput || !MacTerminalMouseReport.contains(data) else { return }
+        super.send(source: source, data: data)
+    }
 }
 #endif

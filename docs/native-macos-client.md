@@ -22,6 +22,17 @@ focus must affect only that window. A window losing input focus releases its hel
 remote keys/buttons without ending another session. Background Mac windows keep
 receiving output; application inactivity alone does not tear down connections.
 Screen lock/app unlock can suppress input and protect local credentials.
+App lock removes sensitive sheet contents and dismisses their nested editors;
+an already presented sheet cannot retain visible saved text while locked.
+Connection-setting mutations recheck app unlock when their actions execute.
+Terminal mouse and wheel events require the same key-window and responder
+admission as typed input, while background terminal protocol replies continue.
+The pinned frontend's synthesized movement callback is also gated at its mouse
+report output, independently of AppKit's local-monitor ordering.
+Optional OSC133 prompt-click cursor navigation is disabled because its delayed
+callback cannot recheck the owning window's focus in the pinned frontend.
+Periodic VNC status reports preserve established locked sessions; an unfinished
+login still cannot complete or save credentials while locked.
 
 Desktop retains display crops admitted by the existing Apple metadata validator,
 All Displays fallback, local fit/zoom/pan, cursor, pointer, wheel and keyboard.
@@ -113,7 +124,7 @@ modify the hash-pinned vendor tree.
 ### 2026-10-09 checkpoint
 
 Stable Xcode 27.0 (27A266a) builds and signs the native Apple Silicon client.
-All 161 application source inputs match the final signed build report. The
+The initial signed checkpoint contains 161 application source inputs. The
 existing Mac app identity, selected Apple Development certificate, and exact
 Mac/local plus iPhone/cloud Keychain groups are verified. The host runs a macOS
 27.2 beta; released macOS and Intel compatibility remain unverified.
@@ -144,6 +155,20 @@ input/output/resize and independent closure. The result is
 `/private/tmp/maccompanion-direct-macos/QA/Results-1791559704983605000.xcresult`.
 The earlier test-session preparation stall is superseded by this completed run.
 Required repository validation passes with 134 indexed fixtures.
+
+The PR review fixes protect and dismiss native sheets on app lock, recheck
+Connection Settings mutations, gate Terminal pointer events and synthesized
+mouse reports, and preserve established VNC owners on locked status updates.
+Hosted QA now completes sixteen tests: fifteen pass, the same native key-window
+check skips, and none fail. Actual SwiftUI editor-subtree removal, all four
+Terminal wheel/focus combinations, synthesized mouse movement, rejected click
+focus reporting, background terminal query replies, locked Desktop/Trackpad
+status reports, initial admission, late callbacks and OSC133 prompt clicks
+after focus loss are covered. The result is
+`/private/tmp/maccompanion-direct-macos/QA/Results-1791564878599514000.xcresult`.
+The indexed native input suite now contains 31 cases, including the pinned
+frontend's mouse-report formats. Nested-sheet lock/unlock appearance still
+requires native GUI acceptance.
 
 The latest iPhone Simulator app build passes with the shared readiness fix.
 The previously completed iPhone suite has 187 tests: 174 pass, 13 optional skips,

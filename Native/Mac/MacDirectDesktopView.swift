@@ -103,7 +103,7 @@ struct MacDirectDesktopView: View {
         }
         .sheet(isPresented: $controls) {
             VNCInputSettings(macID: mac.id, mode: session.inputOnly ? .trackpad : .desktop) { session.reloadPreferences(); loadActions() }
-                .frame(minWidth: 520, minHeight: 520)
+                .frame(minWidth: 520, minHeight: 520).modifier(MacSheetPrivacyCover())
         }
         .background(MacWindowLifetime { closed = true; password = ""; session.close(); MacConnectionRegistry.shared.remove(sessionID) }.frame(width: 0, height: 0))
         .background(MacWindowReader(handle: window, initiallyFullScreen: VNCSessionPreferences.fullscreen(mac.id)) {
@@ -116,7 +116,7 @@ struct MacDirectDesktopView: View {
         .onReceive(NotificationCenter.default.publisher(for: DirectClientPlatformV1.didEnterBackground)) { _ in
             password = ""; session.pauseInput()
         }
-        .onChange(of: DirectAppLockV1.shared.canAccess) { _, value in if !value { password = ""; session.pauseInput() } else { loadLogin() } }
+        .onChange(of: DirectAppLockV1.shared.canAccess) { _, value in if !value { controls = false; password = ""; session.pauseInput() } else { loadLogin() } }
     }
     private func publishStatus() {
         guard !closed else { return }

@@ -4,6 +4,7 @@ import Crypto
 import NIO
 import NIOSSH
 import Citadel
+import SwiftTerm
 @testable import MacCompanion
 
 private final class MemoryCloud: DirectCloudTransport, @unchecked Sendable {
@@ -35,6 +36,29 @@ private final class SSHConnections: @unchecked Sendable {
         lock.lock(); records.append(record); lock.unlock(); return record
     }
     var connections: [SSHTestRecord] { lock.lock(); defer { lock.unlock() }; return records }
+}
+
+private final class InputTestWindow: NSWindow {
+    var inputKeyWindow = false
+    override var isKeyWindow: Bool { inputKeyWindow }
+}
+private final class InputTestScroll: NSEvent {
+    nonisolated(unsafe) var owner: NSWindow?
+    override var window: NSWindow? { owner }
+    override var type: NSEvent.EventType { .scrollWheel }
+    override var locationInWindow: NSPoint { NSPoint(x: 100, y: 100) }
+    override var scrollingDeltaY: CGFloat { 1 }
+    override var hasPreciseScrollingDeltas: Bool { false }
+    override var modifierFlags: NSEvent.ModifierFlags { [] }
+}
+@MainActor private final class InputCapture: NSObject, @preconcurrency TerminalViewDelegate {
+    var sent: [UInt8] = []
+    func send(source: TerminalView, data: ArraySlice<UInt8>) { sent += data }
+    func sizeChanged(source: TerminalView, newCols: Int, newRows: Int) {}
+    func setTerminalTitle(source: TerminalView, title: String) {}
+    func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {}
+    func scrolled(source: TerminalView, position: Double) {}
+    func rangeChanged(source: TerminalView, startY: Int, endY: Int) {}
 }
 
 @MainActor final class NativeClientTests: XCTestCase {
@@ -204,6 +228,7 @@ private final class SSHConnections: @unchecked Sendable {
         second.connect(username: "synthetic", password: "synthetic-only", remember: false)
         try await wait { second.connected || !second.connecting }
         guard second.connected, records.connections.count == 2 else { XCTFail(second.status); throw POSIXError(.ENOTCONN) }
+        if !checkNativeFocus { try await verifyPointerAdmission(session: first) }
         let viewA = MacRemoteTerminalSurface(frame: CGRect(x: 0, y: 0, width: 700, height: 440), font: .monospacedSystemFont(ofSize: 14, weight: .regular))
         let viewB = MacRemoteTerminalSurface(frame: viewA.frame, font: viewA.font)
         viewA.session = first; viewB.session = second
@@ -254,5 +279,70 @@ private final class SSHConnections: @unchecked Sendable {
         XCTAssertEqual(records.connections.count, 3)
         XCTAssertTrue(records.connections[2].received.isEmpty, "Input from the retired shell must not replay")
         second.stop(); try await server.close()
+    }
+
+    private func verifyPointerAdmission(session: DirectTerminalSession) async throws {
+        let directory = try XCTUnwrap(ProcessInfo.processInfo.environment["MACCOMPANION_NATIVE_FIXTURE_DIRECTORY"])
+        let fixture = try JSONSerialization.jsonObject(with: Data(contentsOf: URL(fileURLWithPath: directory).appending(path: "native-macos-client-v1.json"))) as! [String: Any]
+        let cases = try XCTUnwrap(fixture["terminalInputAdmission"] as? [[String: Bool]])
+        let view = MacRemoteTerminalSurface(frame: CGRect(x: 0, y: 0, width: 700, height: 440), font: .monospacedSystemFont(ofSize: 14, weight: .regular))
+        view.session = session
+        let capture = InputCapture(); view.terminalDelegate = capture
+        let window = InputTestWindow(contentRect: view.frame, styleMask: [.titled, .closable], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false; window.contentView = view
+        defer { window.close() }
+        view.feed(text: "\u{1b}[?1000h\u{1b}[?1006h")
+        let scroll = InputTestScroll(); scroll.owner = window
+        for value in cases {
+            window.inputKeyWindow = try XCTUnwrap(value["keyWindow"])
+            let responder = try XCTUnwrap(value["terminalResponder"])
+            window.makeFirstResponder(responder ? view : window)
+            XCTAssertEqual(window.firstResponder === view, responder)
+            capture.sent = []
+            let admitted = view.filterInputEvent(scroll)
+            XCTAssertEqual(admitted != nil, value["admitted"])
+            if let admitted { view.scrollWheel(with: admitted) }
+            XCTAssertEqual(!capture.sent.isEmpty, value["admitted"])
+        }
+        window.inputKeyWindow = false
+        window.makeFirstResponder(window)
+        view.feed(text: "\u{1b}[?1004h")
+        capture.sent = []
+        let click = try XCTUnwrap(NSEvent.mouseEvent(with: .leftMouseDown, location: NSPoint(x: 100, y: 100),
+            modifierFlags: [], timestamp: 0, windowNumber: window.windowNumber, context: nil, eventNumber: 1, clickCount: 1, pressure: 1))
+        view.mouseDown(with: click)
+        XCTAssertTrue(capture.sent.isEmpty, "A mouse press in an inactive window cannot report remote input")
+        XCTAssertFalse(window.firstResponder === view, "A rejected click cannot emit a remote focus report")
+        view.feed(text: "\u{1b}[?1003h")
+        let movement = try XCTUnwrap(NSEvent.mouseEvent(with: .mouseMoved, location: NSPoint(x: 100, y: 100),
+            modifierFlags: [], timestamp: 0, windowNumber: window.windowNumber, context: nil, eventNumber: 2, clickCount: 0, pressure: 0))
+        view.mouseMoved(with: movement)
+        XCTAssertTrue(capture.sent.isEmpty, "SwiftTerm's synthesized movement must be gated independently of monitor ordering")
+        view.feed(text: "\u{1b}[c")
+        XCTAssertFalse(capture.sent.isEmpty, "Terminal protocol replies must continue in background windows")
+        // Another control in this window must retain its own wheel events.
+        let container = NSView(frame: view.bounds)
+        window.contentView = container; container.addSubview(view)
+        let other = NSView(frame: view.bounds); container.addSubview(other)
+        XCTAssertNotNil(view.filterInputEvent(scroll))
+        // OSC133 cursor navigation otherwise queues arrow keys until the
+        // double-click delay, after this window may have lost input focus.
+        let semanticView = MacRemoteTerminalSurface(frame: view.frame, font: view.font)
+        semanticView.session = session; semanticView.terminalDelegate = capture
+        window.contentView = semanticView; window.inputKeyWindow = true
+        window.makeFirstResponder(semanticView)
+        semanticView.feed(text: "\u{1b}]133;A;cl=line\u{7}>\u{1b}]133;B\u{7}hello")
+        let terminal = semanticView.getTerminal()
+        let point = NSPoint(x: 1.5 * semanticView.frame.width / CGFloat(terminal.cols),
+                            y: semanticView.frame.height - 0.5 * semanticView.frame.height / CGFloat(terminal.rows))
+        let down = try XCTUnwrap(NSEvent.mouseEvent(with: .leftMouseDown, location: point, modifierFlags: [], timestamp: 0,
+            windowNumber: window.windowNumber, context: nil, eventNumber: 3, clickCount: 1, pressure: 1))
+        let up = try XCTUnwrap(NSEvent.mouseEvent(with: .leftMouseUp, location: point, modifierFlags: [], timestamp: 0,
+            windowNumber: window.windowNumber, context: nil, eventNumber: 4, clickCount: 1, pressure: 0))
+        capture.sent = []
+        semanticView.mouseDown(with: down); semanticView.mouseUp(with: up)
+        window.inputKeyWindow = false; window.makeFirstResponder(window)
+        try await Task.sleep(for: .seconds(NSEvent.doubleClickInterval + 0.1))
+        XCTAssertTrue(capture.sent.isEmpty, "A prompt click cannot queue cursor keys into a background connection")
     }
 }
