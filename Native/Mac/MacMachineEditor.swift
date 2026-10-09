@@ -13,7 +13,7 @@ struct MacMachineEditor: View {
     @State private var preferred: DirectMacConnection
     @State private var sheet: Sheet?
     @State private var forgetting: Forget?
-    private enum Sheet: String, Identifiable { case keys, install; var id: String { rawValue } }
+    private enum Sheet: String, Identifiable { case keys, install, pro; var id: String { rawValue } }
     private enum Forget { case desktop, terminal, serverKey, keySelection }
     init(library: DirectMacLibraryV1, mac: DirectMacRecordV1? = nil) {
         self.library = library; self.mac = mac
@@ -68,6 +68,11 @@ struct MacMachineEditor: View {
                     ToolbarItem(placement: .confirmationAction) {
                         Button("Save") {
                             guard DirectAppLockV1.shared.canAccess else { return }
+                            let editsExistingMac = mac.map { edited in library.macs.contains { $0.id == edited.id } } ?? false
+                            guard editsExistingMac || DirectProAccess.shared.canAddMac(count: library.macs.count) else {
+                                sheet = .pro
+                                return
+                            }
                             if library.save(id: mac?.id, name: name, addresses: hosts, port: Int(desktopPort) ?? 5900,
                                 sshPort: Int(terminalPort), usesAutomaticName: automatic, preferredConnection: preferred) { dismiss() }
                         }.disabled(!valid).accessibilityIdentifier("mac-save-machine")
@@ -78,6 +83,7 @@ struct MacMachineEditor: View {
                         switch item {
                         case .keys: MacSSHKeyManager(mac: mac)
                         case .install: if let mac { TerminalKeyInstallView(mac: mac).frame(minWidth: 520, minHeight: 500) }
+                        case .pro: DirectProView().frame(minWidth: 480, minHeight: 460)
                         }
                     }.modifier(MacSheetPrivacyCover())
                 }

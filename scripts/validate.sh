@@ -16,6 +16,7 @@ python3 scripts/validate_ci.py
 python3 scripts/validate_open_source_policy.py
 python3 scripts/validate_repository_material.py
 python3 scripts/verify_direct_client_dependencies.py
+python3 scripts/verify_dependency_checkout_provenance.py
 python3 scripts/validate_dependency_policy.py
 python3 scripts/validate_update_policy.py
 python3 scripts/validate_permanent_apple_targets.py

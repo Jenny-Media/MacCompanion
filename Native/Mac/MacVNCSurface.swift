@@ -7,7 +7,8 @@ struct MacVNCSurface: NSViewRepresentable {
     func makeNSView(context: Context) -> MacVNCInputView { MacVNCInputView(session: session) }
     func updateNSView(_ view: MacVNCInputView, context: Context) {
         view.update(image: session.image, crop: session.crop, zoom: session.zoom, pan: session.pan,
-                    enabled: session.canInput, trackpad: session.trackpad)
+                    enabled: session.canInput, trackpad: session.trackpad, cursorImage: session.cursorImage,
+                    cursorHotspot: session.cursorHotspot, cursorPosition: session.cursorPosition)
     }
     static func dismantleNSView(_ view: MacVNCInputView, coordinator: ()) { view.detach() }
 }
@@ -21,6 +22,9 @@ struct MacVNCSurface: NSViewRepresentable {
     private var pan = CGPoint.zero
     private var enabled = false
     private var trackpad = false
+    private var cursorImage: NSImage?
+    private var cursorHotspot = CGPoint.zero
+    private var cursorPosition = CGPoint.zero
     private var keys = MacVNCKeyboardState()
     private var composition = MacVNCComposition()
     private var textEvent: NSEvent?
@@ -41,9 +45,11 @@ struct MacVNCSurface: NSViewRepresentable {
     required init?(coder: NSCoder) { fatalError("init(coder:) is unavailable") }
     private var destination: CGRect { MacVNCGeometry.destination(crop: crop, viewport: bounds.size, zoom: zoom, pan: pan) }
     private var admitsInput: Bool { enabled && session?.canInput == true && window?.isKeyWindow == true && window?.firstResponder === self }
-    func update(image: NSImage?, crop: CGRect, zoom: CGFloat, pan: CGPoint, enabled: Bool, trackpad: Bool) {
+    func update(image: NSImage?, crop: CGRect, zoom: CGFloat, pan: CGPoint, enabled: Bool, trackpad: Bool,
+                cursorImage: NSImage?, cursorHotspot: CGPoint, cursorPosition: CGPoint) {
         if self.enabled && (!enabled || self.crop != crop || self.trackpad != trackpad) { releaseInput() }
         self.image = image; self.crop = crop; self.zoom = zoom; self.pan = pan
+        self.cursorImage = cursorImage; self.cursorHotspot = cursorHotspot; self.cursorPosition = cursorPosition
         self.enabled = enabled; self.trackpad = trackpad; needsDisplay = true
         setAccessibilityHidden(!enabled)
         window?.invalidateCursorRects(for: self)
@@ -70,12 +76,12 @@ struct MacVNCSurface: NSViewRepresentable {
         context.saveGState(); context.interpolationQuality = .high
         context.translateBy(x: destination.minX, y: destination.maxY); context.scaleBy(x: 1, y: -1)
         context.draw(cropped, in: CGRect(origin: .zero, size: destination.size)); context.restoreGState()
-        if trackpad, let session, crop.contains(session.cursorPosition) {
+        if trackpad, crop.contains(cursorPosition) {
             let scale = destination.width / crop.width
-            let point = CGPoint(x: destination.minX + (session.cursorPosition.x - crop.minX) * scale,
-                                y: destination.minY + (session.cursorPosition.y - crop.minY) * scale)
-            if let cursor = session.cursorImage {
-                cursor.draw(in: CGRect(x: point.x - session.cursorHotspot.x * scale, y: point.y - session.cursorHotspot.y * scale,
+            let point = CGPoint(x: destination.minX + (cursorPosition.x - crop.minX) * scale,
+                                y: destination.minY + (cursorPosition.y - crop.minY) * scale)
+            if let cursor = cursorImage {
+                cursor.draw(in: CGRect(x: point.x - cursorHotspot.x * scale, y: point.y - cursorHotspot.y * scale,
                     width: cursor.size.width * scale, height: cursor.size.height * scale), from: .zero, operation: .sourceOver, fraction: 1,
                     respectFlipped: true, hints: nil)
             } else {
@@ -91,7 +97,7 @@ struct MacVNCSurface: NSViewRepresentable {
         super.setFrameSize(newSize)
     }
     override func resetCursorRects() {
-        if let image = session?.cursorImage, !trackpad { addCursorRect(bounds, cursor: NSCursor(image: image, hotSpot: session?.cursorHotspot ?? .zero)) }
+        if let image = cursorImage, !trackpad { addCursorRect(bounds, cursor: NSCursor(image: image, hotSpot: cursorHotspot)) }
         else { addCursorRect(bounds, cursor: .crosshair) }
     }
     override func mouseDown(with event: NSEvent) { click(event, bit: 1, down: true) }
@@ -223,6 +229,6 @@ struct MacVNCSurface: NSViewRepresentable {
             .font: NSFont.systemFont(ofSize: 14), .foregroundColor: NSColor.labelColor, .underlineStyle: NSUnderlineStyle.single.rawValue])
     }
     private func removeObservers() { observers.forEach(NotificationCenter.default.removeObserver); observers = [] }
-    func detach() { releaseInput(); removeObservers(); session?.resetInput = nil; session = nil; image = nil }
+    func detach() { releaseInput(); removeObservers(); session?.resetInput = nil; session = nil; image = nil; cursorImage = nil }
 }
 #endif

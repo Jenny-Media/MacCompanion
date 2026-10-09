@@ -43,7 +43,11 @@ def main():
         roots = [ROOT / 'Native/Mac', ROOT / 'Native/VNC', ROOT / 'Native/Terminal', ROOT / 'Native/Dependencies',
                  ROOT / 'Apps/MacCompanionMac/Assets.xcassets']
         files = [p for folder in roots for p in sorted(folder.rglob('*')) if p.is_file()]
-        files += [Path(__file__), ROOT / 'scripts/direct_mac_development_signing.py', ROOT / 'spec/privacy-manifest/v0/targets/mac-containing-app/PrivacyInfo.xcprivacy']
+        files += [Path(__file__), *[ROOT / 'scripts' / name for name in [
+            'direct_mac_development_signing.py', 'verify_direct_client_dependencies.py',
+            'prepare_swiftterm_build_tool.py', 'dependency_checkout_provenance.py']],
+            ROOT / 'spec/dependency-policy/v0/direct-client-development.json',
+            ROOT / 'spec/privacy-manifest/v0/targets/mac-containing-app/PrivacyInfo.xcprivacy']
         return {str(p.relative_to(ROOT)): sha(p) for p in files}
     application_inputs = source_inputs()
     args.output = args.output.resolve()
@@ -159,12 +163,17 @@ def main():
     expected = json.loads((ROOT / 'Native/Terminal/Package.resolved').read_text())['pins']
     if json.loads(lock_path.read_text())['pins'] != expected:
         raise SystemExit('Resolved package revisions changed. Use the admitted complete lockfile.')
+    from dependency_checkout_provenance import verify_checkouts
+    package_sources = verify_checkouts(args.output / 'DerivedData/SourcePackages', expected)
     from prepare_swiftterm_build_tool import prepare
     prepare(args.output / 'DerivedData')
     with (args.output / 'build.log').open('w') as log:
         run('xcodebuild', '-project', project_path, '-scheme', 'MacCompanion', '-configuration', 'Debug',
             '-destination', 'generic/platform=macOS', '-derivedDataPath', args.output / 'DerivedData',
             '-onlyUsePackageVersionsFromResolvedFile', '-skipPackagePluginValidation', 'build', stdout=log, stderr=subprocess.STDOUT)
+    if json.loads(lock_path.read_text())['pins'] != expected:
+        raise SystemExit('Resolved package revisions changed during the build.')
+    package_sources_after = verify_checkouts(args.output / 'DerivedData/SourcePackages', expected, previous=package_sources)
     if source_inputs() != application_inputs:
         raise SystemExit('Application sources changed during the build. Rerun against a stable source snapshot.')
     app = args.output / 'DerivedData/Build/Products/Debug/MacCompanion.app'
@@ -175,7 +184,8 @@ def main():
     report = {'schema': 1, 'kind': 'native-macos-direct-client-build', 'arch': args.arch, 'toolchain': version,
               'sourceInputs': application_inputs, 'sourceRevision': capture('git', '-C', ROOT, 'rev-parse', 'HEAD'),
               'sourceWorktreeDirty': bool(capture('git', '-C', ROOT, 'status', '--porcelain')),
-              'dependencies': {'LibVNCClient': lock['revision'], 'OpenSSL': inputs, 'SwiftPackages': expected},
+              'dependencies': {'LibVNCClient': lock['revision'], 'OpenSSL': inputs, 'SwiftPackages': expected,
+                               'SwiftPackageSources': {'beforeBuild': package_sources, 'afterBuild': package_sources_after}},
               'app': str(app), 'executableSHA256': sha(executable),
               'artifactFiles': {str(p.relative_to(app)): sha(p) for p in sorted(app.rglob('*')) if p.is_file() and not p.is_symlink()},
               'signedDeviceAcceptance': False,

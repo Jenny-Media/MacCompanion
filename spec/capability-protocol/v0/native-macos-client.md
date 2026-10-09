@@ -24,6 +24,31 @@ PTY channel. SwiftTerm's AppKit surface supplies terminal bytes and PTY resize.
 Remote terminal titles/OSC clipboard/link requests cannot silently affect local
 identity, clipboard or launch applications. Local copy/paste remains explicit.
 
+Native Terminal local clipboard, selection/find and link actions recheck local
+unlock at execution. Lock clears selection, composition and embedded Find text,
+ends field editing and revokes the window responder. Each owner records only
+admitted mouse presses and Kitty press/repeat reports that negotiated release
+events. Focus loss releases that
+owner's held reports once, using their original protocol and key identity.
+Protocol query replies are not held input. Cleanup may finish while locked, but
+cannot admit a new press, replay after reconnect, or exceed the existing bounded
+SSH write budget. Teardown discards the retired ledger; another owner is untouched.
+
+SGR and SGR-pixel releases retain the original button identity, including normal
+AppKit button-up reports. Legacy X10/UTF-8/urxvt releases use their generic release
+code. Kitty functional presses with implicit key number 1 or legacy SS3 encoding
+require a matching CSI event-type-3 release when event reporting is enabled.
+
+Cursor-only VNC notifications invalidate native drawing and cursor rectangles
+without requiring a framebuffer update. Each new VNC window consumes at most one
+saved-login attempt after unlock. Later unlock, cancellation and disconnect never
+automatically dial. New machine saves recheck current local creation entitlement;
+editing a still-existing record and accepting cloud records remain separate.
+
+Development build provenance verifies every remote package checkout against the
+admitted revision and clean source contents before and after compilation. A
+dirty or changing checkout cannot produce a successful pinned build report.
+
 Sync uses the unchanged direct-client cloud records and service. macOS selects
 the data-protection Keychain and the existing iPhone application's authorized
 access group. Missing signing/access-group configuration fails visibly; it never

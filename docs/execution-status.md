@@ -7,15 +7,25 @@ iPhone iCloud library sync. No custom Mac server or helper is started. See
 instructions, current evidence and remaining gates. Earlier Agent work is
 preserved separately; this implementation starts from client checkpoint `ce85d33`.
 
-Stable Xcode 27.0 builds and signs the Apple Silicon client; all 161 application
+Stable Xcode 27.0 builds and signs the Apple Silicon client; all 168 application
 source inputs match its report. Its existing development identity, certificate
 and exact Mac/local plus iPhone/cloud Keychain groups verify. Hosted Mac QA
-completes thirteen tests: twelve pass, one GUI key-window check skips, none fail.
-This supersedes the earlier stalled test-session preparation. Native input model
-checks pass sixteen cases, and required repository validation passes with 134
-indexed fixtures. The latest iPhone Simulator app build includes the shared
-readiness fix and passes. Its previously completed suite has 174 passes,
-thirteen optional skips and no failures; it was not rerun for this polish.
+completes twenty tests: nineteen pass, one GUI key-window check skips, none fail.
+This supersedes the earlier stalled preparation and earlier hosted results.
+Native input checks pass 59 cases; required repository validation passes with
+134 indexed fixtures. The latest iPhone Simulator app build and full suite pass:
+174 passes, thirteen optional skips and no failures.
+
+Fresh-review fixes recheck Terminal Copy/Find/link actions, clear embedded Find
+text and revoke field editors on lock, release each owner's admitted Kitty keys
+and mouse buttons once after focus loss, and discard cleanup on shell retirement.
+Real SSH regressions cover locked cleanup, ordering, normal key-up, independent
+owners and no reconnect replay. Cursor-only reports update drawing/cursor
+rectangles; tests verify moved overlay pixels on an unchanged framebuffer.
+Desktop/Trackpad use a saved login for one initial attempt after unlock. Save
+rechecks creation access against current records/trial state while retaining a
+denied draft. Every remote Swift package source is verified before/after builds:
+12 packages, 3,980 tracked files and 13 disposable-cache regressions pass.
 
 Screenshot review fixes Trackpad's readiness stall: an authenticated input-only
 owner reports Connected without presented pixels; Desktop still waits for a

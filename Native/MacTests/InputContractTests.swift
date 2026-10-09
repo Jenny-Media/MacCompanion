@@ -6,6 +6,45 @@ import Foundation
         let data = try Data(contentsOf: URL(fileURLWithPath: CommandLine.arguments[1]))
         let fixture = try JSONSerialization.jsonObject(with: data) as! [String: Any]
         var count = 0
+        for value in fixture["terminalSGRReleaseIdentity"] as! [[String: Any]] {
+            let input = (value["input"] as! [Int]).map(UInt8.init)
+            let output = (value["output"] as! [Int]).map(UInt8.init)
+            precondition(MacTerminalMouseReport.correctingSGRRelease(input[...], button: value["button"] as? Int) == output)
+            count += 1
+        }
+        for value in fixture["terminalFocusRelease"] as! [[String: Any]] {
+            var held = MacTerminalHeldInput()
+            let press = (value["press"] as! [Int]).map(UInt8.init)
+            let release = (value["release"] as! [Int]).map(UInt8.init)
+            precondition(held.observe(press[...], keyboardEvents: value["keyboardEvents"] as! Bool))
+            precondition(held.releaseAll().packets == (release.isEmpty ? [] : [release]))
+            precondition(held.releaseAll().packets.isEmpty)
+            count += 1
+        }
+        var held = MacTerminalHeldInput()
+        for text in ["\u{1b}[97u", "\u{1b}[97;1:2u", "\u{1b}[97;1:3u"] {
+            precondition(held.observe(Array(text.utf8)[...], keyboardEvents: true))
+        }
+        precondition(held.releaseAll().packets.isEmpty)
+        precondition(held.observe(Array("\u{1b}[<0;12;21M".utf8)[...], keyboardEvents: false))
+        precondition(held.observe(Array("\u{1b}[<32;14;22M".utf8)[...], keyboardEvents: false))
+        precondition(held.releaseAll().packets == [Array("\u{1b}[<0;14;22m".utf8)])
+        for key in 1...256 { precondition(held.observe(Array("\u{1b}[\(key)u".utf8)[...], keyboardEvents: true)) }
+        precondition(!held.observe(Array("\u{1b}[257u".utf8)[...], keyboardEvents: true))
+        precondition(held.releaseAll().packets.count == 256)
+        count += 3
+        var startup = MacVNCInitialLogin()
+        var reads = 0
+        func read() -> String? { reads += 1; return "synthetic" }
+        let lockedStartup = try startup.loadIfNeeded(canAccess: false, hasExplicitLogin: false, usable: { !$0.isEmpty }, read: read)
+        precondition(lockedStartup == nil)
+        precondition(reads == 0)
+        let firstStartup = try startup.loadIfNeeded(canAccess: true, hasExplicitLogin: false, usable: { !$0.isEmpty }, read: read)
+        precondition(firstStartup?.shouldConnect == true)
+        let repeatedStartup = try startup.loadIfNeeded(canAccess: true, hasExplicitLogin: false, usable: { !$0.isEmpty }, read: read)
+        precondition(repeatedStartup == nil)
+        precondition(reads == 1)
+        count += 1
         for value in fixture["terminalMouseReports"] as! [[String: Any]] {
             let bytes = (value["bytes"] as! [Int]).map(UInt8.init)
             precondition(MacTerminalMouseReport.contains(bytes[...]) == value["mouse"] as! Bool)

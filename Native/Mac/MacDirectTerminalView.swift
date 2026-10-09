@@ -131,7 +131,7 @@ struct MacDirectTerminalView: View {
         .onReceive(NotificationCenter.default.publisher(for: VNCSessionPreferences.actionsChanged)) { _ in loadControls() }
         .onChange(of: session.connected) { _, connected in if connected { password = "" } }
         .onChange(of: DirectAppLockV1.shared.canAccess) { _, allowed in
-            if !allowed { sheet = nil; password = ""; session.background() }
+            if !allowed { sheet = nil; password = ""; surface.view?.lockLocalActions(); session.background() }
             else { session.foreground(); if loadedInitialLogin { loadLogin(); loadControls() } else { loadInitialLogin() } }
         }
     }
@@ -208,6 +208,7 @@ struct MacTerminalSurface: NSViewRepresentable {
     func makeNSView(context: Context) -> MacRemoteTerminalSurface {
         let view = MacRemoteTerminalSurface(frame: CGRect(x: 0, y: 0, width: 700, height: 440), font: .monospacedSystemFont(ofSize: fontSize, weight: .regular))
         view.session = session; view.terminalDelegate = context.coordinator; view.installInputGate()
+        session.suspendInput = { [weak view] in view?.releaseHeldInput() }
         handle.view = view
         view.setAccessibilityElement(true)
         view.setAccessibilityRole(.group)
@@ -223,18 +224,22 @@ struct MacTerminalSurface: NSViewRepresentable {
         view.effectiveAppearance.performAsCurrentDrawingAppearance {
             view.nativeForegroundColor = .textColor; view.nativeBackgroundColor = .textBackgroundColor
         }
-        if session.connecting && !view.wasConnecting { view.getTerminal().resetToInitialState() }
+        if session.connecting && !view.wasConnecting { view.releaseHeldInput(); view.getTerminal().resetToInitialState() }
         view.wasConnecting = session.connecting
         if session.connected, view.window?.isKeyWindow == true, view.window?.firstResponder == nil { view.window?.makeFirstResponder(view) }
     }
     static func dismantleNSView(_ view: MacRemoteTerminalSurface, coordinator: Coordinator) {
-        view.session?.received = nil; view.detachInputGate(); view.session = nil; view.terminalDelegate = nil
+        view.releaseHeldInput(); view.session?.received = nil; view.session?.suspendInput = nil
+        view.detachInputGate(); view.session = nil; view.terminalDelegate = nil
     }
     @MainActor final class Coordinator: NSObject, @preconcurrency TerminalViewDelegate {
         private weak var session: DirectTerminalSession?
         init(session: DirectTerminalSession) { self.session = session }
         func sizeChanged(source: TerminalView, newCols: Int, newRows: Int) { session?.resize(columns: newCols, rows: newRows) }
-        func send(source: TerminalView, data: ArraySlice<UInt8>) { session?.send(Array(data)) }
+        func send(source: TerminalView, data: ArraySlice<UInt8>) {
+            guard let surface = source as? MacRemoteTerminalSurface, surface.admitGeneratedOutput(data) else { return }
+            session?.send(Array(data))
+        }
         func setTerminalTitle(source: TerminalView, title: String) {}
         func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {}
         func scrolled(source: TerminalView, position: Double) {}
@@ -243,10 +248,13 @@ struct MacTerminalSurface: NSViewRepresentable {
         func clipboardCopy(source: TerminalView, content: Data) {}
         func clipboardRead(source: TerminalView) -> Data? { nil }
         func requestOpenLink(source: TerminalView, link: String, params: [String: String]) {
+            guard let surface = source as? MacRemoteTerminalSurface, surface.localActionsAllowed else { return }
             guard let url = URL(string: link), ["https", "http"].contains(url.scheme?.lowercased() ?? "") else { return }
             let alert = NSAlert(); alert.messageText = "Open link in your browser?"; alert.informativeText = url.absoluteString
             alert.addButton(withTitle: "Open"); alert.addButton(withTitle: "Cancel")
-            if alert.runModal() == .alertFirstButtonReturn { NSWorkspace.shared.open(url) }
+            if alert.runModal() == .alertFirstButtonReturn, surface.accessAllowed(), session?.connected == true {
+                NSWorkspace.shared.open(url)
+            }
         }
     }
 }
@@ -261,9 +269,58 @@ struct MacTerminalSurface: NSViewRepresentable {
         getTerminal().semanticPromptClickBehavior = .disabled
     }
     weak var session: DirectTerminalSession?
+    var accessAllowed: () -> Bool = { DirectAppLockV1.shared.canAccess }
+    var copyPasteboard: NSPasteboard = .general
     var wasConnecting = false
     private var inputMonitor: Any?
-    private var admitsInput: Bool { session?.connected == true && DirectAppLockV1.shared.canAccess && window?.isKeyWindow == true && window?.firstResponder === self }
+    private var observations: [NSObjectProtocol] = []
+    private var heldInput = MacTerminalHeldInput()
+    private var protocolOutputDepth = 0
+    private var releasedButton: Int?
+    private var admitsInput: Bool { session?.connected == true && accessAllowed() && window?.isKeyWindow == true && window?.firstResponder === self }
+    var localActionsAllowed: Bool { admitsInput }
+    override var hasFocus: Bool {
+        get { super.hasFocus }
+        set { if !newValue, session != nil { releaseHeldInput() }; super.hasFocus = newValue }
+    }
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        observations.forEach(NotificationCenter.default.removeObserver); observations = []
+        guard let window else { releaseHeldInput(); return }
+        for (name, object) in [(NSWindow.didResignKeyNotification, window as AnyObject),
+                               (NSApplication.didResignActiveNotification, NSApplication.shared as AnyObject)] {
+            observations.append(NotificationCenter.default.addObserver(forName: name, object: object, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.releaseHeldInput() }
+            })
+        }
+    }
+    func releaseHeldInput() {
+        session?.releaseNativeInput(heldInput.releaseAll())
+        unmarkText(); inputContext?.discardMarkedText()
+    }
+    func lockLocalActions() {
+        releaseHeldInput(); selectNone()
+        func clearFields(_ view: NSView) {
+            if let field = view as? NSTextField {
+                (field.currentEditor() as? NSTextView)?.string = ""
+                field.stringValue = ""
+            }
+            view.subviews.forEach(clearFields)
+        }
+        clearFields(self)
+        let hide = NSMenuItem(); hide.tag = NSTextFinder.Action.hideFindInterface.rawValue
+        super.performTextFinderAction(hide)
+        window?.endEditing(for: nil); window?.makeFirstResponder(nil)
+    }
+    func admitGeneratedOutput(_ data: ArraySlice<UInt8>) -> Bool {
+        let mouse = MacTerminalMouseReport.contains(data)
+        guard (!mouse && protocolOutputDepth > 0) || admitsInput else { return false }
+        guard heldInput.observe(data, keyboardEvents: protocolOutputDepth == 0 && getTerminal().keyboardEnhancementFlags.contains(.reportEvents),
+                                releasedButton: releasedButton) else {
+            session?.failNativeInputAdmission(); return false
+        }
+        return true
+    }
     // SwiftTerm's keyDown is public, but not open. Gate AppKit event delivery
     // for this responder without changing the pinned dependency or blocking
     // terminal protocol responses generated while a window is in the background.
@@ -291,8 +348,11 @@ struct MacTerminalSurface: NSViewRepresentable {
         }
         return admitsInput ? event : nil
     }
-    func detachInputGate() { if let inputMonitor { NSEvent.removeMonitor(inputMonitor) }; inputMonitor = nil }
-    private var admitsAction: Bool { session?.connected == true && DirectAppLockV1.shared.canAccess && window?.isKeyWindow == true }
+    func detachInputGate() {
+        if let inputMonitor { NSEvent.removeMonitor(inputMonitor) }; inputMonitor = nil
+        observations.forEach(NotificationCenter.default.removeObserver); observations = []
+    }
+    private var admitsAction: Bool { session?.connected == true && accessAllowed() && window?.isKeyWindow == true }
     func sendText(_ text: String) {
         guard admitsAction, !text.isEmpty, text.utf8.count <= 65536 else { return }
         let payload = getTerminal().bracketedPasteMode ? "\u{1b}[200~" + text + "\u{1b}[201~" : text
@@ -317,17 +377,33 @@ struct MacTerminalSurface: NSViewRepresentable {
     }
     override func insertText(_ insertString: Any, replacementRange: NSRange) { guard admitsInput else { return }; super.insertText(insertString, replacementRange: replacementRange) }
     override func paste(_ sender: Any) { guard admitsInput else { return }; super.paste(sender) }
+    override func copy(_ sender: Any) {
+        guard admitsInput, let text = getSelection() else { return }
+        copyPasteboard.clearContents(); copyPasteboard.setString(text, forType: .string)
+    }
+    override func validateUserInterfaceItem(_ item: NSValidatedUserInterfaceItem) -> Bool {
+        admitsInput && super.validateUserInterfaceItem(item)
+    }
+    override func performFindPanelAction(_ sender: Any?) { guard admitsInput else { return }; super.performFindPanelAction(sender) }
+    override func performTextFinderAction(_ sender: Any?) { guard admitsInput else { return }; super.performTextFinderAction(sender) }
     override func mouseDown(with event: NSEvent) {
         guard admitsAction else { return }
         window?.makeFirstResponder(self)
         guard admitsInput else { return }
         super.mouseDown(with: event)
     }
-    override func mouseUp(with event: NSEvent) { guard admitsInput else { return }; super.mouseUp(with: event) }
+    override func mouseUp(with event: NSEvent) {
+        guard admitsInput else { return }
+        releasedButton = event.buttonNumber; defer { releasedButton = nil }
+        super.mouseUp(with: event)
+    }
     override func mouseDragged(with event: NSEvent) { guard admitsInput else { return }; super.mouseDragged(with: event) }
     override func send(source: Terminal, data: ArraySlice<UInt8>) {
         guard admitsInput || !MacTerminalMouseReport.contains(data) else { return }
-        super.send(source: source, data: data)
+        protocolOutputDepth += 1; defer { protocolOutputDepth -= 1 }
+        if let corrected = MacTerminalMouseReport.correctingSGRRelease(data, button: releasedButton) {
+            super.send(source: source, data: corrected[...])
+        } else { super.send(source: source, data: data) }
     }
 }
 #endif

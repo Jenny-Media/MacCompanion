@@ -13,6 +13,7 @@ struct MacDirectDesktopView: View {
     @State private var controls = false
     @State private var actions: [VNCQuickAction] = []
     @State private var closed = false
+    @State private var initialLogin = MacVNCInitialLogin()
     init(mac: DirectMacRecordV1, inputOnly: Bool, sessionID: UUID = UUID()) {
         self.mac = mac; self.sessionID = sessionID
         _session = State(initialValue: MacVNCSession(mac: mac, inputOnly: inputOnly))
@@ -109,20 +110,50 @@ struct MacDirectDesktopView: View {
         .background(MacWindowReader(handle: window, initiallyFullScreen: VNCSessionPreferences.fullscreen(mac.id)) {
             VNCSessionPreferences.setFullscreen($0, mac: mac.id)
         }.frame(width: 0, height: 0))
-        .onAppear { loadLogin(); loadActions(); publishStatus() }
+        .onAppear { loadInitialLogin(); loadActions(); publishStatus() }
         .onChange(of: phase) { _, _ in publishStatus() }
         .onReceive(NotificationCenter.default.publisher(for: VNCSessionPreferences.actionsChanged)) { _ in loadActions() }
         .onChange(of: session.connected) { _, value in if value { password = "" } }
         .onReceive(NotificationCenter.default.publisher(for: DirectClientPlatformV1.didEnterBackground)) { _ in
             password = ""; session.pauseInput()
         }
-        .onChange(of: DirectAppLockV1.shared.canAccess) { _, value in if !value { controls = false; password = ""; session.pauseInput() } else { loadLogin() } }
+        .onChange(of: DirectAppLockV1.shared.canAccess) { _, value in
+            if !value { controls = false; password = ""; session.pauseInput() }
+            else if initialLogin.loaded { restoreRememberedPassword() }
+            else { loadInitialLogin() }
+        }
     }
     private func publishStatus() {
         guard !closed else { return }
         MacConnectionRegistry.shared.update(id: sessionID, macID: mac.id, mode: session.inputOnly ? .trackpad : .desktop, phase: phase, window: window)
     }
     private func loadActions() { actions = VNCSessionPreferences.actions(session.inputOnly ? .trackpad : .desktop, legacyMac: mac.id) }
+    private func loadInitialLogin() {
+        guard !closed, !session.connected, !session.connecting else { return }
+        do {
+            guard let saved = try initialLogin.loadIfNeeded(canAccess: DirectAppLockV1.shared.canAccess,
+                hasExplicitLogin: !username.isEmpty || !password.isEmpty, usable: { login in
+                    do {
+                        try MacLoginPolicy.prepareVNC(username: login.username, password: login.password,
+                                                      remember: true, macID: mac.id)
+                        return true
+                    } catch { return false }
+                },
+                read: { try DesktopCredentialStoreV1.readChecked(mac.id) }) else { return }
+            issue = nil
+            username = saved.login.username; password = saved.login.password; remember = true
+            if saved.shouldConnect { connect() }
+        } catch { issue = .make(.savedDataUnavailable) }
+    }
+    private func restoreRememberedPassword() {
+        guard DirectAppLockV1.shared.canAccess, !closed, !session.connected, !session.connecting,
+              remember, password.isEmpty, !username.isEmpty else { return }
+        do {
+            if let saved = try DesktopCredentialStoreV1.readChecked(mac.id), saved.username == username {
+                password = saved.password
+            }
+        } catch { issue = .make(.savedDataUnavailable) }
+    }
     private func loadLogin() {
         guard DirectAppLockV1.shared.canAccess, !session.connected, !session.connecting else { return }
         issue = nil

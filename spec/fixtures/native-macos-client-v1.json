@@ -101,7 +101,8 @@
     "lockedSettingsMutation": "reject",
     "lockedEstablishedVNC": "retain connection and suppress input",
     "lockedInitialVNC": "retire connection without saving login",
-    "terminalSemanticPromptClick": "disabled; no delayed cursor-key input after focus loss"
+    "terminalSemanticPromptClick": "disabled; no delayed cursor-key input after focus loss",
+    "lockedTerminalLocalActions": "reject clipboard, selection/find and link actions; clear selection/composition and revoke responder"
   },
   "terminalInputAdmission": [
     {
@@ -330,6 +331,582 @@
     {
       "bytes": [],
       "mouse": false
+    }
+  ],
+  "terminalHeldInput": {
+    "maximumKeys": 256,
+    "maximumMouseButtons": 3,
+    "focusLoss": "release own admitted presses once",
+    "lockedCleanup": "releases only on existing owner",
+    "retirement": "discard without replay",
+    "protocolReplies": "never recorded as user presses"
+  },
+  "terminalFocusRelease": [
+    {
+      "name": "sgr",
+      "press": [
+        27,
+        91,
+        60,
+        48,
+        59,
+        49,
+        50,
+        59,
+        50,
+        49,
+        77
+      ],
+      "release": [
+        27,
+        91,
+        60,
+        48,
+        59,
+        49,
+        50,
+        59,
+        50,
+        49,
+        109
+      ],
+      "keyboardEvents": false
+    },
+    {
+      "name": "sgr-right",
+      "press": [
+        27,
+        91,
+        60,
+        49,
+        59,
+        49,
+        50,
+        59,
+        50,
+        49,
+        77
+      ],
+      "release": [
+        27,
+        91,
+        60,
+        49,
+        59,
+        49,
+        50,
+        59,
+        50,
+        49,
+        109
+      ],
+      "keyboardEvents": false
+    },
+    {
+      "name": "sgr-pixel",
+      "press": [
+        27,
+        91,
+        60,
+        50,
+        59,
+        49,
+        48,
+        48,
+        59,
+        50,
+        48,
+        48,
+        77
+      ],
+      "release": [
+        27,
+        91,
+        60,
+        50,
+        59,
+        49,
+        48,
+        48,
+        59,
+        50,
+        48,
+        48,
+        109
+      ],
+      "keyboardEvents": false
+    },
+    {
+      "name": "urxvt",
+      "press": [
+        27,
+        91,
+        51,
+        50,
+        59,
+        49,
+        50,
+        59,
+        50,
+        49,
+        77
+      ],
+      "release": [
+        27,
+        91,
+        51,
+        53,
+        59,
+        49,
+        50,
+        59,
+        50,
+        49,
+        77
+      ],
+      "keyboardEvents": false
+    },
+    {
+      "name": "x10",
+      "press": [
+        27,
+        91,
+        77,
+        32,
+        44,
+        53
+      ],
+      "release": [
+        27,
+        91,
+        77,
+        35,
+        44,
+        53
+      ],
+      "keyboardEvents": false
+    },
+    {
+      "name": "utf8",
+      "press": [
+        27,
+        91,
+        77,
+        32,
+        196,
+        172,
+        198,
+        144
+      ],
+      "release": [
+        27,
+        91,
+        77,
+        35,
+        196,
+        172,
+        198,
+        144
+      ],
+      "keyboardEvents": false
+    },
+    {
+      "name": "kitty-letter",
+      "press": [
+        27,
+        91,
+        57,
+        55,
+        117
+      ],
+      "release": [
+        27,
+        91,
+        57,
+        55,
+        59,
+        49,
+        58,
+        51,
+        117
+      ],
+      "keyboardEvents": true
+    },
+    {
+      "name": "kitty-arrow",
+      "press": [
+        27,
+        91,
+        49,
+        59,
+        50,
+        65
+      ],
+      "release": [
+        27,
+        91,
+        49,
+        59,
+        49,
+        58,
+        51,
+        65
+      ],
+      "keyboardEvents": true
+    },
+    {
+      "name": "kitty-function",
+      "press": [
+        27,
+        91,
+        49,
+        53,
+        59,
+        49,
+        126
+      ],
+      "release": [
+        27,
+        91,
+        49,
+        53,
+        59,
+        49,
+        58,
+        51,
+        126
+      ],
+      "keyboardEvents": true
+    },
+    {
+      "name": "kitty-alternates-text",
+      "press": [
+        27,
+        91,
+        57,
+        55,
+        58,
+        54,
+        53,
+        58,
+        57,
+        55,
+        59,
+        50,
+        59,
+        54,
+        53,
+        117
+      ],
+      "release": [
+        27,
+        91,
+        57,
+        55,
+        59,
+        49,
+        58,
+        51,
+        117
+      ],
+      "keyboardEvents": true
+    },
+    {
+      "name": "kitty-repeat",
+      "press": [
+        27,
+        91,
+        57,
+        55,
+        59,
+        49,
+        58,
+        50,
+        117
+      ],
+      "release": [
+        27,
+        91,
+        57,
+        55,
+        59,
+        49,
+        58,
+        51,
+        117
+      ],
+      "keyboardEvents": true
+    },
+    {
+      "name": "mouse-wheel",
+      "press": [
+        27,
+        91,
+        60,
+        54,
+        52,
+        59,
+        49,
+        50,
+        59,
+        50,
+        49,
+        77
+      ],
+      "release": [],
+      "keyboardEvents": false
+    },
+    {
+      "name": "mouse-motion-no-button",
+      "press": [
+        27,
+        91,
+        60,
+        51,
+        53,
+        59,
+        49,
+        50,
+        59,
+        50,
+        49,
+        77
+      ],
+      "release": [],
+      "keyboardEvents": false
+    },
+    {
+      "name": "protocol-cursor-position",
+      "press": [
+        27,
+        91,
+        50,
+        52,
+        59,
+        56,
+        48,
+        82
+      ],
+      "release": [],
+      "keyboardEvents": false
+    },
+    {
+      "name": "ordinary-text",
+      "press": [
+        115,
+        121,
+        110,
+        116,
+        104,
+        101,
+        116,
+        105,
+        99
+      ],
+      "release": [],
+      "keyboardEvents": false
+    },
+    {
+      "name": "kitty-not-negotiated",
+      "press": [
+        27,
+        91,
+        57,
+        55,
+        117
+      ],
+      "release": [],
+      "keyboardEvents": false
+    },
+    {
+      "name": "kitty-implicit-arrow",
+      "press": [
+        27,
+        91,
+        65
+      ],
+      "release": [
+        27,
+        91,
+        49,
+        59,
+        49,
+        58,
+        51,
+        65
+      ],
+      "keyboardEvents": true
+    },
+    {
+      "name": "kitty-legacy-f1",
+      "press": [
+        27,
+        79,
+        80
+      ],
+      "release": [
+        27,
+        91,
+        49,
+        59,
+        49,
+        58,
+        51,
+        80
+      ],
+      "keyboardEvents": true
+    },
+    {
+      "name": "kitty-legacy-application-arrow",
+      "press": [
+        27,
+        79,
+        65
+      ],
+      "release": [
+        27,
+        91,
+        49,
+        59,
+        49,
+        58,
+        51,
+        65
+      ],
+      "keyboardEvents": true
+    },
+    {
+      "name": "kitty-eight-bit-arrow",
+      "press": [
+        155,
+        65
+      ],
+      "release": [
+        155,
+        49,
+        59,
+        49,
+        58,
+        51,
+        65
+      ],
+      "keyboardEvents": true
+    },
+    {
+      "name": "kitty-eight-bit-f1",
+      "press": [
+        143,
+        80
+      ],
+      "release": [
+        27,
+        91,
+        49,
+        59,
+        49,
+        58,
+        51,
+        80
+      ],
+      "keyboardEvents": true
+    }
+  ],
+  "savedVNCStartup": {
+    "locked": "defer initial load",
+    "validSavedLogin": "one attempt",
+    "laterUnlockOrReappearance": "no retry",
+    "missingUnavailableInvalid": "no attempt",
+    "explicitLogin": "preserve draft"
+  },
+  "cursorPresentation": "cursor image, hotspot and position invalidate drawing and cursor rectangles independently of framebuffer",
+  "saveAdmission": "recheck current creation entitlement at Save; retain draft on denial; existing records stay editable",
+  "terminalSGRReleaseIdentity": [
+    {
+      "button": 0,
+      "input": [
+        27,
+        91,
+        60,
+        48,
+        59,
+        49,
+        50,
+        59,
+        50,
+        49,
+        109
+      ],
+      "output": [
+        27,
+        91,
+        60,
+        48,
+        59,
+        49,
+        50,
+        59,
+        50,
+        49,
+        109
+      ]
+    },
+    {
+      "button": 1,
+      "input": [
+        27,
+        91,
+        60,
+        48,
+        59,
+        49,
+        50,
+        59,
+        50,
+        49,
+        109
+      ],
+      "output": [
+        27,
+        91,
+        60,
+        49,
+        59,
+        49,
+        50,
+        59,
+        50,
+        49,
+        109
+      ]
+    },
+    {
+      "button": 2,
+      "input": [
+        27,
+        91,
+        60,
+        48,
+        59,
+        49,
+        50,
+        59,
+        50,
+        49,
+        109
+      ],
+      "output": [
+        27,
+        91,
+        60,
+        50,
+        59,
+        49,
+        50,
+        59,
+        50,
+        49,
+        109
+      ]
     }
   ]
 }

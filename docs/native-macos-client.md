@@ -27,6 +27,12 @@ an already presented sheet cannot retain visible saved text while locked.
 Connection-setting mutations recheck app unlock when their actions execute.
 Terminal mouse and wheel events require the same key-window and responder
 admission as typed input, while background terminal protocol replies continue.
+Terminal Copy and Find recheck unlock when invoked. Lock clears selection,
+composition and embedded Find text, ends field editing and revokes the window's
+responder. Each window tracks at most 256 held Kitty key reports and three mouse
+buttons. Focus loss sends their matching releases once through that SSH owner,
+with a 16 KiB cleanup limit inside the existing 64 KiB write budget. Cleanup can
+finish while locked; it cannot admit new input or replay into a replacement shell.
 The pinned frontend's synthesized movement callback is also gated at its mouse
 report output, independently of AppKit's local-monitor ordering.
 Optional OSC133 prompt-click cursor navigation is disabled because its delayed
@@ -44,8 +50,13 @@ committed Unicode uses the shared keyboard owner. A local preedit indicator and
 candidate position support input methods; losing focus discards the draft.
 Actual Chinese/character-picker interaction remains a native GUI acceptance case.
 
-New VNC logins match iPhone's retention and field validation rules. New SSH key
-logins recheck the displayed key against current Pro/free-key access. Terminal
+New VNC logins match iPhone's retention and field validation rules. Each new
+Desktop/Trackpad window consumes one usable saved-login attempt after unlock;
+later unlocks only restore a cleared remembered password for the same account.
+Cursor-only reports invalidate drawing and native cursor rectangles independently
+of framebuffer changes. Save rechecks the current machine count and Pro/trial
+access; existing records remain editable and a denied creation keeps its draft.
+New SSH key logins recheck the displayed key against current Pro/free-key access. Terminal
 uses a saved login for one initial attempt after local unlock; later cancellation,
 disconnect and recovery require an explicit new-shell action. Closing a controls
 sheet preserves an explicitly selected password login. Automatic key installation,
@@ -91,6 +102,11 @@ python3 scripts/build_direct_macos.py \
   --openssl-archive /absolute/path/to/openssl-3.5.8.tar.gz \
   --output /private/tmp/maccompanion-direct-macos
 ```
+
+Every resolved remote Swift package must also match its admitted URL/revision and
+Git source bytes/modes before and after compilation. Dirty tracked, untracked,
+ignored and hidden index edits are rejected without resetting the cache. The build
+report records both source-tree snapshots; a clean cache remains reusable.
 
 For usable macOS data protection Keychain, supply `--signing-identity` with the
 existing Apple Development certificate SHA-1, `--team` and `--profile` with an
@@ -170,9 +186,29 @@ The indexed native input suite now contains 31 cases, including the pinned
 frontend's mouse-report formats. Nested-sheet lock/unlock appearance still
 requires native GUI acceptance.
 
-The latest iPhone Simulator app build passes with the shared readiness fix.
-The previously completed iPhone suite has 187 tests: 174 pass, 13 optional skips,
-and none fail; that suite has not been rerun for this screenshot-polish change.
+The fresh review fixes pass required stable-Xcode repository validation with
+134 indexed fixtures and 59 native input contract cases. Thirteen disposable
+Git-cache regressions also pass, including optimized Python; the signed build
+verifies all 12 remote checkouts and 3,980 tracked files before and after building.
+Its 168 source inputs and 24 artifact hashes match the report. A source-exercised
+Save check covers a concurrent addition, trial expiry, locked Save, retained
+draft, existing editing and recreation after removal.
+
+The latest hosted Mac result has nineteen passes, one existing GUI-focus skip,
+and no failures:
+`/private/tmp/maccompanion-direct-macos/QA/Results-1791568474845953000.xcresult`.
+The new real SSH checks exercise private clipboard execution, embedded field
+editor dismissal, Kitty key-up/focus cleanup, mouse release, locked cleanup,
+independent owners and no retired-shell replay. Saved-login tests cover missing,
+unavailable, invalid and explicit fields plus one initial attempt per window.
+Cursor-only SwiftUI updates verify actual overlay pixels, hotspot/position and
+unchanged framebuffer content; they avoid AppKit's transient dirty flag.
+
+The latest iPhone Simulator app build and full suite pass after the shared
+Terminal lifecycle change: 174 pass, 13 optional skips, and none fail. The older
+Desktop lifecycle fixture now explicitly models authentication while waiting for
+fresh pixels, matching the admitted readiness contract. Actual fresh-frame and
+pause/resume transport checks continue to pass.
 
 The user authorized Xcode automation and approved system dialogs locally.
 Native GUI tests authenticate Trackpad to built-in Screen Sharing and Terminal
@@ -235,7 +271,7 @@ temporary directories. Further live VM acceptance requires a recreated fixture.
 | --- | --- | --- |
 | Correct client baseline and preservation | Client checkpoint `ce85d33`; earlier work retained separately | None for the baseline |
 | Native direct client for all three modes | Native SwiftUI/AppKit entry point, reproducible signed build, live native VNC pixels/pointer/text, live pinned SSH PTY probe | Complete native Terminal/Trackpad input and focus acceptance; reconnect/recovery |
-| Feature parity and native input | Shared models and client features, 16 native input contract checks | Native keyboard/input-method, display, resize and recovery flows |
+| Feature parity and native input | Shared models and client features, 59 native input contract checks | Native keyboard/input-method, display, resize and recovery flows |
 | Independent concurrent windows | UUID ownership, immutable selection, independent loopback SSH sessions, live built-in SSH connection closure isolation | Real window focus/input routing and concurrent Desktop/Terminal behavior |
 | Compatible optional iCloud library | Existing schema/group/consent, injected-store merge/offline/deletion checks, verified signing groups | Same-account Mac–iPhone edit/conflict/delete/restart/offline delivery |
 | Preserve iPhone behavior | 174 passed Simulator tests, 13 optional skips; latest app build passes | No additional automated regression failure is known |

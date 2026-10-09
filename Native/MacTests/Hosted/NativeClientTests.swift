@@ -53,7 +53,10 @@ private final class InputTestScroll: NSEvent {
 }
 @MainActor private final class InputCapture: NSObject, @preconcurrency TerminalViewDelegate {
     var sent: [UInt8] = []
-    func send(source: TerminalView, data: ArraySlice<UInt8>) { sent += data }
+    func send(source: TerminalView, data: ArraySlice<UInt8>) {
+        guard let surface = source as? MacRemoteTerminalSurface, surface.admitGeneratedOutput(data) else { return }
+        sent += data
+    }
     func sizeChanged(source: TerminalView, newCols: Int, newRows: Int) {}
     func setTerminalTitle(source: TerminalView, title: String) {}
     func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {}
@@ -205,6 +208,120 @@ private final class InputTestScroll: NSEvent {
 
     func testRealSSHIndependentSessionsResizeCloseAndRecovery() async throws {
         try await runTwoSessions(checkNativeFocus: false)
+    }
+    func testTerminalClipboardLockAndHeldInputCleanupOverRealSSH() async throws {
+        let records = SSHConnections(), hostKey = NIOSSHPrivateKey(ed25519Key: .init())
+        let server = try await ServerBootstrap(group: MultiThreadedEventLoopGroup.singleton).childChannelInitializer { channel in
+            let record = records.accepted(channel)
+            return channel.pipeline.addHandler(NIOSSHHandler(role: .server(.init(hostKeys: [hostKey], userAuthDelegate: SSHTestAuth(record))), allocator: channel.allocator,
+                inboundChildChannelInitializer: { child, _ in child.pipeline.addHandler(SSHTestPTY(record)) }))
+        }.bind(host: "127.0.0.1", port: 0).get()
+        defer { Task { try? await server.close() } }
+        let mac = DirectMacRecordV1(id: UUID(), name: "Synthetic SSH", addresses: ["127.0.0.1"], sshPort: try XCTUnwrap(server.localAddress?.port))
+        let first = DirectTerminalSession(mac: mac), second = DirectTerminalSession(mac: mac)
+        defer { first.stop(); second.stop(); try? TerminalSecretStore.remove(mac.id) }
+        first.connect(username: "synthetic", password: "synthetic-only", remember: false)
+        try await wait { first.trust != nil || !first.connecting }
+        first.answerTrust(true); try await wait { first.connected || !first.connecting }
+        XCTAssertTrue(first.connected, first.status)
+        second.connect(username: "synthetic", password: "synthetic-only", remember: false)
+        try await wait { second.connected || !second.connecting }
+        XCTAssertTrue(second.connected, second.status)
+        let record = try XCTUnwrap(records.connections.first)
+        let view = MacRemoteTerminalSurface(frame: CGRect(x: 0, y: 0, width: 700, height: 440), font: .monospacedSystemFont(ofSize: 14, weight: .regular))
+        let coordinator = MacTerminalSurface.Coordinator(session: first)
+        view.session = first; view.terminalDelegate = coordinator
+        first.suspendInput = { [weak view] in view?.releaseHeldInput() }
+        let window = InputTestWindow(contentRect: view.frame, styleMask: [.titled, .closable], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false; window.contentView = view; window.inputKeyWindow = true
+        defer { window.close(); view.detachInputGate() }
+        window.makeFirstResponder(view)
+        var allowed = true
+        view.accessAllowed = { allowed }
+        let pasteboard = NSPasteboard(name: .init("synthetic-copy-" + UUID().uuidString))
+        defer { pasteboard.releaseGlobally() }
+        view.copyPasteboard = pasteboard
+        view.feed(text: "synthetic-private-output")
+        view.selectAll(); view.copy(view)
+        XCTAssertTrue(try XCTUnwrap(pasteboard.string(forType: .string)).contains("synthetic-private-output"))
+        pasteboard.clearContents(); pasteboard.setString("synthetic-sentinel", forType: .string)
+        allowed = false
+        view.copy(view)
+        XCTAssertEqual(pasteboard.string(forType: .string), "synthetic-sentinel", "Copy must check lock at execution even while selection/responder remain")
+        let copy = NSMenuItem(title: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "")
+        XCTAssertFalse(view.validateUserInterfaceItem(copy))
+        view.lockLocalActions()
+        XCTAssertNil(view.getSelection()); XCTAssertFalse(window.firstResponder === view)
+
+        // Find uses a window field editor, which has its own Copy action.
+        // Exercise that real AppKit responder with private synthetic text.
+        allowed = true
+        let field = NSTextField(string: "synthetic-private-find")
+        view.addSubview(field); field.selectText(nil)
+        XCTAssertTrue((window.firstResponder as? NSTextView)?.isFieldEditor == true)
+        allowed = false; view.lockLocalActions()
+        XCTAssertEqual(field.stringValue, "")
+        XCTAssertFalse((window.firstResponder as? NSTextView)?.isFieldEditor == true)
+        field.removeFromSuperview()
+
+        allowed = true; window.makeFirstResponder(view)
+        view.feed(text: "\u{1b}[>10u\u{1b}[?1000h\u{1b}[?1006h")
+        XCTAssertTrue(view.getTerminal().keyboardEnhancementFlags.contains(.reportEvents))
+        func key(_ type: NSEvent.EventType, repeatKey: Bool = false) throws -> NSEvent {
+            try XCTUnwrap(NSEvent.keyEvent(with: type, location: .zero, modifierFlags: [], timestamp: 0,
+                windowNumber: window.windowNumber, context: nil, characters: "\u{f700}", charactersIgnoringModifiers: "\u{f700}", isARepeat: repeatKey, keyCode: 126))
+        }
+        let press = Array("\u{1b}[A".utf8), release = Array("\u{1b}[1;1:3A".utf8)
+        view.keyDown(with: try key(.keyDown))
+        try await wait("admitted Kitty press") { record.received == press }
+        window.makeFirstResponder(window)
+        view.keyUp(with: try key(.keyUp))
+        NotificationCenter.default.post(name: NSWindow.didResignKeyNotification, object: window)
+        try await wait("one Kitty release on focus loss") { record.received == press + release }
+        window.makeFirstResponder(view)
+        view.keyDown(with: try key(.keyDown)); view.keyUp(with: try key(.keyUp))
+        window.makeFirstResponder(window)
+        try await wait("normal key-up removes held entry") { record.received == press + release + press + release }
+
+        // Only the first owner's outstanding press may be released while local
+        // input is suspended. Protocol cursor replies are never held keys.
+        window.makeFirstResponder(view)
+        view.feed(text: "\u{1b}[6n")
+        try await wait("cursor protocol reply") { record.received.count > 2 * (press.count + release.count) }
+        let before = record.received
+        view.keyDown(with: try key(.keyDown))
+        try await wait("press before lock") { record.received == before + press }
+        allowed = false; first.background(); view.lockLocalActions()
+        second.send([66])
+        try await wait("locked cleanup reaches original SSH only") {
+            record.received == before + press + release && records.connections[1].received == [66]
+        }
+        XCTAssertTrue(second.connected)
+        allowed = true; first.foreground()
+        try await wait("foreground resumes") { !first.suspended }
+        window.makeFirstResponder(view)
+        let mouse = try XCTUnwrap(NSEvent.mouseEvent(with: .leftMouseDown, location: NSPoint(x: 100, y: 100),
+            modifierFlags: [], timestamp: 0, windowNumber: window.windowNumber, context: nil, eventNumber: 1, clickCount: 1, pressure: 1))
+        let beforeMouse = record.received
+        view.mouseDown(with: mouse)
+        try await wait("admitted SGR button press") { record.received.count > beforeMouse.count }
+        let mousePress = Array(record.received.dropFirst(beforeMouse.count))
+        XCTAssertEqual(mousePress.last, 77)
+        let mouseRelease = Array(mousePress.dropLast()) + [UInt8(109)]
+        window.inputKeyWindow = false
+        NotificationCenter.default.post(name: NSWindow.didResignKeyNotification, object: window)
+        try await wait("SGR release on key-window loss") { record.received == beforeMouse + mousePress + mouseRelease }
+        view.releaseHeldInput()
+
+        first.stop()
+        first.connect(username: "synthetic", password: "synthetic-only", remember: false)
+        try await wait { first.connected || !first.connecting }
+        XCTAssertTrue(first.connected, first.status)
+        XCTAssertEqual(records.connections.count, 3)
+        view.releaseHeldInput(); first.resize(columns: 101, rows: 31)
+        try await wait("replacement shell ready") { records.connections[2].size == [101, 31] }
+        XCTAssertTrue(records.connections[2].received.isEmpty, "Retired reports must never replay into a replacement SSH shell")
+        first.stop(); second.stop(); try await server.close()
     }
     func testNativeTerminalWindowFocusRoutesOnlyItsOwnInput() async throws {
         try await runTwoSessions(checkNativeFocus: true)

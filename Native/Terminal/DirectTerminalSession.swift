@@ -80,6 +80,10 @@ private enum TerminalPTY {
     #endif
     private var lifecycleGeneration = UUID()
     private var writeGeneration = UUID()
+    #if os(macOS)
+    private var nativeInputReleaseTail: Task<Void, Never>?
+    private var nativeInputReleaseBytes = 0
+    #endif
     private let activityDefaults: UserDefaults
     private let activityBackend: any RemoteSessionActivityBackend
     var reloadKeyboard: (@MainActor () -> Void)?
@@ -317,22 +321,59 @@ private enum TerminalPTY {
     }
     func send(_ data: [UInt8]) {
         guard connected, !suspended, DirectAppLockV1.shared.canAccess, DirectClientPlatformV1.sessionAvailable, let writer, !data.isEmpty else { return }
-        guard data.count <= 65536, queuedBytes + data.count <= 65536 else { stop(); present(.inputPaused); return }
+        #if os(macOS)
+        let releasingBytes = nativeInputReleaseBytes
+        #else
+        let releasingBytes = 0
+        #endif
+        guard data.count <= 65536, queuedBytes + releasingBytes + data.count <= 65536 else { stop(); present(.inputPaused); return }
         queuedBytes += data.count; let id = generation, writeID = writeGeneration; let previous = writeTail
+        #if os(macOS)
+        let previousRelease = nativeInputReleaseTail
+        #endif
         writeTail = Task {
             await previous?.value
+            #if os(macOS)
+            await previousRelease?.value
+            #endif
             guard generation == id, writeGeneration == writeID, !suspended, !Task.isCancelled, DirectAppLockV1.shared.canAccess, DirectClientPlatformV1.sessionAvailable else { return }
             do { try await writer.write(data); if generation == id && writeGeneration == writeID { queuedBytes -= data.count } }
             catch { if generation == id && writeGeneration == writeID { stop(); present(.terminalEnded, message: "The connection ended while sending input. It won’t be replayed. Open a new shell to continue.") } }
         }
     }
+    #if os(macOS)
+    // This type is constructed only by the native owner ledger. Cleanup is
+    // allowed after focus/lock, but remains bounded and tied to this generation.
+    func releaseNativeInput(_ releases: MacTerminalInputReleases) {
+        let data = releases.packets.flatMap { $0 }
+        guard connected, let writer, !data.isEmpty else { return }
+        guard data.count <= 16384, queuedBytes + nativeInputReleaseBytes + data.count <= 65536 else { failNativeInputAdmission(); return }
+        let id = generation, previous = writeTail, previousRelease = nativeInputReleaseTail
+        nativeInputReleaseBytes += data.count
+        nativeInputReleaseTail = Task {
+            await previous?.value; await previousRelease?.value
+            guard generation == id, connected, !Task.isCancelled else { return }
+            defer { if generation == id { nativeInputReleaseBytes -= data.count } }
+            do { try await writer.write(data) }
+            catch { if generation == id { stop(); present(.terminalEnded, message: "The Terminal ended while releasing held input. Open a new shell to continue.") } }
+        }
+    }
+    func failNativeInputAdmission() { stop(); present(.inputPaused) }
+    #endif
     func resize(columns: Int, rows: Int) {
         self.columns = max(1, min(500, columns)); self.rows = max(1, min(500, rows))
         guard let writer, connected, !suspended, DirectAppLockV1.shared.canAccess, DirectClientPlatformV1.sessionAvailable else { return }
         let cols = self.columns, rows = self.rows, id = generation, writeID = writeGeneration
         let previous = writeTail
+        #if os(macOS)
+        let previousRelease = nativeInputReleaseTail
+        #endif
         writeTail = Task {
-            await previous?.value; guard generation == id, writeGeneration == writeID, !suspended, !Task.isCancelled,
+            await previous?.value
+            #if os(macOS)
+            await previousRelease?.value
+            #endif
+            guard generation == id, writeGeneration == writeID, !suspended, !Task.isCancelled,
                 DirectAppLockV1.shared.canAccess, DirectClientPlatformV1.sessionAvailable else { return }
             do { try await writer.resize(columns: cols, rows: rows) }
             catch { if generation == id && writeGeneration == writeID { stop(); present(.terminalEnded, message: "The connection ended while resizing the Terminal. Open a new shell to continue.") } }
@@ -344,6 +385,9 @@ private enum TerminalPTY {
         suspended = false; pausedOutput.removeAll(keepingCapacity: false)
         suspendInput?(); activity?.finish(); activity = nil
         generation = UUID(); let reply = trustReply; trustReply = nil; trust = nil; reply?.resume(returning: false); work?.cancel(); work = nil; writeTail?.cancel(); writeTail = nil
+        #if os(macOS)
+        nativeInputReleaseTail?.cancel(); nativeInputReleaseTail = nil; nativeInputReleaseBytes = 0
+        #endif
         socketOwner?.cancel(); socketOwner = nil
         let client = self.client, channel = self.channel; self.client = nil; self.channel = nil; writer = nil
         connected = false; connecting = false; completedNormally = false; queuedBytes = 0
@@ -362,8 +406,9 @@ private enum TerminalPTY {
         if connecting { cancelConnection(); return }
         guard connected, !suspended || resumeWork != nil else { return }
         suspended = true; lifecycleGeneration = UUID(); let token = lifecycleGeneration
-        writeGeneration = UUID(); writeTail?.cancel(); writeTail = nil; queuedBytes = 0
+        writeGeneration = UUID(); writeTail?.cancel()
         resumeWork?.cancel(); resumeWork = nil; suspendInput?()
+        writeTail = nil; queuedBytes = 0
         activity?.setForeground(false); activity?.setPhase("paused")
         let readPause = channel?.setOption(ChannelOptions.autoRead, value: false)
         #if os(iOS)
