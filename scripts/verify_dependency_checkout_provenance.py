@@ -8,7 +8,7 @@ import subprocess
 import tempfile
 import unittest
 
-from dependency_checkout_provenance import CheckoutProvenanceError, verify_checkouts
+from dependency_checkout_provenance import CheckoutProvenanceError, verify_checkouts, verify_source_checkout
 
 
 def git(repository, *arguments):
@@ -145,6 +145,68 @@ class CheckoutProvenanceTests(unittest.TestCase):
         git(self.cache, 'remote', 'set-url', 'origin', self.url.removesuffix('.git'))
         with self.assertRaisesRegex(CheckoutProvenanceError, 'changed during the build'):
             self.verify(previous=before)
+
+    def test_external_source_checkout_records_the_same_actual_tree(self):
+        before = verify_source_checkout(self.checkout, self.revision)
+        remote = self.verify()['probe']
+        self.assertEqual(before['sourceTreeSHA256'], remote['sourceTreeSHA256'])
+        self.assertEqual(before['trackedFileCount'], remote['trackedFileCount'])
+        self.assertEqual(verify_source_checkout(self.checkout, self.revision, previous=before), before)
+
+    def test_external_source_rejects_hidden_index_changes(self):
+        for flag in ['--assume-unchanged', '--skip-worktree']:
+            with self.subTest(flag=flag):
+                git(self.checkout, 'update-index', flag, 'Sources/Probe.swift')
+                self.source.write_text('public func probe() -> Int { 99 }\n')
+                self.assertEqual(git(self.checkout, 'status', '--porcelain'), '')
+                with self.assertRaisesRegex(CheckoutProvenanceError, 'differs from its pinned Git tree'):
+                    verify_source_checkout(self.checkout, self.revision)
+                self.source.write_text('public func probe() -> Int { 1 }\n')
+                git(self.checkout, 'update-index', '--no-assume-unchanged', '--no-skip-worktree', 'Sources/Probe.swift')
+
+    def test_external_source_rejects_changed_modes_and_ignored_additions(self):
+        git(self.checkout, 'config', 'core.filemode', 'false')
+        self.source.chmod(0o755)
+        self.assertEqual(git(self.checkout, 'status', '--porcelain'), '')
+        with self.assertRaisesRegex(CheckoutProvenanceError, 'executable mode changed'):
+            verify_source_checkout(self.checkout, self.revision)
+        self.source.chmod(0o644)
+        (self.checkout / 'Sources/Ignored.swift').write_text('public func ignored() {}\n')
+        with self.assertRaisesRegex(CheckoutProvenanceError, 'unadmitted ignored files'):
+            verify_source_checkout(self.checkout, self.revision)
+
+    def test_external_source_rechecks_revision_and_postbuild_content(self):
+        before = verify_source_checkout(self.checkout, self.revision)
+        with self.assertRaisesRegex(CheckoutProvenanceError, 'HEAD does not match'):
+            verify_source_checkout(self.checkout, '0' * 40)
+        git(self.checkout, 'update-index', '--assume-unchanged', 'Sources/Probe.swift')
+        self.source.write_text('public func probe() -> Int { 99 }\n')
+        with self.assertRaisesRegex(CheckoutProvenanceError, 'differs from its pinned Git tree'):
+            verify_source_checkout(self.checkout, self.revision, previous=before)
+
+    def test_uninitialized_gitlink_cannot_hide_unverified_source(self):
+        git(self.checkout, 'update-index', '--add', '--cacheinfo', '160000,' + self.revision + ',Documentation')
+        git(self.checkout, 'commit', '--quiet', '-m', 'Synthetic documentation submodule')
+        revision = git(self.checkout, 'rev-parse', 'HEAD')
+        docs = self.checkout / 'Documentation'
+        docs.mkdir()
+        before = verify_source_checkout(self.checkout, revision)
+        self.assertEqual(before['trackedFileCount'], 4)
+        (docs / 'Unadmitted.swift').write_text('public func unadmitted() {}\n')
+        with self.assertRaises(CheckoutProvenanceError):
+            verify_source_checkout(self.checkout, revision, previous=before)
+
+    def test_initialized_gitlink_verifies_its_actual_pinned_source(self):
+        git(self.checkout, 'update-index', '--add', '--cacheinfo', '160000,' + self.revision + ',Documentation')
+        git(self.checkout, 'commit', '--quiet', '-m', 'Synthetic documentation submodule')
+        revision = git(self.checkout, 'rev-parse', 'HEAD')
+        docs = self.checkout / 'Documentation'
+        git(self.checkout, 'clone', '--quiet', str(self.cache), str(docs))
+        before = verify_source_checkout(self.checkout, revision)
+        git(docs, 'update-index', '--assume-unchanged', 'Sources/Probe.swift')
+        (docs / 'Sources/Probe.swift').write_text('public func probe() -> Int { 99 }\n')
+        with self.assertRaisesRegex(CheckoutProvenanceError, 'differs from its pinned Git tree'):
+            verify_source_checkout(self.checkout, revision, previous=before)
 
 
 if __name__ == '__main__':

@@ -61,6 +61,21 @@ uses a saved login for one initial attempt after local unlock; later cancellatio
 disconnect and recovery require an explicit new-shell action. Closing a controls
 sheet preserves an explicitly selected password login. Automatic key installation,
 free manual setup and identity-verification recovery are available from Terminal.
+Removing the preferred key with **Use Password Login** restores Password mode and
+its separate account. User key creation/import checks the current shared key
+count and Pro/trial access at commit, independently of each window's snapshot.
+Terminal link confirmations are sheets owned by their originating window. Screen
+sleep/app lock, owner closure, disconnect and surface teardown cancel them and
+clear their displayed URL; a cancelled confirmation cannot open a browser later.
+
+On macOS, **Import Key** offers **Choose from ~/.ssh…** and **Choose File…** using
+a native file picker. Hidden folders and extensionless files such as
+`id_ed25519` are selectable. Encrypted and unencrypted Ed25519 OpenSSH private
+keys use the existing bounded importer and local Keychain library. This imports
+a copy: the original file is untouched, its path is not retained, and later file
+changes do not update the imported key. RSA/ECDSA, hardware-backed keys and
+ssh-agent identities remain outside the supported formats. No folder is scanned
+or key read without the user's explicit selection; the picker closes on lock.
 
 ## Storage and sync
 
@@ -107,6 +122,10 @@ Every resolved remote Swift package must also match its admitted URL/revision an
 Git source bytes/modes before and after compilation. Dirty tracked, untracked,
 ignored and hidden index edits are rejected without resetting the cache. The build
 report records both source-tree snapshots; a clean cache remains reusable.
+The supplied LibVNCClient checkout is verified with the same actual-byte/mode
+checks before and after compilation, including ignored additions and hidden
+index edits. Its source-tree hashes and tracked-file counts are recorded in
+`LibVNCClientSources`; a revision label alone is not accepted as provenance.
 
 For usable macOS data protection Keychain, supply `--signing-identity` with the
 existing Apple Development certificate SHA-1, `--team` and `--profile` with an
@@ -265,6 +284,26 @@ copied and verified under `/private/tmp/maccompanion-vm-evidence-20261009` befor
 removal. Native build/test artifacts and screenshots remain in their separate
 temporary directories. Further live VM acceptance requires a recreated fixture.
 
+### Review fixes and local key import, 2026-10-09
+
+The latest shared iPhone suite passes 175 tests with 13 optional skips and no
+failures, including password-account restoration after removing a key selection.
+OpenSSH encrypted export/setup interoperability still passes. Hosted Mac QA
+passes 26 tests with one existing native key-window skip and no failures. Its
+seven new regressions cover the password transition, stale per-window key
+libraries, extensionless/encrypted file import without modifying originals,
+hidden-folder picker configuration, cancellation during picker presentation,
+link-sheet background cancellation and independent window closure. Native sheet
+checks inject the real lifecycle event into owned AppKit windows; they do not
+constitute a physical screen-sleep or complete native input acceptance run.
+
+Nineteen disposable Git provenance regressions cover hidden source/mode changes,
+ignored additions, pinned initialized/uninitialized submodules and post-build
+verification. The original modified LibVNCClient review probe is rejected. The
+signed Apple Silicon build verifies actual LibVNCClient source snapshots in
+addition to the twelve remote Swift package trees. Local SSH-key selection
+imports a device-local copy and retains the existing Ed25519 format limits.
+
 ### Completion audit
 
 | Requirement | Current evidence | Remaining acceptance |
@@ -274,7 +313,7 @@ temporary directories. Further live VM acceptance requires a recreated fixture.
 | Feature parity and native input | Shared models and client features, 59 native input contract checks | Native keyboard/input-method, display, resize and recovery flows |
 | Independent concurrent windows | UUID ownership, immutable selection, independent loopback SSH sessions, live built-in SSH connection closure isolation | Real window focus/input routing and concurrent Desktop/Terminal behavior |
 | Compatible optional iCloud library | Existing schema/group/consent, injected-store merge/offline/deletion checks, verified signing groups | Same-account Mac–iPhone edit/conflict/delete/restart/offline delivery |
-| Preserve iPhone behavior | 174 passed Simulator tests, 13 optional skips; latest app build passes | No additional automated regression failure is known |
+| Preserve iPhone behavior | 175 passed Simulator tests, 13 optional skips; latest app build passes | No additional automated regression failure is known |
 | Repository validation | Required validation passes on the implementation | Repeat after any further changes |
 
 The hosted rerun now passes with its GUI-only key-window skip. Native UI tests

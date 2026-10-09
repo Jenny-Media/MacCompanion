@@ -56,8 +56,8 @@ def main():
     from verify_direct_client_dependencies import validate
     validate()
     lock = json.loads((ROOT / 'Native/VNC/source-lock.json').read_text())
-    if capture('git', '-C', args.source, 'rev-parse', 'HEAD') != lock['revision'] or capture('git', '-C', args.source, 'status', '--porcelain'):
-        raise SystemExit('LibVNCClient source must match its clean pinned revision.')
+    from dependency_checkout_provenance import verify_source_checkout
+    vnc_sources = verify_source_checkout(args.source, lock['revision'])
     if sha(args.openssl_archive) != lock['opensslSourceSHA256']:
         raise SystemExit('OpenSSL source archive checksum mismatch.')
     args.output.mkdir(parents=True, exist_ok=True)
@@ -174,6 +174,7 @@ def main():
     if json.loads(lock_path.read_text())['pins'] != expected:
         raise SystemExit('Resolved package revisions changed during the build.')
     package_sources_after = verify_checkouts(args.output / 'DerivedData/SourcePackages', expected, previous=package_sources)
+    vnc_sources_after = verify_source_checkout(args.source, lock['revision'], previous=vnc_sources)
     if source_inputs() != application_inputs:
         raise SystemExit('Application sources changed during the build. Rerun against a stable source snapshot.')
     app = args.output / 'DerivedData/Build/Products/Debug/MacCompanion.app'
@@ -185,6 +186,7 @@ def main():
               'sourceInputs': application_inputs, 'sourceRevision': capture('git', '-C', ROOT, 'rev-parse', 'HEAD'),
               'sourceWorktreeDirty': bool(capture('git', '-C', ROOT, 'status', '--porcelain')),
               'dependencies': {'LibVNCClient': lock['revision'], 'OpenSSL': inputs, 'SwiftPackages': expected,
+                               'LibVNCClientSources': {'beforeBuild': vnc_sources, 'afterBuild': vnc_sources_after},
                                'SwiftPackageSources': {'beforeBuild': package_sources, 'afterBuild': package_sources_after}},
               'app': str(app), 'executableSHA256': sha(executable),
               'artifactFiles': {str(p.relative_to(app)): sha(p) for p in sorted(app.rglob('*')) if p.is_file() and not p.is_symlink()},

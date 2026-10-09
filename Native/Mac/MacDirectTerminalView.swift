@@ -208,6 +208,7 @@ struct MacTerminalSurface: NSViewRepresentable {
     func makeNSView(context: Context) -> MacRemoteTerminalSurface {
         let view = MacRemoteTerminalSurface(frame: CGRect(x: 0, y: 0, width: 700, height: 440), font: .monospacedSystemFont(ofSize: fontSize, weight: .regular))
         view.session = session; view.terminalDelegate = context.coordinator; view.installInputGate()
+        view.cancelOpenLink = { [weak coordinator = context.coordinator] in coordinator?.links.cancel() }
         session.suspendInput = { [weak view] in view?.releaseHeldInput() }
         handle.view = view
         view.setAccessibilityElement(true)
@@ -220,6 +221,7 @@ struct MacTerminalSurface: NSViewRepresentable {
     func updateNSView(_ view: MacRemoteTerminalSurface, context: Context) {
         if view.font.pointSize != fontSize { view.font = .monospacedSystemFont(ofSize: fontSize, weight: .regular) }
         view.setAccessibilityHidden(!session.connected)
+        if !session.connected { context.coordinator.links.cancel() }
         view.appearance = colors == .app ? nil : NSAppearance(named: colors == .dark ? .darkAqua : .aqua)
         view.effectiveAppearance.performAsCurrentDrawingAppearance {
             view.nativeForegroundColor = .textColor; view.nativeBackgroundColor = .textBackgroundColor
@@ -229,10 +231,12 @@ struct MacTerminalSurface: NSViewRepresentable {
         if session.connected, view.window?.isKeyWindow == true, view.window?.firstResponder == nil { view.window?.makeFirstResponder(view) }
     }
     static func dismantleNSView(_ view: MacRemoteTerminalSurface, coordinator: Coordinator) {
+        coordinator.links.cancel(); view.cancelOpenLink = {}
         view.releaseHeldInput(); view.session?.received = nil; view.session?.suspendInput = nil
         view.detachInputGate(); view.session = nil; view.terminalDelegate = nil
     }
     @MainActor final class Coordinator: NSObject, @preconcurrency TerminalViewDelegate {
+        let links = MacTerminalLinkConfirmation()
         private weak var session: DirectTerminalSession?
         init(session: DirectTerminalSession) { self.session = session }
         func sizeChanged(source: TerminalView, newCols: Int, newRows: Int) { session?.resize(columns: newCols, rows: newRows) }
@@ -250,11 +254,10 @@ struct MacTerminalSurface: NSViewRepresentable {
         func requestOpenLink(source: TerminalView, link: String, params: [String: String]) {
             guard let surface = source as? MacRemoteTerminalSurface, surface.localActionsAllowed else { return }
             guard let url = URL(string: link), ["https", "http"].contains(url.scheme?.lowercased() ?? "") else { return }
-            let alert = NSAlert(); alert.messageText = "Open link in your browser?"; alert.informativeText = url.absoluteString
-            alert.addButton(withTitle: "Open"); alert.addButton(withTitle: "Cancel")
-            if alert.runModal() == .alertFirstButtonReturn, surface.accessAllowed(), session?.connected == true {
-                NSWorkspace.shared.open(url)
-            }
+            guard let window = source.window else { return }
+            links.present(url, in: window, canOpen: { [weak surface, weak session] in
+                surface?.accessAllowed() == true && session?.connected == true
+            })
         }
     }
 }
@@ -271,6 +274,7 @@ struct MacTerminalSurface: NSViewRepresentable {
     weak var session: DirectTerminalSession?
     var accessAllowed: () -> Bool = { DirectAppLockV1.shared.canAccess }
     var copyPasteboard: NSPasteboard = .general
+    var cancelOpenLink: () -> Void = {}
     var wasConnecting = false
     private var inputMonitor: Any?
     private var observations: [NSObjectProtocol] = []
@@ -299,7 +303,7 @@ struct MacTerminalSurface: NSViewRepresentable {
         unmarkText(); inputContext?.discardMarkedText()
     }
     func lockLocalActions() {
-        releaseHeldInput(); selectNone()
+        cancelOpenLink(); releaseHeldInput(); selectNone()
         func clearFields(_ view: NSView) {
             if let field = view as? NSTextField {
                 (field.currentEditor() as? NSTextView)?.string = ""

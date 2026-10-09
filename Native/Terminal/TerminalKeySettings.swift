@@ -74,9 +74,11 @@ struct TerminalKeySettings: View {
                 switch destination {
                 case .create, .importKey:
                     TerminalKeyComposer(importing: destination == .importKey) { key, name in
-                        guard pro.canAddKey(count: library.keys.count) else { sheet = .pro; return false }
+                        reload()
+                        guard library.readable else { return false }
+                        guard pro.ready, pro.canAddKey(count: library.keys.count) else { sheet = .pro; return false }
                         let saved = library.perform {
-                            let id = try TerminalKeyLibraryStore.add(key, name: name)
+                            let id = try TerminalKeyLibraryStore.addForUser(key, name: name, access: pro)
                             if let mac { try TerminalKeyLibraryStore.associate(id, macID: mac.id, username: "") }
                         }
                         if saved { changed() }; return saved
@@ -108,6 +110,10 @@ struct TerminalKeyComposer: View {
     @State private var busy = false
     @State private var issue: DirectRecoveryNotice?
     @State private var generation = UUID()
+    #if os(macOS)
+    @State private var importWindow = MacWindowHandle()
+    @State private var filePicker = MacSSHKeyFilePicker()
+    #endif
     var body: some View {
         NavigationStack {
             Form {
@@ -117,9 +123,19 @@ struct TerminalKeyComposer: View {
                 if importing {
                     Section {
                         SecureField("Import passphrase, if encrypted", text: $passphrase).textContentType(nil).privacySensitive()
+                        #if os(macOS)
+                        Button("Choose from ~/.ssh…") { chooseFile(sshFolder: true) }.disabled(!valid || busy || picking)
+                        Button("Choose File…") { chooseFile(sshFolder: false) }.disabled(!valid || busy || picking)
+                        #else
                         Button("Import from Files") { picking = true }.disabled(!valid || busy)
+                        #endif
                         PasteButton(payloadType: String.self) { values in if let text = values.first { decode(text) } }.disabled(!valid || busy)
-                    } footer: { Text("Ed25519 OpenSSH keys only, up to 32 KiB. Import passphrases are used once and never saved.") }
+                    } footer: {
+                        Text("Ed25519 OpenSSH keys only, up to 32 KiB. Import passphrases are used once and never saved.")
+                        #if os(macOS)
+                        Text("Choose a private key such as id_ed25519, not its .pub file. Import saves a local Keychain copy; the original file is kept and future file edits won’t change the imported key.")
+                        #endif
+                    }
                 } else {
                     Section { Button("Create Ed25519 Key") { if save(.create(), name) { dismiss() } else { issue = .make(.saveFailed, message: "The key couldn’t be saved. Keep this form open and try again.") } }.disabled(!valid || busy) }
                 }
@@ -128,22 +144,34 @@ struct TerminalKeyComposer: View {
             }
             .navigationTitle(importing ? "Import SSH Key" : "Create SSH Key").directInlineNavigationTitle()
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } } }
-            .fileImporter(isPresented: $picking, allowedContentTypes: [.data, .plainText]) { result in
-                do {
-                    let url = try result.get(), access = url.startAccessingSecurityScopedResource()
-                    defer { if access { url.stopAccessingSecurityScopedResource() } }
-                    let file = try FileHandle(forReadingFrom: url); defer { try? file.close() }
-                    let bytes = try file.read(upToCount: 32769) ?? Data()
-                    guard bytes.count <= 32768 else { throw TerminalSSHKey.KeyFailure.tooLarge }; guard let text = String(data: bytes, encoding: .utf8) else { throw TerminalSSHKey.KeyFailure.invalid }
-                    decode(text)
-                } catch {
-                    if !DirectCancellation.isCancellation(error) { issue = importNotice(error) }
-                }
-            }
-            .onDisappear { generation = UUID(); passphrase = "" }
+            #if os(macOS)
+            .background(MacWindowReader(handle: importWindow).frame(width: 0, height: 0))
+            #else
+            .fileImporter(isPresented: $picking, allowedContentTypes: [.data, .plainText], onCompletion: readFile)
+            #endif
+            .onDisappear { generation = UUID(); passphrase = ""; cancelPicker() }
             .onReceive(NotificationCenter.default.publisher(for: DirectClientPlatformV1.willResignActive)) { _ in generation = UUID(); passphrase = ""; busy = false }
+            .onReceive(NotificationCenter.default.publisher(for: DirectClientPlatformV1.didEnterBackground)) { _ in generation = UUID(); passphrase = ""; busy = false; cancelPicker() }
         }
     }
+    private func readFile(_ result: Result<URL, Error>) {
+        guard DirectAppLockV1.shared.canAccess else { return }
+        do { decode(try TerminalSSHKey.readOpenSSHFile(result.get())) }
+        catch { if !DirectCancellation.isCancellation(error) { issue = importNotice(error) } }
+    }
+    private func cancelPicker() {
+        picking = false
+        #if os(macOS)
+        filePicker.cancel()
+        #endif
+    }
+    #if os(macOS)
+    private func chooseFile(sshFolder: Bool) {
+        guard valid, !busy, !picking, DirectAppLockV1.shared.canAccess, let window = importWindow.window else { return }
+        picking = true
+        filePicker.choose(in: window, sshFolder: sshFolder) { result in picking = false; readFile(result) }
+    }
+    #endif
     private func importNotice(_ error: Error) -> DirectRecoveryNotice {
         guard let failure = error as? TerminalSSHKey.KeyFailure else { return .make(.importInvalid, message: "The file couldn’t be read. Choose another Ed25519 OpenSSH key, up to 32 KiB.") }
         switch failure {

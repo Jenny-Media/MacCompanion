@@ -19,6 +19,7 @@ struct TerminalLoginSelection {
         if method == .password { username = account }
     }
     mutating func loadKeyAccount(_ account: String?, preferSelected: Bool) {
+        if preferSelected && account == nil { select(.password) }
         keyUsername = account ?? ""
         if preferSelected && account != nil {
             if method == .password { passwordUsername = username }

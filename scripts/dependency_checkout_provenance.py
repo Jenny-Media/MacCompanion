@@ -61,6 +61,17 @@ def _source_tree(checkout):
         mode, kind, object_id = metadata.split()
         name = os.fsdecode(encoded_path)
         path = checkout / name
+        if kind == b'commit' and mode == b'160000':
+            if path.is_symlink() or (path.exists() and not path.resolve(strict=True).is_relative_to(checkout)):
+                raise CheckoutProvenanceError('Dependency submodule path changed: ' + name)
+            if not path.exists() or (path.is_dir() and not any(path.iterdir())):
+                # A clean clone may leave documentation submodules uninitialized.
+                # Such a gitlink contributes its pin, but no buildable bytes.
+                files[name] = {'mode': mode.decode(), 'revision': object_id.decode(), 'initialized': False}
+            else:
+                files[name] = {'mode': mode.decode(), 'initialized': True,
+                               **verify_source_checkout(path, object_id.decode())}
+            continue
         if kind != b'blob' or mode not in [b'100644', b'100755', b'120000']:
             raise CheckoutProvenanceError('Dependency tree contains an unsupported Git entry: ' + name)
         if not path.resolve(strict=True).is_relative_to(checkout):
@@ -83,6 +94,24 @@ def _source_tree(checkout):
         files[name] = {'mode': mode.decode(), 'sha256': hashlib.sha256(data).hexdigest()}
     encoded = json.dumps(files, sort_keys=True, separators=(',', ':'), ensure_ascii=True).encode()
     return {'sourceTreeSHA256': hashlib.sha256(encoded).hexdigest(), 'trackedFileCount': len(files)}
+
+
+def verify_source_checkout(source, revision, *, previous=None):
+    """Verify actual bytes/modes for a clean, externally supplied pinned tree."""
+    try:
+        checkout = Path(source).resolve(strict=True)
+        if not re.fullmatch(r'[0-9a-f]{40}', revision):
+            raise CheckoutProvenanceError('Invalid admitted dependency revision.')
+        if Path(_git(checkout, 'rev-parse', '--show-toplevel').decode().strip()).resolve() != checkout:
+            raise CheckoutProvenanceError('Resolved checkout does not own its Git worktree.')
+        if _git(checkout, 'rev-parse', 'HEAD').decode().strip() != revision:
+            raise CheckoutProvenanceError('Dependency checkout HEAD does not match its pinned revision.')
+        snapshot = {'revision': revision, **_source_tree(checkout)}
+        if previous is not None and snapshot != previous:
+            raise CheckoutProvenanceError('Dependency source provenance changed during the build.')
+        return snapshot
+    except (OSError, ValueError, subprocess.CalledProcessError) as error:
+        raise CheckoutProvenanceError('Source checkout failed verification: ' + str(error)) from error
 
 
 def verify_checkouts(source_packages, pins, *, previous=None):
@@ -131,14 +160,9 @@ def verify_checkouts(source_packages, pins, *, previous=None):
             checkout = (checkout_root / subpath).resolve(strict=True)
             if checkout.parent != checkout_root:
                 raise CheckoutProvenanceError('Resolved checkout is outside its package directory.')
-            if Path(_git(checkout, 'rev-parse', '--show-toplevel').decode().strip()).resolve() != checkout:
-                raise CheckoutProvenanceError('Resolved checkout does not own its Git worktree.')
-            actual_revision = _git(checkout, 'rev-parse', 'HEAD').decode().strip()
-            if actual_revision != revision:
-                raise CheckoutProvenanceError('Dependency checkout HEAD does not match its pinned revision.')
+            source = verify_source_checkout(checkout, revision)
             origin = _verify_origin(checkout, packages, location)
-            snapshot[identity] = {'revision': actual_revision, 'location': location,
-                                  'originURL': origin, 'checkoutSubpath': str(subpath), **_source_tree(checkout)}
+            snapshot[identity] = {**source, 'location': location, 'originURL': origin, 'checkoutSubpath': str(subpath)}
         except (OSError, KeyError, ValueError, subprocess.CalledProcessError) as error:
             raise CheckoutProvenanceError('Dependency ' + identity + ' failed source verification: ' + str(error)) from error
     if previous is not None and snapshot != previous:
