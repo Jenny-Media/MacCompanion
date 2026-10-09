@@ -40,13 +40,23 @@ struct DirectRecoveryNotice: Equatable, Sendable {
         case .setupUncertain: copy = ("Key setup wasn’t verified", "The public key may already have been added. Your preferred login hasn’t changed. Test key login before repeating setup.", .warning)
         case .setupLoginUnverified: copy = ("Key was added; login wasn’t verified", "The Mac confirmed the public key was present, but key login hasn’t been verified. Your preferred login hasn’t changed.", .warning)
         case .setupPreferenceUnverified: copy = ("Key login worked; preference wasn’t saved", "The key signed in, but the app couldn’t save it as preferred. Test key login again when device storage is available.", .warning)
-        case .setupVerified: copy = ("Public key installed", "A fresh key-only login worked and the preferred Terminal key was saved. Your private key stays on this iPhone.", .success)
+        case .setupVerified:
+            #if os(macOS)
+            copy = ("Public key installed", "A fresh key-only login worked and the preferred Terminal key was saved. Your private key stays on this Mac.", .success)
+            #else
+            copy = ("Public key installed", "A fresh key-only login worked and the preferred Terminal key was saved. Your private key stays on this iPhone.", .success)
+            #endif
         case .importUnsupported: copy = ("This key format isn’t supported", "Use an Ed25519 private key in OpenSSH format. RSA, ECDSA and hardware-backed keys aren’t currently supported.", .warning)
         case .importInvalid: copy = ("Key couldn’t be imported", "The file isn’t a valid supported OpenSSH private key. Choose another file; no key was added.", .warning)
         case .importTooLarge: copy = ("Key file is too large", "Choose an Ed25519 OpenSSH private key no larger than 32 KiB.", .warning)
         case .importUnlock: copy = ("Key couldn’t be unlocked", "The passphrase may be incorrect, or the encrypted file may be damaged. Re-enter the passphrase or choose another file.", .warning)
         case .importWorkLimit: copy = ("Key encryption settings aren’t supported", "Re-export this key with supported OpenSSH encryption settings, then import again.", .warning)
-        case .exportCancelled: copy = ("Export cancelled", "No backup was exported. The original key is still available on this iPhone.", .information)
+        case .exportCancelled:
+            #if os(macOS)
+            copy = ("Export cancelled", "No backup was exported. The original key is still available on this Mac.", .information)
+            #else
+            copy = ("Export cancelled", "No backup was exported. The original key is still available on this iPhone.", .information)
+            #endif
         case .exportFailed: copy = ("Backup wasn’t exported", "The backup couldn’t be prepared or saved. Your original key is kept; try exporting again.", .warning)
         case .controlsUnavailable: copy = ("Saved controls unavailable", "The app couldn’t read your custom controls. Existing data is kept; standard controls remain available where safe.", .warning)
         case .cloudUnavailable: copy = ("iCloud Sync unavailable", "The app couldn’t access sync data. Local Macs and logins are kept. Check iCloud Keychain in Settings, then retry.", .warning)
@@ -75,9 +85,13 @@ enum TerminalSetupPhase: String, Sendable {
     var mayBeInstalled: Bool { self != .notSent }
 }
 
-#if os(iOS) && MACCOMPANION_VNC_DEVELOPMENT
+#if (os(iOS) || os(macOS)) && MACCOMPANION_VNC_DEVELOPMENT
 import SwiftUI
+#if os(iOS)
 import UIKit
+#else
+import AppKit
+#endif
 import LocalAuthentication
 import StoreKit
 
@@ -118,11 +132,23 @@ struct DirectRecoveryCard: View {
             }
         }.padding(17).frame(maxWidth: .infinity, alignment: .leading)
             .background(color.opacity(0.09), in: RoundedRectangle(cornerRadius: 18))
-            .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 18))
+            .background(recoveryBackground, in: RoundedRectangle(cornerRadius: 18))
             .overlay(RoundedRectangle(cornerRadius: 18).stroke(color.opacity(0.17)))
             .accessibilityIdentifier("recovery-" + notice.reason.rawValue)
-            .onAppear { UIAccessibility.post(notification: .announcement, argument: notice.title) }
-            .onChange(of: notice.reason) { _, _ in UIAccessibility.post(notification: .announcement, argument: notice.title) }
+            .onAppear { announce() }
+            .onChange(of: notice.reason) { _, _ in announce() }
+    }
+    private var recoveryBackground: Color {
+        #if os(iOS)
+        Color(uiColor: .secondarySystemBackground)
+        #else
+        Color(nsColor: .controlBackgroundColor)
+        #endif
+    }
+    private func announce() {
+        #if os(iOS)
+        UIAccessibility.post(notification: .announcement, argument: notice.title)
+        #endif
     }
     @ViewBuilder private func action(_ value: DirectRecoveryAction, prominent: Bool) -> some View {
         let button = Button(action: value.perform) {
@@ -169,11 +195,15 @@ struct TerminalServerTrustView: View {
                     Button("Trust & Connect") { answer(true) }.buttonStyle(.borderedProminent).controlSize(.large).frame(minHeight: 44)
                     Text("No login is sent until you approve.").font(.footnote).foregroundStyle(.secondary)
                 }.padding(24).frame(maxWidth: 520)
-            }.navigationTitle("Verify This Mac").navigationBarTitleDisplayMode(.inline)
+            }.navigationTitle("Verify This Mac")
+            #if os(iOS)
+            .navigationBarTitleDisplayMode(.inline)
+            #endif
                 .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { answer(false) } } }
         }.interactiveDismissDisabled()
     }
 }
+#if os(iOS)
 /// UIKit Desktop uses the same copy and actions as the SwiftUI recovery screens.
 @objc(DirectRecoveryBridgeV1) @MainActor final class DirectRecoveryBridgeV1: NSObject {
     static func desktopReason(stage: Int, hadFrame: Bool) -> DirectRecoveryNotice.Reason {
@@ -224,4 +254,6 @@ struct TerminalServerTrustView: View {
         return controller
     }
 }
+#endif
+
 #endif

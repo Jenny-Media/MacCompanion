@@ -1,31 +1,35 @@
 # Mac Companion
 
-Latest streaming checkpoint: [source-built portable native host](docs/evidence/2026-09-27-source-built-portable-native-host.md). Codec deployment inspection, portable package/signature/integrity checks, relocation/credential checks, stable validation and four live native Simulator sessions pass. Video, keyboard/modifiers/shortcuts, pointer and background/reconnect recovery are verified through the development package. Complete transitive source admission, permanent process/TCC ownership, normal-app composition, actual Mac input and physical installation remain pending.
+Mac Companion is being repurposed as native VNC and SSH clients for iPhone and
+macOS. Both clients use the remote Mac's built-in services:
 
-Mac Companion is a native iPhone remote desktop client and macOS host. The first product has one journey: install both apps, pair once on the Mac, then connect to view and control a display or window with pointer, keyboard, and shortcuts.
+- **Desktop:** view and control the Mac through Screen Sharing.
+- **Trackpad & Keyboard:** control it through VNC without displaying its desktop.
+- **Terminal:** connect to Remote Login with SSH, password or an Ed25519 key.
 
-The [remote-desktop MVP decision](docs/remote-desktop-mvp.md) supersedes the earlier three-path product design. Observe and Act are deferred from the main app and website. Pairing explicitly grants the fixed remote-desktop scope; OS permissions, authenticated connections, device removal, and the visible Stop control remain required. Older evidence below describes historical checkpoints rather than the current product scope.
+Enable the relevant built-in service and add local or private VPN addresses in
+My Macs. The client requires no Mac Companion server, Agent or helper. Saved
+logins, private keys and trusted SSH server keys remain local. Optional iCloud
+Keychain sync shares the machine library and supported connection preferences.
 
-> **Name decision:** **Mac Companion** is the implementation name and intended public product name, with the proposed App Store subtitle **Monitor and control your Mac**. The installed Mac component is **Mac Companion Agent**. Company-controlled bundle identifiers may be registered independently of the public name, while public launch still requires written trademark review and App Store name reservation.
+The current iPhone implementation is described in the
+[direct-client product decision](docs/remote-desktop-mvp.md). The approved
+[native macOS goal and implementation](docs/native-macos-client.md) adds
+independent session windows across machines and modes, using shared transport
+and storage code with native SwiftUI/AppKit interfaces. macOS implementation and
+acceptance remain in progress; signed development builds and automated tests do
+not establish live VNC input or Mac–iPhone iCloud delivery.
 
-## Current development product
+The direct VNC profile remains limited to local or private routes and does not
+provide desktop/input encryption. Transport security, compatibility, signed
+device acceptance and public release admission remain separate gates. See the
+[direct connection contract](spec/capability-protocol/v0/direct-screen-sharing.md)
+and [execution status](docs/execution-status.md).
 
-The MVP is a single iOS remote desktop app connecting directly to built-in macOS
-Screen Sharing. No Mac Companion host/helper installation is required. Enable
-Screen Sharing once, add the Mac’s local address in My Macs and use its allowed
-Mac account login. Login retention is optional in the iPhone Keychain.
+The sections below retain the **historical host/Agent architecture and evidence**.
+They do not define the current direct client's product paths.
 
-The direct development build bypasses the historical paired host/Agent runtime.
-It retains keyboard/modifiers, cursor, pan and tap-centered zoom. Exact window
-fitting and automatic individual-display selection are deferred. This profile
-is local-network-only and does not encrypt desktop/input transport; secure
-transport, physical reliability and public release admission remain open.
-
-See [current MVP](docs/remote-desktop-mvp.md) and
-[direct connection contract](spec/capability-protocol/v0/direct-screen-sharing.md).
-The architecture sections below describe the retained historical implementation.
-
-## Product position
+## Historical product position
 
 Mac Companion is a private control companion for personal Macs, especially always-on home Macs, multiple-Mac setups, and MacTools users. Its differentiators are:
 
@@ -39,7 +43,7 @@ Mac Companion is a private control companion for personal Macs, especially alway
 - Adaptive Remote Surfaces: App Focus, Window Focus, and Smart Zoom instead of forcing every visual task through a scaled desktop
 - A provider model that can expose MacTools and other canonical capabilities without exposing arbitrary internals
 
-## Core decisions
+## Historical core decisions
 
 - Build an independent macOS service and native iOS client first.
 - Treat the first local-only build as a technical alpha, not the market MVP.

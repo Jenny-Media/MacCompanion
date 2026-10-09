@@ -3,35 +3,6 @@ import SwiftUI
 import SwiftTerm
 import UIKit
 
-enum TerminalLoginMethod: String, CaseIterable, Identifiable {
-    case password = "Password", sshKey = "SSH Key"
-    var id: String { rawValue }
-}
-struct TerminalLoginSelection {
-    private(set) var method = TerminalLoginMethod.password
-    var username = ""
-    private var passwordUsername = ""
-    private var keyUsername = ""
-    mutating func select(_ method: TerminalLoginMethod) {
-        if self.method == .sshKey { keyUsername = username } else { passwordUsername = username }
-        self.method = method
-        let account = method == .sshKey ? keyUsername : passwordUsername
-        if !account.isEmpty { username = account }
-    }
-    mutating func loadPasswordAccount(_ account: String) {
-        passwordUsername = account
-        if method == .password { username = account }
-    }
-    mutating func loadKeyAccount(_ account: String?, preferSelected: Bool) {
-        keyUsername = account ?? ""
-        if preferSelected && account != nil {
-            if method == .password { passwordUsername = username }
-            method = .sshKey
-        }
-        if method == .sshKey, !keyUsername.isEmpty { username = keyUsername }
-    }
-}
-
 struct DirectTerminalView: View {
     private var mac: DirectMacRecordV1 { session.mac }
     let macLibrary: DirectMacLibraryV1?
@@ -348,26 +319,6 @@ struct TerminalConnectionIssueView: View {
 enum TerminalPresentationLayout {
     static func compactLogin(size: CGSize, accessibility: Bool) -> Bool {
         !accessibility && size.width >= 520 && size.height < 520
-    }
-}
-
-struct TerminalIdentityGuide: View {
-    let macName: String
-    @Environment(\.dismiss) private var dismiss
-    var body: some View {
-        NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 18) {
-                    Image(systemName: "lock.shield").font(.largeTitle).foregroundStyle(.red)
-                    Text("Verify \(macName) independently").font(.title2.bold())
-                    Text("A server key can change after reinstalling macOS, or when an address reaches a different machine. Login stays blocked until the saved and presented identities agree.")
-                    Text("On the Mac, inspect the SSH server keys in /etc/ssh/ssh_host_*_key.pub with ssh-keygen -lf and compare the matching fingerprint.").font(.body.monospaced())
-                    Text("Only after checking the Mac independently, use Mac Settings → Saved Logins & Server Trust → Forget SSH Server Key. The next connection asks you to verify the new fingerprint before sending login.")
-                        .foregroundStyle(.secondary)
-                }.padding(24)
-            }.navigationTitle("Verify Server Identity").navigationBarTitleDisplayMode(.inline)
-                .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
-        }
     }
 }
 

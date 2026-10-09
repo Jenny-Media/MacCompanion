@@ -1,0 +1,120 @@
+{
+  "schema": 1,
+  "kind": "client.nativeMac.v1",
+  "keyMapping": [
+    {
+      "keyCode": 36,
+      "keysym": 65293
+    },
+    {
+      "keyCode": 53,
+      "keysym": 65307
+    },
+    {
+      "keyCode": 123,
+      "keysym": 65361
+    },
+    {
+      "keyCode": 124,
+      "keysym": 65363
+    },
+    {
+      "keyCode": 125,
+      "keysym": 65364
+    },
+    {
+      "keyCode": 126,
+      "keysym": 65362
+    }
+  ],
+  "geometry": [
+    {
+      "crop": [
+        0,
+        0,
+        1920,
+        1080
+      ],
+      "viewport": [
+        960,
+        600
+      ],
+      "point": [
+        480,
+        300
+      ],
+      "mapped": [
+        960,
+        540
+      ]
+    },
+    {
+      "crop": [
+        1920,
+        0,
+        1920,
+        1080
+      ],
+      "viewport": [
+        960,
+        600
+      ],
+      "point": [
+        480,
+        300
+      ],
+      "mapped": [
+        2880,
+        540
+      ]
+    },
+    {
+      "crop": [
+        0,
+        0,
+        1920,
+        1080
+      ],
+      "viewport": [
+        960,
+        600
+      ],
+      "point": [
+        480,
+        0
+      ],
+      "mapped": null
+    }
+  ],
+  "sessionOwnership": {
+    "identity": "window UUID",
+    "selection": "immutable machine UUID and mode",
+    "sameMachineMultipleModes": true,
+    "closeScope": "own connection",
+    "focusLoss": "release own held input",
+    "inactiveWindowOutput": "continue",
+    "inputAdmissionFailure": "retire own connection without replay",
+    "replacementLayout": "await current connection metadata"
+  },
+  "cloud": {
+    "format": "DirectCloudVersion.schema=1",
+    "service": "media.jenny.maccompanion.cloud-library.v1",
+    "macKeychain": "data protection",
+    "accessGroup": "existing iPhone application access group",
+    "secrets": "local device only"
+  },
+  "loginRetention": {
+    "invalidFields": "keep saved login",
+    "rememberFalse": "remove previous VNC login before dialing",
+    "removalFailure": "do not dial",
+    "newSSHKeyLogin": "recheck displayed key against local library and current Pro policy",
+    "activeSSHOnExpiry": "continue"
+  },
+  "nativeTextInput": {
+    "preedit": "local only",
+    "commit": "existing Unicode keyboard owner",
+    "focusLoss": "discard without commit",
+    "physicalShortcuts": "balanced key events",
+    "document": "no remote text query"
+  }
+}

@@ -1,9 +1,11 @@
-#if os(iOS) && MACCOMPANION_VNC_DEVELOPMENT
+#if (os(iOS) || os(macOS)) && MACCOMPANION_VNC_DEVELOPMENT
 import Foundation
 import Observation
 import StoreKit
 import SwiftUI
+#if os(iOS)
 import UIKit
+#endif
 
 struct DirectProEntitlement {
     let verified: Bool
@@ -202,7 +204,7 @@ struct DirectProView: View {
     }
     private var historyAction: DirectRecoveryAction? {
         guard access.recovery?.reason == .purchaseUnconfirmed || access.recovery?.reason == .noPurchase else { return nil }
-        return .init(title: "Apple Purchase History", perform: { UIApplication.shared.open(URL(string: "https://reportaproblem.apple.com/")!) })
+        return .init(title: "Apple Purchase History", perform: { DirectClientPlatformV1.open(URL(string: "https://reportaproblem.apple.com/")!) })
     }
     var body: some View {
         NavigationStack {
@@ -252,7 +254,7 @@ struct DirectProView: View {
                     Text("Security, accessibility and SSH key import/export stay free. Existing extra Macs and keys are preserved.").foregroundStyle(.secondary)
                 }
             }
-            .navigationTitle("Mac Companion Pro").navigationBarTitleDisplayMode(.inline)
+            .navigationTitle("Mac Companion Pro").directInlineNavigationTitle()
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
             .task { await access.loadProduct() }
             .onChange(of: scenePhase) { _, phase in if phase == .active { Task { await access.refresh() } } }

@@ -1,4 +1,4 @@
-#if os(iOS) && MACCOMPANION_VNC_DEVELOPMENT
+#if (os(iOS) || os(macOS)) && MACCOMPANION_VNC_DEVELOPMENT
 import Foundation
 import Observation
 

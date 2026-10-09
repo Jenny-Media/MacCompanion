@@ -21,6 +21,11 @@ for c in profile['portCases']:
 for c in profile['loginCases']:
     b = c['value'].encode(); values = ','.join(str(v) for v in b) or '0'
     checks.append('{ const char bytes[] = {%s}; assert(CompanionVNCLoginBytes(bytes, %d) == %s); }' % (values, len(b), str(c['valid']).lower()))
+for c in profile['connectionReadinessCases']:
+    arguments = ', '.join(str(c[key]).lower() for key in [
+        'running', 'inputReady', 'inputOnly', 'paused', 'stopping', 'overflow',
+        'awaitingResumeFrame', 'baselinePresented'])
+    checks.append('assert(CompanionVNCConnectionReady(%s) == %s);' % (arguments, str(c['connected']).lower()))
 for c in profile['displayLayoutCases']:
     b = bytes.fromhex(c['bodyHex']); values = ','.join(str(v) for v in b)
     checks.append('{ const uint8_t bytes[] = {%s}; CompanionVNCDisplayLayout layout; assert(CompanionVNCDecodeDisplayLayout(bytes, sizeof(bytes), &layout) == %s);' % (values, str(c['valid']).lower()))
@@ -83,9 +88,10 @@ checks.append(r'''{
         assert(CompanionVNCScrollPacket(&state,2,1,1,0,0,100,100,bytes,58)==0);
     }
 }''')
-source = '#include <assert.h>\n#include "CompanionVNCDirectEndpoint.h"\n#include "CompanionVNCDisplayLayout.h"\n#include "CompanionVNCGestures.h"\nint main(void) {\n' + '\n'.join(checks) + '\n}\n'
+source = '#include <assert.h>\n#include "CompanionVNCDirectEndpoint.h"\n#include "CompanionVNCDisplayLayout.h"\n#include "CompanionVNCGestures.h"\n#include "CompanionVNCReadiness.h"\nint main(void) {\n' + '\n'.join(checks) + '\n}\n'
 with tempfile.TemporaryDirectory(prefix='maccompanion-vnc-direct-') as folder:
     p = Path(folder); (p / 'test.c').write_text(source)
     subprocess.run(['xcrun', 'clang', '-Wall', '-Wextra', '-Werror', '-I', str(ROOT/'Native/VNC'), str(p/'test.c'), '-o', str(p/'test')], check=True)
     subprocess.run([str(p/'test')], check=True)
 print(f"Direct Screen Sharing: {len(profile['addressCases'])} endpoint, {len(profile['portCases'])} port, {len(profile['loginCases'])} login and {len(profile['displayLayoutCases'])} Apple display-layout cases, {len(profile['nativeMagnificationCases'])} native magnification vectors, {len(profile['nativeScrollCases'])} precise scroll vectors and 100 repeated lifecycles each passed")
+print(f"Mode-specific connection readiness: {len(profile['connectionReadinessCases'])} cases passed")

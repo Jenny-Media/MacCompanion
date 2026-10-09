@@ -1,3 +1,49 @@
+## 2026-10-09 — Native macOS direct client awaiting acceptance
+
+The approved macOS scope is a native VNC and SSH client, with Desktop,
+Trackpad & Keyboard and Terminal, independent windows and compatible optional
+iPhone iCloud library sync. No custom Mac server or helper is started. See
+[native macOS implementation and acceptance](native-macos-client.md) for build
+instructions, current evidence and remaining gates. Earlier Agent work is
+preserved separately; this implementation starts from client checkpoint `ce85d33`.
+
+Stable Xcode 27.0 builds and signs the Apple Silicon client; all 161 application
+source inputs match its report. Its existing development identity, certificate
+and exact Mac/local plus iPhone/cloud Keychain groups verify. Hosted Mac QA
+completes thirteen tests: twelve pass, one GUI key-window check skips, none fail.
+This supersedes the earlier stalled test-session preparation. Native input model
+checks pass sixteen cases, and required repository validation passes with 134
+indexed fixtures. The latest iPhone Simulator app build includes the shared
+readiness fix and passes. Its previously completed suite has 174 passes,
+thirteen optional skips and no failures; it was not rerun for this polish.
+
+Screenshot review fixes Trackpad's readiness stall: an authenticated input-only
+owner reports Connected without presented pixels; Desktop still waits for a
+complete baseline. Twelve indexed readiness cases and actual callback tests
+cover this behavior. The library shows default mode and active window state,
+raises existing connections, and reports iCloud opt-in/refresh/errors without
+claiming device delivery. Native session status, clearer controls, Trackpad
+instructions and Terminal inset/text-size controls improve presentation.
+
+The user authorized Xcode automation and approved system dialogs locally.
+Native QA authenticates Trackpad to built-in Screen Sharing and Terminal to
+built-in Remote Login with the independently known VM host key. Trackpad now
+shows its connected input-only surface. A complete native GUI focus/keyboard/
+closure run remains pending because other windows cover the intended owner.
+The opt-in live VM runner saves genuine app-window screenshots outside Git;
+it does not advance VM setup or enable iCloud.
+
+The disposable host-only VM ran macOS 26.6.2. Earlier native VNC acceptance
+receives pixels and sends pointer/keyboard input. The isolated pinned-Citadel
+probe verifies two built-in Remote Login connections, PTY input/output/resize
+and closure isolation. At the user's request, the stopped VM and its image
+caches were removed. Small verified manifests and the SSH acceptance report
+remain under `/private/tmp/maccompanion-vm-evidence-20261009`; native build/test
+artifacts and screenshots remain separate. All these artifacts stay outside Git.
+Actual same-account Mac–iPhone delivery, GUI input/recovery across machines,
+Intel/released-macOS compatibility and release readiness remain separate
+unverified gates. No physical iPhone or release submission was used in this work.
+
 ## 2026-10-08 — Simplified My Macs rows
 
 The user reported that build 23's top-aligned, smaller symbols looked worse and

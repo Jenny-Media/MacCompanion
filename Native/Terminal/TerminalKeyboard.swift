@@ -1,6 +1,8 @@
-#if os(iOS) && MACCOMPANION_VNC_DEVELOPMENT
+#if (os(iOS) || os(macOS)) && MACCOMPANION_VNC_DEVELOPMENT
 import Foundation
+#if os(iOS)
 import UIKit
+#endif
 import SwiftTerm
 
 struct TerminalModifiers: OptionSet, Equatable {
@@ -115,6 +117,7 @@ struct TerminalKeyboardPreferences: Codable {
     }
 }
 
+#if os(iOS)
 @MainActor final class TerminalKeyboardBar: UIView {
     weak var terminal: SessionTerminalView?
     var customize: (() -> Void)?
@@ -309,4 +312,6 @@ struct TerminalKeyboardPreferences: Codable {
         terminal.send(data: key.bytes(modifiers: terminal.keyboardState.consume(), applicationCursor: terminal.getTerminal().applicationCursor)[...]); refresh()
     }
 }
+#endif
+
 #endif

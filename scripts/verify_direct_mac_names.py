@@ -13,7 +13,7 @@ identity_source = (ROOT / 'Native/VNC/DirectMacIdentityV1.swift').read_text()
 identity_source = '\n'.join(line for line in identity_source.splitlines() if not line.startswith(('#if', '#endif')))
 record_source = (ROOT / 'Native/VNC/DirectMacLibraryV1.swift').read_text()
 record = record_source[record_source.index('struct DirectMacRecordV1:'):record_source.index('enum DesktopCredentialStoreV1')]
-library = record_source[record_source.index('@MainActor @Observable final class DirectMacLibraryV1'):record_source.index('struct DirectMacLibraryRootV1')]
+library = record_source[record_source.index('@MainActor @Observable final class DirectMacLibraryV1'):record_source.index('\n#if os(iOS)\nstruct DirectMacLibraryRootV1')]
 discovery_source = (ROOT / 'Native/VNC/DirectMacDiscoveryV1.swift').read_text()
 host_discovery = '\n'.join(line for line in discovery_source.splitlines() if not line.startswith(('#if', '#endif')) and line != 'import UIKit')
 key_source = (ROOT / 'Native/Terminal/TerminalKeyLibrary.swift').read_text()
@@ -208,6 +208,11 @@ adapters = r'''
     static let shared = UIApplication()
     var applicationState = State.active
 }
+@MainActor enum DirectClientPlatformV1 {
+    static var sessionAvailable: Bool { UIApplication.shared.applicationState == .active }
+    static func dataURL(_ name: String) -> URL { URL.temporaryDirectory.appending(path: name) }
+    static func write(_ data: Data, to url: URL) throws { try data.write(to: url, options: .atomic) }
+}
 protocol NetServiceBrowserDelegate: AnyObject {}
 protocol NetServiceDelegate: AnyObject {}
 @MainActor final class NetServiceBrowser {
@@ -252,7 +257,7 @@ with tempfile.TemporaryDirectory(prefix='maccompanion-native-names-') as folder:
         subprocess.run([str(binary), str(fixture)], check=True)
     scanner = base / 'Scanner.swift'
     scanner.write_text(identity_source + '\n' + record + '\n@MainActor final class DirectAppLockV1 { static let shared = DirectAppLockV1(); var canAccess = false }\n'
-        + discovery_source)
+        + (ROOT / 'Native/VNC/DirectClientPlatformV1.swift').read_text() + discovery_source)
     sdk = subprocess.check_output(['xcrun', '--sdk', 'iphonesimulator', '--show-sdk-path'], text=True).strip()
     subprocess.run(['xcrun', 'swiftc', '-typecheck', '-swift-version', '6', '-D', 'MACCOMPANION_VNC_DEVELOPMENT',
         '-sdk', sdk, '-target', 'arm64-apple-ios26.0-simulator', str(scanner)], check=True)

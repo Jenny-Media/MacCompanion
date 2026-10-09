@@ -1,4 +1,4 @@
-#if os(iOS) && MACCOMPANION_VNC_DEVELOPMENT
+#if (os(iOS) || os(macOS)) && MACCOMPANION_VNC_DEVELOPMENT
 import Foundation
 import Security
 import CryptoKit
@@ -6,8 +6,12 @@ import CryptoKit
 enum TerminalSecretStore {
     struct Login: Codable { var username: String; var password: String }
     private static func query(_ id: UUID, _ kind: String) -> [String: Any] {
-        [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: "media.jenny.maccompanion.ssh-\(kind).v1",
+        var query: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: "media.jenny.maccompanion.ssh-\(kind).v1",
          kSecAttrAccount as String: id.uuidString.lowercased(), kSecAttrSynchronizable as String: false]
+        #if os(macOS)
+        query[kSecUseDataProtectionKeychain as String] = true
+        #endif
+        return query
     }
     static func read(_ id: UUID, kind: String) throws -> Data? {
         var q = query(id, kind); q[kSecReturnData as String] = true; q[kSecMatchLimit as String] = kSecMatchLimitOne

@@ -11,6 +11,7 @@ python3 scripts/verify_vnc_keyboard.py
 python3 scripts/verify_vnc_viewport.py
 python3 scripts/verify_vnc_direct.py
 python3 scripts/verify_direct_mac_names.py
+python3 scripts/verify_macos_input.py
 python3 scripts/validate_ci.py
 python3 scripts/validate_open_source_policy.py
 python3 scripts/validate_repository_material.py

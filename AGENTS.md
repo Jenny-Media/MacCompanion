@@ -1,6 +1,6 @@
 # Mac Companion agent instructions
 
-- Follow `docs/remote-desktop-mvp.md`: the MVP is one iOS remote-desktop client connecting directly to built-in macOS Screen Sharing, with no Mac app or helper installation. Preserve the legacy protocol and recorded grants without starting them in the direct client.
+- Follow `docs/remote-desktop-mvp.md` and `docs/native-macos-client.md`: native iOS and macOS clients connect directly to built-in Screen Sharing and Remote Login, requiring no Mac Companion server or helper. Preserve the legacy protocol and recorded grants without starting them in either direct client.
 - Treat `spec/capability-protocol/v0/` as normative for v0.1. Update the specification and authoritative fixtures before changing wire or security behavior.
 - `spec/fixtures/manifest.json` is the only fixture index. Do not create a second mutable fixture corpus under package tests.
 - Do not implement application-authentication, pairing, approval, or operation-signature semantics without matching golden cryptographic vectors.
