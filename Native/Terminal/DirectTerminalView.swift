@@ -22,12 +22,11 @@ struct DirectTerminalView: View {
     private let autoConnect: Bool
     private enum Sheet: Identifiable {
         case keys, install, manual, macSettings, appSettings, pro, quickActions, keyboard, verifyGuide, connectionInfo
-        case errorDetails(DirectRecoveryNotice)
         var id: String {
             switch self {
             case .keys: "keys"; case .install: "install"; case .manual: "manual"; case .macSettings: "macSettings"
             case .appSettings: "appSettings"; case .pro: "pro"; case .quickActions: "quickActions"; case .keyboard: "keyboard"
-            case .verifyGuide: "verifyGuide"; case .connectionInfo: "connectionInfo"; case .errorDetails: "errorDetails"
+            case .verifyGuide: "verifyGuide"; case .connectionInfo: "connectionInfo"
             }
         }
     }
@@ -132,7 +131,6 @@ struct DirectTerminalView: View {
                 case .keyboard: TerminalKeyboardSettings(macID: mac.id, changed: { session.reloadKeyboard?() })
                 case .verifyGuide: TerminalIdentityGuide(macName: mac.name)
                 case .connectionInfo: TerminalConnectionInfo(mac: mac)
-                case .errorDetails(let notice): TerminalConnectionIssueView(notice: notice)
                 }
             }
             .sheet(item: $session.trust) { request in
@@ -245,18 +243,18 @@ struct DirectTerminalView: View {
             }
         }
     }
-    @ViewBuilder private func detailsButton(notice: DirectRecoveryNotice?) -> some View {
-        if let notice {
-            if !notice.details.isEmpty {
-                Button { sheet = .errorDetails(notice) } label: {
-                    Label("Issue Details", systemImage: "info.circle").font(.subheadline).frame(maxWidth: .infinity, minHeight: 44)
-                }.accessibilityIdentifier("terminal-login-details")
+    private func detailsButton(notice: DirectRecoveryNotice?) -> some View {
+        DisclosureGroup("Connection Details", isExpanded: $detailsExpanded) {
+            DirectConnectionDetailsRows(mac: mac, desktop: false).padding(.top, 8)
+            if let notice, !notice.details.isEmpty {
+                Divider().padding(.vertical, 4)
+                Text("Issue Details").font(.subheadline.weight(.semibold))
+                ForEach(Array(notice.details.enumerated()), id: \.offset) { offset, detail in
+                    LabeledContent(detail.name, value: detail.value)
+                        .accessibilityIdentifier("terminal-issue-detail-\(offset)")
+                }
             }
-        } else {
-            DisclosureGroup("Connection Details", isExpanded: $detailsExpanded) {
-                DirectConnectionDetailsRows(mac: mac, desktop: false).padding(.top, 8)
-            }.font(.subheadline).accessibilityIdentifier("terminal-login-details")
-        }
+        }.font(.subheadline).accessibilityIdentifier("terminal-login-details")
     }
     private func connectionButton(_ title: String, symbol: String? = nil, enabled: Bool = true, perform: @escaping () -> Void) -> some View {
         Button(action: perform) {
@@ -291,29 +289,6 @@ struct DirectTerminalView: View {
         }.padding(14).frame(maxWidth: .infinity, alignment: .leading)
             .background(Color(uiColor: DirectConnectionStyle.field), in: RoundedRectangle(cornerRadius: 16))
             .overlay(RoundedRectangle(cornerRadius: 16).stroke(Color(uiColor: .separator).opacity(0.25)))
-    }
-}
-
-struct TerminalConnectionIssueView: View {
-    let notice: DirectRecoveryNotice
-    @Environment(\.dismiss) private var dismiss
-    var body: some View {
-        NavigationStack {
-            Form {
-                Section {
-                    Text(notice.title).font(.headline)
-                    Text(notice.message).accessibilityIdentifier("terminal-issue-message")
-                }
-                if !notice.details.isEmpty {
-                    Section("Details") {
-                        ForEach(Array(notice.details.enumerated()), id: \.offset) { offset, detail in
-                            LabeledContent(detail.name, value: detail.value).accessibilityIdentifier("terminal-issue-detail-\(offset)")
-                        }
-                    }
-                }
-            }.navigationTitle("Connection Issue").navigationBarTitleDisplayMode(.inline)
-                .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
-        }.presentationDetents([.medium, .large])
     }
 }
 

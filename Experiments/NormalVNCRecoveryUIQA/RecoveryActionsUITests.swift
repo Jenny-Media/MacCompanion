@@ -18,25 +18,51 @@ final class RecoveryActionsUITests: XCTestCase {
         XCTAssertTrue(app.buttons["terminal-login-details"].exists)
         capture(app, "synthetic-compact-terminal-recovery")
     }
-    @MainActor func testIssueDetailsKeepsCapturedNoticeAfterSessionChanges() async throws {
+    @MainActor func testIssueDetailsRefreshInlineAfterSessionChanges() async throws {
         let app = launch("replace-issue")
         XCTAssertTrue(app.buttons["terminal-login-details"].waitForExistence(timeout: 10))
         app.buttons["terminal-login-details"].tap()
-        XCTAssertTrue(app.navigationBars["Connection Issue"].waitForExistence(timeout: 5))
-        try await Task.sleep(for: .seconds(10))
-        XCTAssertEqual(app.staticTexts["terminal-issue-message"].label, "Synthetic connection was lost. Open a new shell to continue.")
-        XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "Original stage")).firstMatch.exists)
-        XCTAssertFalse(app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "Replacement stage")).firstMatch.exists)
-        capture(app, "synthetic-captured-issue-details")
-        app.buttons["Done"].tap()
+        XCTAssertTrue(app.staticTexts["Original stage"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Replacement stage"].waitForExistence(timeout: 12))
+        XCTAssertFalse(app.staticTexts["Original stage"].exists)
+        XCTAssertTrue(app.staticTexts["synthetic.local"].exists)
+        capture(app, "synthetic-inline-issue-details")
         XCTAssertTrue(app.buttons["terminal-connect"].waitForExistence(timeout: 5))
         XCTAssertFalse(app.navigationBars["Connection Issue"].exists)
     }
-    @MainActor func testNoAdditionalDetailsDoesNotOfferAnEmptySheet() {
+    @MainActor func testNoIssueDiagnosticsStillOffersConfiguredConnectionDetails() {
         let app = launch("no-details")
         XCTAssertTrue(app.buttons["terminal-connect"].waitForExistence(timeout: 10))
-        XCTAssertFalse(app.buttons["terminal-login-details"].exists)
+        XCTAssertTrue(app.buttons["terminal-login-details"].exists)
+        app.buttons["terminal-login-details"].tap()
+        XCTAssertTrue(app.staticTexts["synthetic.local"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["2222"].exists)
+        XCTAssertFalse(app.staticTexts["Issue Details"].exists)
+        XCTAssertFalse(app.navigationBars["Connection Issue"].exists)
         XCTAssertFalse(app.buttons["terminal-change-login"].exists)
+    }
+    @MainActor func testExpandedConnectionDetailsPersistThroughRecoveryAndLoginEditing() {
+        let app = launch("inline-details")
+        let details = app.buttons["terminal-login-details"]
+        XCTAssertTrue(details.waitForExistence(timeout: 10)); details.tap()
+        XCTAssertTrue(app.staticTexts["synthetic.local"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.staticTexts["100.64.0.12"].exists)
+        XCTAssertTrue(app.staticTexts["2222"].exists)
+        app.buttons["Simulate Authentication Failure"].tap()
+        XCTAssertTrue(app.staticTexts["Authentication stage"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["synthetic.local"].exists)
+        app.buttons["Simulate Transport Failure"].tap()
+        XCTAssertTrue(app.staticTexts["Replacement stage"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.staticTexts["Authentication stage"].exists)
+        XCTAssertTrue(app.staticTexts["100.64.0.12"].exists)
+        XCTAssertTrue(app.staticTexts["2222"].exists)
+        let account = app.textFields["Mac account username"]
+        account.tap(); account.typeText("x")
+        XCTAssertFalse(app.staticTexts["Replacement stage"].exists)
+        XCTAssertTrue(app.staticTexts["synthetic.local"].exists)
+        XCTAssertTrue(app.staticTexts["2222"].exists)
+        XCTAssertFalse(app.navigationBars["Connection Issue"].exists)
+        XCTAssertFalse(app.buttons["Done"].exists)
     }
     @MainActor func testAuthenticationFailureKeepsWorkingPasswordAndKeyPicker() {
         let app = launch("auth-rejected")
