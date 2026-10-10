@@ -28,8 +28,38 @@ Required `bash scripts/validate.sh` and `git diff --check` pass on stable Xcode
 27.0. The validation log is
 `/private/tmp/maccompanion-tap-mode-validation-20261010.log`.
 
-This fix is local and is not included in TestFlight build 28. No physical install
-or beta publication occurred for this change.
+The fix is not included in TestFlight build 28. It is published in build 29 below;
+physical installation and acceptance of build 29 remain separate.
+
+### Internal TestFlight 1.0 (29) available
+
+Source commit `8bde6c8d87518355b89a558d9951322ddc13a039` is pushed to the existing
+checkpoint branch, with remote-head verification. A fresh stable-Xcode 27.0
+device build and optimized signed archive bind all **583** application inputs to
+that source. Existing application/widget identities and private Keychain groups
+are retained; experiments and DEBUG code are excluded. The signed main executable
+SHA-256 is `fcea7eeb29c31854898db529fb3fdb2d4d942b6af3e29fe3fb4531499af03910`.
+
+Xcode's **Internal Only** export/upload succeeds on October 10 at **09:01 AM
+America/New_York**. The existing missing OpenSSL framework dSYM warning remains
+non-blocking; app and widget symbols are included. App Store Connect confirms
+processing complete for build ID `e2965831-4cc3-4d6f-a1b4-b865406c4b20`. The
+standard-encryption declaration is saved with distribution in France excluded,
+following the user's previous confirmation. Build-specific first-tap test notes
+are saved and read back, with feedback contact `mac-companion@jenny.media`.
+
+The existing **Internal Testing** group has one tester. App Store Connect shows
+build 29 **Testing**, one invite and expiry in 90 days. It is available for
+installation through TestFlight. Cold-start mode checks and simulated cloud sync
+are verified locally; physical and real cross-device cloud acceptance remain
+separate.
+
+Archive, source report, upload log, test notes, validation log and delivery receipt
+remain outside Git under `/private/tmp/maccompanion-tap-mode-testflight-20261010-*`
+and `app-store-review-20261008/ios-tap-mode-testflight-20261010/` in the local
+artifact directory. `testflight-build-29-testing.png` and the saved accessibility
+snapshot record live availability. No external beta or App Review submission
+occurred; `releaseAdmitted` stays false.
 
 ## 2026-10-10 — Connection backdrop and mode-specific progress
 
