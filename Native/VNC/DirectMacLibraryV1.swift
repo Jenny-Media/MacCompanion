@@ -77,6 +77,17 @@ struct DirectMacRecordV1: Codable, Identifiable, Equatable {
     enum LibraryFailure: Error { case invalid }
 }
 
+enum DirectAddressGuidance {
+    static func issue(_ addresses: [String]) -> String? {
+        let hosts = addresses.map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+        if hosts.isEmpty || hosts.allSatisfy(\.isEmpty) { return "Add an address for this Mac." }
+        if hosts.contains(where: \.isEmpty) { return "Enter an address or remove the empty row." }
+        if Set(hosts).count != hosts.count { return "Each address must be unique." }
+        if (try? DirectMacRecordV1.normalized(name: "Mac", addresses: hosts)) == nil { return "Use hostnames or IP addresses, without spaces or a URL scheme." }
+        return nil
+    }
+}
+
 enum DesktopCredentialStoreV1 {
     struct Login: Codable { let username: String; let password: String }
     private static func query(_ id: UUID) -> [String: Any] {
@@ -268,7 +279,7 @@ struct DirectMacLibraryRootV1: View {
                         VStack(spacing: 16) {
                             Image(systemName: "desktopcomputer").font(.system(size: 48)).foregroundStyle(.blue)
                             Text("Your Macs, within reach").font(.title3.bold())
-                            Text("Enable Remote Login on your Mac, and Screen Sharing for Desktop or Trackpad & Keyboard. Then add its local or Tailscale address.")
+                            Text("Add a Mac on your local network or private VPN. The setup guide shows which services to enable.")
                                 .foregroundStyle(.secondary).multilineTextAlignment(.center)
                             Button("Add your first Mac", systemImage: "plus") { edit(nil) }
                                 .buttonStyle(.borderedProminent).disabled(!library.readable)
@@ -309,13 +320,7 @@ struct DirectMacLibraryRootV1: View {
                             library.move(fromOffsets: offsets, toOffset: destination)
                         }.moveDisabled(!search.isEmpty)
                         if visibleMacs.isEmpty { Text("No matching Macs").foregroundStyle(.secondary) }
-                    } footer: { Text(editMode.isEditing ? "Drag the handles to reorder your Macs." : "Tap a Mac to open its preferred connection. Change Open on Tap in Mac Settings, or choose a mode from its menu.") }
-                }
-                Section {
-                    Button("App Settings", systemImage: "gearshape") { settings = true }
-                    Button("Set Up Your Mac", systemImage: "questionmark.circle") { setup = true }
-                } footer: {
-                    Text("All connections use SSH. Use a trusted local network or private VPN, and verify the Mac’s server key when connecting for the first time.")
+                    } footer: { if editMode.isEditing { Text("Drag to reorder your Macs.") } }
                 }
             }
             .navigationTitle("My Macs")
@@ -328,6 +333,12 @@ struct DirectMacLibraryRootV1: View {
                             withAnimation { editMode = editMode.isEditing ? .inactive : .active }
                         }.disabled(!search.isEmpty).accessibilityIdentifier("macs-edit-order")
                     }
+                }
+                ToolbarItem(placement: .topBarLeading) {
+                    Menu {
+                        Button("App Settings", systemImage: "gearshape") { settings = true }
+                        Button("Set Up Your Mac", systemImage: "questionmark.circle") { setup = true }
+                    } label: { Image(systemName: "gearshape") }.accessibilityLabel("Settings & Help")
                 }
                 ToolbarItem(placement: .primaryAction) {
                     Button("Add Mac", systemImage: "plus") { edit(nil) }.disabled(!library.readable)
@@ -426,6 +437,8 @@ struct DirectMacEditorV1: View {
         return try? .normalized(id: mac.id, name: name, addresses: addresses.map(\.address), port: resolvedPort, sshPort: resolvedSSHPort)
     }
     @State private var addressEditMode: EditMode = .inactive
+    @State private var addressEdited = false
+    private var addressIssue: String? { DirectAddressGuidance.issue(addresses.map(\.address)) }
     @State private var lastAutomaticDiscoveryKey: String?
     init(mac: DirectMacRecordV1?, library: DirectMacLibraryV1) {
         self.mac = mac; self.library = library
@@ -475,42 +488,6 @@ struct DirectMacEditorV1: View {
         NavigationStack {
             Form {
                 if let notice = library.recovery { Section { DirectRecoveryCard(notice: notice, primary: .init(title: "Keep Editing", perform: { library.recovery = nil })) } }
-                Section("Mac") {
-                    TextField("Name", text: Binding(get: { name }, set: { name = $0; usesAutomaticName = false }))
-                        .accessibilityIdentifier("mac-name")
-                    Toggle("Use Detected Name", isOn: $usesAutomaticName)
-                        .accessibilityIdentifier("mac-use-detected-name")
-                    if let detectedName { LabeledContent("Detected Name", value: detectedName) }
-                    LabeledContent("Mac Type") {
-                        Label(detectedModel == nil ? "Not detected" : DirectMacFamily.detect(detectedModel).title,
-                              systemImage: DirectMacFamily.detect(detectedModel).symbol)
-                            .labelStyle(.titleAndIcon)
-                    }
-                    if library.discovery.scanning {
-                        HStack(spacing: 8) {
-                            ProgressView().progressViewStyle(.circular)
-                            Text("Detecting Mac details…").font(.footnote).foregroundStyle(.secondary)
-                        }
-                    }
-                    Button("Refresh Mac Details", systemImage: "arrow.clockwise") {
-                        if library.discovery.start() { lastAutomaticDiscoveryKey = automaticDiscoveryKey }
-                    }.disabled(discoveryKey == nil || library.discovery.scanning)
-                        .accessibilityIdentifier("mac-refresh-details")
-                    Text(library.discovery.unavailable
-                        ? "Local discovery is unavailable. Allow Local Network access in Settings to refresh."
-                        : "Details are saved. Refresh to check for changes.")
-                        .font(.footnote).foregroundStyle(.secondary)
-                    if name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || name.count > 80 || name.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) { Text("Use a name from 1 to 80 characters, without control characters.").font(.footnote).foregroundStyle(.secondary) }
-                }
-                Section {
-                    Picker("Open on Tap", selection: $preferredConnection) {
-                        ForEach(DirectMacConnection.allCases) { connection in
-                            Label(connection.title, systemImage: connection.symbol).tag(connection)
-                        }
-                    }.accessibilityIdentifier("mac-open-on-tap")
-                } footer: {
-                    Text("Choose what opens when you tap this Mac in My Macs. You can always choose another mode from its menu.")
-                }
                 Section {
                     ForEach($addresses) { $draft in
                         VStack(alignment: .leading, spacing: 4) {
@@ -519,7 +496,7 @@ struct DirectMacEditorV1: View {
                                 .textInputAutocapitalization(.never).autocorrectionDisabled().keyboardType(.asciiCapable)
                         }
                     }.onDelete { addresses.remove(atOffsets: $0) }.onMove { addresses.move(fromOffsets: $0, toOffset: $1) }
-                    if !valid { Text("Enter unique addresses for this Mac, a name, and valid ports before saving. An IP address or hostname goes here; enter the port under Advanced.").font(.footnote).foregroundStyle(.secondary) }
+                    if addressEdited, let issue = addressIssue { Text(issue).font(.footnote).foregroundStyle(.secondary) }
                     if addresses.count < 8 { Button("Add Address", systemImage: "plus") { addresses.append(Draft(address: "")) } }
                 } header: {
                     HStack {
@@ -536,19 +513,46 @@ struct DirectMacEditorV1: View {
                     }
                 } footer: {
                     VStack(alignment: .leading, spacing: 8) {
-                        Text("Add local and Tailscale addresses for this same Mac. Addresses are tried in order until one responds. Use Reorder to change priority.")
+                        Text("Tried from top to bottom. Use local or private VPN addresses for the same Mac.")
                         if let sharedNames { Label("Also used by \(sharedNames). Each saved Mac keeps its own login.", systemImage: "info.circle") }
                     }
                 }
+                Section("Mac") {
+                    TextField("Name", text: Binding(get: { name }, set: { name = $0; usesAutomaticName = false }))
+                        .accessibilityIdentifier("mac-name")
+                    Toggle("Use Detected Name", isOn: $usesAutomaticName).accessibilityIdentifier("mac-use-detected-name")
+                    Picker("Open on Tap", selection: $preferredConnection) {
+                        ForEach(DirectMacConnection.allCases) { Label($0.title, systemImage: $0.symbol).tag($0) }
+                    }.accessibilityIdentifier("mac-open-on-tap")
+                    if name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || name.count > 80 || name.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) {
+                        Text("Use a name from 1 to 80 characters, without control characters.").font(.footnote).foregroundStyle(.secondary)
+                    }
+                }
+                if discoveryKey != nil {
+                    Section {
+                        DisclosureGroup("Mac Details") {
+                            if let detectedName { LabeledContent("Detected Name", value: detectedName) }
+                            LabeledContent("Mac Type") { Label(detectedModel == nil ? "Not detected" : DirectMacFamily.detect(detectedModel).title, systemImage: DirectMacFamily.detect(detectedModel).symbol) }
+                            if library.discovery.scanning { ProgressView("Looking for Mac details…") }
+                            Button("Refresh Mac Details", systemImage: "arrow.clockwise") {
+                                if library.discovery.start() { lastAutomaticDiscoveryKey = automaticDiscoveryKey }
+                            }.disabled(library.discovery.scanning).accessibilityIdentifier("mac-refresh-details")
+                            if library.discovery.unavailable { Text("Allow Local Network access in Settings to refresh.").font(.footnote).foregroundStyle(.secondary) }
+                        }
+                    }
+                }
                 Section {
-                    DisclosureGroup("Advanced", isExpanded: $advanced) {
-                        TextField("5900 (default)", text: $port).keyboardType(.numberPad)
-                            .accessibilityLabel("Port").accessibilityIdentifier("mac-port")
+                    DisclosureGroup("Service Ports", isExpanded: $advanced) {
+                        LabeledContent("Screen Sharing") {
+                            TextField("5900", text: $port).keyboardType(.numberPad).multilineTextAlignment(.trailing)
+                                .accessibilityLabel("Screen Sharing Port").accessibilityIdentifier("mac-port")
+                        }
                         if resolvedPort == nil { Text("Use a port from 1 to 65535, or leave it blank for 5900.").font(.footnote).foregroundStyle(.secondary) }
-                        Text("Leave blank to use Screen Sharing port 5900.").font(.footnote).foregroundStyle(.secondary)
-                        TextField("22 (default)", text: $sshPort).keyboardType(.numberPad).accessibilityLabel("SSH Port")
+                        LabeledContent("Remote Login (SSH)") {
+                            TextField("22", text: $sshPort).keyboardType(.numberPad).multilineTextAlignment(.trailing).accessibilityLabel("SSH Port")
+                        }
                         if resolvedSSHPort == nil { Text("Use an SSH port from 1 to 65535, or leave it blank for 22.").font(.footnote).foregroundStyle(.secondary) }
-                        Text("Leave SSH Port blank to use 22. All modes require Remote Login on your Mac.").font(.footnote).foregroundStyle(.secondary)
+                        Text("Leave blank to use the standard ports. All modes require Remote Login.").font(.footnote).foregroundStyle(.secondary)
                     }
                 }
                 if let mac {
@@ -564,7 +568,7 @@ struct DirectMacEditorV1: View {
                         }.disabled(!valid).accessibilityIdentifier("mac-install-ssh-key")
                         Button("Manual Key Setup", systemImage: "doc.text") { sshSheet = .manual(draftMac ?? mac) }
                     } header: { Text("Terminal Access") } footer: {
-                        Text("Selecting a key doesn’t add it to the Mac. Automatic setup requires Pro or an active trial; manual setup is free. Save address changes to keep them for future connections.")
+                        Text("Choose a Terminal key here, then install its public key. Manual setup is free.")
                     }
                     Section {
                         Button("Desktop Login", systemImage: "desktopcomputer") { sshSheet = .login(.desktop) }.accessibilityIdentifier("mac-edit-desktop-login")
@@ -599,6 +603,7 @@ struct DirectMacEditorV1: View {
             .onChange(of: detectedName) { _, detected in if usesAutomaticName, let detected { name = detected } }
             .onChange(of: usesAutomaticName) { _, automatic in if automatic, let detectedName { name = detectedName } }
             .environment(\.editMode, $addressEditMode)
+            .onChange(of: addresses.map(\.address)) { _, _ in addressEdited = true }
             .onChange(of: addresses.count) { _, count in
                 if count < 2 { addressEditMode = .inactive }
             }
@@ -634,81 +639,70 @@ struct DirectSessionSettingsV1: View {
     @AppStorage(VNCSessionActivityController.preferenceKey) private var showSession = true
     @AppStorage(CompanionVNCControlsHapticsPreference) private var controlsHaptics = true
     @State private var lock = DirectAppLockV1.shared
-    @State private var cloud = DirectCloudSyncV1.shared
-    @State private var enableCloud = false
-    @State private var removeCloud = false
-    private enum SettingsSheet: String, Identifiable { case keys, pro, desktop, terminal, trackpad; var id: String { rawValue } }
+    private enum SettingsSheet: String, Identifiable { case pro, desktop, terminal, trackpad; var id: String { rawValue } }
     @State private var settingsSheet: SettingsSheet?
     @Environment(DirectAppearanceV1.self) private var appearance
     var body: some View {
         NavigationStack {
             Form {
-                Section("SSH & Pro") {
-                    Button("SSH Keys", systemImage: "key") { settingsSheet = .keys }.accessibilityIdentifier("settings-ssh-keys")
-                    Button(DirectProAccess.shared.accessTitle, systemImage: "sparkles") { settingsSheet = .pro }
-                }
-                Section("Controls") {
-                    Button("Desktop", systemImage: "desktopcomputer") { settingsSheet = .desktop }
-                    Button("Terminal", systemImage: "terminal") { settingsSheet = .terminal }
-                    Button("Trackpad & Keyboard", systemImage: "rectangle.and.hand.point.up.left") { settingsSheet = .trackpad }
-                }
-                Section("Appearance") {
-                    Picker("App Appearance", selection: Binding(get: { appearance.app }, set: { appearance.app = $0 })) {
-                        ForEach(DirectAppAppearance.allCases) { Text($0.title).tag($0) }
-                    }.accessibilityIdentifier("app-appearance")
-                    Picker("Terminal Colors", selection: Binding(get: { appearance.terminal }, set: { appearance.terminal = $0 })) {
-                        ForEach(DirectTerminalAppearance.allCases) { Text($0.title).tag($0) }
-                    }.accessibilityIdentifier("terminal-appearance")
-                }
                 Section {
-                    Toggle("Sync Saved Macs with iCloud", isOn: Binding(get: { cloud.enabled }, set: { if $0 { enableCloud = true } else { cloud.setEnabled(false) } }))
-                        .disabled(cloud.busy).accessibilityIdentifier("icloud-library-toggle")
-                    if let notice = cloud.recovery {
-                        DirectRecoveryCard(notice: notice, primary: .init(title: notice.reason == .cloudRemoval ? "Retry Removal" : "Retry", perform: { if notice.reason == .cloudRemoval { cloud.removeCloudCopies() } else { cloud.retry() } }))
-                    } else { Text(cloud.status).font(.footnote).foregroundStyle(.secondary) }
-                    if cloud.enabled {
-                        Button("Refresh iCloud", systemImage: "arrow.triangle.2.circlepath") { cloud.refresh() }.disabled(cloud.busy)
-                        if cloud.busy { ProgressView("Refreshing Keychain…") }
-                    }
-                    Button("Remove iCloud Copies", systemImage: "icloud.slash", role: .destructive) { removeCloud = true }.disabled(cloud.busy)
-                } header: { Text("iCloud Sync · Optional") } footer: {
-                    VStack(alignment: .leading, spacing: 8) {
-                    Text("Off by default. Sync uses iCloud Keychain and depends on your Apple Account and trusted devices for privacy. Saved Macs, addresses, ports and display/input settings sync. Passwords, SSH private keys, server trust and saved text stay on this device.")
-                    Link("Apple’s iCloud security overview", destination: URL(string: "https://support.apple.com/en-us/102651")!)
-                    }
+                    NavigationLink { general.navigationTitle("General") } label: { Label("General", systemImage: "gearshape") }
+                    NavigationLink { controls.navigationTitle("Connections & Input") } label: { Label("Connections & Input", systemImage: "slider.horizontal.3") }
+                    NavigationLink { TerminalKeySettings(embedded: true) } label: { Label("SSH Keys", systemImage: "key") }.accessibilityIdentifier("settings-ssh-keys")
+                    NavigationLink { sync.navigationTitle("Sync & Security") } label: { Label("Sync & Security", systemImage: "lock.shield") }
                 }
-                Section {
-                    Toggle("Require Face ID or Passcode", isOn: Binding(get: { lock.enabled }, set: { lock.setEnabled($0) }))
-                        .accessibilityIdentifier("app-lock-toggle")
-                } header: { Text("Security") } footer: {
-                    Text("Optional app unlock protects saved Macs and sessions when you return. Your Mac login remains separate.")
-                    if lock.message.contains("before enabling") { Text(lock.message) }
-                }
-                Section {
-                    Toggle("Show session in Dynamic Island", isOn: $showSession)
-                        .accessibilityIdentifier("session-live-activity")
-                    Toggle("Controls Haptics", isOn: $controlsHaptics).accessibilityIdentifier("controls-haptics")
-                } header: { Text("Session") } footer: {
-                    Text("Dynamic Island shows Desktop or Terminal status with Resume and End actions. Terminal keeps the same shell during brief app switches; iOS may suspend networking while you’re away. Controls Haptics confirms a local menu selection.")
+                Section("Pro") {
+                    Button { settingsSheet = .pro } label: { DirectSettingsRow(title: DirectProAccess.shared.accessTitle, symbol: "sparkles") }
                 }
             }
             .sheet(item: $settingsSheet) { selection in
                 switch selection {
-                case .keys: TerminalKeySettings(); case .pro: DirectProView()
+                case .pro: DirectProView()
                 case .desktop: VNCInputSettings(mode: .desktop)
                 case .terminal: VNCInputSettings(mode: .terminal)
                 case .trackpad: VNCInputSettings(mode: .trackpad)
                 }
             }
-            .alert("Enable iCloud Sync?", isPresented: $enableCloud) {
-                Button("Enable Sync") { cloud.setEnabled(true) }; Button("Cancel", role: .cancel) {}
-            } message: { Text(DirectCloudSyncV1.disclosure) }
-            .confirmationDialog("Remove saved Mac copies from iCloud?", isPresented: $removeCloud, titleVisibility: .visible) {
-                Button("Turn Off Sync & Remove Cloud Copies", role: .destructive) { cloud.removeCloudCopies() }
-            } message: { Text("Local Macs and logins stay on this device. Turn off sync on your other devices first; otherwise they may upload the saved Macs again. Apple manages when removal reaches other devices.") }
             .navigationTitle("App Settings").navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
         }
+    }
+    private var general: some View {
+        Form {
+            Section("Appearance") {
+                Picker("App Appearance", selection: Binding(get: { appearance.app }, set: { appearance.app = $0 })) {
+                    ForEach(DirectAppAppearance.allCases) { Text($0.title).tag($0) }
+                }.accessibilityIdentifier("app-appearance")
+                Picker("Terminal Colors", selection: Binding(get: { appearance.terminal }, set: { appearance.terminal = $0 })) {
+                    ForEach(DirectTerminalAppearance.allCases) { Text($0.title).tag($0) }
+                }.accessibilityIdentifier("terminal-appearance")
+            }
+        }.navigationBarTitleDisplayMode(.inline)
+    }
+    private var controls: some View {
+        Form {
+            Section("Controls") {
+                control("Desktop", symbol: "desktopcomputer", sheet: .desktop)
+                control("Terminal", symbol: "terminal", sheet: .terminal)
+                control("Trackpad & Keyboard", symbol: "rectangle.and.hand.point.up.left", sheet: .trackpad)
+            }
+            Section {
+                Toggle("Show session in Dynamic Island", isOn: $showSession).accessibilityIdentifier("session-live-activity")
+                Toggle("Menu Haptics", isOn: $controlsHaptics).accessibilityIdentifier("controls-haptics")
+            } header: { Text("This Device") } footer: { Text("Dynamic Island shows session status with Resume and End actions. Menu haptics confirm a local selection.") }
+        }.navigationBarTitleDisplayMode(.inline)
+    }
+    private var sync: some View {
+        Form {
+            DirectCloudSettingsSection()
+            Section {
+                Toggle("Require Face ID or Passcode", isOn: Binding(get: { lock.enabled }, set: { lock.setEnabled($0) })).accessibilityIdentifier("app-lock-toggle")
+                if lock.message.contains("before enabling") { Text(lock.message) }
+            } header: { Text("App Unlock") } footer: { Text("Protect saved Macs and sessions when you return. Your Mac login remains separate.") }
+        }.navigationBarTitleDisplayMode(.inline)
+    }
+    private func control(_ title: String, symbol: String, sheet: SettingsSheet) -> some View {
+        Button { settingsSheet = sheet } label: { DirectSettingsRow(title: title, symbol: symbol) }
     }
 }
 

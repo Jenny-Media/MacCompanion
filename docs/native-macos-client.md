@@ -70,12 +70,12 @@ Terminal link confirmations are sheets owned by their originating window. Screen
 sleep/app lock, owner closure, disconnect and surface teardown cancel them and
 clear their displayed URL; a cancelled confirmation cannot open a browser later.
 
-On macOS, **Import Key** offers **Choose from ~/.ssh…** and **Choose File…** using
+On macOS, **SSH Keys → Import Copy** offers **Choose from ~/.ssh…** and **Choose File…** using
 a native file picker. Hidden folders and extensionless files such as
 `id_ed25519` are selectable. Encrypted and unencrypted Ed25519 OpenSSH private
 keys use the existing bounded importer and local Keychain library. This imports
 a copy: the original file is untouched, its path is not retained, and later file
-changes do not update the imported key. Alternatively, Use SSH Keys from Disk
+changes do not update the imported key. Alternatively, **SSH Keys → Use File**
 stores a device-only read-only security-scoped bookmark and public fingerprint.
 Each connection reads and validates the original file without importing it.
 Missing or changed files and stale access require explicit reselection; encrypted

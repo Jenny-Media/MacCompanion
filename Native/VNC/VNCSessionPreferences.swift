@@ -33,10 +33,11 @@ struct VNCQuickAction: Codable, Identifiable, Equatable, Sendable {
     var modifiers: [UInt32] = []
     var text = ""
     var isCustom: Bool { kind == .shortcut || kind == .text }
+    var displayTitle: String { kind == .fit ? "Fit to Window" : title }
     static func canAddCustom(to actions: [Self]) -> Bool {
         actions.count < maximumCount && actions.filter(\.isCustom).count < maximumCustomCount
     }
-    static var defaults: [Self] { [.init(title: "Mouse Mode", kind: .mode), .init(title: "Fit View", kind: .fit), .init(title: "Right Click", kind: .rightClick)] }
+    static var defaults: [Self] { [.init(title: "Mouse Mode", kind: .mode), .init(title: "Fit to Window", kind: .fit), .init(title: "Right Click", kind: .rightClick)] }
     var valid: Bool {
         let allowed: Set<UInt32> = [0xffe1, 0xffe3, 0xffe9, 0xffeb]
         let keyValid = (0x20...0x7e).contains(key) || [UInt32(0xff1b), 0xff09, 0xff0d, 0xff08, 0xffff, 0xff51, 0xff52, 0xff53, 0xff54].contains(key)
@@ -57,7 +58,7 @@ struct VNCQuickAction: Codable, Identifiable, Equatable, Sendable {
         case .escape: "escape"; case .tab: "arrow.right.to.line"; case .returnKey: "return"
         }
     }
-    var native: [String: Any] { ["id": id.uuidString, "title": title, "kind": kind.rawValue, "symbol": symbol, "key": key, "modifiers": modifiers, "text": text, "enabled": enabled] }
+    var native: [String: Any] { ["id": id.uuidString, "title": displayTitle, "kind": kind.rawValue, "symbol": symbol, "key": key, "modifiers": modifiers, "text": text, "enabled": enabled] }
 }
 
 @MainActor enum VNCSessionPreferences {
@@ -197,16 +198,12 @@ struct VNCInputSettings: View {
                         HStack { Text("Pointer Speed"); Spacer(); Text(speed, format: .number.precision(.fractionLength(1))).foregroundStyle(.secondary) }
                         Slider(value: $speed, in: 0.5...3, step: 0.1).accessibilityLabel("Pointer Speed")
                         Button("Reset to Default") { speed = 1.5 }
-                    } footer: { Text("Slow movement stays precise. Faster swipes travel farther. Speed is saved for this Mac.") }
+                    } header: { Text("Pointer · This Mac") } footer: { Text("Adjust trackpad movement for this Mac.") }
                     if mode == .desktop {
                         Section {
                             Toggle("Follow Cursor", isOn: $followCursor).accessibilityIdentifier("follow-cursor-toggle")
                         } footer: {
-                            #if os(macOS)
-                            Text("With Trackpad Input enabled in Desktop, keep the cursor visible while zoomed in. Manual pan or zoom pauses following until your next pointer movement. Saved for this Mac.")
-                            #else
-                            Text("In zoomed Trackpad mode, move the view to keep the cursor visible. Manual pan or zoom pauses following until your next trackpad movement. Saved for this Mac.")
-                            #endif
+                            Text("Keep the cursor visible in zoomed Trackpad mode. Pan or zoom pauses following until the next pointer movement. Saved for this Mac.")
                         }
                     }
                 }
@@ -216,26 +213,26 @@ struct VNCInputSettings: View {
                         Slider(value: $scrollSpeed, in: VNCSessionPreferences.scrollSpeedRange, step: 0.25)
                             .accessibilityLabel("Scroll Speed").accessibilityIdentifier("scroll-speed-slider")
                         Button("Reset to Default") { scrollSpeed = 1 }
-                    } footer: {
+                    } header: { Text("Scrolling · This Device") } footer: {
                         #if os(macOS)
-                        Text("Two-finger scrolling in Desktop. Applies to all Macs.")
+                        Text("Two-finger scrolling in Desktop.")
                         #else
-                        Text("Two-finger scrolling in Desktop and Trackpad. Applies to all Macs.")
+                        Text("Two-finger scrolling in Desktop and Trackpad.")
                         #endif
                     }
                     #if os(iOS)
                     Section {
                         Toggle("Show Touch Points", isOn: $showsTouchPoints).accessibilityIdentifier("trackpad-touch-points-toggle")
                         Toggle("Trackpad Haptics", isOn: $trackpadHaptics).accessibilityIdentifier("trackpad-haptics-toggle")
-                    } header: { Text("Touch Feedback") }
-                    footer: { Text("Touch rings and tap or drag feedback. Applies to all trackpad surfaces.") }
+                    } header: { Text("Trackpad Feedback · This Device") }
+                    footer: { Text("Touch rings and tap or drag feedback on trackpad surfaces.") }
                     #endif
                 }
                 Section {
                     ForEach($actions) { $action in
                         HStack {
                             Toggle(isOn: $action.enabled) {
-                                Button(action.title) { if action.kind == .shortcut || action.kind == .text { editor = action } }
+                                Button(action.displayTitle) { if action.kind == .shortcut || action.kind == .text { editor = action } }
                                     .buttonStyle(.plain)
                             }
                             #if os(macOS)
@@ -252,7 +249,7 @@ struct VNCInputSettings: View {
                     if DirectProAccess.shared.hasPro && actions.count < 15 {
                         Menu("Add Standard Action") {
                             ForEach(mode.builtIns.filter { candidate in !actions.contains { $0.kind == candidate.kind } }) { candidate in
-                                Button(candidate.title, systemImage: candidate.symbol) { actions.append(candidate) }
+                                Button(candidate.displayTitle, systemImage: candidate.symbol) { actions.append(candidate) }
                             }
                         }
                     }
@@ -273,7 +270,7 @@ struct VNCInputSettings: View {
                         #endif
                     }
                 } footer: {
-                    Text("Applies to all Macs in this mode. Saved text stays on this device.")
+                    Text("All \(mode.title) connections on this device. Saved text stays local.")
                 }.disabled(!actionsReadable || !DirectProAccess.shared.hasPro)
                 if !DirectProAccess.shared.hasPro { Section { Button("Customize Quick Actions with Pro") { paywall = true } } }
             }

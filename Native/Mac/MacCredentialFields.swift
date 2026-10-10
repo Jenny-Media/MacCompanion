@@ -36,7 +36,7 @@ struct MacCredentialFields: NSViewRepresentable {
                 let title = NSTextField(labelWithString: label); title.font = .systemFont(ofSize: 12); title.textColor = .secondaryLabelColor
                 field.controlSize = .large; field.font = .systemFont(ofSize: 14)
                 field.isBezeled = true; field.bezelStyle = .roundedBezel
-                field.placeholderString = label; field.setAccessibilityLabel(label)
+                field.placeholderString = field === account ? "Username" : nil; field.setAccessibilityLabel(label)
                 row.addArrangedSubview(title); row.addArrangedSubview(field); addArrangedSubview(row)
                 row.translatesAutoresizingMaskIntoConstraints = false; field.translatesAutoresizingMaskIntoConstraints = false
                 row.widthAnchor.constraint(equalTo: widthAnchor).isActive = true
@@ -103,8 +103,9 @@ struct MacSignInPanel<Content: View, Status: View>: View {
     @ViewBuilder var content: () -> Content
     @ViewBuilder var status: () -> Status
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 22) {
+        GeometryReader { geometry in
+          ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
                 HStack(spacing: 14) {
                     Image(systemName: mode.symbol).font(.system(size: 28)).foregroundStyle(.tint)
                         .frame(width: 52, height: 52).background(.tint.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
@@ -115,12 +116,12 @@ struct MacSignInPanel<Content: View, Status: View>: View {
                 }
                 content()
                 status().frame(maxWidth: .infinity, alignment: .leading)
-            }.padding(28).frame(width: 440)
+            }.padding(22).frame(maxWidth: 420)
                 .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 18))
                 .overlay(RoundedRectangle(cornerRadius: 18).stroke(.quaternary))
-                .padding(24).frame(maxWidth: .infinity)
-        }.scrollBounceBehavior(.basedOnSize)
-            .background(Color(nsColor: .windowBackgroundColor))
+                .padding(24).frame(maxWidth: .infinity, minHeight: geometry.size.height)
+          }.scrollBounceBehavior(.basedOnSize)
+        }.background(Color(nsColor: .windowBackgroundColor))
     }
 }
 #endif

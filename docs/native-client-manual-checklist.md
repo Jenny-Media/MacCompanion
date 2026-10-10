@@ -66,10 +66,16 @@ Items 1–5 have the highest priority.
 
 - [ ] Check grouping, spacing, labels, scrolling and narrow-window layouts.
 - [ ] Read the setup guide on macOS and iOS. Instructions are readable and all controls are visible.
+- [ ] Open Desktop and Terminal Controls on Mac. Both use a compact action table, clear scope labels and one set of editing controls. The Pro explanation remains actionable when customization is unavailable.
 
 ## 11. Settings and error states
 
 - [ ] Open Settings from the library and check the iCloud status. Labels match their destinations and current state.
+- [ ] Navigate General, Connections & Input, SSH Keys, and Sync & Security on both platforms. Key sources and Back/Done actions are clear.
+- [ ] Add a new Mac. Addresses appear first, a pristine draft has no validation warning, and ports/details remain discoverable in disclosures.
+- [ ] Expand Connection Details before sign-in. Addresses and service ports match the configuration; error details refresh without another modal.
+- [ ] Open Pro while the store is unavailable. Benefits stay visible, there is one store retry, and free features remain accessible.
+- [ ] Expand What syncs and Manage Sync, including with sync disabled. Review the complete enable/removal disclosures without confirming a removal unless intended.
 - [ ] Try unavailable hosts and disabled Screen Sharing/Remote Login. Errors explain the next step and Retry/Cancel work.
 - [ ] On first SSH connection, check the identity prompt. A changed server identity requires explicit verification.
 

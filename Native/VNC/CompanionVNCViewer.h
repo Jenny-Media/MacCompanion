@@ -10,6 +10,8 @@ NS_ASSUME_NONNULL_BEGIN
 @property(nonatomic, strong) CompanionVNCSession *session;
 @property(nonatomic, copy, nullable) NSString *macName;
 @property(nonatomic, copy, nullable) NSArray<NSString *> *connectionMacNames;
+/// Configured fallback addresses for local connection-detail presentation.
+@property(nonatomic, copy, nullable) NSArray<NSString *> *connectionAddresses;
 @property(nonatomic, copy, nullable) NSString *preferenceID;
 @property(nonatomic) CGFloat pointerSpeed;
 @property(nonatomic) CGFloat scrollSpeed;

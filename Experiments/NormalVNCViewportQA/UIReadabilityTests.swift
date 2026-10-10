@@ -46,7 +46,7 @@ import SwiftUI
         let image = UIGraphicsImageRenderer(size: window.bounds.size).image { _ in window.drawHierarchy(in: window.bounds, afterScreenUpdates: true) }
         let attachment = XCTAttachment(image: image); attachment.name = "compact-synthetic-terminal-recovery"; attachment.lifetime = .keepAlways; add(attachment)
     }
-    func testMacTypeRowDoesNotReserveAnExpandedIconHeight() async throws {
+    func testEditorStartsWithCompactAddressRowsAndDoesNotScanCachedMetadata() async throws {
         let folder = URL.temporaryDirectory.appending(path: UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: folder) }
         let library = DirectMacLibraryV1(url: folder.appending(path: "macs.json"))
@@ -61,8 +61,9 @@ import SwiftUI
         XCTAssertFalse(library.discovery.scanning, "Opening saved Mac settings must reuse cached metadata")
         let list = try XCTUnwrap(descendants(window).compactMap { $0 as? UICollectionView }.first)
         let initialCells = list.visibleCells.filter { list.indexPath(for: $0)?.section == 0 }
-        XCTAssertGreaterThanOrEqual(initialCells.count, 4)
-        for cell in initialCells { XCTAssertLessThan(cell.bounds.height, 180, "The Mac Type icon must not stretch its form row") }
+        XCTAssertGreaterThanOrEqual(initialCells.count, 2)
+        XCTAssertTrue(initialCells.contains { descendants($0).compactMap { $0 as? UITextField }.contains { $0.text == "synthetic.local" } }, "The first section must expose the connection address")
+        for cell in list.visibleCells { XCTAssertLessThan(cell.bounds.height, 180, "Collapsed editor rows must stay compact") }
         let image = UIGraphicsImageRenderer(size: window.bounds.size).image { _ in window.drawHierarchy(in: window.bounds, afterScreenUpdates: true) }
         let attachment = XCTAttachment(image: image); attachment.name = "compact-synthetic-mac-editor"; attachment.lifetime = .keepAlways; add(attachment)
     }

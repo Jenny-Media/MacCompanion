@@ -236,9 +236,6 @@ struct DirectProView: View {
     }
     @ViewBuilder private var sections: some View {
         Section {
-            #if os(iOS)
-            Label("Mac Companion Pro", systemImage: "sparkles").font(.title2.bold())
-            #endif
             Text("Try Pro free for 14 days, or unlock it for life. No subscription.").foregroundStyle(.secondary)
             if access.hasLifetimePro {
                 Label("Lifetime Pro is unlocked", systemImage: "checkmark.seal.fill").foregroundStyle(.green)
@@ -250,7 +247,11 @@ struct DirectProView: View {
             }
         }
         if let notice = access.recovery {
-            Section { DirectRecoveryCard(notice: notice, primary: recoveryAction, secondary: historyAction) }
+            Section {
+                if notice.reason == .storeUnavailable {
+                    DirectStoreRecoveryBanner(retry: { Task { await access.loadProduct() } }, busy: access.busy)
+                } else { DirectRecoveryCard(notice: notice, primary: recoveryAction, secondary: historyAction) }
+            }
         }
         Section("Pro features") {
             Label("Multiple saved Macs and named SSH keys", systemImage: "desktopcomputer")
@@ -262,7 +263,7 @@ struct DirectProView: View {
                 Button("Start 14-day Free Trial") { Task { await access.startTrial() } }
                     .disabled(!access.canStartTrial || access.busy).accessibilityIdentifier("pro-start-trial")
             } header: { Text("14-day Trial") } footer: {
-                Text("All Pro features for 14 days from today. Then multiple Macs/keys, key setup and custom controls require Lifetime Pro. Basic features stay free and your data is preserved. No automatic charge. \(access.product.map { "Lifetime Pro costs " + $0.displayPrice + " once, as a separate purchase." } ?? "The lifetime upgrade price appears when the store is available.")")
+                Text("After 14 days, Pro features require a separate lifetime purchase. No automatic charge. Your data is kept and basic features stay free. \(access.product.map { "Lifetime Pro: " + $0.displayPrice + " once." } ?? "Lifetime pricing appears when the store is available.")")
             }
         }
         Section {
@@ -272,11 +273,11 @@ struct DirectProView: View {
                 }.disabled(access.product == nil || access.busy).accessibilityIdentifier("pro-purchase")
             }
             Button("Restore Purchases") { Task { await access.restore() } }.disabled(access.busy).accessibilityIdentifier("pro-restore")
-            if access.product == nil || access.trialProduct == nil { Button("Reload Store") { Task { await access.loadProduct() } }.disabled(access.busy) }
+            if (access.product == nil || access.trialProduct == nil) && access.recovery?.reason != .storeUnavailable { Button("Reload Store") { Task { await access.loadProduct() } }.disabled(access.busy) }
             if access.trialHistoryUnavailable { Text("Trial history couldn’t be verified. Restore Purchases before starting a trial; free features remain available.").font(.footnote).foregroundStyle(.secondary) }
             if access.busy { ProgressView("Contacting the App Store…") }
             if let message = access.message { Text(message).font(.footnote).foregroundStyle(.secondary) }
-        } footer: { Text("Lifetime Pro is a one-time purchase. No renewal or subscription.") }
+        }
         Section("Free, without a time limit") {
             #if os(macOS)
             Text("One saved Mac and one SSH key. Desktop, basic Terminal, all standard keyboard controls, local/VPN addresses, display selection and zoom.")

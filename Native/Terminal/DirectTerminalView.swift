@@ -13,6 +13,7 @@ struct DirectTerminalView: View {
     @State private var password = ""
     @State private var remember = false
     @State private var passwordVisible = false
+    @State private var detailsExpanded = false
     @State private var loginIssue: DirectRecoveryNotice?
     @State private var key: TerminalSSHKey?
     @State private var keyName = ""
@@ -252,9 +253,9 @@ struct DirectTerminalView: View {
                 }.accessibilityIdentifier("terminal-login-details")
             }
         } else {
-            Button { sheet = .connectionInfo } label: {
-                Label("Connection Details", systemImage: "info.circle").font(.subheadline).frame(maxWidth: .infinity, minHeight: 44)
-            }.accessibilityIdentifier("terminal-login-details")
+            DisclosureGroup("Connection Details", isExpanded: $detailsExpanded) {
+                DirectConnectionDetailsRows(mac: mac, desktop: false).padding(.top, 8)
+            }.font(.subheadline).accessibilityIdentifier("terminal-login-details")
         }
     }
     private func connectionButton(_ title: String, symbol: String? = nil, enabled: Bool = true, perform: @escaping () -> Void) -> some View {
@@ -662,8 +663,7 @@ struct TerminalConnectionInfo: View {
             Form {
                 Section("Remote Login") {
                     LabeledContent("Mac", value: mac.name)
-                    LabeledContent("SSH Port", value: String(mac.sshPort))
-                    ForEach(mac.addresses, id: \.self) { Text($0).textSelection(.enabled) }
+                    DirectConnectionDetailsRows(mac: mac, desktop: false)
                 }
             }.navigationTitle("Connection Details").navigationBarTitleDisplayMode(.inline)
                 .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }

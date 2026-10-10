@@ -17,6 +17,7 @@ struct SSHKeyDocument: FileDocument {
 }
 
 struct TerminalKeySettings: View {
+    var embedded = false
     var mac: DirectMacRecordV1? = nil
     var changed: @MainActor () -> Void = {}
     @Environment(\.dismiss) private var dismiss
@@ -25,8 +26,12 @@ struct TerminalKeySettings: View {
     private enum Sheet: String, Identifiable { case create, importKey, pro; var id: String { rawValue } }
     @State private var sheet: Sheet?
     var body: some View {
-        NavigationStack {
-            List {
+        Group {
+            if embedded { content } else { NavigationStack { content } }
+        }
+    }
+    private var content: some View {
+            Form {
                 if let mac {
                     Section {
                         Button("Use Password Login", systemImage: "person.badge.key") {
@@ -34,7 +39,7 @@ struct TerminalKeySettings: View {
                         }
                     } footer: { Text("Select a key below for \(mac.name). Keys can be used with any of your Macs.") }
                 }
-                Section("SSH Keys") {
+                Section("Keychain Keys") {
                     ForEach(library.keys) { entry in
                         VStack(alignment: .leading, spacing: 8) {
                             NavigationLink {
@@ -42,6 +47,7 @@ struct TerminalKeySettings: View {
                             } label: { VStack(alignment: .leading, spacing: 4) {
                                 HStack {
                                     Label(entry.name, systemImage: "key")
+                                    Text("Keychain").font(.caption).foregroundStyle(.secondary)
                                     if library.associations.contains(where: { $0.macID == mac?.id && $0.keyID == entry.id }) { Image(systemName: "checkmark.circle.fill").foregroundStyle(.blue) }
                                 }
                                 Text(entry.key.fingerprint).font(.caption.monospaced()).foregroundStyle(.secondary).lineLimit(1)
@@ -53,37 +59,34 @@ struct TerminalKeySettings: View {
                             }
                         }
                     }
-                    if library.keys.isEmpty && library.readable { Text("Create or import a key, then choose it for a Mac.").foregroundStyle(.secondary) }
+                    if library.keys.isEmpty && library.readable { Text("Keys stored in Keychain appear here.").foregroundStyle(.secondary) }
                 }
-                Section {
-                    Button("Create Key", systemImage: "plus") { create() }
-                    Button("Import Key", systemImage: "square.and.arrow.down") {
+                Section("Add a Key") {
+                    #if os(macOS)
+                    NavigationLink { MacSSHKeyFilesView(mac: mac, changed: changed, done: { dismiss() }) } label: {
+                        DirectGuidanceRow(title: "Use File", detail: "Read the original key from ~/.ssh or another folder.", symbol: "doc")
+                    }
+                    #endif
+                    Button {
                         #if os(macOS)
-                        // A referenced fingerprint may be imported without adding another identity.
                         sheet = .importKey
                         #else
                         sheet = pro.canAddKey(count: library.keys.count) ? .importKey : .pro
                         #endif
-                    }
+                    } label: { DirectGuidanceRow(title: "Import Copy", detail: "Store a private-key copy in this device’s Keychain.", symbol: "square.and.arrow.down") }
+                    Button(action: create) { DirectGuidanceRow(title: "Create Key", detail: "Generate an Ed25519 key in Keychain.", symbol: "plus") }
                 }.disabled(!library.readable || !pro.ready)
-                if let notice = library.recovery { Section { DirectRecoveryCard(notice: notice, primary: .init(title: "Retry") { reload() }) }.listRowInsets(EdgeInsets()).listRowBackground(Color.clear) }
-                #if os(macOS)
-                Section {
-                    NavigationLink { MacSSHKeyFilesView(mac: mac, changed: changed) } label: {
-                        Label("Use SSH Keys from Disk…", systemImage: "doc.badge.key")
-                    }
-                } footer: { Text("Read the original file when connecting, without importing a copy.") }
-                #endif
-                Section {
+                if let notice = library.recovery { Section { DirectRecoveryCard(notice: notice, primary: .init(title: "Retry") { reload() }) } }
+                Section {} footer: {
                     #if os(macOS)
-                    Text("Selecting or importing a key doesn’t add it to a Mac. Use that Mac’s Terminal Access settings to install its public key. Private keys stay in this Mac’s Keychain and are excluded from iCloud sync.")
+                    Text("Install the public key from the Mac’s Connection Settings → SSH Keys. Imported keys stay in Keychain; referenced keys stay in their original files. Neither is synced.")
                     #else
-                    Text("Selecting or importing a key doesn’t add it to a Mac. Use that Mac’s Terminal Access settings to install its public key. Private keys stay in this iPhone’s Keychain and are excluded from iCloud sync.")
+                    Text("Install the public key from the Mac’s Terminal Access settings. Private keys stay in this device’s Keychain and are never synced.")
                     #endif
-                }.font(.footnote).foregroundStyle(.secondary)
+                }
             }
             .navigationTitle("SSH Keys").directInlineNavigationTitle()
-            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
+            .toolbar { if !embedded { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } } }
             .sheet(item: $sheet) { destination in
                 switch destination {
                 case .create, .importKey:
@@ -110,7 +113,7 @@ struct TerminalKeySettings: View {
                 }
             }
             .onAppear { reload(); pro.start() }
-        }
+            .directGroupedForm()
     }
     private func reload() { library.reload(macs: mac.map { [$0] } ?? []) }
     private func create() {

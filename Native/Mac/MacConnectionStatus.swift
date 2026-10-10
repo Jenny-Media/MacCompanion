@@ -65,16 +65,10 @@ struct MacCloudStatusView: View {
         return cloud.busy ? "Refreshing iCloud…" : "iCloud Sync On"
     }
     var body: some View {
-        HStack(alignment: .top, spacing: 10) {
+        HStack(spacing: 10) {
             if cloud.busy { ProgressView().controlSize(.small) }
             else { Image(systemName: !cloud.enabled ? "icloud.slash" : cloud.recovery != nil ? "exclamationmark.icloud" : "icloud") }
-            VStack(alignment: .leading, spacing: 4) {
-                Text(title).font(.callout).accessibilityIdentifier("mac-icloud-status")
-                Text(!cloud.enabled ? "Saved Macs stay on this device." : cloud.recovery != nil
-                     ? "Local Macs are kept. Open settings to review the issue."
-                     : "Apple manages delivery to your other devices.")
-                    .font(.caption).foregroundStyle(.secondary)
-            }
+            Text(title).font(.callout).accessibilityIdentifier("mac-icloud-status").help(cloud.status)
             Spacer()
             Button("Settings…", systemImage: "gearshape", action: openSettings.callAsFunction)
                 .accessibilityIdentifier("mac-app-settings").help("Open Mac Companion settings")

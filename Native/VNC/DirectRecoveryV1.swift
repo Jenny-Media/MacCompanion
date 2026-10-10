@@ -61,7 +61,7 @@ struct DirectRecoveryNotice: Equatable, Sendable {
         case .controlsUnavailable: copy = ("Saved controls unavailable", "The app couldn’t read your custom controls. Existing data is kept; standard controls remain available where safe.", .warning)
         case .cloudUnavailable: copy = ("iCloud Sync unavailable", "The app couldn’t access sync data. Local Macs and logins are kept. Check iCloud Keychain in Settings, then retry.", .warning)
         case .cloudRemoval: copy = ("Cloud removal didn’t finish", "Sync is off and local data is kept. Some cloud copies may remain; retry removal when Keychain is available.", .warning)
-        case .storeUnavailable: copy = ("App Store unavailable", "Some purchases couldn’t be loaded. Reload the store when internet access is available. Free features remain available.", .warning)
+        case .storeUnavailable: copy = ("App Store unavailable", "Purchases couldn’t be loaded. Try again; free features remain available.", .warning)
         case .purchasePending: copy = ("Purchase awaiting approval", "Apple hasn’t completed this purchase yet. Pro will unlock when a verified purchase is available. You don’t need to buy again.", .information)
         case .purchaseUnconfirmed: copy = ("Purchase couldn’t be confirmed", "Check your Apple purchase history before buying again, or restore purchases. Saved data and previously verified access are kept.", .warning)
         case .restoreFailed: copy = ("Couldn’t restore Pro", "Your current access and saved data are kept. Check your Apple Account and internet access, then restore again.", .warning)
@@ -133,25 +133,129 @@ struct DirectMacSetupGuide: View {
                     Label("System Settings → General → Sharing", systemImage: "gearshape").font(.footnote).foregroundStyle(.secondary)
                 }
                 Section("2. Add its address") {
-                    DirectGuidanceRow(title: "Local or private VPN address", detail: "Use the address shown in Screen Sharing. For Tailscale, connect both devices to your private network.", symbol: "network")
+                    DirectGuidanceRow(title: "Local or private VPN address", detail: "Use your Mac’s hostname or IP address from Sharing settings. For a private VPN, connect both devices to the same network.", symbol: "network")
                 }
                 Section("3. Sign in") {
-                    DirectGuidanceRow(title: "Your Mac account", detail: "Enter its username and password. Remember the login on this device to reconnect faster.", symbol: "person.badge.key")
+                    DirectGuidanceRow(title: "Your Mac account", detail: "Enter your Mac username and password.", symbol: "person.badge.key")
                 }
-                Section { Label("No Mac Companion server or helper is needed.", systemImage: "checkmark.circle").foregroundStyle(.secondary) }
+                Section {} footer: { Text("Uses built-in Mac services. No helper installation needed.") }
             }.directGroupedForm().navigationTitle("Set Up Your Mac").directInlineNavigationTitle()
                 .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
         }
     }
 }
 
-private extension View {
+extension View {
     @ViewBuilder func directGroupedForm() -> some View {
         #if os(macOS)
         formStyle(.grouped)
         #else
         self
         #endif
+    }
+}
+
+/// Shared presentation; the opt-in disclosure and confirmed removal remain unchanged.
+struct DirectCloudSettingsSection: View {
+    @State private var cloud = DirectCloudSyncV1.shared
+    @State private var lock = DirectAppLockV1.shared
+    @State private var enableCloud = false
+    @State private var removeCloud = false
+    var body: some View {
+        Section {
+            Toggle("iCloud Sync", isOn: Binding(get: { cloud.enabled }, set: {
+                if $0 { enableCloud = true } else if lock.canAccess { cloud.setEnabled(false) }
+            })).disabled(cloud.busy).accessibilityIdentifier("icloud-library-toggle")
+            if let notice = cloud.recovery {
+                DirectRecoveryCard(notice: notice, primary: .init(title: notice.reason == .cloudRemoval ? "Retry Removal" : "Retry") {
+                    guard lock.canAccess else { return }
+                    if notice.reason == .cloudRemoval { cloud.removeCloudCopies() } else { cloud.retry() }
+                })
+            } else { Text(cloud.status).font(.footnote).foregroundStyle(.secondary) }
+            DisclosureGroup("What syncs") {
+                DirectGuidanceRow(title: "Saved Macs & preferences", detail: "Names, detected models, addresses, ports, connection defaults and display/input preferences.", symbol: "icloud")
+                DirectGuidanceRow(title: "Stays on this device", detail: "Passwords, private keys, key-file references, server trust, saved text, custom actions, appearance and app-lock settings.", symbol: "lock.shield")
+                Text("Protected by iCloud Keychain, your Apple Account and trusted devices.").font(.footnote).foregroundStyle(.secondary)
+            }
+            DisclosureGroup("Manage Sync") {
+                if cloud.enabled {
+                    Button("Refresh iCloud", systemImage: "arrow.triangle.2.circlepath") { if lock.canAccess { cloud.refresh() } }.disabled(cloud.busy)
+                }
+                if cloud.busy { ProgressView("Updating Keychain…") }
+                Button("Remove iCloud Copies", systemImage: "icloud.slash", role: .destructive) { removeCloud = true }.disabled(cloud.busy)
+                Text("Turning sync off keeps existing cloud copies. Removal is a separate action.").font(.footnote).foregroundStyle(.secondary)
+                Link("iCloud security", destination: URL(string: "https://support.apple.com/en-us/102651")!)
+            }
+        } header: { Text("iCloud") } footer: {
+            Text("Credentials stay on this device.")
+        }
+        .alert("Enable iCloud Sync?", isPresented: $enableCloud) {
+            Button("Enable Sync") { if lock.canAccess { cloud.setEnabled(true) } }
+            Button("Cancel", role: .cancel) {}
+        } message: { Text(DirectCloudSyncV1.disclosure) }
+        .confirmationDialog("Remove saved Mac copies from iCloud?", isPresented: $removeCloud, titleVisibility: .visible) {
+            Button("Turn Off Sync & Remove Cloud Copies", role: .destructive) { if lock.canAccess { cloud.removeCloudCopies() } }
+        } message: {
+            Text("Local Macs and logins stay on this device. Turn off sync on your other devices first; otherwise they may upload the saved Macs again. Apple manages when removal reaches other devices.")
+        }
+        .onChange(of: lock.canAccess) { _, allowed in if !allowed { enableCloud = false; removeCloud = false } }
+    }
+}
+
+struct DirectConnectionDetailsRows: View {
+    let mac: DirectMacRecordV1
+    let desktop: Bool
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            ForEach(Array(mac.addresses.enumerated()), id: \.offset) { index, address in
+                LabeledContent(index == 0 ? "Address" : "Fallback \(index)", value: address)
+                    .textSelection(.enabled)
+            }
+            #if os(macOS)
+            if desktop {
+                LabeledContent("Screen Sharing", value: String(mac.port))
+                Label("Built-in macOS Screen Sharing", systemImage: "display")
+                    .font(.caption).foregroundStyle(.secondary)
+            } else { sshDetails }
+            #else
+            sshDetails
+            if desktop { LabeledContent("Screen Sharing", value: String(mac.port)) }
+            #endif
+        }
+    }
+    private var sshDetails: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            LabeledContent("Remote Login · SSH", value: String(mac.sshPort))
+            Label("Server identity is verified before login.", systemImage: "lock.shield")
+                .font(.caption).foregroundStyle(.secondary)
+        }
+    }
+}
+
+struct DirectSettingsRow: View {
+    let title: String
+    let symbol: String
+    var body: some View {
+        HStack {
+            Label(title, systemImage: symbol)
+            Spacer()
+            Image(systemName: "chevron.right").font(.caption.weight(.semibold)).foregroundStyle(.tertiary).accessibilityHidden(true)
+        }.contentShape(Rectangle())
+    }
+}
+
+struct DirectStoreRecoveryBanner: View {
+    let retry: @MainActor () -> Void
+    let busy: Bool
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Label("App Store unavailable", systemImage: "exclamationmark.circle").font(.headline)
+                Spacer()
+                Button("Retry", action: retry).disabled(busy)
+            }
+            Text("Purchases couldn’t be loaded. Free features remain available.").font(.subheadline).foregroundStyle(.secondary)
+        }.padding(.vertical, 4).accessibilityIdentifier("recovery-storeUnavailable")
     }
 }
 
