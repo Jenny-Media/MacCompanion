@@ -93,10 +93,10 @@ final class RecoveryActionsUITests: XCTestCase {
         app.buttons["Mac Details"].tap()
         XCTAssertTrue(app.buttons["mac-refresh-details"].waitForExistence(timeout: 10))
         let address = app.textFields["IP address or hostname"]
-        app.swipeUp()
+        app.swipeDown()
         XCTAssertTrue(address.waitForExistence(timeout: 5))
         address.tap(); address.typeText("x")
-        app.swipeDown()
+        app.swipeUp()
         XCTAssertTrue(app.staticTexts["Looking for Mac details…"].waitForExistence(timeout: 5))
     }
     @MainActor func testMacListUsesCachedDetailsAndClearOpenAction() async throws {
