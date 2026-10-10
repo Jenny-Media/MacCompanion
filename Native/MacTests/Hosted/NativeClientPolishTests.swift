@@ -120,26 +120,38 @@ import XCTest
             let window = NSWindow(contentRect: .init(x: -20000, y: -20000, width: 650, height: 700), styleMask: [.titled], backing: .buffered, defer: false)
             window.isReleasedWhenClosed = false; window.contentView = host; window.orderFront(nil)
             defer { window.contentView = nil; window.close() }
-            func element(_ identifier: String) -> (any NSAccessibilityProtocol)? {
+            func element(_ identifier: String) -> NSObject? {
                 host.layoutSubtreeIfNeeded()
                 var pending: [Any] = [host], visited = Set<ObjectIdentifier>()
                 while let item = pending.popLast() {
-                    guard let object = item as? NSObject, visited.insert(ObjectIdentifier(object)).inserted,
-                          let node = item as? any NSAccessibilityProtocol else { continue }
-                    if node.accessibilityIdentifier() == identifier { return node }
-                    pending.append(contentsOf: node.accessibilityChildren() ?? [])
+                    guard let object = item as? NSObject, visited.insert(ObjectIdentifier(object)).inserted else { continue }
+                    // SwiftUI's virtual accessibility nodes implement these
+                    // selectors without adopting AppKit's complete protocol.
+                    if object.responds(to: NSSelectorFromString("accessibilityIdentifier")),
+                       object.value(forKey: "accessibilityIdentifier") as? String == identifier { return object }
+                    if object.responds(to: NSSelectorFromString("accessibilityChildren")) {
+                        pending.append(contentsOf: object.value(forKey: "accessibilityChildren") as? [Any] ?? [])
+                    }
                 }
                 return nil
             }
-            try await self.wait { element("ssh-key-use-file") != nil && element("ssh-key-create")?.isAccessibilityEnabled() == false }
+            func enabled(_ element: NSObject) -> Bool {
+                element.value(forKey: "accessibilityEnabled") as? Bool == true
+            }
+            func press(_ element: NSObject) throws {
+                let selector = NSSelectorFromString("accessibilityPerformPress")
+                XCTAssertTrue(element.responds(to: selector))
+                _ = element.perform(selector)
+            }
+            try await self.wait { element("ssh-key-use-file") != nil && element("ssh-key-create").map(enabled) == false }
             let useFile = try XCTUnwrap(element("ssh-key-use-file"))
-            XCTAssertTrue(useFile.isAccessibilityEnabled())
-            XCTAssertFalse(try XCTUnwrap(element("ssh-key-import-copy")).isAccessibilityEnabled())
-            XCTAssertTrue(useFile.accessibilityPerformPress())
+            XCTAssertTrue(enabled(useFile))
+            XCTAssertFalse(enabled(try XCTUnwrap(element("ssh-key-import-copy"))))
+            try press(useFile)
             let removalID = "ssh-key-remove-" + fileID.uuidString
             try await self.wait { element(removalID) != nil }
             let remove = try XCTUnwrap(element(removalID))
-            XCTAssertTrue(remove.isAccessibilityEnabled()); XCTAssertTrue(remove.accessibilityPerformPress())
+            XCTAssertTrue(enabled(remove)); try press(remove)
             try await self.wait { (try? MacSSHKeyFileStore.load().files.isEmpty) == true }
             XCTAssertEqual(try TerminalSecretStore.read(namedID, kind: "key-library-v2"), unreadable, "Disk-reference cleanup must preserve the unreadable imported data")
         }
