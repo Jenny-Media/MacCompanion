@@ -16,9 +16,9 @@ import AppKit
         if let backgroundObserver { NotificationCenter.default.removeObserver(backgroundObserver) }
         if let closeObserver { NotificationCenter.default.removeObserver(closeObserver) }
     }
-    static func makePanel(sshFolder: Bool, home: URL = FileManager.default.homeDirectoryForCurrentUser) -> NSOpenPanel {
+    static func makePanel(sshFolder: Bool, home: URL = URL(fileURLWithPath: NSHomeDirectoryForUser(NSUserName()) ?? NSHomeDirectory()), referencing: Bool = false) -> NSOpenPanel {
         let panel = NSOpenPanel()
-        panel.title = "Import SSH Private Key"; panel.prompt = "Import"
+        panel.title = referencing ? "Use SSH Key File" : "Import SSH Private Key"; panel.prompt = referencing ? "Choose" : "Import"
         panel.message = "Choose an Ed25519 OpenSSH private key, such as id_ed25519."
         panel.canChooseFiles = true; panel.canChooseDirectories = false; panel.allowsMultipleSelection = false
         panel.showsHiddenFiles = true; panel.allowsOtherFileTypes = true
@@ -26,10 +26,10 @@ import AppKit
         if sshFolder { panel.directoryURL = home.appendingPathComponent(".ssh", isDirectory: true) }
         return panel
     }
-    func choose(in window: NSWindow, sshFolder: Bool, home: URL = FileManager.default.homeDirectoryForCurrentUser,
+    func choose(in window: NSWindow, sshFolder: Bool, home: URL = URL(fileURLWithPath: NSHomeDirectoryForUser(NSUserName()) ?? NSHomeDirectory()), referencing: Bool = false,
                 completion: @escaping @MainActor (Result<URL, Error>) -> Void) {
         guard panel == nil, DirectAppLockV1.shared.canAccess else { return }
-        let panel = Self.makePanel(sshFolder: sshFolder, home: home), token = UUID()
+        let panel = Self.makePanel(sshFolder: sshFolder, home: home, referencing: referencing), token = UUID()
         self.panel = panel; owner = window; generation = token
         closeObserver = NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: window, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.cancel() }

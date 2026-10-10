@@ -25,7 +25,8 @@ def configure(settings, *, identity, team, profile_path, output, bundle, sync_gr
         raise ValueError('The installed Mac profile must authorize the identity, team, existing app and requested Keychain groups.')
     entitlements = output / 'MacDevelopment.entitlements'
     entitlements.write_bytes(plistlib.dumps({'com.apple.application-identifier': application,
-        'com.apple.developer.team-identifier': team, 'keychain-access-groups': groups}))
+        'com.apple.developer.team-identifier': team, 'keychain-access-groups': groups,
+        'com.apple.security.files.bookmarks.app-scope': True}))
     settings.update({'CODE_SIGNING_ALLOWED': 'YES', 'CODE_SIGN_IDENTITY': identity, 'DEVELOPMENT_TEAM': team,
                      'CODE_SIGN_ENTITLEMENTS': str(entitlements), 'CODE_SIGN_INJECT_BASE_ENTITLEMENTS': 'NO'})
     if profile.get('IsXcodeManaged'):

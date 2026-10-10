@@ -124,11 +124,12 @@ private final class CursorInvalidationWindow: NSWindow {
     }
 
     func testCursorOnlyReportsRedrawAndInvalidateCursorRectsWithoutFramebufferChanges() async throws {
-        for trackpad in [false, true] {
+        for legacyTrackpadPreference in [false, true] {
             let transport = CursorOnlyTransport()
             let session = MacVNCSession(mac: .init(id: UUID(), name: "Synthetic", addresses: ["fixture.local"]),
                                         removeSavedLogin: { _ in }, makeTransport: { transport }, canAccess: { true })
-            session.trackpad = trackpad; session.followCursor = false
+            VNCSessionPreferences.setTrackpad(legacyTrackpadPreference, mac: session.mac.id)
+            defer { VNCSessionPreferences.clear(session.mac.id) }
             session.connect(username: "synthetic", password: "synthetic-only", remember: false)
             transport.reportConnected()
             let frame = try solidImage(width: 100, height: 100, rgba: [0, 0, 255, 255])
@@ -164,23 +165,12 @@ private final class CursorInvalidationWindow: NSWindow {
             XCTAssertEqual(session.zoom, 1); XCTAssertEqual(session.pan, .zero)
             XCTAssertGreaterThan(window.invalidations, previous, "Cursor-only reports must update the native surface")
             let after = try render(input)
-            if trackpad {
-                // The 100x100 framebuffer fits at x=50 in this 200x100 viewport.
-                // Check position, hotspot and image shape against actual pixels.
-                let initialPixels = rectanglePixels(x: 68..<78, y: 27..<37, width: 200)
-                let nextPixels = rectanglePixels(x: 126..<134, y: 65..<77, width: 200)
-                XCTAssertEqual(try coloredPixels(before, channel: 0), initialPixels)
-                XCTAssertTrue(try coloredPixels(before, channel: 1).isEmpty)
-                XCTAssertTrue(try coloredPixels(after, channel: 0).isEmpty)
-                XCTAssertEqual(try coloredPixels(after, channel: 1), nextPixels)
-                XCTAssertEqual(try changedPixels(before, after), initialPixels.union(nextPixels),
-                    "Only the old and new cursor overlays change; the framebuffer and crop stay fixed")
-            } else {
-                XCTAssertTrue(try coloredPixels(before, channel: 0).isEmpty)
-                XCTAssertTrue(try coloredPixels(after, channel: 1).isEmpty)
-                XCTAssertTrue(try changedPixels(before, after).isEmpty,
-                    "Pointer mode updates its native cursor rectangles without painting a trackpad overlay")
-            }
+            XCTAssertTrue(try coloredPixels(before, channel: 0).isEmpty)
+            XCTAssertTrue(try coloredPixels(after, channel: 1).isEmpty)
+            XCTAssertTrue(try changedPixels(before, after).isEmpty,
+                "macOS uses native cursor rectangles even with a saved iPhone Trackpad preference")
+            XCTAssertEqual(VNCSessionPreferences.trackpad(session.mac.id), legacyTrackpadPreference,
+                "Opening a macOS desktop must not change the shared iPhone preference")
         }
     }
 }

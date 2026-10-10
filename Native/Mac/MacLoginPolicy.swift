@@ -17,7 +17,8 @@ import Foundation
                              keys: () throws -> [TerminalNamedKey] = { try TerminalKeyLibraryStore.load().keys }) throws -> Bool {
         let library = try keys()
         guard let entry = library.first(where: { $0.key.seed == key.seed }) else { throw Failure.keyUnavailable }
-        return access.canUseKey(entry.id, among: library.map(\.id))
+        let identities = MacSSHKeyFileStore.identities(named: library, files: try MacSSHKeyFileStore.load().files)
+        return access.canUseKey(entry.id, among: identities.map(\.id))
     }
     enum Failure: Error { case invalidLogin, keyUnavailable }
 }

@@ -51,7 +51,7 @@ import XCTest
         let automatic = app.switches["mac-machine-automatic-name"]
         XCTAssertTrue(automatic.waitForExistence(timeout: 5)); automatic.click()
         replace(app.textFields["mac-machine-name"], with: "Sample macOS VM")
-        replace(app.textViews["mac-machine-addresses"], with: host)
+        replace(app.textFields["mac-machine-address-0"], with: host)
         app.buttons["mac-save-machine"].click()
         let row = library.staticTexts["Sample macOS VM"].firstMatch
         XCTAssertTrue(row.waitForExistence(timeout: 5)); row.click()

@@ -81,16 +81,44 @@ struct TerminalKeyAssociation: Codable {
         var library = try load(); try key.validate()
         if let existing = library.keys.first(where: { $0.key.seed == key.seed }) { return existing.id }
         guard library.keys.count < 256, Library.validName(name) else { throw TerminalSecretStore.Failure.storage }
-        let id = UUID(); library.keys.append(.init(id: id, name: name.trimmingCharacters(in: .whitespacesAndNewlines), key: .init(seed: key.seed)))
+        #if os(macOS)
+        let id = try MacSSHKeyFileStore.load().files.first(where: { $0.fingerprint == key.fingerprint })?.id ?? UUID()
+        #else
+        let id = UUID()
+        #endif
+        library.keys.append(.init(id: id, name: name.trimmingCharacters(in: .whitespacesAndNewlines), key: .init(seed: key.seed)))
         try save(library); return id
     }
     enum CreationFailure: Error { case requiresPro }
+    /// Admission must see every current identity, including device-only disk references.
+    static func userKeyIDs() throws -> [UUID] { try userKeyIDs(named: load().keys) }
+    private static func userKeyIDs(named: [TerminalNamedKey]) throws -> [UUID] {
+        #if os(macOS)
+        return MacSSHKeyFileStore.identities(named: named, files: try MacSSHKeyFileStore.load().files).map(\.id)
+        #else
+        return named.map(\.id)
+        #endif
+    }
+    static func canUse(_ entry: TerminalNamedKey, access: DirectProAccess = .shared) throws -> Bool {
+        let named = try load().keys
+        guard named.contains(where: { $0.id == entry.id && $0.key.seed == entry.key.seed }) else { throw TerminalSecretStore.Failure.storage }
+        let ids = try userKeyIDs(named: named)
+        return access.ready && access.canUseKey(entry.id, among: ids)
+    }
     // User creation/import must check the shared store at commit. Other windows
     // may have added keys since the calling view loaded its library snapshot.
     @discardableResult static func addForUser(_ key: TerminalSSHKey, name: String, access: DirectProAccess = .shared) throws -> UUID {
         let library = try load()
         if let existing = library.keys.first(where: { $0.key.seed == key.seed }) { return existing.id }
-        guard access.ready, access.canAddKey(count: library.keys.count) else { throw CreationFailure.requiresPro }
+        #if os(macOS)
+        let files = try MacSSHKeyFileStore.load().files
+        let count = MacSSHKeyFileStore.identities(named: library.keys, files: files).count
+        let alreadyReferenced = files.contains { $0.fingerprint == key.fingerprint }
+        #else
+        let count = library.keys.count
+        let alreadyReferenced = false
+        #endif
+        guard access.ready, alreadyReferenced || access.canAddKey(count: count) else { throw CreationFailure.requiresPro }
         return try add(key, name: name)
     }
     static func rename(_ id: UUID, name: String) throws {
@@ -105,6 +133,9 @@ struct TerminalKeyAssociation: Codable {
         library.associations.append(.init(macID: macID, keyID: keyID, username: username))
         if !library.migratedMacs.contains(macID) { library.migratedMacs.append(macID) }
         try save(library)
+        #if os(macOS)
+        try MacSSHKeyFileStore.forgetSelection(macID)
+        #endif
     }
     static func forgetAssociation(_ macID: UUID) throws {
         // Migrate first so removing a Mac never loses its only local copy of a key.

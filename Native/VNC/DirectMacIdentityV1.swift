@@ -104,4 +104,28 @@ struct DirectMacDetectedIdentity: Equatable {
         return selected
     }
 }
+
+/// A presentation group, not a trusted server identity. Different services on
+/// the same canonical hostname share a card; names alone never join machines.
+struct DirectMacDiscoveryItem: Identifiable, Equatable {
+    let id: String
+    let name: String
+    let host: String
+    let services: [DirectMacDetectedIdentity]
+    var family: DirectMacFamily {
+        let models = Set(services.compactMap(\.modelIdentifier))
+        return .detect(models.count == 1 ? models.first : nil)
+    }
+    static func group(_ identities: [DirectMacDetectedIdentity]) -> [Self] {
+        Dictionary(grouping: identities, by: { DirectMacDetectedIdentity.endpointKey($0.host) })
+            .filter { !$0.key.isEmpty }.map { host, services in
+                let ordered = services.sorted {
+                    if $0.connection != $1.connection { return $0.connection.rawValue < $1.connection.rawValue }
+                    if $0.name != $1.name { return $0.name < $1.name }
+                    return $0.port < $1.port
+                }
+                return Self(id: host, name: ordered[0].name, host: ordered[0].host, services: ordered)
+            }.sorted { $0.name == $1.name ? $0.id < $1.id : $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+    }
+}
 #endif

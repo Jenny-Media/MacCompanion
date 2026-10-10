@@ -183,7 +183,7 @@ private enum TerminalPTY {
         self.mac = mac; self.activityDefaults = activityDefaults; self.activityBackend = activityBackend
     }
     func updateMac(_ record: DirectMacRecordV1) { if record.id == mac.id { mac = record } }
-    func connect(username: String, password: String, remember: Bool, key: TerminalSSHKey? = nil, installation: TerminalNamedKey? = nil, verificationOnly: Bool = false) {
+    func connect(username: String, password: String, remember: Bool, key: TerminalSSHKey? = nil, installation: TerminalNamedKey? = nil, verificationOnly: Bool = false, keyFileID: UUID? = nil) {
         guard DirectAppLockV1.shared.canAccess, !connecting, !connected else { return }
         let loginKey = verificationOnly ? installation?.key : key
         guard !username.isEmpty, (loginKey != nil || !password.isEmpty), username.utf8.count <= 255, password.utf8.count <= 4096,
@@ -232,8 +232,17 @@ private enum TerminalPTY {
                     stop(); installedKey = installation.id; present(.setupVerified, stage: "Key-only login verified; preference saved")
                     return
                 }
-                if var key { key.username = username; try TerminalSecretStore.saveKey(key, id: mac.id) }
-                else if remember { try TerminalSecretStore.save(.init(username: username, password: password), id: mac.id) }
+                var savedFileReference = false
+                #if os(macOS)
+                if let keyFileID, let key {
+                    try MacSSHKeyFileStore.rememberAccount(username, fileID: keyFileID, macID: mac.id, fingerprint: key.fingerprint)
+                    savedFileReference = true
+                }
+                #endif
+                if !savedFileReference {
+                    if var key { key.username = username; try TerminalSecretStore.saveKey(key, id: mac.id) }
+                    else if remember { try TerminalSecretStore.save(.init(username: username, password: password), id: mac.id) }
+                }
                 self.phase = "Opening a new shell"
                 let exitStatus = try await TerminalPTY.run(client: client, columns: columns, rows: rows, ready: { writer in
                     guard self.generation == id, DirectAppLockV1.shared.canAccess, DirectClientPlatformV1.sessionAvailable else { throw CancellationError() }

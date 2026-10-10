@@ -43,9 +43,10 @@ login still cannot complete or save credentials while locked.
 
 Desktop retains display crops admitted by the existing Apple metadata validator,
 All Displays fallback, local fit/zoom/pan, cursor, pointer, wheel and keyboard.
-Desktop supports relative pointer input alongside its remote pixels, pointer,
-scroll and physical keys. Resizing changes local presentation or SSH PTY
-dimensions; it does not change a remote display's resolution.
+Desktop uses direct pointer mapping with remote pixels, scrolling and physical
+keys. It ignores and preserves shared iPhone Trackpad preferences. Resizing
+changes local presentation or SSH PTY dimensions; it does not change a remote
+display's resolution.
 VNC participates in AppKit text input: marked composition stays local, and
 committed Unicode uses the shared keyboard owner. A local preedit indicator and
 candidate position support input methods; losing focus discards the draft.
@@ -74,8 +75,13 @@ a native file picker. Hidden folders and extensionless files such as
 `id_ed25519` are selectable. Encrypted and unencrypted Ed25519 OpenSSH private
 keys use the existing bounded importer and local Keychain library. This imports
 a copy: the original file is untouched, its path is not retained, and later file
-changes do not update the imported key. RSA/ECDSA, hardware-backed keys and
-ssh-agent identities remain outside the supported formats. No folder is scanned
+changes do not update the imported key. Alternatively, Use SSH Keys from Disk
+stores a device-only read-only security-scoped bookmark and public fingerprint.
+Each connection reads and validates the original file without importing it.
+Missing or changed files and stale access require explicit reselection; encrypted
+keys ask for a passphrase for each connection. Imported and referenced copies of
+the same public key count once under the existing Pro/free-key policy. RSA/ECDSA,
+hardware-backed keys and ssh-agent identities remain outside the supported formats. No folder is scanned
 or key read without the user's explicit selection; the picker closes on lock.
 
 ## Storage and sync
@@ -340,3 +346,59 @@ execute after local system authorization, and the removed disposable VM supplied
 live built-in-server evidence. Recreate the fixture to finish GUI and live server
 checks, then obtain the fresh physical-device request required by
 `docs/simulator-first-testing.md` for signed Mac–iPhone sync acceptance.
+
+### Native client polish, 2026-10-09
+
+The library now opens each machine's preferred Desktop or Terminal connection
+on a sidebar double-click or Return. A single click selects the machine. The
+connection editor has bounded, separately editable address rows with Add,
+Remove and ordering actions. Nearby-computer cards group Screen Sharing and
+Remote Login by canonical hostname, show available services and an identified
+Mac family when unambiguous, and retain each advertised service port.
+
+Both clients have structured setup, recovery and server-verification guidance
+with headings and SF Symbols. Native macOS sign-in uses a stable AppKit account
+and password pair that observes programmatic autofill value changes as well as
+typing. Connecting disables the retained fields and displays progress/cancel
+without replacing the form. An authentication retry uses the entered Desktop
+credentials rather than replacing them with an older saved login.
+
+macOS Desktop always maps the pointer directly; physical keyboard, IME,
+scrolling and local zoom/pan remain. Connected full-screen Desktop hides the
+regular toolbar and status footer and offers compact controls at the top edge.
+Its bounded native settings form groups display, scrolling and optional Send
+Key actions. iPhone retains its Desktop, Trackpad & Keyboard and Terminal modes
+and their existing gesture, relative-pointer and keyboard preferences.
+
+The optional disk-key library stores only device-local read-only bookmarks,
+public fingerprints and account associations. Key reads/decryption occur off
+the main thread; cancelled/locked/closed attempts cannot dial or save later.
+A loopback SSH authentication regression proves a successful referenced-key
+login never creates an imported private-key copy. Missing/changed files, stale
+bookmarks, encrypted passphrase requirements, removed references and current
+Pro/free-key limits have hosted regressions.
+
+The repair-loop checks use stable Xcode 27 to build both clients. Hosted Mac QA
+executes 38 tests: 37 pass, one optional native-focus test is skipped, and none
+fail. The full iOS suite executes 188 tests with 13 optional skips. During this
+loop, a full run passed all 175 remaining tests; earlier runs passed 171 and
+failed four software-keyboard layout tests. Those same four tests reproduce
+the identical 13 failed assertions on the pre-change commit
+`843e3e208188211746105da756dcfef2100c9b76`; their view, keyboard and test sources
+are unchanged. The intermittent failures are recorded baseline evidence; a
+passing rerun does not replace actual software-keyboard acceptance. All other
+iOS tests pass. The passing iOS run also verifies OpenSSH encrypted export and
+authorized_keys preservation, duplicate detection, link rejection and file
+permissions.
+
+Earlier native GUI QA passed two flows covering address rows, both double-click
+defaults, account/password focus, controls layout and independent SSH-window
+keyboard, focus, closure and disconnect; optional live-VM capture was skipped.
+These GUI results are historical and were not rerun against the final
+repair-loop state.
+
+Actual Apple Passwords/1Password filling, sandboxed bookmark persistence after
+restart, full-screen hover controls against a live desktop, native IME behavior
+and signed Mac–iPhone iCloud delivery still require user/device acceptance.
+These changes are local source and development-build work; they do not update
+the previously uploaded TestFlight build.
