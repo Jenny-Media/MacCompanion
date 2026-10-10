@@ -1,3 +1,36 @@
+## 2026-10-10 — First-tap connection mode presentation
+
+The reported Trackpad default opening Desktop is reproduced on stable Xcode
+27.0 in the dedicated QA Simulator with iCloud sync disabled. A synthetic saved
+Mac has `preferredConnection: trackpad`; the list displays Open Trackpad &
+Keyboard, but its first tap presents the native Desktop login card. The saved
+record and list label agree. The separate `inputOnly` SwiftUI state, initialized
+to false and read inside the Mac-only full-screen cover, is captured with that
+initial value.
+
+The root now carries an immutable Mac and `DirectMacConnection` together in one
+item-driven full-screen presentation. List taps, explicit Connect-menu choices
+and existing resume routes use that selection. A fresh presentation identity
+is created for each opening. Saved-record format, iCloud merge rules and
+connection transports are unchanged.
+
+Three focused Simulator tests pass: selection persistence across a subsequent
+library update, simulated two-device cloud sync retaining Trackpad/Terminal
+defaults, and the production-host login backdrop regression. Actual production
+list taps after cold launch open Trackpad, Terminal and Desktop correctly;
+Desktop from the Connect menu followed by the Trackpad row also switches
+correctly. No credentials or network connections are needed for these checks.
+Synthetic before/after screenshots and runtime snapshots stay outside Git under
+`/private/tmp/maccompanion-tap-mode-proof-20261010/`; the focused result bundle is
+`/private/tmp/maccompanion-tap-mode-routing-20261010.xcresult`.
+
+Required `bash scripts/validate.sh` and `git diff --check` pass on stable Xcode
+27.0. The validation log is
+`/private/tmp/maccompanion-tap-mode-validation-20261010.log`.
+
+This fix is local and is not included in TestFlight build 28. No physical install
+or beta publication occurred for this change.
+
 ## 2026-10-10 — Connection backdrop and mode-specific progress
 
 The Desktop and Trackpad & Keyboard connection backdrop now extends through the

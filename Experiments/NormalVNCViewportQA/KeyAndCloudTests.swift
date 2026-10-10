@@ -78,7 +78,7 @@ private final class MemoryCloud: DirectCloudTransport, @unchecked Sendable {
         let a = try XCTUnwrap(UserDefaults(suiteName: suiteA)), b = try XCTUnwrap(UserDefaults(suiteName: suiteB))
         defer { a.removePersistentDomain(forName: suiteA); b.removePersistentDomain(forName: suiteB); try? FileManager.default.removeItem(at: folder); try? TerminalSecretStore.remove(id); VNCSessionPreferences.clear(id) }
         let first = DirectMacLibraryV1(url: folder.appending(path: "a.json")), second = DirectMacLibraryV1(url: folder.appending(path: "b.json"))
-        XCTAssertTrue(first.save(id: id, name: "Synthetic Mac", address: "mac.local"))
+        XCTAssertTrue(first.save(id: id, name: "Synthetic Mac", addresses: ["mac.local"], preferredConnection: .trackpad))
         let cloudA = DirectCloudSyncV1(defaults: a, url: folder.appending(path: "journal-a.json"), transport: transport, writerID: UUID())
         let cloudB = DirectCloudSyncV1(defaults: b, url: folder.appending(path: "journal-b.json"), transport: transport, writerID: UUID())
         cloudA.attach(first); cloudB.attach(second)
@@ -87,12 +87,14 @@ private final class MemoryCloud: DirectCloudTransport, @unchecked Sendable {
         try TerminalSecretStore.save(.init(username: "MUST-NOT-SYNC", password: "MUST-NOT-SYNC"), id: id)
         cloudA.setEnabled(true); try await wait(cloudA); cloudB.setEnabled(true); try await wait(cloudB)
         XCTAssertEqual(second.macs.first?.id, id); XCTAssertEqual(second.macs.first?.addresses, ["mac.local"])
+        XCTAssertEqual(second.macs.first?.preferredConnection, .trackpad)
         for data in try transport.read() { let text = String(decoding: data, as: UTF8.self); XCTAssertFalse(text.contains("MUST-NOT-SYNC")); XCTAssertFalse(text.contains(key.seed.base64EncodedString())); XCTAssertFalse(text.contains("username")); XCTAssertFalse(text.contains("host-key")) }
         cloudA.setEnabled(false); let before = transport.readCount
-        XCTAssertTrue(first.save(id: id, name: "Offline edit", addresses: ["100.100.1.2"])); cloudA.refresh()
+        XCTAssertTrue(first.save(id: id, name: "Offline edit", addresses: ["100.100.1.2"], preferredConnection: .terminal)); cloudA.refresh()
         XCTAssertEqual(transport.readCount, before); XCTAssertEqual(first.macs.first?.name, "Offline edit")
         cloudA.setEnabled(true); try await wait(cloudA); cloudB.refresh(); try await wait(cloudB)
         XCTAssertEqual(second.macs.first?.name, "Offline edit")
+        XCTAssertEqual(second.macs.first?.preferredConnection, .terminal)
         // Remote removal drops the Mac, but does not delete the recipient's device-only key.
         second.remove(try XCTUnwrap(second.macs.first)); try await wait(cloudB)
         try TerminalSecretStore.saveKey(key, id: id)
