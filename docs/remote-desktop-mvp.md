@@ -5,7 +5,7 @@ the paired Mac-host product decision of 2026-10-03.
 
 The first product is one iOS app connecting directly to built-in macOS Screen
 Sharing. There is no required or optional Mac Companion host/helper installation.
-The journey is enable Screen Sharing once, add a Mac in the phone, enter the Mac
+The journey is enable Remote Login and Screen Sharing once, add a Mac in the phone, enter the Mac
 account login, then connect. Login retention is optional and local to Keychain.
 My Macs supports multiple Macs, each with ordered local/private-VPN addresses,
 advanced port configuration, names, editing and removal. Saved logins and view/input
@@ -44,10 +44,17 @@ This direct development implementation connects to validated local IPv4/IPv6
 and shared-address-space IPv4 endpoints, including Tailscale addresses. Both devices
 need an active private VPN route for remote access. Automatic address fallback stops
 after the first TCP connection, before Mac authentication. It uses the existing pinned LibVNCClient Apple ARD login implementation.
-ARD protects the login exchange but does not establish encrypted framebuffer or
-input transport, or our former pinned host identity. The setup must disclose this
-and must not label the desktop encrypted. Secure transport and public distribution
-remain release gates. The app does not provide a public relay or direct public endpoint connection.
+Transport revision: 2026-10-09. The iOS client dials the saved SSH port with
+validated numeric addresses, verifies the Mac's SSH host key, and opens one
+`direct-tcpip` channel to 127.0.0.1 on the saved Screen Sharing port. SSH encrypts
+the full desktop and input stream. No plaintext fallback or local TCP listener
+is permitted. Desktop and Trackpad & Keyboard need both built-in Remote Login
+and Screen Sharing; Terminal needs Remote Login. They share the Mac UUID's SSH
+server trust but keep their saved logins separate. Desktop authenticates SSH and
+ARD with its entered Mac account/password; Terminal keys are not silently reused.
+The app does not provide a public relay or direct public endpoint connection.
+Production Simulator, physical-device, licensing and distribution acceptance
+remain separate gates; a passing standalone tunnel probe is not release admission.
 
 Observe/Act, custom session confirmations, alternate host engines, vendor relays,
 accounts, helper installation, audio and file transfer are outside this MVP.

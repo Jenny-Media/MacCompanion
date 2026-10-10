@@ -1,3 +1,188 @@
+## 2026-10-10 — First-tap connection mode presentation
+
+The reported Trackpad default opening Desktop is reproduced on stable Xcode
+27.0 in the dedicated QA Simulator with iCloud sync disabled. A synthetic saved
+Mac has `preferredConnection: trackpad`; the list displays Open Trackpad &
+Keyboard, but its first tap presents the native Desktop login card. The saved
+record and list label agree. The separate `inputOnly` SwiftUI state, initialized
+to false and read inside the Mac-only full-screen cover, is captured with that
+initial value.
+
+The root now carries an immutable Mac and `DirectMacConnection` together in one
+item-driven full-screen presentation. List taps, explicit Connect-menu choices
+and existing resume routes use that selection. A fresh presentation identity
+is created for each opening. Saved-record format, iCloud merge rules and
+connection transports are unchanged.
+
+Three focused Simulator tests pass: selection persistence across a subsequent
+library update, simulated two-device cloud sync retaining Trackpad/Terminal
+defaults, and the production-host login backdrop regression. Actual production
+list taps after cold launch open Trackpad, Terminal and Desktop correctly;
+Desktop from the Connect menu followed by the Trackpad row also switches
+correctly. No credentials or network connections are needed for these checks.
+Synthetic before/after screenshots and runtime snapshots stay outside Git under
+`/private/tmp/maccompanion-tap-mode-proof-20261010/`; the focused result bundle is
+`/private/tmp/maccompanion-tap-mode-routing-20261010.xcresult`.
+
+Required `bash scripts/validate.sh` and `git diff --check` pass on stable Xcode
+27.0. The validation log is
+`/private/tmp/maccompanion-tap-mode-validation-20261010.log`.
+
+The fix is not included in TestFlight build 28. It is published in build 29 below;
+physical installation and acceptance of build 29 remain separate.
+
+### Internal TestFlight 1.0 (29) available
+
+Source commit `8bde6c8d87518355b89a558d9951322ddc13a039` is pushed to the existing
+checkpoint branch, with remote-head verification. A fresh stable-Xcode 27.0
+device build and optimized signed archive bind all **583** application inputs to
+that source. Existing application/widget identities and private Keychain groups
+are retained; experiments and DEBUG code are excluded. The signed main executable
+SHA-256 is `fcea7eeb29c31854898db529fb3fdb2d4d942b6af3e29fe3fb4531499af03910`.
+
+Xcode's **Internal Only** export/upload succeeds on October 10 at **09:01 AM
+America/New_York**. The existing missing OpenSSL framework dSYM warning remains
+non-blocking; app and widget symbols are included. App Store Connect confirms
+processing complete for build ID `e2965831-4cc3-4d6f-a1b4-b865406c4b20`. The
+standard-encryption declaration is saved with distribution in France excluded,
+following the user's previous confirmation. Build-specific first-tap test notes
+are saved and read back, with feedback contact `mac-companion@jenny.media`.
+
+The existing **Internal Testing** group has one tester. App Store Connect shows
+build 29 **Testing**, one invite and expiry in 90 days. It is available for
+installation through TestFlight. Cold-start mode checks and simulated cloud sync
+are verified locally; physical and real cross-device cloud acceptance remain
+separate.
+
+Archive, source report, upload log, test notes, validation log and delivery receipt
+remain outside Git under `/private/tmp/maccompanion-tap-mode-testflight-20261010-*`
+and `app-store-review-20261008/ios-tap-mode-testflight-20261010/` in the local
+artifact directory. `testflight-build-29-testing.png` and the saved accessibility
+snapshot record live availability. No external beta or App Review submission
+occurred; `releaseAdmitted` stays false.
+
+## 2026-10-10 — Connection backdrop and mode-specific progress
+
+The Desktop and Trackpad & Keyboard connection backdrop now extends through the
+status area in the production SwiftUI host. The native controller continues to
+keep the centered login card and controls within the safe area. This removes
+the white strip above the dimmed background reported on iPhone.
+
+Trackpad & Keyboard progress now names that mode instead of Screen Sharing;
+the SSH setup message reads “Opening encrypted connection…”. These are
+presentation changes; connection routing and encrypted transport are unchanged.
+
+Stable Xcode **27.0 (27A266a)** passes 15 focused Simulator appearance, Terminal
+layout and connection-card checks for the backdrop fix. A subsequent connection
+card capture test also passes after the progress-copy update. Light, dark,
+larger-text and high-contrast synthetic captures were inspected. Required
+`bash scripts/validate.sh` and `git diff --check` pass. Logs, result bundles and
+synthetic captures remain outside Git under
+`/private/tmp/maccompanion-login-backdrop-*` and
+`/private/tmp/maccompanion-trackpad-connection-copy-*`.
+
+Local development **1.0 (27)** was installed and launched on the iPhone 18 Pro Max
+with the backdrop fix before the subsequent copy update. Physical acceptance
+of the latest copy remains separate.
+
+### Internal TestFlight 1.0 (28) available
+
+The user authorized committing, pushing and publishing a new internal beta.
+Source commit `418e7b5bea915dc918a5a5268bb87f7eba18f0b8` is pushed to the existing
+checkpoint branch, with remote-head verification. A fresh stable-Xcode device
+build and optimized signed archive bind all **583** application inputs to that
+source. Existing application/widget identities and private Keychain groups are
+retained; experiments and DEBUG code are excluded. The signed main executable
+SHA-256 is `727546db308cc36f89f4f362cd4a42641472cc1c4cec4fd3d6629b8fbafc848b`.
+
+Xcode's **Internal Only** export/upload succeeds on October 10 at **01:49 AM
+America/New_York**, and reports that Apple has begun processing the package.
+The existing missing OpenSSL framework dSYM warning is non-blocking; app and
+widget symbols are included. App Store Connect now confirms processing is
+complete for build ID `ddef6218-0e23-4248-8516-4bff4b283533`. The standard-encryption
+declaration is saved with distribution in France excluded, following the user's
+previous confirmation. Build-specific test notes and updated SSH setup metadata
+are saved and read back; feedback and review contact remain
+`mac-companion@jenny.media`, with privacy URL `https://mac.jenny.media/privacy/`.
+
+The existing **Internal Testing** group has one tester. App Store Connect shows
+build 28 **Testing**, one invite and expiry in 90 days. It is available for
+installation through TestFlight. Physical installation and acceptance of this
+build remain separate.
+
+Archive, source report, upload log, test notes and delivery receipt remain outside
+Git under `/private/tmp/maccompanion-connection-ui-testflight-20261010-*` and the
+local `app-store-review-20261008/ios-connection-ui-testflight-20261010/` artifact
+directory, including `testflight-build-28-testing.png` as live availability
+evidence. No external beta or App Review submission occurred;
+`releaseAdmitted` stays false.
+
+## 2026-10-10 — SSH transport iOS internal TestFlight 1.0 (26)
+
+The user authorized committing, pushing and publishing an iOS internal beta.
+Approved SSH transport source is committed as
+`e1c13c6a6637d33fb2662ac381b0ff331e607c40` and pushed to
+`codex/native-streaming-checkpoint-20260928`; the remote head was verified.
+Required `bash scripts/validate.sh` passes on stable Xcode **27.0 (27A266a)**.
+The preceding Simulator verification passes 182 active tests, skips 13 optional
+captures and has zero failures; the final 8 focused SSH tests also pass.
+
+A fresh normal-source device build and signed archive bind all **583** recorded
+application inputs to that source. Existing app/widget identities and private
+Keychain groups are retained; experiments and DEBUG code are excluded.
+The main executable SHA-256 is
+`df18de3b8399d9bfed67ed3b4491c7de11be7ed27b1f32b70ff7125581a3e331`.
+Xcode export/upload succeeds on October 10 at 12:16 AM America/New_York.
+Apple processes iOS **1.0 (26)** as an **Internal Only** build with ID
+`f07b79cd-0ada-4dac-9df7-9dea4ccbc0e6`.
+
+The standard-encryption declaration is saved after the user explicitly confirms
+this beta will not be distributed in France. Build-specific SSH setup and test
+notes are saved and read back. The existing **Internal Testing** group has
+one tester; App Store Connect shows build 26 **Testing**, one invite and expiry
+in 90 days. It is available for installation through TestFlight. Physical
+installation and acceptance of the integrated transport remain unreported.
+
+Signed archive, source report, upload log, delivery receipt and verification
+screenshot remain outside Git under
+`/private/tmp/maccompanion-ssh-testflight-20261010-*` and the local
+`app-store-review-20261008/ios-ssh-testflight-20261010/` artifact directory.
+The upload has a non-blocking missing OpenSSL framework dSYM warning;
+application and widget symbols are included.
+
+This internal-only build is not eligible for external beta or App Store review.
+No App Review submission or website deployment occurred. Selected review build
+25 predates SSH; a separately eligible and physically tested build is still
+needed for submission. Corresponding-source packaging and Apple distribution
+terms review remain release gates; `releaseAdmitted` stays false.
+
+## 2026-10-09 — Screen Sharing over SSH integrated and tested in Simulator
+
+Following the successful isolated Mac handshake probe, the user approved
+production integration and Simulator verification. Desktop and Trackpad &
+Keyboard now use verified SSH to built-in Remote Login, forwarding only to the
+Mac's loopback Screen Sharing port. First-use trust and changed-key rejection
+reuse the existing Terminal server-key record; saved logins remain separate.
+The transport is bounded, retires input before cleanup and has no plaintext
+fallback or Mac helper. Specification and authoritative fixture changes
+preceded production implementation. Setup, progress, recovery and local website
+copy explain the new requirements.
+
+Stable Xcode **27.0 (27A266a)** builds and launches the normal-source app on the
+iPhone 18 Pro Max Simulator. All **583** recorded application inputs match the
+checkout. The full Simulator suite passes **182** active tests, skips 13 optional
+captures and has zero failures; a final focused run passes all **8** new SSH
+tests. Synthetic screenshots of trust verification and both connected modes
+were inspected. Required `bash scripts/validate.sh`, website checks and
+`git diff --check` pass. Details and boundaries are recorded in
+[the integration evidence](evidence/2026-10-09-screen-sharing-over-ssh.md).
+
+This candidate is uncommitted. No physical iPhone installation, website
+deployment or App Store upload occurred during this integration. Physical
+acceptance and a new signed review build are next; selected build 25 predates
+SSH transport. Corresponding-source packaging and Apple distribution terms
+review remain release gates, and `releaseAdmitted` stays false.
+
 ## 2026-10-09 — Native macOS direct client awaiting acceptance
 
 The approved macOS scope is a native VNC and SSH client, with Desktop and

@@ -226,13 +226,19 @@ enum DesktopCredentialStoreV1 {
     }
 }
 
+/// Carry the chosen mode with the Mac into the presentation. Separate state for
+/// the mode can be captured at its initial value on the first full-screen cover.
+struct DirectMacSessionSelection: Identifiable {
+    let id = UUID()
+    let mac: DirectMacRecordV1
+    let connection: DirectMacConnection
+}
+
 #if os(iOS)
 struct DirectMacLibraryRootV1: View {
     @State private var library: DirectMacLibraryV1
     init(library: DirectMacLibraryV1 = DirectMacLibraryV1()) { _library = State(initialValue: library) }
-    @State private var selected: DirectMacRecordV1?
-    @State private var inputOnly = false
-    @State private var terminal: DirectMacRecordV1?
+    @State private var session: DirectMacSessionSelection?
     @State private var appLock = DirectAppLockV1.shared
     private struct EditorSelection: Identifiable { let id = UUID(); let mac: DirectMacRecordV1? }
     @State private var editor: EditorSelection?
@@ -262,7 +268,7 @@ struct DirectMacLibraryRootV1: View {
                         VStack(spacing: 16) {
                             Image(systemName: "desktopcomputer").font(.system(size: 48)).foregroundStyle(.blue)
                             Text("Your Macs, within reach").font(.title3.bold())
-                            Text("Enable Screen Sharing or Remote Login on your Mac, then add its local or Tailscale address.")
+                            Text("Enable Remote Login on your Mac, and Screen Sharing for Desktop or Trackpad & Keyboard. Then add its local or Tailscale address.")
                                 .foregroundStyle(.secondary).multilineTextAlignment(.center)
                             Button("Add your first Mac", systemImage: "plus") { edit(nil) }
                                 .buttonStyle(.borderedProminent).disabled(!library.readable)
@@ -272,7 +278,7 @@ struct DirectMacLibraryRootV1: View {
                     Section {
                         ForEach(visibleMacs) { mac in
                             HStack(spacing: 12) {
-                                Button { open(mac, input: mac.preferredConnection.inputOnly, terminalMode: mac.preferredConnection.terminalMode) } label: {
+                                Button { open(mac, connection: mac.preferredConnection) } label: {
                                     DirectMacListRowLabel(mac: mac)
                                 }.buttonStyle(.plain).disabled(editMode.isEditing)
                                     .accessibilityLabel("Connect to " + mac.name + " using " + mac.preferredConnection.title)
@@ -280,9 +286,9 @@ struct DirectMacLibraryRootV1: View {
                                 if !editMode.isEditing {
                                     Menu {
                                         Section("Connect") {
-                                            Button("Desktop", systemImage: DirectMacConnection.desktop.symbol) { open(mac, input: false, terminalMode: false) }
-                                            Button("Trackpad & Keyboard", systemImage: "rectangle.and.hand.point.up.left") { open(mac, input: true, terminalMode: false) }
-                                            Button("Terminal", systemImage: "terminal") { open(mac, input: false, terminalMode: true) }
+                                            Button("Desktop", systemImage: DirectMacConnection.desktop.symbol) { open(mac, connection: .desktop) }
+                                            Button("Trackpad & Keyboard", systemImage: "rectangle.and.hand.point.up.left") { open(mac, connection: .trackpad) }
+                                            Button("Terminal", systemImage: "terminal") { open(mac, connection: .terminal) }
                                         }
                                         Section("Manage Mac") {
                                             Button("Mac Settings", systemImage: "gearshape") { edit(mac) }
@@ -309,7 +315,7 @@ struct DirectMacLibraryRootV1: View {
                     Button("App Settings", systemImage: "gearshape") { settings = true }
                     Button("Set Up Your Mac", systemImage: "questionmark.circle") { setup = true }
                 } footer: {
-                    Text("Use a trusted local network or private VPN. Desktop and input traffic are not encrypted by this development app.")
+                    Text("All connections use SSH. Use a trusted local network or private VPN, and verify the Mac’s server key when connecting for the first time.")
                 }
             }
             .navigationTitle("My Macs")
@@ -350,15 +356,18 @@ struct DirectMacLibraryRootV1: View {
             }
             .onOpenURL { url in
                 guard let route = RemoteSessionActivityAttributes.resumeRoute(from: url),
-                      let mac = library.macs.first(where: { $0.id == route.macID }), selected == nil, terminal == nil else { return }
-                open(mac, input: false, terminalMode: route.kind == .terminal)
+                      let mac = library.macs.first(where: { $0.id == route.macID }), session == nil else { return }
+                open(mac, connection: route.kind == .terminal ? .terminal : .desktop)
             }
-            .fullScreenCover(item: $terminal) { mac in
-                DirectTerminalView(mac: mac, macLibrary: library, exit: { terminal = nil })
-            }
-            .fullScreenCover(item: $selected) { mac in
-                DirectDesktopSessionView(mac: mac, inputOnly: inputOnly, connectionMacNames: library.macs.map(\.name), showMacs: { selected = nil })
-                    .ignoresSafeArea(.container, edges: .bottom)
+            .fullScreenCover(item: $session) { selection in
+                switch selection.connection {
+                case .terminal:
+                    DirectTerminalView(mac: selection.mac, macLibrary: library, exit: { session = nil })
+                case .desktop, .trackpad:
+                    DirectDesktopSessionView(mac: selection.mac, inputOnly: selection.connection.inputOnly,
+                                             connectionMacNames: library.macs.map(\.name), showMacs: { session = nil })
+                        .ignoresSafeArea(.container, edges: .bottom)
+                }
             }
         }
         .opacity(appLock.canAccess ? 1 : 0)
@@ -373,11 +382,11 @@ struct DirectMacLibraryRootV1: View {
             editor = EditorSelection(mac: mac)
         }
     }
-    private func open(_ mac: DirectMacRecordV1, input: Bool, terminalMode: Bool) {
+    private func open(_ mac: DirectMacRecordV1, connection: DirectMacConnection) {
         Task {
             if !pro.ready { await pro.refresh() }
             guard pro.canUseMac(mac.id, among: library.macs.map(\.id)) else { paywall = true; return }
-            if terminalMode { terminal = mac } else { inputOnly = input; selected = mac }
+            session = DirectMacSessionSelection(mac: mac, connection: connection)
         }
     }
 }
@@ -395,7 +404,7 @@ struct DirectMacEditorV1: View {
         case desktop, terminal, serverKey
         var id: String { rawValue }
         var title: String { switch self { case .desktop: "Forget Desktop Login"; case .terminal: "Forget Terminal Login"; case .serverKey: "Forget SSH Server Key" } }
-        var detail: String { self == .serverKey ? "You will need to verify the server fingerprint the next time you use Terminal." : "You will need to enter this Mac’s login the next time you connect. The other login is kept." }
+        var detail: String { self == .serverKey ? "You will need to verify the server fingerprint the next time you connect in any mode." : "You will need to enter this Mac’s login the next time you connect. The other login is kept." }
     }
     @State private var addresses: [Draft]
     @State private var port: String
@@ -539,7 +548,7 @@ struct DirectMacEditorV1: View {
                         Text("Leave blank to use Screen Sharing port 5900.").font(.footnote).foregroundStyle(.secondary)
                         TextField("22 (default)", text: $sshPort).keyboardType(.numberPad).accessibilityLabel("SSH Port")
                         if resolvedSSHPort == nil { Text("Use an SSH port from 1 to 65535, or leave it blank for 22.").font(.footnote).foregroundStyle(.secondary) }
-                        Text("Leave SSH Port blank to use 22. Terminal requires Remote Login on your Mac.").font(.footnote).foregroundStyle(.secondary)
+                        Text("Leave SSH Port blank to use 22. All modes require Remote Login on your Mac.").font(.footnote).foregroundStyle(.secondary)
                     }
                 }
                 if let mac {

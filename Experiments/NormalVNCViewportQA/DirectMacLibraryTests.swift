@@ -5,6 +5,30 @@ import SwiftUI
 @testable import Mac_Companion
 
 @MainActor final class DirectMacLibraryTests: XCTestCase {
+    func testSessionSelectionKeepsTappedModeWhileLibraryChanges() throws {
+        let folder = URL.temporaryDirectory.appending(path: UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let url = folder.appending(path: "macs.json")
+        let library = DirectMacLibraryV1(url: url)
+        let id = UUID()
+        for mode in DirectMacConnection.allCases {
+            XCTAssertTrue(library.save(id: id, name: "Synthetic Tap", addresses: ["tap-mode-qa.invalid"], preferredConnection: mode))
+            let reopened = DirectMacLibraryV1(url: url)
+            let tapped = try XCTUnwrap(reopened.macs.first)
+            let selection = DirectMacSessionSelection(mac: tapped, connection: tapped.preferredConnection)
+            XCTAssertEqual(selection.connection, mode)
+            XCTAssertEqual(selection.mac.preferredConnection, mode)
+            var cloudMac = tapped
+            cloudMac.preferredConnection = mode == .desktop ? .trackpad : .desktop
+            try reopened.applyCloud([cloudMac])
+            XCTAssertEqual(reopened.macs.first?.preferredConnection, cloudMac.preferredConnection)
+            XCTAssertEqual(selection.connection, mode, "An already selected mode must not drift with a later library update")
+            XCTAssertEqual(selection.mac, tapped)
+            XCTAssertNotEqual(selection.id, DirectMacSessionSelection(mac: tapped, connection: mode).id,
+                              "Reopening the same Mac creates a fresh presentation")
+        }
+    }
+
     func testIndexedConnectionActionsUseDistinctSupportedSymbols() throws {
         let cases = try XCTUnwrap(profile()["connectionActionCases"] as? [[String: String]])
         for vector in cases {
