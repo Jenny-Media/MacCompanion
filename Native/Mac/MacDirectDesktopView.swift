@@ -25,37 +25,38 @@ struct MacDirectDesktopView: View {
         ZStack {
             MacVNCSurface(session: session)
             if !session.connected {
-                VStack(alignment: .leading, spacing: 18) {
-                    Label(mac.name, systemImage: "macwindow").font(.title2)
-                    Text("Desktop · Screen Sharing").foregroundStyle(.secondary)
+                MacSignInPanel(mac: mac, mode: .desktop) {
+                    MacCredentialFields(username: $username, password: $password, enabled: !session.connecting && DirectAppLockV1.shared.canAccess, prefix: "mac-vnc", submit: connect)
+                        .frame(height: 104)
+                    Toggle("Remember login on this Mac", isOn: $remember).disabled(session.connecting)
                     if let notice = issue ?? session.recovery {
-                        DirectRecoveryCard(notice: notice, primary: .init(title: notice.reason == .savedDataUnavailable ? "Retry Saved Login" : "Reconnect") {
-                            loadLogin()
-                            if issue == nil, !username.isEmpty, !password.isEmpty { connect() }
-                        })
+                        DirectRecoveryCard(notice: notice, primary: notice.reason == .savedDataUnavailable
+                            ? .init(title: "Retry Saved Login", perform: loadLogin) : nil)
                     }
+                } status: {
+                    HStack {
                     if session.connecting {
-                        ProgressView(session.status)
+                        ProgressView().controlSize(.small)
+                        Text(session.status).font(.subheadline).foregroundStyle(.secondary)
+                        Spacer()
                         Button("Cancel") { session.disconnect(); password = "" }
                     } else {
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text("Mac account").font(.caption).foregroundStyle(.secondary)
-                            TextField("Mac account", text: $username).textContentType(.username).accessibilityIdentifier("mac-vnc-account")
-                        }
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text("Password").font(.caption).foregroundStyle(.secondary)
-                            SecureField("Password", text: $password).textContentType(.password).accessibilityIdentifier("mac-vnc-password")
-                        }
-                        Toggle("Remember login on this Mac", isOn: $remember)
-                        Button("Connect", action: connect)
+                        Spacer()
+                        Button("Connect", systemImage: "arrow.right", action: connect)
                             .buttonStyle(.borderedProminent).disabled(username.isEmpty || password.isEmpty)
-                            .tint(username.isEmpty || password.isEmpty ? .gray : .accentColor)
+                            .keyboardShortcut(.defaultAction).controlSize(.large)
                             .accessibilityIdentifier("mac-vnc-connect")
                     }
-                }.padding(28).frame(maxWidth: 420).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
+                    }.frame(height: 36)
+                }
             }
         }
-        .safeAreaInset(edge: .bottom, spacing: 0) { MacConnectionStatusBar(phase: phase, service: "Screen Sharing", addresses: mac.addresses) }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            if !window.fullScreen || !session.connected { MacConnectionStatusBar(phase: phase, service: "Screen Sharing", addresses: mac.addresses) }
+        }
+        .overlay(alignment: .top) {
+            if window.fullScreen && session.connected { MacDesktopFullScreenControls(session: session, window: window, actions: actions) { controls = true } }
+        }
         .frame(minWidth: 520, minHeight: 360)
         .navigationTitle(mac.name + " · Desktop")
         .toolbar {
@@ -71,12 +72,9 @@ struct MacDirectDesktopView: View {
                     Divider()
                     Text("Zoom relative to fit: \(Int(session.zoom * 100))%")
                 }.help("Fit or zoom the remote desktop locally")
-                Toggle("Trackpad Input", isOn: $session.trackpad)
-                    .help("Use relative pointer movement in this Desktop window")
-                    .onChange(of: session.trackpad) { _, value in VNCSessionPreferences.setTrackpad(value, mac: mac.id) }
                 Button("Disconnect", systemImage: "power") { session.disconnect() }
                     .labelStyle(.titleAndIcon).help("End this Screen Sharing connection and keep its window open")
-                Menu("Quick Actions", systemImage: "keyboard") {
+                Menu("Send Key", systemImage: "keyboard") {
                     ForEach(actions.filter(\.enabled)) { action in
                         Button(action.title, systemImage: action.symbol) { if window.acceptsActions { session.quickAction(action) } }
                     }
@@ -84,11 +82,11 @@ struct MacDirectDesktopView: View {
                 Button(window.fullScreen ? "Exit Full Screen" : "Full Screen", systemImage: "arrow.up.left.and.arrow.down.right") { window.toggleFullScreen() }
                     .help("Toggle full screen for this window")
             }
-            Button("Controls", systemImage: "slider.horizontal.3") { controls = true }.help("Configure pointer, display and keyboard controls")
+            Button("Controls", systemImage: "slider.horizontal.3") { controls = true }.help("Configure display, scrolling and optional shortcuts")
         }
+        .toolbarVisibility(window.fullScreen && session.connected ? .hidden : .automatic, for: .windowToolbar)
         .sheet(isPresented: $controls) {
-            VNCInputSettings(macID: mac.id, mode: .desktop) { session.reloadPreferences(); loadActions() }
-                .frame(minWidth: 520, minHeight: 520).modifier(MacSheetPrivacyCover())
+            MacDesktopSettings(macID: mac.id) { loadActions() }.modifier(MacSheetPrivacyCover())
         }
         .background(MacWindowLifetime { closed = true; password = ""; session.close(); MacConnectionRegistry.shared.remove(sessionID) }.frame(width: 0, height: 0))
         .background(MacWindowReader(handle: window, initiallyFullScreen: VNCSessionPreferences.fullscreen(mac.id)) {
@@ -111,7 +109,7 @@ struct MacDirectDesktopView: View {
         guard !closed else { return }
         MacConnectionRegistry.shared.update(id: sessionID, macID: mac.id, mode: .desktop, phase: phase, window: window)
     }
-    private func loadActions() { actions = VNCSessionPreferences.actions(.desktop, legacyMac: mac.id) }
+    private func loadActions() { actions = VNCSessionPreferences.actions(.desktop, legacyMac: mac.id).filter { $0.kind != .mode } }
     private func loadInitialLogin() {
         guard !closed, !session.connected, !session.connecting else { return }
         do {
@@ -145,6 +143,7 @@ struct MacDirectDesktopView: View {
         catch { issue = .make(.savedDataUnavailable) }
     }
     private func connect() {
+        guard !closed, !session.connecting, !session.connected, DirectAppLockV1.shared.canAccess else { return }
         issue = nil; session.connect(username: username, password: password, remember: remember)
     }
 }

@@ -733,25 +733,7 @@ struct DirectMacListRowLabel: View {
 }
 
 private struct DirectMacSetupV1: View {
-    @Environment(\.dismiss) private var dismiss
-    var body: some View {
-        NavigationStack {
-            List {
-                Section("1. Enable Screen Sharing or Remote Login") {
-                    Text("On your Mac, open System Settings → General → Sharing. Turn on Screen Sharing for Desktop, or Remote Login for Terminal, and allow your Mac account.")
-                }
-                Section("2. Add the Mac") {
-                    Text("Use the local address shown in Screen Sharing settings, or a Tailscale address with Tailscale connected on both devices.")
-                }
-                Section("3. Sign in") {
-                    Text("Enter that Mac account’s username and password in the app. Save the login on this iPhone if you want to reconnect without typing it again.")
-                }
-                Section { Text("No Mac Companion installation is needed on your Mac.").foregroundStyle(.secondary) }
-            }
-            .navigationTitle("Set Up Your Mac").navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
-        }
-    }
+    var body: some View { DirectMacSetupGuide() }
 }
 #endif
 

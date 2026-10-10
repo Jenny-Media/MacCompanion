@@ -12,8 +12,8 @@ struct MacMachineLibraryView: View {
     @State private var connections = MacConnectionRegistry.shared
     @State private var cloud = DirectCloudSyncV1.shared
     private enum Sheet: Identifiable {
-        case add, edit(DirectMacRecordV1), pro
-        var id: String { switch self { case .add: "add"; case .edit(let mac): "edit-" + mac.id.uuidString; case .pro: "pro" } }
+        case add, edit(DirectMacRecordV1), pro, setup
+        var id: String { switch self { case .add: "add"; case .edit(let mac): "edit-" + mac.id.uuidString; case .pro: "pro"; case .setup: "setup" } }
     }
     private var selectedMac: DirectMacRecordV1? { library.macs.first { $0.id == selected } }
     var body: some View {
@@ -28,6 +28,8 @@ struct MacMachineLibraryView: View {
                     } }
                         icon: { Image(systemName: mac.family.symbol) }
                         .tag(mac.id)
+                        .onTapGesture(count: 2) { selected = mac.id; open(mac, mode: MacConnectionMode(mac.preferredConnection)) }
+                        .accessibilityAction(named: "Connect") { open(mac, mode: MacConnectionMode(mac.preferredConnection)) }
                         .contextMenu {
                             ForEach(MacConnectionMode.allCases) { mode in Button(mode.actionTitle) { open(mac, mode: mode) } }
                             Divider()
@@ -38,6 +40,9 @@ struct MacMachineLibraryView: View {
                             Button("Remove Mac", role: .destructive) { removing = mac }
                         }
                 }.onMove { _ = library.move(fromOffsets: $0, toOffset: $1) }.moveDisabled(!search.isEmpty)
+            }.onKeyPress(.return) {
+                guard let mac = selectedMac else { return .ignored }
+                open(mac, mode: MacConnectionMode(mac.preferredConnection)); return .handled
             }.navigationTitle("My Macs").searchable(text: $search)
                 .navigationSplitViewColumnWidth(min: 200, ideal: 240, max: 340)
         } detail: {
@@ -92,6 +97,7 @@ struct MacMachineLibraryView: View {
         .toolbar {
             Button("Add Mac", systemImage: "plus") { add() }.disabled(!library.readable).accessibilityIdentifier("mac-add-machine").help("Add a Mac by its local or private VPN address")
             Button("Discover Macs", systemImage: "network") { library.discovery.start() }.disabled(library.discovery.scanning).help("Discover Screen Sharing and Remote Login services on your local network")
+            Button("Setup Guide", systemImage: "questionmark.circle") { sheet = .setup }.help("Set up Screen Sharing and Remote Login")
             Button("Refresh iCloud", systemImage: "arrow.triangle.2.circlepath") { cloud.refresh() }
                 .disabled(!cloud.enabled || cloud.busy).help("Refresh saved Macs in iCloud Keychain. Enable sync in Settings first.")
         }
@@ -101,6 +107,7 @@ struct MacMachineLibraryView: View {
                 case .add: MacMachineEditor(library: library)
                 case .edit(let mac): MacMachineEditor(library: library, mac: mac)
                 case .pro: DirectProView().frame(minWidth: 480, minHeight: 460)
+                case .setup: DirectMacSetupGuide().frame(width: 560, height: 600)
                 }
             }.modifier(MacSheetPrivacyCover())
         }

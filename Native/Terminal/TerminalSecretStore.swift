@@ -57,7 +57,12 @@ enum TerminalSecretStore {
         try TerminalKeyLibraryStore.saveCompatible(key, macID: id)
     }
     static func removeLegacyKey(_ id: UUID) throws { try remove(id, kind: "private-key") }
-    @MainActor static func forgetKey(_ id: UUID) throws { try TerminalKeyLibraryStore.forgetAssociation(id) }
+    @MainActor static func forgetKey(_ id: UUID) throws {
+        try TerminalKeyLibraryStore.forgetAssociation(id)
+        #if os(macOS)
+        try MacSSHKeyFileStore.forgetSelection(id)
+        #endif
+    }
     @MainActor static func remove(_ id: UUID) throws { try forgetLogin(id); try forgetHostKey(id); try forgetKey(id) }
     enum Failure: Error { case storage, locked, changedKey, rejectedKey, network }
 }

@@ -48,12 +48,53 @@ private final class UIConnections: @unchecked Sendable {
     private func connect(_ window: XCUIElement, app: XCUIApplication, acceptTrust: Bool) {
         replace(window.textFields["mac-terminal-account"], with: "synthetic")
         replace(window.secureTextFields["mac-terminal-password"], with: "synthetic-only")
+        app.typeKey(XCUIKeyboardKey.escape, modifierFlags: [])
         window.buttons["mac-terminal-connect"].click()
         if acceptTrust {
             let trust = window.buttons["Trust & Connect"]
             XCTAssertTrue(trust.waitForExistence(timeout: 5)); trust.click()
         }
         XCTAssertTrue(window.buttons["Disconnect"].waitForExistence(timeout: 5))
+    }
+    func testAddressRowsDefaultDoubleClickAndNativeLoginControls() {
+        continueAfterFailure = false
+        let app = XCUIApplication(bundleIdentifier: "dev.maccompanion.macqa")
+        let directory = URL.temporaryDirectory.appending(path: "maccompanion-polish-ui-" + UUID().uuidString)
+        app.launchEnvironment["MACCOMPANION_DIRECT_DATA_DIRECTORY"] = directory.path
+        app.launchArguments = ["-ApplePersistenceIgnoreState", "YES"]
+        app.launch(); defer { app.terminate(); try? FileManager.default.removeItem(at: directory) }
+        XCTAssertTrue(library(app).waitForExistence(timeout: 10)); showLibrary(app)
+        library(app).buttons["mac-add-machine"].click()
+        replace(app.textFields["mac-machine-name"], with: "Synthetic Polish")
+        replace(app.textFields["mac-machine-address-0"], with: "127.0.0.1")
+        app.buttons["Add Address"].click()
+        replace(app.textFields["mac-machine-address-1"], with: "fixture.local")
+        let appearance = XCTAttachment(screenshot: app.screenshot()); appearance.name = "Native address rows"; appearance.lifetime = .keepAlways; add(appearance)
+        app.buttons["mac-save-machine"].click()
+        let row = library(app).outlines.staticTexts["Synthetic Polish"].firstMatch
+        XCTAssertTrue(row.waitForExistence(timeout: 5)); row.click()
+        XCTAssertTrue(library(app).buttons["mac-open-desktop"].waitForExistence(timeout: 5))
+        row.doubleClick()
+        let desktop = windows("Desktop", app: app).firstMatch
+        XCTAssertTrue(desktop.waitForExistence(timeout: 5))
+        let account = desktop.textFields["mac-vnc-account"], password = desktop.secureTextFields["mac-vnc-password"]
+        replace(account, with: "synthetic-account")
+        account.typeKey(XCUIKeyboardKey.return, modifierFlags: [])
+        password.typeText("synthetic-only")
+        XCTAssertTrue(desktop.buttons["mac-vnc-connect"].isEnabled)
+        let login = XCTAttachment(screenshot: app.screenshot()); login.name = "Native Desktop sign-in"; login.lifetime = .keepAlways; add(login)
+        desktop.buttons["Controls"].click()
+        XCTAssertTrue(app.staticTexts["Direct control"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.sliders["Pointer Speed"].exists); XCTAssertFalse(app.checkBoxes["Follow Cursor"].exists)
+        XCTAssertFalse(app.staticTexts["Mouse Mode"].exists)
+        let controls = XCTAttachment(screenshot: app.screenshot()); controls.name = "Native Desktop controls"; controls.lifetime = .keepAlways; add(controls)
+        app.buttons["Cancel"].click()
+        desktop.click(); app.typeKey("w", modifierFlags: .command)
+        showLibrary(app); row.click(); library(app).buttons["mac-connection-settings"].click()
+        app.popUpButtons["mac-machine-default-connection"].click(); app.menuItems["Terminal"].click()
+        app.buttons["mac-save-machine"].click()
+        row.doubleClick()
+        XCTAssertTrue(windows("Terminal", app: app).firstMatch.waitForExistence(timeout: 5))
     }
     func testDesktopAndTerminalWithIndependentTerminalKeyboardAndClose() async throws {
         continueAfterFailure = false
@@ -75,10 +116,12 @@ private final class UIConnections: @unchecked Sendable {
         showLibrary(app)
         library(app).buttons["mac-add-machine"].click()
         replace(app.textFields["mac-machine-name"], with: "Synthetic GUI")
-        replace(app.textViews["mac-machine-addresses"], with: "127.0.0.1")
+        replace(app.textFields["mac-machine-address-0"], with: "127.0.0.1")
+        // Service ports follow the discovery cards in the scrollable form.
+        app.sheets.scrollViews.firstMatch.scroll(byDeltaX: 0, deltaY: -600)
         replace(app.textFields["mac-machine-ssh-port"], with: String(try XCTUnwrap(server.localAddress?.port)))
         app.buttons["mac-save-machine"].click()
-        let row = library(app).staticTexts["Synthetic GUI"].firstMatch
+        let row = library(app).outlines.staticTexts["Synthetic GUI"].firstMatch
         XCTAssertTrue(row.waitForExistence(timeout: 5)); row.click()
         open("desktop", app: app)
         XCTAssertTrue(windows("Desktop", app: app).firstMatch.waitForExistence(timeout: 5))
@@ -119,7 +162,8 @@ private final class UIConnections: @unchecked Sendable {
         // Remove this synthetic record and its QA-local accepted host key.
         showLibrary(app)
         row.click(); library(app).buttons["mac-connection-settings"].click()
-        app.buttons["Forget SSH Server Key"].click(); app.buttons["Forget"].click()
+        app.buttons["Forget SSH Server Key"].click()
+        app.buttons.matching(NSPredicate(format: "label == %@", "Forget")).firstMatch.click()
         app.buttons["Cancel"].click()
         try await server.close()
     }

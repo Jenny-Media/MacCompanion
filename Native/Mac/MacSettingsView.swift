@@ -58,7 +58,7 @@ struct MacSettingsView: View {
                     switch item {
                     case .keys: MacSSHKeyManager()
                     case .pro: DirectProView()
-                    case .desktop: VNCInputSettings(mode: .desktop)
+                    case .desktop: MacDesktopSettings()
                     case .terminal: VNCInputSettings(mode: .terminal)
                     }
                 }.frame(minWidth: 520, minHeight: 520).directAppearance().modifier(MacSheetPrivacyCover())

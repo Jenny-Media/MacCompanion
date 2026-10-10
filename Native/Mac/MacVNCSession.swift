@@ -22,9 +22,6 @@ struct MacVNCDisplay: Identifiable {
     var selectedID: UInt32?
     var zoom: CGFloat = 1
     var pan = CGPoint.zero
-    var trackpad: Bool
-    var pointerSpeed: Double
-    var followCursor: Bool
     var cursorPosition = CGPoint.zero
     var resetInput: (() -> Void)?
     private var transport: CompanionVNCSession?
@@ -42,9 +39,6 @@ struct MacVNCDisplay: Identifiable {
         self.makeTransport = makeTransport
         self.canAccess = canAccess
         selectedID = VNCSessionPreferences.display(mac.id)?.uint32Value
-        trackpad = VNCSessionPreferences.trackpad(mac.id)
-        pointerSpeed = VNCSessionPreferences.speed(mac.id)
-        followCursor = VNCSessionPreferences.followCursor(mac.id)
     }
     var canInput: Bool { connected && !closed && canAccess() && transport?.connected == true }
     var crop: CGRect {
@@ -141,16 +135,12 @@ struct MacVNCDisplay: Identifiable {
         guard transport?.connected == true else { return }
         transport?.pointerX(Int(cursorPosition.x), y: Int(cursorPosition.y), mask: 0)
     }
-    func reloadPreferences() {
-        pointerSpeed = VNCSessionPreferences.speed(mac.id)
-        followCursor = VNCSessionPreferences.followCursor(mac.id)
-    }
     func quickAction(_ action: VNCQuickAction) {
         guard canInput, action.enabled, action.valid, action.compatible(with: .desktop) else { return }
         if [.shortcut, .text].contains(action.kind), !DirectProAccess.shared.hasPro { return }
         resetInput?()
         switch action.kind {
-        case .mode: trackpad.toggle(); VNCSessionPreferences.setTrackpad(trackpad, mac: mac.id)
+        case .mode: break // Historical mobile action; macOS always maps the pointer directly.
         case .fit: fit()
         case .rightClick: pointer(cursorPosition, mask: 4); pointer(cursorPosition, mask: 0)
         case .text: text(action.text)

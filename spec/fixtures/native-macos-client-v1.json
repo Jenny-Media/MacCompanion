@@ -944,6 +944,15 @@
     ],
     "unrelatedMachineEdits": "preserve shared preference",
     "explicitDefaultEdit": "write selected native mode",
-    "desktopInputOnly": false
+    "desktopInputOnly": false,
+    "desktopPointer": "direct absolute mapping; ignore and preserve shared trackpad preference"
+  },
+  "keyFiles": {
+    "storage": "device-only security-scoped bookmarks; no private-key copy",
+    "connect": "reread bounded Ed25519 OpenSSH file and match selected fingerprint",
+    "changedMissingStale": "stop and require explicit reselection",
+    "encrypted": "prompt for passphrase per connection; never persist it",
+    "policy": "count unique public keys across imported keys and file references",
+    "selectionRemoval": "no fallback to an old imported-key preference"
   }
 }

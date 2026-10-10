@@ -7,7 +7,7 @@ struct MacVNCSurface: NSViewRepresentable {
     func makeNSView(context: Context) -> MacVNCInputView { MacVNCInputView(session: session) }
     func updateNSView(_ view: MacVNCInputView, context: Context) {
         view.update(image: session.image, crop: session.crop, zoom: session.zoom, pan: session.pan,
-                    enabled: session.canInput, trackpad: session.trackpad, cursorImage: session.cursorImage,
+                    enabled: session.canInput, cursorImage: session.cursorImage,
                     cursorHotspot: session.cursorHotspot, cursorPosition: session.cursorPosition)
     }
     static func dismantleNSView(_ view: MacVNCInputView, coordinator: ()) { view.detach() }
@@ -21,7 +21,6 @@ struct MacVNCSurface: NSViewRepresentable {
     private var zoom: CGFloat = 1
     private var pan = CGPoint.zero
     private var enabled = false
-    private var trackpad = false
     private var cursorImage: NSImage?
     private var cursorHotspot = CGPoint.zero
     private var cursorPosition = CGPoint.zero
@@ -45,12 +44,12 @@ struct MacVNCSurface: NSViewRepresentable {
     required init?(coder: NSCoder) { fatalError("init(coder:) is unavailable") }
     private var destination: CGRect { MacVNCGeometry.destination(crop: crop, viewport: bounds.size, zoom: zoom, pan: pan) }
     private var admitsInput: Bool { enabled && session?.canInput == true && window?.isKeyWindow == true && window?.firstResponder === self }
-    func update(image: NSImage?, crop: CGRect, zoom: CGFloat, pan: CGPoint, enabled: Bool, trackpad: Bool,
+    func update(image: NSImage?, crop: CGRect, zoom: CGFloat, pan: CGPoint, enabled: Bool,
                 cursorImage: NSImage?, cursorHotspot: CGPoint, cursorPosition: CGPoint) {
-        if self.enabled && (!enabled || self.crop != crop || self.trackpad != trackpad) { releaseInput() }
+        if self.enabled && (!enabled || self.crop != crop) { releaseInput() }
         self.image = image; self.crop = crop; self.zoom = zoom; self.pan = pan
         self.cursorImage = cursorImage; self.cursorHotspot = cursorHotspot; self.cursorPosition = cursorPosition
-        self.enabled = enabled; self.trackpad = trackpad; needsDisplay = true
+        self.enabled = enabled; needsDisplay = true
         setAccessibilityHidden(!enabled)
         window?.invalidateCursorRects(for: self)
     }
@@ -76,20 +75,6 @@ struct MacVNCSurface: NSViewRepresentable {
         context.saveGState(); context.interpolationQuality = .high
         context.translateBy(x: destination.minX, y: destination.maxY); context.scaleBy(x: 1, y: -1)
         context.draw(cropped, in: CGRect(origin: .zero, size: destination.size)); context.restoreGState()
-        if trackpad, crop.contains(cursorPosition) {
-            let scale = destination.width / crop.width
-            let point = CGPoint(x: destination.minX + (cursorPosition.x - crop.minX) * scale,
-                                y: destination.minY + (cursorPosition.y - crop.minY) * scale)
-            if let cursor = cursorImage {
-                cursor.draw(in: CGRect(x: point.x - cursorHotspot.x * scale, y: point.y - cursorHotspot.y * scale,
-                    width: cursor.size.width * scale, height: cursor.size.height * scale), from: .zero, operation: .sourceOver, fraction: 1,
-                    respectFlipped: true, hints: nil)
-            } else {
-                NSColor.white.setStroke(); let path = NSBezierPath()
-                path.move(to: CGPoint(x: point.x - 6, y: point.y)); path.line(to: CGPoint(x: point.x + 6, y: point.y))
-                path.move(to: CGPoint(x: point.x, y: point.y - 6)); path.line(to: CGPoint(x: point.x, y: point.y + 6)); path.stroke()
-            }
-        }
     }
     override func resignFirstResponder() -> Bool { releaseInput(); return super.resignFirstResponder() }
     override func setFrameSize(_ newSize: NSSize) {
@@ -97,7 +82,7 @@ struct MacVNCSurface: NSViewRepresentable {
         super.setFrameSize(newSize)
     }
     override func resetCursorRects() {
-        if let image = cursorImage, !trackpad { addCursorRect(bounds, cursor: NSCursor(image: image, hotSpot: cursorHotspot)) }
+        if let image = cursorImage { addCursorRect(bounds, cursor: NSCursor(image: image, hotSpot: cursorHotspot)) }
         else { addCursorRect(bounds, cursor: .crosshair) }
     }
     override func mouseDown(with event: NSEvent) { click(event, bit: 1, down: true) }
@@ -111,12 +96,6 @@ struct MacVNCSurface: NSViewRepresentable {
     override func rightMouseDragged(with event: NSEvent) { move(event) }
     override func otherMouseDragged(with event: NSEvent) { move(event) }
     private func point(_ event: NSEvent, clamp: Bool) -> CGPoint? {
-        guard let session else { return nil }
-        if trackpad {
-            let speed = session.pointerSpeed
-            return CGPoint(x: max(crop.minX, min(crop.maxX - 1, session.cursorPosition.x + event.deltaX * speed)),
-                           y: max(crop.minY, min(crop.maxY - 1, session.cursorPosition.y + event.deltaY * speed)))
-        }
         return MacVNCGeometry.map(point: convert(event.locationInWindow, from: nil), crop: crop, destination: destination, clamp: clamp)
     }
     private func click(_ event: NSEvent, bit: Int, down: Bool) {
@@ -128,9 +107,6 @@ struct MacVNCSurface: NSViewRepresentable {
     private func move(_ event: NSEvent) {
         guard admitsInput, let point = point(event, clamp: mask != 0) else { return }
         session?.pointer(point, mask: mask)
-        if let session, trackpad, session.followCursor {
-            session.pan = MacVNCGeometry.following(cursor: point, crop: crop, viewport: bounds.size, zoom: session.zoom, pan: session.pan)
-        }
     }
     override func scrollWheel(with event: NSEvent) {
         guard admitsInput, let session else { return }
@@ -168,6 +144,7 @@ struct MacVNCSurface: NSViewRepresentable {
     override func keyUp(with event: NSEvent) { guard admitsInput else { return }; session?.keys(keys.keyUp(code: event.keyCode)) }
     override func flagsChanged(with event: NSEvent) { guard admitsInput, !composition.hasMarkedText else { return }; session?.keys(keys.updateModifiers(event.modifierFlags)) }
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        if event.modifierFlags.contains([.command, .control]), event.charactersIgnoringModifiers?.lowercased() == "f" { return false }
         guard admitsInput, event.modifierFlags.contains(.command),
               !(event.modifierFlags.contains(.shift) && event.charactersIgnoringModifiers?.lowercased() == "n"),
               !["q", "w", "h", "m", ","].contains(event.charactersIgnoringModifiers?.lowercased() ?? "") else { return false }

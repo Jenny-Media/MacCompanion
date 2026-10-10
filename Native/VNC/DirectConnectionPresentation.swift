@@ -111,7 +111,7 @@ struct DirectConnectionNotice: View {
             Image(systemName: notice.severity == .critical ? "exclamationmark.shield" : "exclamationmark.circle").font(.body).foregroundStyle(color).padding(.top, 2)
             VStack(alignment: .leading, spacing: 5) {
                 Text(notice.connectionTitle).font(.subheadline.weight(.semibold))
-                Text(notice.connectionMessage).font(.subheadline).fixedSize(horizontal: false, vertical: true)
+                DirectNoticeMessage(message: notice.connectionMessage).font(.subheadline)
             }
         }.padding(14).frame(maxWidth: .infinity, alignment: .leading)
             .background(color.opacity(0.08), in: RoundedRectangle(cornerRadius: 16))

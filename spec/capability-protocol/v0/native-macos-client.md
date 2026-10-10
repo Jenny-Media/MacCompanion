@@ -11,8 +11,9 @@ shared Trackpad default or a restored legacy Trackpad window resolves to Desktop
 on macOS, preserving the window UUID and machine selection. Reading that default
 or saving unrelated machine edits must not replace the shared iPhone preference.
 An explicit change to the Mac default writes the selected Desktop/Terminal value.
-Native Desktop always requests pixels; relative pointer input remains a Desktop
-control preference, not a separate connection mode.
+Native Desktop always requests pixels and uses direct absolute pointer mapping.
+Saved iPhone Trackpad input preferences are ignored and preserved by macOS.
+Physical trackpad scrolling, native physical keys and input methods remain.
 
 Each window has a unique session UUID and an immutable machine/mode selection.
 Key, pointer, focus and teardown callbacks are routed to that owner. A callback
@@ -74,6 +75,19 @@ failure prevents the new attempt. Invalid fields do not modify saved data.
 Each new SSH key login rechecks access to the actual key displayed in that
 window against the current local key library and Pro/free-key policy. Expired
 access does not stop an existing shell, but cannot authorize a new one.
+
+macOS may use an explicitly selected Ed25519 OpenSSH private-key file without
+importing a copy. Device-only Keychain storage retains a bounded read-only,
+app-scoped bookmark, name and independently derived public-key fingerprint.
+No private-key bytes or passphrases enter the reference store or cloud records.
+Each connection resolves the bookmark without UI, reads at most 32 KiB through
+the existing bounded parser and compares the fingerprint before authentication.
+Missing files, stale grants and a changed key stop the attempt until explicit
+reselection. Encrypted keys ask for a passphrase per connection; it is not saved.
+The same public key counts once across imported keys and file references for the
+existing Pro/free-key policy. Selecting a file replaces the previous imported-key
+preference; deleting its reference cannot silently restore that old preference.
+SSH host-key verification and the existing authentication wire behavior remain.
 
 Native VNC text input keeps marked text local until the input method commits it.
 Commit uses the existing Unicode keyboard owner. Focus loss, lock and retirement

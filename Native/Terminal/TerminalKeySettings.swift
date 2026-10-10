@@ -30,7 +30,7 @@ struct TerminalKeySettings: View {
                 if let mac {
                     Section {
                         Button("Use Password Login", systemImage: "person.badge.key") {
-                            library.perform { try TerminalKeyLibraryStore.forgetAssociation(mac.id) }; changed()
+                            library.perform { try TerminalSecretStore.forgetKey(mac.id) }; changed()
                         }
                     } footer: { Text("Select a key below for \(mac.name). Keys can be used with any of your Macs.") }
                 }
@@ -56,10 +56,24 @@ struct TerminalKeySettings: View {
                     if library.keys.isEmpty && library.readable { Text("Create or import a key, then choose it for a Mac.").foregroundStyle(.secondary) }
                 }
                 Section {
-                    Button("Create Key", systemImage: "plus") { sheet = pro.canAddKey(count: library.keys.count) ? .create : .pro }
-                    Button("Import Key", systemImage: "square.and.arrow.down") { sheet = pro.canAddKey(count: library.keys.count) ? .importKey : .pro }
+                    Button("Create Key", systemImage: "plus") { create() }
+                    Button("Import Key", systemImage: "square.and.arrow.down") {
+                        #if os(macOS)
+                        // A referenced fingerprint may be imported without adding another identity.
+                        sheet = .importKey
+                        #else
+                        sheet = pro.canAddKey(count: library.keys.count) ? .importKey : .pro
+                        #endif
+                    }
                 }.disabled(!library.readable || !pro.ready)
                 if let notice = library.recovery { Section { DirectRecoveryCard(notice: notice, primary: .init(title: "Retry") { reload() }) }.listRowInsets(EdgeInsets()).listRowBackground(Color.clear) }
+                #if os(macOS)
+                Section {
+                    NavigationLink { MacSSHKeyFilesView(mac: mac, changed: changed) } label: {
+                        Label("Use SSH Keys from Disk…", systemImage: "doc.badge.key")
+                    }
+                } footer: { Text("Read the original file when connecting, without importing a copy.") }
+                #endif
                 Section {
                     #if os(macOS)
                     Text("Selecting or importing a key doesn’t add it to a Mac. Use that Mac’s Terminal Access settings to install its public key. Private keys stay in this Mac’s Keychain and are excluded from iCloud sync.")
@@ -76,11 +90,20 @@ struct TerminalKeySettings: View {
                     TerminalKeyComposer(importing: destination == .importKey) { key, name in
                         reload()
                         guard library.readable else { return false }
-                        guard pro.ready, pro.canAddKey(count: library.keys.count) else { sheet = .pro; return false }
+                        guard pro.ready else { return false }
+                        #if os(iOS)
+                        guard pro.canAddKey(count: library.keys.count) else { sheet = .pro; return false }
+                        #endif
+                        var requiresPro = false
                         let saved = library.perform {
-                            let id = try TerminalKeyLibraryStore.addForUser(key, name: name, access: pro)
+                            let id: UUID
+                            do { id = try TerminalKeyLibraryStore.addForUser(key, name: name, access: pro) }
+                            catch TerminalKeyLibraryStore.CreationFailure.requiresPro {
+                                requiresPro = true; throw TerminalKeyLibraryStore.CreationFailure.requiresPro
+                            }
                             if let mac { try TerminalKeyLibraryStore.associate(id, macID: mac.id, username: "") }
                         }
+                        if requiresPro { library.recovery = nil; sheet = .pro; return false }
                         if saved { changed() }; return saved
                     }
                 case .pro: DirectProView()
@@ -90,9 +113,15 @@ struct TerminalKeySettings: View {
         }
     }
     private func reload() { library.reload(macs: mac.map { [$0] } ?? []) }
+    private func create() {
+        guard pro.ready else { return }
+        do { sheet = pro.canAddKey(count: try TerminalKeyLibraryStore.userKeyIDs().count) ? .create : .pro }
+        catch { library.recovery = .make(.savedDataUnavailable) }
+    }
     private func select(_ entry: TerminalNamedKey, for mac: DirectMacRecordV1) {
         guard pro.ready else { return }
-        guard pro.canUseKey(entry.id, among: library.keys.map(\.id)) else { sheet = .pro; return }
+        do { guard try TerminalKeyLibraryStore.canUse(entry, access: pro) else { sheet = .pro; return } }
+        catch { library.recovery = .make(.savedDataUnavailable); return }
         library.perform {
             let username = library.associations.first(where: { $0.macID == mac.id })?.username ?? ""
             try TerminalKeyLibraryStore.associate(entry.id, macID: mac.id, username: username)

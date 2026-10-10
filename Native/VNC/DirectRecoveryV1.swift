@@ -102,6 +102,74 @@ struct DirectRecoveryAction {
     let perform: @MainActor () -> Void
 }
 
+struct DirectGuidanceRow: View {
+    let title: String
+    let detail: String
+    let symbol: String
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: symbol).font(.title3).foregroundStyle(.tint).frame(width: 26).accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title).font(.headline)
+                Text(detail).font(.subheadline).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }.frame(maxWidth: .infinity, alignment: .leading)
+        }.padding(.vertical, 3)
+    }
+}
+
+struct DirectMacSetupGuide: View {
+    @Environment(\.dismiss) private var dismiss
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("1. Enable access on your Mac") {
+                    #if os(iOS)
+                    DirectGuidanceRow(title: "Desktop & Trackpad", detail: "Turn on Screen Sharing and allow your Mac account.", symbol: "macwindow")
+                    #else
+                    DirectGuidanceRow(title: "Desktop", detail: "Turn on Screen Sharing and allow your Mac account.", symbol: "macwindow")
+                    #endif
+                    DirectGuidanceRow(title: "Terminal", detail: "Turn on Remote Login and allow your Mac account.", symbol: "terminal")
+                    Label("System Settings → General → Sharing", systemImage: "gearshape").font(.footnote).foregroundStyle(.secondary)
+                }
+                Section("2. Add its address") {
+                    DirectGuidanceRow(title: "Local or private VPN address", detail: "Use the address shown in Screen Sharing. For Tailscale, connect both devices to your private network.", symbol: "network")
+                }
+                Section("3. Sign in") {
+                    DirectGuidanceRow(title: "Your Mac account", detail: "Enter its username and password. Remember the login on this device to reconnect faster.", symbol: "person.badge.key")
+                }
+                Section { Label("No Mac Companion server or helper is needed.", systemImage: "checkmark.circle").foregroundStyle(.secondary) }
+            }.directGroupedForm().navigationTitle("Set Up Your Mac").directInlineNavigationTitle()
+                .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
+        }
+    }
+}
+
+private extension View {
+    @ViewBuilder func directGroupedForm() -> some View {
+        #if os(macOS)
+        formStyle(.grouped)
+        #else
+        self
+        #endif
+    }
+}
+
+/// Preserve every instruction, with one visible row per sentence.
+struct DirectNoticeMessage: View {
+    let message: String
+    var body: some View {
+        let parts = message.components(separatedBy: ". ")
+        VStack(alignment: .leading, spacing: 8) {
+            ForEach(Array(parts.enumerated()), id: \.offset) { index, part in
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    if parts.count > 1 { Image(systemName: "circle.fill").font(.system(size: 4)).accessibilityHidden(true) }
+                    Text(part + (index < parts.count - 1 ? "." : "")).fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+    }
+}
+
 struct DirectRecoveryCard: View {
     let notice: DirectRecoveryNotice
     var primary: DirectRecoveryAction? = nil
@@ -115,7 +183,7 @@ struct DirectRecoveryCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Label(notice.title, systemImage: symbol).font(.headline).foregroundStyle(.primary)
-            Text(notice.message).font(.subheadline).fixedSize(horizontal: false, vertical: true)
+            DirectNoticeMessage(message: notice.message).font(.subheadline)
             if let primary { action(primary, prominent: true) }
             if let secondary { action(secondary, prominent: false) }
             if !notice.details.isEmpty {

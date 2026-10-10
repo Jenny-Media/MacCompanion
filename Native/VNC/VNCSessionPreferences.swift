@@ -22,6 +22,8 @@ enum DirectControlMode: String, CaseIterable, Identifiable, Sendable {
 }
 
 struct VNCQuickAction: Codable, Identifiable, Equatable, Sendable {
+    static let maximumCount = 15
+    static let maximumCustomCount = 12
     enum Kind: String, Codable, CaseIterable, Sendable { case mode, fit, rightClick, shortcut, text, paste, interrupt, escape, tab, returnKey }
     var id: UUID = UUID()
     var title: String
@@ -30,6 +32,10 @@ struct VNCQuickAction: Codable, Identifiable, Equatable, Sendable {
     var key: UInt32 = 0
     var modifiers: [UInt32] = []
     var text = ""
+    var isCustom: Bool { kind == .shortcut || kind == .text }
+    static func canAddCustom(to actions: [Self]) -> Bool {
+        actions.count < maximumCount && actions.filter(\.isCustom).count < maximumCustomCount
+    }
     static var defaults: [Self] { [.init(title: "Mouse Mode", kind: .mode), .init(title: "Fit View", kind: .fit), .init(title: "Right Click", kind: .rightClick)] }
     var valid: Bool {
         let allowed: Set<UInt32> = [0xffe1, 0xffe3, 0xffe9, 0xffeb]
@@ -108,7 +114,7 @@ struct VNCQuickAction: Codable, Identifiable, Equatable, Sendable {
     static func profileActions(_ mode: DirectControlMode, legacyMac: UUID? = nil) throws -> [VNCQuickAction] {
         guard DirectAppLockV1.shared.canAccess else { throw CocoaError(.fileReadNoPermission) }
         if let saved = try storedActions(mode.profileID) {
-            guard saved.filter({ $0.kind == .shortcut || $0.kind == .text }).count <= 12, saved.allSatisfy({ $0.compatible(with: mode) }) else { throw CocoaError(.fileReadCorruptFile) }
+            guard saved.filter(\.isCustom).count <= VNCQuickAction.maximumCustomCount, saved.allSatisfy({ $0.compatible(with: mode) }) else { throw CocoaError(.fileReadCorruptFile) }
             return saved
         }
         // Keep pre-existing Desktop customizations until a shared profile is saved.
@@ -121,7 +127,7 @@ struct VNCQuickAction: Codable, Identifiable, Equatable, Sendable {
     }
     static func saveProfile(_ actions: [VNCQuickAction], mode: DirectControlMode) throws {
         _ = try profileActions(mode)
-        guard actions.filter({ $0.kind == .shortcut || $0.kind == .text }).count <= 12, actions.allSatisfy({ $0.compatible(with: mode) }) else { throw CocoaError(.fileWriteUnknown) }
+        guard actions.filter(\.isCustom).count <= VNCQuickAction.maximumCustomCount, actions.allSatisfy({ $0.compatible(with: mode) }) else { throw CocoaError(.fileWriteUnknown) }
         try saveActions(actions, mac: mode.profileID)
         NotificationCenter.default.post(name: actionsChanged, object: mode)
     }
@@ -133,13 +139,13 @@ struct VNCQuickAction: Codable, Identifiable, Equatable, Sendable {
         if status == errSecItemNotFound { return nil }
         guard status == errSecSuccess, let data = result as? Data,
               let actions = try? JSONDecoder().decode([VNCQuickAction].self, from: data),
-              actions.count <= 15, Set(actions.map(\.id)).count == actions.count, actions.allSatisfy(\.valid) else { throw CocoaError(.fileReadCorruptFile) }
+              actions.count <= VNCQuickAction.maximumCount, Set(actions.map(\.id)).count == actions.count, actions.allSatisfy(\.valid) else { throw CocoaError(.fileReadCorruptFile) }
         return actions
     }
     static func saveActions(_ actions: [VNCQuickAction], mac id: UUID) throws {
         // Never replace an unreadable saved entry with presentation defaults.
         _ = try readActions(id)
-        guard actions.count <= 15, Set(actions.map(\.id)).count == actions.count, actions.allSatisfy(\.valid) else { throw CocoaError(.fileWriteUnknown) }
+        guard actions.count <= VNCQuickAction.maximumCount, Set(actions.map(\.id)).count == actions.count, actions.allSatisfy(\.valid) else { throw CocoaError(.fileWriteUnknown) }
         let attributes: [String: Any] = [kSecValueData as String: try JSONEncoder().encode(actions), kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly]
         let status = SecItemUpdate(query(id) as CFDictionary, attributes as CFDictionary)
         if status == errSecItemNotFound {
@@ -250,7 +256,7 @@ struct VNCInputSettings: View {
                             }
                         }
                     }
-                    if DirectProAccess.shared.hasPro && actions.count < 15 && actions.filter({ $0.kind == .shortcut || $0.kind == .text }).count < 12 {
+                    if DirectProAccess.shared.hasPro && VNCQuickAction.canAddCustom(to: actions) {
                         Button("Add Shortcut", systemImage: "keyboard") { editor = .init(title: "", kind: .shortcut, key: 0x63, modifiers: [mode == .terminal ? 0xffe3 : 0xffeb]) }
                         Button("Add Saved Text", systemImage: "text.quote") { editor = .init(title: "", kind: .text) }
                     }
@@ -307,7 +313,7 @@ struct VNCInputSettings: View {
     }
 }
 
-private struct VNCActionEditor: View {
+struct VNCActionEditor: View {
     @Environment(\.dismiss) private var dismiss
     @State var action: VNCQuickAction
     let mode: DirectControlMode
