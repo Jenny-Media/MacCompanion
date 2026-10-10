@@ -178,7 +178,12 @@ struct MacDirectTerminalView: View {
     private func loadKey(preferSelected: Bool = false) {
         guard DirectAppLockV1.shared.canAccess else { return }
         do {
-            if let selection = try MacSSHKeyFileStore.selected(mac.id) {
+            let selection = try MacSSHKeyFileStore.selected(mac.id)
+            if keyFile != selection?.file {
+                keyPassphrase = ""; needsPassphrase = false
+                if issue?.reason == .importUnlock { issue = nil }
+            }
+            if let selection {
                 keyFile = selection.file; key = nil; keyName = selection.file.name
                 login.loadKeyAccount(selection.username, preferSelected: preferSelected)
                 return
