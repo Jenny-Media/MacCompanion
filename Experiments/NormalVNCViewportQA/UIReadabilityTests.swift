@@ -18,6 +18,18 @@ import SwiftUI
         selection.select(.sshKey); XCTAssertEqual(selection.username, "updated-key-account")
         selection.select(.password); XCTAssertEqual(selection.username, "edited-password-account")
     }
+    func testUsePasswordLoginRestoresThePasswordAccountAfterRemovingTheKeyAssociation() {
+        var selection = TerminalLoginSelection()
+        selection.loadPasswordAccount("synthetic-password-account")
+        selection.loadKeyAccount("synthetic-key-account", preferSelected: true)
+        selection.loadKeyAccount(nil, preferSelected: true)
+        XCTAssertEqual(selection.method, .password)
+        XCTAssertEqual(selection.username, "synthetic-password-account")
+        selection.username = "edited-password-account"
+        selection.loadKeyAccount("updated-key-account", preferSelected: false)
+        XCTAssertEqual(selection.method, .password)
+        XCTAssertEqual(selection.username, "edited-password-account")
+    }
     func testRecoveryCardWithRetainedLoginRendersWithoutTheFullSignInForm() async throws {
         let mac = try DirectMacRecordV1.normalized(name: "Synthetic Mac", address: "synthetic.local")
         try TerminalSecretStore.save(.init(username: "synthetic", password: "synthetic-only"), id: mac.id)

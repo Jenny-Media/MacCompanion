@@ -1,7 +1,9 @@
-#if os(iOS) && MACCOMPANION_VNC_DEVELOPMENT
+#if (os(iOS) || os(macOS)) && MACCOMPANION_VNC_DEVELOPMENT
 import SwiftUI
 import UniformTypeIdentifiers
+#if os(iOS)
 import UIKit
+#endif
 import LocalAuthentication
 import Crypto
 import Citadel
@@ -59,18 +61,24 @@ struct TerminalKeySettings: View {
                 }.disabled(!library.readable || !pro.ready)
                 if let notice = library.recovery { Section { DirectRecoveryCard(notice: notice, primary: .init(title: "Retry") { reload() }) }.listRowInsets(EdgeInsets()).listRowBackground(Color.clear) }
                 Section {
+                    #if os(macOS)
+                    Text("Selecting or importing a key doesn’t add it to a Mac. Use that Mac’s Terminal Access settings to install its public key. Private keys stay in this Mac’s Keychain and are excluded from iCloud sync.")
+                    #else
                     Text("Selecting or importing a key doesn’t add it to a Mac. Use that Mac’s Terminal Access settings to install its public key. Private keys stay in this iPhone’s Keychain and are excluded from iCloud sync.")
+                    #endif
                 }.font(.footnote).foregroundStyle(.secondary)
             }
-            .navigationTitle("SSH Keys").navigationBarTitleDisplayMode(.inline)
+            .navigationTitle("SSH Keys").directInlineNavigationTitle()
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
             .sheet(item: $sheet) { destination in
                 switch destination {
                 case .create, .importKey:
                     TerminalKeyComposer(importing: destination == .importKey) { key, name in
-                        guard pro.canAddKey(count: library.keys.count) else { sheet = .pro; return false }
+                        reload()
+                        guard library.readable else { return false }
+                        guard pro.ready, pro.canAddKey(count: library.keys.count) else { sheet = .pro; return false }
                         let saved = library.perform {
-                            let id = try TerminalKeyLibraryStore.add(key, name: name)
+                            let id = try TerminalKeyLibraryStore.addForUser(key, name: name, access: pro)
                             if let mac { try TerminalKeyLibraryStore.associate(id, macID: mac.id, username: "") }
                         }
                         if saved { changed() }; return saved
@@ -102,6 +110,10 @@ struct TerminalKeyComposer: View {
     @State private var busy = false
     @State private var issue: DirectRecoveryNotice?
     @State private var generation = UUID()
+    #if os(macOS)
+    @State private var importWindow = MacWindowHandle()
+    @State private var filePicker = MacSSHKeyFilePicker()
+    #endif
     var body: some View {
         NavigationStack {
             Form {
@@ -111,33 +123,55 @@ struct TerminalKeyComposer: View {
                 if importing {
                     Section {
                         SecureField("Import passphrase, if encrypted", text: $passphrase).textContentType(nil).privacySensitive()
+                        #if os(macOS)
+                        Button("Choose from ~/.ssh…") { chooseFile(sshFolder: true) }.disabled(!valid || busy || picking)
+                        Button("Choose File…") { chooseFile(sshFolder: false) }.disabled(!valid || busy || picking)
+                        #else
                         Button("Import from Files") { picking = true }.disabled(!valid || busy)
+                        #endif
                         PasteButton(payloadType: String.self) { values in if let text = values.first { decode(text) } }.disabled(!valid || busy)
-                    } footer: { Text("Ed25519 OpenSSH keys only, up to 32 KiB. Import passphrases are used once and never saved.") }
+                    } footer: {
+                        Text("Ed25519 OpenSSH keys only, up to 32 KiB. Import passphrases are used once and never saved.")
+                        #if os(macOS)
+                        Text("Choose a private key such as id_ed25519, not its .pub file. Import saves a local Keychain copy; the original file is kept and future file edits won’t change the imported key.")
+                        #endif
+                    }
                 } else {
                     Section { Button("Create Ed25519 Key") { if save(.create(), name) { dismiss() } else { issue = .make(.saveFailed, message: "The key couldn’t be saved. Keep this form open and try again.") } }.disabled(!valid || busy) }
                 }
                 if busy { ProgressView("Importing…") }
                 if let issue { DirectRecoveryCard(notice: issue) }
             }
-            .navigationTitle(importing ? "Import SSH Key" : "Create SSH Key").navigationBarTitleDisplayMode(.inline)
+            .navigationTitle(importing ? "Import SSH Key" : "Create SSH Key").directInlineNavigationTitle()
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } } }
-            .fileImporter(isPresented: $picking, allowedContentTypes: [.data, .plainText]) { result in
-                do {
-                    let url = try result.get(), access = url.startAccessingSecurityScopedResource()
-                    defer { if access { url.stopAccessingSecurityScopedResource() } }
-                    let file = try FileHandle(forReadingFrom: url); defer { try? file.close() }
-                    let bytes = try file.read(upToCount: 32769) ?? Data()
-                    guard bytes.count <= 32768 else { throw TerminalSSHKey.KeyFailure.tooLarge }; guard let text = String(data: bytes, encoding: .utf8) else { throw TerminalSSHKey.KeyFailure.invalid }
-                    decode(text)
-                } catch {
-                    if !DirectCancellation.isCancellation(error) { issue = importNotice(error) }
-                }
-            }
-            .onDisappear { generation = UUID(); passphrase = "" }
-            .onReceive(NotificationCenter.default.publisher(for: UIApplication.willResignActiveNotification)) { _ in generation = UUID(); passphrase = ""; busy = false }
+            #if os(macOS)
+            .background(MacWindowReader(handle: importWindow).frame(width: 0, height: 0))
+            #else
+            .fileImporter(isPresented: $picking, allowedContentTypes: [.data, .plainText], onCompletion: readFile)
+            #endif
+            .onDisappear { generation = UUID(); passphrase = ""; cancelPicker() }
+            .onReceive(NotificationCenter.default.publisher(for: DirectClientPlatformV1.willResignActive)) { _ in generation = UUID(); passphrase = ""; busy = false }
+            .onReceive(NotificationCenter.default.publisher(for: DirectClientPlatformV1.didEnterBackground)) { _ in generation = UUID(); passphrase = ""; busy = false; cancelPicker() }
         }
     }
+    private func readFile(_ result: Result<URL, Error>) {
+        guard DirectAppLockV1.shared.canAccess else { return }
+        do { decode(try TerminalSSHKey.readOpenSSHFile(result.get())) }
+        catch { if !DirectCancellation.isCancellation(error) { issue = importNotice(error) } }
+    }
+    private func cancelPicker() {
+        picking = false
+        #if os(macOS)
+        filePicker.cancel()
+        #endif
+    }
+    #if os(macOS)
+    private func chooseFile(sshFolder: Bool) {
+        guard valid, !busy, !picking, DirectAppLockV1.shared.canAccess, let window = importWindow.window else { return }
+        picking = true
+        filePicker.choose(in: window, sshFolder: sshFolder) { result in picking = false; readFile(result) }
+    }
+    #endif
     private func importNotice(_ error: Error) -> DirectRecoveryNotice {
         guard let failure = error as? TerminalSSHKey.KeyFailure else { return .make(.importInvalid, message: "The file couldn’t be read. Choose another Ed25519 OpenSSH key, up to 32 KiB.") }
         switch failure {
@@ -195,7 +229,7 @@ struct TerminalKeyDetail: View {
                 if !DirectProAccess.shared.hasPro { Button("Use as My Free Key") { DirectProAccess.shared.chooseFreeKey(entry.id); changed() } }
             }
             Section("Public Key") {
-                Button("Copy Public Key") { UIPasteboard.general.string = publicLine }
+                Button("Copy Public Key") { DirectClientPlatformV1.copy(publicLine) }
                 Button("Export Public Key") { exportFilename = filename + ".pub"; exportData = Data((publicLine + "\n").utf8); exporting = true }
             }
             Section {
@@ -214,7 +248,7 @@ struct TerminalKeyDetail: View {
                 Button("Delete Key from This iPhone", role: .destructive) { deleting = true }
             } footer: { Text("This clears local selections. It does not remove the public key or revoke access on your Macs.") }
         }
-        .navigationTitle("SSH Key").navigationBarTitleDisplayMode(.inline)
+        .navigationTitle("SSH Key").directInlineNavigationTitle()
         .fileExporter(isPresented: $exporting, document: exportData.map(SSHKeyDocument.init(data:)), contentType: .data, defaultFilename: exportFilename) { result in
             if case .failure(let error) = result { issue = .make(DirectCancellation.isCancellation(error) ? .exportCancelled : .exportFailed) }
             exportData = nil; passphrase = ""; confirmPassphrase = ""
@@ -223,11 +257,11 @@ struct TerminalKeyDetail: View {
             Button("Delete Key", role: .destructive) { library.perform { try TerminalKeyLibraryStore.delete(entry.id) }; changed(); if library.error == nil { dismiss() } }
         }
         .onDisappear { clearExport() }
-        .onReceive(NotificationCenter.default.publisher(for: UIApplication.willResignActiveNotification)) { _ in
+        .onReceive(NotificationCenter.default.publisher(for: DirectClientPlatformV1.willResignActive)) { _ in
             // A system authentication prompt temporarily resigns active without backgrounding.
             passphrase = ""; confirmPassphrase = ""
         }
-        .onReceive(NotificationCenter.default.publisher(for: UIApplication.didEnterBackgroundNotification)) { _ in clearExport() }
+        .onReceive(NotificationCenter.default.publisher(for: DirectClientPlatformV1.didEnterBackground)) { _ in clearExport() }
     }
     private var publicLine: String { entry.key.publicKey + " mac-companion-" + entry.id.uuidString.lowercased() }
     private var filename: String { "ssh-" + entry.id.uuidString.lowercased() }

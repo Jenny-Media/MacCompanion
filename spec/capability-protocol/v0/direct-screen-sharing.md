@@ -282,6 +282,15 @@ Show actual contacting/signing-in/opening-desktop phases and Cancel; present the
 desktop after its first frame. Show actionable failures and allow editing login.
 Healthy sessions hide routine Connected text. Connection problems remain visible.
 
+Connection readiness is mode-specific. Desktop requires a complete presented
+baseline, including after resume or leaving input-only mode. Trackpad & Keyboard
+requires a running, authenticated input owner, but no presented framebuffer:
+it deliberately suppresses desktop presentation and regular pixel requests.
+Publish its initial Connected state after successful RFB initialization and on
+an admitted resume or switch into input-only mode. Paused, stopping, overflowed
+or unauthenticated owners cannot publish Connected in either mode. Switching
+back to Desktop still requires a fresh complete baseline before Connected.
+
 The keyboard/modifier strip remains directly available. One bottom-right glass
 controls button opens quick actions, Displays, Input and Session categories, with
 one Disconnect action. Press-and-slide is a primary interaction: open while

@@ -183,6 +183,71 @@ acceptance and a new signed review build are next; selected build 25 predates
 SSH transport. Corresponding-source packaging and Apple distribution terms
 review remain release gates, and `releaseAdmitted` stays false.
 
+## 2026-10-09 — Native macOS direct client awaiting acceptance
+
+The approved macOS scope is a native VNC and SSH client, with Desktop and
+Terminal, independent windows and compatible optional
+iPhone iCloud library sync. No custom Mac server or helper is started. See
+[native macOS implementation and acceptance](native-macos-client.md) for build
+instructions, current evidence and remaining gates. Earlier Agent work is
+preserved separately; this implementation starts from client checkpoint `ce85d33`.
+
+The later 2026-10-09 simplification removes the standalone Trackpad & Keyboard
+mode from macOS. iPhone keeps all three modes and its shared saved defaults.
+Old Mac Trackpad window requests and shared Trackpad defaults resolve to Desktop;
+unrelated Mac edits preserve the shared preference. The Trackpad acceptance
+described below records the earlier implementation, before this scope change.
+
+Stable Xcode 27.0 builds and signs the Apple Silicon client; all 171 application
+source inputs match its report. Its existing development identity, certificate
+and exact Mac/local plus iPhone/cloud Keychain groups verify. Hosted Mac QA
+completes twenty-eight tests: all pass, with no skips or failures.
+This supersedes the earlier stalled preparation and earlier hosted results.
+Native input checks pass 59 cases; required repository validation passes with
+134 indexed fixtures. The iPhone Simulator app still builds after the Mac-only
+simplification; earlier full Simulator suites are recorded in the native client
+acceptance document. A separate native UI check verifies only Desktop/Terminal
+actions, controls and default choices, preserves a shared iPhone Trackpad default
+through unrelated edits, and verifies independent sign-in window closure.
+
+Fresh-review fixes recheck Terminal Copy/Find/link actions, clear embedded Find
+text and revoke field editors on lock, release each owner's admitted Kitty keys
+and mouse buttons once after focus loss, and discard cleanup on shell retirement.
+Real SSH regressions cover locked cleanup, ordering, normal key-up, independent
+owners and no reconnect replay. Cursor-only reports update drawing/cursor
+rectangles; tests verify moved overlay pixels on an unchanged framebuffer.
+Desktop/Trackpad use a saved login for one initial attempt after unlock. Save
+rechecks creation access against current records/trial state while retaining a
+denied draft. Every remote Swift package source is verified before/after builds:
+12 packages, 3,980 tracked files and 13 disposable-cache regressions pass.
+
+Screenshot review fixes Trackpad's readiness stall: an authenticated input-only
+owner reports Connected without presented pixels; Desktop still waits for a
+complete baseline. Twelve indexed readiness cases and actual callback tests
+cover this behavior. The library shows default mode and active window state,
+raises existing connections, and reports iCloud opt-in/refresh/errors without
+claiming device delivery. Native session status, clearer controls, Trackpad
+instructions and Terminal inset/text-size controls improve presentation.
+
+The user authorized Xcode automation and approved system dialogs locally.
+Native QA authenticates Trackpad to built-in Screen Sharing and Terminal to
+built-in Remote Login with the independently known VM host key. Trackpad now
+shows its connected input-only surface. A complete native GUI focus/keyboard/
+closure run remains pending because other windows cover the intended owner.
+The opt-in live VM runner saves genuine app-window screenshots outside Git;
+it does not advance VM setup or enable iCloud.
+
+The disposable host-only VM ran macOS 26.6.2. Earlier native VNC acceptance
+receives pixels and sends pointer/keyboard input. The isolated pinned-Citadel
+probe verifies two built-in Remote Login connections, PTY input/output/resize
+and closure isolation. At the user's request, the stopped VM and its image
+caches were removed. Small verified manifests and the SSH acceptance report
+remain under `/private/tmp/maccompanion-vm-evidence-20261009`; native build/test
+artifacts and screenshots remain separate. All these artifacts stay outside Git.
+Actual same-account Mac–iPhone delivery, GUI input/recovery across machines,
+Intel/released-macOS compatibility and release readiness remain separate
+unverified gates. No physical iPhone or release submission was used in this work.
+
 ## 2026-10-08 — Simplified My Macs rows
 
 The user reported that build 23's top-aligned, smaller symbols looked worse and

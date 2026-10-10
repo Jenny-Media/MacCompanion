@@ -1,4 +1,4 @@
-#if os(iOS) && MACCOMPANION_VNC_DEVELOPMENT
+#if (os(iOS) || os(macOS)) && MACCOMPANION_VNC_DEVELOPMENT
 import Foundation
 import Observation
 import Security
@@ -80,9 +80,13 @@ struct DirectMacRecordV1: Codable, Identifiable, Equatable {
 enum DesktopCredentialStoreV1 {
     struct Login: Codable { let username: String; let password: String }
     private static func query(_ id: UUID) -> [String: Any] {
-        [kSecClass as String: kSecClassGenericPassword,
+        var query: [String: Any] = [kSecClass as String: kSecClassGenericPassword,
          kSecAttrService as String: "media.jenny.maccompanion.direct-screen-sharing-login.v1",
          kSecAttrAccount as String: id.uuidString.lowercased(), kSecAttrSynchronizable as String: false]
+        #if os(macOS)
+        query[kSecUseDataProtectionKeychain as String] = true
+        #endif
+        return query
     }
     @MainActor static func read(_ id: UUID) -> Login? { try? readChecked(id) }
     @MainActor static func readChecked(_ id: UUID) throws -> Login? {
@@ -122,7 +126,7 @@ enum DesktopCredentialStoreV1 {
     private let url: URL
     private let removeLogin: (UUID) throws -> Void
     init(url: URL? = nil, removeLogin: @escaping (UUID) throws -> Void = DesktopCredentialStoreV1.remove) {
-        self.url = url ?? URL.applicationSupportDirectory.appending(path: "direct-macs-v1.json")
+        self.url = url ?? DirectClientPlatformV1.dataURL("direct-macs-v1.json")
         self.removeLogin = removeLogin
         reload()
         discovery.updated = { [weak self] in
@@ -217,7 +221,7 @@ enum DesktopCredentialStoreV1 {
     }
     private func write(_ next: [DirectMacRecordV1]) throws {
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try JSONEncoder().encode(File(macs: next)).write(to: url, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+        try DirectClientPlatformV1.write(JSONEncoder().encode(File(macs: next)), to: url)
         macs = next; failure = nil
     }
 }
@@ -230,6 +234,7 @@ struct DirectMacSessionSelection: Identifiable {
     let connection: DirectMacConnection
 }
 
+#if os(iOS)
 struct DirectMacLibraryRootV1: View {
     @State private var library: DirectMacLibraryV1
     init(library: DirectMacLibraryV1 = DirectMacLibraryV1()) { _library = State(initialValue: library) }
@@ -757,4 +762,6 @@ private struct DirectMacSetupV1: View {
         }
     }
 }
+#endif
+
 #endif

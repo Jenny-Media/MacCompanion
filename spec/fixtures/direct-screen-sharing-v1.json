@@ -2487,5 +2487,151 @@
     "113": "SSH trust cancelled",
     "114": "Screen Sharing forwarding unavailable",
     "115": "SSH trust storage unavailable"
-  }
+  },
+  "connectionReadinessCases": [
+    {
+      "name": "authenticated trackpad without pixels",
+      "running": true,
+      "inputReady": true,
+      "inputOnly": true,
+      "paused": false,
+      "stopping": false,
+      "overflow": false,
+      "awaitingResumeFrame": false,
+      "baselinePresented": false,
+      "connected": true
+    },
+    {
+      "name": "trackpad resume without pixels",
+      "running": true,
+      "inputReady": true,
+      "inputOnly": true,
+      "paused": false,
+      "stopping": false,
+      "overflow": false,
+      "awaitingResumeFrame": true,
+      "baselinePresented": false,
+      "connected": true
+    },
+    {
+      "name": "desktop before first presented baseline",
+      "running": true,
+      "inputReady": true,
+      "inputOnly": false,
+      "paused": false,
+      "stopping": false,
+      "overflow": false,
+      "awaitingResumeFrame": false,
+      "baselinePresented": false,
+      "connected": false
+    },
+    {
+      "name": "desktop with presented baseline",
+      "running": true,
+      "inputReady": true,
+      "inputOnly": false,
+      "paused": false,
+      "stopping": false,
+      "overflow": false,
+      "awaitingResumeFrame": false,
+      "baselinePresented": true,
+      "connected": true
+    },
+    {
+      "name": "desktop resume before new baseline",
+      "running": true,
+      "inputReady": true,
+      "inputOnly": false,
+      "paused": false,
+      "stopping": false,
+      "overflow": false,
+      "awaitingResumeFrame": true,
+      "baselinePresented": true,
+      "connected": false
+    },
+    {
+      "name": "exit trackpad before new desktop baseline",
+      "running": true,
+      "inputReady": true,
+      "inputOnly": false,
+      "paused": false,
+      "stopping": false,
+      "overflow": false,
+      "awaitingResumeFrame": false,
+      "baselinePresented": false,
+      "connected": false
+    },
+    {
+      "name": "trackpad before authentication",
+      "running": true,
+      "inputReady": false,
+      "inputOnly": true,
+      "paused": false,
+      "stopping": false,
+      "overflow": false,
+      "awaitingResumeFrame": false,
+      "baselinePresented": false,
+      "connected": false
+    },
+    {
+      "name": "trackpad paused",
+      "running": true,
+      "inputReady": true,
+      "inputOnly": true,
+      "paused": true,
+      "stopping": false,
+      "overflow": false,
+      "awaitingResumeFrame": false,
+      "baselinePresented": false,
+      "connected": false
+    },
+    {
+      "name": "trackpad stopping",
+      "running": true,
+      "inputReady": true,
+      "inputOnly": true,
+      "paused": false,
+      "stopping": true,
+      "overflow": false,
+      "awaitingResumeFrame": false,
+      "baselinePresented": false,
+      "connected": false
+    },
+    {
+      "name": "trackpad input queue overflow",
+      "running": true,
+      "inputReady": true,
+      "inputOnly": true,
+      "paused": false,
+      "stopping": false,
+      "overflow": true,
+      "awaitingResumeFrame": false,
+      "baselinePresented": false,
+      "connected": false
+    },
+    {
+      "name": "retired trackpad",
+      "running": false,
+      "inputReady": true,
+      "inputOnly": true,
+      "paused": false,
+      "stopping": false,
+      "overflow": false,
+      "awaitingResumeFrame": false,
+      "baselinePresented": false,
+      "connected": false
+    },
+    {
+      "name": "desktop paused with retained pixels",
+      "running": true,
+      "inputReady": true,
+      "inputOnly": false,
+      "paused": true,
+      "stopping": false,
+      "overflow": false,
+      "awaitingResumeFrame": false,
+      "baselinePresented": true,
+      "connected": false
+    }
+  ]
 }
