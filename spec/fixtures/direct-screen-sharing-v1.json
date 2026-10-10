@@ -474,7 +474,16 @@
     "duplicateAddressWithinRecordAllowed": false,
     "credentialScope": "macUUID",
     "forgetLoginDeletesCredential": true,
-    "removeRecordDeletesCredential": true
+    "removeRecordDeletesCredential": true,
+    "fileVersion": 5,
+    "orderScope": "device",
+    "legacyOrder": "alphabetical",
+    "leadingIcon": "hardware",
+    "connectionModeLabel": "actionText",
+    "cloudMergePreservesOrder": true,
+    "metadataRefresh": "explicitOrEndpointEdit",
+    "refreshOnForeground": false,
+    "refreshOnEditorEntry": false
   },
   "macLibraryEditCases": [
     {
@@ -2356,6 +2365,225 @@
       "expectedName": "Earlier Detected",
       "expectedDetectedName": "Earlier Detected",
       "expectedModel": "Mac13,1"
+    }
+  ],
+  "terminalEndCases": [
+    {
+      "name": "normalExit",
+      "exitStatus": 0,
+      "exitSignal": null,
+      "transportFailed": false,
+      "currentSession": true,
+      "returnToMacs": true
+    },
+    {
+      "name": "nonzeroExit",
+      "exitStatus": 1,
+      "exitSignal": null,
+      "transportFailed": false,
+      "currentSession": true,
+      "returnToMacs": false
+    },
+    {
+      "name": "signalled",
+      "exitStatus": null,
+      "exitSignal": "TERM",
+      "transportFailed": false,
+      "currentSession": true,
+      "returnToMacs": false
+    },
+    {
+      "name": "unexplainedClose",
+      "exitStatus": null,
+      "exitSignal": null,
+      "transportFailed": false,
+      "currentSession": true,
+      "returnToMacs": false
+    },
+    {
+      "name": "transportLossAfterStatus",
+      "exitStatus": 0,
+      "exitSignal": null,
+      "transportFailed": true,
+      "currentSession": true,
+      "returnToMacs": false
+    },
+    {
+      "name": "staleCompletion",
+      "exitStatus": 0,
+      "exitSignal": null,
+      "transportFailed": false,
+      "currentSession": false,
+      "returnToMacs": false
+    }
+  ],
+  "connectionActionCases": [
+    {
+      "mode": "desktop",
+      "title": "Open Desktop",
+      "symbol": "macwindow"
+    },
+    {
+      "mode": "terminal",
+      "title": "Open Terminal",
+      "symbol": "terminal"
+    },
+    {
+      "mode": "trackpad",
+      "title": "Open Trackpad & Keyboard",
+      "symbol": "rectangle.and.hand.point.up.left"
+    }
+  ],
+  "terminalRecoveryPresentation": {
+    "changeLoginForTransportFailure": false,
+    "authenticationFieldsForLoginFailure": true,
+    "issueDetailsRequiresAdditionalDetails": true,
+    "issueDetailsSnapshot": "onTap"
+  },
+  "connectionReadinessCases": [
+    {
+      "name": "authenticated trackpad without pixels",
+      "running": true,
+      "inputReady": true,
+      "inputOnly": true,
+      "paused": false,
+      "stopping": false,
+      "overflow": false,
+      "awaitingResumeFrame": false,
+      "baselinePresented": false,
+      "connected": true
+    },
+    {
+      "name": "trackpad resume without pixels",
+      "running": true,
+      "inputReady": true,
+      "inputOnly": true,
+      "paused": false,
+      "stopping": false,
+      "overflow": false,
+      "awaitingResumeFrame": true,
+      "baselinePresented": false,
+      "connected": true
+    },
+    {
+      "name": "desktop before first presented baseline",
+      "running": true,
+      "inputReady": true,
+      "inputOnly": false,
+      "paused": false,
+      "stopping": false,
+      "overflow": false,
+      "awaitingResumeFrame": false,
+      "baselinePresented": false,
+      "connected": false
+    },
+    {
+      "name": "desktop with presented baseline",
+      "running": true,
+      "inputReady": true,
+      "inputOnly": false,
+      "paused": false,
+      "stopping": false,
+      "overflow": false,
+      "awaitingResumeFrame": false,
+      "baselinePresented": true,
+      "connected": true
+    },
+    {
+      "name": "desktop resume before new baseline",
+      "running": true,
+      "inputReady": true,
+      "inputOnly": false,
+      "paused": false,
+      "stopping": false,
+      "overflow": false,
+      "awaitingResumeFrame": true,
+      "baselinePresented": true,
+      "connected": false
+    },
+    {
+      "name": "exit trackpad before new desktop baseline",
+      "running": true,
+      "inputReady": true,
+      "inputOnly": false,
+      "paused": false,
+      "stopping": false,
+      "overflow": false,
+      "awaitingResumeFrame": false,
+      "baselinePresented": false,
+      "connected": false
+    },
+    {
+      "name": "trackpad before authentication",
+      "running": true,
+      "inputReady": false,
+      "inputOnly": true,
+      "paused": false,
+      "stopping": false,
+      "overflow": false,
+      "awaitingResumeFrame": false,
+      "baselinePresented": false,
+      "connected": false
+    },
+    {
+      "name": "trackpad paused",
+      "running": true,
+      "inputReady": true,
+      "inputOnly": true,
+      "paused": true,
+      "stopping": false,
+      "overflow": false,
+      "awaitingResumeFrame": false,
+      "baselinePresented": false,
+      "connected": false
+    },
+    {
+      "name": "trackpad stopping",
+      "running": true,
+      "inputReady": true,
+      "inputOnly": true,
+      "paused": false,
+      "stopping": true,
+      "overflow": false,
+      "awaitingResumeFrame": false,
+      "baselinePresented": false,
+      "connected": false
+    },
+    {
+      "name": "trackpad input queue overflow",
+      "running": true,
+      "inputReady": true,
+      "inputOnly": true,
+      "paused": false,
+      "stopping": false,
+      "overflow": true,
+      "awaitingResumeFrame": false,
+      "baselinePresented": false,
+      "connected": false
+    },
+    {
+      "name": "retired trackpad",
+      "running": false,
+      "inputReady": true,
+      "inputOnly": true,
+      "paused": false,
+      "stopping": false,
+      "overflow": false,
+      "awaitingResumeFrame": false,
+      "baselinePresented": false,
+      "connected": false
+    },
+    {
+      "name": "desktop paused with retained pixels",
+      "running": true,
+      "inputReady": true,
+      "inputOnly": false,
+      "paused": true,
+      "stopping": false,
+      "overflow": false,
+      "awaitingResumeFrame": false,
+      "baselinePresented": true,
+      "connected": false
     }
   ]
 }

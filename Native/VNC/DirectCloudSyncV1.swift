@@ -1,8 +1,10 @@
-#if os(iOS) && MACCOMPANION_VNC_DEVELOPMENT
+#if (os(iOS) || os(macOS)) && MACCOMPANION_VNC_DEVELOPMENT
 import Foundation
 import Observation
 import Security
+#if os(iOS)
 import UIKit
+#endif
 
 struct DirectCloudPreferences: Codable, Equatable {
     var speed: Double
@@ -70,11 +72,19 @@ struct DirectCloudKeychain: DirectCloudTransport {
     static let service = "media.jenny.maccompanion.cloud-library.v1"
     private let serviceName: String
     init(service: String = Self.service) { serviceName = service }
-    private func query() -> [String: Any] {
-        [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: serviceName, kSecAttrSynchronizable as String: true]
+    private func query() throws -> [String: Any] {
+        var query: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: serviceName, kSecAttrSynchronizable as String: true]
+        #if os(macOS)
+        guard let group = Bundle.main.object(forInfoDictionaryKey: "MacCompanionSharedKeychainGroup") as? String,
+              group.hasSuffix(".media.jenny.maccompanion.ios"), !group.contains("$"),
+              group.count > "media.jenny.maccompanion.ios".count + 1 else { throw DirectCloudError.storage }
+        query[kSecUseDataProtectionKeychain as String] = true
+        query[kSecAttrAccessGroup as String] = group
+        #endif
+        return query
     }
     func read() throws -> [Data] {
-        var q = query(); q[kSecReturnData as String] = true; q[kSecMatchLimit as String] = kSecMatchLimitAll
+        var q = try query(); q[kSecReturnData as String] = true; q[kSecMatchLimit as String] = kSecMatchLimitAll
         var result: CFTypeRef?; let status = SecItemCopyMatching(q as CFDictionary, &result)
         if status == errSecItemNotFound { return [] }
         guard status == errSecSuccess, let values = result as? [Data], values.count <= 512, values.allSatisfy({ $0.count <= 4096 }) else { throw DirectCloudError.storage }
@@ -82,7 +92,7 @@ struct DirectCloudKeychain: DirectCloudTransport {
     }
     func write(_ data: Data, account: String) throws {
         guard data.count <= 4096 else { throw DirectCloudError.invalid }
-        var q = query(); q[kSecAttrAccount as String] = account
+        var q = try query(); q[kSecAttrAccount as String] = account
         let fields: [String: Any] = [kSecValueData as String: data, kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlocked]
         let status = SecItemUpdate(q as CFDictionary, fields as CFDictionary)
         if status == errSecItemNotFound {
@@ -90,7 +100,7 @@ struct DirectCloudKeychain: DirectCloudTransport {
         } else if status != errSecSuccess { throw DirectCloudError.storage }
     }
     func removeAll() throws {
-        let status = SecItemDelete(query() as CFDictionary)
+        let status = SecItemDelete(try query() as CFDictionary)
         guard status == errSecSuccess || status == errSecItemNotFound else { throw DirectCloudError.storage }
     }
 }
@@ -104,6 +114,7 @@ struct DirectCloudKeychain: DirectCloudTransport {
     private let defaults: UserDefaults
     private let url: URL
     private let transport: any DirectCloudTransport
+    private let applyPreferences: @MainActor (DirectCloudPreferences, UUID) -> Void
     private var writer: UUID
     private let injectedWriter: UUID?
     var recovery: DirectRecoveryNotice?
@@ -117,8 +128,10 @@ struct DirectCloudKeychain: DirectCloudTransport {
     private(set) var enabled: Bool
     private(set) var busy = false
     private(set) var status = "Off. Saved Macs stay on this device."
-    init(defaults: UserDefaults = .standard, url: URL? = nil, transport: any DirectCloudTransport = DirectCloudKeychain(), writerID: UUID? = nil) {
-        self.defaults = defaults; self.url = url ?? URL.applicationSupportDirectory.appending(path: "direct-cloud-journal-v1.json"); self.transport = transport
+    init(defaults: UserDefaults = .standard, url: URL? = nil, transport: any DirectCloudTransport = DirectCloudKeychain(), writerID: UUID? = nil,
+         applyPreferences: @escaping @MainActor (DirectCloudPreferences, UUID) -> Void = { $0.apply(mac: $1) }) {
+        self.defaults = defaults; self.url = url ?? DirectClientPlatformV1.dataURL("direct-cloud-journal-v1.json"); self.transport = transport
+        self.applyPreferences = applyPreferences
         // A restored backup must get a new writer, or two phones could overwrite one another.
         let identity = UUID(uuidString: "00000000-0000-0000-0000-000000000001")!
         var identityReadable = true
@@ -173,7 +186,7 @@ struct DirectCloudKeychain: DirectCloudTransport {
         self.library = library
         library.localChange = { [weak self] id in self?.localChange(id) }
         if observers.isEmpty {
-            for name in [UIApplication.didBecomeActiveNotification, DirectAppLockV1.unlocked] {
+            for name in [DirectClientPlatformV1.didBecomeActive, DirectAppLockV1.unlocked] {
                 observers.append(NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in MainActor.assumeIsolated { self?.refresh() } })
             }
             observers.append(NotificationCenter.default.addObserver(forName: Self.preferenceChanged, object: nil, queue: .main) { [weak self] note in
@@ -198,7 +211,7 @@ struct DirectCloudKeychain: DirectCloudTransport {
         guard readable else { throw DirectCloudError.storage }
         let checked = try DirectCloudVersion.merge([], values)
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try JSONEncoder().encode(Journal(versions: checked)).write(to: url, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+        try DirectClientPlatformV1.write(JSONEncoder().encode(Journal(versions: checked)), to: url)
         versions = checked
     }
     func localChange(_ id: UUID) {
@@ -212,13 +225,13 @@ struct DirectCloudKeychain: DirectCloudTransport {
         } catch { recovery = .make(.cloudUnavailable, message: "The sync change couldn’t be saved. Local Macs are kept. Retry after checking device storage.") }
     }
     func refresh() {
-        guard enabled, !busy, readable, DirectAppLockV1.shared.canAccess, UIApplication.shared.applicationState == .active, let library, library.readable else { return }
+        guard enabled, !busy, readable, DirectAppLockV1.shared.canAccess, DirectClientPlatformV1.sessionAvailable, let library, library.readable else { return }
         busy = true; generation = UUID(); let id = generation, transport = self.transport
         refreshTask = Task {
             defer { if generation == id { busy = false; refreshTask = nil } }
             do {
                 let data = try await Task.detached { try transport.read() }.value
-                guard enabled, generation == id, DirectAppLockV1.shared.canAccess, UIApplication.shared.applicationState == .active else { return }
+                guard enabled, generation == id, DirectAppLockV1.shared.canAccess, DirectClientPlatformV1.sessionAvailable else { return }
                 guard data.count <= 512, data.allSatisfy({ $0.count <= 4096 }) else { throw DirectCloudError.invalid }
                 let remote = try data.map { try JSONDecoder().decode(DirectCloudVersion.self, from: $0) }
                 let merged = try DirectCloudVersion.merge(versions, remote)
@@ -230,11 +243,11 @@ struct DirectCloudKeychain: DirectCloudTransport {
                 do {
                 defer { applying = false }
                 try library.applyCloud(next.sorted { $0.id.uuidString < $1.id.uuidString })
-                for value in winners.values { value.preferences?.apply(mac: value.id) }
+                for value in winners.values { if let preferences = value.preferences { applyPreferences(preferences, value.id) } }
                 try persist(merged)
                 }
                 for value in merged where value.writer == writer {
-                    guard enabled, generation == id, DirectAppLockV1.shared.canAccess, UIApplication.shared.applicationState == .active, !Task.isCancelled else { return }
+                    guard enabled, generation == id, DirectAppLockV1.shared.canAccess, DirectClientPlatformV1.sessionAvailable, !Task.isCancelled else { return }
                     let bytes = try JSONEncoder().encode(value), account = value.account
                     try await Task.detached { try transport.write(bytes, account: account) }.value
                 }

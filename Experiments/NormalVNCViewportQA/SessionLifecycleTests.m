@@ -34,6 +34,9 @@
 @implementation SessionLifecycleTests
 - (void)testLayoutStatusCannotCompleteInitialLoginOrResumeBeforeFreshFrame {
     CompanionVNCSession *session = [CompanionVNCSession new]; [session setValue:@YES forKey:@"running"];
+    // An authenticated Desktop still waits for fresh pixels. A Connected
+    // report cannot manufacture authentication/input readiness on its own.
+    [session setValue:@YES forKey:@"inputReady"];
     XCTestExpectation *premature = [self expectationWithDescription:@"Metadata does not admit stale pixels"]; premature.inverted = YES;
     session.stateHandler = ^(NSString *state, NSDictionary *stats) { [premature fulfill]; };
     [session report:@"Connected"];

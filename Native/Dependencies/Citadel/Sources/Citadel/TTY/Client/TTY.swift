@@ -38,6 +38,9 @@ public struct ExecCommandStream {
             case .exit(let status):
                 stdout.finish(throwing: SSHClient.CommandFailed(exitCode: status))
                 stderr.finish(throwing: SSHClient.CommandFailed(exitCode: status))
+            case .signal:
+                stdout.finish(throwing: SSHClient.CommandSignalled())
+                stderr.finish(throwing: SSHClient.CommandSignalled())
             }
         }
     }
@@ -100,6 +103,7 @@ final class ExecCommandHandler: ChannelDuplexHandler, Sendable {
         case stderr(ByteBuffer)
         case eof(Error?)
         case exit(Int)
+        case signal
     }
     
     typealias InboundIn = SSHChannelData
@@ -133,6 +137,8 @@ final class ExecCommandHandler: ChannelDuplexHandler, Sendable {
             onOutput(context.channel, .eof(CitadelError.channelFailure))
         case let status as SSHChannelRequestEvent.ExitStatus:
             onOutput(context.channel, .exit(status.exitStatus))
+        case is SSHChannelRequestEvent.ExitSignal:
+            onOutput(context.channel, .signal)
         default:
             self.logger.debug("Received unknown channel event in command handler: \(event)")
             context.fireUserInboundEventTriggered(event)
@@ -140,7 +146,10 @@ final class ExecCommandHandler: ChannelDuplexHandler, Sendable {
     }
 
     func handlerRemoved(context: ChannelHandlerContext) {
-        onOutput(context.channel, .eof(nil))
+        // A transport close can remove the child handler without an SSH channel
+        // close. Even an earlier status zero must not turn that into success.
+        let error: Error? = context.channel.parent?.isActive == false ? ChannelError.ioOnClosedChannel : nil
+        onOutput(context.channel, .eof(error))
     }
 
     func channelRead(context: ChannelHandlerContext, data: NIOAny) {
@@ -174,6 +183,7 @@ extension SSHClient {
         /// The exit code returned by the command
         public let exitCode: Int
     }
+    public struct CommandSignalled: Error {}
 
     /// Executes a command on the remote server and returns its output as a single buffer
     /// - Parameters:
@@ -268,12 +278,14 @@ extension SSHClient {
 
     internal func _executeCommandStream(
         environment: [SSHChannelRequestEvent.EnvironmentRequest] = [],
-        mode: CommandMode
+        mode: CommandMode,
+        terminalExitStatus: NIOLockedValueBox<Int?>? = nil
     ) async throws -> (channel: Channel, output: AsyncThrowingStream<ExecCommandOutput, Error>) {
         let (stream, streamContinuation) = AsyncThrowingStream<ExecCommandOutput, Error>.makeStream()
 
         let hasReceivedChannelSuccess = NIOLockedValueBox<Bool>(false)
         let exitCode = NIOLockedValueBox<Int?>(nil)
+        let signalled = NIOLockedValueBox(false)
 
         let handler = ExecCommandHandler(logger: logger) { channel, output in
             switch output {
@@ -285,6 +297,8 @@ extension SSHClient {
                 self.logger.debug("EOF triggered, ending the command stream.")
                 if let error {
                     streamContinuation.finish(throwing: error)
+                } else if signalled.withLockedValue({ $0 }) {
+                    streamContinuation.finish(throwing: CommandSignalled())
                 } else if let exitCode = exitCode.withLockedValue({ $0 }), exitCode != 0 {
                     streamContinuation.finish(throwing: CommandFailed(exitCode: exitCode))
                 } else {
@@ -302,6 +316,9 @@ extension SSHClient {
             case .exit(let status):
                 self.logger.debug("Process exited with status code \(status). Will await on EOF for correct exit")
                 exitCode.withLockedValue({ $0 = status })
+                terminalExitStatus?.withLockedValue { $0 = status }
+            case .signal:
+                signalled.withLockedValue { $0 = true }
             }
         }
 
@@ -347,26 +364,30 @@ extension SSHClient {
     ///   - perform: Closure that receives TTY input/output streams and performs terminal operations
     /// - Throws: Any errors that occur during PTY setup or operation
     @available(macOS 15.0, *)
+    @discardableResult
     public func withPTY(
         _ request: SSHChannelRequestEvent.PseudoTerminalRequest,
         environment: [SSHChannelRequestEvent.EnvironmentRequest] = [],
         perform: (_ inbound: TTYOutput, _ outbound: TTYStdinWriter) async throws -> Void
-    ) async throws {
+    ) async throws -> Int? {
+        let status = NIOLockedValueBox<Int?>(nil)
         let (channel, output) = try await _executeCommandStream(
             environment: environment,
-            mode: .pty(request)
+            mode: .pty(request), terminalExitStatus: status
         )
 
         func close() async throws {
-            try await channel.close()
+            do { try await channel.close() }
+            catch ChannelError.alreadyClosed { /* Normal remote channel closure. */ }
         }
 
         do {
             let inbound = TTYOutput(sequence: output)
             try await perform(inbound, TTYStdinWriter(channel: channel))
             try await close()
+            return status.withLockedValue { $0 }
         } catch {
-            try await close()
+            try? await close()
             throw error
         }
     }

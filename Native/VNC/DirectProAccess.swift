@@ -1,9 +1,11 @@
-#if os(iOS) && MACCOMPANION_VNC_DEVELOPMENT
+#if (os(iOS) || os(macOS)) && MACCOMPANION_VNC_DEVELOPMENT
 import Foundation
 import Observation
 import StoreKit
 import SwiftUI
+#if os(iOS)
 import UIKit
+#endif
 
 struct DirectProEntitlement {
     let verified: Bool
@@ -202,60 +204,86 @@ struct DirectProView: View {
     }
     private var historyAction: DirectRecoveryAction? {
         guard access.recovery?.reason == .purchaseUnconfirmed || access.recovery?.reason == .noPurchase else { return nil }
-        return .init(title: "Apple Purchase History", perform: { UIApplication.shared.open(URL(string: "https://reportaproblem.apple.com/")!) })
+        return .init(title: "Apple Purchase History", perform: { DirectClientPlatformV1.open(URL(string: "https://reportaproblem.apple.com/")!) })
     }
     var body: some View {
-        NavigationStack {
-            List {
-                Section {
-                    Label("Mac Companion Pro", systemImage: "sparkles").font(.title2.bold())
-                    Text("Try Pro free for 14 days, or unlock it for life. No subscription.").foregroundStyle(.secondary)
-                    if access.hasLifetimePro {
-                        Label("Lifetime Pro is unlocked", systemImage: "checkmark.seal.fill").foregroundStyle(.green)
-                    } else if access.trialIsActive, let trial = access.trial {
-                        Label("\(access.trialDaysRemaining) days left in your trial", systemImage: "clock").foregroundStyle(.tint)
-                        Text("Pro access ends \(trial.endDate.formatted(date: .abbreviated, time: .shortened)).").font(.footnote)
-                    } else if access.trial != nil {
-                        Text("Your Pro trial has ended. Basic features remain free.").foregroundStyle(.secondary)
-                    }
-                }
-                if let notice = access.recovery {
-                    Section { DirectRecoveryCard(notice: notice, primary: recoveryAction, secondary: historyAction) }
-                }
-                Section("Pro features") {
-                    Label("Multiple saved Macs and named SSH keys", systemImage: "desktopcomputer")
-                    Label("Install SSH keys from each Mac’s settings", systemImage: "key")
-                    Label("Custom terminal keys, shortcuts and snippets", systemImage: "keyboard")
-                }
-                if !access.hasLifetimePro && access.trial == nil {
-                    Section {
-                        Button("Start 14-day Free Trial") { Task { await access.startTrial() } }
-                            .disabled(!access.canStartTrial || access.busy).accessibilityIdentifier("pro-start-trial")
-                    } header: { Text("14-day Trial") } footer: {
-                        Text("All Pro features for 14 days from today. Then multiple Macs/keys, key setup and custom controls require Lifetime Pro. Basic features stay free and your data is preserved. No automatic charge. \(access.product.map { "Lifetime Pro costs " + $0.displayPrice + " once, as a separate purchase." } ?? "The lifetime upgrade price appears when the store is available.")")
-                    }
-                }
-                Section {
-                    if !access.hasLifetimePro {
-                        Button(access.product.map { "Unlock Lifetime Pro · " + $0.displayPrice } ?? "Purchase Unavailable") {
-                            Task { await access.purchase() }
-                        }.disabled(access.product == nil || access.busy).accessibilityIdentifier("pro-purchase")
-                    }
-                    Button("Restore Purchases") { Task { await access.restore() } }.disabled(access.busy).accessibilityIdentifier("pro-restore")
-                    if access.product == nil || access.trialProduct == nil { Button("Reload Store") { Task { await access.loadProduct() } }.disabled(access.busy) }
-                    if access.trialHistoryUnavailable { Text("Trial history couldn’t be verified. Restore Purchases before starting a trial; free features remain available.").font(.footnote).foregroundStyle(.secondary) }
-                    if access.busy { ProgressView("Contacting the App Store…") }
-                    if let message = access.message { Text(message).font(.footnote).foregroundStyle(.secondary) }
-                } footer: { Text("Lifetime Pro is a one-time purchase. No renewal or subscription.") }
-                Section("Free, without a time limit") {
-                    Text("One saved Mac and one SSH key. Desktop, Trackpad & Keyboard, basic Terminal, all standard keyboard controls, local/VPN addresses, display selection and zoom.")
-                    Text("Security, accessibility and SSH key import/export stay free. Existing extra Macs and keys are preserved.").foregroundStyle(.secondary)
-                }
+        Group {
+            #if os(macOS)
+            VStack(spacing: 0) {
+                HStack {
+                    Text("Mac Companion Pro").font(.headline)
+                    Spacer()
+                }.padding(20)
+                Divider()
+                Form { sections }.formStyle(.grouped)
+                    .accessibilityIdentifier("mac-pro-content")
+                Divider()
+                HStack {
+                    Spacer()
+                    Button("Done") { dismiss() }.keyboardShortcut(.defaultAction).buttonStyle(.borderedProminent)
+                }.padding(16)
+            }.frame(width: 560, height: 640)
+            #else
+            NavigationStack {
+                List { sections }
+                    .navigationTitle("Mac Companion Pro").directInlineNavigationTitle()
+                    .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
             }
-            .navigationTitle("Mac Companion Pro").navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
-            .task { await access.loadProduct() }
-            .onChange(of: scenePhase) { _, phase in if phase == .active { Task { await access.refresh() } } }
+            #endif
+        }
+        .task { await access.loadProduct() }
+        .onChange(of: scenePhase) { _, phase in if phase == .active { Task { await access.refresh() } } }
+    }
+    @ViewBuilder private var sections: some View {
+        Section {
+            #if os(iOS)
+            Label("Mac Companion Pro", systemImage: "sparkles").font(.title2.bold())
+            #endif
+            Text("Try Pro free for 14 days, or unlock it for life. No subscription.").foregroundStyle(.secondary)
+            if access.hasLifetimePro {
+                Label("Lifetime Pro is unlocked", systemImage: "checkmark.seal.fill").foregroundStyle(.green)
+            } else if access.trialIsActive, let trial = access.trial {
+                Label("\(access.trialDaysRemaining) days left in your trial", systemImage: "clock").foregroundStyle(.tint)
+                Text("Pro access ends \(trial.endDate.formatted(date: .abbreviated, time: .shortened)).").font(.footnote)
+            } else if access.trial != nil {
+                Text("Your Pro trial has ended. Basic features remain free.").foregroundStyle(.secondary)
+            }
+        }
+        if let notice = access.recovery {
+            Section { DirectRecoveryCard(notice: notice, primary: recoveryAction, secondary: historyAction) }
+        }
+        Section("Pro features") {
+            Label("Multiple saved Macs and named SSH keys", systemImage: "desktopcomputer")
+            Label("Install SSH keys from each Mac’s settings", systemImage: "key")
+            Label("Custom terminal keys, shortcuts and snippets", systemImage: "keyboard")
+        }
+        if !access.hasLifetimePro && access.trial == nil {
+            Section {
+                Button("Start 14-day Free Trial") { Task { await access.startTrial() } }
+                    .disabled(!access.canStartTrial || access.busy).accessibilityIdentifier("pro-start-trial")
+            } header: { Text("14-day Trial") } footer: {
+                Text("All Pro features for 14 days from today. Then multiple Macs/keys, key setup and custom controls require Lifetime Pro. Basic features stay free and your data is preserved. No automatic charge. \(access.product.map { "Lifetime Pro costs " + $0.displayPrice + " once, as a separate purchase." } ?? "The lifetime upgrade price appears when the store is available.")")
+            }
+        }
+        Section {
+            if !access.hasLifetimePro {
+                Button(access.product.map { "Unlock Lifetime Pro · " + $0.displayPrice } ?? "Purchase Unavailable") {
+                    Task { await access.purchase() }
+                }.disabled(access.product == nil || access.busy).accessibilityIdentifier("pro-purchase")
+            }
+            Button("Restore Purchases") { Task { await access.restore() } }.disabled(access.busy).accessibilityIdentifier("pro-restore")
+            if access.product == nil || access.trialProduct == nil { Button("Reload Store") { Task { await access.loadProduct() } }.disabled(access.busy) }
+            if access.trialHistoryUnavailable { Text("Trial history couldn’t be verified. Restore Purchases before starting a trial; free features remain available.").font(.footnote).foregroundStyle(.secondary) }
+            if access.busy { ProgressView("Contacting the App Store…") }
+            if let message = access.message { Text(message).font(.footnote).foregroundStyle(.secondary) }
+        } footer: { Text("Lifetime Pro is a one-time purchase. No renewal or subscription.") }
+        Section("Free, without a time limit") {
+            #if os(macOS)
+            Text("One saved Mac and one SSH key. Desktop, basic Terminal, all standard keyboard controls, local/VPN addresses, display selection and zoom.")
+            #else
+            Text("One saved Mac and one SSH key. Desktop, Trackpad & Keyboard, basic Terminal, all standard keyboard controls, local/VPN addresses, display selection and zoom.")
+            #endif
+            Text("Security, accessibility and SSH key import/export stay free. Existing extra Macs and keys are preserved.").foregroundStyle(.secondary)
         }
     }
 }

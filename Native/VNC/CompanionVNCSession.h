@@ -1,8 +1,15 @@
+#import <TargetConditionals.h>
+#if TARGET_OS_OSX
+#import <AppKit/AppKit.h>
+typedef NSImage CompanionVNCImage;
+#else
 #import <UIKit/UIKit.h>
+typedef UIImage CompanionVNCImage;
+#endif
 
 @interface CompanionVNCSession : NSObject
-@property(nonatomic, copy) void (^frameHandler)(UIImage *image);
-@property(nonatomic, copy) void (^cursorHandler)(UIImage *image, CGPoint hotspot, CGPoint position, BOOL positionKnown);
+@property(nonatomic, copy) void (^frameHandler)(CompanionVNCImage *image);
+@property(nonatomic, copy) void (^cursorHandler)(CompanionVNCImage *image, CGPoint hotspot, CGPoint position, BOOL positionKnown);
 @property(nonatomic, copy) void (^stateHandler)(NSString *state, NSDictionary *counters);
 @property(nonatomic, copy) void (^displayLayoutHandler)(NSDictionary *layout);
 @property(nonatomic, readonly) BOOL running;

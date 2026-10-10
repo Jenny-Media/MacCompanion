@@ -1,4 +1,4 @@
-#if os(iOS) && MACCOMPANION_VNC_DEVELOPMENT
+#if (os(iOS) || os(macOS)) && MACCOMPANION_VNC_DEVELOPMENT
 import Foundation
 import Crypto
 import Citadel
@@ -14,6 +14,15 @@ struct TerminalSSHKey: Codable, Sendable {
         guard seed.count == 32, username.utf8.count <= 255, !username.contains("\0"), !publicKey.isEmpty else { throw KeyFailure.invalid }
     }
     static func create() -> Self { .init(seed: Curve25519.Signing.PrivateKey().rawRepresentation) }
+    static func readOpenSSHFile(_ url: URL) throws -> String {
+        let access = url.startAccessingSecurityScopedResource()
+        defer { if access { url.stopAccessingSecurityScopedResource() } }
+        let file = try FileHandle(forReadingFrom: url); defer { try? file.close() }
+        let bytes = try file.read(upToCount: 32769) ?? Data()
+        guard bytes.count <= 32768 else { throw KeyFailure.tooLarge }
+        guard let text = String(data: bytes, encoding: .utf8) else { throw KeyFailure.invalid }
+        return text
+    }
     static func importOpenSSH(_ text: String, passphrase: String) throws -> Self {
         guard text.utf8.count <= 32768, passphrase.utf8.count <= 4096 else { throw KeyFailure.tooLarge }
         let header = "-----BEGIN OPENSSH " + "PRIVATE KEY-----"

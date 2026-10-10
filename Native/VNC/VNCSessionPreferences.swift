@@ -1,4 +1,4 @@
-#if os(iOS) && MACCOMPANION_VNC_DEVELOPMENT
+#if (os(iOS) || os(macOS)) && MACCOMPANION_VNC_DEVELOPMENT
 import Foundation
 import Security
 import SwiftUI
@@ -94,8 +94,12 @@ struct VNCQuickAction: Codable, Identifiable, Equatable, Sendable {
     static func followCursor(_ id: UUID) -> Bool { UserDefaults.standard.object(forKey: prefix(id) + "follow-cursor") as? Bool ?? true }
     static func setFollowCursor(_ value: Bool, mac id: UUID) { UserDefaults.standard.set(value, forKey: prefix(id) + "follow-cursor"); changed(id) }
     private static func query(_ id: UUID) -> [String: Any] {
-        [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: "media.jenny.maccompanion.direct-actions.v1",
+        var query: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: "media.jenny.maccompanion.direct-actions.v1",
          kSecAttrAccount as String: id.uuidString.lowercased(), kSecAttrSynchronizable as String: false]
+        #if os(macOS)
+        query[kSecUseDataProtectionKeychain as String] = true
+        #endif
+        return query
     }
     static func actions(_ id: UUID) -> [VNCQuickAction] {
         let saved = (try? readActions(id)) ?? VNCQuickAction.defaults
@@ -161,7 +165,9 @@ struct VNCInputSettings: View {
     @State private var actions: [VNCQuickAction]
     @State private var editor: VNCQuickAction?
     @State private var issue: DirectRecoveryNotice?
+    #if os(iOS)
     @State private var actionEditMode: EditMode = .inactive
+    #endif
     @State private var paywall = false
     @State private var actionsReadable: Bool
     init(macID: UUID? = nil, mode: DirectControlMode = .desktop, changed: @escaping @MainActor () -> Void = {}) {
@@ -189,7 +195,13 @@ struct VNCInputSettings: View {
                     if mode == .desktop {
                         Section {
                             Toggle("Follow Cursor", isOn: $followCursor).accessibilityIdentifier("follow-cursor-toggle")
-                        } footer: { Text("In zoomed Trackpad mode, move the view to keep the cursor visible. Manual pan or zoom pauses following until your next trackpad movement. Saved for this Mac.") }
+                        } footer: {
+                            #if os(macOS)
+                            Text("With Trackpad Input enabled in Desktop, keep the cursor visible while zoomed in. Manual pan or zoom pauses following until your next pointer movement. Saved for this Mac.")
+                            #else
+                            Text("In zoomed Trackpad mode, move the view to keep the cursor visible. Manual pan or zoom pauses following until your next trackpad movement. Saved for this Mac.")
+                            #endif
+                        }
                     }
                 }
                 if mode != .terminal {
@@ -198,12 +210,20 @@ struct VNCInputSettings: View {
                         Slider(value: $scrollSpeed, in: VNCSessionPreferences.scrollSpeedRange, step: 0.25)
                             .accessibilityLabel("Scroll Speed").accessibilityIdentifier("scroll-speed-slider")
                         Button("Reset to Default") { scrollSpeed = 1 }
-                    } footer: { Text("Two-finger scrolling in Desktop and Trackpad. Applies to all Macs.") }
+                    } footer: {
+                        #if os(macOS)
+                        Text("Two-finger scrolling in Desktop. Applies to all Macs.")
+                        #else
+                        Text("Two-finger scrolling in Desktop and Trackpad. Applies to all Macs.")
+                        #endif
+                    }
+                    #if os(iOS)
                     Section {
                         Toggle("Show Touch Points", isOn: $showsTouchPoints).accessibilityIdentifier("trackpad-touch-points-toggle")
                         Toggle("Trackpad Haptics", isOn: $trackpadHaptics).accessibilityIdentifier("trackpad-haptics-toggle")
                     } header: { Text("Touch Feedback") }
                     footer: { Text("Touch rings and tap or drag feedback. Applies to all trackpad surfaces.") }
+                    #endif
                 }
                 Section {
                     ForEach($actions) { $action in
@@ -212,6 +232,15 @@ struct VNCInputSettings: View {
                                 Button(action.title) { if action.kind == .shortcut || action.kind == .text { editor = action } }
                                     .buttonStyle(.plain)
                             }
+                            #if os(macOS)
+                            Button("Move Up", systemImage: "arrow.up") {
+                                if let i = actions.firstIndex(where: { $0.id == action.id }), i > 0 { actions.swapAt(i, i - 1) }
+                            }.labelStyle(.iconOnly).disabled(actions.first?.id == action.id)
+                            Button("Move Down", systemImage: "arrow.down") {
+                                if let i = actions.firstIndex(where: { $0.id == action.id }), i + 1 < actions.count { actions.swapAt(i, i + 1) }
+                            }.labelStyle(.iconOnly).disabled(actions.last?.id == action.id)
+                            Button("Remove", systemImage: "trash", role: .destructive) { actions.removeAll { $0.id == action.id } }.labelStyle(.iconOnly)
+                            #endif
                         }
                     }.onMove { actions.move(fromOffsets: $0, toOffset: $1) }.onDelete { actions.remove(atOffsets: $0) }
                     if DirectProAccess.shared.hasPro && actions.count < 15 {
@@ -229,18 +258,20 @@ struct VNCInputSettings: View {
                 } header: {
                     HStack {
                         Text("Quick Actions"); Spacer()
+                        #if os(iOS)
                         if DirectProAccess.shared.hasPro {
                             Button(actionEditMode.isEditing ? "Done" : "Reorder") {
                                 withAnimation { actionEditMode = actionEditMode.isEditing ? .inactive : .active }
                             }.textCase(nil).accessibilityIdentifier("quick-actions-reorder")
                         }
+                        #endif
                     }
                 } footer: {
-                    Text("Applies to all Macs in this mode. Saved text stays on this iPhone.")
+                    Text("Applies to all Macs in this mode. Saved text stays on this device.")
                 }.disabled(!actionsReadable || !DirectProAccess.shared.hasPro)
                 if !DirectProAccess.shared.hasPro { Section { Button("Customize Quick Actions with Pro") { paywall = true } } }
             }
-            .navigationTitle(mode == .trackpad ? "Trackpad Controls" : mode.title + " Controls").navigationBarTitleDisplayMode(.inline)
+            .navigationTitle(mode == .trackpad ? "Trackpad Controls" : mode.title + " Controls").directInlineNavigationTitle()
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) { Button("Save") { save() }.disabled(!actionsReadable || (!DirectProAccess.shared.hasPro && macID == nil && mode == .terminal)) }
@@ -249,7 +280,9 @@ struct VNCInputSettings: View {
                 if let index = actions.firstIndex(where: { $0.id == edited.id }) { actions[index] = edited } else { actions.append(edited) }
             } }
             .sheet(isPresented: $paywall) { DirectProView() }
+            #if os(iOS)
             .environment(\.editMode, $actionEditMode)
+            #endif
 
         }
         .interactiveDismissDisabled()
@@ -289,7 +322,7 @@ private struct VNCActionEditor: View {
                 }
                 if action.kind == .text {
                     Section {
-                        TextEditor(text: $action.text).frame(minHeight: 140).accessibilityLabel("Saved Text").autocorrectionDisabled().textInputAutocapitalization(.never).privacySensitive()
+                        TextEditor(text: $action.text).frame(minHeight: 140).accessibilityLabel("Saved Text").autocorrectionDisabled().directNoAutocapitalization().privacySensitive()
                         Text("\(action.text.unicodeScalars.count)/256 characters").foregroundStyle(.secondary)
                     } footer: { Text(mode == .terminal ? "Sent to the active shell only when selected. A trailing newline can run a command." : "Sent only when you select this action. Check the focused field on your Mac before sending.") }
                 } else {
@@ -301,7 +334,7 @@ private struct VNCActionEditor: View {
                         }
                     }
                     Section("Key") {
-                        TextField("Letter or symbol", text: $letter).textInputAutocapitalization(.never).autocorrectionDisabled()
+                        TextField("Letter or symbol", text: $letter).directNoAutocapitalization().autocorrectionDisabled()
                             .onChange(of: letter) { _, text in if text.unicodeScalars.count == 1, let value = text.unicodeScalars.first?.value { action.key = value } else { action.key = 0 } }
                         Picker("Special Key", selection: Binding(get: { action.key < 0xff00 ? 0 : action.key }, set: { key in
                             action.key = key == 0 && letter.unicodeScalars.count == 1 ? letter.unicodeScalars.first!.value : key
@@ -312,7 +345,7 @@ private struct VNCActionEditor: View {
                     }
                 }
             }
-            .navigationTitle(action.kind == .text ? "Saved Text" : "Shortcut").navigationBarTitleDisplayMode(.inline)
+            .navigationTitle(action.kind == .text ? "Saved Text" : "Shortcut").directInlineNavigationTitle()
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) { Button("Save") { save(action); dismiss() }.disabled(!action.valid || !action.compatible(with: mode)) }

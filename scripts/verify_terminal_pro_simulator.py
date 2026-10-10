@@ -61,6 +61,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--build', type=Path, required=True)
     parser.add_argument('--simulator', required=True)
+    parser.add_argument('--test-diagnostics', choices=['on-failure', 'never'], default='on-failure')
     parser.add_argument('--screenshots', action='store_true', help='Capture synthetic recovery screens in the hosted Simulator tests')
     parser.add_argument('--duo-review', action='store_true', help='Run only the opt-in interactive, synthetic Duo comparison capture')
     args = parser.parse_args(); base = args.build.resolve()
@@ -112,7 +113,7 @@ def main():
             '-destination', 'platform=iOS Simulator,id=' + args.simulator, '-derivedDataPath', base / 'DerivedData',
             '-onlyUsePackageVersionsFromResolvedFile', '-skipPackagePluginValidation', '-parallel-testing-enabled', 'NO',
             *(['-only-testing:DirectClientTests/DuoComparisonTests/testInteractiveCapture'] if args.duo_review else []),
-            '-resultBundlePath', qa / 'Results.xcresult', 'test', stdout=log, stderr=subprocess.STDOUT)
+            '-collect-test-diagnostics', args.test_diagnostics, '-resultBundlePath', qa / 'Results.xcresult', 'test', stdout=log, stderr=subprocess.STDOUT)
     container = subprocess.check_output(['xcrun', 'simctl', 'get_app_container', args.simulator, bundle, 'data'], text=True).strip()
     if not args.duo_review:
         verify_external(Path(container) / 'Documents/synthetic-key-interop')

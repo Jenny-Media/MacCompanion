@@ -3,7 +3,7 @@
     "url": "https://github.com/orlandos-nl/Citadel.git",
     "revision": "ae8562f895de06ccb86fdb1cbb65fd99c8976e12",
     "localPath": "Native/Dependencies/Citadel",
-    "patch": "Existing-channel pipeline/event-loop, early-banner read ordering and timeout correction; bounded exec stderr; standard encrypted Ed25519 OpenSSH export using existing bcrypt and BoringSSL AES-CTR primitives. No embedded key material.",
+    "patch": "Existing-channel pipeline/event-loop, early-banner read ordering and timeout correction; bounded exec stderr; standard encrypted Ed25519 OpenSSH export using existing bcrypt and BoringSSL AES-CTR primitives. No embedded key material. Retained PTY exit status and exit signals; idempotent PTY channel cleanup preserving the original failure.",
     "files": {
       "LICENSE": "580a39b7c09cba3cd18a5b1e0d4376e9d1ac200d241bda87e95ed74917bc3b31",
       "Package.swift": "18c2cf5fdcdda94ec04d24009174f347150643c1419d4d5d22baf499d1fd4eb4",
@@ -50,7 +50,7 @@
       "Sources/Citadel/SSHKeyTypeDetection.swift": "f8c6719fc264f316b2d974072e0e8dd177ee1a9a47eb273970bb46b4470d6aa3",
       "Sources/Citadel/Server.swift": "06ccf403f0afdafa951aee2b41ec187ca2023d99e435fc86e09f5f06aafb73bf",
       "Sources/Citadel/Shell/Server/ShellDelegate.swift": "7423bad85d3aa00bbfd53283351846bf8835ca96e9a5a61f96b8ec567aedd15f",
-      "Sources/Citadel/TTY/Client/TTY.swift": "61b358ba713286d3f69ba78714b17e0d0b00c2cc9a8398e4fb2a3d116dffacd0",
+      "Sources/Citadel/TTY/Client/TTY.swift": "77031492c8d985ec59144468af140a15007cb5a018ed4d68f240b11073266a3d",
       "Sources/CitadelServerExample/EchoShell/BasicCommands.swift": "5ad06013eafc2d2a372c0ade84702c78d8890306c21f699d898d641793f475a7",
       "Sources/CitadelServerExample/EchoShell/EchoShell.swift": "c570877cc95a9a4066fb163e2fa8670ec67970086be4bdb2bbf3f5f413626e46",
       "Sources/CitadelServerExample/EchoShell/Extensions.swift": "b094512b25542e33ee92abbedaeff518f7e09ae63b87cba524ee57bbbbf6f032",

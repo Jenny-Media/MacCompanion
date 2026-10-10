@@ -30,6 +30,16 @@ private final class SSHTestRecord: @unchecked Sendable {
     private var execs=0
     private var input: [UInt8] = []
     private var shell: Channel?
+    private var transport: Channel?
+    func openedTransport(_ channel: Channel) { lock.lock(); transport = channel; lock.unlock() }
+    private func activeTransport() -> Channel? { lock.lock(); defer { lock.unlock() }; return transport }
+    func finish(status: Int?, signal: String? = nil, transportFailed: Bool = false) async throws {
+        guard let channel = activeShell() else { throw POSIXError(.ENOTCONN) }
+        if let status { try await channel.triggerUserOutboundEvent(SSHChannelRequestEvent.ExitStatus(exitStatus: status)).get() }
+        if let signal { try await channel.triggerUserOutboundEvent(SSHChannelRequestEvent.ExitSignal(signalName: signal, errorMessage: "", language: "", dumpedCore: false)).get() }
+        if transportFailed { try await activeTransport()?.close().get() }
+        else { try await channel.close().get() }
+    }
     func opened(_ channel: Channel) { lock.lock(); shell = channel; lock.unlock() }
     func emit(_ text: String) async throws {
         let channel = activeShell()
@@ -335,7 +345,8 @@ private final class SSHEarlyReadProbe: ChannelInboundHandler, @unchecked Sendabl
     private func server(record:SSHTestRecord,key:NIOSSHPrivateKey, publicKey: NIOSSHPublicKey? = nil) async throws -> Channel {
         let auth=SSHTestAuth(record, publicKey: publicKey)
         return try await ServerBootstrap(group:MultiThreadedEventLoopGroup.singleton).childChannelInitializer { channel in
-            channel.pipeline.addHandler(NIOSSHHandler(role:.server(.init(hostKeys:[key],userAuthDelegate:auth)),allocator:channel.allocator,inboundChildChannelInitializer:{ child,type in
+            record.openedTransport(channel)
+            return channel.pipeline.addHandler(NIOSSHHandler(role:.server(.init(hostKeys:[key],userAuthDelegate:auth)),allocator:channel.allocator,inboundChildChannelInitializer:{ child,type in
                 child.pipeline.addHandler(SSHTestPTY(record))
             }))
         }.bind(host:"127.0.0.1",port:0).get()
@@ -344,6 +355,76 @@ private final class SSHEarlyReadProbe: ChannelInboundHandler, @unchecked Sendabl
         for _ in 0..<500 { if condition() { return }; try await Task.sleep(for:.milliseconds(10)) }
         XCTFail("Timed out waiting for \(message)")
         throw POSIXError(.ETIMEDOUT)
+    }
+    func testReportedShellCompletionDistinguishesNormalExitFromLostConnection() async throws {
+        let url = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "direct-screen-sharing-v1", withExtension: "json"))
+        let fixture = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])
+        let cases = try XCTUnwrap(fixture["terminalEndCases"] as? [[String: Any]])
+        for vector in cases where vector["currentSession"] as? Bool == true {
+            let name = try XCTUnwrap(vector["name"] as? String)
+            let record = SSHTestRecord(), key = NIOSSHPrivateKey(ed25519Key: .init())
+            let server = try await server(record: record, key: key)
+            defer { _ = server.close() }
+            let mac = DirectMacRecordV1(id: UUID(), name: "Synthetic Completion", addresses: ["127.0.0.1"], sshPort: try XCTUnwrap(server.localAddress?.port))
+            let defaults = UserDefaults(suiteName: "terminal-completion-" + UUID().uuidString)!
+            let backend = TerminalActivityTestBackend()
+            let session = DirectTerminalSession(mac: mac, activityDefaults: defaults, activityBackend: backend)
+            defer { session.stop(); try? TerminalSecretStore.remove(mac.id) }
+            try TerminalSecretStore.write(Data(String(openSSHPublicKey: key.publicKey).utf8), id: mac.id, kind: "host-key")
+            session.connect(username: "synthetic", password: "synthetic-only", remember: false)
+            try await wait(name + " connected") { session.connected }
+            var tail: [UInt8] = []
+            session.received = { tail += $0 }
+            try await record.emit("final-synthetic-output")
+            try await record.finish(status: vector["exitStatus"] as? Int, signal: vector["exitSignal"] as? String, transportFailed: vector["transportFailed"] as? Bool == true)
+            try await wait(name + " completed") { !session.connected }
+            XCTAssertEqual(session.completedNormally, vector["returnToMacs"] as? Bool, name)
+            if session.completedNormally {
+                XCTAssertNil(session.recovery, name)
+                XCTAssertTrue(String(decoding: tail, as: UTF8.self).contains("final-synthetic-output"), "Drain final output before dismissing")
+            } else { XCTAssertEqual(session.recovery?.reason, .terminalEnded, name) }
+            XCTAssertNil(session.activity); XCTAssertEqual(record.passwordRequests, 1)
+            XCTAssertTrue(record.received.isEmpty, "Completion must never inject or replay input")
+            session.stop(); XCTAssertFalse(session.completedNormally)
+        }
+    }
+    func testNormalExitDismissesHostedTerminalWithoutShowingLoginAgain() async throws {
+        let record = SSHTestRecord(), key = NIOSSHPrivateKey(ed25519Key: .init())
+        let server = try await server(record: record, key: key)
+        defer { _ = server.close() }
+        let mac = DirectMacRecordV1(id: UUID(), name: "Synthetic Exit", addresses: ["127.0.0.1"], sshPort: try XCTUnwrap(server.localAddress?.port))
+        try TerminalSecretStore.save(.init(username: "synthetic", password: "synthetic-only"), id: mac.id)
+        try TerminalSecretStore.write(Data(String(openSSHPublicKey: key.publicKey).utf8), id: mac.id, kind: "host-key")
+        let session = DirectTerminalSession(mac: mac)
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let previous = scene.windows.first(where: \.isKeyWindow), window = UIWindow(windowScene: scene)
+        var exits = 0
+        window.rootViewController = UIHostingController(rootView: DirectTerminalView(mac: mac, session: session, exit: { exits += 1 }).directAppearance())
+        window.makeKeyAndVisible()
+        defer { session.stop(); window.isHidden = true; window.rootViewController = nil; previous?.makeKeyAndVisible(); try? TerminalSecretStore.remove(mac.id) }
+        try await wait("hosted shell connected") { session.connected }
+        try await record.finish(status: 0)
+        try await wait("normal shell navigates to My Macs") { exits == 1 }
+        XCTAssertNil(session.recovery); XCTAssertFalse(session.connected)
+        try await Task.sleep(for: .milliseconds(100)); XCTAssertEqual(exits, 1); XCTAssertEqual(record.passwordRequests, 1)
+    }
+    func testOldShellCompletionCannotDismissReplacementShell() async throws {
+        let record = SSHTestRecord(), key = NIOSSHPrivateKey(ed25519Key: .init())
+        let server = try await server(record: record, key: key)
+        defer { _ = server.close() }
+        let mac = DirectMacRecordV1(id: UUID(), name: "Synthetic Replacement", addresses: ["127.0.0.1"], sshPort: try XCTUnwrap(server.localAddress?.port))
+        let session = DirectTerminalSession(mac: mac)
+        defer { session.stop(); try? TerminalSecretStore.remove(mac.id) }
+        try TerminalSecretStore.write(Data(String(openSSHPublicKey: key.publicKey).utf8), id: mac.id, kind: "host-key")
+        session.connect(username: "synthetic", password: "synthetic-only", remember: false)
+        try await wait { session.connected }
+        try await record.finish(status: 0)
+        session.stop()
+        session.connect(username: "synthetic", password: "synthetic-only", remember: false)
+        try await wait { session.connected }
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertFalse(session.completedNormally); XCTAssertNil(session.recovery); XCTAssertTrue(session.connected)
+        XCTAssertEqual(record.passwordRequests, 2); XCTAssertTrue(record.received.isEmpty)
     }
     func testEd25519AuthenticatesOnlyAfterHostTrustWithoutPasswordFallback() async throws {
         let record = SSHTestRecord(), key = TerminalSSHKey.create()

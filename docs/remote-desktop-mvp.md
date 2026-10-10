@@ -248,6 +248,10 @@ means the saved fallback name and generic icon remain available, including VPN-o
 connections. Pull to refresh retries local discovery. Detection installs nothing
 and does not connect or change saved routes.
 
-Open on Tap in each Mac's settings chooses Desktop (default), Terminal or
+On iPhone, Open on Tap in each Mac's settings chooses Desktop (default), Terminal or
 Trackpad & Keyboard. The Connect menu still opens any mode directly. These settings
 are free and participate in the existing optional iCloud library sync.
+
+On macOS, the approved 2026-10-09 scope exposes Desktop and Terminal only. A
+shared Trackpad default resolves to Desktop without changing the iPhone record;
+the native editor preserves it on unrelated edits. See `native-macos-client.md`.

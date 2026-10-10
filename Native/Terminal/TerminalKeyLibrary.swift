@@ -1,4 +1,4 @@
-#if os(iOS) && MACCOMPANION_VNC_DEVELOPMENT
+#if (os(iOS) || os(macOS)) && MACCOMPANION_VNC_DEVELOPMENT
 import Foundation
 import Observation
 
@@ -83,6 +83,15 @@ struct TerminalKeyAssociation: Codable {
         guard library.keys.count < 256, Library.validName(name) else { throw TerminalSecretStore.Failure.storage }
         let id = UUID(); library.keys.append(.init(id: id, name: name.trimmingCharacters(in: .whitespacesAndNewlines), key: .init(seed: key.seed)))
         try save(library); return id
+    }
+    enum CreationFailure: Error { case requiresPro }
+    // User creation/import must check the shared store at commit. Other windows
+    // may have added keys since the calling view loaded its library snapshot.
+    @discardableResult static func addForUser(_ key: TerminalSSHKey, name: String, access: DirectProAccess = .shared) throws -> UUID {
+        let library = try load()
+        if let existing = library.keys.first(where: { $0.key.seed == key.seed }) { return existing.id }
+        guard access.ready, access.canAddKey(count: library.keys.count) else { throw CreationFailure.requiresPro }
+        return try add(key, name: name)
     }
     static func rename(_ id: UUID, name: String) throws {
         var library = try load()

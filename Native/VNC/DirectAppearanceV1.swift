@@ -1,21 +1,29 @@
-#if os(iOS) && MACCOMPANION_VNC_DEVELOPMENT
+#if (os(iOS) || os(macOS)) && MACCOMPANION_VNC_DEVELOPMENT
 import Observation
 import SwiftUI
+#if os(iOS)
 import UIKit
+#else
+import AppKit
+#endif
 
 enum DirectAppAppearance: String, CaseIterable, Identifiable {
     case system, light, dark
     var id: String { rawValue }
     var title: String { rawValue.capitalized }
     var colorScheme: ColorScheme? { self == .system ? nil : self == .dark ? .dark : .light }
+    #if os(iOS)
     var interfaceStyle: UIUserInterfaceStyle { self == .system ? .unspecified : self == .dark ? .dark : .light }
+    #endif
 }
 
 enum DirectTerminalAppearance: String, CaseIterable, Identifiable {
     case app, light, dark
     var id: String { rawValue }
     var title: String { self == .app ? "Follow App" : rawValue.capitalized }
+    #if os(iOS)
     func style(app: DirectAppAppearance) -> UIUserInterfaceStyle { self == .app ? app.interfaceStyle : self == .dark ? .dark : .light }
+    #endif
 }
 
 /// One preference source for SwiftUI, native controls and the separate privacy window.
@@ -38,16 +46,25 @@ enum DirectTerminalAppearance: String, CaseIterable, Identifiable {
     }
     func install() {
         if observer == nil {
-            observer = NotificationCenter.default.addObserver(forName: UIScene.didActivateNotification, object: nil, queue: .main) { [weak self] _ in
+            #if os(iOS)
+            let name = UIScene.didActivateNotification
+            #else
+            let name = NSApplication.didBecomeActiveNotification
+            #endif
+            observer = NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
                 MainActor.assumeIsolated { self?.applyWindows() }
             }
         }
         applyWindows()
     }
     func applyWindows() {
+        #if os(iOS)
         for scene in UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene }) {
             for window in scene.windows { window.overrideUserInterfaceStyle = app.interfaceStyle }
         }
+        #else
+        NSApplication.shared.appearance = app == .system ? nil : NSAppearance(named: app == .dark ? .darkAqua : .aqua)
+        #endif
     }
 }
 

@@ -5,6 +5,71 @@ import SwiftUI
 @testable import Mac_Companion
 
 @MainActor final class DirectMacLibraryTests: XCTestCase {
+    func testIndexedConnectionActionsUseDistinctSupportedSymbols() throws {
+        let cases = try XCTUnwrap(profile()["connectionActionCases"] as? [[String: String]])
+        for vector in cases {
+            let mode = try XCTUnwrap(DirectMacConnection(rawValue: try XCTUnwrap(vector["mode"])))
+            XCTAssertEqual(mode.actionTitle, vector["title"])
+            XCTAssertEqual(mode.symbol, vector["symbol"])
+            XCTAssertNotNil(UIImage(systemName: mode.symbol))
+        }
+        XCTAssertNotEqual(DirectMacConnection.desktop.symbol, DirectMacFamily.unknown.symbol)
+    }
+    func testManualOrderPersistsThroughReloadRenameDiscoveryAndCloudMerge() throws {
+        let folder = URL.temporaryDirectory.appending(path: UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let url = folder.appending(path: "macs.json")
+        var removed: [UUID] = []
+        let library = DirectMacLibraryV1(url: url, removeLogin: { removed.append($0) })
+        let ids = (0..<3).map { _ in UUID() }
+        for (index, name) in ["Alpha", "Bravo", "Charlie"].enumerated() {
+            XCTAssertTrue(library.save(id: ids[index], name: name, address: "synthetic\(index).local"))
+        }
+        let scope = "mac-order-free-" + UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: scope))
+        defer { defaults.removePersistentDomain(forName: scope) }
+        let access = DirectProAccess(defaults: defaults)
+        access.chooseFreeMac(ids[0])
+        XCTAssertTrue(library.move(fromOffsets: [2], toOffset: 0))
+        XCTAssertEqual(library.macs.map(\.id), [ids[2], ids[0], ids[1]])
+        XCTAssertTrue(access.canUseMac(ids[0], among: library.macs.map(\.id)))
+        XCTAssertFalse(access.canUseMac(ids[2], among: library.macs.map(\.id)))
+        XCTAssertEqual(DirectMacLibraryV1(url: url).macs, library.macs)
+        XCTAssertTrue(library.save(id: ids[0], name: "Zulu", address: "synthetic0.local"))
+        library.updateDetectedMetadata([.init(name: "Detected", host: "synthetic2.local", addresses: ["synthetic2.local"], port: 5900, connection: .desktop, modelIdentifier: "MacBookPro18,1")])
+        let extra = try DirectMacRecordV1.normalized(name: "New", address: "new.local")
+        var updated = library.macs[0]; updated.name = "Cloud Rename"
+        try library.applyCloud([library.macs[2], extra, updated, library.macs[1]])
+        XCTAssertEqual(library.macs.map(\.id), [ids[2], ids[0], ids[1], extra.id])
+        XCTAssertEqual(library.macs.first?.name, "Cloud Rename")
+        XCTAssertEqual(DirectMacLibraryV1(url: url).macs, library.macs)
+        XCTAssertTrue(removed.isEmpty, "Reordering and metadata merges must not touch credentials")
+        XCTAssertFalse(library.move(fromOffsets: [99], toOffset: 0))
+        XCTAssertFalse(library.move(fromOffsets: [0], toOffset: 99))
+    }
+    func testLegacyOrderMigratesToAlphabeticalAndFailedMoveKeepsOriginalFile() throws {
+        let folder = URL.temporaryDirectory.appending(path: UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let url = folder.appending(path: "macs.json")
+        let bravo = try DirectMacRecordV1.normalized(name: "Bravo", address: "bravo.local")
+        let alpha = try DirectMacRecordV1.normalized(name: "Alpha", address: "alpha.local")
+        struct Legacy: Encodable { let version = 4; let macs: [DirectMacRecordV1] }
+        try JSONEncoder().encode(Legacy(macs: [bravo, alpha])).write(to: url)
+        let library = DirectMacLibraryV1(url: url)
+        XCTAssertEqual(library.macs.map(\.id), [alpha.id, bravo.id])
+        XCTAssertTrue(library.move(fromOffsets: [0], toOffset: 2))
+        XCTAssertEqual(DirectMacLibraryV1(url: url).macs.map(\.id), [bravo.id, alpha.id])
+        let data = try Data(contentsOf: url)
+        let policy = try XCTUnwrap(profile()["macLibraryPolicy"] as? [String: Any])
+        let envelope = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        XCTAssertEqual(envelope["version"] as? Int, policy["fileVersion"] as? Int)
+        let before = library.macs
+        try FileManager.default.removeItem(at: url)
+        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: false)
+        XCTAssertFalse(library.move(fromOffsets: [0], toOffset: 2))
+        XCTAssertEqual(library.macs, before); XCTAssertNotNil(library.recovery)
+    }
     func testInputSettingsRendersTheSavedFollowCursorOptOut() throws {
         let id = UUID(); defer { VNCSessionPreferences.clear(id) }
         VNCSessionPreferences.setFollowCursor(false, mac: id)

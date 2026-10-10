@@ -1,3 +1,224 @@
+## 2026-10-09 — Native macOS direct client awaiting acceptance
+
+The approved macOS scope is a native VNC and SSH client, with Desktop and
+Terminal, independent windows and compatible optional
+iPhone iCloud library sync. No custom Mac server or helper is started. See
+[native macOS implementation and acceptance](native-macos-client.md) for build
+instructions, current evidence and remaining gates. Earlier Agent work is
+preserved separately; this implementation starts from client checkpoint `ce85d33`.
+
+The later 2026-10-09 simplification removes the standalone Trackpad & Keyboard
+mode from macOS. iPhone keeps all three modes and its shared saved defaults.
+Old Mac Trackpad window requests and shared Trackpad defaults resolve to Desktop;
+unrelated Mac edits preserve the shared preference. The Trackpad acceptance
+described below records the earlier implementation, before this scope change.
+
+Stable Xcode 27.0 builds and signs the Apple Silicon client; all 171 application
+source inputs match its report. Its existing development identity, certificate
+and exact Mac/local plus iPhone/cloud Keychain groups verify. Hosted Mac QA
+completes twenty-eight tests: all pass, with no skips or failures.
+This supersedes the earlier stalled preparation and earlier hosted results.
+Native input checks pass 59 cases; required repository validation passes with
+134 indexed fixtures. The iPhone Simulator app still builds after the Mac-only
+simplification; earlier full Simulator suites are recorded in the native client
+acceptance document. A separate native UI check verifies only Desktop/Terminal
+actions, controls and default choices, preserves a shared iPhone Trackpad default
+through unrelated edits, and verifies independent sign-in window closure.
+
+Fresh-review fixes recheck Terminal Copy/Find/link actions, clear embedded Find
+text and revoke field editors on lock, release each owner's admitted Kitty keys
+and mouse buttons once after focus loss, and discard cleanup on shell retirement.
+Real SSH regressions cover locked cleanup, ordering, normal key-up, independent
+owners and no reconnect replay. Cursor-only reports update drawing/cursor
+rectangles; tests verify moved overlay pixels on an unchanged framebuffer.
+Desktop/Trackpad use a saved login for one initial attempt after unlock. Save
+rechecks creation access against current records/trial state while retaining a
+denied draft. Every remote Swift package source is verified before/after builds:
+12 packages, 3,980 tracked files and 13 disposable-cache regressions pass.
+
+Screenshot review fixes Trackpad's readiness stall: an authenticated input-only
+owner reports Connected without presented pixels; Desktop still waits for a
+complete baseline. Twelve indexed readiness cases and actual callback tests
+cover this behavior. The library shows default mode and active window state,
+raises existing connections, and reports iCloud opt-in/refresh/errors without
+claiming device delivery. Native session status, clearer controls, Trackpad
+instructions and Terminal inset/text-size controls improve presentation.
+
+The user authorized Xcode automation and approved system dialogs locally.
+Native QA authenticates Trackpad to built-in Screen Sharing and Terminal to
+built-in Remote Login with the independently known VM host key. Trackpad now
+shows its connected input-only surface. A complete native GUI focus/keyboard/
+closure run remains pending because other windows cover the intended owner.
+The opt-in live VM runner saves genuine app-window screenshots outside Git;
+it does not advance VM setup or enable iCloud.
+
+The disposable host-only VM ran macOS 26.6.2. Earlier native VNC acceptance
+receives pixels and sends pointer/keyboard input. The isolated pinned-Citadel
+probe verifies two built-in Remote Login connections, PTY input/output/resize
+and closure isolation. At the user's request, the stopped VM and its image
+caches were removed. Small verified manifests and the SSH acceptance report
+remain under `/private/tmp/maccompanion-vm-evidence-20261009`; native build/test
+artifacts and screenshots remain separate. All these artifacts stay outside Git.
+Actual same-account Mac–iPhone delivery, GUI input/recovery across machines,
+Intel/released-macOS compatibility and release readiness remain separate
+unverified gates. No physical iPhone or release submission was used in this work.
+
+## 2026-10-08 — Simplified My Macs rows
+
+The user reported that build 23's top-aligned, smaller symbols looked worse and
+approved a simpler layout. The hardware badge and sole trailing menu now center
+vertically against one text column containing name, plain Open action and
+address. The inline connection-action symbol and disclosure chevron are removed.
+Hardware and menu symbols scale with Dynamic Type, with bounded decorative sizes;
+action and address text wrap fully. Tap, menu and reorder behavior are preserved.
+This checkpoint supersedes the earlier alignment treatment below.
+
+Stable Xcode **27.0 (27A266a)** passes all three focused Simulator UI checks at
+default, XXXL and Accessibility 3 text sizes. They verify the common text column,
+centered menu, wrapping and menu access. All three synthetic screenshots were
+inspected. Required `bash scripts/validate.sh` and `git diff --check` pass. Logs,
+result bundle and screenshots stay outside Git under
+`/private/tmp/maccompanion-simplified-list-20261008*`. Disposable UI-test sources
+remain under `Experiments/NormalVNCRecoveryUIQA/` and outside application targets.
+These changes were uncommitted and awaiting installation at this checkpoint;
+build 23 predates this simplification. The subsequent installation follows.
+
+### Build 24 installed on iPhone
+
+The user authorized installation of the simplified rows. Normal development
+**1.0 (24)** builds with stable Xcode **27.0 (27A266a)** and retains the existing
+app/widget/Keychain identities. All **582** application source inputs match the
+installed build. CoreDevice confirms installation sequence **9480**, version 1.0,
+build 24 and launch PID **25135** on the connected iPhone 18 Pro Max. The app
+replaces the existing installation in place. The three text-size UI checks and
+required repository validation above cover the unchanged source; `git diff
+--check` passes. Build, signing, source-binding and device read-back evidence
+remain outside Git under `/private/tmp/maccompanion-simple-rows-install-20261008-*`.
+Physical acceptance of this simplification remains unreported. This is a local
+development installation; no TestFlight upload occurred.
+
+## 2026-10-08 — My Macs icon alignment and larger text
+
+Hardware badges, chevrons and menu controls now align with the Mac identity
+instead of centering across the entire variable-height text block. Decorative
+hardware and control symbols keep a consistent size and 44-point control area.
+Connection symbols use a shared column and the first text baseline; action and
+address labels wrap without clipping. At accessibility text sizes, action and
+address move below the identity row to retain more usable width. Existing tap,
+menu and reorder behavior remains unchanged.
+
+Stable Xcode **27.0 (27A266a)** passes three actual Simulator UI checks at default,
+XXXL and Accessibility 3 text sizes. They check control alignment when labels
+wrap and that the Mac menu remains tappable. All three synthetic screenshots
+were inspected. Results and images stay outside Git under
+`/private/tmp/maccompanion-row-alignment-20261008*`. Required
+`bash scripts/validate.sh` and `git diff --check` pass. This alignment update was
+uncommitted and awaiting installation at this checkpoint; build 22 predates it.
+
+### Build 23 installed on iPhone
+
+The user authorized installation of the alignment update. Normal development
+**1.0 (23)** builds with stable Xcode **27.0 (27A266a)** and retains the existing
+app/widget/Keychain identities. All **582** application source inputs match the
+final build. CoreDevice confirms installation sequence **9472**, version 1.0,
+build 23 and launch PID **25064** on the connected iPhone 18 Pro Max. The app
+replaces the existing installation in place. The three text-size UI checks and
+repository validation above cover the source changes; `git diff --check` passes.
+Build, signing, source-binding and device read-back evidence remain outside Git
+under `/private/tmp/maccompanion-alignment-install-20261008-*`.
+Physical acceptance of this alignment update remains unreported. This is a
+local development installation; no TestFlight upload occurred.
+
+## 2026-10-08 — Saved Mac details and actionable Terminal recovery
+
+My Macs now pairs the leading hardware icon with a smaller connection-action
+icon and imperative Open Desktop, Open Terminal or Open Trackpad & Keyboard
+label. Desktop uses a window symbol to distinguish the action from hardware.
+Saved Mac details are reused on launch, foreground and unchanged editor entry.
+New or edited valid endpoints trigger bounded, debounced discovery; saving
+before the debounce still starts discovery. Refresh Mac Details and the list's
+pull-to-refresh explicitly check for updates. Existing matching, ambiguity,
+custom naming and inactive-scan cancellation rules remain in force.
+
+Terminal transport recovery with retained credentials offers a new shell or
+retry without Change Login. Authentication failures retain working Password and
+SSH Key selection and credential fields. Issue Details is offered only for
+additional safe details, captures the tapped notice by value and owns its Done
+action, preventing a later session update from blanking the sheet.
+
+Stable Xcode **27.0 (27A266a)** passes **7** actual Simulator UI tests and **24**
+focused hosted tests with no failures; one opt-in source-inventory test is
+skipped. UI tests cover live-notice replacement while the details sheet stays
+open, details dismissal, empty-detail suppression, authentication selection,
+cached editor entry, explicit refresh, endpoint-edit discovery and list labels.
+Synthetic screenshots were inspected. `bash scripts/validate.sh` passes with
+**133** indexed fixtures; `git diff --check` passes. Disposable UI-test sources
+stay under `Experiments/NormalVNCRecoveryUIQA/` and are excluded from application
+targets. Logs, generated projects, results and screenshots stay outside Git
+under `/private/tmp/maccompanion-recovery-actions-20261008/`.
+These changes were uncommitted and awaiting installation at this checkpoint.
+The subsequent build 22 installation is recorded below; build 21 predates them.
+
+### Build 22 installed on iPhone
+
+The user authorized installation of the latest changes above. Normal development
+**1.0 (22)** builds with stable Xcode **27.0 (27A266a)**, retains the existing
+app/widget/Keychain identities and verifies all **582** application source inputs
+against the final build. CoreDevice confirms installation sequence **9464**,
+version 1.0, build 22 and launch PID **24944** on the connected iPhone 18 Pro Max.
+The app replaces the existing installation in place. Required
+`bash scripts/validate.sh` and `git diff --check` pass. Build, signing, source
+binding and device read-back evidence stay outside Git under
+`/private/tmp/maccompanion-recovery-install-20261008-*`.
+Physical acceptance of the latest UI changes remains unreported. This is a local
+development installation; no TestFlight upload occurred.
+
+## 2026-10-08 — Mac list and Terminal recovery improvements
+
+The approved development changes fix the expanded Mac Type form row with an
+explicit title-and-icon label style and compact discovery progress. My Macs uses
+the leading icon for hardware and plain “Opens…” text for its tap destination.
+Edit/Done exposes native drag handles. Version 5 persists manual order locally;
+record edits, detected metadata and cloud merges preserve existing positions and
+credentials. Earlier library versions initially use alphabetical presentation.
+
+Terminal retains the server's PTY exit status and distinguishes successful shell
+completion from nonzero status, signals, unexplained closure and transport loss.
+Successful completion drains output, ends the Live Activity and returns to My
+Macs. Generation and foreground/unlock guards prevent stale completion from
+dismissing a replacement session. Recovery with retained credentials shows Open
+New Shell, Change Login and one Issue Details action. Full sign-in keeps a native
+Password/SSH Key picker with separate account drafts; reloading a key no longer
+overrides an explicit password choice. Server-key verification remains required.
+
+Stable Xcode **27.0 (27A266a)** builds pass. The Simulator suite passes **186**
+tests with **13** opt-in/platform cases skipped and no failures, including actual
+SSH completion/failure paths, hosted exit navigation, account selection, order
+persistence, migration, failed-write protection and compact editor geometry.
+OpenSSH export/setup interoperability checks pass. A separate temporary Xcode UI
+test verifies Edit, a native drag and persisted order after relaunch. Synthetic
+editor/recovery screenshots were inspected. `bash scripts/validate.sh` passes with
+**133** indexed fixtures; `git diff --check` passes. Logs and screenshots remain
+outside Git under `/private/tmp/maccompanion-terminal-recovery-20261008-*`.
+This checkpoint remains an uncommitted development candidate. Installation is
+recorded below; physical acceptance of the new UI and shell-exit behavior has
+not yet been reported.
+
+### Build 21 installed on iPhone
+
+The user requested the latest main changes and installation on iPhone 18 Pro
+Max. `git pull --ff-only origin main` confirms the checkout already matches
+`origin/main` at `9c96ad3`. The approved local changes above were preserved and
+included in normal development **1.0 (21)**. Stable Xcode **27.0 (27A266a)**
+builds it successfully; all **582** application source inputs, the approved
+working-tree patch and existing app/widget/Keychain identities are verified.
+CoreDevice confirms installation sequence **9456**, version 1.0, build 21 and
+launch PID **24733** on the connected iPhone 18 Pro Max. Installation replaces
+the existing app in place. Required `bash scripts/validate.sh` and `git diff
+--check` pass. Build, signing, source-binding and device read-back evidence stay
+outside Git under `/private/tmp/maccompanion-latest-install-20261008-*`.
+This is a local development installation; no TestFlight upload occurred.
+
 ## 2026-10-08 — Build 19 installed on iPhone
 
 The user authorized installation, commit and push of the precise-scroll and

@@ -7,6 +7,7 @@
 #import "CompanionVNCDirectEndpoint.h"
 #import "CompanionVNCDisplayLayout.h"
 #import "CompanionVNCGestures.h"
+#import "CompanionVNCReadiness.h"
 #import <stdarg.h>
 #import <rfb/rfbclient.h>
 #import <netdb.h>
@@ -15,6 +16,13 @@
 #import <unistd.h>
 
 static char ownerTag;
+static CompanionVNCImage *PlatformImage(CGImageRef image) {
+#if TARGET_OS_OSX
+    return [[NSImage alloc] initWithCGImage:image size:NSMakeSize(CGImageGetWidth(image), CGImageGetHeight(image))];
+#else
+    return [UIImage imageWithCGImage:image];
+#endif
+}
 static _Thread_local int protocolFailure;
 static _Thread_local int protocolStage;
 static _Thread_local BOOL decoderFailed, appleGestureBanner;
@@ -80,7 +88,7 @@ static void QuietLog(const char *format, ...) {
     NSUInteger _sentScrollEpoch;
     int _scrollWidth, _scrollHeight;
     int _magnificationWidth, _magnificationHeight;
-    UIImage *_cursorImage;
+    CompanionVNCImage *_cursorImage;
     CGPoint _cursorHotspot, _cursorPosition;
     BOOL _cursorPositionKnown, _cursorPending, _cursorDirty;
     NSUInteger _cursorShapes, _cursorPositions, _pauses, _resumes, _resumeFrames;
@@ -336,7 +344,7 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
                 return;
             }
             [self->_lock lock]; self->_appleGestureServer = appleGestureBanner; self->_inputReady = !self->_stopping; BOOL active = self->_inputReady; [self->_lock unlock];
-            if (active) [self report:@"Opening desktop"];
+            if (active) [self report:self.inputOnly ? @"Connected" : @"Opening desktop"];
             [self processConnectedClient:client];
             (void)generation;
         }
@@ -380,7 +388,7 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
             unsigned char bit = 1 << (rfbFramebufferUpdateRequest % 8);
             if (inputOnly) {
                 *requests &= ~bit; rfbRectangle empty = {0, 0, 0, 0}; rfbClientSetUpdateRect(client, &empty);
-                if (resume) [self report:@"Connected"];
+                if (resume || modeChanged) [self report:@"Connected"];
             } else {
                 *requests |= bit; rfbClientSetUpdateRect(client, NULL);
             }
@@ -592,7 +600,7 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
     CGColorSpaceRef colors = CGColorSpaceCreateDeviceRGB();
     CGImageRef image = CGImageCreate(width, height, 8, 32, width * 4, colors,
         (CGBitmapInfo)kCGBitmapByteOrder32Big | (CGBitmapInfo)kCGImageAlphaPremultipliedLast, provider, NULL, NO, kCGRenderingIntentDefault);
-    if (image) { _cursorImage = [UIImage imageWithCGImage:image]; _cursorHotspot = CGPointMake(x, y); CGImageRelease(image); }
+    if (image) { _cursorImage = PlatformImage(image); _cursorHotspot = CGPointMake(x, y); CGImageRelease(image); }
     CGColorSpaceRelease(colors); CGDataProviderRelease(provider);
 }
 - (rfbBool)cursorPosition:(rfbClient *)client x:(int)x y:(int)y {
@@ -607,7 +615,7 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
     if (_cursorPending || _stopping || _paused) { [_lock unlock]; return; }
     _cursorPending = YES; NSInteger generation = _generation; NSUInteger epoch = _presentationEpoch; [_lock unlock];
     _cursorDirty = NO;
-    UIImage *image = _cursorImage; CGPoint hotspot = _cursorHotspot, position = _cursorPosition;
+    CompanionVNCImage *image = _cursorImage; CGPoint hotspot = _cursorHotspot, position = _cursorPosition;
     BOOL known = _cursorPositionKnown;
     dispatch_async(dispatch_get_main_queue(), ^{
         [self->_lock lock]; BOOL valid = generation == self->_generation && epoch == self->_presentationEpoch && self->_running && !self->_stopping && !self->_paused;
@@ -627,7 +635,7 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
     CGColorSpaceRef colors = CGColorSpaceCreateDeviceRGB();
     CGImageRef image = CGImageCreate(client->width, client->height, 8, 32, client->width * 4, colors,
         (CGBitmapInfo)kCGBitmapByteOrder32Little | (CGBitmapInfo)kCGImageAlphaNoneSkipFirst, provider, NULL, NO, kCGRenderingIntentDefault);
-    UIImage *frame = image ? [UIImage imageWithCGImage:image] : nil;
+    CompanionVNCImage *frame = image ? PlatformImage(image) : nil;
     if (image) CGImageRelease(image); CGColorSpaceRelease(colors); CGDataProviderRelease(provider);
     dispatch_async(dispatch_get_main_queue(), ^{
         [self->_lock lock]; BOOL valid = generation == self->_generation && epoch == self->_presentationEpoch && self->_running && !self->_stopping && !self->_paused;
@@ -646,7 +654,9 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
 - (void)report:(NSString *)state {
     // No endpoints, names, credentials, pixels, or typed content in diagnostics.
     [_lock lock];
-    if ([state isEqualToString:@"Connected"] && (_paused || _awaitingResumeFrame || !_baselinePresented)) { [_lock unlock]; return; }
+    if ([state isEqualToString:@"Connected"] && !CompanionVNCConnectionReady(
+        _running, _inputReady, _inputOnly, _paused, _stopping, _overflow,
+        _awaitingResumeFrame, _baselinePresented)) { [_lock unlock]; return; }
     NSInteger generation = _generation; NSUInteger epoch = _presentationEpoch; BOOL intermediate = _running;
     NSDictionary *stats = @{@"connectionStarts": @(_connections), @"updateRects": @(_updates),
         @"framebufferAllocations": @(_resizes), @"inputEvents": @(_inputs), @"viewChanges": @(_viewChanges), @"presentedFrames": @(_presentedFrames),

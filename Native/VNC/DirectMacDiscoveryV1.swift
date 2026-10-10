@@ -1,8 +1,10 @@
-#if os(iOS) && MACCOMPANION_VNC_DEVELOPMENT
+#if (os(iOS) || os(macOS)) && MACCOMPANION_VNC_DEVELOPMENT
 import Darwin
 import Foundation
 import Observation
+#if os(iOS)
 import UIKit
+#endif
 
 /// Local advertisements supply presentation only. No discovered route is dialed.
 @MainActor @Observable final class DirectMacDiscoveryV1: NSObject, @preconcurrency NetServiceBrowserDelegate, @preconcurrency NetServiceDelegate {
@@ -17,8 +19,8 @@ import UIKit
     @ObservationIgnored private var models: [String: String] = [:]
     @ObservationIgnored private var deadline: Task<Void, Never>?
 
-    func start() {
-        guard !scanning, DirectAppLockV1.shared.canAccess, UIApplication.shared.applicationState == .active else { return }
+    @discardableResult func start() -> Bool {
+        guard !scanning, DirectAppLockV1.shared.canAccess, DirectClientPlatformV1.sessionAvailable else { return false }
         stop()
         identities = []; resolved = [:]; models = [:]; unavailable = false; scanning = true
         for type in ["_rfb._tcp.", "_ssh._tcp."] {
@@ -31,6 +33,7 @@ import UIKit
             guard !Task.isCancelled else { return }
             self?.finish()
         }
+        return true
     }
     func stop() {
         deadline?.cancel(); deadline = nil; scanning = false
@@ -43,7 +46,7 @@ import UIKit
     private func key(_ service: NetService) -> String { service.domain + "|" + service.type + "|" + service.name }
     private func instance(_ service: NetService) -> String { service.domain + "|" + service.name }
     private func finish() {
-        guard scanning, DirectAppLockV1.shared.canAccess, UIApplication.shared.applicationState == .active else { stop(); return }
+        guard scanning, DirectAppLockV1.shared.canAccess, DirectClientPlatformV1.sessionAvailable else { stop(); return }
         identities = resolved.keys.sorted().compactMap { key in
             guard var identity = resolved[key], let service = services[key] else { return nil }
             identity.modelIdentifier = models[instance(service)]
