@@ -1,3 +1,28 @@
+## 2026-10-10 — Connection backdrop and mode-specific progress
+
+The Desktop and Trackpad & Keyboard connection backdrop now extends through the
+status area in the production SwiftUI host. The native controller continues to
+keep the centered login card and controls within the safe area. This removes
+the white strip above the dimmed background reported on iPhone.
+
+Trackpad & Keyboard progress now names that mode instead of Screen Sharing;
+the SSH setup message reads “Opening encrypted connection…”. These are
+presentation changes; connection routing and encrypted transport are unchanged.
+
+Stable Xcode **27.0 (27A266a)** passes 15 focused Simulator appearance, Terminal
+layout and connection-card checks for the backdrop fix. A subsequent connection
+card capture test also passes after the progress-copy update. Light, dark,
+larger-text and high-contrast synthetic captures were inspected. Required
+`bash scripts/validate.sh` and `git diff --check` pass. Logs, result bundles and
+synthetic captures remain outside Git under
+`/private/tmp/maccompanion-login-backdrop-*` and
+`/private/tmp/maccompanion-trackpad-connection-copy-*`.
+
+Local development **1.0 (27)** was installed and launched on the iPhone 18 Pro Max
+with the backdrop fix before the subsequent copy update. Physical acceptance
+of the latest copy remains separate. A new internal TestFlight build is being
+prepared under the user's commit, push and beta-publication authorization.
+
 ## 2026-10-10 — SSH transport iOS internal TestFlight 1.0 (26)
 
 The user authorized committing, pushing and publishing an iOS internal beta.

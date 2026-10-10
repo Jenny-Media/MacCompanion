@@ -2,8 +2,9 @@
 import SwiftUI
 import UIKit
 
-/// Paint the hosting safe area with the same background as the native canvas.
-/// This also gives SwiftUI's presenting controller the matching status text style.
+/// Let the native backdrop cover the status area as well as the canvas. The
+/// native controller keeps its login card and controls inside the safe area.
+/// SwiftUI's presenting controller also gets the matching status text style.
 struct DirectDesktopSessionView: View {
     let mac: DirectMacRecordV1
     var inputOnly = false
@@ -16,7 +17,7 @@ struct DirectDesktopSessionView: View {
             (immersive ? Color.black : Color(uiColor: .systemBackground)).ignoresSafeArea()
             VNCRemoteDesktopView(mac: mac, inputOnly: inputOnly, connectionMacNames: connectionMacNames,
                                  showMacs: showMacs, chromeChanged: { immersive = $0 })
-                .ignoresSafeArea(.container, edges: immersive ? .top : [])
+                .ignoresSafeArea(.container, edges: .top)
         }
         .preferredColorScheme(immersive ? .dark : appearance.app.colorScheme)
     }

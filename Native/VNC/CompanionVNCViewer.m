@@ -418,6 +418,9 @@
     [self setTrackpadModeEnabled:self.preferredTrackpad || self.inputOnly]; [self updateConnectionChrome];
     if (self.password.text.length) dispatch_async(dispatch_get_main_queue(), ^{ [weak start]; });
 }
+- (NSString *)connectionProgressMessage {
+    return self.inputOnly ? @"Connecting to Trackpad & Keyboard…" : @"Connecting to Screen Sharing…";
+}
 - (void)prepareConnection {
     self.session = [CompanionVNCSession new];
     __weak CompanionVNCViewer *weak = self;
@@ -439,7 +442,7 @@
             [strong reportDiagnostics:stats];
             return;
         }
-        strong.status.text = connected ? @"" : @"Connecting to Screen Sharing…"; strong.status.hidden = YES; strong.progressLabel.text = strong.status.text;
+        strong.status.text = connected ? @"" : [strong connectionProgressMessage]; strong.status.hidden = YES; strong.progressLabel.text = strong.status.text;
         if (connected) {
             strong.session.inputOnly = strong.inputOnly;
             [strong clearRecovery]; strong.image.alpha = 1;
@@ -478,7 +481,7 @@
     if (self.lastFramebuffer) { [self rememberViewport]; self.restoreViewportPending = YES; self.image.alpha = .45; }
     self.starting = YES; self.exited = NO;
     if (self.sessionPhaseHandler) self.sessionPhaseHandler(@"reconnecting");
-    [self.view endEditing:YES]; self.status.text = @"Connecting to Screen Sharing…";
+    [self.view endEditing:YES]; self.status.text = [self connectionProgressMessage];
     self.connect.enabled = NO; self.progressLabel.text = @"Contacting Mac…"; self.status.hidden = YES; [self updateConnectionChrome];
     if (self.connectHandler) self.connectHandler(self.username.text ?: @"", self.password.text ?: @"", self.remember.on);
 }

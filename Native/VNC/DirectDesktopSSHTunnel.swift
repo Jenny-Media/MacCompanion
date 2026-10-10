@@ -213,7 +213,7 @@ final class DirectDesktopSSHTunnel: @unchecked Sendable {
         let client: SSHClient
         do { try Task.checkCancellation(); client = try await SSHClient.connect(on: parent, settings: settings); try Task.checkCancellation() }
         catch { try? await parent.close(); throw error }
-        await progress("Opening encrypted Screen Sharing…")
+        await progress("Opening encrypted connection…")
         var pair: [Int32] = [-1, -1]
         guard socketpair(AF_UNIX, SOCK_STREAM, 0, &pair) == 0 else {
             try? await client.close(); throw DesktopSSHFailure.socket
