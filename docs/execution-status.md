@@ -20,8 +20,32 @@ synthetic captures remain outside Git under
 
 Local development **1.0 (27)** was installed and launched on the iPhone 18 Pro Max
 with the backdrop fix before the subsequent copy update. Physical acceptance
-of the latest copy remains separate. A new internal TestFlight build is being
-prepared under the user's commit, push and beta-publication authorization.
+of the latest copy remains separate.
+
+### Internal TestFlight 1.0 (28) upload
+
+The user authorized committing, pushing and publishing a new internal beta.
+Source commit `418e7b5bea915dc918a5a5268bb87f7eba18f0b8` is pushed to the existing
+checkpoint branch, with remote-head verification. A fresh stable-Xcode device
+build and optimized signed archive bind all **583** application inputs to that
+source. Existing application/widget identities and private Keychain groups are
+retained; experiments and DEBUG code are excluded. The signed main executable
+SHA-256 is `727546db308cc36f89f4f362cd4a42641472cc1c4cec4fd3d6629b8fbafc848b`.
+
+Xcode's **Internal Only** export/upload succeeds on October 10 at **01:49 AM
+America/New_York**, and reports that Apple has begun processing the package.
+The existing missing OpenSSL framework dSYM warning is non-blocking; app and
+widget symbols are included. Independent App Store Connect processing status,
+build-specific notes and tester assignment still require verification: a Chrome
+extension popup blocked the browser. Updated SSH setup metadata is entered but
+its save is not yet confirmed. The user has been asked to dismiss the popup.
+
+Archive, source report, upload log, test notes and delivery receipt remain outside
+Git under `/private/tmp/maccompanion-connection-ui-testflight-20261010-*` and the
+local `app-store-review-20261008/ios-connection-ui-testflight-20261010/` artifact
+directory. This upload is not yet proof of tester availability or physical
+acceptance. No external beta or App Review submission occurred;
+`releaseAdmitted` stays false.
 
 ## 2026-10-10 — SSH transport iOS internal TestFlight 1.0 (26)
 
