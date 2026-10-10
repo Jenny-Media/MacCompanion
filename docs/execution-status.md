@@ -1,3 +1,42 @@
+## 2026-10-10 — SSH transport iOS internal TestFlight 1.0 (26)
+
+The user authorized committing, pushing and publishing an iOS internal beta.
+Approved SSH transport source is committed as
+`e1c13c6a6637d33fb2662ac381b0ff331e607c40` and pushed to
+`codex/native-streaming-checkpoint-20260928`; the remote head was verified.
+Required `bash scripts/validate.sh` passes on stable Xcode **27.0 (27A266a)**.
+The preceding Simulator verification passes 182 active tests, skips 13 optional
+captures and has zero failures; the final 8 focused SSH tests also pass.
+
+A fresh normal-source device build and signed archive bind all **583** recorded
+application inputs to that source. Existing app/widget identities and private
+Keychain groups are retained; experiments and DEBUG code are excluded.
+The main executable SHA-256 is
+`df18de3b8399d9bfed67ed3b4491c7de11be7ed27b1f32b70ff7125581a3e331`.
+Xcode export/upload succeeds on October 10 at 12:16 AM America/New_York.
+Apple processes iOS **1.0 (26)** as an **Internal Only** build with ID
+`f07b79cd-0ada-4dac-9df7-9dea4ccbc0e6`.
+
+The standard-encryption declaration is saved after the user explicitly confirms
+this beta will not be distributed in France. Build-specific SSH setup and test
+notes are saved and read back. The existing **Internal Testing** group has
+one tester; App Store Connect shows build 26 **Testing**, one invite and expiry
+in 90 days. It is available for installation through TestFlight. Physical
+installation and acceptance of the integrated transport remain unreported.
+
+Signed archive, source report, upload log, delivery receipt and verification
+screenshot remain outside Git under
+`/private/tmp/maccompanion-ssh-testflight-20261010-*` and the local
+`app-store-review-20261008/ios-ssh-testflight-20261010/` artifact directory.
+The upload has a non-blocking missing OpenSSL framework dSYM warning;
+application and widget symbols are included.
+
+This internal-only build is not eligible for external beta or App Store review.
+No App Review submission or website deployment occurred. Selected review build
+25 predates SSH; a separately eligible and physically tested build is still
+needed for submission. Corresponding-source packaging and Apple distribution
+terms review remain release gates; `releaseAdmitted` stays false.
+
 ## 2026-10-09 — Screen Sharing over SSH integrated and tested in Simulator
 
 Following the successful isolated Mac handshake probe, the user approved

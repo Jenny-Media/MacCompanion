@@ -4,8 +4,9 @@ Updated 2026-10-10 for the user-authorized SSH transport internal beta. This rep
 Observe/Act/pairing review draft with the product in
 [remote-desktop-mvp.md](remote-desktop-mvp.md): one iOS client using built-in
 macOS Remote Login and Screen Sharing over SSH. No Mac app or helper is required.
-Build 26 is prepared for the existing Internal Testing group; this checkpoint
-does not request external beta review or App Store submission.
+iOS 1.0 (26) is processed and Testing in the existing Internal Testing group.
+Its SSH setup and test notes are saved; physical acceptance remains pending.
+This checkpoint does not request external beta review or App Store submission.
 
 Apple's [external testing instructions](https://developer.apple.com/help/app-store-connect/test-a-beta-version/invite-external-testers)
 require an externally eligible upload and Beta App Review. Builds uploaded as
