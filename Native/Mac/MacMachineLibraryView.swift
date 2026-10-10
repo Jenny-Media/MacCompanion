@@ -2,13 +2,6 @@
 import AppKit
 import SwiftUI
 
-struct MacSessionRequest: Codable, Hashable, Identifiable {
-    let id: UUID
-    let macID: UUID
-    let mode: DirectMacConnection
-    init(macID: UUID, mode: DirectMacConnection) { id = UUID(); self.macID = macID; self.mode = mode }
-}
-
 struct MacMachineLibraryView: View {
     let library: DirectMacLibraryV1
     @Environment(\.openWindow) private var openWindow
@@ -29,14 +22,14 @@ struct MacMachineLibraryView: View {
                 ForEach(library.macs.filter { search.isEmpty || $0.name.localizedCaseInsensitiveContains(search) || $0.addresses.contains(where: { $0.localizedCaseInsensitiveContains(search) }) }) { mac in
                     Label { VStack(alignment: .leading) {
                         Text(mac.name)
-                        Text("Default: " + mac.preferredConnection.title).font(.caption).foregroundStyle(.secondary)
+                        Text("Default: " + MacConnectionMode(mac.preferredConnection).title).font(.caption).foregroundStyle(.secondary)
                         let count = connections.connections(for: mac.id).filter { $0.phase == .connected }.count
                         if count > 0 { Text("\(count) connected \(count == 1 ? "session" : "sessions")").font(.caption).foregroundStyle(.secondary) }
                     } }
                         icon: { Image(systemName: mac.family.symbol) }
                         .tag(mac.id)
                         .contextMenu {
-                            ForEach(DirectMacConnection.allCases) { mode in Button(mode.actionTitle) { open(mac, mode: mode) } }
+                            ForEach(MacConnectionMode.allCases) { mode in Button(mode.actionTitle) { open(mac, mode: mode) } }
                             Divider()
                             Button("Connection Settings") { sheet = .edit(mac) }
                             Button("Use as My Free Mac") { DirectProAccess.shared.chooseFreeMac(mac.id) }
@@ -48,55 +41,59 @@ struct MacMachineLibraryView: View {
             }.navigationTitle("My Macs").searchable(text: $search)
                 .navigationSplitViewColumnWidth(min: 200, ideal: 240, max: 340)
         } detail: {
-            if let mac = selectedMac {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 24) {
-                        Label(mac.name, systemImage: mac.family.symbol).font(.largeTitle)
-                        Text(mac.addresses.joined(separator: "\n")).foregroundStyle(.secondary).textSelection(.enabled)
-                        VStack(alignment: .leading, spacing: 12) {
-                            ForEach(DirectMacConnection.allCases) { mode in
-                                Button { open(mac, mode: mode) } label: { Label(mode.actionTitle, systemImage: mode.symbol).frame(maxWidth: .infinity, alignment: .leading) }
-                                    .buttonStyle(.bordered).controlSize(.large)
-                                    .accessibilityIdentifier("mac-open-" + mode.rawValue)
-                            }
-                        }.frame(maxWidth: 360)
-                        Button("Connection Settings", systemImage: "gearshape") { sheet = .edit(mac) }
-                            .accessibilityIdentifier("mac-connection-settings")
-                        Text("Each connection opens in its own window.").font(.footnote).foregroundStyle(.secondary)
-                        let open = connections.connections(for: mac.id)
-                        if !open.isEmpty {
-                            Divider()
-                            Text("Connection Windows").font(.headline)
-                            ForEach(open) { entry in
-                                HStack {
-                                    Label(entry.mode.title, systemImage: entry.mode.symbol)
-                                    Spacer()
-                                    Text(entry.phase.title).foregroundStyle(.secondary)
-                                    Button("Show Window") { entry.window.raise() }
-                                        .help("Bring this existing \(entry.mode.title) window to the front")
+            Group {
+                if let mac = selectedMac {
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 24) {
+                            Label(mac.name, systemImage: mac.family.symbol).font(.largeTitle)
+                            Text(mac.addresses.joined(separator: "\n")).foregroundStyle(.secondary).textSelection(.enabled)
+                            VStack(alignment: .leading, spacing: 12) {
+                                ForEach(MacConnectionMode.allCases) { mode in
+                                    Button { open(mac, mode: mode) } label: { Label(mode.actionTitle, systemImage: mode.symbol).frame(maxWidth: .infinity, alignment: .leading) }
+                                        .buttonStyle(.bordered).controlSize(.large)
+                                        .accessibilityIdentifier("mac-open-" + mode.rawValue)
+                                }
+                            }.frame(maxWidth: 360)
+                            Button("Connection Settings", systemImage: "gearshape") { sheet = .edit(mac) }
+                                .accessibilityIdentifier("mac-connection-settings")
+                            Text("Each connection opens in its own window.").font(.footnote).foregroundStyle(.secondary)
+                            let open = connections.connections(for: mac.id)
+                            if !open.isEmpty {
+                                Divider()
+                                Text("Connection Windows").font(.headline)
+                                ForEach(open) { entry in
+                                    HStack {
+                                        Label(entry.mode.title, systemImage: entry.mode.symbol)
+                                        Spacer()
+                                        Text(entry.phase.title).foregroundStyle(.secondary)
+                                        Button("Show Window") { entry.window.raise() }
+                                            .help("Bring this existing \(entry.mode.title) window to the front")
+                                    }
                                 }
                             }
-                        }
-                    }.padding(32).frame(maxWidth: .infinity, alignment: .leading)
+                        }.padding(32).frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                } else if library.macs.isEmpty {
+                    ContentUnavailableView { Label("Your Macs, within reach", systemImage: "desktopcomputer") }
+                        description: { Text("Enable Screen Sharing or Remote Login on your Mac, then add its local or private VPN address.") }
+                        actions: { Button("Add Mac") { add() }.buttonStyle(.borderedProminent) }
+                } else { ContentUnavailableView("Choose a Mac", systemImage: "desktopcomputer", description: Text("Open Desktop or Terminal.")) }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                VStack(spacing: 0) {
+                    Divider()
+                    if let notice = library.recovery { DirectRecoveryCard(notice: notice, primary: .init(title: "Retry", perform: { library.reload() })).padding() }
+                    MacCloudStatusView()
                 }
-            } else if library.macs.isEmpty {
-                ContentUnavailableView { Label("Your Macs, within reach", systemImage: "desktopcomputer") }
-                    description: { Text("Enable Screen Sharing or Remote Login on your Mac, then add its local or private VPN address.") }
-                    actions: { Button("Add Mac") { add() }.buttonStyle(.borderedProminent) }
-            } else { ContentUnavailableView("Choose a Mac", systemImage: "desktopcomputer", description: Text("Open Desktop, Trackpad & Keyboard or Terminal.")) }
+            }
         }
         .frame(minWidth: 720, minHeight: 460)
         .toolbar {
             Button("Add Mac", systemImage: "plus") { add() }.disabled(!library.readable).accessibilityIdentifier("mac-add-machine").help("Add a Mac by its local or private VPN address")
             Button("Discover Macs", systemImage: "network") { library.discovery.start() }.disabled(library.discovery.scanning).help("Discover Screen Sharing and Remote Login services on your local network")
             Button("Refresh iCloud", systemImage: "arrow.triangle.2.circlepath") { cloud.refresh() }
-                .disabled(!cloud.enabled || cloud.busy).help("Refresh saved Macs in iCloud Keychain. Enable sync in iCloud Settings first.")
-        }
-        .safeAreaInset(edge: .bottom) {
-            VStack(spacing: 0) {
-                if let notice = library.recovery { DirectRecoveryCard(notice: notice, primary: .init(title: "Retry", perform: { library.reload() })).padding() }
-                MacCloudStatusView()
-            }
+                .disabled(!cloud.enabled || cloud.busy).help("Refresh saved Macs in iCloud Keychain. Enable sync in Settings first.")
         }
         .sheet(item: $sheet) { item in
             Group {
@@ -125,7 +122,7 @@ struct MacMachineLibraryView: View {
             sheet = DirectProAccess.shared.canAddMac(count: library.macs.count) ? .add : .pro
         }
     }
-    private func open(_ mac: DirectMacRecordV1, mode: DirectMacConnection) {
+    private func open(_ mac: DirectMacRecordV1, mode: MacConnectionMode) {
         Task {
             if !DirectProAccess.shared.ready { await DirectProAccess.shared.refresh() }
             guard DirectAppLockV1.shared.canAccess else { return }
@@ -149,7 +146,7 @@ struct MacSessionWindow: View {
         Group {
             if let mac, admitted {
                 if request.mode == .terminal { MacDirectTerminalView(mac: mac, sessionID: request.id) }
-                else { MacDirectDesktopView(mac: mac, inputOnly: request.mode.inputOnly, sessionID: request.id) }
+                else { MacDirectDesktopView(mac: mac, sessionID: request.id) }
             } else if mac != nil {
                 ContentUnavailableView { Label("Open this Mac", systemImage: "desktopcomputer") }
                     description: { Text("Choose this Mac as your free Mac in My Macs, or use Pro to connect to all your saved Macs.") }
@@ -203,6 +200,8 @@ struct MacSheetPrivacyCover: ViewModifier {
     func body(content: Content) -> some View {
         MacSheetPrivacyContent(canAccess: lock.canAccess, content: content)
             .frame(minWidth: 380, minHeight: 260).modifier(MacPrivacyCover())
+            // Respect the editor's declared size instead of the narrower default Mac form width.
+            .presentationSizing(.fitted)
     }
 }
 #endif

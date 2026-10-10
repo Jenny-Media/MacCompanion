@@ -10,7 +10,7 @@ struct MacMachineEditor: View {
     @State private var desktopPort: String
     @State private var terminalPort: String
     @State private var automatic: Bool
-    @State private var preferred: DirectMacConnection
+    @State private var preferred: MacConnectionPreference
     @State private var sheet: Sheet?
     @State private var forgetting: Forget?
     private enum Sheet: String, Identifiable { case keys, install, pro; var id: String { rawValue } }
@@ -20,7 +20,8 @@ struct MacMachineEditor: View {
         _name = State(initialValue: mac?.name ?? "Mac")
         _addresses = State(initialValue: mac?.addresses.joined(separator: "\n") ?? "")
         _desktopPort = State(initialValue: String(mac?.port ?? 5900)); _terminalPort = State(initialValue: String(mac?.sshPort ?? 22))
-        _automatic = State(initialValue: mac?.usesAutomaticName ?? true); _preferred = State(initialValue: mac?.preferredConnection ?? .desktop)
+        _automatic = State(initialValue: mac?.usesAutomaticName ?? true)
+        _preferred = State(initialValue: MacConnectionPreference(mac?.preferredConnection ?? .desktop))
     }
     private var hosts: [String] { addresses.split(whereSeparator: \.isNewline).map(String.init) }
     private var valid: Bool {
@@ -34,7 +35,8 @@ struct MacMachineEditor: View {
                     TextField("Name", text: $name).accessibilityIdentifier("mac-machine-name")
                     Toggle("Use detected Mac name", isOn: $automatic)
                         .accessibilityLabel("Use detected Mac name").accessibilityIdentifier("mac-machine-automatic-name")
-                    Picker("Default connection", selection: $preferred) { ForEach(DirectMacConnection.allCases) { Text($0.title).tag($0) } }
+                    Picker("Default connection", selection: $preferred.mode) { ForEach(MacConnectionMode.allCases) { Text($0.title).tag($0) } }
+                        .accessibilityIdentifier("mac-machine-default-connection")
                 }
                 Section("Addresses, in connection order") {
                     TextEditor(text: $addresses).frame(height: 85).font(.body.monospaced()).accessibilityLabel("Local or private VPN addresses")
@@ -74,7 +76,7 @@ struct MacMachineEditor: View {
                                 return
                             }
                             if library.save(id: mac?.id, name: name, addresses: hosts, port: Int(desktopPort) ?? 5900,
-                                sshPort: Int(terminalPort), usesAutomaticName: automatic, preferredConnection: preferred) { dismiss() }
+                                sshPort: Int(terminalPort), usesAutomaticName: automatic, preferredConnection: preferred.shared) { dismiss() }
                         }.disabled(!valid).accessibilityIdentifier("mac-save-machine")
                     }
                 }

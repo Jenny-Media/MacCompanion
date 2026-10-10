@@ -22,12 +22,12 @@ enum MacConnectionPhase: String {
     struct Entry: Identifiable {
         let id: UUID
         let macID: UUID
-        let mode: DirectMacConnection
+        let mode: MacConnectionMode
         var phase: MacConnectionPhase
         let window: MacWindowHandle
     }
     private(set) var entries: [Entry] = []
-    func update(id: UUID, macID: UUID, mode: DirectMacConnection, phase: MacConnectionPhase, window: MacWindowHandle) {
+    func update(id: UUID, macID: UUID, mode: MacConnectionMode, phase: MacConnectionPhase, window: MacWindowHandle) {
         if let index = entries.firstIndex(where: { $0.id == id }) {
             guard entries[index].macID == macID, entries[index].mode == mode else { return }
             entries[index].phase = phase
@@ -76,8 +76,8 @@ struct MacCloudStatusView: View {
                     .font(.caption).foregroundStyle(.secondary)
             }
             Spacer()
-            Button("iCloud Settings", action: openSettings.callAsFunction)
-                .accessibilityIdentifier("mac-icloud-settings")
+            Button("Settings…", systemImage: "gearshape", action: openSettings.callAsFunction)
+                .accessibilityIdentifier("mac-app-settings").help("Open Mac Companion settings")
         }.padding(12).background(.bar)
     }
 }

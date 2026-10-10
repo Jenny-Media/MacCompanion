@@ -39,7 +39,7 @@ struct MacVNCSurface: NSViewRepresentable {
         session.resetInput = { [weak self] in self?.releaseInput() }
         setAccessibilityElement(true)
         setAccessibilityRole(.group)
-        setAccessibilityLabel(session.inputOnly ? "Remote trackpad and keyboard" : "Remote desktop")
+        setAccessibilityLabel("Remote desktop")
         setAccessibilityIdentifier("mac-vnc-surface")
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) is unavailable") }
@@ -68,9 +68,9 @@ struct MacVNCSurface: NSViewRepresentable {
         addTrackingArea(NSTrackingArea(rect: .zero, options: [.mouseMoved, .activeInKeyWindow, .inVisibleRect], owner: self))
     }
     override func draw(_ dirtyRect: NSRect) {
-        (session?.inputOnly == true ? NSColor.controlBackgroundColor : .black).setFill(); bounds.fill()
+        NSColor.black.setFill(); bounds.fill()
         defer { drawComposition() }
-        guard session?.inputOnly == false, let image, let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil),
+        guard let image, let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil),
               let cropped = cgImage.cropping(to: crop), let context = NSGraphicsContext.current?.cgContext else { return }
         let destination = destination
         context.saveGState(); context.interpolationQuality = .high
@@ -128,13 +128,13 @@ struct MacVNCSurface: NSViewRepresentable {
     private func move(_ event: NSEvent) {
         guard admitsInput, let point = point(event, clamp: mask != 0) else { return }
         session?.pointer(point, mask: mask)
-        if let session, trackpad, session.followCursor, !session.inputOnly {
+        if let session, trackpad, session.followCursor {
             session.pan = MacVNCGeometry.following(cursor: point, crop: crop, viewport: bounds.size, zoom: session.zoom, pan: session.pan)
         }
     }
     override func scrollWheel(with event: NSEvent) {
         guard admitsInput, let session else { return }
-        if event.modifierFlags.contains(.option), !session.inputOnly {
+        if event.modifierFlags.contains(.option) {
             session.pan.x += event.scrollingDeltaX; session.pan.y += event.scrollingDeltaY; return
         }
         scrollX += event.scrollingDeltaX * VNCSessionPreferences.scrollSpeed
@@ -150,7 +150,6 @@ struct MacVNCSurface: NSViewRepresentable {
         if event.phase.contains(.ended) || event.phase.contains(.cancelled) { scrollX = 0; scrollY = 0 }
     }
     override func magnify(with event: NSEvent) {
-        guard session?.inputOnly == false else { return }
         session?.zoom = max(1, min(8, (session?.zoom ?? 1) * (1 + event.magnification)))
     }
     override func keyDown(with event: NSEvent) {

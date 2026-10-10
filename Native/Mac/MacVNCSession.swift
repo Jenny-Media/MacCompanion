@@ -9,7 +9,6 @@ struct MacVNCDisplay: Identifiable {
 
 @MainActor @Observable final class MacVNCSession {
     let mac: DirectMacRecordV1
-    let inputOnly: Bool
     private(set) var image: NSImage?
     private(set) var connected = false
     private(set) var connecting = false
@@ -35,15 +34,15 @@ struct MacVNCDisplay: Identifiable {
     private let removeSavedLogin: (UUID) throws -> Void
     private let makeTransport: () -> CompanionVNCSession
     private let canAccess: () -> Bool
-    init(mac: DirectMacRecordV1, inputOnly: Bool, removeSavedLogin: @escaping (UUID) throws -> Void = DesktopCredentialStoreV1.remove,
+    init(mac: DirectMacRecordV1, removeSavedLogin: @escaping (UUID) throws -> Void = DesktopCredentialStoreV1.remove,
          makeTransport: @escaping () -> CompanionVNCSession = { CompanionVNCSession() },
          canAccess: @escaping () -> Bool = { DirectAppLockV1.shared.canAccess }) {
-        self.mac = mac; self.inputOnly = inputOnly
+        self.mac = mac
         self.removeSavedLogin = removeSavedLogin
         self.makeTransport = makeTransport
         self.canAccess = canAccess
         selectedID = VNCSessionPreferences.display(mac.id)?.uint32Value
-        trackpad = inputOnly || VNCSessionPreferences.trackpad(mac.id)
+        trackpad = VNCSessionPreferences.trackpad(mac.id)
         pointerSpeed = VNCSessionPreferences.speed(mac.id)
         followCursor = VNCSessionPreferences.followCursor(mac.id)
     }
@@ -67,7 +66,7 @@ struct MacVNCDisplay: Identifiable {
             recovery = .make(.removeFailed, message: "The old saved Desktop login couldn’t be removed. This connection wasn’t started. Retry when local Keychain is available."); return
         }
         retire(); let token = UUID(); generation = token
-        let next = makeTransport(); transport = next; next.inputOnly = inputOnly
+        let next = makeTransport(); transport = next; next.inputOnly = false
         connecting = true; recovery = nil; status = "Connecting…"
         pendingLogin = remember ? .init(username: username, password: password) : nil
         next.frameHandler = { [weak self, weak next] image in
@@ -147,8 +146,7 @@ struct MacVNCDisplay: Identifiable {
         followCursor = VNCSessionPreferences.followCursor(mac.id)
     }
     func quickAction(_ action: VNCQuickAction) {
-        let mode: DirectControlMode = inputOnly ? .trackpad : .desktop
-        guard canInput, action.enabled, action.valid, action.compatible(with: mode) else { return }
+        guard canInput, action.enabled, action.valid, action.compatible(with: .desktop) else { return }
         if [.shortcut, .text].contains(action.kind), !DirectProAccess.shared.hasPro { return }
         resetInput?()
         switch action.kind {

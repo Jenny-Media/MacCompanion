@@ -2,7 +2,8 @@
 
 The approved macOS goal extends the direct client decision in
 `docs/remote-desktop-mvp.md`. Both clients connect to built-in macOS Screen
-Sharing for Desktop and Trackpad & Keyboard, and Remote Login for SSH Terminal.
+Sharing for Desktop, and Remote Login for SSH Terminal. iPhone also retains its
+Trackpad & Keyboard mode; macOS exposes only Desktop and Terminal.
 No Mac Companion host, Agent, local XPC, pairing, capability grants, or helper
 is instantiated by this client. The legacy implementation remains historical.
 
@@ -42,8 +43,8 @@ login still cannot complete or save credentials while locked.
 
 Desktop retains display crops admitted by the existing Apple metadata validator,
 All Displays fallback, local fit/zoom/pan, cursor, pointer, wheel and keyboard.
-Trackpad & Keyboard sends relative pointer/scroll and physical keys without
-showing remote desktop pixels. Resizing changes local presentation or SSH PTY
+Desktop supports relative pointer input alongside its remote pixels, pointer,
+scroll and physical keys. Resizing changes local presentation or SSH PTY
 dimensions; it does not change a remote display's resolution.
 VNC participates in AppKit text input: marked composition stays local, and
 committed Unicode uses the shared keyboard owner. A local preedit indicator and
@@ -51,7 +52,7 @@ candidate position support input methods; losing focus discards the draft.
 Actual Chinese/character-picker interaction remains a native GUI acceptance case.
 
 New VNC logins match iPhone's retention and field validation rules. Each new
-Desktop/Trackpad window consumes one usable saved-login attempt after unlock;
+Desktop window consumes one usable saved-login attempt after unlock;
 later unlocks only restore a cleared remembered password for the same account.
 Cursor-only reports invalidate drawing and native cursor rectangles independently
 of framebuffer changes. Save rechecks the current machine count and Pro/trial
@@ -157,6 +158,24 @@ Citadel source outside the checkout so Xcode's user scheme metadata cannot
 modify the hash-pinned vendor tree.
 
 ### 2026-10-09 checkpoint
+
+The later approved macOS simplification removes the standalone Trackpad & Keyboard
+connection and its app-settings control profile. Only Desktop and Terminal appear
+in the library, context menu, default picker and session routes. Old restored
+Trackpad windows become Desktop windows with their original UUIDs; shared iPhone
+Trackpad defaults display as Desktop on Mac. Unrelated edits preserve the shared
+preference; explicitly choosing a new default writes Desktop or Terminal. Native
+VNC owners always request pixels. The input-only acceptance recorded below is
+historical; the shared iPhone input-only transport and its regressions remain.
+
+The simplified client builds and signs with stable Xcode 27.0; all 171 application
+source inputs match the built artifact. All 28 hosted Mac checks pass with no
+skips or failures. A separate native UI check verifies the two library actions,
+context menu, default picker and settings, preserves an iPhone Trackpad default
+through a name edit, and opens independent Desktop/Terminal sign-in windows.
+Closing Terminal preserves Desktop. Required repository validation and the
+iPhone Simulator build pass. Screenshots and test results stay outside Git;
+these checks do not establish live remote input or cross-device iCloud delivery.
 
 Stable Xcode 27.0 (27A266a) builds and signs the native Apple Silicon client.
 The initial signed checkpoint contains 161 application source inputs. The
@@ -309,7 +328,7 @@ imports a device-local copy and retains the existing Ed25519 format limits.
 | Requirement | Current evidence | Remaining acceptance |
 | --- | --- | --- |
 | Correct client baseline and preservation | Client checkpoint `ce85d33`; earlier work retained separately | None for the baseline |
-| Native direct client for all three modes | Native SwiftUI/AppKit entry point, reproducible signed build, live native VNC pixels/pointer/text, live pinned SSH PTY probe | Complete native Terminal/Trackpad input and focus acceptance; reconnect/recovery |
+| Native direct client for Desktop and Terminal | Native SwiftUI/AppKit entry point, reproducible signed build, live native VNC pixels/pointer/text, live pinned SSH PTY probe | Complete native Desktop/Terminal input and focus acceptance; reconnect/recovery |
 | Feature parity and native input | Shared models and client features, 59 native input contract checks | Native keyboard/input-method, display, resize and recovery flows |
 | Independent concurrent windows | UUID ownership, immutable selection, independent loopback SSH sessions, live built-in SSH connection closure isolation | Real window focus/input routing and concurrent Desktop/Terminal behavior |
 | Compatible optional iCloud library | Existing schema/group/consent, injected-store merge/offline/deletion checks, verified signing groups | Same-account Mac–iPhone edit/conflict/delete/restart/offline delivery |

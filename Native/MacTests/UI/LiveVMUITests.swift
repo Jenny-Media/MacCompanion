@@ -71,10 +71,7 @@ import XCTest
             XCTAssertTrue(window.buttons["Disconnect"].waitForExistence(timeout: 20))
             XCTAssertTrue(window.descendants(matching: .any)["mac-vnc-surface"].waitForExistence(timeout: 5))
         }
-        let trackpad = open("trackpad", title: "Trackpad & Keyboard")
-        connectVNC(trackpad)
-        XCTAssertTrue(trackpad.staticTexts["The remote desktop is not displayed."].exists)
-        capture(trackpad, name: "02-connected-trackpad")
+        XCTAssertFalse(library.buttons["mac-open-trackpad"].exists)
 
         let terminal = open("terminal", title: "Terminal")
         replace(terminal.textFields["mac-terminal-account"], with: account)
@@ -91,30 +88,28 @@ import XCTest
         shell.typeKey(.return, modifierFlags: [])
         shell.typeText("uname -m")
         shell.typeKey(.return, modifierFlags: [])
-        capture(terminal, name: "04-connected-terminal")
+        capture(terminal, name: "02-connected-terminal")
 
         let desktop = open("desktop", title: "Desktop")
         connectVNC(desktop)
         capture(desktop, name: "03-connected-desktop")
         // These are distinct live owning windows, not successive replacements.
-        XCTAssertTrue(trackpad.buttons["Disconnect"].exists)
         XCTAssertTrue(terminal.buttons["Disconnect"].exists)
         show("Sample macOS VM · Terminal", app: app)
         showLibrary(app)
-        XCTAssertEqual(library.buttons.matching(NSPredicate(format: "label == %@", "Show Window")).count, 3)
-        capture(library, name: "05-concurrent-connection-library")
+        XCTAssertEqual(library.buttons.matching(NSPredicate(format: "label == %@", "Show Window")).count, 2)
+        capture(library, name: "04-concurrent-connection-library")
         // Raise the registered Terminal owner through the new library control;
-        // this must preserve its existing shell and all three window entries.
-        library.buttons.matching(NSPredicate(format: "label == %@", "Show Window")).element(boundBy: 1).click()
+        // this must preserve its existing shell and both window entries.
+        library.buttons.matching(NSPredicate(format: "label == %@", "Show Window")).element(boundBy: 0).click()
         XCTAssertTrue(terminal.buttons["Disconnect"].isHittable)
         showLibrary(app)
-        XCTAssertEqual(library.buttons.matching(NSPredicate(format: "label == %@", "Show Window")).count, 3)
+        XCTAssertEqual(library.buttons.matching(NSPredicate(format: "label == %@", "Show Window")).count, 2)
 
-        show("Sample macOS VM · Trackpad & Keyboard", app: app)
+        show("Sample macOS VM · Desktop", app: app)
         app.typeKey("w", modifierFlags: .command)
         showLibrary(app)
-        XCTAssertEqual(library.buttons.matching(NSPredicate(format: "label == %@", "Show Window")).count, 2)
-        XCTAssertTrue(desktop.buttons["Disconnect"].exists)
+        XCTAssertEqual(library.buttons.matching(NSPredicate(format: "label == %@", "Show Window")).count, 1)
         XCTAssertTrue(terminal.buttons["Disconnect"].exists)
         // Remove only this fixture's QA-local accepted server key.
         library.buttons["mac-connection-settings"].click()

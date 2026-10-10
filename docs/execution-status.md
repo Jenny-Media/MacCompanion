@@ -1,20 +1,29 @@
 ## 2026-10-09 — Native macOS direct client awaiting acceptance
 
-The approved macOS scope is a native VNC and SSH client, with Desktop,
-Trackpad & Keyboard and Terminal, independent windows and compatible optional
+The approved macOS scope is a native VNC and SSH client, with Desktop and
+Terminal, independent windows and compatible optional
 iPhone iCloud library sync. No custom Mac server or helper is started. See
 [native macOS implementation and acceptance](native-macos-client.md) for build
 instructions, current evidence and remaining gates. Earlier Agent work is
 preserved separately; this implementation starts from client checkpoint `ce85d33`.
 
-Stable Xcode 27.0 builds and signs the Apple Silicon client; all 168 application
+The later 2026-10-09 simplification removes the standalone Trackpad & Keyboard
+mode from macOS. iPhone keeps all three modes and its shared saved defaults.
+Old Mac Trackpad window requests and shared Trackpad defaults resolve to Desktop;
+unrelated Mac edits preserve the shared preference. The Trackpad acceptance
+described below records the earlier implementation, before this scope change.
+
+Stable Xcode 27.0 builds and signs the Apple Silicon client; all 171 application
 source inputs match its report. Its existing development identity, certificate
 and exact Mac/local plus iPhone/cloud Keychain groups verify. Hosted Mac QA
-completes twenty tests: nineteen pass, one GUI key-window check skips, none fail.
+completes twenty-eight tests: all pass, with no skips or failures.
 This supersedes the earlier stalled preparation and earlier hosted results.
 Native input checks pass 59 cases; required repository validation passes with
-134 indexed fixtures. The latest iPhone Simulator app build and full suite pass:
-174 passes, thirteen optional skips and no failures.
+134 indexed fixtures. The iPhone Simulator app still builds after the Mac-only
+simplification; earlier full Simulator suites are recorded in the native client
+acceptance document. A separate native UI check verifies only Desktop/Terminal
+actions, controls and default choices, preserves a shared iPhone Trackpad default
+through unrelated edits, and verifies independent sign-in window closure.
 
 Fresh-review fixes recheck Terminal Copy/Find/link actions, clear embedded Find
 text and revoke field editors on lock, release each owner's admitted Kitty keys

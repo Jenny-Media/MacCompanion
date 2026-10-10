@@ -195,7 +195,13 @@ struct VNCInputSettings: View {
                     if mode == .desktop {
                         Section {
                             Toggle("Follow Cursor", isOn: $followCursor).accessibilityIdentifier("follow-cursor-toggle")
-                        } footer: { Text("In zoomed Trackpad mode, move the view to keep the cursor visible. Manual pan or zoom pauses following until your next trackpad movement. Saved for this Mac.") }
+                        } footer: {
+                            #if os(macOS)
+                            Text("With Trackpad Input enabled in Desktop, keep the cursor visible while zoomed in. Manual pan or zoom pauses following until your next pointer movement. Saved for this Mac.")
+                            #else
+                            Text("In zoomed Trackpad mode, move the view to keep the cursor visible. Manual pan or zoom pauses following until your next trackpad movement. Saved for this Mac.")
+                            #endif
+                        }
                     }
                 }
                 if mode != .terminal {
@@ -204,7 +210,13 @@ struct VNCInputSettings: View {
                         Slider(value: $scrollSpeed, in: VNCSessionPreferences.scrollSpeedRange, step: 0.25)
                             .accessibilityLabel("Scroll Speed").accessibilityIdentifier("scroll-speed-slider")
                         Button("Reset to Default") { scrollSpeed = 1 }
-                    } footer: { Text("Two-finger scrolling in Desktop and Trackpad. Applies to all Macs.") }
+                    } footer: {
+                        #if os(macOS)
+                        Text("Two-finger scrolling in Desktop. Applies to all Macs.")
+                        #else
+                        Text("Two-finger scrolling in Desktop and Trackpad. Applies to all Macs.")
+                        #endif
+                    }
                     #if os(iOS)
                     Section {
                         Toggle("Show Touch Points", isOn: $showsTouchPoints).accessibilityIdentifier("trackpad-touch-points-toggle")

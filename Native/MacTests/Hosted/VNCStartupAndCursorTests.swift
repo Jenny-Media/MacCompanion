@@ -126,7 +126,7 @@ private final class CursorInvalidationWindow: NSWindow {
     func testCursorOnlyReportsRedrawAndInvalidateCursorRectsWithoutFramebufferChanges() async throws {
         for trackpad in [false, true] {
             let transport = CursorOnlyTransport()
-            let session = MacVNCSession(mac: .init(id: UUID(), name: "Synthetic", addresses: ["fixture.local"]), inputOnly: false,
+            let session = MacVNCSession(mac: .init(id: UUID(), name: "Synthetic", addresses: ["fixture.local"]),
                                         removeSavedLogin: { _ in }, makeTransport: { transport }, canAccess: { true })
             session.trackpad = trackpad; session.followCursor = false
             session.connect(username: "synthetic", password: "synthetic-only", remember: false)

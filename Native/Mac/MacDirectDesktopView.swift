@@ -14,9 +14,9 @@ struct MacDirectDesktopView: View {
     @State private var actions: [VNCQuickAction] = []
     @State private var closed = false
     @State private var initialLogin = MacVNCInitialLogin()
-    init(mac: DirectMacRecordV1, inputOnly: Bool, sessionID: UUID = UUID()) {
+    init(mac: DirectMacRecordV1, sessionID: UUID = UUID()) {
         self.mac = mac; self.sessionID = sessionID
-        _session = State(initialValue: MacVNCSession(mac: mac, inputOnly: inputOnly))
+        _session = State(initialValue: MacVNCSession(mac: mac))
     }
     private var phase: MacConnectionPhase {
         session.connected ? .connected : session.connecting ? .connecting : session.recovery != nil || session.status == "Disconnected" ? .disconnected : .signIn
@@ -26,12 +26,8 @@ struct MacDirectDesktopView: View {
             MacVNCSurface(session: session)
             if !session.connected {
                 VStack(alignment: .leading, spacing: 18) {
-                    Label(mac.name, systemImage: session.inputOnly ? "rectangle.and.hand.point.up.left" : "macwindow").font(.title2)
-                    Text(session.inputOnly ? "Trackpad & Keyboard · Screen Sharing" : "Desktop · Screen Sharing").foregroundStyle(.secondary)
-                    if session.inputOnly {
-                        Text("Control the pointer and keyboard without showing the remote desktop.")
-                            .font(.callout).foregroundStyle(.secondary)
-                    }
+                    Label(mac.name, systemImage: "macwindow").font(.title2)
+                    Text("Desktop · Screen Sharing").foregroundStyle(.secondary)
                     if let notice = issue ?? session.recovery {
                         DirectRecoveryCard(notice: notice, primary: .init(title: notice.reason == .savedDataUnavailable ? "Retry Saved Login" : "Reconnect") {
                             loadLogin()
@@ -57,39 +53,27 @@ struct MacDirectDesktopView: View {
                             .accessibilityIdentifier("mac-vnc-connect")
                     }
                 }.padding(28).frame(maxWidth: 420).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
-            } else if session.inputOnly {
-                VStack(spacing: 12) {
-                    Image(systemName: "rectangle.and.hand.point.up.left").font(.largeTitle)
-                    Text("Trackpad & Keyboard").font(.title2)
-                    Text("Click this pad to focus it, then move, scroll or type to control \(mac.name).")
-                        .foregroundStyle(.secondary).multilineTextAlignment(.center)
-                    Text("The remote desktop is not displayed.").font(.caption).foregroundStyle(.secondary)
-                }.padding(32).frame(maxWidth: 460, minHeight: 220)
-                    .overlay(RoundedRectangle(cornerRadius: 16).stroke(.secondary.opacity(0.3)))
-                    .allowsHitTesting(false)
             }
         }
         .safeAreaInset(edge: .bottom, spacing: 0) { MacConnectionStatusBar(phase: phase, service: "Screen Sharing", addresses: mac.addresses) }
         .frame(minWidth: 520, minHeight: 360)
-        .navigationTitle(mac.name + (session.inputOnly ? " · Trackpad & Keyboard" : " · Desktop"))
+        .navigationTitle(mac.name + " · Desktop")
         .toolbar {
             if session.connected {
                 Menu("Displays", systemImage: "display.2") {
                     Button("All Displays") { session.selectDisplay(nil) }
                     ForEach(session.displays) { display in Button("Display \(display.id)") { session.selectDisplay(display.id) } }
                 }.help("Choose the remote display to control")
-                if !session.inputOnly {
-                    Menu("View", systemImage: "magnifyingglass") {
-                        Button("Fit to Window") { session.fit() }
-                        Button("Zoom In") { session.zoom = min(8, session.zoom * 1.25) }
-                        Button("Zoom Out") { session.zoom = max(1, session.zoom / 1.25) }.disabled(session.zoom <= 1)
-                        Divider()
-                        Text("Zoom relative to fit: \(Int(session.zoom * 100))%")
-                    }.help("Fit or zoom the remote desktop locally")
-                    Toggle("Trackpad Input", isOn: $session.trackpad)
-                        .help("Use relative pointer movement in this Desktop window")
-                        .onChange(of: session.trackpad) { _, value in VNCSessionPreferences.setTrackpad(value, mac: mac.id) }
-                }
+                Menu("View", systemImage: "magnifyingglass") {
+                    Button("Fit to Window") { session.fit() }
+                    Button("Zoom In") { session.zoom = min(8, session.zoom * 1.25) }
+                    Button("Zoom Out") { session.zoom = max(1, session.zoom / 1.25) }.disabled(session.zoom <= 1)
+                    Divider()
+                    Text("Zoom relative to fit: \(Int(session.zoom * 100))%")
+                }.help("Fit or zoom the remote desktop locally")
+                Toggle("Trackpad Input", isOn: $session.trackpad)
+                    .help("Use relative pointer movement in this Desktop window")
+                    .onChange(of: session.trackpad) { _, value in VNCSessionPreferences.setTrackpad(value, mac: mac.id) }
                 Button("Disconnect", systemImage: "power") { session.disconnect() }
                     .labelStyle(.titleAndIcon).help("End this Screen Sharing connection and keep its window open")
                 Menu("Quick Actions", systemImage: "keyboard") {
@@ -103,7 +87,7 @@ struct MacDirectDesktopView: View {
             Button("Controls", systemImage: "slider.horizontal.3") { controls = true }.help("Configure pointer, display and keyboard controls")
         }
         .sheet(isPresented: $controls) {
-            VNCInputSettings(macID: mac.id, mode: session.inputOnly ? .trackpad : .desktop) { session.reloadPreferences(); loadActions() }
+            VNCInputSettings(macID: mac.id, mode: .desktop) { session.reloadPreferences(); loadActions() }
                 .frame(minWidth: 520, minHeight: 520).modifier(MacSheetPrivacyCover())
         }
         .background(MacWindowLifetime { closed = true; password = ""; session.close(); MacConnectionRegistry.shared.remove(sessionID) }.frame(width: 0, height: 0))
@@ -125,9 +109,9 @@ struct MacDirectDesktopView: View {
     }
     private func publishStatus() {
         guard !closed else { return }
-        MacConnectionRegistry.shared.update(id: sessionID, macID: mac.id, mode: session.inputOnly ? .trackpad : .desktop, phase: phase, window: window)
+        MacConnectionRegistry.shared.update(id: sessionID, macID: mac.id, mode: .desktop, phase: phase, window: window)
     }
-    private func loadActions() { actions = VNCSessionPreferences.actions(session.inputOnly ? .trackpad : .desktop, legacyMac: mac.id) }
+    private func loadActions() { actions = VNCSessionPreferences.actions(.desktop, legacyMac: mac.id) }
     private func loadInitialLogin() {
         guard !closed, !session.connected, !session.connecting else { return }
         do {

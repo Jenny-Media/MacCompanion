@@ -41,27 +41,26 @@ private final class StatusTransport: CompanionVNCSession {
         XCTAssertFalse(containsEditor(host), "Lock must remove cached editor content, including its nested presentation owners")
     }
 
-    func testPeriodicVNCStatusWhileLockedRetainsEstablishedDesktopAndTrackpad() {
-        for inputOnly in [false, true] {
-            var allowed = true
-            let transport = StatusTransport()
-            let mac = DirectMacRecordV1(id: UUID(), name: "Synthetic", addresses: ["fixture.local"])
-            let session = MacVNCSession(mac: mac, inputOnly: inputOnly, removeSavedLogin: { _ in },
-                                        makeTransport: { transport }, canAccess: { allowed })
-            defer { session.close() }
-            session.connect(username: "synthetic", password: "synthetic-only", remember: false)
-            transport.reportConnected()
-            XCTAssertTrue(session.connected); XCTAssertTrue(session.canInput)
-            allowed = false; session.pauseInput()
-            XCTAssertTrue(session.connected); XCTAssertFalse(session.canInput)
-            for _ in 0..<3 { transport.reportConnected() }
-            XCTAssertTrue(session.connected); XCTAssertEqual(transport.stopCount, 0)
-            let frame = NSImage(size: NSSize(width: 1, height: 1))
-            transport.frameHandler?(frame)
-            XCTAssertTrue(session.image === frame, "A locked established window may keep receiving output")
-            allowed = true
-            XCTAssertTrue(session.canInput)
-        }
+    func testPeriodicVNCStatusWhileLockedRetainsEstablishedDesktop() {
+        var allowed = true
+        let transport = StatusTransport()
+        let mac = DirectMacRecordV1(id: UUID(), name: "Synthetic", addresses: ["fixture.local"])
+        let session = MacVNCSession(mac: mac, removeSavedLogin: { _ in },
+                                    makeTransport: { transport }, canAccess: { allowed })
+        defer { session.close() }
+        session.connect(username: "synthetic", password: "synthetic-only", remember: false)
+        XCTAssertFalse(transport.inputOnly, "Native Desktop must request a visible framebuffer")
+        transport.reportConnected()
+        XCTAssertTrue(session.connected); XCTAssertTrue(session.canInput)
+        allowed = false; session.pauseInput()
+        XCTAssertTrue(session.connected); XCTAssertFalse(session.canInput)
+        for _ in 0..<3 { transport.reportConnected() }
+        XCTAssertTrue(session.connected); XCTAssertEqual(transport.stopCount, 0)
+        let frame = NSImage(size: NSSize(width: 1, height: 1))
+        transport.frameHandler?(frame)
+        XCTAssertTrue(session.image === frame, "A locked established window may keep receiving output")
+        allowed = true
+        XCTAssertTrue(session.canInput)
     }
 
     func testInitialVNCStatusAfterLockCannotSaveLoginOrReviveRetiredOwner() throws {
@@ -69,7 +68,7 @@ private final class StatusTransport: CompanionVNCSession {
         let transport = StatusTransport()
         let mac = DirectMacRecordV1(id: UUID(), name: "Synthetic", addresses: ["fixture.local"])
         defer { try? DesktopCredentialStoreV1.remove(mac.id) }
-        let session = MacVNCSession(mac: mac, inputOnly: false, makeTransport: { transport }, canAccess: { allowed })
+        let session = MacVNCSession(mac: mac, makeTransport: { transport }, canAccess: { allowed })
         defer { session.close() }
         session.connect(username: "synthetic", password: "synthetic-only", remember: true)
         let lateCallback = try XCTUnwrap(transport.stateHandler)

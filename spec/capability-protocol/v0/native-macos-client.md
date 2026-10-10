@@ -5,6 +5,15 @@ It does not instantiate the historical paired host protocol. The authoritative
 native input/ownership cases are `spec/fixtures/native-macos-client-v1.json`,
 indexed only by `spec/fixtures/manifest.json`.
 
+macOS exposes Desktop (Screen Sharing) and Terminal (Remote Login). The shared
+iPhone library retains Desktop, Terminal and Trackpad & Keyboard values. A
+shared Trackpad default or a restored legacy Trackpad window resolves to Desktop
+on macOS, preserving the window UUID and machine selection. Reading that default
+or saving unrelated machine edits must not replace the shared iPhone preference.
+An explicit change to the Mac default writes the selected Desktop/Terminal value.
+Native Desktop always requests pixels; relative pointer input remains a Desktop
+control preference, not a separate connection mode.
+
 Each window has a unique session UUID and an immutable machine/mode selection.
 Key, pointer, focus and teardown callbacks are routed to that owner. A callback
 from a retired connection generation cannot present pixels, alter a replacement

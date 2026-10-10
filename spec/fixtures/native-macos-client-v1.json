@@ -908,5 +908,42 @@
         109
       ]
     }
-  ]
+  ],
+  "connectionModes": {
+    "supported": [
+      "desktop",
+      "terminal"
+    ],
+    "sharedDefaults": [
+      {
+        "shared": "desktop",
+        "native": "desktop"
+      },
+      {
+        "shared": "terminal",
+        "native": "terminal"
+      },
+      {
+        "shared": "trackpad",
+        "native": "desktop"
+      }
+    ],
+    "restoredWindows": [
+      {
+        "stored": "desktop",
+        "native": "desktop"
+      },
+      {
+        "stored": "terminal",
+        "native": "terminal"
+      },
+      {
+        "stored": "trackpad",
+        "native": "desktop"
+      }
+    ],
+    "unrelatedMachineEdits": "preserve shared preference",
+    "explicitDefaultEdit": "write selected native mode",
+    "desktopInputOnly": false
+  }
 }

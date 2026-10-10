@@ -75,7 +75,7 @@ private final class InputTestScroll: NSEvent {
         registry.update(id: desktop, macID: machine, mode: .desktop, phase: .connected, window: window)
         XCTAssertEqual(registry.connections(for: machine).map(\.phase), [.connected, .connected])
         // A stale update cannot retarget the UUID to another machine or mode.
-        registry.update(id: desktop, macID: otherMachine, mode: .trackpad, phase: .disconnected, window: window)
+        registry.update(id: desktop, macID: otherMachine, mode: .terminal, phase: .disconnected, window: window)
         XCTAssertEqual(registry.connections(for: machine).count, 2)
         registry.remove(desktop)
         XCTAssertEqual(registry.connections(for: machine).map(\.id), [terminal])
@@ -96,7 +96,7 @@ private final class InputTestScroll: NSEvent {
     }
     func testVNCLoginRemovalFailureDoesNotStartItsConnection() {
         let mac = DirectMacRecordV1(id: UUID(), name: "Synthetic", addresses: ["127.0.0.1"])
-        let session = MacVNCSession(mac: mac, inputOnly: false, removeSavedLogin: { _ in throw DesktopCredentialStoreV1.StoreFailure.unavailable })
+        let session = MacVNCSession(mac: mac, removeSavedLogin: { _ in throw DesktopCredentialStoreV1.StoreFailure.unavailable })
         session.connect(username: "synthetic", password: "synthetic-only", remember: false)
         XCTAssertFalse(session.connecting); XCTAssertFalse(session.connected)
         XCTAssertEqual(session.recovery?.reason, .removeFailed)
@@ -188,9 +188,46 @@ private final class InputTestScroll: NSEvent {
         XCTAssertTrue(library.save(id: mac, name: "Original", address: "mac.local"))
         let snapshot = try XCTUnwrap(library.macs.first)
         XCTAssertTrue(library.save(id: mac, name: "Renamed", address: "other.local"))
-        let owner = MacVNCSession(mac: snapshot, inputOnly: false)
+        let owner = MacVNCSession(mac: snapshot)
         XCTAssertEqual(owner.mac.name, "Original"); XCTAssertEqual(owner.mac.addresses, ["mac.local"])
         owner.close()
+    }
+
+    func testMacModeFallbackPreservesSharedDefaultsAndRestoredWindowIdentity() throws {
+        let directory = try XCTUnwrap(ProcessInfo.processInfo.environment["MACCOMPANION_NATIVE_FIXTURE_DIRECTORY"])
+        let fixture = try JSONSerialization.jsonObject(with: Data(contentsOf: URL(fileURLWithPath: directory).appending(path: "native-macos-client-v1.json"))) as! [String: Any]
+        let modes = try XCTUnwrap(fixture["connectionModes"] as? [String: Any])
+        XCTAssertEqual(MacConnectionMode.allCases.map(\.rawValue), modes["supported"] as? [String])
+        // macOS reads a compatible iPhone record, edits unrelated fields, then
+        // persists it without silently changing the iPhone's Trackpad default.
+        let folder = URL.temporaryDirectory.appending(path: UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let url = folder.appending(path: "macs.json")
+        let library = DirectMacLibraryV1(url: url, removeLogin: { _ in })
+        for value in try XCTUnwrap(modes["sharedDefaults"] as? [[String: String]]) {
+            let shared = try XCTUnwrap(DirectMacConnection(rawValue: try XCTUnwrap(value["shared"])))
+            let id = UUID()
+            XCTAssertTrue(library.save(id: id, name: "Original", addresses: ["fixture.local"], preferredConnection: shared))
+            var preference = MacConnectionPreference(shared)
+            XCTAssertEqual(preference.mode.rawValue, value["native"])
+            XCTAssertTrue(library.save(id: id, name: "Renamed", addresses: ["other.local"], preferredConnection: preference.shared))
+            let reloaded = DirectMacLibraryV1(url: url, removeLogin: { _ in })
+            XCTAssertEqual(reloaded.macs.first { $0.id == id }?.preferredConnection, shared)
+            for selected in MacConnectionMode.allCases {
+                preference.mode = selected
+                XCTAssertEqual(preference.shared, selected.shared)
+            }
+        }
+        for value in try XCTUnwrap(modes["restoredWindows"] as? [[String: String]]) {
+            let id = UUID(), machine = UUID()
+            let data = try JSONSerialization.data(withJSONObject: ["id": id.uuidString, "macID": machine.uuidString, "mode": try XCTUnwrap(value["stored"])])
+            let request = try JSONDecoder().decode(MacSessionRequest.self, from: data)
+            XCTAssertEqual(request.id, id); XCTAssertEqual(request.macID, machine)
+            XCTAssertEqual(request.mode.rawValue, value["native"])
+            let encoded = try JSONSerialization.jsonObject(with: JSONEncoder().encode(request)) as! [String: String]
+            XCTAssertEqual(encoded["mode"], value["native"])
+        }
+        XCTAssertThrowsError(try JSONDecoder().decode(MacConnectionMode.self, from: Data("\"unknown\"".utf8)))
     }
 
     func testOwnWindowCloseIsDeliveredOnce() {

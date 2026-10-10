@@ -55,7 +55,7 @@ private final class UIConnections: @unchecked Sendable {
         }
         XCTAssertTrue(window.buttons["Disconnect"].waitForExistence(timeout: 5))
     }
-    func testThreeModesAndIndependentTerminalKeyboardAndClose() async throws {
+    func testDesktopAndTerminalWithIndependentTerminalKeyboardAndClose() async throws {
         continueAfterFailure = false
         let records = UIConnections(), hostKey = NIOSSHPrivateKey(ed25519Key: .init())
         let server = try await ServerBootstrap(group: MultiThreadedEventLoopGroup.singleton).childChannelInitializer { channel in
@@ -82,8 +82,7 @@ private final class UIConnections: @unchecked Sendable {
         XCTAssertTrue(row.waitForExistence(timeout: 5)); row.click()
         open("desktop", app: app)
         XCTAssertTrue(windows("Desktop", app: app).firstMatch.waitForExistence(timeout: 5))
-        open("trackpad", app: app)
-        XCTAssertTrue(windows("Trackpad & Keyboard", app: app).firstMatch.waitForExistence(timeout: 5))
+        XCTAssertFalse(library(app).buttons["mac-open-trackpad"].exists)
         open("terminal", app: app)
         let openedFirst = windows("Terminal", app: app).firstMatch
         XCTAssertTrue(openedFirst.waitForExistence(timeout: 5))
@@ -113,7 +112,6 @@ private final class UIConnections: @unchecked Sendable {
         app.typeKey("w", modifierFlags: .command)
         try await wait("own terminal window closes") { windows("Terminal", app: app).count == 1 }
         XCTAssertTrue(windows("Desktop", app: app).firstMatch.exists)
-        XCTAssertTrue(windows("Trackpad & Keyboard", app: app).firstMatch.exists)
         surfaceB.click(); app.typeText("D")
         try await wait("surviving terminal keyboard input") { records.connections[1].received == [66, 68] }
         ownSecond.buttons["Disconnect"].click()

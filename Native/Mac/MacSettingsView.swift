@@ -9,7 +9,7 @@ struct MacSettingsView: View {
     @State private var removeCloud = false
     @State private var sheet: Sheet?
     private enum Sheet: String, Identifiable {
-        case keys, pro, desktop, terminal, trackpad
+        case keys, pro, desktop, terminal
         var id: String { rawValue }
     }
     var body: some View {
@@ -27,7 +27,6 @@ struct MacSettingsView: View {
                 Button(DirectProAccess.shared.accessTitle, systemImage: "sparkles") { sheet = .pro }
                 Button("Desktop Controls") { sheet = .desktop }
                 Button("Terminal Controls") { sheet = .terminal }
-                Button("Trackpad & Keyboard Controls") { sheet = .trackpad }
             }
             Section {
                 Toggle("Sync Saved Macs with iCloud", isOn: Binding(get: { cloud.enabled }, set: {
@@ -61,7 +60,6 @@ struct MacSettingsView: View {
                     case .pro: DirectProView()
                     case .desktop: VNCInputSettings(mode: .desktop)
                     case .terminal: VNCInputSettings(mode: .terminal)
-                    case .trackpad: VNCInputSettings(mode: .trackpad)
                     }
                 }.frame(minWidth: 520, minHeight: 520).directAppearance().modifier(MacSheetPrivacyCover())
             }
