@@ -45,6 +45,12 @@ private final class UIConnections: @unchecked Sendable {
         // AppKit exposes a window's name as its title, rather than its label.
         app.windows.matching(NSPredicate(format: "title CONTAINS %@", " · " + mode))
     }
+    private func expandDisclosure(_ label: String, app: XCUIApplication) {
+        let triangle = app.disclosureTriangles[label].firstMatch
+        let button = app.buttons[label].firstMatch
+        XCTAssertTrue(triangle.waitForExistence(timeout: 3) || button.waitForExistence(timeout: 3))
+        if triangle.exists { triangle.click() } else { button.click() }
+    }
     private func connect(_ window: XCUIElement, app: XCUIApplication, acceptTrust: Bool) {
         replace(window.textFields["mac-terminal-account"], with: "synthetic")
         replace(window.secureTextFields["mac-terminal-password"], with: "synthetic-only")
@@ -83,7 +89,7 @@ private final class UIConnections: @unchecked Sendable {
         XCTAssertTrue(desktop.buttons["mac-vnc-connect"].isEnabled)
         let login = XCTAttachment(screenshot: app.screenshot()); login.name = "Native Desktop sign-in"; login.lifetime = .keepAlways; add(login)
         desktop.buttons["Controls"].click()
-        app.buttons["Pointer, zoom & pan"].click()
+        expandDisclosure("Pointer, zoom & pan", app: app)
         XCTAssertTrue(app.staticTexts["Direct control"].waitForExistence(timeout: 5))
         XCTAssertFalse(app.sliders["Pointer Speed"].exists); XCTAssertFalse(app.checkBoxes["Follow Cursor"].exists)
         XCTAssertFalse(app.staticTexts["Mouse Mode"].exists)
@@ -119,7 +125,7 @@ private final class UIConnections: @unchecked Sendable {
         replace(app.textFields["mac-machine-address-0"], with: "127.0.0.1")
         // Service ports stay secondary until explicitly expanded.
         app.sheets.scrollViews.firstMatch.scroll(byDeltaX: 0, deltaY: -600)
-        app.buttons["Service Ports"].click()
+        expandDisclosure("Service Ports", app: app)
         replace(app.textFields["mac-machine-ssh-port"], with: String(try XCTUnwrap(server.localAddress?.port)))
         app.buttons["mac-save-machine"].click()
         let row = library(app).outlines.staticTexts["Synthetic GUI"].firstMatch
@@ -163,7 +169,7 @@ private final class UIConnections: @unchecked Sendable {
         // Remove this synthetic record and its QA-local accepted host key.
         showLibrary(app)
         row.click(); library(app).buttons["mac-connection-settings"].click()
-        app.buttons["Reset Login & Trust"].click()
+        expandDisclosure("Reset Login & Trust", app: app)
         app.buttons["Forget SSH Server Key"].click()
         app.buttons.matching(NSPredicate(format: "label == %@", "Forget")).firstMatch.click()
         app.buttons["Cancel"].click()
