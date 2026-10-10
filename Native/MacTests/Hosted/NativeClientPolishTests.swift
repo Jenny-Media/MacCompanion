@@ -101,6 +101,49 @@ import XCTest
         let access = DirectProAccess(defaults: defaults); await access.refresh()
         return (access, defaults, suite)
     }
+    func testUnreadableImportedLibraryKeepsDiskKeyManagementAccessible() async throws {
+        try await isolatedKeys {
+            let (access, defaults, suite) = try await self.access()
+            defer { defaults.removePersistentDomain(forName: suite) }
+            let url = URL.temporaryDirectory.appending(path: UUID().uuidString)
+            defer { try? FileManager.default.removeItem(at: url) }
+            try Data(Curve25519.Signing.PrivateKey().makeSSHRepresentation().utf8).write(to: url)
+            let fileID = try MacSSHKeyFileStore.add(url: url, name: "Synthetic Reference", passphrase: "", access: access)
+            let namedID = UUID(uuidString: "00000000-0000-0000-0000-000000000002")!
+            let unreadable = Data("synthetic-invalid-library".utf8)
+            try TerminalSecretStore.write(unreadable, id: namedID, kind: "key-library-v2")
+            let imported = TerminalKeyLibrary(); imported.reload()
+            XCTAssertFalse(imported.readable)
+            XCTAssertEqual(try MacSSHKeyFileStore.load().files.map(\.id), [fileID])
+
+            let host = NSHostingView(rootView: TerminalKeySettings())
+            let window = NSWindow(contentRect: .init(x: -20000, y: -20000, width: 650, height: 700), styleMask: [.titled], backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false; window.contentView = host; window.orderFront(nil)
+            defer { window.contentView = nil; window.close() }
+            func element(_ identifier: String) -> (any NSAccessibilityProtocol)? {
+                host.layoutSubtreeIfNeeded()
+                var pending: [Any] = [host], visited = Set<ObjectIdentifier>()
+                while let item = pending.popLast() {
+                    guard let object = item as? NSObject, visited.insert(ObjectIdentifier(object)).inserted,
+                          let node = item as? any NSAccessibilityProtocol else { continue }
+                    if node.accessibilityIdentifier() == identifier { return node }
+                    pending.append(contentsOf: node.accessibilityChildren() ?? [])
+                }
+                return nil
+            }
+            try await self.wait { element("ssh-key-use-file") != nil && element("ssh-key-create")?.isAccessibilityEnabled() == false }
+            let useFile = try XCTUnwrap(element("ssh-key-use-file"))
+            XCTAssertTrue(useFile.isAccessibilityEnabled())
+            XCTAssertFalse(try XCTUnwrap(element("ssh-key-import-copy")).isAccessibilityEnabled())
+            XCTAssertTrue(useFile.accessibilityPerformPress())
+            let removalID = "ssh-key-remove-" + fileID.uuidString
+            try await self.wait { element(removalID) != nil }
+            let remove = try XCTUnwrap(element(removalID))
+            XCTAssertTrue(remove.isAccessibilityEnabled()); XCTAssertTrue(remove.accessibilityPerformPress())
+            try await self.wait { (try? MacSSHKeyFileStore.load().files.isEmpty) == true }
+            XCTAssertEqual(try TerminalSecretStore.read(namedID, kind: "key-library-v2"), unreadable, "Disk-reference cleanup must preserve the unreadable imported data")
+        }
+    }
     func testKeyFileReferencesPreserveOriginalAndRejectChangedOrMissingKeys() async throws {
         try await isolatedKeys {
             let (access, defaults, suite) = try await self.access()

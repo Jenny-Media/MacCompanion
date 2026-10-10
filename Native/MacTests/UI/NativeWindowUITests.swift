@@ -48,7 +48,6 @@ private final class UIConnections: @unchecked Sendable {
     private func connect(_ window: XCUIElement, app: XCUIApplication, acceptTrust: Bool) {
         replace(window.textFields["mac-terminal-account"], with: "synthetic")
         replace(window.secureTextFields["mac-terminal-password"], with: "synthetic-only")
-        app.typeKey(XCUIKeyboardKey.escape, modifierFlags: [])
         window.buttons["mac-terminal-connect"].click()
         if acceptTrust {
             let trust = window.buttons["Trust & Connect"]
@@ -84,6 +83,7 @@ private final class UIConnections: @unchecked Sendable {
         XCTAssertTrue(desktop.buttons["mac-vnc-connect"].isEnabled)
         let login = XCTAttachment(screenshot: app.screenshot()); login.name = "Native Desktop sign-in"; login.lifetime = .keepAlways; add(login)
         desktop.buttons["Controls"].click()
+        app.buttons["Pointer, zoom & pan"].click()
         XCTAssertTrue(app.staticTexts["Direct control"].waitForExistence(timeout: 5))
         XCTAssertFalse(app.sliders["Pointer Speed"].exists); XCTAssertFalse(app.checkBoxes["Follow Cursor"].exists)
         XCTAssertFalse(app.staticTexts["Mouse Mode"].exists)
@@ -117,8 +117,9 @@ private final class UIConnections: @unchecked Sendable {
         library(app).buttons["mac-add-machine"].click()
         replace(app.textFields["mac-machine-name"], with: "Synthetic GUI")
         replace(app.textFields["mac-machine-address-0"], with: "127.0.0.1")
-        // Service ports follow the discovery cards in the scrollable form.
+        // Service ports stay secondary until explicitly expanded.
         app.sheets.scrollViews.firstMatch.scroll(byDeltaX: 0, deltaY: -600)
+        app.buttons["Service Ports"].click()
         replace(app.textFields["mac-machine-ssh-port"], with: String(try XCTUnwrap(server.localAddress?.port)))
         app.buttons["mac-save-machine"].click()
         let row = library(app).outlines.staticTexts["Synthetic GUI"].firstMatch
@@ -162,6 +163,7 @@ private final class UIConnections: @unchecked Sendable {
         // Remove this synthetic record and its QA-local accepted host key.
         showLibrary(app)
         row.click(); library(app).buttons["mac-connection-settings"].click()
+        app.buttons["Reset Login & Trust"].click()
         app.buttons["Forget SSH Server Key"].click()
         app.buttons.matching(NSPredicate(format: "label == %@", "Forget")).firstMatch.click()
         app.buttons["Cancel"].click()

@@ -78,22 +78,26 @@ final class RecoveryActionsUITests: XCTestCase {
     }
     @MainActor func testCachedEditorOnlyScansOnExplicitRefresh() async throws {
         let app = launch("cached-editor")
+        XCTAssertTrue(app.buttons["Mac Details"].waitForExistence(timeout: 10))
+        app.buttons["Mac Details"].tap()
         XCTAssertTrue(app.buttons["mac-refresh-details"].waitForExistence(timeout: 10))
         try await Task.sleep(for: .seconds(1))
-        XCTAssertFalse(app.staticTexts["Detecting Mac details…"].exists)
+        XCTAssertFalse(app.staticTexts["Looking for Mac details…"].exists)
         capture(app, "synthetic-cached-mac-editor")
         app.buttons["mac-refresh-details"].tap()
-        XCTAssertTrue(app.staticTexts["Detecting Mac details…"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Looking for Mac details…"].waitForExistence(timeout: 5))
     }
     @MainActor func testEditingEndpointsStartsDetectionAfterDebounce() {
         let app = launch("cached-editor")
+        XCTAssertTrue(app.buttons["Mac Details"].waitForExistence(timeout: 10))
+        app.buttons["Mac Details"].tap()
         XCTAssertTrue(app.buttons["mac-refresh-details"].waitForExistence(timeout: 10))
         let address = app.textFields["IP address or hostname"]
         app.swipeUp()
         XCTAssertTrue(address.waitForExistence(timeout: 5))
         address.tap(); address.typeText("x")
         app.swipeDown()
-        XCTAssertTrue(app.staticTexts["Detecting Mac details…"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Looking for Mac details…"].waitForExistence(timeout: 5))
     }
     @MainActor func testMacListUsesCachedDetailsAndClearOpenAction() async throws {
         let app = launch("mac-list")

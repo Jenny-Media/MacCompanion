@@ -65,7 +65,7 @@ struct TerminalKeySettings: View {
                     #if os(macOS)
                     NavigationLink { MacSSHKeyFilesView(mac: mac, changed: changed, done: { dismiss() }) } label: {
                         DirectGuidanceRow(title: "Use File", detail: "Read the original key from ~/.ssh or another folder.", symbol: "doc")
-                    }
+                    }.accessibilityIdentifier("ssh-key-use-file")
                     #endif
                     Button {
                         #if os(macOS)
@@ -74,8 +74,10 @@ struct TerminalKeySettings: View {
                         sheet = pro.canAddKey(count: library.keys.count) ? .importKey : .pro
                         #endif
                     } label: { DirectGuidanceRow(title: "Import Copy", detail: "Store a private-key copy in this device’s Keychain.", symbol: "square.and.arrow.down") }
+                        .disabled(!library.readable || !pro.ready).accessibilityIdentifier("ssh-key-import-copy")
                     Button(action: create) { DirectGuidanceRow(title: "Create Key", detail: "Generate an Ed25519 key in Keychain.", symbol: "plus") }
-                }.disabled(!library.readable || !pro.ready)
+                        .disabled(!library.readable || !pro.ready).accessibilityIdentifier("ssh-key-create")
+                }
                 if let notice = library.recovery { Section { DirectRecoveryCard(notice: notice, primary: .init(title: "Retry") { reload() }) } }
                 Section {} footer: {
                     #if os(macOS)

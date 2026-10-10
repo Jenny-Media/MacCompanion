@@ -32,6 +32,7 @@ struct MacSSHKeyFilesView: View {
                             }
                             Spacer()
                             Button("Remove Reference", systemImage: "minus.circle", role: .destructive) { perform { try MacSSHKeyFileStore.remove(file.id) } }
+                                .accessibilityIdentifier("ssh-key-remove-" + file.id.uuidString)
                         }
                     }.padding(.vertical, 4)
                 }
