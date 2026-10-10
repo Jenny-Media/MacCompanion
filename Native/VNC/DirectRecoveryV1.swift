@@ -209,18 +209,31 @@ struct TerminalServerTrustView: View {
     static func desktopReason(stage: Int, hadFrame: Bool) -> DirectRecoveryNotice.Reason {
         switch stage {
         case 10: return .addressNotFound
-        case 11: return .macUnreachable
+        case 11, 110: return .macUnreachable
         case 2: return .unsupportedConnection
-        case 7, 8: return .loginRejected
+        case 7, 8, 111: return .loginRejected
+        case 112: return .serverChanged
+        case 113: return .connectionCancelled
+        case 114: return .desktopUnavailable
+        case 115: return .savedDataUnavailable
         case 101: return .inputPaused
         default: return hadFrame ? .desktopDisconnected : .desktopUnavailable
         }
     }
     private static func desktopNotice(stage: Int, hadFrame: Bool, port: Int) -> DirectRecoveryNotice {
         let reason = desktopReason(stage: stage, hadFrame: hadFrame)
-        return DirectRecoveryNotice.make(reason,
-            message: stage == 103 ? "The desktop image couldn’t be decoded. Reconnect to request a fresh image. Your login and view settings are kept." : stage == 9 ? "This desktop exceeds the supported size limit. Reduce the Mac’s shared desktop size before retrying." : nil,
-            details: [.init(name: "Service", value: "Screen Sharing"), .init(name: "Port", value: String(port)), .init(name: "Stage", value: String(stage))])
+        let message: String?
+        switch stage {
+        case 110: message = "A verified SSH connection couldn’t be established. Enable Remote Login in System Settings → General → Sharing, and check the saved SSH port and network route."
+        case 111: message = "The Mac didn’t accept this account and password for Remote Login. Check the login and allow this account in Remote Login settings."
+        case 114: message = "SSH connected, but Screen Sharing wasn’t available through it. Enable Screen Sharing, check its saved port, and allow SSH forwarding on the Mac."
+        case 115: message = "The SSH server trust couldn’t be read or saved. Unlock this iPhone and retry. The saved Mac is kept."
+        case 103: message = "The desktop image couldn’t be decoded. Reconnect to request a fresh image. Your login and view settings are kept."
+        case 9: message = "This desktop exceeds the supported size limit. Reduce the Mac’s shared desktop size before retrying."
+        default: message = nil
+        }
+        return DirectRecoveryNotice.make(reason, message: message,
+            details: [.init(name: "Service", value: (stage == 10 || stage == 11 || (110...115).contains(stage)) ? "Remote Login (SSH)" : "Screen Sharing over SSH"), .init(name: "Port", value: String(port)), .init(name: "Stage", value: String(stage))])
     }
     @objc static func desktopDetails(stage: Int, hadFrame: Bool, port: Int) -> String {
         let notice = desktopNotice(stage: stage, hadFrame: hadFrame, port: port)

@@ -3,6 +3,49 @@ import SwiftUI
 @testable import Mac_Companion
 
 @MainActor final class AppearanceTests: XCTestCase {
+    func testConnectionBackdropReachesStatusAreaInProductionHost() async throws {
+        let previous = DirectAppearanceV1.shared.app
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let window = UIWindow(windowScene: scene)
+        let mac = try DirectMacRecordV1.normalized(name: "Synthetic Mac", addresses: ["studio.local"])
+        defer { window.isHidden = true; window.rootViewController = nil; DirectAppearanceV1.shared.app = previous }
+        func controllers(_ root: UIViewController) -> [UIViewController] { [root] + root.children.flatMap(controllers) }
+        for style in [UIUserInterfaceStyle.light, .dark] {
+            DirectAppearanceV1.shared.app = style == .dark ? .dark : .light
+            for inputOnly in [false, true] {
+                let host = UIHostingController(rootView: DirectDesktopSessionView(mac: mac, inputOnly: inputOnly, showMacs: {})
+                    .ignoresSafeArea(.container, edges: .bottom))
+                window.rootViewController = host; window.makeKeyAndVisible()
+                try await Task.sleep(for: .milliseconds(300))
+                let viewer = try XCTUnwrap(controllers(host).compactMap { $0 as? CompanionVNCViewer }.first)
+                let backdrop = try XCTUnwrap(viewer.value(forKey: "loginBackdrop") as? UIViewController)
+                let card = try XCTUnwrap(viewer.value(forKey: "login") as? UIView)
+                for progress in [false, true] {
+                    viewer.setValue(progress, forKey: "starting")
+                    _ = viewer.perform(NSSelectorFromString("updateConnectionChrome"))
+                    try await Task.sleep(for: .milliseconds(200)); window.layoutIfNeeded()
+                    XCTAssertEqual(backdrop.view.convert(backdrop.view.bounds, to: window).minY, 0, accuracy: 0.5,
+                                   "The login backdrop must cover the status area in the SwiftUI host")
+                    XCTAssertGreaterThanOrEqual(card.convert(card.bounds, to: window).minY, window.safeAreaInsets.top)
+                    let image = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in
+                        window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
+                    }
+                    func pixel(_ point: CGPoint) throws -> [UInt8] {
+                        let crop = try XCTUnwrap(image.cgImage?.cropping(to: CGRect(x: point.x * image.scale, y: point.y * image.scale, width: 1, height: 1)))
+                        var rgba = [UInt8](repeating: 0, count: 4)
+                        let context = try XCTUnwrap(CGContext(data: &rgba, width: 1, height: 1, bitsPerComponent: 8, bytesPerRow: 4,
+                            space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+                        context.draw(crop, in: CGRect(x: 0, y: 0, width: 1, height: 1)); return rgba
+                    }
+                    let top = try pixel(CGPoint(x: 1, y: 1))
+                    let below = try pixel(CGPoint(x: 1, y: window.safeAreaInsets.top + 1))
+                    for channel in 0..<3 { XCTAssertEqual(Int(top[channel]), Int(below[channel]), accuracy: 2, "No color seam below the status bar") }
+                }
+                viewer.stop()
+            }
+        }
+    }
+
     func testDesktopReachesStatusAreaButFitAndRestoredViewportUseUnobscuredCanvas() async throws {
         let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
         let window = UIWindow(windowScene: scene)
@@ -63,7 +106,7 @@ import SwiftUI
         try await Task.sleep(for: .milliseconds(200)); window.layoutIfNeeded()
         XCTAssertEqual(canvas.contentInset.top, 0)
         XCTAssertTrue(image.isHidden)
-        XCTAssertGreaterThanOrEqual(viewer.view.convert(CGPoint.zero, to: window).y, window.safeAreaInsets.top - 0.5)
+        XCTAssertGreaterThanOrEqual(canvas.convert(canvas.bounds, to: window).minY, window.safeAreaInsets.top + 8 - 0.5)
         viewer.inputOnly = false; login.isHidden = false
         _ = viewer.perform(NSSelectorFromString("updateConnectionChrome"))
         try await Task.sleep(for: .milliseconds(200)); window.layoutIfNeeded()

@@ -348,7 +348,7 @@ import StoreKitTest
                 (viewer.value(forKey: "password") as? UITextField)?.text = "synthetic-only"
                 _ = viewer.perform(NSSelectorFromString("updateConnectionChrome"))
                 try await Task.sleep(for: .milliseconds(300)); save(window,name:prefix + "login-" + name,folder:folder)
-                viewer.setValue(true,forKey:"starting"); (viewer.value(forKey:"progressLabel") as? UILabel)?.text = "Connecting to Screen Sharing…"
+                viewer.setValue(true,forKey:"starting"); (viewer.value(forKey:"progressLabel") as? UILabel)?.text = viewer.value(forKey: "connectionProgressMessage") as? String
                 _ = viewer.perform(NSSelectorFromString("updateConnectionChrome"))
                 try await Task.sleep(for: .milliseconds(300)); save(window,name:prefix + "connecting-" + name,folder:folder)
                 viewer.setValue(false, forKey: "starting"); viewer.showRecoveryStage(7)
@@ -540,6 +540,7 @@ import StoreKitTest
         let previous = DirectAppearanceV1.shared.app
         defer { window.isHidden = true; window.rootViewController = nil; DirectAppearanceV1.shared.app = previous }
         let mac = try DirectMacRecordV1.normalized(name: "Studio Mac", addresses: ["studio.local"])
+        func controllers(_ root: UIViewController) -> [UIViewController] { [root] + root.children.flatMap(controllers) }
         for (name, style, large, highContrast) in [
             ("light", UIUserInterfaceStyle.light, false, false),
             ("dark", .dark, false, false),
@@ -551,14 +552,19 @@ import StoreKitTest
             window.traitOverrides.accessibilityContrast = highContrast ? .high : .normal
             window.traitOverrides.preferredContentSizeCategory = large ? .accessibilityExtraLarge : .large
             for inputOnly in [false, true] {
-                let viewer = CompanionVNCViewer(); viewer.macName = mac.name; viewer.inputOnly = inputOnly
-                viewer.connectionMacNames = ["Studio Mac", "Living Room Mac"]
-                window.overrideUserInterfaceStyle = style; window.rootViewController = viewer; window.makeKeyAndVisible(); viewer.loadViewIfNeeded()
+                // Capture the production SwiftUI host too: a bare native viewer
+                // does not reproduce clipping at the hosting safe-area boundary.
+                let host = UIHostingController(rootView: DirectDesktopSessionView(mac: mac, inputOnly: inputOnly,
+                    connectionMacNames: ["Studio Mac", "Living Room Mac"], showMacs: {})
+                    .ignoresSafeArea(.container, edges: .bottom))
+                window.overrideUserInterfaceStyle = style; window.rootViewController = host; window.makeKeyAndVisible()
+                try await Task.sleep(for: .milliseconds(300))
+                let viewer = try XCTUnwrap(controllers(host).compactMap { $0 as? CompanionVNCViewer }.first)
                 let mode = inputOnly ? "trackpad" : "desktop"
                 for state in ["login", "progress", "error"] {
                     viewer.setValue(state == "progress", forKey: "starting")
                     if state == "error" { viewer.showRecoveryStage(7) }
-                    else { (viewer.value(forKey: "progressLabel") as? UILabel)?.text = "Connecting to Screen Sharing…" }
+                    else { (viewer.value(forKey: "progressLabel") as? UILabel)?.text = viewer.value(forKey: "connectionProgressMessage") as? String }
                     _ = viewer.perform(NSSelectorFromString("updateConnectionChrome"))
                     try await Task.sleep(for: .milliseconds(400)); save(window, name: mode + "-" + state + "-" + name, folder: folder)
                 }

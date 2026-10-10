@@ -2,8 +2,9 @@
 import SwiftUI
 import UIKit
 
-/// Paint the hosting safe area with the same background as the native canvas.
-/// This also gives SwiftUI's presenting controller the matching status text style.
+/// Let the native backdrop cover the status area as well as the canvas. The
+/// native controller keeps its login card and controls inside the safe area.
+/// SwiftUI's presenting controller also gets the matching status text style.
 struct DirectDesktopSessionView: View {
     let mac: DirectMacRecordV1
     var inputOnly = false
@@ -16,7 +17,7 @@ struct DirectDesktopSessionView: View {
             (immersive ? Color.black : Color(uiColor: .systemBackground)).ignoresSafeArea()
             VNCRemoteDesktopView(mac: mac, inputOnly: inputOnly, connectionMacNames: connectionMacNames,
                                  showMacs: showMacs, chromeChanged: { immersive = $0 })
-                .ignoresSafeArea(.container, edges: immersive ? .top : [])
+                .ignoresSafeArea(.container, edges: .top)
         }
         .preferredColorScheme(immersive ? .dark : appearance.app.colorScheme)
     }
@@ -34,6 +35,7 @@ struct VNCRemoteDesktopView: UIViewControllerRepresentable {
         viewer.macName = mac.name
         viewer.connectionMacNames = connectionMacNames.isEmpty ? [mac.name] : connectionMacNames
         viewer.servicePort = mac.port
+        viewer.sshPort = mac.sshPort
         viewer.inputOnly = inputOnly
         viewer.chromeHandler = { value in
             // Native state can change while SwiftUI mounts this controller.
@@ -106,6 +108,10 @@ struct VNCRemoteDesktopView: UIViewControllerRepresentable {
         weak var viewer: CompanionVNCViewer?
         private var work: Task<Void, Never>?
         private var generation = UUID()
+        private var tunnel: DirectDesktopSSHTunnel?
+        private var retirement: Task<Void, Never>?
+        private var trustReply: CheckedContinuation<Bool, Never>?
+        private var trustController: UIViewController?
         private var login: DesktopCredentialStoreV1.Login?
         private var remember = false
         private var observers: [NSObjectProtocol] = []
@@ -197,21 +203,35 @@ struct VNCRemoteDesktopView: UIViewControllerRepresentable {
             login = remember ? .init(username: user, password: password) : nil
             self.remember = remember
             let previous = viewer?.session
+            previous?.stop()
+            let retiring = retirement
             viewer?.prepareConnection()
             work = Task { [weak self] in
                 guard let self, let viewer else { return }
                 do {
-                    // Previous Stop releases input and closes its native owner before reuse.
+                    // Retire native input and the preceding SSH owner before reuse.
+                    await retiring?.value
                     for _ in 0..<200 {
                         if previous?.running != true { break }
                         try await Task.sleep(for: .milliseconds(50))
                     }
                     try Task.checkCancellation()
                     guard generation == token, previous?.running != true else { throw CancellationError() }
-                    viewer.session.connectAddresses(mac.addresses, port: mac.port, username: user, password: password)
+                    let opened = try await DirectDesktopSSHTunnel.open(addresses: mac.addresses,
+                        sshPort: mac.sshPort, screenSharingPort: mac.port, username: user, password: password,
+                        validateHost: { [weak self] key in
+                            guard let self else { throw CancellationError() }
+                            try await self.verifyHost(key, generation: token)
+                        }, progress: { [weak self] message in
+                            guard let self, self.generation == token else { return }
+                            self.viewer?.showConnectionProgress(message)
+                        })
+                    guard generation == token, !Task.isCancelled else { await opened.close(); throw CancellationError() }
+                    tunnel = opened
+                    viewer.session.connectSocket(opened.takeSocket(), username: user, password: password)
                     work = nil
                 } catch {
-                    if generation == token { disconnect(); viewer.showConnectionFailure() }
+                    if generation == token { disconnect(); viewer.showConnectionFailureStage(DirectDesktopSSHTunnel.failureStage(error)) }
                 }
             }
         }
@@ -235,9 +255,53 @@ struct VNCRemoteDesktopView: UIViewControllerRepresentable {
             controller.modalPresentationStyle = .pageSheet
             viewer.present(controller, animated: true)
         }
+        private func verifyHost(_ key: String, generation token: UUID) async throws {
+            guard generation == token, !Task.isCancelled, DirectAppLockV1.shared.canAccess else { throw CancellationError() }
+            if let saved = try TerminalSecretStore.hostKey(mac.id) {
+                guard saved == key else { throw TerminalSecretStore.Failure.changedKey }
+            } else {
+                guard let fingerprint = TerminalSecretStore.fingerprint(key), let viewer,
+                      viewer.presentedViewController == nil else { throw TerminalSecretStore.Failure.rejectedKey }
+                let accepted = await withCheckedContinuation { reply in
+                    trustReply = reply
+                    let controller = UIHostingController(rootView: TerminalServerTrustView(macName: mac.name,
+                        fingerprint: fingerprint, answer: { [weak self] accepted in
+                            guard let self, self.generation == token else { return }
+                            self.answerTrust(accepted)
+                        }).directAppearance())
+                    controller.modalPresentationStyle = .pageSheet
+                    trustController = controller
+                    viewer.present(controller, animated: true)
+                }
+                guard generation == token, !Task.isCancelled, DirectAppLockV1.shared.canAccess else { throw CancellationError() }
+                guard accepted else { throw TerminalSecretStore.Failure.rejectedKey }
+                try TerminalSecretStore.write(Data(key.utf8), id: mac.id, kind: "host-key")
+            }
+            viewer?.showConnectionProgress("Signing in to Remote Login…")
+        }
+        func answerTrust(_ accepted: Bool) {
+            let reply = trustReply; trustReply = nil
+            let controller = trustController; trustController = nil
+            controller?.dismiss(animated: false)
+            reply?.resume(returning: accepted)
+        }
         func disconnect() {
-            generation = UUID(); work?.cancel(); work = nil
-            viewer?.session.stop(); login = nil; remember = false
+            generation = UUID(); work?.cancel(); work = nil; answerTrust(false)
+            let native = viewer?.session
+            native?.stop(); login = nil; remember = false
+            guard let retired = tunnel else { return }
+            tunnel = nil
+            let earlier = retirement
+            retirement = Task {
+                await earlier?.value
+                // Preserve the native owner's balanced key/button releases.
+                // Its Stop is bounded; force wake-up if it cannot finish.
+                for _ in 0..<200 {
+                    if native?.running != true { break }
+                    try? await Task.sleep(for: .milliseconds(50))
+                }
+                await retired.close()
+            }
         }
         func endSession() {
             activity.finish(); disconnect(); viewer?.stop(); stopObserving(); showMacs()
