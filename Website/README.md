@@ -29,8 +29,8 @@ are published. The app's native catalogs and signing configuration are independe
 
 Fonts use the system stack; artwork, styles and scripts are served from the site.
 The only browser storage is appearance preference. Product privacy disclosures
-cover local credentials, optional iCloud Keychain sync, unencrypted VNC desktop
-transport, separate SSH transport, Live Activities, Apple purchases and support.
+cover local credentials, optional iCloud Keychain sync, SSH encryption for desktop/input and Terminal
+transport, Live Activities, Apple purchases and support.
 
 The public site is hosted on Vercel at <https://mac.jenny.media/>, in the
 `mac-companion` project under `xcv58s-projects`. `vercel.json` serves the generated

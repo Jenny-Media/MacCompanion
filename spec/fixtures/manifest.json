@@ -801,7 +801,7 @@
       "path": "direct-screen-sharing-v1.json",
       "kind": "directScreenSharing.v1",
       "expect": "valid",
-      "canonicalSHA256": "bc996a4a6b391d2578254a7e932f13fe2fd0ed27d03d62105743440e9af35257"
+      "canonicalSHA256": "ec5ee2ef0de8806990162295b153edf3ee61bc9b3ea566d354150c3c235059ff"
     }
   ]
 }

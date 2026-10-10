@@ -156,7 +156,7 @@
     [self prepareConnection];
     __weak CompanionVNCViewer *weak = self;
     self.remoteKeyboard = [[CompanionVNCKeyboard alloc] initWithEvents:^(NSArray<NSDictionary *> *events) { [weak.session keyEvents:events]; }];
-    self.status = [UILabel new]; self.status.text = @"macOS Screen Sharing · local network";
+    self.status = [UILabel new]; self.status.text = @"macOS Screen Sharing · over SSH";
     self.status.font = [[UIFontMetrics metricsForTextStyle:UIFontTextStyleCaption1] scaledFontForFont:[UIFont systemFontOfSize:12]];
     self.status.adjustsFontForContentSizeCategory = YES;
     self.status.backgroundColor = UIColor.secondarySystemBackgroundColor; self.status.layer.cornerRadius = 8; self.status.clipsToBounds = YES;
@@ -486,7 +486,7 @@
     if (!self.session.running && !self.starting) [self start];
 }
 - (void)showLoginDetails {
-    NSString *message = @"Sign in with your Mac account. Saved logins are separate for each Mac and service.\n\nUse a trusted local network or your private VPN. Screen Sharing desktop and input traffic are not encrypted by this app.";
+    NSString *message = @"Sign in with your Mac account. Saved logins are separate for each Mac and service.\n\nEnable Remote Login and Screen Sharing on the Mac. Desktop and input travel over SSH after you verify the Mac’s server key.";
     if (self.loginIssueDetails.length) message = [NSString stringWithFormat:@"%@\n\n%@", self.loginIssueDetails, message];
     UIAlertController *details = [UIAlertController alertControllerWithTitle:@"Desktop Connection" message:message preferredStyle:UIAlertControllerStyleAlert];
     [details addAction:[UIAlertAction actionWithTitle:@"Done" style:UIAlertActionStyleCancel handler:nil]];
@@ -538,15 +538,20 @@
 - (void)editRecoveryLogin { [self clearRecovery]; self.login.hidden = NO; self.starting = NO; [self updateConnectionChrome]; [self.username becomeFirstResponder]; }
 - (void)showRecoveryStage:(NSInteger)stage {
     __weak CompanionVNCViewer *weak = self;
-    UIViewController *card = [DirectRecoveryBridgeV1 desktopWithStage:stage hadFrame:self.lastFramebuffer != nil port:self.servicePort ?: 5900 retry:^{ [weak start]; } edit:^{ [weak editRecoveryLogin]; }];
+    UIViewController *card = [DirectRecoveryBridgeV1 desktopWithStage:stage hadFrame:self.lastFramebuffer != nil port:((stage == 10 || stage == 11 || (stage >= 110 && stage <= 115)) ? self.sshPort ?: 22 : self.servicePort ?: 5900) retry:^{ [weak start]; } edit:^{ [weak editRecoveryLogin]; }];
     [self showRecoveryController:card overFrame:self.lastFramebuffer != nil];
-    self.loginIssueDetails = [DirectRecoveryBridgeV1 desktopDetailsWithStage:stage hadFrame:self.lastFramebuffer != nil port:self.servicePort ?: 5900];
+    self.loginIssueDetails = [DirectRecoveryBridgeV1 desktopDetailsWithStage:stage hadFrame:self.lastFramebuffer != nil port:((stage == 10 || stage == 11 || (stage >= 110 && stage <= 115)) ? self.sshPort ?: 22 : self.servicePort ?: 5900)];
 }
-- (void)showConnectionFailure {
+- (void)showConnectionProgress:(NSString *)message {
+    if (!self.starting || self.exited) return;
+    self.progressLabel.text = message; [self updateConnectionChrome];
+}
+- (void)showConnectionFailure { [self showConnectionFailureStage:0]; }
+- (void)showConnectionFailureStage:(NSInteger)stage {
     self.starting = NO; self.checkingResume = NO; self.resumeGeneration++;
     if (self.sessionPhaseHandler) self.sessionPhaseHandler(@"ended");
     [self clearCursor]; [self resetModifiers]; self.connect.enabled = YES;
-    [self showRecoveryStage:0];
+    [self showRecoveryStage:stage];
 }
 - (void)showInvalidLogin {
     [self clearRecovery]; self.starting = NO; self.connect.enabled = YES; self.login.hidden = NO;
@@ -1422,7 +1427,7 @@
             @{@"kind": @"gestures", @"title": @"Gesture Guide", @"symbol": @"hand.draw"}]}]];
 }
 - (void)showConnectionDetails {
-    NSString *message = [NSString stringWithFormat:@"%@\nBuilt-in macOS Screen Sharing\nDesktop: %.0f × %.0f\nIndividual displays: %lu", self.status.text ?: @"", self.framebufferSize.width, self.framebufferSize.height, (unsigned long)self.displayViews.count];
+    NSString *message = [NSString stringWithFormat:@"%@\nBuilt-in macOS Screen Sharing over SSH\nDesktop: %.0f × %.0f\nIndividual displays: %lu", self.status.text ?: @"", self.framebufferSize.width, self.framebufferSize.height, (unsigned long)self.displayViews.count];
     UIAlertController *details = [UIAlertController alertControllerWithTitle:@"Connection Details" message:message preferredStyle:UIAlertControllerStyleAlert];
     [details addAction:[UIAlertAction actionWithTitle:@"Done" style:UIAlertActionStyleCancel handler:nil]];
     [self presentViewController:details animated:YES completion:nil];

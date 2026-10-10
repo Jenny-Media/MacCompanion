@@ -8,8 +8,13 @@ failed paired connection. Permanent Release admission is still gated.
 
 ## Connection and authentication
 
-Connect to the user-selected saved Mac's ordered list of 1–8 endpoints, TCP port
-5900 by default, optionally 1–65535 in Advanced settings. Resolve
+Transport revision: 2026-10-09. Desktop and Trackpad & Keyboard MUST use SSH
+to the Mac's built-in Remote Login service, then built-in Screen Sharing through
+that encrypted connection. Both services must be enabled; no Mac helper is installed.
+There is no direct plaintext RFB fallback.
+
+Connect to the user-selected saved Mac's ordered list of 1–8 endpoints, SSH TCP
+port 22 by default, optionally 1–65535 in Advanced settings. Resolve
 once, validate each numeric sockaddr, then connect to that exact sockaddr; there
 is no second hostname lookup after validation. IPv4 permits RFC1918, loopback
 and link-local unicast, plus shared-address-space 100.64.0.0/10 for private VPN
@@ -24,7 +29,26 @@ Only explicitly saved addresses are eligible; no inferred alternate hosts are ad
 All waits are cancellable. Stop/background cancels a pending handshake; a new connection
 waits for the preceding native owner to finish, never overlaps it.
 
-The only production authentication scheme remains Apple ARD (30) using the
+Verify the SSH host key before sending a login. Reuse the saved Mac UUID's SSH
+host pin used by Terminal, but never its login or private keys. First use requires
+explicit approval of the server fingerprint before saving the pin in the
+non-synchronizing, WhenUnlockedThisDeviceOnly Keychain. A changed key, rejected
+trust, unavailable Keychain, authentication failure or denied forwarding fails
+closed without retrying another address or a plaintext connection.
+
+Authenticate SSH with the entered Desktop Mac account and password. Open one
+RFC 4254 `direct-tcpip` channel to **127.0.0.1** on the saved Screen Sharing port
+(5900 by default). The forwarding host is fixed; never forward to another host
+or create a local TCP listener. SSH authentication has a cancellable 60-second
+deadline including fingerprint approval; forwarding has a 10-second deadline.
+A socket pair transfers this channel to the existing native RFB owner. Read in
+16-KiB chunks, pause at a 64-KiB write watermark, and close both bridge ends if
+queued bytes exceed 256 KiB. EOF, cancellation and errors close owned descriptors
+and channels without replay. Retire the preceding native owner and tunnel before
+starting another. Native input releases finish before an established tunnel is
+closed; pending handshakes and fingerprint prompts are cancelled immediately.
+
+Inside the encrypted channel the only RFB authentication scheme remains Apple ARD (30) using the
 pinned upstream implementation. No no-auth or legacy VNC-password fallback is
 allowed. No application pairing/authentication/signature semantics are added.
 Login fields must be nonempty, contain no NUL, and fit the upstream 63-byte UTF-8
@@ -32,11 +56,11 @@ payload without truncation. Credentials are supplied only to this selected
 endpoint. No logs contain credentials, host addresses, names, typed content,
 framebuffer pixels or cursor shapes/positions.
 
-ARD's credential encryption does not encrypt the subsequent RFB pixel/input
-stream and does not pin the server identity. Direct setup discloses that this
-development connection is for a trusted local network; encrypted transport is
-a release gate. The viewer must never inherit the paired tunnel's encryption
-claims. Pinned upstream `HandleARDAuth` encrypts the login structure only.
+Pinned upstream `HandleARDAuth` encrypts the login structure only. SSH provides
+server identity verification and encryption of the complete RFB pixel/input
+stream. Describe this SSH transport accurately, without inheriting application
+pairing or grant claims from the historical paired protocol. Deployment and
+physical-device acceptance remain separate release gates.
 
 ## Saved Macs and credentials
 

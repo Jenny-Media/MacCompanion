@@ -1,3 +1,30 @@
+## 2026-10-09 — Screen Sharing over SSH integrated and tested in Simulator
+
+Following the successful isolated Mac handshake probe, the user approved
+production integration and Simulator verification. Desktop and Trackpad &
+Keyboard now use verified SSH to built-in Remote Login, forwarding only to the
+Mac's loopback Screen Sharing port. First-use trust and changed-key rejection
+reuse the existing Terminal server-key record; saved logins remain separate.
+The transport is bounded, retires input before cleanup and has no plaintext
+fallback or Mac helper. Specification and authoritative fixture changes
+preceded production implementation. Setup, progress, recovery and local website
+copy explain the new requirements.
+
+Stable Xcode **27.0 (27A266a)** builds and launches the normal-source app on the
+iPhone 18 Pro Max Simulator. All **583** recorded application inputs match the
+checkout. The full Simulator suite passes **182** active tests, skips 13 optional
+captures and has zero failures; a final focused run passes all **8** new SSH
+tests. Synthetic screenshots of trust verification and both connected modes
+were inspected. Required `bash scripts/validate.sh`, website checks and
+`git diff --check` pass. Details and boundaries are recorded in
+[the integration evidence](evidence/2026-10-09-screen-sharing-over-ssh.md).
+
+This candidate is uncommitted. No physical iPhone installation, website
+deployment or App Store upload occurred during this integration. Physical
+acceptance and a new signed review build are next; selected build 25 predates
+SSH transport. Corresponding-source packaging and Apple distribution terms
+review remain release gates, and `releaseAdmitted` stays false.
+
 ## 2026-10-08 — Simplified My Macs rows
 
 The user reported that build 23's top-aligned, smaller symbols looked worse and

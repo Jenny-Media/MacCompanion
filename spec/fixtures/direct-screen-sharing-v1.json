@@ -2439,5 +2439,53 @@
     "authenticationFieldsForLoginFailure": true,
     "issueDetailsRequiresAdditionalDetails": true,
     "issueDetailsSnapshot": "onTap"
+  },
+  "sshTransportPolicy": {
+    "sshPort": 22,
+    "forwardHost": "127.0.0.1",
+    "screenSharingPort": 5900,
+    "handshakeSeconds": 60,
+    "forwardingSeconds": 10,
+    "readChunkBytes": 16384,
+    "writeLowBytes": 16384,
+    "writeHighBytes": 65536,
+    "queueLimitBytes": 262144,
+    "plaintextFallback": false,
+    "sharesHostPinWithTerminal": true,
+    "sharesLoginWithTerminal": false
+  },
+  "sshTransportCases": [
+    {
+      "name": "trusted-key",
+      "identity": "same",
+      "approved": false,
+      "authenticate": true
+    },
+    {
+      "name": "first-use-approved",
+      "identity": "new",
+      "approved": true,
+      "authenticate": true
+    },
+    {
+      "name": "first-use-rejected",
+      "identity": "new",
+      "approved": false,
+      "authenticate": false
+    },
+    {
+      "name": "changed-key",
+      "identity": "changed",
+      "approved": true,
+      "authenticate": false
+    }
+  ],
+  "sshRecoveryStages": {
+    "110": "SSH connection failed",
+    "111": "SSH login rejected",
+    "112": "SSH server identity changed",
+    "113": "SSH trust cancelled",
+    "114": "Screen Sharing forwarding unavailable",
+    "115": "SSH trust storage unavailable"
   }
 }

@@ -3,6 +3,7 @@
 NS_ASSUME_NONNULL_BEGIN
 @interface CompanionVNCViewer : UIViewController
 @property(nonatomic) NSInteger servicePort;
+@property(nonatomic) NSInteger sshPort;
 @property(nonatomic) BOOL fullscreen;
 @property(nonatomic) BOOL inputOnly;
 @property(nonatomic, copy) void (^presentationHandler)(BOOL fullscreen);
@@ -38,6 +39,8 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)stopViewer;
 - (void)prepareConnection;
 - (void)showConnectionFailure;
+- (void)showConnectionFailureStage:(NSInteger)stage;
+- (void)showConnectionProgress:(NSString *)message;
 - (void)showRecoveryStage:(NSInteger)stage;
 - (void)showInvalidLogin;
 - (void)showLoginRetentionFailure;

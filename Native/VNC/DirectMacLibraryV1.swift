@@ -257,7 +257,7 @@ struct DirectMacLibraryRootV1: View {
                         VStack(spacing: 16) {
                             Image(systemName: "desktopcomputer").font(.system(size: 48)).foregroundStyle(.blue)
                             Text("Your Macs, within reach").font(.title3.bold())
-                            Text("Enable Screen Sharing or Remote Login on your Mac, then add its local or Tailscale address.")
+                            Text("Enable Remote Login on your Mac, and Screen Sharing for Desktop or Trackpad & Keyboard. Then add its local or Tailscale address.")
                                 .foregroundStyle(.secondary).multilineTextAlignment(.center)
                             Button("Add your first Mac", systemImage: "plus") { edit(nil) }
                                 .buttonStyle(.borderedProminent).disabled(!library.readable)
@@ -304,7 +304,7 @@ struct DirectMacLibraryRootV1: View {
                     Button("App Settings", systemImage: "gearshape") { settings = true }
                     Button("Set Up Your Mac", systemImage: "questionmark.circle") { setup = true }
                 } footer: {
-                    Text("Use a trusted local network or private VPN. Desktop and input traffic are not encrypted by this development app.")
+                    Text("All connections use SSH. Use a trusted local network or private VPN, and verify the Mac’s server key when connecting for the first time.")
                 }
             }
             .navigationTitle("My Macs")
@@ -390,7 +390,7 @@ struct DirectMacEditorV1: View {
         case desktop, terminal, serverKey
         var id: String { rawValue }
         var title: String { switch self { case .desktop: "Forget Desktop Login"; case .terminal: "Forget Terminal Login"; case .serverKey: "Forget SSH Server Key" } }
-        var detail: String { self == .serverKey ? "You will need to verify the server fingerprint the next time you use Terminal." : "You will need to enter this Mac’s login the next time you connect. The other login is kept." }
+        var detail: String { self == .serverKey ? "You will need to verify the server fingerprint the next time you connect in any mode." : "You will need to enter this Mac’s login the next time you connect. The other login is kept." }
     }
     @State private var addresses: [Draft]
     @State private var port: String
@@ -534,7 +534,7 @@ struct DirectMacEditorV1: View {
                         Text("Leave blank to use Screen Sharing port 5900.").font(.footnote).foregroundStyle(.secondary)
                         TextField("22 (default)", text: $sshPort).keyboardType(.numberPad).accessibilityLabel("SSH Port")
                         if resolvedSSHPort == nil { Text("Use an SSH port from 1 to 65535, or leave it blank for 22.").font(.footnote).foregroundStyle(.secondary) }
-                        Text("Leave SSH Port blank to use 22. Terminal requires Remote Login on your Mac.").font(.footnote).foregroundStyle(.secondary)
+                        Text("Leave SSH Port blank to use 22. All modes require Remote Login on your Mac.").font(.footnote).foregroundStyle(.secondary)
                     }
                 }
                 if let mac {
@@ -732,8 +732,8 @@ private struct DirectMacSetupV1: View {
     var body: some View {
         NavigationStack {
             List {
-                Section("1. Enable Screen Sharing or Remote Login") {
-                    Text("On your Mac, open System Settings → General → Sharing. Turn on Screen Sharing for Desktop, or Remote Login for Terminal, and allow your Mac account.")
+                Section("1. Enable sharing services") {
+                    Text("On your Mac, open System Settings → General → Sharing. Turn on Remote Login for all modes. For Desktop and Trackpad & Keyboard, also turn on Screen Sharing. Allow your Mac account in both services.")
                 }
                 Section("2. Add the Mac") {
                     Text("Use the local address shown in Screen Sharing settings, or a Tailscale address with Tailscale connected on both devices.")
