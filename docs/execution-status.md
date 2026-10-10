@@ -22,7 +22,7 @@ Local development **1.0 (27)** was installed and launched on the iPhone 18 Pro M
 with the backdrop fix before the subsequent copy update. Physical acceptance
 of the latest copy remains separate.
 
-### Internal TestFlight 1.0 (28) upload
+### Internal TestFlight 1.0 (28) available
 
 The user authorized committing, pushing and publishing a new internal beta.
 Source commit `418e7b5bea915dc918a5a5268bb87f7eba18f0b8` is pushed to the existing
@@ -35,16 +35,23 @@ SHA-256 is `727546db308cc36f89f4f362cd4a42641472cc1c4cec4fd3d6629b8fbafc848b`.
 Xcode's **Internal Only** export/upload succeeds on October 10 at **01:49 AM
 America/New_York**, and reports that Apple has begun processing the package.
 The existing missing OpenSSL framework dSYM warning is non-blocking; app and
-widget symbols are included. Independent App Store Connect processing status,
-build-specific notes and tester assignment still require verification: a Chrome
-extension popup blocked the browser. Updated SSH setup metadata is entered but
-its save is not yet confirmed. The user has been asked to dismiss the popup.
+widget symbols are included. App Store Connect now confirms processing is
+complete for build ID `ddef6218-0e23-4248-8516-4bff4b283533`. The standard-encryption
+declaration is saved with distribution in France excluded, following the user's
+previous confirmation. Build-specific test notes and updated SSH setup metadata
+are saved and read back; feedback and review contact remain
+`mac-companion@jenny.media`, with privacy URL `https://mac.jenny.media/privacy/`.
+
+The existing **Internal Testing** group has one tester. App Store Connect shows
+build 28 **Testing**, one invite and expiry in 90 days. It is available for
+installation through TestFlight. Physical installation and acceptance of this
+build remain separate.
 
 Archive, source report, upload log, test notes and delivery receipt remain outside
 Git under `/private/tmp/maccompanion-connection-ui-testflight-20261010-*` and the
 local `app-store-review-20261008/ios-connection-ui-testflight-20261010/` artifact
-directory. This upload is not yet proof of tester availability or physical
-acceptance. No external beta or App Review submission occurred;
+directory, including `testflight-build-28-testing.png` as live availability
+evidence. No external beta or App Review submission occurred;
 `releaseAdmitted` stays false.
 
 ## 2026-10-10 — SSH transport iOS internal TestFlight 1.0 (26)
