@@ -19,9 +19,19 @@ Do not claim a failed TCP connection proves Remote Login is disabled.
 The Files owner retains one Mac-record snapshot. Its title, sign-in, upload
 review and reconnect MUST use that same record. Reopen Files to adopt edits to
 the saved Mac; do not relabel an existing connection with a different endpoint.
+Removing a saved Mac, including through sync, MUST NOT close an already open
+Files window or discard its pending results. A new Files window for a missing
+record shows Mac unavailable; existing owners keep their original snapshot.
 Opening or dismissing help or purchase sheets MUST NOT reload a saved password,
 replace an edited account, or change the user's saved-login choice. Explicit key
 selection may refresh the selected key/account without reloading the password.
+A disk-key passphrase is bound to that file reference. Clear it when the selected
+reference changes or is removed; keep the same-reference login draft intact.
+This includes changes made in another window. Retire any unfinished key-file
+preparation when its selection changes; it MUST NOT authenticate with the old key.
+Changes received while connecting or connected MUST be reconciled when sign-in
+becomes available again. A stale selection detected during Connect MUST refresh
+the selection or present recovery guidance rather than silently doing nothing.
 
 The SSH handshake including trust approval is bounded to 60 seconds. SFTP v3
 subsystem admission and each idle operation are bounded to 30 seconds. Cancelling,
@@ -36,6 +46,16 @@ deadline for the first directory request. After every metadata await, including
 missing paths, validate the owner and operation before accessing transfer state.
 Conflict prompts suspend that deadline. Responses from a retired connection
 cannot reset a replacement connection's deadline.
+SFTP subsystem-channel closure MUST retire the owned Files connection even if
+the SSH transport remains open. Preserve pending results and require explicit
+reconnect; do not leave a closed subsystem presented as Ready.
+SFTP packets are limited to 1 MiB. Each file-attribute block accepts at most 128
+extended metadata pairs, with at least eight encoded bytes available per declared
+pair before decoding. Reject malformed or excessive counts. Accumulate metadata
+in linear time instead of repeatedly copying the previously decoded pairs.
+Encoding valid paths MUST grow the buffer before writing each SSH-string length
+and payload, including when a length prefix crosses the current buffer capacity.
+The existing SFTP v3 and OpenSSH replacement wire bytes remain unchanged.
 
 ## Browser and transfers
 
@@ -57,12 +77,21 @@ provides user-selected local files; copy regular files into protected temporary
 storage off the main thread, balancing security-scoped access. Review the files,
 Mac, account and remote folder before upload. Limit a batch to 32 files and stream
 one file at a time in 32-KiB chunks with bounded memory.
+The Files owner explicitly owns at most one prepared upload batch. Roll back all
+copies if any item fails staging. Release unadopted copies when review is cancelled,
+superseded or invalidated, or the connection is retired. Transfer results take
+ownership of adopted copies and keep them for explicit retry until discarded or
+the owner closes. Cleanup MUST preserve picker originals and other result files.
 
 Upload into a random, exclusively created, mode-0600 temporary file in the target
 directory. A successful CLOSE and final RENAME are required before reporting
 success. Never truncate an existing destination to begin an upload. Collisions
 require Keep Both, Replace or Cancel. Keep Both and new files use non-replacing
-SFTP v3 rename. Replace uses only the advertised OpenSSH
+SFTP v3 rename. Keep Both reserves space for its numbered suffix within the
+255-byte filename limit, shortening the original stem at a UTF-8 scalar boundary
+without normalizing it. Preserve the extension when it leaves room for the stem;
+otherwise shorten the whole original name before adding the suffix.
+Replace uses only the advertised OpenSSH
 `posix-rename@openssh.com` extension; unsupported replacement fails safely.
 Never remove the destination as a fallback. Cleanup may remove only the temporary
 file owned by that upload, and failure to clean up must not imply successful

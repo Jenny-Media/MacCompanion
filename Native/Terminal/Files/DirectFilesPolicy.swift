@@ -56,9 +56,24 @@ enum DirectFilesPolicy {
     }
     static func parent(_ path: String) -> String { (path as NSString).deletingLastPathComponent.isEmpty ? "/" : (path as NSString).deletingLastPathComponent }
     static func duplicateName(_ name: String, number: Int) -> String {
-        let url = URL(fileURLWithPath: name), ext = url.pathExtension
-        let stem = ext.isEmpty ? name : url.deletingPathExtension().lastPathComponent
-        return stem + " (\(number))" + (ext.isEmpty ? "" : "." + ext)
+        let suffix = " (\(number))"
+        var stem = name, ending = ""
+        // Remote filenames must not inherit local URL normalization rules.
+        if let dot = name.lastIndex(of: "."), dot != name.startIndex, name.index(after: dot) != name.endIndex {
+            stem = String(name[..<dot]); ending = String(name[dot...])
+        }
+        let minimumStemBytes = stem.unicodeScalars.first.map { String($0).utf8.count } ?? 1
+        if suffix.utf8.count + ending.utf8.count + minimumStemBytes > 255 {
+            stem = name; ending = ""
+        }
+        let budget = 255 - suffix.utf8.count - ending.utf8.count
+        var prefix = "", used = 0
+        for scalar in stem.unicodeScalars {
+            let bytes = String(scalar).utf8.count
+            guard used + bytes <= budget else { break }
+            prefix.unicodeScalars.append(scalar); used += bytes
+        }
+        return prefix + suffix + ending
     }
 }
 #endif

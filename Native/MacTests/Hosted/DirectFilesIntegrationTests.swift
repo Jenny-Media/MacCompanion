@@ -61,6 +61,14 @@ private final class FilesTestSFTPProcess: ChannelDuplexHandler, @unchecked Senda
 
 @MainActor @Observable private final class FilesTestAccess { var allowed = true }
 
+private struct FilesTestWindowRoot: View {
+    let library: DirectMacLibraryV1
+    let owner: DirectFilesSession
+    var body: some View {
+        MacFilesWindow(mac: library.macs.first { $0.id == owner.mac.id }, makeSession: { _ in owner })
+    }
+}
+
 @MainActor final class DirectFilesIntegrationTests: XCTestCase {
     private func wait(_ predicate: () -> Bool, seconds: Double = 10) async throws {
         let deadline = Date().addingTimeInterval(seconds)
@@ -82,7 +90,10 @@ private final class FilesTestSFTPProcess: ChannelDuplexHandler, @unchecked Senda
         return try await ServerBootstrap(group: MultiThreadedEventLoopGroup.singleton).childChannelInitializer { channel in
             record.openedTransport(channel)
             return channel.pipeline.addHandler(NIOSSHHandler(role: .server(.init(hostKeys: [hostKey], userAuthDelegate: SSHTestAuth(record, usernames: ["synthetic", "synthetic-second"]))), allocator: channel.allocator,
-                inboundChildChannelInitializer: { child, _ in child.pipeline.addHandler(FilesTestSFTPProcess(root: root, allowSFTP: allowSFTP, responseDelay: responseDelay)) }))
+                inboundChildChannelInitializer: { child, _ in
+                    record.opened(child)
+                    return child.pipeline.addHandler(FilesTestSFTPProcess(root: root, allowSFTP: allowSFTP, responseDelay: responseDelay))
+                }))
         }.bind(host: "127.0.0.1", port: 0).get()
     }
     func testMacOSSFTPBrowseFolderUploadKeepBothReplaceDownloadAndIsolation() async throws {
@@ -135,6 +146,150 @@ private final class FilesTestSFTPProcess: ChannelDuplexHandler, @unchecked Senda
         let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds)); host.cacheDisplay(in: host.bounds, to: bitmap)
         let image = NSImage(size: host.bounds.size); image.addRepresentation(bitmap)
         let attachment = XCTAttachment(image: image); attachment.name = name; attachment.lifetime = .keepAlways; add(attachment)
+    }
+    func testPreparedUploadOwnershipRollsBackCancelsSupersedesAndPreservesAdoptedResults() async throws {
+        let remote = try DirectFilesLocalStore.root(), local = try DirectFilesLocalStore.root()
+        defer { try? FileManager.default.removeItem(at: remote); try? FileManager.default.removeItem(at: local) }
+        let server = try await self.server(root: remote, record: SSHTestRecord())
+        defer { Task { try? await server.close() } }
+        let mac = DirectMacRecordV1(id: UUID(), name: "Synthetic Preparation", addresses: ["127.0.0.1"], sshPort: try XCTUnwrap(server.localAddress?.port))
+        let session = DirectFilesSession(mac: mac)
+        defer { session.close(); try? TerminalSecretStore.remove(mac.id) }
+        try await open(session)
+        let source = try DirectFilesLocalStore.emptyFile(in: local, name: "prepared.txt")
+        let bytes = Data(repeating: 29, count: 100_000); try bytes.write(to: source)
+        let first = try await session.prepare([source])
+        let ownerRoot = try XCTUnwrap(first.first).deletingLastPathComponent().deletingLastPathComponent()
+        XCTAssertEqual(session.preparedUploads, first)
+        session.discardPreparedUploads() // The upload-review Cancel action.
+        XCTAssertFalse(FileManager.default.fileExists(atPath: first[0].path))
+        do { _ = try await session.prepare([source, source.deletingLastPathComponent()]); XCTFail("A rejected second item must roll back the first") } catch {}
+        XCTAssertTrue(session.preparedUploads.isEmpty)
+        XCTAssertTrue(try FileManager.default.contentsOfDirectory(atPath: ownerRoot.path).isEmpty)
+        let replaced = try await session.prepare([source]), current = try await session.prepare([source])
+        XCTAssertFalse(FileManager.default.fileExists(atPath: replaced[0].path))
+        session.discardPreparedUploads(replaced) // A stale UI completion cannot discard the newer batch.
+        XCTAssertEqual(session.preparedUploads, current)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: current[0].path))
+        session.disconnect()
+        XCTAssertTrue(session.preparedUploads.isEmpty)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: current[0].path))
+        try await open(session)
+        let pending = Task { try await session.prepare([source]) }
+        await Task.yield(); session.disconnect()
+        _ = await pending.result
+        XCTAssertTrue(session.preparedUploads.isEmpty)
+        XCTAssertTrue(try FileManager.default.contentsOfDirectory(atPath: ownerRoot.path).isEmpty, "Retired preparations cannot leave copies after completion")
+        try await open(session)
+        let adopted = try await session.prepare([source])
+        session.upload(adopted, to: session.home); try await wait { !session.busy }
+        XCTAssertEqual(session.results.first?.outcome, .completed)
+        XCTAssertTrue(session.preparedUploads.isEmpty)
+        session.discardPreparedUploads(); session.disconnect()
+        XCTAssertTrue(FileManager.default.fileExists(atPath: adopted[0].path), "Transfer results retain adopted sources")
+        XCTAssertEqual(try Data(contentsOf: source), bytes, "Picker originals are never removed")
+        session.close()
+        XCTAssertFalse(FileManager.default.fileExists(atPath: adopted[0].path))
+        XCTAssertEqual(try Data(contentsOf: source), bytes)
+    }
+    func testKeepBothWithFullLengthFilenamePreservesOriginalAndPublishesDuplicate() async throws {
+        let root = try DirectFilesLocalStore.root(), local = try DirectFilesLocalStore.root()
+        defer { try? FileManager.default.removeItem(at: root); try? FileManager.default.removeItem(at: local) }
+        let name = String(repeating: "a", count: 251) + ".txt", original = Data([9]), changed = Data([1, 2, 3])
+        try original.write(to: root.appendingPathComponent(name))
+        let source = local.appendingPathComponent(name); try changed.write(to: source)
+        let server = try await self.server(root: root, record: SSHTestRecord()); defer { Task { try? await server.close() } }
+        let mac = DirectMacRecordV1(id: UUID(), name: "Synthetic Long Name", addresses: ["127.0.0.1"], sshPort: try XCTUnwrap(server.localAddress?.port))
+        let session = DirectFilesSession(mac: mac); defer { session.close(); try? TerminalSecretStore.remove(mac.id) }
+        try await open(session)
+        session.upload([source], to: session.home)
+        try await wait { session.conflict != nil }; session.answerConflict(.keepBoth); try await wait { !session.busy }
+        let duplicate = String(repeating: "a", count: 247) + " (2).txt"
+        XCTAssertEqual(session.results.first?.outcome, .completed, session.results.first?.message ?? "")
+        XCTAssertEqual(session.results.first?.destinationName, duplicate)
+        XCTAssertEqual(try Data(contentsOf: root.appendingPathComponent(name)), original)
+        XCTAssertEqual(try Data(contentsOf: root.appendingPathComponent(duplicate)), changed)
+    }
+    func testEmptyReplacementUploadAtEncoderCapacityBoundary() async throws {
+        let root = try DirectFilesLocalStore.root(), local = try DirectFilesLocalStore.root()
+        defer { try? FileManager.default.removeItem(at: root); try? FileManager.default.removeItem(at: local) }
+        let server = try await self.server(root: root, record: SSHTestRecord()); defer { Task { try? await server.close() } }
+        let mac = DirectMacRecordV1(id: UUID(), name: "Synthetic Boundary", addresses: ["127.0.0.1"], sshPort: try XCTUnwrap(server.localAddress?.port))
+        let session = DirectFilesSession(mac: mac); defer { session.close(); try? TerminalSecretStore.forgetHostKey(mac.id) }
+        try await open(session)
+        let temporaryName = ".maccompanion-upload-" + UUID().uuidString + ".part"
+        let oldPathBytes = 256 - (4 + 1 + 4 + 4 + "posix-rename@openssh.com".utf8.count + 4)
+        let folderBytes = oldPathBytes - 1 - temporaryName.utf8.count
+        let padding = folderBytes - session.home.utf8.count - 1
+        XCTAssertGreaterThan(padding, 0)
+        guard padding > 0 else { throw DirectFilesFailure.invalidPath }
+        session.createFolder(String(repeating: "a", count: padding)); try await wait { !session.busy }
+        let folder = try DirectFilesPolicy.child(String(repeating: "a", count: padding), of: session.home)
+        XCTAssertEqual(folder.utf8.count, folderBytes)
+        let destination = URL(fileURLWithPath: folder).appendingPathComponent("empty.txt")
+        try Data([9]).write(to: destination)
+        session.browse(folder); try await wait { !session.busy }
+        let source = try DirectFilesLocalStore.emptyFile(in: local, name: "empty.txt")
+        session.upload([source], to: folder); try await wait { session.conflict != nil }
+        session.answerConflict(.replace); try await wait { !session.busy }
+        XCTAssertEqual(session.results.first?.outcome, .completed, session.results.first?.message ?? "")
+        XCTAssertEqual(try Data(contentsOf: destination), Data())
+        XCTAssertFalse(try FileManager.default.contentsOfDirectory(atPath: folder).contains { $0.hasPrefix(".maccompanion-upload-") })
+    }
+    func testMountedFilesOwnerRetainsDownloadAfterLocalAndSyncedRecordRemoval() async throws {
+        for synced in [false, true] {
+            let root = try DirectFilesLocalStore.root(); defer { try? FileManager.default.removeItem(at: root) }
+            let bytes = Data([1, 2, 3]); try bytes.write(to: root.appendingPathComponent("pending.txt"))
+            let server = try await self.server(root: root, record: SSHTestRecord()); defer { Task { try? await server.close() } }
+            let mac = DirectMacRecordV1(id: UUID(), name: "Synthetic Removed Mac", addresses: ["127.0.0.1"], sshPort: try XCTUnwrap(server.localAddress?.port))
+            let library = DirectMacLibraryV1(url: root.appendingPathComponent("library.json"), removeLogin: { _ in })
+            XCTAssertTrue(library.save(id: mac.id, name: mac.name, addresses: mac.addresses, sshPort: mac.sshPort))
+            let owner = DirectFilesSession(mac: mac); defer { owner.close(); try? TerminalSecretStore.remove(mac.id) }
+            try await open(owner)
+            owner.download(try XCTUnwrap(owner.directory?.entries.first { $0.name == "pending.txt" })); try await wait { !owner.busy }
+            let download = try XCTUnwrap(owner.results.first?.localDownload)
+            let host = NSHostingView(rootView: FilesTestWindowRoot(library: library, owner: owner))
+            let window = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 720, height: 640), styleMask: [.titled], backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false; window.contentView = host; window.orderFront(nil)
+            defer { window.contentView = nil; window.close() }
+            try await Task.sleep(for: .milliseconds(250)); host.layoutSubtreeIfNeeded()
+            if synced { try library.applyCloud([]) } else { library.remove(mac) }
+            XCTAssertTrue(library.macs.isEmpty)
+            try await Task.sleep(for: .milliseconds(250)); host.layoutSubtreeIfNeeded()
+            XCTAssertEqual(owner.phase, .ready)
+            XCTAssertTrue(owner.hasPendingResults)
+            XCTAssertEqual(owner.mac.name, mac.name)
+            XCTAssertEqual(try Data(contentsOf: download), bytes)
+            // Only an explicit confirmed close releases this owner's result.
+            XCTAssertTrue(owner.confirmExit(.close, retainWhenDismissed: false))
+            XCTAssertFalse(FileManager.default.fileExists(atPath: download.path))
+        }
+        var admissions = 0
+        _ = MacFilesWindow(mac: nil, makeSession: { record in admissions += 1; return DirectFilesSession(mac: record) })
+        XCTAssertEqual(admissions, 0, "A missing-at-open record must not create an owner")
+    }
+    func testSFTPSubsystemClosureRequiresReconnectAndPreservesPendingDownload() async throws {
+        let root = try DirectFilesLocalStore.root(); defer { try? FileManager.default.removeItem(at: root) }
+        let bytes = Data([3, 2, 1]); try bytes.write(to: root.appendingPathComponent("pending.txt"))
+        let record = SSHTestRecord(), server = try await self.server(root: root, record: record)
+        defer { Task { try? await server.close() } }
+        let mac = DirectMacRecordV1(id: UUID(), name: "Synthetic SFTP Closure", addresses: ["127.0.0.1"], sshPort: try XCTUnwrap(server.localAddress?.port))
+        let session = DirectFilesSession(mac: mac); defer { session.close(); try? TerminalSecretStore.remove(mac.id) }
+        try await open(session)
+        session.download(try XCTUnwrap(session.directory?.entries.first { $0.name == "pending.txt" })); try await wait { !session.busy }
+        let download = try XCTUnwrap(session.results.first?.localDownload)
+        XCTAssertTrue(record.transportIsActive)
+        // Closes only the SSH child subsystem, never its parent transport.
+        try await record.finish(status: nil)
+        try await wait { session.phase == .interrupted }
+        XCTAssertFalse(session.busy); XCTAssertTrue(session.hasPendingResults)
+        XCTAssertEqual(try Data(contentsOf: download), bytes)
+        XCTAssertTrue(session.message?.contains("Reconnect") == true)
+        XCTAssertEqual(record.passwordRequests, 1, "No automatic reconnect")
+        try await open(session)
+        XCTAssertEqual(record.passwordRequests, 2)
+        XCTAssertTrue(session.hasPendingResults)
+        XCTAssertEqual(try Data(contentsOf: download), bytes)
     }
     func testInterruptionRequiresExplicitReconnectAndRetryWithNoAutomaticReplay() async throws {
         let root = try DirectFilesLocalStore.root(), local = try DirectFilesLocalStore.root()

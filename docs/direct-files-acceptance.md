@@ -15,6 +15,13 @@ not introduce a connection mode or require a Mac Companion helper.
   and on macOS a key referenced directly from disk, including a passphrase.
   Turn Save SSH Login off after saving a password. The old login must be removed
   while the Mac's SSH host trust and keys remain available.
+  On Mac, type a disk-key passphrase, then select a different key or remove the
+  selection before Connect. The previous passphrase must clear. Reopening the
+  chooser with the same key must preserve it and any edited password draft.
+  Repeat selection/removal from another Mac window with Files already open,
+  including during key preparation, connection and an already connected session.
+  After cancellation/failure or Disconnect, the current selection must appear without
+  restoring an old password or saved-login choice; the old key must not connect.
 - Check first-use SSH fingerprint approval, rejection, and a changed fingerprint.
   Authentication rejection must not send credentials to a fallback address.
 - Browse Home, nested folders and Up. Create a folder and refresh. Check denied
@@ -25,10 +32,16 @@ not introduce a connection mode or require a Mac Companion helper.
   check the file chooser and drag and drop. A folder or symbolic link must be
   rejected. Review the Mac, account, folder and filenames before uploading.
 - Change the upload destination after selecting files. The selected files should
-  remain ready for review; cancel must not upload anything.
+  remain ready for review; cancel must not upload anything and must remove only
+  its prepared local copies. Select a regular file followed by a folder or link:
+  rejection must release the earlier copy and preserve the original. Replace a
+  selection or disconnect while preparing/reviewing; abandoned copies must be
+  released, while sources already adopted by transfer results remain for retry.
 - Test new files, Keep Both, Replace and Cancel, including an empty file, a Unicode
-  filename and a large file. Confirm the original survives a failed replacement.
+  filename, a 255-byte filename and a large file. Confirm the original survives a failed replacement.
   Links and directories must not offer replacement.
+  Also replace an existing file with an empty file in a long nested folder.
+  Encoding valid paths must not crash, regardless of the transfer's byte count.
 - Download a file and save it through the native chooser, including iCloud Drive.
   Cancel Save and confirm the download remains available. On Mac test replacing
   a local file and saving the same download again.
@@ -50,6 +63,11 @@ not introduce a connection mode or require a Mac Companion helper.
 - Leave Files open while editing the saved Mac's name, addresses or SSH port in
   another window. Its title, review and reconnect must keep the owner's original
   record. A newly opened Files owner must use the edited record.
+  Remove the record locally or through sync with an unsaved Files download.
+  The existing window must keep its original identity and Save/Discard results;
+  opening a new Files window for the missing record must show Mac unavailable.
+- Stop only the SFTP subsystem while SSH remains connected. Files must show
+  disconnected, retain pending downloads/retries and require explicit reconnect.
 - Reconnect as a different account. Previous interrupted files must not retry
   under the new account; discard the old batch before a fresh reviewed upload.
 - Keep a Desktop and Terminal connected during file transfers. Closing Files
@@ -66,18 +84,28 @@ Rename, delete and entire-folder transfers are deferred.
 close-before-publish ordering, failure cleanup, original preservation, truncated
 and special-file downloads, fresh path/handle admission, and native staging
 admission, standalone/retained dismissal, and owner-record presentation. The
-fixture is indexed only in `spec/fixtures/manifest.json`.
+fixture is indexed only in `spec/fixtures/manifest.json`. Indexed Keep Both cases
+cover exact UTF-8 spellings and suffix allocation, including full-length names,
+emoji and composed/decomposed Unicode. Embedded-channel decoder cases cover
+the extended metadata count bound and malformed counts below the packet-size cap.
+Encoder vectors cover string-length prefixes at buffer-capacity boundaries and
+the retained OPEN/CLOSE/replacement sequence of an empty upload.
 
 `DirectFilesIntegrationTests` uses a disposable loopback SSH test transport with
 macOS's `/usr/libexec/sftp-server`. It exercises browsing, folder creation,
 uploads, conflicts, atomic replacement, downloads, independent owners, interruption,
-account-bound retry, pending-download preservation and discard, distinct
-Disconnect/Done behavior, confirmed pending-result cleanup, saved-password
+account-bound retry, pending-download preservation and discard,
+local/synced record removal in a mounted window, full-length Keep Both collisions,
+independent SFTP subsystem closure and explicit reconnect,
+empty replacement in a boundary-length folder, distinct Disconnect/Done
+behavior, confirmed pending-result cleanup, saved-password
 removal, admission and missing-destination response activity, progressing and
 stalled responses, stale-link rejection, app-lock/background retirement, host-pin
 rejection and separate authentication/SFTP failure guidance. This transport exists
 only in the hosted test target; neither release client includes a server or subprocess.
 
 `DirectFilesPresentationTests` captures normal and accessibility layouts on both
-platforms. Native window automation and physical file-provider acceptance are
+platforms and mounts Mac login fields to exercise external disk-key selection,
+removal and unchanged-reference notifications while preserving edited drafts.
+Native window automation and physical file-provider acceptance are
 separate from hosted rendering and protocol tests.

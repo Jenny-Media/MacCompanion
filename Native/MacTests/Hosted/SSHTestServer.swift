@@ -16,6 +16,7 @@ final class SSHTestRecord: @unchecked Sendable {
     private var transport: Channel?
     func openedTransport(_ channel: Channel) { lock.lock(); transport = channel; lock.unlock() }
     private func activeTransport() -> Channel? { lock.lock(); defer { lock.unlock() }; return transport }
+    var transportIsActive: Bool { activeTransport()?.isActive ?? false }
     func finish(status: Int?, signal: String? = nil, transportFailed: Bool = false) async throws {
         guard let channel = activeShell() else { throw POSIXError(.ENOTCONN) }
         if let status { try await channel.triggerUserOutboundEvent(SSHChannelRequestEvent.ExitStatus(exitStatus: status)).get() }

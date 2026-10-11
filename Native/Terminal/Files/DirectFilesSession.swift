@@ -45,6 +45,7 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
     private(set) var home = ""
     private(set) var results: [ResultItem] = [] { didSet { activityChanged?(activityTitle) } }
     private(set) var resultsAccount = ""
+    private(set) var preparedUploads: [URL] = []
     private(set) var busy = false
     var message: String?
     var trust: Trust?
@@ -171,6 +172,12 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
                 let logger = Logger(label: "Files", factory: { _ in SwiftLogNoOpLogHandler() })
                 let client = try await ssh.openSFTP(logger: logger)
                 try check(token)
+                client.closeFuture.whenComplete { [weak self] _ in
+                    Task { @MainActor in
+                        guard let self, !self.closed, self.generation == token else { return }
+                        self.disconnect(message: "Files connection lost. Reconnect to continue; transfers will not restart automatically.")
+                    }
+                }
                 armDeadline()
                 client.setResponseActivityHandler { [weak self] in await self?.receivedResponse(token) }
                 let store = DirectFilesSFTPStore(client: client); self.store = store
@@ -245,18 +252,29 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
         guard phase == .ready, !busy else { throw DirectFilesFailure.unavailable }
         guard !hasPendingResults else { throw DirectFilesFailure.pendingTransfers }
         guard (1...DirectFilesPolicy.maximumBatch).contains(urls.count) else { throw DirectFilesFailure.tooManyFiles }
+        discardPreparedUploads()
         let root = try root(), token = generation
         busy = true; status = "Preparing files…"; message = nil
-        let worker = Task.detached(priority: .userInitiated) { try urls.map { try Task.checkCancellation(); return try DirectFilesLocalStore.stage($0, in: root) } }
+        let worker = Task.detached(priority: .userInitiated) { try DirectFilesLocalStore.stageBatch(urls, in: root) }
         stageWork = worker
         defer { if generation == token { busy = false; status = "Ready"; stageWork = nil } }
         let staged = try await worker.value
-        try check(token)
+        do { try check(token) }
+        catch { DirectFilesLocalStore.removeStaged(staged, in: root); throw error }
+        preparedUploads = staged
         return staged
+    }
+    func discardPreparedUploads(_ urls: [URL]? = nil) {
+        let removing = preparedUploads.filter { urls?.contains($0) ?? true }
+        preparedUploads.removeAll { removing.contains($0) }
+        if let temporaryRoot { DirectFilesLocalStore.removeStaged(removing, in: temporaryRoot) }
     }
     func upload(_ urls: [URL], to folder: String) {
         guard phase == .ready, !busy, canAccess(), (1...DirectFilesPolicy.maximumBatch).contains(urls.count), DirectFilesPolicy.validPath(folder) else { return }
         guard beginNewBatch() else { return }
+        // Transfer results now own adopted sources. Release any unadopted review.
+        preparedUploads.removeAll { urls.contains($0) }
+        discardPreparedUploads()
         resultsAccount = account
         results = urls.map { .init(source: $0, remotePath: nil, folder: folder, name: $0.lastPathComponent) }
         runTransfers()
@@ -265,6 +283,7 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
         guard phase == .ready, !busy, entry.kind == .file, let directory, canAccess(),
               let path = try? DirectFilesPolicy.child(entry.name, of: directory.path) else { return }
         guard beginNewBatch() else { return }
+        discardPreparedUploads()
         resultsAccount = account
         results = [.init(source: nil, remotePath: path, folder: directory.path, name: entry.name)]
         runTransfers()
@@ -390,6 +409,7 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
     private func retire() {
         generation = UUID(); operation = UUID(); deadline?.cancel(); deadline = nil
         work?.cancel(); work = nil; stageWork?.cancel(); stageWork = nil
+        discardPreparedUploads()
         let trust = trustReply; trustReply = nil; self.trust = nil; trust?.resume(returning: false)
         let conflict = conflictReply; conflictReply = nil; self.conflict = nil; conflict?.resume(returning: .cancel)
         socket?.cancel(); socket = nil

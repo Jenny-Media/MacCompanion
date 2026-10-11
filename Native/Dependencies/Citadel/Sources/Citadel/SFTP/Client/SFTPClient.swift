@@ -74,6 +74,9 @@ public final class SFTPClient: Sendable {
     public var isActive: Bool {
         self.channel.isActive
     }
+
+    /// Completion of this SFTP subsystem, independently of its SSH transport.
+    public var closeFuture: EventLoopFuture<Void> { self.channel.closeFuture }
     
     /// The SFTP client's event loop.
     public var eventLoop: EventLoop {

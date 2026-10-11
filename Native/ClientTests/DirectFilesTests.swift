@@ -59,6 +59,81 @@ import NIO
         XCTAssertEqual(DirectFilesPolicy.duplicateName("report.txt", number: 2), "report (2).txt")
         XCTAssertThrowsError(try DirectFilesPolicy.child("report", of: String(repeating: "/a", count: 2048)))
     }
+    func testIndexedEncoderCapacityBoundariesAndRetainedEmptyUploadSequence() throws {
+        let url = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "direct-files-v1", withExtension: "json"))
+        let fixture = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])
+        for item in try XCTUnwrap(fixture["encoderBoundaryCases"] as? [[String: Any]]) {
+            let mode = try XCTUnwrap(item["mode"] as? String), id = try XCTUnwrap(item["id"] as? UInt32)
+            let source = try XCTUnwrap(item["source"] as? String), destination = try XCTUnwrap(item["destination"] as? String)
+            XCTAssertTrue(DirectFilesPolicy.validPath(source)); XCTAssertTrue(DirectFilesPolicy.validPath(destination))
+            XCTAssertEqual(source.utf8.count, item["sourceUTF8Bytes"] as? Int)
+            let message: SFTPMessage = mode == "rename"
+                ? .rename(.init(requestId: id, oldPath: source, newPath: destination, flags: 0))
+                : .posixRename(.init(requestId: id, oldPath: source, newPath: destination))
+            var bytes = ByteBufferAllocator().buffer(capacity: try XCTUnwrap(item["capacity"] as? Int))
+            try SFTPMessageSerializer().encode(data: message, out: &bytes)
+            let expected = try XCTUnwrap(item["hex"] as? String)
+            XCTAssertEqual(bytes.readableBytesView.map { String(format: "%02x", $0) }.joined(), expected)
+            // Exercise the actual retained NIO encoder buffer. An empty upload
+            // performs OPEN/CLOSE, then replacement, without a large WRITE
+            // growing capacity before the path's next string-length prefix.
+            let channel = EmbeddedChannel(handler: MessageToByteHandler(SFTPMessageSerializer()))
+            defer { _ = try? channel.finish() }
+            if mode == "posixRename" {
+                var attributes = SFTPFileAttributes.none; attributes.permissions = 0o600
+                try channel.writeOutbound(SFTPMessage.openFile(.init(requestId: 1, filePath: source, pFlags: [.write, .create, .forceCreate], attributes: attributes)))
+                let _: ByteBuffer = try XCTUnwrap(channel.readOutbound())
+                try channel.writeOutbound(SFTPMessage.closeFile(.init(requestId: 2, handle: ByteBuffer(bytes: [0, 1, 2, 3]))))
+                let _: ByteBuffer = try XCTUnwrap(channel.readOutbound())
+            }
+            try channel.writeOutbound(message)
+            let packet: ByteBuffer = try XCTUnwrap(channel.readOutbound())
+            XCTAssertEqual(packet.readableBytesView.map { String(format: "%02x", $0) }.joined(), expected)
+        }
+    }
+    func testIndexedKeepBothNamesReserveSuffixBytesWithoutNormalization() throws {
+        let url = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "direct-files-v1", withExtension: "json"))
+        let fixture = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])
+        for item in try XCTUnwrap(fixture["duplicateNameCases"] as? [[String: Any]]) {
+            let name = try XCTUnwrap(item["name"] as? String), expected = try XCTUnwrap(item["expected"] as? String)
+            XCTAssertTrue(DirectFilesPolicy.validName(name))
+            let candidate = DirectFilesPolicy.duplicateName(name, number: try XCTUnwrap(item["number"] as? Int))
+            // String equality alone accepts canonically equivalent spellings.
+            XCTAssertTrue(candidate.utf8.elementsEqual(expected.utf8), name)
+            XCTAssertEqual(candidate.utf8.count, item["utf8Bytes"] as? Int)
+            XCTAssertTrue(DirectFilesPolicy.validName(candidate))
+            XCTAssertNoThrow(try DirectFilesPolicy.child(candidate, of: "/home"))
+        }
+    }
+    func testIndexedExtendedAttributeDecoderBoundsActualPackets() throws {
+        let url = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "direct-files-v1", withExtension: "json"))
+        let fixture = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])
+        for item in try XCTUnwrap(fixture["extendedAttributesCases"] as? [[String: Any]]) {
+            let declared = try XCTUnwrap(item["declaredCount"] as? UInt32), encoded = try XCTUnwrap(item["encodedCount"] as? Int)
+            let type = try XCTUnwrap(item["type"] as? String), data = try XCTUnwrap(item["data"] as? String)
+            var payload = ByteBuffer()
+            payload.writeInteger(UInt8(105)); payload.writeInteger(UInt32(7))
+            payload.writeInteger(UInt32(0x80000004)); payload.writeInteger(UInt32(0o100600)); payload.writeInteger(declared)
+            for _ in 0..<encoded {
+                payload.writeInteger(UInt32(type.utf8.count)); payload.writeString(type)
+                payload.writeInteger(UInt32(data.utf8.count)); payload.writeString(data)
+            }
+            // The large-count regression must pass the outer packet-size cap.
+            XCTAssertLessThanOrEqual(payload.readableBytes, 1_048_576)
+            var packet = ByteBuffer(); packet.writeInteger(UInt32(payload.readableBytes)); packet.writeBuffer(&payload)
+            let channel = EmbeddedChannel(handler: ByteToMessageHandler(SFTPMessageParser()))
+            defer { _ = try? channel.finish() }
+            if try XCTUnwrap(item["accepted"] as? Bool) {
+                try channel.writeInbound(packet)
+                let message: SFTPMessage = try XCTUnwrap(channel.readInbound())
+                guard case .attributes(let response) = message else { XCTFail("Expected ATTRS"); continue }
+                XCTAssertEqual(response.attributes.extended.count, encoded)
+                XCTAssertTrue(response.attributes.extended.allSatisfy { $0.0 == type && $0.1 == data })
+            } else {
+                XCTAssertThrowsError(try channel.writeInbound(packet), "Declared count: \(declared)")
+            }
+        }
+    }
     func testUploadStreamsChunksAndClosesBeforePublishing() async throws {
         let root = try DirectFilesLocalStore.root(); defer { try? FileManager.default.removeItem(at: root) }
         let source = try DirectFilesLocalStore.emptyFile(in: root, name: "report.txt")
@@ -145,6 +220,23 @@ import NIO
             XCTAssertEqual(store.opens, pathKind == "file" ? 1 : 0)
             XCTAssertEqual(store.handleCloses, pathKind == "file" ? 1 : 0)
             XCTAssertEqual(store.pathChecks, 1)
+        }
+    }
+    func testIndexedPreparationRollsBackEarlierCopiesOnRejectedItems() throws {
+        let fixtureURL = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "direct-files-v1", withExtension: "json"))
+        let fixture = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: fixtureURL)) as? [String: Any])
+        for item in try XCTUnwrap(fixture["preparationRollbackCases"] as? [[String: Any]]) {
+            let originals = try DirectFilesLocalStore.root(), staging = try DirectFilesLocalStore.root()
+            defer { try? FileManager.default.removeItem(at: originals); try? FileManager.default.removeItem(at: staging) }
+            let source = try DirectFilesLocalStore.emptyFile(in: originals, name: "original.txt")
+            let bytes = Data(repeating: 19, count: 100_000); try bytes.write(to: source)
+            let rejected = originals.appendingPathComponent("rejected")
+            if item["rejectedItem"] as? String == "directory" {
+                try FileManager.default.createDirectory(at: rejected, withIntermediateDirectories: false)
+            } else { try FileManager.default.createSymbolicLink(at: rejected, withDestinationURL: source) }
+            XCTAssertThrowsError(try DirectFilesLocalStore.stageBatch([source, rejected], in: staging))
+            XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: staging.path).count, item["remainingCopies"] as? Int)
+            XCTAssertEqual(try Data(contentsOf: source) == bytes, item["originalUnchanged"] as? Bool)
         }
     }
     func testStagePreservesOriginalAndRejectsFoldersAndLinks() throws {

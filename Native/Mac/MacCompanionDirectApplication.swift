@@ -23,8 +23,9 @@ import SwiftUI
         }.defaultSize(width: 1000, height: 680)
             .commands { MacClientCommands() }
         WindowGroup("Files", id: "direct-files", for: DirectFilesWindowRequest.self) { $request in
-            if let request, let mac = library.macs.first(where: { $0.id == request.macID }) {
-                MacFilesWindow(mac: mac).directAppearance().modifier(MacPrivacyCover())
+            if let request {
+                MacFilesWindow(mac: library.macs.first { $0.id == request.macID })
+                    .directAppearance().modifier(MacPrivacyCover())
             } else {
                 ContentUnavailableView("Mac unavailable", systemImage: "folder")
             }

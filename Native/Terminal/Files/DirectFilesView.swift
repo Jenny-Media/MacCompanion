@@ -19,6 +19,7 @@ struct DirectFilesView: View {
     @State private var preparingKey = false
     @State private var preparation = UUID()
     #if os(macOS)
+    var selectedKeyFile: @MainActor (UUID) throws -> (file: MacSSHKeyFileReference, username: String)? = { try MacSSHKeyFileStore.selected($0) }
     @State private var keyFile: MacSSHKeyFileReference?
     @State private var savePicker = DirectFilesMacPicker()
     #endif
@@ -28,7 +29,7 @@ struct DirectFilesView: View {
     @State private var folderName = ""
     @State private var confirmation: Confirmation?
     @State private var saving = false
-    @State private var uploadURLs: [URL] = []
+    private var uploadURLs: [URL] { session.preparedUploads }
     @State private var uploadFolder = ""
     @State private var export: Export?
     @State private var loaded = false
@@ -151,10 +152,23 @@ struct DirectFilesView: View {
         }
         .directAppearance()
         .task { if !loaded { loaded = true; if !pro.ready { await pro.refresh() }; loadLogin(preferSelected: true) } }
-        .onChange(of: session.phase) { _, phase in if phase == .ready { password = ""; passphrase = "" } }
+        .onChange(of: session.phase) { _, phase in
+            if phase == .ready { password = ""; passphrase = "" }
+            else {
+                #if os(macOS)
+                refreshSelectedKeyFile()
+                #endif
+            }
+        }
+        #if os(macOS)
+        .onChange(of: session.busy) { _, busy in if !busy { refreshSelectedKeyFile() } }
+        .onReceive(NotificationCenter.default.publisher(for: MacSSHKeyFileStore.changed)) { _ in
+            refreshSelectedKeyFile()
+        }
+        #endif
         .onChange(of: DirectAppLockV1.shared.canAccess) { _, allowed in
             if !allowed {
-                preparation = UUID(); preparingKey = false; saving = false; confirmation = nil; session.disconnect(); sheet = nil; picker = false; export = nil; password = ""; passphrase = ""; key = nil; keyName = ""; uploadURLs = []; newFolder = false; folderName = ""
+                preparation = UUID(); preparingKey = false; saving = false; confirmation = nil; session.disconnect(); sheet = nil; picker = false; export = nil; password = ""; passphrase = ""; key = nil; keyName = ""; newFolder = false; folderName = ""
                 #if os(macOS)
                 savePicker.cancel()
                 #endif
@@ -245,7 +259,7 @@ struct DirectFilesView: View {
                 } else {
                     Button { sheet = .keys } label: { Label(keyName.isEmpty ? "Choose SSH Key" : keyName, systemImage: "key") }
                     #if os(macOS)
-                    if keyFile != nil { SecureField("Key passphrase, if needed", text: $passphrase) }
+                    if keyFile != nil { SecureField("Key passphrase, if needed", text: $passphrase).accessibilityIdentifier("files-key-passphrase") }
                     #endif
                 }
             }.disabled(session.busy || preparingKey)
@@ -347,8 +361,8 @@ struct DirectFilesView: View {
             }
             .navigationTitle("Upload Files")
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { sheet = nil; uploadURLs = [] } }
-                ToolbarItem(placement: .confirmationAction) { Button("Upload") { session.upload(uploadURLs, to: uploadFolder); sheet = nil; uploadURLs = [] }.disabled(session.phase != .ready || session.busy || session.hasPendingResults) }
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { session.discardPreparedUploads(); sheet = nil } }
+                ToolbarItem(placement: .confirmationAction) { Button("Upload") { session.upload(uploadURLs, to: uploadFolder); sheet = nil }.disabled(session.phase != .ready || session.busy || session.hasPendingResults) }
             }
         }.directAppearance()
     }
@@ -358,7 +372,11 @@ struct DirectFilesView: View {
         case .success(let urls):
             let token = preparation
             Task { @MainActor in
-                do { let staged = try await session.prepare(urls); guard preparation == token, DirectAppLockV1.shared.canAccess else { return }; uploadURLs = staged; sheet = .upload }
+                do {
+                    let staged = try await session.prepare(urls)
+                    guard preparation == token, DirectAppLockV1.shared.canAccess else { session.discardPreparedUploads(staged); return }
+                    sheet = .upload
+                }
                 catch { if preparation == token, DirectAppLockV1.shared.canAccess, !(error is CancellationError) { session.message = DirectFilesSession.operationMessage(error) } }
             }
         case .failure(let error): if !(error is CancellationError) { session.message = "These files could not be selected. Try again." }
@@ -379,15 +397,29 @@ struct DirectFilesView: View {
         }
         #endif
     }
+    #if os(macOS)
+    @discardableResult private func refreshSelectedKeyFile() -> Bool {
+        guard DirectAppLockV1.shared.canAccess, session.phase != .ready, !session.busy else { return false }
+        do {
+            guard try selectedKeyFile(mac.id)?.file != keyFile else { return false }
+            preparation = UUID(); preparingKey = false
+            loadLogin(preferSelected: true, includePassword: false)
+            return true
+        } catch { session.message = "Saved SSH settings could not be read. Existing data is kept."; return false }
+    }
+    #endif
     private func loadLogin(preferSelected: Bool = false, includePassword: Bool = true) {
         guard DirectAppLockV1.shared.canAccess, session.phase != .ready, !session.busy else { return }
         do {
             if includePassword, let saved = try TerminalSecretStore.login(mac.id) { login.loadPasswordAccount(saved.username); password = saved.password; remember = true }
             #if os(macOS)
-            if let selection = try MacSSHKeyFileStore.selected(mac.id) {
-                keyFile = selection.file; key = nil; keyName = selection.file.name
+            let selection = try selectedKeyFile(mac.id)
+            if keyFile != selection?.file { passphrase = "" }
+            keyFile = selection?.file
+            if let selection {
+                key = nil; keyName = selection.file.name
                 login.loadKeyAccount(selection.username, preferSelected: preferSelected); return
-            }; keyFile = nil
+            }
             #endif
             key = try TerminalKeyLibraryStore.selected(mac.id); keyName = key?.name ?? ""
             login.loadKeyAccount(key?.key.username, preferSelected: preferSelected)
@@ -395,6 +427,9 @@ struct DirectFilesView: View {
     }
     private func connect() {
         guard canConnect, DirectAppLockV1.shared.canAccess else { return }
+        #if os(macOS)
+        if refreshSelectedKeyFile() { session.message = "SSH key selection changed. Review the login and connect again."; return }
+        #endif
         let token = UUID()
         preparation = token; preparingKey = true
         Task { @MainActor in
@@ -411,8 +446,12 @@ struct DirectFilesView: View {
                         let account = login.username, secret = passphrase
                         passphrase = ""
                         let parsed = try await Task.detached { try file.read(passphrase: secret) }.value
-                        guard preparation == token, DirectAppLockV1.shared.canAccess,
-                              try MacSSHKeyFileStore.selected(mac.id)?.file == file else { return }
+                        guard preparation == token, DirectAppLockV1.shared.canAccess else { return }
+                        guard try selectedKeyFile(mac.id)?.file == file else {
+                            refreshSelectedKeyFile()
+                            session.message = "SSH key selection changed. Review the login and connect again."
+                            return
+                        }
                         guard try MacSSHKeyFileStore.canUse(file) else { sheet = .pro; return }
                         session.connect(username: account, password: "", key: parsed, remember: false, keyFileID: file.id)
                     } catch { if preparation == token, DirectAppLockV1.shared.canAccess { session.message = error.localizedDescription } }

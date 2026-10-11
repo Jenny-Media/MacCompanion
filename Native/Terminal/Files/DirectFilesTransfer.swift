@@ -120,8 +120,33 @@ enum DirectFilesLocalStore {
         #if os(iOS)
         attributes[.protectionKey] = FileProtectionType.complete
         #endif
-        guard FileManager.default.createFile(atPath: url.path, contents: nil, attributes: attributes) else { throw DirectFilesFailure.unavailable }
+        guard FileManager.default.createFile(atPath: url.path, contents: nil, attributes: attributes) else {
+            try? FileManager.default.removeItem(at: folder)
+            throw DirectFilesFailure.unavailable
+        }
         return url
+    }
+    static func removeStaged(_ urls: [URL], in root: URL) {
+        for url in urls {
+            let folder = url.deletingLastPathComponent()
+            guard folder.deletingLastPathComponent().standardizedFileURL == root.standardizedFileURL,
+                  UUID(uuidString: folder.lastPathComponent) != nil else { continue }
+            try? FileManager.default.removeItem(at: folder)
+        }
+    }
+    static func stageBatch(_ sources: [URL], in root: URL) throws -> [URL] {
+        var staged: [URL] = []
+        do {
+            for source in sources {
+                try Task.checkCancellation()
+                staged.append(try stage(source, in: root))
+            }
+            try Task.checkCancellation()
+            return staged
+        } catch {
+            removeStaged(staged, in: root)
+            throw error
+        }
     }
     static func stage(_ source: URL, in root: URL) throws -> URL {
         guard source.isFileURL, DirectFilesPolicy.validName(source.lastPathComponent) else { throw DirectFilesFailure.invalidName }

@@ -65,17 +65,58 @@
     }
   ],
   "downloadAdmissionCases": [
-    { "pathKind": "file", "handleKind": "file", "accepted": true },
-    { "pathKind": "other", "handleKind": "file", "accepted": false },
-    { "pathKind": "missing", "handleKind": "file", "accepted": false },
-    { "pathKind": "file", "handleKind": "other", "accepted": false }
+    {
+      "pathKind": "file",
+      "handleKind": "file",
+      "accepted": true
+    },
+    {
+      "pathKind": "other",
+      "handleKind": "file",
+      "accepted": false
+    },
+    {
+      "pathKind": "missing",
+      "handleKind": "file",
+      "accepted": false
+    },
+    {
+      "pathKind": "file",
+      "handleKind": "other",
+      "accepted": false
+    }
   ],
   "dismissalCases": [
-    { "retained": false, "active": false, "pending": false, "blocked": false },
-    { "retained": false, "active": true, "pending": false, "blocked": true },
-    { "retained": false, "active": false, "pending": true, "blocked": true },
-    { "retained": true, "active": true, "pending": true, "blocked": false },
-    { "retained": true, "active": false, "pending": true, "blocked": false }
+    {
+      "retained": false,
+      "active": false,
+      "pending": false,
+      "blocked": false
+    },
+    {
+      "retained": false,
+      "active": true,
+      "pending": false,
+      "blocked": true
+    },
+    {
+      "retained": false,
+      "active": false,
+      "pending": true,
+      "blocked": true
+    },
+    {
+      "retained": true,
+      "active": true,
+      "pending": true,
+      "blocked": false
+    },
+    {
+      "retained": true,
+      "active": false,
+      "pending": true,
+      "blocked": false
+    }
   ],
   "replacePacket": {
     "id": 7,
@@ -87,5 +128,194 @@
     "id": 7,
     "path": "/home/report.txt",
     "hex": "000000190700000007000000102f686f6d652f7265706f72742e747874"
-  }
+  },
+  "duplicateNameCases": [
+    {
+      "name": "report.txt",
+      "number": 2,
+      "expected": "report (2).txt",
+      "utf8Bytes": 14
+    },
+    {
+      "name": ".profile",
+      "number": 2,
+      "expected": ".profile (2)",
+      "utf8Bytes": 12
+    },
+    {
+      "name": ".config.json",
+      "number": 2,
+      "expected": ".config (2).json",
+      "utf8Bytes": 16
+    },
+    {
+      "name": "report.",
+      "number": 2,
+      "expected": "report. (2)",
+      "utf8Bytes": 11
+    },
+    {
+      "name": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.txt",
+      "number": 2,
+      "expected": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa (2).txt",
+      "utf8Bytes": 255
+    },
+    {
+      "name": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "number": 2,
+      "expected": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa (2)",
+      "utf8Bytes": 255
+    },
+    {
+      "name": "ééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééé.txt",
+      "number": 2,
+      "expected": "ééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééé (2).txt",
+      "utf8Bytes": 254
+    },
+    {
+      "name": "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀",
+      "number": 2,
+      "expected": "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀 (2)",
+      "utf8Bytes": 252
+    },
+    {
+      "name": "a.xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "number": 2,
+      "expected": "a.xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx (2)",
+      "utf8Bytes": 255
+    },
+    {
+      "name": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.txt",
+      "number": 1000,
+      "expected": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa (1000).txt",
+      "utf8Bytes": 255
+    },
+    {
+      "name": "ééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééé.txt",
+      "number": 2,
+      "expected": "éééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééée (2).txt",
+      "utf8Bytes": 255
+    }
+  ],
+  "extendedAttributesCases": [
+    {
+      "declaredCount": 0,
+      "encodedCount": 0,
+      "type": "",
+      "data": "",
+      "accepted": true
+    },
+    {
+      "declaredCount": 1,
+      "encodedCount": 1,
+      "type": "user.example",
+      "data": "value",
+      "accepted": true
+    },
+    {
+      "declaredCount": 128,
+      "encodedCount": 128,
+      "type": "",
+      "data": "",
+      "accepted": true
+    },
+    {
+      "declaredCount": 129,
+      "encodedCount": 129,
+      "type": "",
+      "data": "",
+      "accepted": false
+    },
+    {
+      "declaredCount": 96000,
+      "encodedCount": 96000,
+      "type": "",
+      "data": "",
+      "accepted": false
+    },
+    {
+      "declaredCount": 4294967295,
+      "encodedCount": 0,
+      "type": "",
+      "data": "",
+      "accepted": false
+    },
+    {
+      "declaredCount": 2,
+      "encodedCount": 1,
+      "type": "",
+      "data": "",
+      "accepted": false
+    }
+  ],
+  "encoderBoundaryCases": [
+    {
+      "mode": "rename",
+      "capacity": 256,
+      "id": 7,
+      "source": "/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/.maccompanion-upload-00000000-0000-0000-0000-000000000001.part",
+      "destination": "/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/report.txt",
+      "sourceUTF8Bytes": 240,
+      "hex": "000001b91200000007000000f02f61616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161612f2e6d6163636f6d70616e696f6e2d75706c6f61642d30303030303030302d303030302d303030302d303030302d3030303030303030303030312e70617274000000bc2f61616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161612f7265706f72742e747874"
+    },
+    {
+      "mode": "rename",
+      "capacity": 256,
+      "id": 7,
+      "source": "/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/.maccompanion-upload-00000000-0000-0000-0000-000000000001.part",
+      "destination": "/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/report.txt",
+      "sourceUTF8Bytes": 243,
+      "hex": "000001bf1200000007000000f32f61616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161612f2e6d6163636f6d70616e696f6e2d75706c6f61642d30303030303030302d303030302d303030302d303030302d3030303030303030303030312e70617274000000bf2f61616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161612f7265706f72742e747874"
+    },
+    {
+      "mode": "rename",
+      "capacity": 256,
+      "id": 7,
+      "source": "/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/.maccompanion-upload-00000000-0000-0000-0000-000000000001.part",
+      "destination": "/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/report.txt",
+      "sourceUTF8Bytes": 244,
+      "hex": "000001c11200000007000000f42f6161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161612f2e6d6163636f6d70616e696f6e2d75706c6f61642d30303030303030302d303030302d303030302d303030302d3030303030303030303030312e70617274000000c02f6161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161612f7265706f72742e747874"
+    },
+    {
+      "mode": "posixRename",
+      "capacity": 256,
+      "id": 7,
+      "source": "/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/.maccompanion-upload-00000000-0000-0000-0000-000000000001.part",
+      "destination": "/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/report.txt",
+      "sourceUTF8Bytes": 212,
+      "hex": "0000019dc80000000700000018706f7369782d72656e616d65406f70656e7373682e636f6d000000d42f616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161612f2e6d6163636f6d70616e696f6e2d75706c6f61642d30303030303030302d303030302d303030302d303030302d3030303030303030303030312e70617274000000a02f616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161612f7265706f72742e747874"
+    },
+    {
+      "mode": "posixRename",
+      "capacity": 256,
+      "id": 7,
+      "source": "/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/.maccompanion-upload-00000000-0000-0000-0000-000000000001.part",
+      "destination": "/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/report.txt",
+      "sourceUTF8Bytes": 215,
+      "hex": "000001a3c80000000700000018706f7369782d72656e616d65406f70656e7373682e636f6d000000d72f616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161612f2e6d6163636f6d70616e696f6e2d75706c6f61642d30303030303030302d303030302d303030302d303030302d3030303030303030303030312e70617274000000a32f616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161612f7265706f72742e747874"
+    },
+    {
+      "mode": "posixRename",
+      "capacity": 256,
+      "id": 7,
+      "source": "/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/.maccompanion-upload-00000000-0000-0000-0000-000000000001.part",
+      "destination": "/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/report.txt",
+      "sourceUTF8Bytes": 216,
+      "hex": "000001a5c80000000700000018706f7369782d72656e616d65406f70656e7373682e636f6d000000d82f61616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161612f2e6d6163636f6d70616e696f6e2d75706c6f61642d30303030303030302d303030302d303030302d303030302d3030303030303030303030312e70617274000000a42f61616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161612f7265706f72742e747874"
+    }
+  ],
+  "preparationRollbackCases": [
+    {
+      "id": "regular-then-directory",
+      "rejectedItem": "directory",
+      "originalUnchanged": true,
+      "remainingCopies": 0
+    },
+    {
+      "id": "regular-then-link",
+      "rejectedItem": "link",
+      "originalUnchanged": true,
+      "remainingCopies": 0
+    }
+  ]
 }
