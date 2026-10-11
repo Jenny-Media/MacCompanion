@@ -2,6 +2,27 @@ import Foundation
 import XCTest
 
 @MainActor final class SettingsFeedbackUITests: XCTestCase {
+    func testFilesOpensAnIndependentWindowWithRemoteLoginGuidance() throws {
+        continueAfterFailure = false
+        let app = XCUIApplication(), directory = URL.temporaryDirectory.appending(path: "files-native-ui-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let record: [String: Any] = ["id": UUID().uuidString, "name": "Synthetic Files", "addresses": ["fixture.local"], "port": 5900, "sshPort": 22, "usesAutomaticName": false, "preferredConnection": "desktop"]
+        try JSONSerialization.data(withJSONObject: ["version": 5, "macs": [record]]).write(to: directory.appendingPathComponent("direct-macs-v1.json"))
+        app.launchEnvironment["MACCOMPANION_DIRECT_DATA_DIRECTORY"] = directory.path
+        app.launchArguments = ["-ApplePersistenceIgnoreState", "YES"]; app.launch()
+        defer { app.terminate(); try? FileManager.default.removeItem(at: directory) }
+        let library = app.windows["My Macs"]
+        XCTAssertTrue(library.waitForExistence(timeout: 10))
+        library.outlines.staticTexts["Synthetic Files"].firstMatch.click()
+        XCTAssertTrue(library.buttons["Browse Files"].waitForExistence(timeout: 5)); library.buttons["Browse Files"].click()
+        let files = app.windows.containing(.button, identifier: "files-connect").firstMatch
+        XCTAssertTrue(files.waitForExistence(timeout: 5))
+        XCTAssertTrue(files.textFields["files-account"].exists); XCTAssertTrue(files.secureTextFields["files-password"].exists)
+        XCTAssertTrue(files.staticTexts["Requires Remote Login"].exists)
+        capture("mac-files-sign-in", window: files)
+        app.typeKey("w", modifierFlags: .command)
+        XCTAssertTrue(library.exists); XCTAssertFalse(files.exists)
+    }
     private func capture(_ name: String, window: XCUIElement) {
         let attachment = XCTAttachment(screenshot: window.screenshot())
         attachment.name = name; attachment.lifetime = .keepAlways; add(attachment)

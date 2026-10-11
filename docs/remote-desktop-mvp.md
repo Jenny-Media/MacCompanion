@@ -57,7 +57,8 @@ Production Simulator, physical-device, licensing and distribution acceptance
 remain separate gates; a passing standalone tunnel probe is not release admission.
 
 Observe/Act, custom session confirmations, alternate host engines, vendor relays,
-accounts, helper installation, audio and file transfer are outside this MVP.
+accounts, helper installation and audio are outside this MVP. File transfer is
+an approved follow-up described below.
 Permanent Apple identities/signing, dependency admission, licensing delivery,
 packaging and physical reliability gates in `docs/execution-status.md` remain.
 
@@ -289,3 +290,13 @@ progress has a stable location with separate load/purchase/trial/restore states.
 The system purchase sheet remains authoritative; cancellation is quiet and
 pending approval leaves the app usable. In compact-height or accessibility iOS
 layouts, the purchase area scrolls with the content so its controls stay reachable.
+
+## Files companion feature, 2026-10-10
+
+The approved follow-up adds free native SFTP browsing, folder creation and individual
+file uploads/downloads to both clients. It adds no connection mode and uses the
+existing Remote Login service, SSH login/key settings and host trust. Files owns
+its connection independently of Desktop and Terminal. See
+[Direct Files v1](../spec/capability-protocol/v0/direct-files.md) for scope,
+transfer safety and lifecycle requirements. Rename, delete, folder transfers and
+automatic resume remain deferred.

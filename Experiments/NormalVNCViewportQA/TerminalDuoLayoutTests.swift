@@ -297,7 +297,8 @@ import UIKit
         let window = UIWindow(windowScene: scene); window.overrideUserInterfaceStyle = .light
         let mac = try DirectMacRecordV1.normalized(name: "Synthetic Terminal", addresses: ["studio.local"])
         let session = DirectTerminalSession(mac: mac); session.connected = true
-        let controller = TerminalController(session: session, customize: {})
+        var actions: [String] = []
+        let controller = TerminalController(session: session, customize: {}, action: { actions.append($0) })
         window.rootViewController = controller; window.makeKeyAndVisible()
         defer { window.isHidden = true; window.rootViewController = nil; session.stop() }
         controller.applyAppearance(.dark)
@@ -309,10 +310,10 @@ import UIKit
         for _ in 0..<100 where navigation.transitionCoordinator != nil { try await Task.sleep(for: .milliseconds(20)) }
         XCTAssertEqual(navigation.traitCollection.userInterfaceStyle, .dark, "Menus must follow the terminal palette even when the app is light")
         let items = menu.sections.flatMap { $0["items"] as? [[String: Any]] ?? [] }
-        XCTAssertEqual(items.compactMap { $0["kind"] as? String }, ["connectionInfo", "appSettings", "exit"])
+        XCTAssertEqual(items.compactMap { $0["kind"] as? String }, ["files", "connectionInfo", "appSettings", "exit"])
         XCTAssertTrue(items.contains { $0["title"] as? String == "Disconnect" && $0["destructive"] as? Bool == true })
         XCTAssertEqual(navigation.viewControllers.count, 1)
-        XCTAssertLessThan(navigation.preferredContentSize.height, 350, "Three session actions should not reserve a full-size sheet")
+        XCTAssertLessThan(navigation.preferredContentSize.height, 400, "Four session actions should not reserve a full-size sheet")
         let last = menu.tableView.rectForRow(at: IndexPath(row: 0, section: 1))
         let visible = menu.tableView.convert(last, to: navigation.view)
         let bottomPadding = navigation.view.bounds.maxY - visible.maxY
@@ -321,6 +322,9 @@ import UIKit
         XCTAssertTrue(navigation.topViewController === menu)
         XCTAssertTrue(controller.session === session)
         XCTAssertTrue(String(decoding: controller.terminal.getTerminal().getBufferAsData(), as: UTF8.self).contains("Preserved across menus"))
+        menu.selectionHandler?(["kind": "files"])
+        XCTAssertEqual(actions, ["files"])
+        XCTAssertTrue(session.connected, "Opening Files must preserve the Terminal transport")
         controller.dismiss(animated: false)
     }
     func testLoginFieldsKeepIdentityAndFocusAcrossCompactLayoutAndLargeText() async throws {
@@ -328,13 +332,13 @@ import UIKit
         let window = UIWindow(windowScene: scene)
         let mac = try DirectMacRecordV1.normalized(name: "Synthetic Terminal", addresses: ["studio.local"])
         let session = DirectTerminalSession(mac: mac)
-        let host = UIHostingController(rootView: DirectTerminalView(mac: mac, session: session, exit: {}).directAppearance())
+        let host = UIHostingController(rootView: DirectTerminalView(mac: mac, session: session, autoConnect: false, exit: {}).directAppearance())
         let holder = UIViewController(); holder.addChild(host); holder.view.addSubview(host.view); host.didMove(toParent: holder)
         window.rootViewController = holder; window.makeKeyAndVisible()
         defer { window.endEditing(true); window.isHidden = true; window.rootViewController = nil; session.stop() }
         func fields(_ view: UIView) -> [UITextField] { (view as? UITextField).map { [$0] } ?? view.subviews.flatMap(fields) }
         host.view.frame = CGRect(x: 0, y: 0, width: 900, height: 660)
-        try await Task.sleep(for: .milliseconds(250))
+        for _ in 0..<100 where fields(host.view).count != 2 { try await Task.sleep(for: .milliseconds(25)) }
         let original = fields(host.view); XCTAssertEqual(original.count, 2)
         XCTAssertLessThan(try XCTUnwrap(original.last).bounds.height, 64, "The password field must use its text height, not stretch the connection sheet")
         let account = try XCTUnwrap(original.first)

@@ -7,6 +7,7 @@ struct DirectTerminalView: View {
     private var mac: DirectMacRecordV1 { session.mac }
     let macLibrary: DirectMacLibraryV1?
     let exit: @MainActor () -> Void
+    @State private var files: DirectFilesSession
     @State private var session: DirectTerminalSession
     @State private var login = TerminalLoginSelection()
     private var username: String { get { login.username } nonmutating set { login.username = newValue } }
@@ -21,12 +22,12 @@ struct DirectTerminalView: View {
     @State private var loadedLogin = false
     private let autoConnect: Bool
     private enum Sheet: Identifiable {
-        case keys, install, manual, macSettings, appSettings, pro, quickActions, keyboard, verifyGuide, connectionInfo
+        case keys, install, manual, macSettings, appSettings, pro, quickActions, keyboard, verifyGuide, connectionInfo, files
         var id: String {
             switch self {
             case .keys: "keys"; case .install: "install"; case .manual: "manual"; case .macSettings: "macSettings"
             case .appSettings: "appSettings"; case .pro: "pro"; case .quickActions: "quickActions"; case .keyboard: "keyboard"
-            case .verifyGuide: "verifyGuide"; case .connectionInfo: "connectionInfo"
+            case .files: "files"; case .verifyGuide: "verifyGuide"; case .connectionInfo: "connectionInfo"
             }
         }
     }
@@ -44,6 +45,7 @@ struct DirectTerminalView: View {
     }
     init(mac: DirectMacRecordV1, macLibrary: DirectMacLibraryV1? = nil, session: DirectTerminalSession? = nil, autoConnect: Bool = true, exit: @escaping @MainActor () -> Void) {
         self.macLibrary = macLibrary; self.exit = exit; _session = State(initialValue: session ?? DirectTerminalSession(mac: mac))
+        _files = State(initialValue: DirectFilesSession(mac: mac))
         self.autoConnect = autoConnect
     }
     private func connect() {
@@ -103,7 +105,7 @@ struct DirectTerminalView: View {
         NavigationStack {
             ZStack {
                 (session.connected ? terminalBackground : Color(uiColor: .systemGroupedBackground)).ignoresSafeArea()
-                TerminalSurface(session: session, style: appearance.terminal.style(app: appearance.app), customize: { sheet = .keyboard }, action: handleControls)
+                TerminalSurface(session: session, style: appearance.terminal.style(app: appearance.app), customize: { sheet = .keyboard }, filesStatus: files.transferActive ? files.activityTitle : "", action: handleControls)
                     .ignoresSafeArea(.container, edges: session.connected ? .top : [])
                     .opacity(session.connected ? 1 : 0).allowsHitTesting(session.connected).accessibilityHidden(!session.connected)
                 if !session.connected && !session.completedNormally {
@@ -119,6 +121,7 @@ struct DirectTerminalView: View {
             .toolbar(.hidden, for: .navigationBar)
             .sheet(item: $sheet, onDismiss: { if let updated = macLibrary?.macs.first(where: { $0.id == mac.id }) { session.updateMac(updated) } }) { destination in
                 switch destination {
+                case .files: DirectFilesView(mac: mac, session: files, retainWhenDismissed: true)
                 case .keys: TerminalKeySettings(mac: mac, changed: { loadKey(preferSelected: true); session.clearRecovery() })
                 case .install: TerminalKeyInstallView(mac: mac, initialUsername: username, changed: { loadKey(preferSelected: true); session.clearRecovery() })
                 case .manual: TerminalManualKeySetupView(mac: mac)
@@ -147,7 +150,7 @@ struct DirectTerminalView: View {
             loadLogin(); loadedLogin = true
             if autoConnect && loginIssue == nil && session.recovery == nil { connect() }
         }
-        .onDisappear { session.stop() }
+        .onDisappear { files.close(); session.stop() }
         .onChange(of: session.completedNormally) { _, _ in returnAfterNormalExit() }
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.willResignActiveNotification)) { _ in session.background() }
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in returnAfterNormalExit(); session.foreground() }
@@ -160,6 +163,7 @@ struct DirectTerminalView: View {
     }
     private func handleControls(_ action: String) {
         switch action {
+        case "files": sheet = .files
         case "connectionInfo": sheet = .connectionInfo
         case "appSettings": sheet = .appSettings
         case "macSettings": sheet = .macSettings
@@ -302,9 +306,11 @@ private struct TerminalSurface: UIViewControllerRepresentable {
     let session: DirectTerminalSession
     let style: UIUserInterfaceStyle
     let customize: @MainActor () -> Void
+    var filesStatus = ""
     let action: @MainActor (String) -> Void
     func makeUIViewController(context: Context) -> TerminalController { TerminalController(session: session, customize: customize, action: action) }
     func updateUIViewController(_ controller: TerminalController, context: Context) {
+        controller.filesStatus = filesStatus
         controller.terminal.isUserInteractionEnabled = session.connected
         if !session.connected { _ = controller.terminal.resignFirstResponder() }
         controller.updateControls()
@@ -367,6 +373,7 @@ private struct TerminalSurface: UIViewControllerRepresentable {
 
 @MainActor class TerminalController: UIViewController, @preconcurrency TerminalViewDelegate {
     static let numberRowPreference = "direct-terminal-number-row"
+    var filesStatus = ""
     let session: DirectTerminalSession
     let terminal = SessionTerminalView(frame: .zero)
     let controls = CompanionVNCControls()
@@ -475,6 +482,7 @@ private struct TerminalSurface: UIViewControllerRepresentable {
         case "session":
             presentControlsMenu(session.mac.name, sections: [
                 ["title": "Session", "items": [
+                    ["kind": "files", "title": filesStatus.isEmpty ? "Files" : "Files · " + filesStatus, "symbol": "folder", "submenu": true],
                     ["kind": "connectionInfo", "title": "Connection Details", "symbol": "info.circle"],
                     ["kind": "appSettings", "title": "App Settings", "symbol": "gearshape", "submenu": true]]],
                 ["title": "", "items": [["kind": "exit", "title": "Disconnect", "symbol": "xmark.circle", "destructive": true]]]])

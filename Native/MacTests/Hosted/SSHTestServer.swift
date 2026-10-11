@@ -44,12 +44,13 @@ final class SSHTestRecord: @unchecked Sendable {
 final class SSHTestAuth: NIOSSHServerUserAuthenticationDelegate, @unchecked Sendable {
     let record:SSHTestRecord
     let publicKey: NIOSSHPublicKey?
+    let usernames: Set<String>
     var supportedAuthenticationMethods:NIOSSHAvailableUserAuthenticationMethods { publicKey == nil ? .password : [.publicKey, .password] }
-    init(_ record:SSHTestRecord, publicKey: NIOSSHPublicKey? = nil) { self.record=record; self.publicKey=publicKey }
+    init(_ record:SSHTestRecord, publicKey: NIOSSHPublicKey? = nil, usernames: Set<String> = ["synthetic"]) { self.record=record; self.publicKey=publicKey; self.usernames=usernames }
     func requestReceived(request:NIOSSHUserAuthenticationRequest,responsePromise:EventLoopPromise<NIOSSHUserAuthenticationOutcome>) {
         switch request.request {
-        case .publicKey(let login): record.keyAuthenticated(); responsePromise.succeed(request.username == "synthetic" && login.publicKey == publicKey ? .success : .failure)
-        case .password(let login): record.authenticated(); responsePromise.succeed(request.username == "synthetic" && login.password == "synthetic-only" ? .success : .failure)
+        case .publicKey(let login): record.keyAuthenticated(); responsePromise.succeed(usernames.contains(request.username) && login.publicKey == publicKey ? .success : .failure)
+        case .password(let login): record.authenticated(); responsePromise.succeed(usernames.contains(request.username) && login.password == "synthetic-only" ? .success : .failure)
         default: responsePromise.succeed(.failure)
         }
     }

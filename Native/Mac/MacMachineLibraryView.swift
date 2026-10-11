@@ -32,6 +32,7 @@ struct MacMachineLibraryView: View {
                         .accessibilityAction(named: "Connect") { open(mac, mode: MacConnectionMode(mac.preferredConnection)) }
                         .contextMenu {
                             ForEach(MacConnectionMode.allCases) { mode in Button(mode.actionTitle) { open(mac, mode: mode) } }
+                            Button("Browse Files", systemImage: "folder") { openWindow(id: "direct-files", value: DirectFilesWindowRequest(macID: mac.id)) }
                             Divider()
                             Button("Connection Settings") { sheet = .edit(mac) }
                             Button("Use as My Free Mac") { DirectProAccess.shared.chooseFreeMac(mac.id) }
@@ -61,6 +62,8 @@ struct MacMachineLibraryView: View {
                                         .buttonStyle(.bordered).controlSize(.large).accessibilityIdentifier("mac-open-" + mode.rawValue)
                                 }
                             }
+                            Button("Browse Files", systemImage: "folder") { openWindow(id: "direct-files", value: DirectFilesWindowRequest(macID: mac.id)) }
+                                .help("Browse and transfer files using Remote Login (SSH)")
                             Button("Connection Settings", systemImage: "gearshape") { sheet = .edit(mac) }
                                 .accessibilityIdentifier("mac-connection-settings")
                             let open = connections.connections(for: mac.id)

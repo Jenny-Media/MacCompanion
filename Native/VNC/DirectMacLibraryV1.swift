@@ -249,6 +249,7 @@ struct DirectMacSessionSelection: Identifiable {
 struct DirectMacLibraryRootV1: View {
     @State private var library: DirectMacLibraryV1
     init(library: DirectMacLibraryV1 = DirectMacLibraryV1()) { _library = State(initialValue: library) }
+    @State private var files: DirectMacRecordV1?
     @State private var session: DirectMacSessionSelection?
     @State private var appLock = DirectAppLockV1.shared
     private struct EditorSelection: Identifiable { let id = UUID(); let mac: DirectMacRecordV1? }
@@ -301,6 +302,7 @@ struct DirectMacLibraryRootV1: View {
                                             Button("Trackpad & Keyboard", systemImage: "rectangle.and.hand.point.up.left") { open(mac, connection: .trackpad) }
                                             Button("Terminal", systemImage: "terminal") { open(mac, connection: .terminal) }
                                         }
+                                        Button("Browse Files", systemImage: "folder") { files = mac }
                                         Section("Manage Mac") {
                                             Button("Mac Settings", systemImage: "gearshape") { edit(mac) }
                                             if !pro.hasPro { Button("Use as My Free Mac") { pro.chooseFreeMac(mac.id) } }
@@ -343,6 +345,7 @@ struct DirectMacLibraryRootV1: View {
                 }
             }
             .environment(\.editMode, $editMode)
+            .sheet(item: $files) { mac in DirectFilesView(mac: mac) }
             .sheet(item: $editor) { selection in DirectMacEditorV1(mac: selection.mac, library: library) }
             .sheet(isPresented: $setup) { DirectMacSetupV1() }
             .sheet(isPresented: $settings) { DirectSessionSettingsV1() }

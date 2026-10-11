@@ -2,6 +2,7 @@
 import SwiftUI
 
 struct MacDirectDesktopView: View {
+    @Environment(\.openWindow) private var openWindow
     let mac: DirectMacRecordV1
     let sessionID: UUID
     @State private var session: MacVNCSession
@@ -60,11 +61,14 @@ struct MacDirectDesktopView: View {
             if !window.fullScreen || !session.connected { MacConnectionStatusBar(phase: phase, service: "Screen Sharing", addresses: mac.addresses) }
         }
         .overlay(alignment: .top) {
-            if window.fullScreen && session.connected { MacDesktopFullScreenControls(session: session, window: window, actions: actions) { controls = true } }
+            if window.fullScreen && session.connected { MacDesktopFullScreenControls(session: session, window: window, actions: actions, files: { openWindow(id: "direct-files", value: DirectFilesWindowRequest(macID: mac.id)) }) { controls = true } }
         }
         .frame(minWidth: 520, minHeight: 360)
         .navigationTitle(mac.name + " · Desktop")
         .toolbar {
+            Button("Files", systemImage: "folder") { openWindow(id: "direct-files", value: DirectFilesWindowRequest(macID: mac.id)) }
+                .help("Browse and transfer files using Remote Login (SSH)").accessibilityIdentifier("session-files")
+
             if session.connected {
                 Menu("Displays", systemImage: "display.2") {
                     Button("All Displays") { session.selectDisplay(nil) }

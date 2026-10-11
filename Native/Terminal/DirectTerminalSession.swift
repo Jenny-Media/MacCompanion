@@ -9,7 +9,7 @@ import UIKit
 @preconcurrency import NIO
 @preconcurrency import NIOSSH
 
-private final class TerminalSocketOwner: @unchecked Sendable {
+final class TerminalSocketOwner: @unchecked Sendable {
     private let lock = NSLock()
     private var cancelled = false
     private var descriptor: Int32 = -1

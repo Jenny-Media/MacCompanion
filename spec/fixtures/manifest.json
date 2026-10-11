@@ -808,6 +808,12 @@
       "kind": "client.nativeMac.v1",
       "expect": "valid",
       "canonicalSHA256": "ceca82d6e0b6c99a0c34fa571877e579d1c409fcf217eeeb9c0d01929bff2880"
+    },
+    {
+      "path": "direct-files-v1.json",
+      "kind": "directFiles.v1",
+      "expect": "valid",
+      "canonicalSHA256": "38b99393bcb65882787e41dbef9e3a9985a833d8005292a3af156e44e2a0eba8"
     }
   ]
 }

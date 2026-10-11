@@ -59,6 +59,8 @@ struct VNCRemoteDesktopView: UIViewControllerRepresentable {
         viewer.settingsHandler = { [weak coordinator = context.coordinator] in
             MainActor.assumeIsolated { coordinator?.showInputSettings() }
         }
+        viewer.filesHandler = { [weak coordinator = context.coordinator] in MainActor.assumeIsolated { coordinator?.showFiles() } }
+        context.coordinator.files.activityChanged = { [weak viewer] value in viewer?.filesStatus = value == "Ready" ? "" : value }
         viewer.appSettingsHandler = { [weak coordinator = context.coordinator] in
             MainActor.assumeIsolated { coordinator?.showAppSettings() }
         }
@@ -100,11 +102,12 @@ struct VNCRemoteDesktopView: UIViewControllerRepresentable {
     }
     func updateUIViewController(_ controller: CompanionVNCViewer, context: Context) {}
     static func dismantleUIViewController(_ controller: CompanionVNCViewer, coordinator: Coordinator) {
-        coordinator.disconnect(); coordinator.stopObserving(); coordinator.activity.finish()
+        coordinator.files.close(); coordinator.disconnect(); coordinator.stopObserving(); coordinator.activity.finish()
         controller.stop()
     }
 
     @MainActor final class Coordinator {
+        lazy var files = DirectFilesSession(mac: mac)
         let mac: DirectMacRecordV1
         weak var viewer: CompanionVNCViewer?
         private var work: Task<Void, Never>?
@@ -247,6 +250,12 @@ struct VNCRemoteDesktopView: UIViewControllerRepresentable {
                 viewer?.followCursorEnabled = VNCSessionPreferences.followCursor(self.mac.id)
                 self.refreshControls()
             }.directAppearance())
+            controller.modalPresentationStyle = .pageSheet
+            viewer.present(controller, animated: true)
+        }
+        func showFiles() {
+            guard let viewer, viewer.presentedViewController == nil, DirectAppLockV1.shared.canAccess else { return }
+            let controller = UIHostingController(rootView: DirectFilesView(mac: mac, session: files, retainWhenDismissed: true).directAppearance())
             controller.modalPresentationStyle = .pageSheet
             viewer.present(controller, animated: true)
         }

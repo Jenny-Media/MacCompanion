@@ -4,6 +4,7 @@ import SwiftUI
 import SwiftTerm
 
 struct MacDirectTerminalView: View {
+    @Environment(\.openWindow) private var openWindow
     let mac: DirectMacRecordV1
     let sessionID: UUID
     @State private var session: DirectTerminalSession
@@ -95,6 +96,9 @@ struct MacDirectTerminalView: View {
         .frame(minWidth: 520, minHeight: 360)
         .navigationTitle(mac.name + " · Terminal")
         .toolbar {
+            Button("Files", systemImage: "folder") { openWindow(id: "direct-files", value: DirectFilesWindowRequest(macID: mac.id)) }
+                .help("Browse and transfer files using Remote Login (SSH)").accessibilityIdentifier("session-files")
+
             if session.connected {
                 Button("Interrupt", systemImage: "stop") { if window.acceptsActions { session.send([3]) } }
                     .labelStyle(.titleAndIcon).help("Send Ctrl+C to interrupt the running command")

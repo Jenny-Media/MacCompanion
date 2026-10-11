@@ -151,49 +151,51 @@ public final class SFTPClient: Sendable {
     public func listDirectory(
         atPath path: String
     ) async throws -> [SFTPMessage.Name] {
-        var path = path
-        var oldPath: String
+        try await listDirectoryBounded(atPath: path, maximumEntries: 10_000)
+    }
 
-        repeat {
-            oldPath = path
-            guard case .name(let realpath) = try await sendRequest(.realpath(.init(requestId: self.allocateRequestId(), path: path))) else {
-                self.logger.warning("SFTP server returned bad response to open file request, this is a protocol error")
-                throw SFTPError.invalidResponse
-            }
-
-            path = realpath.path
-        } while path != oldPath
-        
-        guard case .handle(let handle) = try await sendRequest(.opendir(.init(requestId: self.allocateRequestId(), handle: path))) else {
-            self.logger.warning("SFTP server returned bad response to open file request, this is a protocol error")
+    /// Bounded listing with one canonicalization and deterministic handle cleanup.
+    public func listDirectoryBounded(atPath path: String, maximumEntries: Int) async throws -> [SFTPMessage.Name] {
+        let canonical = try await getRealPath(atPath: path)
+        guard case .handle(let handle) = try await sendRequest(.opendir(.init(requestId: allocateRequestId(), handle: canonical))) else {
             throw SFTPError.invalidResponse
         }
-        
-        var names = [SFTPMessage.Name]()
-        var response = try await sendRequest(
-            .readdir(
-                .init(
-                    requestId: self.allocateRequestId(),
-                    handle: handle.handle
-                )
-            )
-        )
-        
-        while case .name(let name) = response {
-            names.append(name)
-            response = try await sendRequest(
-                .readdir(
-                    .init(
-                        requestId: self.allocateRequestId(),
-                        handle: handle.handle
-                    )
-                )
-            )
+        func closeHandle() async throws {
+            guard case .status(let status) = try await sendRequest(.closeFile(.init(requestId: allocateRequestId(), handle: handle.handle))), status.errorCode == .ok else {
+                throw SFTPError.invalidResponse
+            }
         }
-        
-        return names
+        var names: [SFTPMessage.Name] = [], count = 0
+        do {
+            while true {
+                try Task.checkCancellation()
+                let response = try await sendRequest(.readdir(.init(requestId: allocateRequestId(), handle: handle.handle)))
+                if case .status(let status) = response, status.errorCode == .eof { break }
+                guard case .name(let name) = response, !name.components.isEmpty,
+                      name.components.count <= maximumEntries - count else { throw SFTPError.invalidResponse }
+                count += name.components.count; names.append(name)
+            }
+            try await closeHandle()
+            return names
+        } catch {
+            try? await closeHandle()
+            throw error
+        }
     }
-    
+
+    public func supportsAtomicReplace() async throws -> Bool {
+        let version = try await responses.sftpVersion.futureResult.get()
+        return version.extensionData.contains { $0.0 == "posix-rename@openssh.com" && $0.1 == "1" }
+    }
+
+    /// OpenSSH atomic replacement. Never falls back to deleting the destination.
+    public func renameReplacing(at oldPath: String, to newPath: String) async throws {
+        guard try await supportsAtomicReplace() else { throw SFTPError.invalidResponse }
+        guard case .status(let status) = try await sendRequest(.posixRename(.init(requestId: allocateRequestId(), oldPath: oldPath, newPath: newPath))), status.errorCode == .ok else {
+            throw SFTPError.invalidResponse
+        }
+    }
+
     /// Get the attributes of a file on the SFTP server.
     ///
     /// - Parameter filePath: Path to the file
@@ -225,6 +227,12 @@ public final class SFTPClient: Sendable {
         return attributes.attributes
     }
     
+    /// Inspect a path without following its final symbolic link.
+    public func getLinkAttributes(at path: String) async throws -> SFTPFileAttributes {
+        guard case .attributes(let attributes) = try await sendRequest(.lstat(.init(requestId: allocateRequestId(), path: path))) else { throw SFTPError.invalidResponse }
+        return attributes.attributes
+    }
+
     /// Open a file at the specified path on the SFTP server.
     ///
     /// - Parameters:
@@ -341,11 +349,12 @@ public final class SFTPClient: Sendable {
     ) async throws {
         self.logger.info("SFTP requesting mkdir at '\(path)'")
         
-        let _ = try await sendRequest(.mkdir(.init(
+        let response = try await sendRequest(.mkdir(.init(
             requestId: self.allocateRequestId(),
             filePath: path,
             attributes: attributes
         )))
+        guard case .status(let status) = response, status.errorCode == .ok else { throw SFTPError.invalidResponse }
         
         self.logger.debug("SFTP created directory \(path)")
     }
@@ -364,10 +373,11 @@ public final class SFTPClient: Sendable {
     ) async throws {
         self.logger.info("SFTP requesting remove file at '\(filePath)'")
 
-        let _ = try await sendRequest(.remove(.init(
+        let response = try await sendRequest(.remove(.init(
             requestId: allocateRequestId(),
             filename: filePath
         )))
+        guard case .status(let status) = response, status.errorCode == .ok else { throw SFTPError.invalidResponse }
 
         self.logger.debug("SFTP removed file at \(filePath)")
     }
@@ -416,12 +426,13 @@ public final class SFTPClient: Sendable {
     ) async throws {
         self.logger.info("SFTP requesting rename file at '\(oldPath)' to '\(newPath)'")
 
-        let _ = try await sendRequest(.rename(.init(
+        let response = try await sendRequest(.rename(.init(
             requestId: allocateRequestId(),
             oldPath: oldPath,
             newPath: newPath,
             flags: flags
         )))
+        guard case .status(let status) = response, status.errorCode == .ok else { throw SFTPError.invalidResponse }
 
         self.logger.debug("SFTP renamed file at \(oldPath) to \(newPath)")
     }
@@ -519,7 +530,9 @@ extension SSHClient {
         try await eventLoop.flatSubmit { [eventLoop, sshHandler = session.sshHandler] in
             let createChannel = eventLoop.makePromise(of: Channel.self)
             let createClient = eventLoop.makePromise(of: SFTPClient.self)
-            let timeoutCheck = eventLoop.makePromise(of: Void.self)
+            let result = eventLoop.makePromise(of: SFTPClient.self)
+            let finished = NIOLockedValueBox(false)
+            let openedChannel = NIOLockedValueBox<Channel?>(nil)
             
             sshHandler.value.createChannel(createChannel) { channel, _ in
                 SFTPClient.setupChannelHanders(channel: channel, logger: logger)
@@ -528,17 +541,16 @@ extension SSHClient {
                     }
             }
             
-            timeoutCheck.futureResult.whenFailure { _ in
-                logger.warning("SFTP subsystem request or initialize message received no reply after 15 seconds. Likely the result of opening too many SFTPClient handles.")
+            let timeout = eventLoop.scheduleTask(in: .seconds(15)) {
+                let first = finished.withLockedValue { value in if value { return false }; value = true; return true }
+                guard first else { return }
+                result.fail(SFTPError.missingResponse)
+                openedChannel.withLockedValue { $0 }?.close(promise: nil)
             }
-            
-            eventLoop.scheduleTask(in: .seconds(15)) {
-                timeoutCheck.fail(SFTPError.missingResponse)
-                createChannel.fail(SFTPError.missingResponse)
-                createClient.fail(SFTPError.missingResponse)
-            }
-            
-            return createChannel.futureResult.flatMap { channel in
+
+            let opening = createChannel.futureResult.flatMap { channel in
+                openedChannel.withLockedValue { $0 = channel }
+                guard !finished.withLockedValue({ $0 }) else { channel.close(promise: nil); return eventLoop.makeFailedFuture(SFTPError.missingResponse) }
                 let openSubsystem = eventLoop.makePromise(of: Void.self)
 
                 logger.debug("SFTP requesting subsystem")
@@ -555,8 +567,6 @@ extension SSHClient {
                 logger.debug("SFTP subsystem request completed")
                 return createClient.futureResult
             }.flatMap { (client: SFTPClient) in
-                timeoutCheck.succeed(())
-                
                 let initializeMessage = SFTPMessage.initialize(.init(version: .v3))
                 
                 logger.debug("SFTP start with version \(SFTPProtocolVersion.v3)")
@@ -575,6 +585,15 @@ extension SSHClient {
                     return client
                 }
             }
+            opening.whenComplete { outcome in
+                timeout.cancel()
+                let first = finished.withLockedValue { value in if value { return false }; value = true; return true }
+                if first {
+                    result.completeWith(outcome)
+                    if case .failure = outcome { openedChannel.withLockedValue { $0 }?.close(promise: nil) }
+                } else if case .success(let client) = outcome { client.channel.close(promise: nil) }
+            }
+            return result.futureResult
         }.get()
     }
 }

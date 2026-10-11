@@ -1,0 +1,78 @@
+{
+  "profile": "maccompanion.direct-files.v1",
+  "nameCases": [
+    {
+      "name": "report.pdf",
+      "valid": true
+    },
+    {
+      "name": "Résumé.txt",
+      "valid": true
+    },
+    {
+      "name": "my file.txt",
+      "valid": true
+    },
+    {
+      "name": ".",
+      "valid": false
+    },
+    {
+      "name": "..",
+      "valid": false
+    },
+    {
+      "name": "../report.txt",
+      "valid": false
+    },
+    {
+      "name": "a/b",
+      "valid": false
+    },
+    {
+      "name": "a\u0000b",
+      "valid": false
+    },
+    {
+      "name": "line\nname",
+      "valid": false
+    },
+    {
+      "name": "",
+      "valid": false
+    },
+    {
+      "name": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "valid": false
+    }
+  ],
+  "pathCases": [
+    {
+      "path": "/Users/test/Downloads",
+      "valid": true
+    },
+    {
+      "path": "/",
+      "valid": true
+    },
+    {
+      "path": "relative",
+      "valid": false
+    },
+    {
+      "path": "/bad\u0000path",
+      "valid": false
+    }
+  ],
+  "replacePacket": {
+    "id": 7,
+    "source": "/home/upload.part",
+    "destination": "/home/report.txt",
+    "hex": "0000004ac80000000700000018706f7369782d72656e616d65406f70656e7373682e636f6d000000112f686f6d652f75706c6f61642e70617274000000102f686f6d652f7265706f72742e747874"
+  },
+  "metadataPacket": {
+    "id": 7,
+    "path": "/home/report.txt",
+    "hex": "000000190700000007000000102f686f6d652f7265706f72742e747874"
+  }
+}
