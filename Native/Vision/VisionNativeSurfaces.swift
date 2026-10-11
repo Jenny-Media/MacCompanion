@@ -666,8 +666,13 @@ struct VisionDesktopKeyboard: UIViewRepresentable {
 
 final class VisionTerminalView: TerminalView {
     var lostFocus: @MainActor () -> Void = {}
+    var layoutReady: @MainActor () -> Void = {}
     override init(frame: CGRect) { super.init(frame: frame); getTerminal().semanticPromptClickBehavior = .disabled }
     required init?(coder: NSCoder) { super.init(coder: coder); getTerminal().semanticPromptClickBehavior = .disabled }
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        if window != nil, bounds.width > 0, bounds.height > 0, getTerminal().cols > 2, getTerminal().rows > 1 { layoutReady() }
+    }
     func discardComposition() { setMarkedText(nil, selectedRange: NSRange(location: 0, length: 0)); controlModifier = false; metaModifier = false }
     override func becomeFirstResponder() -> Bool {
         if window?.windowScene?.activationState == .foregroundActive, DirectAppLockV1.shared.canAccess { window?.makeKey() }
@@ -702,7 +707,11 @@ struct VisionTerminalSurface: UIViewRepresentable {
         session.inputAvailable = { [weak coordinator] in coordinator?.focus.available == true }
         if let output {
             coordinator.output = output
-            coordinator.outputAttachment = output.attach { [weak coordinator] in coordinator?.feed($0) }
+            coordinator.outputAttachment = output.attach({ [weak coordinator] in coordinator?.feed($0) }, ready: false)
+            view.layoutReady = { [weak coordinator] in
+                guard let coordinator, let token = coordinator.outputAttachment else { return }
+                coordinator.output?.activate(token)
+            }
         } else { session.received = { [weak coordinator] in coordinator?.feed($0) } }
         session.suspendInput = { [weak coordinator] in coordinator?.release() }
         view.lostFocus = { [weak coordinator] in coordinator?.release() }
@@ -737,6 +746,7 @@ struct VisionTerminalSurface: UIViewRepresentable {
         if view.font.pointSize != font.pointSize { view.font = font }
     }
     static func dismantleUIView(_ view: VisionTerminalView, coordinator: Coordinator) {
+        view.layoutReady = {}
         if let output = coordinator.output, let token = coordinator.outputAttachment, !output.owns(token) {
             // A newer surface owns the shared session and interaction closures.
             coordinator.focus.view = nil; view.discardComposition(); return

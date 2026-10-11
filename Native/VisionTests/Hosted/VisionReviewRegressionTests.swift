@@ -63,12 +63,13 @@ import SwiftTerm
             window.rootViewController = host; host.view.layoutIfNeeded()
             try await wait("Terminal attaches", { !self.descendants(host.view, VisionTerminalView.self).isEmpty })
             let view = try XCTUnwrap(descendants(host.view, VisionTerminalView.self).first)
+            try await wait("Terminal completes native layout", { view.window != nil && view.getTerminal().cols >= 40 && view.getTerminal().rows >= 4 })
             let text = String(decoding: view.getTerminal().getBufferAsData(), as: UTF8.self)
             XCTAssertTrue(text.contains("synthetic-ready")); XCTAssertTrue(text.contains("synthetic-before-render"))
             XCTAssertEqual(output.pendingByteCount, 0)
-            view.layoutIfNeeded(); view.layer.displayIfNeeded()
-            let rendered = UIGraphicsImageRenderer(bounds: view.bounds).image { context in
-                view.layer.render(in: context.cgContext)
+            view.layoutIfNeeded(); view.setNeedsDisplay(); view.layer.displayIfNeeded()
+            let rendered = UIGraphicsImageRenderer(bounds: view.bounds).image { _ in
+                XCTAssertTrue(view.drawHierarchy(in: view.bounds, afterScreenUpdates: true))
             }
             let capture = XCTAttachment(image: rendered); capture.name = "Native Terminal startup rendering"; capture.lifetime = .keepAlways; add(capture)
             try await server.close()
@@ -88,6 +89,14 @@ import SwiftTerm
         XCTAssertTrue(first.isEmpty); XCTAssertEqual(second, Array("current-shell".utf8))
         XCTAssertTrue(output.owns(current)); XCTAssertFalse(output.owns(old))
         output.detach(current)
+        var delayed: [UInt8] = []
+        let preparing = output.attach({ delayed += $0 }, ready: false)
+        try session.receiveOutput(Array("before-layout".utf8)); XCTAssertTrue(delayed.isEmpty)
+        XCTAssertGreaterThan(output.pendingByteCount, 0)
+        output.activate(old); XCTAssertTrue(delayed.isEmpty, "A stale layout cannot activate the new receiver")
+        output.activate(preparing); XCTAssertEqual(delayed, Array("before-layout".utf8))
+        output.activate(preparing); XCTAssertEqual(delayed, Array("before-layout".utf8), "Layout repeats cannot replay output")
+        output.detach(preparing)
     }
     func testTerminalStartupOverflowEndsExplicitly() async throws {
         let url = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "native-visionos-client-v1", withExtension: "json"))

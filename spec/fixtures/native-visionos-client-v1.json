@@ -4452,6 +4452,7 @@
     }
   ],
   "terminalOutput": {
+    "requiresUsableNativeLayout": true,
     "maximumPendingBytes": 1048576,
     "oldGenerationCanDrain": false,
     "staleDetachCanRetireCurrentReceiver": false

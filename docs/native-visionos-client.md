@@ -305,7 +305,7 @@ library recovery, and current-library checks when saving an old editor snapshot.
 
 The Terminal window installs a generation-scoped output buffer before connecting.
 It preserves early banners and protocol queries until the native SwiftTerm view
-attaches, drains once in order, and ends the connection explicitly if its 1 MiB
+attaches with a usable layout, drains once in order, and ends the connection explicitly if its 1 MiB
 bound is exceeded. Old-shell output and stale detach callbacks cannot affect a
 replacement receiver. The native connected-only layout is retained after a
 pre-mounted layout crashed in a normal Simulator UI journey.

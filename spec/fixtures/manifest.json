@@ -813,7 +813,7 @@
       "path": "native-visionos-client-v1.json",
       "kind": "client.nativeVision.v1",
       "expect": "valid",
-      "canonicalSHA256": "0026d2b7c456eb8f83bc4416cbc6efb588a5d9926c86f7c1294bdc5b1a0e1e29"
+      "canonicalSHA256": "f25a75896f4f88d4fc3eb173b72b803f98b24ff28b08435a59b3366f80898d10"
     },
     {
       "path": "ios-text-composer-v1.json",

@@ -9,6 +9,7 @@ import Foundation
     private var pending: [UInt8] = []
     private var receiver: (@MainActor ([UInt8]) -> Void)?
     private var attachment: UUID?
+    private var ready = false
     var pendingByteCount: Int { pending.count }
     init(session: DirectTerminalSession) {
         self.session = session; generation = session.outputGeneration
@@ -17,26 +18,34 @@ import Foundation
     private func retireOldGeneration() {
         guard let session, generation != session.outputGeneration else { return }
         generation = session.outputGeneration; pending.removeAll(keepingCapacity: false)
-        receiver = nil; attachment = nil
+        receiver = nil; attachment = nil; ready = false
     }
     private func receive(_ bytes: [UInt8]) {
         retireOldGeneration()
-        if let receiver { receiver(bytes); return }
+        if ready, let receiver { receiver(bytes); return }
         guard bytes.count <= DirectTerminalSession.maximumPausedOutputBytes - pending.count else {
             pending.removeAll(keepingCapacity: false); session?.failNativeInputAdmission(); return
         }
         pending.append(contentsOf: bytes)
     }
-    @discardableResult func attach(_ receiver: @escaping @MainActor ([UInt8]) -> Void) -> UUID {
+    @discardableResult func attach(_ receiver: @escaping @MainActor ([UInt8]) -> Void, ready: Bool = true) -> UUID {
         retireOldGeneration()
-        let token = UUID(); attachment = token; self.receiver = receiver
-        let bytes = pending; pending.removeAll(keepingCapacity: false)
-        if !bytes.isEmpty { receiver(bytes) }
+        let token = UUID(); attachment = token; self.receiver = receiver; self.ready = ready
+        if ready { drain() }
         return token
+    }
+    func activate(_ token: UUID) {
+        retireOldGeneration()
+        guard owns(token) else { return }
+        ready = true; drain()
+    }
+    private func drain() {
+        let bytes = pending; pending.removeAll(keepingCapacity: false)
+        if !bytes.isEmpty { receiver?(bytes) }
     }
     func detach(_ token: UUID) {
         guard attachment == token else { return }
-        attachment = nil; receiver = nil; pending.removeAll(keepingCapacity: false)
+        attachment = nil; receiver = nil; ready = false; pending.removeAll(keepingCapacity: false)
     }
     func owns(_ token: UUID) -> Bool { attachment == token && session?.outputGeneration == generation }
 }

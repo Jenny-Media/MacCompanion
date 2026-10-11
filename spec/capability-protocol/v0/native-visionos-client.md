@@ -132,7 +132,9 @@ it. Passwords, SSH private keys, trusted server keys, sensitive drafts and conse
 stay device-local. Simulator merge tests do not establish device delivery.
 
 Initial PTY output MUST reach the current Terminal emulator. Before the native
-surface attaches, output is buffered up to the existing 1 MiB output bound;
+surface attaches and completes a usable native layout, output is buffered up to
+the existing 1 MiB output bound. A zero-size or provisional two-column emulator
+MUST NOT drain startup output;
 overflow ends that shell explicitly. Attachment drains bytes exactly once in
 order. Session generation changes discard old pending output, and stale surface
 teardown cannot detach a newer receiver. Initial banners, prompts, mode-setting
