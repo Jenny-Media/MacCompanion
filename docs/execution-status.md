@@ -1,3 +1,95 @@
+## 2026-10-11 — visionOS interaction redesign
+
+The approved issue #8 interaction redesign is implemented in the native visionOS
+client: pinch/click, movement/scroll, hold actions, one-shot dragging, local
+adjustment, native toolbar and reliable keyboard reopening. Terminal controls
+and existing/additional-window discovery retain independent connection owners.
+The specification and existing indexed fixture precede the runtime changes.
+
+Normal and 600×420 accessibility-text UI journeys, native responders, generated
+input-dependent frames, actual SSH/RFB, wide/ultrawide rendering and owner cleanup
+have development evidence. Final implementation acceptance requires every frozen
+check on one stable source fingerprint plus a fresh two-stage review; the bound
+reports live outside Git under
+`/private/tmp/maccompanion-visionos-redesign-20261011/review/`.
+See [the coverage and evidence boundaries](native-visionos-client.md#interaction-redesign--october-11-2026).
+No shared iOS/macOS runtime is changed by this redesign; prior platform and macOS
+hosted-test limitations below remain historical evidence, not a newly passing lane.
+
+The physical headset is not contacted during this implementation loop. Its
+original click/keyboard failures still require final first-generation visionOS 27
+acceptance when access returns. Actual peripheral/direct-finger/two-hand/dictation
+and VoiceOver recognition, comfort, visionOS 26 runtime coverage, signing, cloud
+sync delivery, StoreKit and release remain separate gates. Curved system windows
+remain unsupported by available public third-party APIs; flat wide/ultrawide
+support continues.
+
+## 2026-10-10 — Native visionOS implementation and final hardware checkpoint
+
+Issue [#8](https://github.com/Jenny-Media/MacCompanion/issues/8) proceeds after
+fast-forwarding main to `c6f3bec145f3422691301dc02e530834a8cc1fca` and passing
+dependency/input feasibility in Simulator. The native SwiftUI/UIKit client uses
+independent Desktop and SSH Terminal windows, verified encrypted Desktop
+transport, local input/composition ownership, scene privacy covers and opt-in
+metadata sync. Historical Observe, Act and Control paths and grants remain
+independent and inactive in this direct client. Experiments are excluded from
+normal client builds.
+
+Stable Xcode 27.0 passes normal native Simulator and device-SDK builds, 18
+distinct native client checks across the final focused and multiwindow result
+bundles, the iOS regression suite (203 passed, 13 optional capture skips), and
+required `bash scripts/validate.sh` with 135 indexed fixtures. Actual encrypted
+wide/ultrawide frame rendering is covered in Simulator. Standard windows support
+local fit/zoom/pan; Apple currently exposes no supported third-party curved-window
+API. The provisional minimum is visionOS 26.0, with runtime checks on 27.0.
+
+Native macOS compiles successfully. Its Xcode hosted test invocation stalled
+before test execution in the IDE handshake. An isolated signed LaunchServices
+runner passes 53 of 54 tests, including native window focus, two SSH owners and
+held-input cleanup. The remaining accessibility test reproduces against unchanged
+pulled main in the same runner; a completely passing macOS hosted lane remains
+open. Detailed result paths and the baseline comparison are recorded in
+[native-visionos-client.md](native-visionos-client.md).
+
+Only after Simulator work completed, the user connected the first-generation
+Vision Pro running visionOS 27. The source-bound temporary development app was
+signed with an existing authorized profile/certificate, installed and launched;
+its native process was observed. The profile already covers this device and
+the existing metadata Keychain group. Generated signing material, install/launch
+receipts and all captures stay outside Git. No permanent target identity, new
+profile, App Store configuration or release admission was created.
+
+Real headset sign-in/input, multiple connected windows, readability/accessibility,
+interruption and first-generation performance remain pending. Signed
+iPhone–Mac–Vision Pro metadata delivery, actual Free/Pro purchase/restore,
+TestFlight, the provisional OS floor and existing license/distribution gates
+also remain independent acceptance requirements. Installation and launch do not
+close issue #8 or establish those results.
+
+The first interactive headset check reports pointer movement without successful
+clicking and an empty Desktop keyboard bar without a virtual keyboard. Physical
+input acceptance fails at this checkpoint. Investigation and fixes return to
+Simulator before the next final headset test.
+
+The input correction passes 18 focused native Simulator tests with no failures
+or skips: 17 hosted client/privacy checks plus real native-window selection,
+drag/release and system keyboard presentation over the synthetic encrypted
+SSH/RFB connection. Stationary selection uses a spatial-tap path exclusive with
+dragging; scroll-wheel events cannot claim that selection. The native text view
+requests focus on attachment and releases held input on responder loss without
+committing composition. The five selection traces remain in the single indexed
+fixture corpus. Normal Simulator/device-SDK reports bind the corrected source,
+and the corrected app was signed with the existing authorized profile and
+installed for the final headset retest. Interactive hardware acceptance remains
+pending; Simulator success does not close the original hardware failures.
+Required repository validation also passes on stable Xcode 27. CoreDevice remote
+launch of the corrected build failed with an unavailable-service error and then
+timed out. Its installation is verified, and the user has been asked to open the
+app manually for the click/keyboard retest. Successful launch of the original
+build does not establish launch or physical acceptance of this correction.
+The user subsequently reports no current Vision Pro access. The final Simulator
+input checks are complete; physical retesting waits for headset access.
+
 ## 2026-10-10 — First-tap connection mode presentation
 
 The reported Trackpad default opening Desktop is reproduced on stable Xcode

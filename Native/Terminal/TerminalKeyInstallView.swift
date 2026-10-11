@@ -1,4 +1,4 @@
-#if (os(iOS) || os(macOS)) && MACCOMPANION_VNC_DEVELOPMENT
+#if (os(iOS) || os(macOS) || os(visionOS)) && MACCOMPANION_VNC_DEVELOPMENT
 import SwiftUI
 #if os(iOS)
 import UIKit
@@ -56,7 +56,7 @@ struct TerminalKeyInstallView: View {
                     #if os(macOS)
                     Text("Allow a key on this Mac to sign in to \(mac.name).").foregroundStyle(.secondary)
                     #else
-                    Text("Allow a key on this iPhone to sign in to \(mac.name).").foregroundStyle(.secondary)
+                    Text("Allow a key on this device to sign in to \(mac.name).").foregroundStyle(.secondary)
                     #endif
                 }.listRowBackground(Color.clear)
                 if let notice = session.recovery {
@@ -100,7 +100,7 @@ struct TerminalKeyInstallView: View {
                         #if os(macOS)
                         Text("Keep existing authorized keys. Your private key stays on this Mac.").font(.footnote).foregroundStyle(.secondary)
                         #else
-                        Text("Keep existing authorized keys. Your private key stays on this iPhone.").font(.footnote).foregroundStyle(.secondary)
+                        Text("Keep existing authorized keys. Your private key stays on this device.").font(.footnote).foregroundStyle(.secondary)
                         #endif
                         Label("Test key login", systemImage: session.setupPhase == .verified ? "checkmark.circle" : "2.circle")
                         Text("Verify a fresh key-only login before making this key preferred.").font(.footnote).foregroundStyle(.secondary)
@@ -116,7 +116,12 @@ struct TerminalKeyInstallView: View {
                 if session.installedKey == nil && !session.connecting && !uncertain {
                     VStack(spacing: 8) {
                         Button(action: install) { HStack { Text("Install Public Key"); if !DirectProAccess.shared.hasPro { DirectProBadge() } }.frame(maxWidth: .infinity, minHeight: 32) }
-                            .buttonStyle(.glassProminent).controlSize(.large).disabled(!valid).accessibilityIdentifier("ssh-install-key")
+                            #if os(visionOS)
+                            .buttonStyle(.borderedProminent)
+                            #else
+                            .buttonStyle(.glassProminent)
+                            #endif
+                            .controlSize(.large).disabled(!valid).accessibilityIdentifier("ssh-install-key")
                         if !valid { Text("Choose a key, enter the Mac account, and provide a working setup login.").font(.caption).foregroundStyle(.secondary) }
                     }.padding(16).background(.bar)
                 }

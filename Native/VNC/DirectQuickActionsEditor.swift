@@ -1,6 +1,6 @@
-#if (os(iOS) || os(macOS)) && MACCOMPANION_VNC_DEVELOPMENT
+#if (os(iOS) || os(macOS) || os(visionOS)) && MACCOMPANION_VNC_DEVELOPMENT
 import SwiftUI
-#if os(iOS)
+#if os(iOS) || os(visionOS)
 import UIKit
 #else
 import AppKit
@@ -420,7 +420,7 @@ struct DirectSavedTextEditor: View {
     @Binding var text: String
     let mode: DirectControlMode
     private var editorBackground: Color {
-        #if os(iOS)
+        #if os(iOS) || os(visionOS)
         Color(uiColor: .systemBackground)
         #else
         Color(nsColor: .textBackgroundColor)
@@ -478,7 +478,7 @@ private struct DirectQuickActionsNativePreview: UIViewRepresentable {
         view.refreshEditingPreview()
     }
 }
-#else
+#elseif os(macOS)
 struct DirectShortcutRecorder: NSViewRepresentable {
     let mode: DirectControlMode
     let recorded: (UInt32?, [UInt32]) -> Void

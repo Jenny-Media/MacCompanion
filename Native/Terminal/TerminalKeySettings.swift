@@ -1,4 +1,4 @@
-#if (os(iOS) || os(macOS)) && MACCOMPANION_VNC_DEVELOPMENT
+#if (os(iOS) || os(macOS) || os(visionOS)) && MACCOMPANION_VNC_DEVELOPMENT
 import SwiftUI
 import UniformTypeIdentifiers
 #if os(iOS)
@@ -276,10 +276,16 @@ struct TerminalKeyDetail: View {
                     if passphrase.utf8.count > 4096 { Text("Use a passphrase up to 4 KiB.").font(.footnote).foregroundStyle(.secondary) }
                     if busy { ProgressView("Preparing encrypted key…") }
                 }
-            } header: { Text("Private Key Backup") } footer: { Text("Exports use passphrase-encrypted OpenSSH format and require Face ID or your passcode. Keep the file and passphrase safe; a forgotten passphrase cannot be recovered.") }
+            } header: { Text("Private Key Backup") } footer: {
+                #if os(visionOS)
+                Text("Exports use passphrase-encrypted OpenSSH format and require device authentication. Keep the file and passphrase safe; a forgotten passphrase cannot be recovered.")
+                #else
+                Text("Exports use passphrase-encrypted OpenSSH format and require Face ID or your passcode. Keep the file and passphrase safe; a forgotten passphrase cannot be recovered.")
+                #endif
+            }
             if let issue { DirectRecoveryCard(notice: issue) }
             Section {
-                Button("Delete Key from This iPhone", role: .destructive) { deleting = true }
+                Button("Delete Key from This Device", role: .destructive) { deleting = true }
             } footer: { Text("This clears local selections. It does not remove the public key or revoke access on your Macs.") }
         }
         .navigationTitle("SSH Key").directInlineNavigationTitle()

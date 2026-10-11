@@ -1,7 +1,7 @@
-#if (os(iOS) || os(macOS)) && MACCOMPANION_VNC_DEVELOPMENT
+#if (os(iOS) || os(macOS) || os(visionOS)) && MACCOMPANION_VNC_DEVELOPMENT
 import Observation
 import SwiftUI
-#if os(iOS)
+#if os(iOS) || os(visionOS)
 import UIKit
 #else
 import AppKit
@@ -12,7 +12,7 @@ enum DirectAppAppearance: String, CaseIterable, Identifiable {
     var id: String { rawValue }
     var title: String { rawValue.capitalized }
     var colorScheme: ColorScheme? { self == .system ? nil : self == .dark ? .dark : .light }
-    #if os(iOS)
+    #if os(iOS) || os(visionOS)
     var interfaceStyle: UIUserInterfaceStyle { self == .system ? .unspecified : self == .dark ? .dark : .light }
     #endif
 }
@@ -21,7 +21,7 @@ enum DirectTerminalAppearance: String, CaseIterable, Identifiable {
     case app, light, dark
     var id: String { rawValue }
     var title: String { self == .app ? "Follow App" : rawValue.capitalized }
-    #if os(iOS)
+    #if os(iOS) || os(visionOS)
     func style(app: DirectAppAppearance) -> UIUserInterfaceStyle { self == .app ? app.interfaceStyle : self == .dark ? .dark : .light }
     #endif
 }
@@ -46,7 +46,7 @@ enum DirectTerminalAppearance: String, CaseIterable, Identifiable {
     }
     func install() {
         if observer == nil {
-            #if os(iOS)
+            #if os(iOS) || os(visionOS)
             let name = UIScene.didActivateNotification
             #else
             let name = NSApplication.didBecomeActiveNotification
@@ -58,7 +58,7 @@ enum DirectTerminalAppearance: String, CaseIterable, Identifiable {
         applyWindows()
     }
     func applyWindows() {
-        #if os(iOS)
+        #if os(iOS) || os(visionOS)
         for scene in UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene }) {
             for window in scene.windows { window.overrideUserInterfaceStyle = app.interfaceStyle }
         }

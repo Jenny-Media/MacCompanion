@@ -1,4 +1,4 @@
-#if os(iOS) && MACCOMPANION_VNC_DEVELOPMENT
+#if (os(iOS) || os(visionOS)) && MACCOMPANION_VNC_DEVELOPMENT
 import Foundation
 import Darwin
 @preconcurrency import Citadel

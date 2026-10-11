@@ -808,6 +808,12 @@
       "kind": "client.nativeMac.v1",
       "expect": "valid",
       "canonicalSHA256": "ceca82d6e0b6c99a0c34fa571877e579d1c409fcf217eeeb9c0d01929bff2880"
+    },
+    {
+      "path": "native-visionos-client-v1.json",
+      "kind": "client.nativeVision.v1",
+      "expect": "valid",
+      "canonicalSHA256": "5a28160a5813342d8851ed1f8ab56895be2d2f94e755c81f621b08ce69704d5c"
     }
   ]
 }

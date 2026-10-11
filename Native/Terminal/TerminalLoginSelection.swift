@@ -1,4 +1,4 @@
-#if (os(iOS) || os(macOS)) && MACCOMPANION_VNC_DEVELOPMENT
+#if (os(iOS) || os(macOS) || os(visionOS)) && MACCOMPANION_VNC_DEVELOPMENT
 enum TerminalLoginMethod: String, CaseIterable, Identifiable {
     case password = "Password", sshKey = "SSH Key"
     var id: String { rawValue }

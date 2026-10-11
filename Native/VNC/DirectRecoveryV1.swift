@@ -85,9 +85,9 @@ enum TerminalSetupPhase: String, Sendable {
     var mayBeInstalled: Bool { self != .notSent }
 }
 
-#if (os(iOS) || os(macOS)) && MACCOMPANION_VNC_DEVELOPMENT
+#if (os(iOS) || os(macOS) || os(visionOS)) && MACCOMPANION_VNC_DEVELOPMENT
 import SwiftUI
-#if os(iOS)
+#if os(iOS) || os(visionOS)
 import UIKit
 #else
 import AppKit
@@ -123,7 +123,7 @@ struct DirectMacSetupGuide: View {
         NavigationStack {
             Form {
                 Section("1. Enable access on your Mac") {
-                    #if os(iOS)
+                    #if os(iOS) || os(visionOS)
                     DirectGuidanceRow(title: "Remote Login · All modes", detail: "Turn on Remote Login and allow your Mac account.", symbol: "terminal")
                     DirectGuidanceRow(title: "Desktop & Trackpad", detail: "Also turn on Screen Sharing and allow your Mac account.", symbol: "macwindow")
                     #else
@@ -409,14 +409,14 @@ struct DirectRecoveryCard: View {
             .onChange(of: notice.reason) { _, _ in announce() }
     }
     private var recoveryBackground: Color {
-        #if os(iOS)
+        #if os(iOS) || os(visionOS)
         Color(uiColor: .secondarySystemBackground)
         #else
         Color(nsColor: .controlBackgroundColor)
         #endif
     }
     private func announce() {
-        #if os(iOS)
+        #if os(iOS) || os(visionOS)
         UIAccessibility.post(notification: .announcement, argument: notice.title)
         #endif
     }
@@ -466,7 +466,7 @@ struct TerminalServerTrustView: View {
                     Text("No login is sent until you approve.").font(.footnote).foregroundStyle(.secondary)
                 }.padding(24).frame(maxWidth: 520)
             }.navigationTitle("Verify This Mac")
-            #if os(iOS)
+            #if os(iOS) || os(visionOS)
             .navigationBarTitleDisplayMode(.inline)
             #endif
                 .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { answer(false) } } }
