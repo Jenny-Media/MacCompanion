@@ -7,13 +7,12 @@ struct DirectFilesWindowRequest: Codable, Hashable {
     init(macID: UUID) { id = UUID(); self.macID = macID }
 }
 struct MacFilesWindow: View {
-    let mac: DirectMacRecordV1
     @State private var session: DirectFilesSession
-    init(mac: DirectMacRecordV1) { self.mac = mac; _session = State(initialValue: DirectFilesSession(mac: mac)) }
+    init(mac: DirectMacRecordV1) { _session = State(initialValue: DirectFilesSession(mac: mac)) }
     var body: some View {
-        DirectFilesView(mac: mac, session: session)
-            .navigationTitle(mac.name + " · Files")
-            .windowDismissBehavior(session.transferActive ? .disabled : .automatic)
+        DirectFilesView(mac: session.mac, session: session)
+            .navigationTitle(session.mac.name + " · Files")
+            .windowDismissBehavior(DirectFilesPolicy.preventsDismissal(retained: false, active: session.transferActive, pending: session.hasPendingResults) ? .disabled : .automatic)
             .background(MacWindowLifetime { session.close() }.frame(width: 0, height: 0))
     }
 }

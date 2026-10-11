@@ -70,6 +70,13 @@
     { "pathKind": "missing", "handleKind": "file", "accepted": false },
     { "pathKind": "file", "handleKind": "other", "accepted": false }
   ],
+  "dismissalCases": [
+    { "retained": false, "active": false, "pending": false, "blocked": false },
+    { "retained": false, "active": true, "pending": false, "blocked": true },
+    { "retained": false, "active": false, "pending": true, "blocked": true },
+    { "retained": true, "active": true, "pending": true, "blocked": false },
+    { "retained": true, "active": false, "pending": true, "blocked": false }
+  ],
   "replacePacket": {
     "id": 7,
     "source": "/home/upload.part",

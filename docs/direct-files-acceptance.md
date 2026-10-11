@@ -43,6 +43,13 @@ not introduce a connection mode or require a Mac Companion helper.
   Confirm Disconnect during a transfer keeps Files open with its Save/Retry
   results. Confirm Done warns before closing an independent Files owner with
   unsaved downloads or interrupted transfers. Cancel must keep them available.
+  Swiping a standalone iPhone Files sheet or using the Mac window close control
+  must be blocked while these results remain. Confirmed Done must still close.
+- With a saved SSH password, edit Files' account/password and turn Save SSH login
+  off. Open Setup Guide and dismiss it; the edited fields and off choice must stay.
+- Leave Files open while editing the saved Mac's name, addresses or SSH port in
+  another window. Its title, review and reconnect must keep the owner's original
+  record. A newly opened Files owner must use the edited record.
 - Reconnect as a different account. Previous interrupted files must not retry
   under the new account; discard the old batch before a fresh reviewed upload.
 - Keep a Desktop and Terminal connected during file transfers. Closing Files
@@ -58,14 +65,16 @@ Rename, delete and entire-folder transfers are deferred.
 `DirectFilesTests` checks the indexed path and wire vectors, chunked transfers,
 close-before-publish ordering, failure cleanup, original preservation, truncated
 and special-file downloads, fresh path/handle admission, and native staging
-admission. The fixture is indexed only in `spec/fixtures/manifest.json`.
+admission, standalone/retained dismissal, and owner-record presentation. The
+fixture is indexed only in `spec/fixtures/manifest.json`.
 
 `DirectFilesIntegrationTests` uses a disposable loopback SSH test transport with
 macOS's `/usr/libexec/sftp-server`. It exercises browsing, folder creation,
 uploads, conflicts, atomic replacement, downloads, independent owners, interruption,
 account-bound retry, pending-download preservation and discard, distinct
-Disconnect/Done behavior, saved-password removal, progressing and stalled
-responses, stale-link rejection, app-lock/background retirement, host-pin
+Disconnect/Done behavior, confirmed pending-result cleanup, saved-password
+removal, admission and missing-destination response activity, progressing and
+stalled responses, stale-link rejection, app-lock/background retirement, host-pin
 rejection and separate authentication/SFTP failure guidance. This transport exists
 only in the hosted test target; neither release client includes a server or subprocess.
 

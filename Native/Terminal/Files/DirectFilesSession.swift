@@ -171,6 +171,7 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
                 let logger = Logger(label: "Files", factory: { _ in SwiftLogNoOpLogHandler() })
                 let client = try await ssh.openSFTP(logger: logger)
                 try check(token)
+                armDeadline()
                 client.setResponseActivityHandler { [weak self] in await self?.receivedResponse(token) }
                 let store = DirectFilesSFTPStore(client: client); self.store = store
                 let directory = try await store.directory("."); try check(token)
@@ -290,8 +291,10 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
                     if let source = results[index].source {
                         var name = results[index].name; var replace = false
                         let path = try DirectFilesPolicy.child(name, of: results[index].folder)
-                        if let attrs = try await store.attributes(path) {
-                            try check(); deadline?.cancel()
+                        let attributes = try await store.attributes(path)
+                        try check()
+                        if let attrs = attributes {
+                            deadline?.cancel()
                             conflict = .init(name: name, replaceAllowed: attrs.kind == .file)
                             let choice = await withCheckedContinuation { conflictReply = $0 }; try check()
                             armDeadline()
@@ -303,8 +306,9 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
                                 for number in 2...1000 {
                                     let candidate = DirectFilesPolicy.duplicateName(name, number: number)
                                     let candidatePath = try DirectFilesPolicy.child(candidate, of: results[index].folder)
-                                    if try await store.attributes(candidatePath) == nil { name = candidate; found = true; break }
+                                    let candidateAttributes = try await store.attributes(candidatePath)
                                     try check()
+                                    if candidateAttributes == nil { name = candidate; found = true; break }
                                 }
                                 guard found else { throw DirectFilesFailure.invalidName }
                             }
@@ -368,8 +372,14 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
         results = []; resultsAccount = ""; message = nil
     }
     @discardableResult func confirmExit(_ intent: DirectFilesExitIntent, retainWhenDismissed: Bool) -> Bool {
+        if intent == .close && !retainWhenDismissed {
+            // The user explicitly accepted losing pending results. Retire now
+            // so native dismissal is enabled before requesting it.
+            close()
+            return true
+        }
         disconnect(message: "Transfer stopped. Reconnect and Retry when ready.")
-        return intent == .close && !retainWhenDismissed
+        return false
     }
     func disconnect(message: String? = nil) {
         retire(); phase = .interrupted; status = "Sign In Required"; self.message = message

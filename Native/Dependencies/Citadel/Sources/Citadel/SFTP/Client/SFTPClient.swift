@@ -92,7 +92,7 @@ public final class SFTPClient: Sendable {
     ///   ID is in flight at any given time; multiple reponses to the same ID are likely to cause
     ///   unpredictable behavior.
     internal func sendRequest(_ request: SFTPRequest) async throws -> SFTPResponse {
-        let response = try await self.eventLoop.flatSubmit {
+        let result = try await self.eventLoop.flatSubmit {
             let requestId = request.requestId
             let promise = self.channel.eventLoop.makePromise(of: SFTPResponse.self)
             
@@ -108,10 +108,19 @@ public final class SFTPClient: Sendable {
             return self.channel.writeAndFlush(request.makeMessage()).flatMap {
                 promise.futureResult
             }
-        }.get()
-        let activity = responseActivity.withLockedValue { $0 }
-        await activity?()
-        return response
+        }.map { Result<SFTPResponse, Error>.success($0) }.flatMapErrorThrowing { .failure($0) }.get()
+        switch result {
+        case .success:
+            let activity = responseActivity.withLockedValue { $0 }
+            await activity?()
+        case .failure(let error) where error is SFTPMessage.Status:
+            // A received negative status is activity too. Transport failures
+            // must not extend the owner's idle deadline.
+            let activity = responseActivity.withLockedValue { $0 }
+            await activity?()
+        case .failure: break
+        }
+        return try result.get()
     }
 
     /// Set the attributes of a file on the SFTP server.

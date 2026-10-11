@@ -235,6 +235,25 @@ private final class FilesTestSFTPProcess: ChannelDuplexHandler, @unchecked Senda
         session.disconnect(); try await open(session)
         XCTAssertNil(try TerminalSecretStore.login(mac.id)); XCTAssertEqual(try TerminalSecretStore.hostKey(mac.id), pin)
     }
+    func testConfirmedCloseReleasesPendingDownloadAndNativeDismissalProtection() async throws {
+        let root = try DirectFilesLocalStore.root(); defer { try? FileManager.default.removeItem(at: root) }
+        try Data([1, 2, 3]).write(to: root.appendingPathComponent("pending.txt"))
+        let server = try await self.server(root: root, record: SSHTestRecord())
+        defer { Task { try? await server.close() } }
+        let mac = DirectMacRecordV1(id: UUID(), name: "Synthetic Pending Files", addresses: ["127.0.0.1"], sshPort: try XCTUnwrap(server.localAddress?.port))
+        let session = DirectFilesSession(mac: mac); defer { session.close(); try? TerminalSecretStore.remove(mac.id) }
+        try await open(session)
+        session.download(try XCTUnwrap(session.directory?.entries.first { $0.name == "pending.txt" }))
+        try await wait { !session.busy }
+        let download = try XCTUnwrap(session.results.first?.localDownload)
+        XCTAssertTrue(DirectFilesPolicy.preventsDismissal(retained: false, active: session.transferActive, pending: session.hasPendingResults))
+        XCTAssertFalse(session.confirmExit(.close, retainWhenDismissed: true))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: download.path)); XCTAssertTrue(session.hasPendingResults)
+        XCTAssertTrue(session.confirmExit(.close, retainWhenDismissed: false))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: download.path)); XCTAssertFalse(session.hasPendingResults)
+        XCTAssertFalse(DirectFilesPolicy.preventsDismissal(retained: false, active: session.transferActive, pending: session.hasPendingResults))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: root.appendingPathComponent("pending.txt").path))
+    }
     func testProgressingSFTPListingOutlastsIdleDeadlineAndStalledResponseTimesOut() async throws {
         let root = try DirectFilesLocalStore.root(); defer { try? FileManager.default.removeItem(at: root) }
         for index in 0..<512 { try Data().write(to: root.appendingPathComponent("file-\(index).txt")) }
@@ -258,6 +277,24 @@ private final class FilesTestSFTPProcess: ChannelDuplexHandler, @unchecked Senda
         try await wait { stalled.trust != nil || stalled.phase != .connecting }; stalled.answerTrust(true)
         try await wait { stalled.phase != .connecting }
         XCTAssertEqual(stalled.phase, .interrupted); XCTAssertTrue(stalled.message?.contains("stopped responding") == true)
+    }
+    func testSFTPAdmissionAndMissingUploadDestinationEachResetIdleDeadline() async throws {
+        let root = try DirectFilesLocalStore.root(), local = try DirectFilesLocalStore.root()
+        defer { try? FileManager.default.removeItem(at: root); try? FileManager.default.removeItem(at: local) }
+        // Every response is within the idle budget; VERSION + REALPATH, and
+        // missing-destination LSTAT + OPEN, each exceed it if activity is lost.
+        let server = try await self.server(root: root, record: SSHTestRecord(), responseDelay: .milliseconds(600))
+        defer { Task { try? await server.close() } }
+        let mac = DirectMacRecordV1(id: UUID(), name: "Synthetic Slow Files", addresses: ["127.0.0.1"], sshPort: try XCTUnwrap(server.localAddress?.port))
+        let session = DirectFilesSession(mac: mac, idleTimeout: .milliseconds(1000))
+        defer { session.close(); try? TerminalSecretStore.remove(mac.id) }
+        try await open(session)
+        let source = try DirectFilesLocalStore.emptyFile(in: local, name: "new.txt"), bytes = Data([1, 2, 3])
+        try bytes.write(to: source)
+        session.upload([source], to: session.home); try await wait({ !session.busy }, seconds: 20)
+        XCTAssertEqual(session.phase, .ready, session.message ?? "")
+        XCTAssertEqual(session.results.first?.outcome, .completed, session.results.first?.message ?? "")
+        XCTAssertEqual(try Data(contentsOf: root.appendingPathComponent("new.txt")), bytes)
     }
     func testCachedRegularFileChangedToSymlinkIsRejectedBeforeDownloadingTarget() async throws {
         let root = try DirectFilesLocalStore.root(); defer { try? FileManager.default.removeItem(at: root) }

@@ -9,6 +9,24 @@ import NIO
 #endif
 
 @MainActor final class DirectFilesTests: XCTestCase {
+    func testFilesPresentationUsesOwnerSnapshotAfterSavedMacChanges() {
+        let original = DirectMacRecordV1(id: UUID(), name: "Original Files Mac", addresses: ["127.0.0.1"], sshPort: 22)
+        let owner = DirectFilesSession(mac: original); defer { owner.close() }
+        var edited = original; edited.name = "Edited Files Mac"; edited.addresses = ["127.0.0.2"]; edited.sshPort = 2222
+        let view = DirectFilesView(mac: edited, session: owner)
+        XCTAssertEqual(view.mac.name, original.name)
+        XCTAssertEqual(view.mac.addresses, original.addresses)
+        XCTAssertEqual(view.mac.sshPort, original.sshPort)
+        let reopened = DirectFilesSession(mac: edited); defer { reopened.close() }
+        XCTAssertEqual(DirectFilesView(mac: edited, session: reopened).mac.sshPort, 2222)
+    }
+    func testIndexedStandaloneAndRetainedDismissalPolicy() throws {
+        let url = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "direct-files-v1", withExtension: "json"))
+        let fixture = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])
+        for item in try XCTUnwrap(fixture["dismissalCases"] as? [[String: Bool]]) {
+            XCTAssertEqual(DirectFilesPolicy.preventsDismissal(retained: try XCTUnwrap(item["retained"]), active: try XCTUnwrap(item["active"]), pending: try XCTUnwrap(item["pending"])), item["blocked"])
+        }
+    }
     func testIndexedAtomicReplacementPacketAndV3RenameFraming() throws {
         let url = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "direct-files-v1", withExtension: "json"))
         let fixture = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])

@@ -16,6 +16,12 @@ First-use host trust requires explicit fingerprint approval. Changed pins fail
 closed. Logins, pins and private keys remain in the existing device-only stores.
 Show the selected Mac, account and Remote Login requirement before connection.
 Do not claim a failed TCP connection proves Remote Login is disabled.
+The Files owner retains one Mac-record snapshot. Its title, sign-in, upload
+review and reconnect MUST use that same record. Reopen Files to adopt edits to
+the saved Mac; do not relabel an existing connection with a different endpoint.
+Opening or dismissing help or purchase sheets MUST NOT reload a saved password,
+replace an edited account, or change the user's saved-login choice. Explicit key
+selection may refresh the selected key/account without reloading the password.
 
 The SSH handshake including trust approval is bounded to 60 seconds. SFTP v3
 subsystem admission and each idle operation are bounded to 30 seconds. Cancelling,
@@ -24,6 +30,10 @@ channel, cancels prompts and prevents late callbacks from updating a replacement
 connection. Reconnect and retry are explicit; no transfer replay or resume.
 Each completed SFTP response for the owned operation resets its idle deadline;
 the total duration of a progressing listing or transfer is not an idle timeout.
+This includes received error statuses such as a normal missing upload destination,
+but not transport failures. Successful subsystem admission starts a fresh idle
+deadline for the first directory request. After every metadata await, including
+missing paths, validate the owner and operation before accessing transfer state.
 Conflict prompts suspend that deadline. Responses from a retired connection
 cannot reset a replacement connection's deadline.
 
@@ -74,6 +84,9 @@ Successfully exported downloads and completed uploads do not block a new batch.
 Disconnect preserves the Files owner and its Save/Retry results. Files' Done
 control requires an explicit warning if closing its owner will lose private
 unsaved downloads or retries.
+Standalone sheet swipes and native window-close controls MUST be disabled while
+that warning is required; Done provides the explicit Close/Discard confirmation.
+Retained Files sheets may still be hidden without discarding the owner's results.
 Password-based Files login follows Terminal retention: disabling saved login
 removes the existing saved password before connecting, without removing keys or
 server trust.

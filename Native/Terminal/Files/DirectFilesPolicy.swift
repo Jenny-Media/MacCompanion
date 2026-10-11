@@ -38,6 +38,9 @@ enum DirectFilesExitIntent { case disconnect, close }
 enum DirectFilesPolicy {
     static let chunkSize = 32_768
     static let maximumBatch = 32
+    static func preventsDismissal(retained: Bool, active: Bool, pending: Bool) -> Bool {
+        !retained && (active || pending)
+    }
     static func validName(_ name: String) -> Bool {
         !name.isEmpty && name != "." && name != ".." && name.utf8.count <= 255 && !name.contains("/") &&
         !name.unicodeScalars.contains { CharacterSet.controlCharacters.contains($0) }

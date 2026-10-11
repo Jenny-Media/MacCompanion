@@ -6,7 +6,8 @@ import AppKit
 #endif
 
 struct DirectFilesView: View {
-    let mac: DirectMacRecordV1
+    // The owner is the source of truth even when the library or parent changes.
+    var mac: DirectMacRecordV1 { session.mac }
     let retainWhenDismissed: Bool
     @State private var session: DirectFilesSession
     @State private var login = TerminalLoginSelection()
@@ -42,12 +43,15 @@ struct DirectFilesView: View {
     }
     private struct Export: Identifiable { let id = UUID(); let resultID: UUID; let url: URL }
     init(mac: DirectMacRecordV1, session: DirectFilesSession? = nil, retainWhenDismissed: Bool = false) {
-        self.mac = mac; self.retainWhenDismissed = retainWhenDismissed
+        self.retainWhenDismissed = retainWhenDismissed
         _session = State(initialValue: session ?? DirectFilesSession(mac: mac))
     }
     private var canConnect: Bool {
         !login.username.isEmpty && !session.busy && !preparingKey &&
         (login.method == .password ? !password.isEmpty : !keyName.isEmpty)
+    }
+    private var preventsDismissal: Bool {
+        DirectFilesPolicy.preventsDismissal(retained: retainWhenDismissed, active: session.transferActive, pending: session.hasPendingResults)
     }
     var body: some View {
         NavigationStack {
@@ -65,7 +69,7 @@ struct DirectFilesView: View {
             #endif
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) { Button("Done") {
-                    if !retainWhenDismissed && (session.transferActive || session.hasPendingResults) { confirmation = .close }
+                    if preventsDismissal { confirmation = .close }
                     else { dismiss() }
                 }.accessibilityIdentifier("files-done") }
                 ToolbarItem(placement: .primaryAction) {
@@ -77,13 +81,13 @@ struct DirectFilesView: View {
                     }
                 }
             }
-            .sheet(item: $sheet, onDismiss: { loadLogin() }) { destination in
+            .sheet(item: $sheet) { destination in
                 switch destination {
                 case .keys:
                     #if os(macOS)
-                    MacSSHKeyManager(mac: mac, changed: { loadLogin(preferSelected: true) }).modifier(MacSheetPrivacyCover())
+                    MacSSHKeyManager(mac: mac, changed: { loadLogin(preferSelected: true, includePassword: false) }).modifier(MacSheetPrivacyCover())
                     #else
-                    TerminalKeySettings(mac: mac, changed: { loadLogin(preferSelected: true) }).directAppearance()
+                    TerminalKeySettings(mac: mac, changed: { loadLogin(preferSelected: true, includePassword: false) }).directAppearance()
                     #endif
                 case .setup: DirectMacSetupGuide().directAppearance()
                 case .upload: uploadReview
@@ -171,7 +175,7 @@ struct DirectFilesView: View {
             #endif
             if !retainWhenDismissed { session.close() }
         }
-        .interactiveDismissDisabled(!retainWhenDismissed && session.transferActive)
+        .interactiveDismissDisabled(preventsDismissal)
         #if os(macOS)
         .frame(minWidth: 600, idealWidth: 720, minHeight: 480, idealHeight: 640)
         #endif
@@ -237,7 +241,7 @@ struct DirectFilesView: View {
                     #if os(iOS)
                     SecureField("Password", text: $password).textContentType(.password).accessibilityIdentifier("files-password")
                     #endif
-                    Toggle("Save SSH login on this device", isOn: $remember)
+                    Toggle("Save SSH login on this device", isOn: $remember).accessibilityIdentifier("files-remember-login")
                 } else {
                     Button { sheet = .keys } label: { Label(keyName.isEmpty ? "Choose SSH Key" : keyName, systemImage: "key") }
                     #if os(macOS)
@@ -375,10 +379,10 @@ struct DirectFilesView: View {
         }
         #endif
     }
-    private func loadLogin(preferSelected: Bool = false) {
+    private func loadLogin(preferSelected: Bool = false, includePassword: Bool = true) {
         guard DirectAppLockV1.shared.canAccess, session.phase != .ready, !session.busy else { return }
         do {
-            if let saved = try TerminalSecretStore.login(mac.id) { login.loadPasswordAccount(saved.username); password = saved.password; remember = true }
+            if includePassword, let saved = try TerminalSecretStore.login(mac.id) { login.loadPasswordAccount(saved.username); password = saved.password; remember = true }
             #if os(macOS)
             if let selection = try MacSSHKeyFileStore.selected(mac.id) {
                 keyFile = selection.file; key = nil; keyName = selection.file.name

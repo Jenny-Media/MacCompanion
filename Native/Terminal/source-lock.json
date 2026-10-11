@@ -34,7 +34,7 @@
       "Sources/Citadel/OpenSSHKey.swift": "94b689102f905ac99c95c42226fdbdecd1bcfb9ef30f6d65f751a74156795fb7",
       "Sources/Citadel/RemotePortForward/Client/RemotePortForward+Client.swift": "718344bf84c9cb592b9b28257d53e19289ef8c24ef4e6942e79a0835181bb734",
       "Sources/Citadel/RemotePortForward/Server/RemotePortForward+Server.swift": "aa88252bfb9f66759497cd62c33e67ea8f8099a163d17b9f9826a05ead260cc7",
-      "Sources/Citadel/SFTP/Client/SFTPClient.swift": "0891d86288ffb56d92b96ccb3c0f6215063f1061468dc1ed5d7b4704d7581871",
+      "Sources/Citadel/SFTP/Client/SFTPClient.swift": "0c1d0802f090fc4045f1e92be2f42ef39691026dfb6d722e2ef6d7510b36745a",
       "Sources/Citadel/SFTP/Client/SFTPClientInboundHandler.swift": "8ea1f9585f564300f4fd25808b276ce7040a5396edf17ff4f5573a3014a95444",
       "Sources/Citadel/SFTP/Client/SFTPFile.swift": "490e94a59d17b46ca7cb10ebf3bad1f9f56bba5c21bf34dd271f5f6a30d2d8f6",
       "Sources/Citadel/SFTP/SFTPBasicEnums.swift": "60fa85de3148028b136c94665b747392255d7b0e7873a6b31ee3c249db5df6fc",
