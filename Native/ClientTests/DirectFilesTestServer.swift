@@ -63,8 +63,11 @@ private final class FilesDirectoryTestHandler: ChannelInboundHandler, @unchecked
     typealias OutboundOut = ByteBuffer
     let plan: FilesDirectoryTestPlan
     let probe: FilesDirectoryTestProbe
+    let responseDelay: TimeAmount
     private var index = 0 // Confined to this channel's event loop.
-    init(plan: FilesDirectoryTestPlan, probe: FilesDirectoryTestProbe) { self.plan = plan; self.probe = probe }
+    init(plan: FilesDirectoryTestPlan, probe: FilesDirectoryTestProbe, responseDelay: TimeAmount) {
+        self.plan = plan; self.probe = probe; self.responseDelay = responseDelay
+    }
     func userInboundEventTriggered(context: ChannelHandlerContext, event: Any) {
         if let request = event as? SSHChannelRequestEvent.SubsystemRequest {
             if request.subsystem == "sftp" { context.triggerUserOutboundEvent(ChannelSuccessEvent(), promise: nil) }
@@ -99,7 +102,17 @@ private final class FilesDirectoryTestHandler: ChannelInboundHandler, @unchecked
             response = .status(.init(requestId: request.requestId, errorCode: .ok, message: "", languageTag: ""))
         default: context.close(promise: nil); return
         }
-        do { context.writeAndFlush(wrapOutboundOut(try packet(response)), promise: nil) }
+        do {
+            let bytes = try packet(response)
+            if responseDelay.nanoseconds == 0 { context.writeAndFlush(wrapOutboundOut(bytes), promise: nil) }
+            else {
+                let channel = context.channel
+                channel.eventLoop.scheduleTask(in: responseDelay) {
+                    guard channel.isActive else { return }
+                    channel.writeAndFlush(bytes, promise: nil)
+                }
+            }
+        }
         catch { context.close(promise: nil) }
     }
     private func packet(_ response: SFTPMessage) throws -> ByteBuffer {
@@ -127,7 +140,8 @@ private final class FilesDirectoryTestHandler: ChannelInboundHandler, @unchecked
     func errorCaught(context: ChannelHandlerContext, error: Error) { context.close(promise: nil) }
 }
 
-func filesDirectoryTestServer(plan: FilesDirectoryTestPlan = .empty, probe: FilesDirectoryTestProbe) async throws -> Channel {
+func filesDirectoryTestServer(plan: FilesDirectoryTestPlan = .empty, probe: FilesDirectoryTestProbe,
+                              responseDelay: TimeAmount = .nanoseconds(0)) async throws -> Channel {
     let hostKey = NIOSSHPrivateKey(ed25519Key: .init())
     return try await ServerBootstrap(group: MultiThreadedEventLoopGroup.singleton).childChannelInitializer { channel in
         probe.opened(channel)
@@ -136,7 +150,7 @@ func filesDirectoryTestServer(plan: FilesDirectoryTestPlan = .empty, probe: File
                 probe.opened(child)
                 return child.pipeline.addHandlers(SSHChannelDataUnwrapper(), SSHOutboundChannelDataWrapper(), FilesDirectoryTestChunks(),
                     ByteToMessageHandler(SFTPMessageParser()),
-                    FilesDirectoryTestHandler(plan: plan, probe: probe))
+                    FilesDirectoryTestHandler(plan: plan, probe: probe, responseDelay: responseDelay))
             }))
     }.bind(host: "127.0.0.1", port: 0).get()
 }

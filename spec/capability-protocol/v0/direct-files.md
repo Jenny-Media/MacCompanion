@@ -71,6 +71,8 @@ deadline for the first directory request. After every metadata await, including
 missing paths, validate the owner and operation before accessing transfer state.
 Conflict prompts suspend that deadline. Responses from a retired connection
 cannot reset a replacement connection's deadline.
+Cancelled or superseded idle timers MUST NOT disconnect Files, including when
+their wait has completed and their callback is already queued.
 SFTP subsystem-channel closure MUST retire the owned Files connection even if
 the SSH transport remains open. Preserve pending results and require explicit
 reconnect; do not leave a closed subsystem presented as Ready.

@@ -10,6 +10,38 @@ import NIO
 #endif
 
 @MainActor final class DirectFilesTests: XCTestCase {
+    func testRearmedIdleDeadlineIgnoresExpiredQueuedTimer() async throws {
+        let probe = FilesDirectoryTestProbe()
+        let server = try await filesDirectoryTestServer(probe: probe, responseDelay: .milliseconds(200))
+        defer { Task { await probe.shutdown(); try? await server.close() } }
+        let mac = DirectMacRecordV1(id: UUID(), name: "Synthetic Idle Deadline", addresses: ["127.0.0.1"], sshPort: try XCTUnwrap(server.localAddress?.port))
+        let session = DirectFilesSession(mac: mac, idleTimeout: .milliseconds(700))
+        defer { session.close(); try? TerminalSecretStore.remove(mac.id) }
+        func wait(_ predicate: () -> Bool) async throws {
+            let end = Date().addingTimeInterval(10)
+            while !predicate() {
+                guard Date() < end else { throw DirectFilesFailure.timedOut }
+                try await Task.sleep(for: .milliseconds(20))
+            }
+        }
+        session.connect(username: "synthetic", password: "synthetic-only", key: nil, remember: false)
+        try await wait { session.trust != nil || !session.busy }
+        session.answerTrust(true)
+        try await wait { !session.busy }
+        XCTAssertEqual(session.phase, .ready, session.message ?? session.status)
+        guard session.phase == .ready else { throw DirectFilesFailure.unavailable }
+        session.browse(session.home)
+        // Let the request and timer start. The loopback response arrives before
+        // the idle deadline, but both continuations wait for this actor. Its
+        // activity callback cancels/rearms the already expired timer first.
+        try await Task.sleep(for: .milliseconds(30))
+        func occupyMainActor() { Thread.sleep(forTimeInterval: 1.1) }
+        occupyMainActor()
+        try await wait { !session.busy }
+        XCTAssertEqual(session.phase, .ready, session.message ?? session.status)
+        XCTAssertEqual(session.directory?.path, "/synthetic")
+        XCTAssertEqual(probe.closes, 2, "Both directory operations must finish without a stale timeout")
+    }
     func testIndexedDirectoryMetadataBudgetAndHandleCleanup() async throws {
         struct Fixture: Decodable { let directoryBudgetCases: [FilesDirectoryTestPlan] }
         let url = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "direct-files-v1", withExtension: "json"))

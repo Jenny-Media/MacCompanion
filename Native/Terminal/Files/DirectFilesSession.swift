@@ -109,7 +109,8 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
         let delay = delay ?? idleTimeout
         deadline = Task { [weak self] in
             do { try await Task.sleep(for: delay) } catch { return }
-            guard let self, self.generation == token, self.operation == job else { return }
+            // Cancellation can arrive after sleep completes, while this callback is queued.
+            guard !Task.isCancelled, let self, self.generation == token, self.operation == job else { return }
             self.disconnect(message: DirectFilesFailure.timedOut.localizedDescription)
         }
     }
