@@ -133,5 +133,71 @@
       "text": "ab",
       "invalid": true
     }
-  ]
+  ],
+  "lifecycle": {
+    "cancelCopiedGroup": {
+      "interruptedCase": "multiline",
+      "freshCase": "ascii",
+      "cancelledCompletionWritten": false,
+      "freshCompletionWritten": true,
+      "expectedKeyEvents": [
+        [
+          111,
+          true
+        ],
+        [
+          111,
+          false
+        ],
+        [
+          104,
+          true
+        ],
+        [
+          104,
+          false
+        ],
+        [
+          101,
+          true
+        ],
+        [
+          101,
+          false
+        ],
+        [
+          108,
+          true
+        ],
+        [
+          108,
+          false
+        ],
+        [
+          108,
+          true
+        ],
+        [
+          108,
+          false
+        ],
+        [
+          111,
+          true
+        ],
+        [
+          111,
+          false
+        ]
+      ]
+    },
+    "automaticReplacement": {
+      "modes": [
+        "desktop",
+        "trackpad"
+      ],
+      "warningBeforeAcknowledge": true,
+      "warningAfterAcknowledge": false
+    }
+  }
 }

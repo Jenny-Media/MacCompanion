@@ -34,6 +34,13 @@ local write completes. Queue rejection keeps the draft. Interrupted writes repor
 uncertain delivery on the composer or session screen and require a deliberate
 next action. Local completion does not acknowledge remote app consumption.
 
+Every composed VNC event carries its group's identity. Pause, mode change, Stop
+and connection end retire that identity under the input queue lock, including
+events already copied by a worker blocked in a write. Only a write already
+admitted can finish; the worker drops the remainder and releases any held key
+before sending a newly admitted group. Automatic reconnection preserves the
+interrupted-send warning until the user selects Continue.
+
 The specification and manifest-indexed `ios-text-composer-v1.json` define the
 encoding and confirmation cases. Native QA covers all three entry points,
 balanced VNC packets, PTY bytes, draft retirement and explicit confirmation.
@@ -45,10 +52,17 @@ macOS UI and the legacy Observe/Act/Control protocol are unchanged.
   590 current source inputs.
 - `bash scripts/validate.sh`: passes. All 135 manifest-indexed fixtures and the
   native appearance boundary also pass their final checks.
-- Focused composer checks: 10 passed, zero failures or skips. Includes all three
+- Focused composer checks: 12 passed, zero failures or skips. Includes all three
   native entry points, marked-text editing, oversized editor input, app lock with
-  a hidden draft, balanced VNC socket packets and actual SSH PTY bytes.
-- Full native suite on the isolated Simulator: 226 tests, 13 optional tests
+  a hidden draft, balanced VNC socket packets and actual SSH PTY bytes. Both new
+  regression tests failed before the recovery fixes and passed afterward: a
+  stalled copied group cannot continue across Trackpad pause/resume, its held key
+  is released before fresh text, and the warning survives automatic replacement
+  in Desktop and Trackpad until acknowledgement.
+- Broader VNC frame, session-control, lifecycle and recovery checks: 46 passed,
+  zero failures or skips, using the final recovery fixes.
+- The initial implementation's full native suite on the isolated Simulator:
+  226 tests, 13 optional tests
   skipped, one existing cloud-sync read-count assertion failed. That test passed
   in isolation; the full run is not recorded as wholly green. StoreKit/Pro cases
   also pass after the fresh Simulator's test configuration initialized.

@@ -3,6 +3,57 @@ import UIKit
 @testable import Mac_Companion
 
 @MainActor final class TextComposerTests: XCTestCase {
+    func testInterruptedSendWarningSurvivesAutomaticReplacementUntilAcknowledged() async throws {
+        let url = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "ios-text-composer-v1", withExtension: "json"))
+        let fixture = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])
+        let lifecycle = try XCTUnwrap(fixture["lifecycle"] as? [String: Any])
+        let policy = try XCTUnwrap(lifecycle["automaticReplacement"] as? [String: Any])
+        let modes = try XCTUnwrap(policy["modes"] as? [String])
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let previous = scene.windows.first(where: \.isKeyWindow), window = UIWindow(windowScene: scene)
+        defer { window.isHidden = true; window.rootViewController = nil; previous?.makeKeyAndVisible() }
+        for mode in modes {
+            let viewer = CompanionVNCViewer()
+            viewer.inputOnly = mode == "trackpad"; viewer.macName = "Synthetic Mac"
+            window.rootViewController = viewer; window.makeKeyAndVisible(); viewer.loadViewIfNeeded()
+            viewer.session.setValue(true, forKey: "running"); viewer.session.setValue(true, forKey: "inputReady")
+            viewer.perform(NSSelectorFromString("showTextComposer"))
+            try await Task.sleep(for: .milliseconds(350))
+            let composer = try XCTUnwrap(viewer.value(forKey: "textComposer") as? DirectTextComposer)
+            var completion: ((String?) -> Void)?
+            composer.draft.configure(available: { true }, send: { _, done in completion = done })
+            composer.draft.edit("hello"); composer.draft.requestSend()
+            XCTAssertTrue(composer.sending)
+            viewer.perform(NSSelectorFromString("background"))
+            XCTAssertEqual(viewer.value(forKey: "textSendInterrupted") as? Bool, true)
+            XCTAssertFalse(composer.draft.active); XCTAssertEqual(composer.draft.text, "")
+            viewer.session.setValue(false, forKey: "running")
+            var replacements = 0
+            viewer.connectHandler = { _, _, _ in replacements += 1 }
+            viewer.foregrounded()
+            XCTAssertEqual(replacements, 1)
+            XCTAssertEqual(viewer.value(forKey: "textSendInterrupted") as? Bool, policy["warningBeforeAcknowledge"] as? Bool)
+            // Establish the replacement's real viewer callbacks and report a
+            // synthetic connected framebuffer, without opening a network socket.
+            viewer.prepareConnection()
+            let owner = viewer.session
+            owner.setValue(true, forKey: "running"); owner.setValue(true, forKey: "inputReady")
+            let image = UIGraphicsImageRenderer(size: CGSize(width: 2, height: 2)).image { context in
+                UIColor.black.setFill(); context.fill(CGRect(x: 0, y: 0, width: 2, height: 2))
+            }
+            owner.frameHandler?(image); owner.stateHandler?("Connected", [:])
+            XCTAssertEqual(viewer.value(forKey: "textSendInterrupted") as? Bool, policy["warningBeforeAcknowledge"] as? Bool)
+            XCTAssertNotNil(viewer.value(forKey: "recoveryController"))
+            completion?(nil) // A retired callback must not acknowledge the warning.
+            XCTAssertEqual(viewer.value(forKey: "textSendInterrupted") as? Bool, true)
+            let acknowledge = NSSelectorFromString("acknowledgeTextSendWarning")
+            XCTAssertTrue(viewer.responds(to: acknowledge))
+            if viewer.responds(to: acknowledge) { viewer.perform(acknowledge) }
+            XCTAssertEqual(viewer.value(forKey: "textSendInterrupted") as? Bool, policy["warningAfterAcknowledge"] as? Bool)
+            XCTAssertNil(viewer.value(forKey: "recoveryController"))
+            viewer.perform(NSSelectorFromString("stopViewer")); try await Task.sleep(for: .milliseconds(350))
+        }
+    }
     func testAuthoritativeTextVectorsPreserveUnicodeWhitespaceAndFrameOnlyTerminalPaste() throws {
         let url = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "ios-text-composer-v1", withExtension: "json"))
         let fixture = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])

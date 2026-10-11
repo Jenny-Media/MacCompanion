@@ -490,7 +490,6 @@
 }
 - (void)start {
     [self retireTextDraft];
-    self.textSendInterrupted = NO;
     [self clearRecovery];
     if (self.lastFramebuffer) { [self rememberViewport]; self.restoreViewportPending = YES; self.image.alpha = .45; }
     self.starting = YES; self.exited = NO;
@@ -1469,9 +1468,12 @@
     if (self.recoveryController) return;
     __weak CompanionVNCViewer *weak = self;
     [self showRecoveryController:[DirectRecoveryBridgeV1 interruptedTextWithDone:^{
-        CompanionVNCViewer *strong = weak; strong.textSendInterrupted = NO;
-        [strong clearRecovery]; strong.image.alpha = 1; [strong updateConnectionChrome];
+        [weak acknowledgeTextSendWarning];
     }] overFrame:self.lastFramebuffer != nil];
+}
+- (void)acknowledgeTextSendWarning {
+    self.textSendInterrupted = NO;
+    [self clearRecovery]; self.image.alpha = 1; [self updateConnectionChrome];
 }
 - (void)showTextComposer {
     if (!self.foreground || self.exited || self.checkingResume || !self.session.connected) return;

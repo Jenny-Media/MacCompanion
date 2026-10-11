@@ -389,7 +389,11 @@ queue keeps the draft with a non-destructive error. Once admitted, disable editi
 and duplicate sends until the local transport write completes or fails. A local
 write completion is not remote application consumption. Partial/uncertain writes
 are reported without automatic retry; lifecycle interruption retires callbacks
-and never replays input. Saving reusable snippets remains a separate existing
+and never replays input. Cancellation also retires event groups already copied
+by the VNC worker: resuming input cannot admit their remaining events. Release
+keys actually written before cancellation. An interrupted-send warning survives
+automatic retained-session replacement until the user acknowledges it.
+Saving reusable snippets remains a separate existing
 Pro tool with its current limits and protected storage.
 
 The manifest-indexed `ios-text-composer-v1.json` records text normalization,

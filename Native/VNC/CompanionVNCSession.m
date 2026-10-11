@@ -109,6 +109,10 @@ static void QuietLog(const char *format, ...) {
 - (void)beginSocket:(int)socket addresses:(NSArray<NSString *> *)addresses port:(NSInteger)port user:(NSString *)user password:(NSString *)password;
 - (BOOL)registerSocket:(int)socket;
 - (void)processConnectedClient:(rfbClient *)client;
+#if TARGET_OS_IOS
+- (BOOL)writeKeyEvent:(uint32_t)key down:(BOOL)down client:(rfbClient *)client;
+- (void)cancelComposedTextLocked;
+#endif
 - (void)cancelNativeGesturesLocked;
 - (BOOL)releaseMagnification:(rfbClient *)client;
 - (BOOL)sendMagnificationEvent:(NSDictionary *)event client:(rfbClient *)client;
@@ -157,7 +161,12 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
 - (BOOL)connected { [_lock lock]; BOOL ready = _running && _inputReady && !_paused && !_stopping; [_lock unlock]; return ready; }
 - (BOOL)inputOnly { [_lock lock]; BOOL value = _inputOnly; [_lock unlock]; return value; }
 - (void)setInputOnly:(BOOL)value {
-    [_lock lock]; if (_inputOnly != value) { [self cancelNativeGesturesLocked]; _inputOnly = value; _modeChanged = YES; _presentationEpoch++; }
+    [_lock lock]; if (_inputOnly != value) {
+        [self cancelNativeGesturesLocked]; _inputOnly = value; _modeChanged = YES; _presentationEpoch++;
+#if TARGET_OS_IOS
+        [self cancelComposedTextLocked];
+#endif
+    }
     [_lock unlock]; dispatch_semaphore_signal(_wake);
 }
 - (BOOL)nativeMagnificationSupported {
@@ -266,10 +275,10 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
     [self cancelNativeGesturesLocked];
     _paused = YES; _pauses++; _inputReady = NO; _releaseInputRequested = YES; _presentationEpoch++;
     [_events removeAllObjects]; _queuedPointerMask = 0; _pauseCompletion = [completion copy];
-    [_lock unlock]; dispatch_semaphore_signal(_wake);
 #if TARGET_OS_IOS
-    [self cancelComposedText];
+    [self cancelComposedTextLocked];
 #endif
+    [_lock unlock]; dispatch_semaphore_signal(_wake);
 }
 - (void)resume {
     [_lock lock];
@@ -413,7 +422,17 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
                 }
             }
             for (NSDictionary *event in events) {
-                [self->_lock lock]; BOOL acceptsInput = self->_inputReady && !self->_paused && !self->_stopping; [self->_lock unlock];
+                [self->_lock lock]; BOOL acceptsInput = self->_inputReady && !self->_paused && !self->_stopping;
+#if TARGET_OS_IOS
+                NSString *textID = event[@"composedTextID"];
+                BOOL retiredText = textID && !self->_composedTextReplies[textID];
+#endif
+                [self->_lock unlock];
+#if TARGET_OS_IOS
+                // Pause can retire a group while this copied batch is blocked
+                // in a write. Resume never makes that group eligible again.
+                if (retiredText) continue;
+#endif
                 if (!acceptsInput) {
 #if TARGET_OS_IOS
                     [self cancelComposedText];
@@ -426,7 +445,11 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
                     healthy = [self sendScrollEvent:event client:client];
                 } else if (event[@"key"]) {
                     uint32_t key = [event[@"key"] unsignedIntValue]; BOOL down = [event[@"down"] boolValue];
+#if TARGET_OS_IOS
+                    healthy = [self writeKeyEvent:key down:down client:client];
+#else
                     healthy = SendKeyEvent(client, key, down);
+#endif
                     if (down) [self->_heldKeys addObject:@(key)]; else [self->_heldKeys removeObject:@(key)];
                 } else {
                     self->_lastX = MAX(0, MIN(client->width - 1, [event[@"x"] integerValue]));
@@ -435,7 +458,7 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
                 }
                 [self->_lock lock]; self->_inputs++; [self->_lock unlock];
 #if TARGET_OS_IOS
-                if (healthy && event[@"composedTextID"]) [self completeComposedText:event[@"composedTextID"] written:YES];
+                if (healthy && [event[@"composedTextEnd"] boolValue]) [self completeComposedText:textID written:YES];
 #endif
                 if (!healthy) break;
             }
@@ -475,10 +498,11 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
     [self registerSocket:-1];
     free(_pixels); _pixels = NULL; CompanionVNCCoverageFree(&_coverage); _username = nil; _password = nil;
     _cursorImage = nil; _cursorPositionKnown = NO; _cursorDirty = NO;
-    [_lock lock]; [self cancelNativeGesturesLocked]; _appleGestureServer = NO; _nativeGestureLayout = NO; _running = NO; _inputReady = NO; [_events removeAllObjects]; [_lock unlock];
+    [_lock lock]; [self cancelNativeGesturesLocked]; _appleGestureServer = NO; _nativeGestureLayout = NO; _running = NO; _inputReady = NO; [_events removeAllObjects];
 #if TARGET_OS_IOS
-    [self cancelComposedText];
+    [self cancelComposedTextLocked];
 #endif
+    [_lock unlock];
     [self report:state];
 }
 - (rfbCredential *)credential:(int)type {
@@ -697,12 +721,12 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
     [_lock lock]; [self cancelNativeGesturesLocked]; _stopping = YES; _presentationEpoch++; [_events removeAllObjects]; NSInteger generation = _generation;
     void (^completion)(void) = _pauseCompletion; _pauseCompletion = nil;
     if (!_inputReady && _socket >= 0) shutdown(_socket, SHUT_RDWR);
+#if TARGET_OS_IOS
+    [self cancelComposedTextLocked];
+#endif
     [_lock unlock];
     dispatch_semaphore_signal(_wake);
     if (completion) dispatch_async(dispatch_get_main_queue(), completion);
-#if TARGET_OS_IOS
-    [self cancelComposedText];
-#endif
     // Give the owner a short opportunity to release sent keys, then unblock any
     // stalled partial-frame read. This never affects a newer connection.
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 250 * NSEC_PER_MSEC), dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
@@ -750,6 +774,9 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
     [_lock unlock]; return allowed;
 }
 #if TARGET_OS_IOS
+- (BOOL)writeKeyEvent:(uint32_t)key down:(BOOL)down client:(rfbClient *)client {
+    return SendKeyEvent(client, key, down);
+}
 - (BOOL)tryComposedTextEvents:(NSArray<NSDictionary *> *)events completion:(void (^)(BOOL))completion {
     [_lock lock];
     BOOL allowed = completion && _running && _inputReady && !_paused && !_stopping && !_overflow
@@ -757,9 +784,12 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
     if (allowed) {
         NSString *identifier = NSUUID.UUID.UUIDString;
         _composedTextReplies[identifier] = [completion copy];
-        NSMutableArray *group = [events mutableCopy];
-        NSMutableDictionary *last = [group.lastObject mutableCopy]; last[@"composedTextID"] = identifier;
-        group[group.count - 1] = last; [_events addObjectsFromArray:group];
+        NSMutableArray *group = [NSMutableArray arrayWithCapacity:events.count];
+        for (NSDictionary *event in events) {
+            NSMutableDictionary *annotated = [event mutableCopy]; annotated[@"composedTextID"] = identifier;
+            [group addObject:annotated];
+        }
+        group.lastObject[@"composedTextEnd"] = @YES; [_events addObjectsFromArray:group];
     }
     [_lock unlock]; return allowed;
 }
@@ -769,7 +799,12 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
     if (reply) dispatch_async(dispatch_get_main_queue(), ^{ reply(written); });
 }
 - (void)cancelComposedText {
-    [_lock lock]; NSArray *replies = _composedTextReplies.allValues; [_composedTextReplies removeAllObjects]; [_lock unlock];
+    [_lock lock]; [self cancelComposedTextLocked]; [_lock unlock];
+}
+// Called under the queue lock so retiring input and its copied groups is atomic.
+- (void)cancelComposedTextLocked {
+    NSArray *replies = _composedTextReplies.allValues; [_composedTextReplies removeAllObjects];
+    if (replies.count) _releaseInputRequested = YES;
     for (void (^reply)(BOOL) in replies) dispatch_async(dispatch_get_main_queue(), ^{ reply(NO); });
 }
 #endif
