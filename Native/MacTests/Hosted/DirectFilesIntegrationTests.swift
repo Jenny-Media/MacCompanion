@@ -495,6 +495,72 @@ private struct FilesTestWindowRoot: View {
         XCTAssertTrue(changed.message?.contains("identity changed") == true, changed.message ?? "")
         XCTAssertNil(changed.trust); XCTAssertEqual(replacementRecord.passwordRequests, 0)
     }
+    func testConcurrentFirstUseApprovalsPreserveWinningPinBeforeAuthentication() async throws {
+        let root = try DirectFilesLocalStore.root(); defer { try? FileManager.default.removeItem(at: root) }
+        let firstRecord = SSHTestRecord(), secondRecord = SSHTestRecord()
+        let firstServer = try await server(root: root, record: firstRecord)
+        let secondServer = try await server(root: root, record: secondRecord)
+        defer { Task { try? await firstServer.close(); try? await secondServer.close() } }
+        let firstMac = DirectMacRecordV1(id: UUID(), name: "Synthetic Competing Trust", addresses: ["127.0.0.1"], sshPort: try XCTUnwrap(firstServer.localAddress?.port))
+        var secondMac = firstMac; secondMac.sshPort = try XCTUnwrap(secondServer.localAddress?.port)
+        let first = DirectFilesSession(mac: firstMac), second = DirectFilesSession(mac: secondMac)
+        defer { first.close(); second.close(); try? TerminalSecretStore.remove(firstMac.id) }
+        first.connect(username: "synthetic", password: "synthetic-only", key: nil, remember: false)
+        second.connect(username: "synthetic", password: "synthetic-only", key: nil, remember: false)
+        try await wait { first.trust != nil && second.trust != nil }
+        XCTAssertNotEqual(first.trust?.fingerprint, second.trust?.fingerprint)
+        second.answerTrust(true); try await wait { second.phase != .connecting }
+        XCTAssertEqual(second.phase, .ready, second.message ?? "")
+        let pin = try XCTUnwrap(TerminalSecretStore.hostKey(firstMac.id))
+        first.answerTrust(true); try await wait { first.phase != .connecting }
+        XCTAssertEqual(first.phase, .interrupted)
+        XCTAssertTrue(first.message?.contains("identity changed") == true, first.message ?? "")
+        XCTAssertEqual(firstRecord.passwordRequests, 0, "A superseded approval must fail before sending credentials")
+        XCTAssertEqual(try TerminalSecretStore.hostKey(firstMac.id), pin)
+        XCTAssertEqual(second.phase, .ready, "A rejected competing approval must not disconnect the trusted owner")
+    }
+    func testSFTPOpenAfterAuthenticatedSSHClosureFailsWithoutLeakingPromises() async throws {
+        let root = try DirectFilesLocalStore.root(); defer { try? FileManager.default.removeItem(at: root) }
+        let server = try await self.server(root: root, record: SSHTestRecord())
+        defer { Task { try? await server.close() } }
+        let client = try await SSHClient.connect(to: .init(host: "127.0.0.1", port: try XCTUnwrap(server.localAddress?.port),
+            authenticationMethod: { .passwordBased(username: "synthetic", password: "synthetic-only") }, hostKeyValidator: .acceptAnything()))
+        try await client.close()
+        let began = ContinuousClock.now
+        do { _ = try await client.openSFTP(); XCTFail("A closed SSH transport must not open SFTP") }
+        catch { XCTAssertLessThan(began.duration(to: .now), .seconds(5), "Channel creation failure must finish without awaiting the admission timeout") }
+        // A second attempt also releases the creation state on the event loop.
+        do { _ = try await client.openSFTP(); XCTFail("A closed SSH transport must stay closed") } catch {}
+    }
+    func testReopenedConnectedFilesInitializesSavedLoginOnceAfterDisconnect() async throws {
+        let root = try DirectFilesLocalStore.root(); defer { try? FileManager.default.removeItem(at: root) }
+        let server = try await self.server(root: root, record: SSHTestRecord())
+        defer { Task { try? await server.close() } }
+        let mac = DirectMacRecordV1(id: UUID(), name: "Synthetic Retained Files", addresses: ["127.0.0.1"], sshPort: try XCTUnwrap(server.localAddress?.port))
+        let session = DirectFilesSession(mac: mac); defer { session.close(); try? TerminalSecretStore.remove(mac.id) }
+        session.connect(username: "synthetic", password: "synthetic-only", key: nil, remember: true)
+        try await wait { session.trust != nil }; session.answerTrust(true)
+        try await wait { session.phase != .connecting }; XCTAssertEqual(session.phase, .ready)
+        // Reopening UIKit's retained sheet creates an entirely new view. Mount
+        // that shared SwiftUI view while its existing owner is still Ready.
+        let host = NSHostingView(rootView: DirectFilesView(mac: mac, session: session, retainWhenDismissed: true))
+        let window = NSWindow(contentRect: .init(x: -20000, y: -20000, width: 720, height: 640), styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false; window.contentView = host; window.orderFront(nil)
+        defer { window.makeFirstResponder(nil); window.contentView = nil; window.close() }
+        func descendants(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(descendants) }
+        func fields() -> MacCredentialFields.Fields? { descendants(host).compactMap { $0 as? MacCredentialFields.Fields }.first }
+        try await Task.sleep(for: .milliseconds(200)); host.layoutSubtreeIfNeeded()
+        XCTAssertNil(fields(), "Reopening connected Files must preserve the browser")
+        session.disconnect()
+        try await wait { fields()?.account.stringValue == "synthetic" }
+        let pair = try XCTUnwrap(fields()); XCTAssertEqual(pair.secret.stringValue, "synthetic-only")
+        pair.account.stringValue = "synthetic-edited-account"; pair.secret.stringValue = "synthetic-edited-password"
+        // Subsequent sign-in transitions preserve an already initialized draft.
+        session.connect(username: "synthetic", password: "synthetic-only", key: nil, remember: true); session.disconnect()
+        try await Task.sleep(for: .milliseconds(200)); host.layoutSubtreeIfNeeded()
+        XCTAssertEqual(fields()?.account.stringValue, "synthetic-edited-account")
+        XCTAssertEqual(fields()?.secret.stringValue, "synthetic-edited-password")
+    }
     func testRejectedLoginAndUnavailableSFTPHaveSeparateGuidance() async throws {
         let root = try DirectFilesLocalStore.root(); defer { try? FileManager.default.removeItem(at: root) }
         let server = try await self.server(root: root, record: SSHTestRecord(), allowSFTP: false)

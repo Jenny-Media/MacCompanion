@@ -145,6 +145,8 @@ struct VNCRemoteDesktopView: UIViewControllerRepresentable {
                 }
             }, NotificationCenter.default.addObserver(forName: DirectAppLockV1.unlocked, object: nil, queue: .main) { [weak self] _ in
                 MainActor.assumeIsolated { self?.viewer?.foregrounded() }
+            }, NotificationCenter.default.addObserver(forName: DirectAppLockV1.locked, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.pause() }
             }, NotificationCenter.default.addObserver(forName: UserDefaults.didChangeNotification, object: nil, queue: .main) { [weak self] _ in
                 MainActor.assumeIsolated { self?.activity.preferenceChanged() }
             }, NotificationCenter.default.addObserver(forName: RemoteSessionActivityActions.endRequested, object: nil, queue: .main) { [weak self] notification in
@@ -285,7 +287,7 @@ struct VNCRemoteDesktopView: UIViewControllerRepresentable {
                 }
                 guard generation == token, !Task.isCancelled, DirectAppLockV1.shared.canAccess else { throw CancellationError() }
                 guard accepted else { throw TerminalSecretStore.Failure.rejectedKey }
-                try TerminalSecretStore.write(Data(key.utf8), id: mac.id, kind: "host-key")
+                try TerminalSecretStore.approveHostKey(key, id: mac.id)
             }
             viewer?.showConnectionProgress("Signing in to Remote Login…")
         }

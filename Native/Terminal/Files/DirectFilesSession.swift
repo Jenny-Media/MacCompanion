@@ -161,7 +161,7 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
                     let accepted = await withCheckedContinuation { self.trustReply = $0 }
                     self.trust = nil; try self.check(token)
                     guard accepted else { throw TerminalSecretStore.Failure.rejectedKey }
-                    try TerminalSecretStore.write(Data(publicKey.utf8), id: self.mac.id, kind: "host-key")
+                    try TerminalSecretStore.approveHostKey(publicKey, id: self.mac.id)
                 }
                 var settings = SSHClientSettings(host: addresses.first ?? "", port: port,
                     authenticationMethod: authentication, hostKeyValidator: .custom(validator))

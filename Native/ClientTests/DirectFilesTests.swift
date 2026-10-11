@@ -9,6 +9,23 @@ import NIO
 #endif
 
 @MainActor final class DirectFilesTests: XCTestCase {
+    func testIndexedHostApprovalPreservesConcurrentTrust() throws {
+        let url = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "direct-files-v1", withExtension: "json"))
+        let fixture = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])
+        for item in try XCTUnwrap(fixture["hostApprovalCases"] as? [[String: Any]]) {
+            let id = UUID(), approved = try XCTUnwrap(item["approvedKey"] as? String)
+            defer { try? TerminalSecretStore.forgetHostKey(id) }
+            if let stored = item["storedKey"] as? String { try TerminalSecretStore.approveHostKey(stored, id: id) }
+            if try XCTUnwrap(item["accepted"] as? Bool) {
+                XCTAssertNoThrow(try TerminalSecretStore.approveHostKey(approved, id: id))
+            } else {
+                XCTAssertThrowsError(try TerminalSecretStore.approveHostKey(approved, id: id)) {
+                    XCTAssertEqual($0 as? TerminalSecretStore.Failure, .changedKey)
+                }
+            }
+            XCTAssertEqual(try TerminalSecretStore.hostKey(id), item["expectedKey"] as? String)
+        }
+    }
     func testFilesPresentationUsesOwnerSnapshotAfterSavedMacChanges() {
         let original = DirectMacRecordV1(id: UUID(), name: "Original Files Mac", addresses: ["127.0.0.1"], sshPort: 22)
         let owner = DirectFilesSession(mac: original); defer { owner.close() }

@@ -244,7 +244,10 @@ import UIKit
         let rowsWithNumbers = controller.terminal.getTerminal().rows
         try await capture("number-row-on")
         let menu = try await inputMenu(controller)
-        let path = IndexPath(row: 0, section: 0)
+        let items = try XCTUnwrap(menu.sections.first?["items"] as? [[String: Any]])
+        let numberRowIndex = try XCTUnwrap(items.firstIndex { $0["kind"] as? String == "numberRow" })
+        XCTAssertTrue(items.contains { $0["kind"] as? String == "composeText" })
+        let path = IndexPath(row: numberRowIndex, section: 0)
         let checked = menu.tableView(menu.tableView, cellForRowAt: path)
         XCTAssertEqual(checked.accessibilityIdentifier, "session-menu-numberRow")
         XCTAssertEqual(checked.accessoryType, .checkmark)

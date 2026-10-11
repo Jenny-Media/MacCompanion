@@ -60,8 +60,13 @@
 @end
 @implementation ControlsSession
 - (BOOL)connected { return YES; }
+- (BOOL)established { return YES; }
+- (BOOL)composedTextReady { return YES; }
 - (void)keyEvents:(NSArray<NSDictionary *> *)events { [self.groups addObject:events]; }
 - (BOOL)tryKeyEvents:(NSArray<NSDictionary *> *)events { [self.groups addObject:events]; return YES; }
+- (BOOL)tryComposedTextEvents:(NSArray<NSDictionary *> *)events completion:(void (^)(BOOL))completion {
+    [self.groups addObject:events]; completion(YES); return YES;
+}
 - (void)pointerX:(NSInteger)x y:(NSInteger)y mask:(NSInteger)mask { [self.pointers addObject:@[@(x),@(y),@(mask)]]; }
 @end
 @interface FeedbackControls : CompanionVNCControls
@@ -538,7 +543,11 @@
         CGRect popup = [navigation.view convertRect:navigation.view.bounds toView:viewer.view];
         CGRect button = [anchor convertRect:anchor.bounds toView:viewer.view];
         XCTAssertLessThanOrEqual(CGRectGetMaxY(popup),CGRectGetMinY(button) + 1);
-        [input tableView:input.tableView didSelectRowAtIndexPath:[NSIndexPath indexPathForRow:1 inSection:1]]; // Extra Keys
+        NSArray *keyboardItems = input.sections[1][@"items"];
+        NSUInteger extraKeys = [keyboardItems indexOfObjectPassingTest:^BOOL(NSDictionary *item, NSUInteger index, BOOL *stop) { return [item[@"kind"] isEqual:@"keys"]; }];
+        XCTAssertNotEqual(extraKeys, NSNotFound);
+        XCTAssertTrue([keyboardItems indexOfObjectPassingTest:^BOOL(NSDictionary *item, NSUInteger index, BOOL *stop) { return [item[@"kind"] isEqual:@"composeText"]; }] != NSNotFound);
+        [input tableView:input.tableView didSelectRowAtIndexPath:[NSIndexPath indexPathForRow:extraKeys inSection:1]];
         [[NSRunLoop mainRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:.35]];
         deadline = [NSDate dateWithTimeIntervalSinceNow:3];
         while (navigation.transitionCoordinator && deadline.timeIntervalSinceNow > 0) {
@@ -559,6 +568,27 @@
         [view tableView:view.tableView didSelectRowAtIndexPath:[NSIndexPath indexPathForRow:0 inSection:0]];
         XCTAssertEqual(navigation.viewControllers.count,1); XCTAssertEqual(viewer.session,owner);
         [viewer dismissViewControllerAnimated:NO completion:nil];
+    }];
+}
+- (void)testRenderedViewMenuOmitsCopyTextOnlyInInputOnlyMode {
+    [self withFollowViewer:^(CompanionVNCViewer *viewer, ControlsSession *owner) {
+        for (NSNumber *only in @[@NO,@YES,@NO]) {
+            viewer.inputOnly=only.boolValue;
+            [viewer performControlAction:@{@"kind": @"viewMenu"}];
+            [[NSRunLoop mainRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:.35]];
+            UINavigationController *navigation=(id)viewer.presentedViewController;
+            CompanionVNCMenu *menu=(id)navigation.topViewController; [menu loadViewIfNeeded];
+            NSUInteger copies=0;
+            for (NSInteger section=0; section<menu.sections.count; section++) {
+                for (NSInteger row=0; row<[menu tableView:menu.tableView numberOfRowsInSection:section]; row++) {
+                    UITableViewCell *cell=[menu tableView:menu.tableView cellForRowAtIndexPath:[NSIndexPath indexPathForRow:row inSection:section]];
+                    if ([cell.accessibilityIdentifier isEqual:@"session-menu-copyText"]) copies++;
+                }
+            }
+            XCTAssertEqual(copies,only.boolValue ? 0 : 1); XCTAssertEqual(viewer.session,owner);
+            [viewer dismissViewControllerAnimated:NO completion:nil];
+            [[NSRunLoop mainRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:.1]];
+        }
     }];
 }
 - (void)testTrackpadAccelerationUsesIncrementalDeltasAndIsIndependentOfZoom {

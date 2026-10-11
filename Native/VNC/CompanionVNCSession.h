@@ -13,7 +13,11 @@ typedef UIImage CompanionVNCImage;
 @property(nonatomic, copy) void (^stateHandler)(NSString *state, NSDictionary *counters);
 @property(nonatomic, copy) void (^displayLayoutHandler)(NSDictionary *layout);
 @property(nonatomic, readonly) BOOL running;
+/// Authenticated transport, including paused or fresh-frame-waiting states.
+@property(nonatomic, readonly) BOOL established;
 @property(nonatomic, readonly) BOOL connected;
+// A complete Desktop baseline presented by this owner, independent of retained UI pixels.
+@property(nonatomic, readonly) BOOL desktopFrameReady;
 @property(nonatomic) BOOL inputOnly;
 @property(nonatomic, readonly) BOOL nativeMagnificationSupported;
 - (BOOL)beginMagnificationX:(NSInteger)x y:(NSInteger)y;
@@ -27,6 +31,9 @@ typedef UIImage CompanionVNCImage;
 - (BOOL)tryClickX:(NSInteger)x y:(NSInteger)y mask:(NSInteger)mask;
 - (void)pauseWithCompletion:(void (^)(void))completion;
 - (void)resume;
+/// Local snapshot review closes input while the socket continues receiving.
+- (BOOL)suspendInputForReview:(void (^)(void))completion;
+- (void)resumeInputAfterReview;
 - (void)connectSocket:(int)socket username:(NSString *)username password:(NSString *)password;
 - (void)connectHost:(NSString *)host username:(NSString *)username password:(NSString *)password;
 - (void)connectAddresses:(NSArray<NSString *> *)addresses port:(NSInteger)port username:(NSString *)username password:(NSString *)password;
@@ -35,6 +42,12 @@ typedef UIImage CompanionVNCImage;
 - (void)key:(uint32_t)key down:(BOOL)down;
 - (void)keyEvents:(NSArray<NSDictionary *> *)events;
 - (BOOL)tryKeyEvents:(NSArray<NSDictionary *> *)events;
+#if TARGET_OS_IOS
+/// Mode-specific input admission, including the current Desktop baseline.
+@property(nonatomic, readonly) BOOL composedTextReady;
+/// Completion acknowledges local writes only, never remote application consumption.
+- (BOOL)tryComposedTextEvents:(NSArray<NSDictionary *> *)events completion:(void (^)(BOOL written))completion;
+#endif
 - (void)viewChanged;
 
 @end

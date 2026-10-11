@@ -72,6 +72,12 @@ not introduce a connection mode or require a Mac Companion helper.
   under the new account; discard the old batch before a fresh reviewed upload.
 - Keep a Desktop and Terminal connected during file transfers. Closing Files
   must leave those sessions usable. Test two independent Mac Files windows.
+- Open first-use SSH identity prompts in two sessions for the same saved Mac.
+  Approving a different key in the second session must make the older prompt
+  fail without replacing the saved identity or sending its login credentials.
+- Hide connected iPhone Files with Done, reopen it, then disconnect. Saved SSH
+  login/key choices must appear for explicit reconnect. Further interruptions
+  must preserve an edited sign-in draft.
 - At normal and accessibility text sizes, check that account, path, progress,
   conflict choices and transfer results remain readable and controls reachable.
 
@@ -101,11 +107,15 @@ empty replacement in a boundary-length folder, distinct Disconnect/Done
 behavior, confirmed pending-result cleanup, saved-password
 removal, admission and missing-destination response activity, progressing and
 stalled responses, stale-link rejection, app-lock/background retirement, host-pin
-rejection and separate authentication/SFTP failure guidance. This transport exists
+rejection, competing first-use approvals before authentication, SFTP startup after
+authenticated SSH closure, deferred initial login in a reopened connected view,
+and separate authentication/SFTP failure guidance. This transport exists
 only in the hosted test target; neither release client includes a server or subprocess.
 
 `DirectFilesPresentationTests` captures normal and accessibility layouts on both
 platforms and mounts Mac login fields to exercise external disk-key selection,
 removal and unchanged-reference notifications while preserving edited drafts.
+It also mounts the iPhone sign-in form during an owned pending SSH handshake to
+verify saved credentials load when sign-in becomes available.
 Native window automation and physical file-provider acceptance are
 separate from hosted rendering and protocol tests.

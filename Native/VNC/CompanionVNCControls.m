@@ -232,6 +232,7 @@ NSString *const CompanionVNCControlsHapticsPreference = @"direct-controls-haptic
             };
             choice.configuration = config; choice.titleLabel.numberOfLines = 2; choice.titleLabel.textAlignment = NSTextAlignmentCenter;
             if (self.inputOnly && ([kind isEqual:@"fit"] || [kind isEqual:@"mode"])) choice.enabled = NO;
+            if ([kind isEqual:@"copyText"] && !self.editingPreview) choice.enabled = self.textCopyAvailable && !self.inputOnly;
         }
         choice.tag = i; choice.accessibilityIdentifier = [@"session-action-" stringByAppendingString:kind];
         [choice addTarget:self action:@selector(chosen:) forControlEvents:UIControlEventTouchUpInside];

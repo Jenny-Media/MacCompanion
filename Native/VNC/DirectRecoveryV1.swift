@@ -510,7 +510,12 @@ struct TerminalServerTrustView: View {
         return ([notice.title, notice.message] + notice.details.map { "\($0.name): \($0.value)" }).joined(separator: "\n")
     }
     @objc static func desktop(stage: Int, hadFrame: Bool, port: Int, retry: @escaping @MainActor @Sendable () -> Void, edit: @escaping @MainActor @Sendable () -> Void) -> UIViewController {
-        let notice = desktopNotice(stage: stage, hadFrame: hadFrame, port: port)
+        desktop(stage: stage, hadFrame: hadFrame, port: port, textInterrupted: false, retry: retry, edit: edit)
+    }
+    @objc static func desktop(stage: Int, hadFrame: Bool, port: Int, textInterrupted: Bool, retry: @escaping @MainActor @Sendable () -> Void, edit: @escaping @MainActor @Sendable () -> Void) -> UIViewController {
+        let original = desktopNotice(stage: stage, hadFrame: hadFrame, port: port)
+        let notice = textInterrupted ? DirectRecoveryNotice.make(original.reason,
+            message: original.message + " Text may have been partially sent. Check your Mac before sending it again; input won’t be replayed.", details: original.details) : original
         let reason = notice.reason
         if !hadFrame {
             let controller = UIHostingController(rootView: DirectConnectionNotice(notice: notice).directAppearance())
@@ -522,6 +527,14 @@ struct TerminalServerTrustView: View {
             secondary: reason == .loginRejected ? nil : .init(title: "Edit Login", perform: edit)).directAppearance())
         controller.sizingOptions = .intrinsicContentSize
         controller.view.backgroundColor = .clear
+        return controller
+    }
+    @objc static func interruptedText(done: @escaping @MainActor @Sendable () -> Void) -> UIViewController {
+        let notice = DirectRecoveryNotice(reason: .inputPaused, title: "Check the sent text",
+            message: "Sending text was interrupted. It may have been partially sent. Check your Mac before sending it again; input won’t be replayed.")
+        let controller = UIHostingController(rootView: DirectRecoveryCard(notice: notice,
+            primary: .init(title: "Continue", perform: done), secondary: nil).directAppearance())
+        controller.sizingOptions = .intrinsicContentSize; controller.view.backgroundColor = .clear
         return controller
     }
     @objc static func savedLogin(connected: Bool, done: @escaping @MainActor @Sendable () -> Void) -> UIViewController {

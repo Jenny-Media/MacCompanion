@@ -151,17 +151,25 @@ struct DirectFilesView: View {
             #endif
         }
         .directAppearance()
-        .task { if !loaded { loaded = true; if !pro.ready { await pro.refresh() }; loadLogin(preferSelected: true) } }
+        .task { if !pro.ready { await pro.refresh() }; initializeLoginIfNeeded() }
         .onChange(of: session.phase) { _, phase in
             if phase == .ready { password = ""; passphrase = "" }
             else {
+                initializeLoginIfNeeded()
+                #if os(macOS)
+                refreshSelectedKeyFile()
+                #endif
+            }
+        }
+        .onChange(of: session.busy) { _, busy in
+            if !busy {
+                initializeLoginIfNeeded()
                 #if os(macOS)
                 refreshSelectedKeyFile()
                 #endif
             }
         }
         #if os(macOS)
-        .onChange(of: session.busy) { _, busy in if !busy { refreshSelectedKeyFile() } }
         .onReceive(NotificationCenter.default.publisher(for: MacSSHKeyFileStore.changed)) { _ in
             refreshSelectedKeyFile()
         }
@@ -173,7 +181,7 @@ struct DirectFilesView: View {
                 savePicker.cancel()
                 #endif
             }
-            else { loadLogin(preferSelected: true) }
+            else { if loaded { loadLogin(preferSelected: true) } else { initializeLoginIfNeeded() } }
         }
         .onReceive(NotificationCenter.default.publisher(for: DirectClientPlatformV1.didEnterBackground)) { _ in
             preparation = UUID(); preparingKey = false; saving = false; confirmation = nil
@@ -408,6 +416,11 @@ struct DirectFilesView: View {
         } catch { session.message = "Saved SSH settings could not be read. Existing data is kept."; return false }
     }
     #endif
+    private func initializeLoginIfNeeded() {
+        guard !loaded, DirectAppLockV1.shared.canAccess, session.phase != .ready, !session.busy else { return }
+        loaded = true
+        loadLogin(preferSelected: true)
+    }
     private func loadLogin(preferSelected: Bool = false, includePassword: Bool = true) {
         guard DirectAppLockV1.shared.canAccess, session.phase != .ready, !session.busy else { return }
         do {

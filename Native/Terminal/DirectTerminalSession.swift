@@ -77,6 +77,11 @@ private enum TerminalPTY {
     private var pauseDeadline: Task<Void, Never>?
     #if os(iOS)
     private var backgroundTask = UIBackgroundTaskIdentifier.invalid
+    var textSendNotice: DirectRecoveryNotice?
+    func interruptComposedText() {
+        textSendNotice = .init(reason: .inputPaused, title: "Check the sent text",
+            message: "Sending text was interrupted. It may have been partially sent. Check your Mac before sending it again; input won’t be replayed.")
+    }
     #endif
     private var lifecycleGeneration = UUID()
     private var writeGeneration = UUID()
@@ -126,6 +131,10 @@ private enum TerminalPTY {
         return .terminalConnection
     }
     private func present(_ reason: DirectRecoveryNotice.Reason, message: String? = nil, stage: String? = nil) {
+        #if os(iOS)
+        let message = reason == .terminalEnded
+            ? textSendNotice.map { (message ?? DirectRecoveryNotice.make(reason).message) + " " + $0.message } ?? message : message
+        #endif
         recovery = .make(reason, message: message, details: (reason == .serverChanged ? identityDetails : []) + [.init(name: "Service", value: "Remote Login (SSH)"),
             .init(name: "SSH port", value: String(mac.sshPort)), .init(name: "Stage", value: stage ?? phase)])
         status = recovery?.title ?? ""
@@ -194,7 +203,11 @@ private enum TerminalPTY {
                 authentication = { .ed25519(username: username, privateKey: parsed) }
             } catch { present(.savedDataUnavailable, message: "The selected SSH key couldn’t be read. Existing keys are kept."); return }
         } else { authentication = { .passwordBased(username: username, password: password) } }
-        stop(); identityDetails = []; installedKey = nil; recovery = nil; phase = "Contacting Mac"; setupPhase = .notSent; settingUp = installation != nil; let id = UUID(); generation = id
+        stop()
+        #if os(iOS)
+        textSendNotice = nil
+        #endif
+        identityDetails = []; installedKey = nil; recovery = nil; phase = "Contacting Mac"; setupPhase = .notSent; settingUp = installation != nil; let id = UUID(); generation = id
         let owner = TerminalSocketOwner(); socketOwner = owner
         connecting = true; phase = "Finding a reachable address"; status = "Contacting Remote Login…"
         let addresses = mac.addresses, port = mac.sshPort
@@ -314,7 +327,7 @@ private enum TerminalPTY {
             let accepted = await withCheckedContinuation { self.trustReply = $0 }
             self.trust = nil
             guard accepted, self.generation == id, DirectAppLockV1.shared.canAccess else { throw TerminalSecretStore.Failure.rejectedKey }
-            try TerminalSecretStore.write(Data(key.utf8), id: self.mac.id, kind: "host-key")
+            try TerminalSecretStore.approveHostKey(key, id: self.mac.id)
             self.phase = "Signing in"
         }
         var settings = SSHClientSettings(host: addresses.first ?? mac.address, port: port,
@@ -350,6 +363,41 @@ private enum TerminalPTY {
             catch { if generation == id && writeGeneration == writeID { stop(); present(.terminalEnded, message: "The connection ended while sending input. It won’t be replayed. Open a new shell to continue.") } }
         }
     }
+    #if os(iOS)
+    var composeGeneration: UUID { generation }
+    var canComposeText: Bool { connected && !suspended && DirectAppLockV1.shared.canAccess && DirectClientPlatformV1.sessionAvailable && writer != nil }
+    /// Use the same PTY and write ordering as live typing. A completion confirms
+    /// only the local write; the remote program supplies no consumption receipt.
+    func sendComposedText(_ data: [UInt8], generation expected: UUID, completion: @escaping (String?) -> Void) {
+        guard generation == expected, canComposeText, let writer, !data.isEmpty else {
+            completion("The Terminal session changed. Nothing was sent."); return
+        }
+        guard data.count <= 4108, queuedBytes + data.count <= 65536 else {
+            completion("Input is busy or the text is too large. Nothing was queued."); return
+        }
+        queuedBytes += data.count
+        let id = generation, writeID = writeGeneration, previous = writeTail
+        writeTail = Task {
+            await previous?.value
+            defer { if generation == id && writeGeneration == writeID { queuedBytes -= data.count } }
+            guard generation == id, writeGeneration == writeID, canComposeText, !Task.isCancelled else {
+                completion("Sending was interrupted. Check the Terminal before sending again."); return
+            }
+            do {
+                try await writer.write(data)
+                guard generation == id, writeGeneration == writeID else {
+                    completion("Text may have been partially sent. Check the Terminal before sending again."); return
+                }
+                completion(nil)
+            } catch {
+                completion("Text may have been partially sent. Check the Terminal before sending again.")
+                if generation == id && writeGeneration == writeID {
+                    stop(); present(.terminalEnded, message: "The connection ended while sending text. It may have been partially sent and won’t be replayed. Check the Mac before opening a new shell.")
+                }
+            }
+        }
+    }
+    #endif
     #if os(macOS)
     // This type is constructed only by the native owner ledger. Cleanup is
     // allowed after focus/lock, but remains bounded and tied to this generation.

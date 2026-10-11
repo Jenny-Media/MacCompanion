@@ -1,3 +1,24 @@
+## 2026-10-10 — iOS Desktop Copy Text from Screen candidate
+
+The local text tool is implemented for iOS Desktop. Its default quick action is
+beside Mouse Mode, with a View & Display fallback and Add Action support for
+existing profiles. Saved choices and Pro customization policy are preserved.
+A frozen original-pixel crop feeds accurate on-device Vision recognition; users
+review and edit text before explicitly copying or sharing it. Remote input is
+released before presentation, remains closed throughout review, and reopens only
+after a fresh complete frame. Lock, background, closure and replacement retire
+review content and pending callbacks. macOS clipboard work remains separate.
+
+The manifest-indexed geometry vectors and hosted synthetic tests cover bounds,
+Retina pixels, local zoom/crop, English URLs/code, Chinese, empty recognition,
+cancellation, editable copy, responsive layouts, owner replacement and actual
+socket release/frame/resume behavior. Build and check artifacts are kept outside
+Git under `/private/tmp/maccompanion-copy-text-20261011-ios/` and
+`/private/tmp/maccompanion-copy-text-review-20261011/`.
+
+This is a local, uncommitted candidate. Physical-device, real Screen Sharing,
+TestFlight and release acceptance remain separate gates.
+
 ## 2026-10-10 — First-tap connection mode presentation
 
 The reported Trackpad default opening Desktop is reproduced on stable Xcode

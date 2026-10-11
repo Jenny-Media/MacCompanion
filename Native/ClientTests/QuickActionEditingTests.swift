@@ -6,6 +6,22 @@ import XCTest
 #endif
 
 @MainActor final class QuickActionEditingTests: XCTestCase {
+    func testScreenTextIsAFreeDesktopBuiltInAndPreservesSavedProfiles() throws {
+        let action = VNCQuickAction(title: "Copy Text", kind: .copyText)
+        #if os(iOS)
+        XCTAssertEqual(DirectControlMode.desktop.defaults.map(\.kind), [.mode, .copyText, .fit, .rightClick])
+        XCTAssertTrue(DirectQuickActionEditing.standards(.desktop).contains { $0.kind == .copyText })
+        XCTAssertTrue(DirectQuickActionEditing.canSave([action], mode: .desktop, hasPro: false))
+        #else
+        XCTAssertFalse(DirectControlMode.desktop.defaults.contains { $0.kind == .copyText })
+        XCTAssertFalse(action.compatible(with: .desktop))
+        #endif
+        XCTAssertFalse(action.compatible(with: .trackpad))
+        XCTAssertFalse(action.compatible(with: .terminal))
+        let saved = [VNCQuickAction(title: "My Right Click", kind: .rightClick, enabled: false)]
+        let decoded = try JSONDecoder().decode([VNCQuickAction].self, from: JSONEncoder().encode(saved))
+        XCTAssertEqual(decoded, saved, "Existing saved choices retain identity, visibility and order")
+    }
     func testAddingHiddenStandardRestoresItsIdentityInsteadOfDuplicatingIt() throws {
         let hidden = VNCQuickAction(title: "Custom Return Label", kind: .returnKey, enabled: false)
         var actions = [hidden]

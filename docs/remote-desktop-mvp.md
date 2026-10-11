@@ -142,6 +142,17 @@ The Add Action sheet offers standards that aren't already visible. All changes,
 including confirmed Restore Defaults, remain drafts until Save; Cancel discards them. Mac
 uses menu rows with the same labels as its session menu. Hidden legacy actions,
 profile scope, Pro gating and the 15-total/12-custom limits are preserved.
+On iOS Desktop, the default first quick-action row is Mouse Mode and Copy Text;
+Fit to Window and Right Click follow. Existing saved profiles keep their choices
+and order; Add Action offers Copy Text. View & Display also contains Copy Text
+from Screen. This free tool freezes original received pixels with the visible
+area selected. Adjust the crop locally, recognize with on-device Vision, then
+review and edit text beside the image before Copy or Share. Return to Live
+Desktop restores the viewport when its geometry still matches and waits for a
+fresh complete frame before reopening remote input. Background, app lock and
+session closure clear the temporary review. Terminal and video-free Trackpad &
+Keyboard do not offer extraction. macOS clipboard integration remains separate.
+
 Extra Keys groups editing, navigation and special keys; gesture help is separate.
 Terminal offers its own keyboard and color
 controls. Its persistent modifier bar puts a keyboard toggle on the left and

@@ -114,6 +114,50 @@ private final class SSHEarlyReadProbe: ChannelInboundHandler, @unchecked Sendabl
     }
 }
 @MainActor final class TerminalIntegrationTests:XCTestCase {
+    func testComposerUsesCurrentPTYBracketingAndNeverAddsReturnOrReplaysAfterStop() async throws {
+        let record = SSHTestRecord(), key = NIOSSHPrivateKey(ed25519Key: .init())
+        let server = try await server(record: record, key: key)
+        defer { _ = server.close() }
+        let mac = DirectMacRecordV1(id: UUID(), name: "Synthetic Composer", addresses: ["127.0.0.1"], sshPort: try XCTUnwrap(server.localAddress?.port))
+        try TerminalSecretStore.write(Data(String(openSSHPublicKey: key.publicKey).utf8), id: mac.id, kind: "host-key")
+        let session = DirectTerminalSession(mac: mac)
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let previous = scene.windows.first(where: \.isKeyWindow)
+        let window = UIWindow(windowScene: scene), controller = TerminalController(session: session, customize: {})
+        window.rootViewController = controller; window.makeKeyAndVisible()
+        defer { session.stop(); window.isHidden = true; window.rootViewController = nil; previous?.makeKeyAndVisible(); try? TerminalSecretStore.remove(mac.id) }
+        session.connect(username: "synthetic", password: "synthetic-only", remember: false)
+        try await wait("composer PTY") { session.connected }
+        controller.showTextComposer()
+        try await wait("composer sheet") { controller.presentedViewController != nil }
+        let draft = controller.textComposer.draft
+        draft.edit("中文😀")
+        XCTAssertTrue(record.received.isEmpty)
+        draft.requestSend()
+        try await wait("plain UTF-8 write") { record.received == Array("中文😀".utf8) }
+        try await wait("successful composer dismisses") { controller.presentedViewController == nil }
+        XCTAssertEqual(draft.text, ""); XCTAssertEqual(record.passwordRequests, 1)
+        try await record.emit("\u{1b}[?2004h")
+        try await wait("remote bracketed paste mode") { controller.terminal.getTerminal().bracketedPasteMode }
+        controller.showTextComposer()
+        try await wait("second composer sheet") { controller.presentedViewController != nil }
+        draft.edit("one\r\n  two\r\n"); draft.requestSend()
+        let reviewed = try XCTUnwrap(draft.confirmation)
+        XCTAssertEqual(record.received, Array("中文😀".utf8), "Multiline review must send nothing")
+        // SwiftUI dismisses an alert binding before invoking its captured action.
+        draft.confirmation = nil; draft.confirmSend(reviewed); draft.requestSend()
+        let expected = Array("中文😀\u{1b}[200~one\n  two\n\u{1b}[201~".utf8)
+        try await wait("bracketed UTF-8 write") { record.received == expected }
+        try await wait("second composer dismisses") { controller.presentedViewController == nil }
+        try await Task.sleep(for: .milliseconds(50)); XCTAssertEqual(record.received, expected)
+        let oldGeneration = session.composeGeneration
+        controller.showTextComposer(); draft.edit("retire this draft"); session.stop()
+        XCTAssertEqual(draft.text, ""); XCTAssertFalse(draft.active)
+        var staleIssue: String?
+        session.sendComposedText(Array("must not replay".utf8), generation: oldGeneration) { staleIssue = $0 }
+        XCTAssertNotNil(staleIssue)
+        try await Task.sleep(for: .milliseconds(50)); XCTAssertEqual(record.received, expected)
+    }
     func testSavedTerminalLoginStartsOnEntryAndRetainsTrustGateAndSingleAttempt() async throws {
         let record = SSHTestRecord(), key = NIOSSHPrivateKey(ed25519Key: .init())
         let server = try await server(record: record, key: key)

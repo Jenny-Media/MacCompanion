@@ -98,6 +98,7 @@ def main():
     shutil.copyfile(args.source / 'COPYING', args.output / 'LibVNCClient-COPYING.txt')
     target['sources'].append({'path': 'LibVNCClient-COPYING.txt', 'buildPhase': 'resources'})
     target['dependencies'] = [
+        {'sdk': 'Vision.framework'},
         {'package': 'Citadel'}, {'package': 'SwiftTerm'},
         {'framework': str(build / 'libvncclient.a'), 'embed': False},
         {'framework': str(deps / 'OpenSSL.framework'), 'embed': True, 'codeSign': False}]

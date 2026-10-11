@@ -551,7 +551,7 @@ extension SSHClient {
     ) async throws -> SFTPClient {
         try await eventLoop.flatSubmit { [eventLoop, sshHandler = session.sshHandler] in
             let createChannel = eventLoop.makePromise(of: Channel.self)
-            let createClient = eventLoop.makePromise(of: SFTPClient.self)
+            let initializedClient = NIOLockedValueBox<SFTPClient?>(nil)
             let result = eventLoop.makePromise(of: SFTPClient.self)
             let finished = NIOLockedValueBox(false)
             let openedChannel = NIOLockedValueBox<Channel?>(nil)
@@ -559,7 +559,7 @@ extension SSHClient {
             sshHandler.value.createChannel(createChannel) { channel, _ in
                 SFTPClient.setupChannelHanders(channel: channel, logger: logger)
                     .map { client in
-                        createClient.succeed(client)
+                        initializedClient.withLockedValue { $0 = client }
                     }
             }
             
@@ -573,6 +573,10 @@ extension SSHClient {
             let opening = createChannel.futureResult.flatMap { channel in
                 openedChannel.withLockedValue { $0 = channel }
                 guard !finished.withLockedValue({ $0 }) else { channel.close(promise: nil); return eventLoop.makeFailedFuture(SFTPError.missingResponse) }
+                // createChannel succeeds only after its initializer completes.
+                // Keep the initialized value, not a second promise that could
+                // be orphaned when creation fails before that initializer runs.
+                guard let client = initializedClient.withLockedValue({ $0 }) else { return eventLoop.makeFailedFuture(SFTPError.missingResponse) }
                 let openSubsystem = eventLoop.makePromise(of: Void.self)
 
                 logger.debug("SFTP requesting subsystem")
@@ -584,10 +588,7 @@ extension SSHClient {
                     ),
                     promise: openSubsystem
                 )
-                return openSubsystem.futureResult
-            }.flatMap {
-                logger.debug("SFTP subsystem request completed")
-                return createClient.futureResult
+                return openSubsystem.futureResult.map { client }
             }.flatMap { (client: SFTPClient) in
                 let initializeMessage = SFTPMessage.initialize(.init(version: .v3))
                 

@@ -14,6 +14,10 @@ retry credentials against another address. Reuse the Mac UUID's existing SSH
 host pin and Terminal login/key selection; never infer a login from Desktop.
 First-use host trust requires explicit fingerprint approval. Changed pins fail
 closed. Logins, pins and private keys remain in the existing device-only stores.
+After approval, recheck shared trust and install an absent pin atomically. A
+concurrent approval of the same key is compatible; a different key MUST remain
+stored and fail the pending connection before authentication. This applies to
+all direct SSH consumers sharing the Mac UUID, including Terminal and Desktop.
 Show the selected Mac, account and Remote Login requirement before connection.
 Do not claim a failed TCP connection proves Remote Login is disabled.
 The Files owner retains one Mac-record snapshot. Its title, sign-in, upload
@@ -38,6 +42,8 @@ subsystem admission and each idle operation are bounded to 30 seconds. Cancellin
 locking, backgrounding on iOS, or closing Files retires only its owned socket and
 channel, cancels prompts and prevents late callbacks from updating a replacement
 connection. Reconnect and retry are explicit; no transfer replay or resume.
+SFTP admission failure, including SSH closure before child-channel creation,
+MUST settle its internal asynchronous work and report failure without crashing.
 Each completed SFTP response for the owned operation resets its idle deadline;
 the total duration of a progressing listing or transfer is not an idle timeout.
 This includes received error statuses such as a normal missing upload destination,

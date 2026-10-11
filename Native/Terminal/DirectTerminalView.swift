@@ -112,6 +112,10 @@ struct DirectTerminalView: View {
                     DirectConnectionBackdrop(names: macLibrary?.macs.map(\.name) ?? [mac.name])
                     loginView
                 }
+                else if let notice = session.textSendNotice {
+                    VStack { Spacer(); DirectRecoveryCard(notice: notice,
+                        primary: .init(title: "Continue", perform: { session.textSendNotice = nil }), secondary: nil).padding(12); Spacer() }
+                }
                 else if let notice = session.controlsRecovery {
                     VStack { DirectRecoveryCard(notice: notice,
                         primary: .init(title: "Keyboard Settings", perform: { sheet = .keyboard }),
@@ -316,7 +320,7 @@ private struct TerminalSurface: UIViewControllerRepresentable {
         controller.updateControls()
         controller.applyAppearance(style)
     }
-    static func dismantleUIViewController(_ controller: TerminalController, coordinator: ()) { controller.session.received = nil; controller.session.toggleKeyboard = nil; controller.session.reloadKeyboard = nil; controller.session.suspendInput = nil }
+    static func dismantleUIViewController(_ controller: TerminalController, coordinator: ()) { controller.textComposer.invalidate(); controller.session.received = nil; controller.session.toggleKeyboard = nil; controller.session.reloadKeyboard = nil; controller.session.suspendInput = nil }
 }
 
 @MainActor final class SessionTerminalView: TerminalView {
@@ -377,6 +381,11 @@ private struct TerminalSurface: UIViewControllerRepresentable {
     let session: DirectTerminalSession
     let terminal = SessionTerminalView(frame: .zero)
     let controls = CompanionVNCControls()
+    lazy var textComposer: DirectTextComposer = {
+        let composer = DirectTextComposer(macName: session.mac.name, mode: "terminal")
+        composer.interruptionHandler = { [weak session] in session?.interruptComposedText() }
+        return composer
+    }()
     lazy var keyboardBar = TerminalKeyboardBar(terminal: terminal, preferences: .init())
     private var reportedGrid: (columns: Int, rows: Int)?
     private var paletteIsDark: Bool?
@@ -428,7 +437,11 @@ private struct TerminalSurface: UIViewControllerRepresentable {
         session.received = { [weak self] bytes in self?.terminal.feed(byteArray: bytes[...]) }
         configureKeyboard()
         session.reloadKeyboard = { [weak self] in self?.configureKeyboard(); self?.updateControls() }
-        session.suspendInput = { [weak self] in self?.terminal.resetModifiers(); self?.controls.cancelSlideForLayoutChange(); self?.controls.close() }
+        session.suspendInput = { [weak self] in
+            guard let self else { return }
+            if textComposer.sending { session.interruptComposedText() }
+            textComposer.invalidate(); terminal.resetModifiers(); controls.cancelSlideForLayoutChange(); controls.close()
+        }
         terminal.focusChanged = { [weak self, weak session] visible in session?.keyboardVisible = visible; self?.updateControls(); self?.view.setNeedsLayout() }
         keyboardBar.toggleKeyboard = { [weak session] in session?.toggleKeyboard?() }
         session.toggleKeyboard = { [weak self] in
@@ -471,6 +484,7 @@ private struct TerminalSurface: UIViewControllerRepresentable {
         switch kind {
         case "inputMenu":
             presentControlsMenu("Keyboard & Input", sections: [["title": "Keyboard", "items": [
+                ["kind": "composeText", "title": "Compose Text", "symbol": "square.and.pencil"],
                 ["kind": "numberRow", "title": "Show Number Row", "symbol": "textformat.123", "selected": keyboardBar.showsNumberRow],
                 ["kind": "quickActions", "title": "Quick Actions", "symbol": "slider.horizontal.3", "submenu": true],
                 ["kind": "customize", "title": "Customize Keys & Snippets", "symbol": "slider.horizontal.3", "submenu": true]]]])
@@ -498,6 +512,7 @@ private struct TerminalSurface: UIViewControllerRepresentable {
             defaults.set(keyboardBar.showsNumberRow, forKey: Self.numberRowPreference)
             view.setNeedsLayout()
         case "paste": terminal.resetModifiers(); terminal.paste(nil)
+        case "composeText": showTextComposer()
         case "escape", "tab", "returnKey":
             terminal.resetModifiers()
             let bytes: [UInt8] = kind == "escape" ? [0x1b] : kind == "tab" ? [0x09] : [0x0d]
@@ -511,6 +526,26 @@ private struct TerminalSurface: UIViewControllerRepresentable {
                 DirectAppearanceV1.shared.terminal = value
             } else { action(kind) }
         }
+    }
+    func showTextComposer() {
+        guard session.canComposeText else { return }
+        terminal.resetModifiers(); _ = terminal.resignFirstResponder(); controls.close()
+        let generation = session.composeGeneration
+        let present = { [weak self] in
+            guard let self else { return }
+            textComposer.present(from: self, available: { [weak session] in
+                session?.composeGeneration == generation && session?.canComposeText == true
+            }, send: { [weak self] text, complete in
+                guard let self, let prepared = try? DirectComposedText(text, mode: .terminal) else {
+                    complete("The Terminal session ended. Nothing was sent."); return
+                }
+                terminal.resetModifiers()
+                session.sendComposedText(prepared.terminalBytes(bracketedPaste: terminal.getTerminal().bracketedPasteMode),
+                                         generation: generation, completion: complete)
+            })
+        }
+        if presentedViewController != nil { dismiss(animated: true, completion: present) }
+        else { present() }
     }
     private func presentControlsMenu(_ title: String, sections: [[String: Any]]) {
         let menu = CompanionVNCMenu(); menu.title = title; menu.sections = sections

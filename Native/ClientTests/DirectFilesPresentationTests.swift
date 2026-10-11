@@ -1,5 +1,6 @@
 import XCTest
 import SwiftUI
+import NIO
 #if os(iOS)
 import UIKit
 @testable import Mac_Companion
@@ -9,6 +10,37 @@ import AppKit
 #endif
 
 @MainActor final class DirectFilesPresentationTests: XCTestCase {
+    #if os(iOS)
+    func testMountedFilesDefersFirstLoginUntilSignInBecomesAvailable() async throws {
+        if !DirectProAccess.shared.ready { await DirectProAccess.shared.refresh() }
+        // Keep the SSH handshake pending on an owned loopback socket, so the
+        // new sheet's initial task runs while loading credentials is ineligible.
+        let server = try await ServerBootstrap(group: MultiThreadedEventLoopGroup.singleton)
+            .childChannelInitializer { $0.eventLoop.makeSucceededFuture(()) }.bind(host: "127.0.0.1", port: 0).get()
+        defer { Task { try? await server.close() } }
+        let mac = DirectMacRecordV1(id: UUID(), name: "Synthetic Deferred Login", addresses: ["127.0.0.1"], sshPort: try XCTUnwrap(server.localAddress?.port))
+        try TerminalSecretStore.save(.init(username: "synthetic-saved-account", password: "synthetic-saved-password"), id: mac.id)
+        let session = DirectFilesSession(mac: mac); defer { session.close(); try? TerminalSecretStore.remove(mac.id) }
+        session.connect(username: "synthetic", password: "synthetic-only", key: nil, remember: true)
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let previous = scene.windows.first { $0.isKeyWindow }
+        let window = UIWindow(windowScene: scene); window.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
+        window.rootViewController = UIHostingController(rootView: DirectFilesView(mac: mac, session: session, retainWhenDismissed: true)); window.makeKeyAndVisible()
+        defer { window.endEditing(true); window.isHidden = true; window.rootViewController = nil; previous?.makeKeyAndVisible() }
+        func descendants(_ view: UIView) -> [UIView] { [view] + view.subviews.flatMap(descendants) }
+        func fields() -> [UITextField] { descendants(window).compactMap { $0 as? UITextField } }
+        try await Task.sleep(for: .milliseconds(300)); window.layoutIfNeeded()
+        XCTAssertTrue(session.busy); XCTAssertFalse(fields().contains { $0.text == "synthetic-saved-account" })
+        session.disconnect()
+        let deadline = Date().addingTimeInterval(5)
+        while !fields().contains(where: { $0.text == "synthetic-saved-account" }) {
+            guard Date() < deadline else { XCTFail("Deferred saved login was not initialized"); return }
+            try await Task.sleep(for: .milliseconds(50)); window.layoutIfNeeded()
+        }
+        XCTAssertTrue(fields().contains { $0.text == "synthetic-saved-password" })
+        XCTAssertEqual(session.phase, .interrupted, "Showing saved credentials must not reconnect automatically")
+    }
+    #endif
     #if os(macOS)
     func testMountedFilesRefreshesExternalDiskKeyChangesWithoutReloadingDrafts() async throws {
         let mac = DirectMacRecordV1(id: UUID(), name: "Synthetic Key Selection", addresses: ["127.0.0.1"], sshPort: 1)
