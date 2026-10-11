@@ -2633,5 +2633,155 @@
       "baselinePresented": true,
       "connected": false
     }
+  ],
+  "copyTextGeometryCases": [
+    {
+      "size": [
+        1920,
+        1080
+      ],
+      "selection": [
+        100.2,
+        50.7,
+        399.2,
+        199.1
+      ],
+      "pixels": [
+        100,
+        50,
+        400,
+        200
+      ]
+    },
+    {
+      "size": [
+        1920,
+        1080
+      ],
+      "selection": [
+        -20,
+        -10,
+        120,
+        60
+      ],
+      "pixels": [
+        0,
+        0,
+        100,
+        50
+      ]
+    },
+    {
+      "size": [
+        1920,
+        1080
+      ],
+      "selection": [
+        1900,
+        1000,
+        200,
+        200
+      ],
+      "pixels": [
+        1900,
+        1000,
+        20,
+        80
+      ]
+    },
+    {
+      "size": [
+        1920,
+        1080
+      ],
+      "selection": [
+        1920,
+        0,
+        20,
+        20
+      ],
+      "pixels": null
+    },
+    {
+      "size": [
+        1920,
+        1080
+      ],
+      "selection": [
+        0,
+        0,
+        0,
+        20
+      ],
+      "pixels": null
+    },
+    {
+      "size": [
+        0,
+        1080
+      ],
+      "selection": [
+        0,
+        0,
+        20,
+        20
+      ],
+      "pixels": null
+    },
+    {
+      "size": [
+        3840,
+        2160
+      ],
+      "selection": [
+        0,
+        0,
+        3840,
+        2160
+      ],
+      "pixels": [
+        0,
+        0,
+        3840,
+        2160
+      ]
+    }
+  ],
+  "copyTextBoundsCases": [
+    {
+      "size": [
+        4096,
+        4096
+      ],
+      "fits": true
+    },
+    {
+      "size": [
+        4097,
+        4096
+      ],
+      "fits": false
+    },
+    {
+      "size": [
+        8192,
+        1
+      ],
+      "fits": true
+    },
+    {
+      "size": [
+        8193,
+        1
+      ],
+      "fits": false
+    },
+    {
+      "size": [
+        0,
+        10
+      ],
+      "fits": false
+    }
   ]
 }

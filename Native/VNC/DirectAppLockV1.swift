@@ -8,6 +8,7 @@ import UIKit
     static let shared = DirectAppLockV1()
     static let preferenceKey = "direct-client-require-device-unlock-v1"
     static let unlocked = Notification.Name("DirectClientUnlockedV1")
+    static let locked = Notification.Name("DirectClientLockedV1")
     private(set) var authenticating = false
     private(set) var allowed: Bool
     private(set) var message = "Unlock to access your Macs"
@@ -40,13 +41,14 @@ import UIKit
             }
         }
         UserDefaults.standard.set(value, forKey: Self.preferenceKey)
-        if value { allowed = false; showCover(); authenticate() }
+        if value { allowed = false; NotificationCenter.default.post(name: Self.locked, object: nil); showCover(); authenticate() }
         else { attempt = UUID(); context?.invalidate(); context = nil; authenticating = false; allowed = true; hideCover() }
     }
     func background() {
         guard enabled else { return }
         attempt = UUID(); context?.invalidate(); context = nil; authenticating = false
         allowed = false; message = "Unlock to access your Macs"; showCover()
+        NotificationCenter.default.post(name: Self.locked, object: nil)
     }
     func authenticate() {
         guard enabled, !allowed, !authenticating, UIApplication.shared.applicationState == .active else { return }

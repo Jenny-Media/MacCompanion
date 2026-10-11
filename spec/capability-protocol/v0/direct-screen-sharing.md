@@ -1,5 +1,8 @@
 # Direct macOS Screen Sharing development profile v1
 
+The iOS Desktop local text-extraction tool is specified in
+[Copy Text from Screen](copy-text-from-screen.md).
+
 Decision: 2026-10-04. The normal iOS VNC development composition is a standalone
 client of built-in macOS Screen Sharing, with no Mac Companion host or Agent.
 The historical paired protocol remains compatible but is not instantiated here.

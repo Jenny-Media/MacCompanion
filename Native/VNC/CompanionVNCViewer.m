@@ -10,6 +10,7 @@
 #import "CompanionVNCTapGesture.h"
 #import "CompanionVNCTrackpadFeedback.h"
 #import "CompanionVNCMenu.h"
+#import "CompanionVNCTextReview.h"
 #import "Mac_Companion-Swift.h"
 
 @interface CompanionRemoteTextInput : UITextView
@@ -108,6 +109,13 @@
 @property CGFloat resumeZoomRatio;
 @property CGPoint resumeCenter;
 @property(nonatomic, weak) CompanionVNCDisplayPicker *displayPicker;
+@property CompanionVNCTextReview *textReview;
+@property NSUInteger textReviewGeneration;
+@property CGRect textReviewCrop;
+@property CGSize textReviewFramebuffer;
+@property CGFloat textReviewZoom;
+@property CGPoint textReviewCenter;
+@property BOOL textReviewViewportPending;
 @end
 
 @implementation CompanionVNCViewer
@@ -169,6 +177,7 @@
     self.controls.macName = self.macName ?: @"Mac";
     self.controls.quickActions = self.quickActions ?: @[
         @{@"kind": @"mode", @"title": @"Mouse Mode", @"enabled": @YES},
+        @{@"kind": @"copyText", @"title": @"Copy Text", @"symbol": @"text.viewfinder", @"enabled": @YES},
         @{@"kind": @"fit", @"title": @"Fit to Window", @"enabled": @YES},
         @{@"kind": @"rightClick", @"title": @"Right Click", @"enabled": @YES}];
     self.controls.actionHandler = ^(NSDictionary *action) { [weak performControlAction:action]; };
@@ -176,6 +185,7 @@
     self.controls.openingHandler = ^{
         [weak releasePointer]; [weak cancelTrackpadTouches];
         if (weak.quickActionsProvider) weak.quickActions = weak.quickActionsProvider(weak.inputOnly);
+        weak.controls.textCopyAvailable = [weak canCopyScreenText];
     };
     self.views = self.controls.button;
     self.status.translatesAutoresizingMaskIntoConstraints = NO;
@@ -429,6 +439,7 @@
     return self.inputOnly ? @"Connecting to Trackpad & Keyboard…" : @"Connecting to Screen Sharing…";
 }
 - (void)prepareConnection {
+    [self invalidateTextReview:NO]; self.textReviewViewportPending=NO;
     self.session = [CompanionVNCSession new];
     __weak CompanionVNCViewer *weak = self;
     __weak CompanionVNCSession *owner = self.session;
@@ -462,6 +473,7 @@
         [strong.connect setTitle:@"Connect" forState:UIControlStateNormal];
         UIApplication.sharedApplication.idleTimerDisabled = running;
         if (!running) {
+            [strong invalidateTextReview:NO];
             [strong clearCursor]; [strong resetModifiers];
             if (strong.disconnectHandler) strong.disconnectHandler();
             if (strong.checkingResume) [strong reconnectAfterFailedResume];
@@ -484,6 +496,7 @@
     self.diagnosticHandler(diagnostics);
 }
 - (void)start {
+    [self invalidateTextReview:NO]; self.textReviewViewportPending=NO;
     [self clearRecovery];
     if (self.lastFramebuffer) { [self rememberViewport]; self.restoreViewportPending = YES; self.image.alpha = .45; }
     self.starting = YES; self.exited = NO;
@@ -512,6 +525,7 @@
 - (void)loginEdited { [self clearRecovery]; self.progressLabel.text = @""; [self updateConnectionChrome]; }
 - (void)showMacs { [self stopViewer]; if (self.macsHandler) self.macsHandler(); }
 - (void)stopViewer {
+    [self invalidateTextReview:NO]; self.textReviewViewportPending=NO;
     [self.controls close]; self.starting = NO; self.exited = YES; self.reconnectWhenReady = NO; self.checkingResume = NO;
     self.resumeGeneration++; self.restoreViewportPending = NO; self.resumeDisplayID = nil;
     self.keyboardViewportSaved = NO; self.keyboardLayoutPending = NO;
@@ -566,6 +580,7 @@
 }
 - (void)showConnectionFailure { [self showConnectionFailureStage:0]; }
 - (void)showConnectionFailureStage:(NSInteger)stage {
+    [self invalidateTextReview:NO]; self.textReviewViewportPending=NO;
     self.starting = NO; self.checkingResume = NO; self.resumeGeneration++;
     if (self.sessionPhaseHandler) self.sessionPhaseHandler(@"ended");
     [self clearCursor]; [self resetModifiers]; self.connect.enabled = YES;
@@ -591,13 +606,14 @@
     if (!self.foreground || self.exited) { if (completion) completion(); return; }
     self.reconnectWhenReady = self.session.running || self.starting;
     self.foreground = NO; self.image.alpha = .45; self.resumeGeneration++; self.checkingResume = NO;
+    [self invalidateTextReview:NO]; self.textReviewViewportPending=NO;
     [self updateTrackpadFeedback];
     [self.controls close]; [self rememberViewport]; [self releasePointer]; [self resetModifiers]; [self clearCursor];
     self.zoomGeneration++; self.smartZoomPending = NO;
     [self.view endEditing:YES]; UIApplication.sharedApplication.idleTimerDisabled = NO;
     self.status.text = @"Paused · Return to resume";
     if (self.reconnectWhenReady && self.sessionPhaseHandler) self.sessionPhaseHandler(@"paused");
-    if (self.session.connected) [self.session pauseWithCompletion:completion];
+    if (self.session.connected) { [self.session pauseWithCompletion:completion]; [self.session resumeInputAfterReview]; }
     else {
         [self.session stop]; if (self.disconnectHandler) self.disconnectHandler();
         if (completion) completion();
@@ -654,6 +670,11 @@
     self.framebufferSize = pixels; self.lastFramebuffer = frame;
     if (resized) [self updateDisplayPicker];
     [self restoreSavedDisplay]; [self renderFramebuffer:resized]; [self restoreViewport];
+    if (self.textReviewViewportPending) {
+        self.textReviewViewportPending = NO;
+        if (CGSizeEqualToSize(self.framebufferSize,self.textReviewFramebuffer) && CGRectEqualToRect(self.activeCrop,self.textReviewCrop))
+            [self applyViewportRatio:self.textReviewZoom center:self.textReviewCenter];
+    }
 }
 - (void)renderFramebuffer:(BOOL)reset {
     if (!self.lastFramebuffer) return;
@@ -1182,12 +1203,14 @@
     self.keyboardButton.accessibilityHint = active ? @"Dismiss the keyboard and restore the desktop view." : @"Open the keyboard to type on your Mac.";
 }
 - (void)keyboard {
+    if (self.textReview) return;
     if (self.input.isFirstResponder) [self.input resignFirstResponder]; else [self.input becomeFirstResponder];
     [self updateKeyboardButton];
 }
 - (void)textViewDidBeginEditing:(UITextView *)textView { if (textView == self.input) [self updateKeyboardButton]; }
 - (void)textViewDidEndEditing:(UITextView *)textView { if (textView == self.input) [self updateKeyboardButton]; }
 - (void)keyboardFrame:(NSNotification *)notification {
+    if (self.textReview) return;
     if (!self.view.window) return;
     [self.view layoutIfNeeded];
     CGRect keyboard = [self.view convertRect:[notification.userInfo[UIKeyboardFrameEndUserInfoKey] CGRectValue] fromView:nil];
@@ -1365,6 +1388,8 @@
 }
 - (void)performControlAction:(NSDictionary *)action {
     NSString *kind = action[@"kind"];
+    if (self.textReview) return;
+    if ([kind isEqual:@"copyText"]) { [self showCopyScreenText]; return; }
     if ([kind isEqual:@"viewMenu"]) { [self showViewMenu]; return; }
     if ([kind isEqual:@"inputMenu"]) { [self showInputMenu]; return; }
     if ([kind isEqual:@"appSettings"]) { if (self.appSettingsHandler) self.appSettingsHandler(); return; }
@@ -1427,11 +1452,60 @@
     UINavigationController *menu = [CompanionVNCMenu navigationControllerForMenu:picker sourceView:self.views];
     [self presentViewController:menu animated:YES completion:nil];
 }
+- (BOOL)canCopyScreenText {
+    return self.foreground && !self.exited && !self.checkingResume && !self.inputOnly && !self.textReview
+        && self.session.connected && self.lastFramebuffer && !CGRectIsNull(self.activeCrop)
+        && !CGRectIsEmpty(self.activeCrop) && self.activeCrop.size.width*self.activeCrop.size.height <= 32*1024*1024;
+}
+- (void)showCopyScreenText {
+    if (![self canCopyScreenText] || self.presentedViewController) return;
+    CGRect visible = [self.image convertRect:[self canvasViewportBounds] fromView:self.canvas];
+    CGImageRef image = CGImageCreateWithImageInRect(self.lastFramebuffer.CGImage,self.activeCrop);
+    if (!image) return;
+    CompanionVNCTextReview *review = [[CompanionVNCTextReview alloc] initWithImage:[UIImage imageWithCGImage:image] visibleRect:visible];
+    CGImageRelease(image);
+    self.textReviewCrop=self.activeCrop; self.textReviewFramebuffer=self.framebufferSize;
+    self.textReviewZoom=self.canvas.minimumZoomScale > 0 ? self.canvas.zoomScale/self.canvas.minimumZoomScale : 1;
+    self.textReviewCenter=[self viewportCenter];
+    [self releasePointer]; [self resetModifiers]; [self cancelTrackpadTouches]; [self.view endEditing:YES];
+    self.zoomGeneration++; self.smartZoomPending=NO;
+    self.textReview=review; NSUInteger token=++self.textReviewGeneration;
+    CompanionVNCSession *owner=self.session; __weak CompanionVNCViewer *weak=self;
+    __weak CompanionVNCTextReview *weakReview=review;
+    review.returnHandler=^{
+        if (weak.session==owner && weak.textReview==weakReview && weak.textReviewGeneration==token) [weak invalidateTextReview:YES];
+    };
+    BOOL suspended=[owner suspendInputForReview:^{
+        CompanionVNCViewer *strong=weak;
+        if (!strong || strong.session!=owner || strong.textReview!=review || strong.textReviewGeneration!=token
+            || !strong.foreground || strong.exited || !owner.connected) return;
+        if (strong.view.window) [strong presentViewController:review animated:!UIAccessibilityIsReduceMotionEnabled() completion:nil];
+    }];
+    if (!suspended) [self invalidateTextReview:NO];
+}
+- (void)invalidateTextReview:(BOOL)resume {
+    CompanionVNCTextReview *review=self.textReview;
+    self.textReviewGeneration++; self.textReview=nil;
+    if (!review) return;
+    [review invalidate];
+    // Keyboard notifications from the local editor were deliberately isolated.
+    // Retire any inset left by the remote keyboard before returning to desktop.
+    self.keyboardOverlap=0; self.keyboardViewportSaved=NO; self.keyboardLayoutPending=NO;
+    self.canvasFullscreenBottom.constant=0; self.toolbarBottom.constant=-4;
+    self.controls.bottomInset=4; [self.controls setNeedsLayout];
+    [self.view setNeedsLayout]; [self.view layoutIfNeeded];
+    if (self.presentedViewController==review) [self dismissViewControllerAnimated:NO completion:nil];
+    if (resume && self.foreground && !self.exited && self.session.running) {
+        self.textReviewViewportPending=YES;
+        [self.session resumeInputAfterReview];
+    }
+}
 - (void)showViewMenu {
     [self presentMenu:@"View & Display" sections:@[
         @{@"title": @"Desktop", @"items": @[
             @{@"kind": @"displays", @"title": @"Choose Display", @"symbol": @"display.2", @"submenu": @YES, @"push": @YES, @"disabled": @(self.inputOnly)},
-            @{@"kind": @"fit", @"title": @"Fit to Window", @"symbol": @"arrow.down.right.and.arrow.up.left", @"disabled": @(self.inputOnly)}]},
+            @{@"kind": @"fit", @"title": @"Fit to Window", @"symbol": @"arrow.down.right.and.arrow.up.left", @"disabled": @(self.inputOnly)},
+            @{@"kind": @"copyText", @"title": @"Copy Text from Screen", @"symbol": @"text.viewfinder", @"disabled": @(![self canCopyScreenText])}]},
         @{@"title": @"Presentation", @"items": @[
             @{@"kind": @"fullscreen", @"title": self.fullscreen ? @"Show Keyboard Bar" : @"Hide Keyboard Bar", @"symbol": self.fullscreen ? @"keyboard" : @"keyboard.chevron.compact.down"},
             @{@"kind": @"inputOnly", @"title": self.inputOnly ? @"Show Desktop" : @"Trackpad & Keyboard Only", @"symbol": self.inputOnly ? @"desktopcomputer" : @"rectangle.and.hand.point.up.left", @"subtitle": self.inputOnly ? @"Resume desktop video" : @"Control your Mac without video"}]}]];

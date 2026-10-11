@@ -27,6 +27,9 @@ typedef UIImage CompanionVNCImage;
 - (BOOL)tryClickX:(NSInteger)x y:(NSInteger)y mask:(NSInteger)mask;
 - (void)pauseWithCompletion:(void (^)(void))completion;
 - (void)resume;
+/// Local snapshot review closes input while the socket continues receiving.
+- (BOOL)suspendInputForReview:(void (^)(void))completion;
+- (void)resumeInputAfterReview;
 - (void)connectSocket:(int)socket username:(NSString *)username password:(NSString *)password;
 - (void)connectHost:(NSString *)host username:(NSString *)username password:(NSString *)password;
 - (void)connectAddresses:(NSArray<NSString *> *)addresses port:(NSInteger)port username:(NSString *)username password:(NSString *)password;
