@@ -11,6 +11,63 @@ import AppKit
 
 @MainActor final class DirectFilesPresentationTests: XCTestCase {
     #if os(macOS)
+    func testKeyChooserRenamingPreservesEditedFilesAccount() async throws {
+        if !DirectProAccess.shared.ready { await DirectProAccess.shared.refresh() }
+        let mac = DirectMacRecordV1(id: UUID(), name: "Synthetic Key Rename", addresses: ["127.0.0.1"])
+        let keyID = try TerminalKeyLibraryStore.add(.create(), name: "Synthetic Before Rename")
+        try TerminalKeyLibraryStore.associate(keyID, macID: mac.id, username: "synthetic-stored-account")
+        let session = DirectFilesSession(mac: mac)
+        defer {
+            session.close()
+            try? TerminalSecretStore.remove(mac.id)
+            try? TerminalKeyLibraryStore.delete(keyID)
+        }
+        let host = NSHostingView(rootView: DirectFilesView(mac: mac, session: session))
+        let window = NSWindow(contentRect: .init(x: -20000, y: -20000, width: 720, height: 640), styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false; window.contentView = host; window.orderFront(nil)
+        defer { window.makeFirstResponder(nil); window.contentView = nil; window.close() }
+        func descendants(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(descendants) }
+        func account() -> NSTextField? { descendants(host).compactMap { $0 as? MacCredentialFields.Fields }.first?.account }
+        func element(_ identifier: String) -> NSObject? {
+            var pending: [Any] = [host] + window.sheets.compactMap(\.contentView), visited = Set<ObjectIdentifier>()
+            while let item = pending.popLast() {
+                guard let object = item as? NSObject, visited.insert(ObjectIdentifier(object)).inserted else { continue }
+                if object.responds(to: NSSelectorFromString("accessibilityIdentifier")), object.value(forKey: "accessibilityIdentifier") as? String == identifier { return object }
+                if object.responds(to: NSSelectorFromString("accessibilityChildren")) { pending.append(contentsOf: object.value(forKey: "accessibilityChildren") as? [Any] ?? []) }
+            }
+            return nil
+        }
+        func press(_ identifier: String) throws {
+            let button = try XCTUnwrap(element(identifier)), selector = NSSelectorFromString("accessibilityPerformPress")
+            XCTAssertTrue(button.responds(to: selector)); _ = button.perform(selector)
+        }
+        func wait(_ predicate: () -> Bool) async throws {
+            let deadline = Date().addingTimeInterval(10)
+            while !predicate() {
+                guard Date() < deadline else { throw DirectFilesFailure.timedOut }
+                try await Task.sleep(for: .milliseconds(50)); host.layoutSubtreeIfNeeded()
+                window.sheets.forEach { $0.contentView?.layoutSubtreeIfNeeded() }
+            }
+        }
+        try await wait { account()?.stringValue == "synthetic-stored-account" }
+        let field = try XCTUnwrap(account()); field.stringValue = "synthetic-edited-account"
+        try press("files-choose-key")
+        try await wait { element("ssh-key-detail-" + keyID.uuidString) != nil }
+        try press("ssh-key-detail-" + keyID.uuidString)
+        try await wait { element("ssh-key-save-name") != nil }
+        let sheet = try XCTUnwrap(window.sheets.first), content = try XCTUnwrap(sheet.contentView)
+        let name = try XCTUnwrap(descendants(content).compactMap { $0 as? NSTextField }.first { $0.isEditable })
+        XCTAssertTrue(sheet.makeFirstResponder(name))
+        let editor = try XCTUnwrap(name.currentEditor() as? NSTextView)
+        editor.insertText("Synthetic After Rename", replacementRange: NSRange(location: 0, length: editor.string.utf16.count))
+        sheet.makeFirstResponder(nil)
+        try await Task.sleep(for: .milliseconds(150))
+        try press("ssh-key-save-name")
+        try await wait { (try? TerminalKeyLibraryStore.selected(mac.id)?.name) == "Synthetic After Rename" }
+        try await Task.sleep(for: .milliseconds(150))
+        XCTAssertEqual(field.stringValue, "synthetic-edited-account", "Renaming does not select a different key or replace the edited account")
+        XCTAssertEqual(try TerminalKeyLibraryStore.selected(mac.id)?.key.username, "synthetic-stored-account", "Editing the Files draft must not rewrite saved account settings")
+    }
     func testCancelConnectionButtonPreservesSavedAndEditedPasswordDrafts() async throws {
         if !DirectProAccess.shared.ready { await DirectProAccess.shared.refresh() }
         // An owned socket accepts TCP but never begins SSH. The Cancel button

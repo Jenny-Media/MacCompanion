@@ -20,6 +20,10 @@ not introduce a connection mode or require a Mac Companion helper.
   Rejected sign-ins must not save the account. Change or remove the selected key,
   or edit its saved account in another window during connection; the newer setting
   must remain after the pending connection completes.
+  Before connecting with a selected SSH key, edit Files' account, open the key
+  chooser and rename a key or choose the free key. The displayed name must refresh
+  while the edited account remains. Selecting a different key or Use Password Login
+  must still update the sign-in selection. Repeat on iPhone and Mac.
   Repeat with a macOS key referenced from disk in both Files and Terminal. While
   trust or authentication is pending, edit its saved account, reselect its file,
   switch keys or remove the selection in another window. The connection may

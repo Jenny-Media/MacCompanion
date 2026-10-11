@@ -29,6 +29,9 @@ record shows Mac unavailable; existing owners keep their original snapshot.
 Opening or dismissing help or purchase sheets MUST NOT reload a saved password,
 replace an edited account, or change the user's saved-login choice. Explicit key
 selection may refresh the selected key/account without reloading the password.
+Key-chooser updates that leave the selected key unchanged, including renaming a
+key or choosing the free key, MUST preserve the edited sign-in account and method.
+Refresh the displayed key name without restoring its saved account.
 After a successful password connection clears its sign-in secret, returning to
 sign-in in the same view MUST make the remembered password available again for
 explicit reconnect. Restore only that cleared credential, for the same account,

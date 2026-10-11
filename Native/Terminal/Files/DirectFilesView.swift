@@ -94,9 +94,9 @@ struct DirectFilesView: View {
                 switch destination {
                 case .keys:
                     #if os(macOS)
-                    MacSSHKeyManager(mac: mac, changed: { loadLogin(preferSelected: true, includePassword: false) }).modifier(MacSheetPrivacyCover())
+                    MacSSHKeyManager(mac: mac, changed: { loadLogin(preferSelected: true, includePassword: false, preserveUnchangedSelection: true) }).modifier(MacSheetPrivacyCover())
                     #else
-                    TerminalKeySettings(mac: mac, changed: { loadLogin(preferSelected: true, includePassword: false) }).directAppearance()
+                    TerminalKeySettings(mac: mac, changed: { loadLogin(preferSelected: true, includePassword: false, preserveUnchangedSelection: true) }).directAppearance()
                     #endif
                 case .setup: DirectMacSetupGuide().directAppearance()
                 case .upload: uploadReview
@@ -280,6 +280,7 @@ struct DirectFilesView: View {
                     Toggle("Save SSH login on this device", isOn: $remember).accessibilityIdentifier("files-remember-login")
                 } else {
                     Button { sheet = .keys } label: { Label(keyName.isEmpty ? "Choose SSH Key" : keyName, systemImage: "key") }
+                        .accessibilityIdentifier("files-choose-key")
                     #if os(macOS)
                     if keyFile != nil { SecureField("Key passphrase, if needed", text: $passphrase).accessibilityIdentifier("files-key-passphrase") }
                     #endif
@@ -451,23 +452,36 @@ struct DirectFilesView: View {
         loaded = true
         loadLogin(preferSelected: true)
     }
-    private func loadLogin(preferSelected: Bool = false, includePassword: Bool = true) {
+    private func loadLogin(preferSelected: Bool = false, includePassword: Bool = true, preserveUnchangedSelection: Bool = false) {
         guard DirectAppLockV1.shared.canAccess, session.phase != .ready, !session.busy else { return }
         do {
             if includePassword, let saved = try TerminalSecretStore.login(mac.id) {
                 login.loadPasswordAccount(saved.username); password = saved.password; remember = true; clearedPasswordAccount = nil
             }
             #if os(macOS)
-            let selection = try selectedKeyFile(mac.id)
-            if keyFile != selection?.file { passphrase = "" }
-            keyFile = selection?.file
-            if let selection {
-                key = nil; keyName = selection.file.name
-                login.loadKeyAccount(selection.username, preferSelected: preferSelected); return
+            let fileSelection = try selectedKeyFile(mac.id)
+            let fileChanged = keyFile != fileSelection?.file
+            if fileChanged { passphrase = "" }
+            keyFile = fileSelection?.file
+            if let fileSelection {
+                key = nil; keyName = fileSelection.file.name
+                if !preserveUnchangedSelection || fileChanged {
+                    login.loadKeyAccount(fileSelection.username, preferSelected: preferSelected)
+                }
+                return
             }
+            let previousFileRemoved = fileChanged
+            #else
+            let previousFileRemoved = false
             #endif
-            key = try TerminalKeyLibraryStore.selected(mac.id); keyName = key?.name ?? ""
-            login.loadKeyAccount(key?.key.username, preferSelected: preferSelected)
+            let namedSelection = try TerminalKeyLibraryStore.selected(mac.id)
+            let keyChanged = previousFileRemoved || key?.id != namedSelection?.id || key?.key.seed != namedSelection?.key.seed
+            key = namedSelection; keyName = namedSelection?.name ?? ""
+            // Names and free-key eligibility can change without selecting a
+            // different key. Refresh labels without replacing the account draft.
+            if !preserveUnchangedSelection || keyChanged {
+                login.loadKeyAccount(namedSelection?.key.username, preferSelected: preferSelected)
+            }
         } catch { session.message = "Saved SSH settings could not be read. Existing data is kept." }
     }
     private func connect() {
