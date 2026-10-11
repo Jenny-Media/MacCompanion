@@ -41,7 +41,9 @@ marker and menu anchor use that same target; no old display coordinate is reused
 Session, focus, display/crop and viewport changes invalidate targets, timers and
 arms. An admitted drag releases through its owner on completion/interruption.
 Normal gesture completion preserves held physical keyboard modifiers; complete
-owner cleanup still releases keys/buttons and discards composition.
+owner cleanup still releases keys/buttons and discards composition. A key release
+whose HID identity was retired cannot reconstruct modifiers from its flags; only
+new admitted presses can establish a new held-key owner.
 Each connection's native scene owns its content and system toolbar ornament
 windows. A key window in that same scene admits its controls; another connection
 scene cannot supply admission. Key-window transitions within the owned scene
@@ -128,6 +130,27 @@ Saved-machine metadata and supported connection preferences reuse the existing
 opt-in synchronizable Keychain schema and group when a signed profile authorizes
 it. Passwords, SSH private keys, trusted server keys, sensitive drafts and consent
 stay device-local. Simulator merge tests do not establish device delivery.
+
+Initial PTY output MUST reach the current Terminal emulator. Before the native
+surface attaches, output is buffered up to the existing 1 MiB output bound;
+overflow ends that shell explicitly. Attachment drains bytes exactly once in
+order. Session generation changes discard old pending output, and stale surface
+teardown cannot detach a newer receiver. Initial banners, prompts, mode-setting
+sequences and emulator queries cannot be discarded during presentation.
+
+Metadata sync uses the existing full disclosure and affirmative confirmation
+before persisting opt-in. Cancellation and scene interruption leave sync off.
+Sensitive SSH import/export drafts, picker requests and pending operations are
+cleared or invalidated when their owning scene backgrounds or app unlock locks.
+Temporary inactive authentication prompts do not cancel an admitted export.
+Completion and picker callbacks require the same current operation generation
+and an active owning scene. Unsaved quick-action text is also discarded on
+background or lock.
+
+Unreadable saved-Mac storage offers explicit Retry and disables creation/editing
+until readable. Free users can select another retained Mac without deleting any
+record. Save treats a snapshot as an edit only if its UUID still exists in the
+current library; recreation rechecks the current creation limit.
 
 The development floor is provisionally visionOS 26.0. Disposable feasibility
 sources remain in Experiments and are never linked to the client. Development

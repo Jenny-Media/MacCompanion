@@ -23,7 +23,7 @@ struct VisionSessionRequest: Codable, Hashable, Identifiable {
 
 @main struct MacCompanionVisionApplication: App {
     @State private var library = DirectMacLibraryV1(url: VisionDevelopmentQA.libraryURL)
-    @State private var cloud = DirectCloudSyncV1.shared
+    @State private var cloud = VisionDevelopmentQA.makeCloud()
     @State private var sessions = VisionSessionRegistry()
     var body: some Scene {
         Window("Mac Companion", id: "library") {
@@ -65,7 +65,10 @@ struct VisionLibrary: View {
                         }
                     }
                 }
-                if let recovery = library.recovery { DirectNoticeMessage(message: recovery.message) }
+                if let recovery = library.recovery {
+                    DirectRecoveryCard(notice: recovery, primary: .init(title: "Retry", perform: { library.reload() }))
+                        .accessibilityIdentifier("vision-library-recovery")
+                }
                 if library.macs.isEmpty {
                     ContentUnavailableView("Your Macs", systemImage: "desktopcomputer", description: Text("Add a Mac with Screen Sharing and Remote Login enabled."))
                 }
@@ -83,10 +86,17 @@ struct VisionLibrary: View {
                                 Button("Another Terminal") { open(mac, .terminal, another: true) }
                             }.labelStyle(.iconOnly).accessibilityIdentifier("vision-another-window-" + mac.id.uuidString)
                             Menu {
-                                Button("Edit Mac") { editing = mac }
+                                Button("Edit Mac") { editing = mac }.disabled(!library.readable)
+                                if !pro.hasPro {
+                                    Button("Use as My Free Mac") {
+                                        guard library.readable, DirectAppLockV1.shared.canAccess else { return }
+                                        pro.chooseFreeMac(mac.id)
+                                    }.accessibilityIdentifier("vision-free-mac-" + mac.id.uuidString)
+                                }
                                 Button("Forget Desktop Login") { library.forgetLogin(mac) }
                                 Button("Remove Mac", role: .destructive) { deleting = mac }
                             } label: { Image(systemName: "ellipsis") }.accessibilityLabel("Manage " + mac.name)
+                                .accessibilityIdentifier("vision-manage-mac-" + mac.id.uuidString)
                         }.buttonStyle(.bordered)
                     }.padding(.vertical, 8)
                 }.onMove { library.move(fromOffsets: $0, toOffset: $1) }
@@ -94,7 +104,7 @@ struct VisionLibrary: View {
                 .toolbar {
                     ToolbarItem(placement: .primaryAction) { Button("Add Mac", systemImage: "plus") {
                         if pro.ready && pro.canAddMac(count: library.macs.count) { adding = true } else { proShown = true }
-                    }.disabled(!pro.ready).accessibilityIdentifier("vision-add-mac") }
+                    }.disabled(!pro.ready || !library.readable).accessibilityIdentifier("vision-add-mac") }
                     ToolbarItem(placement: .secondaryAction) { Button("Settings", systemImage: "gearshape") { openWindow(id: "settings") } }
                 }
                 .sheet(isPresented: $adding) { VisionMacEditor(library: library, mac: nil) }
@@ -138,15 +148,28 @@ struct VisionMacEditor: View {
             }.navigationTitle(mac == nil ? "Add Mac" : "Edit Mac")
                 .toolbar {
                     ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
-                    ToolbarItem(placement: .confirmationAction) { Button("Save") { save() }.accessibilityIdentifier("vision-save-mac") }
+                    ToolbarItem(placement: .confirmationAction) { Button("Save") { save() }.disabled(!library.readable).accessibilityIdentifier("vision-save-mac") }
                 }
         }.onAppear { name = mac?.name ?? ""; addresses = mac?.addresses.joined(separator: ", ") ?? ""; desktopPort = String(mac?.port ?? 5900); sshPort = String(mac?.sshPort ?? VisionDevelopmentQA.sshPort) }
     }
     private func save() {
-        guard DirectAppLockV1.shared.canAccess,
-              let port = DirectMacRecordV1.port(from: desktopPort), let ssh = DirectMacRecordV1.port(from: sshPort) else { library.failure = "Ports must be from 1 to 65535."; return }
-        guard mac != nil || DirectProAccess.shared.canAddMac(count: library.macs.count) else { library.failure = "Adding another Mac requires Pro. Your existing Macs are kept."; return }
-        if library.save(id: mac?.id, name: name, addresses: addresses.split(separator: ",").map(String.init), port: port, sshPort: ssh) { dismiss() }
+        if VisionMacSaving.save(library: library, mac: mac, name: name, addresses: addresses,
+                                desktopPort: desktopPort, sshPort: sshPort) { dismiss() }
+    }
+}
+
+@MainActor enum VisionMacSaving {
+    static func save(library: DirectMacLibraryV1, mac: DirectMacRecordV1?, name: String, addresses: String,
+                     desktopPort: String, sshPort: String, access: DirectProAccess = .shared) -> Bool {
+        guard DirectAppLockV1.shared.canAccess, library.readable else { return false }
+        guard let port = DirectMacRecordV1.port(from: desktopPort), let ssh = DirectMacRecordV1.port(from: sshPort) else {
+            library.failure = "Ports must be from 1 to 65535."; return false
+        }
+        let existing = mac.map { edited in library.macs.contains { $0.id == edited.id } } ?? false
+        guard existing || access.canAddMac(count: library.macs.count) else {
+            library.failure = "Adding another Mac requires Pro. Your existing Macs are kept."; return false
+        }
+        return library.save(id: mac?.id, name: name, addresses: addresses.split(separator: ",").map(String.init), port: port, sshPort: ssh)
     }
 }
 
@@ -154,6 +177,8 @@ struct VisionSettings: View {
     @Bindable var cloud: DirectCloudSyncV1
     @State private var lock = DirectAppLockV1.shared
     @State private var appearance = DirectAppearanceV1.shared
+    @State private var enableCloud = false
+    @Environment(\.scenePhase) private var phase
     var body: some View {
         NavigationStack {
             Form {
@@ -166,7 +191,9 @@ struct VisionSettings: View {
                     Text("Use \(lock.method) when you return. Every connection window is covered while locked.").font(.footnote)
                 } header: { Text("Privacy") }
                 Section("Saved Macs") {
-                    Toggle("Sync Mac Metadata with iCloud", isOn: Binding(get: { cloud.enabled }, set: { cloud.setEnabled($0) }))
+                    Toggle("Sync Mac Metadata with iCloud", isOn: Binding(get: { cloud.enabled }, set: {
+                        if $0 { enableCloud = true } else { cloud.setEnabled(false) }
+                    })).disabled(cloud.busy)
                     Text(cloud.status).font(.footnote)
                     Text("Only saved Mac metadata and supported preferences sync. Logins, private keys, trusted server keys and typed content stay on this device.").font(.footnote)
                     if let notice = cloud.recovery { DirectNoticeMessage(message: notice.message) }
@@ -184,6 +211,12 @@ struct VisionSettings: View {
                 }
             }.navigationTitle("Settings")
         }
+        .alert("Enable iCloud Sync?", isPresented: $enableCloud) {
+            Button("Enable Sync") { if phase == .active && lock.canAccess { cloud.setEnabled(true) } }
+            Button("Cancel", role: .cancel) {}
+        } message: { Text(DirectCloudSyncV1.disclosure) }
+        .onChange(of: lock.canAccess) { _, value in if !value { enableCloud = false } }
+        .onChange(of: phase) { _, value in if value != .active { enableCloud = false } }
     }
 }
 struct VisionQuickActionsSettings: View {
@@ -198,10 +231,7 @@ struct VisionQuickActionsSettings: View {
                 canEdit: readable && DirectProAccess.shared.hasPro && DirectAppLockV1.shared.canAccess,
                 hasPro: DirectProAccess.shared.hasPro)
         }.navigationTitle(mode.title + " Quick Actions")
-            .onAppear {
-                do { actions = try VNCSessionPreferences.profileActions(mode); readable = true }
-                catch { readable = false; failure = "Quick actions couldn’t be read. Try again when local storage is available." }
-            }
+            .onAppear { reload() }
             .toolbar {
                 Button("Save") {
                     guard DirectAppLockV1.shared.canAccess, readable, DirectProAccess.shared.hasPro,
@@ -211,6 +241,17 @@ struct VisionQuickActionsSettings: View {
                 }.disabled(!readable || !DirectProAccess.shared.hasPro || !DirectQuickActionEditing.canSave(actions, mode: mode, hasPro: DirectProAccess.shared.hasPro))
                     .accessibilityIdentifier("vision-save-quick-actions")
             }
+            .visionSensitiveState {
+                actions = []; readable = false; failure = nil
+            }
+            .onChange(of: DirectAppLockV1.shared.canAccess) { _, value in if value { reload() } }
+            .onChange(of: scenePhase) { _, value in if value == .active { reload() } }
+    }
+    @Environment(\.scenePhase) private var scenePhase
+    private func reload() {
+        guard scenePhase == .active, DirectAppLockV1.shared.canAccess else { return }
+        do { actions = try VNCSessionPreferences.profileActions(mode); readable = true; failure = nil }
+        catch { readable = false; failure = "Quick actions couldn’t be read. Try again when local storage is available." }
     }
 }
 

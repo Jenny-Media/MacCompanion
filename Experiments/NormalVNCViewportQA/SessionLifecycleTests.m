@@ -9,6 +9,7 @@
 - (void)configureClient:(rfbClient *)client;
 - (rfbBool)allocate:(rfbClient *)client;
 - (BOOL)registerSocket:(int)socket;
+- (BOOL)resetBaseline:(rfbClient *)client;
 - (void)processConnectedClient:(rfbClient *)client;
 - (void)publishFrame:(rfbClient *)client;
 - (void)report:(NSString *)state;
@@ -19,11 +20,12 @@
 - (void)setTrackpadModeEnabled:(BOOL)enabled;
 @end
 @interface LifecycleSession : CompanionVNCSession
-@property BOOL alive, ready;
+@property BOOL alive, ready, authenticated;
 @property NSUInteger pauses, resumes, stops;
 @end
 @implementation LifecycleSession
 - (BOOL)running { return self.alive; }
+- (BOOL)established { return self.alive && self.authenticated; }
 - (BOOL)connected { return self.ready; }
 - (void)pauseWithCompletion:(void (^)(void))completion { self.pauses++; self.ready = NO; if (completion) completion(); }
 - (void)resume { self.resumes++; }
@@ -66,6 +68,7 @@
     client->supportedMessages.client2server[0] |= (1 << rfbKeyEvent) | (1 << rfbPointerEvent) | (1 << rfbFramebufferUpdateRequest);
     client->updateRect.w = 2; client->updateRect.h = 2;
     [session setValue:@YES forKey:@"running"]; [session setValue:@YES forKey:@"inputReady"]; XCTAssertTrue([session registerSocket:pair[0]]);
+    [session setValue:@YES forKey:@"established"];
     XCTestExpectation *ended = [self expectationWithDescription:@"Paused owner stops without hanging"];
     __weak CompanionVNCSession *weakSession = session;
     session.stateHandler = ^(NSString *state, NSDictionary *stats) { if (!weakSession.running) [ended fulfill]; };
@@ -104,6 +107,7 @@
     CompanionVNCSession *session = [CompanionVNCSession new];
     rfbClient *client = rfbGetClient(8, 3, 4); client->width = 2; client->height = 2;
     [session allocate:client]; [session setValue:@YES forKey:@"running"]; [session setValue:@YES forKey:@"inputReady"];
+    [session setValue:@YES forKey:@"established"];
     [session configureClient:client]; client->GotFrameBufferUpdate(client,0,0,2,2);
     XCTestExpectation *stale = [self expectationWithDescription:@"Pre-pause frame is rejected"]; stale.inverted = YES;
     session.frameHandler = ^(UIImage *image) { [stale fulfill]; };
@@ -115,9 +119,60 @@
     // Session owns the test pixel buffer; avoid LibVNCClient freeing it twice.
     client->frameBuffer = NULL; rfbClientCleanup(client);
 }
+- (void)testStopReleasesSentKeyAndButtonWhileInputAdmissionIsClosed {
+    for (NSDictionary *entry in [self profile][@"stopReleaseCases"]) {
+        int pair[2]; XCTAssertEqual(socketpair(AF_UNIX,SOCK_STREAM,0,pair),0);
+        int yes=1; setsockopt(pair[0],SOL_SOCKET,SO_NOSIGPIPE,&yes,sizeof(yes));
+        struct timeval timeout={.tv_sec=2}; setsockopt(pair[1],SOL_SOCKET,SO_RCVTIMEO,&timeout,sizeof(timeout));
+        CompanionVNCSession *session=[CompanionVNCSession new]; rfbClient *client=rfbGetClient(8,3,4);
+        client->sock=pair[0]; client->width=2; client->height=2;
+        [session configureClient:client]; XCTAssertTrue([session allocate:client]);
+        client->supportedMessages.client2server[0]|=(1<<rfbKeyEvent)|(1<<rfbPointerEvent);
+        for (NSString *key in @[@"running",@"established",@"inputReady",@"baselinePresented"]) [session setValue:@YES forKey:key];
+        XCTAssertTrue([session registerSocket:pair[0]]);
+        // Hold the owner at its iteration boundary after actual wire downs and
+        // before it consumes the reset's release request, then Stop immediately.
+        uint32_t heldKey=[entry[@"key"] unsignedIntValue];
+        XCTAssertTrue(SendKeyEvent(client,heldKey,TRUE)); [[session valueForKey:@"heldKeys"] addObject:@(heldKey)];
+        XCTAssertTrue(SendPointerEvent(client,1,1,[entry[@"buttonMask"] intValue]));
+        [session setValue:@1 forKey:@"lastX"]; [session setValue:@1 forKey:@"lastY"];
+        uint8_t down[14]; XCTAssertEqual(recv(pair[1],down,sizeof(down),MSG_WAITALL),sizeof(down));
+        XCTAssertEqual(down[0],rfbKeyEvent); XCTAssertEqual(down[1],1);
+        XCTAssertEqual(down[8],rfbPointerEvent); XCTAssertEqual(down[9],[entry[@"buttonMask"] intValue]);
+        if ([entry[@"transition"] isEqual:@"baselineReset"]) XCTAssertTrue([session resetBaseline:client]);
+        else if ([entry[@"transition"] isEqual:@"inputOnly"]) session.inputOnly=YES;
+        else { XCTAssertTrue([session suspendInputForReview:nil]); [session resumeInputAfterReview]; }
+        XCTAssertFalse(session.connected); XCTAssertTrue(session.established);
+        XCTestExpectation *ended=[self expectationWithDescription:entry[@"name"]]; __weak CompanionVNCSession *weak=session;
+        session.stateHandler=^(NSString *state,NSDictionary *stats){if(!weak.running)[ended fulfill];};
+        [session stop];
+        dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0),^{[session processConnectedClient:client];});
+        uint8_t released[14]; ssize_t count=recv(pair[1],released,sizeof(released),MSG_WAITALL);
+        XCTAssertEqual(count,sizeof(released)); XCTAssertTrue([entry[@"releasesBeforeClose"] boolValue]);
+        if(count==sizeof(released)) {
+            XCTAssertEqual(released[0],rfbKeyEvent); XCTAssertEqual(released[1],0);
+            XCTAssertEqual(memcmp(released+4,down+4,4),0);
+            XCTAssertEqual(released[8],rfbPointerEvent); XCTAssertEqual(released[9],0);
+            XCTAssertEqual(memcmp(released+10,down+10,4),0);
+        }
+        [self waitForExpectations:@[ended] timeout:2]; session.stateHandler=nil;
+        uint8_t extra; XCTAssertEqual(recv(pair[1],&extra,1,0),0); close(pair[1]);
+    }
+}
+- (void)testStopBoundsAnEstablishedSocketWhenItsOwnerCannotFinish {
+    int pair[2]; XCTAssertEqual(socketpair(AF_UNIX,SOCK_STREAM,0,pair),0);
+    struct timeval timeout={.tv_sec=1}; setsockopt(pair[1],SOL_SOCKET,SO_RCVTIMEO,&timeout,sizeof(timeout));
+    CompanionVNCSession *session=[CompanionVNCSession new];
+    [session setValue:@YES forKey:@"running"]; [session setValue:@YES forKey:@"established"];
+    XCTAssertTrue([session registerSocket:pair[0]]);
+    [session stop]; uint8_t byte;
+    // No socket owner can acknowledge here; the 250 ms fallback must end the read.
+    XCTAssertEqual(recv(pair[1],&byte,1,0),0);
+    [session registerSocket:-1]; [session setValue:@NO forKey:@"running"]; close(pair[0]); close(pair[1]);
+}
 - (void)testViewerRepeatedBackgroundResumeIsIdempotentAndExplicitExitNeverRestarts {
     CompanionVNCViewer *viewer = [CompanionVNCViewer new]; [viewer loadViewIfNeeded];
-    LifecycleSession *session = [LifecycleSession new]; session.alive = YES; session.ready = YES; viewer.session = session;
+    LifecycleSession *session = [LifecycleSession new]; session.alive = YES; session.ready = YES; session.authenticated = YES; viewer.session = session;
     [viewer background]; [viewer background]; XCTAssertEqual(session.pauses, 1); XCTAssertEqual(session.stops, 0);
     [viewer foregrounded]; [viewer foregrounded]; XCTAssertEqual(session.resumes, 1);
     [viewer stopViewer]; [viewer foregrounded]; XCTAssertEqual(session.resumes, 1);
@@ -128,7 +183,7 @@
     XCTAssertEqualObjects(policy[@"automaticReconnectAttempts"], @1);
     for (NSNumber *ready in @[@NO, @YES]) {
         CompanionVNCViewer *viewer = [CompanionVNCViewer new]; [viewer loadViewIfNeeded];
-        LifecycleSession *session = [LifecycleSession new]; session.alive = YES; session.ready = ready.boolValue; viewer.session = session;
+        LifecycleSession *session = [LifecycleSession new]; session.alive = YES; session.ready = ready.boolValue; session.authenticated = ready.boolValue; viewer.session = session;
         __block NSUInteger attempts = 0; viewer.connectHandler = ^(NSString *u, NSString *p, BOOL save) { attempts++; };
         [viewer background]; [viewer foregrounded];
         if (ready.boolValue) {
@@ -147,7 +202,7 @@
     viewer.displayLayout = layout; [viewer frame:[self frame]]; [viewer selectDisplay:display]; [viewer setTrackpadModeEnabled:YES];
     UIScrollView *canvas = [viewer valueForKey:@"canvas"]; CGFloat ratio = 2;
     [canvas setZoomScale:canvas.minimumZoomScale * ratio animated:NO];
-    LifecycleSession *old = [LifecycleSession new]; old.alive = YES; old.ready = YES; viewer.session = old;
+    LifecycleSession *old = [LifecycleSession new]; old.alive = YES; old.ready = YES; old.authenticated = YES; viewer.session = old;
     [viewer background]; [viewer prepareConnection]; viewer.displayLayout = layout; [viewer frame:[self frame]];
     XCTAssertEqualObjects([viewer valueForKey:@"selectedDisplay"][@"id"], @2);
     XCTAssertEqualWithAccuracy(canvas.zoomScale / canvas.minimumZoomScale, ratio, .001);

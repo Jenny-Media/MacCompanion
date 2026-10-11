@@ -6,6 +6,7 @@ struct VisionSessionWindow: View {
     let library: DirectMacLibraryV1
     @State private var desktop: VisionDesktopSession?
     @State private var terminal: DirectTerminalSession?
+    @State private var terminalOutput: VisionTerminalOutput?
     @State private var terminalInteraction = VisionTerminalInteraction()
     @State private var lock = DirectAppLockV1.shared
     @State private var username = ""
@@ -25,7 +26,9 @@ struct VisionSessionWindow: View {
     init(request: VisionSessionRequest, library: DirectMacLibraryV1) {
         self.request = request; self.library = library
         _desktop = State(initialValue: request.connection == .desktop ? VisionDesktopSession(mac: request.mac) : nil)
-        _terminal = State(initialValue: request.connection == .terminal ? DirectTerminalSession(mac: request.mac) : nil)
+        let session = request.connection == .terminal ? DirectTerminalSession(mac: request.mac) : nil
+        _terminal = State(initialValue: session)
+        _terminalOutput = State(initialValue: session.map(VisionTerminalOutput.init))
     }
     private var connected: Bool { desktop?.connected == true || terminal?.connected == true }
     private var connecting: Bool { desktop?.connecting == true || terminal?.connecting == true }
@@ -64,7 +67,8 @@ struct VisionSessionWindow: View {
                         }.padding(16)
                     }
                 } else if let terminal {
-                    VisionTerminalSurface(session: terminal, interaction: terminalInteraction).frame(maxWidth: .infinity, maxHeight: .infinity)
+                    VisionTerminalSurface(session: terminal, interaction: terminalInteraction, output: terminalOutput)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
             } else {
                 login

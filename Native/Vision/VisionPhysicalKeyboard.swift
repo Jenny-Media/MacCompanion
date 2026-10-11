@@ -19,6 +19,8 @@ import UIKit
         handle(usage: key.keyCode, symbol: symbol, flags: key.modifierFlags, down: down)
     }
     func handle(usage: UIKeyboardHIDUsage, symbol: UInt32, flags: UIKeyModifierFlags, down: Bool) {
+        // A release from a retired owner must not reconstruct its modifiers.
+        guard down || pressed[usage] != nil || modifierPressed[usage] != nil else { return }
         var target = Set(Self.flags.filter { flags.contains($0.0) }.map(\.1))
         let normalized: [UInt32: UInt32] = [0xffe1: 0xffe1, 0xffe2: 0xffe1, 0xffe3: 0xffe3, 0xffe4: 0xffe3,
             0xffe9: 0xffe9, 0xffea: 0xffe9, 0xffeb: 0xffeb, 0xffec: 0xffeb]

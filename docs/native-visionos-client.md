@@ -294,6 +294,45 @@ preflight provide no supported third-party curved-system-window API; no private
 window settings or immersive replacement are used. Signing, cloud delivery,
 StoreKit, TestFlight and release keep their independent gates.
 
+## PR #12 full-review repairs — October 11, 2026
+
+The follow-up candidate integrates main through
+`3ec3942303e96aa31f643fd1920f20e8d8df7814`, retaining the iOS text composer and
+Copy Text from Screen changes. Seven accepted review findings have dedicated
+regression coverage: retired keyboard releases, initial Terminal output, owning
+scene sensitive-state cleanup, metadata-sync consent, Free Mac selection,
+library recovery, and current-library checks when saving an old editor snapshot.
+
+The Terminal window installs a generation-scoped output buffer before connecting.
+It preserves early banners and protocol queries until the native SwiftTerm view
+attaches, drains once in order, and ends the connection explicitly if its 1 MiB
+bound is exceeded. Old-shell output and stale detach callbacks cannot affect a
+replacement receiver. The native connected-only layout is retained after a
+pre-mounted layout crashed in a normal Simulator UI journey.
+
+Eight hosted regressions exercise native responders, the real SSH/RFB peer,
+bounded startup output, import passphrase scene cleanup and the actual library
+save path. Two additional UI journeys inspect the full sync disclosure, cancel
+and confirm opt-in, and choose another retained Free Mac. The existing Terminal
+UI journey now checks its startup banner. Development checks passed before the
+complete stable-state gate; final evidence for this cycle is stored outside Git
+under `/private/tmp/maccompanion-pr12-seven-fixes-20261011/review/`. The gate
+requires all 44 discovered native cases, the full repository validation, both
+unsigned SDK builds and a fresh two-stage independent review on one unchanged
+source fingerprint. Earlier reports do not substitute for that gate.
+
+Owning-scene background and actual lock retire SSH drafts, pickers and pending
+operations. Temporary authentication inactivity preserves its context; completion
+still requires the current generation and an active, unlocked owning scene.
+Settings clears unsaved quick-action drafts on the same privacy boundary.
+Unreadable library storage exposes Retry and disables creation/editing; retrying
+does not overwrite the unreadable file. A removed editor snapshot receives the
+same current Free/Pro creation check as a new record.
+
+No physical Vision Pro is contacted in this repair cycle. Optic ID/export,
+actual hand/peripheral recognition and the original headset click/keyboard
+acceptance remain final physical work, alongside the gates below.
+
 ## Final physical acceptance
 
 Simulator checks precede final first-generation Vision Pro testing. iOS/macOS

@@ -414,6 +414,74 @@
           false
         ]
       ]
+    },
+    {
+      "name": "retired_release_cannot_reconstruct_modifier",
+      "events": [
+        {
+          "usage": 224,
+          "symbol": 65507,
+          "flags": [
+            "control"
+          ],
+          "down": true
+        },
+        {
+          "usage": 4,
+          "symbol": 97,
+          "flags": [
+            "control"
+          ],
+          "down": true
+        },
+        {
+          "clear": true
+        },
+        {
+          "usage": 4,
+          "symbol": 97,
+          "flags": [
+            "control"
+          ],
+          "down": false
+        },
+        {
+          "usage": 224,
+          "symbol": 65507,
+          "flags": [],
+          "down": false
+        },
+        {
+          "usage": 5,
+          "symbol": 98,
+          "flags": [],
+          "down": true
+        },
+        {
+          "usage": 5,
+          "symbol": 98,
+          "flags": [],
+          "down": false
+        }
+      ],
+      "output": [
+        [
+          65507,
+          true
+        ],
+        [
+          97,
+          true
+        ],
+        [
+          98,
+          true
+        ],
+        [
+          98,
+          false
+        ]
+      ]
     }
   ],
   "selection": [
@@ -4360,5 +4428,32 @@
         0
       ]
     }
-  ]
+  ],
+  "sensitiveSceneLifecycle": [
+    {
+      "phase": "active",
+      "locked": false,
+      "interrupt": false
+    },
+    {
+      "phase": "inactive",
+      "locked": false,
+      "interrupt": false
+    },
+    {
+      "phase": "background",
+      "locked": false,
+      "interrupt": true
+    },
+    {
+      "phase": "active",
+      "locked": true,
+      "interrupt": true
+    }
+  ],
+  "terminalOutput": {
+    "maximumPendingBytes": 1048576,
+    "oldGenerationCanDrain": false,
+    "staleDetachCanRetireCurrentReceiver": false
+  }
 }

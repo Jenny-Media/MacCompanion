@@ -1,3 +1,20 @@
+## 2026-10-11 — PR #12 full-review repair candidate
+
+The repair candidate integrates main through `3ec3942` and addresses seven
+accepted findings covering keyboard retirement, Terminal startup output,
+scene-specific sensitive drafts, sync consent, Free Mac choice and library
+recovery/save admission. Eight new hosted regressions and two new UI journeys
+extend the discovered Simulator suite to 44 cases. The complete gate requires
+both unsigned SDK builds, every native case, required repository validation and
+a fresh independent two-stage review on one stable source state. Evidence lives
+outside Git under `/private/tmp/maccompanion-pr12-seven-fixes-20261011/review/`;
+see [the repair coverage](native-visionos-client.md#pr-12-full-review-repairs--october-11-2026).
+
+This cycle does not contact the physical Vision Pro. Final first-generation
+visionOS 27 input, authentication, accessibility and performance acceptance
+remain pending. Flat wide/ultrawide support and the existing public-API curvature,
+signing, cloud, StoreKit and release gates remain as described below.
+
 ## 2026-10-11 — visionOS interaction redesign
 
 The approved issue #8 interaction redesign is implemented in the native visionOS
@@ -89,6 +106,27 @@ app manually for the click/keyboard retest. Successful launch of the original
 build does not establish launch or physical acceptance of this correction.
 The user subsequently reports no current Vision Pro access. The final Simulator
 input checks are complete; physical retesting waits for headset access.
+
+## 2026-10-10 — iOS Desktop Copy Text from Screen candidate
+
+The local text tool is implemented for iOS Desktop. Its default quick action is
+beside Mouse Mode, with a View & Display fallback and Add Action support for
+existing profiles. Saved choices and Pro customization policy are preserved.
+A frozen original-pixel crop feeds accurate on-device Vision recognition; users
+review and edit text before explicitly copying or sharing it. Remote input is
+released before presentation, remains closed throughout review, and reopens only
+after a fresh complete frame. Lock, background, closure and replacement retire
+review content and pending callbacks. macOS clipboard work remains separate.
+
+The manifest-indexed geometry vectors and hosted synthetic tests cover bounds,
+Retina pixels, local zoom/crop, English URLs/code, Chinese, empty recognition,
+cancellation, editable copy, responsive layouts, owner replacement and actual
+socket release/frame/resume behavior. Build and check artifacts are kept outside
+Git under `/private/tmp/maccompanion-copy-text-20261011-ios/` and
+`/private/tmp/maccompanion-copy-text-review-20261011/`.
+
+This is a local, uncommitted candidate. Physical-device, real Screen Sharing,
+TestFlight and release acceptance remain separate gates.
 
 ## 2026-10-10 — First-tap connection mode presentation
 

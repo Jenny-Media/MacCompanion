@@ -144,4 +144,27 @@ private struct VisionUnlockPanel: View {
     }
 }
 extension View { func visionPrivacy() -> some View { modifier(VisionPrivacy()) } }
+
+enum VisionSensitiveLifecycle {
+    static func interrupts(phase: ScenePhase, locked: Bool) -> Bool { phase == .background || locked }
+}
+private struct VisionSensitiveState: ViewModifier {
+    @Environment(\.scenePhase) private var phase
+    @State private var lock = DirectAppLockV1.shared
+    let interrupt: @MainActor () -> Void
+    private var locked: Bool { lock.enabled && !lock.allowed }
+    func body(content: Content) -> some View {
+        content
+            .onAppear { if VisionSensitiveLifecycle.interrupts(phase: phase, locked: locked) { interrupt() } }
+            .onChange(of: phase) { _, value in
+                if VisionSensitiveLifecycle.interrupts(phase: value, locked: locked) { interrupt() }
+            }
+            .onChange(of: locked) { _, value in if value { interrupt() } }
+    }
+}
+extension View {
+    func visionSensitiveState(_ interrupt: @escaping @MainActor () -> Void) -> some View {
+        modifier(VisionSensitiveState(interrupt: interrupt))
+    }
+}
 #endif

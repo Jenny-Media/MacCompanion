@@ -24,7 +24,7 @@ enum DirectControlMode: String, CaseIterable, Identifiable, Sendable {
 struct VNCQuickAction: Codable, Identifiable, Equatable, Sendable {
     static let maximumCount = 15
     static let maximumCustomCount = 12
-    enum Kind: String, Codable, CaseIterable, Sendable { case mode, fit, rightClick, shortcut, text, paste, interrupt, escape, tab, returnKey }
+    enum Kind: String, Codable, CaseIterable, Sendable { case mode, fit, copyText, rightClick, shortcut, text, paste, interrupt, escape, tab, returnKey }
     var id: UUID = UUID()
     var title: String
     var kind: Kind
@@ -37,7 +37,13 @@ struct VNCQuickAction: Codable, Identifiable, Equatable, Sendable {
     static func canAddCustom(to actions: [Self]) -> Bool {
         actions.count < maximumCount && actions.filter(\.isCustom).count < maximumCustomCount
     }
-    static var defaults: [Self] { [.init(title: "Mouse Mode", kind: .mode), .init(title: "Fit to Window", kind: .fit), .init(title: "Right Click", kind: .rightClick)] }
+    static var defaults: [Self] {
+        var actions = [Self(title: "Mouse Mode", kind: .mode)]
+        #if os(iOS)
+        actions.append(.init(title: "Copy Text", kind: .copyText))
+        #endif
+        return actions + [.init(title: "Fit to Window", kind: .fit), .init(title: "Right Click", kind: .rightClick)]
+    }
     var valid: Bool {
         let allowed: Set<UInt32> = [0xffe1, 0xffe3, 0xffe9, 0xffeb]
         let keyValid = (0x20...0x7e).contains(key) || [UInt32(0xff1b), 0xff09, 0xff0d, 0xff08, 0xffff, 0xff51, 0xff52, 0xff53, 0xff54].contains(key)
@@ -47,12 +53,16 @@ struct VNCQuickAction: Codable, Identifiable, Equatable, Sendable {
             && (kind != .shortcut || keyValid) && (kind != .text || !text.isEmpty)
     }
     func compatible(with mode: DirectControlMode) -> Bool {
-        if mode == .terminal { return ![.mode, .fit, .rightClick].contains(kind) && !modifiers.contains(0xffeb) && (kind != .text || !text.contains("\u{1b}")) }
-        return ![.paste, .interrupt].contains(kind) && (mode != .trackpad || ![.mode, .fit].contains(kind))
+        #if os(macOS)
+        if kind == .copyText { return false }
+        #endif
+        if mode == .terminal { return ![.mode, .fit, .copyText, .rightClick].contains(kind) && !modifiers.contains(0xffeb) && (kind != .text || !text.contains("\u{1b}")) }
+        return ![.paste, .interrupt].contains(kind) && (mode != .trackpad || ![.mode, .fit, .copyText].contains(kind))
     }
     var symbol: String {
         switch kind {
         case .mode: "cursorarrow.motionlines"; case .fit: "arrow.down.right.and.arrow.up.left"
+        case .copyText: "text.viewfinder"
         case .rightClick: "cursorarrow.click"; case .shortcut: "keyboard"; case .text: "text.quote"
         case .paste: "document.on.clipboard"; case .interrupt: "stop.circle"
         case .escape: "escape"; case .tab: "arrow.right.to.line"; case .returnKey: "return"

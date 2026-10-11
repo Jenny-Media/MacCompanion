@@ -689,6 +689,7 @@ final class VisionTerminalView: TerminalView {
 struct VisionTerminalSurface: UIViewRepresentable {
     let session: DirectTerminalSession
     let interaction: VisionTerminalInteraction
+    var output: VisionTerminalOutput?
     @Environment(DirectAppearanceV1.self) private var appearance
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     func makeCoordinator() -> Coordinator { Coordinator(session: session, interaction: interaction) }
@@ -699,7 +700,10 @@ struct VisionTerminalSurface: UIViewRepresentable {
         view.accessibilityIdentifier = "vision-terminal-canvas"
         view.inputAccessoryView = nil; view.font = .monospacedSystemFont(ofSize: 18, weight: .regular)
         session.inputAvailable = { [weak coordinator] in coordinator?.focus.available == true }
-        session.received = { [weak coordinator] in coordinator?.feed($0) }
+        if let output {
+            coordinator.output = output
+            coordinator.outputAttachment = output.attach { [weak coordinator] in coordinator?.feed($0) }
+        } else { session.received = { [weak coordinator] in coordinator?.feed($0) } }
         session.suspendInput = { [weak coordinator] in coordinator?.release() }
         view.lostFocus = { [weak coordinator] in coordinator?.release() }
         interaction.quickAction = { [weak coordinator] in coordinator?.perform($0) }
@@ -733,7 +737,13 @@ struct VisionTerminalSurface: UIViewRepresentable {
         if view.font.pointSize != font.pointSize { view.font = font }
     }
     static func dismantleUIView(_ view: VisionTerminalView, coordinator: Coordinator) {
-        coordinator.release(); coordinator.focus.view = nil; coordinator.session.received = nil
+        if let output = coordinator.output, let token = coordinator.outputAttachment, !output.owns(token) {
+            // A newer surface owns the shared session and interaction closures.
+            coordinator.focus.view = nil; view.discardComposition(); return
+        }
+        coordinator.release(); coordinator.focus.view = nil
+        if let output = coordinator.output, let attachment = coordinator.outputAttachment { output.detach(attachment) }
+        else { coordinator.session.received = nil }
         coordinator.session.inputAvailable = { false }; coordinator.session.suspendInput = nil
         coordinator.interaction.quickAction = nil; coordinator.interaction.keyboard = nil; coordinator.interaction.link = nil
         coordinator.interaction.dismissKeyboard = nil; coordinator.interaction.specialKey = nil; coordinator.interaction.toggleModifier = nil
@@ -744,6 +754,8 @@ struct VisionTerminalSurface: UIViewRepresentable {
         let interaction: VisionTerminalInteraction
         weak var view: VisionTerminalView?
         let focus = VisionSurfaceFocus()
+        var output: VisionTerminalOutput?
+        var outputAttachment: UUID?
         private var held = MacTerminalHeldInput()
         private var protocolDepth = 0
         init(session: DirectTerminalSession, interaction: VisionTerminalInteraction) { self.session = session; self.interaction = interaction }

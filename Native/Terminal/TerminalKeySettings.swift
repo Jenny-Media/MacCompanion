@@ -144,6 +144,17 @@ struct TerminalKeyComposer: View {
     @State private var busy = false
     @State private var issue: DirectRecoveryNotice?
     @State private var generation = UUID()
+    #if os(visionOS)
+    @Environment(\.scenePhase) private var scenePhase
+    @State private var fileRequestGeneration: UUID?
+    #endif
+    private var sensitiveAvailable: Bool {
+        #if os(visionOS)
+        scenePhase == .active && DirectAppLockV1.shared.canAccess
+        #else
+        DirectAppLockV1.shared.canAccess
+        #endif
+    }
     #if os(macOS)
     @State private var importWindow = MacWindowHandle()
     @State private var filePicker = MacSSHKeyFilePicker()
@@ -161,7 +172,13 @@ struct TerminalKeyComposer: View {
                         Button("Choose from ~/.ssh…") { chooseFile(sshFolder: true) }.disabled(!valid || busy || picking)
                         Button("Choose File…") { chooseFile(sshFolder: false) }.disabled(!valid || busy || picking)
                         #else
-                        Button("Import from Files") { picking = true }.disabled(!valid || busy)
+                        Button("Import from Files") {
+                            #if os(visionOS)
+                            guard sensitiveAvailable else { return }
+                            fileRequestGeneration = generation
+                            #endif
+                            picking = true
+                        }.disabled(!valid || busy)
                         #endif
                         PasteButton(payloadType: String.self) { values in if let text = values.first { decode(text) } }.disabled(!valid || busy)
                     } footer: {
@@ -186,15 +203,25 @@ struct TerminalKeyComposer: View {
             .onDisappear { generation = UUID(); passphrase = ""; cancelPicker() }
             .onReceive(NotificationCenter.default.publisher(for: DirectClientPlatformV1.willResignActive)) { _ in generation = UUID(); passphrase = ""; busy = false }
             .onReceive(NotificationCenter.default.publisher(for: DirectClientPlatformV1.didEnterBackground)) { _ in generation = UUID(); passphrase = ""; busy = false; cancelPicker() }
+            #if os(visionOS)
+            .visionSensitiveState { generation = UUID(); passphrase = ""; busy = false; cancelPicker() }
+            #endif
         }
     }
     private func readFile(_ result: Result<URL, Error>) {
-        guard DirectAppLockV1.shared.canAccess else { return }
+        #if os(visionOS)
+        guard fileRequestGeneration == generation else { return }
+        fileRequestGeneration = nil
+        #endif
+        guard sensitiveAvailable else { return }
         do { decode(try TerminalSSHKey.readOpenSSHFile(result.get())) }
         catch { if !DirectCancellation.isCancellation(error) { issue = importNotice(error) } }
     }
     private func cancelPicker() {
         picking = false
+        #if os(visionOS)
+        fileRequestGeneration = nil
+        #endif
         #if os(macOS)
         filePicker.cancel()
         #endif
@@ -218,11 +245,11 @@ struct TerminalKeyComposer: View {
     }
     private var valid: Bool { TerminalKeyLibraryStore.Library.validName(name) }
     private func decode(_ text: String) {
-        guard valid, !busy, DirectAppLockV1.shared.canAccess else { return }
+        guard valid, !busy, sensitiveAvailable else { return }
         busy = true; let token = generation, secret = passphrase; passphrase = ""
         Task {
             let result = await Task.detached(priority: .userInitiated) { Result { try TerminalSSHKey.importOpenSSH(text, passphrase: secret) } }.value
-            guard token == generation, DirectAppLockV1.shared.canAccess else { return }; busy = false
+            guard token == generation, sensitiveAvailable else { return }; busy = false
             switch result {
             case .success(let key): if save(key, name) { dismiss() } else { issue = .make(.saveFailed, message: "The key couldn’t be saved. Keep this form open and try again.") }
             case .failure(let failure): issue = importNotice(failure)
@@ -248,6 +275,16 @@ struct TerminalKeyDetail: View {
     @State private var issue: DirectRecoveryNotice?
     @State private var generation = UUID()
     @State private var authentication: LAContext?
+    #if os(visionOS)
+    @Environment(\.scenePhase) private var scenePhase
+    #endif
+    private var sensitiveAvailable: Bool {
+        #if os(visionOS)
+        scenePhase == .active && DirectAppLockV1.shared.canAccess
+        #else
+        DirectAppLockV1.shared.canAccess
+        #endif
+    }
     init(entry: TerminalNamedKey, library: TerminalKeyLibrary, changed: @escaping @MainActor () -> Void) {
         self.entry = entry; self.library = library; self.changed = changed; _name = State(initialValue: entry.name)
     }
@@ -302,24 +339,27 @@ struct TerminalKeyDetail: View {
             passphrase = ""; confirmPassphrase = ""
         }
         .onReceive(NotificationCenter.default.publisher(for: DirectClientPlatformV1.didEnterBackground)) { _ in clearExport() }
+        #if os(visionOS)
+        .visionSensitiveState { clearExport() }
+        #endif
     }
     private var publicLine: String { entry.key.publicKey + " mac-companion-" + entry.id.uuidString.lowercased() }
     private var filename: String { "ssh-" + entry.id.uuidString.lowercased() }
     private func clearExport() { generation = UUID(); authentication?.invalidate(); authentication = nil; exportData = nil; exporting = false; passphrase = ""; confirmPassphrase = ""; busy = false }
     private func exportPrivate() {
-        guard !busy, DirectAppLockV1.shared.canAccess else { return }
+        guard !busy, sensitiveAvailable else { return }
         let token = generation, secret = passphrase, context = LAContext()
         authentication = context; busy = true; issue = nil; passphrase = ""; confirmPassphrase = ""
         Task {
             do {
                 guard try await context.evaluatePolicy(.deviceOwnerAuthentication, localizedReason: "Export this SSH private key in encrypted form.") else { throw CancellationError() }
-                guard token == generation, DirectAppLockV1.shared.canAccess,
+                guard token == generation, sensitiveAvailable,
                       let current = try TerminalKeyLibraryStore.load().keys.first(where: { $0.id == entry.id }) else { throw CancellationError() }
                 let data = try await Task.detached(priority: .userInitiated) {
                     let key = try Curve25519.Signing.PrivateKey(rawRepresentation: current.key.seed)
                     return Data(try key.makeEncryptedSSHRepresentation(passphrase: secret, comment: current.name).utf8)
                 }.value
-                guard token == generation, DirectAppLockV1.shared.canAccess else { return }
+                guard token == generation, sensitiveAvailable else { return }
                 exportFilename = filename; exportData = data; exporting = true
             } catch { if token == generation { self.issue = .make(DirectCancellation.isCancellation(error) ? .exportCancelled : .exportFailed) } }
             if token == generation { busy = false; authentication = nil }

@@ -132,6 +132,7 @@ import SwiftUI
             let keyboard = VisionPhysicalKeyboard(); var output: [[Any]] = []
             keyboard.send = { output.append([$0, $1]) }
             for event in try XCTUnwrap(row["events"] as? [[String: Any]]) {
+                if event["clear"] as? Bool == true { keyboard.clear(); continue }
                 let usage = try XCTUnwrap(UIKeyboardHIDUsage(rawValue: try XCTUnwrap(event["usage"] as? Int)))
                 let names = try XCTUnwrap(event["flags"] as? [String]); var flags: UIKeyModifierFlags = []
                 if names.contains("control") { flags.insert(.control) }; if names.contains("shift") { flags.insert(.shift) }

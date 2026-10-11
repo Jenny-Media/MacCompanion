@@ -1,10 +1,11 @@
 import XCTest
 
 @MainActor final class VisionWindowUITests: XCTestCase {
-    private func launch(sshPort: Int? = nil, compact: Bool = false) -> XCUIApplication {
+    private func launch(sshPort: Int? = nil, compact: Bool = false, multipleMacs: Bool = false) -> XCUIApplication {
         let app = XCUIApplication(); app.launchArguments = ["--vision-qa-empty-library"]
         if let sshPort { app.launchArguments += ["--vision-qa-ssh-port", String(sshPort)] }
         if compact { app.launchArguments += ["--vision-qa-compact-large-text"] }
+        if multipleMacs { app.launchArguments += ["--vision-qa-multiple-macs"] }
         app.launch(); return app
     }
     private func addMac(_ app: XCUIApplication, sshPort: Int? = nil) {
@@ -156,6 +157,10 @@ import XCTest
         let terminal = app.descendants(matching: .any).matching(identifier: "vision-terminal-canvas").firstMatch
         connect(app, surface: terminal)
         XCTAssertTrue(terminal.waitForExistence(timeout: 20))
+        // SwiftTerm renders terminal cells itself rather than exposing each row
+        // as a static-text element. Inspect this native capture for the startup
+        // banner; the hosted test verifies the emulator buffer before UI input.
+        let startup = XCTAttachment(screenshot: terminal.screenshot()); startup.name = "Initial Terminal banner before UI input"; startup.lifetime = .keepAlways; add(startup)
         // A steady cursor keeps XCTest's public idle wait deterministic; the
         // normal emulator handles the host's standard cursor-style sequence.
         try await server.record.emit("\u{1b}[2 q")
@@ -239,6 +244,39 @@ import XCTest
         XCTAssertTrue(app.buttons["quick-action-add"].exists, app.debugDescription)
         let settingsCapture = XCTAttachment(screenshot: app.screenshot()); settingsCapture.name = "Supported native Desktop quick actions"; settingsCapture.lifetime = .keepAlways; add(settingsCapture)
 
+    }
+    func testMetadataSyncRequiresDisclosureAndAffirmativeConsent() {
+        let app = launch(); app.buttons["Settings"].tap()
+        let toggle = app.switches["Sync Mac Metadata with iCloud"]
+        XCTAssertTrue(toggle.waitForExistence(timeout: 15)); XCTAssertEqual(toggle.value as? String, "0")
+        toggle.tap()
+        let alert = app.alerts["Enable iCloud Sync?"]
+        XCTAssertTrue(alert.waitForExistence(timeout: 10))
+        let disclosure = alert.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "addresses, ports")).firstMatch
+        XCTAssertTrue(disclosure.exists, app.debugDescription)
+        XCTAssertTrue(alert.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "Apple Account and trusted devices")).firstMatch.exists)
+        let capture = XCTAttachment(screenshot: app.screenshot()); capture.name = "Metadata disclosure before opt-in"; capture.lifetime = .keepAlways; add(capture)
+        alert.buttons["Cancel"].tap(); XCTAssertEqual(toggle.value as? String, "0")
+        toggle.tap(); XCTAssertTrue(alert.waitForExistence(timeout: 10)); alert.buttons["Enable Sync"].tap()
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "1"), object: toggle)], timeout: 10), .completed)
+        XCTAssertFalse(app.staticTexts["Sync completed."].exists, "Unsigned Simulator does not establish cloud delivery")
+        toggle.tap(); XCTAssertEqual(toggle.value as? String, "0")
+    }
+    func testFreeMacCanBeChangedWithoutRemovingSavedRecords() {
+        let app = launch(multipleMacs: true)
+        XCTAssertTrue(app.staticTexts["Synthetic First Mac"].waitForExistence(timeout: 30))
+        XCTAssertTrue(app.staticTexts["Synthetic Second Mac"].exists)
+        app.buttons["Manage Synthetic First Mac"].tap(); app.buttons["Use as My Free Mac"].tap()
+        let desktop = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "vision-open-desktop-")).element(boundBy: 1)
+        desktop.tap()
+        XCTAssertTrue(app.staticTexts["Mac Companion Pro"].waitForExistence(timeout: 10), app.debugDescription)
+        app.buttons["Done"].tap()
+        app.buttons["Manage Synthetic Second Mac"].tap(); app.buttons["Use as My Free Mac"].tap()
+        desktop.tap()
+        XCTAssertTrue(app.staticTexts["Synthetic Second Mac · Desktop"].waitForExistence(timeout: 10), app.debugDescription)
+        app.buttons["Your Macs"].firstMatch.tap()
+        XCTAssertTrue(app.staticTexts["Synthetic First Mac"].exists); XCTAssertTrue(app.staticTexts["Synthetic Second Mac"].exists)
+        let capture = XCTAttachment(screenshot: app.screenshot()); capture.name = "Both Macs retained after free choice"; capture.lifetime = .keepAlways; add(capture)
     }
     func testCompactLargerTextForms() async throws {
         let server = DesktopSSHServer(.rfb); try await server.start()

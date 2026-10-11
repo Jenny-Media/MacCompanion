@@ -32,7 +32,11 @@ struct DirectProTrial {
 }
 
 @MainActor @Observable final class DirectProAccess {
+    #if os(visionOS)
+    static let shared = DirectProAccess(defaults: VisionDevelopmentQA.defaults)
+    #else
     static let shared = DirectProAccess()
+    #endif
     static let productID = "media.jenny.maccompanion.pro.lifetime"
     static let trialProductID = "media.jenny.maccompanion.pro.trial14"
     private(set) var hasLifetimePro = false
