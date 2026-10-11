@@ -9,14 +9,14 @@ struct MacDesktopSettings: View {
     @State private var scrollSpeed = VNCSessionPreferences.scrollSpeed
     @State private var fullscreen = false
     @State private var actions: [VNCQuickAction] = []
-    @State private var selection: UUID?
-    @State private var editor: VNCQuickAction?
     @State private var issue: DirectRecoveryNotice?
     @State private var readable = false
-    @State private var paywall = false
     var body: some View {
         NavigationStack {
             Form {
+                Section {
+                    DirectQuickActionsEditor(actions: $actions, mode: mode, readable: readable, macID: macID)
+                }
                 if mode == .desktop {
                     Section {
                         if macID != nil { Toggle("Open this desktop in full screen", isOn: $fullscreen) }
@@ -32,49 +32,9 @@ struct MacDesktopSettings: View {
                             Text(scrollSpeed.formatted(.number.precision(.fractionLength(0...2))) + "×").monospacedDigit().frame(width: 36)
                         }
                         Button("Reset to Default") { scrollSpeed = 1 }
-                    } header: { Label("Scrolling · This device", systemImage: "computermouse") }
+                    } header: { Label("Scrolling", systemImage: "computermouse") } footer: { Text("Applies to all Mac connections on this Mac.") }
                 }
-                Section {
-                    HStack {
-                        Text("All " + mode.title + " connections on this device").font(.caption).foregroundStyle(.secondary)
-                        Spacer()
-                        if !DirectProAccess.shared.hasPro {
-                            Button { paywall = true } label: { Label("Customize with Pro", systemImage: "sparkles") }
-                        }
-                    }
-                    VStack(spacing: 0) {
-                    Table(actions, selection: $selection) {
-                        TableColumn("Enabled") { action in
-                            Toggle(action.displayTitle, isOn: Binding(get: { actions.first { $0.id == action.id }?.enabled ?? false }, set: { value in
-                                if let index = actions.firstIndex(where: { $0.id == action.id }) { actions[index].enabled = value }
-                            })).labelsHidden().accessibilityLabel("Enable " + action.displayTitle)
-                        }.width(58)
-                        TableColumn("Action") { action in Label(action.displayTitle, systemImage: action.symbol) }
-                        TableColumn("Type") { action in Text(action.kind == .text ? "Saved text" : action.kind == .shortcut ? "Shortcut" : "Standard").foregroundStyle(.secondary) }.width(85)
-                    }.frame(height: min(240, max(90, CGFloat(actions.count) * 28 + 36)))
-                    HStack {
-                        Menu("Add Action", systemImage: "plus") {
-                            ForEach(mode.builtIns.filter { $0.kind != .mode && !actions.map(\.kind).contains($0.kind) }) { action in
-                                Button(action.displayTitle, systemImage: action.symbol) { actions.append(action) }
-                            }
-                            Divider()
-                            Button("Keyboard Shortcut…") { editor = .init(title: "", kind: .shortcut, key: 0x63, modifiers: [mode == .terminal ? 0xffe3 : 0xffeb]) }
-                                .disabled(!VNCQuickAction.canAddCustom(to: actions))
-                            Button("Saved Text…") { editor = .init(title: "", kind: .text) }
-                                .disabled(!VNCQuickAction.canAddCustom(to: actions))
-                        }.disabled(actions.count >= VNCQuickAction.maximumCount)
-                        Button("Edit…") { editor = actions.first { $0.id == selection } }.disabled(!canEdit)
-                        Menu("Arrange", systemImage: "arrow.up.arrow.down") {
-                            Button("Move Up") { move(-1) }.disabled(selection == nil || selection == actions.first?.id)
-                            Button("Move Down") { move(1) }.disabled(selection == nil || selection == actions.last?.id)
-                        }.disabled(selection == nil)
-                        Spacer()
-                        Button("Remove", systemImage: "minus") { actions.removeAll { $0.id == selection }; selection = nil }.disabled(selection == nil)
-                    }
-                    Button("Restore Default Actions") { actions = mode.defaults.filter { $0.kind != .mode } }
-                    }.disabled(!readable || !DirectProAccess.shared.hasPro)
-                } header: { Label("Quick Actions", systemImage: "keyboard") }
-                footer: { Text("Saved text stays on this device.") }
+
                 if let issue {
                     DirectRecoveryCard(notice: issue,
                         primary: .init(title: readable ? "Retry Save" : "Retry", perform: { if readable { save() } else { reload() } }),
@@ -83,22 +43,11 @@ struct MacDesktopSettings: View {
             }.formStyle(.grouped).navigationTitle(mode.title + " Controls")
                 .toolbar {
                     ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
-                    ToolbarItem(placement: .confirmationAction) { Button("Save", action: save).disabled(!readable) }
+                    ToolbarItem(placement: .confirmationAction) { Button("Save", action: save).disabled(!readable || !DirectQuickActionEditing.valid(actions, mode: mode)) }
                 }
-                .sheet(item: $editor) { action in
-                    VNCActionEditor(action: action, mode: mode) { edited in
-                        if let i = actions.firstIndex(where: { $0.id == edited.id }) { actions[i] = edited }
-                        else if VNCQuickAction.canAddCustom(to: actions) { actions.append(edited) }
-                    }.frame(width: 500, height: 520).modifier(MacSheetPrivacyCover())
-                }
-            .sheet(isPresented: $paywall) { DirectProView().modifier(MacSheetPrivacyCover()) }
-        }.frame(width: 580, height: mode == .terminal ? 400 : 560).interactiveDismissDisabled().onAppear(perform: reload)
+        }.frame(width: 820, height: 680).interactiveDismissDisabled().directAppearance().onAppear(perform: reload)
     }
-    private var canEdit: Bool { actions.contains { $0.id == selection && [.shortcut, .text].contains($0.kind) } }
-    private func move(_ offset: Int) {
-        guard let i = actions.firstIndex(where: { $0.id == selection }), actions.indices.contains(i + offset) else { return }
-        actions.swapAt(i, i + offset)
-    }
+
     private func reload() {
         guard DirectAppLockV1.shared.canAccess else { return }
         do { actions = try VNCSessionPreferences.profileActions(mode, legacyMac: macID).filter { $0.kind != .mode }; readable = true; issue = nil }
@@ -106,7 +55,7 @@ struct MacDesktopSettings: View {
         fullscreen = macID.map(VNCSessionPreferences.fullscreen) ?? false
     }
     private func save() {
-        guard DirectAppLockV1.shared.canAccess, readable else { return }
+        guard DirectAppLockV1.shared.canAccess, readable, DirectQuickActionEditing.valid(actions, mode: mode) else { return }
         do {
             if DirectProAccess.shared.hasPro { try VNCSessionPreferences.saveProfile(actions, mode: mode) }
             if mode == .desktop {
@@ -136,7 +85,7 @@ struct MacDesktopFullScreenControls: View {
             }
             Button("Fit to Window", systemImage: "arrow.down.right.and.arrow.up.left") { session.fit() }
             Menu("Quick Actions", systemImage: "keyboard") {
-                ForEach(actions.filter(\.enabled)) { action in Button(action.displayTitle, systemImage: action.symbol) { if window.acceptsActions { session.quickAction(action) } } }
+                MacQuickActionsMenu(actions: actions, perform: { if window.acceptsActions { session.quickAction($0) } }, customize: settings)
             }
             Button("Controls", systemImage: "slider.horizontal.3", action: settings)
             Button("Exit Full Screen", systemImage: "arrow.down.right.and.arrow.up.left") { window.toggleFullScreen() }

@@ -66,12 +66,16 @@ Items 1–5 have the highest priority.
 
 - [ ] Check grouping, spacing, labels, scrolling and narrow-window layouts.
 - [ ] Read the setup guide on macOS and iOS. Instructions are readable and all controls are visible.
-- [ ] Open Desktop and Terminal Controls on Mac. Both use a compact action table, clear scope labels and one set of editing controls. The Pro explanation remains actionable when customization is unavailable.
+- [ ] Open quick-action customization in each supported mode. iOS previews the session grid; Mac previews the native menu rows. Selecting a preview action edits it inline without sending input to the remote Mac.
+- [ ] Drag actions and use Move Earlier/Later with VoiceOver. The preview, saved order and reopened session menu agree.
+- [ ] Add, rename, edit and remove a shortcut or saved text. Add Action shows only standards that aren't already visible; hidden actions can be restored. Limits disable additions without producing an empty menu. Save keeps the draft and Cancel discards it.
+- [ ] Restore Defaults requires confirmation. Verify Pro-expired and unreadable-storage states remain safe and actionable.
 
 ## 11. Settings and error states
 
-- [ ] Open Settings from the library and check the iCloud status. Labels match their destinations and current state.
-- [ ] Navigate General, Connections & Input, SSH Keys, and Sync & Security on both platforms. Key sources and Back/Done actions are clear.
+- [ ] The library gear opens Settings directly. Set Up Your Mac is reachable in Help.
+- [ ] Navigate Appearance, Controls, SSH Keys, Sync & Security, and Help on both platforms. Key sources and Back/Done actions are clear.
+- [ ] Change Light, Dark and System while Appearance is open. The existing sheet updates immediately without losing its navigation; nested sheets follow the same choice.
 - [ ] Add a new Mac. Addresses appear first, a pristine draft has no validation warning, and ports/details remain discoverable in disclosures.
 - [ ] Expand Connection Details before sign-in. Addresses and service ports match the configuration; error details refresh without another modal.
 - [ ] Open Pro while the store is unavailable. Benefits stay visible, there is one store retry, and free features remain accessible.
@@ -93,3 +97,24 @@ Items 1–5 have the highest priority.
 
 Keep feedback free of passwords, private keys, private addresses and sensitive
 screen content. Store screenshots outside Git, as required by `AGENTS.md`.
+
+## Settings feedback follow-up
+
+- Expand Mac Details in Edit Mac: name, type and Refresh Details form a compact group with no blank area. Check a detected laptop and an unknown model.
+- Expand Service Ports in Add Mac and Edit Mac on both platforms: the full Remote Login (SSH) label is visible, values stay aligned, and empty fields use 5900/22. Check large text and a narrow iPhone.
+- On iOS, choose every Open on Tap mode. The native menu marks the current mode; the selected value and menu indicator share a baseline and stay trailing-aligned.
+- In Sync & Security, expand What Syncs and Manage Sync. Read the credentials information sheet; passwords/private keys are explicitly excluded from app sync.
+- Open Delete Mac Data from iCloud. Cancel the review, then cancel the final confirmation. Neither cancellation changes sync or removes data. Perform confirmed deletion only with synthetic test data after disabling sync on other test devices; verify local Macs/logins are kept and delayed propagation is reported without claiming a global wipe.
+- Verify Require Unlock describes the available Face ID/Touch ID/passcode method on iOS. Check actual device unlock after backgrounding. Mac keeps its existing screen-sleep/session-lock behavior.
+- In every session mode, use Customize from the floating menu to reach the preview editor. iOS Trackpad & Keyboard remains available; Mac has Desktop/Terminal.
+- In Pro, benefits are informational, purchase/trial terms are beside their actions, and Free Version is a short list. Check portrait, landscape and large text; purchase/restore controls remain reachable.
+- Test StoreKit product loading, trial start, purchase, restore, cancellation, offline errors and pending approval. Progress names the current operation in a stable area; system cancellation is quiet and pending approval doesn't block the app. Use StoreKit fixtures for local tests, then the signed TestFlight build for physical acceptance.
+
+## Controls editor follow-up
+
+- On iOS, check the quick-action preview and session menu in portrait, landscape and large text. Two wider columns become one column at accessibility sizes. The editing preview contains only editable actions and grows to fit them.
+- Open Add Action, add a standard, shortcut or saved text, and verify the sheet closes to the selected inspector. Already-visible standards are absent. Cancel the controls editor to discard all changes.
+- Add a shortcut in each mode. Its initial name follows the key combination until manually renamed; existing custom names remain unchanged. Ctrl, Option, Shift and Cmd stay on one line with full VoiceOver labels. Terminal excludes Cmd.
+- Use Insert Symbol in a shortcut name, including an emoji name. Check insertion at the caret and replacement of selected text, then save and reopen.
+- Check Saved Text empty, single-line, multiline and over the 256-character limit. The field grows until it scrolls, stays readable with the keyboard open, and preserves spaces and trailing newlines. Cancel does not persist the draft.
+- On iOS, check Touch & Haptics: Show Touch Indicators and Haptic Feedback apply to all Mac connections on that iPhone or iPad. Mac only shows relevant desktop/terminal settings.

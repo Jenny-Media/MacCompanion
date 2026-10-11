@@ -8,49 +8,51 @@ struct MacSettingsView: View {
     private var category: Category { selection ?? .general }
     @State private var sheet: Sheet?
     private enum Category: String, CaseIterable, Identifiable {
-        case general, controls, keys, sync
+        case general, controls, keys, sync, help
         var id: String { rawValue }
-        var title: String { switch self { case .general: "General"; case .controls: "Connections & Input"; case .keys: "SSH Keys"; case .sync: "Sync & Security" } }
-        var symbol: String { switch self { case .general: "gearshape"; case .controls: "slider.horizontal.3"; case .keys: "key"; case .sync: "lock.shield" } }
+        var title: String { switch self { case .general: "Appearance"; case .controls: "Controls"; case .keys: "SSH Keys"; case .sync: "Sync & Security"; case .help: "Help" } }
+        var symbol: String { switch self { case .general: "circle.lefthalf.filled"; case .controls: "slider.horizontal.3"; case .keys: "key"; case .sync: "lock.shield"; case .help: "questionmark.circle" } }
     }
     private enum Sheet: String, Identifiable {
-        case keys, pro, desktop, terminal
+        case keys, pro, desktop, terminal, help
         var id: String { rawValue }
     }
     var body: some View {
         HStack(spacing: 0) {
             List(Category.allCases, selection: $selection) { item in
                 Label(item.title, systemImage: item.symbol).lineLimit(2).tag(item)
+                    .accessibilityIdentifier("mac-settings-category-" + item.rawValue)
             }.listStyle(.sidebar).frame(width: 230)
             Divider()
             VStack(alignment: .leading, spacing: 0) {
                 Text(category.title).font(.title2.bold()).padding(.horizontal, 24).padding(.top, 22)
-                Form {
-                    switch category {
-                    case .general:
-                        Section("Appearance") {
-                            Picker("App Appearance", selection: $appearance.app) { ForEach(DirectAppAppearance.allCases) { Text($0.title).tag($0) } }
-                            Picker("Terminal Colors", selection: $appearance.terminal) { ForEach(DirectTerminalAppearance.allCases) { Text($0.title).tag($0) } }
+                if category == .sync {
+                    DirectSyncSecurityForm()
+                } else {
+                    Form {
+                        switch category {
+                        case .general:
+                            Section("Appearance") {
+                                Picker("App Appearance", selection: $appearance.app) { ForEach(DirectAppAppearance.allCases) { Text($0.title).tag($0) } }
+                                Picker("Terminal Colors", selection: $appearance.terminal) { ForEach(DirectTerminalAppearance.allCases) { Text($0.title).tag($0) } }
+                            }
+                            Section("Pro") { destination(DirectProAccess.shared.accessTitle, symbol: "sparkles", sheet: .pro) }
+                        case .controls:
+                            Section("Quick Actions") {
+                                destination("Desktop", symbol: "display", sheet: .desktop)
+                                destination("Terminal", symbol: "terminal", sheet: .terminal)
+                            }
+                            Section {} footer: { Text("Each editor shows whether a preference applies to one Mac or all connections on this device.") }
+                        case .keys:
+                            Section { destination("Manage SSH Keys", symbol: "key", sheet: .keys) }
+                            Section {} footer: { Text("Use an existing key file, import a copy into Keychain, or create a new key.") }
+                        case .sync:
+                            EmptyView()
+                        case .help:
+                            Section { destination("Set Up Your Mac", symbol: "questionmark.circle", sheet: .help) }
                         }
-                        Section("Pro") { destination(DirectProAccess.shared.accessTitle, symbol: "sparkles", sheet: .pro) }
-                    case .controls:
-                        Section("Quick Actions") {
-                            destination("Desktop", symbol: "display", sheet: .desktop)
-                            destination("Terminal", symbol: "terminal", sheet: .terminal)
-                        }
-                        Section {} footer: { Text("Each editor shows whether a preference applies to one Mac or all connections on this device.") }
-                    case .keys:
-                        Section { destination("Manage SSH Keys", symbol: "key", sheet: .keys) }
-                        Section {} footer: { Text("Use an existing key file, import a copy into Keychain, or create a new key.") }
-                    case .sync:
-                        DirectCloudSettingsSection()
-                        Section {
-                            Toggle("Require Mac Authentication", isOn: Binding(get: { lock.enabled }, set: { lock.setEnabled($0) }))
-                                .accessibilityIdentifier("app-lock-toggle")
-                            if lock.message.contains("before enabling") { Text(lock.message) }
-                        } header: { Text("App Unlock") } footer: { Text("Lock on screen sleep or user-session lock. Unlock with Touch ID or your Mac password.") }
-                    }
-                }.formStyle(.grouped)
+                    }.formStyle(.grouped)
+                }
             }.frame(maxWidth: .infinity, maxHeight: .infinity)
         }.frame(width: 780, height: 540)
             .sheet(item: $sheet) { item in
@@ -60,6 +62,7 @@ struct MacSettingsView: View {
                     case .pro: DirectProView()
                     case .desktop: MacDesktopSettings()
                     case .terminal: MacDesktopSettings(mode: .terminal)
+                    case .help: DirectMacSetupGuide().frame(width: 560, height: 600)
                     }
                 }.directAppearance().modifier(MacSheetPrivacyCover())
             }
@@ -69,6 +72,7 @@ struct MacSettingsView: View {
     private func destination(_ title: String, symbol: String, sheet: Sheet) -> some View {
         Button { self.sheet = sheet } label: { DirectSettingsRow(title: title, symbol: symbol) }
             .buttonStyle(.plain).padding(.vertical, 4)
+            .accessibilityIdentifier("mac-settings-destination-" + sheet.rawValue)
     }
 }
 #endif

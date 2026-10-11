@@ -129,13 +129,20 @@ black; input-only help uses the app background.
 The Mac menu groups Desktop, Trackpad & Keyboard and Terminal under Connect, and
 editing/removal under Manage Mac. Credential removal lives only in Edit Mac, with
 separate Desktop login, Terminal login and SSH server-key confirmations.
-App Settings groups Appearance, Security and Session options.
+App Settings groups Appearance, Controls, SSH Keys, Sync & Security, and Help.
+The library gear opens Settings directly; Help contains Set Up Your Mac. Open
+settings and nested sheets observe appearance changes without being recreated.
 
 The floating session menu groups View & Display, Keyboard & Input and Session.
-Customizable quick actions stay nearest the controls button and support tap and
-press-and-slide. Extra Keys groups editing, navigation and special keys; gesture
-help is separate. Mode-specific Controls uses a section-scoped Reorder control and
-Save/Cancel for all preference drafts. Terminal offers its own keyboard and color
+Customizable quick actions follow saved order from the top of the grid and support
+tap and press-and-slide. Customize opens an input-free preview of the same native
+renderer with drag reordering, accessible move actions and an inline inspector.
+The Add Action sheet offers standards that aren't already visible. All changes,
+including confirmed Restore Defaults, remain drafts until Save; Cancel discards them. Mac
+uses menu rows with the same labels as its session menu. Hidden legacy actions,
+profile scope, Pro gating and the 15-total/12-custom limits are preserved.
+Extra Keys groups editing, navigation and special keys; gesture help is separate.
+Terminal offers its own keyboard and color
 controls. Its persistent modifier bar puts a keyboard toggle on the left and
 the shared controls button on the right, with scrolling middle keys on narrow
 screens. Number and admitted custom-key rows appear while the software keyboard
@@ -262,3 +269,23 @@ are free and participate in the existing optional iCloud library sync.
 On macOS, the approved 2026-10-09 scope exposes Desktop and Terminal only. A
 shared Trackpad default resolves to Desktop without changing the iPhone record;
 the native editor preserves it on unrelated edits. See `native-macos-client.md`.
+
+## Settings presentation follow-up
+
+Both clients share compact Mac-details and bounded port fields, structured sync
+information, credential privacy guidance, and the Pro presentation. iOS Open on
+Tap uses a native menu and a consistently trailing-aligned selected value with
+its menu indicator on the same baseline. Require Unlock uses available local authentication terminology; lock
+triggers remain platform-specific. Deleting the app's iCloud metadata now uses a
+review sheet and final destructive confirmation. Cancellation has no effect;
+confirmed deletion retains local Macs and credentials. Other devices with sync
+enabled can upload their retained metadata again, so deletion is never presented
+as an immediate verified global wipe. This changes presentation and confirmation,
+not the Keychain transport, version schema, merge rules, or credential scope.
+
+Pro benefits are informational content with a short Free Version list. Price is
+read from StoreKit. Purchase/trial terms sit beside their actions, and operation
+progress has a stable location with separate load/purchase/trial/restore states.
+The system purchase sheet remains authoritative; cancellation is quiet and
+pending approval leaves the app usable. In compact-height or accessibility iOS
+layouts, the purchase area scrolls with the content so its controls stay reachable.

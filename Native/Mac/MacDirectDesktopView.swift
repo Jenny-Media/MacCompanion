@@ -80,9 +80,7 @@ struct MacDirectDesktopView: View {
                 Button("Disconnect", systemImage: "power") { session.disconnect() }
                     .labelStyle(.titleAndIcon).help("End this Screen Sharing connection and keep its window open")
                 Menu("Quick Actions", systemImage: "keyboard") {
-                    ForEach(actions.filter(\.enabled)) { action in
-                        Button(action.displayTitle, systemImage: action.symbol) { if window.acceptsActions { session.quickAction(action) } }
-                    }
+                    MacQuickActionsMenu(actions: actions, perform: { if window.acceptsActions { session.quickAction($0) } }, customize: { controls = true })
                 }.help("Send a configured key or action to this Mac")
                 Button(window.fullScreen ? "Exit Full Screen" : "Full Screen", systemImage: "arrow.up.left.and.arrow.down.right") { window.toggleFullScreen() }
                     .help("Toggle full screen for this window")

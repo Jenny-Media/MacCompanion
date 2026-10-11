@@ -108,7 +108,7 @@ struct MacDirectTerminalView: View {
                     Text("\(Int(fontSize)) pt")
                 }.help("Adjust terminal text size on this Mac")
                 Menu("Quick Actions", systemImage: "keyboard") {
-                    ForEach(actions.filter(\.enabled)) { action in Button(action.displayTitle, systemImage: action.symbol) { surface.view?.perform(action) } }
+                    MacQuickActionsMenu(actions: actions, perform: { if window.acceptsActions { surface.view?.perform($0) } }, customize: { sheet = .controls })
                     if DirectProAccess.shared.hasPro {
                         Divider()
                         ForEach(keyboard.keys) { key in Button(key.title) { surface.view?.sendAccessory(key) } }

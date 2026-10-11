@@ -1,11 +1,12 @@
 #import "CompanionVNCControls.h"
 #import "CompanionVNCAdaptiveLayout.h"
 NSString *const CompanionVNCControlsHapticsPreference = @"direct-controls-haptics";
-@interface CompanionVNCControls ()
+@interface CompanionVNCControls () <UIDragInteractionDelegate, UIDropInteractionDelegate>
 @property UIButton *button;
 @property UIVisualEffectView *panel;
 @property UIScrollView *scroll;
 @property UILabel *nameLabel;
+@property UIButton *customizeButton;
 @property NSMutableArray<UIButton *> *choices;
 @property NSArray<NSDictionary *> *items;
 @property UIButton *highlighted;
@@ -14,6 +15,7 @@ NSString *const CompanionVNCControlsHapticsPreference = @"direct-controls-haptic
 @property UIImpactFeedbackGenerator *impact;
 @property NSUInteger fadeGeneration;
 @property NSUInteger quickCount;
+@property NSString *renderedPreviewID;
 @end
 @implementation CompanionVNCControls
 - (instancetype)initWithFrame:(CGRect)frame {
@@ -77,7 +79,7 @@ NSString *const CompanionVNCControlsHapticsPreference = @"direct-controls-haptic
     UIView *hit = [super hitTest:point withEvent:event];
     return hit == self ? (self.panel ? self : nil) : hit;
 }
-- (void)touchesEnded:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event { [self close]; }
+- (void)touchesEnded:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event { if (!self.editingPreview) [self close]; }
 - (CGRect)activeDivision { return CompanionVNCActiveDivision(self); }
 - (void)layoutSubviews {
     [super layoutSubviews];
@@ -98,19 +100,17 @@ NSString *const CompanionVNCControlsHapticsPreference = @"direct-controls-haptic
         self.button.center = CGPointMake(CGRectGetMidX(slot), CGRectGetMidY(slot));
     }
     if (!self.panel) return;
-    CGFloat width = MAX(0, MIN(360, available.size.width - 24));
-    CGFloat panelRoom = MAX(0, self.button.frame.origin.y - CGRectGetMinY(available) - 24);
+    CGFloat width = MAX(0, MIN(360, available.size.width - (self.editingPreview ? 0 : 24)));
+    CGFloat panelRoom = self.editingPreview ? available.size.height : MAX(0, self.button.frame.origin.y - CGRectGetMinY(available) - 24);
     BOOL largeText = UIContentSizeCategoryIsAccessibilityCategory(self.traitCollection.preferredContentSizeCategory)
-        || width < 280 || panelRoom < 208;
-    CGFloat headerHeight = MAX(44, ceil(self.nameLabel.font.lineHeight) + 16);
-    CGFloat headingHeight = MAX(32, ceil([UIFont preferredFontForTextStyle:UIFontTextStyleFootnote compatibleWithTraitCollection:self.traitCollection].lineHeight) + 8);
+        || width < 250;
+    CGFloat headerHeight = self.editingPreview ? 0 : MAX(44, ceil(self.nameLabel.font.lineHeight) + 16);
+    CGFloat headingHeight = self.quickCount && !self.editingPreview ? MAX(32, ceil([UIFont preferredFontForTextStyle:UIFontTextStyleFootnote compatibleWithTraitCollection:self.traitCollection].lineHeight) + 8) : 0;
     NSUInteger columns = largeText ? 1 : 2;
     NSUInteger categoryCount = self.items.count - self.quickCount;
-    CGFloat tileWidth = (width - (columns == 1 ? 16 : 28)) / columns;
+    CGFloat tileWidth = (width - 16 - (columns - 1) * 8) / columns;
     CGFloat categoryWidth = largeText ? width - 16 : (width - 16) / MAX(1, categoryCount);
-    CGFloat tileHeight = largeText ? 44 : 64, categoryHeight = largeText ? 44 : 64;
-    // Measure the configured native button at its actual width. Fixed-height
-    // tiles clip growing SF Symbols and wrapped titles at larger text sizes.
+    CGFloat tileHeight = largeText ? 44 : 72, categoryHeight = largeText ? 44 : 64;
     for (NSUInteger i = 0; i < self.choices.count; i++) {
         UIButton *choice = self.choices[i];
         UIButtonConfiguration *configuration = choice.configuration;
@@ -122,41 +122,63 @@ NSString *const CompanionVNCControlsHapticsPreference = @"direct-controls-haptic
         if (i < self.quickCount) tileHeight = MAX(tileHeight, fittingHeight);
         else categoryHeight = MAX(categoryHeight, fittingHeight);
     }
-    CGFloat fixedHeight = headerHeight + (largeText ? 8 : categoryHeight + 12);
-    // When a fixed header would consume the action viewport, scroll it too.
-    BOOL scrollingHeader = panelRoom < fixedHeight + MIN(tileHeight, categoryHeight) + 12;
-    CGFloat scrollHeaderHeight = scrollingHeader ? headerHeight + 8 : 0;
+    BOOL scrollingHeader = panelRoom < headerHeight + categoryHeight + MIN(tileHeight, categoryHeight) + 20;
     BOOL scrollingCategories = largeText || scrollingHeader;
-    CGFloat categoryBody = largeText ? categoryCount * categoryHeight : (scrollingHeader && categoryCount ? categoryHeight + 8 : 0);
-    CGFloat contentHeight = scrollHeaderHeight + categoryBody + (self.quickCount ? headingHeight + ceil(self.quickCount / (CGFloat)columns) * (tileHeight + 8) + 8 : 0);
-    if (scrollingHeader) fixedHeight = 0;
-    CGFloat height = MIN(fixedHeight + contentHeight + 12, panelRoom);
-    CGRect rect = CGRectMake(MAX(CGRectGetMinX(available) + 12, CGRectGetMaxX(self.button.frame) - width), self.button.frame.origin.y - height - 12, width, height);
-    self.panel.bounds = CGRectMake(0,0,rect.size.width,rect.size.height); self.panel.center = CGPointMake(CGRectGetMidX(rect),CGRectGetMidY(rect));
+    CGFloat scrollHeaderHeight = scrollingHeader ? headerHeight : 0;
+    CGFloat gridHeight = self.quickCount ? headingHeight + ceil(self.quickCount / (CGFloat)columns) * (tileHeight + 8) : 0;
+    CGFloat categoryBody = scrollingCategories ? categoryHeight * (largeText ? categoryCount : (categoryCount ? 1 : 0)) + 8 : 0;
+    CGFloat contentHeight = scrollHeaderHeight + gridHeight + categoryBody + 8;
+    CGFloat fixedHeader = scrollingHeader ? 0 : headerHeight;
+    CGFloat fixedFooter = scrollingCategories || !categoryCount ? 0 : categoryHeight + 8;
+    CGFloat height = MIN(fixedHeader + contentHeight + fixedFooter, panelRoom);
+    CGFloat x = self.editingPreview ? CGRectGetMidX(available) - width / 2 : MAX(CGRectGetMinX(available) + 12, CGRectGetMaxX(self.button.frame) - width);
+    CGFloat y = self.editingPreview ? CGRectGetMinY(available) : self.button.frame.origin.y - height - 12;
+    self.panel.frame = CGRectMake(x, y, width, height);
     UIView *nameParent = scrollingHeader ? self.scroll : self.panel.contentView;
     if (self.nameLabel.superview != nameParent) [nameParent addSubview:self.nameLabel];
-    self.nameLabel.frame = CGRectMake(16, 8, MAX(0, width - 32), headerHeight - 16);
-    self.scroll.frame = CGRectMake(0, fixedHeight, width, MAX(0, height - fixedHeight - (scrollingHeader ? 0 : 12)));
+    CGFloat customizeWidth = self.customizeButton ? MIN(140, width * .45) : 0;
+    self.nameLabel.frame = CGRectMake(16, 8, MAX(0, width - 32 - customizeWidth), MAX(0, headerHeight - 16));
+    if (self.customizeButton) {
+        if (self.customizeButton.superview != nameParent) [nameParent addSubview:self.customizeButton];
+        self.customizeButton.frame = CGRectMake(width - customizeWidth - 8, 0, customizeWidth, headerHeight);
+    }
+    self.scroll.frame = CGRectMake(0, fixedHeader, width, MAX(0, height - fixedHeader - fixedFooter));
     self.scroll.contentSize = CGSizeMake(width, contentHeight);
-    UILabel *heading = (UILabel *)[self.scroll viewWithTag:1001]; heading.frame = CGRectMake(16, scrollHeaderHeight + categoryBody + 4, MAX(0, width - 32), headingHeight - 8);
+    UILabel *heading = (UILabel *)[self.scroll viewWithTag:1001];
+    heading.frame = CGRectMake(16, scrollHeaderHeight + 4, MAX(0, width - 32), MAX(0, headingHeight - 8));
     for (NSUInteger i = 0; i < self.choices.count; i++) {
         UIView *parent = i < self.quickCount || scrollingCategories ? self.scroll : self.panel.contentView;
         if (self.choices[i].superview != parent) [parent addSubview:self.choices[i]];
-        self.choices[i].frame = i < self.quickCount
-            ? CGRectMake(8 + (i % columns) * (tileWidth + 12), scrollHeaderHeight + categoryBody + headingHeight + (ceil(self.quickCount / (CGFloat)columns) - 1 - (i / columns)) * (tileHeight + 8), tileWidth, tileHeight)
-            : largeText ? CGRectMake(8, scrollHeaderHeight + (i - self.quickCount) * categoryHeight, width - 16, categoryHeight)
-                       : CGRectMake(8 + (i - self.quickCount) * ((width - 16) / MAX(1, categoryCount)), scrollingHeader ? scrollHeaderHeight : headerHeight + 4, (width - 16) / MAX(1, categoryCount), categoryHeight);
+        if (i < self.quickCount) {
+            self.choices[i].frame = CGRectMake(8 + (i % columns) * (tileWidth + 8), scrollHeaderHeight + headingHeight + (i / columns) * (tileHeight + 8), tileWidth, tileHeight);
+        } else {
+            NSUInteger category = i - self.quickCount;
+            CGFloat categoryY = scrollingCategories ? scrollHeaderHeight + gridHeight + 8 : height - fixedFooter;
+            self.choices[i].frame = largeText ? CGRectMake(8, categoryY + category * categoryHeight, width - 16, categoryHeight)
+                : CGRectMake(8 + category * categoryWidth, categoryY, categoryWidth, categoryHeight);
+        }
     }
+}
+- (CGSize)sizeThatFits:(CGSize)size {
+    if (!self.editingPreview) return [super sizeThatFits:size];
+    CGFloat width = MAX(0, MIN(360, size.width));
+    // Measuring the real renderer preserves long titles and Dynamic Type.
+    CGRect previous = self.bounds;
+    self.bounds = CGRectMake(0, 0, width, 100000);
+    [self setNeedsLayout]; [self layoutIfNeeded];
+    CGFloat height = self.scroll.contentSize.height;
+    self.bounds = previous; [self setNeedsLayout];
+    return CGSizeMake(width, height);
 }
 - (void)toggle { if (self.panel) [self close]; else [self open]; }
 - (void)open {
     self.fadeGeneration++; self.button.alpha = 1;
     if (self.panel) return;
-    if (self.openingHandler) self.openingHandler();
+    if (!self.editingPreview && self.openingHandler) self.openingHandler();
     NSMutableArray *items = [NSMutableArray new];
     for (NSDictionary *item in self.quickActions) if ([item[@"enabled"] boolValue]) [items addObject:item];
     self.quickCount = items.count;
-    [items addObjectsFromArray:self.categoryActions ?: @[
+    if (!self.editingPreview) [items addObjectsFromArray:self.categoryActions ?: @[
         @{@"kind": @"viewMenu", @"title": @"View & Display", @"symbol": @"display.2"},
         @{@"kind": @"inputMenu", @"title": @"Keyboard & Input", @"symbol": @"keyboard"},
         @{@"kind": @"session", @"title": @"Session", @"symbol": @"link"}]];
@@ -164,16 +186,30 @@ NSString *const CompanionVNCControlsHapticsPreference = @"direct-controls-haptic
     UIVisualEffect *effect;
     if (@available(iOS 26.0, *)) { UIGlassEffect *glass = [UIGlassEffect effectWithStyle:UIGlassEffectStyleRegular]; glass.interactive = YES; effect = glass; }
     else effect = [UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemMaterial];
-    self.panel = [[UIVisualEffectView alloc] initWithEffect:effect]; self.panel.layer.cornerRadius = 24; self.panel.clipsToBounds = YES;
+    self.panel = [[UIVisualEffectView alloc] initWithEffect:self.editingPreview ? nil : effect]; self.panel.layer.cornerRadius = 24; self.panel.clipsToBounds = YES;
     self.panel.accessibilityIdentifier = @"session-control-panel";
     self.scroll = [UIScrollView new]; self.scroll.showsVerticalScrollIndicator = YES; [self.panel.contentView addSubview:self.scroll];
     UILabel *name = [UILabel new]; name.text = self.macName; name.font = [UIFont preferredFontForTextStyle:UIFontTextStyleHeadline compatibleWithTraitCollection:self.traitCollection];
     name.numberOfLines = 1; name.tag = 1000; name.textColor = UIColor.labelColor;
-    name.adjustsFontForContentSizeCategory = YES; self.nameLabel = name; [self.panel.contentView addSubview:name];
+    name.hidden = self.editingPreview; name.adjustsFontForContentSizeCategory = YES; self.nameLabel = name; [self.panel.contentView addSubview:name];
+    if (self.customizeHandler && !self.editingPreview) {
+        self.customizeButton = [UIButton buttonWithType:UIButtonTypeSystem];
+        UIButtonConfiguration *customize = [UIButtonConfiguration plainButtonConfiguration];
+        customize.title = @"Customize"; customize.image = [UIImage systemImageNamed:@"pencil"];
+        customize.imagePadding = 4;
+        customize.titleTextAttributesTransformer = ^NSDictionary *(NSDictionary *attributes) {
+            NSMutableDictionary *result = attributes.mutableCopy;
+            result[NSFontAttributeName] = [UIFont preferredFontForTextStyle:UIFontTextStyleFootnote]; return result;
+        };
+        self.customizeButton.configuration = customize;
+        self.customizeButton.accessibilityIdentifier = @"customize-quick-actions";
+        [self.customizeButton addTarget:self action:@selector(customizeActions) forControlEvents:UIControlEventTouchUpInside];
+        [self.panel.contentView addSubview:self.customizeButton];
+    }
     UILabel *heading = [UILabel new]; heading.text = @"Quick Actions"; heading.tag = 1001;
     heading.font = [UIFont preferredFontForTextStyle:UIFontTextStyleFootnote compatibleWithTraitCollection:self.traitCollection]; heading.textColor = UIColor.secondaryLabelColor;
     heading.adjustsFontForContentSizeCategory = YES;
-    heading.hidden = !self.quickCount; [self.scroll addSubview:heading];
+    heading.hidden = self.editingPreview || !self.quickCount; [self.scroll addSubview:heading];
     for (NSUInteger i = 0; i < items.count; i++) {
         NSDictionary *item = items[i]; NSString *kind = item[@"kind"];
         UIButton *choice = [UIButton buttonWithType:UIButtonTypeSystem];
@@ -199,19 +235,52 @@ NSString *const CompanionVNCControlsHapticsPreference = @"direct-controls-haptic
         }
         choice.tag = i; choice.accessibilityIdentifier = [@"session-action-" stringByAppendingString:kind];
         [choice addTarget:self action:@selector(chosen:) forControlEvents:UIControlEventTouchUpInside];
+        if (self.editingPreview) {
+            if (i >= self.quickCount) { choice.enabled = NO; }
+            else {
+                choice.enabled = self.previewSelectionHandler != nil;
+                NSString *identifier = item[@"id"];
+                choice.accessibilityIdentifier = [@"preview-action-" stringByAppendingString:identifier ?: @""];
+                choice.accessibilityHint = @"Select to edit. Drag to reorder. No input is sent to your Mac.";
+                if ([identifier isEqual:self.selectedPreviewID]) {
+                    choice.layer.borderColor = UIColor.systemBlueColor.CGColor; choice.layer.borderWidth = 2;
+                    choice.accessibilityTraits |= UIAccessibilityTraitSelected;
+                }
+                UIDragInteraction *drag = [[UIDragInteraction alloc] initWithDelegate:self]; drag.enabled = YES;
+                [choice addInteraction:drag];
+                [choice addInteraction:[[UIDropInteraction alloc] initWithDelegate:self]];
+                __weak CompanionVNCControls *weak = self;
+                NSMutableArray *moves = [NSMutableArray new];
+                for (NSNumber *direction in @[@(-1), @(1)]) {
+                    NSInteger neighbor = (NSInteger)i + direction.integerValue;
+                    if (neighbor < 0 || neighbor >= (NSInteger)self.quickCount) continue;
+                    NSString *target = items[neighbor][@"id"];
+                    [moves addObject:[[UIAccessibilityCustomAction alloc] initWithName:direction.integerValue < 0 ? @"Move Earlier" : @"Move Later" actionHandler:^BOOL(UIAccessibilityCustomAction *action) {
+                        if (!weak.editingPreview || !weak.previewMoveHandler || !identifier || !target) return NO;
+                        weak.previewMoveHandler(identifier, target); return YES;
+                    }]];
+                }
+                choice.accessibilityCustomActions = moves;
+            }
+        }
         [(i < self.quickCount ? self.scroll : self.panel.contentView) addSubview:choice]; [self.choices addObject:choice];
     }
     [self insertSubview:self.panel belowSubview:self.button]; [self setNeedsLayout]; [self layoutIfNeeded];
-    self.scroll.contentOffset = CGPointMake(0, MAX(0, self.scroll.contentSize.height - self.scroll.bounds.size.height));
+    self.scroll.contentOffset = CGPointZero;
     self.button.accessibilityValue = @"Open";
-    [self feedback:@"open"];
+    if (!self.editingPreview) [self feedback:@"open"];
     self.panel.alpha = 0;
-    if (!self.reduceMotion) self.panel.transform = CGAffineTransformTranslate(CGAffineTransformMakeScale(.98,.98),0,4);
-    [UIView animateWithDuration:self.reduceMotion ? .1 : .18 delay:0 options:UIViewAnimationOptionAllowUserInteraction animations:^{ self.panel.alpha = 1; self.panel.transform = CGAffineTransformIdentity; } completion:nil];
+    if (!self.editingPreview && !self.reduceMotion) self.panel.transform = CGAffineTransformTranslate(CGAffineTransformMakeScale(.98,.98),0,4);
+    [UIView animateWithDuration:self.editingPreview ? 0 : self.reduceMotion ? .1 : .18 delay:0 options:UIViewAnimationOptionAllowUserInteraction animations:^{ self.panel.alpha = 1; self.panel.transform = CGAffineTransformIdentity; } completion:nil];
 }
 - (void)chosen:(UIButton *)button {
     if (!self.panel || !button.enabled || button.tag < 0 || (NSUInteger)button.tag >= self.items.count) return;
-    NSDictionary *item = self.items[button.tag]; [self feedback:@"commit"]; [self close];
+    NSDictionary *item = self.items[button.tag];
+    if (self.editingPreview) {
+        if ((NSUInteger)button.tag < self.quickCount && self.previewSelectionHandler && item[@"id"]) self.previewSelectionHandler(item[@"id"]);
+        return;
+    }
+    [self feedback:@"commit"]; [self close];
     if (self.actionHandler) self.actionHandler(item);
 }
 - (void)slide:(UILongPressGestureRecognizer *)gesture {
@@ -240,8 +309,49 @@ NSString *const CompanionVNCControlsHapticsPreference = @"direct-controls-haptic
     if (closing && self.window) {
         [UIView animateWithDuration:.1 animations:^{ closing.alpha = 0; } completion:^(BOOL finished) { [closing removeFromSuperview]; }];
     } else { [closing removeFromSuperview]; }
-    self.panel = nil; self.scroll = nil; self.nameLabel = nil; self.items = @[]; self.choices = nil; self.highlighted = nil;
+    self.panel = nil; self.scroll = nil; self.nameLabel = nil; self.customizeButton = nil; self.items = @[]; self.choices = nil; self.highlighted = nil;
     self.button.accessibilityValue = @"Closed"; [self dimWhenIdle];
+}
+- (void)customizeActions { if (!self.editingPreview) { [self close]; if (self.customizeHandler) self.customizeHandler(); } }
+- (void)refreshEditingPreview {
+    if (!self.editingPreview) return;
+    // No animations, opening callback, session actions or global preferences.
+    CGPoint offset = self.scroll.contentOffset;
+    BOOL changedSelection = ![self.renderedPreviewID isEqual:self.selectedPreviewID];
+    [self.panel removeFromSuperview]; self.panel = nil; self.customizeButton = nil;
+    self.button.hidden = YES; self.slide.enabled = NO;
+    [self open]; self.panel.alpha = 1; self.panel.transform = CGAffineTransformIdentity;
+    self.scroll.contentOffset = CGPointMake(0, MIN(MAX(0, offset.y), MAX(0, self.scroll.contentSize.height - self.scroll.bounds.size.height)));
+    if (changedSelection && self.selectedPreviewID) {
+        for (UIButton *choice in self.choices) {
+            if (choice.tag < self.quickCount && [self.items[choice.tag][@"id"] isEqual:self.selectedPreviewID]) {
+                [self.scroll scrollRectToVisible:choice.frame animated:NO]; break;
+            }
+        }
+    }
+    self.renderedPreviewID = self.selectedPreviewID;
+}
+- (NSArray<UIDragItem *> *)dragInteraction:(UIDragInteraction *)interaction itemsForBeginningSession:(id<UIDragSession>)session {
+    if (!self.editingPreview || !self.previewMoveHandler || ![interaction.view isKindOfClass:UIButton.class]) return @[];
+    UIButton *choice = (id)interaction.view;
+    if (choice.tag < 0 || choice.tag >= self.quickCount) return @[];
+    NSString *identifier = self.items[choice.tag][@"id"]; if (!identifier) return @[];
+    session.localContext = self;
+    UIDragItem *item = [[UIDragItem alloc] initWithItemProvider:[[NSItemProvider alloc] initWithObject:identifier]];
+    item.localObject = identifier; return @[item];
+}
+- (BOOL)dropInteraction:(UIDropInteraction *)interaction canHandleSession:(id<UIDropSession>)session {
+    return self.editingPreview && self.previewMoveHandler && session.localDragSession.localContext == self;
+}
+- (UIDropProposal *)dropInteraction:(UIDropInteraction *)interaction sessionDidUpdate:(id<UIDropSession>)session {
+    return [[UIDropProposal alloc] initWithDropOperation:[self dropInteraction:interaction canHandleSession:session] ? UIDropOperationMove : UIDropOperationCancel];
+}
+- (void)dropInteraction:(UIDropInteraction *)interaction performDrop:(id<UIDropSession>)session {
+    if (![self dropInteraction:interaction canHandleSession:session]) return;
+    UIButton *choice = (id)interaction.view;
+    if (choice.tag < 0 || choice.tag >= self.quickCount) return;
+    NSString *source = session.items.firstObject.localObject, *target = self.items[choice.tag][@"id"];
+    if (source && target && ![source isEqual:target]) self.previewMoveHandler(source, target);
 }
 - (void)cancelSlideForLayoutChange {
     if (self.slide.state == UIGestureRecognizerStateBegan || self.slide.state == UIGestureRecognizerStateChanged) {

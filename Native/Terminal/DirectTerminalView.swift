@@ -415,6 +415,7 @@ private struct TerminalSurface: UIViewControllerRepresentable {
             ["kind": "appearance", "title": "Appearance", "symbol": "circle.lefthalf.filled"],
             ["kind": "session", "title": "Session", "symbol": "link"]]
         controls.actionHandler = { [weak self] item in self?.performQuickAction(item) }
+        controls.customizeHandler = { [weak self] in self?.action("quickActions") }
         controls.openingHandler = { [weak self] in self?.updateControls() }
         CompanionVNCObserveDivision(view)
         session.received = { [weak self] bytes in self?.terminal.feed(byteArray: bytes[...]) }

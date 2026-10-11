@@ -172,6 +172,7 @@
         @{@"kind": @"fit", @"title": @"Fit to Window", @"enabled": @YES},
         @{@"kind": @"rightClick", @"title": @"Right Click", @"enabled": @YES}];
     self.controls.actionHandler = ^(NSDictionary *action) { [weak performControlAction:action]; };
+    self.controls.customizeHandler = ^{ if (weak.settingsHandler) weak.settingsHandler(); };
     self.controls.openingHandler = ^{
         [weak releasePointer]; [weak cancelTrackpadTouches];
         if (weak.quickActionsProvider) weak.quickActions = weak.quickActionsProvider(weak.inputOnly);

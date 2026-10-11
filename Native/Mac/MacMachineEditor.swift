@@ -27,8 +27,10 @@ struct MacMachineEditor: View {
         _preferred = State(initialValue: MacConnectionPreference(mac?.preferredConnection ?? .desktop))
     }
     private var hosts: [String] { addresses.map { $0.value.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty } }
+    private var resolvedDesktopPort: Int? { desktopPort.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? 5900 : Int(desktopPort) }
+    private var resolvedTerminalPort: Int? { terminalPort.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? 22 : Int(terminalPort) }
     private var valid: Bool {
-        guard let vnc = Int(desktopPort), let ssh = Int(terminalPort) else { return false }
+        guard let vnc = resolvedDesktopPort, let ssh = resolvedTerminalPort else { return false }
         return (try? DirectMacRecordV1.normalized(name: name, addresses: hosts, port: vnc, sshPort: ssh)) != nil
     }
     var body: some View {
@@ -69,13 +71,23 @@ struct MacMachineEditor: View {
                     Picker("Default connection", selection: $preferred.mode) { ForEach(MacConnectionMode.allCases) { Text($0.title).tag($0) } }
                         .accessibilityIdentifier("mac-machine-default-connection")
                 }
+                if let mac {
+                    Section {
+                        DisclosureGroup("Mac Details") {
+                            let current = library.macs.first { $0.id == mac.id } ?? mac
+                            DirectMacDetailsContent(name: current.detectedName, model: current.modelIdentifier,
+                                scanning: library.discovery.scanning, unavailable: library.discovery.unavailable) { library.discovery.start() }
+                        }
+                    }
+                }
                 Section {
                     DisclosureGroup("Service Ports") {
-                        TextField("Screen Sharing", text: $desktopPort).accessibilityIdentifier("mac-machine-vnc-port")
-                        TextField("Remote Login (SSH)", text: $terminalPort).accessibilityIdentifier("mac-machine-ssh-port")
-                        if Int(desktopPort).map({ (1...65535).contains($0) }) != true || Int(terminalPort).map({ (1...65535).contains($0) }) != true {
+                        DirectServicePortField(title: "Screen Sharing", defaultPort: "5900", value: $desktopPort, identifier: "mac-machine-vnc-port")
+                        DirectServicePortField(title: "Remote Login (SSH)", defaultPort: "22", value: $terminalPort, identifier: "mac-machine-ssh-port")
+                        if resolvedDesktopPort.map({ (1...65535).contains($0) }) != true || resolvedTerminalPort.map({ (1...65535).contains($0) }) != true {
                             Text("Use ports from 1 to 65535.").font(.caption).foregroundStyle(.secondary)
                         }
+                        Text("Default ports: Screen Sharing 5900 · SSH 22.").font(.caption).foregroundStyle(.secondary)
                     }
                 }
                 if mac != nil {
@@ -107,8 +119,8 @@ struct MacMachineEditor: View {
                                 sheet = .pro
                                 return
                             }
-                            if library.save(id: mac?.id, name: name, addresses: hosts, port: Int(desktopPort) ?? 5900,
-                                sshPort: Int(terminalPort), usesAutomaticName: automatic, preferredConnection: preferred.shared) { dismiss() }
+                            if library.save(id: mac?.id, name: name, addresses: hosts, port: resolvedDesktopPort ?? 5900,
+                                sshPort: resolvedTerminalPort, usesAutomaticName: automatic, preferredConnection: preferred.shared) { dismiss() }
                         }.disabled(!valid).accessibilityIdentifier("mac-save-machine")
                     }
                 }
@@ -119,12 +131,12 @@ struct MacMachineEditor: View {
                         case .install: if let mac { TerminalKeyInstallView(mac: mac).frame(minWidth: 520, minHeight: 500) }
                         case .pro: DirectProView().frame(minWidth: 480, minHeight: 460)
                         }
-                    }.modifier(MacSheetPrivacyCover())
+                    }.directAppearance().modifier(MacSheetPrivacyCover())
                 }
                 .confirmationDialog("Forget this saved login or trust record on this Mac?", isPresented: Binding(get: { forgetting != nil }, set: { if !$0 { forgetting = nil } }), titleVisibility: .visible) {
                     Button("Forget", role: .destructive) { forget() }
                 }
-        }.frame(width: 620, height: 580)
+        }.frame(width: 620, height: 580).directAppearance()
             .onChange(of: addresses.map(\.value)) { _, _ in addressEdited = true }
             .onChange(of: DirectAppLockV1.shared.canAccess) { _, allowed in
                 if !allowed { sheet = nil; forgetting = nil }

@@ -155,50 +155,147 @@ extension View {
     }
 }
 
-/// Shared presentation; the opt-in disclosure and confirmed removal remain unchanged.
-struct DirectCloudSettingsSection: View {
-    @State private var cloud = DirectCloudSyncV1.shared
+/// Metadata sync and local credentials have separate, explicit explanations.
+struct DirectSyncSecurityForm: View {
+    @State private var cloud: DirectCloudSyncV1
     @State private var lock = DirectAppLockV1.shared
     @State private var enableCloud = false
-    @State private var removeCloud = false
+    @State private var sheet: DirectCloudSheet?
+    init(cloud: DirectCloudSyncV1 = .shared) { _cloud = State(initialValue: cloud) }
     var body: some View {
-        Section {
-            Toggle("iCloud Sync", isOn: Binding(get: { cloud.enabled }, set: {
-                if $0 { enableCloud = true } else if lock.canAccess { cloud.setEnabled(false) }
-            })).disabled(cloud.busy).accessibilityIdentifier("icloud-library-toggle")
-            if let notice = cloud.recovery {
-                DirectRecoveryCard(notice: notice, primary: .init(title: notice.reason == .cloudRemoval ? "Retry Removal" : "Retry") {
-                    guard lock.canAccess else { return }
-                    if notice.reason == .cloudRemoval { cloud.removeCloudCopies() } else { cloud.retry() }
-                })
-            } else { Text(cloud.status).font(.footnote).foregroundStyle(.secondary) }
-            DisclosureGroup("What syncs") {
-                DirectGuidanceRow(title: "Saved Macs & preferences", detail: "Names, detected models, addresses, ports, connection defaults and display/input preferences.", symbol: "icloud")
-                DirectGuidanceRow(title: "Stays on this device", detail: "Passwords, private keys, key-file references, server trust, saved text, custom actions, appearance and app-lock settings.", symbol: "lock.shield")
-                Text("Protected by iCloud Keychain, your Apple Account and trusted devices.").font(.footnote).foregroundStyle(.secondary)
-            }
-            DisclosureGroup("Manage Sync") {
-                if cloud.enabled {
-                    Button("Refresh iCloud", systemImage: "arrow.triangle.2.circlepath") { if lock.canAccess { cloud.refresh() } }.disabled(cloud.busy)
-                }
-                if cloud.busy { ProgressView("Updating Keychain…") }
-                Button("Remove iCloud Copies", systemImage: "icloud.slash", role: .destructive) { removeCloud = true }.disabled(cloud.busy)
-                Text("Turning sync off keeps existing cloud copies. Removal is a separate action.").font(.footnote).foregroundStyle(.secondary)
-                Link("iCloud security", destination: URL(string: "https://support.apple.com/en-us/102651")!)
-            }
-        } header: { Text("iCloud") } footer: {
-            Text("Credentials stay on this device.")
+        Form {
+            DirectCloudSettingsSection(cloud: cloud, enable: { enableCloud = true }, present: { sheet = $0 })
+            DirectAppUnlockSection()
+        }.directGroupedForm()
+        .sheet(item: $sheet) { item in
+            DirectCloudInformationSheet(kind: item, cloud: cloud).directAppearance()
+                #if os(macOS)
+                .modifier(MacSheetPrivacyCover())
+                #endif
         }
         .alert("Enable iCloud Sync?", isPresented: $enableCloud) {
             Button("Enable Sync") { if lock.canAccess { cloud.setEnabled(true) } }
             Button("Cancel", role: .cancel) {}
         } message: { Text(DirectCloudSyncV1.disclosure) }
-        .confirmationDialog("Remove saved Mac copies from iCloud?", isPresented: $removeCloud, titleVisibility: .visible) {
-            Button("Turn Off Sync & Remove Cloud Copies", role: .destructive) { if lock.canAccess { cloud.removeCloudCopies() } }
-        } message: {
-            Text("Local Macs and logins stay on this device. Turn off sync on your other devices first; otherwise they may upload the saved Macs again. Apple manages when removal reaches other devices.")
+        .onChange(of: lock.canAccess) { _, allowed in if !allowed { enableCloud = false; sheet = nil } }
+    }
+}
+
+private struct DirectCloudSettingsSection: View {
+    let cloud: DirectCloudSyncV1
+    let enable: () -> Void
+    let present: (DirectCloudSheet) -> Void
+    @State private var lock = DirectAppLockV1.shared
+    var body: some View {
+        Section {
+            Toggle("iCloud Sync", isOn: Binding(get: { cloud.enabled }, set: {
+                if $0 { enable() } else if lock.canAccess { cloud.setEnabled(false) }
+            })).disabled(cloud.busy).accessibilityIdentifier("icloud-library-toggle")
+            if let notice = cloud.recovery {
+                DirectRecoveryCard(notice: notice, primary: .init(title: notice.reason == .cloudRemoval ? "Retry Removal" : "Retry") {
+                    guard lock.canAccess else { return }
+                    if notice.reason == .cloudRemoval { present(.deleteData) } else { cloud.retry() }
+                })
+            } else {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Sync saved Macs across your devices.")
+                    Text(cloud.status)
+                }.font(.footnote).foregroundStyle(.secondary)
+            }
+            DisclosureGroup("What Syncs") {
+                VStack(alignment: .leading, spacing: 12) {
+                    DirectInformationGroup(title: "Across devices", symbol: "icloud", items: [
+                        "Saved Macs, names and models", "Addresses and service ports", "Default connection mode",
+                        "Display selection and fullscreen", "Pointer speed, input mode and cursor following"])
+                    Divider()
+                    DirectInformationGroup(title: "On this device", symbol: "lock.shield", items: [
+                        "Passwords and SSH keys", "Trusted Mac identities", "Shortcuts and saved text", "Appearance and app-lock settings"])
+                }
+            }
+            DisclosureGroup("Manage Sync") {
+                if cloud.enabled {
+                    Button("Refresh iCloud", systemImage: "arrow.triangle.2.circlepath") { if lock.canAccess { cloud.refresh() } }.disabled(cloud.busy)
+                }
+                if cloud.busy { ProgressView("Updating iCloud data…") }
+                Button("Delete Mac Data from iCloud…", systemImage: "icloud.slash", role: .destructive) { present(.deleteData) }
+                    .disabled(cloud.busy).accessibilityIdentifier("icloud-delete-data")
+                Text("Turning sync off doesn’t delete iCloud data.").font(.footnote).foregroundStyle(.secondary)
+            }
+            Button { present(.credentials) } label: {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Label("Passwords and private keys stay on this device", systemImage: "lock.shield")
+                        .font(.subheadline.weight(.semibold)).foregroundStyle(.primary)
+                    Spacer(minLength: 4)
+                    Image(systemName: "info.circle").foregroundStyle(.tint)
+                }.contentShape(Rectangle())
+            }.buttonStyle(.plain).accessibilityIdentifier("icloud-credentials-info")
+                .accessibilityHint("Explains which information stays local and why")
+        } header: { Text("iCloud") }
+    }
+}
+
+enum DirectCloudSheet: String, Identifiable {
+    case credentials, deleteData
+    var id: String { rawValue }
+}
+
+struct DirectCloudInformationSheet: View {
+    let kind: DirectCloudSheet
+    let cloud: DirectCloudSyncV1
+    @Environment(\.dismiss) private var dismiss
+    @State private var confirmDeletion = false
+    @State private var lock = DirectAppLockV1.shared
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    if kind == .credentials {
+                        DirectInformationGroup(title: "Your logins stay local", symbol: "lock.shield", items: [
+                            "Passwords and private keys aren’t included in app sync.",
+                            "Set up a login or SSH key on each device before connecting."])
+                        DirectInformationGroup(title: "Why", symbol: "info.circle", items: [
+                            "You choose which devices can use your Mac logins and private keys.",
+                            "Local credentials are stored in this device’s Keychain. Referenced key files stay in their original location."])
+                        DirectInformationGroup(title: "How Mac entries sync", symbol: "icloud", items: [
+                            "Uses iCloud Keychain with your Apple Account and trusted devices.",
+                            "Enable iCloud Keychain on every device you want to sync."])
+                        Link("About iCloud Keychain security", destination: URL(string: "https://support.apple.com/en-us/102651")!)
+                    } else {
+                        DirectInformationGroup(title: "Delete from iCloud", symbol: "icloud.slash", items: [
+                            "Saved Mac entries and their synced desktop preferences."])
+                        DirectInformationGroup(title: "Keep on this device", symbol: "internaldrive", items: [
+                            "Your saved Macs, passwords, SSH keys and local preferences."])
+                        DirectInformationGroup(title: "Before you continue", symbol: "exclamationmark.triangle", items: [
+                            "Turn off Mac Companion sync on your other devices first. Otherwise they may upload their saved Macs again.",
+                            "This turns sync off on this device. Removal may take a moment to reach other devices.",
+                            "Turning sync back on can upload your local Macs again."])
+                    }
+                }.padding(24).frame(maxWidth: 560, alignment: .leading).frame(maxWidth: .infinity)
+            }.navigationTitle(kind == .credentials ? "Credentials & iCloud" : "Delete iCloud Data")
+                .directInlineNavigationTitle()
+                .toolbar { ToolbarItem(placement: .cancellationAction) { Button(kind == .credentials ? "Done" : "Cancel") { dismiss() } } }
+                .safeAreaInset(edge: .bottom) {
+                    if kind == .deleteData {
+                        VStack(spacing: 8) {
+                            Button("Continue to Confirmation", role: .destructive) { confirmDeletion = true }
+                                .buttonStyle(.borderedProminent).disabled(cloud.busy || !lock.canAccess)
+                                .accessibilityIdentifier("icloud-review-continue")
+                        }.padding(16).frame(maxWidth: .infinity).background(.bar)
+                    }
+                }
         }
-        .onChange(of: lock.canAccess) { _, allowed in if !allowed { enableCloud = false; removeCloud = false } }
+        #if os(macOS)
+        .frame(width: 540, height: 580)
+        #endif
+        .background(.background)
+        .alert("Delete Mac Data from iCloud?", isPresented: $confirmDeletion) {
+            Button("Delete iCloud Data", role: .destructive) {
+                guard lock.canAccess, !cloud.busy else { return }
+                cloud.removeCloudCopies(); dismiss()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: { Text("This deletes the app’s synced Mac data and turns sync off here. Your local Macs and logins are kept. Other devices with sync enabled can upload data again.") }
+        .onChange(of: lock.canAccess) { _, allowed in if !allowed { confirmDeletion = false; dismiss() } }
     }
 }
 
