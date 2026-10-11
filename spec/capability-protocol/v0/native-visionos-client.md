@@ -120,8 +120,8 @@ High Performance/virtual-monitor claim is permitted. Curvature requires a new
 public API audit and input/rendering acceptance before admission.
 
 Quick Actions Settings presents only actions supported by the selected visionOS
-connection. Desktop Mouse Mode is absent from the draft preview, add catalogue
-and restored defaults. Loading or editing a supported action preserves stored
+connection. Desktop Mouse Mode and Copy Text from Screen are absent from the
+draft preview, add catalogue and restored defaults. Loading or editing a supported action preserves stored
 unsupported entries and their identities; presentation is not a profile migration.
 Restore Defaults replaces only supported entries, subject to the existing total
 profile limits. Draft editing sends no remote input and retains Pro and unlock gates.
@@ -150,8 +150,12 @@ before persisting opt-in. Cancellation and scene interruption leave sync off.
 Sensitive SSH import/export drafts, picker requests and pending operations are
 cleared or invalidated when their owning scene backgrounds or app unlock locks.
 Temporary inactive authentication prompts do not cancel an admitted export.
-Completion and picker callbacks require the same current operation generation
-and an active owning scene. Unsaved quick-action text is also discarded on
+Completion and picker callbacks require the same current operation generation,
+an immutable identity for the initiating presentation, and an active, unlocked
+owning scene. Retired success, cancellation and error callbacks cannot read a
+file, consume a newer request, or clear newer export state. Each admitted
+presentation completes at most once; a denied callback cannot replay after
+reactivation. Unsaved quick-action text is also discarded on
 background or lock.
 
 Unreadable saved-Mac storage offers explicit Retry and disables creation/editing

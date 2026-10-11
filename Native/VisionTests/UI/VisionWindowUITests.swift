@@ -241,9 +241,33 @@ import XCTest
         XCTAssertTrue(app.staticTexts["Right Click"].exists, app.debugDescription)
         XCTAssertFalse(app.staticTexts["Mouse Mode"].exists, app.debugDescription)
         XCTAssertFalse(app.buttons["Mouse Mode"].exists, app.debugDescription)
+        XCTAssertFalse(app.staticTexts["Copy Text from Screen"].exists, app.debugDescription)
+        XCTAssertFalse(app.buttons["Copy Text from Screen"].exists, app.debugDescription)
+        XCTAssertFalse(app.buttons["Copy Text"].exists, app.debugDescription)
         XCTAssertTrue(app.buttons["quick-action-add"].exists, app.debugDescription)
         let settingsCapture = XCTAttachment(screenshot: app.screenshot()); settingsCapture.name = "Supported native Desktop quick actions"; settingsCapture.lifetime = .keepAlways; add(settingsCapture)
 
+    }
+    func testNativeSSHImportPickerCanCancelAndReopen() {
+        let app = launch(); app.buttons["Settings"].tap()
+        XCTAssertTrue(app.staticTexts["Privacy"].waitForExistence(timeout: 15))
+        let keys = app.buttons["SSH Keys"]
+        let settingsWindow = app.windows.containing(.staticText, identifier: "Privacy").firstMatch
+        reveal(keys, in: settingsWindow); keys.tap()
+        let importCopy = app.buttons["ssh-key-import-copy"]
+        XCTAssertTrue(importCopy.waitForExistence(timeout: 15)); importCopy.tap()
+        let name = app.textFields["Name"]
+        XCTAssertTrue(name.waitForExistence(timeout: 10)); name.tap(); name.typeText("Synthetic picker")
+        let files = app.buttons["Import from Files"]
+        for _ in 0..<2 {
+            XCTAssertTrue(files.waitForExistence(timeout: 10)); files.tap()
+            let picker = app.otherElements["Browse View (Picker)"]
+            XCTAssertTrue(picker.waitForExistence(timeout: 15), app.debugDescription)
+            let tree = XCTAttachment(string: app.debugDescription); tree.name = "Native SSH file importer presentation"; tree.lifetime = .keepAlways; add(tree)
+            let cancel = app.navigationBars["DOCSidebarView"].buttons["Cancel"]
+            XCTAssertTrue(cancel.exists, app.debugDescription); cancel.tap()
+            XCTAssertTrue(files.waitForExistence(timeout: 10)); XCTAssertTrue(files.isHittable, app.debugDescription)
+        }
     }
     func testMetadataSyncRequiresDisclosureAndAffirmativeConsent() {
         let app = launch(); app.buttons["Settings"].tap()

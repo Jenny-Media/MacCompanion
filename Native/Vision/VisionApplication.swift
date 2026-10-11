@@ -259,7 +259,7 @@ struct VisionQuickActionsSettings: View {
 /// Presentation only: hidden legacy entries retain their storage identities and limits.
 enum VisionQuickActionPresentation {
     static func supported(_ action: VNCQuickAction, mode: DirectControlMode) -> Bool {
-        action.kind != .mode && action.compatible(with: mode)
+        action.kind != .mode && action.kind != .copyText && action.compatible(with: mode)
     }
     static func presented(_ actions: [VNCQuickAction], mode: DirectControlMode) -> [VNCQuickAction] {
         actions.filter { supported($0, mode: mode) }

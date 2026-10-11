@@ -637,7 +637,8 @@ import SwiftUI
         for row in cases {
             let mode = try XCTUnwrap(DirectControlMode(rawValue: row["mode"] as! String))
             let stored = (row["storedKinds"] as! [String]).map { kind in
-                VNCQuickAction(title: "Stored " + kind, kind: VNCQuickAction.Kind(rawValue: kind)!, key: kind == "shortcut" ? 0x63 : 0)
+                VNCQuickAction(title: "Stored " + kind, kind: VNCQuickAction.Kind(rawValue: kind)!,
+                    enabled: !(row["disabledKinds"] as? [String] ?? []).contains(kind), key: kind == "shortcut" ? 0x63 : 0)
             }
             let id = UUID(); defer { VNCSessionPreferences.clear(id) }
             try VNCSessionPreferences.saveActions(stored, mac: id)
@@ -654,12 +655,14 @@ import SwiftUI
             if let first = presented.first, let index = loaded.firstIndex(where: { $0.id == first.id }) {
                 var edited = loaded; edited[index].enabled = false
                 try VNCSessionPreferences.saveActions(edited, mac: id)
-                XCTAssertEqual(try VNCSessionPreferences.readActions(id).filter { $0.kind == .mode }, stored.filter { $0.kind == .mode })
+                XCTAssertEqual(try VNCSessionPreferences.readActions(id).filter { !VisionQuickActionPresentation.supported($0, mode: mode) },
+                    stored.filter { !VisionQuickActionPresentation.supported($0, mode: mode) })
                 XCTAssertFalse(VisionQuickActionPresentation.presented(edited, mode: mode).filter(\.enabled).contains { $0.id == first.id })
             }
         }
         XCTAssertFalse(VisionQuickActionPresentation.presented(DirectControlMode.desktop.defaults, mode: .desktop).contains { $0.kind == .mode })
         XCTAssertEqual(DirectQuickActionEditing.standards(.desktop).filter { $0.kind == .mode }.count, 1, "Shared platform catalogue remains unchanged")
+        XCTAssertTrue(VNCQuickAction(title: "Copy Text", kind: .copyText).compatible(with: .desktop), "Shared profile compatibility remains unchanged")
     }
     func testRegistryReusesDiscoveryAndRetainsIndependentOwners() throws {
         let mac = try DirectMacRecordV1.normalized(name: "Synthetic registry Mac", address: "127.0.0.1")

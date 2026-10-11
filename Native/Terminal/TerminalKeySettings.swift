@@ -146,7 +146,7 @@ struct TerminalKeyComposer: View {
     @State private var generation = UUID()
     #if os(visionOS)
     @Environment(\.scenePhase) private var scenePhase
-    @State private var fileRequestGeneration: UUID?
+    @State private var fileRequests = VisionFileRequests()
     #endif
     private var sensitiveAvailable: Bool {
         #if os(visionOS)
@@ -175,9 +175,10 @@ struct TerminalKeyComposer: View {
                         Button("Import from Files") {
                             #if os(visionOS)
                             guard sensitiveAvailable else { return }
-                            fileRequestGeneration = generation
-                            #endif
+                            fileRequests.begin(generation: generation)
+                            #else
                             picking = true
+                            #endif
                         }.disabled(!valid || busy)
                         #endif
                         PasteButton(payloadType: String.self) { values in if let text = values.first { decode(text) } }.disabled(!valid || busy)
@@ -197,6 +198,14 @@ struct TerminalKeyComposer: View {
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } } }
             #if os(macOS)
             .background(MacWindowReader(handle: importWindow).frame(width: 0, height: 0))
+            #elseif os(visionOS)
+            .background {
+                if let request = fileRequests.current {
+                    VisionKeyFileImporter(completion: fileRequests.completion(for: request,
+                        generation: { generation }, available: { DirectAppLockV1.shared.canAccess }, receive: readFile))
+                        .id(request.id)
+                }
+            }
             #else
             .fileImporter(isPresented: $picking, allowedContentTypes: [.data, .plainText], onCompletion: readFile)
             #endif
@@ -204,15 +213,13 @@ struct TerminalKeyComposer: View {
             .onReceive(NotificationCenter.default.publisher(for: DirectClientPlatformV1.willResignActive)) { _ in generation = UUID(); passphrase = ""; busy = false }
             .onReceive(NotificationCenter.default.publisher(for: DirectClientPlatformV1.didEnterBackground)) { _ in generation = UUID(); passphrase = ""; busy = false; cancelPicker() }
             #if os(visionOS)
+            .onAppear { fileRequests.scenePhase = scenePhase }
+            .onChange(of: scenePhase) { _, phase in fileRequests.scenePhase = phase }
             .visionSensitiveState { generation = UUID(); passphrase = ""; busy = false; cancelPicker() }
             #endif
         }
     }
     private func readFile(_ result: Result<URL, Error>) {
-        #if os(visionOS)
-        guard fileRequestGeneration == generation else { return }
-        fileRequestGeneration = nil
-        #endif
         guard sensitiveAvailable else { return }
         do { decode(try TerminalSSHKey.readOpenSSHFile(result.get())) }
         catch { if !DirectCancellation.isCancellation(error) { issue = importNotice(error) } }
@@ -220,7 +227,7 @@ struct TerminalKeyComposer: View {
     private func cancelPicker() {
         picking = false
         #if os(visionOS)
-        fileRequestGeneration = nil
+        fileRequests.invalidate()
         #endif
         #if os(macOS)
         filePicker.cancel()
@@ -277,6 +284,7 @@ struct TerminalKeyDetail: View {
     @State private var authentication: LAContext?
     #if os(visionOS)
     @Environment(\.scenePhase) private var scenePhase
+    @State private var fileRequests = VisionFileRequests()
     #endif
     private var sensitiveAvailable: Bool {
         #if os(visionOS)
@@ -301,7 +309,12 @@ struct TerminalKeyDetail: View {
             }
             Section("Public Key") {
                 Button("Copy Public Key") { DirectClientPlatformV1.copy(publicLine) }
-                Button("Export Public Key") { exportFilename = filename + ".pub"; exportData = Data((publicLine + "\n").utf8); exporting = true }
+                Button("Export Public Key") {
+                    #if os(visionOS)
+                    guard !busy, sensitiveAvailable else { return }
+                    #endif
+                    presentExport(Data((publicLine + "\n").utf8), filename: filename + ".pub")
+                }
             }
             Section {
                 Toggle("Export Encrypted Private Key", isOn: $privateExport)
@@ -326,10 +339,20 @@ struct TerminalKeyDetail: View {
             } footer: { Text("This clears local selections. It does not remove the public key or revoke access on your Macs.") }
         }
         .navigationTitle("SSH Key").directInlineNavigationTitle()
-        .fileExporter(isPresented: $exporting, document: exportData.map(SSHKeyDocument.init(data:)), contentType: .data, defaultFilename: exportFilename) { result in
-            if case .failure(let error) = result { issue = .make(DirectCancellation.isCancellation(error) ? .exportCancelled : .exportFailed) }
-            exportData = nil; passphrase = ""; confirmPassphrase = ""
+        #if os(visionOS)
+        .background {
+            if let request = fileRequests.current, let exportData {
+                VisionKeyFileExporter(document: SSHKeyDocument(data: exportData), filename: exportFilename,
+                    completion: fileRequests.completion(for: request, generation: { generation },
+                        available: { DirectAppLockV1.shared.canAccess }, receive: exportCompleted))
+                    .id(request.id)
+            }
         }
+        #else
+        .fileExporter(isPresented: $exporting, document: exportData.map(SSHKeyDocument.init(data:)), contentType: .data, defaultFilename: exportFilename) { result in
+            exportCompleted(result)
+        }
+        #endif
         .confirmationDialog("Delete this key and its local selections?", isPresented: $deleting, titleVisibility: .visible) {
             Button("Delete Key", role: .destructive) { library.perform { try TerminalKeyLibraryStore.delete(entry.id) }; changed(); if library.error == nil { dismiss() } }
         }
@@ -340,12 +363,31 @@ struct TerminalKeyDetail: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: DirectClientPlatformV1.didEnterBackground)) { _ in clearExport() }
         #if os(visionOS)
+        .onAppear { fileRequests.scenePhase = scenePhase }
+        .onChange(of: scenePhase) { _, phase in fileRequests.scenePhase = phase }
         .visionSensitiveState { clearExport() }
         #endif
     }
     private var publicLine: String { entry.key.publicKey + " mac-companion-" + entry.id.uuidString.lowercased() }
     private var filename: String { "ssh-" + entry.id.uuidString.lowercased() }
-    private func clearExport() { generation = UUID(); authentication?.invalidate(); authentication = nil; exportData = nil; exporting = false; passphrase = ""; confirmPassphrase = ""; busy = false }
+    private func presentExport(_ data: Data, filename: String) {
+        exportFilename = filename; exportData = data
+        #if os(visionOS)
+        fileRequests.begin(generation: generation)
+        #else
+        exporting = true
+        #endif
+    }
+    private func exportCompleted(_ result: Result<URL, Error>) {
+        if case .failure(let error) = result { issue = .make(DirectCancellation.isCancellation(error) ? .exportCancelled : .exportFailed) }
+        exportData = nil; passphrase = ""; confirmPassphrase = ""
+    }
+    private func clearExport() {
+        generation = UUID(); authentication?.invalidate(); authentication = nil; exportData = nil; exporting = false; passphrase = ""; confirmPassphrase = ""; busy = false
+        #if os(visionOS)
+        fileRequests.invalidate()
+        #endif
+    }
     private func exportPrivate() {
         guard !busy, sensitiveAvailable else { return }
         let token = generation, secret = passphrase, context = LAContext()
@@ -360,7 +402,7 @@ struct TerminalKeyDetail: View {
                     return Data(try key.makeEncryptedSSHRepresentation(passphrase: secret, comment: current.name).utf8)
                 }.value
                 guard token == generation, sensitiveAvailable else { return }
-                exportFilename = filename; exportData = data; exporting = true
+                presentExport(data, filename: filename)
             } catch { if token == generation { self.issue = .make(DirectCancellation.isCancellation(error) ? .exportCancelled : .exportFailed) } }
             if token == generation { busy = false; authentication = nil }
         }

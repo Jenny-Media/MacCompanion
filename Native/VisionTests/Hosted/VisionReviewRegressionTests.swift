@@ -133,6 +133,71 @@ import SwiftTerm
             XCTAssertEqual(VisionSensitiveLifecycle.interrupts(phase: phase, locked: try XCTUnwrap(row["locked"] as? Bool)), row["interrupt"] as? Bool)
         }
     }
+    func testImportCompletionRetainsPresentationOwnershipAcrossSceneChanges() throws {
+        try checkFileRequestCompletions(importing: true)
+    }
+    func testExportCompletionCannotClearANewerPresentation() throws {
+        try checkFileRequestCompletions(importing: false)
+    }
+    private func checkFileRequestCompletions(importing: Bool) throws {
+        let fixtureURL = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "native-visionos-client-v1", withExtension: "json"))
+        let fixture = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: fixtureURL)) as? [String: Any])
+        let file = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        let contents = "synthetic-file-request-only"
+        try Data(contents.utf8).write(to: file)
+        defer { try? FileManager.default.removeItem(at: file) }
+        for row in try XCTUnwrap(fixture["fileRequestCompletion"] as? [[String: Any]]) {
+            let name = try XCTUnwrap(row["name"] as? String)
+            let requests = VisionFileRequests(); requests.scenePhase = .active
+            var generation = UUID(), unlocked = true, receipts = 0, reads = 0, errors = 0
+            var exportDraft: Data? = Data(contents.utf8)
+            let receive: (Result<URL, Error>) -> Void = { result in
+                receipts += 1
+                if importing, case .success(let url) = result {
+                    reads += 1
+                    XCTAssertEqual(try? TerminalSSHKey.readOpenSSHFile(url), contents)
+                }
+                if case .failure = result { errors += 1 }
+                if !importing { exportDraft = nil }
+            }
+            let first = requests.begin(generation: generation)
+            // These are the production callback factory's actual retained closures.
+            let firstCompletion = requests.completion(for: first, generation: { generation }, available: { unlocked }, receive: receive)
+            var current = first
+            switch name {
+            case "superseded-success", "superseded-cancellation", "superseded-error":
+                requests.invalidate(); generation = UUID()
+                current = requests.begin(generation: generation)
+            case "inactive": requests.scenePhase = .inactive
+            case "background": requests.scenePhase = .background; requests.invalidate(); generation = UUID()
+            case "locked": unlocked = false
+            case "generation-change": generation = UUID()
+            case "duplicate": break
+            default: XCTFail("Unknown indexed completion case: " + name)
+            }
+            let oldResult: Result<URL, Error> = name == "superseded-cancellation" ? .failure(CancellationError())
+                : name == "superseded-error" ? .failure(POSIXError(.EIO)) : .success(file)
+            firstCompletion(oldResult)
+            let expected = try XCTUnwrap(row["firstReceipts"] as? Int)
+            XCTAssertEqual(receipts, expected, name)
+            XCTAssertEqual(reads, importing ? expected : 0, name)
+            XCTAssertEqual(errors, 0, "An old failure cannot replace a newer issue: " + name)
+            if !importing { XCTAssertEqual(exportDraft, expected == 0 ? Data(contents.utf8) : nil, name) }
+            if name.hasPrefix("superseded") { XCTAssertEqual(requests.current, current, "A cannot consume B: " + name) }
+            requests.scenePhase = .active; unlocked = true
+            firstCompletion(.success(file)); firstCompletion(.failure(POSIXError(.EIO)))
+            XCTAssertEqual(receipts, expected, "Retired or denied callbacks cannot replay: " + name)
+            XCTAssertEqual(errors, 0, name)
+            exportDraft = Data(contents.utf8)
+            let fresh = name.hasPrefix("superseded") ? current : requests.begin(generation: generation)
+            let freshCompletion = requests.completion(for: fresh, generation: { generation }, available: { unlocked }, receive: receive)
+            freshCompletion(.success(file)); freshCompletion(.failure(CancellationError()))
+            XCTAssertEqual(receipts, expected + 1, "Fresh B completes exactly once: " + name)
+            XCTAssertEqual(reads, importing ? expected + 1 : 0, name)
+            XCTAssertEqual(errors, 0, name); XCTAssertNil(requests.current, name)
+            if !importing { XCTAssertNil(exportDraft, name) }
+        }
+    }
     func testNativeImportPassphraseClearsOnlyOnOwningSceneBackground() async throws {
         let (window, previous) = try window()
         let form = TerminalKeyComposer(importing: true, save: { _, _ in XCTFail("Background cannot save a key"); return false })

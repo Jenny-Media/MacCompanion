@@ -304,6 +304,12 @@ scene sensitive-state cleanup, metadata-sync consent, Free Mac selection,
 library recovery, and current-library checks when saving an old editor snapshot.
 The fresh review also added persisted-port coverage: blank and whitespace SSH
 input uses 22, Screen Sharing uses 5900, and invalid values preserve storage.
+Further indexed regressions retain immutable import/export presentation identities
+across replacement, background, inactive and locked callbacks. A retired success,
+cancellation or error cannot read a file or clear a newer export. A normal native
+UI journey opens, cancels and reopens the system Files importer. Unsupported
+retained Copy Text actions remain stored but are absent from visionOS presentation
+and restoration, alongside Mouse Mode.
 
 The Terminal window installs a generation-scoped output buffer before connecting.
 It preserves early banners and protocol queries until the native SwiftTerm view
@@ -312,15 +318,15 @@ bound is exceeded. Old-shell output and stale detach callbacks cannot affect a
 replacement receiver. The native connected-only layout is retained after a
 pre-mounted layout crashed in a normal Simulator UI journey.
 
-Nine hosted regressions exercise native responders, the real SSH/RFB peer,
+Eleven hosted regressions exercise native responders, the real SSH/RFB peer,
 bounded startup output, import passphrase scene cleanup and the actual library
-save path. Two additional UI journeys inspect the full sync disclosure, cancel
-and confirm opt-in, and choose another retained Free Mac. The Terminal hosted
+save path. Three additional UI journeys inspect the full sync disclosure, cancel
+and confirm opt-in, choose another retained Free Mac, and reopen the Files picker. The Terminal hosted
 test asserts and renders its startup banner, while the normal UI journey records
 native attachment before input. Development checks passed before the
 complete stable-state gate; final evidence for this cycle is stored outside Git
 under `/private/tmp/maccompanion-pr12-seven-fixes-20261011/review/`. The gate
-requires all 45 discovered native cases, the full repository validation, both
+requires all 48 discovered native cases, the full repository validation, both
 unsigned SDK builds and a fresh two-stage independent review on one unchanged
 source fingerprint. Earlier reports do not substitute for that gate.
 

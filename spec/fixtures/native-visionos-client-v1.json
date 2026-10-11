@@ -2178,6 +2178,38 @@
       ]
     },
     {
+      "name": "desktop-retained-copy-text",
+      "mode": "desktop",
+      "storedKinds": [
+        "copyText",
+        "rightClick",
+        "mode",
+        "shortcut",
+        "fit"
+      ],
+      "presentedKinds": [
+        "rightClick",
+        "shortcut",
+        "fit"
+      ],
+      "standardKinds": [
+        "fit",
+        "rightClick",
+        "escape",
+        "tab",
+        "returnKey"
+      ],
+      "restoredKinds": [
+        "copyText",
+        "mode",
+        "fit",
+        "rightClick"
+      ],
+      "disabledKinds": [
+        "copyText"
+      ]
+    },
+    {
       "name": "terminal-defaults",
       "mode": "terminal",
       "storedKinds": [
@@ -4553,6 +4585,40 @@
       "valid": false,
       "desktopPort": null,
       "sshPort": null
+    }
+  ],
+  "fileRequestCompletion": [
+    {
+      "name": "superseded-success",
+      "firstReceipts": 0
+    },
+    {
+      "name": "superseded-cancellation",
+      "firstReceipts": 0
+    },
+    {
+      "name": "superseded-error",
+      "firstReceipts": 0
+    },
+    {
+      "name": "inactive",
+      "firstReceipts": 0
+    },
+    {
+      "name": "background",
+      "firstReceipts": 0
+    },
+    {
+      "name": "locked",
+      "firstReceipts": 0
+    },
+    {
+      "name": "generation-change",
+      "firstReceipts": 0
+    },
+    {
+      "name": "duplicate",
+      "firstReceipts": 1
     }
   ]
 }
