@@ -13,6 +13,8 @@ typedef UIImage CompanionVNCImage;
 @property(nonatomic, copy) void (^stateHandler)(NSString *state, NSDictionary *counters);
 @property(nonatomic, copy) void (^displayLayoutHandler)(NSDictionary *layout);
 @property(nonatomic, readonly) BOOL running;
+/// Authenticated transport, including paused or fresh-frame-waiting states.
+@property(nonatomic, readonly) BOOL established;
 @property(nonatomic, readonly) BOOL connected;
 @property(nonatomic) BOOL inputOnly;
 @property(nonatomic, readonly) BOOL nativeMagnificationSupported;

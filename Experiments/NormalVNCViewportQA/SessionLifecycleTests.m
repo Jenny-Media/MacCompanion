@@ -19,11 +19,12 @@
 - (void)setTrackpadModeEnabled:(BOOL)enabled;
 @end
 @interface LifecycleSession : CompanionVNCSession
-@property BOOL alive, ready;
+@property BOOL alive, ready, authenticated;
 @property NSUInteger pauses, resumes, stops;
 @end
 @implementation LifecycleSession
 - (BOOL)running { return self.alive; }
+- (BOOL)established { return self.alive && self.authenticated; }
 - (BOOL)connected { return self.ready; }
 - (void)pauseWithCompletion:(void (^)(void))completion { self.pauses++; self.ready = NO; if (completion) completion(); }
 - (void)resume { self.resumes++; }
@@ -66,6 +67,7 @@
     client->supportedMessages.client2server[0] |= (1 << rfbKeyEvent) | (1 << rfbPointerEvent) | (1 << rfbFramebufferUpdateRequest);
     client->updateRect.w = 2; client->updateRect.h = 2;
     [session setValue:@YES forKey:@"running"]; [session setValue:@YES forKey:@"inputReady"]; XCTAssertTrue([session registerSocket:pair[0]]);
+    [session setValue:@YES forKey:@"established"];
     XCTestExpectation *ended = [self expectationWithDescription:@"Paused owner stops without hanging"];
     __weak CompanionVNCSession *weakSession = session;
     session.stateHandler = ^(NSString *state, NSDictionary *stats) { if (!weakSession.running) [ended fulfill]; };
@@ -104,6 +106,7 @@
     CompanionVNCSession *session = [CompanionVNCSession new];
     rfbClient *client = rfbGetClient(8, 3, 4); client->width = 2; client->height = 2;
     [session allocate:client]; [session setValue:@YES forKey:@"running"]; [session setValue:@YES forKey:@"inputReady"];
+    [session setValue:@YES forKey:@"established"];
     [session configureClient:client]; client->GotFrameBufferUpdate(client,0,0,2,2);
     XCTestExpectation *stale = [self expectationWithDescription:@"Pre-pause frame is rejected"]; stale.inverted = YES;
     session.frameHandler = ^(UIImage *image) { [stale fulfill]; };
@@ -117,7 +120,7 @@
 }
 - (void)testViewerRepeatedBackgroundResumeIsIdempotentAndExplicitExitNeverRestarts {
     CompanionVNCViewer *viewer = [CompanionVNCViewer new]; [viewer loadViewIfNeeded];
-    LifecycleSession *session = [LifecycleSession new]; session.alive = YES; session.ready = YES; viewer.session = session;
+    LifecycleSession *session = [LifecycleSession new]; session.alive = YES; session.ready = YES; session.authenticated = YES; viewer.session = session;
     [viewer background]; [viewer background]; XCTAssertEqual(session.pauses, 1); XCTAssertEqual(session.stops, 0);
     [viewer foregrounded]; [viewer foregrounded]; XCTAssertEqual(session.resumes, 1);
     [viewer stopViewer]; [viewer foregrounded]; XCTAssertEqual(session.resumes, 1);
@@ -128,7 +131,7 @@
     XCTAssertEqualObjects(policy[@"automaticReconnectAttempts"], @1);
     for (NSNumber *ready in @[@NO, @YES]) {
         CompanionVNCViewer *viewer = [CompanionVNCViewer new]; [viewer loadViewIfNeeded];
-        LifecycleSession *session = [LifecycleSession new]; session.alive = YES; session.ready = ready.boolValue; viewer.session = session;
+        LifecycleSession *session = [LifecycleSession new]; session.alive = YES; session.ready = ready.boolValue; session.authenticated = ready.boolValue; viewer.session = session;
         __block NSUInteger attempts = 0; viewer.connectHandler = ^(NSString *u, NSString *p, BOOL save) { attempts++; };
         [viewer background]; [viewer foregrounded];
         if (ready.boolValue) {
@@ -147,7 +150,7 @@
     viewer.displayLayout = layout; [viewer frame:[self frame]]; [viewer selectDisplay:display]; [viewer setTrackpadModeEnabled:YES];
     UIScrollView *canvas = [viewer valueForKey:@"canvas"]; CGFloat ratio = 2;
     [canvas setZoomScale:canvas.minimumZoomScale * ratio animated:NO];
-    LifecycleSession *old = [LifecycleSession new]; old.alive = YES; old.ready = YES; viewer.session = old;
+    LifecycleSession *old = [LifecycleSession new]; old.alive = YES; old.ready = YES; old.authenticated = YES; viewer.session = old;
     [viewer background]; [viewer prepareConnection]; viewer.displayLayout = layout; [viewer frame:[self frame]];
     XCTAssertEqualObjects([viewer valueForKey:@"selectedDisplay"][@"id"], @2);
     XCTAssertEqualWithAccuracy(canvas.zoomScale / canvas.minimumZoomScale, ratio, .001);

@@ -26,6 +26,9 @@ keys/buttons/gestures on the existing socket owner. Keep receiving live frames
 and connection state. Every remote input entry point remains closed during
 review. Return to Live Desktop requests a fresh complete frame before reopening
 input; it preserves the viewport only when its display crop remains valid.
+Background during that wait pauses the established owner without disconnecting.
+If the display baseline changes during presentation, the superseded callback
+cannot reopen input; wait for a complete frame from the current baseline.
 Cancellation/replacement/background/lock/closure clears the snapshot, local
 editor, share presentation and OCR result, and cancels pending recognition.
 Late release/OCR callbacks cannot present content or resume a replacement session.

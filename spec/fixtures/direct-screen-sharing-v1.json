@@ -319,6 +319,12 @@
       "phase": "paused"
     },
     {
+      "name": "background established while review return frame pending",
+      "retainsSocket": true,
+      "allowsInput": false,
+      "phase": "paused"
+    },
+    {
       "name": "healthy foreground resume",
       "retainsSocket": true,
       "allowsInputBeforeFrame": false,
@@ -1409,8 +1415,38 @@
       "host layout change"
     ],
     "retainLastPresentedImage": true,
+    "baselineResetClosesInput": true,
+    "presentationCommitRequiresCurrentEpoch": true,
     "layoutGapsAreRequired": false
   },
+  "inputOnlyTransitionCases": [
+    {
+      "name": "enter input-only while desktop baseline unavailable",
+      "allowsInputBeforeRelease": false,
+      "allowsInputAfterRelease": true,
+      "requestsPixelsInInputOnly": false,
+      "allowsInputAfterReturningToDesktop": false,
+      "allowsInputAfterFreshDesktopFrame": true
+    }
+  ],
+  "framePresentationCases": [
+    {
+      "name": "reset during review return presentation",
+      "reviewReturn": true,
+      "before": [2, 2],
+      "after": [4, 4],
+      "allowsInputAfterReset": false,
+      "allowsInputAfterCurrentFrame": true
+    },
+    {
+      "name": "reset during live desktop presentation",
+      "reviewReturn": false,
+      "before": [2, 2],
+      "after": [4, 4],
+      "allowsInputAfterReset": false,
+      "allowsInputAfterCurrentFrame": true
+    }
+  ],
   "frameReadinessCases": [
     {
       "name": "metadata only",

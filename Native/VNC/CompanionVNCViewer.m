@@ -613,7 +613,7 @@
     [self.view endEditing:YES]; UIApplication.sharedApplication.idleTimerDisabled = NO;
     self.status.text = @"Paused · Return to resume";
     if (self.reconnectWhenReady && self.sessionPhaseHandler) self.sessionPhaseHandler(@"paused");
-    if (self.session.connected) { [self.session pauseWithCompletion:completion]; [self.session resumeInputAfterReview]; }
+    if (self.session.established) { [self.session pauseWithCompletion:completion]; [self.session resumeInputAfterReview]; }
     else {
         [self.session stop]; if (self.disconnectHandler) self.disconnectHandler();
         if (completion) completion();
@@ -1353,7 +1353,7 @@
     if (self.quickActionsProvider) self.quickActions = self.quickActionsProvider(value);
     if (self.isViewLoaded) {
         [self releasePointer]; [self cancelTrackpadTouches]; [self resetModifiers];
-        if (self.session.connected) self.session.inputOnly = value;
+        if (self.session.established) self.session.inputOnly = value;
         if (value) [self setTrackpadModeEnabled:YES];
         [self applyPresentation];
     }
@@ -1478,7 +1478,7 @@
     BOOL suspended=[owner suspendInputForReview:^{
         CompanionVNCViewer *strong=weak;
         if (!strong || strong.session!=owner || strong.textReview!=review || strong.textReviewGeneration!=token
-            || !strong.foreground || strong.exited || !owner.connected) return;
+            || !strong.foreground || strong.exited || !owner.established) return;
         if (strong.view.window) [strong presentViewController:review animated:!UIAccessibilityIsReduceMotionEnabled() completion:nil];
     }];
     if (!suspended) [self invalidateTextReview:NO];
@@ -1501,11 +1501,12 @@
     }
 }
 - (void)showViewMenu {
+    NSMutableArray *desktopItems=[@[
+        @{@"kind": @"displays", @"title": @"Choose Display", @"symbol": @"display.2", @"submenu": @YES, @"push": @YES, @"disabled": @(self.inputOnly)},
+        @{@"kind": @"fit", @"title": @"Fit to Window", @"symbol": @"arrow.down.right.and.arrow.up.left", @"disabled": @(self.inputOnly)}] mutableCopy];
+    if (!self.inputOnly) [desktopItems addObject:@{@"kind": @"copyText", @"title": @"Copy Text from Screen", @"symbol": @"text.viewfinder", @"disabled": @(![self canCopyScreenText])}];
     [self presentMenu:@"View & Display" sections:@[
-        @{@"title": @"Desktop", @"items": @[
-            @{@"kind": @"displays", @"title": @"Choose Display", @"symbol": @"display.2", @"submenu": @YES, @"push": @YES, @"disabled": @(self.inputOnly)},
-            @{@"kind": @"fit", @"title": @"Fit to Window", @"symbol": @"arrow.down.right.and.arrow.up.left", @"disabled": @(self.inputOnly)},
-            @{@"kind": @"copyText", @"title": @"Copy Text from Screen", @"symbol": @"text.viewfinder", @"disabled": @(![self canCopyScreenText])}]},
+        @{@"title": @"Desktop", @"items": desktopItems},
         @{@"title": @"Presentation", @"items": @[
             @{@"kind": @"fullscreen", @"title": self.fullscreen ? @"Show Keyboard Bar" : @"Hide Keyboard Bar", @"symbol": self.fullscreen ? @"keyboard" : @"keyboard.chevron.compact.down"},
             @{@"kind": @"inputOnly", @"title": self.inputOnly ? @"Show Desktop" : @"Trackpad & Keyboard Only", @"symbol": self.inputOnly ? @"desktopcomputer" : @"rectangle.and.hand.point.up.left", @"subtitle": self.inputOnly ? @"Resume desktop video" : @"Control your Mac without video"}]}]];

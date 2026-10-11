@@ -36,14 +36,29 @@
 @end
 @implementation TextReviewOwner
 - (BOOL)running { return YES; }
+- (BOOL)established { return YES; }
 - (BOOL)connected { return YES; }
 - (BOOL)suspendInputForReview:(void (^)(void))completion { self.suspensions++; completion(); return YES; }
 - (void)resumeInputAfterReview { self.resumptions++; }
+@end
+@interface DelayedTextReviewOwner : CompanionVNCSession
+@property(nonatomic,copy) void (^acknowledgeRelease)(void);
+@end
+@implementation DelayedTextReviewOwner
+- (BOOL)suspendInputForReview:(void (^)(void))completion {
+    BOOL suspended=[super suspendInputForReview:nil];
+    if (suspended) self.acknowledgeRelease=completion;
+    return suspended;
+}
 @end
 
 @interface ScreenTextTests : XCTestCase
 @end
 @implementation ScreenTextTests
+- (NSDictionary *)profile {
+    NSURL *url=[[NSBundle bundleForClass:self.class] URLForResource:@"direct-screen-sharing-v1" withExtension:@"json"];
+    return [NSJSONSerialization JSONObjectWithData:[NSData dataWithContentsOfURL:url] options:0 error:NULL];
+}
 - (UIImage *)image:(CGSize)size scale:(CGFloat)scale text:(NSString *)text {
     UIGraphicsImageRendererFormat *format=[UIGraphicsImageRendererFormat defaultFormat]; format.scale=scale;
     return [[[UIGraphicsImageRenderer alloc] initWithSize:size format:format] imageWithActions:^(UIGraphicsImageRendererContext *context) {
@@ -244,5 +259,115 @@
     session.frameHandler=^(UIImage *image){ [fresh fulfill]; }; client->GotFrameBufferUpdate(client,0,1,2,1); [session publishFrame:client];
     [self waitForExpectations:@[fresh] timeout:1]; XCTAssertTrue(session.connected);
     session.frameHandler=nil; [session setValue:@NO forKey:@"running"]; client->frameBuffer=NULL; rfbClientCleanup(client);
+}
+- (void)testBackgroundDuringReviewReturnRetainsSocketAndResumesWithFreshPixels {
+    NSDictionary *policy=nil;
+    for (NSDictionary *entry in [self profile][@"lifecycleCases"]) if ([entry[@"name"] isEqual:@"background established while review return frame pending"]) policy=entry;
+    XCTAssertNotNil(policy);
+    int pair[2]; XCTAssertEqual(socketpair(AF_UNIX,SOCK_STREAM,0,pair),0);
+    struct timeval timeout={.tv_sec=2}; setsockopt(pair[1],SOL_SOCKET,SO_RCVTIMEO,&timeout,sizeof(timeout));
+    int yes=1; setsockopt(pair[0],SOL_SOCKET,SO_NOSIGPIPE,&yes,sizeof(yes));
+    CompanionVNCSession *session=[CompanionVNCSession new]; rfbClient *client=rfbGetClient(8,3,4);
+    client->sock=pair[0]; client->width=2; client->height=2;
+    [session configureClient:client]; XCTAssertTrue([session allocate:client]);
+    client->supportedMessages.client2server[0]|=(1<<rfbKeyEvent)|(1<<rfbPointerEvent)|(1<<rfbFramebufferUpdateRequest);
+    rfbClientSetUpdateRect(client,NULL); client->GotFrameBufferUpdate(client,0,0,2,2);
+    for (NSString *key in @[@"running",@"established",@"inputReady",@"baselinePresented"]) [session setValue:@YES forKey:key];
+    [session registerSocket:pair[0]];
+    CompanionVNCViewer *viewer=[CompanionVNCViewer new]; [viewer loadViewIfNeeded];
+    viewer.view.frame=CGRectMake(0,0,440,956); [viewer.view layoutIfNeeded]; viewer.session=session;
+    [viewer setValue:@YES forKey:@"foreground"]; [viewer frame:[self image:CGSizeMake(2,2) scale:1 text:@""]];
+    __block NSUInteger disconnects=0; viewer.disconnectHandler=^{disconnects++;};
+    [viewer showCopyScreenText]; CompanionVNCTextReview *review=[viewer valueForKey:@"textReview"]; XCTAssertNotNil(review);
+    XCTestExpectation *ended=[self expectationWithDescription:@"Retained owner ends on explicit exit"];
+    __weak CompanionVNCSession *weak=session;
+    session.stateHandler=^(NSString *state,NSDictionary *stats){if(!weak.running)[ended fulfill];};
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0),^{[session processConnectedClient:client];});
+    uint8_t pointer[6]; XCTAssertEqual(recv(pair[1],pointer,6,MSG_WAITALL),6); XCTAssertEqual(pointer[0],rfbPointerEvent);
+    [review returnToDesktop]; XCTAssertFalse(session.connected); XCTAssertTrue(session.established);
+    XCTestExpectation *paused=[self expectationWithDescription:@"Background acknowledges release during fresh-frame wait"];
+    [viewer backgroundWithCompletion:^{[paused fulfill];}];
+    // A full refresh may have been sent just before background took ownership.
+    BOOL released=NO;
+    for (NSUInteger packet=0; packet<2 && !released; packet++) {
+        uint8_t type=255; XCTAssertEqual(recv(pair[1],&type,1,MSG_WAITALL),1);
+        if (type==rfbFramebufferUpdateRequest) {uint8_t rest[9]; XCTAssertEqual(recv(pair[1],rest,9,MSG_WAITALL),9);}
+        else {XCTAssertEqual(type,rfbPointerEvent); uint8_t rest[5]; XCTAssertEqual(recv(pair[1],rest,5,MSG_WAITALL),5); XCTAssertEqual(rest[0],0); released=YES;}
+    }
+    XCTAssertTrue(released); [self waitForExpectations:@[paused] timeout:2];
+    XCTAssertEqual(session.established,[policy[@"retainsSocket"] boolValue]); XCTAssertTrue(session.running);
+    XCTAssertTrue([[session valueForKey:@"paused"] boolValue]); XCTAssertEqual(disconnects,0);
+    XCTAssertEqual([session tryClickX:1 y:1 mask:1],[policy[@"allowsInput"] boolValue]);
+    [viewer foregrounded]; XCTAssertTrue(session.established); XCTAssertFalse(session.connected);
+    uint8_t request[10]; XCTAssertEqual(recv(pair[1],request,10,MSG_WAITALL),10); XCTAssertEqual(request[0],rfbFramebufferUpdateRequest); XCTAssertEqual(request[1],0);
+    XCTestExpectation *fresh=[self expectationWithDescription:@"Fresh pixels from the same socket reopen input"];
+    session.frameHandler=^(UIImage *image){[viewer frame:image]; [fresh fulfill];};
+    uint8_t frame[]={0,0,0,1,0,0,0,0,0,2,0,2,0,0,0,0, 0,0,255,0,0,0,255,0,0,0,255,0,0,0,255,0};
+    XCTAssertEqual(write(pair[1],frame,sizeof(frame)),sizeof(frame));
+    [self waitForExpectations:@[fresh] timeout:2]; XCTAssertTrue(session.connected); XCTAssertEqual(viewer.session,session);
+    session.frameHandler=nil; viewer.disconnectHandler=nil; [viewer stopViewer];
+    [self waitForExpectations:@[ended] timeout:2]; session.stateHandler=nil; close(pair[1]);
+}
+- (void)testBaselineResetDuringPresentationCannotReopenInputUntilCurrentFrame {
+    for (NSDictionary *entry in [self profile][@"framePresentationCases"]) {
+        CompanionVNCSession *session=[CompanionVNCSession new]; rfbClient *client=rfbGetClient(8,3,4);
+        client->width=[entry[@"before"][0] intValue]; client->height=[entry[@"before"][1] intValue];
+        [session configureClient:client]; XCTAssertTrue([session allocate:client]);
+        client->GotFrameBufferUpdate(client,0,0,client->width,client->height);
+        for (NSString *key in @[@"running",@"established",@"inputReady",@"baselinePresented"]) [session setValue:@YES forKey:key];
+        if ([entry[@"reviewReturn"] boolValue]) {
+            XCTAssertTrue([session suspendInputForReview:nil]); [session resumeInputAfterReview];
+            [session setValue:@NO forKey:@"resumeRequested"]; XCTAssertTrue([session resetBaseline:client]);
+            client->GotFrameBufferUpdate(client,0,0,client->width,client->height);
+        } else { XCTAssertTrue([session tryClickX:1 y:1 mask:1]); }
+        XCTestExpectation *reset=[self expectationWithDescription:entry[@"name"]];
+        session.frameHandler=^(UIImage *image){
+            NSUInteger epoch=[[session valueForKey:@"presentationEpoch"] unsignedIntegerValue];
+            // Inject the socket-owner reset precisely between validation and readiness commit.
+            client->width=[entry[@"after"][0] intValue]; client->height=[entry[@"after"][1] intValue];
+            XCTAssertTrue([session allocate:client]);
+            XCTAssertGreaterThan([[session valueForKey:@"presentationEpoch"] unsignedIntegerValue],epoch);
+            [reset fulfill];
+        };
+        [session publishFrame:client]; [self waitForExpectations:@[reset] timeout:1];
+        XCTAssertEqual([[session valueForKey:@"expectedPixels"] unsignedIntegerValue],client->width*client->height);
+        XCTAssertEqualObjects([session valueForKey:@"receivedPixels"],@0);
+        XCTAssertFalse([[session valueForKey:@"baselinePresented"] boolValue]); XCTAssertTrue(session.established);
+        XCTAssertEqual([session tryClickX:1 y:1 mask:1],[entry[@"allowsInputAfterReset"] boolValue]);
+        XCTAssertEqual([[session valueForKey:@"events"] count],0);
+        client->GotFrameBufferUpdate(client,0,0,client->width,client->height/2);
+        [session publishFrame:client]; XCTAssertFalse(session.connected);
+        XCTestExpectation *fresh=[self expectationWithDescription:@"Only the current complete baseline reopens input"];
+        session.frameHandler=^(UIImage *image){[fresh fulfill];}; [session setValue:@0 forKey:@"lastFrame"];
+        client->GotFrameBufferUpdate(client,0,client->height/2,client->width,client->height-client->height/2);
+        [session publishFrame:client]; [self waitForExpectations:@[fresh] timeout:1];
+        XCTAssertEqual([session tryClickX:1 y:1 mask:1],[entry[@"allowsInputAfterCurrentFrame"] boolValue]);
+        session.frameHandler=nil; [session setValue:@NO forKey:@"running"]; client->frameBuffer=NULL; rfbClientCleanup(client);
+    }
+}
+- (void)testDelayedReleaseStillPresentsFrozenReviewAfterDisplayReset {
+    DelayedTextReviewOwner *session=[DelayedTextReviewOwner new]; rfbClient *client=rfbGetClient(8,3,4);
+    client->width=800; client->height=600; [session configureClient:client]; XCTAssertTrue([session allocate:client]);
+    for (NSString *key in @[@"running",@"established",@"inputReady",@"baselinePresented"]) [session setValue:@YES forKey:key];
+    CompanionVNCViewer *viewer=[CompanionVNCViewer new]; [viewer loadViewIfNeeded]; viewer.session=session;
+    UIWindowScene *scene=(id)UIApplication.sharedApplication.connectedScenes.anyObject;
+    UIWindow *previous=nil; for (UIWindow *candidate in scene.windows) if(candidate.isKeyWindow) previous=candidate;
+    UIWindow *window=[[UIWindow alloc] initWithWindowScene:scene]; window.rootViewController=viewer; [window makeKeyAndVisible];
+    [viewer.view layoutIfNeeded]; [viewer setValue:@YES forKey:@"foreground"];
+    [viewer frame:[self image:CGSizeMake(800,600) scale:1 text:@"Synthetic"]];
+    [viewer showCopyScreenText]; CompanionVNCTextReview *review=[viewer valueForKey:@"textReview"];
+    XCTAssertNotNil(review); XCTAssertNil(viewer.presentedViewController); XCTAssertNotNil(session.acknowledgeRelease);
+    client->width=400; client->height=300; XCTAssertTrue([session allocate:client]);
+    XCTAssertTrue(session.established); XCTAssertFalse(session.connected);
+    session.acknowledgeRelease(); session.acknowledgeRelease=nil;
+    XCTAssertEqual(viewer.presentedViewController,review);
+    XCTAssertEqual(CGImageGetWidth(((UIImage *)[review valueForKey:@"snapshot"]).CGImage),800);
+    XCTAssertFalse([session tryClickX:1 y:1 mask:1]);
+    // Let UIKit finish presentation before retiring this test-owned window.
+    NSDate *deadline=[NSDate dateWithTimeIntervalSinceNow:3];
+    while(viewer.transitionCoordinator && deadline.timeIntervalSinceNow>0) [[NSRunLoop mainRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:.01]];
+    [viewer stopViewer]; [session setValue:@NO forKey:@"running"];
+    window.hidden=YES; window.rootViewController=nil; [previous makeKeyAndVisible];
+    client->frameBuffer=NULL; rfbClientCleanup(client);
 }
 @end

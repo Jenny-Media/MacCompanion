@@ -801,7 +801,7 @@
       "path": "direct-screen-sharing-v1.json",
       "kind": "directScreenSharing.v1",
       "expect": "valid",
-      "canonicalSHA256": "8330e1f728faf7c34aeb03784d96d3908ed90546ba2d988234f9e007f6d95360"
+      "canonicalSHA256": "7f7342b1dc79e7980c86237c9563056c10cf07f2ce6a82019ddb74278cc5293e"
     },
     {
       "path": "native-macos-client-v1.json",

@@ -148,14 +148,19 @@ Changing modes, crops, backgrounding, cancellation and exit release held buttons
 One Done action disconnects and returns to My Macs; no separate active-session
 Disconnect button is presented. Explicit exit does not reconnect automatically. Background cancels a pending
 handshake. An established connection cancels queued input and pauses its native owner
-without closing the socket. A bounded in-flight read may finish before sent
+without closing the socket, including while initial, review-return or foreground
+pixels are pending. Transport establishment is independent of input readiness.
+A bounded in-flight read may finish before sent
 keys/buttons are released. Once release completes, the owner sleeps: no frame
 decoding, new update requests, UI presentation or remote input runs while paused. A bounded
 UIKit background task only finishes input release and the paused status update,
 ending immediately on completion
 or expiration; it does not maintain an idle connection or stream in the background.
 Foreground requests a full framebuffer on the same owner. Input remains blocked
-until a complete framebuffer arrives. If the socket fails or no framebuffer arrives
+until a complete framebuffer arrives. Every baseline reset closes input, retires
+queued input and releases held input. Presentation commits recheck the connection
+generation and baseline epoch under the owner lock after the UI callback, before
+marking a baseline presented or reopening input. If the socket fails or no framebuffer arrives
 within 9000 ms (allowing the bounded baseline refresh window), retire it and make one automatic reconnect attempt. Do not loop
 retries or overlap native owners. Background/foreground calls are idempotent.
 Preserve the selected display ID, relative zoom, viewport center and mouse mode;
@@ -293,6 +298,11 @@ Publish its initial Connected state after successful RFB initialization and on
 an admitted resume or switch into input-only mode. Paused, stopping, overflowed
 or unauthenticated owners cannot publish Connected in either mode. Switching
 back to Desktop still requires a fresh complete baseline before Connected.
+Forward mode changes to any established owner, including while Desktop waits
+for pixels. Retire queued input and release held input on the socket owner before
+admitting the new mode. Entering Trackpad & Keyboard reopens input after that
+release without requiring a desktop baseline; a superseded mode or presentation
+epoch cannot reopen input.
 
 The keyboard/modifier strip remains directly available. One bottom-right glass
 controls button opens quick actions, Displays, Input and Session categories, with

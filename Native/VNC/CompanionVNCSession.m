@@ -53,7 +53,7 @@ static void QuietLog(const char *format, ...) {
     NSLock *_lock;
     NSMutableArray<NSDictionary *> *_events;
     dispatch_queue_t _worker;
-    BOOL _running, _stopping, _framePending, _overflow, _inputReady, _inputOnly, _modeChanged;
+    BOOL _running, _established, _stopping, _framePending, _overflow, _inputReady, _inputOnly, _modeChanged;
     BOOL _paused, _releaseInputRequested, _resumeRequested, _awaitingResumeFrame;
     BOOL _reviewInputSuspended;
     void (^_reviewReleaseCompletion)(void);
@@ -150,10 +150,19 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
     return self;
 }
 - (BOOL)running { [_lock lock]; BOOL r = _running; [_lock unlock]; return r; }
+- (BOOL)established { [_lock lock]; BOOL value = _running && _established && !_stopping; [_lock unlock]; return value; }
 - (BOOL)connected { [_lock lock]; BOOL ready = _running && _inputReady && !_paused && !_stopping; [_lock unlock]; return ready; }
 - (BOOL)inputOnly { [_lock lock]; BOOL value = _inputOnly; [_lock unlock]; return value; }
 - (void)setInputOnly:(BOOL)value {
-    [_lock lock]; if (_inputOnly != value) { [self cancelNativeGesturesLocked]; _inputOnly = value; _modeChanged = YES; _presentationEpoch++; }
+    [_lock lock];
+    if (_inputOnly != value) {
+        [self cancelNativeGesturesLocked]; _inputOnly = value; _modeChanged = YES; _presentationEpoch++;
+        if (_established) {
+            // The owner releases the old mode before admitting input in the new one.
+            _inputReady = NO; _awaitingResumeFrame = !value; _releaseInputRequested = YES;
+            [_events removeAllObjects]; _queuedPointerMask = 0;
+        }
+    }
     [_lock unlock]; dispatch_semaphore_signal(_wake);
 }
 - (BOOL)nativeMagnificationSupported {
@@ -280,7 +289,7 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
 }
 - (void)pauseWithCompletion:(void (^)(void))completion {
     [_lock lock];
-    if (!_running || !_inputReady || _stopping || _paused) { [_lock unlock]; if (completion) completion(); return; }
+    if (!_running || !_established || _stopping || _paused) { [_lock unlock]; if (completion) completion(); return; }
     [self cancelNativeGesturesLocked];
     _paused = YES; _pauses++; _inputReady = NO; _releaseInputRequested = YES; _presentationEpoch++;
     [_events removeAllObjects]; _queuedPointerMask = 0; _pauseCompletion = [completion copy];
@@ -315,7 +324,7 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
     if (_running) { [_lock unlock]; if (socket >= 0) close(socket); return; }
     [self cancelNativeGesturesLocked]; _appleGestureServer = NO; _nativeGestureLayout = NO;
     _sentMagnification = (CompanionVNCMagnification){0}; _sentScroll = (CompanionVNCScroll){0};
-    _running = YES; _stopping = NO; _overflow = NO; _framePending = NO; _cursorPending = NO; _layoutPending = NO; _latestLayout = nil; _inputReady = NO; _failureStage = 0;
+    _running = YES; _established = NO; _stopping = NO; _overflow = NO; _framePending = NO; _cursorPending = NO; _layoutPending = NO; _latestLayout = nil; _inputReady = NO; _failureStage = 0;
     _layoutDiagnostics = @{}; _layoutMessages = 0; _baselinePresented = NO; _coverageLayoutValid = NO; _metadataCallback = NO;
     _paused = NO; _reviewInputSuspended = NO; _reviewReleaseCompletion = nil;
     _releaseInputRequested = NO; _resumeRequested = NO; _awaitingResumeFrame = NO; _presentationEpoch++;
@@ -368,7 +377,7 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
                 [self finish:failures[MIN((NSUInteger)self->_failureStage, failures.count - 1)]];
                 return;
             }
-            [self->_lock lock]; self->_appleGestureServer = appleGestureBanner; self->_inputReady = !self->_stopping; BOOL active = self->_inputReady; [self->_lock unlock];
+            [self->_lock lock]; self->_appleGestureServer = appleGestureBanner; self->_established = !self->_stopping; self->_inputReady = self->_established; BOOL active = self->_established; [self->_lock unlock];
             if (active) [self report:self.inputOnly ? @"Connected" : @"Opening desktop"];
             [self processConnectedClient:client];
             (void)generation;
@@ -387,7 +396,7 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
             void (^reviewCompletion)(void) = release ? self->_reviewReleaseCompletion : nil;
             if (release) self->_reviewReleaseCompletion = nil;
             if (release) self->_pauseCompletion = nil;
-            NSUInteger gestureEpoch = self->_gestureEpoch;
+            NSUInteger gestureEpoch = self->_gestureEpoch, presentationEpoch = self->_presentationEpoch;
             NSArray *events = [self->_events copy]; [self->_events removeAllObjects];
             [self->_lock unlock];
             if (stopping) break;
@@ -416,7 +425,14 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
             unsigned char bit = 1 << (rfbFramebufferUpdateRequest % 8);
             if (inputOnly) {
                 *requests &= ~bit; rfbRectangle empty = {0, 0, 0, 0}; rfbClientSetUpdateRect(client, &empty);
-                if (resume || modeChanged) [self report:@"Connected"];
+                if (resume || modeChanged) {
+                    [self->_lock lock];
+                    BOOL current = presentationEpoch == self->_presentationEpoch && self->_running && self->_established
+                        && self->_inputOnly && !self->_paused && !self->_stopping && !self->_overflow;
+                    if (current) { self->_inputReady = YES; self->_awaitingResumeFrame = NO; }
+                    [self->_lock unlock];
+                    if (current) [self report:@"Connected"];
+                }
             } else {
                 *requests |= bit; rfbClientSetUpdateRect(client, NULL);
             }
@@ -486,7 +502,7 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
     [self registerSocket:-1];
     free(_pixels); _pixels = NULL; CompanionVNCCoverageFree(&_coverage); _username = nil; _password = nil;
     _cursorImage = nil; _cursorPositionKnown = NO; _cursorDirty = NO;
-    [_lock lock]; [self cancelNativeGesturesLocked]; _appleGestureServer = NO; _nativeGestureLayout = NO; _running = NO; _inputReady = NO; _reviewInputSuspended = NO; _reviewReleaseCompletion = nil; [_events removeAllObjects]; [_lock unlock];
+    [_lock lock]; [self cancelNativeGesturesLocked]; _appleGestureServer = NO; _nativeGestureLayout = NO; _running = NO; _established = NO; _inputReady = NO; _reviewInputSuspended = NO; _reviewReleaseCompletion = nil; [_events removeAllObjects]; [_lock unlock];
     [self report:state];
 }
 - (rfbCredential *)credential:(int)type {
@@ -519,10 +535,17 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
     return TRUE;
 }
 - (BOOL)resetBaseline:(rfbClient *)client {
+    // Retire input and presentation before changing coverage on the socket owner.
+    [_lock lock]; _fullRefreshRetries = 0; _baselinePresented = NO; _presentationEpoch++;
+    if (_established && !_inputOnly) {
+        _releaseInputRequested = _releaseInputRequested || _inputReady;
+        _inputReady = NO; _awaitingResumeFrame = YES;
+        [self cancelNativeGesturesLocked]; [_events removeAllObjects]; _queuedPointerMask = 0;
+    }
+    [_lock unlock];
     if (!CompanionVNCCoverageReset(&_coverage, client->width, client->height)) return NO;
     _baselineStarted = _lastFullRefresh = NSProcessInfo.processInfo.systemUptime;
     _dirty = NO;
-    [_lock lock]; _fullRefreshRetries = 0; _baselinePresented = NO; _presentationEpoch++; [_lock unlock];
     [self applyCoverageLayout:client]; return YES;
 }
 - (void)applyCoverageLayout:(rfbClient *)client {
@@ -672,7 +695,11 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
         if (generation == self->_generation) self->_framePending = NO; [self->_lock unlock];
         if (valid && frame && self.frameHandler) self.frameHandler(frame);
         if (valid && frame) {
-            [self->_lock lock]; BOOL firstBaseline = !self->_baselinePresented; self->_baselinePresented = YES; self->_presentedFrames++;
+            [self->_lock lock];
+            // The socket owner can reset the baseline while frameHandler lays out UI.
+            valid = generation == self->_generation && epoch == self->_presentationEpoch && self->_running && !self->_stopping && !self->_paused;
+            if (!valid) { [self->_lock unlock]; return; }
+            BOOL firstBaseline = !self->_baselinePresented; self->_baselinePresented = YES; self->_presentedFrames++;
             BOOL resumed = self->_awaitingResumeFrame;
             if (resumed) { self->_resumeFrames++; self->_awaitingResumeFrame = NO; self->_inputReady = YES; }
             [self->_lock unlock];
