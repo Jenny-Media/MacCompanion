@@ -36,6 +36,12 @@
 @end
 @implementation FrameReadinessTests
 - (void)testCopiedComposerGroupIsRetiredAcrossTrackpadPauseResumeAndFreshTextStillSends {
+    [self assertCopiedComposerGroupRetired:NO];
+}
+- (void)testCopiedComposerGroupIsRetiredByScreenTextReviewBeforeFreshDesktopSend {
+    [self assertCopiedComposerGroupRetired:YES];
+}
+- (void)assertCopiedComposerGroupRetired:(BOOL)screenTextReview {
     NSURL *url = [[NSBundle bundleForClass:self.class] URLForResource:@"ios-text-composer-v1" withExtension:@"json"];
     NSDictionary *fixture = [NSJSONSerialization JSONObjectWithData:[NSData dataWithContentsOfURL:url] options:0 error:NULL];
     NSDictionary *policy = fixture[@"lifecycle"][@"cancelCopiedGroup"];
@@ -53,8 +59,10 @@
     StalledComposerSession *session = [StalledComposerSession new];
     rfbClient *client = rfbGetClient(8, 3, 4); client->sock = pair[0]; client->width = 2; client->height = 2;
     [session configureClient:client]; XCTAssertTrue([session allocate:client]);
-    client->supportedMessages.client2server[0] |= (1 << rfbKeyEvent) | (1 << rfbPointerEvent);
-    session.inputOnly = YES; [session setValue:@YES forKey:@"running"]; [session setValue:@YES forKey:@"inputReady"];
+    client->supportedMessages.client2server[0] |= (1 << rfbKeyEvent) | (1 << rfbPointerEvent) | (1 << rfbFramebufferUpdateRequest);
+    session.inputOnly = !screenTextReview;
+    for (NSString *key in @[@"running",@"established",@"inputReady",@"baselinePresented"]) [session setValue:@YES forKey:key];
+    if (screenTextReview) client->GotFrameBufferUpdate(client,0,0,2,2);
     [session registerSocket:pair[0]];
     XCTestExpectation *cancelled = [self expectationWithDescription:@"Interrupted group fails once"];
     XCTestExpectation *fresh = [self expectationWithDescription:@"New deliberately admitted group writes"];
@@ -69,20 +77,46 @@
     XCTAssertEqual(dispatch_semaphore_wait(session.firstWrite, dispatch_time(DISPATCH_TIME_NOW, NSEC_PER_SEC)), 0);
     // The worker owns a copied batch and has admitted its first write. Pause and
     // resume before that write returns; the old queue itself is already empty.
-    [session pauseWithCompletion:nil]; [session resume];
+    if (screenTextReview) XCTAssertTrue([session suspendInputForReview:nil]);
+    else { [session pauseWithCompletion:nil]; [session resume]; }
     [self waitForExpectations:@[cancelled] timeout:1];
+    NSMutableData *wire = [NSMutableData new];
+    if (screenTextReview) {
+        NSDictionary *reviewPolicy=fixture[@"lifecycle"][@"screenTextReview"];
+        XCTAssertEqual([session tryComposedTextEvents:events(policy[@"freshCase"]) completion:^(BOOL written) { XCTFail(@"Review must reject input"); }],
+            [reviewPolicy[@"allowsSendDuringReview"] boolValue]);
+        XCTAssertEqual([(NSDictionary *)[session valueForKey:@"composedTextReplies"] count],[reviewPolicy[@"repliesAfterReview"] unsignedIntegerValue]);
+        [session resumeInputAfterReview]; XCTAssertFalse(session.connected);
+        dispatch_semaphore_signal(session.continueWrite);
+        // Wait for the owner's fresh full request before providing new pixels.
+        BOOL requested=NO;
+        for (NSUInteger packet=0;packet<5 && !requested;packet++) {
+            uint8_t bytes[10]; ssize_t got=recv(pair[1],bytes,1,MSG_WAITALL); XCTAssertEqual(got,1);
+            if(got!=1) break;
+            NSUInteger size=bytes[0]==rfbKeyEvent ? 8 : bytes[0]==rfbPointerEvent ? 6 : bytes[0]==rfbFramebufferUpdateRequest ? 10 : 0;
+            XCTAssertGreaterThan(size,0); if(!size) break;
+            XCTAssertEqual(recv(pair[1],bytes+1,size-1,MSG_WAITALL),size-1); [wire appendBytes:bytes length:size];
+            requested=bytes[0]==rfbFramebufferUpdateRequest; if(requested) XCTAssertEqual(bytes[1],0);
+        }
+        XCTAssertTrue(requested);
+        XCTestExpectation *baseline=[self expectationWithDescription:@"Current complete Desktop frame admits fresh composed text"];
+        session.frameHandler=^(UIImage *image){[baseline fulfill];};
+        uint8_t frame[]={0,0,0,1,0,0,0,0,0,2,0,2,0,0,0,0, 0,0,255,0,0,0,255,0,0,0,255,0,0,0,255,0};
+        XCTAssertEqual(write(pair[1],frame,sizeof(frame)),sizeof(frame));
+        [self waitForExpectations:@[baseline] timeout:2]; session.frameHandler=nil; XCTAssertTrue(session.connected);
+    }
     XCTAssertTrue([session tryComposedTextEvents:events(policy[@"freshCase"]) completion:^(BOOL written) {
         freshReplies++; XCTAssertEqual(written, [policy[@"freshCompletionWritten"] boolValue]); [fresh fulfill];
     }]);
-    dispatch_semaphore_signal(session.continueWrite);
+    if (!screenTextReview) dispatch_semaphore_signal(session.continueWrite);
     [self waitForExpectations:@[fresh] timeout:2];
     [session stop]; [self waitForExpectations:@[ended] timeout:2];
-    NSMutableData *wire = [NSMutableData new]; uint8_t bytes[512]; ssize_t count;
+    uint8_t bytes[512]; ssize_t count;
     while ((count = recv(pair[1], bytes, sizeof(bytes), 0)) > 0) [wire appendBytes:bytes length:(NSUInteger)count];
     XCTAssertEqual(count, 0); close(pair[1]);
     NSMutableArray *keys = [NSMutableArray new]; const uint8_t *packets = wire.bytes;
     for (NSUInteger offset = 0; offset < wire.length;) {
-        uint8_t type = packets[offset]; NSUInteger size = type == rfbKeyEvent ? 8 : type == rfbPointerEvent ? 6 : 0;
+        uint8_t type = packets[offset]; NSUInteger size = type == rfbKeyEvent ? 8 : type == rfbPointerEvent ? 6 : type == rfbFramebufferUpdateRequest ? 10 : 0;
         XCTAssertTrue(size && offset + size <= wire.length); if (!size || offset + size > wire.length) break;
         if (type == rfbKeyEvent) {
             uint32_t key = ((uint32_t)packets[offset + 4] << 24) | ((uint32_t)packets[offset + 5] << 16)

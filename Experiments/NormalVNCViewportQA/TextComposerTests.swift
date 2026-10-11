@@ -16,7 +16,9 @@ import UIKit
             let viewer = CompanionVNCViewer()
             viewer.inputOnly = mode == "trackpad"; viewer.macName = "Synthetic Mac"
             window.rootViewController = viewer; window.makeKeyAndVisible(); viewer.loadViewIfNeeded()
+            viewer.session.inputOnly = mode == "trackpad"
             viewer.session.setValue(true, forKey: "running"); viewer.session.setValue(true, forKey: "inputReady")
+            viewer.session.setValue(true, forKey: "established"); viewer.session.setValue(true, forKey: "baselinePresented")
             viewer.perform(NSSelectorFromString("showTextComposer"))
             try await Task.sleep(for: .milliseconds(350))
             let composer = try XCTUnwrap(viewer.value(forKey: "textComposer") as? DirectTextComposer)
@@ -127,6 +129,7 @@ import UIKit
     func testDesktopQueueRejectsWholeGroupAndCancelsOnePendingWriteWithoutReplay() async throws {
         let owner = CompanionVNCSession()
         owner.setValue(true, forKey: "running"); owner.setValue(true, forKey: "inputReady")
+        owner.setValue(true, forKey: "established"); owner.setValue(true, forKey: "baselinePresented")
         let events = try DirectComposedText(String(repeating: "x", count: 256), mode: .desktop).desktopEvents
         var replies: [Bool] = []
         XCTAssertTrue(owner.tryComposedTextEvents(events) { replies.append($0) })

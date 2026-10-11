@@ -60,6 +60,8 @@
 @end
 @implementation ControlsSession
 - (BOOL)connected { return YES; }
+- (BOOL)established { return YES; }
+- (BOOL)composedTextReady { return YES; }
 - (void)keyEvents:(NSArray<NSDictionary *> *)events { [self.groups addObject:events]; }
 - (BOOL)tryKeyEvents:(NSArray<NSDictionary *> *)events { [self.groups addObject:events]; return YES; }
 - (BOOL)tryComposedTextEvents:(NSArray<NSDictionary *> *)events completion:(void (^)(BOOL))completion {
@@ -566,6 +568,27 @@
         [view tableView:view.tableView didSelectRowAtIndexPath:[NSIndexPath indexPathForRow:0 inSection:0]];
         XCTAssertEqual(navigation.viewControllers.count,1); XCTAssertEqual(viewer.session,owner);
         [viewer dismissViewControllerAnimated:NO completion:nil];
+    }];
+}
+- (void)testRenderedViewMenuOmitsCopyTextOnlyInInputOnlyMode {
+    [self withFollowViewer:^(CompanionVNCViewer *viewer, ControlsSession *owner) {
+        for (NSNumber *only in @[@NO,@YES,@NO]) {
+            viewer.inputOnly=only.boolValue;
+            [viewer performControlAction:@{@"kind": @"viewMenu"}];
+            [[NSRunLoop mainRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:.35]];
+            UINavigationController *navigation=(id)viewer.presentedViewController;
+            CompanionVNCMenu *menu=(id)navigation.topViewController; [menu loadViewIfNeeded];
+            NSUInteger copies=0;
+            for (NSInteger section=0; section<menu.sections.count; section++) {
+                for (NSInteger row=0; row<[menu tableView:menu.tableView numberOfRowsInSection:section]; row++) {
+                    UITableViewCell *cell=[menu tableView:menu.tableView cellForRowAtIndexPath:[NSIndexPath indexPathForRow:row inSection:section]];
+                    if ([cell.accessibilityIdentifier isEqual:@"session-menu-copyText"]) copies++;
+                }
+            }
+            XCTAssertEqual(copies,only.boolValue ? 0 : 1); XCTAssertEqual(viewer.session,owner);
+            [viewer dismissViewControllerAnimated:NO completion:nil];
+            [[NSRunLoop mainRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:.1]];
+        }
     }];
 }
 - (void)testTrackpadAccelerationUsesIncrementalDeltasAndIsIndependentOfZoom {

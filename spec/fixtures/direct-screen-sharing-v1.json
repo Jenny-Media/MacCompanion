@@ -319,6 +319,12 @@
       "phase": "paused"
     },
     {
+      "name": "background established while review return frame pending",
+      "retainsSocket": true,
+      "allowsInput": false,
+      "phase": "paused"
+    },
+    {
       "name": "healthy foreground resume",
       "retainsSocket": true,
       "allowsInputBeforeFrame": false,
@@ -1409,8 +1415,38 @@
       "host layout change"
     ],
     "retainLastPresentedImage": true,
+    "baselineResetClosesInput": true,
+    "presentationCommitRequiresCurrentEpoch": true,
     "layoutGapsAreRequired": false
   },
+  "inputOnlyTransitionCases": [
+    {
+      "name": "enter input-only while desktop baseline unavailable",
+      "allowsInputBeforeRelease": false,
+      "allowsInputAfterRelease": true,
+      "requestsPixelsInInputOnly": false,
+      "allowsInputAfterReturningToDesktop": false,
+      "allowsInputAfterFreshDesktopFrame": true
+    }
+  ],
+  "framePresentationCases": [
+    {
+      "name": "reset during review return presentation",
+      "reviewReturn": true,
+      "before": [2, 2],
+      "after": [4, 4],
+      "allowsInputAfterReset": false,
+      "allowsInputAfterCurrentFrame": true
+    },
+    {
+      "name": "reset during live desktop presentation",
+      "reviewReturn": false,
+      "before": [2, 2],
+      "after": [4, 4],
+      "allowsInputAfterReset": false,
+      "allowsInputAfterCurrentFrame": true
+    }
+  ],
   "frameReadinessCases": [
     {
       "name": "metadata only",
@@ -2632,6 +2668,209 @@
       "awaitingResumeFrame": false,
       "baselinePresented": true,
       "connected": false
+    }
+  ],
+  "copyTextGeometryCases": [
+    {
+      "size": [
+        1920,
+        1080
+      ],
+      "selection": [
+        100.2,
+        50.7,
+        399.2,
+        199.1
+      ],
+      "pixels": [
+        100,
+        50,
+        400,
+        200
+      ]
+    },
+    {
+      "size": [
+        1920,
+        1080
+      ],
+      "selection": [
+        -20,
+        -10,
+        120,
+        60
+      ],
+      "pixels": [
+        0,
+        0,
+        100,
+        50
+      ]
+    },
+    {
+      "size": [
+        1920,
+        1080
+      ],
+      "selection": [
+        1900,
+        1000,
+        200,
+        200
+      ],
+      "pixels": [
+        1900,
+        1000,
+        20,
+        80
+      ]
+    },
+    {
+      "size": [
+        1920,
+        1080
+      ],
+      "selection": [
+        1920,
+        0,
+        20,
+        20
+      ],
+      "pixels": null
+    },
+    {
+      "size": [
+        1920,
+        1080
+      ],
+      "selection": [
+        0,
+        0,
+        0,
+        20
+      ],
+      "pixels": null
+    },
+    {
+      "size": [
+        0,
+        1080
+      ],
+      "selection": [
+        0,
+        0,
+        20,
+        20
+      ],
+      "pixels": null
+    },
+    {
+      "size": [
+        3840,
+        2160
+      ],
+      "selection": [
+        0,
+        0,
+        3840,
+        2160
+      ],
+      "pixels": [
+        0,
+        0,
+        3840,
+        2160
+      ]
+    }
+  ],
+  "copyTextBoundsCases": [
+    {
+      "size": [
+        4096,
+        4096
+      ],
+      "fits": true
+    },
+    {
+      "size": [
+        4097,
+        4096
+      ],
+      "fits": false
+    },
+    {
+      "size": [
+        8192,
+        1
+      ],
+      "fits": true
+    },
+    {
+      "size": [
+        8193,
+        1
+      ],
+      "fits": false
+    },
+    {
+      "size": [
+        0,
+        10
+      ],
+      "fits": false
+    }
+  ],
+  "copyTextReadinessCases": [
+    {
+      "name": "authenticated replacement retains old desktop before initial baseline",
+      "baselinePresented": false,
+      "awaitingResumeFrame": false,
+      "inputOnly": false,
+      "allowsCopyText": false
+    },
+    {
+      "name": "complete baseline still waiting for resume",
+      "baselinePresented": true,
+      "awaitingResumeFrame": true,
+      "inputOnly": false,
+      "allowsCopyText": false
+    },
+    {
+      "name": "input-only retains desktop pixels",
+      "baselinePresented": true,
+      "awaitingResumeFrame": false,
+      "inputOnly": true,
+      "allowsCopyText": false
+    },
+    {
+      "name": "current presented desktop baseline",
+      "baselinePresented": true,
+      "awaitingResumeFrame": false,
+      "inputOnly": false,
+      "allowsCopyText": true
+    }
+  ],
+  "stopReleaseCases": [
+    {
+      "name": "stop after baseline reset",
+      "transition": "baselineReset",
+      "key": 97,
+      "buttonMask": 1,
+      "releasesBeforeClose": true
+    },
+    {
+      "name": "stop while entering input-only",
+      "transition": "inputOnly",
+      "key": 65505,
+      "buttonMask": 1,
+      "releasesBeforeClose": true
+    },
+    {
+      "name": "stop during review return fresh-frame wait",
+      "transition": "reviewReturn",
+      "key": 65507,
+      "buttonMask": 4,
+      "releasesBeforeClose": true
     }
   ]
 }

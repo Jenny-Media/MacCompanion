@@ -1,5 +1,8 @@
 # Direct macOS Screen Sharing development profile v1
 
+The iOS Desktop local text-extraction tool is specified in
+[Copy Text from Screen](copy-text-from-screen.md).
+
 Decision: 2026-10-04. The normal iOS VNC development composition is a standalone
 client of built-in macOS Screen Sharing, with no Mac Companion host or Agent.
 The historical paired protocol remains compatible but is not instantiated here.
@@ -145,14 +148,23 @@ Changing modes, crops, backgrounding, cancellation and exit release held buttons
 One Done action disconnects and returns to My Macs; no separate active-session
 Disconnect button is presented. Explicit exit does not reconnect automatically. Background cancels a pending
 handshake. An established connection cancels queued input and pauses its native owner
-without closing the socket. A bounded in-flight read may finish before sent
+without closing the socket, including while initial, review-return or foreground
+pixels are pending. Transport establishment is independent of input readiness. Explicit Stop gives
+an established socket owner up to 250 ms to release sent keys/buttons/gestures,
+including when a baseline reset or mode transition has closed input admission.
+Only an incomplete handshake is shut down immediately. The bounded fallback
+unblocks stalled reads and is fenced to the stopped connection generation.
+A bounded in-flight read may finish before sent
 keys/buttons are released. Once release completes, the owner sleeps: no frame
 decoding, new update requests, UI presentation or remote input runs while paused. A bounded
 UIKit background task only finishes input release and the paused status update,
 ending immediately on completion
 or expiration; it does not maintain an idle connection or stream in the background.
 Foreground requests a full framebuffer on the same owner. Input remains blocked
-until a complete framebuffer arrives. If the socket fails or no framebuffer arrives
+until a complete framebuffer arrives. Every baseline reset closes input, retires
+queued input and releases held input. Presentation commits recheck the connection
+generation and baseline epoch under the owner lock after the UI callback, before
+marking a baseline presented or reopening input. If the socket fails or no framebuffer arrives
 within 9000 ms (allowing the bounded baseline refresh window), retire it and make one automatic reconnect attempt. Do not loop
 retries or overlap native owners. Background/foreground calls are idempotent.
 Preserve the selected display ID, relative zoom, viewport center and mouse mode;
@@ -290,6 +302,11 @@ Publish its initial Connected state after successful RFB initialization and on
 an admitted resume or switch into input-only mode. Paused, stopping, overflowed
 or unauthenticated owners cannot publish Connected in either mode. Switching
 back to Desktop still requires a fresh complete baseline before Connected.
+Forward mode changes to any established owner, including while Desktop waits
+for pixels. Retire queued input and release held input on the socket owner before
+admitting the new mode. Entering Trackpad & Keyboard reopens input after that
+release without requiring a desktop baseline; a superseded mode or presentation
+epoch cannot reopen input.
 
 The keyboard/modifier strip remains directly available. One bottom-right glass
 controls button opens quick actions, Displays, Input and Session categories, with
@@ -389,7 +406,15 @@ queue keeps the draft with a non-destructive error. Once admitted, disable editi
 and duplicate sends until the local transport write completes or fails. A local
 write completion is not remote application consumption. Partial/uncertain writes
 are reported without automatic retry; lifecycle interruption retires callbacks
-and never replays input. Cancellation also retires event groups already copied
+and never replays input. Copy Text review and Desktop baseline resets also retire
+composed-text groups and their pending completions under the queue lock.
+Composer presentation, availability, queue admission and worker writes use the
+mode-specific readiness contract: Desktop requires the current complete presented
+baseline, including the first frame after replacement. Retained viewer pixels,
+partial coverage and a complete frame awaiting presentation cannot admit text.
+Trackpad & Keyboard can compose and send without pixels on its authenticated
+input owner. Recheck this readiness under the queue lock before admitting text.
+Cancellation also retires event groups already copied
 by the VNC worker: resuming input cannot admit their remaining events. Release
 keys actually written before cancellation. An interrupted-send warning survives
 automatic retained-session replacement until the user acknowledges it.

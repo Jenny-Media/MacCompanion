@@ -142,6 +142,8 @@ struct VNCRemoteDesktopView: UIViewControllerRepresentable {
                 }
             }, NotificationCenter.default.addObserver(forName: DirectAppLockV1.unlocked, object: nil, queue: .main) { [weak self] _ in
                 MainActor.assumeIsolated { self?.viewer?.foregrounded() }
+            }, NotificationCenter.default.addObserver(forName: DirectAppLockV1.locked, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.pause() }
             }, NotificationCenter.default.addObserver(forName: UserDefaults.didChangeNotification, object: nil, queue: .main) { [weak self] _ in
                 MainActor.assumeIsolated { self?.activity.preferenceChanged() }
             }, NotificationCenter.default.addObserver(forName: RemoteSessionActivityActions.endRequested, object: nil, queue: .main) { [weak self] notification in

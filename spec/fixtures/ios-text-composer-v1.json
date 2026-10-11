@@ -198,6 +198,22 @@
       ],
       "warningBeforeAcknowledge": true,
       "warningAfterAcknowledge": false
+    },
+    "screenTextReview": {
+      "cancelQueuedCompletionWritten": false,
+      "allowsSendDuringReview": false,
+      "repliesAfterReview": 0,
+      "copiedGroupBoundary": "desktopReview"
+    },
+    "admission": {
+      "replacementDesktop": {
+        "beforeFirstFrame": false,
+        "partialFrame": false,
+        "completeBeforePresentation": false,
+        "presentedCurrentFrame": true,
+        "afterBaselineReset": false
+      },
+      "trackpadWithoutPixels": true
     }
   }
 }

@@ -9,6 +9,7 @@ python3 scripts/validate_fixtures.py
 python3 scripts/verify_vnc_framebuffer_bounds.py
 python3 scripts/verify_vnc_keyboard.py
 python3 scripts/verify_vnc_viewport.py
+python3 scripts/verify_vnc_text.py
 python3 scripts/verify_vnc_direct.py
 python3 scripts/verify_direct_mac_names.py
 python3 scripts/verify_macos_input.py

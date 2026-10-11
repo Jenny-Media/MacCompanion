@@ -37,8 +37,11 @@
 @end
 @implementation NativeGestureTests
 - (CompanionVNCSession *)session {
-    CompanionVNCSession *s = [CompanionVNCSession new]; s.inputOnly = YES;
-    for (NSString *key in @[@"running", @"inputReady", @"appleGestureServer", @"nativeGestureLayout"]) [s setValue:@YES forKey:key];
+    return [self sessionWithInputOnly:YES];
+}
+- (CompanionVNCSession *)sessionWithInputOnly:(BOOL)inputOnly {
+    CompanionVNCSession *s = [CompanionVNCSession new]; s.inputOnly = inputOnly;
+    for (NSString *key in @[@"running", @"established", @"inputReady", @"appleGestureServer", @"nativeGestureLayout"]) [s setValue:@YES forKey:key];
     [s setValue:@3024 forKey:@"framebufferWidth"]; [s setValue:@1964 forKey:@"framebufferHeight"];
     return s;
 }
@@ -140,7 +143,7 @@
     int pair[2]; XCTAssertEqual(socketpair(AF_UNIX, SOCK_STREAM, 0, pair),0);
     struct timeval timeout={.tv_sec=1}; setsockopt(pair[1],SOL_SOCKET,SO_RCVTIMEO,&timeout,sizeof(timeout));
     rfbClient *client=rfbGetClient(8,3,4); client->sock=pair[0]; client->width=3024; client->height=1964;
-    CompanionVNCSession *s=[self session]; s.inputOnly=NO; [s configureClient:client];
+    CompanionVNCSession *s=[self sessionWithInputOnly:NO]; [s configureClient:client];
     for (NSUInteger repeat=0;repeat<3;repeat++) {
         XCTAssertTrue([s beginScrollX:1000 y:600]); XCTAssertTrue([s changeScrollX:12 y:24]);
         NSArray *events=[self takeEvents:s]; XCTAssertEqual(events.count,2);
@@ -171,7 +174,7 @@
         int yes=1; setsockopt(pair[0],SOL_SOCKET,SO_NOSIGPIPE,&yes,sizeof(yes));
         rfbClient *client=rfbGetClient(8,3,4); client->sock=pair[0]; client->width=3024; client->height=1964;
         client->supportedMessages.client2server[0] |= 1 << rfbPointerEvent;
-        CompanionVNCSession *s=[self session]; s.inputOnly=only.boolValue; [s configureClient:client];
+        CompanionVNCSession *s=[self sessionWithInputOnly:only.boolValue]; [s configureClient:client];
         // Keep this socket-owner test focused on input, without requiring desktop pixels.
         [s setValue:@YES forKey:@"baselinePresented"]; [s setValue:@NO forKey:@"modeChanged"];
         // The coverage timeout starts well after this bounded pause/stop check.
@@ -193,7 +196,7 @@
 - (void)testViewerPreservesMotionUsesScrollSpeedAndCancelsAtControlsInBothModes {
     for (NSNumber *only in @[@NO,@YES]) {
         CompanionVNCViewer *viewer=[CompanionVNCViewer new]; viewer.inputOnly=only.boolValue; [viewer loadViewIfNeeded];
-        CompanionVNCSession *s=[self session]; s.inputOnly=only.boolValue; viewer.session=s;
+        CompanionVNCSession *s=[self sessionWithInputOnly:only.boolValue]; viewer.session=s;
         [viewer setValue:[NSValue valueWithCGRect:CGRectMake(0,0,3024,1964)] forKey:@"activeCrop"];
         [viewer setValue:[NSValue valueWithCGPoint:CGPointMake(1000,600)] forKey:@"cursorPosition"];
         [viewer setValue:@YES forKey:@"cursorPositionKnown"];

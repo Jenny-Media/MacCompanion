@@ -10,6 +10,7 @@ FOUNDATION_EXPORT NSString *const CompanionVNCControlsHapticsPreference;
 @property(nonatomic) BOOL trackpad;
 @property(nonatomic) BOOL hapticsEnabled;
 @property(nonatomic) BOOL fullscreen, inputOnly;
+@property(nonatomic) BOOL textCopyAvailable;
 @property(nonatomic) CGFloat bottomInset;
 /// Optional toolbar slot; the shared button and its gestures remain in this overlay.
 @property(nonatomic, weak, nullable) UIView *buttonAnchorView;
