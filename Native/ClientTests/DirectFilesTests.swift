@@ -9,6 +9,38 @@ import NIO
 #endif
 
 @MainActor final class DirectFilesTests: XCTestCase {
+    func testIndexedDirectoryMetadataBudgetAndHandleCleanup() async throws {
+        struct Fixture: Decodable { let directoryBudgetCases: [FilesDirectoryTestPlan] }
+        let url = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "direct-files-v1", withExtension: "json"))
+        let plans = try JSONDecoder().decode(Fixture.self, from: Data(contentsOf: url)).directoryBudgetCases
+        for plan in plans {
+            let probe = FilesDirectoryTestProbe()
+            let server = try await filesDirectoryTestServer(plan: plan, probe: probe)
+            defer { Task { await probe.shutdown(); try? await server.close() } }
+            let deadline = Task {
+                do { try await Task.sleep(for: .seconds(15)); await probe.shutdown() } catch {}
+            }
+            defer { deadline.cancel() }
+            // Host acceptance is scoped to this freshly generated, owned test peer.
+            let client = try await SSHClient.connect(to: .init(host: "127.0.0.1", port: try XCTUnwrap(server.localAddress?.port),
+                authenticationMethod: { .passwordBased(username: "synthetic", password: "synthetic-only") }, hostKeyValidator: .acceptAnything()))
+            let sftp = try await client.openSFTP()
+            do {
+                let listing: [SFTPMessage.Name]
+                if let budget = plan.maximumMetadataBytes {
+                    listing = try await sftp.listDirectoryBounded(atPath: "/synthetic", maximumEntries: 10_000, maximumMetadataBytes: budget)
+                } else { listing = try await sftp.listDirectoryBounded(atPath: "/synthetic", maximumEntries: 10_000) }
+                XCTAssertTrue(plan.accepted, plan.name)
+                XCTAssertEqual(listing.flatMap(\.components).count, plan.entries, plan.name)
+            } catch {
+                XCTAssertFalse(plan.accepted, "\(plan.name): \(error)")
+                if case SFTPError.invalidResponse = error {} else { XCTFail("Unexpected budget failure: \(error)") }
+            }
+            XCTAssertEqual(probe.reads, plan.expectedReadRequests, plan.name)
+            XCTAssertEqual(probe.closes, 1, "\(plan.name): close the directory on success and budget rejection")
+            try await sftp.close(); try await client.close()
+        }
+    }
     func testIndexedHostApprovalPreservesConcurrentTrust() throws {
         let url = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "direct-files-v1", withExtension: "json"))
         let fixture = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])

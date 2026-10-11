@@ -15,6 +15,11 @@ not introduce a connection mode or require a Mac Companion helper.
   and on macOS a key referenced directly from disk, including a passphrase.
   Turn Save SSH Login off after saving a password. The old login must be removed
   while the Mac's SSH host trust and keys remain available.
+  Keep Files open through a successful saved-password connection, Disconnect and
+  network loss. The saved password must be available for explicit reconnect in
+  that same view. Edit the retry account/password, then cancel or fail a connection:
+  the draft must remain. On iPhone, backgrounding must defer restoration until
+  the app is active and unlocked. Removing the saved login must prevent restoration.
   On Mac, type a disk-key passphrase, then select a different key or remove the
   selection before Connect. The previous passphrase must clear. Reopening the
   chooser with the same key must preserve it and any edited password draft.
@@ -26,6 +31,8 @@ not introduce a connection mode or require a Mac Companion helper.
   Authentication rejection must not send credentials to a fallback address.
 - Browse Home, nested folders and Up. Create a folder and refresh. Check denied
   directories, an empty directory, and a directory beyond the 10,000-entry limit.
+  Listings beyond the aggregate 16-MiB UTF-8 metadata budget must be rejected,
+  including oversized longnames and extended attributes in otherwise valid packets.
   A slow listing that continues responding must remain connected; a stalled
   response must time out and offer an explicit reconnect.
 - Upload individual files from local Files and iCloud Drive on iPhone. On Mac,
@@ -96,6 +103,9 @@ emoji and composed/decomposed Unicode. Embedded-channel decoder cases cover
 the extended metadata count bound and malformed counts below the packet-size cap.
 Encoder vectors cover string-length prefixes at buffer-capacity boundaries and
 the retained OPEN/CLOSE/replacement sequence of an empty upload.
+Indexed loopback SFTP responses cover the aggregate metadata cap, exact UTF-8
+boundaries, longnames and extended attributes. Directory handles must close on
+both successful listings and budget rejection.
 
 `DirectFilesIntegrationTests` uses a disposable loopback SSH test transport with
 macOS's `/usr/libexec/sftp-server`. It exercises browsing, folder creation,
@@ -117,5 +127,8 @@ platforms and mounts Mac login fields to exercise external disk-key selection,
 removal and unchanged-reference notifications while preserving edited drafts.
 It also mounts the iPhone sign-in form during an owned pending SSH handshake to
 verify saved credentials load when sign-in becomes available.
+Both platforms also mount Files before its first saved-password connection and
+verify same-view reconnect after Disconnect and authenticated network loss,
+edited retry-draft preservation, and removal of a remembered login.
 Native window automation and physical file-provider acceptance are
 separate from hosted rendering and protocol tests.

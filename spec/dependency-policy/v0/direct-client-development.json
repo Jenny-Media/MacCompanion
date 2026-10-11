@@ -3,7 +3,7 @@
   "releaseAdmitted": false,
   "vendorPackage": "Native/Dependencies/Citadel",
   "sourceLockPath": "Native/Terminal/source-lock.json",
-  "sourceLockSHA256": "7655d269bb6e444248397b763a45d704d04304f1fdfa095c1e5466a404256019",
+  "sourceLockSHA256": "e95749a687659156d8e4bd3940f865215f93116c3cec1ee6cc94b088abbe8eda",
   "resolvedLockfilePath": "Native/Terminal/Package.resolved",
   "resolvedLockfileSHA256": "29b3df8602d0787d62a02e930de45b40f6a7644e9b6c5ccd2cd3d368aa5dc1c2"
 }

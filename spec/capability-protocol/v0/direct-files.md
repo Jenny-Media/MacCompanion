@@ -29,6 +29,11 @@ record shows Mac unavailable; existing owners keep their original snapshot.
 Opening or dismissing help or purchase sheets MUST NOT reload a saved password,
 replace an edited account, or change the user's saved-login choice. Explicit key
 selection may refresh the selected key/account without reloading the password.
+After a successful password connection clears its sign-in secret, returning to
+sign-in in the same view MUST make the remembered password available again for
+explicit reconnect. Restore only that cleared credential, for the same account,
+while saved login remains enabled; preserve edited drafts and never reconnect
+automatically. On iOS defer reading it until the app is active and unlocked.
 A disk-key passphrase is bound to that file reference. Clear it when the selected
 reference changes or is removed; keep the same-reference login draft intact.
 This includes changes made in another window. Retire any unfinished key-file
@@ -67,7 +72,11 @@ The existing SFTP v3 and OpenSSH replacement wire bytes remain unchanged.
 
 Browse from the account's canonical home directory. Resolve paths using SFTP,
 not local filesystem rules or shell interpolation. Directory listings are bounded
-to 10,000 entries and directory handles MUST close on success and failure.
+to 10,000 entries and 16 MiB of aggregate decoded UTF-8 string metadata, including
+filenames, longnames and extended-attribute keys and values. Enforce the byte
+budget before retaining each response, even when every packet fits the 1-MiB
+packet limit and continues arriving within the idle deadline. Directory handles
+MUST close on success and failure, including budget rejection.
 Accept valid single filenames only; reject dot entries, slash, NUL, control
 characters and overlong names. Full paths are bounded to 4096 UTF-8 bytes.
 Use LSTAT for filename conflicts so symbolic links are not offered for replacement.

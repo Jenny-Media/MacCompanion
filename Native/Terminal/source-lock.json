@@ -3,7 +3,7 @@
     "url": "https://github.com/orlandos-nl/Citadel.git",
     "revision": "ae8562f895de06ccb86fdb1cbb65fd99c8976e12",
     "localPath": "Native/Dependencies/Citadel",
-    "patch": "Existing-channel pipeline/event-loop, early-banner read ordering and timeout correction; bounded exec stderr; standard encrypted Ed25519 OpenSSH export using existing bcrypt and BoringSSL AES-CTR primitives. No embedded key material. Retained PTY exit status and exit signals; idempotent PTY channel cleanup preserving the original failure. Bounded SFTP listings with handle closure; SFTP v3 rename framing and advertised OpenSSH atomic replacement; packet length admission and handle-based download attributes. SFTP subsystem/version deadline owns one completion and closes late channels; mutating SFTP operations require OK status. Optional awaited SFTP response activity resets the owned Files idle watchdog before returning each response. Bounded linear-time extended attribute decoding; observable independent SFTP subsystem closure. Allocating SSH-string length prefixes preserve encoding across buffer-capacity boundaries.",
+    "patch": "Existing-channel pipeline/event-loop, early-banner read ordering and timeout correction; bounded exec stderr; standard encrypted Ed25519 OpenSSH export using existing bcrypt and BoringSSL AES-CTR primitives. No embedded key material. Retained PTY exit status and exit signals; idempotent PTY channel cleanup preserving the original failure. Bounded SFTP listings with handle closure; SFTP v3 rename framing and advertised OpenSSH atomic replacement; packet length admission and handle-based download attributes. SFTP subsystem/version deadline owns one completion and closes late channels; mutating SFTP operations require OK status. Optional awaited SFTP response activity resets the owned Files idle watchdog before returning each response. Bounded linear-time extended attribute decoding; observable independent SFTP subsystem closure. Allocating SSH-string length prefixes preserve encoding across buffer-capacity boundaries. Aggregate UTF-8 directory metadata budget enforced before response retention.",
     "files": {
       "LICENSE": "580a39b7c09cba3cd18a5b1e0d4376e9d1ac200d241bda87e95ed74917bc3b31",
       "Package.swift": "18c2cf5fdcdda94ec04d24009174f347150643c1419d4d5d22baf499d1fd4eb4",
@@ -34,7 +34,7 @@
       "Sources/Citadel/OpenSSHKey.swift": "94b689102f905ac99c95c42226fdbdecd1bcfb9ef30f6d65f751a74156795fb7",
       "Sources/Citadel/RemotePortForward/Client/RemotePortForward+Client.swift": "718344bf84c9cb592b9b28257d53e19289ef8c24ef4e6942e79a0835181bb734",
       "Sources/Citadel/RemotePortForward/Server/RemotePortForward+Server.swift": "aa88252bfb9f66759497cd62c33e67ea8f8099a163d17b9f9826a05ead260cc7",
-      "Sources/Citadel/SFTP/Client/SFTPClient.swift": "9280c92ebed42c34c2514bb6b3624b361e181df1a8942209f6c20225836dd2b6",
+      "Sources/Citadel/SFTP/Client/SFTPClient.swift": "5132ad293c3fa9618f02a3c7c3d849ebd4e4c6f9ada1bfc5a155805ad00c4aa5",
       "Sources/Citadel/SFTP/Client/SFTPClientInboundHandler.swift": "8ea1f9585f564300f4fd25808b276ce7040a5396edf17ff4f5573a3014a95444",
       "Sources/Citadel/SFTP/Client/SFTPFile.swift": "490e94a59d17b46ca7cb10ebf3bad1f9f56bba5c21bf34dd271f5f6a30d2d8f6",
       "Sources/Citadel/SFTP/SFTPBasicEnums.swift": "60fa85de3148028b136c94665b747392255d7b0e7873a6b31ee3c249db5df6fc",

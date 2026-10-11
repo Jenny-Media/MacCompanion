@@ -10,6 +10,88 @@ import AppKit
 #endif
 
 @MainActor final class DirectFilesPresentationTests: XCTestCase {
+    func testMountedFilesRestoresClearedSavedPasswordAndPreservesEditedRetryDraft() async throws {
+        if !DirectProAccess.shared.ready { await DirectProAccess.shared.refresh() }
+        let probe = FilesDirectoryTestProbe()
+        let server = try await filesDirectoryTestServer(probe: probe)
+        defer { Task { await probe.shutdown(); try? await server.close() } }
+        let mac = DirectMacRecordV1(id: UUID(), name: "Synthetic Remembered Login", addresses: ["127.0.0.1"], sshPort: try XCTUnwrap(server.localAddress?.port))
+        try TerminalSecretStore.save(.init(username: "synthetic", password: "synthetic-only"), id: mac.id)
+        let session = DirectFilesSession(mac: mac)
+        defer { session.close(); try? TerminalSecretStore.remove(mac.id) }
+        let view = DirectFilesView(mac: mac, session: session, retainWhenDismissed: true)
+        #if os(iOS)
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let previous = scene.windows.first { $0.isKeyWindow }
+        let window = UIWindow(windowScene: scene); window.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
+        window.rootViewController = UIHostingController(rootView: view); window.makeKeyAndVisible()
+        defer { window.endEditing(true); window.isHidden = true; window.rootViewController = nil; previous?.makeKeyAndVisible() }
+        func descendants(_ view: UIView) -> [UIView] { [view] + view.subviews.flatMap(descendants) }
+        func account() -> UITextField? { descendants(window).compactMap { $0 as? UITextField }.first { !$0.isSecureTextEntry } }
+        func secret() -> UITextField? { descendants(window).compactMap { $0 as? UITextField }.first { $0.isSecureTextEntry } }
+        func values() -> (String?, String?) { (account()?.text, secret()?.text) }
+        func edit(_ username: String, _ password: String) throws {
+            let account = try XCTUnwrap(account()), secret = try XCTUnwrap(secret())
+            account.text = username; account.sendActions(for: .editingChanged)
+            secret.text = password; secret.sendActions(for: .editingChanged)
+        }
+        func layout() { window.layoutIfNeeded() }
+        #else
+        let host = NSHostingView(rootView: view)
+        let window = NSWindow(contentRect: .init(x: -20000, y: -20000, width: 720, height: 640), styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false; window.contentView = host; window.orderFront(nil)
+        defer { window.makeFirstResponder(nil); window.contentView = nil; window.close() }
+        func descendants(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(descendants) }
+        func fields() -> MacCredentialFields.Fields? { descendants(host).compactMap { $0 as? MacCredentialFields.Fields }.first }
+        func values() -> (String?, String?) { (fields()?.account.stringValue, fields()?.secret.stringValue) }
+        func edit(_ username: String, _ password: String) throws {
+            let fields = try XCTUnwrap(fields())
+            fields.account.stringValue = username; fields.secret.stringValue = password
+        }
+        func layout() { host.layoutSubtreeIfNeeded() }
+        #endif
+        func wait(_ predicate: () -> Bool) async throws {
+            let deadline = Date().addingTimeInterval(10)
+            while !predicate() {
+                guard Date() < deadline else { throw DirectFilesFailure.timedOut }
+                try await Task.sleep(for: .milliseconds(50)); layout()
+            }
+        }
+        // Mount before the first connection: loaded=true must not block later reconnect.
+        try await wait { values().0 == "synthetic" && values().1 == "synthetic-only" }
+        func connect() async throws {
+            session.connect(username: "synthetic", password: "synthetic-only", key: nil, remember: true)
+            try await wait { session.trust != nil || session.phase != .connecting }
+            if session.trust != nil { session.answerTrust(true) }
+            try await wait { session.phase == .ready || session.phase == .interrupted }
+            XCTAssertEqual(session.phase, .ready, session.message ?? session.status)
+            guard session.phase == .ready else { throw DirectFilesFailure.unavailable }
+            // Give the mounted view's successful-connection observer time to clear the secret.
+            try await Task.sleep(for: .milliseconds(150)); layout()
+        }
+        try await connect()
+        session.disconnect()
+        try await wait { values().1 == "synthetic-only" }
+        XCTAssertEqual(values().0, "synthetic")
+        XCTAssertEqual(session.phase, .interrupted, "Restoring the secret never reconnects automatically")
+        try edit("synthetic-edited-account", "synthetic-edited-password")
+        try await Task.sleep(for: .milliseconds(150))
+        session.connect(username: "synthetic-edited-account", password: "synthetic-edited-password", key: nil, remember: true)
+        try await wait { session.phase == .interrupted } // Real password rejection from the owned peer.
+        try await Task.sleep(for: .milliseconds(150)); layout()
+        XCTAssertEqual(values().0, "synthetic-edited-account")
+        XCTAssertEqual(values().1, "synthetic-edited-password")
+        try edit("synthetic", "synthetic-only")
+        try await connect()
+        await probe.shutdown() // Authenticated network loss in the same mounted view.
+        try await wait { session.phase == .interrupted && values().1 == "synthetic-only" }
+        XCTAssertEqual(values().0, "synthetic")
+        try await connect()
+        try TerminalSecretStore.forgetLogin(mac.id)
+        session.disconnect()
+        try await wait { values().0 == "synthetic" }
+        XCTAssertEqual(values().1, "", "A removed saved login must never be restored")
+    }
     #if os(iOS)
     func testMountedFilesDefersFirstLoginUntilSignInBecomesAvailable() async throws {
         if !DirectProAccess.shared.ready { await DirectProAccess.shared.refresh() }

@@ -340,5 +340,86 @@
       "accepted": false,
       "expectedKey": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEB"
     }
+  ],
+  "directoryBudgetCases": [
+    {
+      "name": "default-budget-large-longnames",
+      "entries": 18,
+      "longnameUnit": "x",
+      "longnameRepeats": 1000000,
+      "extended": [],
+      "accepted": false,
+      "expectedReadRequests": 17
+    },
+    {
+      "name": "ascii-exact-budget",
+      "entries": 2,
+      "longnameUnit": "x",
+      "longnameRepeats": 20,
+      "extended": [],
+      "maximumMetadataBytes": 60,
+      "accepted": true,
+      "expectedReadRequests": 3
+    },
+    {
+      "name": "ascii-over-budget",
+      "entries": 2,
+      "longnameUnit": "x",
+      "longnameRepeats": 20,
+      "extended": [],
+      "maximumMetadataBytes": 59,
+      "accepted": false,
+      "expectedReadRequests": 2
+    },
+    {
+      "name": "utf8-exact-budget",
+      "entries": 1,
+      "longnameUnit": "é",
+      "longnameRepeats": 4,
+      "extended": [],
+      "maximumMetadataBytes": 18,
+      "accepted": true,
+      "expectedReadRequests": 2
+    },
+    {
+      "name": "utf8-over-budget",
+      "entries": 1,
+      "longnameUnit": "é",
+      "longnameRepeats": 4,
+      "extended": [],
+      "maximumMetadataBytes": 17,
+      "accepted": false,
+      "expectedReadRequests": 1
+    },
+    {
+      "name": "extended-exact-budget",
+      "entries": 1,
+      "longnameUnit": "é",
+      "longnameRepeats": 1,
+      "extended": [
+        [
+          "x",
+          "é"
+        ]
+      ],
+      "maximumMetadataBytes": 15,
+      "accepted": true,
+      "expectedReadRequests": 2
+    },
+    {
+      "name": "extended-over-budget",
+      "entries": 1,
+      "longnameUnit": "é",
+      "longnameRepeats": 1,
+      "extended": [
+        [
+          "x",
+          "é"
+        ]
+      ],
+      "maximumMetadataBytes": 14,
+      "accepted": false,
+      "expectedReadRequests": 1
+    }
   ]
 }

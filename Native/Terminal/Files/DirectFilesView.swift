@@ -12,6 +12,7 @@ struct DirectFilesView: View {
     @State private var session: DirectFilesSession
     @State private var login = TerminalLoginSelection()
     @State private var password = ""
+    @State private var clearedPasswordAccount: String?
     @State private var remember = false
     @State private var key: TerminalNamedKey?
     @State private var keyName = ""
@@ -151,11 +152,14 @@ struct DirectFilesView: View {
             #endif
         }
         .directAppearance()
-        .task { if !pro.ready { await pro.refresh() }; initializeLoginIfNeeded() }
+        .task { if !pro.ready { await pro.refresh() }; prepareSignIn() }
         .onChange(of: session.phase) { _, phase in
-            if phase == .ready { password = ""; passphrase = "" }
+            if phase == .ready {
+                clearedPasswordAccount = remember && login.method == .password ? session.account : nil
+                password = ""; passphrase = ""
+            }
             else {
-                initializeLoginIfNeeded()
+                prepareSignIn()
                 #if os(macOS)
                 refreshSelectedKeyFile()
                 #endif
@@ -163,7 +167,7 @@ struct DirectFilesView: View {
         }
         .onChange(of: session.busy) { _, busy in
             if !busy {
-                initializeLoginIfNeeded()
+                prepareSignIn()
                 #if os(macOS)
                 refreshSelectedKeyFile()
                 #endif
@@ -189,6 +193,9 @@ struct DirectFilesView: View {
             savePicker.cancel()
             #endif
             password = ""; passphrase = ""; picker = false; export = nil
+        }
+        .onReceive(NotificationCenter.default.publisher(for: DirectClientPlatformV1.didBecomeActive)) { _ in
+            prepareSignIn()
         }
         .onDisappear {
             preparation = UUID(); preparingKey = false; saving = false; password = ""; passphrase = ""
@@ -416,6 +423,20 @@ struct DirectFilesView: View {
         } catch { session.message = "Saved SSH settings could not be read. Existing data is kept."; return false }
     }
     #endif
+    private func prepareSignIn() {
+        initializeLoginIfNeeded()
+        // Rehydrate only a remembered secret cleared by successful connection.
+        // Failures/cancellation and key-selection updates preserve edited drafts.
+        guard let account = clearedPasswordAccount, DirectAppLockV1.shared.canAccess,
+              DirectClientPlatformV1.sessionAvailable, session.phase != .ready, !session.busy else { return }
+        guard remember, login.method == .password, password.isEmpty, login.username == account else {
+            clearedPasswordAccount = nil; return
+        }
+        do {
+            if let saved = try TerminalSecretStore.login(mac.id), saved.username == account { password = saved.password }
+            clearedPasswordAccount = nil
+        } catch { session.message = "Saved SSH settings could not be read. Existing data is kept." }
+    }
     private func initializeLoginIfNeeded() {
         guard !loaded, DirectAppLockV1.shared.canAccess, session.phase != .ready, !session.busy else { return }
         loaded = true
@@ -424,7 +445,9 @@ struct DirectFilesView: View {
     private func loadLogin(preferSelected: Bool = false, includePassword: Bool = true) {
         guard DirectAppLockV1.shared.canAccess, session.phase != .ready, !session.busy else { return }
         do {
-            if includePassword, let saved = try TerminalSecretStore.login(mac.id) { login.loadPasswordAccount(saved.username); password = saved.password; remember = true }
+            if includePassword, let saved = try TerminalSecretStore.login(mac.id) {
+                login.loadPasswordAccount(saved.username); password = saved.password; remember = true; clearedPasswordAccount = nil
+            }
             #if os(macOS)
             let selection = try selectedKeyFile(mac.id)
             if keyFile != selection?.file { passphrase = "" }

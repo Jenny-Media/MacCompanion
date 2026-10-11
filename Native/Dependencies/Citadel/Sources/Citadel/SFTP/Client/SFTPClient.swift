@@ -176,8 +176,9 @@ public final class SFTPClient: Sendable {
         try await listDirectoryBounded(atPath: path, maximumEntries: 10_000)
     }
 
-    /// Bounded listing with one canonicalization and deterministic handle cleanup.
-    public func listDirectoryBounded(atPath path: String, maximumEntries: Int) async throws -> [SFTPMessage.Name] {
+    /// Bounds entries and aggregate UTF-8 metadata, with deterministic handle cleanup.
+    public func listDirectoryBounded(atPath path: String, maximumEntries: Int, maximumMetadataBytes: Int = 16 * 1024 * 1024) async throws -> [SFTPMessage.Name] {
+        guard maximumEntries >= 0, maximumMetadataBytes >= 0 else { throw SFTPError.invalidResponse }
         let canonical = try await getRealPath(atPath: path)
         guard case .handle(let handle) = try await sendRequest(.opendir(.init(requestId: allocateRequestId(), handle: canonical))) else {
             throw SFTPError.invalidResponse
@@ -188,6 +189,12 @@ public final class SFTPClient: Sendable {
             }
         }
         var names: [SFTPMessage.Name] = [], count = 0
+        var remainingMetadataBytes = maximumMetadataBytes
+        func admit(_ string: String) throws {
+            let bytes = string.utf8.count
+            guard bytes <= remainingMetadataBytes else { throw SFTPError.invalidResponse }
+            remainingMetadataBytes -= bytes
+        }
         do {
             while true {
                 try Task.checkCancellation()
@@ -195,6 +202,12 @@ public final class SFTPClient: Sendable {
                 if case .status(let status) = response, status.errorCode == .eof { break }
                 guard case .name(let name) = response, !name.components.isEmpty,
                       name.components.count <= maximumEntries - count else { throw SFTPError.invalidResponse }
+                // A packet limit alone cannot bound a stream of large responses.
+                // Charge all retained strings before appending this response.
+                for component in name.components {
+                    try admit(component.filename); try admit(component.longname)
+                    for (key, value) in component.attributes.extended { try admit(key); try admit(value) }
+                }
                 count += name.components.count; names.append(name)
             }
             try await closeHandle()
