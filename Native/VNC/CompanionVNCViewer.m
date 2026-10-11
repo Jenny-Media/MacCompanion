@@ -1454,7 +1454,7 @@
 }
 - (BOOL)canCopyScreenText {
     return self.foreground && !self.exited && !self.checkingResume && !self.inputOnly && !self.textReview
-        && self.session.connected && self.lastFramebuffer && !CGRectIsNull(self.activeCrop)
+        && self.session.desktopFrameReady && self.lastFramebuffer && !CGRectIsNull(self.activeCrop)
         && !CGRectIsEmpty(self.activeCrop) && self.activeCrop.size.width*self.activeCrop.size.height <= 32*1024*1024;
 }
 - (void)showCopyScreenText {

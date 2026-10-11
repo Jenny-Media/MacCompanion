@@ -38,6 +38,7 @@
 - (BOOL)running { return YES; }
 - (BOOL)established { return YES; }
 - (BOOL)connected { return YES; }
+- (BOOL)desktopFrameReady { return YES; }
 - (BOOL)suspendInputForReview:(void (^)(void))completion { self.suspensions++; completion(); return YES; }
 - (void)resumeInputAfterReview { self.resumptions++; }
 @end
@@ -210,6 +211,59 @@
     [viewer prepareConnection]; XCTAssertNil([viewer valueForKey:@"textReview"]); XCTAssertNil([review valueForKey:@"snapshot"]);
     [viewer stopViewer];
 }
+- (void)testCopyTextAdmissionUsesCurrentOwnerBaselineRatherThanRetainedPixels {
+    for (NSDictionary *entry in [self profile][@"copyTextReadinessCases"]) {
+        CompanionVNCViewer *viewer=[CompanionVNCViewer new]; [viewer loadViewIfNeeded];
+        viewer.view.frame=CGRectMake(0,0,440,956); [viewer.view layoutIfNeeded];
+        [viewer setValue:@YES forKey:@"foreground"];
+        [viewer frame:[self image:CGSizeMake(800,600) scale:1 text:@"Retained synthetic desktop"]];
+        [viewer prepareConnection]; CompanionVNCSession *session=viewer.session;
+        // This is the authenticated replacement's state before its first frame,
+        // not an overridden connected getter on a fake owner.
+        [session setValue:@YES forKey:@"running"]; [session setValue:@YES forKey:@"established"];
+        session.inputOnly=[entry[@"inputOnly"] boolValue];
+        [session setValue:@YES forKey:@"inputReady"];
+        [session setValue:entry[@"baselinePresented"] forKey:@"baselinePresented"];
+        [session setValue:entry[@"awaitingResumeFrame"] forKey:@"awaitingResumeFrame"];
+        XCTAssertNotNil([viewer valueForKey:@"lastFramebuffer"]);
+        BOOL expected=[entry[@"allowsCopyText"] boolValue];
+        XCTAssertEqual(session.desktopFrameReady,expected,@"%@",entry[@"name"]);
+        XCTAssertEqual([viewer canCopyScreenText],expected,@"%@",entry[@"name"]);
+        XCTAssertEqual([session suspendInputForReview:nil],expected,@"%@",entry[@"name"]);
+        XCTAssertEqual([[session valueForKey:@"reviewInputSuspended"] boolValue],expected);
+        if (!expected) { [viewer showCopyScreenText]; XCTAssertNil([viewer valueForKey:@"textReview"]); }
+        [viewer stopViewer]; [session setValue:@NO forKey:@"running"];
+    }
+}
+- (void)testReconnectCopyTextWaitsForCompleteCurrentFrameAndRechecksAtSuspension {
+    CompanionVNCViewer *viewer=[CompanionVNCViewer new]; [viewer loadViewIfNeeded];
+    viewer.view.frame=CGRectMake(0,0,440,956); [viewer.view layoutIfNeeded];
+    [viewer setValue:@YES forKey:@"foreground"];
+    UIImage *retained=[self image:CGSizeMake(800,600) scale:1 text:@"Old synthetic desktop"];
+    [viewer frame:retained]; [viewer prepareConnection]; CompanionVNCSession *session=viewer.session;
+    rfbClient *client=rfbGetClient(8,3,4); client->width=4; client->height=4;
+    [session configureClient:client]; XCTAssertTrue([session allocate:client]);
+    for (NSString *key in @[@"running",@"established",@"inputReady"]) [session setValue:@YES forKey:key];
+    XCTAssertTrue(session.connected); XCTAssertFalse(session.desktopFrameReady);
+    [viewer showCopyScreenText]; XCTAssertNil([viewer valueForKey:@"textReview"]);
+    XCTAssertEqual([viewer valueForKey:@"lastFramebuffer"],retained);
+    client->GotFrameBufferUpdate(client,0,0,4,2); [session publishFrame:client];
+    XCTAssertFalse([viewer canCopyScreenText]); XCTAssertFalse([session suspendInputForReview:nil]);
+    XCTestExpectation *presented=[self expectationWithDescription:@"Replacement's complete frame is presented"];
+    void (^deliver)(UIImage *)=[session.frameHandler copy];
+    session.frameHandler=^(UIImage *image){deliver(image); [presented fulfill];};
+    client->GotFrameBufferUpdate(client,0,2,4,2); [session publishFrame:client];
+    [self waitForExpectations:@[presented] timeout:1];
+    XCTAssertTrue([viewer canCopyScreenText]);
+    [viewer showCopyScreenText]; CompanionVNCTextReview *review=[viewer valueForKey:@"textReview"];
+    XCTAssertNotNil(review); XCTAssertEqual(CGImageGetWidth(((UIImage *)[review valueForKey:@"snapshot"]).CGImage),4);
+    [viewer invalidateTextReview:NO]; [session setValue:@NO forKey:@"reviewInputSuspended"];
+    // A reset between availability checking and suspension must reject atomically.
+    XCTAssertTrue(session.desktopFrameReady); XCTAssertTrue([session resetBaseline:client]);
+    XCTAssertFalse([session suspendInputForReview:nil]); XCTAssertFalse([[session valueForKey:@"reviewInputSuspended"] boolValue]);
+    session.frameHandler=nil; [viewer stopViewer]; [session setValue:@NO forKey:@"running"];
+    client->frameBuffer=NULL; rfbClientCleanup(client);
+}
 - (void)testSocketOwnerReleasesKeysThenKeepsFramesFlowingAndRequiresFreshResumeFrame {
     int pair[2]; XCTAssertEqual(socketpair(AF_UNIX,SOCK_STREAM,0,pair),0);
     struct timeval timeout={.tv_sec=2}; setsockopt(pair[1],SOL_SOCKET,SO_RCVTIMEO,&timeout,sizeof(timeout));
@@ -249,6 +303,7 @@
     client->width=2; client->height=2; [session configureClient:client]; XCTAssertTrue([session allocate:client]);
     client->GotFrameBufferUpdate(client,0,0,2,2);
     [session setValue:@YES forKey:@"running"]; [session setValue:@YES forKey:@"inputReady"];
+    [session setValue:@YES forKey:@"baselinePresented"];
     XCTAssertTrue([session suspendInputForReview:nil]); [session resumeInputAfterReview];
     XCTestExpectation *old=[self expectationWithDescription:@"Old complete coverage does not satisfy resume"]; old.inverted=YES;
     session.frameHandler=^(UIImage *image){ [old fulfill]; }; [session publishFrame:client];

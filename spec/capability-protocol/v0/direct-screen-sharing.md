@@ -149,7 +149,11 @@ One Done action disconnects and returns to My Macs; no separate active-session
 Disconnect button is presented. Explicit exit does not reconnect automatically. Background cancels a pending
 handshake. An established connection cancels queued input and pauses its native owner
 without closing the socket, including while initial, review-return or foreground
-pixels are pending. Transport establishment is independent of input readiness.
+pixels are pending. Transport establishment is independent of input readiness. Explicit Stop gives
+an established socket owner up to 250 ms to release sent keys/buttons/gestures,
+including when a baseline reset or mode transition has closed input admission.
+Only an incomplete handshake is shut down immediately. The bounded fallback
+unblocks stalled reads and is fenced to the stopped connection generation.
 A bounded in-flight read may finish before sent
 keys/buttons are released. Once release completes, the owner sleeps: no frame
 decoding, new update requests, UI presentation or remote input runs while paused. A bounded

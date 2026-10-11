@@ -11,6 +11,11 @@ action ordering, hidden actions, limits and Pro customization policy. Offer the
 new standard through Add Action; do not rewrite existing saved profiles. Exclude
 it from Terminal, video-free Trackpad & Keyboard, and the macOS action catalogue.
 
+Copy Text availability and review admission require the current connection owner's
+complete, presented Desktop baseline. Authentication alone does not admit extraction;
+a retained recovery image and an incomplete or superseded baseline remain unavailable.
+Recheck this readiness under the owner lock when suspending input for review.
+
 Capture one immutable, fully presented framebuffer and its selected-display crop.
 Preselect the unobscured visible viewport, preserving its position and zoom as
 space permits. Selection uses original received pixels, independent of UIKit

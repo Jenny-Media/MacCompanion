@@ -16,6 +16,8 @@ typedef UIImage CompanionVNCImage;
 /// Authenticated transport, including paused or fresh-frame-waiting states.
 @property(nonatomic, readonly) BOOL established;
 @property(nonatomic, readonly) BOOL connected;
+// A complete Desktop baseline presented by this owner, independent of retained UI pixels.
+@property(nonatomic, readonly) BOOL desktopFrameReady;
 @property(nonatomic) BOOL inputOnly;
 @property(nonatomic, readonly) BOOL nativeMagnificationSupported;
 - (BOOL)beginMagnificationX:(NSInteger)x y:(NSInteger)y;

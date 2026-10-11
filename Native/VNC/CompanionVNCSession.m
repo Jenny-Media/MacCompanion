@@ -152,6 +152,12 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
 - (BOOL)running { [_lock lock]; BOOL r = _running; [_lock unlock]; return r; }
 - (BOOL)established { [_lock lock]; BOOL value = _running && _established && !_stopping; [_lock unlock]; return value; }
 - (BOOL)connected { [_lock lock]; BOOL ready = _running && _inputReady && !_paused && !_stopping; [_lock unlock]; return ready; }
+- (BOOL)desktopFrameReady {
+    [_lock lock];
+    BOOL ready = !_inputOnly && CompanionVNCConnectionReady(_running, _inputReady, _inputOnly,
+        _paused, _stopping, _overflow, _awaitingResumeFrame, _baselinePresented);
+    [_lock unlock]; return ready;
+}
 - (BOOL)inputOnly { [_lock lock]; BOOL value = _inputOnly; [_lock unlock]; return value; }
 - (void)setInputOnly:(BOOL)value {
     [_lock lock];
@@ -267,7 +273,8 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
 }
 - (BOOL)suspendInputForReview:(void (^)(void))completion {
     [_lock lock];
-    if (!_running || !_inputReady || _paused || _stopping || _reviewInputSuspended) {
+    if (_inputOnly || _reviewInputSuspended || !CompanionVNCConnectionReady(_running, _inputReady, _inputOnly,
+        _paused, _stopping, _overflow, _awaitingResumeFrame, _baselinePresented)) {
         [_lock unlock]; return NO;
     }
     _reviewInputSuspended = YES; _releaseInputRequested = YES;
@@ -733,7 +740,9 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
 - (void)stop {
     [_lock lock]; [self cancelNativeGesturesLocked]; _stopping = YES; _presentationEpoch++; [_events removeAllObjects]; NSInteger generation = _generation;
     void (^completion)(void) = _pauseCompletion; _pauseCompletion = nil;
-    if (!_inputReady && _socket >= 0) shutdown(_socket, SHUT_RDWR);
+    // A temporary input gate must not close an authenticated transport before
+    // its owner releases sent input. Handshakes have no held input to release.
+    if (!_established && _socket >= 0) shutdown(_socket, SHUT_RDWR);
     [_lock unlock];
     dispatch_semaphore_signal(_wake);
     if (completion) dispatch_async(dispatch_get_main_queue(), completion);

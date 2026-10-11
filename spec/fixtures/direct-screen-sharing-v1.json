@@ -2819,5 +2819,58 @@
       ],
       "fits": false
     }
+  ],
+  "copyTextReadinessCases": [
+    {
+      "name": "authenticated replacement retains old desktop before initial baseline",
+      "baselinePresented": false,
+      "awaitingResumeFrame": false,
+      "inputOnly": false,
+      "allowsCopyText": false
+    },
+    {
+      "name": "complete baseline still waiting for resume",
+      "baselinePresented": true,
+      "awaitingResumeFrame": true,
+      "inputOnly": false,
+      "allowsCopyText": false
+    },
+    {
+      "name": "input-only retains desktop pixels",
+      "baselinePresented": true,
+      "awaitingResumeFrame": false,
+      "inputOnly": true,
+      "allowsCopyText": false
+    },
+    {
+      "name": "current presented desktop baseline",
+      "baselinePresented": true,
+      "awaitingResumeFrame": false,
+      "inputOnly": false,
+      "allowsCopyText": true
+    }
+  ],
+  "stopReleaseCases": [
+    {
+      "name": "stop after baseline reset",
+      "transition": "baselineReset",
+      "key": 97,
+      "buttonMask": 1,
+      "releasesBeforeClose": true
+    },
+    {
+      "name": "stop while entering input-only",
+      "transition": "inputOnly",
+      "key": 65505,
+      "buttonMask": 1,
+      "releasesBeforeClose": true
+    },
+    {
+      "name": "stop during review return fresh-frame wait",
+      "transition": "reviewReturn",
+      "key": 65507,
+      "buttonMask": 4,
+      "releasesBeforeClose": true
+    }
   ]
 }
