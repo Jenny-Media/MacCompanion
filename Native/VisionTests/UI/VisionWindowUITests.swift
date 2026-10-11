@@ -158,9 +158,9 @@ import XCTest
         connect(app, surface: terminal)
         XCTAssertTrue(terminal.waitForExistence(timeout: 20))
         // SwiftTerm renders terminal cells itself rather than exposing each row
-        // as a static-text element. Inspect this native capture for the startup
-        // banner; the hosted test verifies the emulator buffer before UI input.
-        let startup = XCTAttachment(screenshot: terminal.screenshot()); startup.name = "Initial Terminal banner before UI input"; startup.lifetime = .keepAlways; add(startup)
+        // as a static-text element. The hosted test verifies and renders its
+        // buffer before UI input. XCTest camera crops can target another scene.
+        let startup = XCTAttachment(string: terminal.debugDescription); startup.name = "Native Terminal attached before UI input"; startup.lifetime = .keepAlways; add(startup)
         // A steady cursor keeps XCTest's public idle wait deterministic; the
         // normal emulator handles the host's standard cursor-style sequence.
         try await server.record.emit("\u{1b}[2 q")
@@ -255,7 +255,7 @@ import XCTest
         let disclosure = alert.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "addresses, ports")).firstMatch
         XCTAssertTrue(disclosure.exists, app.debugDescription)
         XCTAssertTrue(alert.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "Apple Account and trusted devices")).firstMatch.exists)
-        let capture = XCTAttachment(screenshot: alert.screenshot()); capture.name = "Metadata disclosure before opt-in"; capture.lifetime = .keepAlways; add(capture)
+        let capture = XCTAttachment(string: alert.debugDescription); capture.name = "Native metadata disclosure before opt-in"; capture.lifetime = .keepAlways; add(capture)
         alert.buttons["Cancel"].tap(); XCTAssertEqual(toggle.value as? String, "0")
         toggle.tap(); XCTAssertTrue(alert.waitForExistence(timeout: 10)); alert.buttons["Enable Sync"].tap()
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "1"), object: toggle)], timeout: 10), .completed)
@@ -276,7 +276,7 @@ import XCTest
         XCTAssertTrue(app.staticTexts["Synthetic Second Mac · Desktop"].waitForExistence(timeout: 10), app.debugDescription)
         app.buttons["Your Macs"].firstMatch.tap()
         XCTAssertTrue(app.staticTexts["Synthetic First Mac"].exists); XCTAssertTrue(app.staticTexts["Synthetic Second Mac"].exists)
-        let capture = XCTAttachment(screenshot: app.collectionViews.firstMatch.screenshot()); capture.name = "Both Macs retained after free choice"; capture.lifetime = .keepAlways; add(capture)
+        let capture = XCTAttachment(string: app.collectionViews.firstMatch.debugDescription); capture.name = "Native library retains both Macs after free choice"; capture.lifetime = .keepAlways; add(capture)
     }
     func testCompactLargerTextForms() async throws {
         let server = DesktopSSHServer(.rfb); try await server.start()

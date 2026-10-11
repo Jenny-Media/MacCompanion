@@ -66,6 +66,11 @@ import SwiftTerm
             let text = String(decoding: view.getTerminal().getBufferAsData(), as: UTF8.self)
             XCTAssertTrue(text.contains("synthetic-ready")); XCTAssertTrue(text.contains("synthetic-before-render"))
             XCTAssertEqual(output.pendingByteCount, 0)
+            view.layoutIfNeeded(); view.layer.displayIfNeeded()
+            let rendered = UIGraphicsImageRenderer(bounds: view.bounds).image { context in
+                view.layer.render(in: context.cgContext)
+            }
+            let capture = XCTAttachment(image: rendered); capture.name = "Native Terminal startup rendering"; capture.lifetime = .keepAlways; add(capture)
             try await server.close()
         } catch { try? await server.close(); throw error }
     }

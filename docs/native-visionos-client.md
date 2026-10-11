@@ -313,13 +313,20 @@ pre-mounted layout crashed in a normal Simulator UI journey.
 Eight hosted regressions exercise native responders, the real SSH/RFB peer,
 bounded startup output, import passphrase scene cleanup and the actual library
 save path. Two additional UI journeys inspect the full sync disclosure, cancel
-and confirm opt-in, and choose another retained Free Mac. The existing Terminal
-UI journey now checks its startup banner. Development checks passed before the
+and confirm opt-in, and choose another retained Free Mac. The Terminal hosted
+test asserts and renders its startup banner, while the normal UI journey records
+native attachment before input. Development checks passed before the
 complete stable-state gate; final evidence for this cycle is stored outside Git
 under `/private/tmp/maccompanion-pr12-seven-fixes-20261011/review/`. The gate
 requires all 44 discovered native cases, the full repository validation, both
 unsigned SDK builds and a fresh two-stage independent review on one unchanged
 source fingerprint. Earlier reports do not substitute for that gate.
+
+Multiwindow Simulator XCTest screenshots may crop another scene's camera view.
+The startup hosted test captures pixels directly from the native Terminal layer;
+the normal UI journeys retain the actual consent and library accessibility trees
+alongside their assertions. Camera captures are diagnostics, not proof of a
+specific window's content.
 
 Owning-scene background and actual lock retire SSH drafts, pickers and pending
 operations. Temporary authentication inactivity preserves its context; completion
