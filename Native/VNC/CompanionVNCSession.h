@@ -35,6 +35,10 @@ typedef UIImage CompanionVNCImage;
 - (void)key:(uint32_t)key down:(BOOL)down;
 - (void)keyEvents:(NSArray<NSDictionary *> *)events;
 - (BOOL)tryKeyEvents:(NSArray<NSDictionary *> *)events;
+#if TARGET_OS_IOS
+/// Completion acknowledges local writes only, never remote application consumption.
+- (BOOL)tryComposedTextEvents:(NSArray<NSDictionary *> *)events completion:(void (^)(BOOL written))completion;
+#endif
 - (void)viewChanged;
 
 @end

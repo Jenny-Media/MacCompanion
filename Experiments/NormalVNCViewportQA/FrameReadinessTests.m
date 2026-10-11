@@ -13,10 +13,126 @@
 - (void)publishFrame:(rfbClient *)client;
 - (void)processConnectedClient:(rfbClient *)client;
 - (BOOL)registerSocket:(int)socket;
+- (BOOL)writeKeyEvent:(uint32_t)key down:(BOOL)down client:(rfbClient *)client;
+@end
+@interface StalledComposerSession : CompanionVNCSession
+@property(nonatomic, strong) dispatch_semaphore_t firstWrite, continueWrite;
+@property BOOL stalled;
+@end
+@implementation StalledComposerSession
+- (instancetype)init {
+    if ((self = [super init])) { _firstWrite = dispatch_semaphore_create(0); _continueWrite = dispatch_semaphore_create(0); }
+    return self;
+}
+- (BOOL)writeKeyEvent:(uint32_t)key down:(BOOL)down client:(rfbClient *)client {
+    if (!self.stalled) {
+        self.stalled = YES; dispatch_semaphore_signal(self.firstWrite);
+        if (dispatch_semaphore_wait(self.continueWrite, dispatch_time(DISPATCH_TIME_NOW, 3 * NSEC_PER_SEC))) return NO;
+    }
+    return [super writeKeyEvent:key down:down client:client];
+}
 @end
 @interface FrameReadinessTests : XCTestCase
 @end
 @implementation FrameReadinessTests
+- (void)testCopiedComposerGroupIsRetiredAcrossTrackpadPauseResumeAndFreshTextStillSends {
+    NSURL *url = [[NSBundle bundleForClass:self.class] URLForResource:@"ios-text-composer-v1" withExtension:@"json"];
+    NSDictionary *fixture = [NSJSONSerialization JSONObjectWithData:[NSData dataWithContentsOfURL:url] options:0 error:NULL];
+    NSDictionary *policy = fixture[@"lifecycle"][@"cancelCopiedGroup"];
+    NSMutableDictionary *vectors = [NSMutableDictionary new];
+    for (NSDictionary *vector in fixture[@"cases"]) vectors[vector[@"name"]] = vector;
+    NSArray *(^events)(NSString *) = ^NSArray *(NSString *name) {
+        NSMutableArray *group = [NSMutableArray new];
+        for (NSNumber *key in vectors[name][@"desktopKeys"]) for (NSNumber *down in @[@YES, @NO])
+            [group addObject:@{@"key": key, @"down": down}];
+        return group;
+    };
+    int pair[2]; XCTAssertEqual(socketpair(AF_UNIX, SOCK_STREAM, 0, pair), 0);
+    int yes = 1; setsockopt(pair[0], SOL_SOCKET, SO_NOSIGPIPE, &yes, sizeof(yes));
+    struct timeval timeout = {.tv_sec = 2}; setsockopt(pair[1], SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+    StalledComposerSession *session = [StalledComposerSession new];
+    rfbClient *client = rfbGetClient(8, 3, 4); client->sock = pair[0]; client->width = 2; client->height = 2;
+    [session configureClient:client]; XCTAssertTrue([session allocate:client]);
+    client->supportedMessages.client2server[0] |= (1 << rfbKeyEvent) | (1 << rfbPointerEvent);
+    session.inputOnly = YES; [session setValue:@YES forKey:@"running"]; [session setValue:@YES forKey:@"inputReady"];
+    [session registerSocket:pair[0]];
+    XCTestExpectation *cancelled = [self expectationWithDescription:@"Interrupted group fails once"];
+    XCTestExpectation *fresh = [self expectationWithDescription:@"New deliberately admitted group writes"];
+    XCTestExpectation *ended = [self expectationWithDescription:@"Synthetic VNC worker retires"];
+    __block NSUInteger cancelledReplies = 0, freshReplies = 0;
+    __weak StalledComposerSession *weakSession = session;
+    session.stateHandler = ^(NSString *state, NSDictionary *stats) { if (!weakSession.running) [ended fulfill]; };
+    XCTAssertTrue([session tryComposedTextEvents:events(policy[@"interruptedCase"]) completion:^(BOOL written) {
+        cancelledReplies++; XCTAssertEqual(written, [policy[@"cancelledCompletionWritten"] boolValue]); [cancelled fulfill];
+    }]);
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{ [session processConnectedClient:client]; });
+    XCTAssertEqual(dispatch_semaphore_wait(session.firstWrite, dispatch_time(DISPATCH_TIME_NOW, NSEC_PER_SEC)), 0);
+    // The worker owns a copied batch and has admitted its first write. Pause and
+    // resume before that write returns; the old queue itself is already empty.
+    [session pauseWithCompletion:nil]; [session resume];
+    [self waitForExpectations:@[cancelled] timeout:1];
+    XCTAssertTrue([session tryComposedTextEvents:events(policy[@"freshCase"]) completion:^(BOOL written) {
+        freshReplies++; XCTAssertEqual(written, [policy[@"freshCompletionWritten"] boolValue]); [fresh fulfill];
+    }]);
+    dispatch_semaphore_signal(session.continueWrite);
+    [self waitForExpectations:@[fresh] timeout:2];
+    [session stop]; [self waitForExpectations:@[ended] timeout:2];
+    NSMutableData *wire = [NSMutableData new]; uint8_t bytes[512]; ssize_t count;
+    while ((count = recv(pair[1], bytes, sizeof(bytes), 0)) > 0) [wire appendBytes:bytes length:(NSUInteger)count];
+    XCTAssertEqual(count, 0); close(pair[1]);
+    NSMutableArray *keys = [NSMutableArray new]; const uint8_t *packets = wire.bytes;
+    for (NSUInteger offset = 0; offset < wire.length;) {
+        uint8_t type = packets[offset]; NSUInteger size = type == rfbKeyEvent ? 8 : type == rfbPointerEvent ? 6 : 0;
+        XCTAssertTrue(size && offset + size <= wire.length); if (!size || offset + size > wire.length) break;
+        if (type == rfbKeyEvent) {
+            uint32_t key = ((uint32_t)packets[offset + 4] << 24) | ((uint32_t)packets[offset + 5] << 16)
+                | ((uint32_t)packets[offset + 6] << 8) | packets[offset + 7];
+            [keys addObject:@[@(key), @(packets[offset + 1] != 0)]];
+        }
+        offset += size;
+    }
+    XCTAssertEqualObjects(keys, policy[@"expectedKeyEvents"], @"Only the in-flight key, its cleanup release, and fresh text may be written");
+    XCTAssertEqual(cancelledReplies, 1); XCTAssertEqual(freshReplies, 1);
+    XCTAssertEqual([(NSSet *)[session valueForKey:@"heldKeys"] count], 0);
+}
+- (void)testComposerCompletionFollowsExactUnicodeKeyPacketsWithoutExtraReturn {
+    NSURL *url = [[NSBundle bundleForClass:self.class] URLForResource:@"ios-text-composer-v1" withExtension:@"json"];
+    NSDictionary *fixture = [NSJSONSerialization JSONObjectWithData:[NSData dataWithContentsOfURL:url] options:0 error:NULL];
+    for (NSDictionary *vector in fixture[@"cases"]) {
+        if ([vector[@"invalid"] boolValue]) continue;
+        int pair[2]; XCTAssertEqual(socketpair(AF_UNIX, SOCK_STREAM, 0, pair), 0);
+        int yes = 1; setsockopt(pair[0], SOL_SOCKET, SO_NOSIGPIPE, &yes, sizeof(yes));
+        struct timeval timeout = {.tv_sec = 1}; setsockopt(pair[1], SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+        CompanionVNCSession *session = [CompanionVNCSession new];
+        rfbClient *client = rfbGetClient(8, 3, 4); client->sock = pair[0]; client->width = 2; client->height = 2;
+        [session configureClient:client]; XCTAssertTrue([session allocate:client]);
+        client->supportedMessages.client2server[0] |= (1 << rfbKeyEvent) | (1 << rfbPointerEvent);
+        // Input-only owns the same key writer and needs no desktop pixels.
+        [session setValue:@YES forKey:@"inputOnly"]; [session setValue:@YES forKey:@"running"];
+        [session setValue:@YES forKey:@"inputReady"]; [session registerSocket:pair[0]];
+        NSMutableArray *events = [NSMutableArray new]; NSMutableData *expected = [NSMutableData new];
+        for (NSNumber *key in vector[@"desktopKeys"]) {
+            uint32_t value = key.unsignedIntValue;
+            for (NSNumber *down in @[@YES, @NO]) {
+                [events addObject:@{@"key": key, @"down": down}];
+                uint8_t packet[] = {4, down.boolValue, 0, 0, value >> 24, value >> 16, value >> 8, value};
+                [expected appendBytes:packet length:sizeof(packet)];
+            }
+        }
+        XCTestExpectation *written = [self expectationWithDescription:@"The whole text group reached the local socket"];
+        __block NSUInteger replies = 0;
+        XCTAssertTrue([session tryComposedTextEvents:events completion:^(BOOL success) { replies++; XCTAssertTrue(success); [written fulfill]; }]);
+        XCTestExpectation *ended = [self expectationWithDescription:@"Synthetic VNC worker stopped"];
+        session.stateHandler = ^(NSString *state, NSDictionary *stats) { if (!session.running) [ended fulfill]; };
+        dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{ [session processConnectedClient:client]; });
+        NSMutableData *received = [NSMutableData dataWithLength:expected.length];
+        XCTAssertEqual(recv(pair[1], received.mutableBytes, received.length, MSG_WAITALL), expected.length);
+        XCTAssertEqualObjects(received, expected, @"%@", vector[@"name"]);
+        [self waitForExpectations:@[written] timeout:1]; XCTAssertEqual(replies, 1);
+        [session stop]; [self waitForExpectations:@[ended] timeout:1]; XCTAssertEqual(replies, 1);
+        close(pair[1]);
+    }
+}
 - (NSDictionary *)encodingPolicy {
     NSURL *url=[[NSBundle bundleForClass:self.class] URLForResource:@"direct-screen-sharing-v1" withExtension:@"json"];
     return [NSJSONSerialization JSONObjectWithData:[NSData dataWithContentsOfURL:url] options:0 error:NULL][@"desktopEncodingPolicy"];

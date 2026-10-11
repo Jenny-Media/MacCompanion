@@ -1,0 +1,203 @@
+{
+  "profile": "maccompanion.ios-text-composer.v1",
+  "desktopMaximumScalars": 256,
+  "terminalMaximumBytes": 4096,
+  "draftMaximumBytes": 16384,
+  "cases": [
+    {
+      "name": "ascii",
+      "text": "hello",
+      "normalized": "hello",
+      "desktopKeys": [
+        104,
+        101,
+        108,
+        108,
+        111
+      ],
+      "terminalHex": "68656c6c6f",
+      "bracketedHex": "1b5b3230307e68656c6c6f1b5b3230317e",
+      "confirmation": false
+    },
+    {
+      "name": "cjk-emoji",
+      "text": "中文😀é",
+      "normalized": "中文😀é",
+      "desktopKeys": [
+        16797229,
+        16803207,
+        16905728,
+        101,
+        16777985
+      ],
+      "terminalHex": "e4b8ade69687f09f988065cc81",
+      "bracketedHex": "1b5b3230307ee4b8ade69687f09f988065cc811b5b3230317e",
+      "confirmation": false
+    },
+    {
+      "name": "multiline",
+      "text": "one\n  two\n",
+      "normalized": "one\n  two\n",
+      "desktopKeys": [
+        111,
+        110,
+        101,
+        65293,
+        32,
+        32,
+        116,
+        119,
+        111,
+        65293
+      ],
+      "terminalHex": "6f6e650a202074776f0a",
+      "bracketedHex": "1b5b3230307e6f6e650a202074776f0a1b5b3230317e",
+      "confirmation": true
+    },
+    {
+      "name": "crlf",
+      "text": "a\r\nb\rc",
+      "normalized": "a\nb\nc",
+      "desktopKeys": [
+        97,
+        65293,
+        98,
+        65293,
+        99
+      ],
+      "terminalHex": "610a620a63",
+      "bracketedHex": "1b5b3230307e610a620a631b5b3230317e",
+      "confirmation": true
+    },
+    {
+      "name": "unicode-lines",
+      "text": "a b ",
+      "normalized": "a\nb\n",
+      "desktopKeys": [
+        97,
+        65293,
+        98,
+        65293
+      ],
+      "terminalHex": "610a620a",
+      "bracketedHex": "1b5b3230307e610a620a1b5b3230317e",
+      "confirmation": true
+    },
+    {
+      "name": "tab",
+      "text": "a\tb",
+      "normalized": "a\tb",
+      "desktopKeys": [
+        97,
+        65289,
+        98
+      ],
+      "terminalHex": "610962",
+      "bracketedHex": "1b5b3230307e6109621b5b3230317e",
+      "confirmation": true
+    },
+    {
+      "name": "spaces",
+      "text": "  ",
+      "normalized": "  ",
+      "desktopKeys": [
+        32,
+        32
+      ],
+      "terminalHex": "2020",
+      "bracketedHex": "1b5b3230307e20201b5b3230317e",
+      "confirmation": false
+    },
+    {
+      "name": "empty",
+      "text": "",
+      "invalid": true
+    },
+    {
+      "name": "nul",
+      "text": "a\u0000b",
+      "invalid": true
+    },
+    {
+      "name": "escape",
+      "text": "a\u001bb",
+      "invalid": true
+    },
+    {
+      "name": "backspace",
+      "text": "a\bb",
+      "invalid": true
+    },
+    {
+      "name": "c1",
+      "text": "ab",
+      "invalid": true
+    }
+  ],
+  "lifecycle": {
+    "cancelCopiedGroup": {
+      "interruptedCase": "multiline",
+      "freshCase": "ascii",
+      "cancelledCompletionWritten": false,
+      "freshCompletionWritten": true,
+      "expectedKeyEvents": [
+        [
+          111,
+          true
+        ],
+        [
+          111,
+          false
+        ],
+        [
+          104,
+          true
+        ],
+        [
+          104,
+          false
+        ],
+        [
+          101,
+          true
+        ],
+        [
+          101,
+          false
+        ],
+        [
+          108,
+          true
+        ],
+        [
+          108,
+          false
+        ],
+        [
+          108,
+          true
+        ],
+        [
+          108,
+          false
+        ],
+        [
+          111,
+          true
+        ],
+        [
+          111,
+          false
+        ]
+      ]
+    },
+    "automaticReplacement": {
+      "modes": [
+        "desktop",
+        "trackpad"
+      ],
+      "warningBeforeAcknowledge": true,
+      "warningAfterAcknowledge": false
+    }
+  }
+}
