@@ -23,8 +23,9 @@ enum DirectQuickActionEditing {
             && actions.allSatisfy { $0.valid && $0.compatible(with: mode) }
     }
     static func canSave(_ actions: [VNCQuickAction], mode: DirectControlMode, hasPro: Bool) -> Bool {
-        // Terminal has no free preferences to save alongside its Pro-only actions.
-        (mode != .terminal || hasPro) && valid(actions, mode: mode)
+        // Without Pro, save handlers skip the action draft and only save free
+        // preferences. Terminal has no free preferences to save alongside it.
+        hasPro ? valid(actions, mode: mode) : mode != .terminal
     }
     @discardableResult static func add(_ candidate: VNCQuickAction, to actions: inout [VNCQuickAction], mode: DirectControlMode) -> UUID? {
         guard !candidate.isCustom, candidate.compatible(with: mode) else { return nil }

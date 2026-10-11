@@ -18,6 +18,16 @@ import XCTest
         XCTAssertFalse(DirectQuickActionEditing.canSave([.init(title: "Invalid", kind: .shortcut)], mode: .terminal, hasPro: true))
     }
 
+    func testUnfinishedProActionDoesNotBlockSavingFreeControlSettingsAfterLosingPro() {
+        for mode in [DirectControlMode.desktop, .trackpad] {
+            var draft = mode.defaults
+            draft.append(VNCQuickAction(title: "Saved Text", kind: .text))
+            XCTAssertFalse(DirectQuickActionEditing.valid(draft, mode: mode))
+            XCTAssertFalse(DirectQuickActionEditing.canSave(draft, mode: mode, hasPro: true))
+            XCTAssertTrue(DirectQuickActionEditing.canSave(draft, mode: mode, hasPro: false))
+        }
+    }
+
     #if os(iOS)
     // The Simulator QA lane enables StoreKit transactions. Mac hosted QA has no
     // StoreKit purchase entitlement; the shared save policy is tested above.
@@ -27,10 +37,12 @@ import XCTest
         store.disableDialogs = true; store.clearTransactions()
         defer { store.clearTransactions() }
         let draft = [VNCQuickAction(title: "Synthetic interrupt", kind: .shortcut, key: 0x63, modifiers: [0xffe3])]
+        let unfinished = [VNCQuickAction(title: "Saved Text", kind: .text)]
         let access = DirectProAccess()
         await access.loadProduct(); await access.purchase()
         XCTAssertTrue(access.hasPro)
         XCTAssertTrue(DirectQuickActionEditing.canSave(draft, mode: .terminal, hasPro: access.hasPro))
+        XCTAssertFalse(DirectQuickActionEditing.canSave(unfinished, mode: .desktop, hasPro: access.hasPro))
         let purchase = try XCTUnwrap(store.allTransactions().first { $0.productIdentifier == DirectProAccess.productID })
         try store.refundTransaction(identifier: purchase.identifier)
         for _ in 0..<200 {
@@ -40,6 +52,8 @@ import XCTest
         await access.refresh()
         XCTAssertFalse(access.hasPro)
         XCTAssertFalse(DirectQuickActionEditing.canSave(draft, mode: .terminal, hasPro: access.hasPro))
+        XCTAssertTrue(DirectQuickActionEditing.canSave(unfinished, mode: .desktop, hasPro: access.hasPro))
+        XCTAssertTrue(DirectQuickActionEditing.canSave(unfinished, mode: .trackpad, hasPro: access.hasPro))
 
         var clock = Date()
         let trialAccess = DirectProAccess(now: { clock })
@@ -47,10 +61,13 @@ import XCTest
         clock = Date(); trialAccess.reevaluateTrial()
         XCTAssertTrue(trialAccess.hasPro)
         XCTAssertTrue(DirectQuickActionEditing.canSave(draft, mode: .terminal, hasPro: trialAccess.hasPro))
+        XCTAssertFalse(DirectQuickActionEditing.canSave(unfinished, mode: .desktop, hasPro: trialAccess.hasPro))
         clock = try XCTUnwrap(trialAccess.trial).endDate
         trialAccess.reevaluateTrial()
         XCTAssertFalse(trialAccess.hasPro)
         XCTAssertFalse(DirectQuickActionEditing.canSave(draft, mode: .terminal, hasPro: trialAccess.hasPro))
+        XCTAssertTrue(DirectQuickActionEditing.canSave(unfinished, mode: .desktop, hasPro: trialAccess.hasPro))
+        XCTAssertTrue(DirectQuickActionEditing.canSave(unfinished, mode: .trackpad, hasPro: trialAccess.hasPro))
     }
     #endif
 
