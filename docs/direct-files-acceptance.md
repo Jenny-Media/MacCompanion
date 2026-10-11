@@ -130,5 +130,10 @@ verify saved credentials load when sign-in becomes available.
 Both platforms also mount Files before its first saved-password connection and
 verify same-view reconnect after Disconnect and authenticated network loss,
 edited retry-draft preservation, and removal of a remembered login.
+On macOS the mounted Cancel Connection button exercises the shared action to
+preserve both a loaded saved password and an edited retry account/password;
+backgrounding still clears the visible secret. Hosted iOS tests do not expose
+SwiftUI button accessibility nodes; actual iPhone Cancel interaction remains
+part of native UI acceptance.
 Native window automation and physical file-provider acceptance are
 separate from hosted rendering and protocol tests.

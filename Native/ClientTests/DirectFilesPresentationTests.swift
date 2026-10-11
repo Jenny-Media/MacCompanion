@@ -10,6 +10,69 @@ import AppKit
 #endif
 
 @MainActor final class DirectFilesPresentationTests: XCTestCase {
+    #if os(macOS)
+    func testCancelConnectionButtonPreservesSavedAndEditedPasswordDrafts() async throws {
+        if !DirectProAccess.shared.ready { await DirectProAccess.shared.refresh() }
+        // An owned socket accepts TCP but never begins SSH. The Cancel button
+        // remains available without authenticating against a real machine.
+        let server = try await ServerBootstrap(group: MultiThreadedEventLoopGroup.singleton)
+            .childChannelInitializer { $0.eventLoop.makeSucceededFuture(()) }.bind(host: "127.0.0.1", port: 0).get()
+        defer { Task { try? await server.close() } }
+        let mac = DirectMacRecordV1(id: UUID(), name: "Synthetic Cancel Login", addresses: ["127.0.0.1"], sshPort: try XCTUnwrap(server.localAddress?.port))
+        try TerminalSecretStore.save(.init(username: "synthetic-saved-account", password: "synthetic-saved-password"), id: mac.id)
+        let session = DirectFilesSession(mac: mac)
+        defer { session.close(); try? TerminalSecretStore.remove(mac.id) }
+        let view = DirectFilesView(mac: mac, session: session, retainWhenDismissed: true)
+        let host = NSHostingView(rootView: view)
+        let window = NSWindow(contentRect: .init(x: -20000, y: -20000, width: 720, height: 640), styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false; window.contentView = host; window.orderFront(nil)
+        defer { window.makeFirstResponder(nil); window.contentView = nil; window.close() }
+        func descendants(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(descendants) }
+        func fields() -> MacCredentialFields.Fields? { descendants(host).compactMap { $0 as? MacCredentialFields.Fields }.first }
+        func values() -> (String?, String?) { (fields()?.account.stringValue, fields()?.secret.stringValue) }
+        func edit() throws {
+            let fields = try XCTUnwrap(fields()); fields.account.stringValue = "synthetic-edited-account"; fields.secret.stringValue = "synthetic-edited-password"
+        }
+        func layout() { host.layoutSubtreeIfNeeded() }
+        func element(_ identifier: String) -> NSObject? {
+            var pending: [Any] = [host], visited = Set<ObjectIdentifier>()
+            while let item = pending.popLast() {
+                guard let object = item as? NSObject, visited.insert(ObjectIdentifier(object)).inserted else { continue }
+                if object.responds(to: NSSelectorFromString("accessibilityIdentifier")), object.value(forKey: "accessibilityIdentifier") as? String == identifier { return object }
+                if object.responds(to: NSSelectorFromString("accessibilityChildren")) { pending.append(contentsOf: object.value(forKey: "accessibilityChildren") as? [Any] ?? []) }
+            }
+            return nil
+        }
+        func press(_ button: NSObject) {
+            let selector = NSSelectorFromString("accessibilityPerformPress")
+            XCTAssertTrue(button.responds(to: selector)); _ = button.perform(selector)
+        }
+        func wait(_ predicate: () -> Bool) async throws {
+            let deadline = Date().addingTimeInterval(10)
+            while !predicate() {
+                guard Date() < deadline else { throw DirectFilesFailure.timedOut }
+                try await Task.sleep(for: .milliseconds(50)); layout()
+            }
+        }
+        try await wait { values().1 == "synthetic-saved-password" }
+        for edited in [false, true] {
+            if edited { try edit(); try await Task.sleep(for: .milliseconds(150)) }
+            let before = values()
+            session.connect(username: try XCTUnwrap(before.0), password: try XCTUnwrap(before.1), key: nil, remember: true)
+            try await wait { element("files-cancel-connection") != nil }
+            // Invoke the mounted button action, rather than session.disconnect(),
+            // which bypassed the draft-clearing regression.
+            press(try XCTUnwrap(element("files-cancel-connection")))
+            try await wait { session.phase == .interrupted && !session.busy }
+            try await Task.sleep(for: .milliseconds(150)); layout()
+            XCTAssertEqual(values().0, before.0); XCTAssertEqual(values().1, before.1)
+            XCTAssertNotNil(element("files-connect"), "Cancellation must offer explicit reconnect without re-entry")
+            XCTAssertEqual(try TerminalSecretStore.login(mac.id)?.password, "synthetic-saved-password", "Cancellation must not rewrite stored credentials")
+        }
+        NotificationCenter.default.post(name: DirectClientPlatformV1.didEnterBackground, object: nil)
+        try await wait { values().1 == "" }
+    }
+    #endif
     func testMountedFilesRestoresClearedSavedPasswordAndPreservesEditedRetryDraft() async throws {
         if !DirectProAccess.shared.ready { await DirectProAccess.shared.refresh() }
         let probe = FilesDirectoryTestProbe()

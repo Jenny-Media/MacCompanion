@@ -279,7 +279,9 @@ struct DirectFilesView: View {
                 }
             }.disabled(session.busy || preparingKey)
             Section {
-                if session.busy || preparingKey { Button("Cancel Connection") { preparation = UUID(); preparingKey = false; session.disconnect(); password = ""; passphrase = "" } }
+                if session.busy || preparingKey { Button("Cancel Connection") {
+                    preparation = UUID(); preparingKey = false; session.disconnect()
+                }.accessibilityIdentifier("files-cancel-connection") }
                 else { Button("Connect Files", systemImage: "folder") { connect() }.buttonStyle(.borderedProminent).disabled(!canConnect).accessibilityIdentifier("files-connect") }
             }
             if let message = session.message { Section { Label(message, systemImage: "exclamationmark.circle").foregroundStyle(.secondary) } }
