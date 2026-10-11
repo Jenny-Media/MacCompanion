@@ -4456,5 +4456,103 @@
     "maximumPendingBytes": 1048576,
     "oldGenerationCanDrain": false,
     "staleDetachCanRetireCurrentReceiver": false
-  }
+  },
+  "servicePortDefaults": [
+    {
+      "id": "blank-defaults",
+      "desktopInput": "",
+      "sshInput": "",
+      "valid": true,
+      "desktopPort": 5900,
+      "sshPort": 22
+    },
+    {
+      "id": "whitespace-defaults",
+      "desktopInput": " \t\n",
+      "sshInput": " \t\n",
+      "valid": true,
+      "desktopPort": 5900,
+      "sshPort": 22
+    },
+    {
+      "id": "blank-ssh-custom-desktop",
+      "desktopInput": "5901",
+      "sshInput": "",
+      "valid": true,
+      "desktopPort": 5901,
+      "sshPort": 22
+    },
+    {
+      "id": "explicit-defaults",
+      "desktopInput": "5900",
+      "sshInput": "22",
+      "valid": true,
+      "desktopPort": 5900,
+      "sshPort": 22
+    },
+    {
+      "id": "blank-desktop-custom-ssh",
+      "desktopInput": "",
+      "sshInput": "2222",
+      "valid": true,
+      "desktopPort": 5900,
+      "sshPort": 2222
+    },
+    {
+      "id": "lower-boundary",
+      "desktopInput": "1",
+      "sshInput": "1",
+      "valid": true,
+      "desktopPort": 1,
+      "sshPort": 1
+    },
+    {
+      "id": "upper-boundary",
+      "desktopInput": "65535",
+      "sshInput": "65535",
+      "valid": true,
+      "desktopPort": 65535,
+      "sshPort": 65535
+    },
+    {
+      "id": "invalid-ssh-zero",
+      "desktopInput": "5900",
+      "sshInput": "0",
+      "valid": false,
+      "desktopPort": null,
+      "sshPort": null
+    },
+    {
+      "id": "invalid-ssh-overflow",
+      "desktopInput": "5900",
+      "sshInput": "65536",
+      "valid": false,
+      "desktopPort": null,
+      "sshPort": null
+    },
+    {
+      "id": "invalid-ssh-text",
+      "desktopInput": "5900",
+      "sshInput": "ssh",
+      "valid": false,
+      "desktopPort": null,
+      "sshPort": null
+    },
+    {
+      "id": "invalid-desktop-zero",
+      "desktopInput": "0",
+      "sshInput": "22",
+      "valid": false,
+      "desktopPort": null,
+      "sshPort": null
+    },
+    {
+      "id": "invalid-desktop-overflow",
+      "desktopInput": "65536",
+      "sshInput": "22",
+      "valid": false,
+      "desktopPort": null,
+      "sshPort": null
+    }
+  ]
 }

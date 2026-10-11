@@ -126,6 +126,11 @@ unsupported entries and their identities; presentation is not a profile migratio
 Restore Defaults replaces only supported entries, subject to the existing total
 profile limits. Draft editing sends no remote input and retains Pro and unlock gates.
 
+Saved-machine service ports follow the existing direct-client defaults: blank
+or whitespace-only Screen Sharing input resolves to 5900, and blank or
+whitespace-only Remote Login input resolves to 22. Explicit ports must be from
+1 to 65535; invalid input cannot change the persisted record.
+
 Saved-machine metadata and supported connection preferences reuse the existing
 opt-in synchronizable Keychain schema and group when a signed profile authorizes
 it. Passwords, SSH private keys, trusted server keys, sensitive drafts and consent

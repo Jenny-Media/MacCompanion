@@ -173,6 +173,32 @@ import SwiftTerm
         XCTAssertTrue(VisionMacSaving.save(library: library, mac: mac, name: "Edited after retry", addresses: "127.0.0.1", desktopPort: "5900", sshPort: "22"))
         XCTAssertEqual(DirectMacLibraryV1(url: url, removeLogin: { _ in }).macs.first?.name, "Edited after retry")
     }
+    func testServicePortDefaultsAndInvalidInputsUsePersistedRecords() throws {
+        let url = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "native-visionos-client-v1", withExtension: "json"))
+        let fixture = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])
+        let cases = try XCTUnwrap(fixture["servicePortDefaults"] as? [[String: Any]])
+        let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        for row in cases {
+            let id = try XCTUnwrap(row["id"] as? String)
+            let storage = directory.appending(path: id + ".json")
+            let library = DirectMacLibraryV1(url: storage, removeLogin: { _ in })
+            XCTAssertTrue(library.save(id: nil, name: "Synthetic service ports", addresses: ["127.0.0.1"]))
+            let current = try XCTUnwrap(library.macs.first), before = try Data(contentsOf: storage)
+            let valid = try XCTUnwrap(row["valid"] as? Bool)
+            XCTAssertEqual(VisionMacSaving.save(library: library, mac: current, name: "Synthetic service ports",
+                addresses: "127.0.0.1", desktopPort: try XCTUnwrap(row["desktopInput"] as? String),
+                sshPort: try XCTUnwrap(row["sshInput"] as? String)), valid, id)
+            let persisted = try XCTUnwrap(DirectMacLibraryV1(url: storage, removeLogin: { _ in }).macs.first)
+            if valid {
+                XCTAssertEqual(persisted.port, try XCTUnwrap(row["desktopPort"] as? Int), id)
+                XCTAssertEqual(persisted.sshPort, try XCTUnwrap(row["sshPort"] as? Int), id)
+            } else {
+                XCTAssertEqual(persisted, current, id)
+                XCTAssertEqual(try Data(contentsOf: storage), before, id)
+            }
+        }
+    }
     func testRemovedEditorSnapshotCannotBypassFreeCreationLimit() throws {
         let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
         let defaults = try XCTUnwrap(UserDefaults(suiteName: "vision-save-" + UUID().uuidString))

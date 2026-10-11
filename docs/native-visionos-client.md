@@ -302,6 +302,8 @@ Copy Text from Screen changes. Seven accepted review findings have dedicated
 regression coverage: retired keyboard releases, initial Terminal output, owning
 scene sensitive-state cleanup, metadata-sync consent, Free Mac selection,
 library recovery, and current-library checks when saving an old editor snapshot.
+The fresh review also added persisted-port coverage: blank and whitespace SSH
+input uses 22, Screen Sharing uses 5900, and invalid values preserve storage.
 
 The Terminal window installs a generation-scoped output buffer before connecting.
 It preserves early banners and protocol queries until the native SwiftTerm view
@@ -310,7 +312,7 @@ bound is exceeded. Old-shell output and stale detach callbacks cannot affect a
 replacement receiver. The native connected-only layout is retained after a
 pre-mounted layout crashed in a normal Simulator UI journey.
 
-Eight hosted regressions exercise native responders, the real SSH/RFB peer,
+Nine hosted regressions exercise native responders, the real SSH/RFB peer,
 bounded startup output, import passphrase scene cleanup and the actual library
 save path. Two additional UI journeys inspect the full sync disclosure, cancel
 and confirm opt-in, and choose another retained Free Mac. The Terminal hosted
@@ -318,7 +320,7 @@ test asserts and renders its startup banner, while the normal UI journey records
 native attachment before input. Development checks passed before the
 complete stable-state gate; final evidence for this cycle is stored outside Git
 under `/private/tmp/maccompanion-pr12-seven-fixes-20261011/review/`. The gate
-requires all 44 discovered native cases, the full repository validation, both
+requires all 45 discovered native cases, the full repository validation, both
 unsigned SDK builds and a fresh two-stage independent review on one unchanged
 source fingerprint. Earlier reports do not substitute for that gate.
 

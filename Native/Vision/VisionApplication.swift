@@ -162,7 +162,8 @@ struct VisionMacEditor: View {
     static func save(library: DirectMacLibraryV1, mac: DirectMacRecordV1?, name: String, addresses: String,
                      desktopPort: String, sshPort: String, access: DirectProAccess = .shared) -> Bool {
         guard DirectAppLockV1.shared.canAccess, library.readable else { return false }
-        guard let port = DirectMacRecordV1.port(from: desktopPort), let ssh = DirectMacRecordV1.port(from: sshPort) else {
+        let sshInput = sshPort.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let port = DirectMacRecordV1.port(from: desktopPort), let ssh = sshInput.isEmpty ? 22 : DirectMacRecordV1.port(from: sshInput) else {
             library.failure = "Ports must be from 1 to 65535."; return false
         }
         let existing = mac.map { edited in library.macs.contains { $0.id == edited.id } } ?? false

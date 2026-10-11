@@ -3,8 +3,9 @@
 The repair candidate integrates main through `3ec3942` and addresses seven
 accepted findings covering keyboard retirement, Terminal startup output,
 scene-specific sensitive drafts, sync consent, Free Mac choice and library
-recovery/save admission. Eight new hosted regressions and two new UI journeys
-extend the discovered Simulator suite to 44 cases. The complete gate requires
+recovery/save admission. The fresh review adds SSH default-port persistence
+coverage. Nine new hosted regressions and two new UI journeys extend the
+discovered Simulator suite to 45 cases. The complete gate requires
 both unsigned SDK builds, every native case, required repository validation and
 a fresh independent two-stage review on one stable source state. Evidence lives
 outside Git under `/private/tmp/maccompanion-pr12-seven-fixes-20261011/review/`;
