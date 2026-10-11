@@ -125,15 +125,26 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
         }
         let authentication: @Sendable () -> SSHAuthenticationMethod
         let namedSelection: TerminalNamedKey?
+        #if os(macOS)
+        let keyFileSelection: MacSSHKeyFileStore.LoginSelection?
+        #endif
         do {
             if let key {
                 try key.validate()
+                #if os(macOS)
+                keyFileSelection = try keyFileID.flatMap {
+                    try MacSSHKeyFileStore.loginSelection(fileID: $0, macID: mac.id, fingerprint: key.fingerprint)
+                }
+                #endif
                 let selected = keyFileID == nil ? try TerminalKeyLibraryStore.selected(mac.id) : nil
                 namedSelection = selected?.key.seed == key.seed ? selected : nil
                 let parsed = try Curve25519.Signing.PrivateKey(rawRepresentation: key.seed)
                 authentication = { .ed25519(username: username, privateKey: parsed) }
             } else {
                 namedSelection = nil
+                #if os(macOS)
+                keyFileSelection = nil
+                #endif
                 authentication = { .passwordBased(username: username, password: password) }
             }
         } catch { message = "The SSH key could not be read."; return }
@@ -192,9 +203,9 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
                 let store = DirectFilesSFTPStore(client: client); self.store = store
                 let directory = try await store.directory("."); try check(token)
                 // Reuse existing Terminal retention. No Desktop credentials are read.
-                do { if let keyFileID {
+                do { if keyFileID != nil {
                     #if os(macOS)
-                    if let key { try MacSSHKeyFileStore.rememberAccount(username, fileID: keyFileID, macID: mac.id, fingerprint: key.fingerprint) }
+                    if let keyFileSelection { try MacSSHKeyFileStore.rememberAccount(username, selection: keyFileSelection) }
                     #endif
                 } else if let namedSelection {
                     try TerminalKeyLibraryStore.rememberAccount(username, macID: mac.id, selection: namedSelection)

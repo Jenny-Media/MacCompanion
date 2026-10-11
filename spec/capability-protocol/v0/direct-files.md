@@ -45,6 +45,13 @@ After successful named-key authentication and SFTP admission, retain the SSH
 account on that Mac's existing key association. Update only the association used
 by the login, if its key identity and prior account still match. A newer selection,
 account edit or removed association MUST NOT be overwritten or recreated.
+For macOS keys referenced from disk, snapshot the full file reference and saved
+account when starting authentication. Files and Terminal MUST retain a successful
+account only while that reference and prior account still match. A newer account
+edit, reselected reference, different key or removed association skips retention
+without importing the disk key or failing an otherwise successful connection.
+Each explicit reconnect captures a fresh selection; rejected or cancelled logins
+MUST NOT retain an account.
 
 The SSH handshake including trust approval is bounded to 60 seconds. SFTP v3
 subsystem admission and each idle operation are bounded to 30 seconds. Cancelling,

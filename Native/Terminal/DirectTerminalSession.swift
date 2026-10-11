@@ -203,6 +203,14 @@ private enum TerminalPTY {
                 authentication = { .ed25519(username: username, privateKey: parsed) }
             } catch { present(.savedDataUnavailable, message: "The selected SSH key couldn’t be read. Existing keys are kept."); return }
         } else { authentication = { .passwordBased(username: username, password: password) } }
+        #if os(macOS)
+        let keyFileSelection: MacSSHKeyFileStore.LoginSelection?
+        do {
+            if installation == nil, let keyFileID, let key {
+                keyFileSelection = try MacSSHKeyFileStore.loginSelection(fileID: keyFileID, macID: mac.id, fingerprint: key.fingerprint)
+            } else { keyFileSelection = nil }
+        } catch { present(.savedDataUnavailable, message: "The selected SSH key couldn’t be read. Existing keys are kept."); return }
+        #endif
         stop()
         #if os(iOS)
         textSendNotice = nil
@@ -247,8 +255,10 @@ private enum TerminalPTY {
                 }
                 var savedFileReference = false
                 #if os(macOS)
-                if let keyFileID, let key {
-                    try MacSSHKeyFileStore.rememberAccount(username, fileID: keyFileID, macID: mac.id, fingerprint: key.fingerprint)
+                if keyFileID != nil, key != nil {
+                    if let keyFileSelection { try MacSSHKeyFileStore.rememberAccount(username, selection: keyFileSelection) }
+                    // Even if its association changed, never import a disk key
+                    // through the legacy named-key retention path below.
                     savedFileReference = true
                 }
                 #endif

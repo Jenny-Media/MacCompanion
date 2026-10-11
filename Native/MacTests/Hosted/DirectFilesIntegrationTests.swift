@@ -179,6 +179,96 @@ private struct FilesTestWindowRoot: View {
             XCTAssertEqual(try TerminalKeyLibraryStore.load().keys, before.keys)
         }
     }
+    func testIndexedDiskKeyFilesLoginPreservesConcurrentAccountAndSelectionEdits() async throws {
+        try await checkDiskKeyAccountRetention(terminal: false)
+    }
+    func testIndexedDiskKeyTerminalLoginPreservesConcurrentAccountAndSelectionEdits() async throws {
+        try await checkDiskKeyAccountRetention(terminal: true)
+    }
+    private func checkDiskKeyAccountRetention(terminal useTerminal: Bool) async throws {
+        struct Fixture: Decodable {
+            struct Case: Decodable {
+                let id: String
+                let priorAccount: String
+                let change: String
+                let login: String
+                let expectedAccount: String?
+            }
+            let diskKeyAccountCases: [Case]
+        }
+        let fixtureURL = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "direct-files-v1", withExtension: "json"))
+        let cases = try JSONDecoder().decode(Fixture.self, from: Data(contentsOf: fixtureURL)).diskKeyAccountCases
+        let namedID = UUID(uuidString: "00000000-0000-0000-0000-000000000002")!
+        let named = try TerminalKeyLibraryStore.load(), original = try MacSSHKeyFileStore.load()
+        defer {
+            try? TerminalSecretStore.write(JSONEncoder().encode(named), id: namedID, kind: "key-library-v2")
+            try? TerminalSecretStore.write(JSONEncoder().encode(original), id: MacSSHKeyFileStore.storageID, kind: MacSSHKeyFileStore.kind)
+        }
+        try TerminalSecretStore.write(JSONEncoder().encode(TerminalKeyLibraryStore.Library()), id: namedID, kind: "key-library-v2")
+        func save(_ library: MacSSHKeyFileStore.Library) throws {
+            try TerminalSecretStore.write(JSONEncoder().encode(library), id: MacSSHKeyFileStore.storageID, kind: MacSSHKeyFileStore.kind)
+        }
+        let root = try DirectFilesLocalStore.root(); defer { try? FileManager.default.removeItem(at: root) }
+        for item in cases {
+            let key = TerminalSSHKey.create(), record = SSHTestRecord()
+            let publicKey = NIOSSHPrivateKey(ed25519Key: try .init(rawRepresentation: key.seed)).publicKey
+            let server: Channel
+            if useTerminal {
+                let hostKey = NIOSSHPrivateKey(ed25519Key: .init())
+                server = try await ServerBootstrap(group: MultiThreadedEventLoopGroup.singleton).childChannelInitializer { channel in
+                    record.openedTransport(channel)
+                    return channel.pipeline.addHandler(NIOSSHHandler(role: .server(.init(hostKeys: [hostKey], userAuthDelegate: SSHTestAuth(record, publicKey: publicKey, usernames: ["synthetic", "synthetic-second"]))), allocator: channel.allocator,
+                        inboundChildChannelInitializer: { child, _ in child.pipeline.addHandler(SSHTestPTY(record)) }))
+                }.bind(host: "127.0.0.1", port: 0).get()
+            } else { server = try await self.server(root: root, record: record, publicKey: publicKey) }
+            defer { Task { try? await server.close() } }
+            let mac = DirectMacRecordV1(id: UUID(), name: "Synthetic Disk Key", addresses: ["127.0.0.1"], sshPort: try XCTUnwrap(server.localAddress?.port))
+            // No private-key bytes or actual security-scoped bookmarks are stored.
+            // Existing disk-reader tests cover resolving and parsing real key files.
+            let file = MacSSHKeyFileReference(id: UUID(), name: "Synthetic Reference", bookmark: Data([1]), fingerprint: key.fingerprint)
+            let newer = MacSSHKeyFileReference(id: UUID(), name: "Synthetic Newer Reference", bookmark: Data([2]), fingerprint: TerminalSSHKey.create().fingerprint)
+            var library = MacSSHKeyFileStore.Library(files: [file, newer], associations: [.init(macID: mac.id, keyID: file.id, username: item.priorAccount)])
+            try save(library)
+            let files = useTerminal ? nil : DirectFilesSession(mac: mac)
+            let terminal = useTerminal ? DirectTerminalSession(mac: mac) : nil
+            func start(_ username: String) {
+                files?.connect(username: username, password: "", key: key, remember: false, keyFileID: file.id)
+                terminal?.connect(username: username, password: "", remember: false, key: key, keyFileID: file.id)
+            }
+            func stop() { files?.disconnect(); terminal?.stop() }
+            func connecting() -> Bool { files.map { $0.phase == .connecting } ?? terminal!.connecting }
+            func ready() -> Bool { files.map { $0.phase == .ready } ?? terminal!.connected }
+            defer { files?.close(); terminal?.stop(); try? TerminalSecretStore.remove(mac.id) }
+            start(item.login == "rejected" ? "rejected-synthetic" : "synthetic")
+            try await wait { files?.trust != nil || terminal?.trust != nil || !connecting() }
+            XCTAssertTrue(files?.trust != nil || terminal?.trust != nil, item.id)
+            XCTAssertEqual(record.keyRequests, 0, "Changes occur before authentication: \(item.id)")
+            switch item.change {
+            case "account": library.associations[0].username = "newer-account"
+            case "key": library.associations[0] = .init(macID: mac.id, keyID: newer.id, username: "newer-account")
+            case "reference": library.files[0].bookmark = Data([3])
+            case "association": library.associations = []
+            case "delete": library.files.removeAll { $0.id == file.id }; library.associations = []
+            default: break
+            }
+            try save(library)
+            if item.login == "cancelled" { files?.disconnect(); terminal?.cancelConnection() }
+            else { files?.answerTrust(true); terminal?.answerTrust(true) }
+            try await wait { !connecting() }
+            XCTAssertEqual(ready(), item.login != "rejected" && item.login != "cancelled", item.id)
+            if item.login == "repeated" {
+                XCTAssertEqual(try MacSSHKeyFileStore.selected(mac.id)?.username, "synthetic", item.id)
+                stop(); start("synthetic-second"); try await wait { !connecting() }
+                XCTAssertTrue(ready(), item.id)
+            }
+            let saved = try MacSSHKeyFileStore.load()
+            XCTAssertEqual(try MacSSHKeyFileStore.selected(mac.id)?.username, item.expectedAccount, item.id)
+            XCTAssertEqual(saved.files, library.files, "Retention never rewrites or recreates references: \(item.id)")
+            XCTAssertEqual(saved.associations.map(\.keyID), library.associations.map(\.keyID), item.id)
+            XCTAssertTrue(try TerminalKeyLibraryStore.load().keys.isEmpty, "Disk login must not import private key material: \(item.id)")
+            XCTAssertNil(try TerminalSecretStore.sshKey(mac.id), item.id)
+        }
+    }
     func testMacOSSFTPBrowseFolderUploadKeepBothReplaceDownloadAndIsolation() async throws {
         let root = try DirectFilesLocalStore.root(), local = try DirectFilesLocalStore.root()
         defer { try? FileManager.default.removeItem(at: root); try? FileManager.default.removeItem(at: local) }

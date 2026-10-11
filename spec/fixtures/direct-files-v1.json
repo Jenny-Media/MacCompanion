@@ -350,6 +350,18 @@
     { "id": "removed-association", "priorAccount": "", "change": "association", "expectedAccount": null },
     { "id": "deleted-key", "priorAccount": "", "change": "delete", "expectedAccount": null }
   ],
+  "diskKeyAccountCases": [
+    { "id": "initial-account", "priorAccount": "", "change": "none", "login": "success", "expectedAccount": "synthetic" },
+    { "id": "changed-account", "priorAccount": "old-account", "change": "none", "login": "success", "expectedAccount": "synthetic" },
+    { "id": "newer-account-edit", "priorAccount": "old-account", "change": "account", "login": "success", "expectedAccount": "newer-account" },
+    { "id": "newer-key-selection", "priorAccount": "old-account", "change": "key", "login": "success", "expectedAccount": "newer-account" },
+    { "id": "reselected-file-reference", "priorAccount": "old-account", "change": "reference", "login": "success", "expectedAccount": "old-account" },
+    { "id": "removed-association", "priorAccount": "old-account", "change": "association", "login": "success", "expectedAccount": null },
+    { "id": "deleted-key", "priorAccount": "old-account", "change": "delete", "login": "success", "expectedAccount": null },
+    { "id": "rejected-login", "priorAccount": "old-account", "change": "none", "login": "rejected", "expectedAccount": "old-account" },
+    { "id": "cancelled-login", "priorAccount": "old-account", "change": "none", "login": "cancelled", "expectedAccount": "old-account" },
+    { "id": "repeated-login", "priorAccount": "old-account", "change": "none", "login": "repeated", "expectedAccount": "synthetic-second" }
+  ],
   "hostApprovalCases": [
     {
       "id": "first-approval",

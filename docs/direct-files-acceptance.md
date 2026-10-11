@@ -20,6 +20,13 @@ not introduce a connection mode or require a Mac Companion helper.
   Rejected sign-ins must not save the account. Change or remove the selected key,
   or edit its saved account in another window during connection; the newer setting
   must remain after the pending connection completes.
+  Repeat with a macOS key referenced from disk in both Files and Terminal. While
+  trust or authentication is pending, edit its saved account, reselect its file,
+  switch keys or remove the selection in another window. The connection may
+  finish using its original login, but newer settings must remain and no disk key
+  may be imported into Keychain. Reconnect explicitly with a second account and
+  verify it is retained when no newer edit occurs. Cancelled and rejected logins
+  must leave the saved account unchanged.
   Keep Files open through a successful saved-password connection, Disconnect and
   network loss. The saved password must be available for explicit reconnect in
   that same view. Edit the retry account/password, then cancel or fail a connection:
@@ -132,6 +139,11 @@ successful named-key account retention in a freshly mounted Files view and
 Terminal login selection, rejected key logins and changes while trust is pending,
 and separate authentication/SFTP failure guidance. This transport exists
 only in the hosted test target; neither release client includes a server or subprocess.
+Indexed disk-key account cases run real SSH authentication through both Files and
+Terminal. They cover first/changed accounts, repeated connections, rejection and
+cancellation, plus account edits, changed file references, key switches, association
+removal and key deletion during first-use trust. Newer settings remain intact and
+successful disk-key connections never import private key material into Keychain.
 
 `DirectFilesPresentationTests` captures normal and accessibility layouts on both
 platforms and mounts Mac login fields to exercise external disk-key selection,

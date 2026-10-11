@@ -813,7 +813,7 @@
       "path": "direct-files-v1.json",
       "kind": "directFiles.v1",
       "expect": "valid",
-      "canonicalSHA256": "7e9aee926f3f850ee3d4b21d5a2c3bc02b23232f61ba25ecf5bbc96f57cb9cc8"
+      "canonicalSHA256": "ce941ef65765ab44046cd5c7946c244b46c6e0fde8882e62a0d162d75c72c6b2"
     },
     {
       "path": "ios-text-composer-v1.json",
