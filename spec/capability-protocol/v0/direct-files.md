@@ -41,6 +41,10 @@ preparation when its selection changes; it MUST NOT authenticate with the old ke
 Changes received while connecting or connected MUST be reconciled when sign-in
 becomes available again. A stale selection detected during Connect MUST refresh
 the selection or present recovery guidance rather than silently doing nothing.
+After successful named-key authentication and SFTP admission, retain the SSH
+account on that Mac's existing key association. Update only the association used
+by the login, if its key identity and prior account still match. A newer selection,
+account edit or removed association MUST NOT be overwritten or recreated.
 
 The SSH handshake including trust approval is bounded to 60 seconds. SFTP v3
 subsystem admission and each idle operation are bounded to 30 seconds. Cancelling,
@@ -92,6 +96,12 @@ provides user-selected local files; copy regular files into protected temporary
 storage off the main thread, balancing security-scoped access. Review the files,
 Mac, account and remote folder before upload. Limit a batch to 32 files and stream
 one file at a time in 32-KiB chunks with bounded memory.
+Local staging MUST open the coordinated source without following a final-component
+symlink, reject non-regular files using metadata from the opened descriptor, and
+copy from that same descriptor without reopening the path. Reject an already
+non-regular source before file coordination; descriptor admission MUST NOT block
+on a FIFO. Replacing the path after admission MUST NOT redirect the
+copy to the replacement's contents.
 The Files owner explicitly owns at most one prepared upload batch. Roll back all
 copies if any item fails staging. Release unadopted copies when review is cancelled,
 superseded or invalidated, or the connection is retired. Transfer results take

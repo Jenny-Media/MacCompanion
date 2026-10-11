@@ -15,6 +15,11 @@ not introduce a connection mode or require a Mac Companion helper.
   and on macOS a key referenced directly from disk, including a passphrase.
   Turn Save SSH Login off after saving a password. The old login must be removed
   while the Mac's SSH host trust and keys remain available.
+  Sign in with a named key and a newly entered or changed account. Close Files,
+  then open fresh Files and Terminal views: the successful account must appear.
+  Rejected sign-ins must not save the account. Change or remove the selected key,
+  or edit its saved account in another window during connection; the newer setting
+  must remain after the pending connection completes.
   Keep Files open through a successful saved-password connection, Disconnect and
   network loss. The saved password must be available for explicit reconnect in
   that same view. Edit the retry account/password, then cancel or fail a connection:
@@ -97,6 +102,10 @@ Rename, delete and entire-folder transfers are deferred.
 close-before-publish ordering, failure cleanup, original preservation, truncated
 and special-file downloads, fresh path/handle admission, and native staging
 admission, standalone/retained dismissal, and owner-record presentation. The
+local staging cases replace a regular path with a link or FIFO before opening,
+and replace it with a link after opening: rejected batches roll back and admitted
+copies keep reading the original descriptor. Named-key account cases preserve
+newer key/account choices and removed associations without recreating keys. The
 fixture is indexed only in `spec/fixtures/manifest.json`. Indexed Keep Both cases
 cover exact UTF-8 spellings and suffix allocation, including full-length names,
 emoji and composed/decomposed Unicode. Embedded-channel decoder cases cover
@@ -119,6 +128,8 @@ removal, admission and missing-destination response activity, progressing and
 stalled responses, stale-link rejection, app-lock/background retirement, host-pin
 rejection, competing first-use approvals before authentication, SFTP startup after
 authenticated SSH closure, deferred initial login in a reopened connected view,
+successful named-key account retention in a freshly mounted Files view and
+Terminal login selection, rejected key logins and changes while trust is pending,
 and separate authentication/SFTP failure guidance. This transport exists
 only in the hosted test target; neither release client includes a server or subprocess.
 

@@ -1,5 +1,6 @@
 import XCTest
 import Foundation
+import Darwin
 import NIO
 @testable import Citadel
 #if os(iOS)
@@ -282,10 +283,71 @@ import NIO
             let rejected = originals.appendingPathComponent("rejected")
             if item["rejectedItem"] as? String == "directory" {
                 try FileManager.default.createDirectory(at: rejected, withIntermediateDirectories: false)
+            } else if item["rejectedItem"] as? String == "fifo" {
+                XCTAssertEqual(mkfifo(rejected.path, 0o600), 0)
             } else { try FileManager.default.createSymbolicLink(at: rejected, withDestinationURL: source) }
             XCTAssertThrowsError(try DirectFilesLocalStore.stageBatch([source, rejected], in: staging))
             XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: staging.path).count, item["remainingCopies"] as? Int)
             XCTAssertEqual(try Data(contentsOf: source) == bytes, item["originalUnchanged"] as? Bool)
+        }
+    }
+    func testIndexedLocalAdmissionPinsTheOpenedFileAndRejectsReplacements() throws {
+        let url = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "direct-files-v1", withExtension: "json"))
+        let fixture = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])
+        for item in try XCTUnwrap(fixture["localStagingAdmissionCases"] as? [[String: Any]]) {
+            let root = try DirectFilesLocalStore.root()
+            defer { try? FileManager.default.removeItem(at: root) }
+            let source = try DirectFilesLocalStore.emptyFile(in: root, name: "selected.txt")
+            let target = try DirectFilesLocalStore.emptyFile(in: root, name: "unselected.txt")
+            let destination = try DirectFilesLocalStore.emptyFile(in: root, name: "copy.txt")
+            let original = Data(repeating: 19, count: 100_000), replacement = Data(repeating: 23, count: 100_000)
+            try original.write(to: source); try replacement.write(to: target)
+            // Deliberately replace a previously regular path at both boundaries.
+            XCTAssertTrue(try source.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile == true)
+            let admitted = try XCTUnwrap(item["opened"] as? Bool)
+            let input = admitted ? try DirectFilesStagingInput(url: source) : nil
+            try FileManager.default.removeItem(at: source)
+            if item["replacement"] as? String == "fifo" { XCTAssertEqual(mkfifo(source.path, 0o600), 0) }
+            else { try FileManager.default.createSymbolicLink(at: source, withDestinationURL: target) }
+            if let input {
+                try input.copy(to: destination)
+                XCTAssertEqual(try Data(contentsOf: destination) == original, item["copiedOriginal"] as? Bool)
+            } else {
+                XCTAssertThrowsError(try DirectFilesStagingInput(url: source)) {
+                    guard case DirectFilesFailure.notRegular = $0 else { XCTFail("Unexpected admission error: \($0)"); return }
+                }
+            }
+            XCTAssertEqual(try Data(contentsOf: target), replacement, "The unselected target is never changed")
+        }
+    }
+    func testIndexedNamedKeyAccountRetentionPreservesConcurrentEdits() throws {
+        let storageID = UUID(uuidString: "00000000-0000-0000-0000-000000000002")!
+        let original = try TerminalKeyLibraryStore.load()
+        defer { try? TerminalSecretStore.write(JSONEncoder().encode(original), id: storageID, kind: "key-library-v2") }
+        let url = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "direct-files-v1", withExtension: "json"))
+        let fixture = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])
+        for item in try XCTUnwrap(fixture["namedKeyAccountCases"] as? [[String: Any]]) {
+            try TerminalSecretStore.write(JSONEncoder().encode(TerminalKeyLibraryStore.Library()), id: storageID, kind: "key-library-v2")
+            let macID = UUID(), key = TerminalSSHKey.create()
+            let keyID = try TerminalKeyLibraryStore.add(key, name: "Synthetic Named Key")
+            try TerminalKeyLibraryStore.associate(keyID, macID: macID, username: try XCTUnwrap(item["priorAccount"] as? String))
+            let selected = try XCTUnwrap(TerminalKeyLibraryStore.selected(macID))
+            switch try XCTUnwrap(item["change"] as? String) {
+            case "key":
+                let newerID = try TerminalKeyLibraryStore.add(.create(), name: "Synthetic Newer Key")
+                try TerminalKeyLibraryStore.associate(newerID, macID: macID, username: "newer-account")
+            case "account": try TerminalKeyLibraryStore.associate(keyID, macID: macID, username: "newer-account")
+            case "association": try TerminalKeyLibraryStore.forgetAssociation(macID)
+            case "delete": try TerminalKeyLibraryStore.delete(keyID)
+            default: break
+            }
+            let before = try TerminalKeyLibraryStore.load()
+            try TerminalKeyLibraryStore.rememberAccount("synthetic", macID: macID, selection: selected)
+            let after = try TerminalKeyLibraryStore.load()
+            XCTAssertEqual(try TerminalKeyLibraryStore.selected(macID)?.key.username, item["expectedAccount"] as? String, item["id"] as? String ?? "")
+            XCTAssertEqual(after.keys, before.keys, "Retention never imports, renames or recreates keys")
+            XCTAssertEqual(after.associations.map(\.keyID), before.associations.map(\.keyID))
+            XCTAssertEqual(after.migratedMacs, before.migratedMacs)
         }
     }
     func testStagePreservesOriginalAndRejectsFoldersAndLinks() throws {

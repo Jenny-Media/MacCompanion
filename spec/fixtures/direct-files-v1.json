@@ -316,7 +316,39 @@
       "rejectedItem": "link",
       "originalUnchanged": true,
       "remainingCopies": 0
+    },
+    {
+      "id": "regular-then-fifo",
+      "rejectedItem": "fifo",
+      "originalUnchanged": true,
+      "remainingCopies": 0
     }
+  ],
+  "localStagingAdmissionCases": [
+    {
+      "id": "regular-replaced-by-link-before-open",
+      "replacement": "link",
+      "opened": false
+    },
+    {
+      "id": "regular-replaced-by-fifo-before-open",
+      "replacement": "fifo",
+      "opened": false
+    },
+    {
+      "id": "regular-replaced-by-link-after-open",
+      "replacement": "link",
+      "opened": true,
+      "copiedOriginal": true
+    }
+  ],
+  "namedKeyAccountCases": [
+    { "id": "initial-account", "priorAccount": "", "change": "none", "expectedAccount": "synthetic" },
+    { "id": "changed-account", "priorAccount": "old-account", "change": "none", "expectedAccount": "synthetic" },
+    { "id": "newer-key-selection", "priorAccount": "", "change": "key", "expectedAccount": "newer-account" },
+    { "id": "newer-account-edit", "priorAccount": "", "change": "account", "expectedAccount": "newer-account" },
+    { "id": "removed-association", "priorAccount": "", "change": "association", "expectedAccount": null },
+    { "id": "deleted-key", "priorAccount": "", "change": "delete", "expectedAccount": null }
   ],
   "hostApprovalCases": [
     {

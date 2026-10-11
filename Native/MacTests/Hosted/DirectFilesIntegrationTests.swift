@@ -85,16 +85,99 @@ private struct FilesTestWindowRoot: View {
         XCTAssertEqual(session.phase, .ready, session.message ?? session.status)
         guard session.phase == .ready else { throw DirectFilesFailure.unavailable }
     }
-    private func server(root: URL, record: SSHTestRecord, allowSFTP: Bool = true, responseDelay: TimeAmount = .nanoseconds(0)) async throws -> Channel {
+    private func server(root: URL, record: SSHTestRecord, allowSFTP: Bool = true, responseDelay: TimeAmount = .nanoseconds(0), publicKey: NIOSSHPublicKey? = nil) async throws -> Channel {
         let hostKey = NIOSSHPrivateKey(ed25519Key: .init())
         return try await ServerBootstrap(group: MultiThreadedEventLoopGroup.singleton).childChannelInitializer { channel in
             record.openedTransport(channel)
-            return channel.pipeline.addHandler(NIOSSHHandler(role: .server(.init(hostKeys: [hostKey], userAuthDelegate: SSHTestAuth(record, usernames: ["synthetic", "synthetic-second"]))), allocator: channel.allocator,
+            return channel.pipeline.addHandler(NIOSSHHandler(role: .server(.init(hostKeys: [hostKey], userAuthDelegate: SSHTestAuth(record, publicKey: publicKey, usernames: ["synthetic", "synthetic-second"]))), allocator: channel.allocator,
                 inboundChildChannelInitializer: { child, _ in
                     record.opened(child)
                     return child.pipeline.addHandler(FilesTestSFTPProcess(root: root, allowSFTP: allowSFTP, responseDelay: responseDelay))
                 }))
         }.bind(host: "127.0.0.1", port: 0).get()
+    }
+    func testNamedKeyFilesLoginRetainsAccountForFreshFilesAndTerminal() async throws {
+        let storageID = UUID(uuidString: "00000000-0000-0000-0000-000000000002")!
+        let library = try TerminalKeyLibraryStore.load()
+        defer { try? TerminalSecretStore.write(JSONEncoder().encode(library), id: storageID, kind: "key-library-v2") }
+        let root = try DirectFilesLocalStore.root(); defer { try? FileManager.default.removeItem(at: root) }
+        let key = TerminalSSHKey.create(), record = SSHTestRecord()
+        let publicKey = NIOSSHPrivateKey(ed25519Key: try .init(rawRepresentation: key.seed)).publicKey
+        let server = try await self.server(root: root, record: record, publicKey: publicKey)
+        defer { Task { try? await server.close() } }
+        let id = try TerminalKeyLibraryStore.add(key, name: "Synthetic Files Key")
+        for priorAccount in ["", "old-account"] {
+            let mac = DirectMacRecordV1(id: UUID(), name: "Synthetic Named Key", addresses: ["127.0.0.1"], sshPort: try XCTUnwrap(server.localAddress?.port))
+            try TerminalKeyLibraryStore.associate(id, macID: mac.id, username: priorAccount)
+            let selected = try XCTUnwrap(TerminalKeyLibraryStore.selected(mac.id))
+            let session = DirectFilesSession(mac: mac)
+            defer { session.close(); try? TerminalSecretStore.remove(mac.id) }
+            session.connect(username: "synthetic", password: "", key: selected.key, remember: false)
+            try await wait { session.trust != nil }; session.answerTrust(true)
+            try await wait { session.phase != .connecting }
+            XCTAssertEqual(session.phase, .ready, session.message ?? session.status)
+            let saved = try XCTUnwrap(TerminalKeyLibraryStore.selected(mac.id))
+            XCTAssertEqual(saved.id, id); XCTAssertEqual(saved.key.username, "synthetic")
+            XCTAssertEqual(saved.name, "Synthetic Files Key"); XCTAssertEqual(saved.key.seed, key.seed)
+            var terminalLogin = TerminalLoginSelection()
+            terminalLogin.loadKeyAccount(saved.key.username, preferSelected: true)
+            XCTAssertEqual(terminalLogin.method, .sshKey); XCTAssertEqual(terminalLogin.username, "synthetic")
+            var expectedAccount = "synthetic"
+            if priorAccount.isEmpty {
+                // A continuously mounted view may still hold its original key
+                // value, whose account predates the first successful login.
+                session.disconnect()
+                session.connect(username: "synthetic-second", password: "", key: selected.key, remember: false)
+                try await wait { session.phase != .connecting }
+                XCTAssertEqual(session.phase, .ready, session.message ?? session.status)
+                expectedAccount = "synthetic-second"
+                XCTAssertEqual(try TerminalKeyLibraryStore.selected(mac.id)?.key.username, expectedAccount)
+            }
+            session.close()
+            let reopened = DirectFilesSession(mac: mac); defer { reopened.close() }
+            let host = NSHostingView(rootView: DirectFilesView(mac: mac, session: reopened))
+            let window = NSWindow(contentRect: .init(x: -20000, y: -20000, width: 720, height: 640), styleMask: [.titled], backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false; window.contentView = host; window.orderFront(nil)
+            defer { window.makeFirstResponder(nil); window.contentView = nil; window.close() }
+            func descendants(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(descendants) }
+            func fields() -> MacCredentialFields.Fields? { descendants(host).compactMap { $0 as? MacCredentialFields.Fields }.first }
+            try await wait { fields()?.account.stringValue == expectedAccount }
+            XCTAssertTrue(fields()?.secret.isHiddenOrHasHiddenAncestor == true, "Key login must not become password login")
+        }
+        XCTAssertGreaterThanOrEqual(record.keyRequests, 2)
+    }
+    func testNamedKeyFilesLoginPreservesRejectionAndConcurrentSelectionChanges() async throws {
+        let storageID = UUID(uuidString: "00000000-0000-0000-0000-000000000002")!
+        let library = try TerminalKeyLibraryStore.load()
+        defer { try? TerminalSecretStore.write(JSONEncoder().encode(library), id: storageID, kind: "key-library-v2") }
+        let root = try DirectFilesLocalStore.root(); defer { try? FileManager.default.removeItem(at: root) }
+        let key = TerminalSSHKey.create()
+        let publicKey = NIOSSHPrivateKey(ed25519Key: try .init(rawRepresentation: key.seed)).publicKey
+        let server = try await self.server(root: root, record: SSHTestRecord(), publicKey: publicKey)
+        defer { Task { try? await server.close() } }
+        for change in ["rejected", "key", "account", "deleted"] {
+            let mac = DirectMacRecordV1(id: UUID(), name: "Synthetic Pending Key", addresses: ["127.0.0.1"], sshPort: try XCTUnwrap(server.localAddress?.port))
+            let id = try TerminalKeyLibraryStore.add(key, name: "Synthetic Pending Key")
+            try TerminalKeyLibraryStore.associate(id, macID: mac.id, username: "")
+            let selected = try XCTUnwrap(TerminalKeyLibraryStore.selected(mac.id))
+            let session = DirectFilesSession(mac: mac)
+            defer { session.close(); try? TerminalSecretStore.remove(mac.id) }
+            session.connect(username: change == "rejected" ? "rejected-synthetic" : "synthetic", password: "", key: selected.key, remember: false)
+            try await wait { session.trust != nil }
+            if change == "key" {
+                let newer = try TerminalKeyLibraryStore.add(.create(), name: "Synthetic Newer Key")
+                try TerminalKeyLibraryStore.associate(newer, macID: mac.id, username: "newer-account")
+            } else if change == "account" {
+                try TerminalKeyLibraryStore.associate(id, macID: mac.id, username: "newer-account")
+            } else if change == "deleted" { try TerminalKeyLibraryStore.delete(id) }
+            let before = try TerminalKeyLibraryStore.load()
+            session.answerTrust(true); try await wait { session.phase != .connecting }
+            if change == "rejected" { XCTAssertNotEqual(session.phase, .ready) }
+            else { XCTAssertEqual(session.phase, .ready, session.message ?? session.status) }
+            let current = try TerminalKeyLibraryStore.selected(mac.id)
+            XCTAssertEqual(current?.key.username, change == "deleted" ? nil : change == "rejected" ? "" : "newer-account")
+            XCTAssertEqual(try TerminalKeyLibraryStore.load().keys, before.keys)
+        }
     }
     func testMacOSSFTPBrowseFolderUploadKeepBothReplaceDownloadAndIsolation() async throws {
         let root = try DirectFilesLocalStore.root(), local = try DirectFilesLocalStore.root()

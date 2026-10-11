@@ -124,9 +124,18 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
             message = "Enter a Mac account and password, or choose its SSH key."; return
         }
         let authentication: @Sendable () -> SSHAuthenticationMethod
+        let namedSelection: TerminalNamedKey?
         do {
-            if let key { try key.validate(); let parsed = try Curve25519.Signing.PrivateKey(rawRepresentation: key.seed); authentication = { .ed25519(username: username, privateKey: parsed) } }
-            else { authentication = { .passwordBased(username: username, password: password) } }
+            if let key {
+                try key.validate()
+                let selected = keyFileID == nil ? try TerminalKeyLibraryStore.selected(mac.id) : nil
+                namedSelection = selected?.key.seed == key.seed ? selected : nil
+                let parsed = try Curve25519.Signing.PrivateKey(rawRepresentation: key.seed)
+                authentication = { .ed25519(username: username, privateKey: parsed) }
+            } else {
+                namedSelection = nil
+                authentication = { .passwordBased(username: username, password: password) }
+            }
         } catch { message = "The SSH key could not be read."; return }
         observeLifecycle()
         retire(); let token = generation, owner = TerminalSocketOwner(); socket = owner
@@ -187,6 +196,8 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
                     #if os(macOS)
                     if let key { try MacSSHKeyFileStore.rememberAccount(username, fileID: keyFileID, macID: mac.id, fingerprint: key.fingerprint) }
                     #endif
+                } else if let namedSelection {
+                    try TerminalKeyLibraryStore.rememberAccount(username, macID: mac.id, selection: namedSelection)
                 } else if remember && key == nil { try TerminalSecretStore.save(.init(username: username, password: password), id: mac.id) }
                 } catch { self.message = "Connected. The SSH login could not be saved on this device." }
                 self.directory = directory; self.home = directory.path

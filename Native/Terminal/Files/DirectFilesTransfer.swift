@@ -1,5 +1,6 @@
 #if (os(iOS) || os(macOS)) && MACCOMPANION_VNC_DEVELOPMENT
 import Foundation
+import Darwin
 
 @MainActor protocol DirectFilesRemoteHandle {
     func attributes() async throws -> DirectFilesAttributes
@@ -100,6 +101,48 @@ actor DirectFilesDiskFile {
     }
 }
 
+/// Admission and copying share one descriptor, even if a local writer replaces
+/// the selected path. Nonblocking admission also rejects FIFOs without waiting.
+final class DirectFilesStagingInput {
+    private let handle: FileHandle
+    private let size: UInt64
+    init(url: URL) throws {
+        let descriptor = url.withUnsafeFileSystemRepresentation { path -> Int32 in
+            guard let path else { return -1 }
+            return Darwin.open(path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC)
+        }
+        guard descriptor >= 0 else {
+            throw errno == ELOOP ? DirectFilesFailure.notRegular : DirectFilesFailure.unavailable
+        }
+        var metadata = stat()
+        guard fstat(descriptor, &metadata) == 0 else {
+            Darwin.close(descriptor); throw DirectFilesFailure.unavailable
+        }
+        guard metadata.st_mode & mode_t(S_IFMT) == mode_t(S_IFREG), metadata.st_size >= 0 else {
+            Darwin.close(descriptor); throw DirectFilesFailure.notRegular
+        }
+        size = UInt64(metadata.st_size)
+        handle = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
+    }
+    deinit { try? handle.close() }
+    func copy(to destination: URL) throws {
+        defer { try? handle.close() }
+        let output = try FileHandle(forWritingTo: destination)
+        defer { try? output.close() }
+        var count: UInt64 = 0
+        while true {
+            try Task.checkCancellation()
+            let data = try handle.read(upToCount: DirectFilesPolicy.chunkSize) ?? Data()
+            if data.isEmpty { break }
+            count += UInt64(data.count)
+            guard count <= size else { throw DirectFilesFailure.changedFile }
+            try output.write(contentsOf: data)
+        }
+        guard count == size else { throw DirectFilesFailure.changedFile }
+        try output.synchronize()
+    }
+}
+
 /// Private, ephemeral files. Names and bytes are never written to app diagnostics.
 enum DirectFilesLocalStore {
     static func root() throws -> URL {
@@ -152,25 +195,22 @@ enum DirectFilesLocalStore {
         guard source.isFileURL, DirectFilesPolicy.validName(source.lastPathComponent) else { throw DirectFilesFailure.invalidName }
         let scope = source.startAccessingSecurityScopedResource()
         defer { if scope { source.stopAccessingSecurityScopedResource() } }
+        // Foundation can open the path before invoking its accessor. Avoid
+        // coordinating an already-special file (notably a blocking FIFO).
+        // This preflight is advisory; the opened descriptor is authoritative.
+        var metadata = stat()
+        let inspected = source.withUnsafeFileSystemRepresentation { path in
+            guard let path else { return false }
+            return lstat(path, &metadata) == 0
+        }
+        // A provider may not materialize a cloud file until coordination. An
+        // unavailable preflight must not prevent that coordinated download.
+        if inspected, metadata.st_mode & mode_t(S_IFMT) != mode_t(S_IFREG) { throw DirectFilesFailure.notRegular }
         let destination = try emptyFile(in: root, name: source.lastPathComponent)
         var coordinationError: NSError?, result: Result<Void, Error> = .failure(DirectFilesFailure.unavailable)
         NSFileCoordinator().coordinate(readingItemAt: source, options: [], error: &coordinationError) { url in
             result = Result {
-                let values = try url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey])
-                guard values.isRegularFile == true, values.isSymbolicLink != true, let size = values.fileSize, size >= 0 else { throw DirectFilesFailure.notRegular }
-                let input = try FileHandle(forReadingFrom: url), output = try FileHandle(forWritingTo: destination)
-                defer { try? input.close(); try? output.close() }
-                var count: UInt64 = 0
-                while true {
-                    try Task.checkCancellation()
-                    let data = try input.read(upToCount: DirectFilesPolicy.chunkSize) ?? Data()
-                    if data.isEmpty { break }
-                    count += UInt64(data.count)
-                    guard count <= UInt64(size) else { throw DirectFilesFailure.changedFile }
-                    try output.write(contentsOf: data)
-                }
-                guard count == UInt64(size) else { throw DirectFilesFailure.changedFile }
-                try output.synchronize()
+                try DirectFilesStagingInput(url: url).copy(to: destination)
             }
         }
         do { if let coordinationError { throw coordinationError }; try result.get(); try Task.checkCancellation(); return destination }
