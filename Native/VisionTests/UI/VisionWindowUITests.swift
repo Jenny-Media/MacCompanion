@@ -269,6 +269,26 @@ import XCTest
             XCTAssertTrue(files.waitForExistence(timeout: 10)); XCTAssertTrue(files.isHittable, app.debugDescription)
         }
     }
+    func testCloudDeletionWarningAndConfirmationCanCancelWithoutEnablingSync() {
+        let app = launch(multipleMacs: true); app.buttons["Settings"].tap()
+        XCTAssertTrue(app.staticTexts["Privacy"].waitForExistence(timeout: 15))
+        let settingsWindow = app.windows.containing(.staticText, identifier: "Privacy").firstMatch
+        let deletion = app.buttons["icloud-delete-data"]
+        reveal(deletion, in: settingsWindow); deletion.tap()
+        let warning = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "Turn off Mac Companion sync on your other devices first.")).firstMatch
+        XCTAssertTrue(warning.waitForExistence(timeout: 10), app.debugDescription)
+        XCTAssertTrue(app.staticTexts["Your saved Macs, passwords, SSH keys and local preferences."].exists)
+        let next = app.buttons["icloud-review-continue"]
+        XCTAssertTrue(next.waitForExistence(timeout: 10)); next.tap()
+        let confirmation = app.alerts["Delete Mac Data from iCloud?"]
+        XCTAssertTrue(confirmation.waitForExistence(timeout: 10))
+        XCTAssertTrue(confirmation.buttons["Delete iCloud Data"].exists)
+        let evidence = XCTAttachment(string: app.debugDescription); evidence.name = "Native cloud deletion warning and confirmation"; evidence.lifetime = .keepAlways; add(evidence)
+        confirmation.buttons["Cancel"].tap()
+        app.navigationBars["Delete iCloud Data"].buttons["Cancel"].tap()
+        let toggle = app.switches["Sync Mac Metadata with iCloud"]
+        XCTAssertTrue(toggle.waitForExistence(timeout: 10)); XCTAssertEqual(toggle.value as? String, "0")
+    }
     func testMetadataSyncRequiresDisclosureAndAffirmativeConsent() {
         let app = launch(); app.buttons["Settings"].tap()
         let toggle = app.switches["Sync Mac Metadata with iCloud"]

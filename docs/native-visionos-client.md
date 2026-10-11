@@ -318,15 +318,16 @@ bound is exceeded. Old-shell output and stale detach callbacks cannot affect a
 replacement receiver. The native connected-only layout is retained after a
 pre-mounted layout crashed in a normal Simulator UI journey.
 
-Eleven hosted regressions exercise native responders, the real SSH/RFB peer,
+Twelve hosted regressions exercise native responders, the real SSH/RFB peer,
 bounded startup output, import passphrase scene cleanup and the actual library
-save path. Three additional UI journeys inspect the full sync disclosure, cancel
-and confirm opt-in, choose another retained Free Mac, and reopen the Files picker. The Terminal hosted
+save path. Four additional UI journeys inspect the full sync disclosure, cancel
+and confirm opt-in, choose another retained Free Mac, reopen the Files picker,
+and reach/cancel the separate cloud-deletion warning and confirmation. The Terminal hosted
 test asserts and renders its startup banner, while the normal UI journey records
 native attachment before input. Development checks passed before the
 complete stable-state gate; final evidence for this cycle is stored outside Git
 under `/private/tmp/maccompanion-pr12-seven-fixes-20261011/review/`. The gate
-requires all 48 discovered native cases, the full repository validation, both
+requires all 50 discovered native cases, the full repository validation, both
 unsigned SDK builds and a fresh two-stage independent review on one unchanged
 source fingerprint. Earlier reports do not substitute for that gate.
 
@@ -340,6 +341,12 @@ Owning-scene background and actual lock retire SSH drafts, pickers and pending
 operations. Temporary authentication inactivity preserves its context; completion
 still requires the current generation and an active, unlocked owning scene.
 Settings clears unsaved quick-action drafts on the same privacy boundary.
+Settings also exposes the existing Delete Mac Data from iCloud workflow. Its
+warning keeps local Macs and asks users to disable sync on other devices first.
+An immutable confirmation identity and live scene/unlock/busy checks prevent
+cancelled, stale or interrupted alerts from committing. Indexed hosted cases
+exercise actual deletion through injected in-memory storage and verify local
+record bytes remain unchanged; normal UI tests cancel without any real deletion.
 Unreadable library storage exposes Retry and disables creation/editing; retrying
 does not overwrite the unreadable file. A removed editor snapshot receives the
 same current Free/Pro creation check as a new record.

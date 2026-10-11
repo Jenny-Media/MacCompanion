@@ -179,6 +179,7 @@ struct VisionSettings: View {
     @State private var lock = DirectAppLockV1.shared
     @State private var appearance = DirectAppearanceV1.shared
     @State private var enableCloud = false
+    @State private var cloudSheet: DirectCloudSheet?
     @Environment(\.scenePhase) private var phase
     var body: some View {
         NavigationStack {
@@ -199,6 +200,10 @@ struct VisionSettings: View {
                     Text("Only saved Mac metadata and supported preferences sync. Logins, private keys, trusted server keys and typed content stay on this device.").font(.footnote)
                     if let notice = cloud.recovery { DirectNoticeMessage(message: notice.message) }
                     Button("Retry Sync") { cloud.retry() }
+                    Button("Delete Mac Data from iCloud…", systemImage: "icloud.slash", role: .destructive) {
+                        guard phase == .active, lock.canAccess, !cloud.busy else { return }
+                        cloudSheet = .deleteData
+                    }.disabled(cloud.busy).accessibilityIdentifier("icloud-delete-data")
                 }
                 Section("Connections") {
                     NavigationLink("SSH Keys") { TerminalKeySettings(embedded: true) }
@@ -216,8 +221,11 @@ struct VisionSettings: View {
             Button("Enable Sync") { if phase == .active && lock.canAccess { cloud.setEnabled(true) } }
             Button("Cancel", role: .cancel) {}
         } message: { Text(DirectCloudSyncV1.disclosure) }
-        .onChange(of: lock.canAccess) { _, value in if !value { enableCloud = false } }
-        .onChange(of: phase) { _, value in if value != .active { enableCloud = false } }
+        .sheet(item: $cloudSheet) { kind in
+            DirectCloudInformationSheet(kind: kind, cloud: cloud).directAppearance().visionPrivacy()
+        }
+        .onChange(of: lock.canAccess) { _, value in if !value { enableCloud = false; cloudSheet = nil } }
+        .onChange(of: phase) { _, value in if value != .active { enableCloud = false; cloudSheet = nil } }
     }
 }
 struct VisionQuickActionsSettings: View {

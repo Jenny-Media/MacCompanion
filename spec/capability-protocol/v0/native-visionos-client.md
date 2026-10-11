@@ -147,6 +147,11 @@ sequences and emulator queries cannot be discarded during presentation.
 
 Metadata sync uses the existing full disclosure and affirmative confirmation
 before persisting opt-in. Cancellation and scene interruption leave sync off.
+Settings exposes the existing separate Delete Mac Data from iCloud workflow,
+including its warning to turn off sync on other devices, local-record retention,
+and explicit confirmation. Only the current confirmation in an active, unlocked
+owning scene may commit while cloud work is idle. Cancellation, disappearance,
+inactivity, background and lock retire that confirmation without replay.
 Sensitive SSH import/export drafts, picker requests and pending operations are
 cleared or invalidated when their owning scene backgrounds or app unlock locks.
 Temporary inactive authentication prompts do not cancel an admitted export.

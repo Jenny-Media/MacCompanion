@@ -4620,5 +4620,39 @@
       "name": "duplicate",
       "firstReceipts": 1
     }
+  ],
+  "cloudDeletionConfirmation": [
+    {
+      "name": "current-active",
+      "commit": true
+    },
+    {
+      "name": "cancelled",
+      "commit": false
+    },
+    {
+      "name": "disappeared",
+      "commit": false
+    },
+    {
+      "name": "inactive",
+      "commit": false
+    },
+    {
+      "name": "background",
+      "commit": false
+    },
+    {
+      "name": "locked",
+      "commit": false
+    },
+    {
+      "name": "busy",
+      "commit": false
+    },
+    {
+      "name": "superseded",
+      "commit": false
+    }
   ]
 }

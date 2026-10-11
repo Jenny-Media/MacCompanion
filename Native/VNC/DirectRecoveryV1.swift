@@ -245,6 +245,10 @@ struct DirectCloudInformationSheet: View {
     @Environment(\.dismiss) private var dismiss
     @State private var confirmDeletion = false
     @State private var lock = DirectAppLockV1.shared
+    #if os(visionOS)
+    @Environment(\.scenePhase) private var phase
+    @State private var deletion = VisionCloudDeletion()
+    #endif
     var body: some View {
         NavigationStack {
             ScrollView {
@@ -277,7 +281,13 @@ struct DirectCloudInformationSheet: View {
                 .safeAreaInset(edge: .bottom) {
                     if kind == .deleteData {
                         VStack(spacing: 8) {
-                            Button("Continue to Confirmation", role: .destructive) { confirmDeletion = true }
+                            Button("Continue to Confirmation", role: .destructive) {
+                                #if os(visionOS)
+                                deletion.review(unlocked: lock.canAccess, busy: cloud.busy)
+                                #else
+                                confirmDeletion = true
+                                #endif
+                            }
                                 .buttonStyle(.borderedProminent).disabled(cloud.busy || !lock.canAccess)
                                 .accessibilityIdentifier("icloud-review-continue")
                         }.padding(16).frame(maxWidth: .infinity).background(.bar)
@@ -288,6 +298,18 @@ struct DirectCloudInformationSheet: View {
         .frame(width: 540, height: 580)
         #endif
         .background(.background)
+        #if os(visionOS)
+        .background {
+            if let token = deletion.confirmation {
+                VisionCloudDeletionAlert(token: token, deletion: deletion, cloud: cloud, done: { dismiss() })
+                    .id(token)
+            }
+        }
+        .onAppear { deletion.scenePhase = phase }
+        .onChange(of: phase) { _, value in deletion.scenePhase = value }
+        .onDisappear { deletion.invalidate() }
+        .visionSensitiveState { deletion.invalidate(); dismiss() }
+        #else
         .alert("Delete Mac Data from iCloud?", isPresented: $confirmDeletion) {
             Button("Delete iCloud Data", role: .destructive) {
                 guard lock.canAccess, !cloud.busy else { return }
@@ -295,6 +317,7 @@ struct DirectCloudInformationSheet: View {
             }
             Button("Cancel", role: .cancel) {}
         } message: { Text("This deletes the app’s synced Mac data and turns sync off here. Your local Macs and logins are kept. Other devices with sync enabled can upload data again.") }
+        #endif
         .onChange(of: lock.canAccess) { _, allowed in if !allowed { confirmDeletion = false; dismiss() } }
     }
 }
