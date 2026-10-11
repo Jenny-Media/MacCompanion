@@ -34,6 +34,7 @@ struct VNCRemoteDesktopView: UIViewControllerRepresentable {
         let viewer = CompanionVNCViewer()
         viewer.macName = mac.name
         viewer.connectionMacNames = connectionMacNames.isEmpty ? [mac.name] : connectionMacNames
+        viewer.connectionAddresses = mac.addresses
         viewer.servicePort = mac.port
         viewer.sshPort = mac.sshPort
         viewer.inputOnly = inputOnly

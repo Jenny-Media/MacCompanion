@@ -101,6 +101,61 @@ import XCTest
         let access = DirectProAccess(defaults: defaults); await access.refresh()
         return (access, defaults, suite)
     }
+    func testUnreadableImportedLibraryKeepsDiskKeyManagementAccessible() async throws {
+        try await isolatedKeys {
+            let (access, defaults, suite) = try await self.access()
+            defer { defaults.removePersistentDomain(forName: suite) }
+            let url = URL.temporaryDirectory.appending(path: UUID().uuidString)
+            defer { try? FileManager.default.removeItem(at: url) }
+            try Data(Curve25519.Signing.PrivateKey().makeSSHRepresentation().utf8).write(to: url)
+            let fileID = try MacSSHKeyFileStore.add(url: url, name: "Synthetic Reference", passphrase: "", access: access)
+            let namedID = UUID(uuidString: "00000000-0000-0000-0000-000000000002")!
+            let unreadable = Data("synthetic-invalid-library".utf8)
+            try TerminalSecretStore.write(unreadable, id: namedID, kind: "key-library-v2")
+            let imported = TerminalKeyLibrary(); imported.reload()
+            XCTAssertFalse(imported.readable)
+            XCTAssertEqual(try MacSSHKeyFileStore.load().files.map(\.id), [fileID])
+
+            let host = NSHostingView(rootView: TerminalKeySettings())
+            let window = NSWindow(contentRect: .init(x: -20000, y: -20000, width: 650, height: 700), styleMask: [.titled], backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false; window.contentView = host; window.orderFront(nil)
+            defer { window.contentView = nil; window.close() }
+            func element(_ identifier: String) -> NSObject? {
+                host.layoutSubtreeIfNeeded()
+                var pending: [Any] = [host], visited = Set<ObjectIdentifier>()
+                while let item = pending.popLast() {
+                    guard let object = item as? NSObject, visited.insert(ObjectIdentifier(object)).inserted else { continue }
+                    // SwiftUI's virtual accessibility nodes implement these
+                    // selectors without adopting AppKit's complete protocol.
+                    if object.responds(to: NSSelectorFromString("accessibilityIdentifier")),
+                       object.value(forKey: "accessibilityIdentifier") as? String == identifier { return object }
+                    if object.responds(to: NSSelectorFromString("accessibilityChildren")) {
+                        pending.append(contentsOf: object.value(forKey: "accessibilityChildren") as? [Any] ?? [])
+                    }
+                }
+                return nil
+            }
+            func enabled(_ element: NSObject) -> Bool {
+                element.value(forKey: "accessibilityEnabled") as? Bool == true
+            }
+            func press(_ element: NSObject) throws {
+                let selector = NSSelectorFromString("accessibilityPerformPress")
+                XCTAssertTrue(element.responds(to: selector))
+                _ = element.perform(selector)
+            }
+            try await self.wait { element("ssh-key-use-file") != nil && element("ssh-key-create").map(enabled) == false }
+            let useFile = try XCTUnwrap(element("ssh-key-use-file"))
+            XCTAssertTrue(enabled(useFile))
+            XCTAssertFalse(enabled(try XCTUnwrap(element("ssh-key-import-copy"))))
+            try press(useFile)
+            let removalID = "ssh-key-remove-" + fileID.uuidString
+            try await self.wait { element(removalID) != nil }
+            let remove = try XCTUnwrap(element(removalID))
+            XCTAssertTrue(enabled(remove)); try press(remove)
+            try await self.wait { (try? MacSSHKeyFileStore.load().files.isEmpty) == true }
+            XCTAssertEqual(try TerminalSecretStore.read(namedID, kind: "key-library-v2"), unreadable, "Disk-reference cleanup must preserve the unreadable imported data")
+        }
+    }
     func testKeyFileReferencesPreserveOriginalAndRejectChangedOrMissingKeys() async throws {
         try await isolatedKeys {
             let (access, defaults, suite) = try await self.access()

@@ -28,7 +28,10 @@ struct MacDirectDesktopView: View {
                 MacSignInPanel(mac: mac, mode: .desktop) {
                     MacCredentialFields(username: $username, password: $password, enabled: !session.connecting && DirectAppLockV1.shared.canAccess, prefix: "mac-vnc", submit: connect)
                         .frame(height: 104)
-                    Toggle("Remember login on this Mac", isOn: $remember).disabled(session.connecting)
+                    Toggle("Save login on this Mac", isOn: $remember).disabled(session.connecting)
+                        .help("Store this Mac’s Desktop credentials in Keychain.")
+                    DisclosureGroup("Connection Details") { DirectConnectionDetailsRows(mac: mac, desktop: true) }
+                        .font(.subheadline).disabled(session.connecting)
                     if let notice = issue ?? session.recovery {
                         DirectRecoveryCard(notice: notice, primary: notice.reason == .savedDataUnavailable
                             ? .init(title: "Retry Saved Login", perform: loadLogin) : nil)
@@ -41,6 +44,8 @@ struct MacDirectDesktopView: View {
                         Spacer()
                         Button("Cancel") { session.disconnect(); password = "" }
                     } else {
+                        Button("Cancel") { window.window?.performClose(nil) }.keyboardShortcut(.cancelAction)
+                            .accessibilityIdentifier("mac-vnc-login-cancel")
                         Spacer()
                         Button("Connect", systemImage: "arrow.right", action: connect)
                             .buttonStyle(.borderedProminent).disabled(username.isEmpty || password.isEmpty)
@@ -74,10 +79,8 @@ struct MacDirectDesktopView: View {
                 }.help("Fit or zoom the remote desktop locally")
                 Button("Disconnect", systemImage: "power") { session.disconnect() }
                     .labelStyle(.titleAndIcon).help("End this Screen Sharing connection and keep its window open")
-                Menu("Send Key", systemImage: "keyboard") {
-                    ForEach(actions.filter(\.enabled)) { action in
-                        Button(action.title, systemImage: action.symbol) { if window.acceptsActions { session.quickAction(action) } }
-                    }
+                Menu("Quick Actions", systemImage: "keyboard") {
+                    MacQuickActionsMenu(actions: actions, perform: { if window.acceptsActions { session.quickAction($0) } }, customize: { controls = true })
                 }.help("Send a configured key or action to this Mac")
                 Button(window.fullScreen ? "Exit Full Screen" : "Full Screen", systemImage: "arrow.up.left.and.arrow.down.right") { window.toggleFullScreen() }
                     .help("Toggle full screen for this window")

@@ -16,6 +16,13 @@ FOUNDATION_EXPORT NSString *const CompanionVNCControlsHapticsPreference;
 @property(nonatomic, readonly) UIButton *button;
 @property(nonatomic, copy, nullable) void (^actionHandler)(NSDictionary *);
 @property(nonatomic, copy, nullable) void (^openingHandler)(void);
+@property(nonatomic, copy, nullable) void (^customizeHandler)(void);
+/// Uses the session renderer, but gestures only select/reorder draft actions.
+@property(nonatomic) BOOL editingPreview;
+@property(nonatomic, copy, nullable) NSString *selectedPreviewID;
+@property(nonatomic, copy, nullable) void (^previewSelectionHandler)(NSString *);
+@property(nonatomic, copy, nullable) void (^previewMoveHandler)(NSString *, NSString *);
+- (void)refreshEditingPreview;
 - (void)close;
 - (void)cancelSlideForLayoutChange;
 @end

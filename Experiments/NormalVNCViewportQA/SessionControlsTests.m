@@ -75,6 +75,58 @@
 @interface SessionControlsTests : XCTestCase
 @end
 @implementation SessionControlsTests
+- (void)testEditingPreviewCannotExecuteActionsAndUsesTheSessionRenderer {
+    CompanionVNCControls *controls = [[CompanionVNCControls alloc] initWithFrame:CGRectMake(0,0,340,360)];
+    controls.editingPreview = YES; controls.bottomInset = 0;
+    NSString *identifier = NSUUID.UUID.UUIDString;
+    controls.quickActions = @[@{@"id": identifier, @"kind": @"escape", @"title": @"Escape", @"enabled": @YES}];
+    __block NSUInteger executions = 0, openings = 0, selections = 0;
+    controls.actionHandler = ^(NSDictionary *action) { executions++; };
+    controls.openingHandler = ^{ openings++; };
+    controls.previewSelectionHandler = ^(NSString *selected) { XCTAssertEqualObjects(selected, identifier); selections++; };
+    [controls refreshEditingPreview]; [controls layoutIfNeeded];
+    NSArray<UIButton *> *choices = [controls valueForKey:@"choices"];
+    [choices.firstObject sendActionsForControlEvents:UIControlEventTouchUpInside];
+    XCTAssertEqual(selections, 1); XCTAssertEqual(executions, 0); XCTAssertEqual(openings, 0);
+    XCTAssertNotNil([controls valueForKey:@"panel"], @"Selection must keep the editing preview open");
+    XCTAssertTrue(controls.button.hidden);
+    XCTAssertEqual(choices.count, 1, @"The preview excludes noneditable navigation");
+    controls.editingPreview = NO; [controls close]; [controls open];
+    choices = [controls valueForKey:@"choices"];
+    XCTAssertEqualObjects(choices.firstObject.configuration.title, @"Escape");
+    [choices.firstObject sendActionsForControlEvents:UIControlEventTouchUpInside];
+    XCTAssertEqual(executions, 1, @"The runtime handler still executes exactly once");
+}
+- (void)testPreviewSizesFromWiderRuntimeTilesAndAccessibilityText {
+    CompanionVNCControls *controls = [[CompanionVNCControls alloc] initWithFrame:CGRectMake(0,0,340,600)];
+    controls.editingPreview = YES; controls.bottomInset = 0;
+    controls.quickActions = @[
+        @{@"id": @"first", @"kind": @"mode", @"title": @"Switch to Trackpad", @"enabled": @YES},
+        @{@"id": @"second", @"kind": @"fit", @"title": @"Fit to Window", @"enabled": @YES},
+        @{@"id": @"third", @"kind": @"rightClick", @"title": @"Right Click", @"enabled": @YES}];
+    [controls refreshEditingPreview];
+    CGSize fitting = [controls sizeThatFits:CGSizeMake(340,CGFLOAT_MAX)];
+    XCTAssertLessThan(fitting.height, 250, @"No title or category chrome expands the preview");
+    controls.frame=CGRectMake(0,0,340,fitting.height); [controls layoutIfNeeded];
+    NSArray<UIButton *> *choices=[controls valueForKey:@"choices"];
+    XCTAssertEqualWithAccuracy(choices[0].frame.origin.y,choices[1].frame.origin.y,.1);
+    XCTAssertGreaterThan(choices[0].frame.size.width,150);
+    XCTAssertGreaterThan(choices[2].frame.origin.y,choices[0].frame.origin.y);
+    controls.traitOverrides.preferredContentSizeCategory=UIContentSizeCategoryAccessibilityExtraExtraExtraLarge;
+    [controls updateTraitsIfNeeded];
+    XCTAssertEqualObjects(controls.traitCollection.preferredContentSizeCategory,UIContentSizeCategoryAccessibilityExtraExtraExtraLarge);
+    [controls refreshEditingPreview];
+    CGSize accessible=[controls sizeThatFits:CGSizeMake(340,CGFLOAT_MAX)];
+    controls.frame=CGRectMake(0,0,340,accessible.height); [controls layoutIfNeeded];
+    choices=[controls valueForKey:@"choices"];
+    XCTAssertGreaterThan(choices[1].frame.origin.y,choices[0].frame.origin.y,@"Large text becomes one column");
+    XCTAssertGreaterThan(accessible.height,fitting.height,@"Preview measures the full accessible tile layout");
+    controls.traitOverrides.preferredContentSizeCategory=UIContentSizeCategoryLarge;
+    [controls updateTraitsIfNeeded];
+    controls.editingPreview=NO; [controls close]; [controls open]; [controls layoutIfNeeded];
+    choices=[controls valueForKey:@"choices"];
+    XCTAssertEqualWithAccuracy(choices[0].frame.size.width,(340-24-16-8)/2.,.1,@"Session and preview use the same two-column tile formula");
+}
 - (void)testShortMenuScrollsHeaderAndKeepsEveryActionReachable {
     for (NSString *category in @[UIContentSizeCategoryLarge, UIContentSizeCategoryAccessibilityExtraExtraExtraLarge]) {
         CompanionVNCControls *controls = [[CompanionVNCControls alloc] initWithFrame:CGRectMake(0,0,402,874)];

@@ -3,6 +3,38 @@ import SwiftUI
 @testable import Mac_Companion
 
 @MainActor final class AppearanceTests: XCTestCase {
+    func testAnAlreadyPresentedSettingsSheetTracksAppearanceWithoutReopening() async throws {
+        let previous = DirectAppearanceV1.shared.app
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let previousWindow = scene.windows.first(where: \.isKeyWindow)
+        let window = UIWindow(windowScene: scene)
+        DirectAppearanceV1.shared.app = .light
+        let host = UIHostingController(rootView: AnyView(Color.clear.sheet(isPresented: .constant(true)) {
+            DirectSessionSettingsV1()
+        }.directAppearance()))
+        window.rootViewController = host; window.makeKeyAndVisible()
+        defer {
+            host.rootView = AnyView(Color.clear)
+            host.dismiss(animated: false)
+            window.isHidden = true; window.rootViewController = nil
+            DirectAppearanceV1.shared.app = previous; previousWindow?.makeKeyAndVisible()
+        }
+        try await Task.sleep(for: .milliseconds(500))
+        let sheet = try XCTUnwrap(host.presentedViewController)
+        for choice in [DirectAppAppearance.dark, .light, .dark] {
+            DirectAppearanceV1.shared.app = choice
+            try await Task.sleep(for: .milliseconds(250)); window.layoutIfNeeded()
+            XCTAssertTrue(host.presentedViewController === sheet, "Do not recreate the sheet or reset its navigation")
+            XCTAssertEqual(sheet.view.traitCollection.userInterfaceStyle, choice.interfaceStyle)
+            let attachment = XCTAttachment(image: UIGraphicsImageRenderer(bounds: window.bounds).image { _ in
+                window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
+            })
+            attachment.name = "settings-appearance-" + choice.rawValue; attachment.lifetime = .keepAlways; add(attachment)
+        }
+        host.rootView = AnyView(Color.clear)
+        host.dismiss(animated: false)
+        try await Task.sleep(for: .milliseconds(300))
+    }
     func testConnectionBackdropReachesStatusAreaInProductionHost() async throws {
         let previous = DirectAppearanceV1.shared.app
         let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
@@ -149,7 +181,7 @@ import SwiftUI
         viewer.stop()
     }
 
-    func testAppChoicePersistsAndUpdatesNativeWindowsWithoutReplacingViewerOrOwner() throws {
+    func testAppChoicePersistsAndUpdatesNativeWindowsWithoutReplacingViewerOrOwner() async throws {
         let suite = "appearance-qa-" + UUID().uuidString
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
         let appearance = DirectAppearanceV1(defaults: defaults)
@@ -159,9 +191,11 @@ import SwiftUI
         let owner = viewer.session
         window.rootViewController = viewer; window.isHidden = false
         defer { window.isHidden = true; window.rootViewController = nil; viewer.stop(); defaults.removePersistentDomain(forName: suite); DirectAppearanceV1.shared.applyWindows() }
-        appearance.app = .light; window.layoutIfNeeded()
+        appearance.app = .light
+        try await Task.sleep(for: .milliseconds(200)); window.layoutIfNeeded()
         XCTAssertEqual(viewer.traitCollection.userInterfaceStyle, .light)
-        appearance.app = .dark; window.layoutIfNeeded()
+        appearance.app = .dark
+        try await Task.sleep(for: .milliseconds(200)); window.layoutIfNeeded()
         XCTAssertEqual(viewer.traitCollection.userInterfaceStyle, .dark)
         XCTAssertTrue(viewer.session === owner)
         XCTAssertTrue(window.rootViewController === viewer)

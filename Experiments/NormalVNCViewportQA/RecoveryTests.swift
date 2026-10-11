@@ -50,6 +50,24 @@ import Citadel
         _ = viewer.perform(NSSelectorFromString("loginEdited"))
         XCTAssertNil(viewer.value(forKey: "loginIssueDetails"))
     }
+    func testConnectionDetailsExpandInlineWithConfiguredPortsAndRetainIssueContext() throws {
+        let viewer = CompanionVNCViewer()
+        viewer.connectionAddresses = ["synthetic.local", "100.64.0.12"]
+        viewer.servicePort = 5901; viewer.sshPort = 2222; viewer.loadViewIfNeeded()
+        defer { viewer.stop() }
+        let detail = try XCTUnwrap(viewer.value(forKey: "loginDetailsText") as? UILabel)
+        XCTAssertTrue(detail.isHidden)
+        _ = viewer.perform(NSSelectorFromString("showLoginDetails"))
+        XCTAssertFalse(detail.isHidden); XCTAssertNil(viewer.presentedViewController)
+        for expected in ["synthetic.local", "100.64.0.12", "5901", "2222"] { XCTAssertTrue(detail.text?.contains(expected) == true) }
+        viewer.showRecoveryStage(7)
+        XCTAssertTrue(detail.text?.contains("Stage: 7") == true)
+        _ = viewer.perform(NSSelectorFromString("loginEdited"))
+        XCTAssertFalse(detail.text?.contains("Stage: 7") == true)
+        XCTAssertTrue(detail.text?.contains("synthetic.local") == true)
+        _ = viewer.perform(NSSelectorFromString("showLoginDetails"))
+        XCTAssertTrue(detail.isHidden)
+    }
     func testSavedMacRetryRereadsWithoutReplacingMalformedData() throws {
         let folder = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)

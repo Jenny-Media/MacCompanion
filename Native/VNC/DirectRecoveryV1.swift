@@ -61,7 +61,7 @@ struct DirectRecoveryNotice: Equatable, Sendable {
         case .controlsUnavailable: copy = ("Saved controls unavailable", "The app couldn’t read your custom controls. Existing data is kept; standard controls remain available where safe.", .warning)
         case .cloudUnavailable: copy = ("iCloud Sync unavailable", "The app couldn’t access sync data. Local Macs and logins are kept. Check iCloud Keychain in Settings, then retry.", .warning)
         case .cloudRemoval: copy = ("Cloud removal didn’t finish", "Sync is off and local data is kept. Some cloud copies may remain; retry removal when Keychain is available.", .warning)
-        case .storeUnavailable: copy = ("App Store unavailable", "Some purchases couldn’t be loaded. Reload the store when internet access is available. Free features remain available.", .warning)
+        case .storeUnavailable: copy = ("App Store unavailable", "Purchases couldn’t be loaded. Try again; free features remain available.", .warning)
         case .purchasePending: copy = ("Purchase awaiting approval", "Apple hasn’t completed this purchase yet. Pro will unlock when a verified purchase is available. You don’t need to buy again.", .information)
         case .purchaseUnconfirmed: copy = ("Purchase couldn’t be confirmed", "Check your Apple purchase history before buying again, or restore purchases. Saved data and previously verified access are kept.", .warning)
         case .restoreFailed: copy = ("Couldn’t restore Pro", "Your current access and saved data are kept. Check your Apple Account and internet access, then restore again.", .warning)
@@ -133,25 +133,226 @@ struct DirectMacSetupGuide: View {
                     Label("System Settings → General → Sharing", systemImage: "gearshape").font(.footnote).foregroundStyle(.secondary)
                 }
                 Section("2. Add its address") {
-                    DirectGuidanceRow(title: "Local or private VPN address", detail: "Use the address shown in Screen Sharing. For Tailscale, connect both devices to your private network.", symbol: "network")
+                    DirectGuidanceRow(title: "Local or private VPN address", detail: "Use your Mac’s hostname or IP address from Sharing settings. For a private VPN, connect both devices to the same network.", symbol: "network")
                 }
                 Section("3. Sign in") {
-                    DirectGuidanceRow(title: "Your Mac account", detail: "Enter its username and password. Remember the login on this device to reconnect faster.", symbol: "person.badge.key")
+                    DirectGuidanceRow(title: "Your Mac account", detail: "Enter your Mac username and password.", symbol: "person.badge.key")
                 }
-                Section { Label("No Mac Companion server or helper is needed.", systemImage: "checkmark.circle").foregroundStyle(.secondary) }
+                Section {} footer: { Text("Uses built-in Mac services. No helper installation needed.") }
             }.directGroupedForm().navigationTitle("Set Up Your Mac").directInlineNavigationTitle()
                 .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
         }
     }
 }
 
-private extension View {
+extension View {
     @ViewBuilder func directGroupedForm() -> some View {
         #if os(macOS)
         formStyle(.grouped)
         #else
         self
         #endif
+    }
+}
+
+/// Metadata sync and local credentials have separate, explicit explanations.
+struct DirectSyncSecurityForm: View {
+    @State private var cloud: DirectCloudSyncV1
+    @State private var lock = DirectAppLockV1.shared
+    @State private var enableCloud = false
+    @State private var sheet: DirectCloudSheet?
+    init(cloud: DirectCloudSyncV1 = .shared) { _cloud = State(initialValue: cloud) }
+    var body: some View {
+        Form {
+            DirectCloudSettingsSection(cloud: cloud, enable: { enableCloud = true }, present: { sheet = $0 })
+            DirectAppUnlockSection()
+        }.directGroupedForm()
+        .sheet(item: $sheet) { item in
+            DirectCloudInformationSheet(kind: item, cloud: cloud).directAppearance()
+                #if os(macOS)
+                .modifier(MacSheetPrivacyCover())
+                #endif
+        }
+        .alert("Enable iCloud Sync?", isPresented: $enableCloud) {
+            Button("Enable Sync") { if lock.canAccess { cloud.setEnabled(true) } }
+            Button("Cancel", role: .cancel) {}
+        } message: { Text(DirectCloudSyncV1.disclosure) }
+        .onChange(of: lock.canAccess) { _, allowed in if !allowed { enableCloud = false; sheet = nil } }
+    }
+}
+
+private struct DirectCloudSettingsSection: View {
+    let cloud: DirectCloudSyncV1
+    let enable: () -> Void
+    let present: (DirectCloudSheet) -> Void
+    @State private var lock = DirectAppLockV1.shared
+    var body: some View {
+        Section {
+            Toggle("iCloud Sync", isOn: Binding(get: { cloud.enabled }, set: {
+                if $0 { enable() } else if lock.canAccess { cloud.setEnabled(false) }
+            })).disabled(cloud.busy).accessibilityIdentifier("icloud-library-toggle")
+            if let notice = cloud.recovery {
+                DirectRecoveryCard(notice: notice, primary: .init(title: notice.reason == .cloudRemoval ? "Retry Removal" : "Retry") {
+                    guard lock.canAccess else { return }
+                    if notice.reason == .cloudRemoval { present(.deleteData) } else { cloud.retry() }
+                })
+            } else {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Sync saved Macs across your devices.")
+                    Text(cloud.status)
+                }.font(.footnote).foregroundStyle(.secondary)
+            }
+            DisclosureGroup("What Syncs") {
+                VStack(alignment: .leading, spacing: 12) {
+                    DirectInformationGroup(title: "Across devices", symbol: "icloud", items: [
+                        "Saved Macs, names and models", "Addresses and service ports", "Default connection mode",
+                        "Display selection and fullscreen", "Pointer speed, input mode and cursor following"])
+                    Divider()
+                    DirectInformationGroup(title: "On this device", symbol: "lock.shield", items: [
+                        "Passwords and SSH keys", "Trusted Mac identities", "Shortcuts and saved text", "Appearance and app-lock settings"])
+                }
+            }
+            DisclosureGroup("Manage Sync") {
+                if cloud.enabled {
+                    Button("Refresh iCloud", systemImage: "arrow.triangle.2.circlepath") { if lock.canAccess { cloud.refresh() } }.disabled(cloud.busy)
+                }
+                if cloud.busy { ProgressView("Updating iCloud data…") }
+                Button("Delete Mac Data from iCloud…", systemImage: "icloud.slash", role: .destructive) { present(.deleteData) }
+                    .disabled(cloud.busy).accessibilityIdentifier("icloud-delete-data")
+                Text("Turning sync off doesn’t delete iCloud data.").font(.footnote).foregroundStyle(.secondary)
+            }
+            Button { present(.credentials) } label: {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Label("Passwords and private keys stay on this device", systemImage: "lock.shield")
+                        .font(.subheadline.weight(.semibold)).foregroundStyle(.primary)
+                    Spacer(minLength: 4)
+                    Image(systemName: "info.circle").foregroundStyle(.tint)
+                }.contentShape(Rectangle())
+            }.buttonStyle(.plain).accessibilityIdentifier("icloud-credentials-info")
+                .accessibilityHint("Explains which information stays local and why")
+        } header: { Text("iCloud") }
+    }
+}
+
+enum DirectCloudSheet: String, Identifiable {
+    case credentials, deleteData
+    var id: String { rawValue }
+}
+
+struct DirectCloudInformationSheet: View {
+    let kind: DirectCloudSheet
+    let cloud: DirectCloudSyncV1
+    @Environment(\.dismiss) private var dismiss
+    @State private var confirmDeletion = false
+    @State private var lock = DirectAppLockV1.shared
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    if kind == .credentials {
+                        DirectInformationGroup(title: "Your logins stay local", symbol: "lock.shield", items: [
+                            "Passwords and private keys aren’t included in app sync.",
+                            "Set up a login or SSH key on each device before connecting."])
+                        DirectInformationGroup(title: "Why", symbol: "info.circle", items: [
+                            "You choose which devices can use your Mac logins and private keys.",
+                            "Local credentials are stored in this device’s Keychain. Referenced key files stay in their original location."])
+                        DirectInformationGroup(title: "How Mac entries sync", symbol: "icloud", items: [
+                            "Uses iCloud Keychain with your Apple Account and trusted devices.",
+                            "Enable iCloud Keychain on every device you want to sync."])
+                        Link("About iCloud Keychain security", destination: URL(string: "https://support.apple.com/en-us/102651")!)
+                    } else {
+                        DirectInformationGroup(title: "Delete from iCloud", symbol: "icloud.slash", items: [
+                            "Saved Mac entries and their synced desktop preferences."])
+                        DirectInformationGroup(title: "Keep on this device", symbol: "internaldrive", items: [
+                            "Your saved Macs, passwords, SSH keys and local preferences."])
+                        DirectInformationGroup(title: "Before you continue", symbol: "exclamationmark.triangle", items: [
+                            "Turn off Mac Companion sync on your other devices first. Otherwise they may upload their saved Macs again.",
+                            "This turns sync off on this device. Removal may take a moment to reach other devices.",
+                            "Turning sync back on can upload your local Macs again."])
+                    }
+                }.padding(24).frame(maxWidth: 560, alignment: .leading).frame(maxWidth: .infinity)
+            }.navigationTitle(kind == .credentials ? "Credentials & iCloud" : "Delete iCloud Data")
+                .directInlineNavigationTitle()
+                .toolbar { ToolbarItem(placement: .cancellationAction) { Button(kind == .credentials ? "Done" : "Cancel") { dismiss() } } }
+                .safeAreaInset(edge: .bottom) {
+                    if kind == .deleteData {
+                        VStack(spacing: 8) {
+                            Button("Continue to Confirmation", role: .destructive) { confirmDeletion = true }
+                                .buttonStyle(.borderedProminent).disabled(cloud.busy || !lock.canAccess)
+                                .accessibilityIdentifier("icloud-review-continue")
+                        }.padding(16).frame(maxWidth: .infinity).background(.bar)
+                    }
+                }
+        }
+        #if os(macOS)
+        .frame(width: 540, height: 580)
+        #endif
+        .background(.background)
+        .alert("Delete Mac Data from iCloud?", isPresented: $confirmDeletion) {
+            Button("Delete iCloud Data", role: .destructive) {
+                guard lock.canAccess, !cloud.busy else { return }
+                cloud.removeCloudCopies(); dismiss()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: { Text("This deletes the app’s synced Mac data and turns sync off here. Your local Macs and logins are kept. Other devices with sync enabled can upload data again.") }
+        .onChange(of: lock.canAccess) { _, allowed in if !allowed { confirmDeletion = false; dismiss() } }
+    }
+}
+
+struct DirectConnectionDetailsRows: View {
+    let mac: DirectMacRecordV1
+    let desktop: Bool
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            ForEach(Array(mac.addresses.enumerated()), id: \.offset) { index, address in
+                LabeledContent(index == 0 ? "Address" : "Fallback \(index)", value: address)
+                    .textSelection(.enabled)
+            }
+            #if os(macOS)
+            if desktop {
+                LabeledContent("Screen Sharing", value: String(mac.port))
+                Label("Built-in macOS Screen Sharing", systemImage: "display")
+                    .font(.caption).foregroundStyle(.secondary)
+            } else { sshDetails }
+            #else
+            sshDetails
+            if desktop { LabeledContent("Screen Sharing", value: String(mac.port)) }
+            #endif
+        }
+    }
+    private var sshDetails: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            LabeledContent("Remote Login · SSH", value: String(mac.sshPort))
+            Label("Server identity is verified before login.", systemImage: "lock.shield")
+                .font(.caption).foregroundStyle(.secondary)
+        }
+    }
+}
+
+struct DirectSettingsRow: View {
+    let title: String
+    let symbol: String
+    var body: some View {
+        HStack {
+            Label(title, systemImage: symbol)
+            Spacer()
+            Image(systemName: "chevron.right").font(.caption.weight(.semibold)).foregroundStyle(.tertiary).accessibilityHidden(true)
+        }.contentShape(Rectangle())
+    }
+}
+
+struct DirectStoreRecoveryBanner: View {
+    let retry: @MainActor () -> Void
+    let busy: Bool
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Label("App Store unavailable", systemImage: "exclamationmark.circle").font(.headline)
+                Spacer()
+                Button("Retry", action: retry).disabled(busy)
+            }
+            Text("Purchases couldn’t be loaded. Free features remain available.").font(.subheadline).foregroundStyle(.secondary)
+        }.padding(.vertical, 4).accessibilityIdentifier("recovery-storeUnavailable")
     }
 }
 

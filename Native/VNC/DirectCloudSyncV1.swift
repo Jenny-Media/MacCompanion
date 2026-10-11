@@ -109,7 +109,7 @@ struct DirectCloudKeychain: DirectCloudTransport {
     static let shared = DirectCloudSyncV1()
     static let enabledKey = "direct-cloud-library-enabled-v1"
     static let preferenceChanged = Notification.Name("DirectCloudLocalPreferencesChangedV1")
-    static let disclosure = "Sync sends saved Mac names, detected names and models, local and VPN addresses, ports, tap destinations, and display/input settings to iCloud Keychain on devices using your Apple Account. These details can reveal your machines and network. Privacy relies on Apple’s iCloud Keychain security, your Apple Account and trusted devices. Mac Companion adds no separate cloud password. Passwords, SSH private keys, trusted server keys, saved text and custom actions are excluded. Enable iCloud Keychain in Settings on each device. Turning this off stops app sync but does not delete existing cloud copies."
+    static let disclosure = "Across your devices: Mac names and models, addresses, ports, default connection modes and desktop preferences. These details describe your Macs and network.\n\nPasswords, private keys, trusted Mac identities, shortcuts and saved text don’t sync.\n\nUses iCloud Keychain with your Apple Account and trusted devices; there is no separate cloud password. Enable iCloud Keychain on each device.\n\nTurning sync off keeps existing iCloud data. Use Delete Mac Data from iCloud to remove it."
     private struct Journal: Codable { var schema = 1; var versions: [DirectCloudVersion] }
     private let defaults: UserDefaults
     private let url: URL
@@ -127,7 +127,7 @@ struct DirectCloudKeychain: DirectCloudTransport {
     private var refreshTask: Task<Void, Never>?
     private(set) var enabled: Bool
     private(set) var busy = false
-    private(set) var status = "Off. Saved Macs stay on this device."
+    private(set) var status = "Sync is off on this device."
     init(defaults: UserDefaults = .standard, url: URL? = nil, transport: any DirectCloudTransport = DirectCloudKeychain(), writerID: UUID? = nil,
          applyPreferences: @escaping @MainActor (DirectCloudPreferences, UUID) -> Void = { $0.apply(mac: $1) }) {
         self.defaults = defaults; self.url = url ?? DirectClientPlatformV1.dataURL("direct-cloud-journal-v1.json"); self.transport = transport
@@ -205,7 +205,7 @@ struct DirectCloudKeychain: DirectCloudTransport {
         if value {
             if let library { for mac in library.macs where !versions.contains(where: { $0.id == mac.id }) { localChange(mac.id) } }
             refresh()
-        } else { status = "Off. Local Macs and existing iCloud copies are kept." }
+        } else { status = "Sync is off on this device. Existing iCloud data is kept." }
     }
     private func persist(_ values: [DirectCloudVersion]) throws {
         guard readable else { throw DirectCloudError.storage }
@@ -252,7 +252,7 @@ struct DirectCloudKeychain: DirectCloudTransport {
                     try await Task.detached { try transport.write(bytes, account: account) }.value
                 }
                 if enabled, generation == id {
-                    recovery = nil; status = "Saved to the syncing Keychain. Apple manages delivery; cross-device completion is not confirmed here."
+                    recovery = nil; status = "Changes may take a moment to appear on other devices."
                     if versions != merged { busy = false; refresh() }
                 }
             } catch { if generation == id { recovery = .make(.cloudUnavailable) } }
@@ -266,7 +266,7 @@ struct DirectCloudKeychain: DirectCloudTransport {
             do {
                 try await Task.detached { try transport.removeAll() }.value
                 try persist([])
-                recovery = nil; status = "Cloud copy removal requested. Sync is off; local Macs are kept. Apple manages propagation to other devices."
+                recovery = nil; status = "Deletion requested. Sync is off; your local Macs are kept. Other devices may take a moment to update."
             } catch { recovery = .make(.cloudRemoval) }
         }
     }

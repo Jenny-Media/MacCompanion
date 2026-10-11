@@ -49,19 +49,20 @@ struct MacMachineLibraryView: View {
             Group {
                 if let mac = selectedMac {
                     ScrollView {
-                        VStack(alignment: .leading, spacing: 24) {
+                        VStack(alignment: .leading, spacing: 20) {
                             Label(mac.name, systemImage: mac.family.symbol).font(.largeTitle)
                             Text(mac.addresses.joined(separator: "\n")).foregroundStyle(.secondary).textSelection(.enabled)
-                            VStack(alignment: .leading, spacing: 12) {
-                                ForEach(MacConnectionMode.allCases) { mode in
-                                    Button { open(mac, mode: mode) } label: { Label(mode.actionTitle, systemImage: mode.symbol).frame(maxWidth: .infinity, alignment: .leading) }
-                                        .buttonStyle(.bordered).controlSize(.large)
-                                        .accessibilityIdentifier("mac-open-" + mode.rawValue)
+                            let preferred = MacConnectionMode(mac.preferredConnection)
+                            HStack(spacing: 12) {
+                                Button { open(mac, mode: preferred) } label: { Label(preferred.actionTitle, systemImage: preferred.symbol) }
+                                    .buttonStyle(.borderedProminent).controlSize(.large).accessibilityIdentifier("mac-open-" + preferred.rawValue)
+                                ForEach(MacConnectionMode.allCases.filter { $0 != preferred }) { mode in
+                                    Button { open(mac, mode: mode) } label: { Label(mode.actionTitle, systemImage: mode.symbol) }
+                                        .buttonStyle(.bordered).controlSize(.large).accessibilityIdentifier("mac-open-" + mode.rawValue)
                                 }
-                            }.frame(maxWidth: 360)
+                            }
                             Button("Connection Settings", systemImage: "gearshape") { sheet = .edit(mac) }
                                 .accessibilityIdentifier("mac-connection-settings")
-                            Text("Each connection opens in its own window.").font(.footnote).foregroundStyle(.secondary)
                             let open = connections.connections(for: mac.id)
                             if !open.isEmpty {
                                 Divider()
@@ -76,11 +77,11 @@ struct MacMachineLibraryView: View {
                                     }
                                 }
                             }
-                        }.padding(32).frame(maxWidth: .infinity, alignment: .leading)
+                        }.padding(32).frame(maxWidth: 640, alignment: .leading).frame(maxWidth: .infinity, alignment: .center)
                     }
                 } else if library.macs.isEmpty {
                     ContentUnavailableView { Label("Your Macs, within reach", systemImage: "desktopcomputer") }
-                        description: { Text("Enable Screen Sharing or Remote Login on your Mac, then add its local or private VPN address.") }
+                        description: { Text("Add a Mac on your local network or private VPN.") }
                         actions: { Button("Add Mac") { add() }.buttonStyle(.borderedProminent) }
                 } else { ContentUnavailableView("Choose a Mac", systemImage: "desktopcomputer", description: Text("Open Desktop or Terminal.")) }
             }
@@ -96,10 +97,11 @@ struct MacMachineLibraryView: View {
         .frame(minWidth: 720, minHeight: 460)
         .toolbar {
             Button("Add Mac", systemImage: "plus") { add() }.disabled(!library.readable).accessibilityIdentifier("mac-add-machine").help("Add a Mac by its local or private VPN address")
-            Button("Discover Macs", systemImage: "network") { library.discovery.start() }.disabled(library.discovery.scanning).help("Discover Screen Sharing and Remote Login services on your local network")
-            Button("Setup Guide", systemImage: "questionmark.circle") { sheet = .setup }.help("Set up Screen Sharing and Remote Login")
-            Button("Refresh iCloud", systemImage: "arrow.triangle.2.circlepath") { cloud.refresh() }
-                .disabled(!cloud.enabled || cloud.busy).help("Refresh saved Macs in iCloud Keychain. Enable sync in Settings first.")
+            Menu("More", systemImage: "ellipsis.circle") {
+                Button("Discover Macs", systemImage: "network") { library.discovery.start() }.disabled(library.discovery.scanning)
+                Button("Setup Guide", systemImage: "questionmark.circle") { sheet = .setup }
+                if cloud.enabled { Button("Refresh iCloud", systemImage: "arrow.triangle.2.circlepath") { cloud.refresh() }.disabled(cloud.busy) }
+            }.help("Discovery, setup and sync")
         }
         .sheet(item: $sheet) { item in
             Group {

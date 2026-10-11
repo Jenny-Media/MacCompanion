@@ -35,7 +35,19 @@ struct DirectProTrial {
     private(set) var ready = false
     private(set) var product: Product?
     private(set) var trialProduct: Product?
-    private(set) var busy = false
+    enum Operation {
+        case loadingProducts, purchasing, startingTrial, restoring
+        var title: String {
+            switch self {
+            case .loadingProducts: "Checking App Store availability…"
+            case .purchasing: "Completing purchase…"
+            case .startingTrial: "Starting your trial…"
+            case .restoring: "Restoring purchases…"
+            }
+        }
+    }
+    private(set) var operation: Operation?
+    var busy: Bool { operation != nil }
     var message: String?
     var recovery: DirectRecoveryNotice?
     private var updates: Task<Void, Never>?
@@ -125,7 +137,7 @@ struct DirectProTrial {
     func loadProduct() async {
         start()
         guard !busy else { return }
-        busy = true; message = nil; recovery = nil; defer { busy = false }
+        operation = .loadingProducts; message = nil; recovery = nil; defer { operation = nil }
         do {
             let products = try await Product.products(for: [Self.productID, Self.trialProductID])
             product = products.first { $0.id == Self.productID && $0.type == .nonConsumable }
@@ -148,7 +160,7 @@ struct DirectProTrial {
     }
     private func purchase(_ selected: Product, trialPurchase: Bool) async {
         guard !busy, !trialPurchase || selected.price == 0 else { return }
-        busy = true; message = nil; recovery = nil; defer { busy = false }
+        operation = trialPurchase ? .startingTrial : .purchasing; message = nil; recovery = nil; defer { operation = nil }
         do {
             switch try await selected.purchase() {
             case .success(let result):
@@ -159,22 +171,27 @@ struct DirectProTrial {
                 if trialPurchase {
                     message = trialIsActive ? "Your 14-day Pro trial has started. There is no automatic charge."
                                            : "This trial cannot unlock Pro. Restore Purchases and check your device date."
-                }
+                } else if hasLifetimePro { message = "Lifetime Pro unlocked." }
             case .pending: recovery = .make(.purchasePending)
             case .userCancelled: break
             @unknown default: recovery = .make(.purchaseUnconfirmed)
             }
-        } catch { if !DirectCancellation.isCancellation(error) { recovery = .make(.purchaseUnconfirmed) } }
+        } catch { if !Self.isStoreCancellation(error) { recovery = .make(.purchaseUnconfirmed) } }
     }
     func restore() async {
-        guard !busy else { return }; busy = true; message = nil; recovery = nil; defer { busy = false }
+        guard !busy else { return }; operation = .restoring; message = nil; recovery = nil; defer { operation = nil }
         do {
             try await AppStore.sync(); await refresh()
             if hasLifetimePro { message = "Lifetime Pro restored." }
             else if trialIsActive { message = "Your Pro trial is restored with its original end date." }
             else if trial != nil { recovery = .make(.trialEnded) }
             else { recovery = .make(.noPurchase) }
-        } catch { if !DirectCancellation.isCancellation(error) { recovery = .make(.restoreFailed) } }
+        } catch { if !Self.isStoreCancellation(error) { recovery = .make(.restoreFailed) } }
+    }
+    static func isStoreCancellation(_ error: Error) -> Bool {
+        if case StoreKitError.userCancelled = error { return true }
+        let value = error as NSError
+        return DirectCancellation.isCancellation(error) || (value.domain == SKErrorDomain && value.code == SKError.paymentCancelled.rawValue)
     }
     func canAddMac(count: Int) -> Bool { hasPro || count < 1 }
     func canAddKey(count: Int) -> Bool { hasPro || count < 1 }
@@ -193,7 +210,13 @@ struct DirectProTrial {
 struct DirectProView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var scenePhase
-    @State private var access = DirectProAccess.shared
+    @Environment(\.dynamicTypeSize) private var textSize
+    @ScaledMetric(relativeTo: .title2) private var benefitIconWidth = 32.0
+    #if os(iOS)
+    @Environment(\.verticalSizeClass) private var verticalSize
+    #endif
+    @State private var access: DirectProAccess
+    init(access: DirectProAccess = .shared) { _access = State(initialValue: access) }
     private var recoveryAction: DirectRecoveryAction? {
         guard let reason = access.recovery?.reason else { return nil }
         switch reason {
@@ -215,76 +238,127 @@ struct DirectProView: View {
                     Spacer()
                 }.padding(20)
                 Divider()
-                Form { sections }.formStyle(.grouped)
-                    .accessibilityIdentifier("mac-pro-content")
+                content.accessibilityIdentifier("mac-pro-content")
+                purchaseArea
                 Divider()
                 HStack {
                     Spacer()
                     Button("Done") { dismiss() }.keyboardShortcut(.defaultAction).buttonStyle(.borderedProminent)
                 }.padding(16)
-            }.frame(width: 560, height: 640)
+            }.frame(width: 600, height: 700)
             #else
             NavigationStack {
-                List { sections }
+                content
                     .navigationTitle("Mac Companion Pro").directInlineNavigationTitle()
                     .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
+                    .safeAreaInset(edge: .bottom, spacing: 0) { if !purchaseInScroll { purchaseArea } }
             }
             #endif
         }
+        .background(.background).directAppearance()
         .task { await access.loadProduct() }
         .onChange(of: scenePhase) { _, phase in if phase == .active { Task { await access.refresh() } } }
     }
-    @ViewBuilder private var sections: some View {
-        Section {
-            #if os(iOS)
-            Label("Mac Companion Pro", systemImage: "sparkles").font(.title2.bold())
-            #endif
-            Text("Try Pro free for 14 days, or unlock it for life. No subscription.").foregroundStyle(.secondary)
+    private var content: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 24) {
+                status
+                if let notice = access.recovery {
+                    if notice.reason == .storeUnavailable {
+                        DirectStoreRecoveryBanner(retry: { Task { await access.loadProduct() } }, busy: access.busy)
+                    } else { DirectRecoveryCard(notice: notice, primary: recoveryAction, secondary: historyAction) }
+                }
+                VStack(alignment: .leading, spacing: 20) {
+                    Text("More ways to work with your Macs").font(.title2.bold())
+                    benefit("More Macs and SSH keys", detail: "Save multiple connections and named keys.", symbol: "desktopcomputer")
+                    benefit("Easier SSH setup", detail: "Install a public key from your Mac’s settings.", symbol: "key")
+                    benefit("Your own quick actions", detail: "Customize keys, shortcuts and saved text.", symbol: "keyboard")
+                }.accessibilityIdentifier("pro-benefits")
+                Divider()
+                DirectInformationGroup(title: "Free Version", symbol: "checkmark.circle", items: freeFeatures)
+                    .accessibilityIdentifier("pro-free-features")
+                if !access.hasLifetimePro {
+                    DisclosureGroup("After the trial") {
+                        Text("There is no automatic charge. After 14 days, Pro features require a lifetime purchase. Your saved Macs and keys are kept; free-version limits apply.")
+                            .font(.footnote).foregroundStyle(.secondary).padding(.top, 6)
+                    }
+                }
+                if access.trialHistoryUnavailable {
+                    Text("Restore Purchases to check your trial history. Free features remain available.").font(.footnote).foregroundStyle(.secondary)
+                }
+                if purchaseInScroll { purchaseArea }
+            }.padding(24).frame(maxWidth: 560, alignment: .leading).frame(maxWidth: .infinity)
+        }.accessibilityIdentifier("pro-scroll-content")
+    }
+    @ViewBuilder private var status: some View {
             if access.hasLifetimePro {
                 Label("Lifetime Pro is unlocked", systemImage: "checkmark.seal.fill").foregroundStyle(.green)
             } else if access.trialIsActive, let trial = access.trial {
-                Label("\(access.trialDaysRemaining) days left in your trial", systemImage: "clock").foregroundStyle(.tint)
-                Text("Pro access ends \(trial.endDate.formatted(date: .abbreviated, time: .shortened)).").font(.footnote)
+                VStack(alignment: .leading, spacing: 6) {
+                    Label("\(access.trialDaysRemaining) days left in your trial", systemImage: "clock").font(.headline).foregroundStyle(.tint)
+                    Text("Ends \(trial.endDate.formatted(date: .abbreviated, time: .omitted)).").font(.footnote).foregroundStyle(.secondary)
+                }
             } else if access.trial != nil {
-                Text("Your Pro trial has ended. Basic features remain free.").foregroundStyle(.secondary)
+                Label("Your trial has ended", systemImage: "clock").foregroundStyle(.secondary)
             }
-        }
-        if let notice = access.recovery {
-            Section { DirectRecoveryCard(notice: notice, primary: recoveryAction, secondary: historyAction) }
-        }
-        Section("Pro features") {
-            Label("Multiple saved Macs and named SSH keys", systemImage: "desktopcomputer")
-            Label("Install SSH keys from each Mac’s settings", systemImage: "key")
-            Label("Custom terminal keys, shortcuts and snippets", systemImage: "keyboard")
-        }
-        if !access.hasLifetimePro && access.trial == nil {
-            Section {
-                Button("Start 14-day Free Trial") { Task { await access.startTrial() } }
-                    .disabled(!access.canStartTrial || access.busy).accessibilityIdentifier("pro-start-trial")
-            } header: { Text("14-day Trial") } footer: {
-                Text("All Pro features for 14 days from today. Then multiple Macs/keys, key setup and custom controls require Lifetime Pro. Basic features stay free and your data is preserved. No automatic charge. \(access.product.map { "Lifetime Pro costs " + $0.displayPrice + " once, as a separate purchase." } ?? "The lifetime upgrade price appears when the store is available.")")
-            }
-        }
-        Section {
+    }
+    private var purchaseArea: some View {
+        VStack(spacing: 10) {
             if !access.hasLifetimePro {
-                Button(access.product.map { "Unlock Lifetime Pro · " + $0.displayPrice } ?? "Purchase Unavailable") {
+                Button {
                     Task { await access.purchase() }
-                }.disabled(access.product == nil || access.busy).accessibilityIdentifier("pro-purchase")
+                } label: {
+                    Text(access.product.map { "Unlock Lifetime Pro · " + $0.displayPrice } ?? "Purchase Unavailable")
+                        .frame(maxWidth: .infinity).multilineTextAlignment(.center)
+                }.buttonStyle(.borderedProminent).controlSize(.large)
+                    .disabled(access.product == nil || access.busy).accessibilityIdentifier("pro-purchase")
+                Text("One-time purchase. No subscription.").font(.footnote).foregroundStyle(.secondary)
+                if access.trial == nil {
+                    Button("Try Pro Free for 14 Days") { Task { await access.startTrial() } }
+                        .disabled(!access.canStartTrial || access.busy).accessibilityIdentifier("pro-start-trial")
+                    Text("No automatic charge.").font(.footnote).foregroundStyle(.secondary)
+                }
             }
-            Button("Restore Purchases") { Task { await access.restore() } }.disabled(access.busy).accessibilityIdentifier("pro-restore")
-            if access.product == nil || access.trialProduct == nil { Button("Reload Store") { Task { await access.loadProduct() } }.disabled(access.busy) }
-            if access.trialHistoryUnavailable { Text("Trial history couldn’t be verified. Restore Purchases before starting a trial; free features remain available.").font(.footnote).foregroundStyle(.secondary) }
-            if access.busy { ProgressView("Contacting the App Store…") }
-            if let message = access.message { Text(message).font(.footnote).foregroundStyle(.secondary) }
-        } footer: { Text("Lifetime Pro is a one-time purchase. No renewal or subscription.") }
-        Section("Free, without a time limit") {
-            #if os(macOS)
-            Text("One saved Mac and one SSH key. Desktop, basic Terminal, all standard keyboard controls, local/VPN addresses, display selection and zoom.")
-            #else
-            Text("One saved Mac and one SSH key. Desktop, Trackpad & Keyboard, basic Terminal, all standard keyboard controls, local/VPN addresses, display selection and zoom.")
-            #endif
-            Text("Security, accessibility and SSH key import/export stay free. Existing extra Macs and keys are preserved.").foregroundStyle(.secondary)
-        }
+            HStack(spacing: 16) {
+                Button("Restore Purchases") { Task { await access.restore() } }.disabled(access.busy).accessibilityIdentifier("pro-restore")
+                if (access.product == nil || access.trialProduct == nil) && access.recovery?.reason != .storeUnavailable {
+                    Button("Reload Store") { Task { await access.loadProduct() } }.disabled(access.busy)
+                }
+            }.font(.footnote)
+            ZStack {
+                Text(" ").font(.footnote).accessibilityHidden(true)
+                if let operation = access.operation {
+                    HStack(spacing: 8) { ProgressView().controlSize(.small); Text(operation.title).font(.footnote).foregroundStyle(.secondary) }
+                        .accessibilityElement(children: .combine).accessibilityIdentifier("pro-operation")
+                }
+                else if let message = access.message { Text(message).font(.footnote).foregroundStyle(.secondary).accessibilityIdentifier("pro-result") }
+            }.frame(minHeight: 24)
+        }.padding(16).frame(maxWidth: .infinity).background(.bar)
+    }
+    private func benefit(_ title: String, detail: String, symbol: String) -> some View {
+        HStack(alignment: .top, spacing: 14) {
+            Image(systemName: symbol).font(.title2).foregroundStyle(.tint).frame(width: benefitIconWidth).accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title).font(.headline)
+                Text(detail).font(.subheadline).foregroundStyle(.secondary)
+            }.fixedSize(horizontal: false, vertical: true)
+        }.frame(maxWidth: .infinity, alignment: .leading)
+    }
+    private var freeFeatures: [String] {
+        #if os(iOS)
+        let modes = "Desktop, Trackpad & Keyboard, and basic Terminal"
+        #else
+        let modes = "Desktop and basic Terminal"
+        #endif
+        return ["One saved Mac and one SSH key", modes, "Standard keyboard controls, display selection and zoom",
+            "Local and private VPN connections", "Security, accessibility and SSH key import/export"]
+    }
+    private var purchaseInScroll: Bool {
+        #if os(iOS)
+        textSize.isAccessibilitySize || verticalSize == .compact
+        #else
+        false
+        #endif
     }
 }
 #endif

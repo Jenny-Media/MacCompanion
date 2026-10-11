@@ -93,7 +93,7 @@ private struct DirectUnlockCover: View {
                         Text("Mac Companion").font(.title2.bold()).fixedSize(horizontal: false, vertical: true)
                         Text(lock.message).multilineTextAlignment(.center).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                         if lock.authenticating { ProgressView() }
-                        else { Button("Unlock", systemImage: "faceid") { lock.authenticate() }.buttonStyle(.glassProminent).accessibilityIdentifier("app-unlock") }
+                        else { Button("Unlock", systemImage: DirectUnlockMethod.current().symbol) { lock.authenticate() }.buttonStyle(.glassProminent).accessibilityIdentifier("app-unlock") }
                     }.padding(32).frame(maxWidth: 340).glassEffect(.regular, in: .rect(cornerRadius: 28))
                         .padding(16).frame(maxWidth: .infinity, minHeight: geometry.size.height)
                 }.scrollBounceBehavior(.basedOnSize)

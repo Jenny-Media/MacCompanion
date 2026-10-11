@@ -52,7 +52,7 @@ struct MacDirectTerminalView: View {
                             .frame(height: login.method == .password ? 104 : 45)
                         if login.method == .sshKey {
                             HStack {
-                                Label(key == nil && keyFile == nil ? "No SSH key selected" : keyName, systemImage: keyFile == nil ? "key" : "doc.badge.key")
+                                Label(key == nil && keyFile == nil ? "No SSH key selected" : keyName, systemImage: keyFile == nil ? "key" : "doc")
                                 Spacer()
                                 Button("Choose…") { sheet = .keys }
                             }.disabled(busy)
@@ -65,7 +65,9 @@ struct MacDirectTerminalView: View {
                                     Button("Manual Key Setup") { sheet = .manual }
                                 }.disabled(busy)
                             }
-                        } else { Toggle("Remember login on this Mac", isOn: $remember).disabled(busy) }
+                        } else { Toggle("Save login on this Mac", isOn: $remember).disabled(busy).help("Store this Mac’s Terminal credentials in Keychain.") }
+                        DisclosureGroup("Connection Details") { DirectConnectionDetailsRows(mac: mac, desktop: false) }
+                            .font(.subheadline).disabled(busy)
                         if let issue { DirectRecoveryCard(notice: issue, primary: .init(title: "Retry") { loadLogin() }) }
                         if let recovery = session.recovery {
                             DirectRecoveryCard(notice: recovery, primary: recoveryAction(recovery), secondary: recovery.reason == .keyRejected ? .init(title: "Use Password") { login.select(.password); session.clearRecovery() } : nil)
@@ -78,6 +80,8 @@ struct MacDirectTerminalView: View {
                             Spacer()
                             Button("Cancel") { cancelPreparation(); session.cancelConnection(); password = "" }
                         } else {
+                            Button("Cancel") { window.window?.performClose(nil) }.keyboardShortcut(.cancelAction)
+                                .accessibilityIdentifier("mac-terminal-login-cancel")
                             Spacer()
                             Button("Connect", systemImage: "arrow.right", action: connect).buttonStyle(.borderedProminent).controlSize(.large).keyboardShortcut(.defaultAction)
                                 .disabled(login.username.isEmpty || (login.method == .sshKey ? key == nil && keyFile == nil : password.isEmpty))
@@ -104,7 +108,7 @@ struct MacDirectTerminalView: View {
                     Text("\(Int(fontSize)) pt")
                 }.help("Adjust terminal text size on this Mac")
                 Menu("Quick Actions", systemImage: "keyboard") {
-                    ForEach(actions.filter(\.enabled)) { action in Button(action.title, systemImage: action.symbol) { surface.view?.perform(action) } }
+                    MacQuickActionsMenu(actions: actions, perform: { if window.acceptsActions { surface.view?.perform($0) } }, customize: { sheet = .controls })
                     if DirectProAccess.shared.hasPro {
                         Divider()
                         ForEach(keyboard.keys) { key in Button(key.title) { surface.view?.sendAccessory(key) } }
@@ -121,14 +125,14 @@ struct MacDirectTerminalView: View {
             Group {
                 switch item {
                 case .keys: MacSSHKeyManager(mac: mac, changed: { loadKey(preferSelected: true); session.clearRecovery() })
-                case .controls: VNCInputSettings(mode: .terminal, changed: loadControls)
+                case .controls: MacDesktopSettings(mode: .terminal, changed: loadControls)
                 case .keyboard: TerminalKeyboardSettings(macID: mac.id, changed: loadControls)
                 case .install: TerminalKeyInstallView(mac: mac, initialUsername: login.username, changed: { loadKey(preferSelected: true) })
                 case .manual: TerminalManualKeySetupView(mac: mac)
                 case .identity: TerminalIdentityGuide(macName: mac.name)
                 case .pro: DirectProView()
                 }
-            }.frame(minWidth: 520, minHeight: 520).modifier(MacSheetPrivacyCover())
+            }.frame(minWidth: 520).modifier(MacSheetPrivacyCover())
         }
         .sheet(item: Binding(get: { session.trust }, set: { if $0 == nil { session.answerTrust(false) } })) { request in
             TerminalServerTrustView(macName: mac.name, fingerprint: request.fingerprint) { session.answerTrust($0) }

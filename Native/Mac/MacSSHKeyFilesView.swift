@@ -4,6 +4,7 @@ import SwiftUI
 struct MacSSHKeyFilesView: View {
     let mac: DirectMacRecordV1?
     var changed: @MainActor () -> Void = {}
+    var done: (() -> Void)? = nil
     @Environment(\.dismiss) private var dismiss
     @State private var library = MacSSHKeyFileStore.Library()
     @State private var issue: DirectRecoveryNotice?
@@ -11,14 +12,14 @@ struct MacSSHKeyFilesView: View {
     private enum Sheet: String, Identifiable { case choose, pro; var id: String { rawValue } }
     var body: some View {
         Form {
-            Section {
-                DirectGuidanceRow(title: "Use the original file", detail: "Choose a key in ~/.ssh or another folder. The app reads it when you connect.", symbol: "doc.badge.key")
+            Section("SSH Key Files") {
+                DirectGuidanceRow(title: "Use the original file", detail: "Choose a key in ~/.ssh or another folder. The app reads it when you connect.", symbol: "doc")
                 DirectGuidanceRow(title: "Keep it on this Mac", detail: "The file reference stays local. Private keys and passphrases are never synced.", symbol: "lock.shield")
             }
             Section("Key Files") {
                 ForEach(library.files) { file in
                     VStack(alignment: .leading, spacing: 8) {
-                        Label(file.name, systemImage: "doc.badge.key").font(.headline)
+                        HStack { Label(file.name, systemImage: "doc").font(.headline); Text("File").font(.caption).foregroundStyle(.secondary) }
                         Text(file.fingerprint).font(.caption.monospaced()).foregroundStyle(.secondary).textSelection(.enabled)
                         if !DirectProAccess.shared.hasPro {
                             Button("Use as My Free Key") { perform { try MacSSHKeyFileStore.chooseFreeKey(file.id) } }
@@ -31,14 +32,17 @@ struct MacSSHKeyFilesView: View {
                             }
                             Spacer()
                             Button("Remove Reference", systemImage: "minus.circle", role: .destructive) { perform { try MacSSHKeyFileStore.remove(file.id) } }
+                                .accessibilityIdentifier("ssh-key-remove-" + file.id.uuidString)
                         }
                     }.padding(.vertical, 4)
                 }
                 Button("Choose Key File…", systemImage: "folder") { sheet = .choose }
             }
             if let issue { Section { DirectRecoveryCard(notice: issue, primary: .init(title: "Retry", perform: reload)) } }
-        }.formStyle(.grouped).navigationTitle("SSH Key Files")
-            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
+        }.formStyle(.grouped).navigationTitle("")
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) { Button("Done") { if let done { done() } else { dismiss() } } }
+            }
             .sheet(item: $sheet) { destination in
                 switch destination {
                 case .choose: MacSSHKeyFileComposer { id in

@@ -13,6 +13,7 @@ struct DirectTerminalView: View {
     @State private var password = ""
     @State private var remember = false
     @State private var passwordVisible = false
+    @State private var detailsExpanded = false
     @State private var loginIssue: DirectRecoveryNotice?
     @State private var key: TerminalSSHKey?
     @State private var keyName = ""
@@ -21,12 +22,11 @@ struct DirectTerminalView: View {
     private let autoConnect: Bool
     private enum Sheet: Identifiable {
         case keys, install, manual, macSettings, appSettings, pro, quickActions, keyboard, verifyGuide, connectionInfo
-        case errorDetails(DirectRecoveryNotice)
         var id: String {
             switch self {
             case .keys: "keys"; case .install: "install"; case .manual: "manual"; case .macSettings: "macSettings"
             case .appSettings: "appSettings"; case .pro: "pro"; case .quickActions: "quickActions"; case .keyboard: "keyboard"
-            case .verifyGuide: "verifyGuide"; case .connectionInfo: "connectionInfo"; case .errorDetails: "errorDetails"
+            case .verifyGuide: "verifyGuide"; case .connectionInfo: "connectionInfo"
             }
         }
     }
@@ -131,7 +131,6 @@ struct DirectTerminalView: View {
                 case .keyboard: TerminalKeyboardSettings(macID: mac.id, changed: { session.reloadKeyboard?() })
                 case .verifyGuide: TerminalIdentityGuide(macName: mac.name)
                 case .connectionInfo: TerminalConnectionInfo(mac: mac)
-                case .errorDetails(let notice): TerminalConnectionIssueView(notice: notice)
                 }
             }
             .sheet(item: $session.trust) { request in
@@ -244,18 +243,18 @@ struct DirectTerminalView: View {
             }
         }
     }
-    @ViewBuilder private func detailsButton(notice: DirectRecoveryNotice?) -> some View {
-        if let notice {
-            if !notice.details.isEmpty {
-                Button { sheet = .errorDetails(notice) } label: {
-                    Label("Issue Details", systemImage: "info.circle").font(.subheadline).frame(maxWidth: .infinity, minHeight: 44)
-                }.accessibilityIdentifier("terminal-login-details")
+    private func detailsButton(notice: DirectRecoveryNotice?) -> some View {
+        DisclosureGroup("Connection Details", isExpanded: $detailsExpanded) {
+            DirectConnectionDetailsRows(mac: mac, desktop: false).padding(.top, 8)
+            if let notice, !notice.details.isEmpty {
+                Divider().padding(.vertical, 4)
+                Text("Issue Details").font(.subheadline.weight(.semibold))
+                ForEach(Array(notice.details.enumerated()), id: \.offset) { offset, detail in
+                    LabeledContent(detail.name, value: detail.value)
+                        .accessibilityIdentifier("terminal-issue-detail-\(offset)")
+                }
             }
-        } else {
-            Button { sheet = .connectionInfo } label: {
-                Label("Connection Details", systemImage: "info.circle").font(.subheadline).frame(maxWidth: .infinity, minHeight: 44)
-            }.accessibilityIdentifier("terminal-login-details")
-        }
+        }.font(.subheadline).accessibilityIdentifier("terminal-login-details")
     }
     private func connectionButton(_ title: String, symbol: String? = nil, enabled: Bool = true, perform: @escaping () -> Void) -> some View {
         Button(action: perform) {
@@ -290,29 +289,6 @@ struct DirectTerminalView: View {
         }.padding(14).frame(maxWidth: .infinity, alignment: .leading)
             .background(Color(uiColor: DirectConnectionStyle.field), in: RoundedRectangle(cornerRadius: 16))
             .overlay(RoundedRectangle(cornerRadius: 16).stroke(Color(uiColor: .separator).opacity(0.25)))
-    }
-}
-
-struct TerminalConnectionIssueView: View {
-    let notice: DirectRecoveryNotice
-    @Environment(\.dismiss) private var dismiss
-    var body: some View {
-        NavigationStack {
-            Form {
-                Section {
-                    Text(notice.title).font(.headline)
-                    Text(notice.message).accessibilityIdentifier("terminal-issue-message")
-                }
-                if !notice.details.isEmpty {
-                    Section("Details") {
-                        ForEach(Array(notice.details.enumerated()), id: \.offset) { offset, detail in
-                            LabeledContent(detail.name, value: detail.value).accessibilityIdentifier("terminal-issue-detail-\(offset)")
-                        }
-                    }
-                }
-            }.navigationTitle("Connection Issue").navigationBarTitleDisplayMode(.inline)
-                .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
-        }.presentationDetents([.medium, .large])
     }
 }
 
@@ -439,6 +415,7 @@ private struct TerminalSurface: UIViewControllerRepresentable {
             ["kind": "appearance", "title": "Appearance", "symbol": "circle.lefthalf.filled"],
             ["kind": "session", "title": "Session", "symbol": "link"]]
         controls.actionHandler = { [weak self] item in self?.performQuickAction(item) }
+        controls.customizeHandler = { [weak self] in self?.action("quickActions") }
         controls.openingHandler = { [weak self] in self?.updateControls() }
         CompanionVNCObserveDivision(view)
         session.received = { [weak self] bytes in self?.terminal.feed(byteArray: bytes[...]) }
@@ -662,8 +639,7 @@ struct TerminalConnectionInfo: View {
             Form {
                 Section("Remote Login") {
                     LabeledContent("Mac", value: mac.name)
-                    LabeledContent("SSH Port", value: String(mac.sshPort))
-                    ForEach(mac.addresses, id: \.self) { Text($0).textSelection(.enabled) }
+                    DirectConnectionDetailsRows(mac: mac, desktop: false)
                 }
             }.navigationTitle("Connection Details").navigationBarTitleDisplayMode(.inline)
                 .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }

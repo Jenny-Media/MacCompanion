@@ -69,7 +69,8 @@ def main():
                               output=qa, bundle='dev.maccompanion.macqa')
     spec['targets']['NativeClientTests'] = {
         'type': 'bundle.unit-test', 'platform': 'macOS',
-        'sources': [{'path': str(ROOT / 'Native/MacTests/Hosted')}],
+        'sources': [{'path': str(ROOT / 'Native/MacTests/Hosted')}, {'path': str(ROOT / 'Native/ClientTests')},
+                    {'path': str(ROOT / 'spec/storekit/v0/LifetimePro.storekit'), 'buildPhase': 'resources'}],
         'dependencies': [{'target': 'MacCompanion'}],
         'settings': {'base': {
             'GENERATE_INFOPLIST_FILE': 'YES', 'PRODUCT_BUNDLE_IDENTIFIER': 'dev.maccompanion.macqa.tests',
@@ -81,10 +82,13 @@ def main():
             'TEST_HOST': '$(BUILT_PRODUCTS_DIR)/MacCompanion.app/Contents/MacOS/MacCompanion', 'BUNDLE_LOADER': '$(TEST_HOST)'}}}
     spec['schemes'] = {'NativeMacClientQA': {
         'build': {'targets': {'MacCompanion': 'all', 'NativeClientTests': 'all'}},
+        'run': {'config': 'Debug', 'executable': 'MacCompanion', 'macroExpansion': 'MacCompanion',
+                'storeKitConfiguration': 'LifetimePro.storekit'},
         'test': {'config': 'Debug', 'macroExpansion': 'MacCompanion',
                  'environmentVariables': {'MACCOMPANION_DIRECT_DATA_DIRECTORY': str(qa / 'app-data'),
                                           'MACCOMPANION_NATIVE_FIXTURE_DIRECTORY': str(ROOT / 'spec/fixtures')},
                  'targets': [{'name': 'NativeClientTests', 'parallelizable': False}]}}}
+    shutil.copyfile(ROOT / 'spec/storekit/v0/LifetimePro.storekit', qa / 'LifetimePro.storekit')
     if args.ui:
         # The UI runner is sandboxed by Xcode. Its synthetic SSH fixture binds
         # only loopback, but still needs the incoming-network entitlement.

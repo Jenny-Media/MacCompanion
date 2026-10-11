@@ -64,6 +64,7 @@ def main():
     parser.add_argument('--test-diagnostics', choices=['on-failure', 'never'], default='on-failure')
     parser.add_argument('--screenshots', action='store_true', help='Capture synthetic recovery screens in the hosted Simulator tests')
     parser.add_argument('--duo-review', action='store_true', help='Run only the opt-in interactive, synthetic Duo comparison capture')
+    parser.add_argument('--settings-ui', action='store_true', help='Also test gear navigation and live sheet appearance using native UI interactions')
     args = parser.parse_args(); base = args.build.resolve()
     qa = base / 'QA'; qa.mkdir(exist_ok=True)
     spec = json.loads((base / 'project.json').read_text())
@@ -85,7 +86,7 @@ def main():
                  ROOT / 'spec/storekit/v0/LifetimePro.storekit', qa / 'synthetic-ed25519', qa / 'synthetic-ed25519.pub', qa / 'synthetic-rsa']
     spec['targets']['DirectClientTests'] = {
         'type': 'bundle.unit-test', 'platform': 'iOS',
-        'sources': [{'path': str(ROOT / 'Experiments/NormalVNCViewportQA')}] + [{'path': str(p), 'buildPhase': 'resources'} for p in resources],
+        'sources': [{'path': str(ROOT / 'Experiments/NormalVNCViewportQA')}, {'path': str(ROOT / 'Native/ClientTests')}] + [{'path': str(p), 'buildPhase': 'resources'} for p in resources],
         'dependencies': [{'target': 'MacCompanionIOS'}],
         'settings': {'base': {'GENERATE_INFOPLIST_FILE': 'YES', 'PRODUCT_BUNDLE_IDENTIFIER': bundle + '.tests',
             'SWIFT_VERSION': '6.0', 'SWIFT_ACTIVE_COMPILATION_CONDITIONS': 'DEBUG MACCOMPANION_VNC_DEVELOPMENT',
@@ -97,6 +98,17 @@ def main():
         'test': {'config': 'Debug', 'macroExpansion': 'MacCompanionIOS', 'targets': [{'name': 'DirectClientTests', 'parallelizable': False}],
                  'storeKitConfiguration': str(ROOT / 'spec/storekit/v0/LifetimePro.storekit')}}}
     for action in ['run', 'profile', 'analyze', 'archive']: spec['schemes']['DirectClientQA'][action] = {'config': 'Debug'}
+    if args.settings_ui:
+        spec['targets']['SettingsNavigationTests'] = {
+            'type': 'bundle.ui-testing', 'platform': 'iOS',
+            'sources': [{'path': str(ROOT / 'Experiments/DirectClientSettingsQA')}],
+            'dependencies': [{'target': 'MacCompanionIOS'}],
+            'settings': {'base': {'GENERATE_INFOPLIST_FILE': 'YES', 'PRODUCT_BUNDLE_IDENTIFIER': bundle + '.settings-ui',
+                'SWIFT_VERSION': '6.0', 'IPHONEOS_DEPLOYMENT_TARGET': '26.0', 'ARCHS': 'arm64', 'ONLY_ACTIVE_ARCH': 'YES',
+                'CODE_SIGN_IDENTITY': '-', 'CODE_SIGNING_ALLOWED': 'YES', 'TEST_TARGET_NAME': 'MacCompanionIOS'}}}
+        spec['schemes']['DirectClientQA']['build']['targets']['SettingsNavigationTests'] = 'all'
+        spec['schemes']['DirectClientQA']['test']['targets'].append({'name': 'SettingsNavigationTests', 'parallelizable': False})
+        spec['schemes']['DirectClientQA']['test'].setdefault('environmentVariables', {})['MACCOMPANION_SETTINGS_QA_BUNDLE'] = bundle
     shutil.copyfile(ROOT / 'spec/storekit/v0/LifetimePro.storekit', qa / 'LifetimePro.storekit')
     spec['schemes']['DirectClientQA']['run'].update({'executable': 'MacCompanionIOS', 'macroExpansion': 'MacCompanionIOS', 'storeKitConfiguration': 'LifetimePro.storekit'})
     if args.screenshots:

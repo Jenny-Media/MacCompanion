@@ -107,7 +107,7 @@ def main():
         run('/opt/homebrew/bin/cmake', '-S', args.source, '-B', vnc, *['-D' + k + '=' + str(v) for k, v in definitions.items()], stdout=log, stderr=subprocess.STDOUT)
         run('/opt/homebrew/bin/cmake', '--build', vnc, '--target', 'vncclient', '-j6', stdout=log, stderr=subprocess.STDOUT)
     shared_vnc = ['DirectMacLibraryV1.swift', 'DirectMacIdentityV1.swift', 'DirectMacDiscoveryV1.swift', 'DirectCloudSyncV1.swift',
-        'DirectClientPlatformV1.swift', 'DirectAppearanceV1.swift', 'DirectProAccess.swift', 'DirectRecoveryV1.swift', 'VNCSessionPreferences.swift',
+        'DirectClientPlatformV1.swift', 'DirectAppearanceV1.swift', 'DirectProAccess.swift', 'DirectRecoveryV1.swift', 'DirectSettingsComponents.swift', 'VNCSessionPreferences.swift', 'DirectQuickActionsEditor.swift',
         'CompanionVNCSession.m', 'CompanionVNCDirectConnection.m', 'CompanionVNCKeyboard.m']
     shared_terminal = ['DirectTerminalSession.swift', 'TerminalSecretStore.swift', 'TerminalSSHKey.swift', 'TerminalKeyLibrary.swift', 'TerminalKeyInstallation.swift',
                        'TerminalKeyboard.swift', 'TerminalLoginSelection.swift', 'TerminalIdentityGuide.swift',
