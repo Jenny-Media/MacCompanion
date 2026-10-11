@@ -813,7 +813,7 @@
       "path": "direct-files-v1.json",
       "kind": "directFiles.v1",
       "expect": "valid",
-      "canonicalSHA256": "38b99393bcb65882787e41dbef9e3a9985a833d8005292a3af156e44e2a0eba8"
+      "canonicalSHA256": "a17556e42c049ff63513c32176af2a407f99388816a80bfc5823899190b9cf25"
     }
   ]
 }

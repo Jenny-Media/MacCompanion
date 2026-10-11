@@ -23,6 +23,13 @@ public final class SFTPClient: Sendable {
     
     /// In-flight request ID tracker.
     fileprivate let responses: SFTPResponses
+    private let responseActivity = NIOLockedValueBox<(@Sendable () async -> Void)?>(nil)
+
+    /// Await owned-client idle activity before returning a response, so it
+    /// cannot race the caller's next operation. Disabled for other consumers.
+    public func setResponseActivityHandler(_ handler: (@Sendable () async -> Void)?) {
+        responseActivity.withLockedValue { $0 = handler }
+    }
     
     /// What it says on the tin.
     public let logger: Logger
@@ -85,7 +92,7 @@ public final class SFTPClient: Sendable {
     ///   ID is in flight at any given time; multiple reponses to the same ID are likely to cause
     ///   unpredictable behavior.
     internal func sendRequest(_ request: SFTPRequest) async throws -> SFTPResponse {
-        try await self.eventLoop.flatSubmit {
+        let response = try await self.eventLoop.flatSubmit {
             let requestId = request.requestId
             let promise = self.channel.eventLoop.makePromise(of: SFTPResponse.self)
             
@@ -102,6 +109,9 @@ public final class SFTPClient: Sendable {
                 promise.futureResult
             }
         }.get()
+        let activity = responseActivity.withLockedValue { $0 }
+        await activity?()
+        return response
     }
 
     /// Set the attributes of a file on the SFTP server.

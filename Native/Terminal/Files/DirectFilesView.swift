@@ -25,7 +25,8 @@ struct DirectFilesView: View {
     @State private var picker = false
     @State private var newFolder = false
     @State private var folderName = ""
-    @State private var disconnectConfirmation = false
+    @State private var confirmation: Confirmation?
+    @State private var saving = false
     @State private var uploadURLs: [URL] = []
     @State private var uploadFolder = ""
     @State private var export: Export?
@@ -34,6 +35,11 @@ struct DirectFilesView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     private enum Sheet: String, Identifiable { case keys, setup, upload, pro; var id: String { rawValue } }
+    private enum Confirmation {
+        case disconnect, close, discard
+        var title: String { switch self { case .disconnect: "Disconnect Files?"; case .close: "Close Files?"; case .discard: "Discard pending transfers?" } }
+        var action: String { switch self { case .disconnect: "Disconnect"; case .close: "Close Files"; case .discard: "Discard" } }
+    }
     private struct Export: Identifiable { let id = UUID(); let resultID: UUID; let url: URL }
     init(mac: DirectMacRecordV1, session: DirectFilesSession? = nil, retainWhenDismissed: Bool = false) {
         self.mac = mac; self.retainWhenDismissed = retainWhenDismissed
@@ -59,14 +65,14 @@ struct DirectFilesView: View {
             #endif
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) { Button("Done") {
-                    if !retainWhenDismissed && session.transferActive { disconnectConfirmation = true }
+                    if !retainWhenDismissed && (session.transferActive || session.hasPendingResults) { confirmation = .close }
                     else { dismiss() }
                 }.accessibilityIdentifier("files-done") }
                 ToolbarItem(placement: .primaryAction) {
                     Menu("More", systemImage: "ellipsis.circle") {
                         Button("Setup Guide", systemImage: "questionmark.circle") { sheet = .setup }
                         if session.phase == .ready { Button("Disconnect Files", systemImage: "power") {
-                            if session.transferActive { disconnectConfirmation = true } else { session.disconnect() }
+                            if session.transferActive { confirmation = .disconnect } else { session.disconnect() }
                         } }
                     }
                 }
@@ -97,19 +103,28 @@ struct DirectFilesView: View {
                 Button("Create") { session.createFolder(folderName); folderName = "" }.disabled(!DirectFilesPolicy.validName(folderName))
                 Button("Cancel", role: .cancel) { folderName = "" }
             }
-            .confirmationDialog("Stop the current transfer?", isPresented: $disconnectConfirmation, titleVisibility: .visible) {
-                Button("Stop Transfer", role: .destructive) { session.disconnect(message: "Transfer stopped. Reconnect and Retry when ready."); if !retainWhenDismissed { dismiss() } }
-            } message: { Text("Completed files are kept. Unfinished uploads may leave a temporary file on the Mac.") }
+            .confirmationDialog(confirmation?.title ?? "Files", isPresented: Binding(get: { confirmation != nil }, set: { if !$0 { confirmation = nil } }), titleVisibility: .visible, presenting: confirmation) { intent in
+                Button(intent.action, role: .destructive) {
+                    confirmation = nil
+                    if intent == .discard { session.discardResults() }
+                    else if session.confirmExit(intent == .close ? .close : .disconnect, retainWhenDismissed: retainWhenDismissed) { dismiss() }
+                }
+                Button("Cancel", role: .cancel) { confirmation = nil }
+            } message: { intent in
+                if intent == .disconnect { Text("Stop the current transfer. Downloads and unfinished files stay here so you can Save or reconnect and Retry.") }
+                else if intent == .discard { Text("Unsaved downloads and retry entries will be removed from this device. Files already uploaded or exported are kept.") }
+                else { Text("Transfers will stop. Unsaved downloads and retry entries will be removed from this device. Files already uploaded or exported are kept.") }
+            }
             #if os(iOS)
             .sheet(isPresented: $picker) { DirectFilesDocumentPicker { result in picker = false; selected(result) } }
-            .sheet(item: $export) { item in DirectFilesDocumentPicker(exporting: item.url) { result in
-                export = nil
+            .sheet(item: $export, onDismiss: { saving = false }) { item in DirectFilesDocumentPicker(exporting: item.url) { result in
+                export = nil; saving = false
                 if case .success = result { session.markSaved(item.resultID) }
             } }
             #else
             .fileImporter(isPresented: $picker, allowedContentTypes: [.item], allowsMultipleSelection: true, onCompletion: selected)
             .onDrop(of: [UTType.fileURL.identifier], isTargeted: nil) { providers in
-                guard session.phase == .ready, !session.busy, providers.count <= DirectFilesPolicy.maximumBatch else { return false }
+                guard session.phase == .ready, !session.busy, !session.hasPendingResults, !saving, providers.count <= DirectFilesPolicy.maximumBatch else { return false }
                 uploadFolder = session.directory?.path ?? ""
                 let token = preparation
                 Task { @MainActor in
@@ -135,7 +150,7 @@ struct DirectFilesView: View {
         .onChange(of: session.phase) { _, phase in if phase == .ready { password = ""; passphrase = "" } }
         .onChange(of: DirectAppLockV1.shared.canAccess) { _, allowed in
             if !allowed {
-                preparation = UUID(); preparingKey = false; session.disconnect(); sheet = nil; picker = false; export = nil; password = ""; passphrase = ""; key = nil; keyName = ""; uploadURLs = []; newFolder = false; folderName = ""
+                preparation = UUID(); preparingKey = false; saving = false; confirmation = nil; session.disconnect(); sheet = nil; picker = false; export = nil; password = ""; passphrase = ""; key = nil; keyName = ""; uploadURLs = []; newFolder = false; folderName = ""
                 #if os(macOS)
                 savePicker.cancel()
                 #endif
@@ -143,14 +158,14 @@ struct DirectFilesView: View {
             else { loadLogin(preferSelected: true) }
         }
         .onReceive(NotificationCenter.default.publisher(for: DirectClientPlatformV1.didEnterBackground)) { _ in
-            preparation = UUID(); preparingKey = false
+            preparation = UUID(); preparingKey = false; saving = false; confirmation = nil
             #if os(macOS)
             savePicker.cancel()
             #endif
             password = ""; passphrase = ""; picker = false; export = nil
         }
         .onDisappear {
-            preparation = UUID(); preparingKey = false; password = ""; passphrase = ""
+            preparation = UUID(); preparingKey = false; saving = false; password = ""; passphrase = ""
             #if os(macOS)
             savePicker.cancel()
             #endif
@@ -264,9 +279,9 @@ struct DirectFilesView: View {
                                 if entry.kind == .other { Text("Link or special file").font(.caption).foregroundStyle(.secondary) }
                             } } icon: { Image(systemName: entry.symbol).foregroundStyle(.tint) }
                             .frame(maxWidth: .infinity, alignment: .leading)
-                        }.buttonStyle(.plain).disabled(entry.kind == .other || session.busy)
+                        }.buttonStyle(.plain).disabled(entry.kind == .other || session.busy || (entry.kind == .file && (session.hasPendingResults || saving)))
                         if entry.kind == .folder { Image(systemName: "chevron.right").font(.caption).foregroundStyle(.secondary) }
-                        else if entry.kind == .file { Button("Download", systemImage: "arrow.down.to.line") { session.download(entry) }.labelStyle(.iconOnly).buttonStyle(.borderless).disabled(session.busy) }
+                        else if entry.kind == .file { Button("Download", systemImage: "arrow.down.to.line") { session.download(entry) }.labelStyle(.iconOnly).buttonStyle(.borderless).disabled(session.busy || session.hasPendingResults || saving) }
                     }
                 }
             }.accessibilityIdentifier("files-list")
@@ -274,7 +289,7 @@ struct DirectFilesView: View {
                 Button("New Folder", systemImage: "folder.badge.plus") { folderName = ""; newFolder = true }
                 Spacer()
                 Button("Upload Here", systemImage: "arrow.up.doc") { uploadFolder = session.directory?.path ?? ""; if uploadURLs.isEmpty { picker = true } else { sheet = .upload } }
-                    .buttonStyle(.borderedProminent).accessibilityIdentifier("files-upload")
+                    .buttonStyle(.borderedProminent).disabled(session.hasPendingResults || saving).accessibilityIdentifier("files-upload")
             }.padding().disabled(session.busy)
         }
     }
@@ -300,12 +315,16 @@ struct DirectFilesView: View {
                                 }
                             }
                             Spacer()
-                            if let url = result.localDownload { Button("Save…") { saveDownload(result.id, url: url) }.disabled(!DirectAppLockV1.shared.canAccess) }
+                            if let url = result.localDownload { Button(result.saved ? "Save Again…" : "Save…") { saveDownload(result.id, url: url) }.disabled(saving || !DirectAppLockV1.shared.canAccess) }
                             if result.outcome == .interrupted { Button("Retry") { session.retry(result.id) }.disabled(session.busy || session.phase != .ready || session.account != session.resultsAccount) }
                         }
                     }
                 }
             }.frame(maxHeight: 160)
+            if session.hasPendingResults && !session.busy {
+                Text("Save downloads or retry unfinished files before starting another transfer.").font(.caption).foregroundStyle(.secondary)
+                Button("Discard Pending Transfers…", role: .destructive) { confirmation = .discard }.disabled(saving).accessibilityIdentifier("files-discard")
+            }
             if session.phase == .ready && session.account != session.resultsAccount { Text("Reconnect as \(session.resultsAccount) to retry these transfers.").font(.caption).foregroundStyle(.secondary) }
             #if os(iOS)
             if session.transferActive { Text("Keep the app open until the transfer finishes.").font(.caption).foregroundStyle(.secondary) }
@@ -325,12 +344,12 @@ struct DirectFilesView: View {
             .navigationTitle("Upload Files")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { sheet = nil; uploadURLs = [] } }
-                ToolbarItem(placement: .confirmationAction) { Button("Upload") { session.upload(uploadURLs, to: uploadFolder); sheet = nil; uploadURLs = [] }.disabled(session.phase != .ready || session.busy) }
+                ToolbarItem(placement: .confirmationAction) { Button("Upload") { session.upload(uploadURLs, to: uploadFolder); sheet = nil; uploadURLs = [] }.disabled(session.phase != .ready || session.busy || session.hasPendingResults) }
             }
         }.directAppearance()
     }
     private func selected(_ result: Result<[URL], Error>) {
-        guard DirectAppLockV1.shared.canAccess else { return }
+        guard DirectAppLockV1.shared.canAccess, !saving else { return }
         switch result {
         case .success(let urls):
             let token = preparation
@@ -342,13 +361,15 @@ struct DirectFilesView: View {
         }
     }
     private func saveDownload(_ id: UUID, url: URL) {
-        guard DirectAppLockV1.shared.canAccess else { return }
+        guard DirectAppLockV1.shared.canAccess, !saving else { return }
+        saving = true
         #if os(iOS)
         export = .init(resultID: id, url: url)
         #else
         let token = preparation
         savePicker.save(url) { result in
             guard preparation == token, DirectAppLockV1.shared.canAccess else { return }
+            saving = false
             if case .success = result { session.markSaved(id) }
             else if case .failure(let error) = result, !(error is CancellationError) { session.message = "The downloaded file could not be saved. Choose another destination." }
         }

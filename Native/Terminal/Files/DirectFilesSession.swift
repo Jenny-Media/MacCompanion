@@ -33,6 +33,8 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
         var bytes: UInt64 = 0
         var total: UInt64?
         var localDownload: URL?
+        var saved = false
+        var needsAttention: Bool { outcome != .completed || (localDownload != nil && !saved) }
     }
     let mac: DirectMacRecordV1
     private(set) var account = ""
@@ -62,8 +64,10 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
     @ObservationIgnored private var backgroundObserver: DirectFilesBackgroundObservation?
     private var closed = false
     private let canAccess: @MainActor () -> Bool
-    init(mac: DirectMacRecordV1, canAccess: @escaping @MainActor () -> Bool = { DirectAppLockV1.shared.canAccess }) {
-        self.mac = mac; self.canAccess = canAccess
+    private let idleTimeout: Duration
+    init(mac: DirectMacRecordV1, canAccess: @escaping @MainActor () -> Bool = { DirectAppLockV1.shared.canAccess }, idleTimeout: Duration = .seconds(30)) {
+        precondition(idleTimeout > .zero)
+        self.mac = mac; self.canAccess = canAccess; self.idleTimeout = idleTimeout
     }
     private func observeLifecycle() {
         guard backgroundObserver == nil else { return }
@@ -87,6 +91,8 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
         }
     }
     var transferActive: Bool { results.contains { $0.outcome == .transferring || $0.outcome == .waiting } && busy }
+    var hasPendingResults: Bool { results.contains { $0.needsAttention } }
+    var hasUnsavedDownloads: Bool { results.contains { $0.localDownload != nil && !$0.saved } }
     var activityTitle: String {
         if let current = results.first(where: { $0.outcome == .transferring }) {
             if let total = current.total, total > 0 { return "Transferring · \(min(100, Int(Double(current.bytes) / Double(total) * 100)))%" }
@@ -97,13 +103,18 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
     private func check(_ token: UUID, _ job: UUID? = nil) throws {
         guard !closed, generation == token, job == nil || operation == job, canAccess(), !Task.isCancelled else { throw CancellationError() }
     }
-    private func armDeadline(seconds: Int = 30) {
+    private func armDeadline(after delay: Duration? = nil) {
         deadline?.cancel(); let token = generation, job = operation
+        let delay = delay ?? idleTimeout
         deadline = Task { [weak self] in
-            do { try await Task.sleep(for: .seconds(seconds)) } catch { return }
+            do { try await Task.sleep(for: delay) } catch { return }
             guard let self, self.generation == token, self.operation == job else { return }
             self.disconnect(message: DirectFilesFailure.timedOut.localizedDescription)
         }
+    }
+    private func receivedResponse(_ token: UUID) {
+        guard generation == token, !closed, busy, canAccess(), conflict == nil else { return }
+        armDeadline()
     }
     func connect(username: String, password: String, key: TerminalSSHKey?, remember: Bool, keyFileID: UUID? = nil) {
         guard !closed, canAccess(), !busy, phase != .ready else { return }
@@ -118,10 +129,16 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
         } catch { message = "The SSH key could not be read."; return }
         observeLifecycle()
         retire(); let token = generation, owner = TerminalSocketOwner(); socket = owner
-        phase = .connecting; busy = true; account = username; message = nil; status = "Contacting Remote Login…"; armDeadline(seconds: 60)
+        phase = .connecting; busy = true; account = username; message = nil; status = "Contacting Remote Login…"; armDeadline(after: .seconds(60))
         let addresses = mac.addresses, port = mac.sshPort
         work = Task {
             do {
+                do { if key == nil && !remember { try TerminalSecretStore.forgetLogin(mac.id) } }
+                catch {
+                    retire(); phase = .interrupted; status = "Sign In Required"
+                    message = "The saved SSH login could not be removed. Files did not connect."
+                    return
+                }
                 let (fd, failure) = await Task.detached(priority: .userInitiated) {
                     var failure = 0
                     let fd = CompanionVNCConnectAddresses(addresses, port, { owner.isCancelled }, { owner.register($0) }, nil, &failure)
@@ -154,6 +171,7 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
                 let logger = Logger(label: "Files", factory: { _ in SwiftLogNoOpLogHandler() })
                 let client = try await ssh.openSFTP(logger: logger)
                 try check(token)
+                client.setResponseActivityHandler { [weak self] in await self?.receivedResponse(token) }
                 let store = DirectFilesSFTPStore(client: client); self.store = store
                 let directory = try await store.directory("."); try check(token)
                 // Reuse existing Terminal retention. No Desktop credentials are read.
@@ -224,6 +242,7 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
     func prepare(_ urls: [URL]) async throws -> [URL] {
         guard canAccess(), !closed, !Task.isCancelled else { throw CancellationError() }
         guard phase == .ready, !busy else { throw DirectFilesFailure.unavailable }
+        guard !hasPendingResults else { throw DirectFilesFailure.pendingTransfers }
         guard (1...DirectFilesPolicy.maximumBatch).contains(urls.count) else { throw DirectFilesFailure.tooManyFiles }
         let root = try root(), token = generation
         busy = true; status = "Preparing files…"; message = nil
@@ -236,6 +255,7 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
     }
     func upload(_ urls: [URL], to folder: String) {
         guard phase == .ready, !busy, canAccess(), (1...DirectFilesPolicy.maximumBatch).contains(urls.count), DirectFilesPolicy.validPath(folder) else { return }
+        guard beginNewBatch() else { return }
         resultsAccount = account
         results = urls.map { .init(source: $0, remotePath: nil, folder: folder, name: $0.lastPathComponent) }
         runTransfers()
@@ -243,6 +263,7 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
     func download(_ entry: DirectFilesEntry) {
         guard phase == .ready, !busy, entry.kind == .file, let directory, canAccess(),
               let path = try? DirectFilesPolicy.child(entry.name, of: directory.path) else { return }
+        guard beginNewBatch() else { return }
         resultsAccount = account
         results = [.init(source: nil, remotePath: path, folder: directory.path, name: entry.name)]
         runTransfers()
@@ -324,7 +345,31 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
     }
     func markSaved(_ id: UUID) {
         guard canAccess(), let index = results.firstIndex(where: { $0.id == id }) else { return }
+        results[index].saved = true
         results[index].message = "Saved"
+    }
+    private func beginNewBatch() -> Bool {
+        guard !hasPendingResults else { message = DirectFilesFailure.pendingTransfers.localizedDescription; return false }
+        discardResults()
+        return true
+    }
+    func discardResults() {
+        guard !closed, canAccess(), !busy else { return }
+        if let temporaryRoot {
+            for url in results.flatMap({ [$0.source, $0.localDownload].compactMap { $0 } }) {
+                let folder = url.deletingLastPathComponent()
+                // Remove only this owner's UUID staging folders, never picker
+                // sources or files staged for a later upload review.
+                if folder.deletingLastPathComponent().standardizedFileURL == temporaryRoot.standardizedFileURL {
+                    try? FileManager.default.removeItem(at: folder)
+                }
+            }
+        }
+        results = []; resultsAccount = ""; message = nil
+    }
+    @discardableResult func confirmExit(_ intent: DirectFilesExitIntent, retainWhenDismissed: Bool) -> Bool {
+        disconnect(message: "Transfer stopped. Reconnect and Retry when ready.")
+        return intent == .close && !retainWhenDismissed
     }
     func disconnect(message: String? = nil) {
         retire(); phase = .interrupted; status = "Sign In Required"; self.message = message

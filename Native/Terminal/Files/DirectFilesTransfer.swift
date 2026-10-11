@@ -70,16 +70,19 @@ actor DirectFilesDiskFile {
     static func download(path: String, to destination: URL, store: any DirectFilesRemoteStore,
                          check: Check, progress: Progress) async throws {
         try check()
-        let remote = try await store.open(path, writing: false)
+        var remote: (any DirectFilesRemoteHandle)?
         var local: DirectFilesDiskFile?
         do {
-            let attrs = try await remote.attributes(); try check()
+            guard let current = try await store.attributes(path), current.kind == .file else { throw DirectFilesFailure.notRegular }
+            try check()
+            let file = try await store.open(path, writing: false); remote = file
+            let attrs = try await file.attributes(); try check()
             guard attrs.kind == .file else { throw DirectFilesFailure.notRegular }
             local = try DirectFilesDiskFile(url: destination, writing: true)
             var offset: UInt64 = 0
             while true {
                 try check()
-                let data = try await remote.read(offset: offset, length: UInt32(DirectFilesPolicy.chunkSize)); try check()
+                let data = try await file.read(offset: offset, length: UInt32(DirectFilesPolicy.chunkSize)); try check()
                 guard data.count <= DirectFilesPolicy.chunkSize else { throw DirectFilesFailure.changedFile }
                 if data.isEmpty { break }
                 guard offset <= UInt64.max - UInt64(data.count) else { throw DirectFilesFailure.changedFile }
@@ -88,9 +91,9 @@ actor DirectFilesDiskFile {
                 try await local!.write(data); try check(); progress(offset, attrs.size)
             }
             if let size = attrs.size, offset != size { throw DirectFilesFailure.changedFile }
-            try await remote.close(); try await local!.finish(); try check()
+            try await file.close(); remote = nil; try await local!.finish(); try check()
         } catch {
-            try? await remote.close(); await local?.close()
+            try? await remote?.close(); await local?.close()
             try? FileManager.default.removeItem(at: destination)
             throw error
         }

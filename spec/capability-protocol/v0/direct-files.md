@@ -22,6 +22,10 @@ subsystem admission and each idle operation are bounded to 30 seconds. Cancellin
 locking, backgrounding on iOS, or closing Files retires only its owned socket and
 channel, cancels prompts and prevents late callbacks from updating a replacement
 connection. Reconnect and retry are explicit; no transfer replay or resume.
+Each completed SFTP response for the owned operation resets its idle deadline;
+the total duration of a progressing listing or transfer is not an idle timeout.
+Conflict prompts suspend that deadline. Responses from a retired connection
+cannot reset a replacement connection's deadline.
 
 ## Browser and transfers
 
@@ -33,6 +37,10 @@ characters and overlong names. Full paths are bounded to 4096 UTF-8 bytes.
 Use LSTAT for filename conflicts so symbolic links are not offered for replacement.
 Only regular files transfer in v1. Directories can be browsed and created;
 symlinks, special files, rename, delete and recursive transfers are not offered.
+Before downloading a listed file, obtain fresh LSTAT attributes for its path and
+reject a missing path, link or special file before OPEN. Also check FSTAT on the
+opened handle. These checks reject stale listed links; SFTP v3 does not guarantee
+an atomic no-follow open or an unchanged remote filesystem between requests.
 
 Choose the remote destination before selecting local files. The native picker
 provides user-selected local files; copy regular files into protected temporary
@@ -60,6 +68,15 @@ original SSH account. A different account requires a new, reviewed transfer.
 Temporary local content is never synced, logged or committed, and is removed
 when its Files owner closes. No
 uninterrupted iOS background-transfer guarantee is made.
+Files retains one pending batch. Unsaved downloads and interrupted transfers
+must be saved, retried or explicitly discarded before a new batch replaces them.
+Successfully exported downloads and completed uploads do not block a new batch.
+Disconnect preserves the Files owner and its Save/Retry results. Files' Done
+control requires an explicit warning if closing its owner will lose private
+unsaved downloads or retries.
+Password-based Files login follows Terminal retention: disabling saved login
+removes the existing saved password before connecting, without removing keys or
+server trust.
 
 The indexed `direct-files-v1.json` cases are authoritative for path admission and
 the OpenSSH replacement packet. Existing transport, signing, Keychain and release

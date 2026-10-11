@@ -18,7 +18,7 @@ struct DirectFilesAttributes: Sendable {
     let size: UInt64?
 }
 enum DirectFilesFailure: LocalizedError {
-    case invalidName, invalidPath, notRegular, tooManyFiles, changedFile, unsupportedReplace, interrupted, unavailable, timedOut
+    case invalidName, invalidPath, notRegular, tooManyFiles, changedFile, unsupportedReplace, interrupted, unavailable, timedOut, pendingTransfers
     var errorDescription: String? {
         switch self {
         case .invalidName: "Use a filename without slashes or control characters, up to 255 UTF-8 bytes."
@@ -30,9 +30,11 @@ enum DirectFilesFailure: LocalizedError {
         case .interrupted: "Transfer interrupted. Review the result before retrying."
         case .unavailable: "The Files connection is unavailable. Reconnect to continue."
         case .timedOut: "The Mac stopped responding. Reconnect and retry when it is reachable."
+        case .pendingTransfers: "Save your downloads, retry unfinished files, or discard pending transfers before starting another transfer."
         }
     }
 }
+enum DirectFilesExitIntent { case disconnect, close }
 enum DirectFilesPolicy {
     static let chunkSize = 32_768
     static let maximumBatch = 32

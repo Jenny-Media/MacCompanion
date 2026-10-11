@@ -43,7 +43,7 @@ import Logging
         } else { try await client.rename(at: temporary, to: destination) }
     }
     func removeTemporary(_ path: String) async throws { try await client.remove(at: path) }
-    func close() { Task { try? await client.close() } }
+    func close() { client.setResponseActivityHandler(nil); Task { try? await client.close() } }
 }
 
 // Used serially by one Files owner; Citadel's mutable file handle never escapes.

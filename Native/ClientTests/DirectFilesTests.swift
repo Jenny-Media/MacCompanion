@@ -98,13 +98,36 @@ import NIO
             let store = FilesTestStore(); store.files["/home/download.txt"] = Data([1, 2]); store.reportedSize = 3; store.kind = kind
             do { try await DirectFilesTransfer.download(path: "/home/download.txt", to: destination,
                 store: store, check: {}, progress: { _, _ in }); XCTFail("Invalid download succeeded") } catch {}
-            XCTAssertFalse(FileManager.default.fileExists(atPath: destination.path)); XCTAssertEqual(store.handleCloses, 1)
+            XCTAssertFalse(FileManager.default.fileExists(atPath: destination.path)); XCTAssertEqual(store.handleCloses, kind == .file ? 1 : 0)
         }
         let root = try DirectFilesLocalStore.root(); defer { try? FileManager.default.removeItem(at: root) }
         let destination = try DirectFilesLocalStore.emptyFile(in: root, name: "download.txt")
         let store = FilesTestStore(); let data = Data(repeating: 3, count: 100_000); store.files["/home/download.txt"] = data
         try await DirectFilesTransfer.download(path: "/home/download.txt", to: destination, store: store, check: {}, progress: { _, _ in })
         XCTAssertEqual(try Data(contentsOf: destination), data); XCTAssertLessThanOrEqual(store.largestRead, DirectFilesPolicy.chunkSize)
+    }
+    func testIndexedDownloadAdmissionChecksPathBeforeOpenAndHandleAfterOpen() async throws {
+        let url = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "direct-files-v1", withExtension: "json"))
+        let fixture = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])
+        for item in try XCTUnwrap(fixture["downloadAdmissionCases"] as? [[String: Any]]) {
+            let pathKind = try XCTUnwrap(item["pathKind"] as? String), handleKind = try XCTUnwrap(item["handleKind"] as? String)
+            let accepted = try XCTUnwrap(item["accepted"] as? Bool)
+            let root = try DirectFilesLocalStore.root(); defer { try? FileManager.default.removeItem(at: root) }
+            let destination = try DirectFilesLocalStore.emptyFile(in: root, name: "selected.txt")
+            let store = FilesTestStore(), path = "/home/selected.txt", bytes = Data([1, 2, 3])
+            if pathKind != "missing" { store.files[path] = bytes }
+            store.kind = pathKind == "file" ? .file : .other
+            store.handleKind = handleKind == "file" ? .file : .other
+            do {
+                try await DirectFilesTransfer.download(path: path, to: destination, store: store, check: {}, progress: { _, _ in })
+                XCTAssertTrue(accepted); XCTAssertEqual(try Data(contentsOf: destination), bytes)
+            } catch {
+                XCTAssertFalse(accepted); XCTAssertFalse(FileManager.default.fileExists(atPath: destination.path))
+            }
+            XCTAssertEqual(store.opens, pathKind == "file" ? 1 : 0)
+            XCTAssertEqual(store.handleCloses, pathKind == "file" ? 1 : 0)
+            XCTAssertEqual(store.pathChecks, 1)
+        }
     }
     func testStagePreservesOriginalAndRejectsFoldersAndLinks() throws {
         let root = try DirectFilesLocalStore.root(); defer { try? FileManager.default.removeItem(at: root) }
@@ -120,16 +143,18 @@ import NIO
 
 @MainActor private final class FilesTestStore: DirectFilesRemoteStore {
     var files: [String: Data] = [:]
-    var largestWrite = 0, largestRead = 0, commits = 0, handleCloses = 0
+    var largestWrite = 0, largestRead = 0, commits = 0, handleCloses = 0, opens = 0, pathChecks = 0
     var closedBeforeCommit = false, failCommit = false
     var removed: [String] = []
     var wrote: (() throws -> Void)?
     var reportedSize: UInt64?
     var kind = DirectFilesEntry.Kind.file
+    var handleKind: DirectFilesEntry.Kind?
     func directory(_ path: String) async throws -> DirectFilesDirectory { .init(path: path, entries: []) }
-    func attributes(_ path: String) async throws -> DirectFilesAttributes? { files[path].map { .init(kind: kind, size: reportedSize ?? UInt64($0.count)) } }
+    func attributes(_ path: String) async throws -> DirectFilesAttributes? { pathChecks += 1; return files[path].map { .init(kind: kind, size: reportedSize ?? UInt64($0.count)) } }
     func createDirectory(_ path: String) async throws {}
     func open(_ path: String, writing: Bool) async throws -> any DirectFilesRemoteHandle {
+        opens += 1
         if writing { guard files[path] == nil else { throw DirectFilesFailure.unavailable }; files[path] = Data() }
         guard files[path] != nil else { throw DirectFilesFailure.unavailable }
         return FilesTestHandle(path: path, store: self)
@@ -145,7 +170,7 @@ import NIO
 @MainActor private final class FilesTestHandle: DirectFilesRemoteHandle {
     let path: String; let store: FilesTestStore; var closed = false
     init(path: String, store: FilesTestStore) { self.path = path; self.store = store }
-    func attributes() async throws -> DirectFilesAttributes { try await store.attributes(path)! }
+    func attributes() async throws -> DirectFilesAttributes { .init(kind: store.handleKind ?? store.kind, size: store.reportedSize ?? UInt64(store.files[path]!.count)) }
     func read(offset: UInt64, length: UInt32) async throws -> Data {
         store.largestRead = max(store.largestRead, Int(length))
         return Data(store.files[path]!.dropFirst(Int(offset)).prefix(Int(length)))

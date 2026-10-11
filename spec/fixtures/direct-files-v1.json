@@ -64,6 +64,12 @@
       "valid": false
     }
   ],
+  "downloadAdmissionCases": [
+    { "pathKind": "file", "handleKind": "file", "accepted": true },
+    { "pathKind": "other", "handleKind": "file", "accepted": false },
+    { "pathKind": "missing", "handleKind": "file", "accepted": false },
+    { "pathKind": "file", "handleKind": "other", "accepted": false }
+  ],
   "replacePacket": {
     "id": 7,
     "source": "/home/upload.part",
