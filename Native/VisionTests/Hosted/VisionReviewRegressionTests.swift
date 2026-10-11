@@ -67,6 +67,10 @@ import SwiftTerm
             let text = String(decoding: view.getTerminal().getBufferAsData(), as: UTF8.self)
             XCTAssertTrue(text.contains("synthetic-ready")); XCTAssertTrue(text.contains("synthetic-before-render"))
             XCTAssertEqual(output.pendingByteCount, 0)
+            // The pinned SwiftTerm schedules its display cache refresh on a
+            // 16.67 ms timer after feed. Capture the painted frame, not the
+            // previous cache while the emulator already contains the new text.
+            try await Task.sleep(for: .milliseconds(100))
             view.layoutIfNeeded(); view.setNeedsDisplay(); view.layer.displayIfNeeded()
             let rendered = UIGraphicsImageRenderer(bounds: view.bounds).image { _ in
                 XCTAssertTrue(view.drawHierarchy(in: view.bounds, afterScreenUpdates: true))
