@@ -90,8 +90,11 @@
 @property CGFloat displayAspect;
 @property CGSize framebufferSize;
 @property BOOL trackpadMode, reconnectWhenReady, foreground, fixtureExercised, starting;
+@property BOOL textSendInterrupted;
 @property NSMutableArray<UIButton *> *modifiers;
 @property CompanionVNCKeyboard *remoteKeyboard;
+@property DirectTextComposer *textComposer;
+@property NSUInteger textGeneration;
 @property NSDictionary *selectedDisplay;
 @property UIImage *lastFramebuffer;
 @property CGRect activeCrop, smartWindow;
@@ -439,6 +442,7 @@
     return self.inputOnly ? @"Connecting to Trackpad & Keyboard…" : @"Connecting to Screen Sharing…";
 }
 - (void)prepareConnection {
+    [self retireTextDraft];
     [self invalidateTextReview:NO]; self.textReviewViewportPending=NO;
     self.session = [CompanionVNCSession new];
     __weak CompanionVNCViewer *weak = self;
@@ -463,7 +467,8 @@
         strong.status.text = connected ? @"" : [strong connectionProgressMessage]; strong.status.hidden = YES; strong.progressLabel.text = strong.status.text;
         if (connected) {
             strong.session.inputOnly = strong.inputOnly;
-            [strong clearRecovery]; strong.image.alpha = 1;
+            if (strong.textSendInterrupted) [strong showTextSendWarning];
+            else { [strong clearRecovery]; strong.image.alpha = 1; }
             strong.checkingResume = NO; strong.reconnectWhenReady = NO; strong.resumeGeneration++;
             if (strong.sessionPhaseHandler) strong.sessionPhaseHandler(@"connected");
             if (strong.connectedHandler) strong.connectedHandler();
@@ -474,6 +479,7 @@
         UIApplication.sharedApplication.idleTimerDisabled = running;
         if (!running) {
             [strong invalidateTextReview:NO];
+            [strong retireTextDraft];
             [strong clearCursor]; [strong resetModifiers];
             if (strong.disconnectHandler) strong.disconnectHandler();
             if (strong.checkingResume) [strong reconnectAfterFailedResume];
@@ -497,6 +503,7 @@
 }
 - (void)start {
     [self invalidateTextReview:NO]; self.textReviewViewportPending=NO;
+    [self retireTextDraft];
     [self clearRecovery];
     if (self.lastFramebuffer) { [self rememberViewport]; self.restoreViewportPending = YES; self.image.alpha = .45; }
     self.starting = YES; self.exited = NO;
@@ -526,6 +533,7 @@
 - (void)showMacs { [self stopViewer]; if (self.macsHandler) self.macsHandler(); }
 - (void)stopViewer {
     [self invalidateTextReview:NO]; self.textReviewViewportPending=NO;
+    [self retireTextDraft];
     [self.controls close]; self.starting = NO; self.exited = YES; self.reconnectWhenReady = NO; self.checkingResume = NO;
     self.resumeGeneration++; self.restoreViewportPending = NO; self.resumeDisplayID = nil;
     self.keyboardViewportSaved = NO; self.keyboardLayoutPending = NO;
@@ -569,7 +577,7 @@
 - (void)editRecoveryLogin { [self clearRecovery]; self.login.hidden = NO; self.starting = NO; [self updateConnectionChrome]; [self.username becomeFirstResponder]; }
 - (void)showRecoveryStage:(NSInteger)stage {
     __weak CompanionVNCViewer *weak = self;
-    UIViewController *card = [DirectRecoveryBridgeV1 desktopWithStage:stage hadFrame:self.lastFramebuffer != nil port:((stage == 10 || stage == 11 || (stage >= 110 && stage <= 115)) ? self.sshPort ?: 22 : self.servicePort ?: 5900) retry:^{ [weak start]; } edit:^{ [weak editRecoveryLogin]; }];
+    UIViewController *card = [DirectRecoveryBridgeV1 desktopWithStage:stage hadFrame:self.lastFramebuffer != nil port:((stage == 10 || stage == 11 || (stage >= 110 && stage <= 115)) ? self.sshPort ?: 22 : self.servicePort ?: 5900) textInterrupted:self.textSendInterrupted retry:^{ [weak start]; } edit:^{ [weak editRecoveryLogin]; }];
     [self showRecoveryController:card overFrame:self.lastFramebuffer != nil];
     self.loginIssueDetails = [DirectRecoveryBridgeV1 desktopDetailsWithStage:stage hadFrame:self.lastFramebuffer != nil port:((stage == 10 || stage == 11 || (stage >= 110 && stage <= 115)) ? self.sshPort ?: 22 : self.servicePort ?: 5900)];
     [self updateConnectionChrome];
@@ -581,6 +589,7 @@
 - (void)showConnectionFailure { [self showConnectionFailureStage:0]; }
 - (void)showConnectionFailureStage:(NSInteger)stage {
     [self invalidateTextReview:NO]; self.textReviewViewportPending=NO;
+    [self retireTextDraft];
     self.starting = NO; self.checkingResume = NO; self.resumeGeneration++;
     if (self.sessionPhaseHandler) self.sessionPhaseHandler(@"ended");
     [self clearCursor]; [self resetModifiers]; self.connect.enabled = YES;
@@ -603,6 +612,7 @@
 }
 - (void)background { [self backgroundWithCompletion:nil]; }
 - (void)backgroundWithCompletion:(void (^)(void))completion {
+    [self retireTextDraft];
     if (!self.foreground || self.exited) { if (completion) completion(); return; }
     self.reconnectWhenReady = self.session.running || self.starting;
     self.foreground = NO; self.image.alpha = .45; self.resumeGeneration++; self.checkingResume = NO;
@@ -1349,6 +1359,7 @@
     if (self.presentationHandler) self.presentationHandler(value);
 }
 - (void)setInputOnly:(BOOL)value {
+    if (_inputOnly != value) { [self retireTextDraft]; self.textComposer = nil; }
     _inputOnly = value;
     if (self.quickActionsProvider) self.quickActions = self.quickActionsProvider(value);
     if (self.isViewLoaded) {
@@ -1392,6 +1403,7 @@
     if ([kind isEqual:@"copyText"]) { [self showCopyScreenText]; return; }
     if ([kind isEqual:@"viewMenu"]) { [self showViewMenu]; return; }
     if ([kind isEqual:@"inputMenu"]) { [self showInputMenu]; return; }
+    if ([kind isEqual:@"composeText"]) { [self showTextComposer]; return; }
     if ([kind isEqual:@"appSettings"]) { if (self.appSettingsHandler) self.appSettingsHandler(); return; }
     if ([kind isEqual:@"gestures"]) { [self showGestureHelp]; return; }
     if ([kind isEqual:@"exit"]) { [self showMacs]; return; }
@@ -1517,11 +1529,61 @@
             @{@"kind": @"setPointer", @"title": @"Pointer", @"symbol": @"cursorarrow", @"selected": @(!self.trackpadMode), @"disabled": @(self.inputOnly)},
             @{@"kind": @"setTrackpad", @"title": @"Trackpad", @"symbol": @"cursorarrow.motionlines", @"selected": @(self.trackpadMode)}]},
         @{@"title": @"Keyboard", @"items": @[
+            @{@"kind": @"composeText", @"title": @"Compose Text", @"symbol": @"square.and.pencil"},
             @{@"kind": @"keyboard", @"title": self.input.isFirstResponder ? @"Hide Keyboard" : @"Show Keyboard", @"symbol": self.input.isFirstResponder ? @"keyboard.chevron.compact.down" : @"keyboard"},
             @{@"kind": @"keys", @"title": @"Extra Keys", @"symbol": @"keyboard", @"submenu": @YES, @"push": @YES}]},
         @{@"title": @"Preferences & Help", @"items": @[
             @{@"kind": @"input", @"title": @"Input & Quick Actions", @"symbol": @"slider.horizontal.3", @"submenu": @YES},
             @{@"kind": @"gestures", @"title": @"Gesture Guide", @"symbol": @"hand.draw"}]}]];
+}
+- (void)retireTextDraft {
+    if (self.textComposer.sending) self.textSendInterrupted = YES;
+    self.textGeneration++; [self.textComposer invalidate];
+}
+- (void)showTextSendWarning {
+    if (self.recoveryController) return;
+    __weak CompanionVNCViewer *weak = self;
+    [self showRecoveryController:[DirectRecoveryBridgeV1 interruptedTextWithDone:^{
+        [weak acknowledgeTextSendWarning];
+    }] overFrame:self.lastFramebuffer != nil];
+}
+- (void)acknowledgeTextSendWarning {
+    self.textSendInterrupted = NO;
+    [self clearRecovery]; self.image.alpha = 1; [self updateConnectionChrome];
+}
+- (void)showTextComposer {
+    if (self.textReview || !self.foreground || self.exited || self.checkingResume || !self.session.composedTextReady) return;
+    if (!self.textComposer) self.textComposer = [[DirectTextComposer alloc] initWithMacName:self.macName ?: @"Mac" mode:self.inputOnly ? @"trackpad" : @"desktop"];
+    [self.view endEditing:YES]; [self resetModifiers]; [self releasePointer];
+    [self cancelTrackpadTouches]; [self.controls close];
+    __weak CompanionVNCViewer *weak = self;
+    __weak CompanionVNCSession *owner = self.session;
+    NSUInteger generation = self.textGeneration;
+    self.textComposer.interruptionHandler = ^{ weak.textSendInterrupted = YES; };
+    void (^present)(void) = ^{
+        CompanionVNCViewer *strong = weak;
+        if (!strong || strong.textReview || strong.session != owner || strong.textGeneration != generation
+            || !strong.foreground || strong.exited || strong.checkingResume || !owner.composedTextReady) return;
+        [strong.textComposer presentFrom:strong available:^BOOL {
+            CompanionVNCViewer *current = weak;
+            return current && owner && current.session == owner && current.textGeneration == generation
+                && current.foreground && !current.exited && !current.checkingResume && !current.textReview && owner.composedTextReady;
+        } send:^(NSString *text, void (^complete)(NSString *)) {
+            CompanionVNCViewer *current = weak;
+            if (!current || !owner || current.session != owner || current.textGeneration != generation
+                || !current.foreground || current.exited || current.checkingResume || current.textReview || !owner.composedTextReady) {
+                complete(@"The session changed. Nothing was sent."); return;
+            }
+            [current resetModifiers];
+            NSArray *events = [DirectTextComposer desktopEvents:text];
+            if (![owner tryComposedTextEvents:events completion:^(BOOL written) {
+                if (!written && weak.textGeneration == generation) weak.textSendInterrupted = YES;
+                complete(written ? nil : @"Text may have been partially sent. Check your Mac before sending it again.");
+            }]) complete(@"Input is busy. Nothing was queued. Try Send Text again.");
+        }];
+    };
+    if (self.presentedViewController) [self dismissViewControllerAnimated:YES completion:present];
+    else present();
 }
 - (void)showConnectionDetails {
     NSString *message = [NSString stringWithFormat:@"%@\n\n%@\n\nDesktop: %.0f × %.0f\nIndividual displays: %lu", self.status.text ?: @"", [self configuredConnectionDetails], self.framebufferSize.width, self.framebufferSize.height, (unsigned long)self.displayViews.count];

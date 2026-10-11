@@ -808,6 +808,12 @@
       "kind": "client.nativeMac.v1",
       "expect": "valid",
       "canonicalSHA256": "ceca82d6e0b6c99a0c34fa571877e579d1c409fcf217eeeb9c0d01929bff2880"
+    },
+    {
+      "path": "ios-text-composer-v1.json",
+      "kind": "client.iosTextComposer.v1",
+      "expect": "valid",
+      "canonicalSHA256": "4846675db3ad21d4f8b4d48145cb47dd12b62da0877c5fb143e6a2884788ea2d"
     }
   ]
 }

@@ -28,6 +28,7 @@
 - (void)frame:(UIImage *)frame;
 - (BOOL)canCopyScreenText;
 - (void)showCopyScreenText;
+- (void)showTextComposer;
 - (void)invalidateTextReview:(BOOL)resume;
 - (void)backgroundWithCompletion:(void (^)(void))completion;
 @end
@@ -297,6 +298,94 @@
     session.frameHandler=^(UIImage *image){[fresh fulfill];}; XCTAssertEqual(write(pair[1],frame,sizeof(frame)),sizeof(frame));
     [self waitForExpectations:@[fresh] timeout:2]; XCTAssertTrue(session.connected);
     session.frameHandler=nil; [session stop]; [self waitForExpectations:@[ended] timeout:3]; session.stateHandler=nil; close(pair[1]);
+}
+- (void)testComposerAdmissionWaitsForPresentedReplacementDesktopAndRechecksReset {
+    NSURL *url=[[NSBundle bundleForClass:self.class] URLForResource:@"ios-text-composer-v1" withExtension:@"json"];
+    NSDictionary *fixture=[NSJSONSerialization JSONObjectWithData:[NSData dataWithContentsOfURL:url] options:0 error:NULL];
+    NSDictionary *policy=fixture[@"lifecycle"][@"admission"][@"replacementDesktop"];
+    NSMutableArray *events=[NSMutableArray new];
+    for(NSDictionary *entry in fixture[@"cases"]) if([entry[@"name"] isEqual:@"ascii"])
+        for(NSNumber *key in entry[@"desktopKeys"]) for(NSNumber *down in @[@YES,@NO]) [events addObject:@{@"key":key,@"down":down}];
+    XCTAssertGreaterThan(events.count,0);
+    CompanionVNCViewer *viewer=[CompanionVNCViewer new]; [viewer loadViewIfNeeded];
+    viewer.view.frame=CGRectMake(0,0,440,956); [viewer.view layoutIfNeeded];
+    [viewer setValue:@YES forKey:@"foreground"];
+    UIImage *retained=[self image:CGSizeMake(800,600) scale:1 text:@"Retained synthetic desktop"];
+    [viewer frame:retained]; [viewer prepareConnection]; CompanionVNCSession *session=viewer.session;
+    rfbClient *client=rfbGetClient(8,3,4); client->width=4; client->height=4;
+    [session configureClient:client]; XCTAssertTrue([session allocate:client]);
+    for(NSString *key in @[@"running",@"established",@"inputReady"]) [session setValue:@YES forKey:key];
+    XCTAssertTrue(session.connected); XCTAssertEqual([viewer valueForKey:@"lastFramebuffer"],retained);
+    void (^assertRejected)(NSString *)=^(NSString *stage) {
+        XCTAssertEqual(session.composedTextReady,[policy[stage] boolValue],@"%@",stage);
+        XCTAssertEqual([session tryComposedTextEvents:events completion:^(BOOL written){XCTFail(@"Unseen Desktop cannot admit text");}],
+            [policy[stage] boolValue],@"%@",stage);
+        XCTAssertEqual([[session valueForKey:@"events"] count],0);
+    };
+    assertRejected(@"beforeFirstFrame"); [viewer showTextComposer]; XCTAssertNil([viewer valueForKey:@"textComposer"]);
+    client->GotFrameBufferUpdate(client,0,0,4,2); [session publishFrame:client];
+    assertRejected(@"partialFrame"); [viewer showTextComposer]; XCTAssertNil([viewer valueForKey:@"textComposer"]);
+    XCTestExpectation *presented=[self expectationWithDescription:@"Current replacement frame presented before composer admission"];
+    void (^deliver)(UIImage *)=[session.frameHandler copy];
+    session.frameHandler=^(UIImage *image) {
+        assertRejected(@"completeBeforePresentation"); deliver(image); [presented fulfill];
+    };
+    client->GotFrameBufferUpdate(client,0,2,4,2); [session publishFrame:client];
+    [self waitForExpectations:@[presented] timeout:1];
+    XCTAssertEqual(session.composedTextReady,[policy[@"presentedCurrentFrame"] boolValue]);
+    XCTestExpectation *retired=[self expectationWithDescription:@"Reset retires the admitted composer group once"];
+    __block NSUInteger replies=0;
+    XCTAssertEqual([session tryComposedTextEvents:events completion:^(BOOL written){replies++; XCTAssertFalse(written); [retired fulfill];}],
+        [policy[@"presentedCurrentFrame"] boolValue]);
+    XCTAssertTrue([session resetBaseline:client]); assertRejected(@"afterBaselineReset");
+    [self waitForExpectations:@[retired] timeout:1]; XCTAssertEqual(replies,1);
+    session.frameHandler=nil; [viewer stopViewer]; [session setValue:@NO forKey:@"running"];
+    client->frameBuffer=NULL; rfbClientCleanup(client);
+}
+- (void)testTrackpadComposerAdmitsWithoutDesktopPixelsOnAuthenticatedOwner {
+    NSURL *url=[[NSBundle bundleForClass:self.class] URLForResource:@"ios-text-composer-v1" withExtension:@"json"];
+    NSDictionary *fixture=[NSJSONSerialization JSONObjectWithData:[NSData dataWithContentsOfURL:url] options:0 error:NULL];
+    NSMutableArray *events=[NSMutableArray new];
+    for(NSDictionary *entry in fixture[@"cases"]) if([entry[@"name"] isEqual:@"ascii"])
+        for(NSNumber *key in entry[@"desktopKeys"]) for(NSNumber *down in @[@YES,@NO]) [events addObject:@{@"key":key,@"down":down}];
+    CompanionVNCSession *session=[CompanionVNCSession new]; session.inputOnly=YES;
+    for(NSString *key in @[@"running",@"established",@"inputReady"]) [session setValue:@YES forKey:key];
+    XCTAssertFalse(session.desktopFrameReady); XCTAssertEqualObjects([session valueForKey:@"baselinePresented"],@NO);
+    BOOL admitted=[fixture[@"lifecycle"][@"admission"][@"trackpadWithoutPixels"] boolValue];
+    XCTAssertEqual(session.composedTextReady,admitted);
+    XCTestExpectation *retired=[self expectationWithDescription:@"Unwritten Trackpad composer group retires"];
+    XCTAssertEqual([session tryComposedTextEvents:events completion:^(BOOL written){XCTAssertFalse(written); [retired fulfill];}],admitted);
+    [session pauseWithCompletion:nil]; XCTAssertFalse(session.composedTextReady);
+    [self waitForExpectations:@[retired] timeout:1];
+    [session stop]; [session setValue:@NO forKey:@"running"];
+}
+- (void)testReviewAndBaselineResetCancelQueuedComposedTextOnce {
+    NSURL *url=[[NSBundle bundleForClass:self.class] URLForResource:@"ios-text-composer-v1" withExtension:@"json"];
+    NSDictionary *fixture=[NSJSONSerialization JSONObjectWithData:[NSData dataWithContentsOfURL:url] options:0 error:NULL];
+    NSDictionary *policy=fixture[@"lifecycle"][@"screenTextReview"];
+    NSMutableArray *events=[NSMutableArray new];
+    for(NSDictionary *entry in fixture[@"cases"]) if([entry[@"name"] isEqual:@"ascii"])
+        for(NSNumber *key in entry[@"desktopKeys"]) for(NSNumber *down in @[@YES,@NO]) [events addObject:@{@"key":key,@"down":down}];
+    XCTAssertGreaterThan(events.count,0);
+    for(NSNumber *reviewBoundary in @[@YES,@NO]) {
+        CompanionVNCSession *session=[CompanionVNCSession new]; rfbClient *client=rfbGetClient(8,3,4);
+        client->width=2; client->height=2; [session configureClient:client]; XCTAssertTrue([session allocate:client]);
+        for(NSString *key in @[@"running",@"established",@"inputReady",@"baselinePresented"]) [session setValue:@YES forKey:key];
+        XCTestExpectation *cancelled=[self expectationWithDescription:@"Queued composed send completes as interrupted"];
+        __block NSUInteger replies=0;
+        XCTAssertTrue([session tryComposedTextEvents:events completion:^(BOOL written){
+            replies++; XCTAssertEqual(written,[policy[@"cancelQueuedCompletionWritten"] boolValue]); [cancelled fulfill];
+        }]);
+        if(reviewBoundary.boolValue) XCTAssertTrue([session suspendInputForReview:nil]);
+        else XCTAssertTrue([session resetBaseline:client]);
+        [self waitForExpectations:@[cancelled] timeout:1];
+        XCTAssertEqual([[session valueForKey:@"events"] count],0);
+        XCTAssertEqual([[session valueForKey:@"composedTextReplies"] count],[policy[@"repliesAfterReview"] unsignedIntegerValue]);
+        XCTAssertEqual([session tryComposedTextEvents:events completion:^(BOOL written){XCTFail(@"Closed input gate must reject composer");}],
+            [policy[@"allowsSendDuringReview"] boolValue]);
+        [session stop]; XCTAssertEqual(replies,1); [session setValue:@NO forKey:@"running"];
+        client->frameBuffer=NULL; rfbClientCleanup(client);
+    }
 }
 - (void)testFrameReceivedBeforeOwnerResetsBaselineCannotReopenInput {
     CompanionVNCSession *session=[CompanionVNCSession new]; rfbClient *client=rfbGetClient(8,3,4);

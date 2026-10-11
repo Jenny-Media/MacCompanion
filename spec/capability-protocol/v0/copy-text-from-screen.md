@@ -28,8 +28,9 @@ ask for a smaller area rather than silently reducing resolution.
 
 Before presenting, close input admission and acknowledge release of held remote
 keys/buttons/gestures on the existing socket owner. Keep receiving live frames
-and connection state. Every remote input entry point remains closed during
-review. Return to Live Desktop requests a fresh complete frame before reopening
+and connection state. Every remote input entry point, including composed text, remains closed during
+review. Opening review retires queued and copied composed-text groups with one
+failed local completion; a later return cannot replay their remaining events. Return to Live Desktop requests a fresh complete frame before reopening
 input; it preserves the viewport only when its display crop remains valid.
 Background during that wait pauses the established owner without disconnecting.
 If the display baseline changes during presentation, the superseded callback
