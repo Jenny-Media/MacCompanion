@@ -77,6 +77,8 @@ not introduce a connection mode or require a Mac Companion helper.
   unsaved downloads or interrupted transfers. Cancel must keep them available.
   Swiping a standalone iPhone Files sheet or using the Mac window close control
   must be blocked while these results remain. Confirmed Done must still close.
+  On Mac, one Done → Close Files confirmation must close that window immediately;
+  Cancel must keep the download available, and another Files window must stay open.
 - With a saved SSH password, edit Files' account/password and turn Save SSH login
   off. Open Setup Guide and dismiss it; the edited fields and off choice must stay.
 - Leave Files open while editing the saved Mac's name, addresses or SSH port in
@@ -160,3 +162,8 @@ SwiftUI button accessibility nodes; actual iPhone Cancel interaction remains
 part of native UI acceptance.
 Native window automation and physical file-provider acceptance are
 separate from hosted rendering and protocol tests.
+
+`SettingsFeedbackUITests` exercises the actual macOS WindowGroup with a disposable
+loopback SSH/SFTP fixture and an unsaved download. It checks blocked Command-W,
+Cancel preserving the download, and one confirmed Done closing only its owning
+window while another Files window and My Macs remain open.

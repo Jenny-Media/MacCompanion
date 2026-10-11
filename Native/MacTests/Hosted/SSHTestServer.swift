@@ -87,3 +87,53 @@ final class SSHTestPTY: ChannelDuplexHandler, @unchecked Sendable {
     }
     func errorCaught(context:ChannelHandlerContext,error:Error) { context.close(promise:nil) }
 }
+
+/// The only server here is a disposable XCTest transport to macOS's own SFTP
+/// executable. No server, shell process or helper is linked into either client.
+final class FilesTestSFTPProcess: ChannelDuplexHandler, @unchecked Sendable {
+    typealias InboundIn = SSHChannelData
+    typealias OutboundIn = SSHChannelData
+    typealias OutboundOut = SSHChannelData
+    private let root: URL
+    private let allowSFTP: Bool
+    private let responseDelay: TimeAmount
+    private var process: Process?
+    private var input: Pipe?
+    private var output: Pipe?
+    init(root: URL, allowSFTP: Bool, responseDelay: TimeAmount) { self.root = root; self.allowSFTP = allowSFTP; self.responseDelay = responseDelay }
+    func userInboundEventTriggered(context: ChannelHandlerContext, event: Any) {
+        guard let request = event as? SSHChannelRequestEvent.SubsystemRequest else { context.fireUserInboundEventTriggered(event); return }
+        guard allowSFTP, request.subsystem == "sftp", process == nil else { context.triggerUserOutboundEvent(ChannelFailureEvent(), promise: nil); return }
+        let process = Process(), input = Pipe(), output = Pipe(), channel = context.channel
+        process.executableURL = URL(fileURLWithPath: "/usr/libexec/sftp-server")
+        process.arguments = ["-d", root.path]; process.currentDirectoryURL = root
+        process.standardInput = input; process.standardOutput = output; process.standardError = FileHandle.nullDevice
+        self.process = process; self.input = input; self.output = output
+        let delay = responseDelay
+        output.fileHandleForReading.readabilityHandler = { handle in
+            let bytes = handle.availableData
+            if bytes.isEmpty { handle.readabilityHandler = nil; channel.close(promise: nil) }
+            else {
+                channel.eventLoop.scheduleTask(in: delay) {
+                    guard channel.isActive else { return }
+                    channel.writeAndFlush(SSHChannelData(type: .channel, data: .byteBuffer(ByteBuffer(bytes: bytes))), promise: nil)
+                }
+            }
+        }
+        do { try process.run(); context.triggerUserOutboundEvent(ChannelSuccessEvent(), promise: nil) }
+        catch { context.triggerUserOutboundEvent(ChannelFailureEvent(), promise: nil); stop() }
+    }
+    func channelRead(context: ChannelHandlerContext, data: NIOAny) {
+        guard case .byteBuffer(let buffer) = unwrapInboundIn(data).data, let input else { context.close(promise: nil); return }
+        do { try input.fileHandleForWriting.write(contentsOf: Data(buffer.readableBytesView)) }
+        catch { context.close(promise: nil) }
+    }
+    func channelInactive(context: ChannelHandlerContext) { stop(); context.fireChannelInactive() }
+    func errorCaught(context: ChannelHandlerContext, error: Error) { context.close(promise: nil) }
+    private func stop() {
+        output?.fileHandleForReading.readabilityHandler = nil
+        try? input?.fileHandleForWriting.close(); try? output?.fileHandleForReading.close()
+        if process?.isRunning == true { process?.terminate() }
+        process = nil; input = nil; output = nil
+    }
+}

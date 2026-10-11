@@ -147,6 +147,9 @@ control requires an explicit warning if closing its owner will lose private
 unsaved downloads or retries.
 Standalone sheet swipes and native window-close controls MUST be disabled while
 that warning is required; Done provides the explicit Close/Discard confirmation.
+On macOS, accepting Close Files MUST close only the owning native window on the
+first confirmation, even while its last rendered dismissal policy is disabled.
+Cancelling the warning MUST preserve the owner and pending results.
 Retained Files sheets may still be hidden without discarding the owner's results.
 Password-based Files login follows Terminal retention: disabling saved login
 removes the existing saved password before connecting, without removing keys or

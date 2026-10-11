@@ -9,6 +9,7 @@ struct DirectFilesView: View {
     // The owner is the source of truth even when the library or parent changes.
     var mac: DirectMacRecordV1 { session.mac }
     let retainWhenDismissed: Bool
+    private let closeOwnerWindow: (@MainActor () -> Void)?
     @State private var session: DirectFilesSession
     @State private var login = TerminalLoginSelection()
     @State private var password = ""
@@ -44,9 +45,15 @@ struct DirectFilesView: View {
         var action: String { switch self { case .disconnect: "Disconnect"; case .close: "Close Files"; case .discard: "Discard" } }
     }
     private struct Export: Identifiable { let id = UUID(); let resultID: UUID; let url: URL }
-    init(mac: DirectMacRecordV1, session: DirectFilesSession? = nil, retainWhenDismissed: Bool = false) {
+    init(mac: DirectMacRecordV1, session: DirectFilesSession? = nil, retainWhenDismissed: Bool = false,
+         closeOwnerWindow: (@MainActor () -> Void)? = nil) {
         self.retainWhenDismissed = retainWhenDismissed
+        self.closeOwnerWindow = closeOwnerWindow
         _session = State(initialValue: session ?? DirectFilesSession(mac: mac))
+    }
+    private func finishDismissal() {
+        if let closeOwnerWindow { closeOwnerWindow() }
+        else { dismiss() }
     }
     private var canConnect: Bool {
         !login.username.isEmpty && !session.busy && !preparingKey &&
@@ -72,7 +79,7 @@ struct DirectFilesView: View {
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) { Button("Done") {
                     if preventsDismissal { confirmation = .close }
-                    else { dismiss() }
+                    else { finishDismissal() }
                 }.accessibilityIdentifier("files-done") }
                 ToolbarItem(placement: .primaryAction) {
                     Menu("More", systemImage: "ellipsis.circle") {
@@ -113,7 +120,7 @@ struct DirectFilesView: View {
                 Button(intent.action, role: .destructive) {
                     confirmation = nil
                     if intent == .discard { session.discardResults() }
-                    else if session.confirmExit(intent == .close ? .close : .disconnect, retainWhenDismissed: retainWhenDismissed) { dismiss() }
+                    else if session.confirmExit(intent == .close ? .close : .disconnect, retainWhenDismissed: retainWhenDismissed) { finishDismissal() }
                 }
                 Button("Cancel", role: .cancel) { confirmation = nil }
             } message: { intent in
