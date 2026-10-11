@@ -1,0 +1,66 @@
+# iOS session text composer
+
+Issue: [Native text composer](https://github.com/Jenny-Media/MacCompanion/issues/7).
+
+Desktop, Trackpad & Keyboard and Terminal now expose **Compose Text** under
+**Keyboard & Input**. This free iOS tool uses a native multiline editor with
+selection, composition and explicit Paste. Editing sends no remote input.
+**Back to Session** keeps the draft so the user can choose remote focus; reopening
+the composer returns to that draft. **Discard** asks before clearing it.
+
+The only delivery action is **Send Text**. Spaces, tabs and trailing line breaks
+are preserved. CRLF, CR and Unicode line separators become LF. A draft containing
+line breaks or tabs requires confirmation, including an explicit warning when it
+ends with a line break. No extra Return is appended.
+
+- Desktop and Trackpad type Unicode key events into the currently focused Mac
+  app. A line break presses Return; a tab presses Tab. These can submit content,
+  run commands or change focus.
+- Terminal writes UTF-8 to the current SSH PTY. It reads the program's current
+  bracketed-paste mode at delivery time. Without that mode, embedded line breaks
+  can run commands. Selecting Send Text does not prevent command execution.
+
+The editable draft is bounded to 16 KiB UTF-8. An oversized paste is rejected as
+a whole. A Desktop send is limited to 256 Unicode scalars by its balanced
+512-event queue; a Terminal send is limited to 4096 UTF-8 bytes before optional
+paste framing. Other C0/C1 controls are rejected. Oversized sendable content stays
+editable and is never silently truncated.
+
+Each draft belongs to one viewer or PTY generation. Background, app lock,
+connection replacement, mode change and session end clear it. There is no storage,
+sync, clipboard monitoring, diagnostic content or automatic input replay. Once a
+send is admitted, editing, dismissal and duplicate sends are disabled until the
+local write completes. Queue rejection keeps the draft. Interrupted writes report
+uncertain delivery on the composer or session screen and require a deliberate
+next action. Local completion does not acknowledge remote app consumption.
+
+The specification and manifest-indexed `ios-text-composer-v1.json` define the
+encoding and confirmation cases. Native QA covers all three entry points,
+balanced VNC packets, PTY bytes, draft retirement and explicit confirmation.
+macOS UI and the legacy Observe/Act/Control protocol are unchanged.
+
+## Verification
+
+- Stable Xcode 27.0 (27A266a): native iOS build passes; recorded hashes match all
+  590 current source inputs.
+- `bash scripts/validate.sh`: passes. All 135 manifest-indexed fixtures and the
+  native appearance boundary also pass their final checks.
+- Focused composer checks: 10 passed, zero failures or skips. Includes all three
+  native entry points, marked-text editing, oversized editor input, app lock with
+  a hidden draft, balanced VNC socket packets and actual SSH PTY bytes.
+- Full native suite on the isolated Simulator: 226 tests, 13 optional tests
+  skipped, one existing cloud-sync read-count assertion failed. That test passed
+  in isolation; the full run is not recorded as wholly green. StoreKit/Pro cases
+  also pass after the fresh Simulator's test configuration initialized.
+- OpenSSH export and sandboxed key-setup interoperability checks pass.
+
+The shared QA Simulator had another QA app active and interrupted test processes.
+Final checks used the temporary **Mac Companion Composer QA** Simulator
+(`29EA219C-C71E-45A5-91F7-4337C0151753`, iPhone 18 Pro Max, iOS 27.0). Captures
+and generated build/test artifacts remain outside the checkout.
+
+Physical acceptance still needs an iPhone/iPad connected to built-in macOS Screen
+Sharing and Remote Login: native IME and dictation, explicit Paste, Unicode and
+emoji in a remote text editor, desktop Return/Tab behavior, and multiline shell
+input with bracketed paste enabled and disabled. Simulator and synthetic socket
+checks do not establish those hardware results.

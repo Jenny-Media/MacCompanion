@@ -352,6 +352,51 @@ session; local display/input settings remain available during recovery.
 Admit the complete custom action into the bounded input queue or none of it.
 A busy queue reports a retryable issue without partial text or a disconnect.
 
+## iOS session text composer
+
+Desktop, Trackpad & Keyboard and Terminal offer a free **Compose Text** session
+tool under Keyboard & Input. macOS does not expose this tool. A native multiline
+editor holds an ephemeral, device-local draft bound to its originating viewer or
+PTY generation. **Back to Session** retains the unsent draft so the user can focus
+the remote destination; **Discard** clears it. Background, app lock, connection
+replacement and session closure clear the draft and dismiss its editor. Neither
+the draft nor its content enters storage, sync, diagnostics or ActivityKit.
+
+The only delivery action is **Send Text**. It never appends Return. Clipboard
+reads require an explicit native Paste action. Preserve spaces and trailing line
+breaks; normalize CRLF, CR and Unicode line/paragraph separators to LF. Reject
+other C0/C1 controls (including NUL and Escape), except Tab. Bound the editable
+draft to 16 KiB UTF-8 without silently truncating pasted content. Desktop sends
+at most 256 Unicode scalars; Terminal sends at most 4096 UTF-8 bytes, excluding
+bracketed-paste framing. A too-large draft remains editable and cannot be sent.
+
+Desktop delivery uses balanced Unicode RFB key events, with LF represented by
+Return and Tab by the Tab keysym, clearing armed modifiers. It is typing into
+whatever currently has focus, not clipboard synchronization or semantic field
+selection. Every draft containing LF or Tab requires explicit confirmation that
+line breaks may submit content/run commands and tabs may change focus. Admit the
+whole event group into the existing bounded queue or none of it.
+
+Terminal sends UTF-8 to its existing PTY owner and wraps it in bracketed-paste
+markers only when the current terminal mode requests them. Every draft containing
+LF or Tab requires explicit confirmation; without bracketed paste these can run
+commands or change terminal input. Never describe Send Text as preventing command
+execution, even though it adds no extra Return.
+
+Confirmation binds the exact reviewed text. At sending time, recheck app unlock,
+foreground/input admission and the originating connection generation. A busy
+queue keeps the draft with a non-destructive error. Once admitted, disable editing
+and duplicate sends until the local transport write completes or fails. A local
+write completion is not remote application consumption. Partial/uncertain writes
+are reported without automatic retry; lifecycle interruption retires callbacks
+and never replays input. Saving reusable snippets remains a separate existing
+Pro tool with its current limits and protected storage.
+
+The manifest-indexed `ios-text-composer-v1.json` records text normalization,
+Unicode/keysym encoding, bracketed-paste framing and confirmation cases. Synthetic
+checks do not establish built-in Screen Sharing Unicode compatibility or native
+dictation/IME acceptance on a physical iPhone.
+
 ## Optional session Live Activity
 
 “Show session in Dynamic Island” is enabled by default, persisted locally and

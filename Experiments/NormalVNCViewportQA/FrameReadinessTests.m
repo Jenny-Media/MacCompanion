@@ -17,6 +17,44 @@
 @interface FrameReadinessTests : XCTestCase
 @end
 @implementation FrameReadinessTests
+- (void)testComposerCompletionFollowsExactUnicodeKeyPacketsWithoutExtraReturn {
+    NSURL *url = [[NSBundle bundleForClass:self.class] URLForResource:@"ios-text-composer-v1" withExtension:@"json"];
+    NSDictionary *fixture = [NSJSONSerialization JSONObjectWithData:[NSData dataWithContentsOfURL:url] options:0 error:NULL];
+    for (NSDictionary *vector in fixture[@"cases"]) {
+        if ([vector[@"invalid"] boolValue]) continue;
+        int pair[2]; XCTAssertEqual(socketpair(AF_UNIX, SOCK_STREAM, 0, pair), 0);
+        int yes = 1; setsockopt(pair[0], SOL_SOCKET, SO_NOSIGPIPE, &yes, sizeof(yes));
+        struct timeval timeout = {.tv_sec = 1}; setsockopt(pair[1], SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+        CompanionVNCSession *session = [CompanionVNCSession new];
+        rfbClient *client = rfbGetClient(8, 3, 4); client->sock = pair[0]; client->width = 2; client->height = 2;
+        [session configureClient:client]; XCTAssertTrue([session allocate:client]);
+        client->supportedMessages.client2server[0] |= (1 << rfbKeyEvent) | (1 << rfbPointerEvent);
+        // Input-only owns the same key writer and needs no desktop pixels.
+        [session setValue:@YES forKey:@"inputOnly"]; [session setValue:@YES forKey:@"running"];
+        [session setValue:@YES forKey:@"inputReady"]; [session registerSocket:pair[0]];
+        NSMutableArray *events = [NSMutableArray new]; NSMutableData *expected = [NSMutableData new];
+        for (NSNumber *key in vector[@"desktopKeys"]) {
+            uint32_t value = key.unsignedIntValue;
+            for (NSNumber *down in @[@YES, @NO]) {
+                [events addObject:@{@"key": key, @"down": down}];
+                uint8_t packet[] = {4, down.boolValue, 0, 0, value >> 24, value >> 16, value >> 8, value};
+                [expected appendBytes:packet length:sizeof(packet)];
+            }
+        }
+        XCTestExpectation *written = [self expectationWithDescription:@"The whole text group reached the local socket"];
+        __block NSUInteger replies = 0;
+        XCTAssertTrue([session tryComposedTextEvents:events completion:^(BOOL success) { replies++; XCTAssertTrue(success); [written fulfill]; }]);
+        XCTestExpectation *ended = [self expectationWithDescription:@"Synthetic VNC worker stopped"];
+        session.stateHandler = ^(NSString *state, NSDictionary *stats) { if (!session.running) [ended fulfill]; };
+        dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{ [session processConnectedClient:client]; });
+        NSMutableData *received = [NSMutableData dataWithLength:expected.length];
+        XCTAssertEqual(recv(pair[1], received.mutableBytes, received.length, MSG_WAITALL), expected.length);
+        XCTAssertEqualObjects(received, expected, @"%@", vector[@"name"]);
+        [self waitForExpectations:@[written] timeout:1]; XCTAssertEqual(replies, 1);
+        [session stop]; [self waitForExpectations:@[ended] timeout:1]; XCTAssertEqual(replies, 1);
+        close(pair[1]);
+    }
+}
 - (NSDictionary *)encodingPolicy {
     NSURL *url=[[NSBundle bundleForClass:self.class] URLForResource:@"direct-screen-sharing-v1" withExtension:@"json"];
     return [NSJSONSerialization JSONObjectWithData:[NSData dataWithContentsOfURL:url] options:0 error:NULL][@"desktopEncodingPolicy"];

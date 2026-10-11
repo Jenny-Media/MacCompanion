@@ -52,6 +52,9 @@ static void QuietLog(const char *format, ...) {
 @interface CompanionVNCSession () {
     NSLock *_lock;
     NSMutableArray<NSDictionary *> *_events;
+#if TARGET_OS_IOS
+    NSMutableDictionary<NSString *, void (^)(BOOL)> *_composedTextReplies;
+#endif
     dispatch_queue_t _worker;
     BOOL _running, _stopping, _framePending, _overflow, _inputReady, _inputOnly, _modeChanged;
     BOOL _paused, _releaseInputRequested, _resumeRequested, _awaitingResumeFrame;
@@ -139,6 +142,9 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
 - (instancetype)init {
     if ((self = [super init])) {
         _lock = [NSLock new]; _events = [NSMutableArray new]; _heldKeys = [NSMutableSet new];
+#if TARGET_OS_IOS
+        _composedTextReplies = [NSMutableDictionary new];
+#endif
         _worker = dispatch_queue_create("media.jenny.maccompanion.rfb.owner", DISPATCH_QUEUE_SERIAL);
         _socket = -1; _wake = dispatch_semaphore_create(0);
         rfbClientLog = QuietLog; rfbClientErr = QuietLog;
@@ -261,6 +267,9 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
     _paused = YES; _pauses++; _inputReady = NO; _releaseInputRequested = YES; _presentationEpoch++;
     [_events removeAllObjects]; _queuedPointerMask = 0; _pauseCompletion = [completion copy];
     [_lock unlock]; dispatch_semaphore_signal(_wake);
+#if TARGET_OS_IOS
+    [self cancelComposedText];
+#endif
 }
 - (void)resume {
     [_lock lock];
@@ -405,7 +414,12 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
             }
             for (NSDictionary *event in events) {
                 [self->_lock lock]; BOOL acceptsInput = self->_inputReady && !self->_paused && !self->_stopping; [self->_lock unlock];
-                if (!acceptsInput) break;
+                if (!acceptsInput) {
+#if TARGET_OS_IOS
+                    [self cancelComposedText];
+#endif
+                    break;
+                }
                 if (event[@"magnifyPhase"]) {
                     healthy = [self sendMagnificationEvent:event client:client];
                 } else if (event[@"scrollPhase"]) {
@@ -420,6 +434,9 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
                     healthy = SendPointerEvent(client, (int)self->_lastX, (int)self->_lastY, [event[@"mask"] intValue]);
                 }
                 [self->_lock lock]; self->_inputs++; [self->_lock unlock];
+#if TARGET_OS_IOS
+                if (healthy && event[@"composedTextID"]) [self completeComposedText:event[@"composedTextID"] written:YES];
+#endif
                 if (!healthy) break;
             }
             if (!healthy) break;
@@ -459,6 +476,9 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
     free(_pixels); _pixels = NULL; CompanionVNCCoverageFree(&_coverage); _username = nil; _password = nil;
     _cursorImage = nil; _cursorPositionKnown = NO; _cursorDirty = NO;
     [_lock lock]; [self cancelNativeGesturesLocked]; _appleGestureServer = NO; _nativeGestureLayout = NO; _running = NO; _inputReady = NO; [_events removeAllObjects]; [_lock unlock];
+#if TARGET_OS_IOS
+    [self cancelComposedText];
+#endif
     [self report:state];
 }
 - (rfbCredential *)credential:(int)type {
@@ -680,6 +700,9 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
     [_lock unlock];
     dispatch_semaphore_signal(_wake);
     if (completion) dispatch_async(dispatch_get_main_queue(), completion);
+#if TARGET_OS_IOS
+    [self cancelComposedText];
+#endif
     // Give the owner a short opportunity to release sent keys, then unblock any
     // stalled partial-frame read. This never affects a newer connection.
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 250 * NSEC_PER_MSEC), dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
@@ -726,4 +749,28 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
     if (allowed) [_events addObjectsFromArray:events];
     [_lock unlock]; return allowed;
 }
+#if TARGET_OS_IOS
+- (BOOL)tryComposedTextEvents:(NSArray<NSDictionary *> *)events completion:(void (^)(BOOL))completion {
+    [_lock lock];
+    BOOL allowed = completion && _running && _inputReady && !_paused && !_stopping && !_overflow
+        && events.count > 0 && CompanionVNCKeyGroupFits(_events.count, events.count, 512);
+    if (allowed) {
+        NSString *identifier = NSUUID.UUID.UUIDString;
+        _composedTextReplies[identifier] = [completion copy];
+        NSMutableArray *group = [events mutableCopy];
+        NSMutableDictionary *last = [group.lastObject mutableCopy]; last[@"composedTextID"] = identifier;
+        group[group.count - 1] = last; [_events addObjectsFromArray:group];
+    }
+    [_lock unlock]; return allowed;
+}
+- (void)completeComposedText:(NSString *)identifier written:(BOOL)written {
+    [_lock lock]; void (^reply)(BOOL) = _composedTextReplies[identifier];
+    [_composedTextReplies removeObjectForKey:identifier]; [_lock unlock];
+    if (reply) dispatch_async(dispatch_get_main_queue(), ^{ reply(written); });
+}
+- (void)cancelComposedText {
+    [_lock lock]; NSArray *replies = _composedTextReplies.allValues; [_composedTextReplies removeAllObjects]; [_lock unlock];
+    for (void (^reply)(BOOL) in replies) dispatch_async(dispatch_get_main_queue(), ^{ reply(NO); });
+}
+#endif
 @end
