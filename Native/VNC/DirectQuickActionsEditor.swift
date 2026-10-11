@@ -22,6 +22,10 @@ enum DirectQuickActionEditing {
             && actions.filter(\.isCustom).count <= VNCQuickAction.maximumCustomCount
             && actions.allSatisfy { $0.valid && $0.compatible(with: mode) }
     }
+    static func canSave(_ actions: [VNCQuickAction], mode: DirectControlMode, hasPro: Bool) -> Bool {
+        // Terminal has no free preferences to save alongside its Pro-only actions.
+        (mode != .terminal || hasPro) && valid(actions, mode: mode)
+    }
     @discardableResult static func add(_ candidate: VNCQuickAction, to actions: inout [VNCQuickAction], mode: DirectControlMode) -> UUID? {
         guard !candidate.isCustom, candidate.compatible(with: mode) else { return nil }
         if let index = actions.firstIndex(where: { $0.kind == candidate.kind }) {
@@ -43,7 +47,7 @@ extension VNCQuickAction {
         let symbols: [(UInt32, String)] = [(0xffe3, "⌃"), (0xffe9, "⌥"), (0xffe1, "⇧"), (0xffeb, "⌘")]
         let special: [UInt32: String] = [0xff1b: "Esc", 0xff09: "Tab", 0xff0d: "↵", 0xff08: "⌫", 0xffff: "⌦", 0xff51: "←", 0xff52: "↑", 0xff53: "→", 0xff54: "↓"]
         return symbols.filter { modifiers.contains($0.0) }.map(\.1).joined()
-            + (special[key] ?? UnicodeScalar(key).map { String($0).uppercased() } ?? "")
+            + (special[key] ?? (key == 0 ? "" : UnicodeScalar(key).map { String($0).uppercased() } ?? ""))
     }
 }
 
@@ -51,11 +55,10 @@ extension VNCQuickAction {
 struct DirectQuickActionLabel: View {
     let action: VNCQuickAction
     var body: some View {
-        HStack {
-            Label(action.displayTitle, systemImage: action.symbol)
-            Spacer(minLength: 8)
-            if action.kind == .shortcut { Text(action.shortcutTitle).foregroundStyle(.secondary) }
-        }
+        // Native menus extract the Label title and discard sibling Text views.
+        Label(action.kind == .shortcut && action.displayTitle != action.shortcutTitle
+            ? action.displayTitle + " · " + action.shortcutTitle : action.displayTitle,
+            systemImage: action.symbol)
     }
 }
 
@@ -366,7 +369,7 @@ struct DirectQuickActionInspector: View {
                         }
                     }
                     TextField("Letter or symbol", text: Binding(get: {
-                        action.key < 0xff00 ? UnicodeScalar(action.key).map(String.init) ?? "" : ""
+                        action.key > 0 && action.key < 0xff00 ? UnicodeScalar(action.key).map(String.init) ?? "" : ""
                     }, set: { value in
                         action.key = value.unicodeScalars.count == 1 ? value.unicodeScalars.first!.value : 0
                     })).autocorrectionDisabled().directNoAutocapitalization().accessibilityIdentifier("quick-action-key")

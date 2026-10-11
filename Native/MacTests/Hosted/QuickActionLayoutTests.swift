@@ -1,9 +1,68 @@
 import AppKit
 import SwiftUI
+import Observation
 import XCTest
 @testable import MacCompanion
 
+@MainActor @Observable private final class ShortcutFieldDraft {
+    var action = VNCQuickAction(title: "Synthetic", kind: .shortcut, key: 0x63, modifiers: [0xffeb])
+}
+
 @MainActor final class QuickActionLayoutTests: XCTestCase {
+    func testShortcutCharacterCanBeClearedAndReplacedInTheNativeField() async throws {
+        let draft = ShortcutFieldDraft()
+        let host = NSHostingView(rootView: DirectQuickActionInspector(
+            action: Binding(get: { draft.action }, set: { draft.action = $0 }), mode: .desktop).frame(width: 600, height: 400))
+        let window = NSWindow(contentRect: .init(x: -20000, y: -20000, width: 600, height: 400), styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false; window.contentView = host
+        defer { window.makeFirstResponder(nil); window.contentView = nil; window.close() }
+        func update() async throws { try await Task.sleep(for: .milliseconds(100)); host.layoutSubtreeIfNeeded() }
+        func descendants(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(descendants) }
+        try await update()
+        let field = try XCTUnwrap(descendants(host).compactMap { $0 as? NSTextField }.first { $0.placeholderString == "Letter or symbol" })
+        XCTAssertTrue(window.makeFirstResponder(field))
+        try await update()
+        let editor = try XCTUnwrap(field.currentEditor() as? NSTextView)
+        editor.setSelectedRange(NSRange(location: 0, length: editor.string.utf16.count)); editor.deleteBackward(nil)
+        try await update()
+        XCTAssertEqual(draft.action.key, 0)
+        XCTAssertEqual(editor.string, "", "An invalid key must not put an invisible NUL into the native field")
+        XCTAssertFalse(draft.action.shortcutTitle.unicodeScalars.contains { $0.value == 0 })
+        editor.insertText("x", replacementRange: NSRange(location: NSNotFound, length: 0))
+        try await update()
+        XCTAssertEqual(draft.action.key, 0x78)
+        XCTAssertEqual(editor.string, "x"); XCTAssertTrue(draft.action.valid)
+        draft.action.key = 0xff09
+        try await update()
+        draft.action.key = 0 // Selecting Character after a special key starts empty.
+        try await update()
+        XCTAssertEqual(editor.string, "")
+        editor.insertText("k", replacementRange: NSRange(location: NSNotFound, length: 0))
+        try await update()
+        XCTAssertEqual(draft.action.key, 0x6b); XCTAssertTrue(draft.action.valid)
+    }
+
+    func testNativeQuickActionsMenusRetainShortcutChordsWithoutRegisteringHostShortcuts() async throws {
+        let actions = [VNCQuickAction(title: "Synthetic Copy", kind: .shortcut, key: 0x63, modifiers: [0xffeb]),
+            VNCQuickAction(title: "⌘K", kind: .shortcut, key: 0x6b, modifiers: [0xffeb]),
+            VNCQuickAction(title: "Right Click", kind: .rightClick)]
+        var performed = 0
+        let live = Menu("Quick Actions", systemImage: "keyboard") {
+            MacQuickActionsMenu(actions: actions, perform: { _ in performed += 1 }, customize: {})
+        }
+        func check<V: View>(_ root: V) async throws {
+            let menu = NSHostingMenu(rootView: root)
+            menu.update(); try await Task.sleep(for: .milliseconds(100))
+            let submenu = try XCTUnwrap(menu.items.first?.submenu)
+            submenu.update(); try await Task.sleep(for: .milliseconds(100))
+            XCTAssertEqual(submenu.items.prefix(3).map(\.title), ["Synthetic Copy · ⌘C", "⌘K", "Right Click"])
+            XCTAssertTrue(submenu.items.allSatisfy { $0.keyEquivalent.isEmpty }, "Remote shortcuts must not become host key equivalents")
+        }
+        try await check(live)
+        try await check(live.labelStyle(.iconOnly))
+        XCTAssertEqual(performed, 0, "Rendering the menu must not execute remote input")
+    }
+
     func testShortcutRecorderOnlyCapturesWhileFocusedAndKeepsTerminalKeysCompatible() throws {
         let capture = DirectShortcutRecorder.Capture()
         let window = NSWindow(contentRect: .init(x: -20000, y: -20000, width: 200, height: 100), styleMask: [.titled], backing: .buffered, defer: false)

@@ -43,7 +43,7 @@ struct MacDesktopSettings: View {
             }.formStyle(.grouped).navigationTitle(mode.title + " Controls")
                 .toolbar {
                     ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
-                    ToolbarItem(placement: .confirmationAction) { Button("Save", action: save).disabled(!readable || !DirectQuickActionEditing.valid(actions, mode: mode)) }
+                    ToolbarItem(placement: .confirmationAction) { Button("Save", action: save).disabled(!readable || !DirectQuickActionEditing.canSave(actions, mode: mode, hasPro: DirectProAccess.shared.hasPro)) }
                 }
         }.frame(width: 820, height: 680).interactiveDismissDisabled().directAppearance().onAppear(perform: reload)
     }
@@ -55,7 +55,8 @@ struct MacDesktopSettings: View {
         fullscreen = macID.map(VNCSessionPreferences.fullscreen) ?? false
     }
     private func save() {
-        guard DirectAppLockV1.shared.canAccess, readable, DirectQuickActionEditing.valid(actions, mode: mode) else { return }
+        guard DirectAppLockV1.shared.canAccess, readable,
+              DirectQuickActionEditing.canSave(actions, mode: mode, hasPro: DirectProAccess.shared.hasPro) else { return }
         do {
             if DirectProAccess.shared.hasPro { try VNCSessionPreferences.saveProfile(actions, mode: mode) }
             if mode == .desktop {

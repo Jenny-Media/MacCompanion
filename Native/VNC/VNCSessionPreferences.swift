@@ -225,7 +225,7 @@ struct VNCInputSettings: View {
             .navigationTitle(mode == .trackpad ? "Trackpad Controls" : mode.title + " Controls").directInlineNavigationTitle()
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
-                ToolbarItem(placement: .confirmationAction) { Button("Save") { save() }.disabled(!actionsReadable || !DirectQuickActionEditing.valid(actions, mode: mode)) }
+                ToolbarItem(placement: .confirmationAction) { Button("Save") { save() }.disabled(!actionsReadable || !DirectQuickActionEditing.canSave(actions, mode: mode, hasPro: DirectProAccess.shared.hasPro)) }
             }
         }.interactiveDismissDisabled().directAppearance()
     }
@@ -256,7 +256,8 @@ struct VNCInputSettings: View {
         catch { actionsReadable = false }
     }
     private func save() {
-        guard DirectAppLockV1.shared.canAccess, actionsReadable, DirectQuickActionEditing.valid(actions, mode: mode) else { return }
+        guard DirectAppLockV1.shared.canAccess, actionsReadable,
+              DirectQuickActionEditing.canSave(actions, mode: mode, hasPro: DirectProAccess.shared.hasPro) else { return }
         do {
             if DirectProAccess.shared.hasPro { try VNCSessionPreferences.saveProfile(actions, mode: mode) }
             if let macID, mode != .terminal {
