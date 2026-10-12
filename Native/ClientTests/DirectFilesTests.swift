@@ -10,6 +10,90 @@ import NIO
 #endif
 
 @MainActor final class DirectFilesTests: XCTestCase {
+    func testIndexedLoginDraftLifecycleJourneys() throws {
+        struct Journey: Decodable {
+            let id: String; let events: [String]; let password: String
+            let account: String; let remember: Bool; let reads: Int
+        }
+        struct Fixture: Decodable { let loginDraftCases: [Journey] }
+        let url = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "direct-files-v1", withExtension: "json"))
+        let fixture = try JSONDecoder().decode(Fixture.self, from: Data(contentsOf: url))
+        for journey in fixture.loginDraftCases {
+            var draft = DirectFilesLoginDraft(), reads = 0
+            var saved: TerminalSecretStore.Login? = .init(username: "synthetic", password: "synthetic-only")
+            func restore(active: Bool = true, allowed: Bool = true, signIn: Bool = true) {
+                draft.resume()
+                draft.restorePassword(active: active, allowed: allowed, signIn: signIn) { reads += 1; return saved }
+            }
+            for event in journey.events {
+                switch event {
+                case "initialize": draft.initialize(saved: saved)
+                case "suspend": draft.suspend()
+                case "active": restore()
+                case "locked": restore(allowed: false)
+                case "inactive": restore(active: false)
+                case "busy": restore(signIn: false)
+                case "clear": draft.password = ""
+                case "edit-password": draft.password = "synthetic-edited-password"
+                case "edit-account": draft.username = "synthetic-edited-account"
+                case "save-off": draft.remember = false
+                case "save-on": draft.remember = true
+                case "forget": saved = nil
+                case "stored-account-change": saved = .init(username: "synthetic-new-account", password: "synthetic-new-password")
+                case "choose-key": draft.loadKeyAccount("synthetic-key", preferSelected: true)
+                case "password-method": draft.selectMethod(.password)
+                case "save-edited": saved = .init(username: "synthetic", password: "synthetic-edited-password")
+                case "connected": draft.connected(account: "synthetic", saved: saved)
+                default: XCTFail("Unknown indexed login event: " + event)
+                }
+            }
+            let passwords = ["saved": "synthetic-only", "edited": "synthetic-edited-password", "empty": ""]
+            let accounts = ["saved": "synthetic", "edited": "synthetic-edited-account", "key": "synthetic-key"]
+            XCTAssertEqual(draft.password, passwords[journey.password], journey.id)
+            XCTAssertEqual(draft.username, accounts[journey.account], journey.id)
+            XCTAssertEqual(draft.remember, journey.remember, journey.id)
+            XCTAssertEqual(reads, journey.reads, journey.id)
+            XCTAssertEqual(draft.method, journey.account == "key" ? .sshKey : .password, journey.id)
+        }
+    }
+    func testLoginDraftInitializationAndIndependentOwners() {
+        let saved = TerminalSecretStore.Login(username: "synthetic", password: "synthetic-only")
+        var first = DirectFilesLoginDraft(), second = DirectFilesLoginDraft()
+        XCTAssertFalse(first.needsInitialLoad(active: false, allowed: true, signIn: true))
+        XCTAssertFalse(first.needsInitialLoad(active: true, allowed: false, signIn: true))
+        XCTAssertFalse(first.needsInitialLoad(active: true, allowed: true, signIn: false))
+        first.initialize(saved: saved); second.initialize(saved: saved)
+        first.username = "synthetic-edited-account"; first.remember = false
+        first.suspend(); second.suspend(); second.resume()
+        second.restorePassword(active: true, allowed: true, signIn: true) { saved }
+        XCTAssertEqual(second.username, "synthetic"); XCTAssertEqual(second.password, "synthetic-only")
+        XCTAssertTrue(second.remember)
+        XCTAssertEqual(first.username, "synthetic-edited-account"); XCTAssertEqual(first.password, "")
+        XCTAssertFalse(first.remember)
+        var earlyEdit = DirectFilesLoginDraft()
+        earlyEdit.username = "synthetic-before-load"; earlyEdit.password = "synthetic-draft"
+        earlyEdit.initialize(saved: saved)
+        XCTAssertEqual(earlyEdit.username, "synthetic-before-load"); XCTAssertEqual(earlyEdit.password, "synthetic-draft")
+    }
+    func testLoginDraftKeyRefreshAndFailedCredentialRead() throws {
+        let saved = TerminalSecretStore.Login(username: "synthetic", password: "synthetic-only")
+        var draft = DirectFilesLoginDraft(); draft.initialize(saved: saved)
+        draft.password = "synthetic-draft"; draft.passphrase = "synthetic-passphrase"
+        draft.keyFileChanged()
+        XCTAssertEqual(draft.passphrase, ""); XCTAssertEqual(draft.password, "synthetic-draft")
+        let identity = DirectFilesLoginDraft.NamedKeyIdentity(id: UUID(), fingerprint: "SHA256:synthetic")
+        XCTAssertTrue(draft.updateNamedKey(identity)); XCTAssertFalse(draft.updateNamedKey(identity))
+        draft.initialize(saved: saved)
+        XCTAssertEqual(draft.password, "synthetic-draft", "Initialization is not a reload action")
+        var remembered = DirectFilesLoginDraft(); remembered.initialize(saved: saved); remembered.suspend()
+        var reads = 0
+        remembered.restorePassword(active: true, allowed: true, signIn: true) { reads += 1; return saved }
+        XCTAssertEqual(reads, 0, "A suspended view never reads credentials")
+        remembered.resume()
+        XCTAssertThrowsError(try remembered.restorePassword(active: true, allowed: true, signIn: true) { throw DirectFilesFailure.unavailable })
+        remembered.restorePassword(active: true, allowed: true, signIn: true) { saved }
+        XCTAssertEqual(remembered.password, "synthetic-only", "Transient storage failure preserves restoration eligibility")
+    }
     func testRearmedIdleDeadlineIgnoresExpiredQueuedTimer() async throws {
         let probe = FilesDirectoryTestProbe()
         let server = try await filesDirectoryTestServer(probe: probe, responseDelay: .milliseconds(200))

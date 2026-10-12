@@ -10,14 +10,12 @@ struct DirectFilesView: View {
     var mac: DirectMacRecordV1 { session.mac }
     let retainWhenDismissed: Bool
     private let closeOwnerWindow: (@MainActor () -> Void)?
+    var accessAllowed: @MainActor () -> Bool = { DirectAppLockV1.shared.canAccess }
+    var sessionAvailable: @MainActor () -> Bool = { DirectClientPlatformV1.sessionAvailable }
     @State private var session: DirectFilesSession
-    @State private var login = TerminalLoginSelection()
-    @State private var password = ""
-    @State private var clearedPasswordAccount: String?
-    @State private var remember = false
+    @State private var draft = DirectFilesLoginDraft()
     @State private var key: TerminalNamedKey?
     @State private var keyName = ""
-    @State private var passphrase = ""
     @State private var preparingKey = false
     @State private var preparation = UUID()
     #if os(macOS)
@@ -34,7 +32,6 @@ struct DirectFilesView: View {
     private var uploadURLs: [URL] { session.preparedUploads }
     @State private var uploadFolder = ""
     @State private var export: Export?
-    @State private var loaded = false
     @State private var pro = DirectProAccess.shared
     @Environment(\.dismiss) private var dismiss
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
@@ -56,8 +53,9 @@ struct DirectFilesView: View {
         else { dismiss() }
     }
     private var canConnect: Bool {
-        !login.username.isEmpty && !session.busy && !preparingKey &&
-        (login.method == .password ? !password.isEmpty : !keyName.isEmpty)
+        accessAllowed() && sessionAvailable() && !draft.isSuspended &&
+        !draft.username.isEmpty && !session.busy && !preparingKey &&
+        (draft.method == .password ? !draft.password.isEmpty : !keyName.isEmpty)
     }
     private var preventsDismissal: Bool {
         DirectFilesPolicy.preventsDismissal(retained: retainWhenDismissed, active: session.transferActive, pending: session.hasPendingResults)
@@ -149,7 +147,7 @@ struct DirectFilesView: View {
                                 continuation.resume(returning: url)
                             }
                         }
-                        guard preparation == token, DirectAppLockV1.shared.canAccess else { return }
+                        guard preparation == token, accessAllowed() else { return }
                         if let url { urls.append(url) }
                     }
                     selected(.success(urls))
@@ -159,12 +157,10 @@ struct DirectFilesView: View {
             #endif
         }
         .directAppearance()
-        .task { if !pro.ready { await pro.refresh() }; prepareSignIn() }
+        .task { resumeSignIn(); if !pro.ready { await pro.refresh() } }
+        .onChange(of: draft.method) { _, _ in prepareSignIn() }
         .onChange(of: session.phase) { _, phase in
-            if phase == .ready {
-                clearedPasswordAccount = remember && login.method == .password ? session.account : nil
-                password = ""; passphrase = ""
-            }
+            if phase == .ready { connectedSignIn() }
             else {
                 prepareSignIn()
                 #if os(macOS)
@@ -185,30 +181,21 @@ struct DirectFilesView: View {
             refreshSelectedKeyFile()
         }
         #endif
-        .onChange(of: DirectAppLockV1.shared.canAccess) { _, allowed in
+        .onChange(of: accessAllowed()) { _, allowed in
             if !allowed {
-                preparation = UUID(); preparingKey = false; saving = false; confirmation = nil; session.disconnect(); sheet = nil; picker = false; export = nil; password = ""; passphrase = ""; key = nil; keyName = ""; newFolder = false; folderName = ""
-                #if os(macOS)
-                savePicker.cancel()
-                #endif
+                suspendSignIn(); session.disconnect(); sheet = nil
+                key = nil; keyName = ""; newFolder = false; folderName = ""
             }
-            else { if loaded { loadLogin(preferSelected: true) } else { initializeLoginIfNeeded() } }
+            else { resumeSignIn() }
         }
         .onReceive(NotificationCenter.default.publisher(for: DirectClientPlatformV1.didEnterBackground)) { _ in
-            preparation = UUID(); preparingKey = false; saving = false; confirmation = nil
-            #if os(macOS)
-            savePicker.cancel()
-            #endif
-            password = ""; passphrase = ""; picker = false; export = nil
+            suspendSignIn()
         }
         .onReceive(NotificationCenter.default.publisher(for: DirectClientPlatformV1.didBecomeActive)) { _ in
-            prepareSignIn()
+            resumeSignIn()
         }
         .onDisappear {
-            preparation = UUID(); preparingKey = false; saving = false; password = ""; passphrase = ""
-            #if os(macOS)
-            savePicker.cancel()
-            #endif
+            suspendSignIn()
             if !retainWhenDismissed { session.close() }
         }
         .interactiveDismissDisabled(preventsDismissal)
@@ -263,26 +250,26 @@ struct DirectFilesView: View {
                 Text("Uses your Terminal login settings. Other sessions stay connected.").font(.footnote).foregroundStyle(.secondary)
             }
             Section("Sign In to " + mac.name) {
-                Picker("Sign in with", selection: Binding(get: { login.method }, set: { login.select($0) })) {
+                Picker("Sign in with", selection: Binding(get: { draft.method }, set: { draft.selectMethod($0) })) {
                     ForEach(TerminalLoginMethod.allCases) { Text($0.rawValue).tag($0) }
                 }.pickerStyle(.segmented)
                 #if os(macOS)
-                MacCredentialFields(username: $login.username, password: $password, showsPassword: login.method == .password,
-                                    enabled: !session.busy && !preparingKey && DirectAppLockV1.shared.canAccess, prefix: "files", submit: connect)
-                    .frame(height: login.method == .password ? 104 : 45)
+                MacCredentialFields(username: $draft.username, password: $draft.password, showsPassword: draft.method == .password,
+                                    enabled: !session.busy && !preparingKey && accessAllowed(), prefix: "files", submit: connect)
+                    .frame(height: draft.method == .password ? 104 : 45)
                 #else
-                TextField("Mac account", text: $login.username).textContentType(.username).directNoAutocapitalization().autocorrectionDisabled().accessibilityIdentifier("files-account")
+                TextField("Mac account", text: $draft.username).textContentType(.username).directNoAutocapitalization().autocorrectionDisabled().accessibilityIdentifier("files-account")
                 #endif
-                if login.method == .password {
+                if draft.method == .password {
                     #if os(iOS)
-                    SecureField("Password", text: $password).textContentType(.password).accessibilityIdentifier("files-password")
+                    SecureField("Password", text: $draft.password).textContentType(.password).accessibilityIdentifier("files-password")
                     #endif
-                    Toggle("Save SSH login on this device", isOn: $remember).accessibilityIdentifier("files-remember-login")
+                    Toggle("Save SSH login on this device", isOn: $draft.remember).accessibilityIdentifier("files-remember-login")
                 } else {
                     Button { sheet = .keys } label: { Label(keyName.isEmpty ? "Choose SSH Key" : keyName, systemImage: "key") }
                         .accessibilityIdentifier("files-choose-key")
                     #if os(macOS)
-                    if keyFile != nil { SecureField("Key passphrase, if needed", text: $passphrase).accessibilityIdentifier("files-key-passphrase") }
+                    if keyFile != nil { SecureField("Key passphrase, if needed", text: $draft.passphrase).accessibilityIdentifier("files-key-passphrase") }
                     #endif
                 }
             }.disabled(session.busy || preparingKey)
@@ -358,7 +345,7 @@ struct DirectFilesView: View {
                                 }
                             }
                             Spacer()
-                            if let url = result.localDownload { Button(result.saved ? "Save Again…" : "Save…") { saveDownload(result.id, url: url) }.disabled(saving || !DirectAppLockV1.shared.canAccess) }
+                            if let url = result.localDownload { Button(result.saved ? "Save Again…" : "Save…") { saveDownload(result.id, url: url) }.disabled(saving || !accessAllowed()) }
                             if result.outcome == .interrupted { Button("Retry") { session.retry(result.id) }.disabled(session.busy || session.phase != .ready || session.account != session.resultsAccount) }
                         }
                     }
@@ -392,30 +379,30 @@ struct DirectFilesView: View {
         }.directAppearance()
     }
     private func selected(_ result: Result<[URL], Error>) {
-        guard DirectAppLockV1.shared.canAccess, !saving else { return }
+        guard accessAllowed(), !saving else { return }
         switch result {
         case .success(let urls):
             let token = preparation
             Task { @MainActor in
                 do {
                     let staged = try await session.prepare(urls)
-                    guard preparation == token, DirectAppLockV1.shared.canAccess else { session.discardPreparedUploads(staged); return }
+                    guard preparation == token, accessAllowed() else { session.discardPreparedUploads(staged); return }
                     sheet = .upload
                 }
-                catch { if preparation == token, DirectAppLockV1.shared.canAccess, !(error is CancellationError) { session.message = DirectFilesSession.operationMessage(error) } }
+                catch { if preparation == token, accessAllowed(), !(error is CancellationError) { session.message = DirectFilesSession.operationMessage(error) } }
             }
         case .failure(let error): if !(error is CancellationError) { session.message = "These files could not be selected. Try again." }
         }
     }
     private func saveDownload(_ id: UUID, url: URL) {
-        guard DirectAppLockV1.shared.canAccess, !saving else { return }
+        guard accessAllowed(), !saving else { return }
         saving = true
         #if os(iOS)
         export = .init(resultID: id, url: url)
         #else
         let token = preparation
         savePicker.save(url) { result in
-            guard preparation == token, DirectAppLockV1.shared.canAccess else { return }
+            guard preparation == token, accessAllowed() else { return }
             saving = false
             if case .success = result { session.markSaved(id) }
             else if case .failure(let error) = result, !(error is CancellationError) { session.message = "The downloaded file could not be saved. Choose another destination." }
@@ -424,7 +411,7 @@ struct DirectFilesView: View {
     }
     #if os(macOS)
     @discardableResult private func refreshSelectedKeyFile() -> Bool {
-        guard DirectAppLockV1.shared.canAccess, session.phase != .ready, !session.busy else { return false }
+        guard accessAllowed(), session.phase != .ready, !session.busy else { return false }
         do {
             guard try selectedKeyFile(mac.id)?.file != keyFile else { return false }
             preparation = UUID(); preparingKey = false
@@ -433,40 +420,66 @@ struct DirectFilesView: View {
         } catch { session.message = "Saved SSH settings could not be read. Existing data is kept."; return false }
     }
     #endif
+    private func suspendSignIn() {
+        draft.suspend()
+        preparation = UUID(); preparingKey = false; saving = false; confirmation = nil
+        picker = false; export = nil
+        #if os(macOS)
+        savePicker.cancel()
+        #endif
+    }
+    private func resumeSignIn() {
+        draft.resume()
+        prepareSignIn()
+        // Only reconcile an already initialized key selection here. User input
+        // before initialization must not be replaced by delayed defaults.
+        if draft.hasKeySnapshot {
+            loadLogin(preferSelected: true, includePassword: false, preserveUnchangedSelection: true)
+        }
+    }
+    private func connectedSignIn() {
+        guard !draft.isSuspended, accessAllowed(), sessionAvailable() else {
+            draft.suspend(); return
+        }
+        var saved: TerminalSecretStore.Login?
+        if draft.remember, draft.method == .password {
+            do { saved = try TerminalSecretStore.login(mac.id) }
+            catch { session.message = "Connected. The SSH login could not be read on this device." }
+        }
+        draft.connected(account: session.account, saved: saved)
+    }
     private func prepareSignIn() {
-        initializeLoginIfNeeded()
-        // Rehydrate only a remembered secret cleared by successful connection.
-        // Failures/cancellation and key-selection updates preserve edited drafts.
-        guard let account = clearedPasswordAccount, DirectAppLockV1.shared.canAccess,
-              DirectClientPlatformV1.sessionAvailable, session.phase != .ready, !session.busy else { return }
-        guard remember, login.method == .password, password.isEmpty, login.username == account else {
-            clearedPasswordAccount = nil; return
+        let active = sessionAvailable(), allowed = accessAllowed()
+        let signIn = session.phase != .ready && !session.busy
+        if draft.needsInitialLoad(active: active, allowed: allowed, signIn: signIn) {
+            loadLogin(preferSelected: true)
         }
         do {
-            if let saved = try TerminalSecretStore.login(mac.id), saved.username == account { password = saved.password }
-            clearedPasswordAccount = nil
+            try draft.restorePassword(active: active, allowed: allowed, signIn: signIn) { try TerminalSecretStore.login(mac.id) }
         } catch { session.message = "Saved SSH settings could not be read. Existing data is kept." }
     }
-    private func initializeLoginIfNeeded() {
-        guard !loaded, DirectAppLockV1.shared.canAccess, session.phase != .ready, !session.busy else { return }
-        loaded = true
-        loadLogin(preferSelected: true)
-    }
     private func loadLogin(preferSelected: Bool = false, includePassword: Bool = true, preserveUnchangedSelection: Bool = false) {
-        guard DirectAppLockV1.shared.canAccess, session.phase != .ready, !session.busy else { return }
+        guard !draft.isSuspended, sessionAvailable(),
+              accessAllowed(), session.phase != .ready, !session.busy else { return }
         do {
-            if includePassword, let saved = try TerminalSecretStore.login(mac.id) {
-                login.loadPasswordAccount(saved.username); password = saved.password; remember = true; clearedPasswordAccount = nil
-            }
+            // Read the complete selection before applying initialization. A
+            // failed read must not partially reset an existing login draft.
+            let saved = includePassword ? try TerminalSecretStore.login(mac.id) : nil
             #if os(macOS)
             let fileSelection = try selectedKeyFile(mac.id)
+            let namedSelection = fileSelection == nil ? try TerminalKeyLibraryStore.selected(mac.id) : nil
+            #else
+            let namedSelection = try TerminalKeyLibraryStore.selected(mac.id)
+            #endif
+            if includePassword { draft.initialize(saved: saved) }
+            #if os(macOS)
             let fileChanged = keyFile != fileSelection?.file
-            if fileChanged { passphrase = "" }
+            if fileChanged { draft.keyFileChanged() }
             keyFile = fileSelection?.file
             if let fileSelection {
                 key = nil; keyName = fileSelection.file.name
                 if !preserveUnchangedSelection || fileChanged {
-                    login.loadKeyAccount(fileSelection.username, preferSelected: preferSelected)
+                    draft.loadKeyAccount(fileSelection.username, preferSelected: preferSelected)
                 }
                 return
             }
@@ -474,18 +487,19 @@ struct DirectFilesView: View {
             #else
             let previousFileRemoved = false
             #endif
-            let namedSelection = try TerminalKeyLibraryStore.selected(mac.id)
-            let keyChanged = previousFileRemoved || key?.id != namedSelection?.id || key?.key.seed != namedSelection?.key.seed
+            let identity = namedSelection.map { DirectFilesLoginDraft.NamedKeyIdentity(id: $0.id, fingerprint: $0.key.fingerprint) }
+            let namedChanged = draft.updateNamedKey(identity)
+            let keyChanged = previousFileRemoved || namedChanged
             key = namedSelection; keyName = namedSelection?.name ?? ""
             // Names and free-key eligibility can change without selecting a
             // different key. Refresh labels without replacing the account draft.
             if !preserveUnchangedSelection || keyChanged {
-                login.loadKeyAccount(namedSelection?.key.username, preferSelected: preferSelected)
+                draft.loadKeyAccount(namedSelection?.key.username, preferSelected: preferSelected)
             }
         } catch { session.message = "Saved SSH settings could not be read. Existing data is kept." }
     }
     private func connect() {
-        guard canConnect, DirectAppLockV1.shared.canAccess else { return }
+        guard canConnect, accessAllowed() else { return }
         #if os(macOS)
         if refreshSelectedKeyFile() { session.message = "SSH key selection changed. Review the login and connect again."; return }
         #endif
@@ -494,18 +508,18 @@ struct DirectFilesView: View {
         Task { @MainActor in
             defer { if preparation == token { preparingKey = false } }
             if !pro.ready { await pro.refresh() }
-            guard preparation == token, DirectAppLockV1.shared.canAccess else { return }
+            guard preparation == token, accessAllowed() else { return }
             let library = DirectMacLibraryV1()
             guard library.readable, pro.canUseMac(mac.id, among: library.macs.map(\.id)) else { sheet = .pro; return }
-            if login.method == .sshKey {
+            if draft.method == .sshKey {
                 #if os(macOS)
                 if let file = keyFile {
                     do {
                         guard try MacSSHKeyFileStore.canUse(file) else { sheet = .pro; return }
-                        let account = login.username, secret = passphrase
-                        passphrase = ""
+                        let account = draft.username, secret = draft.passphrase
+                        draft.passphrase = ""
                         let parsed = try await Task.detached { try file.read(passphrase: secret) }.value
-                        guard preparation == token, DirectAppLockV1.shared.canAccess else { return }
+                        guard preparation == token, accessAllowed() else { return }
                         guard try selectedKeyFile(mac.id)?.file == file else {
                             refreshSelectedKeyFile()
                             session.message = "SSH key selection changed. Review the login and connect again."
@@ -513,15 +527,15 @@ struct DirectFilesView: View {
                         }
                         guard try MacSSHKeyFileStore.canUse(file) else { sheet = .pro; return }
                         session.connect(username: account, password: "", key: parsed, remember: false, keyFileID: file.id)
-                    } catch { if preparation == token, DirectAppLockV1.shared.canAccess { session.message = error.localizedDescription } }
+                    } catch { if preparation == token, accessAllowed() { session.message = error.localizedDescription } }
                     return
                 }
                 #endif
                 do {
                     guard let key, try TerminalKeyLibraryStore.canUse(key) else { sheet = .pro; return }
-                    session.connect(username: login.username, password: "", key: key.key, remember: false)
+                    session.connect(username: draft.username, password: "", key: key.key, remember: false)
                 } catch { session.message = "The selected key is unavailable. Choose an SSH key and retry." }
-            } else { session.connect(username: login.username, password: password, key: nil, remember: remember) }
+            } else { session.connect(username: draft.username, password: draft.password, key: nil, remember: draft.remember) }
         }
     }
 }

@@ -465,5 +465,221 @@
       "accepted": false,
       "expectedReadRequests": 1
     }
+  ],
+  "loginDraftCases": [
+    {
+      "id": "saved-return-twice",
+      "events": [
+        "initialize",
+        "suspend",
+        "active",
+        "suspend",
+        "active"
+      ],
+      "password": "saved",
+      "account": "saved",
+      "remember": true,
+      "reads": 2
+    },
+    {
+      "id": "connected-disconnect-return",
+      "events": [
+        "initialize",
+        "connected",
+        "active",
+        "suspend",
+        "active"
+      ],
+      "password": "saved",
+      "account": "saved",
+      "remember": true,
+      "reads": 2
+    },
+    {
+      "id": "locked-defers-restoration",
+      "events": [
+        "initialize",
+        "suspend",
+        "locked",
+        "active"
+      ],
+      "password": "saved",
+      "account": "saved",
+      "remember": true,
+      "reads": 1
+    },
+    {
+      "id": "inactive-defers-restoration",
+      "events": [
+        "initialize",
+        "suspend",
+        "inactive",
+        "active"
+      ],
+      "password": "saved",
+      "account": "saved",
+      "remember": true,
+      "reads": 1
+    },
+    {
+      "id": "busy-defers-restoration",
+      "events": [
+        "initialize",
+        "suspend",
+        "busy",
+        "active"
+      ],
+      "password": "saved",
+      "account": "saved",
+      "remember": true,
+      "reads": 1
+    },
+    {
+      "id": "explicit-empty-stays-empty",
+      "events": [
+        "initialize",
+        "clear",
+        "suspend",
+        "active"
+      ],
+      "password": "empty",
+      "account": "saved",
+      "remember": true,
+      "reads": 0
+    },
+    {
+      "id": "edited-secret-not-replaced",
+      "events": [
+        "initialize",
+        "edit-password",
+        "suspend",
+        "active"
+      ],
+      "password": "empty",
+      "account": "saved",
+      "remember": true,
+      "reads": 0
+    },
+    {
+      "id": "edited-account-preserved",
+      "events": [
+        "initialize",
+        "edit-account",
+        "suspend",
+        "active"
+      ],
+      "password": "empty",
+      "account": "edited",
+      "remember": true,
+      "reads": 0
+    },
+    {
+      "id": "save-off-preserved",
+      "events": [
+        "initialize",
+        "save-off",
+        "suspend",
+        "active"
+      ],
+      "password": "empty",
+      "account": "saved",
+      "remember": false,
+      "reads": 0
+    },
+    {
+      "id": "off-on-does-not-resurrect",
+      "events": [
+        "initialize",
+        "save-off",
+        "suspend",
+        "save-on",
+        "active"
+      ],
+      "password": "empty",
+      "account": "saved",
+      "remember": true,
+      "reads": 0
+    },
+    {
+      "id": "removed-login-not-restored",
+      "events": [
+        "initialize",
+        "suspend",
+        "forget",
+        "active"
+      ],
+      "password": "empty",
+      "account": "saved",
+      "remember": true,
+      "reads": 1
+    },
+    {
+      "id": "changed-saved-account-not-restored",
+      "events": [
+        "initialize",
+        "suspend",
+        "stored-account-change",
+        "active"
+      ],
+      "password": "empty",
+      "account": "saved",
+      "remember": true,
+      "reads": 1
+    },
+    {
+      "id": "method-choice-preserved",
+      "events": [
+        "initialize",
+        "suspend",
+        "choose-key",
+        "active"
+      ],
+      "password": "empty",
+      "account": "key",
+      "remember": true,
+      "reads": 0
+    },
+    {
+      "id": "explicit-return-to-password",
+      "events": [
+        "initialize",
+        "suspend",
+        "choose-key",
+        "active",
+        "password-method",
+        "active"
+      ],
+      "password": "saved",
+      "account": "saved",
+      "remember": true,
+      "reads": 1
+    },
+    {
+      "id": "newly-saved-success-restores",
+      "events": [
+        "initialize",
+        "edit-password",
+        "save-edited",
+        "connected",
+        "active"
+      ],
+      "password": "edited",
+      "account": "saved",
+      "remember": true,
+      "reads": 1
+    },
+    {
+      "id": "failed-save-does-not-restore-old-secret",
+      "events": [
+        "initialize",
+        "edit-password",
+        "connected",
+        "active"
+      ],
+      "password": "empty",
+      "account": "saved",
+      "remember": true,
+      "reads": 0
+    }
   ]
 }

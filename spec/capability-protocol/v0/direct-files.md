@@ -37,6 +37,19 @@ sign-in in the same view MUST make the remembered password available again for
 explicit reconnect. Restore only that cleared credential, for the same account,
 while saved login remains enabled; preserve edited drafts and never reconnect
 automatically. On iOS defer reading it until the app is active and unlocked.
+Each Files owner MUST keep its own login draft with explicit empty, saved,
+edited and privacy-cleared password states. Backgrounding, locking and retained
+view suspension clear visible secrets, preserving only non-secret restoration
+context for an unedited remembered password. On returning to eligible sign-in,
+restore that password only while its account, Password method and Save Login
+choice still match and the saved credential still exists. Repeated suspension
+and return cycles MUST remain recoverable. User-cleared or edited passwords
+MUST NOT be replaced with an older saved password. Successful authentication
+may make an edited password restorable only if that exact login was saved.
+Unlocking MUST NOT reset edited accounts, login methods or Save Login choices.
+Initialization and restoration wait for active, allowed sign-in; help/key-label
+refresh and connection cancellation preserve drafts. Independent owners MUST
+not share mutable credential state.
 A disk-key passphrase is bound to that file reference. Clear it when the selected
 reference changes or is removed; keep the same-reference login draft intact.
 This includes changes made in another window. Retire any unfinished key-file

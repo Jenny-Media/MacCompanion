@@ -1,5 +1,6 @@
 import XCTest
 import SwiftUI
+import Observation
 import NIO
 #if os(iOS)
 import UIKit
@@ -8,6 +9,11 @@ import UIKit
 import AppKit
 @testable import MacCompanion
 #endif
+
+@MainActor @Observable private final class FilesPresentationAdmission {
+    var allowed = true
+    var active = true
+}
 
 @MainActor final class DirectFilesPresentationTests: XCTestCase {
     #if os(macOS)
@@ -137,9 +143,12 @@ import AppKit
         defer { Task { await probe.shutdown(); try? await server.close() } }
         let mac = DirectMacRecordV1(id: UUID(), name: "Synthetic Remembered Login", addresses: ["127.0.0.1"], sshPort: try XCTUnwrap(server.localAddress?.port))
         try TerminalSecretStore.save(.init(username: "synthetic", password: "synthetic-only"), id: mac.id)
-        let session = DirectFilesSession(mac: mac)
+        let admission = FilesPresentationAdmission()
+        let session = DirectFilesSession(mac: mac, canAccess: { admission.allowed })
         defer { session.close(); try? TerminalSecretStore.remove(mac.id) }
-        let view = DirectFilesView(mac: mac, session: session, retainWhenDismissed: true)
+        var view = DirectFilesView(mac: mac, session: session, retainWhenDismissed: true)
+        view.accessAllowed = { admission.allowed }
+        view.sessionAvailable = { admission.active }
         #if os(iOS)
         let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
         let previous = scene.windows.first { $0.isKeyWindow }
@@ -179,6 +188,33 @@ import AppKit
         }
         // Mount before the first connection: loaded=true must not block later reconnect.
         try await wait { values().0 == "synthetic" && values().1 == "synthetic-only" }
+        func suspendAndReturn() async throws {
+            admission.active = false
+            NotificationCenter.default.post(name: DirectClientPlatformV1.didEnterBackground, object: nil)
+            try await wait { values().1 == "" }
+            admission.active = true
+            NotificationCenter.default.post(name: DirectClientPlatformV1.didBecomeActive, object: nil)
+            do { try await wait { values().1 == "synthetic-only" } }
+            catch {
+                XCTAssertEqual(values().1, "synthetic-only", "Returning must restore the remembered password without re-entry")
+                throw error
+            }
+            XCTAssertEqual(values().0, "synthetic")
+            XCTAssertNotEqual(session.phase, .ready, "Restoring a saved login must never reconnect automatically")
+        }
+        func lockAndUnlock() async throws {
+            admission.allowed = false
+            try await wait { values().1 == "" && session.phase == .interrupted }
+            admission.allowed = true
+            try await wait { values().1 == "synthetic-only" }
+            XCTAssertEqual(values().0, "synthetic")
+            XCTAssertEqual(session.phase, .interrupted, "Unlocking never reconnects automatically")
+        }
+        // Cover the whole round trip before any authentication, then repeat it
+        // after successful authentication and Disconnect in this same view.
+        try await suspendAndReturn()
+        try await suspendAndReturn()
+        try await lockAndUnlock()
         func connect() async throws {
             session.connect(username: "synthetic", password: "synthetic-only", key: nil, remember: true)
             try await wait { session.trust != nil || session.phase != .connecting }
@@ -194,6 +230,9 @@ import AppKit
         try await wait { values().1 == "synthetic-only" }
         XCTAssertEqual(values().0, "synthetic")
         XCTAssertEqual(session.phase, .interrupted, "Restoring the secret never reconnects automatically")
+        try await suspendAndReturn()
+        try await suspendAndReturn()
+        try await lockAndUnlock()
         try edit("synthetic-edited-account", "synthetic-edited-password")
         try await Task.sleep(for: .milliseconds(150))
         session.connect(username: "synthetic-edited-account", password: "synthetic-edited-password", key: nil, remember: true)
@@ -201,6 +240,12 @@ import AppKit
         try await Task.sleep(for: .milliseconds(150)); layout()
         XCTAssertEqual(values().0, "synthetic-edited-account")
         XCTAssertEqual(values().1, "synthetic-edited-password")
+        admission.allowed = false
+        try await wait { values().1 == "" }
+        admission.allowed = true
+        try await Task.sleep(for: .milliseconds(150)); layout()
+        XCTAssertEqual(values().0, "synthetic-edited-account", "Unlock must preserve the edited account")
+        XCTAssertEqual(values().1, "", "Privacy cleanup cannot replace an edited password with an older saved login")
         try edit("synthetic", "synthetic-only")
         try await connect()
         await probe.shutdown() // Authenticated network loss in the same mounted view.

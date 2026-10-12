@@ -36,6 +36,14 @@ not introduce a connection mode or require a Mac Companion helper.
   that same view. Edit the retry account/password, then cancel or fail a connection:
   the draft must remain. On iPhone, backgrounding must defer restoration until
   the app is active and unlocked. Removing the saved login must prevent restoration.
+  With App Unlock off, background and return both before the first connection
+  and after Disconnect. The remembered password must refill without re-entry or
+  automatic connection. Repeat the round trip twice in the same Files sheet.
+  Repeat with App Unlock on: secrets must remain cleared until active and
+  unlocked, then restore only an unchanged remembered login. Edited accounts,
+  Password/Key selection and an off Save Login choice must survive unlock.
+  An edited or explicitly cleared password must not be replaced with an older
+  saved password. Removing the saved credential while suspended prevents refill.
   On Mac, type a disk-key passphrase, then select a different key or remove the
   selection before Connect. The previous passphrase must clear. Reopening the
   chooser with the same key must preserve it and any edited password draft.
@@ -159,6 +167,17 @@ verify saved credentials load when sign-in becomes available.
 Both platforms also mount Files before its first saved-password connection and
 verify same-view reconnect after Disconnect and authenticated network loss,
 edited retry-draft preservation, and removal of a remembered login.
+The shared value-owned `DirectFilesLoginDraft` represents empty, saved, edited
+and privacy-cleared secrets explicitly. Sixteen manifest-indexed journeys cover
+repeated suspension/recovery, active/unlocked admission, busy owners, changed
+accounts and methods, Save Login choices, deleted credentials and verified
+successful saving. Additional tests check independent owners, early user edits,
+key-reference cleanup and retry after a credential-read failure.
+Mounted views on both platforms repeat background/return and lock/unlock before
+authentication and after Disconnect. Injected observable admission exercises
+inactive/locked transitions without invoking personal biometric settings;
+edited retry accounts remain intact and old saved passwords cannot replace
+privacy-cleared edits. These checks do not certify physical device unlocking.
 On macOS the mounted Cancel Connection button exercises the shared action to
 preserve both a loaded saved password and an edited retry account/password;
 backgrounding still clears the visible secret. Hosted iOS tests do not expose
