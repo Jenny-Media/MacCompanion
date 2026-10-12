@@ -1403,6 +1403,7 @@
     if ([kind isEqual:@"copyText"]) { [self showCopyScreenText]; return; }
     if ([kind isEqual:@"viewMenu"]) { [self showViewMenu]; return; }
     if ([kind isEqual:@"inputMenu"]) { [self showInputMenu]; return; }
+    if ([kind isEqual:@"files"]) { if (self.filesHandler) self.filesHandler(); return; }
     if ([kind isEqual:@"composeText"]) { [self showTextComposer]; return; }
     if ([kind isEqual:@"appSettings"]) { if (self.appSettingsHandler) self.appSettingsHandler(); return; }
     if ([kind isEqual:@"gestures"]) { [self showGestureHelp]; return; }
@@ -1594,6 +1595,7 @@
 - (void)showSessionMenu {
     [self presentMenu:self.macName ?: @"Session" sections:@[
         @{@"title": @"Session", @"items": @[
+            @{@"kind": @"files", @"title": self.filesStatus.length ? [@"Files · " stringByAppendingString:self.filesStatus] : @"Files", @"symbol": @"folder", @"submenu": @YES},
             @{@"kind": @"details", @"title": @"Connection Details", @"symbol": @"info.circle"},
             @{@"kind": @"appSettings", @"title": @"App Settings", @"symbol": @"gearshape", @"submenu": @YES}]},
         @{@"title": @"", @"items": @[@{@"kind": @"exit", @"title": @"Disconnect", @"symbol": @"xmark.circle", @"destructive": @YES}]}]];

@@ -51,7 +51,7 @@ struct TerminalKeySettings: View {
                                     if library.associations.contains(where: { $0.macID == mac?.id && $0.keyID == entry.id }) { Image(systemName: "checkmark.circle.fill").foregroundStyle(.blue) }
                                 }
                                 Text(entry.key.fingerprint).font(.caption.monospaced()).foregroundStyle(.secondary).lineLimit(1)
-                            } }
+                            } }.accessibilityIdentifier("ssh-key-detail-" + entry.id.uuidString)
                             if let mac {
                                 let selected = library.associations.contains { $0.macID == mac.id && $0.keyID == entry.id }
                                 if selected { Label("Selected for \(mac.name)", systemImage: "checkmark").font(.subheadline).foregroundStyle(.secondary) }
@@ -300,9 +300,10 @@ struct TerminalKeyDetail: View {
         Form {
             if let notice = library.recovery { DirectRecoveryCard(notice: notice, primary: .init(title: "Review Keys", perform: { library.reload() })) }
             Section("Key") {
-                TextField("Name", text: $name)
+                TextField("Name", text: $name).accessibilityIdentifier("ssh-key-name")
                 Button("Save Name") { library.perform { try TerminalKeyLibraryStore.rename(entry.id, name: name) }; changed() }
                     .disabled(!TerminalKeyLibraryStore.Library.validName(name))
+                    .accessibilityIdentifier("ssh-key-save-name")
                 Text(entry.key.fingerprint).font(.caption.monospaced()).textSelection(.enabled)
                 Text("Used by \(library.associations.filter { $0.keyID == entry.id }.count) saved Mac(s)").foregroundStyle(.secondary)
                 if !DirectProAccess.shared.hasPro { Button("Use as My Free Key") { DirectProAccess.shared.chooseFreeKey(entry.id); changed() } }

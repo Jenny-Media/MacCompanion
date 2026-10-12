@@ -2,6 +2,7 @@
 import SwiftUI
 
 struct MacDirectDesktopView: View {
+    @Environment(\.openWindow) private var openWindow
     let mac: DirectMacRecordV1
     let sessionID: UUID
     @State private var session: MacVNCSession
@@ -14,9 +15,9 @@ struct MacDirectDesktopView: View {
     @State private var actions: [VNCQuickAction] = []
     @State private var closed = false
     @State private var initialLogin = MacVNCInitialLogin()
-    init(mac: DirectMacRecordV1, sessionID: UUID = UUID()) {
+    init(mac: DirectMacRecordV1, sessionID: UUID = UUID(), libraryURL: URL = DirectMacLibraryV1.defaultURL) {
         self.mac = mac; self.sessionID = sessionID
-        _session = State(initialValue: MacVNCSession(mac: mac))
+        _session = State(initialValue: MacVNCSession(mac: mac, libraryURL: libraryURL))
     }
     private var phase: MacConnectionPhase {
         session.connected ? .connected : session.connecting ? .connecting : session.recovery != nil || session.status == "Disconnected" ? .disconnected : .signIn
@@ -60,11 +61,14 @@ struct MacDirectDesktopView: View {
             if !window.fullScreen || !session.connected { MacConnectionStatusBar(phase: phase, service: "Screen Sharing", addresses: mac.addresses) }
         }
         .overlay(alignment: .top) {
-            if window.fullScreen && session.connected { MacDesktopFullScreenControls(session: session, window: window, actions: actions) { controls = true } }
+            if window.fullScreen && session.connected { MacDesktopFullScreenControls(session: session, window: window, actions: actions, files: { openWindow(id: "direct-files", value: DirectFilesWindowRequest(macID: mac.id)) }) { controls = true } }
         }
         .frame(minWidth: 520, minHeight: 360)
         .navigationTitle(mac.name + " · Desktop")
         .toolbar {
+            Button("Files", systemImage: "folder") { openWindow(id: "direct-files", value: DirectFilesWindowRequest(macID: mac.id)) }
+                .help("Browse and transfer files using Remote Login (SSH)").accessibilityIdentifier("session-files")
+
             if session.connected {
                 Menu("Displays", systemImage: "display.2") {
                     Button("All Displays") { session.selectDisplay(nil) }
@@ -97,6 +101,9 @@ struct MacDirectDesktopView: View {
         }.frame(width: 0, height: 0))
         .onAppear { loadInitialLogin(); loadActions(); publishStatus() }
         .onChange(of: phase) { _, _ in publishStatus() }
+        .onChange(of: session.macRemoved) { _, removed in
+            if removed { controls = false; password = ""; window.window?.close() }
+        }
         .onReceive(NotificationCenter.default.publisher(for: VNCSessionPreferences.actionsChanged)) { _ in loadActions() }
         .onChange(of: session.connected) { _, value in if value { password = "" } }
         .onReceive(NotificationCenter.default.publisher(for: DirectClientPlatformV1.didEnterBackground)) { _ in
@@ -114,7 +121,7 @@ struct MacDirectDesktopView: View {
     }
     private func loadActions() { actions = VNCSessionPreferences.actions(.desktop, legacyMac: mac.id).filter { $0.kind != .mode } }
     private func loadInitialLogin() {
-        guard !closed, !session.connected, !session.connecting else { return }
+        guard !closed, !session.macRemoved, !session.connected, !session.connecting else { return }
         do {
             guard let saved = try initialLogin.loadIfNeeded(canAccess: DirectAppLockV1.shared.canAccess,
                 hasExplicitLogin: !username.isEmpty || !password.isEmpty, usable: { login in

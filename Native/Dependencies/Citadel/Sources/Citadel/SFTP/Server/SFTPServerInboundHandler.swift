@@ -578,6 +578,9 @@ final class SFTPServerInboundHandler: ChannelInboundHandler {
             symlink(command: command, context: context)
         case .readlink(let command):
             readlink(command: command, context: context)
+        case .posixRename(let command):
+            context.channel.writeAndFlush(SFTPMessage.status(.init(requestId: command.requestId,
+                errorCode: .unsupportedOperation, message: "", languageTag: "")), promise: nil)
         case .rename(let command):
             rename(command: command, context: context)
         case .version, .handle, .status, .data, .attributes, .name:

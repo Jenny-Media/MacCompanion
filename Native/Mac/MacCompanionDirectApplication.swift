@@ -22,6 +22,14 @@ import SwiftUI
             }
         }.defaultSize(width: 1000, height: 680)
             .commands { MacClientCommands() }
+        WindowGroup("Files", id: "direct-files", for: DirectFilesWindowRequest.self) { $request in
+            if let request {
+                MacFilesWindow(mac: library.macs.first { $0.id == request.macID })
+                    .directAppearance().modifier(MacPrivacyCover())
+            } else {
+                ContentUnavailableView("Mac unavailable", systemImage: "folder")
+            }
+        }.defaultSize(width: 720, height: 640)
         Settings {
             MacSettingsView()
         }

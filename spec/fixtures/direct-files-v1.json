@@ -1,0 +1,860 @@
+{
+  "profile": "maccompanion.direct-files.v1",
+  "nameCases": [
+    {
+      "name": "report.pdf",
+      "valid": true
+    },
+    {
+      "name": "Résumé.txt",
+      "valid": true
+    },
+    {
+      "name": "my file.txt",
+      "valid": true
+    },
+    {
+      "name": ".",
+      "valid": false
+    },
+    {
+      "name": "..",
+      "valid": false
+    },
+    {
+      "name": "../report.txt",
+      "valid": false
+    },
+    {
+      "name": "a/b",
+      "valid": false
+    },
+    {
+      "name": "a\u0000b",
+      "valid": false
+    },
+    {
+      "name": "line\nname",
+      "valid": false
+    },
+    {
+      "name": "",
+      "valid": false
+    },
+    {
+      "name": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "valid": false
+    }
+  ],
+  "pathCases": [
+    {
+      "path": "/Users/test/Downloads",
+      "valid": true
+    },
+    {
+      "path": "/",
+      "valid": true
+    },
+    {
+      "path": "relative",
+      "valid": false
+    },
+    {
+      "path": "/bad\u0000path",
+      "valid": false
+    }
+  ],
+  "downloadAdmissionCases": [
+    {
+      "pathKind": "file",
+      "handleKind": "file",
+      "accepted": true
+    },
+    {
+      "pathKind": "other",
+      "handleKind": "file",
+      "accepted": false
+    },
+    {
+      "pathKind": "missing",
+      "handleKind": "file",
+      "accepted": false
+    },
+    {
+      "pathKind": "file",
+      "handleKind": "other",
+      "accepted": false
+    }
+  ],
+  "dismissalCases": [
+    {
+      "retained": false,
+      "active": false,
+      "pending": false,
+      "blocked": false
+    },
+    {
+      "retained": false,
+      "active": true,
+      "pending": false,
+      "blocked": true
+    },
+    {
+      "retained": false,
+      "active": false,
+      "pending": true,
+      "blocked": true
+    },
+    {
+      "retained": true,
+      "active": true,
+      "pending": true,
+      "blocked": false
+    },
+    {
+      "retained": true,
+      "active": false,
+      "pending": true,
+      "blocked": false
+    }
+  ],
+  "replacePacket": {
+    "id": 7,
+    "source": "/home/upload.part",
+    "destination": "/home/report.txt",
+    "hex": "0000004ac80000000700000018706f7369782d72656e616d65406f70656e7373682e636f6d000000112f686f6d652f75706c6f61642e70617274000000102f686f6d652f7265706f72742e747874"
+  },
+  "metadataPacket": {
+    "id": 7,
+    "path": "/home/report.txt",
+    "hex": "000000190700000007000000102f686f6d652f7265706f72742e747874"
+  },
+  "duplicateNameCases": [
+    {
+      "name": "report.txt",
+      "number": 2,
+      "expected": "report (2).txt",
+      "utf8Bytes": 14
+    },
+    {
+      "name": ".profile",
+      "number": 2,
+      "expected": ".profile (2)",
+      "utf8Bytes": 12
+    },
+    {
+      "name": ".config.json",
+      "number": 2,
+      "expected": ".config (2).json",
+      "utf8Bytes": 16
+    },
+    {
+      "name": "report.",
+      "number": 2,
+      "expected": "report. (2)",
+      "utf8Bytes": 11
+    },
+    {
+      "name": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.txt",
+      "number": 2,
+      "expected": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa (2).txt",
+      "utf8Bytes": 255
+    },
+    {
+      "name": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "number": 2,
+      "expected": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa (2)",
+      "utf8Bytes": 255
+    },
+    {
+      "name": "ééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééé.txt",
+      "number": 2,
+      "expected": "ééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééé (2).txt",
+      "utf8Bytes": 254
+    },
+    {
+      "name": "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀",
+      "number": 2,
+      "expected": "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀 (2)",
+      "utf8Bytes": 252
+    },
+    {
+      "name": "a.xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "number": 2,
+      "expected": "a.xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx (2)",
+      "utf8Bytes": 255
+    },
+    {
+      "name": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.txt",
+      "number": 1000,
+      "expected": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa (1000).txt",
+      "utf8Bytes": 255
+    },
+    {
+      "name": "ééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééé.txt",
+      "number": 2,
+      "expected": "éééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééée (2).txt",
+      "utf8Bytes": 255
+    }
+  ],
+  "extendedAttributesCases": [
+    {
+      "declaredCount": 0,
+      "encodedCount": 0,
+      "type": "",
+      "data": "",
+      "accepted": true
+    },
+    {
+      "declaredCount": 1,
+      "encodedCount": 1,
+      "type": "user.example",
+      "data": "value",
+      "accepted": true
+    },
+    {
+      "declaredCount": 128,
+      "encodedCount": 128,
+      "type": "",
+      "data": "",
+      "accepted": true
+    },
+    {
+      "declaredCount": 129,
+      "encodedCount": 129,
+      "type": "",
+      "data": "",
+      "accepted": false
+    },
+    {
+      "declaredCount": 96000,
+      "encodedCount": 96000,
+      "type": "",
+      "data": "",
+      "accepted": false
+    },
+    {
+      "declaredCount": 4294967295,
+      "encodedCount": 0,
+      "type": "",
+      "data": "",
+      "accepted": false
+    },
+    {
+      "declaredCount": 2,
+      "encodedCount": 1,
+      "type": "",
+      "data": "",
+      "accepted": false
+    }
+  ],
+  "encoderBoundaryCases": [
+    {
+      "mode": "rename",
+      "capacity": 256,
+      "id": 7,
+      "source": "/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/.maccompanion-upload-00000000-0000-0000-0000-000000000001.part",
+      "destination": "/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/report.txt",
+      "sourceUTF8Bytes": 240,
+      "hex": "000001b91200000007000000f02f61616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161612f2e6d6163636f6d70616e696f6e2d75706c6f61642d30303030303030302d303030302d303030302d303030302d3030303030303030303030312e70617274000000bc2f61616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161612f7265706f72742e747874"
+    },
+    {
+      "mode": "rename",
+      "capacity": 256,
+      "id": 7,
+      "source": "/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/.maccompanion-upload-00000000-0000-0000-0000-000000000001.part",
+      "destination": "/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/report.txt",
+      "sourceUTF8Bytes": 243,
+      "hex": "000001bf1200000007000000f32f61616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161612f2e6d6163636f6d70616e696f6e2d75706c6f61642d30303030303030302d303030302d303030302d303030302d3030303030303030303030312e70617274000000bf2f61616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161612f7265706f72742e747874"
+    },
+    {
+      "mode": "rename",
+      "capacity": 256,
+      "id": 7,
+      "source": "/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/.maccompanion-upload-00000000-0000-0000-0000-000000000001.part",
+      "destination": "/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/report.txt",
+      "sourceUTF8Bytes": 244,
+      "hex": "000001c11200000007000000f42f6161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161612f2e6d6163636f6d70616e696f6e2d75706c6f61642d30303030303030302d303030302d303030302d303030302d3030303030303030303030312e70617274000000c02f6161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161612f7265706f72742e747874"
+    },
+    {
+      "mode": "posixRename",
+      "capacity": 256,
+      "id": 7,
+      "source": "/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/.maccompanion-upload-00000000-0000-0000-0000-000000000001.part",
+      "destination": "/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/report.txt",
+      "sourceUTF8Bytes": 212,
+      "hex": "0000019dc80000000700000018706f7369782d72656e616d65406f70656e7373682e636f6d000000d42f616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161612f2e6d6163636f6d70616e696f6e2d75706c6f61642d30303030303030302d303030302d303030302d303030302d3030303030303030303030312e70617274000000a02f616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161612f7265706f72742e747874"
+    },
+    {
+      "mode": "posixRename",
+      "capacity": 256,
+      "id": 7,
+      "source": "/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/.maccompanion-upload-00000000-0000-0000-0000-000000000001.part",
+      "destination": "/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/report.txt",
+      "sourceUTF8Bytes": 215,
+      "hex": "000001a3c80000000700000018706f7369782d72656e616d65406f70656e7373682e636f6d000000d72f616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161612f2e6d6163636f6d70616e696f6e2d75706c6f61642d30303030303030302d303030302d303030302d303030302d3030303030303030303030312e70617274000000a32f616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161612f7265706f72742e747874"
+    },
+    {
+      "mode": "posixRename",
+      "capacity": 256,
+      "id": 7,
+      "source": "/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/.maccompanion-upload-00000000-0000-0000-0000-000000000001.part",
+      "destination": "/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/report.txt",
+      "sourceUTF8Bytes": 216,
+      "hex": "000001a5c80000000700000018706f7369782d72656e616d65406f70656e7373682e636f6d000000d82f61616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161612f2e6d6163636f6d70616e696f6e2d75706c6f61642d30303030303030302d303030302d303030302d303030302d3030303030303030303030312e70617274000000a42f61616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161612f7265706f72742e747874"
+    }
+  ],
+  "preparationRollbackCases": [
+    {
+      "id": "regular-then-directory",
+      "rejectedItem": "directory",
+      "originalUnchanged": true,
+      "remainingCopies": 0
+    },
+    {
+      "id": "regular-then-link",
+      "rejectedItem": "link",
+      "originalUnchanged": true,
+      "remainingCopies": 0
+    },
+    {
+      "id": "regular-then-fifo",
+      "rejectedItem": "fifo",
+      "originalUnchanged": true,
+      "remainingCopies": 0
+    }
+  ],
+  "localStagingAdmissionCases": [
+    {
+      "id": "regular-replaced-by-link-before-open",
+      "replacement": "link",
+      "opened": false
+    },
+    {
+      "id": "regular-replaced-by-fifo-before-open",
+      "replacement": "fifo",
+      "opened": false
+    },
+    {
+      "id": "regular-replaced-by-link-after-open",
+      "replacement": "link",
+      "opened": true,
+      "copiedOriginal": true
+    }
+  ],
+  "namedKeyAccountCases": [
+    { "id": "initial-account", "priorAccount": "", "change": "none", "expectedAccount": "synthetic" },
+    { "id": "changed-account", "priorAccount": "old-account", "change": "none", "expectedAccount": "synthetic" },
+    { "id": "newer-key-selection", "priorAccount": "", "change": "key", "expectedAccount": "newer-account" },
+    { "id": "newer-account-edit", "priorAccount": "", "change": "account", "expectedAccount": "newer-account" },
+    { "id": "removed-association", "priorAccount": "", "change": "association", "expectedAccount": null },
+    { "id": "deleted-key", "priorAccount": "", "change": "delete", "expectedAccount": null }
+  ],
+  "diskKeyAccountCases": [
+    { "id": "initial-account", "priorAccount": "", "change": "none", "login": "success", "expectedAccount": "synthetic" },
+    { "id": "changed-account", "priorAccount": "old-account", "change": "none", "login": "success", "expectedAccount": "synthetic" },
+    { "id": "newer-account-edit", "priorAccount": "old-account", "change": "account", "login": "success", "expectedAccount": "newer-account" },
+    { "id": "newer-key-selection", "priorAccount": "old-account", "change": "key", "login": "success", "expectedAccount": "newer-account" },
+    { "id": "reselected-file-reference", "priorAccount": "old-account", "change": "reference", "login": "success", "expectedAccount": "old-account" },
+    { "id": "removed-association", "priorAccount": "old-account", "change": "association", "login": "success", "expectedAccount": null },
+    { "id": "deleted-key", "priorAccount": "old-account", "change": "delete", "login": "success", "expectedAccount": null },
+    { "id": "rejected-login", "priorAccount": "old-account", "change": "none", "login": "rejected", "expectedAccount": "old-account" },
+    { "id": "cancelled-login", "priorAccount": "old-account", "change": "none", "login": "cancelled", "expectedAccount": "old-account" },
+    { "id": "repeated-login", "priorAccount": "old-account", "change": "none", "login": "repeated", "expectedAccount": "synthetic-second" }
+  ],
+  "hostApprovalCases": [
+    {
+      "id": "first-approval",
+      "storedKey": null,
+      "approvedKey": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      "accepted": true,
+      "expectedKey": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+    },
+    {
+      "id": "concurrent-same-key",
+      "storedKey": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      "approvedKey": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      "accepted": true,
+      "expectedKey": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+    },
+    {
+      "id": "concurrent-different-key",
+      "storedKey": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEB",
+      "approvedKey": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      "accepted": false,
+      "expectedKey": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEB"
+    }
+  ],
+  "directoryBudgetCases": [
+    {
+      "name": "default-budget-large-longnames",
+      "entries": 18,
+      "longnameUnit": "x",
+      "longnameRepeats": 1000000,
+      "extended": [],
+      "accepted": false,
+      "expectedReadRequests": 17
+    },
+    {
+      "name": "ascii-exact-budget",
+      "entries": 2,
+      "longnameUnit": "x",
+      "longnameRepeats": 20,
+      "extended": [],
+      "maximumMetadataBytes": 60,
+      "accepted": true,
+      "expectedReadRequests": 3
+    },
+    {
+      "name": "ascii-over-budget",
+      "entries": 2,
+      "longnameUnit": "x",
+      "longnameRepeats": 20,
+      "extended": [],
+      "maximumMetadataBytes": 59,
+      "accepted": false,
+      "expectedReadRequests": 2
+    },
+    {
+      "name": "utf8-exact-budget",
+      "entries": 1,
+      "longnameUnit": "é",
+      "longnameRepeats": 4,
+      "extended": [],
+      "maximumMetadataBytes": 18,
+      "accepted": true,
+      "expectedReadRequests": 2
+    },
+    {
+      "name": "utf8-over-budget",
+      "entries": 1,
+      "longnameUnit": "é",
+      "longnameRepeats": 4,
+      "extended": [],
+      "maximumMetadataBytes": 17,
+      "accepted": false,
+      "expectedReadRequests": 1
+    },
+    {
+      "name": "extended-exact-budget",
+      "entries": 1,
+      "longnameUnit": "é",
+      "longnameRepeats": 1,
+      "extended": [
+        [
+          "x",
+          "é"
+        ]
+      ],
+      "maximumMetadataBytes": 15,
+      "accepted": true,
+      "expectedReadRequests": 2
+    },
+    {
+      "name": "extended-over-budget",
+      "entries": 1,
+      "longnameUnit": "é",
+      "longnameRepeats": 1,
+      "extended": [
+        [
+          "x",
+          "é"
+        ]
+      ],
+      "maximumMetadataBytes": 14,
+      "accepted": false,
+      "expectedReadRequests": 1
+    }
+  ],
+  "loginDraftCases": [
+    {
+      "id": "saved-return-twice",
+      "events": [
+        "initialize",
+        "suspend",
+        "active",
+        "suspend",
+        "active"
+      ],
+      "password": "saved",
+      "account": "saved",
+      "remember": true,
+      "reads": 2
+    },
+    {
+      "id": "connected-disconnect-return",
+      "events": [
+        "initialize",
+        "connected",
+        "active",
+        "suspend",
+        "active"
+      ],
+      "password": "saved",
+      "account": "saved",
+      "remember": true,
+      "reads": 2
+    },
+    {
+      "id": "locked-defers-restoration",
+      "events": [
+        "initialize",
+        "suspend",
+        "locked",
+        "active"
+      ],
+      "password": "saved",
+      "account": "saved",
+      "remember": true,
+      "reads": 1
+    },
+    {
+      "id": "inactive-defers-restoration",
+      "events": [
+        "initialize",
+        "suspend",
+        "inactive",
+        "active"
+      ],
+      "password": "saved",
+      "account": "saved",
+      "remember": true,
+      "reads": 1
+    },
+    {
+      "id": "busy-defers-restoration",
+      "events": [
+        "initialize",
+        "suspend",
+        "busy",
+        "active"
+      ],
+      "password": "saved",
+      "account": "saved",
+      "remember": true,
+      "reads": 1
+    },
+    {
+      "id": "explicit-empty-stays-empty",
+      "events": [
+        "initialize",
+        "clear",
+        "suspend",
+        "active"
+      ],
+      "password": "empty",
+      "account": "saved",
+      "remember": true,
+      "reads": 0
+    },
+    {
+      "id": "edited-secret-not-replaced",
+      "events": [
+        "initialize",
+        "edit-password",
+        "suspend",
+        "active"
+      ],
+      "password": "empty",
+      "account": "saved",
+      "remember": true,
+      "reads": 0
+    },
+    {
+      "id": "edited-account-preserved",
+      "events": [
+        "initialize",
+        "edit-account",
+        "suspend",
+        "active"
+      ],
+      "password": "empty",
+      "account": "edited",
+      "remember": true,
+      "reads": 0
+    },
+    {
+      "id": "save-off-preserved",
+      "events": [
+        "initialize",
+        "save-off",
+        "suspend",
+        "active"
+      ],
+      "password": "empty",
+      "account": "saved",
+      "remember": false,
+      "reads": 0
+    },
+    {
+      "id": "off-on-does-not-resurrect",
+      "events": [
+        "initialize",
+        "save-off",
+        "suspend",
+        "save-on",
+        "active"
+      ],
+      "password": "empty",
+      "account": "saved",
+      "remember": true,
+      "reads": 0
+    },
+    {
+      "id": "removed-login-not-restored",
+      "events": [
+        "initialize",
+        "suspend",
+        "forget",
+        "active"
+      ],
+      "password": "empty",
+      "account": "saved",
+      "remember": true,
+      "reads": 1
+    },
+    {
+      "id": "changed-saved-account-not-restored",
+      "events": [
+        "initialize",
+        "suspend",
+        "stored-account-change",
+        "active"
+      ],
+      "password": "empty",
+      "account": "saved",
+      "remember": true,
+      "reads": 1
+    },
+    {
+      "id": "method-choice-preserved",
+      "events": [
+        "initialize",
+        "suspend",
+        "choose-key",
+        "active"
+      ],
+      "password": "empty",
+      "account": "key",
+      "remember": true,
+      "reads": 0
+    },
+    {
+      "id": "explicit-return-to-password",
+      "events": [
+        "initialize",
+        "suspend",
+        "choose-key",
+        "active",
+        "password-method",
+        "active"
+      ],
+      "password": "saved",
+      "account": "saved",
+      "remember": true,
+      "reads": 1
+    },
+    {
+      "id": "newly-saved-success-restores",
+      "events": [
+        "initialize",
+        "edit-password",
+        "save-edited",
+        "connected",
+        "active"
+      ],
+      "password": "edited",
+      "account": "saved",
+      "remember": true,
+      "reads": 1
+    },
+    {
+      "id": "failed-save-does-not-restore-old-secret",
+      "events": [
+        "initialize",
+        "edit-password",
+        "connected",
+        "active"
+      ],
+      "password": "empty",
+      "account": "saved",
+      "remember": true,
+      "reads": 0
+    },
+    {
+      "id": "retained-presentation-preserves-edited-choices",
+      "events": [
+        "initialize",
+        "edit-account",
+        "save-off",
+        "suspend",
+        "initialize",
+        "active"
+      ],
+      "password": "empty",
+      "account": "edited",
+      "remember": false,
+      "reads": 0
+    },
+    {
+      "id": "hidden-edited-login-saved-before-restoration",
+      "events": [
+        "initialize",
+        "edit-password",
+        "begin-password-auth",
+        "suspend",
+        "save-edited",
+        "finish-password-auth",
+        "active"
+      ],
+      "password": "edited",
+      "account": "saved",
+      "remember": true,
+      "reads": 1
+    },
+    {
+      "id": "late-authentication-preserves-newer-account",
+      "events": [
+        "initialize",
+        "begin-password-auth",
+        "suspend",
+        "edit-account",
+        "finish-password-auth",
+        "active"
+      ],
+      "password": "empty",
+      "account": "edited",
+      "remember": true,
+      "reads": 0
+    },
+    {
+      "id": "late-authentication-preserves-save-off",
+      "events": [
+        "initialize",
+        "begin-password-auth",
+        "suspend",
+        "save-off",
+        "finish-password-auth",
+        "active"
+      ],
+      "password": "empty",
+      "account": "saved",
+      "remember": false,
+      "reads": 0
+    },
+    {
+      "id": "hidden-failed-save-never-restores-old-password",
+      "events": [
+        "initialize",
+        "edit-password",
+        "begin-password-auth",
+        "suspend",
+        "finish-password-auth",
+        "active"
+      ],
+      "password": "empty",
+      "account": "saved",
+      "remember": true,
+      "reads": 0
+    },
+    {
+      "id": "saved-password-write-failure",
+      "events": [
+        "initialize",
+        "begin-password-auth",
+        "fail-password-save",
+        "active",
+        "suspend",
+        "active"
+      ],
+      "password": "saved",
+      "account": "saved",
+      "remember": true,
+      "reads": 2
+    },
+    {
+      "id": "hidden-saved-password-write-failure",
+      "events": [
+        "initialize",
+        "begin-password-auth",
+        "suspend",
+        "fail-password-save",
+        "active"
+      ],
+      "password": "saved",
+      "account": "saved",
+      "remember": true,
+      "reads": 1
+    },
+    {
+      "id": "edited-password-write-failure",
+      "events": [
+        "initialize",
+        "edit-password",
+        "begin-password-auth",
+        "fail-password-save",
+        "active"
+      ],
+      "password": "empty",
+      "account": "saved",
+      "remember": true,
+      "reads": 0
+    },
+    {
+      "id": "hidden-edited-password-write-failure",
+      "events": [
+        "initialize",
+        "edit-password",
+        "begin-password-auth",
+        "suspend",
+        "fail-password-save",
+        "active"
+      ],
+      "password": "empty",
+      "account": "saved",
+      "remember": true,
+      "reads": 0
+    },
+    {
+      "id": "forgotten-password-after-write-failure",
+      "events": [
+        "initialize",
+        "begin-password-auth",
+        "fail-password-save",
+        "forget",
+        "active"
+      ],
+      "password": "empty",
+      "account": "saved",
+      "remember": true,
+      "reads": 1
+    },
+    {
+      "id": "newer-edit-survives-write-failure",
+      "events": [
+        "initialize",
+        "begin-password-auth",
+        "edit-password",
+        "fail-password-save"
+      ],
+      "password": "edited",
+      "account": "saved",
+      "remember": true,
+      "reads": 0
+    },
+    {
+      "id": "mac-removal-invalidates-late-save",
+      "events": [
+        "initialize",
+        "begin-password-auth",
+        "remove-mac",
+        "finish-password-auth",
+        "active"
+      ],
+      "password": "empty",
+      "account": "empty",
+      "remember": false,
+      "reads": 0
+    }
+  ]
+}

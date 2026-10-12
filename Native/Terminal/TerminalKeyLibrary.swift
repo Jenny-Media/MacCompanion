@@ -153,6 +153,19 @@ struct TerminalKeyAssociation: Codable {
         let id = try add(key, name: "SSH Key")
         try associate(id, macID: macID, username: key.username)
     }
+    /// Retain the authenticated account without recreating a removed key or
+    /// overwriting a selection/account edited while the connection was pending.
+    static func rememberAccount(_ username: String, macID: UUID, selection: TerminalNamedKey) throws {
+        #if os(macOS)
+        guard try MacSSHKeyFileStore.selected(macID) == nil else { return }
+        #endif
+        var library = try load()
+        guard let index = library.associations.firstIndex(where: {
+            $0.macID == macID && $0.keyID == selection.id && $0.username == selection.key.username
+        }), library.keys.contains(where: { $0.id == selection.id && $0.key.seed == selection.key.seed }) else { return }
+        library.associations[index].username = username
+        try save(library)
+    }
 }
 
 @MainActor @Observable final class TerminalKeyLibrary {

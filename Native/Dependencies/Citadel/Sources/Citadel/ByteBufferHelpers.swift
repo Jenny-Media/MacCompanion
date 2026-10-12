@@ -94,10 +94,14 @@ extension ByteBuffer {
         }
         
         if flags.contains(.extended) {
-            guard let extendedCount = readInteger(as: UInt32.self) else {
+            guard let extendedCount = readInteger(as: UInt32.self),
+                  extendedCount <= 128, Int(extendedCount) <= readableBytes / 8 else {
                 return nil
             }
-            
+            // Bound synchronous decoder work before allocating. Each pair
+            // needs two SSH-string lengths, even when both strings are empty.
+            var extended = [(String, String)]()
+            extended.reserveCapacity(Int(extendedCount))
             for _ in 0..<extendedCount {
                 guard
                     let type = readSSHString(),
@@ -106,8 +110,9 @@ extension ByteBuffer {
                     return nil
                 }
                 
-                attributes.extended.append((type, data))
+                extended.append((type, data))
             }
+            attributes.extended = extended
         }
         
         return attributes
@@ -119,10 +124,9 @@ extension ByteBuffer {
     }
     
     mutating func writeSSHString(_ string: String) {
-        let oldWriterIndex = writerIndex
-        moveWriterIndex(forwardBy: 4)
+        // Both writes allocate as needed; advancing an index cannot grow storage.
+        writeInteger(UInt32(string.utf8.count))
         writeString(string)
-        setInteger(UInt32(writerIndex - oldWriterIndex - 4), at: oldWriterIndex)
     }
     
     mutating func readSSHString() -> String? {

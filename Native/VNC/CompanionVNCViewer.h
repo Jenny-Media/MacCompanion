@@ -24,6 +24,8 @@ NS_ASSUME_NONNULL_BEGIN
 @property(nonatomic, copy, nullable) NSArray<NSDictionary *> * (^quickActionsProvider)(BOOL inputOnly);
 @property(nonatomic, copy, nullable) void (^settingsHandler)(void);
 @property(nonatomic, copy, nullable) void (^appSettingsHandler)(void);
+@property(nonatomic, copy, nullable) void (^filesHandler)(void);
+@property(nonatomic, copy, nullable) NSString *filesStatus;
 @property(nonatomic, copy, nullable) void (^displaySelectionHandler)(NSNumber * _Nullable);
 @property(nonatomic, copy, nullable) void (^inputModeHandler)(BOOL);
 @property(nonatomic, copy, nullable) NSString *savedUsername;

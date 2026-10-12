@@ -112,7 +112,7 @@ def main():
     shared_terminal = ['DirectTerminalSession.swift', 'TerminalSecretStore.swift', 'TerminalSSHKey.swift', 'TerminalKeyLibrary.swift', 'TerminalKeyInstallation.swift',
                        'TerminalKeyboard.swift', 'TerminalLoginSelection.swift', 'TerminalIdentityGuide.swift',
                        'TerminalKeySettings.swift', 'TerminalKeyInstallView.swift', 'TerminalKeyboardSettings.swift']
-    sources = [{'path': str(ROOT / 'Native/Mac')}, *[{'path': str(ROOT / 'Native/VNC' / p)} for p in shared_vnc],
+    sources = [{'path': str(ROOT / 'Native/Mac')}, {'path': str(ROOT / 'Native/Terminal/Files')}, *[{'path': str(ROOT / 'Native/VNC' / p)} for p in shared_vnc],
         *[{'path': str(ROOT / 'Native/Terminal' / p)} for p in shared_terminal],
         {'path': str(ROOT / 'Apps/MacCompanionMac/Assets.xcassets'), 'buildPhase': 'resources'},
         {'path': str(ROOT / 'spec/privacy-manifest/v0/targets/mac-containing-app/PrivacyInfo.xcprivacy'), 'buildPhase': 'resources'}]

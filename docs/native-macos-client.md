@@ -402,3 +402,13 @@ restart, full-screen hover controls against a live desktop, native IME behavior
 and signed Mac–iPhone iCloud delivery still require user/device acceptance.
 These changes are local source and development-build work; they do not update
 the previously uploaded TestFlight build.
+
+## Files companion feature, 2026-10-10
+
+The approved follow-up adds free native SFTP browsing, folder creation and individual
+file uploads/downloads to both clients. It adds no connection mode and uses the
+existing Remote Login service, SSH login/key settings and host trust. Files owns
+its connection independently of Desktop and Terminal. See
+[Direct Files v1](../spec/capability-protocol/v0/direct-files.md) for scope,
+transfer safety and lifecycle requirements. Rename, delete, folder transfers and
+automatic resume remain deferred.

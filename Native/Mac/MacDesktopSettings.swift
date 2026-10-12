@@ -72,6 +72,7 @@ struct MacDesktopFullScreenControls: View {
     let session: MacVNCSession
     let window: MacWindowHandle
     let actions: [VNCQuickAction]
+    let files: () -> Void
     let settings: () -> Void
     @State private var revealed = false
     var body: some View {
@@ -89,6 +90,7 @@ struct MacDesktopFullScreenControls: View {
                 MacQuickActionsMenu(actions: actions, perform: { if window.acceptsActions { session.quickAction($0) } }, customize: settings)
             }
             Button("Controls", systemImage: "slider.horizontal.3", action: settings)
+            Button("Files", systemImage: "folder", action: files).help("Browse and transfer files using Remote Login (SSH)")
             Button("Exit Full Screen", systemImage: "arrow.down.right.and.arrow.up.left") { window.toggleFullScreen() }
             Button("Disconnect", systemImage: "power") { session.disconnect() }
         }.labelStyle(.iconOnly).buttonStyle(.borderless).padding(.horizontal, 18).padding(.vertical, 12)

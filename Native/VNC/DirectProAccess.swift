@@ -211,7 +211,7 @@ struct DirectProTrial {
     }
     func canAddMac(count: Int) -> Bool { hasPro || count < 1 }
     func canAddKey(count: Int) -> Bool { hasPro || count < 1 }
-    func canUseMac(_ id: UUID, among ids: [UUID]) -> Bool { hasPro || freeID("mac", ids: ids) == id }
+    func canUseMac(_ id: UUID, among ids: [UUID]) -> Bool { ids.contains(id) && (hasPro || freeID("mac", ids: ids) == id) }
     func canUseKey(_ id: UUID, among ids: [UUID]) -> Bool { hasPro || freeID("key", ids: ids) == id }
     func chooseFreeMac(_ id: UUID) { defaults.set(id.uuidString, forKey: "direct-free-mac-v1") }
     func chooseFreeKey(_ id: UUID) { defaults.set(id.uuidString, forKey: "direct-free-key-v1") }
