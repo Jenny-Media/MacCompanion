@@ -34,6 +34,9 @@ typedef UIImage CompanionVNCImage;
 /// Local snapshot review closes input while the socket continues receiving.
 - (BOOL)suspendInputForReview:(void (^)(void))completion;
 - (void)resumeInputAfterReview;
+/// Brief inactivity releases held input without resetting an established baseline.
+- (void)suspendInputForInterruption;
+- (void)resumeInputAfterInterruption;
 - (void)connectSocket:(int)socket username:(NSString *)username password:(NSString *)password;
 - (void)connectHost:(NSString *)host username:(NSString *)username password:(NSString *)password;
 - (void)connectAddresses:(NSArray<NSString *> *)addresses port:(NSInteger)port username:(NSString *)username password:(NSString *)password;

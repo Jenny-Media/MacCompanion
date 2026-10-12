@@ -7,19 +7,41 @@ import UIKit
 @MainActor @Observable final class DirectAppLockV1 {
     static let shared = DirectAppLockV1()
     static let preferenceKey = "direct-client-require-device-unlock-v1"
+    static let gracePreferenceKey = "direct-client-unlock-grace-seconds-v1"
     static let unlocked = Notification.Name("DirectClientUnlockedV1")
     static let locked = Notification.Name("DirectClientLockedV1")
     private(set) var authenticating = false
     private(set) var allowed: Bool
+    private(set) var graceSeconds: Int
     private(set) var message = "Unlock to access your Macs"
-    var enabled: Bool { UserDefaults.standard.bool(forKey: Self.preferenceKey) }
-    var canAccess: Bool { !enabled || allowed }
+    var enabled: Bool { defaults.bool(forKey: Self.preferenceKey) }
+    var canAccess: Bool { !enabled || (allowed && protectedDataAvailable()) }
     private let contextFactory: () -> LAContext
+    private let defaults: UserDefaults
+    private let now: () -> TimeInterval
+    private let isActive: () -> Bool
+    private let protectedDataAvailable: () -> Bool
+    private var graceStarted: TimeInterval?
+    private var graceDeadline: TimeInterval?
+    private var unlockNeedsPublication = false
     private var context: LAContext?
     private var cover: UIWindow?
     private var observers: [NSObjectProtocol] = []
     private var attempt = UUID()
-    init(contextFactory: @escaping () -> LAContext = { LAContext() }) { self.contextFactory = contextFactory; allowed = !UserDefaults.standard.bool(forKey: Self.preferenceKey) }
+    init(contextFactory: @escaping () -> LAContext = { LAContext() }, defaults: UserDefaults = .standard,
+         now: (() -> TimeInterval)? = nil,
+         isActive: @escaping () -> Bool = { UIApplication.shared.applicationState == .active },
+         protectedDataAvailable: @escaping () -> Bool = { UIApplication.shared.isProtectedDataAvailable }) {
+        self.contextFactory = contextFactory; self.defaults = defaults
+        let origin = ContinuousClock.now
+        self.now = now ?? {
+            let elapsed = origin.duration(to: ContinuousClock.now).components
+            return Double(elapsed.seconds) + Double(elapsed.attoseconds) / 1e18
+        }
+        self.isActive = isActive; self.protectedDataAvailable = protectedDataAvailable
+        allowed = !defaults.bool(forKey: Self.preferenceKey)
+        graceSeconds = defaults.integer(forKey: Self.gracePreferenceKey) == 30 ? 30 : 0
+    }
     func install() {
         if observers.isEmpty {
             let center = NotificationCenter.default
@@ -28,7 +50,11 @@ import UIKit
             }, center.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main) { [weak self] _ in
                 MainActor.assumeIsolated { self?.background() }
             }, center.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
-                MainActor.assumeIsolated { guard let self, !self.authenticating else { return }; if self.canAccess { self.hideCover() } else { self.authenticate() } }
+                MainActor.assumeIsolated { self?.becameActive() }
+            }, center.addObserver(forName: UIApplication.protectedDataWillBecomeUnavailableNotification, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.protectedDataLost() }
+            }, center.addObserver(forName: UIApplication.protectedDataDidBecomeAvailableNotification, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.becameActive() }
             }]
         }
         if canAccess { hideCover() } else { showCover(); authenticate() }
@@ -40,18 +66,52 @@ import UIKit
                 message = "Set up an iPhone passcode before enabling app unlock."; return
             }
         }
-        UserDefaults.standard.set(value, forKey: Self.preferenceKey)
+        discardGrace(); defaults.set(value, forKey: Self.preferenceKey)
+        attempt = UUID(); context?.invalidate(); context = nil; authenticating = false; unlockNeedsPublication = false
         if value { allowed = false; NotificationCenter.default.post(name: Self.locked, object: nil); showCover(); authenticate() }
         else { attempt = UUID(); context?.invalidate(); context = nil; authenticating = false; allowed = true; hideCover() }
     }
+    func setGraceSeconds(_ value: Int) {
+        graceSeconds = value == 30 ? 30 : 0; defaults.set(graceSeconds, forKey: Self.gracePreferenceKey)
+        discardGrace()
+    }
+    private func discardGrace() { graceStarted = nil; graceDeadline = nil }
     func background() {
         guard enabled else { return }
+        if allowed && !unlockNeedsPublication && graceSeconds > 0 && protectedDataAvailable() {
+            let time = now(); graceStarted = time; graceDeadline = time + TimeInterval(graceSeconds)
+        } else if authenticating || unlockNeedsPublication { discardGrace() }
+        revokeAccess()
+    }
+    func protectedDataLost() {
+        discardGrace(); guard enabled else { return }; revokeAccess()
+    }
+    private func revokeAccess() {
         attempt = UUID(); context?.invalidate(); context = nil; authenticating = false
+        unlockNeedsPublication = false
         allowed = false; message = "Unlock to access your Macs"; showCover()
         NotificationCenter.default.post(name: Self.locked, object: nil)
     }
+    func becameActive() {
+        guard isActive(), !authenticating else { return }
+        if canAccess {
+            hideCover()
+            if unlockNeedsPublication { publishUnlock() }
+            return
+        }
+        let time = now()
+        if let start = graceStarted, let deadline = graceDeadline,
+           time >= start, time < deadline, protectedDataAvailable() {
+            discardGrace(); allowed = true; publishUnlock()
+        } else { discardGrace(); authenticate() }
+    }
+    private func publishUnlock() {
+        unlockNeedsPublication = false; hideCover()
+        NotificationCenter.default.post(name: Self.unlocked, object: nil)
+    }
     func authenticate() {
-        guard enabled, !allowed, !authenticating, UIApplication.shared.applicationState == .active else { return }
+        guard enabled, !allowed, !authenticating, isActive(), protectedDataAvailable() else { return }
+        discardGrace()
         showCover(); let id = UUID(); attempt = id
         let context = contextFactory(); self.context = context
         var error: NSError?
@@ -63,9 +123,10 @@ import UIKit
             Task { @MainActor in
                 guard let self, self.attempt == id else { return }
                 self.context = nil; self.authenticating = false
-                guard success, UIApplication.shared.applicationState != .background else { self.message = "App locked. Tap Unlock to try again."; return }
-                self.allowed = true; self.hideCover()
-                NotificationCenter.default.post(name: Self.unlocked, object: nil)
+                guard success, self.protectedDataAvailable(), UIApplication.shared.applicationState != .background else { self.message = "App locked. Tap Unlock to try again."; return }
+                self.allowed = true
+                if self.isActive() { self.publishUnlock() }
+                else { self.unlockNeedsPublication = true }
             }
         }
     }

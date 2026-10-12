@@ -102,16 +102,25 @@ enum DirectUnlockMethod {
 }
 
 struct DirectAppUnlockSection: View {
-    @State private var lock = DirectAppLockV1.shared
+    @State private var lock: DirectAppLockV1
     @State private var method = DirectUnlockMethod.current()
+    init(lock: DirectAppLockV1 = .shared) { _lock = State(initialValue: lock) }
     var body: some View {
         Section {
             Toggle("Require Unlock", isOn: Binding(get: { lock.enabled }, set: { lock.setEnabled($0) }))
                 .accessibilityIdentifier("app-lock-toggle")
+            #if os(iOS)
+            if lock.enabled {
+                Picker("Lock After", selection: Binding(get: { lock.graceSeconds }, set: { lock.setGraceSeconds($0) })) {
+                    Text("Immediately").tag(0)
+                    Text("30 seconds").tag(30)
+                }.accessibilityIdentifier("app-lock-delay")
+            }
+            #endif
             if lock.message.contains("before enabling") { Text(lock.message).font(.footnote).foregroundStyle(.secondary) }
         } header: { Text("App Unlock") } footer: {
             #if os(iOS)
-            Text(method.returningDescription)
+            Text(lock.graceSeconds == 0 ? method.returningDescription : "Short returns can reuse your recent unlock. Content stays covered while away; protected-data loss requires a new unlock.")
             #else
             Text("Unlock again after screen sleep or locking your Mac.")
             #endif

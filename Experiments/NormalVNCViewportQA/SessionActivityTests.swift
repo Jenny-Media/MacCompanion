@@ -144,7 +144,7 @@ private final class ActivityActionTestSession: CompanionVNCSession {
         defaults.set(true, forKey: VNCSessionActivityController.preferenceKey); owner.preferenceChanged(); await owner.waitForUpdates()
         XCTAssertTrue(backend.ids.isEmpty) // foreground is required for activity creation
         owner.setForeground(true); owner.setPhase("connected"); await owner.waitForUpdates()
-        XCTAssertEqual(backend.events.last, "update:connected")
+        XCTAssertEqual(backend.events.last, "start:connected")
         backend.ids = []; owner.setPhase("paused"); await owner.waitForUpdates()
         owner.setPhase("connected"); await owner.waitForUpdates()
         XCTAssertTrue(backend.ids.isEmpty) // respect dismissal until a deliberate opt-in
@@ -186,6 +186,8 @@ private final class ActivityActionTestSession: CompanionVNCSession {
         XCTAssertEqual(RemoteSessionActivityAttributes.resumeRoute(from: terminal.resumeURL), .init(macID: id, kind: .terminal))
         let encoded = try JSONEncoder().encode(RemoteSessionActivityAttributes(macID: id, macName: "Legacy Desktop"))
         let legacy = try JSONDecoder().decode(RemoteSessionActivityAttributes.self, from: encoded)
+        XCTAssertFalse(try XCTUnwrap(RemoteSessionActivityAttributes.resumeRoute(from: terminal.resumeURL)).automaticallyConnect)
+        XCTAssertTrue(try XCTUnwrap(RemoteSessionActivityAttributes.resumeRoute(from: legacy.resumeURL)).automaticallyConnect)
         XCTAssertNil(legacy.kind)
         XCTAssertEqual(RemoteSessionActivityAttributes.resumeRoute(from: legacy.resumeURL), .init(macID: id, kind: .desktop))
     }

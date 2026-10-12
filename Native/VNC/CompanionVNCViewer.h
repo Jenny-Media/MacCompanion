@@ -49,6 +49,7 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)showInvalidLogin;
 - (void)showLoginRetentionFailure;
 - (void)background;
+- (void)becameInactive;
 - (void)backgroundWithCompletion:(nullable void (^)(void))completion;
 - (void)foregrounded;
 @end

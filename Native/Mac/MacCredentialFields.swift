@@ -61,9 +61,16 @@ struct MacCredentialFields: NSViewRepresentable {
             self.view = view
             for field in [view.account, view.secret] {
                 field.delegate = self; field.target = self; field.action = #selector(commit(_:))
-                observations.append(field.observe(\.stringValue, options: [.new]) { [weak self] _, _ in
-                    MainActor.assumeIsolated { self?.synchronize() }
-                })
+                // AppKit/providers can assign the cell through any native value
+                // property. These setters do not all emit stringValue KVO.
+                observations.append(observe(field, \.stringValue))
+                observations.append(observe(field, \.objectValue))
+                observations.append(observe(field, \.attributedStringValue))
+            }
+        }
+        private func observe<Value>(_ field: NSTextField, _ keyPath: KeyPath<NSTextField, Value>) -> NSKeyValueObservation {
+            field.observe(keyPath, options: [.new]) { [weak self] _, _ in
+                MainActor.assumeIsolated { self?.synchronize() }
             }
         }
         func update(_ view: Fields) {
@@ -81,6 +88,15 @@ struct MacCredentialFields: NSViewRepresentable {
         }
         func synchronize() {
             guard !updating, let view else { return }
+            guard parent.enabled else {
+                // A provider reply can arrive after a lock/disable redraw.
+                // Restore application-owned values instead of reviving input.
+                updating = true
+                view.account.stringValue = parent.username
+                view.secret.stringValue = parent.password
+                updating = false
+                return
+            }
             let account = view.account.stringValue, secret = view.secret.stringValue
             previousUsername = account; previousPassword = secret
             if parent.username != account { parent.username = account }

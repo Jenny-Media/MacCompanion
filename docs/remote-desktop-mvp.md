@@ -311,3 +311,57 @@ its connection independently of Desktop and Terminal. See
 [Direct Files v1](../spec/capability-protocol/v0/direct-files.md) for scope,
 transfer safety and lifecycle requirements. Rename, delete, folder transfers and
 automatic resume remain deferred.
+
+## iOS interruption and return policy
+
+Established Desktop and Terminal sessions distinguish temporary foreground
+inactivity from actual background entry. Inactivity releases held/queued input
+without replacing the transport or changing the displayed crop. Background entry
+pauses frame processing or SSH reads. The one-second background assertion bounds
+input cleanup independently of ActivityKit completion; a slow status update cannot
+kill a transport whose input release already completed. An observed connection
+end retires ownership synchronously and dismisses the Live Activity independently
+of pending status updates, even while the viewer is backgrounded. Late completion
+of an older update cannot retire or update a replacement activity.
+
+A returning Desktop preserves the cached selected-display crop while a fresh
+frame and the replacement connection's display layout converge, in either order.
+Only a verified missing selection falls back to the full desktop. Input remains
+gated until presentation is ready. A compact indeterminate indicator appears
+after 500 milliseconds of real restoration/reconnection work and disappears on
+readiness; brief inactive returns do not show it. The existing one-replacement
+limit and nine-second resume deadline remain. Terminal does not silently create
+a replacement shell or replay input. Grid changes while inactive are deferred;
+return publishes the latest dimensions to the same PTY before fresh input.
+
+Require Unlock continues to default to immediate locking after background entry.
+An explicit, local 30-second preference can reuse a recent successful unlock on
+foreground return. Access is revoked throughout background entry, and reuse
+requires an active app, protected data availability, and an unexpired monotonic
+deadline. Protected-data loss, preference changes and process restart discard
+reuse. The privacy cover appears on inactivity, independently of this preference.
+These are local presentation/access gates; legacy application-authentication,
+pairing, signatures and recorded grants remain unchanged.
+
+The Island provides contextual return and End actions. Paused/stale content does
+not claim that a remote socket or shell remains alive. Stale content offers Open
+to Check, and an observed session end immediately ends the activity. Fresh
+connection evidence renews a bounded connected freshness date; background state
+is always presented as paused. The system may suspend execution, so detection of
+a later remote close and timed activity dismissal are not guaranteed while the
+app is suspended. No helper, APNs publisher or indefinite background mode is added.
+
+Simulator/AppKit regression checks verify software transitions and synthetic
+input only. Signed Passwords/1Password selection, real iPhone authentication and
+long-background behavior require final acceptance; physical Vision Pro is used
+only for final visionOS acceptance.
+
+The optional unlock grace uses a continuous monotonic clock, including device
+sleep, so suspension or wall-clock changes cannot extend its 30-second limit.
+Terminal return keeps the last SSH evidence timestamp. Re-enabling reads on an
+existing local socket does not verify the peer; fresh SSH output renews status.
+
+Opening a Terminal Live Activity after its owner view or process is gone loads
+sign-in details without auto-connect. It explains that the previous session
+cannot be recovered in this app; Connect is an explicit choice to open a new
+shell. Ordinary Mac-list entry retains the saved-login convenience.

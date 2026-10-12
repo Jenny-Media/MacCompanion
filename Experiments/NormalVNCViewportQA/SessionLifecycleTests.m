@@ -13,15 +13,19 @@
 - (void)processConnectedClient:(rfbClient *)client;
 - (void)publishFrame:(rfbClient *)client;
 - (void)report:(NSString *)state;
+- (BOOL)writeKeyEvent:(uint32_t)key down:(BOOL)down client:(rfbClient *)client;
 @end
 @interface CompanionVNCViewer (LifecycleTesting)
 - (void)frame:(UIImage *)frame;
 - (void)selectDisplay:(NSDictionary *)display;
 - (void)setTrackpadModeEnabled:(BOOL)enabled;
+- (void)updateConnectionChrome;
+- (void)sendPointer:(CGPoint)point mask:(NSInteger)mask;
+- (BOOL)clickPointer:(CGPoint)point mask:(NSInteger)mask;
 @end
 @interface LifecycleSession : CompanionVNCSession
 @property BOOL alive, ready, authenticated;
-@property NSUInteger pauses, resumes, stops;
+@property NSUInteger pauses, resumes, stops, pointerEvents, clicks;
 @end
 @implementation LifecycleSession
 - (BOOL)running { return self.alive; }
@@ -29,7 +33,26 @@
 - (BOOL)connected { return self.ready; }
 - (void)pauseWithCompletion:(void (^)(void))completion { self.pauses++; self.ready = NO; if (completion) completion(); }
 - (void)resume { self.resumes++; }
+- (void)pointerX:(NSInteger)x y:(NSInteger)y mask:(NSInteger)mask { self.pointerEvents++; }
+- (BOOL)tryClickX:(NSInteger)x y:(NSInteger)y mask:(NSInteger)mask { self.clicks++; return YES; }
 - (void)stop { self.stops++; self.alive = NO; self.ready = NO; }
+@end
+@interface InterruptedBatchSession : CompanionVNCSession
+@property(nonatomic, strong) dispatch_semaphore_t firstWrite, continueWrite;
+@property BOOL stalled;
+@end
+@implementation InterruptedBatchSession
+- (instancetype)init {
+    if ((self=[super init])) { _firstWrite=dispatch_semaphore_create(0); _continueWrite=dispatch_semaphore_create(0); }
+    return self;
+}
+- (BOOL)writeKeyEvent:(uint32_t)key down:(BOOL)down client:(rfbClient *)client {
+    if (!self.stalled) {
+        self.stalled=YES; dispatch_semaphore_signal(self.firstWrite);
+        if (dispatch_semaphore_wait(self.continueWrite,dispatch_time(DISPATCH_TIME_NOW,3*NSEC_PER_SEC))) return NO;
+    }
+    return [super writeKeyEvent:key down:down client:client];
+}
 @end
 @interface SessionLifecycleTests : XCTestCase
 @end
@@ -159,6 +182,61 @@
         uint8_t extra; XCTAssertEqual(recv(pair[1],&extra,1,0),0); close(pair[1]);
     }
 }
+- (void)testInactiveInputOnlyReleasePrecedesNewInputWithoutResettingTheSocket {
+    int pair[2]; XCTAssertEqual(socketpair(AF_UNIX,SOCK_STREAM,0,pair),0);
+    int yes=1; setsockopt(pair[0],SOL_SOCKET,SO_NOSIGPIPE,&yes,sizeof(yes));
+    struct timeval timeout={.tv_sec=2}; setsockopt(pair[1],SOL_SOCKET,SO_RCVTIMEO,&timeout,sizeof(timeout));
+    CompanionVNCSession *session=[CompanionVNCSession new]; rfbClient *client=rfbGetClient(8,3,4);
+    client->sock=pair[0]; client->width=2; client->height=2;
+    [session configureClient:client]; XCTAssertTrue([session allocate:client]);
+    client->supportedMessages.client2server[0]|=(1<<rfbKeyEvent)|(1<<rfbPointerEvent);
+    session.inputOnly=YES;
+    for (NSString *key in @[@"running",@"established",@"inputReady"]) [session setValue:@YES forKey:key];
+    XCTAssertTrue([session registerSocket:pair[0]]);
+    XCTAssertTrue(SendKeyEvent(client,0x61,TRUE)); [[session valueForKey:@"heldKeys"] addObject:@0x61];
+    uint8_t key[8]; XCTAssertEqual(recv(pair[1],key,8,MSG_WAITALL),8);
+    [session suspendInputForInterruption]; [session key:0x62 down:YES];
+    XCTAssertEqual([[session valueForKey:@"events"] count],0);
+    [session resumeInputAfterInterruption]; XCTAssertTrue(session.connected);
+    [session key:0x63 down:YES];
+    XCTestExpectation *ended=[self expectationWithDescription:@"Retained socket stops"]; __weak CompanionVNCSession *weak=session;
+    session.stateHandler=^(NSString *state,NSDictionary *stats){if(!weak.running)[ended fulfill];};
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0),^{[session processConnectedClient:client];});
+    uint8_t wire[22]; XCTAssertEqual(recv(pair[1],wire,sizeof(wire),MSG_WAITALL),sizeof(wire));
+    XCTAssertEqual(wire[0],rfbKeyEvent); XCTAssertEqual(wire[1],0); XCTAssertEqual(wire[7],0x61);
+    XCTAssertEqual(wire[8],rfbPointerEvent); XCTAssertEqual(wire[9],0);
+    XCTAssertEqual(wire[14],rfbKeyEvent); XCTAssertEqual(wire[15],1); XCTAssertEqual(wire[21],0x63);
+    XCTAssertEqualObjects([session valueForKey:@"resumeRequested"],@NO);
+    [session stop]; [self waitForExpectations:@[ended] timeout:2]; session.stateHandler=nil; close(pair[1]);
+}
+- (void)testCopiedInputBatchCannotResumeAfterABriefInterruption {
+    XCTAssertEqualObjects([self profile][@"recoveryPolicy"][@"retireCopiedInputOnInterruption"],@YES);
+    int pair[2]; XCTAssertEqual(socketpair(AF_UNIX,SOCK_STREAM,0,pair),0);
+    int yes=1; setsockopt(pair[0],SOL_SOCKET,SO_NOSIGPIPE,&yes,sizeof(yes));
+    struct timeval timeout={.tv_sec=2}; setsockopt(pair[1],SOL_SOCKET,SO_RCVTIMEO,&timeout,sizeof(timeout));
+    InterruptedBatchSession *session=[InterruptedBatchSession new]; rfbClient *client=rfbGetClient(8,3,4);
+    client->sock=pair[0]; client->width=2; client->height=2;
+    [session configureClient:client]; XCTAssertTrue([session allocate:client]);
+    client->supportedMessages.client2server[0]|=(1<<rfbKeyEvent)|(1<<rfbPointerEvent);
+    session.inputOnly=YES;
+    for (NSString *key in @[@"running",@"established",@"inputReady"]) [session setValue:@YES forKey:key];
+    XCTAssertTrue([session registerSocket:pair[0]]);
+    [session keyEvents:@[@{@"key":@0x61,@"down":@YES},@{@"key":@0x62,@"down":@YES}]];
+    XCTestExpectation *ended=[self expectationWithDescription:@"Interrupted owner stops"]; __weak CompanionVNCSession *weak=session;
+    session.stateHandler=^(NSString *state,NSDictionary *stats){if(!weak.running)[ended fulfill];};
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0),^{[session processConnectedClient:client];});
+    XCTAssertEqual(dispatch_semaphore_wait(session.firstWrite,dispatch_time(DISPATCH_TIME_NOW,NSEC_PER_SEC)),0);
+    [session suspendInputForInterruption]; [session resumeInputAfterInterruption]; [session key:0x63 down:YES];
+    dispatch_semaphore_signal(session.continueWrite);
+    uint8_t wire[30]; XCTAssertEqual(recv(pair[1],wire,sizeof(wire),MSG_WAITALL),sizeof(wire));
+    // The already-admitted write may finish; unsent b must be retired. Release a,
+    // then admit only c from the new epoch on the same authenticated socket.
+    XCTAssertEqual(wire[0],rfbKeyEvent); XCTAssertEqual(wire[1],1); XCTAssertEqual(wire[7],0x61);
+    XCTAssertEqual(wire[8],rfbKeyEvent); XCTAssertEqual(wire[9],0); XCTAssertEqual(wire[15],0x61);
+    XCTAssertEqual(wire[16],rfbPointerEvent); XCTAssertEqual(wire[17],0);
+    XCTAssertEqual(wire[22],rfbKeyEvent); XCTAssertEqual(wire[23],1); XCTAssertEqual(wire[29],0x63);
+    [session stop]; [self waitForExpectations:@[ended] timeout:2]; session.stateHandler=nil; close(pair[1]);
+}
 - (void)testStopBoundsAnEstablishedSocketWhenItsOwnerCannotFinish {
     int pair[2]; XCTAssertEqual(socketpair(AF_UNIX,SOCK_STREAM,0,pair),0);
     struct timeval timeout={.tv_sec=1}; setsockopt(pair[1],SOL_SOCKET,SO_RCVTIMEO,&timeout,sizeof(timeout));
@@ -208,5 +286,88 @@
     XCTAssertEqualWithAccuracy(canvas.zoomScale / canvas.minimumZoomScale, ratio, .001);
     XCTAssertTrue([[viewer valueForKey:@"trackpadMode"] boolValue]);
     [viewer stopViewer];
+}
+- (void)testReplacementNeverShowsCombinedDesktopBeforeMatchingFrameAndLayoutInEitherOrder {
+    for (NSNumber *frameFirst in @[@YES, @NO]) {
+        CompanionVNCViewer *viewer = [CompanionVNCViewer new]; [viewer loadViewIfNeeded];
+        viewer.view.frame = CGRectMake(0,0,440,956); [viewer.view layoutIfNeeded];
+        NSDictionary *display = @{@"id":@2,@"title":@"Display 2",@"x":@.5,@"y":@0,@"width":@.5,@"height":@1};
+        NSDictionary *layout = @{@"aspectRatio":@(800.0/600),@"views":@[display]};
+        UIImage *frame = [self frame]; viewer.displayLayout = layout; [viewer frame:frame]; [viewer selectDisplay:display];
+        UIImageView *image = [viewer valueForKey:@"image"]; size_t selectedWidth = CGImageGetWidth(image.image.CGImage);
+        LifecycleSession *old = [LifecycleSession new]; old.alive=YES; old.ready=YES; old.authenticated=YES; viewer.session=old;
+        [viewer background]; [viewer prepareConnection];
+        XCTAssertEqual(CGImageGetWidth(image.image.CGImage),selectedWidth);
+        if (frameFirst.boolValue) [viewer frame:frame]; else viewer.displayLayout=layout;
+        [viewer.view layoutIfNeeded];
+        XCTAssertEqual(CGImageGetWidth(image.image.CGImage),selectedWidth,@"Half a restoration must keep the prior crop");
+        XCTAssertTrue([[viewer valueForKey:@"restoreViewportPending"] boolValue]);
+        if (frameFirst.boolValue) viewer.displayLayout=layout; else [viewer frame:frame];
+        XCTAssertEqualObjects([viewer valueForKey:@"selectedDisplay"][@"id"],@2);
+        XCTAssertEqual(CGImageGetWidth(image.image.CGImage),selectedWidth);
+        XCTAssertFalse([[viewer valueForKey:@"restoreViewportPending"] boolValue]);
+        [viewer stopViewer];
+    }
+}
+- (void)testRestorationWaitsForMatchingAspectAndAllDisplaysNeedsNoMetadata {
+    for (NSNumber *individual in @[@YES,@NO]) {
+        CompanionVNCViewer *viewer=[CompanionVNCViewer new]; [viewer loadViewIfNeeded];
+        NSDictionary *display=@{@"id":@2,@"title":@"Display 2",@"x":@.5,@"y":@0,@"width":@.5,@"height":@1};
+        NSDictionary *layout=@{@"aspectRatio":@(800.0/600),@"views":@[display]};
+        viewer.displayLayout=layout; [viewer frame:[self frame]]; [viewer selectDisplay:individual.boolValue ? display : nil];
+        LifecycleSession *old=[LifecycleSession new]; old.alive=YES; old.ready=YES; old.authenticated=YES; viewer.session=old;
+        [viewer background]; [viewer prepareConnection];
+        LifecycleSession *replacement=[LifecycleSession new]; replacement.alive=YES; replacement.ready=YES; replacement.authenticated=YES; viewer.session=replacement;
+        UIImage *newFrame=[[[UIGraphicsImageRenderer alloc] initWithSize:CGSizeMake(1000,600)] imageWithActions:^(UIGraphicsImageRendererContext *ctx){ [UIColor.systemGreenColor setFill]; UIRectFill(CGRectMake(0,0,1000,600)); }];
+        if (individual.boolValue) viewer.displayLayout=layout;
+        [viewer setValue:@YES forKey:@"foreground"]; [viewer frame:newFrame];
+        if (individual.boolValue) {
+            XCTAssertTrue([[viewer valueForKey:@"restoreViewportPending"] boolValue]);
+            XCTAssertEqual(CGImageGetWidth(((UIImageView *)[viewer valueForKey:@"image"]).image.CGImage),CGImageGetWidth([self frame].CGImage)/2);
+            [viewer sendPointer:CGPointMake(500,50) mask:1]; XCTAssertFalse([viewer clickPointer:CGPointMake(500,50) mask:1]);
+            XCTAssertEqual(replacement.pointerEvents,0); XCTAssertEqual(replacement.clicks,0);
+            viewer.displayLayout=@{@"aspectRatio":@(1000.0/600),@"views":@[display]};
+            XCTAssertEqualObjects([viewer valueForKey:@"selectedDisplay"][@"id"],@2);
+        }
+        XCTAssertFalse([[viewer valueForKey:@"restoreViewportPending"] boolValue]);
+        XCTAssertEqual(CGImageGetWidth(((UIImageView *)[viewer valueForKey:@"image"]).image.CGImage),CGImageGetWidth(newFrame.CGImage)/(individual.boolValue ? 2 : 1));
+        [viewer stopViewer];
+    }
+}
+- (void)testBackgroundConnectionFailurePublishesEndedInsteadOfLeavingPausedActivity {
+    CompanionVNCViewer *viewer=[CompanionVNCViewer new]; [viewer loadViewIfNeeded];
+    [viewer prepareConnection]; CompanionVNCSession *owner=viewer.session;
+    __block NSString *phase=nil; viewer.sessionPhaseHandler=^(NSString *value){ phase=value; };
+    [owner setValue:@YES forKey:@"running"]; [owner setValue:@YES forKey:@"established"];
+    [viewer background]; [owner setValue:@NO forKey:@"running"];
+    owner.stateHandler(@"Connection ended",@{});
+    XCTAssertEqualObjects(phase,@"ended"); [viewer stopViewer];
+}
+- (void)testBriefInactiveReturnDoesNotPauseOrReconnectTheTransport {
+    CompanionVNCViewer *viewer=[CompanionVNCViewer new]; [viewer loadViewIfNeeded];
+    LifecycleSession *session=[LifecycleSession new]; session.alive=YES; session.ready=YES; session.authenticated=YES; viewer.session=session;
+    [viewer becameInactive]; [viewer becameInactive]; [viewer foregrounded]; [viewer foregrounded];
+    XCTAssertEqual(session.pauses,0); XCTAssertEqual(session.resumes,0); XCTAssertEqual(session.stops,0);
+    XCTAssertFalse([[viewer valueForKey:@"inputInactive"] boolValue]);
+    XCTAssertTrue(((UILabel *)[viewer valueForKey:@"status"]).hidden);
+    [viewer stopViewer];
+}
+- (void)testResumeIndicatorIsDelayedAndCancellationRemovesIt {
+    CompanionVNCViewer *viewer=[CompanionVNCViewer new]; [viewer loadViewIfNeeded];
+    UIWindow *window=[[UIWindow alloc] initWithFrame:CGRectMake(0,0,440,956)]; window.rootViewController=viewer; window.hidden=NO;
+    LifecycleSession *session=[LifecycleSession new]; session.alive=YES; session.ready=YES; session.authenticated=YES; viewer.session=session;
+    [viewer frame:[self frame]]; ((UIView *)[viewer valueForKey:@"login"]).hidden=YES; [viewer updateConnectionChrome];
+    [viewer background]; [viewer foregrounded];
+    UILabel *status=[viewer valueForKey:@"status"]; XCTAssertTrue(status.hidden);
+    XCTestExpectation *delay=[self expectationWithDescription:@"Delayed indication"];
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW,600*NSEC_PER_MSEC),dispatch_get_main_queue(),^{[delay fulfill];});
+    [self waitForExpectations:@[delay] timeout:2];
+    XCTAssertFalse(status.hidden); XCTAssertEqualObjects(status.text,@"Restoring desktop…");
+    UIView *pill=[viewer valueForKey:@"statusBackdrop"]; [viewer.view layoutIfNeeded]; XCTAssertFalse(pill.hidden);
+    XCTAssertGreaterThan(pill.bounds.size.width,0); XCTAssertLessThanOrEqual(CGRectGetMaxX(pill.frame),viewer.view.bounds.size.width);
+    UIGraphicsImageRenderer *renderer=[[UIGraphicsImageRenderer alloc] initWithSize:viewer.view.bounds.size];
+    UIImage *capture=[renderer imageWithActions:^(UIGraphicsImageRendererContext *context){[viewer.view drawViewHierarchyInRect:viewer.view.bounds afterScreenUpdates:YES];}];
+    XCTAttachment *attachment=[XCTAttachment attachmentWithImage:capture]; attachment.name=@"Desktop restoration capsule"; attachment.lifetime=XCTAttachmentLifetimeKeepAlways; [self addAttachment:attachment];
+    [viewer stopViewer]; XCTAssertTrue(pill.hidden); window.hidden=YES; window.rootViewController=nil;
 }
 @end

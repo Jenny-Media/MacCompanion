@@ -30,7 +30,7 @@ struct RemoteSessionLiveActivity: Widget {
             } compactTrailing: {
                 phaseSymbol(context.state.phase, isStale: context.isStale)
             } minimal: {
-                Image(systemName: context.attributes.symbol).foregroundStyle(.blue)
+                phaseSymbol(context.state.phase, isStale: context.isStale)
             }
             .widgetURL(context.attributes.resumeURL)
             .keylineTint(.blue)
@@ -38,8 +38,8 @@ struct RemoteSessionLiveActivity: Widget {
     }
 
     private func phaseSymbol(_ phase: RemoteSessionActivityAttributes.Phase, isStale: Bool) -> some View {
-        Image(systemName: isStale || phase == .paused ? "pause.fill" :
-            phase == .reconnecting ? "arrow.triangle.2.circlepath" : "checkmark")
-            .accessibilityLabel(isStale ? "Paused · Tap to resume" : phase.title)
+        Image(systemName: isStale ? "questionmark.circle" : phase == .paused ? "arrow.up.forward.app" :
+            phase == .reconnecting ? "arrow.triangle.2.circlepath" : "link")
+            .accessibilityLabel(isStale ? "Open to check connection" : phase == .paused ? "Return to session" : phase.title)
     }
 }

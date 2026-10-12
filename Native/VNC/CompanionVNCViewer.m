@@ -106,7 +106,14 @@
 @property CGPoint lastPointer;
 @property BOOL pointerHeld, smartZoomed, smartZoomPending;
 @property NSUInteger zoomGeneration, resumeGeneration;
-@property BOOL checkingResume, exited, restoreViewportPending;
+@property BOOL checkingResume, exited, restoreViewportPending, inputInactive, awaitingReplacementLayout;
+@property UIImage *pendingRestorationFrame;
+@property NSUInteger statusGeneration;
+@property UIStackView *statusRow;
+@property UIVisualEffectView *statusBackdrop;
+@property UIActivityIndicatorView *statusSpinner;
+@property NSDictionary *latestCounters;
+@property NSTimeInterval displayNoticeUntil;
 @property NSNumber *resumeDisplayID;
 @property CGSize resumeFramebufferSize;
 @property CGFloat resumeZoomRatio;
@@ -130,9 +137,16 @@
     return self;
 }
 - (void)setDisplayLayout:(NSDictionary *)displayLayout {
+    if (self.awaitingReplacementLayout && (!displayLayout || [displayLayout[@"aspectRatio"] doubleValue] <= 0 || ![displayLayout[@"views"] count])) return;
     _displayLayout = [displayLayout copy];
     self.displayViews = displayLayout[@"views"] ?: @[];
     self.displayAspect = [displayLayout[@"aspectRatio"] doubleValue];
+    if (self.awaitingReplacementLayout) {
+        self.awaitingReplacementLayout = NO;
+        UIImage *pending = self.pendingRestorationFrame; self.pendingRestorationFrame = nil;
+        if (pending) [self frame:pending];
+        return;
+    }
     [self updateDisplayPicker];
     [self restoreSavedDisplay];
     if (self.selectedDisplay) {
@@ -168,12 +182,32 @@
     self.modifiers = [NSMutableArray new];
     [self prepareConnection];
     __weak CompanionVNCViewer *weak = self;
-    self.remoteKeyboard = [[CompanionVNCKeyboard alloc] initWithEvents:^(NSArray<NSDictionary *> *events) { [weak.session keyEvents:events]; }];
+    self.remoteKeyboard = [[CompanionVNCKeyboard alloc] initWithEvents:^(NSArray<NSDictionary *> *events) {
+        if (weak && weak.foreground && !weak.inputInactive && !weak.exited && !weak.checkingResume && !weak.restoreViewportPending) [weak.session keyEvents:events];
+    }];
     self.status = [UILabel new]; self.status.text = @"macOS Screen Sharing · over SSH";
     self.status.font = [[UIFontMetrics metricsForTextStyle:UIFontTextStyleCaption1] scaledFontForFont:[UIFont systemFontOfSize:12]];
     self.status.adjustsFontForContentSizeCategory = YES;
-    self.status.backgroundColor = UIColor.secondarySystemBackgroundColor; self.status.layer.cornerRadius = 8; self.status.clipsToBounds = YES;
+    self.status.backgroundColor = UIColor.clearColor;
     self.status.textColor = UIColor.secondaryLabelColor; self.status.numberOfLines = 2;
+    self.status.hidden = YES;
+    self.statusSpinner = [[UIActivityIndicatorView alloc] initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleMedium];
+    self.statusSpinner.hidden = YES;
+    self.statusRow = [[UIStackView alloc] initWithArrangedSubviews:@[self.statusSpinner, self.status]];
+    self.statusRow.spacing = 8; self.statusRow.alignment = UIStackViewAlignmentCenter;
+    self.statusRow.layoutMarginsRelativeArrangement = YES; self.statusRow.layoutMargins = UIEdgeInsetsMake(9,14,9,14);
+    self.statusRow.translatesAutoresizingMaskIntoConstraints = NO;
+    self.statusBackdrop = [[UIVisualEffectView alloc] initWithEffect:[UIGlassEffect effectWithStyle:UIGlassEffectStyleRegular]];
+    self.statusBackdrop.translatesAutoresizingMaskIntoConstraints = NO;
+    self.statusBackdrop.hidden = YES; self.statusBackdrop.userInteractionEnabled = NO;
+    self.statusBackdrop.layer.cornerRadius = 20; self.statusBackdrop.clipsToBounds = YES;
+    self.statusBackdrop.accessibilityIdentifier = @"desktop-resume-indicator";
+    [self.statusBackdrop.contentView addSubview:self.statusRow];
+    [NSLayoutConstraint activateConstraints:@[
+        [self.statusRow.leadingAnchor constraintEqualToAnchor:self.statusBackdrop.contentView.leadingAnchor],
+        [self.statusRow.trailingAnchor constraintEqualToAnchor:self.statusBackdrop.contentView.trailingAnchor],
+        [self.statusRow.topAnchor constraintEqualToAnchor:self.statusBackdrop.contentView.topAnchor],
+        [self.statusRow.bottomAnchor constraintEqualToAnchor:self.statusBackdrop.contentView.bottomAnchor]]];
     self.connect = [self button:@"Connect" action:@selector(connectionAction)];
     self.pan = [self button:@"Pointer" action:@selector(chooseInputMode)];
     self.controls = [CompanionVNCControls new]; self.controls.translatesAutoresizingMaskIntoConstraints = NO;
@@ -370,15 +404,16 @@
         [row.widthAnchor constraintGreaterThanOrEqualToConstant:332], fill,
         [toolbar.heightAnchor constraintEqualToAnchor:row.heightAnchor]]];
     self.toolbarBottom = [toolbar.bottomAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.bottomAnchor constant:-4];
-    [self.view addSubview:self.status]; [self.view addSubview:self.controls];
+    [self.view addSubview:self.statusBackdrop]; [self.view addSubview:self.controls];
     self.canvasToolbarBottom = [self.canvas.bottomAnchor constraintEqualToAnchor:toolbar.topAnchor constant:-8];
     self.canvasFullscreenBottom = [self.canvas.bottomAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.bottomAnchor];
     self.tabletopCanvasBottom = [self.canvas.bottomAnchor constraintEqualToAnchor:self.view.topAnchor];
     self.canvasTop = [self.canvas.topAnchor constraintEqualToAnchor:self.view.topAnchor constant:8];
     [NSLayoutConstraint activateConstraints:@[
-        [self.status.topAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.topAnchor constant:8],
-        [self.status.leadingAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.leadingAnchor constant:16],
-        [self.status.trailingAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.trailingAnchor constant:-16],
+        [self.statusBackdrop.topAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.topAnchor constant:8],
+        [self.statusBackdrop.centerXAnchor constraintEqualToAnchor:self.view.centerXAnchor],
+        [self.statusBackdrop.leadingAnchor constraintGreaterThanOrEqualToAnchor:self.view.safeAreaLayoutGuide.leadingAnchor constant:16],
+        [self.statusBackdrop.trailingAnchor constraintLessThanOrEqualToAnchor:self.view.safeAreaLayoutGuide.trailingAnchor constant:-16],
         [toolbar.leadingAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.leadingAnchor constant:6],
         [toolbar.trailingAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.trailingAnchor constant:-68], self.toolbarBottom,
         self.canvasTop,
@@ -445,6 +480,7 @@
     [self retireTextDraft];
     [self invalidateTextReview:NO]; self.textReviewViewportPending=NO;
     self.session = [CompanionVNCSession new];
+    self.latestCounters = @{};
     __weak CompanionVNCViewer *weak = self;
     __weak CompanionVNCSession *owner = self.session;
     self.session.frameHandler = ^(UIImage *image) { if (weak.session == owner) [weak frame:image]; };
@@ -453,23 +489,37 @@
     };
     self.session.displayLayoutHandler = ^(NSDictionary *layout) { if (weak.session == owner) weak.displayLayout = layout; };
     if (self.reconnectWhenReady || self.checkingResume) self.restoreViewportPending = YES;
-    self.displayLayout = nil;
+    self.awaitingReplacementLayout = self.restoreViewportPending && self.lastFramebuffer != nil && self.resumeDisplayID != nil;
+    self.pendingRestorationFrame = nil;
+    if (!self.awaitingReplacementLayout) self.displayLayout = nil;
+    if (self.awaitingReplacementLayout) {
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 9000 * NSEC_PER_MSEC), dispatch_get_main_queue(), ^{
+            if (weak.session == owner && weak.foreground && !weak.exited && weak.restoreViewportPending) {
+                [owner stop]; if (weak.disconnectHandler) weak.disconnectHandler();
+                [weak showConnectionFailureStage:102];
+            }
+        });
+    }
     self.session.stateHandler = ^(NSString *state, NSDictionary *stats) {
         CompanionVNCViewer *strong = weak; if (!strong || strong.session != owner) return;
+        strong.latestCounters = stats;
         if (strong.exited) return;
-        BOOL running = strong.session.running, connected = [state isEqualToString:@"Connected"] && strong.session.connected && strong.lastFramebuffer != nil;
+        BOOL running = strong.session.running, connected = [state isEqualToString:@"Connected"] && strong.session.connected && strong.lastFramebuffer != nil && !strong.restoreViewportPending;
         if (!strong.foreground) {
             strong.status.text = @"Paused · Return to resume";
-            if (!running && strong.disconnectHandler) strong.disconnectHandler();
+            if (!running) { if (strong.sessionPhaseHandler) strong.sessionPhaseHandler(@"ended"); if (strong.disconnectHandler) strong.disconnectHandler(); }
             [strong reportDiagnostics:stats];
             return;
         }
-        strong.status.text = connected ? @"" : [strong connectionProgressMessage]; strong.status.hidden = YES; strong.progressLabel.text = strong.status.text;
+        BOOL displayNotice = NSProcessInfo.processInfo.systemUptime < strong.displayNoticeUntil;
+        if (!displayNotice) strong.status.text = connected ? @"" : [strong connectionProgressMessage];
+        if (connected && !displayNotice) strong.status.hidden = YES;
+        strong.progressLabel.text = connected ? @"" : [strong connectionProgressMessage];
         if (connected) {
             strong.session.inputOnly = strong.inputOnly;
             if (strong.textSendInterrupted) [strong showTextSendWarning];
             else { [strong clearRecovery]; strong.image.alpha = 1; }
-            strong.checkingResume = NO; strong.reconnectWhenReady = NO; strong.resumeGeneration++;
+            strong.checkingResume = NO; strong.reconnectWhenReady = NO; strong.resumeGeneration++; strong.statusGeneration++;
             if (strong.sessionPhaseHandler) strong.sessionPhaseHandler(@"connected");
             if (strong.connectedHandler) strong.connectedHandler();
         }
@@ -507,6 +557,7 @@
     [self clearRecovery];
     if (self.lastFramebuffer) { [self rememberViewport]; self.restoreViewportPending = YES; self.image.alpha = .45; }
     self.starting = YES; self.exited = NO;
+    if (self.lastFramebuffer) [self scheduleResumeIndicator:@"Reconnecting…"];
     if (self.sessionPhaseHandler) self.sessionPhaseHandler(@"reconnecting");
     [self.view endEditing:YES]; self.status.text = [self connectionProgressMessage];
     self.connect.enabled = NO; self.progressLabel.text = @"Contacting Mac…"; self.status.hidden = YES; [self updateConnectionChrome];
@@ -532,10 +583,11 @@
 - (void)loginEdited { [self clearRecovery]; self.progressLabel.text = @""; [self updateConnectionChrome]; }
 - (void)showMacs { [self stopViewer]; if (self.macsHandler) self.macsHandler(); }
 - (void)stopViewer {
+    self.status.hidden = YES; [self updateStatusPresentation];
     [self invalidateTextReview:NO]; self.textReviewViewportPending=NO;
     [self retireTextDraft];
     [self.controls close]; self.starting = NO; self.exited = YES; self.reconnectWhenReady = NO; self.checkingResume = NO;
-    self.resumeGeneration++; self.restoreViewportPending = NO; self.resumeDisplayID = nil;
+    self.resumeGeneration++; self.statusGeneration++; self.restoreViewportPending = NO; self.awaitingReplacementLayout = NO; self.pendingRestorationFrame = nil; self.resumeDisplayID = nil;
     self.keyboardViewportSaved = NO; self.keyboardLayoutPending = NO;
     if (self.sessionPhaseHandler) self.sessionPhaseHandler(@"ended");
     [self releasePointer]; self.zoomGeneration++; self.smartZoomed = NO; self.smartZoomPending = NO;
@@ -590,7 +642,7 @@
 - (void)showConnectionFailureStage:(NSInteger)stage {
     [self invalidateTextReview:NO]; self.textReviewViewportPending=NO;
     [self retireTextDraft];
-    self.starting = NO; self.checkingResume = NO; self.resumeGeneration++;
+    self.starting = NO; self.checkingResume = NO; self.resumeGeneration++; self.statusGeneration++; self.awaitingReplacementLayout = NO; self.pendingRestorationFrame = nil; self.restoreViewportPending = NO;
     if (self.sessionPhaseHandler) self.sessionPhaseHandler(@"ended");
     [self clearCursor]; [self resetModifiers]; self.connect.enabled = YES;
     [self showRecoveryStage:stage];
@@ -610,12 +662,22 @@
     self.resumeZoomRatio = self.canvas.minimumZoomScale > 0 ? self.canvas.zoomScale / self.canvas.minimumZoomScale : 1;
     self.resumeCenter = CGRectIsEmpty(self.activeCrop) || CGRectIsNull(self.activeCrop) ? CGPointMake(.5, .5) : [self viewportCenter];
 }
+- (void)becameInactive {
+    if (!self.foreground || self.exited || self.inputInactive) return;
+    self.inputInactive = YES;
+    [self.controls close]; [self releasePointer]; [self resetModifiers]; [self cancelTrackpadTouches];
+    [self invalidateTextReview:NO];
+    [self.session suspendInputForInterruption];
+    [self clearCursor]; [self updateTrackpadFeedback];
+}
 - (void)background { [self backgroundWithCompletion:nil]; }
 - (void)backgroundWithCompletion:(void (^)(void))completion {
     [self retireTextDraft];
     if (!self.foreground || self.exited) { if (completion) completion(); return; }
     self.reconnectWhenReady = self.session.running || self.starting;
-    self.foreground = NO; self.image.alpha = .45; self.resumeGeneration++; self.checkingResume = NO;
+    self.foreground = NO; self.inputInactive = YES; self.statusGeneration++; self.image.alpha = .45; self.resumeGeneration++; self.checkingResume = NO;
+    self.pendingRestorationFrame = nil;
+    self.status.hidden = YES; [self updateStatusPresentation];
     [self invalidateTextReview:NO]; self.textReviewViewportPending=NO;
     [self updateTrackpadFeedback];
     [self.controls close]; [self rememberViewport]; [self releasePointer]; [self resetModifiers]; [self clearCursor];
@@ -630,12 +692,16 @@
     }
 }
 - (void)foregrounded {
-    if (self.foreground || self.exited) return;
-    self.foreground = YES;
+    if (self.exited) return;
+    if (self.foreground) {
+        if (self.inputInactive) { self.inputInactive = NO; [self.session resumeInputAfterInterruption]; [self updateTrackpadFeedback]; }
+        return;
+    }
+    self.foreground = YES; self.inputInactive = NO;
     if (!self.reconnectWhenReady) return;
     self.checkingResume = YES;
     if (self.sessionPhaseHandler) self.sessionPhaseHandler(@"reconnecting");
-    self.status.hidden = NO; self.status.text = @"Resuming desktop…"; self.image.alpha = .6;
+    self.status.hidden = YES; [self scheduleResumeIndicator:@"Restoring desktop…"]; self.image.alpha = .6;
     if (!self.session.running) { [self reconnectAfterFailedResume]; return; }
     [self.session resume];
     CompanionVNCSession *owner = self.session; NSUInteger generation = ++self.resumeGeneration;
@@ -654,14 +720,22 @@
     self.restoreViewportPending = YES; [self start];
 }
 - (void)restoreViewport {
-    if (!self.restoreViewportPending || !self.lastFramebuffer) return;
+    if (!self.restoreViewportPending || self.awaitingReplacementLayout || !self.lastFramebuffer) return;
     self.restoreViewportPending = NO;
-    if (!CGSizeEqualToSize(self.framebufferSize, self.resumeFramebufferSize)) { self.resumeDisplayID = nil; return; }
+    BOOL sameSize = CGSizeEqualToSize(self.framebufferSize, self.resumeFramebufferSize);
     NSDictionary *display = nil;
     for (NSDictionary *candidate in self.displayViews) if ([candidate[@"id"] isEqual:self.resumeDisplayID]) { display = candidate; break; }
     BOOL missing = self.resumeDisplayID && !display;
     [self selectDisplay:display]; self.resumeDisplayID = nil;
-    if (missing || CGRectIsNull(self.activeCrop)) return;
+    if (missing) {
+        self.displayNoticeUntil = NSProcessInfo.processInfo.systemUptime + 3;
+        self.status.text = @"Selected display is unavailable. Showing all displays."; self.status.hidden = NO; [self updateStatusPresentation];
+        __weak CompanionVNCViewer *weak = self;
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 3 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
+            if (NSProcessInfo.processInfo.systemUptime >= weak.displayNoticeUntil && !weak.checkingResume && !weak.starting) { weak.status.hidden = YES; [weak updateStatusPresentation]; }
+        });
+    }
+    if (missing || !sameSize || CGRectIsNull(self.activeCrop)) return;
     [self applyViewportRatio:self.resumeZoomRatio center:self.resumeCenter];
 }
 - (void)resetModifiers {
@@ -674,20 +748,45 @@
     }
 }
 - (void)frame:(UIImage *)frame {
+    if (self.awaitingReplacementLayout) { self.pendingRestorationFrame = frame; return; }
+    BOOL restoring = self.restoreViewportPending;
     CGSize pixels = CGSizeMake(CGImageGetWidth(frame.CGImage), CGImageGetHeight(frame.CGImage));
+    if (restoring && self.resumeDisplayID && (self.displayAspect <= 0 || fabs(pixels.width / pixels.height - self.displayAspect) / self.displayAspect >= .03)) {
+        self.awaitingReplacementLayout = YES; self.pendingRestorationFrame = frame; return;
+    }
     BOOL resized = !CGSizeEqualToSize(self.framebufferSize, pixels);
     if (resized) { [self releasePointer]; self.zoomGeneration++; self.smartZoomed = NO; self.smartZoomPending = NO; [self clearCursor]; }
     self.framebufferSize = pixels; self.lastFramebuffer = frame;
-    if (resized) [self updateDisplayPicker];
-    [self restoreSavedDisplay]; [self renderFramebuffer:resized]; [self restoreViewport];
+    if (resized || restoring) [self updateDisplayPicker];
+    if (restoring) [self restoreViewport];
+    else { [self restoreSavedDisplay]; [self renderFramebuffer:resized]; }
+    if (restoring && !self.restoreViewportPending && self.session.connected && self.session.desktopFrameReady && self.session.stateHandler) {
+        self.session.stateHandler(@"Connected", self.latestCounters ?: @{});
+    }
     if (self.textReviewViewportPending) {
         self.textReviewViewportPending = NO;
         if (CGSizeEqualToSize(self.framebufferSize,self.textReviewFramebuffer) && CGRectEqualToRect(self.activeCrop,self.textReviewCrop))
             [self applyViewportRatio:self.textReviewZoom center:self.textReviewCenter];
     }
 }
+- (void)scheduleResumeIndicator:(NSString *)message {
+    NSUInteger generation = ++self.statusGeneration;
+    self.status.hidden = YES; [self updateStatusPresentation];
+    __weak CompanionVNCViewer *weak = self;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 500 * NSEC_PER_MSEC), dispatch_get_main_queue(), ^{
+        if (!weak || weak.statusGeneration != generation || !weak.foreground || weak.inputInactive || weak.exited
+            || !(weak.checkingResume || weak.starting || weak.restoreViewportPending)) return;
+        weak.status.text = message; weak.status.hidden = NO; [weak updateStatusPresentation];
+    });
+}
+- (void)updateStatusPresentation {
+    BOOL busy = self.checkingResume || self.starting || self.restoreViewportPending;
+    self.statusBackdrop.hidden = self.status.hidden;
+    self.statusSpinner.hidden = !busy || self.status.hidden;
+    if (!self.statusSpinner.hidden) [self.statusSpinner startAnimating]; else [self.statusSpinner stopAnimating];
+}
 - (void)renderFramebuffer:(BOOL)reset {
-    if (!self.lastFramebuffer) return;
+    if (!self.lastFramebuffer || self.restoreViewportPending) return;
     NSDictionary *display = self.selectedDisplay;
     CGRect normalized = CGRectMake([display[@"x"] doubleValue], [display[@"y"] doubleValue],
         [display[@"width"] doubleValue], [display[@"height"] doubleValue]);
@@ -920,7 +1019,7 @@
     for (CompanionVNCTrackpadFeedback *feedback in @[self.trackpadFeedback, self.tabletopFeedback]) {
         feedback.touchesAllowed = ^BOOL {
             CompanionVNCViewer *viewer = weak;
-            return viewer && viewer.foreground && !viewer.exited && !viewer.checkingResume && viewer.session.connected
+            return viewer && viewer.foreground && !viewer.exited && !viewer.inputInactive && !viewer.restoreViewportPending && !viewer.checkingResume && viewer.session.connected
                 && viewer.login.hidden && !viewer.recoveryController && !viewer.presentedViewController;
         };
     }
@@ -929,7 +1028,7 @@
 - (void)setShowsTouchPoints:(BOOL)value { _showsTouchPoints = value; [self updateTrackpadFeedback]; }
 - (void)setTrackpadHapticsEnabled:(BOOL)value { _trackpadHapticsEnabled = value; [self updateTrackpadFeedback]; }
 - (void)updateTrackpadFeedback {
-    BOOL ready = self.foreground && !self.exited && !self.checkingResume && self.session.connected
+    BOOL ready = self.foreground && !self.exited && !self.inputInactive && !self.restoreViewportPending && !self.checkingResume && self.session.connected
         && self.login.hidden && !self.recoveryController;
     self.trackpadFeedback.showsTouchPoints = self.showsTouchPoints;
     self.tabletopFeedback.showsTouchPoints = self.showsTouchPoints;
@@ -946,6 +1045,7 @@
     [self cancelTrackpadTouches]; [super presentViewController:controller animated:animated completion:completion];
 }
 - (void)chooseView {
+    if (self.restoreViewportPending) return;
     if (!self.framebufferSize.width) return;
     CompanionVNCDisplayPicker *picker = [CompanionVNCDisplayPicker new];
     self.displayPicker = picker;
@@ -1035,8 +1135,8 @@
     }
 }
 - (BOOL)clickPointer:(CGPoint)p mask:(NSInteger)mask {
-    if (!self.foreground || self.exited || self.checkingResume || ![self.session tryClickX:p.x y:p.y mask:mask]) {
-        self.status.hidden = NO; self.status.text = @"Click not sent. Wait for your Mac to resume."; return NO;
+    if (!self.foreground || self.exited || self.inputInactive || self.restoreViewportPending || self.checkingResume || ![self.session tryClickX:p.x y:p.y mask:mask]) {
+        self.status.hidden = NO; self.status.text = @"Click not sent. Wait for your Mac to resume."; [self updateStatusPresentation]; return NO;
     }
     self.cursorPosition = p; self.cursorPositionKnown = YES; [self updateCursor];
     return YES;
@@ -1051,7 +1151,7 @@
     BOOL held = gesture.state == UIGestureRecognizerStateBegan || gesture.state == UIGestureRecognizerStateChanged;
     if (held) [self followTrackpadPointer:p];
     self.lastPointer = p; self.pointerHeld = held; [self sendPointer:p mask:held ? 1 : 0];
-    [[self feedbackForGesture:gesture] setDragging:held && self.foreground && !self.exited && !self.checkingResume && self.session.connected];
+    [[self feedbackForGesture:gesture] setDragging:held && self.foreground && !self.exited && !self.inputInactive && !self.restoreViewportPending && !self.checkingResume && self.session.connected];
 }
 - (void)pinchRemote:(UIPinchGestureRecognizer *)gesture {
     if (gesture.state == UIGestureRecognizerStateEnded) {
@@ -1059,7 +1159,7 @@
         self.magnificationActive = NO; return;
     }
     if (gesture.state == UIGestureRecognizerStateCancelled || gesture.state == UIGestureRecognizerStateFailed
-        || !self.inputOnly || !self.foreground || self.exited || self.checkingResume || !self.session.connected) {
+        || !self.inputOnly || !self.foreground || self.exited || self.inputInactive || self.restoreViewportPending || self.checkingResume || !self.session.connected) {
         [self.session cancelNativeGestures]; self.magnificationActive = NO; return;
     }
     if (gesture.state == UIGestureRecognizerStateBegan) {
@@ -1068,7 +1168,7 @@
         CGPoint anchor = [self trackpadPointer];
         self.magnificationActive = [self.session beginMagnificationX:anchor.x y:anchor.y];
         if (!self.magnificationActive && !self.session.nativeMagnificationSupported) {
-            self.status.hidden = NO; self.status.text = @"Native pinch is unavailable for this connection.";
+            self.status.hidden = NO; self.status.text = @"Native pinch is unavailable for this connection."; [self updateStatusPresentation];
         }
     }
     // UIPinch scale is relative to its last reset. Use incremental magnification,
@@ -1084,7 +1184,7 @@
     BOOL ended = gesture.state == UIGestureRecognizerStateEnded;
     if (gesture.state == UIGestureRecognizerStateCancelled || gesture.state == UIGestureRecognizerStateFailed
         || CGRectIsNull(self.activeCrop) || CGRectIsEmpty(self.activeCrop)
-        || !self.foreground || self.exited || self.checkingResume || !self.session.connected) {
+        || !self.foreground || self.exited || self.inputInactive || self.restoreViewportPending || self.checkingResume || !self.session.connected) {
         [self.session cancelNativeGestures]; self.scrollingActive = NO; self.scrollUsesNative = NO; self.scrollGestureActive = NO; self.scrollRemainder = 0; self.scrollFraction = CGPointZero; return;
     }
     if (gesture.state == UIGestureRecognizerStateBegan) {
@@ -1126,14 +1226,14 @@
     if (ended) { self.scrollRemainder = 0; self.scrollGestureActive = NO; }
 }
 - (void)sendPointer:(CGPoint)point mask:(NSInteger)mask {
-    if (!self.foreground || self.exited || self.checkingResume) return;
+    if (!self.foreground || self.exited || self.inputInactive || self.restoreViewportPending || self.checkingResume) return;
     if (!self.session.connected) return;
     self.cursorPosition = point; self.cursorPositionKnown = YES; [self updateCursor];
     [self.session pointerX:point.x y:point.y mask:mask];
 }
 - (void)followTrackpadPointer:(CGPoint)point {
     if (self.inputOnly || !self.followCursorEnabled || (!self.trackpadMode && !self.tabletop) || self.cursorFollowingSuspended
-        || !self.foreground || self.exited || self.checkingResume || !self.login.hidden
+        || !self.foreground || self.exited || self.inputInactive || self.restoreViewportPending || self.checkingResume || !self.login.hidden
         || self.presentedViewController || self.canvas.dragging || self.canvas.decelerating || self.canvas.zooming
         || self.canvas.zoomScale <= self.canvas.minimumZoomScale * 1.01) return;
     CGPoint local = CGPointZero;
@@ -1159,7 +1259,7 @@
 }
 - (void)updateCursor {
     CGPoint local = CGPointZero;
-    if (!self.cursorPositionKnown || !self.image.image || !CompanionVNCCursorLocalPoint(self.activeCrop, self.cursorPosition, &local)) {
+    if (!self.foreground || self.inputInactive || self.checkingResume || self.restoreViewportPending || !self.cursorPositionKnown || !self.image.image || !CompanionVNCCursorLocalPoint(self.activeCrop, self.cursorPosition, &local)) {
         self.cursorIndicator.hidden = YES; return;
     }
     CGPoint anchor = [self.image convertPoint:local toView:self.cursorOverlay];
@@ -1351,7 +1451,8 @@
     self.controls.hidden = !self.loginScroll.hidden;
     self.toolbar.hidden = !self.loginScroll.hidden || self.fullscreen || self.recoveryPanel != nil;
     self.trackpadHelp.hidden = !self.loginScroll.hidden || !self.inputOnly;
-    if (!self.loginScroll.hidden || (self.session.connected && !self.checkingResume)) self.status.hidden = YES;
+    if (!self.loginScroll.hidden || (self.session.connected && !self.checkingResume && !self.restoreViewportPending && NSProcessInfo.processInfo.systemUptime >= self.displayNoticeUntil)) self.status.hidden = YES;
+    [self updateStatusPresentation];
     [self.view setNeedsLayout];
 }
 - (void)setFullscreen:(BOOL)value {
@@ -1421,8 +1522,8 @@
     if ([kind isEqual:@"fit"]) { [self fitDesktop]; return; }
     if ([kind isEqual:@"keys"]) { [self moreKeys:self.views]; return; }
     if ([kind isEqual:@"session"]) { [self showSessionMenu]; return; }
-    if (!self.foreground || self.exited || self.checkingResume || !self.session.connected) {
-        self.status.hidden = NO; self.status.text = @"Wait for the desktop to resume before sending input."; return;
+    if (!self.foreground || self.exited || self.inputInactive || self.restoreViewportPending || self.checkingResume || !self.session.connected) {
+        self.status.hidden = NO; self.status.text = @"Wait for the desktop to resume before sending input."; [self updateStatusPresentation]; return;
     }
     if ([kind isEqual:@"escape"]) { [self sendRemoteKey:0xff1b]; return; }
     if ([kind isEqual:@"tab"]) { [self sendRemoteKey:0xff09]; return; }
@@ -1446,7 +1547,7 @@
             [keyboard pressKey:[action[@"key"] unsignedIntValue]];
         } else [keyboard text:action[@"text"] ?: @""];
         if (![self.session tryKeyEvents:events]) {
-            self.status.hidden = NO; self.status.text = @"Input is busy. Try the action again.";
+            self.status.hidden = NO; self.status.text = @"Input is busy. Try the action again."; [self updateStatusPresentation];
         }
         [self refreshModifiers];
     }
@@ -1466,7 +1567,7 @@
     [self presentViewController:menu animated:YES completion:nil];
 }
 - (BOOL)canCopyScreenText {
-    return self.foreground && !self.exited && !self.checkingResume && !self.inputOnly && !self.textReview
+    return self.foreground && !self.exited && !self.inputInactive && !self.restoreViewportPending && !self.checkingResume && !self.inputOnly && !self.textReview
         && self.session.desktopFrameReady && self.lastFramebuffer && !CGRectIsNull(self.activeCrop)
         && !CGRectIsEmpty(self.activeCrop) && self.activeCrop.size.width*self.activeCrop.size.height <= 32*1024*1024;
 }

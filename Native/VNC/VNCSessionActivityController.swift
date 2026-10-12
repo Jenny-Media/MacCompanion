@@ -44,32 +44,93 @@ import Foundation
     private var finished = false
     private var preferenceEnabled: Bool
     private var work: Task<Void, Never>?
-    init(mac: DirectMacRecordV1, kind: RemoteSessionActivityAttributes.Kind = .desktop, defaults: UserDefaults = .standard, backend: any RemoteSessionActivityBackend = ActivityKitSessionBackend()) {
+    private var workGeneration: UInt64 = 0
+    private var retirements: [UUID: Task<Void, Never>] = [:]
+    private var dirty = false
+    private let now: () -> Date
+    private var phaseDate: Date?
+    private var evidenceDate: Date?
+    private var lastEvidencePublication: Date?
+    init(mac: DirectMacRecordV1, kind: RemoteSessionActivityAttributes.Kind = .desktop, defaults: UserDefaults = .standard, backend: any RemoteSessionActivityBackend = ActivityKitSessionBackend(), now: @escaping () -> Date = { Date() }) {
         self.defaults = defaults; self.backend = backend; self.preferenceEnabled = Self.enabled(in: defaults)
+        self.now = now
         attributes = .init(macID: mac.id, macName: mac.name, kind: kind)
         // A process restart must not leave a previous socket labeled connected.
         let orphaned = backend.existingIDs()
-        work = Task { for id in orphaned { await backend.end(id) } }
+        let generation = workGeneration
+        work = Task { [self] in
+            for id in orphaned { await backend.end(id) }
+            await drainUpdates(generation: generation)
+        }
     }
-    func setForeground(_ value: Bool) { foreground = value; reconcileSoon() }
-    func setPhase(_ value: String) {
-        if value == "ended" { phase = nil; connectedOnce = false; reconcileSoon(); return }
+    func setForeground(_ value: Bool) {
+        guard foreground != value else { return }
+        foreground = value
+        if !value { phaseDate = now() }
+        reconcileSoon()
+    }
+    func setPhase(_ value: String, verified: Bool = true) {
+        if value == "ended" {
+            phase = nil; connectedOnce = false
+            phaseDate = nil; evidenceDate = nil; lastEvidencePublication = nil
+            retireActivity()
+            return
+        }
         guard !finished, let next = RemoteSessionActivityAttributes.Phase(rawValue: value) else { return }
-        if next == .connected { connectedOnce = true }
+        if next == .connected {
+            connectedOnce = true
+            if verified { evidenceDate = now() }
+            if phase == next {
+                if verified && foreground && (lastEvidencePublication.map { now().timeIntervalSince($0) >= 15 } ?? true) {
+                    lastEvidencePublication = now(); reconcileSoon()
+                }
+                return
+            }
+            if verified { lastEvidencePublication = now() }
+        }
         guard phase != next else { return }
+        phaseDate = now()
         phase = next; reconcileSoon()
     }
     func preferenceChanged() {
         let enabled = Self.enabled(in: defaults)
         if enabled && !preferenceEnabled { dismissed = false }
-        preferenceEnabled = enabled; reconcileSoon()
+        preferenceEnabled = enabled
+        if !enabled { retireActivity() }
+        else { reconcileSoon() }
     }
-    func finish() { finished = true; phase = nil; reconcileSoon() }
+    func finish() { finished = true; phase = nil; retireActivity() }
     func ownsActivity(_ id: String) -> Bool { !finished && activityID == id }
-    func waitForUpdates() async { await work?.value }
+    func waitForUpdates() async {
+        while work != nil || !retirements.isEmpty {
+            await work?.value
+            for retirement in Array(retirements.values) { await retirement.value }
+        }
+    }
+    private func retireActivity() {
+        // ActivityKit updates can stall. A known end must not queue behind one,
+        // and its late completion must not consume a replacement owner's work.
+        workGeneration &+= 1
+        work?.cancel(); work = nil; dirty = false
+        guard let id = activityID else { return }
+        activityID = nil
+        let token = UUID()
+        retirements[token] = Task { [self] in
+            await backend.end(id)
+            retirements[token] = nil
+        }
+    }
     private func reconcileSoon() {
-        let previous = work
-        work = Task { [self] in await previous?.value; await reconcile() }
+        dirty = true
+        guard work == nil else { return }
+        let generation = workGeneration
+        work = Task { [self] in await drainUpdates(generation: generation) }
+    }
+    private func drainUpdates(generation: UInt64) async {
+        while generation == workGeneration && dirty {
+            dirty = false; await reconcile()
+        }
+        if generation == workGeneration { work = nil }
     }
     private func reconcile() async {
         guard !finished, Self.enabled(in: defaults), backend.enabled, let phase, connectedOnce else {
@@ -77,8 +138,10 @@ import Foundation
             return
         }
         if let id = activityID, !backend.existingIDs().contains(id) { activityID = nil; dismissed = true }
-        let content = ActivityContent(state: RemoteSessionActivityAttributes.ContentState(phase: phase),
-            staleDate: Date().addingTimeInterval(phase == .paused ? 900 : 60))
+        let visiblePhase: RemoteSessionActivityAttributes.Phase = foreground ? phase : .paused
+        let verified = visiblePhase == .connected ? evidenceDate : phaseDate
+        let content = ActivityContent(state: RemoteSessionActivityAttributes.ContentState(phase: visiblePhase),
+            staleDate: (verified ?? now()).addingTimeInterval(60))
         if let id = activityID { await backend.update(id, content: content) }
         else if foreground && !dismissed {
             // OS denial or user-disabled Live Activities never affects VNC.

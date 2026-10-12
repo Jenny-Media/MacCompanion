@@ -60,7 +60,7 @@ static void QuietLog(const char *format, ...) {
     BOOL _paused, _releaseInputRequested, _resumeRequested, _awaitingResumeFrame;
     BOOL _reviewInputSuspended;
     void (^_reviewReleaseCompletion)(void);
-    NSUInteger _presentationEpoch;
+    NSUInteger _presentationEpoch, _inputEpoch;
     dispatch_semaphore_t _wake;
     void (^_pauseCompletion)(void);
     NSString *_username, *_password;
@@ -172,7 +172,7 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
 - (void)setInputOnly:(BOOL)value {
     [_lock lock];
     if (_inputOnly != value) {
-        [self cancelNativeGesturesLocked]; _inputOnly = value; _modeChanged = YES; _presentationEpoch++;
+        [self cancelNativeGesturesLocked]; _inputOnly = value; _modeChanged = YES; _presentationEpoch++; _inputEpoch++;
         if (_established) {
             // The owner releases the old mode before admitting input in the new one.
             _inputReady = NO; _awaitingResumeFrame = !value; _releaseInputRequested = YES;
@@ -290,7 +290,7 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
         _paused, _stopping, _overflow, _awaitingResumeFrame, _baselinePresented)) {
         [_lock unlock]; return NO;
     }
-    _reviewInputSuspended = YES; _releaseInputRequested = YES;
+    _reviewInputSuspended = YES; _releaseInputRequested = YES; _inputEpoch++;
 #if TARGET_OS_IOS
     [self cancelComposedTextLocked];
 #endif
@@ -314,11 +314,29 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
     [_lock lock];
     if (!_running || !_established || _stopping || _paused) { [_lock unlock]; if (completion) completion(); return; }
     [self cancelNativeGesturesLocked];
-    _paused = YES; _pauses++; _inputReady = NO; _releaseInputRequested = YES; _presentationEpoch++;
+    _paused = YES; _inputEpoch++; _pauses++; _inputReady = NO; _releaseInputRequested = YES; _presentationEpoch++;
     [_events removeAllObjects]; _queuedPointerMask = 0; _pauseCompletion = [completion copy];
 #if TARGET_OS_IOS
     [self cancelComposedTextLocked];
 #endif
+    [_lock unlock]; dispatch_semaphore_signal(_wake);
+}
+- (void)suspendInputForInterruption {
+    [_lock lock];
+    if (_running && _inputReady && !_paused && !_stopping) {
+        _reviewInputSuspended = YES; _releaseInputRequested = YES; _inputEpoch++;
+#if TARGET_OS_IOS
+        [self cancelComposedTextLocked];
+#endif
+        [self cancelNativeGesturesLocked]; [_events removeAllObjects]; _queuedPointerMask = 0;
+    }
+    [_lock unlock]; dispatch_semaphore_signal(_wake);
+}
+- (void)resumeInputAfterInterruption {
+    [_lock lock];
+    // Inactivity has not replaced the presented framebuffer. Pending release
+    // is still consumed by the sole socket owner before any newly queued input.
+    _reviewInputSuspended = NO; _reviewReleaseCompletion = nil;
     [_lock unlock]; dispatch_semaphore_signal(_wake);
 }
 - (void)resume {
@@ -422,7 +440,7 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
             void (^reviewCompletion)(void) = release ? self->_reviewReleaseCompletion : nil;
             if (release) self->_reviewReleaseCompletion = nil;
             if (release) self->_pauseCompletion = nil;
-            NSUInteger gestureEpoch = self->_gestureEpoch, presentationEpoch = self->_presentationEpoch;
+            NSUInteger gestureEpoch = self->_gestureEpoch, presentationEpoch = self->_presentationEpoch, inputEpoch = self->_inputEpoch;
             NSArray *events = [self->_events copy]; [self->_events removeAllObjects];
             [self->_lock unlock];
             if (stopping) break;
@@ -474,13 +492,14 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
                 }
             }
             for (NSDictionary *event in events) {
-                [self->_lock lock]; BOOL acceptsInput = self->_inputReady && !self->_reviewInputSuspended && !self->_paused && !self->_stopping;
+                [self->_lock lock]; BOOL currentBatch = inputEpoch == self->_inputEpoch; BOOL acceptsInput = self->_inputReady && !self->_reviewInputSuspended && !self->_paused && !self->_stopping;
 #if TARGET_OS_IOS
                 NSString *textID = event[@"composedTextID"];
                 if (textID) acceptsInput = acceptsInput && [self composedTextReadyLocked];
                 BOOL retiredText = textID && !self->_composedTextReplies[textID];
 #endif
                 [self->_lock unlock];
+                if (!currentBatch) break; // Never revive the copied batch after a quick return.
 #if TARGET_OS_IOS
                 // Pause can retire a group while this copied batch is blocked
                 // in a write. Resume never makes that group eligible again.

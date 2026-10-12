@@ -5,11 +5,12 @@ struct RemoteSessionActivityActionsView: View {
     let resumeURL: URL
     let activityID: String
     var compact = false
+    var isStale = false
 
     var body: some View {
         HStack(spacing: compact ? 8 : 12) {
             Link(destination: resumeURL) {
-                Label("Resume", systemImage: "arrow.up.forward.app")
+                Label(isStale ? "Open to Check" : "Open", systemImage: "arrow.up.forward.app")
                     .lineLimit(1).minimumScaleFactor(0.8)
                     .frame(maxWidth: .infinity, minHeight: compact ? 28 : 32)
             }
@@ -46,16 +47,16 @@ struct RemoteSessionExpandedContent: View {
                     .font(.headline).lineLimit(2).truncationMode(.tail)
                     .accessibilityLabel(attributes.macName)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                Text(isStale ? "Paused" : phase.title)
+                Text(isStale ? "Needs checking" : phase.title)
                     .font(.caption).foregroundStyle(.secondary)
                     .lineLimit(1).fixedSize(horizontal: true, vertical: false)
             }
             if attributes.kind == .terminal {
-                Text(isStale ? "Resume to check SSH" : phase == .paused ? "SSH shell retained" : "Terminal session")
+                Text("Terminal")
                     .font(.caption).foregroundStyle(.secondary).lineLimit(1)
             }
             RemoteSessionActivityActionsView(resumeURL: attributes.resumeURL,
-                activityID: activityID, compact: true)
+                activityID: activityID, compact: true, isStale: isStale)
         }
         // Keep every expanded element below the camera and inset from the curved mask.
         .padding(.top, 8)
@@ -76,16 +77,16 @@ struct RemoteSessionActivityCard: View {
                 Image(systemName: attributes.symbol).font(.title2).foregroundStyle(.blue)
                 VStack(alignment: .leading, spacing: 4) {
                     Text(attributes.macName).font(.headline).lineLimit(1)
-                    Text(isStale ? "Paused · Tap to resume" : phase.title)
+                    Text(isStale ? "Open to check connection" : phase.title)
                         .font(.subheadline).foregroundStyle(.secondary)
                     if attributes.kind == .terminal {
-                        Text(isStale ? "Resume to check SSH" : phase == .paused ? "Shell retained for your return" : "Terminal session")
+                        Text("Terminal")
                             .font(.caption).foregroundStyle(.secondary)
                     }
                 }
                 Spacer(minLength: 0)
             }
-            RemoteSessionActivityActionsView(resumeURL: attributes.resumeURL, activityID: activityID)
+            RemoteSessionActivityActionsView(resumeURL: attributes.resumeURL, activityID: activityID, isStale: isStale)
         }
         .padding(16)
     }

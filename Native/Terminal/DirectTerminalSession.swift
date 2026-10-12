@@ -76,6 +76,8 @@ private enum TerminalPTY {
     var pausedOutputByteCount: Int { pausedOutput.count }
     private var pauseWork: Task<Void, Never>?
     private var resumeWork: Task<Void, Never>?
+    private var inputInactive = false
+    private var readPauseCompleted = false
     private var pauseDeadline: Task<Void, Never>?
     #if os(iOS)
     private var backgroundTask = UIBackgroundTaskIdentifier.invalid
@@ -369,7 +371,7 @@ private enum TerminalPTY {
         VisionTerminalAdmission.allows(focused: inputAvailable(), emulatorReply: source == .emulatorReply,
                                       suspended: suspended, unlocked: DirectAppLockV1.shared.canAccess)
         #else
-        !suspended && DirectAppLockV1.shared.canAccess && inputAvailable()
+        !inputInactive && !suspended && DirectAppLockV1.shared.canAccess && inputAvailable()
         #endif
     }
     func send(_ data: [UInt8], source: OutputSource = .userInput) {
@@ -451,7 +453,7 @@ private enum TerminalPTY {
     #endif
     func resize(columns: Int, rows: Int) {
         self.columns = max(1, min(500, columns)); self.rows = max(1, min(500, rows))
-        guard inputAvailable(), let writer, connected, !suspended, DirectAppLockV1.shared.canAccess, DirectClientPlatformV1.sessionAvailable else { return }
+        guard !inputInactive, inputAvailable(), let writer, connected, !suspended, DirectAppLockV1.shared.canAccess, DirectClientPlatformV1.sessionAvailable else { return }
         let cols = self.columns, rows = self.rows, id = generation, writeID = writeGeneration
         let previous = writeTail
         #if os(macOS) || os(visionOS)
@@ -462,13 +464,14 @@ private enum TerminalPTY {
             #if os(macOS) || os(visionOS)
             await previousRelease?.value
             #endif
-            guard inputAvailable(), generation == id, writeGeneration == writeID, !suspended, !Task.isCancelled,
+            guard !inputInactive, inputAvailable(), generation == id, writeGeneration == writeID, !suspended, !Task.isCancelled,
                 DirectAppLockV1.shared.canAccess, DirectClientPlatformV1.sessionAvailable else { return }
             do { try await writer.resize(columns: cols, rows: rows) }
             catch { if generation == id && writeGeneration == writeID { stop(); present(.terminalEnded, message: "The connection ended while resizing the Terminal. Open a new shell to continue.") } }
         }
     }
     func stop() {
+        inputInactive = false; readPauseCompleted = false
         lifecycleGeneration = UUID(); writeGeneration = UUID()
         pauseWork?.cancel(); pauseWork = nil; resumeWork?.cancel(); resumeWork = nil; finishBackgroundWork()
         suspended = false; pausedOutput.removeAll(keepingCapacity: false)
@@ -483,18 +486,28 @@ private enum TerminalPTY {
         Task { try? await client?.close(); try? await channel?.close() }
     }
     func receiveOutput(_ bytes: [UInt8]) throws {
-        guard !suspended, DirectAppLockV1.shared.canAccess, DirectClientPlatformV1.sessionAvailable else {
-            if !suspended { background() }
+        guard !inputInactive, !suspended, DirectAppLockV1.shared.canAccess, DirectClientPlatformV1.sessionAvailable else {
+            // A brief inactive transition can retain reads while buffering UI
+            // output. Actual background/lock entry separately pauses the channel.
+            if !suspended && !(inputInactive && DirectAppLockV1.shared.canAccess) { background() }
             guard bytes.count <= Self.maximumPausedOutputBytes - pausedOutput.count else { throw TerminalConnectionFailure.pausedOutputLimit }
             pausedOutput.append(contentsOf: bytes); return
         }
         if !pausedOutput.isEmpty { let pending = pausedOutput; pausedOutput.removeAll(keepingCapacity: false); received?(pending) }
         received?(bytes)
+        if !bytes.isEmpty { activity?.setPhase("connected") }
+    }
+    func becameInactive() {
+        if connecting { cancelConnection(); return }
+        guard connected, !inputInactive else { return }
+        inputInactive = true; writeGeneration = UUID(); writeTail?.cancel(); writeTail = nil; queuedBytes = 0
+        suspendInput?()
     }
     func background() {
         if connecting { cancelConnection(); return }
         guard connected, !suspended || resumeWork != nil else { return }
         suspended = true; lifecycleGeneration = UUID(); let token = lifecycleGeneration
+        inputInactive = true; readPauseCompleted = false
         writeGeneration = UUID(); writeTail?.cancel()
         resumeWork?.cancel(); resumeWork = nil; suspendInput?()
         writeTail = nil; queuedBytes = 0
@@ -504,6 +517,7 @@ private enum TerminalPTY {
         backgroundTask = UIApplication.shared.beginBackgroundTask(withName: "Pause SSH session") { [weak self] in
             MainActor.assumeIsolated {
                 guard let self, self.lifecycleGeneration == token else { return }
+                if !self.readPauseCompleted { self.stop(); self.present(.terminalEnded) }
                 self.finishBackgroundWork()
             }
         }
@@ -514,19 +528,31 @@ private enum TerminalPTY {
                 self.stop(); self.present(.terminalEnded); return
             }
             guard let self, self.lifecycleGeneration == token else { return }
-            await self.activity?.waitForUpdates()
-            if self.lifecycleGeneration == token { self.finishBackgroundWork() }
+            self.readPauseCompleted = true
+            // ActivityKit must not be on the transport-resume dependency chain.
+            Task { [weak self, activity = self.activity] in
+                await activity?.waitForUpdates()
+                guard let self, self.lifecycleGeneration == token else { return }
+                self.finishBackgroundWork()
+            }
         }
         pauseDeadline = Task { [weak self] in
             do { try await Task.sleep(for: .seconds(1)) } catch { return }
             guard let self, self.lifecycleGeneration == token else { return }
+            if !self.readPauseCompleted { self.stop(); self.present(.terminalEnded) }
             self.finishBackgroundWork()
         }
     }
     func foreground() {
         guard connected, DirectAppLockV1.shared.canAccess, DirectClientPlatformV1.sessionAvailable else { return }
+        let wasInactive = inputInactive
+        inputInactive = false
         activity?.setForeground(true)
-        guard suspended else { activity?.setPhase("connected"); return }
+        guard suspended else {
+            do { try receiveOutput([]) } catch { stop(); present(.terminalEnded); return }
+            if wasInactive { resize(columns: columns, rows: rows) }
+            activity?.setPhase("connected", verified: false); return
+        }
         guard resumeWork == nil else { return }
         lifecycleGeneration = UUID(); let token = lifecycleGeneration, id = generation
         finishBackgroundWork(); let previousPause = pauseWork
@@ -542,7 +568,7 @@ private enum TerminalPTY {
                 guard self.generation == id, self.lifecycleGeneration == token, DirectAppLockV1.shared.canAccess, DirectClientPlatformV1.sessionAvailable else { return }
                 self.suspended = false; try self.receiveOutput([])
                 self.resize(columns: self.columns, rows: self.rows)
-                self.activity?.setPhase("connected")
+                self.activity?.setPhase("connected", verified: false)
             } catch {
                 if self.generation == id && self.lifecycleGeneration == token { self.stop(); self.present(.terminalEnded) }
             }

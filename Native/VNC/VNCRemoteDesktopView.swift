@@ -137,11 +137,12 @@ struct VNCRemoteDesktopView: UIViewControllerRepresentable {
         let activity: VNCSessionActivityController
         private var backgroundTask = UIBackgroundTaskIdentifier.invalid
         private var backgroundGeneration = UUID()
+        private var inputReleaseCompleted = false
         private let showMacs: @MainActor () -> Void
         private var removed = false
         private var removalObserver: DirectMacRemovalObservation?
-        init(mac: DirectMacRecordV1, files: DirectFilesSession? = nil, showMacs: @escaping @MainActor () -> Void = {}) {
-            self.mac = mac; self.files = files ?? DirectFilesSession(mac: mac); self.showMacs = showMacs; activity = VNCSessionActivityController(mac: mac)
+        init(mac: DirectMacRecordV1, files: DirectFilesSession? = nil, activityController: VNCSessionActivityController? = nil, showMacs: @escaping @MainActor () -> Void = {}) {
+            self.mac = mac; self.files = files ?? DirectFilesSession(mac: mac); self.showMacs = showMacs; activity = activityController ?? VNCSessionActivityController(mac: mac)
             removalObserver = DirectMacRemovalObservation(macID: mac.id, libraryURL: self.files.libraryURL) { [weak self] in
                 guard let self else { return }
                 self.removed = true; self.disconnect(); self.viewer?.stop(); self.activity.finish()
@@ -159,6 +160,8 @@ struct VNCRemoteDesktopView: UIViewControllerRepresentable {
             }, NotificationCenter.default.addObserver(forName: VNCSessionPreferences.actionsChanged, object: nil, queue: .main) { [weak self] _ in
                 MainActor.assumeIsolated { self?.refreshControls() }
             }, NotificationCenter.default.addObserver(forName: UIApplication.willResignActiveNotification, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.viewer?.becameInactive() }
+            }, NotificationCenter.default.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main) { [weak self] _ in
                 MainActor.assumeIsolated { self?.pause() }
             }, NotificationCenter.default.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
                 MainActor.assumeIsolated {
@@ -184,15 +187,18 @@ struct VNCRemoteDesktopView: UIViewControllerRepresentable {
             activity.setForeground(false)
             guard backgroundTask == .invalid else { return }
             let token = UUID(); backgroundGeneration = token
+            inputReleaseCompleted = false
             backgroundTask = UIApplication.shared.beginBackgroundTask(withName: "Finish session pause") { [weak self] in
                 MainActor.assumeIsolated {
                     guard let self, self.backgroundGeneration == token else { return }
-                    self.viewer?.session.stop(); self.finishBackgroundWork()
+                    if !self.inputReleaseCompleted { self.viewer?.session.stop(); self.activity.setPhase("ended") }
+                    self.finishBackgroundWork()
                 }
             }
             viewer?.background(completion: { [weak self] in
                 MainActor.assumeIsolated {
                     guard let self, self.backgroundGeneration == token else { return }
+                    self.inputReleaseCompleted = true
                     Task { [weak self] in
                         guard let self else { return }
                         await self.activity.waitForUpdates()
@@ -204,7 +210,8 @@ struct VNCRemoteDesktopView: UIViewControllerRepresentable {
                 try? await Task.sleep(for: .seconds(1))
                 guard let self, self.backgroundGeneration == token else { return }
                 // Only a stalled release is retired; no idle background assertion remains.
-                self.viewer?.session.stop(); self.finishBackgroundWork()
+                if !self.inputReleaseCompleted { self.viewer?.session.stop(); self.activity.setPhase("ended") }
+                self.finishBackgroundWork()
             }
         }
         private func finishBackgroundWork() {

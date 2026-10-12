@@ -266,6 +266,7 @@ struct DirectMacSessionSelection: Identifiable {
     let id = UUID()
     let mac: DirectMacRecordV1
     let connection: DirectMacConnection
+    var autoConnect = true
 }
 
 #if os(iOS)
@@ -394,12 +395,12 @@ struct DirectMacLibraryRootV1: View {
             .onOpenURL { url in
                 guard let route = RemoteSessionActivityAttributes.resumeRoute(from: url),
                       let mac = library.macs.first(where: { $0.id == route.macID }), session == nil else { return }
-                open(mac, connection: route.kind == .terminal ? .terminal : .desktop)
+                open(mac, connection: route.kind == .terminal ? .terminal : .desktop, autoConnect: route.automaticallyConnect)
             }
             .fullScreenCover(item: $session) { selection in
                 switch selection.connection {
                 case .terminal:
-                    DirectTerminalView(mac: selection.mac, macLibrary: library, exit: { session = nil })
+                    DirectTerminalView(mac: selection.mac, macLibrary: library, autoConnect: selection.autoConnect, exit: { session = nil })
                 case .desktop, .trackpad:
                     DirectDesktopSessionView(mac: selection.mac, inputOnly: selection.connection.inputOnly,
                                              connectionMacNames: library.macs.map(\.name), showMacs: { session = nil })
@@ -419,12 +420,12 @@ struct DirectMacLibraryRootV1: View {
             editor = EditorSelection(mac: mac)
         }
     }
-    private func open(_ mac: DirectMacRecordV1, connection: DirectMacConnection) {
+    private func open(_ mac: DirectMacRecordV1, connection: DirectMacConnection, autoConnect: Bool = true) {
         Task {
             if !pro.ready { await pro.refresh() }
             guard library.macs.contains(where: { $0.id == mac.id }) else { return }
             guard pro.canUseMac(mac.id, among: library.macs.map(\.id)) else { paywall = true; return }
-            session = DirectMacSessionSelection(mac: mac, connection: connection)
+            session = DirectMacSessionSelection(mac: mac, connection: connection, autoConnect: autoConnect)
         }
     }
 }

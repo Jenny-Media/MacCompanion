@@ -309,7 +309,18 @@
     "automaticReconnectAttempts": 1,
     "liveActivityDefaultEnabled": true,
     "connectedStatusStaleSeconds": 60,
-    "pausedStatusStaleSeconds": 900
+    "pausedStatusStaleSeconds": 60,
+    "inactiveRetainsEstablishedTransport": true,
+    "inputReleaseIndependentOfActivityUpdate": true,
+    "resumeIndicatorDelayMilliseconds": 500,
+    "replacementPresentation": "matching-frame-and-display-layout",
+    "staleStatus": "open-to-check",
+    "renewConnectedStatusOnEvidence": true,
+    "retireCopiedInputOnInterruption": true,
+    "terminalReturnRenewsEvidence": false,
+    "terminalColdActivityReturnRequiresExplicitConnect": true,
+    "knownEndIndependentOfActivityUpdate": true,
+    "inactiveReturnRestoresLatestTerminalGrid": true
   },
   "lifecycleCases": [
     {
@@ -820,7 +831,16 @@
       "defaultEnabled": false,
       "policy": "deviceOwnerAuthentication",
       "backgroundRevokesAccess": true,
-      "promptInactiveRelocks": false
+      "promptInactiveRelocks": false,
+      "defaultGraceSeconds": 0,
+      "allowedGraceSeconds": [
+        0,
+        30
+      ],
+      "backgroundGraceDoesNotGrantBackgroundAccess": true,
+      "protectedDataLossRevokesGrace": true,
+      "processRestartRevokesGrace": true,
+      "graceClock": "continuous-including-device-sleep"
     },
     "fullscreen": {
       "reconnect": false,
@@ -1433,16 +1453,28 @@
     {
       "name": "reset during review return presentation",
       "reviewReturn": true,
-      "before": [2, 2],
-      "after": [4, 4],
+      "before": [
+        2,
+        2
+      ],
+      "after": [
+        4,
+        4
+      ],
       "allowsInputAfterReset": false,
       "allowsInputAfterCurrentFrame": true
     },
     {
       "name": "reset during live desktop presentation",
       "reviewReturn": false,
-      "before": [2, 2],
-      "after": [4, 4],
+      "before": [
+        2,
+        2
+      ],
+      "after": [
+        4,
+        4
+      ],
       "allowsInputAfterReset": false,
       "allowsInputAfterCurrentFrame": true
     }
@@ -2871,6 +2903,152 @@
       "key": 65507,
       "buttonMask": 4,
       "releasesBeforeClose": true
+    }
+  ],
+  "interruptionCases": [
+    {
+      "name": "brief-inactive-return",
+      "events": [
+        "inactive",
+        "active"
+      ],
+      "expect": [
+        "input-released",
+        "same-transport",
+        "same-display",
+        "no-reconnect-indicator"
+      ]
+    },
+    {
+      "name": "slow-activity-update",
+      "events": [
+        "background",
+        "input-release-complete",
+        "activity-update-stalled",
+        "pause-deadline"
+      ],
+      "expect": [
+        "transport-retained",
+        "background-assertion-ended"
+      ]
+    },
+    {
+      "name": "stalled-input-release",
+      "events": [
+        "background",
+        "input-release-stalled",
+        "pause-deadline"
+      ],
+      "expect": [
+        "transport-stopped",
+        "activity-ended"
+      ]
+    },
+    {
+      "name": "replacement-frame-first",
+      "events": [
+        "replacement",
+        "frame",
+        "layout"
+      ],
+      "expect": [
+        "previous-crop-until-layout",
+        "selected-display-restored"
+      ]
+    },
+    {
+      "name": "replacement-layout-first",
+      "events": [
+        "replacement",
+        "layout",
+        "frame"
+      ],
+      "expect": [
+        "previous-crop-until-frame",
+        "selected-display-restored"
+      ]
+    },
+    {
+      "name": "background-disconnect",
+      "events": [
+        "background",
+        "connection-ended"
+      ],
+      "expect": [
+        "activity-ended"
+      ]
+    },
+    {
+      "name": "observed-desktop-end-during-stalled-activity-update",
+      "events": [
+        "activity-update-stalled",
+        "connection-ended",
+        "replacement-connected",
+        "old-update-completes"
+      ],
+      "expect": [
+        "ownership-retired-synchronously",
+        "activity-ended-before-update-completes",
+        "replacement-activity-preserved"
+      ]
+    },
+    {
+      "name": "terminal-finish-during-stalled-activity-update",
+      "events": [
+        "activity-update-stalled",
+        "session-finished",
+        "old-update-completes"
+      ],
+      "expect": [
+        "ownership-retired-synchronously",
+        "activity-ended-before-update-completes",
+        "finished-owner-cannot-restart"
+      ]
+    },
+    {
+      "name": "brief-inactive-terminal-grid-change",
+      "events": [
+        "inactive",
+        "grid-changes",
+        "latest-grid-changes",
+        "active"
+      ],
+      "expect": [
+        "no-inactive-window-change",
+        "latest-grid-published-on-return",
+        "same-authentication-and-PTY",
+        "no-input-replay"
+      ]
+    }
+  ],
+  "appUnlockGraceCases": [
+    {
+      "name": "immediate-default",
+      "graceSeconds": 0,
+      "elapsedSeconds": 1,
+      "protectedDataAvailable": true,
+      "authenticate": true
+    },
+    {
+      "name": "short-opt-in-return",
+      "graceSeconds": 30,
+      "elapsedSeconds": 1,
+      "protectedDataAvailable": true,
+      "authenticate": false
+    },
+    {
+      "name": "expired-opt-in-return",
+      "graceSeconds": 30,
+      "elapsedSeconds": 30,
+      "protectedDataAvailable": true,
+      "authenticate": true
+    },
+    {
+      "name": "protected-data-loss",
+      "graceSeconds": 30,
+      "elapsedSeconds": 1,
+      "protectedDataAvailable": false,
+      "authenticate": true
     }
   ]
 }
