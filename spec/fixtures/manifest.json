@@ -813,7 +813,7 @@
       "path": "native-visionos-client-v1.json",
       "kind": "client.nativeVision.v1",
       "expect": "valid",
-      "canonicalSHA256": "a4f088ba2aacdd563f26d1080c5c59d44ce021eb2d820ab553bee03c1b37b6bf"
+      "canonicalSHA256": "b4f283ab87c972098df03794f7e55ddab3e69ec61768369eb12192427bf7c68a"
     },
     {
       "path": "direct-files-v1.json",

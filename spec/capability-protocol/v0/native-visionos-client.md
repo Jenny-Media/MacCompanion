@@ -14,6 +14,22 @@ send input through another. Scene interruption suspends input, clears local
 composition and sensitive drafts, and leaves reconnection explicit if the
 transport fails. Lock covers every scene and invalidates pending authentication.
 
+After a pending first-use SSH approval resumes, Desktop MUST recheck shared
+trust using the existing atomic host-key approval operation. A matching key
+approved by another owner is compatible; a different winning pin MUST NOT be
+replaced and the losing connection MUST send no credentials or forwarding.
+The authoritative shared vectors are `direct-files-v1.json:hostApprovalCases`;
+native Desktop transport coverage is indexed in `mainIntegration` of the native
+visionOS fixture.
+
+Each Desktop and Terminal owner MUST observe removals from its actual library
+URL and Mac UUID. A successfully persisted removal synchronously retires all
+matching owners before Remove returns, invalidating input, pending trust,
+connection callbacks and login retention. Later approval or Connected callbacks
+cannot restore trust/logins or authenticate. Other Mac UUIDs and libraries
+remain independently owned. SwiftUI window/draft cleanup follows retirement
+and cannot provide the connection's cancellation fence.
+
 Native system selection gestures and physical pointer/keyboard events map only
 to the focused scene's current remote surface. Gaze hover is not remote pointer
 authority. Local composition remains local until committed. Letterbox taps are

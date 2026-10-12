@@ -22,11 +22,12 @@ struct VisionSessionWindow: View {
     @Environment(\.dismissWindow) private var dismissWindow
     @Environment(VisionSessionRegistry.self) private var sessions
     @FocusState private var loginFocus: LoginField?
+    @State private var closing = false
     private enum LoginField { case account, password }
     init(request: VisionSessionRequest, library: DirectMacLibraryV1) {
         self.request = request; self.library = library
-        _desktop = State(initialValue: request.connection == .desktop ? VisionDesktopSession(mac: request.mac) : nil)
-        let session = request.connection == .terminal ? DirectTerminalSession(mac: request.mac) : nil
+        _desktop = State(initialValue: request.connection == .desktop ? VisionDesktopSession(mac: request.mac, libraryURL: library.storageURL) : nil)
+        let session = request.connection == .terminal ? DirectTerminalSession(mac: request.mac, libraryURL: library.storageURL) : nil
         _terminal = State(initialValue: session)
         _terminalOutput = State(initialValue: session.map(VisionTerminalOutput.init))
     }
@@ -46,9 +47,7 @@ struct VisionSessionWindow: View {
                 Text(status).font(.caption).foregroundStyle(.secondary).lineLimit(2)
                 Button("Your Macs", systemImage: "square.grid.2x2") { openWindow(id: "library") }.labelStyle(.iconOnly)
                 Button("Close Window", systemImage: "xmark") {
-                    desktop?.close(); terminal?.stop(); clearDraft()
-                    sessions.remove(request.id)
-                    dismissWindow(id: "connection", value: request)
+                    closeWindow()
                 }.labelStyle(.iconOnly).accessibilityIdentifier("vision-close-session")
             }.padding(16)
             if connected {
@@ -102,9 +101,17 @@ struct VisionSessionWindow: View {
                 else { interrupt() }
             }
             .onChange(of: connected) { _, value in if value { clearDraft() } }
+            .onChange(of: desktop?.closed) { _, value in if value == true { closeWindow() } }
+            .onChange(of: terminal?.macRemoved) { _, value in if value == true { closeWindow() } }
             .onChange(of: library.macs) { _, records in
-                if !records.contains(where: { $0.id == request.mac.id }) { desktop?.close(); terminal?.stop(); clearDraft() }
+                if !records.contains(where: { $0.id == request.mac.id }) { closeWindow() }
             }
+    }
+    private func closeWindow() {
+        guard !closing else { return }; closing = true
+        desktop?.close(); terminal?.stop(); clearDraft()
+        sessions.remove(request.id)
+        dismissWindow(id: "connection", value: request)
     }
     private var login: some View {
         ScrollView {

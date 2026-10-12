@@ -4725,5 +4725,34 @@
       "retired-same-hid-and-control-flags",
       "late-cancel-during-fresh-drag"
     ]
+  },
+  "mainIntegration": {
+    "hostApprovalCases": [
+      {
+        "id": "concurrent-same-key",
+        "storedMatchesPeer": true,
+        "accepted": true,
+        "credentialsAllowed": true
+      },
+      {
+        "id": "concurrent-different-key",
+        "storedMatchesPeer": false,
+        "accepted": false,
+        "credentialsAllowed": false
+      }
+    ],
+    "hostApprovalAuthority": "direct-files-v1.json:hostApprovalCases",
+    "macRemovalCases": [
+      "pending-trust",
+      "connected-owners",
+      "terminal-owning-library",
+      "same-uuid-different-library"
+    ],
+    "expect": {
+      "retiredBeforeRemoveReturns": true,
+      "lateTrustCannotSaveOrAuthenticate": true,
+      "retiredInputCannotSend": true,
+      "otherMacAndLibraryOwnersRemainActive": true
+    }
   }
 }

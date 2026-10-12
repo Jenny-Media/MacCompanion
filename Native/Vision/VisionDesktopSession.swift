@@ -38,7 +38,14 @@ import UIKit
     private(set) var inputGeneration = UUID()
     private var pendingLogin: DesktopCredentialStoreV1.Login?
     private(set) var closed = false
-    init(mac: DirectMacRecordV1) { self.mac = mac; selectedID = VNCSessionPreferences.display(mac.id)?.uint32Value }
+    @ObservationIgnored private var removalObserver: DirectMacRemovalObservation?
+    init(mac: DirectMacRecordV1, libraryURL: URL = DirectMacLibraryV1.defaultURL) {
+        self.mac = mac; selectedID = VNCSessionPreferences.display(mac.id)?.uint32Value
+        removalObserver = DirectMacRemovalObservation(macID: mac.id, libraryURL: libraryURL) { [weak self] in
+            self?.close()
+            self?.status = "Mac removed"
+        }
+    }
     var canInput: Bool { !closed && !suspended && connected && transport?.connected == true && inputAvailable() && DirectAppLockV1.shared.canAccess }
     var pointerHeld: Bool { held.buttons != 0 }
     var crop: CGRect {
@@ -132,7 +139,7 @@ import UIKit
                         let accepted = await withCheckedContinuation { self.trustReply = $0 }
                         self.trust = nil
                         guard accepted, self.generation == token, DirectAppLockV1.shared.canAccess else { throw TerminalSecretStore.Failure.rejectedKey }
-                        try TerminalSecretStore.write(Data(key.utf8), id: self.mac.id, kind: "host-key")
+                        try TerminalSecretStore.approveHostKey(key, id: self.mac.id)
                     }, progress: { [weak self] progress in
                         guard let self, self.generation == token else { return }; self.status = progress
                     })
