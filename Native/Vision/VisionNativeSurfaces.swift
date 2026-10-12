@@ -164,6 +164,7 @@ final class VisionDesktopCanvas: UIView, UIGestureRecognizerDelegate {
     private var maximumMovement: CGFloat = 0
     private var spatialKind = "none"
     private var interruptedSelection = false
+    private var hardwarePresses: [ObjectIdentifier: UUID] = [:]
     override var canBecomeFirstResponder: Bool { true }
     init(session: VisionDesktopSession, interaction: VisionDesktopInteraction = .init()) {
         self.session = session; self.interaction = interaction; super.init(frame: .zero)
@@ -176,6 +177,7 @@ final class VisionDesktopCanvas: UIView, UIGestureRecognizerDelegate {
         session.resetInput = { [weak self] in
             guard let self else { return }
             self.physical.clear(); self.blockedID = self.eventID
+            self.hardwarePresses.removeAll()
             self.interruptedSelection = self.gesture.active
             self.holdTask?.cancel(); self.holdTask = nil; self.eventID = nil
             _ = self.gesture.cancel(); _ = self.gesture.setAdjusting(self.interaction.adjusting)
@@ -505,12 +507,37 @@ final class VisionDesktopCanvas: UIView, UIGestureRecognizerDelegate {
         zoomBinding = (owner.generation, owner.crop, owner.viewport, owner.anchor, session.zoom, session.pan)
     }
     override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
-        for press in presses { if let key = press.key { physical.handle(key, down: true) } }
+        var remaining = presses
+        for press in presses {
+            if session.canInput, let key = press.key, VisionHardwareKeys.symbol(key) != nil {
+                hardwarePresses[ObjectIdentifier(press)] = session.inputGeneration
+                physical.handle(key, down: true); remaining.remove(press)
+            }
+        }
+        if !remaining.isEmpty { super.pressesBegan(remaining, with: event) }
     }
     override func pressesEnded(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
-        for press in presses { if let key = press.key { physical.handle(key, down: false) } }
+        var remaining = presses
+        for press in presses {
+            if let generation = hardwarePresses.removeValue(forKey: ObjectIdentifier(press)) {
+                remaining.remove(press)
+                if generation == session.inputGeneration, let key = press.key { physical.handle(key, down: false) }
+            }
+        }
+        if !remaining.isEmpty { super.pressesEnded(remaining, with: event) }
     }
-    override func pressesCancelled(_ presses: Set<UIPress>, with event: UIPressesEvent?) { session.releaseInput() }
+    override func pressesCancelled(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        var remaining = presses
+        var cancelsCurrentOwner = false
+        for press in presses {
+            if let generation = hardwarePresses.removeValue(forKey: ObjectIdentifier(press)) {
+                remaining.remove(press)
+                cancelsCurrentOwner = cancelsCurrentOwner || generation == session.inputGeneration
+            }
+        }
+        if cancelsCurrentOwner { session.releaseInput() }
+        if !remaining.isEmpty { super.pressesCancelled(remaining, with: event) }
+    }
     override func becomeFirstResponder() -> Bool {
         interaction.transferringFocus = true; defer { interaction.transferringFocus = false }
         if window?.windowScene?.activationState == .foregroundActive, DirectAppLockV1.shared.canAccess { window?.makeKey() }

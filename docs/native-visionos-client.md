@@ -365,14 +365,19 @@ held modifiers. Terminal owns its press identities, stops frontend repeat and
 balances negotiated Kitty releases on cancellation and owner cleanup. Retired
 endpoints cannot stop a newer repeat or duplicate a release.
 
-Four additional hosted Simulator regressions invoke actual native press handlers
+Five additional hosted Simulator regressions invoke actual native press handlers
 through synthetic UIKey/UIPress subclasses, over real SSH/RFB and SSH PTY. The
 manifest-indexed cases cover focused cancellation, modified clicks, duplicate
 endpoints, fresh same-HID input, repeat shutdown and negotiated release. The full
-required suite is 45 hosted cases and nine normal UI cases, with no required skips.
+required suite is 46 hosted cases and nine normal UI cases, with no required skips.
+The canvas case also proves old Control flags cannot recreate retired modifiers,
+and late endpoints cannot release a fresh same-HID key or newer pointer hold.
 The new complete stable gate and fresh review evidence live outside Git under
 `/private/tmp/maccompanion-pr12-keyboard-cancel-20261011/review/`; results from
 earlier repair cycles cannot substitute for this candidate's gate.
+The requested Xcode 27.1 RC checks and stable Xcode 27.0 checks use separate
+SDK build and validation scratch directories. Both lanes must pass on the
+same source state; RC results alone remain provisional.
 
 SwiftTerm's pinned UIKit `pressesEnded` is public but not open. Native visionOS
 development builds admit exactly a public-to-open declaration change using

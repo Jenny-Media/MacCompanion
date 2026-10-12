@@ -45,11 +45,15 @@ owner cleanup still releases keys/buttons and discards composition. A key releas
 whose HID identity was retired cannot reconstruct modifiers from its flags; only
 new admitted presses can establish a new held-key owner.
 UIKit hardware presses terminate through either ended or cancelled callbacks.
-The native text responder MUST balance a cancelled admitted key owner exactly
+The native canvas and text responders MUST bind actual press identity to the
+current input generation and balance a cancelled admitted key owner exactly
 once while it remains focused, clear its captured HID identities, and leave
 later endpoints harmless. Cancellation of a retired press MUST NOT release a
 newer key owner, including a new press of the same HID usage. Normal modified
 click completion continues to preserve held modifiers.
+Canvas owner reset retires hardware press identities as well as HID state.
+Unknown, duplicate and retired endpoints cannot release a newer key, reconstruct
+its modifiers from old flags, or end a newer pointer hold.
 The native Terminal responder MUST stop frontend key repeat and balance any
 negotiated key releases on cancellation. Owner cleanup retires its admitted
 press identities before fresh input; old cancellation or ended callbacks cannot

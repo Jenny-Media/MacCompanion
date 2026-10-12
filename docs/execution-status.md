@@ -1,18 +1,20 @@
 ## 2026-10-11 — Native keyboard cancellation repair
 
-Native Desktop and Terminal responders now handle canceled hardware presses,
+Native canvas, Desktop text and Terminal responders now handle canceled hardware presses,
 balance held keys, stop Terminal repeat, and reject retired endpoints before
-they can affect fresh input. Four focused hosted Simulator regressions pass,
+they can affect fresh input. Five focused hosted Simulator regressions cover
 including current focus, modified clicks, same-HID replacement, duplicate
 callbacks, repeat and negotiated releases. A hash-admitted visionOS-only
 public-to-open SwiftTerm release declaration enables the native completion
 guard; all other source provenance checks remain strict.
 
-The complete gate requires 54 native cases (45 hosted and nine UI), both unsigned
+The complete gate requires 55 native cases (46 hosted and nine UI), both unsigned
 SDK builds, required repository validation and fresh blind review plus ledger
 audit on one unchanged source state. Evidence is outside Git under
 `/private/tmp/maccompanion-pr12-keyboard-cancel-20261011/review/`. Physical Vision
 Pro contact remains reserved for final acceptance; no hardware pass is claimed.
+The requested Xcode 27.1 RC lane uses separate build and validation directories
+from stable Xcode 27.0. RC results remain provisional until the stable lane passes.
 
 ## 2026-10-11 — PR #12 full-review repair candidate
 

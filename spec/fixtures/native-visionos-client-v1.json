@@ -4718,6 +4718,12 @@
       "retiredEndpointsAffectFreshOwner": false,
       "cancellationRequiresFocusLoss": false,
       "freshInputAfterCancellation": true
-    }
+    },
+    "canvasCases": [
+      "current-cancel",
+      "duplicate-endpoints",
+      "retired-same-hid-and-control-flags",
+      "late-cancel-during-fresh-drag"
+    ]
   }
 }

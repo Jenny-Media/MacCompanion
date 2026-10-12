@@ -22,6 +22,11 @@ import SwiftTerm
         let url = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "native-visionos-client-v1", withExtension: "json"))
         let fixture = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])
         let rows = try XCTUnwrap(fixture["hardwareCancellation"] as? [String: Any])
+        if surface == "canvas" {
+            var row = try XCTUnwrap(rows["desktop"] as? [String: Any])
+            row["cases"] = rows["canvasCases"]
+            return row
+        }
         return try XCTUnwrap(rows[surface] as? [String: Any])
     }
     private func press(_ row: [String: Any], prefix: String = "", control: Bool = false) throws -> CancellationPress {
@@ -92,6 +97,62 @@ import SwiftTerm
     }
     func testNativeDesktopCancellationBalancesChordWithoutLosingFocus() async throws { try await desktopCancellation(retired: false) }
     func testRetiredNativeKeyboardCancellationCannotReleaseFreshSameHID() async throws { try await desktopCancellation(retired: true) }
+    func testNativeCanvasEndpointsCannotRetireFreshKeysOrPointer() async throws {
+        let row = try cancellation("canvas")
+        XCTAssertEqual(Set(try XCTUnwrap(row["cases"] as? [String])), ["current-cancel", "duplicate-endpoints", "retired-same-hid-and-control-flags", "late-cancel-during-fresh-drag"])
+        let server = DesktopSSHServer(.rfb); try await server.start()
+        let mac = try DirectMacRecordV1.normalized(name: "Synthetic canvas cancellation", addresses: ["127.0.0.1"], sshPort: server.port)
+        try TerminalSecretStore.write(Data(server.hostKey.utf8), id: mac.id, kind: "host-key")
+        let session = VisionDesktopSession(mac: mac), interaction = VisionDesktopInteraction()
+        let (window, previous) = try window()
+        defer { session.close(); window.isHidden = true; previous?.makeKey(); try? TerminalSecretStore.remove(mac.id) }
+        do {
+            let canvas = VisionDesktopCanvas(session: session, interaction: interaction)
+            canvas.frame = CGRect(x: 0, y: 0, width: 600, height: 300)
+            window.rootViewController!.view.addSubview(canvas); canvas.layoutIfNeeded()
+            session.connect(username: "synthetic", password: "synthetic-only", remember: false)
+            try await wait("Canvas ready", { session.canInput && session.image != nil })
+            XCTAssertTrue(canvas.becomeFirstResponder())
+            let usage = try XCTUnwrap(UIKeyboardHIDUsage(rawValue: try XCTUnwrap(row["usage"] as? Int)))
+            let text = try XCTUnwrap(row["characters"] as? String)
+            let original = CancellationPress(CancellationKey(usage: usage, text: text, flags: .control))
+            let modifier = try press(row, prefix: "modifier", control: true)
+            let key = try XCTUnwrap(row["key"] as? Int), control = try XCTUnwrap(row["modifierKey"] as? Int)
+            canvas.pressesBegan([modifier, original], with: nil)
+            try await wait("Canvas chord admitted", { server.record.count("keyDown-\(key)") == 1 && server.record.count("keyDown-\(control)") == 1 })
+            original.sampledPhase = .cancelled; canvas.pressesCancelled([original], with: nil)
+            try await wait("Current canvas cancellation balances", { server.record.count("keyUp-\(key)") == 1 && server.record.count("keyUp-\(control)") == 1 })
+            XCTAssertTrue(canvas.isFirstResponder)
+            let fresh = CancellationPress(CancellationKey(usage: usage, text: text, flags: []))
+            canvas.pressesBegan([fresh], with: nil)
+            try await wait("Fresh same HID admitted", { server.record.count("keyDown-\(key)") == 2 })
+            canvas.physicalSelection(start: CGPoint(x: 300, y: 150), translation: .zero)
+            try await wait("Fresh pointer hold admitted", { session.pointerHeld && server.record.pointerEvents().last?.mask == 1 })
+            XCTAssertEqual(server.record.pointerEvents().last?.modifiers, [], "Fresh drag cannot inherit retired Control")
+            let pointers = server.record.pointerEvents().count
+            original.sampledPhase = .ended; canvas.pressesEnded([original, modifier], with: nil)
+            original.sampledPhase = .cancelled; canvas.pressesCancelled([original, modifier], with: nil)
+            canvas.pressesCancelled([original], with: nil)
+            try await Task.sleep(for: .milliseconds(100))
+            XCTAssertEqual(server.record.count("keyUp-\(key)"), 1)
+            XCTAssertEqual(server.record.count("keyDown-\(control)"), 1, "Old flags cannot reconstruct retired Control")
+            XCTAssertEqual(server.record.count("keyUp-\(control)"), 1)
+            XCTAssertEqual(server.record.pointerEvents().count, pointers); XCTAssertTrue(session.pointerHeld)
+            fresh.sampledPhase = .cancelled; canvas.pressesCancelled([fresh], with: nil)
+            try await wait("Current cancellation releases fresh key and pointer", { server.record.count("keyUp-\(key)") == 2 && server.record.pointerEvents().last?.mask == 0 })
+            XCTAssertFalse(session.pointerHeld)
+            canvas.selectionFinished(cancelled: true)
+            let arrow = try press(row, prefix: "fresh")
+            canvas.pressesBegan([arrow], with: nil)
+            canvas.pressesEnded([fresh], with: nil); canvas.pressesCancelled([fresh], with: nil)
+            arrow.sampledPhase = .ended; canvas.pressesEnded([arrow], with: nil)
+            let arrowKey = try XCTUnwrap(row["freshKey"] as? Int)
+            try await wait("Fresh arrow balances after retired endpoints", { server.record.count("keyUp-\(arrowKey)") == 1 })
+            XCTAssertEqual(server.record.count("keyUp-\(key)"), 2)
+            XCTAssertEqual(server.record.count("keyDown-\(control)"), 1)
+            try await server.close()
+        } catch { try? await server.close(); throw error }
+    }
     private func terminalCancellation(kitty: Bool) async throws {
         let row = try cancellation("terminal")
         XCTAssertEqual(Set(try XCTUnwrap(row["cases"] as? [String])), ["repeat-cancel", "duplicate-endpoints", "retired-same-hid", "kitty-cancel"])
