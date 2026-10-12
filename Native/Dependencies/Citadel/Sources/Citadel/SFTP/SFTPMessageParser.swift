@@ -6,6 +6,9 @@ struct SFTPMessageParser: ByteToMessageDecoder {
     mutating func decode(context: ChannelHandlerContext, buffer: inout ByteBuffer) throws -> DecodingState {
         let oldReaderIndex = buffer.readerIndex
         
+        if let length: UInt32 = buffer.getInteger(at: oldReaderIndex), length < 1 || length > 1_048_576 {
+            throw SFTPError.invalidResponse
+        }
         guard
             let length = buffer.readInteger(as: UInt32.self),
             let typeByte = buffer.readInteger(as: UInt8.self),
@@ -378,8 +381,7 @@ struct SFTPMessageParser: ByteToMessageDecoder {
             guard
                 let requestId = payload.readInteger(as: UInt32.self),
                 let oldPath = payload.readSSHString(),
-                let newPath = payload.readSSHString(),
-                let flags = payload.readInteger(as: UInt32.self)
+                let newPath = payload.readSSHString()
             else {
                 throw SFTPError.invalidPayload(type: type)
             }
@@ -389,7 +391,7 @@ struct SFTPMessageParser: ByteToMessageDecoder {
                     requestId: requestId,
                     oldPath: oldPath,
                     newPath: newPath,
-                    flags: flags
+                    flags: 0
                 )
             )
 
@@ -423,7 +425,14 @@ struct SFTPMessageParser: ByteToMessageDecoder {
                     targetPath: targetPath
                 )
             )
-        case .extended, .extendedReply:
+        case .extended:
+            guard let requestId = payload.readInteger(as: UInt32.self),
+                  payload.readSSHString() == "posix-rename@openssh.com",
+                  let oldPath = payload.readSSHString(), let newPath = payload.readSSHString(), payload.readableBytes == 0 else {
+                throw SFTPError.invalidPayload(type: type)
+            }
+            message = .posixRename(.init(requestId: requestId, oldPath: oldPath, newPath: newPath))
+        case .extendedReply:
             throw SFTPError.invalidPayload(type: type)
         }
         

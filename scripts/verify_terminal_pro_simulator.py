@@ -82,7 +82,8 @@ def main():
     for algorithm, name, secret in [('ed25519', 'synthetic-ed25519', 'synthetic-import-only'), ('rsa', 'synthetic-rsa', '')]:
         destination = qa / name
         if not destination.exists(): run('/usr/bin/ssh-keygen', '-q', '-t', algorithm, '-N', secret, '-f', destination)
-    resources = [ROOT / 'spec/fixtures/direct-screen-sharing-v1.json', ROOT / 'spec/fixtures/vnc-desktop-tunnel-v0.1.json', ROOT / 'spec/fixtures/ios-text-composer-v1.json',
+    resources = [ROOT / 'spec/fixtures/direct-screen-sharing-v1.json', ROOT / 'spec/fixtures/vnc-desktop-tunnel-v0.1.json',
+                 ROOT / 'spec/fixtures/direct-files-v1.json', ROOT / 'spec/fixtures/ios-text-composer-v1.json',
                  ROOT / 'spec/storekit/v0/LifetimePro.storekit', qa / 'synthetic-ed25519', qa / 'synthetic-ed25519.pub', qa / 'synthetic-rsa']
     spec['targets']['DirectClientTests'] = {
         'type': 'bundle.unit-test', 'platform': 'iOS',

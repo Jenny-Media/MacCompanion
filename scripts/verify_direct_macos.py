@@ -70,6 +70,7 @@ def main():
     spec['targets']['NativeClientTests'] = {
         'type': 'bundle.unit-test', 'platform': 'macOS',
         'sources': [{'path': str(ROOT / 'Native/MacTests/Hosted')}, {'path': str(ROOT / 'Native/ClientTests')},
+                    {'path': str(ROOT / 'spec/fixtures/direct-files-v1.json'), 'buildPhase': 'resources'},
                     {'path': str(ROOT / 'spec/storekit/v0/LifetimePro.storekit'), 'buildPhase': 'resources'}],
         'dependencies': [{'target': 'MacCompanion'}],
         'settings': {'base': {

@@ -24,6 +24,11 @@ struct MacSSHKeyFileReference: Codable, Identifiable, Equatable, Sendable {
     static let storageID = UUID(uuidString: "00000000-0000-0000-0000-000000000003")!
     static let kind = "key-file-references-v1"
     static let changed = Notification.Name("MacSSHKeyFileSelectionChanged")
+    struct LoginSelection: Sendable {
+        let macID: UUID
+        let file: MacSSHKeyFileReference
+        let username: String
+    }
     struct Library: Codable {
         var version = 1
         var files: [MacSSHKeyFileReference] = []
@@ -131,10 +136,17 @@ struct MacSSHKeyFileReference: Codable, Identifiable, Equatable, Sendable {
         for association in library.associations where association.keyID == id { try TerminalKeyLibraryStore.forgetAssociation(association.macID) }
         library.files.removeAll { $0.id == id }; library.associations.removeAll { $0.keyID == id }; try save(library)
     }
-    static func rememberAccount(_ username: String, fileID: UUID, macID: UUID, fingerprint: String) throws {
+    static func loginSelection(fileID: UUID, macID: UUID, fingerprint: String) throws -> LoginSelection? {
+        guard let selected = try selected(macID), selected.file.id == fileID,
+              selected.file.fingerprint == fingerprint else { return nil }
+        return .init(macID: macID, file: selected.file, username: selected.username)
+    }
+    /// A pending login must not replace a newer account or file selection.
+    static func rememberAccount(_ username: String, selection: LoginSelection) throws {
         var library = try load()
-        guard let index = library.associations.firstIndex(where: { $0.macID == macID && $0.keyID == fileID }),
-              library.files.contains(where: { $0.id == fileID && $0.fingerprint == fingerprint }) else { throw Failure.unavailable }
+        guard let index = library.associations.firstIndex(where: {
+            $0.macID == selection.macID && $0.keyID == selection.file.id && $0.username == selection.username
+        }), library.files.contains(selection.file) else { return }
         library.associations[index].username = username; try save(library)
     }
 }

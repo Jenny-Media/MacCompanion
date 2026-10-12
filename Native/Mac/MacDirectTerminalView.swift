@@ -4,6 +4,7 @@ import SwiftUI
 import SwiftTerm
 
 struct MacDirectTerminalView: View {
+    @Environment(\.openWindow) private var openWindow
     let mac: DirectMacRecordV1
     let sessionID: UUID
     @State private var session: DirectTerminalSession
@@ -29,8 +30,8 @@ struct MacDirectTerminalView: View {
     @State private var closed = false
     @Environment(\.colorScheme) private var colorScheme
     private enum Sheet: String, Identifiable { case keys, controls, keyboard, install, manual, identity, pro; var id: String { rawValue } }
-    init(mac: DirectMacRecordV1, sessionID: UUID = UUID()) {
-        self.mac = mac; self.sessionID = sessionID; _session = State(initialValue: DirectTerminalSession(mac: mac))
+    init(mac: DirectMacRecordV1, sessionID: UUID = UUID(), libraryURL: URL = DirectMacLibraryV1.defaultURL) {
+        self.mac = mac; self.sessionID = sessionID; _session = State(initialValue: DirectTerminalSession(mac: mac, libraryURL: libraryURL))
         _storedFontSize = State(initialValue: UserDefaults.standard.object(forKey: "mac-terminal-font-size-v1") as? Double ?? 14)
     }
     private var fontSize: Double { storedFontSize.isFinite ? min(28, max(10, storedFontSize)) : 14 }
@@ -95,6 +96,9 @@ struct MacDirectTerminalView: View {
         .frame(minWidth: 520, minHeight: 360)
         .navigationTitle(mac.name + " · Terminal")
         .toolbar {
+            Button("Files", systemImage: "folder") { openWindow(id: "direct-files", value: DirectFilesWindowRequest(macID: mac.id)) }
+                .help("Browse and transfer files using Remote Login (SSH)").accessibilityIdentifier("session-files")
+
             if session.connected {
                 Button("Interrupt", systemImage: "stop") { if window.acceptsActions { session.send([3]) } }
                     .labelStyle(.titleAndIcon).help("Send Ctrl+C to interrupt the running command")
@@ -142,6 +146,9 @@ struct MacDirectTerminalView: View {
         .background(MacWindowReader(handle: window).frame(width: 0, height: 0))
         .onAppear { loadInitialLogin(); publishStatus() }
         .onChange(of: phase) { _, _ in publishStatus() }
+        .onChange(of: session.macRemoved) { _, removed in
+            if removed { sheet = nil; cancelPreparation(); password = ""; key = nil; window.window?.close() }
+        }
         .onChange(of: storedFontSize) { _, value in UserDefaults.standard.set(value, forKey: "mac-terminal-font-size-v1") }
         .onReceive(NotificationCenter.default.publisher(for: VNCSessionPreferences.actionsChanged)) { _ in loadControls() }
         .onChange(of: session.connected) { _, connected in if connected { password = ""; keyPassphrase = "" } }
@@ -164,7 +171,7 @@ struct MacDirectTerminalView: View {
         MacConnectionRegistry.shared.update(id: sessionID, macID: mac.id, mode: .terminal, phase: phase, window: window)
     }
     private func loadInitialLogin() {
-        guard !loadedInitialLogin, DirectAppLockV1.shared.canAccess else { return }
+        guard !session.macRemoved, !loadedInitialLogin, DirectAppLockV1.shared.canAccess else { return }
         loadedInitialLogin = true; loadLogin(preferSelected: true); loadControls()
         // Match iPhone's single initial attempt. Cancellation, disconnect and
         // later unlocks still require an explicit request for a new shell.

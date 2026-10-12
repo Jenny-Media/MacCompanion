@@ -38,6 +38,20 @@ enum TerminalSecretStore {
         guard let key = String(data: data, encoding: .utf8), fingerprint(key) != nil else { throw Failure.storage }
         return key
     }
+    /// Approval may have waited while another session established shared trust.
+    /// Add atomically: never update a pin belonging to another approval.
+    static func approveHostKey(_ key: String, id: UUID) throws {
+        guard fingerprint(key) != nil else { throw Failure.rejectedKey }
+        if let saved = try hostKey(id) {
+            guard saved == key else { throw Failure.changedKey }; return
+        }
+        let fields: [String: Any] = [kSecValueData as String: Data(key.utf8),
+            kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly]
+        let status = SecItemAdd(query(id, "host-key").merging(fields) { _, new in new } as CFDictionary, nil)
+        if status == errSecDuplicateItem {
+            guard try hostKey(id) == key else { throw Failure.changedKey }
+        } else if status != errSecSuccess { throw Failure.storage }
+    }
     static func fingerprint(_ key: String) -> String? {
         let fields = key.split(separator: " ")
         guard fields.count >= 2, let data = Data(base64Encoded: String(fields[1])) else { return nil }

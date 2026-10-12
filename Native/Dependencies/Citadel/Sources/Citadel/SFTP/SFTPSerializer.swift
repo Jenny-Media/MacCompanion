@@ -5,7 +5,7 @@ final class SFTPMessageSerializer: MessageToByteEncoder {
     
     func encode(data: SFTPMessage, out: inout ByteBuffer) throws {
         let lengthIndex = out.writerIndex
-        out.moveWriterIndex(forwardBy: 4)
+        out.writeInteger(UInt32(0))
         
         switch data {
         case .initialize(let initialize):
@@ -125,12 +125,17 @@ final class SFTPMessageSerializer: MessageToByteEncoder {
             out.writeInteger(SFTPMessage.Symlink.id.rawValue)
             out.writeInteger(readlink.requestId)
             out.writeSSHString(readlink.path)
+        case .posixRename(let rename):
+            out.writeInteger(SFTPMessageType.extended.rawValue)
+            out.writeInteger(rename.requestId)
+            out.writeSSHString("posix-rename@openssh.com")
+            out.writeSSHString(rename.oldPath)
+            out.writeSSHString(rename.newPath)
         case .rename(let rename):
             out.writeInteger(SFTPMessage.Rename.id.rawValue)
             out.writeInteger(rename.requestId)
             out.writeSSHString(rename.oldPath)
             out.writeSSHString(rename.newPath)
-            out.writeInteger(rename.flags)
         }
         
         let length = out.writerIndex - lengthIndex - 4

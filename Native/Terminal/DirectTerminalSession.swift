@@ -9,7 +9,7 @@ import UIKit
 @preconcurrency import NIO
 @preconcurrency import NIOSSH
 
-private final class TerminalSocketOwner: @unchecked Sendable {
+final class TerminalSocketOwner: @unchecked Sendable {
     private let lock = NSLock()
     private var cancelled = false
     private var descriptor: Int32 = -1
@@ -96,6 +96,8 @@ private enum TerminalPTY {
     var keyboardVisible = false
     struct TrustRequest: Identifiable { let id = UUID(); let fingerprint: String }
     private(set) var mac: DirectMacRecordV1
+    private(set) var macRemoved = false
+    @ObservationIgnored private var removalObserver: DirectMacRemovalObservation?
     var status = "Sign in to Remote Login"
     var connecting = false
     var connected = false
@@ -188,12 +190,17 @@ private enum TerminalPTY {
     private var generation = UUID()
     private var columns = 80
     private var rows = 24
-    init(mac: DirectMacRecordV1, activityDefaults: UserDefaults = .standard, activityBackend: any RemoteSessionActivityBackend = ActivityKitSessionBackend()) {
+    init(mac: DirectMacRecordV1, activityDefaults: UserDefaults = .standard, activityBackend: any RemoteSessionActivityBackend = ActivityKitSessionBackend(),
+         libraryURL: URL = DirectMacLibraryV1.defaultURL) {
         self.mac = mac; self.activityDefaults = activityDefaults; self.activityBackend = activityBackend
+        removalObserver = DirectMacRemovalObservation(macID: mac.id, libraryURL: libraryURL) { [weak self] in
+            guard let self else { return }
+            self.macRemoved = true; self.stop()
+        }
     }
     func updateMac(_ record: DirectMacRecordV1) { if record.id == mac.id { mac = record } }
     func connect(username: String, password: String, remember: Bool, key: TerminalSSHKey? = nil, installation: TerminalNamedKey? = nil, verificationOnly: Bool = false, keyFileID: UUID? = nil) {
-        guard DirectAppLockV1.shared.canAccess, !connecting, !connected else { return }
+        guard !macRemoved, DirectAppLockV1.shared.canAccess, !connecting, !connected else { return }
         let loginKey = verificationOnly ? installation?.key : key
         guard !username.isEmpty, (loginKey != nil || !password.isEmpty), username.utf8.count <= 255, password.utf8.count <= 4096,
               !username.contains("\0"), !password.contains("\0") else { present(.loginRejected, message: "Enter a Mac account and password or choose an SSH key. Account names must be at most 255 UTF-8 bytes and passwords at most 4 KiB, with no NUL characters."); return }
@@ -203,6 +210,14 @@ private enum TerminalPTY {
                 authentication = { .ed25519(username: username, privateKey: parsed) }
             } catch { present(.savedDataUnavailable, message: "The selected SSH key couldn’t be read. Existing keys are kept."); return }
         } else { authentication = { .passwordBased(username: username, password: password) } }
+        #if os(macOS)
+        let keyFileSelection: MacSSHKeyFileStore.LoginSelection?
+        do {
+            if installation == nil, let keyFileID, let key {
+                keyFileSelection = try MacSSHKeyFileStore.loginSelection(fileID: keyFileID, macID: mac.id, fingerprint: key.fingerprint)
+            } else { keyFileSelection = nil }
+        } catch { present(.savedDataUnavailable, message: "The selected SSH key couldn’t be read. Existing keys are kept."); return }
+        #endif
         stop()
         #if os(iOS)
         textSendNotice = nil
@@ -247,8 +262,10 @@ private enum TerminalPTY {
                 }
                 var savedFileReference = false
                 #if os(macOS)
-                if let keyFileID, let key {
-                    try MacSSHKeyFileStore.rememberAccount(username, fileID: keyFileID, macID: mac.id, fingerprint: key.fingerprint)
+                if keyFileID != nil, key != nil {
+                    if let keyFileSelection { try MacSSHKeyFileStore.rememberAccount(username, selection: keyFileSelection) }
+                    // Even if its association changed, never import a disk key
+                    // through the legacy named-key retention path below.
                     savedFileReference = true
                 }
                 #endif
@@ -327,7 +344,7 @@ private enum TerminalPTY {
             let accepted = await withCheckedContinuation { self.trustReply = $0 }
             self.trust = nil
             guard accepted, self.generation == id, DirectAppLockV1.shared.canAccess else { throw TerminalSecretStore.Failure.rejectedKey }
-            try TerminalSecretStore.write(Data(key.utf8), id: self.mac.id, kind: "host-key")
+            try TerminalSecretStore.approveHostKey(key, id: self.mac.id)
             self.phase = "Signing in"
         }
         var settings = SSHClientSettings(host: addresses.first ?? mac.address, port: port,

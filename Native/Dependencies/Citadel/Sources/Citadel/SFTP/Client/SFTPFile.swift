@@ -62,9 +62,9 @@ public final class SFTPFile {
     public func readAttributes() async throws -> SFTPFileAttributes {
         guard self.isActive else { throw SFTPError.fileHandleInvalid }
         
-        guard case .attributes(let attributes) = try await self.client.sendRequest(.stat(.init(
+        guard case .attributes(let attributes) = try await self.client.sendRequest(.fstat(.init(
             requestId: self.client.allocateRequestId(),
-            path: path
+            handle: handle
         ))) else {
             self.logger.warning("SFTP server returned bad response to read file request, this is a protocol error")
             throw SFTPError.invalidResponse
