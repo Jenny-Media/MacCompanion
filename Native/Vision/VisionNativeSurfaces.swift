@@ -552,10 +552,13 @@ final class VisionCommittedTextView: UITextView, UITextViewDelegate {
     var committed: @MainActor (String) -> Void = { _ in }
     var backspace: @MainActor () -> Void = {}
     var admission: @MainActor () -> Bool = { false }
+    var hardwareGeneration: @MainActor () -> UUID = { [generation = UUID()] in generation }
+    var cancelledHardware: @MainActor () -> Void = {}
     var physical = VisionPhysicalKeyboard()
     weak var interaction: VisionDesktopInteraction?
     var lastFocusRequest: UUID?
     private var cancelling = false
+    private var capturedPresses: [UIPress: UUID] = [:]
     override init(frame: CGRect, textContainer: NSTextContainer?) {
         super.init(frame: frame, textContainer: textContainer)
         delegate = self; font = .preferredFont(forTextStyle: .body)
@@ -595,6 +598,7 @@ final class VisionCommittedTextView: UITextView, UITextViewDelegate {
         if markedTextRange == nil {
             for press in presses {
                 if let key = press.key, VisionPhysicalKeyboard.capturesForTextInput(key), admission() {
+                    capturedPresses[press] = hardwareGeneration()
                     physical.handle(key, down: true); remaining.remove(press)
                 }
             }
@@ -604,11 +608,30 @@ final class VisionCommittedTextView: UITextView, UITextViewDelegate {
     override func pressesEnded(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
         var remaining = presses
         for press in presses {
-            if let key = press.key, physical.captured(key) {
-                physical.handle(key, down: false); remaining.remove(press)
+            if let generation = capturedPresses.removeValue(forKey: press) {
+                remaining.remove(press)
+                if generation == hardwareGeneration(), let key = press.key, physical.captured(key) {
+                    physical.handle(key, down: false)
+                }
             }
         }
         if !remaining.isEmpty { super.pressesEnded(remaining, with: event) }
+    }
+    override func pressesCancelled(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        var remaining = presses
+        var cancelsCurrentOwner = false
+        for press in presses {
+            if let generation = capturedPresses.removeValue(forKey: press) {
+                remaining.remove(press)
+                cancelsCurrentOwner = cancelsCurrentOwner || generation == hardwareGeneration()
+            }
+        }
+        if cancelsCurrentOwner {
+            capturedPresses.removeAll()
+            cancelledHardware()
+            physical.clear()
+        }
+        if !remaining.isEmpty { super.pressesCancelled(remaining, with: event) }
     }
     func discard() {
         _ = resignFirstResponder()
@@ -616,7 +639,7 @@ final class VisionCommittedTextView: UITextView, UITextViewDelegate {
     override func resignFirstResponder() -> Bool {
         let wasFocused = isFirstResponder
         cancelling = true
-        if wasFocused, interaction?.transferringFocus != true { physical.clear() }
+        if wasFocused, interaction?.transferringFocus != true { capturedPresses.removeAll(); physical.clear() }
         setMarkedText(nil, selectedRange: .init(location: 0, length: 0)); text = ""
         let result = super.resignFirstResponder()
         cancelling = false
@@ -645,6 +668,8 @@ struct VisionDesktopKeyboard: UIViewRepresentable {
         view.committed = { [weak session] in session?.text($0) }
         view.backspace = { [weak session] in session?.key(0xff08, down: true); session?.key(0xff08, down: false) }
         view.physical.send = { [weak session] key, down in session?.key(key, down: down) }
+        view.hardwareGeneration = { [weak session] in session?.inputGeneration ?? UUID() }
+        view.cancelledHardware = { [weak session] in session?.releaseInput(discardComposition: false) }
         view.lostFocus = { [weak session, weak interaction] in
             if interaction?.transferringFocus != true { session?.releaseInput(discardComposition: false) }
         }
@@ -667,6 +692,9 @@ struct VisionDesktopKeyboard: UIViewRepresentable {
 final class VisionTerminalView: TerminalView {
     var lostFocus: @MainActor () -> Void = {}
     var layoutReady: @MainActor () -> Void = {}
+    var hardwareAdmission: @MainActor () -> Bool = { false }
+    var cancelledHardware: @MainActor () -> Void = {}
+    private var hardwarePresses = Set<UIPress>()
     override init(frame: CGRect) { super.init(frame: frame); getTerminal().semanticPromptClickBehavior = .disabled }
     required init?(coder: NSCoder) { super.init(coder: coder); getTerminal().semanticPromptClickBehavior = .disabled }
     override func layoutSubviews() {
@@ -674,6 +702,32 @@ final class VisionTerminalView: TerminalView {
         if window != nil, bounds.width > 0, bounds.height > 0, getTerminal().cols > 2, getTerminal().rows > 1 { layoutReady() }
     }
     func discardComposition() { setMarkedText(nil, selectedRange: NSRange(location: 0, length: 0)); controlModifier = false; metaModifier = false }
+    override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        let admitted = Set(presses.filter { $0.key == nil || hardwareAdmission() })
+        hardwarePresses.formUnion(admitted.filter { $0.key != nil })
+        if !admitted.isEmpty { super.pressesBegan(admitted, with: event) }
+    }
+    override func pressesEnded(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        let admitted = presses.intersection(hardwarePresses)
+        hardwarePresses.subtract(admitted)
+        let remaining = Set(presses.filter { $0.key == nil }).union(admitted)
+        if !remaining.isEmpty { super.pressesEnded(remaining, with: event) }
+    }
+    override func pressesCancelled(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        if !presses.isDisjoint(with: hardwarePresses) {
+            retireHardwarePresses()
+            cancelledHardware()
+        }
+        let unhandled = Set(presses.filter { $0.key == nil })
+        if !unhandled.isEmpty { super.pressesCancelled(unhandled, with: event) }
+    }
+    func retireHardwarePresses() {
+        let retiring = hardwarePresses
+        hardwarePresses.removeAll()
+        // SwiftTerm's public release endpoint owns its repeat timer and Kitty
+        // releases. Inherited UIKit cancellation does not balance either.
+        if !retiring.isEmpty { super.pressesEnded(retiring, with: nil) }
+    }
     override func becomeFirstResponder() -> Bool {
         if window?.windowScene?.activationState == .foregroundActive, DirectAppLockV1.shared.canAccess { window?.makeKey() }
         return super.becomeFirstResponder()
@@ -715,6 +769,8 @@ struct VisionTerminalSurface: UIViewRepresentable {
         } else { session.received = { [weak coordinator] in coordinator?.feed($0) } }
         session.suspendInput = { [weak coordinator] in coordinator?.release() }
         view.lostFocus = { [weak coordinator] in coordinator?.release() }
+        view.hardwareAdmission = { [weak coordinator] in coordinator?.focus.available == true && coordinator?.session.connected == true && coordinator?.session.suspended == false }
+        view.cancelledHardware = { [weak coordinator] in coordinator?.release() }
         interaction.quickAction = { [weak coordinator] in coordinator?.perform($0) }
         interaction.keyboard = { [weak view] in
             guard let view else { return }
@@ -769,7 +825,7 @@ struct VisionTerminalSurface: UIViewRepresentable {
         private var held = MacTerminalHeldInput()
         private var protocolDepth = 0
         init(session: DirectTerminalSession, interaction: VisionTerminalInteraction) { self.session = session; self.interaction = interaction }
-        func release() { view?.discardComposition(); session.releaseNativeInput(held.releaseAll()); interaction.link = nil; syncModifiers() }
+        func release() { view?.retireHardwarePresses(); view?.discardComposition(); session.releaseNativeInput(held.releaseAll()); interaction.link = nil; syncModifiers() }
         func syncModifiers() { interaction.control = view?.controlModifier == true; interaction.option = view?.metaModifier == true }
         func specialKey(_ symbol: UInt32) {
             guard focus.available, let view else { return }

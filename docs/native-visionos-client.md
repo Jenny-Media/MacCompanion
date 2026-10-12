@@ -355,6 +355,34 @@ No physical Vision Pro is contacted in this repair cycle. Optic ID/export,
 actual hand/peripheral recognition and the original headset click/keyboard
 acceptance remain final physical work, alongside the gates below.
 
+### Native hardware-key cancellation
+
+UIKit may cancel a hardware press instead of ending it while its responder stays
+focused. Desktop now binds captured press identities to the current input
+generation and balances the whole canceled key owner once. Old endpoints cannot
+release a fresh press of the same HID usage; ordinary modified clicks retain
+held modifiers. Terminal owns its press identities, stops frontend repeat and
+balances negotiated Kitty releases on cancellation and owner cleanup. Retired
+endpoints cannot stop a newer repeat or duplicate a release.
+
+Four additional hosted Simulator regressions invoke actual native press handlers
+through synthetic UIKey/UIPress subclasses, over real SSH/RFB and SSH PTY. The
+manifest-indexed cases cover focused cancellation, modified clicks, duplicate
+endpoints, fresh same-HID input, repeat shutdown and negotiated release. The full
+required suite is 45 hosted cases and nine normal UI cases, with no required skips.
+The new complete stable gate and fresh review evidence live outside Git under
+`/private/tmp/maccompanion-pr12-keyboard-cancel-20261011/review/`; results from
+earlier repair cycles cannot substitute for this candidate's gate.
+
+SwiftTerm's pinned UIKit `pressesEnded` is public but not open. Native visionOS
+development builds admit exactly a public-to-open declaration change using
+original and adapted full-file hashes in the dependency policy. The complete
+Git/pin/origin/source tree is verified before writing, the original file mode is
+preserved, and actual adapted provenance is checked before and after compilation.
+Other platform builders retain default strict clean-checkout verification. No
+frontend implementation, package revision, authentication or wire protocol is
+changed. Distribution and actual hardware acceptance remain separate gates.
+
 ## Final physical acceptance
 
 Simulator checks precede final first-generation Vision Pro testing. iOS/macOS

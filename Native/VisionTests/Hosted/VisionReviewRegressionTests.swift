@@ -18,6 +18,130 @@ import SwiftTerm
     private func descendants<T: UIView>(_ view: UIView, _: T.Type) -> [T] {
         (view as? T).map { [$0] } ?? view.subviews.flatMap { descendants($0, T.self) }
     }
+    private func cancellation(_ surface: String) throws -> [String: Any] {
+        let url = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "native-visionos-client-v1", withExtension: "json"))
+        let fixture = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])
+        let rows = try XCTUnwrap(fixture["hardwareCancellation"] as? [String: Any])
+        return try XCTUnwrap(rows[surface] as? [String: Any])
+    }
+    private func press(_ row: [String: Any], prefix: String = "", control: Bool = false) throws -> CancellationPress {
+        let usage = try XCTUnwrap(UIKeyboardHIDUsage(rawValue: try XCTUnwrap(row[prefix + "Usage"] as? Int)))
+        return CancellationPress(CancellationKey(usage: usage, text: row[prefix + "Characters"] as? String ?? "", flags: control ? .control : []))
+    }
+    private func desktopCancellation(retired: Bool) async throws {
+        let row = try cancellation("desktop")
+        XCTAssertEqual(Set(try XCTUnwrap(row["cases"] as? [String])), ["focused-cancel", "duplicate-endpoints", "modified-click", "retired-same-hid"])
+        let server = DesktopSSHServer(.rfb); try await server.start()
+        let mac = try DirectMacRecordV1.normalized(name: "Synthetic cancellation", addresses: ["127.0.0.1"], sshPort: server.port)
+        try TerminalSecretStore.write(Data(server.hostKey.utf8), id: mac.id, kind: "host-key")
+        let session = VisionDesktopSession(mac: mac), interaction = VisionDesktopInteraction()
+        interaction.requestKeyboard()
+        let (window, previous) = try window()
+        defer { session.close(); window.isHidden = true; previous?.makeKey(); try? TerminalSecretStore.remove(mac.id) }
+        do {
+            let host = UIHostingController(rootView: VStack {
+                VisionDesktopSurface(session: session, interaction: interaction)
+                VisionDesktopKeyboard(session: session, interaction: interaction).frame(height: 56)
+            }.directAppearance())
+            window.rootViewController = host; host.view.layoutIfNeeded()
+            session.connect(username: "synthetic", password: "synthetic-only", remember: false)
+            try await wait("Native keyboard ready", { session.canInput && !self.descendants(host.view, VisionCommittedTextView.self).isEmpty })
+            let view = try XCTUnwrap(descendants(host.view, VisionCommittedTextView.self).first)
+            XCTAssertTrue(view.becomeFirstResponder())
+            let original = CancellationPress(CancellationKey(usage: try XCTUnwrap(UIKeyboardHIDUsage(rawValue: try XCTUnwrap(row["usage"] as? Int))), text: try XCTUnwrap(row["characters"] as? String), flags: .control))
+            let modifier = try press(row, prefix: "modifier", control: true)
+            view.pressesBegan([modifier], with: nil); view.pressesBegan([original], with: nil)
+            let key = try XCTUnwrap(row["key"] as? Int), modifierKey = try XCTUnwrap(row["modifierKey"] as? Int)
+            try await wait("Captured chord reaches real RFB", { server.record.count("keyDown-\(key)") == 1 && server.record.count("keyDown-\(modifierKey)") == 1 })
+            if retired {
+                session.releaseInput(discardComposition: false)
+                try await wait("Retirement balances first owner", { server.record.count("keyUp-\(key)") == 1 && server.record.count("keyUp-\(modifierKey)") == 1 })
+                let fresh = CancellationPress(CancellationKey(usage: original.sample.keyCode, text: original.sample.charactersIgnoringModifiers, flags: .control))
+                view.pressesBegan([fresh], with: nil)
+                try await wait("Same HID starts fresh owner", { server.record.count("keyDown-\(key)") == 2 })
+                original.sampledPhase = .cancelled; view.pressesCancelled([original, modifier], with: nil)
+                view.pressesEnded([original, modifier], with: nil)
+                try await Task.sleep(for: .milliseconds(100))
+                XCTAssertEqual(server.record.count("keyUp-\(key)"), 1)
+                XCTAssertEqual(server.record.count("keyUp-\(modifierKey)"), 1)
+                fresh.sampledPhase = .cancelled; view.pressesCancelled([fresh], with: nil)
+                try await wait("Fresh owner cancels once", { server.record.count("keyUp-\(key)") == 2 && server.record.count("keyUp-\(modifierKey)") == 2 })
+            } else {
+                let canvas = try XCTUnwrap(interaction.canvas)
+                let point = CGPoint(x: canvas.bounds.midX, y: canvas.bounds.midY)
+                canvas.selectionChanged(start: point, translation: .zero); canvas.selectionFinished(cancelled: false)
+                try await wait("Modified click reaches peer", { server.record.count("pointer-mask-1") == 1 })
+                XCTAssertEqual(server.record.pointerEvents().first { $0.mask == 1 }?.modifiers, [UInt32(modifierKey)])
+                XCTAssertEqual(server.record.count("keyUp-\(modifierKey)"), 0)
+                XCTAssertTrue(view.becomeFirstResponder())
+                original.sampledPhase = .cancelled; view.pressesCancelled([original], with: nil)
+                try await wait("Cancel balances full captured owner", { server.record.count("keyUp-\(key)") == 1 && server.record.count("keyUp-\(modifierKey)") == 1 })
+                XCTAssertTrue(view.isFirstResponder, "Cancellation does not require focus loss")
+                view.pressesCancelled([original, modifier], with: nil); view.pressesEnded([original, modifier], with: nil)
+            }
+            let fresh = try press(row, prefix: "fresh")
+            view.pressesBegan([fresh], with: nil); fresh.sampledPhase = .ended; view.pressesEnded([fresh], with: nil)
+            let freshKey = try XCTUnwrap(row["freshKey"] as? Int)
+            try await wait("Fresh captured arrow balances", { server.record.count("keyUp-\(freshKey)") == 1 })
+            XCTAssertEqual(server.record.count("keyDown-\(key)"), retired ? 2 : 1)
+            XCTAssertEqual(server.record.count("keyUp-\(key)"), retired ? 2 : 1)
+            XCTAssertEqual(server.record.count("keyDown-\(modifierKey)"), retired ? 2 : 1)
+            XCTAssertEqual(server.record.count("keyUp-\(modifierKey)"), retired ? 2 : 1)
+            try await server.close()
+        } catch { try? await server.close(); throw error }
+    }
+    func testNativeDesktopCancellationBalancesChordWithoutLosingFocus() async throws { try await desktopCancellation(retired: false) }
+    func testRetiredNativeKeyboardCancellationCannotReleaseFreshSameHID() async throws { try await desktopCancellation(retired: true) }
+    private func terminalCancellation(kitty: Bool) async throws {
+        let row = try cancellation("terminal")
+        XCTAssertEqual(Set(try XCTUnwrap(row["cases"] as? [String])), ["repeat-cancel", "duplicate-endpoints", "retired-same-hid", "kitty-cancel"])
+        let server = SSHTestServer(); try await server.start()
+        let mac = try DirectMacRecordV1.normalized(name: "Synthetic terminal cancellation", addresses: ["127.0.0.1"], sshPort: server.port)
+        try TerminalSecretStore.write(Data(server.hostKey.utf8), id: mac.id, kind: "host-key")
+        let session = DirectTerminalSession(mac: mac), interaction = VisionTerminalInteraction()
+        let (window, previous) = try window()
+        defer { session.stop(); window.isHidden = true; previous?.makeKey(); try? TerminalSecretStore.remove(mac.id) }
+        do {
+            let host = UIHostingController(rootView: VisionTerminalSurface(session: session, interaction: interaction).directAppearance())
+            window.rootViewController = host; host.view.layoutIfNeeded()
+            session.connect(username: "synthetic", password: "synthetic-only", remember: false)
+            try await wait("Native Terminal ready", { session.connected && !self.descendants(host.view, VisionTerminalView.self).isEmpty })
+            let view = try XCTUnwrap(descendants(host.view, VisionTerminalView.self).first)
+            XCTAssertTrue(view.becomeFirstResponder())
+            if kitty {
+                let mode = try XCTUnwrap(row["kittyMode"] as? [UInt8])
+                try await server.record.emit(String(decoding: mode, as: UTF8.self))
+                try await wait("Kitty reporting negotiated", { view.getTerminal().keyboardEnhancementFlags.contains(.reportEvents) })
+            }
+            let usage = try XCTUnwrap(UIKeyboardHIDUsage(rawValue: try XCTUnwrap(row["usage"] as? Int)))
+            let original = CancellationPress(CancellationKey(usage: usage, text: try XCTUnwrap(row["characters"] as? String), flags: []))
+            view.pressesBegan([original], with: nil)
+            let down = try XCTUnwrap(row[kitty ? "kittyPress" : "legacyPress"] as? [UInt8])
+            try await wait("Native key reaches real SSH", { server.record.received.starts(with: down) })
+            if !kitty { try await wait("Inherited timer repeats", { server.record.received.count >= down.count * 2 }) }
+            original.sampledPhase = .cancelled; view.pressesCancelled([original], with: nil)
+            let release = try XCTUnwrap(row["kittyRelease"] as? [UInt8])
+            if kitty { try await wait("Cancellation reports one release", { server.record.received == down + release }) }
+            try await Task.sleep(for: .milliseconds(100))
+            let afterCancel = server.record.received
+            XCTAssertTrue(view.isFirstResponder)
+            view.pressesCancelled([original], with: nil); original.sampledPhase = .ended; view.pressesEnded([original], with: nil)
+            try await Task.sleep(for: .milliseconds(550)); XCTAssertEqual(server.record.received, afterCancel, "No repeat or duplicate release after cancellation")
+            let fresh = CancellationPress(CancellationKey(usage: usage, text: original.sample.characters, flags: []))
+            view.pressesBegan([fresh], with: nil)
+            try await wait("Same HID starts new native press", { server.record.received.count > afterCancel.count })
+            view.pressesCancelled([original], with: nil); view.pressesEnded([original], with: nil)
+            if !kitty { try await wait("Old endpoint cannot stop fresh repeat", { server.record.received.count >= afterCancel.count + down.count * 2 }) }
+            fresh.sampledPhase = .ended; view.pressesEnded([fresh], with: nil)
+            try await Task.sleep(for: .milliseconds(100))
+            let afterEnd = server.record.received
+            if kitty { XCTAssertEqual(afterEnd, down + release + down + release) }
+            try await Task.sleep(for: .milliseconds(550)); XCTAssertEqual(server.record.received, afterEnd)
+            try await server.close()
+        } catch { try? await server.close(); throw error }
+    }
+    func testNativeTerminalCancellationStopsRepeatAndIgnoresOldEndpoints() async throws { try await terminalCancellation(kitty: false) }
+    func testNativeTerminalCancellationBalancesNegotiatedKittyRelease() async throws { try await terminalCancellation(kitty: true) }
     func testViewportRetirementCannotRepressModifierFromOldRelease() async throws {
         let server = DesktopSSHServer(.rfb); try await server.start()
         let mac = try DirectMacRecordV1.normalized(name: "Synthetic keyboard retirement", addresses: ["127.0.0.1"], sshPort: server.port)
@@ -283,4 +407,25 @@ import SwiftTerm
         XCTAssertTrue(VisionMacSaving.save(library: library, mac: snapshot, name: "New permitted Mac", addresses: "127.0.0.1", desktopPort: "5900", sshPort: "22", access: access))
         XCTAssertEqual(library.macs.count, 1)
     }
+}
+
+@MainActor private final class CancellationKey: UIKey {
+    let usage: UIKeyboardHIDUsage
+    let value: String
+    let flags: UIKeyModifierFlags
+    init(usage: UIKeyboardHIDUsage, text: String, flags: UIKeyModifierFlags) {
+        self.usage = usage; value = text; self.flags = flags; super.init()
+    }
+    required init?(coder: NSCoder) { fatalError("Generated test keys are not decoded") }
+    override var keyCode: UIKeyboardHIDUsage { usage }
+    override var characters: String { value }
+    override var charactersIgnoringModifiers: String { value }
+    override var modifierFlags: UIKeyModifierFlags { flags }
+}
+private final class CancellationPress: UIPress {
+    let sample: UIKey
+    var sampledPhase: UIPress.Phase = .began
+    init(_ key: UIKey) { sample = key; super.init() }
+    override var key: UIKey? { sample }
+    override var phase: UIPress.Phase { sampledPhase }
 }

@@ -44,6 +44,17 @@ Normal gesture completion preserves held physical keyboard modifiers; complete
 owner cleanup still releases keys/buttons and discards composition. A key release
 whose HID identity was retired cannot reconstruct modifiers from its flags; only
 new admitted presses can establish a new held-key owner.
+UIKit hardware presses terminate through either ended or cancelled callbacks.
+The native text responder MUST balance a cancelled admitted key owner exactly
+once while it remains focused, clear its captured HID identities, and leave
+later endpoints harmless. Cancellation of a retired press MUST NOT release a
+newer key owner, including a new press of the same HID usage. Normal modified
+click completion continues to preserve held modifiers.
+The native Terminal responder MUST stop frontend key repeat and balance any
+negotiated key releases on cancellation. Owner cleanup retires its admitted
+press identities before fresh input; old cancellation or ended callbacks cannot
+stop a newer repeat or duplicate a release. These native endpoints require
+manifest-indexed Simulator coverage through the actual responders and transports.
 Each connection's native scene owns its content and system toolbar ornament
 windows. A key window in that same scene admits its controls; another connection
 scene cannot supply admission. Key-window transitions within the owned scene

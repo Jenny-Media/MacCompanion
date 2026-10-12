@@ -22,7 +22,7 @@ def application_inputs(probe):
     files = [p for folder in roots for p in sorted(folder.rglob('*')) if p.is_file()]
     files += [ROOT / 'Native/Mac' / (name + '.swift') for name in ['MacSessionStatus', 'MacTerminalHeldInput', 'MacTerminalMouseReport']]
     files += [Path(__file__), *[ROOT / 'scripts' / name for name in ['verify_direct_client_dependencies.py',
-        'prepare_swiftterm_build_tool.py', 'dependency_checkout_provenance.py']],
+        'prepare_swiftterm_build_tool.py', 'prepare_visionos_swiftterm.py', 'dependency_checkout_provenance.py']],
         ROOT / 'spec/dependency-policy/v0/direct-client-development.json',
         ROOT / 'spec/privacy-manifest/v0/targets/ios-app/PrivacyInfo.xcprivacy']
     return {str(p.relative_to(ROOT)): digest(p) for p in files}
@@ -154,11 +154,13 @@ def main():
     build_args = ['xcodebuild', '-project', project, '-scheme', name, '-derivedDataPath', args.output / 'DerivedData', '-onlyUsePackageVersionsFromResolvedFile']
     with (args.output / 'resolve.log').open('w') as log:
         run(*build_args, '-resolvePackageDependencies', stdout=log, stderr=subprocess.STDOUT)
+    from prepare_visionos_swiftterm import prepare as prepare_frontend
+    transforms = prepare_frontend(args.output / 'DerivedData')
     from prepare_swiftterm_build_tool import prepare
-    prepare(args.output / 'DerivedData')
+    prepare(args.output / 'DerivedData', transforms=transforms['swiftterm'])
     from dependency_checkout_provenance import verify_checkouts
     expected = json.loads((ROOT / 'Native/Terminal/Package.resolved').read_text())['pins']
-    package_sources = verify_checkouts(args.output / 'DerivedData/SourcePackages', expected)
+    package_sources = verify_checkouts(args.output / 'DerivedData/SourcePackages', expected, transforms=transforms)
     if args.prepare_only:
         print(project); return
     with (args.output / 'build.log').open('w') as log:
@@ -171,13 +173,14 @@ def main():
         raise SystemExit('LibVNCClient source changed during build.')
     if application_inputs(args.probe) != application_before:
         raise SystemExit('Application inputs changed during build. Rebuild the final source.')
-    verify_checkouts(args.output / 'DerivedData/SourcePackages', expected, previous=package_sources)
+    verify_checkouts(args.output / 'DerivedData/SourcePackages', expected, previous=package_sources, transforms=transforms)
     app = args.output / ('DerivedData/Build/Products/Debug-' + args.sdk) / (name + '.app')
     (args.output / 'build-report.json').write_text(json.dumps({'profile': 'maccompanion.native-visionos-development.v1',
         'sdk': args.sdk, 'toolchain': version, 'app': str(app), 'binarySHA256': digest(app / name),
         'applicationCode': {str(p.relative_to(app)): digest(p) for p in sorted(app.rglob('*'))
                             if p.is_file() and (p == app / name or p.suffix == '.dylib')},
         'libVNCClientSources': vnc_before, 'pins': expected, 'packageSources': package_sources,
+        'swiftTermPressEndpoint': json.loads((ROOT / 'spec/dependency-policy/v0/direct-client-development.json').read_text())['visionOSSwiftTermPressEndpoint'],
         'applicationInputs': application_before, 'applicationInputsUnchanged': True, 'probe': args.probe,
         'installed': False, 'physicalAcceptance': False, 'releaseAdmitted': False}, indent=2) + '\n')
     print('Native visionOS application:', app)

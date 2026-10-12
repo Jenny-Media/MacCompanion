@@ -5,5 +5,13 @@
   "sourceLockPath": "Native/Terminal/source-lock.json",
   "sourceLockSHA256": "dba560a2adf450558bd8ba2300afd764b3a78ef168dca0fa18d042ba2849f28e",
   "resolvedLockfilePath": "Native/Terminal/Package.resolved",
-  "resolvedLockfileSHA256": "29b3df8602d0787d62a02e930de45b40f6a7644e9b6c5ccd2cd3d368aa5dc1c2"
+  "resolvedLockfileSHA256": "29b3df8602d0787d62a02e930de45b40f6a7644e9b6c5ccd2cd3d368aa5dc1c2",
+  "visionOSSwiftTermPressEndpoint": {
+    "path": "Sources/SwiftTerm/iOS/iOSTerminalView.swift",
+    "originalSHA256": "1ab65491906c029d3581e674f63e4d748f08a6f8a85595b2bd26ca4567625ab4",
+    "adaptedSHA256": "3cbf6998cdac334e05dbeaaba2f3cddc06dcd8eeae8ede66360d9acdd6893919",
+    "originalDeclaration": "public override func pressesEnded(_ presses: Set<UIPress>, with event: UIPressesEvent?)",
+    "adaptedDeclaration": "open override func pressesEnded(_ presses: Set<UIPress>, with event: UIPressesEvent?)",
+    "purpose": "Allow the native visionOS wrapper to retire cancelled hardware keys and reject old completion endpoints. No frontend implementation or package pin change. All other source modifications remain rejected."
+  }
 }

@@ -4654,5 +4654,70 @@
       "name": "superseded",
       "commit": false
     }
-  ]
+  ],
+  "hardwareCancellation": {
+    "desktop": {
+      "usage": 4,
+      "characters": "a",
+      "modifierUsage": 224,
+      "modifierKey": 65507,
+      "key": 97,
+      "flags": [
+        "control"
+      ],
+      "freshUsage": 82,
+      "freshCharacters": "",
+      "freshKey": 65362,
+      "cases": [
+        "focused-cancel",
+        "duplicate-endpoints",
+        "modified-click",
+        "retired-same-hid"
+      ]
+    },
+    "terminal": {
+      "usage": 82,
+      "characters": "",
+      "legacyPress": [
+        27,
+        91,
+        65
+      ],
+      "kittyMode": [
+        27,
+        91,
+        62,
+        49,
+        49,
+        117
+      ],
+      "kittyPress": [
+        27,
+        91,
+        65
+      ],
+      "kittyRelease": [
+        27,
+        91,
+        49,
+        59,
+        49,
+        58,
+        51,
+        65
+      ],
+      "cases": [
+        "repeat-cancel",
+        "duplicate-endpoints",
+        "retired-same-hid",
+        "kitty-cancel"
+      ]
+    },
+    "expect": {
+      "balancedReleasesPerOwner": 1,
+      "retiredEndpointsAffectFreshOwner": false,
+      "cancellationRequiresFocusLoss": false,
+      "freshInputAfterCancellation": true
+    }
+  }
 }

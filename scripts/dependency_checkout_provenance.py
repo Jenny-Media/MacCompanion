@@ -47,8 +47,10 @@ def _verify_origin(checkout, packages, location):
     return origin
 
 
-def _source_tree(checkout):
-    if _git(checkout, 'status', '--porcelain', '-z', '--untracked-files=all'):
+def _source_tree(checkout, transforms):
+    changes = _git(checkout, 'status', '--porcelain', '-z', '--untracked-files=all')
+    admitted_changes = {b' M ' + os.fsencode(name) for name in transforms}
+    if any(change not in admitted_changes for change in changes.split(b'\0') if change):
         raise CheckoutProvenanceError('Dependency checkout has tracked or untracked changes.')
     # Ignored additions can still be picked up by a package target or generator.
     if _git(checkout, 'ls-files', '--others', '--ignored', '--exclude-standard', '-z'):
@@ -88,16 +90,27 @@ def _source_tree(checkout):
             data = path.read_bytes()
         # Comparing bytes with HEAD also catches assume-unchanged/skip-worktree
         # edits that Git status can omit. All admitted repositories use SHA-1 Git.
-        blob = hashlib.sha1(b'blob ' + str(len(data)).encode() + b'\0' + data).hexdigest().encode()
+        original = data
+        if name in transforms:
+            before, after = transforms[name]
+            if data not in (before, after):
+                raise CheckoutProvenanceError('Dependency source differs from its admitted transform: ' + name)
+            original = before
+        blob = hashlib.sha1(b'blob ' + str(len(original)).encode() + b'\0' + original).hexdigest().encode()
         if blob != object_id:
             raise CheckoutProvenanceError('Dependency source differs from its pinned Git tree: ' + name)
         files[name] = {'mode': mode.decode(), 'sha256': hashlib.sha256(data).hexdigest()}
     encoded = json.dumps(files, sort_keys=True, separators=(',', ':'), ensure_ascii=True).encode()
+    if not transforms.keys() <= files.keys():
+        raise CheckoutProvenanceError('Dependency transform path is absent from its pinned tree.')
     return {'sourceTreeSHA256': hashlib.sha256(encoded).hexdigest(), 'trackedFileCount': len(files)}
 
 
-def verify_source_checkout(source, revision, *, previous=None):
-    """Verify actual bytes/modes for a clean, externally supplied pinned tree."""
+def verify_source_checkout(source, revision, *, previous=None, transforms=None):
+    """Verify actual bytes/modes against Git, with optional exact caller-admitted
+    before/after byte transforms. Default callers require a clean pinned tree.
+    The provenance digest always includes actual compiled bytes.
+    """
     try:
         checkout = Path(source).resolve(strict=True)
         if not re.fullmatch(r'[0-9a-f]{40}', revision):
@@ -106,7 +119,7 @@ def verify_source_checkout(source, revision, *, previous=None):
             raise CheckoutProvenanceError('Resolved checkout does not own its Git worktree.')
         if _git(checkout, 'rev-parse', 'HEAD').decode().strip() != revision:
             raise CheckoutProvenanceError('Dependency checkout HEAD does not match its pinned revision.')
-        snapshot = {'revision': revision, **_source_tree(checkout)}
+        snapshot = {'revision': revision, **_source_tree(checkout, transforms or {})}
         if previous is not None and snapshot != previous:
             raise CheckoutProvenanceError('Dependency source provenance changed during the build.')
         return snapshot
@@ -114,7 +127,7 @@ def verify_source_checkout(source, revision, *, previous=None):
         raise CheckoutProvenanceError('Source checkout failed verification: ' + str(error)) from error
 
 
-def verify_checkouts(source_packages, pins, *, previous=None):
+def verify_checkouts(source_packages, pins, *, previous=None, transforms=None):
     """Return actual content provenance for every admitted resolved remote package.
 
     Pass the pre-build result as ``previous`` after building to reject a changed
@@ -160,7 +173,7 @@ def verify_checkouts(source_packages, pins, *, previous=None):
             checkout = (checkout_root / subpath).resolve(strict=True)
             if checkout.parent != checkout_root:
                 raise CheckoutProvenanceError('Resolved checkout is outside its package directory.')
-            source = verify_source_checkout(checkout, revision)
+            source = verify_source_checkout(checkout, revision, transforms=(transforms or {}).get(identity))
             origin = _verify_origin(checkout, packages, location)
             snapshot[identity] = {**source, 'location': location, 'originURL': origin, 'checkoutSubpath': str(subpath)}
         except (OSError, KeyError, ValueError, subprocess.CalledProcessError) as error:

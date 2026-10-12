@@ -74,6 +74,35 @@ class CheckoutProvenanceTests(unittest.TestCase):
         with self.assertRaisesRegex(CheckoutProvenanceError, 'tracked or untracked changes'):
             self.verify()
 
+    def test_explicit_transform_records_actual_bytes_and_keeps_default_strict(self):
+        before = self.source.read_bytes()
+        after = before.replace(b'{ 1 }', b'{ 2 }')
+        transforms = {'probe': {'Sources/Probe.swift': (before, after)}}
+        original = self.verify()
+        self.source.write_bytes(after)
+        adapted = verify_checkouts(self.packages, self.pins, transforms=transforms)
+        self.assertNotEqual(adapted['probe']['sourceTreeSHA256'], original['probe']['sourceTreeSHA256'])
+        self.assertEqual(verify_checkouts(self.packages, self.pins, transforms=transforms, previous=adapted), adapted)
+        with self.assertRaises(CheckoutProvenanceError):
+            self.verify()
+        git(self.checkout, 'update-index', '--assume-unchanged', 'Sources/Probe.swift')
+        self.source.write_bytes(after + b'// unadmitted modification\n')
+        with self.assertRaisesRegex(CheckoutProvenanceError, 'admitted transform'):
+            verify_checkouts(self.packages, self.pins, transforms=transforms)
+
+    def test_explicit_transform_does_not_admit_other_paths_or_an_invented_baseline(self):
+        before = self.source.read_bytes()
+        after = before.replace(b'{ 1 }', b'{ 2 }')
+        transforms = {'probe': {'Sources/Probe.swift': (before, after)}}
+        self.source.write_bytes(after)
+        (self.checkout / 'Package.swift').write_text('// unadmitted package change\n')
+        with self.assertRaisesRegex(CheckoutProvenanceError, 'tracked or untracked changes'):
+            verify_checkouts(self.packages, self.pins, transforms=transforms)
+        git(self.checkout, 'restore', 'Package.swift')
+        transforms['probe']['Sources/Probe.swift'] = (b'invented source', after)
+        with self.assertRaisesRegex(CheckoutProvenanceError, 'pinned Git tree'):
+            verify_checkouts(self.packages, self.pins, transforms=transforms)
+
     def test_untracked_compiled_source_is_rejected(self):
         (self.checkout / 'Sources/Added.swift').write_text('public func added() {}\n')
         with self.assertRaisesRegex(CheckoutProvenanceError, 'tracked or untracked changes'):
