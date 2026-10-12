@@ -44,6 +44,17 @@ not introduce a connection mode or require a Mac Companion helper.
   Password/Key selection and an off Save Login choice must survive unlock.
   An edited or explicitly cleared password must not be replaced with an older
   saved password. Removing the saved credential while suspended prevents refill.
+  Edit the account, Password/Key method and Save Login choice, hide retained Files
+  with Done or swipe, then reopen from Desktop, Trackpad or Terminal. Repeat twice:
+  non-secret choices must survive and saved defaults must not replace them.
+  Repeat with named keys and a referenced Mac key file. A different Files owner
+  must keep independent choices. Hide during a saved-password connection and
+  reopen after it completes; Disconnect must restore that successfully saved
+  login without restoring an older password after a failed save or newer edit.
+  With App Unlock off, let the Mac display sleep while the app stays active.
+  Display/session wake must enable explicit Files reconnect without switching
+  apps. Repeat while locked: credentials must wait for unlock. Closing the owner
+  must clear its transient draft and secret restoration context.
   On Mac, type a disk-key passphrase, then select a different key or remove the
   selection before Connect. The previous passphrase must clear. Reopening the
   chooser with the same key must preserve it and any edited password draft.
@@ -167,17 +178,30 @@ verify saved credentials load when sign-in becomes available.
 Both platforms also mount Files before its first saved-password connection and
 verify same-view reconnect after Disconnect and authenticated network loss,
 edited retry-draft preservation, and removal of a remembered login.
-The shared value-owned `DirectFilesLoginDraft` represents empty, saved, edited
-and privacy-cleared secrets explicitly. Sixteen manifest-indexed journeys cover
+Each retained Files session owns a value-based `DirectFilesLoginDraft`, representing
+empty, saved, edited and privacy-cleared secrets explicitly. Twenty-one
+manifest-indexed journeys cover
 repeated suspension/recovery, active/unlocked admission, busy owners, changed
 accounts and methods, Save Login choices, deleted credentials and verified
-successful saving. Additional tests check independent owners, early user edits,
+successful saving, hidden authentication completion and revision fencing of newer
+edits. Additional tests check independent owners, early user edits,
 key-reference cleanup and retry after a credential-read failure.
 Mounted views on both platforms repeat background/return and lock/unlock before
 authentication and after Disconnect. Injected observable admission exercises
 inactive/locked transitions without invoking personal biometric settings;
 edited retry accounts remain intact and old saved passwords cannot replace
 privacy-cleared edits. These checks do not certify physical device unlocking.
+Both platforms destroy and remount the actual Files presentation around the same
+owner, preserving edited Password/Key accounts, methods and Save Login choices.
+Real loopback SSH also finishes authentication while the presentation is hidden,
+then verifies remembered-password restoration after remount and Disconnect.
+Mac cases preserve a referenced-file identity across remount, exercise both
+workspace wake notifications without app activation, and wait for unlock.
+Closing an owner clears its draft; later activation cannot reload its credentials.
+The retained-owner fixes passed 73 focused macOS tests and 29 iOS Simulator tests
+with Xcode 27.1 RC (27A9275), with no failures or skips. Full repository validation
+also passed, including all 136 indexed fixtures. These RC results remain
+provisional until the stable Xcode lane passes for this update.
 On macOS the mounted Cancel Connection button exercises the shared action to
 preserve both a loaded saved password and an edited retry account/password;
 backgrounding still clears the visible secret. Hosted iOS tests do not expose

@@ -50,6 +50,16 @@ Unlocking MUST NOT reset edited accounts, login methods or Save Login choices.
 Initialization and restoration wait for active, allowed sign-in; help/key-label
 refresh and connection cancellation preserve drafts. Independent owners MUST
 not share mutable credential state.
+The draft belongs to the retained Files connection owner, including while its
+sheet is hidden. Recreating a presentation MUST preserve its account, method,
+Save Login choice and selected-key identity instead of reapplying defaults.
+Successful authentication while hidden may establish remembered-password
+restoration only for the unchanged draft and the exact login successfully saved
+by that attempt. A later user edit invalidates that attempt's draft revision.
+Closing the owner clears its draft and secrets; later presentation or activation
+callbacks MUST NOT reload that closed owner's login. On macOS, display and user-session
+wake MUST restore eligible sign-in without depending on application activation;
+locked wake cannot restore secrets, and wake never reconnects automatically.
 A disk-key passphrase is bound to that file reference. Clear it when the selected
 reference changes or is removed; keep the same-reference login draft intact.
 This includes changes made in another window. Retire any unfinished key-file

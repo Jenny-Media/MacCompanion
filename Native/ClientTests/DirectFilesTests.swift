@@ -20,6 +20,7 @@ import NIO
         let fixture = try JSONDecoder().decode(Fixture.self, from: Data(contentsOf: url))
         for journey in fixture.loginDraftCases {
             var draft = DirectFilesLoginDraft(), reads = 0
+            var attempt: DirectFilesLoginDraft.PasswordAttempt?, authenticatedPassword = ""
             var saved: TerminalSecretStore.Login? = .init(username: "synthetic", password: "synthetic-only")
             func restore(active: Bool = true, allowed: Bool = true, signIn: Bool = true) {
                 draft.resume()
@@ -44,6 +45,12 @@ import NIO
                 case "password-method": draft.selectMethod(.password)
                 case "save-edited": saved = .init(username: "synthetic", password: "synthetic-edited-password")
                 case "connected": draft.connected(account: "synthetic", saved: saved)
+                case "begin-password-auth":
+                    authenticatedPassword = draft.password
+                    attempt = draft.passwordAttempt(account: draft.username, password: authenticatedPassword, remember: draft.remember)
+                    XCTAssertNotNil(attempt, journey.id)
+                case "finish-password-auth":
+                    draft.connected(account: "synthetic", saved: saved, attempt: attempt, authenticatedPassword: authenticatedPassword)
                 default: XCTFail("Unknown indexed login event: " + event)
                 }
             }
@@ -74,6 +81,21 @@ import NIO
         earlyEdit.username = "synthetic-before-load"; earlyEdit.password = "synthetic-draft"
         earlyEdit.initialize(saved: saved)
         XCTAssertEqual(earlyEdit.username, "synthetic-before-load"); XCTAssertEqual(earlyEdit.password, "synthetic-draft")
+    }
+    func testSessionOwnsIndependentDraftAndClearsItOnClose() {
+        let mac = DirectMacRecordV1(id: UUID(), name: "Synthetic Draft Owners", addresses: ["fixture.local"])
+        let first = DirectFilesSession(mac: mac), second = DirectFilesSession(mac: mac)
+        defer { first.close(); second.close() }
+        let saved = TerminalSecretStore.Login(username: "synthetic", password: "synthetic-only")
+        first.loginDraft.initialize(saved: saved); second.loginDraft.initialize(saved: saved)
+        first.loginDraft.username = "synthetic-edited-account"; first.loginDraft.remember = false
+        first.loginDraft.suspend(); first.loginDraft.resume(); first.loginDraft.initialize(saved: saved)
+        XCTAssertEqual(first.loginDraft.username, "synthetic-edited-account"); XCTAssertFalse(first.loginDraft.remember)
+        XCTAssertEqual(second.loginDraft.username, "synthetic"); XCTAssertEqual(second.loginDraft.password, "synthetic-only")
+        first.close()
+        XCTAssertEqual(first.loginDraft.username, ""); XCTAssertEqual(first.loginDraft.password, "")
+        XCTAssertFalse(first.loginDraft.remember); XCTAssertTrue(first.loginDraft.isSuspended)
+        XCTAssertEqual(second.loginDraft.password, "synthetic-only", "Closing one owner never clears another draft")
     }
     func testLoginDraftKeyRefreshAndFailedCredentialRead() throws {
         let saved = TerminalSecretStore.Login(username: "synthetic", password: "synthetic-only")

@@ -37,6 +37,7 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
         var needsAttention: Bool { outcome != .completed || (localDownload != nil && !saved) }
     }
     let mac: DirectMacRecordV1
+    var loginDraft = DirectFilesLoginDraft()
     private(set) var account = ""
     private(set) var phase: Phase = .signIn
     @ObservationIgnored var activityChanged: (@MainActor (String) -> Void)?
@@ -64,6 +65,7 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
     private var temporaryRoot: URL?
     @ObservationIgnored private var backgroundObserver: DirectFilesBackgroundObservation?
     private var closed = false
+    var isClosed: Bool { closed }
     private let canAccess: @MainActor () -> Bool
     private let idleTimeout: Duration
     init(mac: DirectMacRecordV1, canAccess: @escaping @MainActor () -> Bool = { DirectAppLockV1.shared.canAccess }, idleTimeout: Duration = .seconds(30)) {
@@ -76,6 +78,7 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
         backgroundObserver = DirectFilesBackgroundObservation { [weak self] _ in
             MainActor.assumeIsolated {
                 guard let self, !self.closed else { return }
+                self.loginDraft.suspend()
                 self.disconnect(message: "Files paused. Reconnect, then Retry any interrupted transfer.")
             }
         }
@@ -86,7 +89,10 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
         withObservationTracking { _ = DirectAppLockV1.shared.allowed; _ = canAccess() } onChange: { [weak self] in
             Task { @MainActor in
                 guard let self, !self.closed else { return }
-                if !self.canAccess() { self.disconnect(message: "Files stopped when the app locked. Reconnect after unlocking.") }
+                if !self.canAccess() {
+                    self.loginDraft.suspend()
+                    self.disconnect(message: "Files stopped when the app locked. Reconnect after unlocking.")
+                }
                 self.observeAccess()
             }
         }
@@ -149,6 +155,7 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
                 authentication = { .passwordBased(username: username, password: password) }
             }
         } catch { message = "The SSH key could not be read."; return }
+        let passwordAttempt = key == nil ? loginDraft.passwordAttempt(account: username, password: password, remember: remember) : nil
         observeLifecycle()
         retire(); let token = generation, owner = TerminalSocketOwner(); socket = owner
         phase = .connecting; busy = true; account = username; message = nil; status = "Contacting Remote Login…"; armDeadline(after: .seconds(60))
@@ -204,14 +211,21 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
                 let store = DirectFilesSFTPStore(client: client); self.store = store
                 let directory = try await store.directory("."); try check(token)
                 // Reuse existing Terminal retention. No Desktop credentials are read.
+                var savedLogin: TerminalSecretStore.Login?
                 do { if keyFileID != nil {
                     #if os(macOS)
                     if let keyFileSelection { try MacSSHKeyFileStore.rememberAccount(username, selection: keyFileSelection) }
                     #endif
                 } else if let namedSelection {
                     try TerminalKeyLibraryStore.rememberAccount(username, macID: mac.id, selection: namedSelection)
-                } else if remember && key == nil { try TerminalSecretStore.save(.init(username: username, password: password), id: mac.id) }
+                } else if remember && key == nil {
+                    let login = TerminalSecretStore.Login(username: username, password: password)
+                    try TerminalSecretStore.save(login, id: mac.id)
+                    savedLogin = login
+                }
                 } catch { self.message = "Connected. The SSH login could not be saved on this device." }
+                loginDraft.connected(account: username, saved: savedLogin, attempt: passwordAttempt,
+                                     authenticatedPassword: passwordAttempt == nil ? nil : password)
                 self.directory = directory; self.home = directory.path
                 self.deadline?.cancel(); self.busy = false; self.phase = .ready; self.status = "Ready"
                 channel.closeFuture.whenComplete { [weak self] _ in
@@ -443,6 +457,7 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
     }
     func close() {
         closed = true
+        loginDraft = DirectFilesLoginDraft(); loginDraft.suspend()
         backgroundObserver = nil
         disconnect()
         directory = nil; results = []; resultsAccount = ""; account = ""; home = ""

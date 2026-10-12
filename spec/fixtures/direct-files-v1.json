@@ -680,6 +680,82 @@
       "account": "saved",
       "remember": true,
       "reads": 0
+    },
+    {
+      "id": "retained-presentation-preserves-edited-choices",
+      "events": [
+        "initialize",
+        "edit-account",
+        "save-off",
+        "suspend",
+        "initialize",
+        "active"
+      ],
+      "password": "empty",
+      "account": "edited",
+      "remember": false,
+      "reads": 0
+    },
+    {
+      "id": "hidden-edited-login-saved-before-restoration",
+      "events": [
+        "initialize",
+        "edit-password",
+        "begin-password-auth",
+        "suspend",
+        "save-edited",
+        "finish-password-auth",
+        "active"
+      ],
+      "password": "edited",
+      "account": "saved",
+      "remember": true,
+      "reads": 1
+    },
+    {
+      "id": "late-authentication-preserves-newer-account",
+      "events": [
+        "initialize",
+        "begin-password-auth",
+        "suspend",
+        "edit-account",
+        "finish-password-auth",
+        "active"
+      ],
+      "password": "empty",
+      "account": "edited",
+      "remember": true,
+      "reads": 0
+    },
+    {
+      "id": "late-authentication-preserves-save-off",
+      "events": [
+        "initialize",
+        "begin-password-auth",
+        "suspend",
+        "save-off",
+        "finish-password-auth",
+        "active"
+      ],
+      "password": "empty",
+      "account": "saved",
+      "remember": false,
+      "reads": 0
+    },
+    {
+      "id": "hidden-failed-save-never-restores-old-password",
+      "events": [
+        "initialize",
+        "edit-password",
+        "begin-password-auth",
+        "suspend",
+        "finish-password-auth",
+        "active"
+      ],
+      "password": "empty",
+      "account": "saved",
+      "remember": true,
+      "reads": 0
     }
   ]
 }

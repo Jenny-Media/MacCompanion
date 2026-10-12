@@ -16,7 +16,148 @@ import AppKit
 }
 
 @MainActor final class DirectFilesPresentationTests: XCTestCase {
+    func testRetainedFilesRemountPreservesAccountMethodAndSaveChoice() async throws {
+        let mac = DirectMacRecordV1(id: UUID(), name: "Synthetic Retained Draft", addresses: ["127.0.0.1"])
+        try TerminalSecretStore.save(.init(username: "synthetic", password: "synthetic-only"), id: mac.id)
+        let keyID = try TerminalKeyLibraryStore.add(.create(), name: "Synthetic Retained Key")
+        try TerminalKeyLibraryStore.associate(keyID, macID: mac.id, username: "synthetic-key")
+        let admission = FilesPresentationAdmission()
+        let session = DirectFilesSession(mac: mac, canAccess: { admission.allowed })
+        defer { session.close(); try? TerminalSecretStore.remove(mac.id); try? TerminalKeyLibraryStore.delete(keyID) }
+        func view() -> DirectFilesView {
+            var view = DirectFilesView(mac: mac, session: session, retainWhenDismissed: true)
+            view.accessAllowed = { admission.allowed }; view.sessionAvailable = { admission.active }
+            return view
+        }
+        let presentation = try FilesMountedPresentation(view())
+        defer { presentation.close() }
+        try await presentation.wait { presentation.values().0 == "synthetic-key" }
+        session.loginDraft.selectMethod(.password)
+        try await presentation.wait { presentation.values().0 == "synthetic" }
+        try presentation.edit("synthetic-edited-account", "synthetic-edited-password")
+        session.loginDraft.remember = false
+        for _ in 0..<2 {
+            presentation.hide()
+            try await presentation.wait { session.loginDraft.isSuspended }
+            XCTAssertEqual(session.loginDraft.password, "", "Hiding clears the visible secret")
+            presentation.mount(view())
+            try await presentation.wait { !session.loginDraft.isSuspended && presentation.values().0 != nil }
+            XCTAssertEqual(presentation.values().0, "synthetic-edited-account", "Reopening the retained owner must not initialize another draft")
+            XCTAssertEqual(presentation.values().1, "")
+            XCTAssertEqual(session.loginDraft.method, .password); XCTAssertFalse(session.loginDraft.remember)
+            XCTAssertEqual(session.phase, .signIn, "Reopening never connects automatically")
+        }
+        session.loginDraft.selectMethod(.sshKey)
+        try await presentation.wait { presentation.values().0 == "synthetic-key" }
+        session.loginDraft.username = "synthetic-edited-key-account"
+        presentation.hide(); try await presentation.wait { session.loginDraft.isSuspended }
+        presentation.mount(view()); try await presentation.wait { !session.loginDraft.isSuspended && presentation.values().0 != nil }
+        XCTAssertEqual(presentation.values().0, "synthetic-edited-key-account")
+        XCTAssertEqual(session.loginDraft.method, .sshKey); XCTAssertFalse(session.loginDraft.remember)
+        XCTAssertEqual(try TerminalKeyLibraryStore.selected(mac.id)?.key.username, "synthetic-key")
+        XCTAssertEqual(try TerminalSecretStore.login(mac.id)?.password, "synthetic-only", "Draft edits do not change stored credentials")
+        session.close()
+        NotificationCenter.default.post(name: DirectClientPlatformV1.didBecomeActive, object: nil)
+        try await Task.sleep(for: .milliseconds(150)); presentation.layout()
+        XCTAssertTrue(session.loginDraft.isSuspended)
+        XCTAssertEqual(session.loginDraft.username, ""); XCTAssertEqual(session.loginDraft.password, "", "Late activation cannot reload a closed owner's login")
+    }
+    func testHiddenPasswordAuthenticationRestoresItsSavedLoginAfterRemount() async throws {
+        let probe = FilesDirectoryTestProbe()
+        let server = try await filesDirectoryTestServer(probe: probe)
+        defer { Task { await probe.shutdown(); try? await server.close() } }
+        let mac = DirectMacRecordV1(id: UUID(), name: "Synthetic Hidden Login", addresses: ["127.0.0.1"], sshPort: try XCTUnwrap(server.localAddress?.port))
+        try TerminalSecretStore.save(.init(username: "synthetic", password: "synthetic-old-password"), id: mac.id)
+        let admission = FilesPresentationAdmission()
+        let session = DirectFilesSession(mac: mac, canAccess: { admission.allowed })
+        defer { session.close(); try? TerminalSecretStore.remove(mac.id) }
+        #if os(macOS)
+        let file = MacSSHKeyFileReference(id: UUID(), name: "Synthetic Hidden File Key", bookmark: Data([1]), fingerprint: "SHA256:synthetic")
+        #endif
+        func view() -> DirectFilesView {
+            var view = DirectFilesView(mac: mac, session: session, retainWhenDismissed: true)
+            view.accessAllowed = { admission.allowed }; view.sessionAvailable = { admission.active }
+            #if os(macOS)
+            view.selectedKeyFile = { _ in (file, "synthetic-file-account") }
+            #endif
+            return view
+        }
+        let presentation = try FilesMountedPresentation(view()); defer { presentation.close() }
+        try await presentation.wait { presentation.values().1 == "synthetic-old-password" }
+        session.loginDraft.selectMethod(.password)
+        try await presentation.wait { presentation.values().0 == "synthetic" }
+        try presentation.edit("synthetic", "synthetic-only")
+        session.connect(username: "synthetic", password: "synthetic-only", key: nil, remember: true)
+        try await presentation.wait { session.trust != nil || session.phase == .interrupted }
+        XCTAssertNotNil(session.trust)
+        presentation.hide()
+        try await presentation.wait { session.loginDraft.isSuspended }
+        session.answerTrust(true)
+        try await presentation.wait { session.phase == .ready || session.phase == .interrupted }
+        XCTAssertEqual(session.phase, .ready, session.message ?? "")
+        XCTAssertEqual(session.loginDraft.password, "", "A hidden authentication must not refill visible secrets")
+        XCTAssertEqual(try TerminalSecretStore.login(mac.id)?.password, "synthetic-only")
+        presentation.mount(view())
+        try await presentation.wait { !session.loginDraft.isSuspended }
+        session.disconnect()
+        try await presentation.wait { presentation.values().0 != nil }
+        XCTAssertEqual(presentation.values().0, "synthetic")
+        XCTAssertEqual(presentation.values().1, "synthetic-only", "The owner, rather than a mounted-view callback, records verified saving")
+        XCTAssertEqual(session.loginDraft.method, .password, "Key display refresh after a connected remount must preserve Password choice")
+        XCTAssertEqual(session.phase, .interrupted, "Restoration requires explicit reconnect")
+    }
     #if os(macOS)
+    func testRetainedDiskKeyRemountPreservesPasswordChoiceAndEditedAccount() async throws {
+        let mac = DirectMacRecordV1(id: UUID(), name: "Synthetic Retained File Key", addresses: ["127.0.0.1"])
+        try TerminalSecretStore.save(.init(username: "synthetic", password: "synthetic-only"), id: mac.id)
+        let file = MacSSHKeyFileReference(id: UUID(), name: "Synthetic File Key", bookmark: Data([1]), fingerprint: "SHA256:synthetic")
+        let session = DirectFilesSession(mac: mac)
+        defer { session.close(); try? TerminalSecretStore.remove(mac.id) }
+        func view() -> DirectFilesView {
+            var view = DirectFilesView(mac: mac, session: session, retainWhenDismissed: true)
+            view.selectedKeyFile = { _ in (file, "synthetic-file-account") }
+            return view
+        }
+        let presentation = try FilesMountedPresentation(view()); defer { presentation.close() }
+        try await presentation.wait { presentation.values().0 == "synthetic-file-account" }
+        session.loginDraft.selectMethod(.password)
+        try await presentation.wait { presentation.values().0 == "synthetic" }
+        try presentation.edit("synthetic-edited-account", "synthetic-edited-password")
+        session.loginDraft.remember = false
+        presentation.hide(); try await presentation.wait { session.loginDraft.isSuspended }
+        presentation.mount(view()); try await presentation.wait { !session.loginDraft.isSuspended && presentation.values().0 != nil }
+        XCTAssertEqual(presentation.values().0, "synthetic-edited-account")
+        XCTAssertEqual(session.loginDraft.method, .password, "Recreating key display state is not a new key selection")
+        XCTAssertFalse(session.loginDraft.remember); XCTAssertEqual(presentation.values().1, "")
+    }
+    func testFilesResumesOnWorkspaceWakeAndWaitsForUnlock() async throws {
+        let mac = DirectMacRecordV1(id: UUID(), name: "Synthetic Workspace Wake", addresses: ["127.0.0.1"])
+        try TerminalSecretStore.save(.init(username: "synthetic", password: "synthetic-only"), id: mac.id)
+        let admission = FilesPresentationAdmission()
+        let session = DirectFilesSession(mac: mac, canAccess: { admission.allowed })
+        defer { session.close(); try? TerminalSecretStore.remove(mac.id) }
+        var view = DirectFilesView(mac: mac, session: session, retainWhenDismissed: true)
+        view.accessAllowed = { admission.allowed }; view.sessionAvailable = { admission.active }
+        let presentation = try FilesMountedPresentation(view); defer { presentation.close() }
+        try await presentation.wait { presentation.values().1 == "synthetic-only" }
+        for wake in [NSWorkspace.screensDidWakeNotification, NSWorkspace.sessionDidBecomeActiveNotification] {
+            NotificationCenter.default.post(name: DirectClientPlatformV1.didEnterBackground, object: nil)
+            try await presentation.wait { session.loginDraft.isSuspended && presentation.values().1 == "" }
+            // No application activation is sent in this journey.
+            NSWorkspace.shared.notificationCenter.post(name: wake, object: nil)
+            try await presentation.wait { !session.loginDraft.isSuspended }
+            XCTAssertEqual(presentation.values().1, "synthetic-only")
+            XCTAssertNotEqual(session.phase, .ready, "Wake never reconnects automatically")
+        }
+        admission.allowed = false
+        try await presentation.wait { session.loginDraft.isSuspended && presentation.values().1 == "" }
+        NSWorkspace.shared.notificationCenter.post(name: NSWorkspace.screensDidWakeNotification, object: nil)
+        try await Task.sleep(for: .milliseconds(150)); presentation.layout()
+        XCTAssertTrue(session.loginDraft.isSuspended); XCTAssertEqual(presentation.values().1, "")
+        admission.allowed = true
+        try await presentation.wait { presentation.values().1 == "synthetic-only" }
+        XCTAssertFalse(session.loginDraft.isSuspended); XCTAssertEqual(session.phase, .interrupted)
+    }
     func testKeyChooserRenamingPreservesEditedFilesAccount() async throws {
         if !DirectProAccess.shared.ready { await DirectProAccess.shared.refresh() }
         let mac = DirectMacRecordV1(id: UUID(), name: "Synthetic Key Rename", addresses: ["127.0.0.1"])
@@ -393,5 +534,60 @@ import AppKit
             XCTAssertEqual(session.phase, .signIn, "Presentation must never authenticate automatically")
             XCTAssertFalse(session.busy)
         }
+    }
+}
+
+/// Recreate the actual Files presentation around a retained owner. This covers
+/// the host lifetime that a same-view foreground/background test cannot exercise.
+@MainActor private final class FilesMountedPresentation {
+    #if os(iOS)
+    private let window: UIWindow
+    private let previous: UIWindow?
+    init(_ view: DirectFilesView) throws {
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        previous = scene.windows.first { $0.isKeyWindow }
+        window = UIWindow(windowScene: scene); window.frame = .init(x: 0, y: 0, width: 390, height: 844)
+        mount(view); window.makeKeyAndVisible()
+    }
+    func mount(_ view: DirectFilesView) { window.rootViewController = UIHostingController(rootView: view) }
+    func hide() { window.endEditing(true); window.rootViewController = nil }
+    func close() { hide(); window.isHidden = true; previous?.makeKeyAndVisible() }
+    func layout() { window.layoutIfNeeded() }
+    private func fields() -> [UITextField] {
+        func descendants(_ view: UIView) -> [UIView] { [view] + view.subviews.flatMap(descendants) }
+        return descendants(window).compactMap { $0 as? UITextField }
+    }
+    func values() -> (String?, String?) { (fields().first { !$0.isSecureTextEntry }?.text, fields().first { $0.isSecureTextEntry }?.text) }
+    func edit(_ username: String, _ password: String) throws {
+        let account = try XCTUnwrap(fields().first { !$0.isSecureTextEntry }), secret = try XCTUnwrap(fields().first { $0.isSecureTextEntry })
+        account.text = username; account.sendActions(for: .editingChanged)
+        secret.text = password; secret.sendActions(for: .editingChanged)
+    }
+    #else
+    private let window: NSWindow
+    init(_ view: DirectFilesView) throws {
+        window = NSWindow(contentRect: .init(x: -20000, y: -20000, width: 720, height: 640), styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false; mount(view); window.orderFront(nil)
+    }
+    func mount(_ view: DirectFilesView) { window.contentView = NSHostingView(rootView: view) }
+    func hide() { window.makeFirstResponder(nil); window.contentView = nil }
+    func close() { hide(); window.close() }
+    func layout() { window.contentView?.layoutSubtreeIfNeeded() }
+    private func fields() -> MacCredentialFields.Fields? {
+        func descendants(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(descendants) }
+        return window.contentView.map(descendants)?.compactMap { $0 as? MacCredentialFields.Fields }.first
+    }
+    func values() -> (String?, String?) { (fields()?.account.stringValue, fields()?.secret.stringValue) }
+    func edit(_ username: String, _ password: String) throws {
+        let fields = try XCTUnwrap(fields()); fields.account.stringValue = username; fields.secret.stringValue = password
+    }
+    #endif
+    func wait(_ predicate: () -> Bool) async throws {
+        let end = Date().addingTimeInterval(10)
+        while !predicate() {
+            guard Date() < end else { throw DirectFilesFailure.timedOut }
+            try await Task.sleep(for: .milliseconds(50)); layout()
+        }
+        layout()
     }
 }

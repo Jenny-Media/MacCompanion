@@ -1,8 +1,8 @@
 #if (os(iOS) || os(macOS)) && MACCOMPANION_VNC_DEVELOPMENT
 import Foundation
 
-/// Value state owned by one Files view. Storage, authentication and other
-/// windows never mutate its fields implicitly.
+/// Value state owned by one Files session, surviving its sheet presentations.
+/// Storage and other windows never replace its user choices implicitly.
 @MainActor struct DirectFilesLoginDraft {
     private enum Initialization { case pending, complete }
     private enum Visibility { case active, suspended }
@@ -23,6 +23,9 @@ import Foundation
         let id: UUID
         let fingerprint: String
     }
+    struct PasswordAttempt {
+        fileprivate let revision: UUID
+    }
     private enum KeySnapshot: Equatable {
         case unknown, none, named(NamedKeyIdentity), file
     }
@@ -32,6 +35,10 @@ import Foundation
     private var secret = Password.empty
     private var savesLogin = false
     private var keySnapshot = KeySnapshot.unknown
+    private var revision = UUID()
+    #if os(macOS)
+    private var keyFileReference: MacSSHKeyFileReference?
+    #endif
     var passphrase = ""
 
     var username: String {
@@ -39,6 +46,7 @@ import Foundation
         set {
             guard newValue != selection.username else { return }
             initialization = .complete
+            revision = UUID()
             if selection.method == .password { invalidateRestoration() }
             selection.username = newValue
         }
@@ -49,6 +57,7 @@ import Foundation
         set {
             guard newValue != secret.value else { return }
             initialization = .complete
+            revision = UUID()
             secret = newValue.isEmpty ? .empty : .edited(newValue)
         }
     }
@@ -57,6 +66,7 @@ import Foundation
         set {
             guard newValue != savesLogin else { return }
             initialization = .complete
+            revision = UUID()
             savesLogin = newValue
             if !newValue { invalidateRestoration() }
         }
@@ -77,10 +87,13 @@ import Foundation
     }
     mutating func selectMethod(_ method: TerminalLoginMethod) {
         initialization = .complete
+        revision = UUID()
         selection.select(method)
     }
     mutating func loadKeyAccount(_ account: String?, preferSelected: Bool) {
+        let previousAccount = selection.username, previousMethod = selection.method
         selection.loadKeyAccount(account, preferSelected: preferSelected)
+        if previousAccount != selection.username || previousMethod != selection.method { revision = UUID() }
     }
     mutating func updateNamedKey(_ identity: NamedKeyIdentity?) -> Bool {
         let snapshot = identity.map { KeySnapshot.named($0) } ?? .none
@@ -89,6 +102,19 @@ import Foundation
         return changed
     }
     mutating func keyFileChanged() { passphrase = ""; keySnapshot = .file }
+    #if os(macOS)
+    mutating func updateKeyFile(_ reference: MacSSHKeyFileReference?) -> Bool {
+        guard keyFileReference != reference else { return false }
+        keyFileReference = reference
+        keyFileChanged()
+        return true
+    }
+    #endif
+    func passwordAttempt(account: String, password: String, remember: Bool) -> PasswordAttempt? {
+        guard selection.method == .password, selection.username == account,
+              secret.value == password, savesLogin == remember else { return nil }
+        return .init(revision: revision)
+    }
 
     mutating func suspend() {
         visibility = .suspended
@@ -100,11 +126,15 @@ import Foundation
         clearSecrets(restoring: account)
     }
     mutating func resume() { visibility = .active }
-    mutating func connected(account: String, saved: TerminalSecretStore.Login?) {
+    mutating func connected(account: String, saved: TerminalSecretStore.Login?,
+                            attempt: PasswordAttempt? = nil, authenticatedPassword: String? = nil) {
+        // A hidden presentation has cleared the visible secret. Its unchanged
+        // authentication attempt may establish restoration after a verified save.
+        if let attempt, attempt.revision != revision { return }
         // A newly edited password is restorable only after that exact login
         // reached storage. A failed save cannot resurrect an older password.
         let remembered = savesLogin && selection.method == .password && selection.username == account &&
-            saved?.username == account && saved?.password == secret.value
+            saved?.username == account && saved?.password == (attempt == nil ? secret.value : authenticatedPassword)
         clearSecrets(restoring: remembered ? account : nil)
     }
     mutating func restorePassword(active: Bool, allowed: Bool, signIn: Bool,

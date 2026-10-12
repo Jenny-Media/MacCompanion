@@ -13,7 +13,10 @@ struct DirectFilesView: View {
     var accessAllowed: @MainActor () -> Bool = { DirectAppLockV1.shared.canAccess }
     var sessionAvailable: @MainActor () -> Bool = { DirectClientPlatformV1.sessionAvailable }
     @State private var session: DirectFilesSession
-    @State private var draft = DirectFilesLoginDraft()
+    private var draft: DirectFilesLoginDraft {
+        get { session.loginDraft }
+        nonmutating set { session.loginDraft = newValue }
+    }
     @State private var key: TerminalNamedKey?
     @State private var keyName = ""
     @State private var preparingKey = false
@@ -53,7 +56,7 @@ struct DirectFilesView: View {
         else { dismiss() }
     }
     private var canConnect: Bool {
-        accessAllowed() && sessionAvailable() && !draft.isSuspended &&
+        !session.isClosed && accessAllowed() && sessionAvailable() && !draft.isSuspended &&
         !draft.username.isEmpty && !session.busy && !preparingKey &&
         (draft.method == .password ? !draft.password.isEmpty : !keyName.isEmpty)
     }
@@ -160,21 +163,10 @@ struct DirectFilesView: View {
         .task { resumeSignIn(); if !pro.ready { await pro.refresh() } }
         .onChange(of: draft.method) { _, _ in prepareSignIn() }
         .onChange(of: session.phase) { _, phase in
-            if phase == .ready { connectedSignIn() }
-            else {
-                prepareSignIn()
-                #if os(macOS)
-                refreshSelectedKeyFile()
-                #endif
-            }
+            if phase != .ready { refreshSignIn() }
         }
         .onChange(of: session.busy) { _, busy in
-            if !busy {
-                prepareSignIn()
-                #if os(macOS)
-                refreshSelectedKeyFile()
-                #endif
-            }
+            if !busy { refreshSignIn() }
         }
         #if os(macOS)
         .onReceive(NotificationCenter.default.publisher(for: MacSSHKeyFileStore.changed)) { _ in
@@ -194,6 +186,14 @@ struct DirectFilesView: View {
         .onReceive(NotificationCenter.default.publisher(for: DirectClientPlatformV1.didBecomeActive)) { _ in
             resumeSignIn()
         }
+        #if os(macOS)
+        .onReceive(NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.screensDidWakeNotification)) { _ in
+            resumeSignInIfAllowed()
+        }
+        .onReceive(NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.sessionDidBecomeActiveNotification)) { _ in
+            resumeSignInIfAllowed()
+        }
+        #endif
         .onDisappear {
             suspendSignIn()
             if !retainWhenDismissed { session.close() }
@@ -254,22 +254,22 @@ struct DirectFilesView: View {
                     ForEach(TerminalLoginMethod.allCases) { Text($0.rawValue).tag($0) }
                 }.pickerStyle(.segmented)
                 #if os(macOS)
-                MacCredentialFields(username: $draft.username, password: $draft.password, showsPassword: draft.method == .password,
+                MacCredentialFields(username: $session.loginDraft.username, password: $session.loginDraft.password, showsPassword: draft.method == .password,
                                     enabled: !session.busy && !preparingKey && accessAllowed(), prefix: "files", submit: connect)
                     .frame(height: draft.method == .password ? 104 : 45)
                 #else
-                TextField("Mac account", text: $draft.username).textContentType(.username).directNoAutocapitalization().autocorrectionDisabled().accessibilityIdentifier("files-account")
+                TextField("Mac account", text: $session.loginDraft.username).textContentType(.username).directNoAutocapitalization().autocorrectionDisabled().accessibilityIdentifier("files-account")
                 #endif
                 if draft.method == .password {
                     #if os(iOS)
-                    SecureField("Password", text: $draft.password).textContentType(.password).accessibilityIdentifier("files-password")
+                    SecureField("Password", text: $session.loginDraft.password).textContentType(.password).accessibilityIdentifier("files-password")
                     #endif
-                    Toggle("Save SSH login on this device", isOn: $draft.remember).accessibilityIdentifier("files-remember-login")
+                    Toggle("Save SSH login on this device", isOn: $session.loginDraft.remember).accessibilityIdentifier("files-remember-login")
                 } else {
                     Button { sheet = .keys } label: { Label(keyName.isEmpty ? "Choose SSH Key" : keyName, systemImage: "key") }
                         .accessibilityIdentifier("files-choose-key")
                     #if os(macOS)
-                    if keyFile != nil { SecureField("Key passphrase, if needed", text: $draft.passphrase).accessibilityIdentifier("files-key-passphrase") }
+                    if keyFile != nil { SecureField("Key passphrase, if needed", text: $session.loginDraft.passphrase).accessibilityIdentifier("files-key-passphrase") }
                     #endif
                 }
             }.disabled(session.busy || preparingKey)
@@ -411,11 +411,11 @@ struct DirectFilesView: View {
     }
     #if os(macOS)
     @discardableResult private func refreshSelectedKeyFile() -> Bool {
-        guard accessAllowed(), session.phase != .ready, !session.busy else { return false }
+        guard !session.isClosed, !draft.isSuspended, sessionAvailable(), accessAllowed(), session.phase != .ready, !session.busy else { return false }
         do {
             guard try selectedKeyFile(mac.id)?.file != keyFile else { return false }
             preparation = UUID(); preparingKey = false
-            loadLogin(preferSelected: true, includePassword: false)
+            loadLogin(preferSelected: true, includePassword: false, preserveUnchangedSelection: true)
             return true
         } catch { session.message = "Saved SSH settings could not be read. Existing data is kept."; return false }
     }
@@ -429,26 +429,27 @@ struct DirectFilesView: View {
         #endif
     }
     private func resumeSignIn() {
+        guard !session.isClosed else { return }
         draft.resume()
+        refreshSignIn()
+    }
+    private func refreshSignIn() {
         prepareSignIn()
+        #if os(macOS)
+        refreshSelectedKeyFile()
+        #endif
         // Only reconcile an already initialized key selection here. User input
         // before initialization must not be replaced by delayed defaults.
         if draft.hasKeySnapshot {
             loadLogin(preferSelected: true, includePassword: false, preserveUnchangedSelection: true)
         }
     }
-    private func connectedSignIn() {
-        guard !draft.isSuspended, accessAllowed(), sessionAvailable() else {
-            draft.suspend(); return
-        }
-        var saved: TerminalSecretStore.Login?
-        if draft.remember, draft.method == .password {
-            do { saved = try TerminalSecretStore.login(mac.id) }
-            catch { session.message = "Connected. The SSH login could not be read on this device." }
-        }
-        draft.connected(account: session.account, saved: saved)
+    private func resumeSignInIfAllowed() {
+        guard accessAllowed(), sessionAvailable() else { return }
+        resumeSignIn()
     }
     private func prepareSignIn() {
+        guard !session.isClosed else { return }
         let active = sessionAvailable(), allowed = accessAllowed()
         let signIn = session.phase != .ready && !session.busy
         if draft.needsInitialLoad(active: active, allowed: allowed, signIn: signIn) {
@@ -459,7 +460,7 @@ struct DirectFilesView: View {
         } catch { session.message = "Saved SSH settings could not be read. Existing data is kept." }
     }
     private func loadLogin(preferSelected: Bool = false, includePassword: Bool = true, preserveUnchangedSelection: Bool = false) {
-        guard !draft.isSuspended, sessionAvailable(),
+        guard !session.isClosed, !draft.isSuspended, sessionAvailable(),
               accessAllowed(), session.phase != .ready, !session.busy else { return }
         do {
             // Read the complete selection before applying initialization. A
@@ -473,8 +474,7 @@ struct DirectFilesView: View {
             #endif
             if includePassword { draft.initialize(saved: saved) }
             #if os(macOS)
-            let fileChanged = keyFile != fileSelection?.file
-            if fileChanged { draft.keyFileChanged() }
+            let fileChanged = draft.updateKeyFile(fileSelection?.file)
             keyFile = fileSelection?.file
             if let fileSelection {
                 key = nil; keyName = fileSelection.file.name
