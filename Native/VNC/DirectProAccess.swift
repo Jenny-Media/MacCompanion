@@ -1,10 +1,16 @@
-#if (os(iOS) || os(macOS)) && MACCOMPANION_VNC_DEVELOPMENT
+#if (os(iOS) || os(macOS) || os(visionOS)) && MACCOMPANION_VNC_DEVELOPMENT
 import Foundation
 import Observation
 import StoreKit
 import SwiftUI
-#if os(iOS)
+#if os(iOS) || os(visionOS)
 import UIKit
+#endif
+
+#if os(visionOS)
+typealias DirectPurchaseScene = UIWindowScene
+#else
+struct DirectPurchaseScene {}
 #endif
 
 struct DirectProEntitlement {
@@ -26,7 +32,11 @@ struct DirectProTrial {
 }
 
 @MainActor @Observable final class DirectProAccess {
+    #if os(visionOS)
+    static let shared = DirectProAccess(defaults: VisionDevelopmentQA.defaults)
+    #else
     static let shared = DirectProAccess()
+    #endif
     static let productID = "media.jenny.maccompanion.pro.lifetime"
     static let trialProductID = "media.jenny.maccompanion.pro.trial14"
     private(set) var hasLifetimePro = false
@@ -148,21 +158,27 @@ struct DirectProTrial {
             await refresh()
         } catch { recovery = .make(.storeUnavailable) }
     }
-    func purchase() async {
+    func purchase(scene: DirectPurchaseScene? = nil) async {
         guard let product, !hasLifetimePro else { return }
-        await purchase(product, trialPurchase: false)
+        await purchase(product, trialPurchase: false, scene: scene)
     }
-    func startTrial() async {
+    func startTrial(scene: DirectPurchaseScene? = nil) async {
         guard !busy else { return }
         await refresh()
         guard canStartTrial, let trialProduct else { return }
-        await purchase(trialProduct, trialPurchase: true)
+        await purchase(trialProduct, trialPurchase: true, scene: scene)
     }
-    private func purchase(_ selected: Product, trialPurchase: Bool) async {
+    private func purchase(_ selected: Product, trialPurchase: Bool, scene: DirectPurchaseScene?) async {
         guard !busy, !trialPurchase || selected.price == 0 else { return }
         operation = trialPurchase ? .startingTrial : .purchasing; message = nil; recovery = nil; defer { operation = nil }
         do {
-            switch try await selected.purchase() {
+            #if os(visionOS)
+            guard let scene, scene.activationState == .foregroundActive else { recovery = .make(.storeUnavailable); return }
+            let result = try await selected.purchase(confirmIn: scene)
+            #else
+            let result = try await selected.purchase()
+            #endif
+            switch result {
             case .success(let result):
                 guard case .verified(let transaction) = result, Self.admits(transaction, productID: selected.id) else {
                     recovery = .make(.purchaseUnconfirmed); return
@@ -216,6 +232,7 @@ struct DirectProView: View {
     @Environment(\.verticalSizeClass) private var verticalSize
     #endif
     @State private var access: DirectProAccess
+    @State private var purchaseScene: DirectPurchaseScene?
     init(access: DirectProAccess = .shared) { _access = State(initialValue: access) }
     private var recoveryAction: DirectRecoveryAction? {
         guard let reason = access.recovery?.reason else { return nil }
@@ -257,6 +274,10 @@ struct DirectProView: View {
         }
         .background(.background).directAppearance()
         .task { await access.loadProduct() }
+        #if os(visionOS)
+        .background(VisionSceneCapture { purchaseScene = $0 })
+        .onDisappear { purchaseScene = nil }
+        #endif
         .onChange(of: scenePhase) { _, phase in if phase == .active { Task { await access.refresh() } } }
     }
     private var content: some View {
@@ -306,7 +327,7 @@ struct DirectProView: View {
         VStack(spacing: 10) {
             if !access.hasLifetimePro {
                 Button {
-                    Task { await access.purchase() }
+                    Task { await access.purchase(scene: purchaseScene) }
                 } label: {
                     Text(access.product.map { "Unlock Lifetime Pro · " + $0.displayPrice } ?? "Purchase Unavailable")
                         .frame(maxWidth: .infinity).multilineTextAlignment(.center)
@@ -314,7 +335,7 @@ struct DirectProView: View {
                     .disabled(access.product == nil || access.busy).accessibilityIdentifier("pro-purchase")
                 Text("One-time purchase. No subscription.").font(.footnote).foregroundStyle(.secondary)
                 if access.trial == nil {
-                    Button("Try Pro Free for 14 Days") { Task { await access.startTrial() } }
+                    Button("Try Pro Free for 14 Days") { Task { await access.startTrial(scene: purchaseScene) } }
                         .disabled(!access.canStartTrial || access.busy).accessibilityIdentifier("pro-start-trial")
                     Text("No automatic charge.").font(.footnote).foregroundStyle(.secondary)
                 }

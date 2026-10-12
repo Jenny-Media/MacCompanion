@@ -1,6 +1,7 @@
 # Mac Companion Capability Protocol v0.1
 
 Current normal VNC development composition: [standalone Screen Sharing client](direct-screen-sharing.md).
+The native visionOS composition is defined in [native-visionos-client.md](native-visionos-client.md).
 The paired application protocol below is retained for compatibility and remains
 normative when that historical profile is used.
 

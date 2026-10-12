@@ -1,4 +1,4 @@
-#if os(macOS) && MACCOMPANION_VNC_DEVELOPMENT
+#if (os(macOS) || os(visionOS)) && MACCOMPANION_VNC_DEVELOPMENT
 import Foundation
 
 // Live Activities are iOS-only. Shared SSH session ownership uses this Mac

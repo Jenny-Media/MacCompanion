@@ -810,6 +810,12 @@
       "canonicalSHA256": "ceca82d6e0b6c99a0c34fa571877e579d1c409fcf217eeeb9c0d01929bff2880"
     },
     {
+      "path": "native-visionos-client-v1.json",
+      "kind": "client.nativeVision.v1",
+      "expect": "valid",
+      "canonicalSHA256": "b4f283ab87c972098df03794f7e55ddab3e69ec61768369eb12192427bf7c68a"
+    },
+    {
       "path": "direct-files-v1.json",
       "kind": "directFiles.v1",
       "expect": "valid",

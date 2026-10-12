@@ -1,4 +1,4 @@
-#if (os(iOS) || os(macOS)) && MACCOMPANION_VNC_DEVELOPMENT
+#if (os(iOS) || os(macOS) || os(visionOS)) && MACCOMPANION_VNC_DEVELOPMENT
 import Foundation
 import Security
 import SwiftUI
@@ -230,7 +230,11 @@ struct VNCInputSettings: View {
                             #endif
                         }
                     }.padding(16)
-                }.scrollDismissesKeyboard(.interactively).background(pageBackground)
+                }
+                #if !os(visionOS)
+                .scrollDismissesKeyboard(.interactively)
+                #endif
+                .background(pageBackground)
             }
             .navigationTitle(mode == .trackpad ? "Trackpad Controls" : mode.title + " Controls").directInlineNavigationTitle()
             .toolbar {
@@ -242,12 +246,14 @@ struct VNCInputSettings: View {
     private var localScopeDescription: String {
         #if os(iOS)
         "Applies to all Mac connections on this \(UIDevice.current.userInterfaceIdiom == .pad ? "iPad" : "iPhone")."
+        #elseif os(visionOS)
+        "Applies to all Mac connections on this Vision Pro."
         #else
         "Applies to all Mac connections on this Mac."
         #endif
     }
     private var pageBackground: Color {
-        #if os(iOS)
+        #if os(iOS) || os(visionOS)
         Color(uiColor: .systemGroupedBackground)
         #else
         Color(nsColor: .windowBackgroundColor)

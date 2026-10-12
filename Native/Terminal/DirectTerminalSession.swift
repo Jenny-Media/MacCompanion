@@ -1,4 +1,4 @@
-#if (os(iOS) || os(macOS)) && MACCOMPANION_VNC_DEVELOPMENT
+#if (os(iOS) || os(macOS) || os(visionOS)) && MACCOMPANION_VNC_DEVELOPMENT
 import Foundation
 import Crypto
 import Observation
@@ -67,6 +67,8 @@ private enum TerminalPTY {
 
 @MainActor @Observable final class DirectTerminalSession {
     static let maximumPausedOutputBytes = 1_048_576
+    // Native windows admit input independently of other active scenes.
+    var inputAvailable: @MainActor () -> Bool = { true }
     var suspendInput: (@MainActor () -> Void)?
     private(set) var suspended = false
     private(set) var activity: VNCSessionActivityController?
@@ -85,7 +87,10 @@ private enum TerminalPTY {
     #endif
     private var lifecycleGeneration = UUID()
     private var writeGeneration = UUID()
-    #if os(macOS)
+    #if os(visionOS)
+    var outputGeneration: UUID { generation }
+    #endif
+    #if os(macOS) || os(visionOS)
     private var nativeInputReleaseTail: Task<Void, Never>?
     private var nativeInputReleaseBytes = 0
     #endif
@@ -358,25 +363,35 @@ private enum TerminalPTY {
         let reply = trustReply; trustReply = nil; trust = nil; reply?.resume(returning: accepted)
         if !accepted, reply != nil { stop(); present(.connectionCancelled) }
     }
-    func send(_ data: [UInt8]) {
-        guard connected, !suspended, DirectAppLockV1.shared.canAccess, DirectClientPlatformV1.sessionAvailable, let writer, !data.isEmpty else { return }
-        #if os(macOS)
+    enum OutputSource { case userInput, emulatorReply }
+    private func admits(_ source: OutputSource) -> Bool {
+        #if os(visionOS)
+        VisionTerminalAdmission.allows(focused: inputAvailable(), emulatorReply: source == .emulatorReply,
+                                      suspended: suspended, unlocked: DirectAppLockV1.shared.canAccess)
+        #else
+        !suspended && DirectAppLockV1.shared.canAccess && inputAvailable()
+        #endif
+    }
+    func send(_ data: [UInt8], source: OutputSource = .userInput) {
+        guard admits(source), connected, DirectClientPlatformV1.sessionAvailable, let writer, !data.isEmpty else { return }
+        #if os(macOS) || os(visionOS)
         let releasingBytes = nativeInputReleaseBytes
         #else
         let releasingBytes = 0
         #endif
         guard data.count <= 65536, queuedBytes + releasingBytes + data.count <= 65536 else { stop(); present(.inputPaused); return }
         queuedBytes += data.count; let id = generation, writeID = writeGeneration; let previous = writeTail
-        #if os(macOS)
+        #if os(macOS) || os(visionOS)
         let previousRelease = nativeInputReleaseTail
         #endif
         writeTail = Task {
             await previous?.value
-            #if os(macOS)
+            #if os(macOS) || os(visionOS)
             await previousRelease?.value
             #endif
-            guard generation == id, writeGeneration == writeID, !suspended, !Task.isCancelled, DirectAppLockV1.shared.canAccess, DirectClientPlatformV1.sessionAvailable else { return }
-            do { try await writer.write(data); if generation == id && writeGeneration == writeID { queuedBytes -= data.count } }
+            defer { if generation == id && writeGeneration == writeID { queuedBytes -= data.count } }
+            guard admits(source), generation == id, writeGeneration == writeID, !Task.isCancelled, DirectClientPlatformV1.sessionAvailable else { return }
+            do { try await writer.write(data) }
             catch { if generation == id && writeGeneration == writeID { stop(); present(.terminalEnded, message: "The connection ended while sending input. It won’t be replayed. Open a new shell to continue.") } }
         }
     }
@@ -415,7 +430,7 @@ private enum TerminalPTY {
         }
     }
     #endif
-    #if os(macOS)
+    #if os(macOS) || os(visionOS)
     // This type is constructed only by the native owner ledger. Cleanup is
     // allowed after focus/lock, but remains bounded and tied to this generation.
     func releaseNativeInput(_ releases: MacTerminalInputReleases) {
@@ -436,18 +451,18 @@ private enum TerminalPTY {
     #endif
     func resize(columns: Int, rows: Int) {
         self.columns = max(1, min(500, columns)); self.rows = max(1, min(500, rows))
-        guard let writer, connected, !suspended, DirectAppLockV1.shared.canAccess, DirectClientPlatformV1.sessionAvailable else { return }
+        guard inputAvailable(), let writer, connected, !suspended, DirectAppLockV1.shared.canAccess, DirectClientPlatformV1.sessionAvailable else { return }
         let cols = self.columns, rows = self.rows, id = generation, writeID = writeGeneration
         let previous = writeTail
-        #if os(macOS)
+        #if os(macOS) || os(visionOS)
         let previousRelease = nativeInputReleaseTail
         #endif
         writeTail = Task {
             await previous?.value
-            #if os(macOS)
+            #if os(macOS) || os(visionOS)
             await previousRelease?.value
             #endif
-            guard generation == id, writeGeneration == writeID, !suspended, !Task.isCancelled,
+            guard inputAvailable(), generation == id, writeGeneration == writeID, !suspended, !Task.isCancelled,
                 DirectAppLockV1.shared.canAccess, DirectClientPlatformV1.sessionAvailable else { return }
             do { try await writer.resize(columns: cols, rows: rows) }
             catch { if generation == id && writeGeneration == writeID { stop(); present(.terminalEnded, message: "The connection ended while resizing the Terminal. Open a new shell to continue.") } }
@@ -459,7 +474,7 @@ private enum TerminalPTY {
         suspended = false; pausedOutput.removeAll(keepingCapacity: false)
         suspendInput?(); activity?.finish(); activity = nil
         generation = UUID(); let reply = trustReply; trustReply = nil; trust = nil; reply?.resume(returning: false); work?.cancel(); work = nil; writeTail?.cancel(); writeTail = nil
-        #if os(macOS)
+        #if os(macOS) || os(visionOS)
         nativeInputReleaseTail?.cancel(); nativeInputReleaseTail = nil; nativeInputReleaseBytes = 0
         #endif
         socketOwner?.cancel(); socketOwner = nil

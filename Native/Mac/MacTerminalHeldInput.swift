@@ -1,4 +1,4 @@
-#if os(macOS) && MACCOMPANION_VNC_DEVELOPMENT
+#if (os(macOS) || os(visionOS)) && MACCOMPANION_VNC_DEVELOPMENT
 import Foundation
 
 // Only this ledger can manufacture cleanup. It retains report identities, never

@@ -1,7 +1,8 @@
 # Mac Companion
 
 Mac Companion is being repurposed as native VNC and SSH clients for iPhone and
-macOS. Both clients use the remote Mac's built-in services:
+macOS, with a native visionOS development client for Apple Vision Pro. The clients
+use the remote Mac's built-in services:
 
 - **Desktop:** view and control the Mac through Screen Sharing.
 - **Trackpad & Keyboard:** control it through VNC without displaying its desktop.
@@ -20,8 +21,15 @@ and storage code with native SwiftUI/AppKit interfaces. macOS implementation and
 acceptance remain in progress; signed development builds and automated tests do
 not establish live VNC input or Mac–iPhone iCloud delivery.
 
-The direct VNC profile remains limited to local or private routes and does not
-provide desktop/input encryption. Transport security, compatibility, signed
+The [native visionOS implementation](docs/native-visionos-client.md) provides
+independent Desktop and Terminal windows, encrypted Desktop forwarding through
+SSH, and aspect-correct wide/ultrawide views. Simulator verification precedes
+final first-generation Vision Pro acceptance. Curved windows are unavailable
+through Apple's current public APIs for third-party apps.
+
+The direct VNC profile remains limited to local or private routes. The iPhone and
+visionOS clients forward Desktop through SSH without plaintext fallback; the
+macOS client's direct VNC transport remains a separate security gate. Compatibility, signed
 device acceptance and public release admission remain separate gates. See the
 [direct connection contract](spec/capability-protocol/v0/direct-screen-sharing.md)
 and [execution status](docs/execution-status.md).

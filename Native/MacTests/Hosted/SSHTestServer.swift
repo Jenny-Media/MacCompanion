@@ -88,6 +88,7 @@ final class SSHTestPTY: ChannelDuplexHandler, @unchecked Sendable {
     func errorCaught(context:ChannelHandlerContext,error:Error) { context.close(promise:nil) }
 }
 
+#if os(macOS)
 /// The only server here is a disposable XCTest transport to macOS's own SFTP
 /// executable. No server, shell process or helper is linked into either client.
 final class FilesTestSFTPProcess: ChannelDuplexHandler, @unchecked Sendable {
@@ -137,3 +138,4 @@ final class FilesTestSFTPProcess: ChannelDuplexHandler, @unchecked Sendable {
         process = nil; input = nil; output = nil
     }
 }
+#endif

@@ -13,7 +13,14 @@ def sha(path): return hashlib.sha256(path.read_bytes()).hexdigest()
 
 def validate():
     policy = json.loads(POLICY.read_text())
-    assert set(policy) == {'profile', 'releaseAdmitted', 'vendorPackage', 'sourceLockPath', 'sourceLockSHA256', 'resolvedLockfilePath', 'resolvedLockfileSHA256'}
+    assert set(policy) == {'profile', 'releaseAdmitted', 'vendorPackage', 'sourceLockPath', 'sourceLockSHA256', 'resolvedLockfilePath', 'resolvedLockfileSHA256', 'visionOSSwiftTermPressEndpoint'}
+    adaptation = policy['visionOSSwiftTermPressEndpoint']
+    assert set(adaptation) == {'path', 'originalSHA256', 'adaptedSHA256', 'originalDeclaration', 'adaptedDeclaration', 'purpose'}
+    assert adaptation['path'] == 'Sources/SwiftTerm/iOS/iOSTerminalView.swift'
+    assert adaptation['originalDeclaration'] == 'public override func pressesEnded(_ presses: Set<UIPress>, with event: UIPressesEvent?)'
+    assert adaptation['adaptedDeclaration'] == adaptation['originalDeclaration'].replace('public', 'open', 1)
+    for name in ['originalSHA256', 'adaptedSHA256']:
+        assert len(adaptation[name]) == 64 and all(c in '0123456789abcdef' for c in adaptation[name])
     assert policy['profile'] == 'maccompanion.direct-client-development-dependencies.v1'
     assert policy['releaseAdmitted'] is False and policy['vendorPackage'] == VENDOR
     assert policy['resolvedLockfilePath'] == RESOLVED and policy['sourceLockPath'] == 'Native/Terminal/source-lock.json'

@@ -1,4 +1,4 @@
-#if (os(iOS) || os(macOS)) && MACCOMPANION_VNC_DEVELOPMENT
+#if (os(iOS) || os(macOS) || os(visionOS)) && MACCOMPANION_VNC_DEVELOPMENT
 import Foundation
 import Observation
 import Security
@@ -74,11 +74,13 @@ struct DirectCloudKeychain: DirectCloudTransport {
     init(service: String = Self.service) { serviceName = service }
     private func query() throws -> [String: Any] {
         var query: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: serviceName, kSecAttrSynchronizable as String: true]
-        #if os(macOS)
+        #if os(macOS) || os(visionOS)
         guard let group = Bundle.main.object(forInfoDictionaryKey: "MacCompanionSharedKeychainGroup") as? String,
               group.hasSuffix(".media.jenny.maccompanion.ios"), !group.contains("$"),
               group.count > "media.jenny.maccompanion.ios".count + 1 else { throw DirectCloudError.storage }
+        #if os(macOS)
         query[kSecUseDataProtectionKeychain as String] = true
+        #endif
         query[kSecAttrAccessGroup as String] = group
         #endif
         return query

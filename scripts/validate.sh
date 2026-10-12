@@ -5,6 +5,13 @@ set -euo pipefail
 repository_root="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$repository_root"
 
+# A caller may isolate cached compiler inputs without changing the check set.
+maccompanion_validation_scratch_root="${MACCOMPANION_VALIDATION_SCRATCH_ROOT:-/private/tmp}"
+if [[ "$maccompanion_validation_scratch_root" != /* ]]; then
+  echo "MACCOMPANION_VALIDATION_SCRATCH_ROOT must be an absolute path." >&2
+  exit 2
+fi
+
 python3 scripts/validate_fixtures.py
 python3 scripts/verify_vnc_framebuffer_bounds.py
 python3 scripts/verify_vnc_keyboard.py
@@ -13,6 +20,7 @@ python3 scripts/verify_vnc_text.py
 python3 scripts/verify_vnc_direct.py
 python3 scripts/verify_direct_mac_names.py
 python3 scripts/verify_macos_input.py
+python3 scripts/verify_visionos_input.py
 python3 scripts/validate_ci.py
 python3 scripts/validate_open_source_policy.py
 python3 scripts/validate_repository_material.py
@@ -59,7 +67,10 @@ python3 scripts/validate_prephysical_completion_audit.py
 
 swift_arguments=(test --package-path Packages/MacCompanionKit)
 if [[ "${MACCOMPANION_DISABLE_SWIFTPM_SANDBOX:-0}" == "1" ]]; then
-  swift_arguments+=(--disable-sandbox --scratch-path /private/tmp/maccompanion-swift-build)
+  swift_arguments+=(--disable-sandbox)
+fi
+if [[ "${MACCOMPANION_DISABLE_SWIFTPM_SANDBOX:-0}" == "1" || -n "${MACCOMPANION_VALIDATION_SCRATCH_ROOT:-}" ]]; then
+  swift_arguments+=(--scratch-path "$maccompanion_validation_scratch_root/maccompanion-swift-build")
 fi
 # BSD mktemp requires the replacement X run at the end of the template.
 maccompanion_test_log="$(mktemp /private/tmp/maccompanion-tests.XXXXXX)"
@@ -71,7 +82,14 @@ if rg -q 'Some test targets (reported failures|did not run successfully)|✘ Tes
   echo "Swift Testing reported a failure despite the process exit status." >&2
   exit 1
 fi
-swift test --package-path Experiments/LiveControlLab 2>&1 | tee "$maccompanion_test_log"
+lab_arguments=(test --package-path Experiments/LiveControlLab)
+if [[ -n "${MACCOMPANION_VALIDATION_SCRATCH_ROOT:-}" ]]; then
+  lab_arguments+=(--scratch-path "$maccompanion_validation_scratch_root/maccompanion-live-control-lab-build")
+  if [[ "${MACCOMPANION_DISABLE_SWIFTPM_SANDBOX:-0}" == "1" ]]; then
+    lab_arguments+=(--disable-sandbox)
+  fi
+fi
+swift "${lab_arguments[@]}" 2>&1 | tee "$maccompanion_test_log"
 if rg -q 'Some test targets (reported failures|did not run successfully)|✘ Test|Test run with .* failed after' "$maccompanion_test_log"; then
   echo "Lab safety tests reported a failure despite the process exit status." >&2
   exit 1
@@ -85,10 +103,10 @@ network_platform_arguments=(
   --target CompanionNetworkPlatform
 )
 if [[ "${MACCOMPANION_DISABLE_SWIFTPM_SANDBOX:-0}" == "1" ]]; then
-  network_platform_arguments+=(
-    --disable-sandbox
-    --scratch-path /private/tmp/maccompanion-network-platform-build
-  )
+  network_platform_arguments+=(--disable-sandbox)
+fi
+if [[ "${MACCOMPANION_DISABLE_SWIFTPM_SANDBOX:-0}" == "1" || -n "${MACCOMPANION_VALIDATION_SCRATCH_ROOT:-}" ]]; then
+  network_platform_arguments+=(--scratch-path "$maccompanion_validation_scratch_root/maccompanion-network-platform-build")
 fi
 swift "${network_platform_arguments[@]}"
 
@@ -98,10 +116,10 @@ client_network_platform_arguments=(
   --target CompanionClientNetworkPlatform
 )
 if [[ "${MACCOMPANION_DISABLE_SWIFTPM_SANDBOX:-0}" == "1" ]]; then
-  client_network_platform_arguments+=(
-    --disable-sandbox
-    --scratch-path /private/tmp/maccompanion-client-network-platform-build
-  )
+  client_network_platform_arguments+=(--disable-sandbox)
+fi
+if [[ "${MACCOMPANION_DISABLE_SWIFTPM_SANDBOX:-0}" == "1" || -n "${MACCOMPANION_VALIDATION_SCRATCH_ROOT:-}" ]]; then
+  client_network_platform_arguments+=(--scratch-path "$maccompanion_validation_scratch_root/maccompanion-client-network-platform-build")
 fi
 swift "${client_network_platform_arguments[@]}"
 
@@ -112,10 +130,10 @@ ios_client_platform_arguments=(
   --target CompanionClientPlatform
 )
 if [[ "${MACCOMPANION_DISABLE_SWIFTPM_SANDBOX:-0}" == "1" ]]; then
-  ios_client_platform_arguments+=(
-    --disable-sandbox
-    --scratch-path /private/tmp/maccompanion-ios-client-platform-build
-  )
+  ios_client_platform_arguments+=(--disable-sandbox)
+fi
+if [[ "${MACCOMPANION_DISABLE_SWIFTPM_SANDBOX:-0}" == "1" || -n "${MACCOMPANION_VALIDATION_SCRATCH_ROOT:-}" ]]; then
+  ios_client_platform_arguments+=(--scratch-path "$maccompanion_validation_scratch_root/maccompanion-ios-client-platform-build")
 fi
 swift "${ios_client_platform_arguments[@]}"
 
@@ -126,10 +144,10 @@ ios_local_xpc_platform_arguments=(
   --target CompanionLocalXPCPlatform
 )
 if [[ "${MACCOMPANION_DISABLE_SWIFTPM_SANDBOX:-0}" == "1" ]]; then
-  ios_local_xpc_platform_arguments+=(
-    --disable-sandbox
-    --scratch-path /private/tmp/maccompanion-ios-local-xpc-platform-build
-  )
+  ios_local_xpc_platform_arguments+=(--disable-sandbox)
+fi
+if [[ "${MACCOMPANION_DISABLE_SWIFTPM_SANDBOX:-0}" == "1" || -n "${MACCOMPANION_VALIDATION_SCRATCH_ROOT:-}" ]]; then
+  ios_local_xpc_platform_arguments+=(--scratch-path "$maccompanion_validation_scratch_root/maccompanion-ios-local-xpc-platform-build")
 fi
 swift "${ios_local_xpc_platform_arguments[@]}"
 
@@ -140,10 +158,10 @@ ios_client_ui_arguments=(
   --target CompanionClientUI
 )
 if [[ "${MACCOMPANION_DISABLE_SWIFTPM_SANDBOX:-0}" == "1" ]]; then
-  ios_client_ui_arguments+=(
-    --disable-sandbox
-    --scratch-path /private/tmp/maccompanion-ios-client-ui-build
-  )
+  ios_client_ui_arguments+=(--disable-sandbox)
+fi
+if [[ "${MACCOMPANION_DISABLE_SWIFTPM_SANDBOX:-0}" == "1" || -n "${MACCOMPANION_VALIDATION_SCRATCH_ROOT:-}" ]]; then
+  ios_client_ui_arguments+=(--scratch-path "$maccompanion_validation_scratch_root/maccompanion-ios-client-ui-build")
 fi
 swift "${ios_client_ui_arguments[@]}"
 
@@ -153,28 +171,37 @@ mac_ui_arguments=(
   --target CompanionMacUI
 )
 if [[ "${MACCOMPANION_DISABLE_SWIFTPM_SANDBOX:-0}" == "1" ]]; then
-  mac_ui_arguments+=(
-    --disable-sandbox
-    --scratch-path /private/tmp/maccompanion-mac-ui-build
-  )
+  mac_ui_arguments+=(--disable-sandbox)
+fi
+if [[ "${MACCOMPANION_DISABLE_SWIFTPM_SANDBOX:-0}" == "1" || -n "${MACCOMPANION_VALIDATION_SCRATCH_ROOT:-}" ]]; then
+  mac_ui_arguments+=(--scratch-path "$maccompanion_validation_scratch_root/maccompanion-mac-ui-build")
 fi
 swift "${mac_ui_arguments[@]}"
 
 experiment_arguments=(test --package-path Experiments/PlatformAuthorityProbe)
 if [[ "${MACCOMPANION_DISABLE_SWIFTPM_SANDBOX:-0}" == "1" ]]; then
-  experiment_arguments+=(--disable-sandbox --scratch-path /private/tmp/maccompanion-platform-probe-build)
+  experiment_arguments+=(--disable-sandbox)
+fi
+if [[ "${MACCOMPANION_DISABLE_SWIFTPM_SANDBOX:-0}" == "1" || -n "${MACCOMPANION_VALIDATION_SCRATCH_ROOT:-}" ]]; then
+  experiment_arguments+=(--scratch-path "$maccompanion_validation_scratch_root/maccompanion-platform-probe-build")
 fi
 swift "${experiment_arguments[@]}"
 
 discovery_experiment_arguments=(build --package-path Experiments/NetworkDiscoveryProbe)
 if [[ "${MACCOMPANION_DISABLE_SWIFTPM_SANDBOX:-0}" == "1" ]]; then
-  discovery_experiment_arguments+=(--disable-sandbox --scratch-path /private/tmp/maccompanion-network-probe-build)
+  discovery_experiment_arguments+=(--disable-sandbox)
+fi
+if [[ "${MACCOMPANION_DISABLE_SWIFTPM_SANDBOX:-0}" == "1" || -n "${MACCOMPANION_VALIDATION_SCRATCH_ROOT:-}" ]]; then
+  discovery_experiment_arguments+=(--scratch-path "$maccompanion_validation_scratch_root/maccompanion-network-probe-build")
 fi
 swift "${discovery_experiment_arguments[@]}"
 
 tls_experiment_arguments=(build --package-path Experiments/NetworkTLSProbe)
 if [[ "${MACCOMPANION_DISABLE_SWIFTPM_SANDBOX:-0}" == "1" ]]; then
-  tls_experiment_arguments+=(--disable-sandbox --scratch-path /private/tmp/maccompanion-tls-probe-build)
+  tls_experiment_arguments+=(--disable-sandbox)
+fi
+if [[ "${MACCOMPANION_DISABLE_SWIFTPM_SANDBOX:-0}" == "1" || -n "${MACCOMPANION_VALIDATION_SCRATCH_ROOT:-}" ]]; then
+  tls_experiment_arguments+=(--scratch-path "$maccompanion_validation_scratch_root/maccompanion-tls-probe-build")
 fi
 swift "${tls_experiment_arguments[@]}"
 
