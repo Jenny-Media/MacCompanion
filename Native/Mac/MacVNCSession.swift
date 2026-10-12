@@ -27,18 +27,24 @@ struct MacVNCDisplay: Identifiable {
     private var transport: CompanionVNCSession?
     private var generation = UUID()
     private var closed = false
+    private(set) var macRemoved = false
+    @ObservationIgnored private var removalObserver: DirectMacRemovalObservation?
     private var pendingLogin: DesktopCredentialStoreV1.Login?
     private let removeSavedLogin: (UUID) throws -> Void
     private let makeTransport: () -> CompanionVNCSession
     private let canAccess: () -> Bool
     init(mac: DirectMacRecordV1, removeSavedLogin: @escaping (UUID) throws -> Void = DesktopCredentialStoreV1.remove,
          makeTransport: @escaping () -> CompanionVNCSession = { CompanionVNCSession() },
-         canAccess: @escaping () -> Bool = { DirectAppLockV1.shared.canAccess }) {
+         canAccess: @escaping () -> Bool = { DirectAppLockV1.shared.canAccess }, libraryURL: URL = DirectMacLibraryV1.defaultURL) {
         self.mac = mac
         self.removeSavedLogin = removeSavedLogin
         self.makeTransport = makeTransport
         self.canAccess = canAccess
         selectedID = VNCSessionPreferences.display(mac.id)?.uint32Value
+        removalObserver = DirectMacRemovalObservation(macID: mac.id, libraryURL: libraryURL) { [weak self] in
+            guard let self else { return }
+            self.macRemoved = true; self.close()
+        }
     }
     var canInput: Bool { connected && !closed && canAccess() && transport?.connected == true }
     var crop: CGRect {

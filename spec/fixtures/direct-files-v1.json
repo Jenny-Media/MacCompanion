@@ -756,6 +756,105 @@
       "account": "saved",
       "remember": true,
       "reads": 0
+    },
+    {
+      "id": "saved-password-write-failure",
+      "events": [
+        "initialize",
+        "begin-password-auth",
+        "fail-password-save",
+        "active",
+        "suspend",
+        "active"
+      ],
+      "password": "saved",
+      "account": "saved",
+      "remember": true,
+      "reads": 2
+    },
+    {
+      "id": "hidden-saved-password-write-failure",
+      "events": [
+        "initialize",
+        "begin-password-auth",
+        "suspend",
+        "fail-password-save",
+        "active"
+      ],
+      "password": "saved",
+      "account": "saved",
+      "remember": true,
+      "reads": 1
+    },
+    {
+      "id": "edited-password-write-failure",
+      "events": [
+        "initialize",
+        "edit-password",
+        "begin-password-auth",
+        "fail-password-save",
+        "active"
+      ],
+      "password": "empty",
+      "account": "saved",
+      "remember": true,
+      "reads": 0
+    },
+    {
+      "id": "hidden-edited-password-write-failure",
+      "events": [
+        "initialize",
+        "edit-password",
+        "begin-password-auth",
+        "suspend",
+        "fail-password-save",
+        "active"
+      ],
+      "password": "empty",
+      "account": "saved",
+      "remember": true,
+      "reads": 0
+    },
+    {
+      "id": "forgotten-password-after-write-failure",
+      "events": [
+        "initialize",
+        "begin-password-auth",
+        "fail-password-save",
+        "forget",
+        "active"
+      ],
+      "password": "empty",
+      "account": "saved",
+      "remember": true,
+      "reads": 1
+    },
+    {
+      "id": "newer-edit-survives-write-failure",
+      "events": [
+        "initialize",
+        "begin-password-auth",
+        "edit-password",
+        "fail-password-save"
+      ],
+      "password": "edited",
+      "account": "saved",
+      "remember": true,
+      "reads": 0
+    },
+    {
+      "id": "mac-removal-invalidates-late-save",
+      "events": [
+        "initialize",
+        "begin-password-auth",
+        "remove-mac",
+        "finish-password-auth",
+        "active"
+      ],
+      "password": "empty",
+      "account": "empty",
+      "remember": false,
+      "reads": 0
     }
   ]
 }

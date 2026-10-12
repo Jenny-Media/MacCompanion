@@ -43,9 +43,11 @@ struct DirectTerminalView: View {
         !username.isEmpty && username.utf8.count <= 255 && !username.contains("\0") &&
         (useKey ? key != nil : !password.isEmpty && password.utf8.count <= 4096 && !password.contains("\0"))
     }
-    init(mac: DirectMacRecordV1, macLibrary: DirectMacLibraryV1? = nil, session: DirectTerminalSession? = nil, autoConnect: Bool = true, exit: @escaping @MainActor () -> Void) {
-        self.macLibrary = macLibrary; self.exit = exit; _session = State(initialValue: session ?? DirectTerminalSession(mac: mac))
-        _files = State(initialValue: DirectFilesSession(mac: mac))
+    init(mac: DirectMacRecordV1, macLibrary: DirectMacLibraryV1? = nil, session: DirectTerminalSession? = nil, files: DirectFilesSession? = nil, autoConnect: Bool = true, exit: @escaping @MainActor () -> Void) {
+        self.macLibrary = macLibrary; self.exit = exit
+        let libraryURL = macLibrary?.storageURL ?? DirectMacLibraryV1.defaultURL
+        _session = State(initialValue: session ?? DirectTerminalSession(mac: mac, libraryURL: libraryURL))
+        _files = State(initialValue: files ?? DirectFilesSession(mac: mac, libraryURL: libraryURL))
         self.autoConnect = autoConnect
     }
     private func connect() {
@@ -121,6 +123,9 @@ struct DirectTerminalView: View {
                         primary: .init(title: "Keyboard Settings", perform: { sheet = .keyboard }),
                         secondary: .init(title: "Use Standard Controls", perform: { session.controlsRecovery = nil })).padding(12); Spacer() }
                 }
+                if session.macRemoved, files.hasUnsavedDownloads {
+                    DirectFilesView(mac: mac, session: files, closeOwnerWindow: exit)
+                }
             }
             .toolbar(.hidden, for: .navigationBar)
             .sheet(item: $sheet, onDismiss: { if let updated = macLibrary?.macs.first(where: { $0.id == mac.id }) { session.updateMac(updated) } }) { destination in
@@ -156,6 +161,10 @@ struct DirectTerminalView: View {
         }
         .onDisappear { files.close(); session.stop() }
         .onChange(of: session.completedNormally) { _, _ in returnAfterNormalExit() }
+        .onChange(of: session.macRemoved) { _, removed in
+            if removed { sheet = nil; password = ""; key = nil; if !files.hasUnsavedDownloads { exit() } }
+        }
+        .onChange(of: files.shouldCloseAfterRemoval) { _, close in if close { exit() } }
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.willResignActiveNotification)) { _ in session.background() }
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in returnAfterNormalExit(); session.foreground() }
         .onReceive(NotificationCenter.default.publisher(for: DirectAppLockV1.unlocked)) { _ in returnAfterNormalExit(); session.foreground() }

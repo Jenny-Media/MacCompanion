@@ -20,6 +20,30 @@ private struct FilesTestWindowRoot: View {
 }
 
 @MainActor final class DirectFilesIntegrationTests: XCTestCase {
+    func testRemovalClosesDesktopAndTerminalWindowsWithoutClosingAnotherMac() async throws {
+        for synced in [false, true] {
+            let root = try DirectFilesLocalStore.root(); defer { try? FileManager.default.removeItem(at: root) }
+            let url = root.appendingPathComponent("library.json")
+            let library = DirectMacLibraryV1(url: url, removeLogin: { _ in })
+            let mac = DirectMacRecordV1(id: UUID(), name: "Synthetic Removed Window", addresses: ["fixture.local"])
+            let other = DirectMacRecordV1(id: UUID(), name: "Synthetic Kept Window", addresses: ["other.local"])
+            XCTAssertTrue(library.save(id: mac.id, name: mac.name, addresses: mac.addresses))
+            XCTAssertTrue(library.save(id: other.id, name: other.name, addresses: other.addresses))
+            func mount(_ view: some View) -> NSWindow {
+                let window = NSWindow(contentRect: .init(x: -20000, y: -20000, width: 720, height: 640), styleMask: [.titled], backing: .buffered, defer: false)
+                window.isReleasedWhenClosed = false; window.contentView = NSHostingView(rootView: view); window.orderFront(nil)
+                return window
+            }
+            let desktop = mount(MacDirectDesktopView(mac: mac, libraryURL: url))
+            let terminal = mount(MacDirectTerminalView(mac: mac, libraryURL: url))
+            let kept = mount(MacDirectDesktopView(mac: other, libraryURL: url))
+            defer { for window in [desktop, terminal, kept] { window.contentView = nil; window.close() } }
+            try await Task.sleep(for: .milliseconds(200))
+            if synced { try library.applyCloud([other]) } else { library.remove(mac) }
+            try await wait { !desktop.isVisible && !terminal.isVisible }
+            XCTAssertTrue(kept.isVisible)
+        }
+    }
     private func wait(_ predicate: () -> Bool, seconds: Double = 10) async throws {
         let deadline = Date().addingTimeInterval(seconds)
         while !predicate() {
@@ -367,7 +391,7 @@ private struct FilesTestWindowRoot: View {
             let mac = DirectMacRecordV1(id: UUID(), name: "Synthetic Removed Mac", addresses: ["127.0.0.1"], sshPort: try XCTUnwrap(server.localAddress?.port))
             let library = DirectMacLibraryV1(url: root.appendingPathComponent("library.json"), removeLogin: { _ in })
             XCTAssertTrue(library.save(id: mac.id, name: mac.name, addresses: mac.addresses, sshPort: mac.sshPort))
-            let owner = DirectFilesSession(mac: mac); defer { owner.close(); try? TerminalSecretStore.remove(mac.id) }
+            let owner = DirectFilesSession(mac: mac, libraryURL: root.appendingPathComponent("library.json")); defer { owner.close(); try? TerminalSecretStore.remove(mac.id) }
             try await open(owner)
             owner.download(try XCTUnwrap(owner.directory?.entries.first { $0.name == "pending.txt" })); try await wait { !owner.busy }
             let download = try XCTUnwrap(owner.results.first?.localDownload)
@@ -379,10 +403,14 @@ private struct FilesTestWindowRoot: View {
             if synced { try library.applyCloud([]) } else { library.remove(mac) }
             XCTAssertTrue(library.macs.isEmpty)
             try await Task.sleep(for: .milliseconds(250)); host.layoutSubtreeIfNeeded()
-            XCTAssertEqual(owner.phase, .ready)
+            XCTAssertEqual(owner.phase, .interrupted)
+            XCTAssertTrue(owner.macRemoved); XCTAssertFalse(owner.isClosed)
             XCTAssertTrue(owner.hasPendingResults)
             XCTAssertEqual(owner.mac.name, mac.name)
             XCTAssertEqual(try Data(contentsOf: download), bytes)
+            owner.connect(username: "synthetic", password: "synthetic-only", key: nil, remember: true)
+            XCTAssertEqual(owner.phase, .interrupted, "Removed owners cannot reconnect, regardless of Pro")
+            XCTAssertEqual(owner.loginDraft.password, "")
             // Only an explicit confirmed close releases this owner's result.
             XCTAssertTrue(owner.confirmExit(.close, retainWhenDismissed: false))
             XCTAssertFalse(FileManager.default.fileExists(atPath: download.path))

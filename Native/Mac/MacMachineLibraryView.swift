@@ -118,6 +118,8 @@ struct MacMachineLibraryView: View {
         }
         .confirmationDialog("Remove this Mac and its local saved login?", isPresented: Binding(get: { removing != nil }, set: { if !$0 { removing = nil } }), titleVisibility: .visible) {
             Button("Remove Mac", role: .destructive) { if DirectAppLockV1.shared.canAccess, let removing { library.remove(removing) }; removing = nil }
+        } message: {
+            Text("Related sessions will close and transfers will stop. Unsaved downloads stay available until you save or discard them.")
         }
         .onChange(of: DirectAppLockV1.shared.canAccess) { _, allowed in
             if !allowed { sheet = nil; removing = nil }
@@ -138,6 +140,7 @@ struct MacMachineLibraryView: View {
         Task {
             if !DirectProAccess.shared.ready { await DirectProAccess.shared.refresh() }
             guard DirectAppLockV1.shared.canAccess else { return }
+            guard library.macs.contains(where: { $0.id == mac.id }) else { return }
             guard DirectProAccess.shared.canUseMac(mac.id, among: library.macs.map(\.id)) else { sheet = .pro; return }
             openWindow(id: "direct-session", value: MacSessionRequest(macID: mac.id, mode: mode))
         }
@@ -150,6 +153,7 @@ struct MacSessionWindow: View {
     @State private var mac: DirectMacRecordV1?
     @State private var admitted = false
     @State private var pro = false
+    @State private var window = MacWindowHandle()
     init(request: MacSessionRequest, library: DirectMacLibraryV1) {
         self.request = request; self.library = library
         _mac = State(initialValue: library.macs.first { $0.id == request.macID })
@@ -157,8 +161,8 @@ struct MacSessionWindow: View {
     var body: some View {
         Group {
             if let mac, admitted {
-                if request.mode == .terminal { MacDirectTerminalView(mac: mac, sessionID: request.id) }
-                else { MacDirectDesktopView(mac: mac, sessionID: request.id) }
+                if request.mode == .terminal { MacDirectTerminalView(mac: mac, sessionID: request.id, libraryURL: library.storageURL) }
+                else { MacDirectDesktopView(mac: mac, sessionID: request.id, libraryURL: library.storageURL) }
             } else if mac != nil {
                 ContentUnavailableView { Label("Open this Mac", systemImage: "desktopcomputer") }
                     description: { Text("Choose this Mac as your free Mac in My Macs, or use Pro to connect to all your saved Macs.") }
@@ -174,10 +178,17 @@ struct MacSessionWindow: View {
                 DirectProView().frame(minWidth: 480, minHeight: 460).modifier(MacSheetPrivacyCover())
             }
             .onChange(of: DirectAppLockV1.shared.canAccess) { _, allowed in if !allowed { pro = false } }
+            .background(MacWindowReader(handle: window).frame(width: 0, height: 0))
+            .onChange(of: library.macs.map(\.id)) { _, _ in closeIfRemoved() }
+            .onChange(of: window.window != nil) { _, _ in closeIfRemoved() }
+    }
+    private func closeIfRemoved() {
+        if mac != nil, !library.macs.contains(where: { $0.id == request.macID }) { pro = false; window.window?.close() }
     }
     private func admit() async {
         guard !admitted else { return }
         if !DirectProAccess.shared.ready { await DirectProAccess.shared.refresh() }
+        guard library.macs.contains(where: { $0.id == request.macID }) else { closeIfRemoved(); return }
         admitted = DirectProAccess.shared.canUseMac(request.macID, among: library.macs.map(\.id))
     }
 }

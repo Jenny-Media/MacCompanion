@@ -37,6 +37,7 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
         var needsAttention: Bool { outcome != .completed || (localDownload != nil && !saved) }
     }
     let mac: DirectMacRecordV1
+    let libraryURL: URL
     var loginDraft = DirectFilesLoginDraft()
     private(set) var account = ""
     private(set) var phase: Phase = .signIn
@@ -66,18 +67,27 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
     @ObservationIgnored private var backgroundObserver: DirectFilesBackgroundObservation?
     private var closed = false
     var isClosed: Bool { closed }
+    private(set) var macRemoved = false
+    var shouldCloseAfterRemoval: Bool { macRemoved && !hasUnsavedDownloads }
+    @ObservationIgnored private var removalObserver: DirectMacRemovalObservation?
     private let canAccess: @MainActor () -> Bool
+    private let saveLogin: @MainActor (TerminalSecretStore.Login, UUID) throws -> Void
     private let idleTimeout: Duration
-    init(mac: DirectMacRecordV1, canAccess: @escaping @MainActor () -> Bool = { DirectAppLockV1.shared.canAccess }, idleTimeout: Duration = .seconds(30)) {
+    init(mac: DirectMacRecordV1, canAccess: @escaping @MainActor () -> Bool = { DirectAppLockV1.shared.canAccess }, idleTimeout: Duration = .seconds(30),
+         libraryURL: URL = DirectMacLibraryV1.defaultURL,
+         saveLogin: @escaping @MainActor (TerminalSecretStore.Login, UUID) throws -> Void = TerminalSecretStore.save) {
         precondition(idleTimeout > .zero)
         self.mac = mac; self.canAccess = canAccess; self.idleTimeout = idleTimeout
+        self.libraryURL = libraryURL
+        self.saveLogin = saveLogin
+        removalObserver = DirectMacRemovalObservation(macID: mac.id, libraryURL: libraryURL) { [weak self] in self?.removedFromLibrary() }
     }
     private func observeLifecycle() {
         guard backgroundObserver == nil else { return }
         observeAccess()
         backgroundObserver = DirectFilesBackgroundObservation { [weak self] _ in
             MainActor.assumeIsolated {
-                guard let self, !self.closed else { return }
+                guard let self, !self.closed, !self.macRemoved else { return }
                 self.loginDraft.suspend()
                 self.disconnect(message: "Files paused. Reconnect, then Retry any interrupted transfer.")
             }
@@ -88,7 +98,7 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
         // while unlock is disabled, so enabling it also retires a hidden owner.
         withObservationTracking { _ = DirectAppLockV1.shared.allowed; _ = canAccess() } onChange: { [weak self] in
             Task { @MainActor in
-                guard let self, !self.closed else { return }
+                guard let self, !self.closed, !self.macRemoved else { return }
                 if !self.canAccess() {
                     self.loginDraft.suspend()
                     self.disconnect(message: "Files stopped when the app locked. Reconnect after unlocking.")
@@ -108,7 +118,7 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
         return status
     }
     private func check(_ token: UUID, _ job: UUID? = nil) throws {
-        guard !closed, generation == token, job == nil || operation == job, canAccess(), !Task.isCancelled else { throw CancellationError() }
+        guard !closed, !macRemoved, generation == token, job == nil || operation == job, canAccess(), !Task.isCancelled else { throw CancellationError() }
     }
     private func armDeadline(after delay: Duration? = nil) {
         deadline?.cancel(); let token = generation, job = operation
@@ -125,7 +135,7 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
         armDeadline()
     }
     func connect(username: String, password: String, key: TerminalSSHKey?, remember: Bool, keyFileID: UUID? = nil) {
-        guard !closed, canAccess(), !busy, phase != .ready else { return }
+        guard !closed, !macRemoved, canAccess(), !busy, phase != .ready else { return }
         guard !username.isEmpty, username.utf8.count <= 255, !username.contains("\0"),
               (key != nil || !password.isEmpty), password.utf8.count <= 4096, !password.contains("\0") else {
             message = "Enter a Mac account and password, or choose its SSH key."; return
@@ -155,7 +165,7 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
                 authentication = { .passwordBased(username: username, password: password) }
             }
         } catch { message = "The SSH key could not be read."; return }
-        let passwordAttempt = key == nil ? loginDraft.passwordAttempt(account: username, password: password, remember: remember) : nil
+        let attempt = loginDraft.authenticationAttempt(account: username, password: key == nil ? password : nil, remember: remember)
         observeLifecycle()
         retire(); let token = generation, owner = TerminalSocketOwner(); socket = owner
         phase = .connecting; busy = true; account = username; message = nil; status = "Contacting Remote Login…"; armDeadline(after: .seconds(60))
@@ -211,7 +221,7 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
                 let store = DirectFilesSFTPStore(client: client); self.store = store
                 let directory = try await store.directory("."); try check(token)
                 // Reuse existing Terminal retention. No Desktop credentials are read.
-                var savedLogin: TerminalSecretStore.Login?
+                var retention = DirectFilesLoginDraft.PasswordRetention.notRequested
                 do { if keyFileID != nil {
                     #if os(macOS)
                     if let keyFileSelection { try MacSSHKeyFileStore.rememberAccount(username, selection: keyFileSelection) }
@@ -220,12 +230,11 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
                     try TerminalKeyLibraryStore.rememberAccount(username, macID: mac.id, selection: namedSelection)
                 } else if remember && key == nil {
                     let login = TerminalSecretStore.Login(username: username, password: password)
-                    try TerminalSecretStore.save(login, id: mac.id)
-                    savedLogin = login
+                    do { try saveLogin(login, mac.id); retention = .saved }
+                    catch { retention = .failed; throw error }
                 }
                 } catch { self.message = "Connected. The SSH login could not be saved on this device." }
-                loginDraft.connected(account: username, saved: savedLogin, attempt: passwordAttempt,
-                                     authenticatedPassword: passwordAttempt == nil ? nil : password)
+                loginDraft.authenticationSucceeded(attempt, retention: retention)
                 self.directory = directory; self.home = directory.path
                 self.deadline?.cancel(); self.busy = false; self.phase = .ready; self.status = "Ready"
                 channel.closeFuture.whenComplete { [weak self] _ in
@@ -457,11 +466,22 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
     }
     func close() {
         closed = true
-        loginDraft = DirectFilesLoginDraft(); loginDraft.suspend()
+        loginDraft.invalidate()
         backgroundObserver = nil
+        removalObserver = nil
         disconnect()
         directory = nil; results = []; resultsAccount = ""; account = ""; home = ""
         if let temporaryRoot { try? FileManager.default.removeItem(at: temporaryRoot) }; temporaryRoot = nil
+    }
+    private func removedFromLibrary() {
+        guard !closed, !macRemoved else { return }
+        macRemoved = true
+        backgroundObserver = nil
+        removalObserver = nil
+        loginDraft.invalidate()
+        disconnect(message: "This Mac was removed. Save or discard your downloads to close Files.")
+        directory = nil
+        if !hasUnsavedDownloads { close() }
     }
 }
 #endif

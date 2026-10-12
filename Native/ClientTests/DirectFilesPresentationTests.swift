@@ -16,6 +16,146 @@ import AppKit
 }
 
 @MainActor final class DirectFilesPresentationTests: XCTestCase {
+    func testRemovedMacRetainsDownloadsUntilSaveOrDiscardAndThenClosesPresentation() async throws {
+        #if os(iOS)
+        let origins = ["files", "terminal", "desktop", "trackpad"]
+        #else
+        let origins = ["files"]
+        #endif
+        for origin in origins {
+            for save in [false, true] {
+                let root = try DirectFilesLocalStore.root(); defer { try? FileManager.default.removeItem(at: root) }
+                let url = root.appendingPathComponent("library.json")
+                let library = DirectMacLibraryV1(url: url, removeLogin: { _ in })
+                let probe = FilesDirectoryTestProbe(), bytes = Data([1, 2, 3])
+                let server = try await filesDirectoryTestServer(probe: probe, downloadBytes: bytes)
+                defer { Task { await probe.shutdown(); try? await server.close() } }
+                let mac = DirectMacRecordV1(id: UUID(), name: "Synthetic Download Recovery", addresses: ["127.0.0.1"], sshPort: try XCTUnwrap(server.localAddress?.port))
+                XCTAssertTrue(library.save(id: mac.id, name: mac.name, addresses: mac.addresses, sshPort: mac.sshPort))
+                let owner = DirectFilesSession(mac: mac, libraryURL: url)
+                defer { owner.close(); try? TerminalSecretStore.remove(mac.id) }
+                var dismissals = 0
+                let exit: @MainActor () -> Void = { dismissals += 1 }
+                var view = AnyView(DirectFilesView(mac: mac, session: owner, retainWhenDismissed: true, closeOwnerWindow: exit))
+                #if os(iOS)
+                if origin == "terminal" { view = AnyView(DirectTerminalView(mac: mac, macLibrary: library, files: owner, autoConnect: false, exit: exit)) }
+                if origin == "desktop" || origin == "trackpad" { view = AnyView(DirectDesktopSessionView(mac: mac, inputOnly: origin == "trackpad", files: owner, showMacs: exit)) }
+                #endif
+                let presentation = try FilesMountedPresentation(view.directAppearance()); defer { presentation.close() }
+                owner.connect(username: "synthetic", password: "synthetic-only", key: nil, remember: false)
+                try await presentation.wait { owner.trust != nil || owner.phase == .interrupted }
+                owner.answerTrust(true)
+                try await presentation.wait { owner.phase == .ready || owner.phase == .interrupted }
+                XCTAssertEqual(owner.phase, .ready)
+                owner.download(.init(name: "pending.txt", kind: .file, size: UInt64(bytes.count)))
+                try await presentation.wait { !owner.busy }
+                let item = try XCTUnwrap(owner.results.first), download = try XCTUnwrap(item.localDownload)
+                // Sync can remove a Mac while its retained Files sheet is hidden.
+                try library.applyCloud([])
+                try await Task.sleep(for: .milliseconds(200)); presentation.layout()
+                XCTAssertTrue(owner.macRemoved); XCTAssertFalse(owner.isClosed)
+                XCTAssertEqual(dismissals, 0, origin)
+                XCTAssertEqual(try Data(contentsOf: download), bytes)
+                XCTAssertEqual(owner.loginDraft.password, "")
+                if save {
+                    let exported = root.appendingPathComponent("exported.txt")
+                    try FileManager.default.copyItem(at: download, to: exported)
+                    owner.markSaved(item.id) // Native chooser reports successful export.
+                    try await presentation.wait { dismissals > 0 }
+                    owner.close()
+                    XCTAssertEqual(try Data(contentsOf: exported), bytes)
+                } else {
+                    owner.discardResults()
+                    try await presentation.wait { dismissals > 0 }
+                }
+                XCTAssertFalse(FileManager.default.fileExists(atPath: download.path))
+            }
+        }
+    }
+    func testCredentialWriteFailurePreservesOnlyAnAlreadySavedPasswordAcrossPresentation() async throws {
+        for hidden in [false, true] {
+            for edited in [false, true] {
+                let probe = FilesDirectoryTestProbe()
+                let server = try await filesDirectoryTestServer(probe: probe)
+                defer { Task { await probe.shutdown(); try? await server.close() } }
+                let mac = DirectMacRecordV1(id: UUID(), name: "Synthetic Retention Failure", addresses: ["127.0.0.1"], sshPort: try XCTUnwrap(server.localAddress?.port))
+                let savedPassword = edited ? "synthetic-old-password" : "synthetic-only"
+                try TerminalSecretStore.save(.init(username: "synthetic", password: savedPassword), id: mac.id)
+                var writes = 0
+                let session = DirectFilesSession(mac: mac, saveLogin: { _, _ in writes += 1; throw TerminalSecretStore.Failure.storage })
+                defer { session.close(); try? TerminalSecretStore.remove(mac.id) }
+                func view() -> DirectFilesView {
+                    var view = DirectFilesView(mac: mac, session: session, retainWhenDismissed: true)
+                    view.sessionAvailable = { true }
+                    return view
+                }
+                let presentation = try FilesMountedPresentation(view()); defer { presentation.close() }
+                try await presentation.wait { presentation.values().1 == savedPassword }
+                if edited { try presentation.edit("synthetic", "synthetic-only") }
+                session.connect(username: "synthetic", password: "synthetic-only", key: nil, remember: true)
+                try await presentation.wait { session.trust != nil || session.phase == .interrupted }
+                XCTAssertNotNil(session.trust)
+                if hidden { presentation.hide(); try await presentation.wait { session.loginDraft.isSuspended } }
+                session.answerTrust(true)
+                try await presentation.wait { session.phase == .ready || session.phase == .interrupted }
+                XCTAssertEqual(session.phase, .ready, session.message ?? "")
+                XCTAssertEqual(writes, 1)
+                XCTAssertEqual(try TerminalSecretStore.login(mac.id)?.password, savedPassword)
+                XCTAssertEqual(session.loginDraft.password, "")
+                if hidden { presentation.mount(view()); try await presentation.wait { !session.loginDraft.isSuspended } }
+                session.disconnect()
+                try await presentation.wait { presentation.values().0 != nil }
+                XCTAssertEqual(presentation.values().1, edited ? "" : savedPassword,
+                               "Failed saving must neither forget an already saved password nor resurrect an older password after an edit")
+                XCTAssertTrue(session.loginDraft.remember)
+                XCTAssertEqual(session.phase, .interrupted, "No automatic reconnect")
+            }
+        }
+    }
+    func testRemovalClosesAllMatchingOwnersAndCancelsPendingAuthentication() async throws {
+        for synced in [false, true] {
+            let root = try DirectFilesLocalStore.root(); defer { try? FileManager.default.removeItem(at: root) }
+            let url = root.appendingPathComponent("library.json")
+            let library = DirectMacLibraryV1(url: url, removeLogin: { _ in })
+            let probe = FilesDirectoryTestProbe()
+            let server = try await filesDirectoryTestServer(probe: probe)
+            defer { Task { await probe.shutdown(); try? await server.close() } }
+            let mac = DirectMacRecordV1(id: UUID(), name: "Synthetic Removed Owners", addresses: ["127.0.0.1"], sshPort: try XCTUnwrap(server.localAddress?.port))
+            XCTAssertTrue(library.save(id: mac.id, name: mac.name, addresses: mac.addresses, sshPort: mac.sshPort))
+            var writes = 0, dismissals = 0
+            let first = DirectFilesSession(mac: mac, libraryURL: url, saveLogin: { _, _ in writes += 1 })
+            let second = DirectFilesSession(mac: mac, libraryURL: url)
+            let other = DirectFilesSession(mac: .init(id: UUID(), name: "Synthetic Other Mac", addresses: ["fixture.local"]), libraryURL: url)
+            let otherLibrary = DirectFilesSession(mac: mac, libraryURL: root.appendingPathComponent("other.json"))
+            let terminal = DirectTerminalSession(mac: mac, libraryURL: url)
+            defer { first.close(); second.close(); other.close(); otherLibrary.close(); terminal.stop(); try? TerminalSecretStore.remove(mac.id) }
+            #if os(macOS)
+            let desktop = MacVNCSession(mac: mac, libraryURL: url); defer { desktop.close() }
+            #endif
+            let presentation = try FilesMountedPresentation(DirectFilesView(mac: mac, session: first, retainWhenDismissed: true, closeOwnerWindow: { dismissals += 1 }))
+            defer { presentation.close() }
+            try await presentation.wait { presentation.values().0 != nil }
+            try presentation.edit("synthetic", "synthetic-only"); first.loginDraft.remember = true
+            first.connect(username: "synthetic", password: "synthetic-only", key: nil, remember: true)
+            try await presentation.wait { first.trust != nil }
+            if synced { try library.applyCloud([]) } else { library.remove(mac) }
+            XCTAssertTrue(first.isClosed); XCTAssertTrue(second.isClosed)
+            XCTAssertTrue(terminal.macRemoved); XCTAssertFalse(terminal.connecting)
+            #if os(macOS)
+            XCTAssertTrue(desktop.macRemoved)
+            desktop.connect(username: "synthetic", password: "synthetic-only", remember: true)
+            XCTAssertFalse(desktop.connecting)
+            #endif
+            XCTAssertFalse(other.macRemoved); XCTAssertFalse(otherLibrary.macRemoved)
+            first.answerTrust(true)
+            first.connect(username: "synthetic", password: "synthetic-only", key: nil, remember: true)
+            terminal.connect(username: "synthetic", password: "synthetic-only", remember: true)
+            try await presentation.wait { dismissals > 0 }
+            XCTAssertEqual(writes, 0, "A removed owner's authentication cannot recreate a saved login")
+            XCTAssertFalse(terminal.connecting); XCTAssertEqual(first.loginDraft.password, "")
+            XCTAssertNil(try TerminalSecretStore.login(mac.id))
+        }
+    }
     func testRetainedFilesRemountPreservesAccountMethodAndSaveChoice() async throws {
         let mac = DirectMacRecordV1(id: UUID(), name: "Synthetic Retained Draft", addresses: ["127.0.0.1"])
         try TerminalSecretStore.save(.init(username: "synthetic", password: "synthetic-only"), id: mac.id)
@@ -543,13 +683,13 @@ import AppKit
     #if os(iOS)
     private let window: UIWindow
     private let previous: UIWindow?
-    init(_ view: DirectFilesView) throws {
+    init(_ view: some View) throws {
         let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
         previous = scene.windows.first { $0.isKeyWindow }
         window = UIWindow(windowScene: scene); window.frame = .init(x: 0, y: 0, width: 390, height: 844)
         mount(view); window.makeKeyAndVisible()
     }
-    func mount(_ view: DirectFilesView) { window.rootViewController = UIHostingController(rootView: view) }
+    func mount(_ view: some View) { window.rootViewController = UIHostingController(rootView: view) }
     func hide() { window.endEditing(true); window.rootViewController = nil }
     func close() { hide(); window.isHidden = true; previous?.makeKeyAndVisible() }
     func layout() { window.layoutIfNeeded() }
@@ -565,11 +705,11 @@ import AppKit
     }
     #else
     private let window: NSWindow
-    init(_ view: DirectFilesView) throws {
+    init(_ view: some View) throws {
         window = NSWindow(contentRect: .init(x: -20000, y: -20000, width: 720, height: 640), styleMask: [.titled], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false; mount(view); window.orderFront(nil)
     }
-    func mount(_ view: DirectFilesView) { window.contentView = NSHostingView(rootView: view) }
+    func mount(_ view: some View) { window.contentView = NSHostingView(rootView: view) }
     func hide() { window.makeFirstResponder(nil); window.contentView = nil }
     func close() { hide(); window.close() }
     func layout() { window.contentView?.layoutSubtreeIfNeeded() }

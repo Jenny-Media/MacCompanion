@@ -23,9 +23,14 @@ import Foundation
         let id: UUID
         let fingerprint: String
     }
-    struct PasswordAttempt {
+    /// No secret is retained in an attempt across suspension or authentication.
+    struct AuthenticationAttempt {
+        fileprivate enum Source { case savedPassword, editedPassword, key }
         fileprivate let revision: UUID
+        fileprivate let account: String
+        fileprivate let source: Source
     }
+    enum PasswordRetention { case notRequested, saved, failed }
     private enum KeySnapshot: Equatable {
         case unknown, none, named(NamedKeyIdentity), file
     }
@@ -110,10 +115,17 @@ import Foundation
         return true
     }
     #endif
-    func passwordAttempt(account: String, password: String, remember: Bool) -> PasswordAttempt? {
-        guard selection.method == .password, selection.username == account,
+    func authenticationAttempt(account: String, password: String?, remember: Bool) -> AuthenticationAttempt? {
+        guard selection.username == account else { return nil }
+        guard let password else {
+            return selection.method == .sshKey ? .init(revision: revision, account: account, source: .key) : nil
+        }
+        guard selection.method == .password, !password.isEmpty,
               secret.value == password, savesLogin == remember else { return nil }
-        return .init(revision: revision)
+        let source: AuthenticationAttempt.Source
+        if case .saved(let savedAccount, _) = secret, savedAccount == account { source = .savedPassword }
+        else { source = .editedPassword }
+        return .init(revision: revision, account: account, source: source)
     }
 
     mutating func suspend() {
@@ -126,16 +138,19 @@ import Foundation
         clearSecrets(restoring: account)
     }
     mutating func resume() { visibility = .active }
-    mutating func connected(account: String, saved: TerminalSecretStore.Login?,
-                            attempt: PasswordAttempt? = nil, authenticatedPassword: String? = nil) {
-        // A hidden presentation has cleared the visible secret. Its unchanged
-        // authentication attempt may establish restoration after a verified save.
-        if let attempt, attempt.revision != revision { return }
-        // A newly edited password is restorable only after that exact login
-        // reached storage. A failed save cannot resurrect an older password.
-        let remembered = savesLogin && selection.method == .password && selection.username == account &&
-            saved?.username == account && saved?.password == (attempt == nil ? secret.value : authenticatedPassword)
-        clearSecrets(restoring: remembered ? account : nil)
+    mutating func authenticationSucceeded(_ attempt: AuthenticationAttempt?, retention: PasswordRetention) {
+        guard let attempt, attempt.revision == revision, attempt.account == selection.username else { return }
+        // Successful authentication does not prove a write succeeded. A failed
+        // redundant write preserves the provenance of an already saved login;
+        // an edited secret requires successful retention by this exact attempt.
+        let restorable = attempt.source != .key && savesLogin && selection.method == .password &&
+            (retention == .saved || (retention == .failed && attempt.source == .savedPassword))
+        clearSecrets(restoring: restorable ? attempt.account : nil)
+    }
+    mutating func invalidate() {
+        self = Self()
+        initialization = .complete
+        visibility = .suspended
     }
     mutating func restorePassword(active: Bool, allowed: Bool, signIn: Bool,
                                   read: () throws -> TerminalSecretStore.Login?) rethrows {

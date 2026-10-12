@@ -64,9 +64,11 @@ private final class FilesDirectoryTestHandler: ChannelInboundHandler, @unchecked
     let plan: FilesDirectoryTestPlan
     let probe: FilesDirectoryTestProbe
     let responseDelay: TimeAmount
+    let downloadBytes: Data?
     private var index = 0 // Confined to this channel's event loop.
-    init(plan: FilesDirectoryTestPlan, probe: FilesDirectoryTestProbe, responseDelay: TimeAmount) {
+    init(plan: FilesDirectoryTestPlan, probe: FilesDirectoryTestProbe, responseDelay: TimeAmount, downloadBytes: Data?) {
         self.plan = plan; self.probe = probe; self.responseDelay = responseDelay
+        self.downloadBytes = downloadBytes
     }
     func userInboundEventTriggered(context: ChannelHandlerContext, event: Any) {
         if let request = event as? SSHChannelRequestEvent.SubsystemRequest {
@@ -100,6 +102,18 @@ private final class FilesDirectoryTestHandler: ChannelInboundHandler, @unchecked
         case .closeFile(let request):
             probe.closeHandle()
             response = .status(.init(requestId: request.requestId, errorCode: .ok, message: "", languageTag: ""))
+        case .lstat(let request) where downloadBytes != nil:
+            var attributes = SFTPFileAttributes(); attributes.permissions = 0o100600; attributes.size = UInt64(downloadBytes!.count)
+            response = .attributes(.init(requestId: request.requestId, attributes: attributes))
+        case .fstat(let request) where downloadBytes != nil:
+            var attributes = SFTPFileAttributes(); attributes.permissions = 0o100600; attributes.size = UInt64(downloadBytes!.count)
+            response = .attributes(.init(requestId: request.requestId, attributes: attributes))
+        case .openFile(let request) where downloadBytes != nil:
+            response = .handle(.init(requestId: request.requestId, handle: ByteBuffer(string: "download")))
+        case .read(let request) where downloadBytes != nil:
+            let bytes = downloadBytes!.dropFirst(Int(request.offset)).prefix(Int(request.length))
+            response = bytes.isEmpty ? .status(.init(requestId: request.requestId, errorCode: .eof, message: "", languageTag: ""))
+                : .data(.init(requestId: request.requestId, data: ByteBuffer(bytes: bytes)))
         default: context.close(promise: nil); return
         }
         do {
@@ -141,7 +155,7 @@ private final class FilesDirectoryTestHandler: ChannelInboundHandler, @unchecked
 }
 
 func filesDirectoryTestServer(plan: FilesDirectoryTestPlan = .empty, probe: FilesDirectoryTestProbe,
-                              responseDelay: TimeAmount = .nanoseconds(0)) async throws -> Channel {
+                              responseDelay: TimeAmount = .nanoseconds(0), downloadBytes: Data? = nil) async throws -> Channel {
     let hostKey = NIOSSHPrivateKey(ed25519Key: .init())
     return try await ServerBootstrap(group: MultiThreadedEventLoopGroup.singleton).childChannelInitializer { channel in
         probe.opened(channel)
@@ -150,7 +164,7 @@ func filesDirectoryTestServer(plan: FilesDirectoryTestPlan = .empty, probe: File
                 probe.opened(child)
                 return child.pipeline.addHandlers(SSHChannelDataUnwrapper(), SSHOutboundChannelDataWrapper(), FilesDirectoryTestChunks(),
                     ByteToMessageHandler(SFTPMessageParser()),
-                    FilesDirectoryTestHandler(plan: plan, probe: probe, responseDelay: responseDelay))
+                    FilesDirectoryTestHandler(plan: plan, probe: probe, responseDelay: responseDelay, downloadBytes: downloadBytes))
             }))
     }.bind(host: "127.0.0.1", port: 0).get()
 }

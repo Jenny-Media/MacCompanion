@@ -124,6 +124,9 @@ enum DesktopCredentialStoreV1 {
 }
 
 @MainActor @Observable final class DirectMacLibraryV1 {
+    static var defaultURL: URL { DirectClientPlatformV1.dataURL("direct-macs-v1.json") }
+    static let removed = Notification.Name("DirectMacLibraryRemovedV1")
+    struct Removal: Sendable { let libraryURL: URL; let ids: Set<UUID> }
     private struct File: Codable { var version = 5; var macs: [DirectMacRecordV1] }
     private(set) var macs: [DirectMacRecordV1] = []
     private(set) var readable = true
@@ -135,9 +138,10 @@ enum DesktopCredentialStoreV1 {
     var localChange: ((UUID) -> Void)?
     let discovery = DirectMacDiscoveryV1()
     private let url: URL
+    var storageURL: URL { url }
     private let removeLogin: (UUID) throws -> Void
     init(url: URL? = nil, removeLogin: @escaping (UUID) throws -> Void = DesktopCredentialStoreV1.remove) {
-        self.url = url ?? DirectClientPlatformV1.dataURL("direct-macs-v1.json")
+        self.url = url ?? Self.defaultURL
         self.removeLogin = removeLogin
         reload()
         discovery.updated = { [weak self] in
@@ -233,8 +237,27 @@ enum DesktopCredentialStoreV1 {
     private func write(_ next: [DirectMacRecordV1]) throws {
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         try DirectClientPlatformV1.write(JSONEncoder().encode(File(macs: next)), to: url)
+        let removedIDs = Set(macs.map(\.id)).subtracting(next.map(\.id))
         macs = next; failure = nil
+        if !removedIDs.isEmpty {
+            NotificationCenter.default.post(name: Self.removed, object: Removal(libraryURL: url.standardizedFileURL, ids: removedIDs))
+        }
     }
+}
+
+/// Owner-scoped cancellation, delivered synchronously after library persistence.
+/// Hidden sheets and pending handshakes are retired before they can save a login.
+final class DirectMacRemovalObservation: @unchecked Sendable {
+    private let token: NSObjectProtocol
+    @MainActor init(macID: UUID, libraryURL: URL, removed: @escaping @MainActor () -> Void) {
+        let url = libraryURL.standardizedFileURL
+        token = NotificationCenter.default.addObserver(forName: DirectMacLibraryV1.removed, object: nil, queue: .main) { notification in
+            guard let event = notification.object as? DirectMacLibraryV1.Removal,
+                  event.libraryURL == url, event.ids.contains(macID) else { return }
+            MainActor.assumeIsolated { removed() }
+        }
+    }
+    deinit { NotificationCenter.default.removeObserver(token) }
 }
 
 /// Carry the chosen mode with the Mac into the presentation. Separate state for
@@ -365,6 +388,8 @@ struct DirectMacLibraryRootV1: View {
             .onDisappear { library.discovery.stop() }
             .confirmationDialog("Remove this Mac and its saved login?", isPresented: Binding(get: { removing != nil }, set: { if !$0 { removing = nil } }), titleVisibility: .visible) {
                 Button("Remove Mac", role: .destructive) { if let removing { library.remove(removing) }; removing = nil }
+            } message: {
+                Text("Related sessions will close and transfers will stop. Unsaved downloads stay available until you save or discard them.")
             }
             .onOpenURL { url in
                 guard let route = RemoteSessionActivityAttributes.resumeRoute(from: url),
@@ -397,6 +422,7 @@ struct DirectMacLibraryRootV1: View {
     private func open(_ mac: DirectMacRecordV1, connection: DirectMacConnection) {
         Task {
             if !pro.ready { await pro.refresh() }
+            guard library.macs.contains(where: { $0.id == mac.id }) else { return }
             guard pro.canUseMac(mac.id, among: library.macs.map(\.id)) else { paywall = true; return }
             session = DirectMacSessionSelection(mac: mac, connection: connection)
         }

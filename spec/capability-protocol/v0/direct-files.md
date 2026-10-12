@@ -23,9 +23,14 @@ Do not claim a failed TCP connection proves Remote Login is disabled.
 The Files owner retains one Mac-record snapshot. Its title, sign-in, upload
 review and reconnect MUST use that same record. Reopen Files to adopt edits to
 the saved Mac; do not relabel an existing connection with a different endpoint.
-Removing a saved Mac, including through sync, MUST NOT close an already open
-Files window or discard its pending results. A new Files window for a missing
-record shows Mac unavailable; existing owners keep their original snapshot.
+Removing a saved Mac, including through sync, MUST retire all related Desktop,
+Terminal and Files connections and unfinished authentication attempts. Related
+windows/presentations close. A Files owner with unsaved completed downloads stays
+open solely for Save or explicit Discard, retaining its original identity; it
+MUST NOT connect, retry or read credentials again. Close it once those downloads
+are saved or discarded. Other Macs' owners remain independent. Publish removal
+only after the updated library is successfully persisted, scoped to that library.
+A missing record MUST fail connection admission independently of Pro access.
 Opening or dismissing help or purchase sheets MUST NOT reload a saved password,
 replace an edited account, or change the user's saved-login choice. Explicit key
 selection may refresh the selected key/account without reloading the password.
@@ -53,9 +58,15 @@ not share mutable credential state.
 The draft belongs to the retained Files connection owner, including while its
 sheet is hidden. Recreating a presentation MUST preserve its account, method,
 Save Login choice and selected-key identity instead of reapplying defaults.
-Successful authentication while hidden may establish remembered-password
-restoration only for the unchanged draft and the exact login successfully saved
-by that attempt. A later user edit invalidates that attempt's draft revision.
+Authentication attempts carry non-secret password provenance, account and draft
+revision. Authentication success and credential-retention outcomes are separate
+events. A failed write of an unchanged, already saved password MUST preserve its
+restoration eligibility; restoration still reads the current device-only store
+and requires the credential to exist. An edited password becomes restorable only
+after that attempt successfully stores it. These rules also apply while hidden.
+A later user edit invalidates that attempt's draft revision. Failed/cancelled
+authentication never establishes new restoration eligibility. Removal invalidates
+the owner and its entire draft before any late result can retain credentials.
 Closing the owner clears its draft and secrets; later presentation or activation
 callbacks MUST NOT reload that closed owner's login. On macOS, display and user-session
 wake MUST restore eligible sign-in without depending on application activation;

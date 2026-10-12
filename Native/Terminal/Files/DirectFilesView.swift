@@ -56,7 +56,7 @@ struct DirectFilesView: View {
         else { dismiss() }
     }
     private var canConnect: Bool {
-        !session.isClosed && accessAllowed() && sessionAvailable() && !draft.isSuspended &&
+        !session.isClosed && !session.macRemoved && accessAllowed() && sessionAvailable() && !draft.isSuspended &&
         !draft.username.isEmpty && !session.busy && !preparingKey &&
         (draft.method == .password ? !draft.password.isEmpty : !keyName.isEmpty)
     }
@@ -68,7 +68,11 @@ struct DirectFilesView: View {
             VStack(spacing: 0) {
                 identity
                 Divider()
-                if session.phase == .ready { browser }
+                if session.macRemoved {
+                    Label("Mac removed", systemImage: "info.circle").font(.headline).padding(.top)
+                    Text("Save or discard your downloads to close Files.").font(.subheadline).foregroundStyle(.secondary).padding()
+                }
+                else if session.phase == .ready { browser }
                 else { signIn }
                 if !session.results.isEmpty { transferResults }
             }
@@ -167,6 +171,12 @@ struct DirectFilesView: View {
         }
         .onChange(of: session.busy) { _, busy in
             if !busy { refreshSignIn() }
+        }
+        .onChange(of: session.shouldCloseAfterRemoval, initial: true) { _, close in
+            if close { finishDismissal() }
+        }
+        .onChange(of: session.macRemoved) { _, removed in
+            if removed { suspendSignIn(); sheet = nil; key = nil; keyName = "" }
         }
         #if os(macOS)
         .onReceive(NotificationCenter.default.publisher(for: MacSSHKeyFileStore.changed)) { _ in
@@ -327,14 +337,14 @@ struct DirectFilesView: View {
         VStack(alignment: .leading, spacing: 8) {
             Divider()
             HStack {
-                Text("Transfers").font(.headline)
+                Text(session.macRemoved ? "Downloads" : "Transfers").font(.headline)
                 Spacer()
                 if session.transferActive { Button("Cancel") { session.disconnect(message: "Transfer stopped. Reconnect and Retry when ready.") } }
             }
             Text("Account: " + session.resultsAccount).font(.caption).foregroundStyle(.secondary).lineLimit(2)
             ScrollView {
                 VStack(spacing: 10) {
-                    ForEach(session.results) { result in
+                    ForEach(session.results.filter { !session.macRemoved || $0.localDownload != nil }) { result in
                         HStack {
                             VStack(alignment: .leading, spacing: 4) {
                                 Text(result.destinationName ?? result.name).font(.subheadline).lineLimit(1)
@@ -346,14 +356,14 @@ struct DirectFilesView: View {
                             }
                             Spacer()
                             if let url = result.localDownload { Button(result.saved ? "Save Again…" : "Save…") { saveDownload(result.id, url: url) }.disabled(saving || !accessAllowed()) }
-                            if result.outcome == .interrupted { Button("Retry") { session.retry(result.id) }.disabled(session.busy || session.phase != .ready || session.account != session.resultsAccount) }
+                            if !session.macRemoved, result.outcome == .interrupted { Button("Retry") { session.retry(result.id) }.disabled(session.busy || session.phase != .ready || session.account != session.resultsAccount) }
                         }
                     }
                 }
             }.frame(maxHeight: 160)
             if session.hasPendingResults && !session.busy {
-                Text("Save downloads or retry unfinished files before starting another transfer.").font(.caption).foregroundStyle(.secondary)
-                Button("Discard Pending Transfers…", role: .destructive) { confirmation = .discard }.disabled(saving).accessibilityIdentifier("files-discard")
+                if !session.macRemoved { Text("Save downloads or retry unfinished files before starting another transfer.").font(.caption).foregroundStyle(.secondary) }
+                Button(session.macRemoved ? "Discard Downloads…" : "Discard Pending Transfers…", role: .destructive) { confirmation = .discard }.disabled(saving).accessibilityIdentifier("files-discard")
             }
             if session.phase == .ready && session.account != session.resultsAccount { Text("Reconnect as \(session.resultsAccount) to retry these transfers.").font(.caption).foregroundStyle(.secondary) }
             #if os(iOS)
@@ -411,7 +421,7 @@ struct DirectFilesView: View {
     }
     #if os(macOS)
     @discardableResult private func refreshSelectedKeyFile() -> Bool {
-        guard !session.isClosed, !draft.isSuspended, sessionAvailable(), accessAllowed(), session.phase != .ready, !session.busy else { return false }
+        guard !session.isClosed, !session.macRemoved, !draft.isSuspended, sessionAvailable(), accessAllowed(), session.phase != .ready, !session.busy else { return false }
         do {
             guard try selectedKeyFile(mac.id)?.file != keyFile else { return false }
             preparation = UUID(); preparingKey = false
@@ -429,7 +439,7 @@ struct DirectFilesView: View {
         #endif
     }
     private func resumeSignIn() {
-        guard !session.isClosed else { return }
+        guard !session.isClosed, !session.macRemoved else { return }
         draft.resume()
         refreshSignIn()
     }
@@ -449,7 +459,7 @@ struct DirectFilesView: View {
         resumeSignIn()
     }
     private func prepareSignIn() {
-        guard !session.isClosed else { return }
+        guard !session.isClosed, !session.macRemoved else { return }
         let active = sessionAvailable(), allowed = accessAllowed()
         let signIn = session.phase != .ready && !session.busy
         if draft.needsInitialLoad(active: active, allowed: allowed, signIn: signIn) {
@@ -460,7 +470,7 @@ struct DirectFilesView: View {
         } catch { session.message = "Saved SSH settings could not be read. Existing data is kept." }
     }
     private func loadLogin(preferSelected: Bool = false, includePassword: Bool = true, preserveUnchangedSelection: Bool = false) {
-        guard !session.isClosed, !draft.isSuspended, sessionAvailable(),
+        guard !session.isClosed, !session.macRemoved, !draft.isSuspended, sessionAvailable(),
               accessAllowed(), session.phase != .ready, !session.busy else { return }
         do {
             // Read the complete selection before applying initialization. A
@@ -509,8 +519,12 @@ struct DirectFilesView: View {
             defer { if preparation == token { preparingKey = false } }
             if !pro.ready { await pro.refresh() }
             guard preparation == token, accessAllowed() else { return }
-            let library = DirectMacLibraryV1()
-            guard library.readable, pro.canUseMac(mac.id, among: library.macs.map(\.id)) else { sheet = .pro; return }
+            let library = DirectMacLibraryV1(url: session.libraryURL)
+            guard library.readable else { session.message = "Saved Macs could not be read. Retry when device storage is available."; return }
+            guard library.macs.contains(where: { $0.id == mac.id }), !session.macRemoved, !session.isClosed else {
+                session.message = "This Mac was removed from My Macs."; return
+            }
+            guard pro.canUseMac(mac.id, among: library.macs.map(\.id)) else { sheet = .pro; return }
             if draft.method == .sshKey {
                 #if os(macOS)
                 if let file = keyFile {

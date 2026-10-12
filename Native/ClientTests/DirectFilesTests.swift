@@ -10,6 +10,24 @@ import NIO
 #endif
 
 @MainActor final class DirectFilesTests: XCTestCase {
+    func testFailedLibraryPersistenceDoesNotRetireOwners() throws {
+        let root = try DirectFilesLocalStore.root(); defer { try? FileManager.default.removeItem(at: root) }
+        let directory = root.appendingPathComponent("library"), url = directory.appendingPathComponent("macs.json")
+        let library = DirectMacLibraryV1(url: url, removeLogin: { _ in })
+        let mac = DirectMacRecordV1(id: UUID(), name: "Synthetic Failed Removal", addresses: ["fixture.local"])
+        XCTAssertTrue(library.save(id: mac.id, name: mac.name, addresses: mac.addresses))
+        let files = DirectFilesSession(mac: mac, libraryURL: url), terminal = DirectTerminalSession(mac: mac, libraryURL: url)
+        defer { files.close(); terminal.stop(); try? TerminalSecretStore.remove(mac.id) }
+        // A file where the directory should be makes the write fail deterministically.
+        try FileManager.default.removeItem(at: directory)
+        try Data([1]).write(to: directory)
+        XCTAssertThrowsError(try library.applyCloud([]))
+        XCTAssertFalse(files.macRemoved); XCTAssertFalse(files.isClosed); XCTAssertFalse(terminal.macRemoved)
+        XCTAssertEqual(library.macs.map(\.id), [mac.id])
+        library.remove(mac)
+        XCTAssertNotNil(library.recovery)
+        XCTAssertFalse(files.macRemoved); XCTAssertFalse(terminal.macRemoved)
+    }
     func testIndexedLoginDraftLifecycleJourneys() throws {
         struct Journey: Decodable {
             let id: String; let events: [String]; let password: String
@@ -20,7 +38,7 @@ import NIO
         let fixture = try JSONDecoder().decode(Fixture.self, from: Data(contentsOf: url))
         for journey in fixture.loginDraftCases {
             var draft = DirectFilesLoginDraft(), reads = 0
-            var attempt: DirectFilesLoginDraft.PasswordAttempt?, authenticatedPassword = ""
+            var attempt: DirectFilesLoginDraft.AuthenticationAttempt?, authenticatedPassword = ""
             var saved: TerminalSecretStore.Login? = .init(username: "synthetic", password: "synthetic-only")
             func restore(active: Bool = true, allowed: Bool = true, signIn: Bool = true) {
                 draft.resume()
@@ -44,18 +62,23 @@ import NIO
                 case "choose-key": draft.loadKeyAccount("synthetic-key", preferSelected: true)
                 case "password-method": draft.selectMethod(.password)
                 case "save-edited": saved = .init(username: "synthetic", password: "synthetic-edited-password")
-                case "connected": draft.connected(account: "synthetic", saved: saved)
+                case "connected":
+                    let password = draft.password
+                    let current = draft.authenticationAttempt(account: draft.username, password: password, remember: draft.remember)
+                    draft.authenticationSucceeded(current, retention: saved?.username == draft.username && saved?.password == password ? .saved : .failed)
                 case "begin-password-auth":
                     authenticatedPassword = draft.password
-                    attempt = draft.passwordAttempt(account: draft.username, password: authenticatedPassword, remember: draft.remember)
+                    attempt = draft.authenticationAttempt(account: draft.username, password: authenticatedPassword, remember: draft.remember)
                     XCTAssertNotNil(attempt, journey.id)
                 case "finish-password-auth":
-                    draft.connected(account: "synthetic", saved: saved, attempt: attempt, authenticatedPassword: authenticatedPassword)
+                    draft.authenticationSucceeded(attempt, retention: saved?.password == authenticatedPassword ? .saved : .failed)
+                case "fail-password-save": draft.authenticationSucceeded(attempt, retention: .failed)
+                case "remove-mac": draft.invalidate()
                 default: XCTFail("Unknown indexed login event: " + event)
                 }
             }
             let passwords = ["saved": "synthetic-only", "edited": "synthetic-edited-password", "empty": ""]
-            let accounts = ["saved": "synthetic", "edited": "synthetic-edited-account", "key": "synthetic-key"]
+            let accounts = ["saved": "synthetic", "edited": "synthetic-edited-account", "key": "synthetic-key", "empty": ""]
             XCTAssertEqual(draft.password, passwords[journey.password], journey.id)
             XCTAssertEqual(draft.username, accounts[journey.account], journey.id)
             XCTAssertEqual(draft.remember, journey.remember, journey.id)

@@ -23,6 +23,9 @@ struct MacFilesWindow: View {
                 .windowDismissBehavior(DirectFilesPolicy.preventsDismissal(retained: false, active: session.transferActive, pending: session.hasPendingResults) ? .disabled : .automatic)
                 .background(MacWindowReader(handle: window).frame(width: 0, height: 0))
                 .background(MacWindowLifetime { session.close() }.frame(width: 0, height: 0))
+                .onChange(of: window.window != nil) { _, attached in
+                    if attached, session.shouldCloseAfterRemoval { window.window?.close() }
+                }
         } else {
             ContentUnavailableView("Mac unavailable", systemImage: "folder",
                 description: Text("This Mac was removed from your library. Add it again in My Macs."))

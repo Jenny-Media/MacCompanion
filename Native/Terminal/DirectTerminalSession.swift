@@ -96,6 +96,8 @@ private enum TerminalPTY {
     var keyboardVisible = false
     struct TrustRequest: Identifiable { let id = UUID(); let fingerprint: String }
     private(set) var mac: DirectMacRecordV1
+    private(set) var macRemoved = false
+    @ObservationIgnored private var removalObserver: DirectMacRemovalObservation?
     var status = "Sign in to Remote Login"
     var connecting = false
     var connected = false
@@ -188,12 +190,17 @@ private enum TerminalPTY {
     private var generation = UUID()
     private var columns = 80
     private var rows = 24
-    init(mac: DirectMacRecordV1, activityDefaults: UserDefaults = .standard, activityBackend: any RemoteSessionActivityBackend = ActivityKitSessionBackend()) {
+    init(mac: DirectMacRecordV1, activityDefaults: UserDefaults = .standard, activityBackend: any RemoteSessionActivityBackend = ActivityKitSessionBackend(),
+         libraryURL: URL = DirectMacLibraryV1.defaultURL) {
         self.mac = mac; self.activityDefaults = activityDefaults; self.activityBackend = activityBackend
+        removalObserver = DirectMacRemovalObservation(macID: mac.id, libraryURL: libraryURL) { [weak self] in
+            guard let self else { return }
+            self.macRemoved = true; self.stop()
+        }
     }
     func updateMac(_ record: DirectMacRecordV1) { if record.id == mac.id { mac = record } }
     func connect(username: String, password: String, remember: Bool, key: TerminalSSHKey? = nil, installation: TerminalNamedKey? = nil, verificationOnly: Bool = false, keyFileID: UUID? = nil) {
-        guard DirectAppLockV1.shared.canAccess, !connecting, !connected else { return }
+        guard !macRemoved, DirectAppLockV1.shared.canAccess, !connecting, !connected else { return }
         let loginKey = verificationOnly ? installation?.key : key
         guard !username.isEmpty, (loginKey != nil || !password.isEmpty), username.utf8.count <= 255, password.utf8.count <= 4096,
               !username.contains("\0"), !password.contains("\0") else { present(.loginRejected, message: "Enter a Mac account and password or choose an SSH key. Account names must be at most 255 UTF-8 bytes and passwords at most 4 KiB, with no NUL characters."); return }

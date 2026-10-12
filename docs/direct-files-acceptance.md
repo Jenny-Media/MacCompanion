@@ -51,6 +51,11 @@ not introduce a connection mode or require a Mac Companion helper.
   must keep independent choices. Hide during a saved-password connection and
   reopen after it completes; Disconnect must restore that successfully saved
   login without restoring an older password after a failed save or newer edit.
+  Inject a local credential-write failure after successful SSH/SFTP admission:
+  an unchanged, already saved password must remain available after Disconnect.
+  An edited password must not restore the older stored password. Repeat with
+  Files hidden during authentication and with the saved login removed before
+  returning. Failed/cancelled authentication and newer edits must keep their draft.
   With App Unlock off, let the Mac display sleep while the app stays active.
   Display/session wake must enable explicit Files reconnect without switching
   apps. Repeat while locked: credentials must wait for unlock. Closing the owner
@@ -108,8 +113,15 @@ not introduce a connection mode or require a Mac Companion helper.
   another window. Its title, review and reconnect must keep the owner's original
   record. A newly opened Files owner must use the edited record.
   Remove the record locally or through sync with an unsaved Files download.
-  The existing window must keep its original identity and Save/Discard results;
-  opening a new Files window for the missing record must show Mac unavailable.
+  All matching Desktop, Terminal and Files connections and pending logins must
+  stop. Their windows/presentations close, except Files with unsaved completed
+  downloads: it keeps its identity and offers only Save/Discard, then closes.
+  Reconnect and Retry must be unavailable for both free and Pro users. Downloads
+  already exported remain intact. Other Macs' sessions and My Macs stay open.
+  Repeat from iPhone Desktop, Trackpad, Terminal and standalone Files, including
+  a retained Files sheet hidden when removal arrives. Rejecting or failing library
+  persistence must not publish removal or close sessions. Opening a new Files
+  window for the missing record must show Mac unavailable.
 - Stop only the SFTP subsystem while SSH remains connected. Files must show
   disconnected, retain pending downloads/retries and require explicit reconnect.
 - Reconnect as a different account. Previous interrupted files must not retry
@@ -179,7 +191,7 @@ Both platforms also mount Files before its first saved-password connection and
 verify same-view reconnect after Disconnect and authenticated network loss,
 edited retry-draft preservation, and removal of a remembered login.
 Each retained Files session owns a value-based `DirectFilesLoginDraft`, representing
-empty, saved, edited and privacy-cleared secrets explicitly. Twenty-one
+empty, saved, edited and privacy-cleared secrets explicitly. Twenty-eight
 manifest-indexed journeys cover
 repeated suspension/recovery, active/unlocked admission, busy owners, changed
 accounts and methods, Save Login choices, deleted credentials and verified
@@ -198,10 +210,34 @@ then verifies remembered-password restoration after remount and Disconnect.
 Mac cases preserve a referenced-file identity across remount, exercise both
 workspace wake notifications without app activation, and wait for unlock.
 Closing an owner clears its draft; later activation cannot reload its credentials.
+Authentication attempts now carry non-secret password provenance, account and
+revision; typed retention outcomes distinguish successful storage, failed writes
+and no requested write. The native suites inject failed writes after real loopback
+SSH/SFTP admission on both platforms. Already saved and edited passwords are
+checked in visible and hidden presentations, with current local Keychain contents
+verified independently. Manifest-indexed journeys include redundant-save failure,
+edited-save failure, later credential deletion, newer edits and Mac removal before
+a late authentication result.
+Scoped library-removal events retire owners synchronously after successful
+persistence. Both native platforms check matching owners, unrelated Macs and
+independent libraries, pending trust cancellation and prevention of late saving.
+macOS mounts actual Desktop and Terminal windows to verify closure and preserves
+an unsaved Files download after local/synced removal. Both platforms exercise
+Save/Discard recovery through mounted Files; iOS also mounts Desktop, Trackpad
+and Terminal parents with hidden retained downloads. These checks simulate sync
+application and native chooser completion; physical iCloud delivery and file-provider
+interaction remain separate acceptance checks.
 The retained-owner fixes passed 73 focused macOS tests and 29 iOS Simulator tests
 with Xcode 27.1 RC (27A9275), with no failures or skips. Full repository validation
 also passed, including all 136 indexed fixtures. These RC results remain
 provisional until the stable Xcode lane passes for this update.
+The credential-provenance and removal-lifecycle refactor is checked locally with
+stable Xcode 27.0 (27A266a): the full macOS hosted run had 113 passes and one
+native key-window focus skip. A final Files run covers 37 passing tests, including
+the subsequently added persistence-failure case. The iOS 27.0 Simulator run covers
+33 passing Files tests with no skips. Repository validation passes with all 136
+indexed fixtures. Hosted focus, physical file-provider/biometric interaction and
+signed cross-device iCloud delivery remain separate acceptance work.
 On macOS the mounted Cancel Connection button exercises the shared action to
 preserve both a loaded saved password and an edited retry account/password;
 backgrounding still clears the visible secret. Hosted iOS tests do not expose
