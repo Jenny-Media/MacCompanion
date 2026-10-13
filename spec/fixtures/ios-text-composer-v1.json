@@ -229,6 +229,21 @@
     "sessionRemainsVisible": true,
     "sendRemainsReachable": true,
     "expandable": true,
-    "shortLandscape": "compact controls, editor and Send above keyboard; destination and validation accessible"
+    "shortLandscape": "compact controls, editor and Send above keyboard; destination and validation accessible",
+    "grabberResizable": true,
+    "resizePreserves": [
+      "draft",
+      "selection",
+      "keyboardFocus",
+      "editorIdentity"
+    ],
+    "editorScrollingExpands": false,
+    "interactiveDismissal": "retain only on completion; cancellation keeps state",
+    "sendingBlocksDismissal": true,
+    "snapPositions": [
+      "compact",
+      "expanded"
+    ],
+    "implementation": "public UIKit keyboard guide and pan recognizer; one native editor"
   }
 }

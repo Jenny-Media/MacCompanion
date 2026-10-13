@@ -170,14 +170,19 @@ struct DirectComposedText: Equatable {
     }
 }
 
-/// The panel follows UIKit's real keyboard guide, so presenting the keyboard
-/// cannot promote it to a full-screen sheet or scroll its delivery action away.
-@MainActor final class DirectTextComposerPanel: UIViewController {
+/// Maps-style snapping panel follows the real keyboard without letting a
+/// presentation controller resize or resign the native editor during dragging.
+@MainActor final class DirectTextComposerPanel: UIViewController, UIGestureRecognizerDelegate {
     let draft: DirectTextComposerDraft
     private var height: NSLayoutConstraint?
     private var peek: NSLayoutConstraint?
+    private var grabberHeight: NSLayoutConstraint?
     private var editorHost: UIHostingController<AnyView>?
+    private var card: UIView?
     private var sendBounds = CGRect.zero
+    private var draggingHeight: CGFloat?
+    private var initialHeight: CGFloat = 0
+    private var initialExpanded = false
     var deliveryActionFrame: CGRect { editorHost?.view.convert(sendBounds, to: view) ?? .zero }
     init(draft: DirectTextComposerDraft) { self.draft = draft; super.init(nibName: nil, bundle: nil) }
     required init?(coder: NSCoder) { fatalError("init(coder:) is unavailable") }
@@ -188,37 +193,90 @@ struct DirectComposedText: Equatable {
         backdrop.translatesAutoresizingMaskIntoConstraints = false
         backdrop.addTarget(self, action: #selector(back), for: .touchUpInside)
         view.addSubview(backdrop)
-        NSLayoutConstraint.activate([backdrop.leadingAnchor.constraint(equalTo: view.leadingAnchor), backdrop.trailingAnchor.constraint(equalTo: view.trailingAnchor), backdrop.topAnchor.constraint(equalTo: view.topAnchor), backdrop.bottomAnchor.constraint(equalTo: view.bottomAnchor)])
-        let host = UIHostingController(rootView: AnyView(DirectTextComposerView(draft: draft, expand: { [weak self] in self?.toggleExpansion() }, reportSendBounds: { [weak self] in self?.sendBounds = $0 }).directAppearance()))
-        editorHost = host; addChild(host); view.addSubview(host.view); host.didMove(toParent: self)
-        host.view.translatesAutoresizingMaskIntoConstraints = false
-        host.view.backgroundColor = .secondarySystemBackground; host.view.layer.cornerRadius = 20; host.view.clipsToBounds = true
+        NSLayoutConstraint.activate([backdrop.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            backdrop.trailingAnchor.constraint(equalTo: view.trailingAnchor), backdrop.topAnchor.constraint(equalTo: view.topAnchor),
+            backdrop.bottomAnchor.constraint(equalTo: view.bottomAnchor)])
+        let card = UIView(); self.card = card; view.addSubview(card); card.translatesAutoresizingMaskIntoConstraints = false
+        card.backgroundColor = .secondarySystemBackground; card.layer.cornerRadius = 20; card.clipsToBounds = true
+        let grabber = UIButton(type: .custom); grabber.translatesAutoresizingMaskIntoConstraints = false
+        grabber.accessibilityLabel = "Resize composer"; grabber.accessibilityHint = "Expand or collapse the editor"
+        grabber.accessibilityIdentifier = "compose-grabber"
+        grabber.addTarget(self, action: #selector(toggleExpansion), for: .touchUpInside)
+        card.addSubview(grabber)
+        let indicator = UIView(); indicator.backgroundColor = .tertiaryLabel; indicator.layer.cornerRadius = 2.5
+        indicator.isUserInteractionEnabled = false; indicator.translatesAutoresizingMaskIntoConstraints = false; grabber.addSubview(indicator)
+        let pan = UIPanGestureRecognizer(target: self, action: #selector(resize(_:))); pan.delegate = self
+        grabber.addGestureRecognizer(pan)
+        let host = UIHostingController(rootView: AnyView(DirectTextComposerView(draft: draft,
+            expand: { [weak self] in self?.toggleExpansion() },
+            reportSendBounds: { [weak self] in self?.sendBounds = $0 }).directAppearance()))
+        editorHost = host; addChild(host); card.addSubview(host.view); host.didMove(toParent: self)
+        host.view.translatesAutoresizingMaskIntoConstraints = false; host.view.backgroundColor = .secondarySystemBackground
         host.view.accessibilityIdentifier = "compose-panel"
-        let preferredHeight = host.view.heightAnchor.constraint(equalToConstant: 280); preferredHeight.priority = .defaultHigh; height = preferredHeight
-        let peek = host.view.topAnchor.constraint(greaterThanOrEqualTo: view.safeAreaLayoutGuide.topAnchor, constant: 48); self.peek = peek
+        let preferredHeight = card.heightAnchor.constraint(equalToConstant: 324); preferredHeight.priority = .defaultHigh; height = preferredHeight
+        let peek = card.topAnchor.constraint(greaterThanOrEqualTo: view.safeAreaLayoutGuide.topAnchor, constant: 48); self.peek = peek
+        let grabberHeight = grabber.heightAnchor.constraint(equalToConstant: 44); self.grabberHeight = grabberHeight
         NSLayoutConstraint.activate([
-            host.view.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            host.view.widthAnchor.constraint(lessThanOrEqualToConstant: 640),
-            host.view.leadingAnchor.constraint(greaterThanOrEqualTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 8),
-            host.view.trailingAnchor.constraint(lessThanOrEqualTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -8),
-            host.view.bottomAnchor.constraint(equalTo: view.keyboardLayoutGuide.topAnchor, constant: -8),
-            peek, preferredHeight
+            card.centerXAnchor.constraint(equalTo: view.centerXAnchor), card.widthAnchor.constraint(lessThanOrEqualToConstant: 640),
+            card.leadingAnchor.constraint(greaterThanOrEqualTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 8),
+            card.trailingAnchor.constraint(lessThanOrEqualTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -8),
+            card.bottomAnchor.constraint(equalTo: view.keyboardLayoutGuide.topAnchor, constant: -8), peek, preferredHeight,
+            grabber.topAnchor.constraint(equalTo: card.topAnchor), grabber.centerXAnchor.constraint(equalTo: card.centerXAnchor),
+            grabber.widthAnchor.constraint(equalToConstant: 88), grabberHeight,
+            indicator.widthAnchor.constraint(equalToConstant: 36), indicator.heightAnchor.constraint(equalToConstant: 5),
+            indicator.centerXAnchor.constraint(equalTo: grabber.centerXAnchor), indicator.centerYAnchor.constraint(equalTo: grabber.centerYAnchor),
+            host.view.leadingAnchor.constraint(equalTo: card.leadingAnchor), host.view.trailingAnchor.constraint(equalTo: card.trailingAnchor),
+            host.view.topAnchor.constraint(equalTo: grabber.bottomAnchor), host.view.bottomAnchor.constraint(equalTo: card.bottomAnchor)
         ])
-        let width = host.view.widthAnchor.constraint(equalTo: view.safeAreaLayoutGuide.widthAnchor, constant: -16); width.priority = .defaultHigh; width.isActive = true
+        let width = card.widthAnchor.constraint(equalTo: view.safeAreaLayoutGuide.widthAnchor, constant: -16)
+        width.priority = .defaultHigh; width.isActive = true
     }
+    private var availableHeight: CGFloat {
+        max(0, view.keyboardLayoutGuide.layoutFrame.minY - view.safeAreaInsets.top - (draft.compactLayout ? 16 : 56))
+    }
+    private var compactHeight: CGFloat { min(availableHeight, draft.compactLayout ? 180 : 324) }
     @objc private func back() { if !draft.sending { draft.close?() } }
-    func toggleExpansion() { draft.expanded.toggle(); view.setNeedsLayout() }
+    func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool { draft.active && !draft.sending }
+    @objc func toggleExpansion() {
+        guard draft.active else { return }
+        draggingHeight = nil; draft.expanded.toggle(); settle()
+    }
+    private func settle() {
+        UIView.animate(withDuration: 0.25, delay: 0, options: [.curveEaseOut, .beginFromCurrentState]) {
+            self.view.setNeedsLayout(); self.view.layoutIfNeeded()
+        }
+    }
+    @objc private func resize(_ gesture: UIPanGestureRecognizer) {
+        guard draft.active else { draggingHeight = nil; return }
+        switch gesture.state {
+        case .began:
+            initialHeight = card?.bounds.height ?? compactHeight; initialExpanded = draft.expanded
+        case .changed:
+            draggingHeight = min(availableHeight, max(compactHeight, initialHeight - gesture.translation(in: view).y))
+            view.setNeedsLayout(); view.layoutIfNeeded()
+        case .ended:
+            let translation = gesture.translation(in: view).y, velocity = gesture.velocity(in: view).y
+            let current = draggingHeight ?? initialHeight; draggingHeight = nil
+            if !draft.sending && !initialExpanded && translation > 110 {
+                back(); return
+            }
+            draft.expanded = velocity < -300 || (velocity <= 300 && current > (compactHeight + availableHeight) / 2)
+            settle()
+        case .cancelled, .failed:
+            draggingHeight = nil; draft.expanded = initialExpanded; settle()
+        default: break
+        }
+    }
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
         let room = view.keyboardLayoutGuide.layoutFrame.minY - view.safeAreaInsets.top
-        let compact = room < 240
+        let compact = room < 284
         if draft.compactLayout != compact { draft.compactLayout = compact }
         peek?.constant = compact ? 8 : 48
-        let available = max(0, room - (compact ? 16 : 56))
+        grabberHeight?.constant = compact ? 20 : 44
         let accessibility = traitCollection.preferredContentSizeCategory.isAccessibilityCategory
-        let desired: CGFloat = draft.expanded || accessibility ? available : (compact ? 144 : 280)
-        let newHeight = min(available, desired)
-        if height?.constant != newHeight { height?.constant = newHeight }
+        let desired = min(availableHeight, draggingHeight ?? (draft.expanded || accessibility ? availableHeight : compactHeight))
+        if height?.constant != desired { height?.constant = desired }
     }
 }
 
@@ -236,7 +294,7 @@ private struct DirectTextComposerView: View {
         return explanation + (reviewed.endsWithNewline ? " This draft ends with a line break." : "") + " Send Text adds no extra Return."
     }
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: draft.compactLayout ? 4 : 8) {
           if !draft.compactLayout {
             HStack {
                 Button("Back", systemImage: "chevron.down") { editing = false; draft.close?() }
@@ -256,7 +314,7 @@ private struct DirectTextComposerView: View {
                 .background(.background, in: RoundedRectangle(cornerRadius: 10))
                 .overlay(RoundedRectangle(cornerRadius: 10).stroke(.secondary.opacity(0.4)))
                 .autocorrectionDisabled(draft.mode == .terminal).textInputAutocapitalization(draft.mode == .terminal ? .never : .sentences)
-                .focused($editing).disabled(draft.sending)
+                .focused($editing).disabled(draft.sending).scrollDismissesKeyboard(.never)
                 .accessibilityLabel(draft.compactLayout ? "Text to Send · " + draft.macName + " · " + draft.mode.title : "Text to Send")
                 .accessibilityHint(draft.issue ?? draft.validationIssue ?? "")
                 .accessibilityIdentifier("compose-text").privacySensitive()
@@ -274,6 +332,12 @@ private struct DirectTextComposerView: View {
                 } else {
                     Button("Discard", role: .destructive) { discard = true }.font(.footnote)
                         .disabled(draft.text.isEmpty || draft.sending).accessibilityIdentifier("compose-discard")
+                }
+                if draft.compactLayout {
+                    Button(action: expand) {
+                        Image(systemName: draft.expanded ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right")
+                            .font(.system(size: 20)).frame(width: 44, height: 44)
+                    }.accessibilityLabel(draft.expanded ? "Collapse" : "Expand").accessibilityIdentifier("compose-expand")
                 }
                 Spacer()
                 if draft.compactLayout, let issue = draft.issue ?? (draft.text.isEmpty ? nil : draft.validationIssue) {
@@ -296,7 +360,7 @@ private struct DirectTextComposerView: View {
                     .onGeometryChange(for: CGRect.self) { $0.frame(in: .named("composer-panel")) } action: { reportSendBounds($0) }
             }
 
-        }.padding(draft.compactLayout ? 8 : 12).background(.background).coordinateSpace(name: "composer-panel")
+        }.padding(draft.compactLayout ? 4 : 12).background(.background).coordinateSpace(name: "composer-panel")
             .onAppear { editing = true }
             .alert("Send line breaks or tabs?", isPresented: Binding(get: { draft.confirmation != nil }, set: { if !$0 { draft.confirmation = nil } }), presenting: draft.confirmation) { reviewed in
                 Button("Send Text") { draft.confirmSend(reviewed) }

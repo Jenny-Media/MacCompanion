@@ -246,8 +246,8 @@
     [arrow addLineToPoint:CGPointMake(7, 18)]; [arrow addLineToPoint:CGPointMake(12, 27)];
     [arrow addLineToPoint:CGPointMake(16, 25)]; [arrow addLineToPoint:CGPointMake(11, 16)];
     [arrow addLineToPoint:CGPointMake(20, 16)]; [arrow closePath];
-    self.fallbackCursor.path = arrow.CGPath; self.fallbackCursor.fillColor = UIColor.whiteColor.CGColor;
-    self.fallbackCursor.strokeColor = UIColor.blackColor.CGColor; self.fallbackCursor.lineWidth = 1.5;
+    self.fallbackCursor.path = arrow.CGPath; self.fallbackCursor.fillColor = UIColor.blackColor.CGColor;
+    self.fallbackCursor.strokeColor = UIColor.whiteColor.CGColor; self.fallbackCursor.lineWidth = 1.5;
     [self.cursorIndicator.layer addSublayer:self.fallbackCursor];
     self.click = [[CompanionVNCTapGesture alloc] initWithTarget:self action:@selector(clickAt:)];
     self.drag = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(dragAt:)];

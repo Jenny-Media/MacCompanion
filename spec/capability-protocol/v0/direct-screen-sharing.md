@@ -388,7 +388,10 @@ Quick Action (also available under Keyboard & Input). Existing untouched default
 profiles gain this action; preserve all customized profiles and their disabled
 actions. macOS does not expose this tool. Present a compact bottom panel above
 the native keyboard, retaining visible session content and reachable Send/Back
-actions; allow expansion for longer drafts and accessibility sizes. Short landscape
+actions. Use keyboard-aware compact/expanded snap positions and a draggable grabber;
+resizing retains editor identity, draft, selection and keyboard focus. Editor
+scrolling does not expand the sheet. A completed swipe dismissal retains the
+draft; a canceled gesture changes no draft state. Sending blocks dismissal. Short landscape
 layouts use a compact control row and retain a scrollable editor above the keyboard;
 keep destination and validation explanations accessible. A native multiline
 editor holds an ephemeral, device-local draft bound to its originating viewer or
@@ -739,3 +742,34 @@ Opaque model mappings are based on Apple's model identification references:
 [Mac Pro](https://support.apple.com/en-us/102887).
 Bonjour privacy declarations follow Apple's
 [TN3179](https://developer.apple.com/documentation/technotes/tn3179-understanding-local-network-privacy).
+
+### Direct-client cached cursor images
+
+
+Both native iOS and Mac direct clients advertises Apple cursor encoding 1104 (`0x450`)
+through the existing authenticated classic RFB transport. This does not select
+Apple's encrypted record layer or alter authentication, ClientInit or input.
+Compatibility with a particular Screen Sharing host requires live verification.
+A rectangle contains a big-endian uint32 opaque cache identifier and uint32
+compressed length, followed by exactly that many zlib bytes. A positive length
+stores and selects an image: rectangle width/height are 1–256 and its hotspot
+must be inside the image. The decoded payload is exactly width × height × 5
+bytes: BGRA pixels followed by a separate alpha plane. Preserve fractional alpha
+by converting to premultiplied RGBA. Finished and complete sync-flushed zlib
+streams are admitted; corruption, truncation, trailing data, extra output and
+compressed lengths above 512 KiB fail the owning connection safely.
+
+A zero compressed length selects a cached identifier, including when rectangle
+geometry is zero. Unknown identifiers clear the shape to the local fallback;
+identifiers have no semantic meaning. Cache at most 64 images and 4 MiB of pixel
+data per socket owner, evicting the least recently used. Clear the cache on new
+connection and teardown. Cursor metadata must not satisfy framebuffer coverage
+or fabricate a video update. Existing pause, retirement and presentation epochs
+also fence these reports. Keep request-driven framebuffer updates; do not enable
+automatic streaming or change encrypted input to obtain cursor feedback.
+
+Both generated direct-client builds deliver empty standard cursor reports through
+the exact hash-admitted upstream callback adapter. Standard and Apple reports
+replace the shape at the current pointer position even without video damage.
+Content-free report, visible-image, publication and cache-miss counters describe
+wire delivery without claiming context semantics or live host compatibility.

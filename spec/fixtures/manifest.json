@@ -759,7 +759,7 @@
       "path": "vnc-desktop-tunnel-v0.1.json",
       "kind": "desktop.tunnel.profile.v0.1",
       "expect": "valid",
-      "canonicalSHA256": "df3777966696f0d120b4bf94f3e8478db4693037cf5577c2d560fce3b1b79dc0"
+      "canonicalSHA256": "36b5458a479770bad7fa21515c518d417f39b9f107e39fea175b5dfa2d01f0c0"
     },
     {
       "path": "valid/desktop-tunnel-open.json",
@@ -825,7 +825,7 @@
       "path": "ios-text-composer-v1.json",
       "kind": "client.iosTextComposer.v1",
       "expect": "valid",
-      "canonicalSHA256": "cf270bcac42030910ac4091bd6dbcc8d1e9167872aad74efc3f9bd9125bf8492"
+      "canonicalSHA256": "56230ded8b4631e544b2e3f00956dc923e8d9e6b8b449d7cc099a7629b525c7a"
     }
   ]
 }

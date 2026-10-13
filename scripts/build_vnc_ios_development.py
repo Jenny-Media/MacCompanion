@@ -57,6 +57,8 @@ def main():
         if hashlib.sha256((framework / path).read_bytes()).hexdigest() != digest:
             raise SystemExit('OpenSSL framework hash mismatch.')
     args.output.mkdir(parents=True, exist_ok=True)
+    from prepare_macos_vnc_cursor import prepare as prepare_cursor, verify as verify_cursor
+    cursor_source, cursor_tree, cursor_provenance = prepare_cursor(args.source, args.output, LOCK)
     deps = args.output / 'dependencies'
     deps.mkdir(exist_ok=True)
     shutil.copytree(framework, deps / 'OpenSSL.framework', dirs_exist_ok=True)
@@ -81,7 +83,7 @@ def main():
         'WITH_EXAMPLES': 'OFF', 'WITH_TESTS': 'OFF',
         'WITH_WEBSOCKETS': 'OFF', 'WITH_TIGHTVNC_FILETRANSFER': 'OFF'
     }
-    run('/opt/homebrew/bin/cmake', '-S', args.source, '-B', build,
+    run('/opt/homebrew/bin/cmake', '-S', cursor_source, '-B', build,
         *['-D' + k + '=' + str(v) for k, v in definitions.items()])
     run('/opt/homebrew/bin/cmake', '--build', build, '--target', 'vncclient', '-j', '6')
     resolved = args.output / 'normal-project.json'
@@ -108,7 +110,7 @@ def main():
         'SWIFT_ACTIVE_COMPILATION_CONDITIONS': '$(inherited) DEBUG MACCOMPANION_VNC_DEVELOPMENT',
         'SWIFT_OBJC_BRIDGING_HEADER': str(HERE / 'MacCompanionVNC-Bridging-Header.h'),
         'CLANG_ENABLE_OBJC_ARC': 'YES', 'ENABLE_DEBUG_DYLIB': 'NO', 'CODE_SIGNING_ALLOWED': 'NO',
-        'HEADER_SEARCH_PATHS': [str(args.source / 'include'), str(build / 'include')],
+        'HEADER_SEARCH_PATHS': [str(cursor_source / 'include'), str(build / 'include')],
         'LIBRARY_SEARCH_PATHS': [str(build)], 'ARCHS': 'arm64', 'ONLY_ACTIVE_ARCH': 'YES', 'OTHER_LDFLAGS': ['$(inherited)', '-lz']})
     import plistlib
     direct_info = plistlib.loads((ROOT / base['INFOPLIST_FILE']).read_bytes())
@@ -170,11 +172,12 @@ def main():
     if json.loads(package_lock.read_text())['pins'] != expected_pins:
         raise SystemExit('Resolved terminal package revisions changed during build.')
     app = args.output / ('DerivedData/Build/Products/Debug-' + args.sdk) / 'Mac Companion.app'
+    verify_cursor(cursor_source, cursor_tree)
     if inputs != source_inputs():
         raise SystemExit('Application sources changed during the build. Rebuild the final sources.')
     (args.output / 'build-report.json').write_text(json.dumps({'profile': 'maccompanion.normal-ios-direct-screen-sharing-development.v1',
         'normalSourceRoot': True, 'releaseAdmitted': False, 'sdk': args.sdk, 'app': str(app),
-        'upstream': LOCK, 'terminalDependencies': terminal_lock, 'terminalPackagePins': expected_pins, 'libVNCClientSHA256': sha(build / 'libvncclient.a'), 'inputs': inputs,
+        'cursorAdapter': cursor_provenance, 'upstream': LOCK, 'terminalDependencies': terminal_lock, 'terminalPackagePins': expected_pins, 'libVNCClientSHA256': sha(build / 'libvncclient.a'), 'inputs': inputs,
         'normalApplicationBinarySHA256': sha(app / 'Mac Companion'), 'installed': False}, indent=2))
     print('Normal VNC app:', app)
 

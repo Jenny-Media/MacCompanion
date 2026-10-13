@@ -106,3 +106,30 @@ Simulator coverage exercises these policies with native windows and the keyboard
 layout guide, actual rendered Send geometry, current/canceled authentication
 callbacks, native editor input and existing VNC/Terminal lifecycle fences.
 Physical Face ID and third-party keyboard acceptance remain separate checks.
+
+
+## Maps-style resizing revision (2026-10-13)
+
+The keyboard-aware panel now has a grabber with compact and expanded snap
+positions. Dragging keeps the same native editor mounted, preserving the draft,
+selection and keyboard focus. Expand/Collapse also provides an accessible action.
+Editor scrolling leaves the panel size unchanged. A short canceled closing drag
+retains the draft; a completed swipe closes it while retaining unsent text.
+Sending prevents swipe dismissal. Background and lock still retire the draft.
+
+The panel uses public UIKit gestures and the actual keyboard guide. Native
+UISheetPresentationController prototypes expanded automatically with the
+keyboard and dismissed it during resizing, so they failed the required typing
+experience. The snapping panel preserves the verified keyboard-aware layout.
+Simulator UI tests use real grabber drags, editor scrolling, typing, dismissal
+and background transitions; native editor tests cover selection, short landscape
+and accessibility sizes. Physical iPhone acceptance remains a separate check.
+
+
+Reproduce the drag suite after a normal simulator development build:
+
+    python3 scripts/verify_terminal_pro_simulator.py --build /absolute/build-output --simulator SIMULATOR_ID --generate-only --composer-ui
+    xcodebuild -project /absolute/build-output/QA/DirectClientQA.xcodeproj -scheme ComposerSheetQA -destination 'platform=iOS Simulator,id=SIMULATOR_ID' -derivedDataPath /absolute/build-output/DerivedData -parallel-testing-enabled NO test
+
+The generated QA app links the experiment entry point only in its private
+target. Release and normal development targets do not link experiment sources.

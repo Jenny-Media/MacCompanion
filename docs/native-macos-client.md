@@ -425,3 +425,13 @@ its connection independently of Desktop and Terminal. See
 [Direct Files v1](../spec/capability-protocol/v0/direct-files.md) for scope,
 transfer safety and lifecycle requirements. Rename, delete, folder transfers and
 automatic resume remain deferred.
+
+
+Both direct clients now advertise and decode bounded Apple1104 cached cursor
+reports alongside standard cursor formats. Cursor-only STORE/SELECT updates
+retain alpha and hotspots without requiring video damage. Cache state remains
+per connection and reports are fenced by the existing pause/retirement epochs.
+Synthetic native Mac and simulator wire tests verify this path; live Screen
+Sharing shape delivery on the existing classic transport remains a separate
+compatibility check. No helper, authentication or encrypted record-layer change
+is introduced.

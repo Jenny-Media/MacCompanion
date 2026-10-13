@@ -14,6 +14,14 @@ import UIKit
     }
 }
 
+@MainActor private final class ComposerPanProbe: UIPanGestureRecognizer {
+    var simulatedState: UIGestureRecognizer.State = .possible
+    override var state: UIGestureRecognizer.State {
+        get { simulatedState }
+        set { simulatedState = newValue }
+    }
+}
+
 @MainActor final class TextComposerTests: XCTestCase {
     func testComposeQuickActionUpgradesOnlyUntouchedDefaultsInEveryIOSMode() {
         for mode in DirectControlMode.allCases {
@@ -54,7 +62,7 @@ import UIKit
         XCTAssertGreaterThan(panel.view.keyboardLayoutGuide.layoutFrame.height, 150, "Coverage requires the actual software keyboard")
         let content = try XCTUnwrap(descendants(panel.view).first { $0.accessibilityIdentifier == "compose-panel" })
         let contentRect = content.convert(content.bounds, to: panel.view)
-        XCTAssertGreaterThanOrEqual(contentRect.minY, panel.view.safeAreaInsets.top + 40, "Some remote desktop remains visible")
+        XCTAssertGreaterThanOrEqual(content.convert(content.bounds, to: window).minY, window.safeAreaInsets.top + 40, "Compact panel leaves remote desktop visible")
         XCTAssertLessThanOrEqual(contentRect.maxY, panel.view.keyboardLayoutGuide.layoutFrame.minY)
         let sendRect = panel.deliveryActionFrame
         XCTAssertGreaterThan(sendRect.width, 20); XCTAssertGreaterThan(sendRect.height, 20)
@@ -66,7 +74,10 @@ import UIKit
         editor.insertText("synthetic draft")
         try await Task.sleep(for: .milliseconds(50))
         XCTAssertEqual(composer.draft.text, "synthetic draft")
-        panel.toggleExpansion(); panel.view.layoutIfNeeded()
+        editor.selectedRange = NSRange(location: 3, length: 0)
+        let selection = editor.selectedRange
+        panel.toggleExpansion(); try await Task.sleep(for: .milliseconds(450)); panel.view.layoutIfNeeded()
+        XCTAssertTrue(editor.isFirstResponder); XCTAssertEqual(editor.selectedRange, selection)
         XCTAssertGreaterThanOrEqual(content.bounds.height, contentRect.height)
         XCTAssertEqual(composer.draft.text, "synthetic draft")
         panel.traitOverrides.preferredContentSizeCategory = .accessibilityExtraExtraExtraLarge
@@ -76,7 +87,13 @@ import UIKit
         XCTAssertGreaterThan(largeRect.width, 20)
         XCTAssertLessThanOrEqual(largeRect.maxY, panel.view.keyboardLayoutGuide.layoutFrame.minY)
         XCTAssertLessThanOrEqual(largeRect.maxX, panel.view.bounds.maxX)
+        composer.draft.expanded = true
+        let latePan = ComposerPanProbe(); latePan.simulatedState = .began
+        panel.perform(NSSelectorFromString("resize:"), with: latePan)
         NotificationCenter.default.post(name: UIApplication.didEnterBackgroundNotification, object: nil)
+        latePan.simulatedState = .cancelled
+        panel.perform(NSSelectorFromString("resize:"), with: latePan)
+        XCTAssertFalse(composer.draft.expanded, "Late canceled drag cannot restore retired presentation state")
         XCTAssertFalse(composer.draft.active); XCTAssertEqual(composer.draft.text, "")
     }
     func testLandscapeComposerKeepsActualSendAndEditorAboveKeyboard() async throws {
@@ -109,6 +126,7 @@ import UIKit
         let content = try XCTUnwrap(descendants(panel.view).first { $0.accessibilityIdentifier == "compose-panel" })
         let contentRect = content.convert(content.bounds, to: panel.view)
         let editorRect = editor.convert(editor.bounds, to: panel.view)
+        XCTAssertGreaterThanOrEqual(content.convert(content.bounds, to: window).minY, window.safeAreaInsets.top + 8)
         XCTAssertGreaterThan(panel.view.keyboardLayoutGuide.layoutFrame.height, 120)
         XCTAssertGreaterThan(panel.deliveryActionFrame.height, 20)
         XCTAssertGreaterThanOrEqual(panel.deliveryActionFrame.minY, contentRect.minY)

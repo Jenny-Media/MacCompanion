@@ -1,6 +1,7 @@
 #import <XCTest/XCTest.h>
 #import <AppKit/AppKit.h>
 #import "CompanionVNCSession.h"
+#import "CompanionVNCAppleCursor.h"
 #import <rfb/rfbclient.h>
 #import <arpa/inet.h>
 #import <sys/socket.h>
@@ -9,6 +10,7 @@
 @interface CompanionVNCSession (NativeCursorWireDiagnosis)
 - (void)configureClient:(rfbClient *)client;
 - (void)publishCursor;
+- (rfbBool)allocate:(rfbClient *)client;
 @end
 
 @interface VNCCursorWireTests : XCTestCase
@@ -56,6 +58,7 @@
         [actual addObject:@((int32_t)ntohl(encoding))];
     }
     for (NSNumber *encoding in [self profile][@"cursorNegotiationEncodings"]) XCTAssertTrue([actual containsObject:encoding]);
+    XCTAssertTrue([actual containsObject:[self profile][@"appleCursor"][@"encoding"]]);
     [session setValue:@NO forKey:@"running"]; rfbClientCleanup(client); close(peer);
 }
 - (NSData *)updateFor:(NSDictionary *)vector {
@@ -149,5 +152,172 @@
         [self waitForExpectations:@[cleared] timeout:1];
         session.cursorHandler = nil; [session setValue:@NO forKey:@"running"]; rfbClientCleanup(client); close(peer);
     }
+}
+- (void)testAppleStoreAndZeroGeometrySelectKeepAlphaHotspotAndStayMetadata {
+    for (NSDictionary *vector in [self profile][@"appleCursorCases"]) {
+        CompanionVNCSession *session = [CompanionVNCSession new]; int peer;
+        rfbClient *client = [self clientFor:session peer:&peer];
+        for (BOOL select = NO;; select = YES) {
+            NSMutableDictionary *message = [vector mutableCopy];
+            if (select) { message[@"size"] = @[@0, @0]; message[@"hotspot"] = @[@0, @0]; message[@"payload"] = @[@0, @0, @0, @17, @0, @0, @0, @0]; }
+            XCTestExpectation *shape = [self expectationWithDescription:select ? @"Cached SELECT" : @"Apple STORE"];
+            session.cursorHandler = ^(NSImage *image, CGPoint hotspot, CGPoint position, BOOL known) {
+                [self assertImage:image vector:vector]; XCTAssertEqual(hotspot.x, 1); XCTAssertEqual(hotspot.y, 0); [shape fulfill];
+            };
+            NSData *packet = [self updateFor:message]; XCTAssertEqual(send(peer, packet.bytes, packet.length, 0), packet.length);
+            XCTAssertTrue(HandleRFBServerMessage(client)); [session publishCursor];
+            [self waitForExpectations:@[shape] timeout:1];
+            XCTAssertEqualObjects([session valueForKey:@"updates"], @0);
+            if (select) break;
+        }
+        session.cursorHandler = nil; [session setValue:@NO forKey:@"running"]; rfbClientCleanup(client); close(peer);
+    }
+}
+- (void)testAppleCacheReplacementEvictionAndConnectionIsolation {
+    NSDictionary *vector = [self profile][@"appleCursorCases"][0];
+    CompanionVNCSession *session = [CompanionVNCSession new]; int peer;
+    rfbClient *client = [self clientFor:session peer:&peer];
+    for (NSUInteger i = 0; i < 65; i++) {
+        NSMutableDictionary *message = [vector mutableCopy]; NSMutableArray *payload = [vector[@"payload"] mutableCopy];
+        payload[3] = @(i); message[@"payload"] = payload;
+        NSData *packet = [self updateFor:message]; XCTAssertEqual(send(peer, packet.bytes, packet.length, 0), packet.length);
+        XCTAssertTrue(HandleRFBServerMessage(client));
+    }
+    NSDictionary *cache = [session valueForKey:@"appleCursorCache"];
+    XCTAssertEqual(cache.count, 64); XCTAssertNil(cache[@0]); XCTAssertNotNil(cache[@64]);
+    NSMutableDictionary *replacement = [[self profile][@"appleCursorCases"][1] mutableCopy];
+    NSMutableArray *payload = [replacement[@"payload"] mutableCopy]; payload[3] = @64; replacement[@"payload"] = payload;
+    NSData *packet = [self updateFor:replacement]; XCTAssertEqual(send(peer, packet.bytes, packet.length, 0), packet.length);
+    XCTAssertTrue(HandleRFBServerMessage(client));
+    XCTAssertEqual([[session valueForKey:@"appleCursorCache"] count], 64);
+    [self assertImage:[session valueForKey:@"cursorImage"] vector:replacement];
+    NSMutableDictionary *select = [vector mutableCopy]; select[@"size"] = @[@0, @0]; select[@"hotspot"] = @[@0, @0];
+    select[@"payload"] = @[@0, @0, @0, @0, @0, @0, @0, @0];
+    packet = [self updateFor:select]; XCTAssertEqual(send(peer, packet.bytes, packet.length, 0), packet.length);
+    XCTAssertTrue(HandleRFBServerMessage(client)); XCTAssertNil([session valueForKey:@"cursorImage"]);
+    [session configureClient:client]; XCTAssertEqual([[session valueForKey:@"appleCursorCache"] count], 0);
+    select[@"payload"] = @[@0, @0, @0, @64, @0, @0, @0, @0];
+    packet = [self updateFor:select]; XCTAssertEqual(send(peer, packet.bytes, packet.length, 0), packet.length);
+    XCTAssertTrue(HandleRFBServerMessage(client)); XCTAssertNil([session valueForKey:@"cursorImage"]);
+    [session setValue:@NO forKey:@"running"]; rfbClientCleanup(client); close(peer);
+}
+- (void)testAppleCompressedBoundsRejectCorruptionTruncationAndExtraOutput {
+    for (NSDictionary *vector in [self profile][@"appleCursorCases"]) {
+        NSMutableData *compressed = [NSMutableData new]; NSArray *payload = vector[@"payload"];
+        for (NSUInteger i = 8; i < payload.count; i++) { uint8_t byte = [payload[i] unsignedCharValue]; [compressed appendBytes:&byte length:1]; }
+        uint8_t rgba[8];
+        XCTAssertTrue(CompanionVNCAppleCursorRGBA(2, 1, 1, 0, compressed.bytes, compressed.length, rgba, sizeof(rgba)));
+        for (NSUInteger i = 0; i < 8; i++) XCTAssertEqual(rgba[i], [vector[@"rgba"][i] unsignedCharValue]);
+        for (NSUInteger length = 0; length < compressed.length; length++) XCTAssertFalse(CompanionVNCAppleCursorRGBA(2, 1, 1, 0, compressed.bytes, length, rgba, sizeof(rgba)));
+        NSMutableData *extra = [compressed mutableCopy]; uint8_t zero = 0; [extra appendBytes:&zero length:1];
+        XCTAssertFalse(CompanionVNCAppleCursorRGBA(2, 1, 1, 0, extra.bytes, extra.length, rgba, sizeof(rgba)));
+        ((uint8_t *)extra.mutableBytes)[0] = 0;
+        XCTAssertFalse(CompanionVNCAppleCursorRGBA(2, 1, 1, 0, extra.bytes, compressed.length, rgba, sizeof(rgba)));
+        XCTAssertFalse(CompanionVNCAppleCursorRGBA(1, 1, 0, 0, compressed.bytes, compressed.length, rgba, sizeof(rgba)));
+        XCTAssertFalse(CompanionVNCAppleCursorRGBA(2, 1, 2, 0, compressed.bytes, compressed.length, rgba, sizeof(rgba)));
+        XCTAssertFalse(CompanionVNCAppleCursorRGBA(257, 1, 0, 0, compressed.bytes, compressed.length, rgba, sizeof(rgba)));
+        XCTAssertFalse(CompanionVNCAppleCursorRGBA(2, 1, 1, 0, compressed.bytes, 512 * 1024 + 1, rgba, sizeof(rgba)));
+    }
+}
+- (void)testAppleCursorPauseAndRetirementFenceQueuedPresentation {
+    NSDictionary *vector = [self profile][@"appleCursorCases"][0];
+    for (BOOL pause = NO;; pause = YES) {
+        CompanionVNCSession *session = [CompanionVNCSession new]; int peer;
+        rfbClient *client = [self clientFor:session peer:&peer];
+        session.cursorHandler = ^(NSImage *image, CGPoint hotspot, CGPoint position, BOOL known) { XCTFail(@"Retired cursor must not be presented"); };
+        NSData *packet = [self updateFor:vector]; XCTAssertEqual(send(peer, packet.bytes, packet.length, 0), packet.length);
+        XCTAssertTrue(HandleRFBServerMessage(client)); [session publishCursor];
+        if (pause) { [session setValue:@YES forKey:@"established"]; [session pauseWithCompletion:^{}]; } else [session stop];
+        XCTestExpectation *turn = [self expectationWithDescription:@"Drain cursor"];
+        dispatch_async(dispatch_get_main_queue(), ^{ [turn fulfill]; }); [self waitForExpectations:@[turn] timeout:1];
+        session.cursorHandler = nil; [session setValue:@NO forKey:@"running"]; rfbClientCleanup(client); close(peer);
+        if (pause) break;
+    }
+}
+- (void)testAppleCachePixelBudgetAndMaximumDimensions {
+    NSDictionary *policy = [self profile][@"appleCursor"];
+    NSUInteger dimension = [policy[@"maximumDimension"] unsignedIntegerValue];
+    NSMutableData *raw = [NSMutableData dataWithLength:dimension * dimension * 5];
+    memset(raw.mutableBytes, 255, raw.length);
+    uLongf length = compressBound(raw.length); NSMutableData *compressed = [NSMutableData dataWithLength:length];
+    XCTAssertEqual(compress2(compressed.mutableBytes, &length, raw.bytes, raw.length, Z_BEST_SPEED), Z_OK); compressed.length = length;
+    NSMutableData *rgba = [NSMutableData dataWithLength:dimension * dimension * 4];
+    XCTAssertTrue(CompanionVNCAppleCursorRGBA((int)dimension, (int)dimension, (int)dimension - 1, 0, compressed.bytes, compressed.length, rgba.mutableBytes, rgba.length));
+    CompanionVNCSession *session = [CompanionVNCSession new]; int peer; rfbClient *client = [self clientFor:session peer:&peer];
+    client->width = client->height = 512;
+    NSMutableArray *payload = [NSMutableArray arrayWithArray:@[@0, @0, @0, @0, @(length >> 24), @((length >> 16) & 255), @((length >> 8) & 255), @(length & 255)]];
+    for (NSUInteger i = 0; i < length; i++) [payload addObject:@(((const uint8_t *)compressed.bytes)[i])];
+    for (NSUInteger i = 0; i < 17; i++) {
+        payload[3] = @(i);
+        NSData *packet = [self updateFor:@{@"size": @[@(dimension), @(dimension)], @"hotspot": @[@(dimension - 1), @0], @"encoding": policy[@"encoding"], @"payload": payload}];
+        XCTAssertEqual(send(peer, packet.bytes, packet.length, 0), packet.length); XCTAssertTrue(HandleRFBServerMessage(client));
+        XCTAssertLessThanOrEqual([[session valueForKey:@"appleCursorBytes"] unsignedIntegerValue], [policy[@"maximumCachePixelBytes"] unsignedIntegerValue]);
+    }
+    XCTAssertNil([session valueForKey:@"appleCursorCache"][@0]);
+    [session setValue:@NO forKey:@"running"]; rfbClientCleanup(client); close(peer);
+}
+- (void)testAppleCursorAndRawRectanglesShareOneAlignedUpdate {
+    CompanionVNCSession *session = [CompanionVNCSession new]; int peer; rfbClient *client = [self clientFor:session peer:&peer];
+    XCTAssertTrue([session allocate:client]);
+    NSMutableData *packet = [[self updateFor:[self profile][@"appleCursorCases"][0]] mutableCopy];
+    ((uint8_t *)packet.mutableBytes)[3] = 2;
+    // One red synthetic raw pixel follows the cursor rectangle in the SAME
+    // update. Cursor geometry must not satisfy even one pixel of coverage.
+    uint8_t raw[] = {0,0, 0,0, 0,1, 0,1, 0,0,0,0, 0,0,255,0};
+    [packet appendBytes:raw length:sizeof(raw)];
+    XCTAssertEqual(send(peer, packet.bytes, packet.length, 0), packet.length); XCTAssertTrue(HandleRFBServerMessage(client));
+    XCTAssertEqualObjects([session valueForKey:@"updates"], @1);
+    XCTAssertEqualObjects([session valueForKey:@"receivedPixels"], @1);
+    XCTAssertNotNil([session valueForKey:@"cursorImage"]);
+    XCTAssertEqual(client->frameBuffer[2], 255);
+    [session setValue:@NO forKey:@"running"]; client->frameBuffer = NULL; rfbClientCleanup(client); close(peer);
+}
+- (void)testAppleMalformedWireRetiresOwnerWithoutPublishingCursor {
+    for (NSArray *payload in @[@[@0, @0, @0, @1, @0, @8, @0, @1], @[@0, @0, @0, @1, @0, @0, @0, @2, @0, @0]]) {
+        CompanionVNCSession *session = [CompanionVNCSession new]; int peer; rfbClient *client = [self clientFor:session peer:&peer];
+        NSData *packet = [self updateFor:@{@"size": @[@2, @1], @"hotspot": @[@1, @0], @"encoding": @1104, @"payload": payload}];
+        XCTAssertEqual(send(peer, packet.bytes, packet.length, 0), packet.length); XCTAssertFalse(HandleRFBServerMessage(client));
+        XCTAssertEqualObjects([session valueForKey:@"extensionFailed"], @YES); XCTAssertNil([session valueForKey:@"cursorImage"]);
+        [session setValue:@NO forKey:@"running"]; rfbClientCleanup(client); close(peer);
+    }
+}
+- (void)testStationaryWireShapeChangesAndCoalescedReportsPublishLatestWithoutVideo {
+    CompanionVNCSession *session = [CompanionVNCSession new]; int peer;
+    rfbClient *client = [self clientFor:session peer:&peer];
+    NSDictionary *profile = [self profile], *sequence = profile[@"stationaryCursorSequence"];
+    NSMutableArray *vectors = [NSMutableArray new];
+    for (NSString *kind in @[@"standard", @"apple"]) {
+        NSArray *cases = profile[[kind isEqual:@"standard"] ? @"cursorWireCases" : @"appleCursorCases"];
+        for (NSString *name in sequence[kind]) {
+            for (NSDictionary *vector in cases) if ([vector[@"name"] isEqual:name]) [vectors addObject:vector];
+        }
+    }
+    XCTAssertEqual(vectors.count, 4);
+    for (NSDictionary *vector in vectors) {
+        XCTestExpectation *delivered = [self expectationWithDescription:@"Stationary shape"];
+        session.cursorHandler = ^(NSImage *image, CGPoint hotspot, CGPoint position, BOOL known) {
+            [self assertImage:image vector:vector]; XCTAssertFalse(known); [delivered fulfill];
+        };
+        NSData *packet = [self updateFor:vector]; XCTAssertEqual(send(peer, packet.bytes, packet.length, 0), packet.length);
+        XCTAssertTrue(HandleRFBServerMessage(client)); [session publishCursor];
+        [self waitForExpectations:@[delivered] timeout:1];
+    }
+    XCTestExpectation *pending = [self expectationWithDescription:@"Pending shape"];
+    session.cursorHandler = ^(NSImage *image, CGPoint hotspot, CGPoint position, BOOL known) { [pending fulfill]; };
+    for (NSDictionary *vector in @[vectors[0], vectors.lastObject]) {
+        NSData *packet = [self updateFor:vector]; XCTAssertEqual(send(peer, packet.bytes, packet.length, 0), packet.length);
+        XCTAssertTrue(HandleRFBServerMessage(client)); [session publishCursor];
+    }
+    [self waitForExpectations:@[pending] timeout:1];
+    XCTestExpectation *latest = [self expectationWithDescription:@"Latest dirty shape"];
+    session.cursorHandler = ^(NSImage *image, CGPoint hotspot, CGPoint position, BOOL known) {
+        [self assertImage:image vector:vectors.lastObject]; [latest fulfill];
+    };
+    [session publishCursor]; [self waitForExpectations:@[latest] timeout:1];
+    XCTAssertEqualObjects([session valueForKey:@"updates"], @0);
+    XCTAssertEqualObjects([session valueForKey:@"cursorPositions"], @0);
+    XCTAssertEqualObjects([session valueForKey:@"appleCursorStores"], @3);
+    XCTAssertEqualObjects([session valueForKey:@"standardCursorReports"], @3);
+    session.cursorHandler = nil; [session setValue:@NO forKey:@"running"]; rfbClientCleanup(client); close(peer);
 }
 @end

@@ -2077,5 +2077,143 @@
         "payload": []
       }
     }
-  ]
+  ],
+  "appleCursor": {
+    "encoding": 1104,
+    "maximumDimension": 256,
+    "maximumCompressedBytes": 524288,
+    "maximumCacheEntries": 64,
+    "maximumCachePixelBytes": 4194304,
+    "transport": "existing classic authenticated RFB",
+    "unknownSelect": "clear shape",
+    "metadataOnly": true
+  },
+  "appleCursorCases": [
+    {
+      "name": "fractional-alpha",
+      "encoding": 1104,
+      "size": [
+        2,
+        1
+      ],
+      "hotspot": [
+        1,
+        0
+      ],
+      "payload": [
+        0,
+        0,
+        0,
+        17,
+        0,
+        0,
+        0,
+        18,
+        120,
+        156,
+        227,
+        18,
+        145,
+        99,
+        208,
+        48,
+        178,
+        97,
+        104,
+        96,
+        0,
+        0,
+        5,
+        236,
+        1,
+        83
+      ],
+      "rgba": [
+        15,
+        10,
+        5,
+        128,
+        0,
+        0,
+        0,
+        0
+      ]
+    },
+    {
+      "name": "sync-flushed",
+      "encoding": 1104,
+      "size": [
+        2,
+        1
+      ],
+      "hotspot": [
+        1,
+        0
+      ],
+      "payload": [
+        0,
+        0,
+        0,
+        17,
+        0,
+        0,
+        0,
+        18,
+        120,
+        156,
+        226,
+        18,
+        145,
+        99,
+        208,
+        48,
+        178,
+        97,
+        248,
+        223,
+        0,
+        0,
+        0,
+        0,
+        255,
+        255
+      ],
+      "rgba": [
+        30,
+        20,
+        10,
+        255,
+        30,
+        25,
+        20,
+        128
+      ]
+    }
+  ],
+  "cursorPresentationPolicy": {
+    "clients": [
+      "ios",
+      "macos"
+    ],
+    "stationaryShapeUpdates": true,
+    "emptyCallback": [
+      "ios",
+      "macos"
+    ],
+    "cacheScope": "socket owner",
+    "diagnostics": "content-free counters; synthetic is not live acceptance"
+  },
+  "stationaryCursorSequence": {
+    "standard": [
+      "rich-mask-row-padding",
+      "x-cursor-colors-and-row-padding"
+    ],
+    "apple": [
+      "fractional-alpha",
+      "sync-flushed"
+    ],
+    "positionMessages": 0,
+    "videoRects": 0,
+    "coalescedDelivery": "latest dirty shape publishes after the pending callback drains"
+  }
 }

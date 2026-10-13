@@ -3,6 +3,7 @@
 #import "CompanionVNCCoverage.h"
 #import "CompanionVNCKeyboard.h"
 #import "CompanionVNCCursor.h"
+#import "CompanionVNCAppleCursor.h"
 #import "CompanionVNCDirectConnection.h"
 #import "CompanionVNCDirectEndpoint.h"
 #import "CompanionVNCDisplayLayout.h"
@@ -97,6 +98,10 @@ static void QuietLog(const char *format, ...) {
     CGPoint _cursorHotspot, _cursorPosition;
     BOOL _cursorPositionKnown, _cursorPending, _cursorDirty;
     NSUInteger _cursorShapes, _cursorPositions, _pauses, _resumes, _resumeFrames;
+    NSMutableDictionary<NSNumber *, NSDictionary *> *_appleCursorCache;
+    NSMutableArray<NSNumber *> *_appleCursorOrder;
+    NSUInteger _appleCursorBytes, _appleCursorStores, _appleCursorSelections, _appleCursorMisses;
+    NSUInteger _standardCursorReports, _visibleCursorImages, _cursorPublications;
 }
 - (rfbCredential *)credential:(int)type;
 - (rfbBool)allocate:(rfbClient *)client;
@@ -122,6 +127,7 @@ static void QuietLog(const char *format, ...) {
 - (BOOL)sendScrollEvent:(NSDictionary *)event client:(rfbClient *)client;
 - (rfbBool)displayLayout:(rfbClient *)client;
 - (rfbBool)displayLayout:(rfbClient *)client encoding:(int)encoding;
+- (rfbBool)appleCursor:(rfbClient *)client rect:(rfbFramebufferUpdateRectHeader *)rect;
 @end
 
 static CompanionVNCSession *Owner(rfbClient *client) {
@@ -135,12 +141,19 @@ static void CursorShape(rfbClient *client, int x, int y, int width, int height, 
 }
 static rfbBool CursorPosition(rfbClient *client, int x, int y) { return [Owner(client) cursorPosition:client x:x y:y]; }
 static rfbBool AppleLayout(rfbClient *client, rfbFramebufferUpdateRectHeader *rect) {
+#if TARGET_OS_OSX || TARGET_OS_IOS
+    if (rect->encoding == 1104) return [Owner(client) appleCursor:client rect:rect];
+#endif
     if (rect->encoding != 1101 && rect->encoding != 1105) return FALSE;
     return [Owner(client) displayLayout:client encoding:rect->encoding];
 }
 // 1101 enables the server's display-info delivery; 1105 selects the newer
 // layout format. Requesting 1105 alone leaves its send-display-info gate off.
-static int layoutEncodings[] = {1101, 1105, 0};
+static int layoutEncodings[] = {1101,
+#if TARGET_OS_OSX || TARGET_OS_IOS
+    1104,
+#endif
+    1105, 0};
 static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncodings, .handleEncoding = AppleLayout};
 
 @implementation CompanionVNCSession
@@ -552,6 +565,7 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
 
 }
 - (void)configureClient:(rfbClient *)client {
+    _appleCursorCache = [NSMutableDictionary new]; _appleCursorOrder = [NSMutableArray new]; _appleCursorBytes = 0;
     decoderFailed = NO; appleGestureBanner = NO;
     rfbClientSetClientData(client, &ownerTag, (__bridge void *)self);
     free(client->serverHost);
@@ -570,6 +584,7 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
     [self registerSocket:-1];
     free(_pixels); _pixels = NULL; CompanionVNCCoverageFree(&_coverage); _username = nil; _password = nil;
     _cursorImage = nil; _cursorPositionKnown = NO; _cursorDirty = NO;
+    [_appleCursorCache removeAllObjects]; [_appleCursorOrder removeAllObjects]; _appleCursorBytes = 0;
     [_lock lock]; [self cancelNativeGesturesLocked]; _appleGestureServer = NO; _nativeGestureLayout = NO; _running = NO; _established = NO; _inputReady = NO; _reviewInputSuspended = NO; _reviewReleaseCompletion = nil; [_events removeAllObjects];
 #if TARGET_OS_IOS
     [self cancelComposedTextLocked];
@@ -716,7 +731,7 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
 }
 - (void)cursorShape:(rfbClient *)client x:(int)x y:(int)y width:(int)width height:(int)height bytesPerPixel:(int)bytes {
     _cursorImage = nil; _cursorHotspot = CGPointZero; _cursorDirty = YES;
-    [_lock lock]; _cursorShapes++; [_lock unlock];
+    [_lock lock]; _cursorShapes++; _standardCursorReports++; [_lock unlock];
     if (width <= 0 || height <= 0 || width > 256 || height > 256 || bytes != 4) return;
     NSUInteger count = (NSUInteger)width * height;
     NSMutableData *rgba = [NSMutableData dataWithLength:count * 4];
@@ -726,8 +741,53 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
     CGColorSpaceRef colors = CGColorSpaceCreateDeviceRGB();
     CGImageRef image = CGImageCreate(width, height, 8, 32, width * 4, colors,
         (CGBitmapInfo)kCGBitmapByteOrder32Big | (CGBitmapInfo)kCGImageAlphaPremultipliedLast, provider, NULL, NO, kCGRenderingIntentDefault);
-    if (image) { _cursorImage = PlatformImage(image); _cursorHotspot = CGPointMake(x, y); CGImageRelease(image); }
+    if (image) { [_lock lock]; _visibleCursorImages++; [_lock unlock]; _cursorImage = PlatformImage(image); _cursorHotspot = CGPointMake(x, y); CGImageRelease(image); }
     CGColorSpaceRelease(colors); CGDataProviderRelease(provider);
+}
+- (rfbBool)appleCursor:(rfbClient *)client rect:(rfbFramebufferUpdateRectHeader *)rect {
+    _metadataCallback = YES;
+    uint8_t header[8];
+    if (!ReadFromRFBServer(client, (char *)header, sizeof(header))) { _extensionFailed = YES; return FALSE; }
+    uint32_t identifier = ((uint32_t)header[0] << 24) | ((uint32_t)header[1] << 16) | ((uint32_t)header[2] << 8) | header[3];
+    uint32_t length = ((uint32_t)header[4] << 24) | ((uint32_t)header[5] << 16) | ((uint32_t)header[6] << 8) | header[7];
+    NSNumber *key = @(identifier);
+    if (length) {
+        int width = rect->r.w, height = rect->r.h, x = rect->r.x, y = rect->r.y;
+        if (length > 512 * 1024 || width < 1 || height < 1 || width > 256 || height > 256 || x >= width || y >= height) {
+            _extensionFailed = YES; return FALSE;
+        }
+        NSMutableData *compressed = [NSMutableData dataWithLength:length];
+        NSMutableData *rgba = [NSMutableData dataWithLength:(NSUInteger)width * height * 4];
+        if (!ReadFromRFBServer(client, compressed.mutableBytes, length)
+            || !CompanionVNCAppleCursorRGBA(width, height, x, y, compressed.bytes, length, rgba.mutableBytes, rgba.length)) {
+            _extensionFailed = YES; return FALSE;
+        }
+        CGDataProviderRef provider = CGDataProviderCreateWithCFData((__bridge CFDataRef)rgba);
+        CGColorSpaceRef colors = CGColorSpaceCreateDeviceRGB();
+        CGImageRef cg = CGImageCreate(width, height, 8, 32, width * 4, colors,
+            (CGBitmapInfo)kCGBitmapByteOrder32Big | (CGBitmapInfo)kCGImageAlphaPremultipliedLast, provider, NULL, NO, kCGRenderingIntentDefault);
+        CompanionVNCImage *image = cg ? PlatformImage(cg) : nil;
+        if (cg) CGImageRelease(cg); CGColorSpaceRelease(colors); CGDataProviderRelease(provider);
+        if (!image) { _extensionFailed = YES; return FALSE; }
+        _appleCursorBytes -= [_appleCursorCache[key][@"bytes"] unsignedIntegerValue];
+        [_appleCursorOrder removeObject:key];
+        while (_appleCursorOrder.count && (_appleCursorOrder.count >= 64 || _appleCursorBytes + rgba.length > 4 * 1024 * 1024)) {
+            NSNumber *oldest = _appleCursorOrder.firstObject;
+            _appleCursorBytes -= [_appleCursorCache[oldest][@"bytes"] unsignedIntegerValue];
+            [_appleCursorCache removeObjectForKey:oldest]; [_appleCursorOrder removeObjectAtIndex:0];
+        }
+        _appleCursorCache[key] = @{@"image": image, @"x": @(x), @"y": @(y), @"bytes": @(rgba.length)};
+        _appleCursorBytes += rgba.length;
+        [_lock lock]; _appleCursorStores++; _visibleCursorImages++; [_lock unlock];
+    } else { [_lock lock]; _appleCursorSelections++; [_lock unlock]; }
+    NSDictionary *selected = _appleCursorCache[key];
+    _cursorImage = selected[@"image"];
+    _cursorHotspot = selected ? CGPointMake([selected[@"x"] doubleValue], [selected[@"y"] doubleValue]) : CGPointZero;
+    if (selected) { [_appleCursorOrder removeObject:key]; [_appleCursorOrder addObject:key]; }
+    else { [_lock lock]; _appleCursorMisses++; [_lock unlock]; }
+    _cursorDirty = YES;
+    [_lock lock]; _cursorShapes++; [_lock unlock];
+    return TRUE;
 }
 - (rfbBool)cursorPosition:(rfbClient *)client x:(int)x y:(int)y {
     _cursorPositionKnown = x >= 0 && y >= 0 && x < client->width && y < client->height;
@@ -746,7 +806,10 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
     dispatch_async(dispatch_get_main_queue(), ^{
         [self->_lock lock]; BOOL valid = generation == self->_generation && epoch == self->_presentationEpoch && self->_running && !self->_stopping && !self->_paused;
         if (generation == self->_generation) self->_cursorPending = NO; [self->_lock unlock];
-        if (valid && self.cursorHandler) self.cursorHandler(image, hotspot, position, known);
+        if (valid && self.cursorHandler) {
+            [self->_lock lock]; self->_cursorPublications++; [self->_lock unlock];
+            self.cursorHandler(image, hotspot, position, known);
+        }
     });
 }
 - (void)publishFrame:(rfbClient *)client {
@@ -798,7 +861,10 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
         @"framebufferWidth": @(_framebufferWidth), @"framebufferHeight": @(_framebufferHeight),
         @"displayLayoutMessages": @(_layoutMessages), @"displayLayout": _layoutDiagnostics ?: @{},
         @"backgroundPauses": @(_pauses), @"retainedResumes": @(_resumes), @"resumeFrames": @(_resumeFrames),
-        @"cursorShapeUpdates": @(_cursorShapes), @"cursorPositionUpdates": @(_cursorPositions)};
+        @"cursorShapeUpdates": @(_cursorShapes), @"cursorPositionUpdates": @(_cursorPositions),
+        @"standardCursorReports": @(_standardCursorReports), @"decodedCursorImages": @(_visibleCursorImages),
+        @"appleCursorStores": @(_appleCursorStores), @"appleCursorSelections": @(_appleCursorSelections),
+        @"appleCursorCacheMisses": @(_appleCursorMisses), @"cursorPublications": @(_cursorPublications)};
     [_lock unlock];
     dispatch_async(dispatch_get_main_queue(), ^{
         [self->_lock lock]; BOOL current = generation == self->_generation && !(intermediate && (self->_stopping || epoch != self->_presentationEpoch)); [self->_lock unlock];
