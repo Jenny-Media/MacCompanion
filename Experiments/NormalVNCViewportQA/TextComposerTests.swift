@@ -2,7 +2,45 @@ import XCTest
 import UIKit
 @testable import Mac_Companion
 
+@MainActor private final class ComposerAdmissionProbe: NSObject {
+    @objc var interruptionHandler: (() -> Void)?
+    @objc var sending: Bool { false }
+    var available: (() -> Bool)?
+    var send: ((String, @escaping (String?) -> Void) -> Void)?
+    @objc func invalidate() { available = nil; send = nil }
+    @objc func present(from controller: UIViewController, available: @escaping () -> Bool,
+                       send: @escaping (String, @escaping (String?) -> Void) -> Void) {
+        self.available = available; self.send = send
+    }
+}
+
 @MainActor final class TextComposerTests: XCTestCase {
+    func testCapturedComposerAvailabilityAndFinalDeliveryRejectLaterRestoration() throws {
+        let url = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "direct-screen-sharing-v1", withExtension: "json"))
+        let fixture = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])
+        let vectors = try XCTUnwrap(fixture["interruptionCases"] as? [[String: Any]])
+        XCTAssertNotNil(vectors.first { $0["name"] as? String == "replacement-composer-delivery-before-layout" })
+        let viewer = CompanionVNCViewer(); viewer.loadViewIfNeeded()
+        let owner = viewer.session
+        for key in ["running", "inputReady", "established", "baselinePresented"] { owner.setValue(true, forKey: key) }
+        let probe = ComposerAdmissionProbe(); viewer.setValue(probe, forKey: "textComposer")
+        defer { viewer.perform(NSSelectorFromString("stopViewer")); owner.setValue(false, forKey: "running") }
+        viewer.perform(NSSelectorFromString("showTextComposer"))
+        let availability = try XCTUnwrap(probe.available), delivery = try XCTUnwrap(probe.send)
+        XCTAssertTrue(availability())
+        viewer.setValue(true, forKey: "restoreViewportPending")
+        XCTAssertFalse(availability(), "A captured availability callback must observe later restoration")
+        var rejected: String?
+        // Exercise the production final-send closure independently of the draft's
+        // earlier availability check, as a late delivery callback can do.
+        delivery("synthetic-only") { rejected = $0 }
+        XCTAssertNotNil(rejected)
+        XCTAssertEqual((owner.value(forKey: "events") as? [NSDictionary])?.count, 0)
+        viewer.setValue(false, forKey: "restoreViewportPending")
+        XCTAssertTrue(availability())
+        delivery("a") { _ in }
+        XCTAssertEqual((owner.value(forKey: "events") as? [NSDictionary])?.count, 2, "Current readiness still admits balanced Unicode events")
+    }
     func testInterruptedSendWarningSurvivesAutomaticReplacementUntilAcknowledged() async throws {
         let url = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "ios-text-composer-v1", withExtension: "json"))
         let fixture = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])

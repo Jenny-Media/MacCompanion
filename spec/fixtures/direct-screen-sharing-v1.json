@@ -154,11 +154,11 @@
       "valid": false
     },
     {
-      "value": "ééééééééééééééééééééééééééééééé",
+      "value": "\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9",
       "valid": true
     },
     {
-      "value": "éééééééééééééééééééééééééééééééé",
+      "value": "\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9",
       "valid": false
     },
     {
@@ -320,7 +320,9 @@
     "terminalReturnRenewsEvidence": false,
     "terminalColdActivityReturnRequiresExplicitConnect": true,
     "knownEndIndependentOfActivityUpdate": true,
-    "inactiveReturnRestoresLatestTerminalGrid": true
+    "inactiveReturnRestoresLatestTerminalGrid": true,
+    "replacementComposeTextRequiresPresentedDesktop": true,
+    "replacementVideoModeChange": "defer-until-presentation-ready"
   },
   "lifecycleCases": [
     {
@@ -1203,16 +1205,16 @@
     },
     {
       "id": "unicode",
-      "value": "工作 Mac",
+      "value": "\u5de5\u4f5c Mac",
       "macValid": true,
-      "normalizedName": "工作 Mac",
+      "normalizedName": "\u5de5\u4f5c Mac",
       "keyValid": true
     },
     {
       "id": "emoji",
-      "value": "Mac 🖥️",
+      "value": "Mac \ud83d\udda5\ufe0f",
       "macValid": true,
-      "normalizedName": "Mac 🖥️",
+      "normalizedName": "Mac \ud83d\udda5\ufe0f",
       "keyValid": true
     },
     {
@@ -1248,7 +1250,7 @@
     },
     {
       "id": "bidi-format",
-      "value": "Mac‮",
+      "value": "Mac\u202e",
       "macValid": false,
       "keyValid": false
     },
@@ -2199,8 +2201,8 @@
       "normalized": "Studio Mac"
     },
     {
-      "value": "开发 Mac",
-      "normalized": "开发 Mac"
+      "value": "\u5f00\u53d1 Mac",
+      "normalized": "\u5f00\u53d1 Mac"
     },
     {
       "value": "",
@@ -2215,7 +2217,7 @@
       "normalized": null
     },
     {
-      "value": "Mac‮Name",
+      "value": "Mac\u202eName",
       "normalized": null
     }
   ],
@@ -3018,6 +3020,83 @@
         "latest-grid-published-on-return",
         "same-authentication-and-PTY",
         "no-input-replay"
+      ]
+    },
+    {
+      "name": "replacement-frame-first-composer",
+      "events": [
+        "replacement",
+        "frame",
+        "compose-text",
+        "matching-layout",
+        "compose-text"
+      ],
+      "expect": [
+        "old-crop-retained",
+        "composer-entry-rejected",
+        "current-crop-presented",
+        "composer-entry-admitted"
+      ]
+    },
+    {
+      "name": "replacement-composer-delivery-before-layout",
+      "events": [
+        "composer-configured",
+        "replacement-presentation-pending",
+        "availability-check",
+        "final-send"
+      ],
+      "expect": [
+        "composer-unavailable",
+        "no-composed-events-queued"
+      ]
+    },
+    {
+      "name": "replacement-video-mode-change-before-frame",
+      "events": [
+        "replacement",
+        "trackpad-only-request",
+        "layout",
+        "frame",
+        "trackpad-only-request"
+      ],
+      "expect": [
+        "desktop-mode-retained",
+        "frame-requests-retained",
+        "current-crop-presented",
+        "trackpad-mode-admitted"
+      ]
+    },
+    {
+      "name": "replacement-video-mode-change-frame-first",
+      "events": [
+        "replacement",
+        "frame",
+        "trackpad-only-request",
+        "layout",
+        "trackpad-only-request"
+      ],
+      "expect": [
+        "desktop-mode-retained",
+        "pending-frame-retained",
+        "current-crop-presented",
+        "trackpad-mode-admitted"
+      ]
+    },
+    {
+      "name": "replacement-video-mode-replay-before-frame",
+      "events": [
+        "cached-trackpad-view",
+        "replacement",
+        "same-mode-replayed",
+        "matching-layout",
+        "frame"
+      ],
+      "expect": [
+        "current-mode-retained",
+        "replacement-frame-delivery-retained",
+        "current-presentation-ready",
+        "native-trackpad-admitted"
       ]
     }
   ],

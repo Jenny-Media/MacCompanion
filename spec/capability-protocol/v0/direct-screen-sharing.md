@@ -146,8 +146,10 @@ two fingers pan it in Pointer. Desktop pinch and two-finger double tap stay loca
 Trackpad & Keyboard mode can send optional native magnification as specified below.
 Changing modes, crops, backgrounding, cancellation and exit release held buttons.
 One Done action disconnects and returns to My Macs; no separate active-session
-Disconnect button is presented. Explicit exit does not reconnect automatically. Background cancels a pending
-handshake. An established connection cancels queued input and pauses its native owner
+Disconnect button is presented. Explicit exit does not reconnect automatically. Temporary
+foreground inactivity retires queued/copied input and releases held input while retaining
+the established transport and presentation; it does not start desktop restoration.
+Background cancels a pending handshake. An established connection cancels queued input and pauses its native owner
 without closing the socket, including while initial, review-return or foreground
 pixels are pending. Transport establishment is independent of input readiness. Explicit Stop gives
 an established socket owner up to 250 ms to release sent keys/buttons/gestures,
@@ -157,9 +159,10 @@ unblocks stalled reads and is fenced to the stopped connection generation.
 A bounded in-flight read may finish before sent
 keys/buttons are released. Once release completes, the owner sleeps: no frame
 decoding, new update requests, UI presentation or remote input runs while paused. A bounded
-UIKit background task only finishes input release and the paused status update,
-ending immediately on completion
-or expiration; it does not maintain an idle connection or stream in the background.
+UIKit background task bounds input release independently of paused-status publication,
+ending within one second or on expiration. A stalled release retires the transport;
+a stalled ActivityKit update cannot retire a transport whose release completed.
+The task does not maintain an idle connection or stream in the background.
 Foreground requests a full framebuffer on the same owner. Input remains blocked
 until a complete framebuffer arrives. Every baseline reset closes input, retires
 queued input and releases held input. Presentation commits recheck the connection
@@ -167,10 +170,17 @@ generation and baseline epoch under the owner lock after the UI callback, before
 marking a baseline presented or reopening input. If the socket fails or no framebuffer arrives
 within 9000 ms (allowing the bounded baseline refresh window), retire it and make one automatic reconnect attempt. Do not loop
 retries or overlap native owners. Background/foreground calls are idempotent.
-Preserve the selected display ID, relative zoom, viewport center and mouse mode;
-reapply only to matching dimensions and verified layout after reconnect. Changed
-or missing displays fall back to All Displays and fit. A manual retry remains
-available after the automatic attempt fails.
+Preserve the selected display ID, relative zoom, viewport center and mouse mode.
+Keep the cached selected-display crop until the replacement frame and matching current
+layout converge in either callback order. A received frame retained for this wait is
+not a presented desktop: ordinary and composed input remain blocked. Composer entry,
+availability and final delivery MUST all enforce this presentation gate. Defer UI
+video-mode changes during replacement restoration; they become available after readiness.
+A verified missing display falls back to All Displays and fit with a concise notice.
+A retained display with changed dimensions remains selected and fits its new geometry;
+old relative zoom/center apply only to matching dimensions. Restoration feedback is a
+compact indeterminate indicator delayed 500 ms, cancelled on readiness or exit.
+A manual retry remains available after the automatic attempt fails.
 Returning to My Macs permanently retires that viewer. Late native frame, cursor
 and status callbacks cannot revive a stopped or replaced connection.
 
@@ -302,8 +312,8 @@ Publish its initial Connected state after successful RFB initialization and on
 an admitted resume or switch into input-only mode. Paused, stopping, overflowed
 or unauthenticated owners cannot publish Connected in either mode. Switching
 back to Desktop still requires a fresh complete baseline before Connected.
-Forward mode changes to any established owner, including while Desktop waits
-for pixels. Retire queued input and release held input on the socket owner before
+Outside replacement presentation restoration, forward mode changes to any established
+owner, including while Desktop waits for its initial pixels. Retire queued input and release held input on the socket owner before
 admitting the new mode. Entering Trackpad & Keyboard reopens input after that
 release without requiring a desktop baseline; a superseded mode or presentation
 epoch cannot reopen input.
@@ -432,18 +442,26 @@ dictation/IME acceptance on a physical iPhone.
 independent of connection recovery. The ActivityKit widget has no network client,
 credentials, remote input or background execution mode. Its scoped End Session
 LiveActivityIntent runs in the app process without foregrounding it.
-Publish Connected only for a foreground, ready native owner. Publish Paused as
-soon as the app resigns active; publish Reconnecting while checking/replacing the
+Publish Connected only for a foreground, ready native owner. Temporary foreground
+inactivity releases input without changing the established session phase. Actual
+background entry presents Paused; publish Reconnecting while checking/replacing the
 connection. End immediately on Done, terminal failure or opt-out. A dismissed
 activity is not recreated for that session unless the user opts back in.
-Connected status has a short stale date; stale presentations show “Tap to resume”
-instead of promising a live socket. Paused status becomes stale after 15 minutes.
+Connected and paused freshness are bounded to 60 seconds. Renew connected freshness
+only on observed connection evidence, with coalesced foreground publication; returning
+to a local socket does not prove the peer is alive. Stale presentations offer Open to
+Check and never promise a live socket or retained shell. An observed session end retires
+activity ownership immediately and ends the activity independently of a stalled update.
+Late updates cannot consume a replacement owner. Suspension can delay observation of
+a later remote close or activity dismissal; no indefinite background runtime is added.
 Only the user-assigned Mac name, opaque saved Mac UUID, Desktop/Terminal kind and phase reach ActivityKit;
 no address, account login, pixels or input content. The resume URL accepts only
 maccompanion-session://resume/<UUID> or maccompanion-session://resume-terminal/<UUID>
 for an existing saved record, with no query,
 fragment or credentials. It opens the existing viewer when already selected;
-it cannot create an endpoint or start a parallel session. An already presented
+it cannot create an endpoint or start a parallel session. A Terminal route after its
+owner view/process is gone opens sign-in without auto-connect and explains that Connect
+opens a new shell; ordinary Mac-list entry retains saved-login convenience. An already presented
 Desktop or Terminal is kept; a Terminal link cannot accidentally open Desktop.
 Old activities without a kind retain Desktop semantics. Activities left by a
 previous process are ended before starting a new one. No APNs or vendor server
@@ -451,13 +469,14 @@ is added. Permanent extension identity/signing admission remains gated.
 
 Compact presentation shows a one-line Mac name with a bounded width and a phase
 symbol; expanded and Lock Screen presentations show the name, status,
-Resume and End Session. The expanded name may use two lines and truncate to fit,
+Open (Open to Check when stale) and End Session. The expanded name may use two lines and truncate to fit,
 retaining its full accessible label. Its compact ending action may say End,
 with the accessible label End Session. Phase text and actions use the full-width
 region below the camera, with inset spacing from the curved edges. Expanded
 presentation has no glyphs in the camera-adjacent top regions. Minimal
-presentation retains the desktop symbol. A stale
-presentation says Paused rather than Connected. End Session targets the opaque
+presentation uses the current phase symbol, including a question mark when stale.
+Stale cards say Open to check connection and expanded content says Needs checking;
+paused/stale Terminal content identifies Terminal without promising a retained shell. End Session targets the opaque
 ActivityKit activity ID, not just a saved Mac ID, so a retired button cannot stop
 a replacement activity/session. Route the action to the matching existing viewer's
 deliberate exit path: retire recovery, release input/stop the native owner, end
@@ -475,6 +494,12 @@ Face ID/passcode runs. Gate credential reads, connect, input and session resume 
 success. A biometric prompt's transient inactive state must not relock recursively;
 actual background entry covers content and revokes access. Failure/cancel remains
 covered with an explicit retry. Cover all presented controllers and app snapshots.
+Locking after background entry defaults to immediate. An explicit local 30-second
+preference may reuse prior successful access only when the app is active, protected
+data is available and a continuous monotonic deadline (including sleep) is unexpired.
+Access remains revoked throughout background entry. Protected-data loss, preference
+changes and process restart discard reuse; a late retired authentication cannot restore
+access. The opaque cover appears on inactivity independently of this preference.
 
 Fullscreen hides the key strip and reclaims its viewport space without a reconnect.
 A reachable session-controls button restores it, including keyboard access. Remember
@@ -513,16 +538,21 @@ Never silently accept a changed key, and never use acceptAnything. Fingerprints 
 the decoded SSH public-key wire blob, using SHA256/base64 without padding. The indexed
 synthetic vectors are authoritative. Save trust only on an explicit affirmative action.
 Open an xterm-256color PTY, forward bytes in order and propagate row/column resize.
-Close on explicit exit or actual transport failure. Inactive/background transitions
-MUST retain an established SSH channel and PTY, pause automatic transport reads,
-clear armed modifiers and stop admitting input. An incomplete handshake or key
+Close on explicit exit or actual transport failure. Temporary foreground inactivity and background transitions MUST retain an established
+SSH channel and PTY, clear armed modifiers and stop admitting input. Inactivity
+retires copied/queued writes and buffers output within the existing memory bound
+without pausing reads; actual background or local lock pauses automatic transport reads. An incomplete handshake or key
 installation still cancels on inactivity. A bounded UIKit background assertion
-finishes read-pause and Live Activity status updates, then ends within one second
-or on expiration; it MUST NOT maintain idle background runtime or polling.
+bounds read-pause independently of Live Activity updates, then ends within one second
+or on expiration. Failure to finish read-pause retires the transport; a completed
+read-pause cannot be failed by stalled status publication. The assertion MUST NOT
+maintain idle background runtime or polling.
 Output already in flight is kept only in a bounded 1 MiB memory buffer, never
 rendered while inactive/locked or written to disk. Overflow ends the session with
 an actionable error rather than dropping bytes. Foreground/unlock re-enables reads,
-flushes pending output in order and applies the latest PTY size to the same shell.
+flushes pending output in order and applies the latest PTY size to the same shell
+before admitting fresh typing, including a grid changed during brief inactivity.
+Resuming local reads does not renew verified SSH freshness; fresh peer output does.
 Resume MUST wait for active app state and app unlock; late callbacks cannot revive
 a stopped/replaced session. No input is queued or replayed across this transition.
 Transport loss offers an explicit new shell; never silently reconnect SSH or imply

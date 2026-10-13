@@ -126,6 +126,7 @@
 @property CGFloat textReviewZoom;
 @property CGPoint textReviewCenter;
 @property BOOL textReviewViewportPending;
+- (BOOL)composedTextAvailable;
 @end
 
 @implementation CompanionVNCViewer
@@ -1460,6 +1461,9 @@
     if (self.presentationHandler) self.presentationHandler(value);
 }
 - (void)setInputOnly:(BOOL)value {
+    // Keep frame delivery alive until the replacement's visible crop is ready.
+    // This also fences direct callers, rather than only the controls menu.
+    if (self.restoreViewportPending) return;
     if (_inputOnly != value) { [self retireTextDraft]; self.textComposer = nil; }
     _inputOnly = value;
     if (self.quickActionsProvider) self.quickActions = self.quickActionsProvider(value);
@@ -1623,7 +1627,7 @@
         @{@"title": @"Desktop", @"items": desktopItems},
         @{@"title": @"Presentation", @"items": @[
             @{@"kind": @"fullscreen", @"title": self.fullscreen ? @"Show Keyboard Bar" : @"Hide Keyboard Bar", @"symbol": self.fullscreen ? @"keyboard" : @"keyboard.chevron.compact.down"},
-            @{@"kind": @"inputOnly", @"title": self.inputOnly ? @"Show Desktop" : @"Trackpad & Keyboard Only", @"symbol": self.inputOnly ? @"desktopcomputer" : @"rectangle.and.hand.point.up.left", @"subtitle": self.inputOnly ? @"Resume desktop video" : @"Control your Mac without video"}]}]];
+            @{@"kind": @"inputOnly", @"title": self.inputOnly ? @"Show Desktop" : @"Trackpad & Keyboard Only", @"symbol": self.inputOnly ? @"desktopcomputer" : @"rectangle.and.hand.point.up.left", @"subtitle": self.inputOnly ? @"Resume desktop video" : @"Control your Mac without video", @"disabled": @(self.restoreViewportPending)}]}]];
 }
 - (void)showInputMenu {
     [self presentMenu:@"Keyboard & Input" sections:@[
@@ -1631,7 +1635,7 @@
             @{@"kind": @"setPointer", @"title": @"Pointer", @"symbol": @"cursorarrow", @"selected": @(!self.trackpadMode), @"disabled": @(self.inputOnly)},
             @{@"kind": @"setTrackpad", @"title": @"Trackpad", @"symbol": @"cursorarrow.motionlines", @"selected": @(self.trackpadMode)}]},
         @{@"title": @"Keyboard", @"items": @[
-            @{@"kind": @"composeText", @"title": @"Compose Text", @"symbol": @"square.and.pencil"},
+            @{@"kind": @"composeText", @"title": @"Compose Text", @"symbol": @"square.and.pencil", @"disabled": @(![self composedTextAvailable])},
             @{@"kind": @"keyboard", @"title": self.input.isFirstResponder ? @"Hide Keyboard" : @"Show Keyboard", @"symbol": self.input.isFirstResponder ? @"keyboard.chevron.compact.down" : @"keyboard"},
             @{@"kind": @"keys", @"title": @"Extra Keys", @"symbol": @"keyboard", @"submenu": @YES, @"push": @YES}]},
         @{@"title": @"Preferences & Help", @"items": @[
@@ -1653,8 +1657,12 @@
     self.textSendInterrupted = NO;
     [self clearRecovery]; self.image.alpha = 1; [self updateConnectionChrome];
 }
+- (BOOL)composedTextAvailable {
+    return self.foreground && !self.exited && !self.inputInactive && !self.checkingResume
+        && !self.restoreViewportPending && !self.textReview && self.session.composedTextReady;
+}
 - (void)showTextComposer {
-    if (self.textReview || !self.foreground || self.exited || self.checkingResume || !self.session.composedTextReady) return;
+    if (![self composedTextAvailable]) return;
     if (!self.textComposer) self.textComposer = [[DirectTextComposer alloc] initWithMacName:self.macName ?: @"Mac" mode:self.inputOnly ? @"trackpad" : @"desktop"];
     [self.view endEditing:YES]; [self resetModifiers]; [self releasePointer];
     [self cancelTrackpadTouches]; [self.controls close];
@@ -1665,15 +1673,15 @@
     void (^present)(void) = ^{
         CompanionVNCViewer *strong = weak;
         if (!strong || strong.textReview || strong.session != owner || strong.textGeneration != generation
-            || !strong.foreground || strong.exited || strong.checkingResume || !owner.composedTextReady) return;
+            || ![strong composedTextAvailable]) return;
         [strong.textComposer presentFrom:strong available:^BOOL {
             CompanionVNCViewer *current = weak;
             return current && owner && current.session == owner && current.textGeneration == generation
-                && current.foreground && !current.exited && !current.checkingResume && !current.textReview && owner.composedTextReady;
+                && [current composedTextAvailable];
         } send:^(NSString *text, void (^complete)(NSString *)) {
             CompanionVNCViewer *current = weak;
             if (!current || !owner || current.session != owner || current.textGeneration != generation
-                || !current.foreground || current.exited || current.checkingResume || current.textReview || !owner.composedTextReady) {
+                || ![current composedTextAvailable]) {
                 complete(@"The session changed. Nothing was sent."); return;
             }
             [current resetModifiers];

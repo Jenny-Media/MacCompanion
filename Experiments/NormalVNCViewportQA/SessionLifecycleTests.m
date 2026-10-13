@@ -22,6 +22,8 @@
 - (void)updateConnectionChrome;
 - (void)sendPointer:(CGPoint)point mask:(NSInteger)mask;
 - (BOOL)clickPointer:(CGPoint)point mask:(NSInteger)mask;
+- (void)showTextComposer;
+- (void)performControlAction:(NSDictionary *)action;
 @end
 @interface LifecycleSession : CompanionVNCSession
 @property BOOL alive, ready, authenticated;
@@ -309,6 +311,64 @@
         [viewer stopViewer];
     }
 }
+- (void)testNativeBufferedReplacementFrameRejectsComposerUntilMatchingLayout {
+    NSDictionary *profile=[self profile];
+    XCTAssertEqualObjects(profile[@"recoveryPolicy"][@"replacementComposeTextRequiresPresentedDesktop"],@YES);
+    XCTAssertTrue([[profile[@"interruptionCases"] valueForKey:@"name"] containsObject:@"replacement-frame-first-composer"]);
+    UIWindowScene *scene=nil;
+    for (UIScene *candidate in UIApplication.sharedApplication.connectedScenes) if ([candidate isKindOfClass:UIWindowScene.class]) { scene=(UIWindowScene *)candidate; break; }
+    XCTAssertNotNil(scene); UIWindow *previous=scene.keyWindow, *window=[[UIWindow alloc] initWithWindowScene:scene];
+    CompanionVNCViewer *viewer=[CompanionVNCViewer new]; window.rootViewController=viewer; [window makeKeyAndVisible]; [viewer loadViewIfNeeded];
+    NSDictionary *display=@{@"id":@2,@"title":@"Synthetic display",@"x":@.5,@"y":@0,@"width":@.5,@"height":@1};
+    viewer.displayLayout=@{@"aspectRatio":@(800.0/600),@"views":@[display]}; [viewer frame:[self frame]]; [viewer selectDisplay:display];
+    LifecycleSession *old=[LifecycleSession new]; old.alive=YES; old.ready=YES; old.authenticated=YES; viewer.session=old;
+    [viewer background]; [viewer prepareConnection]; [viewer setValue:@YES forKey:@"foreground"]; [viewer setValue:@NO forKey:@"inputInactive"];
+    ((UIView *)[viewer valueForKey:@"login"]).hidden=YES;
+    CompanionVNCSession *owner=viewer.session;
+    rfbClient *client=rfbGetClient(8,3,4); client->width=2; client->height=2;
+    [owner configureClient:client]; XCTAssertTrue([owner allocate:client]);
+    for (NSString *key in @[@"running",@"inputReady",@"established"]) [owner setValue:@YES forKey:key];
+    client->GotFrameBufferUpdate(client,0,0,2,2); [owner publishFrame:client];
+    XCTestExpectation *published=[self expectationWithDescription:@"Native frame callback completes"];
+    dispatch_async(dispatch_get_main_queue(),^{ [published fulfill]; }); [self waitForExpectations:@[published] timeout:1];
+    XCTAssertTrue(owner.composedTextReady,@"The native callback can be ready while the viewer still retains cached pixels");
+    XCTAssertTrue([[viewer valueForKey:@"restoreViewportPending"] boolValue]);
+    UIImage *cached=((UIImageView *)[viewer valueForKey:@"image"]).image;
+    [viewer performControlAction:@{@"kind":@"composeText"}];
+    XCTAssertNil([viewer valueForKey:@"textComposer"],@"Native readiness must not bypass current presentation readiness");
+    XCTAssertEqual([[owner valueForKey:@"events"] count],0);
+    viewer.displayLayout=@{@"aspectRatio":@1,@"views":@[display]};
+    XCTAssertFalse([[viewer valueForKey:@"restoreViewportPending"] boolValue]);
+    XCTAssertNotEqual(((UIImageView *)[viewer valueForKey:@"image"]).image,cached);
+    [viewer performControlAction:@{@"kind":@"composeText"}]; XCTAssertNotNil([viewer valueForKey:@"textComposer"]);
+    [viewer stopViewer]; [viewer dismissViewControllerAnimated:NO completion:nil]; window.hidden=YES; window.rootViewController=nil; [previous makeKeyAndVisible];
+    [owner setValue:@NO forKey:@"running"]; client->frameBuffer=NULL; rfbClientCleanup(client);
+}
+- (void)testReplacementVideoModeRequestsKeepFramesUntilPresentationThenSwitchNormally {
+    NSDictionary *profile=[self profile];
+    XCTAssertEqualObjects(profile[@"recoveryPolicy"][@"replacementVideoModeChange"],@"defer-until-presentation-ready");
+    for (NSNumber *frameFirst in @[@YES,@NO]) {
+        NSString *name=frameFirst.boolValue ? @"replacement-video-mode-change-frame-first" : @"replacement-video-mode-change-before-frame";
+        XCTAssertTrue([[profile[@"interruptionCases"] valueForKey:@"name"] containsObject:name]);
+        CompanionVNCViewer *viewer=[CompanionVNCViewer new]; [viewer loadViewIfNeeded];
+        NSDictionary *display=@{@"id":@2,@"title":@"Synthetic display",@"x":@.5,@"y":@0,@"width":@.5,@"height":@1};
+        NSDictionary *layout=@{@"aspectRatio":@(800.0/600),@"views":@[display]};
+        viewer.displayLayout=layout; [viewer frame:[self frame]]; [viewer selectDisplay:display];
+        LifecycleSession *old=[LifecycleSession new]; old.alive=YES; old.ready=YES; old.authenticated=YES; viewer.session=old;
+        [viewer background]; [viewer prepareConnection]; [viewer setValue:@YES forKey:@"foreground"]; [viewer setValue:@NO forKey:@"inputInactive"];
+        CompanionVNCSession *owner=viewer.session; [owner setValue:@YES forKey:@"running"]; [owner setValue:@YES forKey:@"established"];
+        if (frameFirst.boolValue) [viewer frame:[self frame]];
+        UIImage *pending=[viewer valueForKey:@"pendingRestorationFrame"];
+        [viewer performControlAction:@{@"kind":@"inputOnly"}]; viewer.inputOnly=YES;
+        XCTAssertFalse(viewer.inputOnly); XCTAssertFalse(owner.inputOnly,@"Pending presentation must retain native frame delivery");
+        XCTAssertTrue(owner.running); XCTAssertEqual([viewer valueForKey:@"pendingRestorationFrame"],pending);
+        viewer.displayLayout=layout; if (!frameFirst.boolValue) [viewer frame:[self frame]];
+        XCTAssertFalse([[viewer valueForKey:@"restoreViewportPending"] boolValue]);
+        [viewer performControlAction:@{@"kind":@"inputOnly"}]; XCTAssertTrue(viewer.inputOnly); XCTAssertTrue(owner.inputOnly);
+        [viewer performControlAction:@{@"kind":@"inputOnly"}]; XCTAssertFalse(viewer.inputOnly); XCTAssertFalse(owner.inputOnly);
+        [viewer stopViewer]; [owner setValue:@NO forKey:@"running"];
+    }
+}
 - (void)testRestorationWaitsForMatchingAspectAndAllDisplaysNeedsNoMetadata {
     for (NSNumber *individual in @[@YES,@NO]) {
         CompanionVNCViewer *viewer=[CompanionVNCViewer new]; [viewer loadViewIfNeeded];
@@ -333,6 +393,25 @@
         XCTAssertEqual(CGImageGetWidth(((UIImageView *)[viewer valueForKey:@"image"]).image.CGImage),CGImageGetWidth(newFrame.CGImage)/(individual.boolValue ? 2 : 1));
         [viewer stopViewer];
     }
+}
+- (void)testReplayedTrackpadModeKeepsReplacementFramesUntilCurrentPresentation {
+    XCTAssertTrue([[[self profile][@"interruptionCases"] valueForKey:@"name"] containsObject:@"replacement-video-mode-replay-before-frame"]);
+    CompanionVNCViewer *viewer=[CompanionVNCViewer new]; [viewer loadViewIfNeeded];
+    NSDictionary *display=@{@"id":@2,@"title":@"Synthetic display",@"x":@.5,@"y":@0,@"width":@.5,@"height":@1};
+    NSDictionary *layout=@{@"aspectRatio":@(800.0/600),@"views":@[display]};
+    viewer.displayLayout=layout; [viewer frame:[self frame]]; [viewer selectDisplay:display];
+    LifecycleSession *old=[LifecycleSession new]; old.alive=YES; old.ready=YES; old.authenticated=YES; viewer.session=old;
+    viewer.inputOnly=YES; [viewer background]; [viewer prepareConnection];
+    [viewer setValue:@YES forKey:@"foreground"]; [viewer setValue:@NO forKey:@"inputInactive"];
+    CompanionVNCSession *owner=viewer.session;
+    for (NSString *key in @[@"running",@"established",@"inputReady",@"baselinePresented"]) [owner setValue:@YES forKey:key];
+    XCTAssertFalse(owner.inputOnly);
+    viewer.inputOnly=YES; // A representable update reapplies the current view mode.
+    XCTAssertTrue(viewer.inputOnly); XCTAssertFalse(owner.inputOnly,@"A same-value replay must not suppress the pending frame");
+    viewer.displayLayout=layout; [viewer frame:[self frame]];
+    XCTAssertFalse([[viewer valueForKey:@"restoreViewportPending"] boolValue]);
+    XCTAssertTrue(owner.inputOnly,@"The ready callback forwards the retained Trackpad mode after presentation");
+    XCTAssertTrue(owner.running); [viewer stopViewer]; [owner setValue:@NO forKey:@"running"];
 }
 - (void)testBackgroundConnectionFailurePublishesEndedInsteadOfLeavingPausedActivity {
     CompanionVNCViewer *viewer=[CompanionVNCViewer new]; [viewer loadViewIfNeeded];
