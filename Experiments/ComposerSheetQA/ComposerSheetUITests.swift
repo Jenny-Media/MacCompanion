@@ -8,6 +8,21 @@ import XCTest
         XCTAssertTrue(app.textViews["compose-text"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5)); return app
     }
+    private func waitForDockedKeyboardAndPanel(_ app: XCUIApplication) async {
+        let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+        let keyboard = app.keyboards.firstMatch, panel = app.otherElements["compose-panel"].firstMatch
+        var previous: [CGRect]?
+        repeat {
+            let frames = [keyboard.frame, panel.frame]
+            let docked = keyboard.exists && frames[0].height > 100 && frames[0].intersects(app.frame)
+                && frames[0].maxY <= app.frame.maxY + 2 && frames[1].height > 100
+                && frames[1].maxY <= frames[0].minY + 2
+            if docked, previous == frames { return }
+            previous = docked ? frames : nil
+            try? await Task.sleep(for: .milliseconds(50))
+        } while ContinuousClock.now < deadline
+        XCTFail("Composer and visible docked keyboard did not reach a stable layout")
+    }
     private func grabber(_ app: XCUIApplication) -> XCUICoordinate {
         let button = app.buttons["compose-grabber"]
         return button.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
@@ -43,10 +58,11 @@ import XCTest
         XCTAssertTrue(app.textViews["compose-text"].waitForExistence(timeout: 5))
         XCTAssertEqual(app.textViews["compose-text"].value as? String, "retained")
     }
-    func testEditorScrollingDoesNotResizeAndSendingBlocksSwipeDismissal() {
+    func testEditorScrollingDoesNotResizeAndSendingBlocksSwipeDismissal() async {
         let app = open(); defer { app.terminate() }
         let editor = app.textViews["compose-text"]
         editor.typeText(String(repeating: "row\n", count: 36))
+        await waitForDockedKeyboardAndPanel(app)
         let panel = app.otherElements["compose-panel"].firstMatch, before = panel.frame
         editor.swipeDown()
         XCTAssertEqual(panel.frame.minY, before.minY, accuracy: 2)
