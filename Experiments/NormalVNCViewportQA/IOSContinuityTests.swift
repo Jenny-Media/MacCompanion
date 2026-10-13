@@ -138,6 +138,56 @@ private final class ContinuitySession: CompanionVNCSession {
             if needsAuthentication && protected { XCTAssertTrue(lock.authenticating); XCTAssertEqual(context.evaluations, 2) }
         }
     }
+    func testCancelledInactiveGestureNeverShowsNativeCoverOrReauthenticates() async throws {
+        var active = true
+        let context = ContinuityAuthentication()
+        let lock = DirectAppLockV1(contextFactory: { context }, defaults: isolatedDefaults(), isActive: { active }, isBackground: { false }, protectedDataAvailable: { true })
+        defer { lock.setEnabled(false) }
+        lock.setEnabled(true); lock.install()
+        context.reply?(true, nil); try await eventually { lock.canAccess }
+        XCTAssertFalse(lock.privacyCoverVisible)
+        active = false
+        NotificationCenter.default.post(name: UIApplication.willResignActiveNotification, object: nil)
+        XCTAssertFalse(lock.privacyCoverVisible); XCTAssertTrue(lock.contentVisible)
+        active = true; lock.becameActive()
+        XCTAssertFalse(lock.privacyCoverVisible); XCTAssertEqual(context.evaluations, 1)
+    }
+    func testSuccessfulInactiveAuthenticationHidesRealCoverBeforeSingleActivePublication() async throws {
+        var active = true, background = false
+        let context = ContinuityAuthentication()
+        let lock = DirectAppLockV1(contextFactory: { context }, defaults: isolatedDefaults(), isActive: { active }, isBackground: { background }, protectedDataAvailable: { true })
+        var publications = 0
+        let observer = NotificationCenter.default.addObserver(forName: DirectAppLockV1.unlocked, object: nil, queue: .main) { _ in
+            MainActor.assumeIsolated { publications += 1 }
+        }
+        defer { NotificationCenter.default.removeObserver(observer); lock.setEnabled(false) }
+        lock.setEnabled(true); XCTAssertTrue(lock.privacyCoverVisible)
+        let oldReply = try XCTUnwrap(context.reply)
+        active = false; oldReply(true, nil); try await eventually { lock.canAccess }
+        XCTAssertFalse(lock.privacyCoverVisible); XCTAssertEqual(publications, 0)
+        active = true; lock.becameActive(); lock.becameActive()
+        XCTAssertEqual(publications, 1)
+        lock.background(); background = true; oldReply(true, nil)
+        try await Task.sleep(for: .milliseconds(30))
+        XCTAssertFalse(lock.canAccess); XCTAssertTrue(lock.privacyCoverVisible); XCTAssertEqual(publications, 1)
+    }
+    func testGraceForegroundPresentationDoesNotGrantInactiveAccessAndExpiryRemasks() async throws {
+        var time: TimeInterval = 100, active = true, protected = true
+        let context = ContinuityAuthentication()
+        let lock = DirectAppLockV1(contextFactory: { context }, defaults: isolatedDefaults(), now: { time }, isActive: { active }, isBackground: { false }, protectedDataAvailable: { protected })
+        defer { lock.setEnabled(false) }
+        lock.setGraceSeconds(30); lock.setEnabled(true)
+        context.reply?(true, nil); try await eventually { lock.canAccess }
+        active = false; lock.background(); XCTAssertTrue(lock.privacyCoverVisible)
+        time += 1; lock.prepareForeground()
+        XCTAssertFalse(lock.privacyCoverVisible); XCTAssertTrue(lock.contentVisible); XCTAssertFalse(lock.canAccess)
+        active = true; lock.becameActive()
+        XCTAssertTrue(lock.canAccess); XCTAssertEqual(context.evaluations, 1)
+        active = false; lock.background(); time += 30; lock.prepareForeground()
+        XCTAssertTrue(lock.privacyCoverVisible); XCTAssertFalse(lock.contentVisible)
+        protected = false; lock.protectedDataLost(); lock.prepareForeground()
+        XCTAssertTrue(lock.privacyCoverVisible); XCTAssertFalse(lock.canAccess)
+    }
     func testProtectedDataLossRestartAndLateRepliesCannotReuseUnlock() async throws {
         var time: TimeInterval = 100
         let defaults = isolatedDefaults(), context = ContinuityAuthentication()

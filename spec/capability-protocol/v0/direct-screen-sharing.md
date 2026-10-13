@@ -179,7 +179,9 @@ video-mode changes during replacement restoration; they become available after r
 A verified missing display falls back to All Displays and fit with a concise notice.
 A retained display with changed dimensions remains selected and fits its new geometry;
 old relative zoom/center apply only to matching dimensions. Restoration feedback is a
-compact indeterminate indicator delayed 500 ms, cancelled on readiness or exit.
+compact indeterminate indicator delayed 1000 ms, cancelled on readiness or exit.
+A retained-owner refresh keeps cached pixels at full opacity and remains paused
+until fresh readiness evidence; only a replacement dial announces Reconnecting.
 A manual retry remains available after the automatic attempt fails.
 Returning to My Macs permanently retires that viewer. Late native frame, cursor
 and status callbacks cannot revive a stopped or replaced connection.
@@ -382,7 +384,13 @@ A busy queue reports a retryable issue without partial text or a disconnect.
 ## iOS session text composer
 
 Desktop, Trackpad & Keyboard and Terminal offer a free **Compose Text** session
-tool under Keyboard & Input. macOS does not expose this tool. A native multiline
+Quick Action (also available under Keyboard & Input). Existing untouched default
+profiles gain this action; preserve all customized profiles and their disabled
+actions. macOS does not expose this tool. Present a compact bottom panel above
+the native keyboard, retaining visible session content and reachable Send/Back
+actions; allow expansion for longer drafts and accessibility sizes. Short landscape
+layouts use a compact control row and retain a scrollable editor above the keyboard;
+keep destination and validation explanations accessible. A native multiline
 editor holds an ephemeral, device-local draft bound to its originating viewer or
 PTY generation. **Back to Session** retains the unsent draft so the user can focus
 the remote destination; **Discard** clears it. Background, app lock, connection
@@ -499,7 +507,13 @@ preference may reuse prior successful access only when the app is active, protec
 data is available and a continuous monotonic deadline (including sleep) is unexpired.
 Access remains revoked throughout background entry. Protected-data loss, preference
 changes and process restart discard reuse; a late retired authentication cannot restore
-access. The opaque cover appears on inactivity independently of this preference.
+access. Transient inactivity alone MUST NOT reveal a lock cover or revoke prior
+authentication; session input still stops until active. Cover actual background
+entry for the app snapshot. On foreground entry remove that snapshot cover before
+visible presentation when a valid grace reuse is pending, without granting input
+or credential access until active. A successful current authentication removes
+the cover immediately, including the inactive-to-active handoff; defer unlocked
+publication until active and reject replies after background/protected-data loss.
 
 Fullscreen hides the key strip and reclaims its viewport space without a reconnect.
 A reachable session-controls button restores it, including keyboard access. Remember

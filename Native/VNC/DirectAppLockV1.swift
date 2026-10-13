@@ -16,14 +16,18 @@ import UIKit
     private(set) var message = "Unlock to access your Macs"
     var enabled: Bool { defaults.bool(forKey: Self.preferenceKey) }
     var canAccess: Bool { !enabled || (allowed && protectedDataAvailable()) }
+    var contentVisible: Bool { canAccess || foregroundGracePending }
+    var privacyCoverVisible: Bool { cover?.isHidden == false }
     private let contextFactory: () -> LAContext
     private let defaults: UserDefaults
     private let now: () -> TimeInterval
     private let isActive: () -> Bool
+    private let isBackground: () -> Bool
     private let protectedDataAvailable: () -> Bool
     private var graceStarted: TimeInterval?
     private var graceDeadline: TimeInterval?
     private var unlockNeedsPublication = false
+    private var foregroundGracePending = false
     private var context: LAContext?
     private var cover: UIWindow?
     private var observers: [NSObjectProtocol] = []
@@ -31,6 +35,7 @@ import UIKit
     init(contextFactory: @escaping () -> LAContext = { LAContext() }, defaults: UserDefaults = .standard,
          now: (() -> TimeInterval)? = nil,
          isActive: @escaping () -> Bool = { UIApplication.shared.applicationState == .active },
+         isBackground: @escaping () -> Bool = { UIApplication.shared.applicationState == .background },
          protectedDataAvailable: @escaping () -> Bool = { UIApplication.shared.isProtectedDataAvailable }) {
         self.contextFactory = contextFactory; self.defaults = defaults
         let origin = ContinuousClock.now
@@ -38,15 +43,15 @@ import UIKit
             let elapsed = origin.duration(to: ContinuousClock.now).components
             return Double(elapsed.seconds) + Double(elapsed.attoseconds) / 1e18
         }
-        self.isActive = isActive; self.protectedDataAvailable = protectedDataAvailable
+        self.isActive = isActive; self.isBackground = isBackground; self.protectedDataAvailable = protectedDataAvailable
         allowed = !defaults.bool(forKey: Self.preferenceKey)
         graceSeconds = defaults.integer(forKey: Self.gracePreferenceKey) == 30 ? 30 : 0
     }
     func install() {
         if observers.isEmpty {
             let center = NotificationCenter.default
-            observers = [center.addObserver(forName: UIApplication.willResignActiveNotification, object: nil, queue: .main) { [weak self] _ in
-                MainActor.assumeIsolated { guard let self, !self.authenticating else { return }; self.showCover() }
+            observers = [center.addObserver(forName: UIApplication.willEnterForegroundNotification, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.prepareForeground() }
             }, center.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main) { [weak self] _ in
                 MainActor.assumeIsolated { self?.background() }
             }, center.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
@@ -58,6 +63,10 @@ import UIKit
             }]
         }
         if canAccess { hideCover() } else { showCover(); authenticate() }
+    }
+    isolated deinit {
+        observers.forEach(NotificationCenter.default.removeObserver)
+        cover?.isHidden = true
     }
     func setEnabled(_ value: Bool) {
         if value {
@@ -75,8 +84,22 @@ import UIKit
         graceSeconds = value == 30 ? 30 : 0; defaults.set(graceSeconds, forKey: Self.gracePreferenceKey)
         discardGrace()
     }
-    private func discardGrace() { graceStarted = nil; graceDeadline = nil }
+    private func discardGrace() { graceStarted = nil; graceDeadline = nil; foregroundGracePending = false }
+    private var graceValid: Bool {
+        guard let start = graceStarted, let deadline = graceDeadline else { return false }
+        let time = now()
+        return time >= start && time < deadline && protectedDataAvailable()
+    }
+    func prepareForeground() {
+        guard !isBackground() else { return }
+        // Presentation can precede active admission. Do not publish unlock or
+        // grant credential/input access while UIKit is still inactive.
+        foregroundGracePending = enabled && !allowed && graceValid
+        if canAccess || foregroundGracePending { hideCover() }
+        else { showCover() }
+    }
     func background() {
+        foregroundGracePending = false
         guard enabled else { return }
         if allowed && !unlockNeedsPublication && graceSeconds > 0 && protectedDataAvailable() {
             let time = now(); graceStarted = time; graceDeadline = time + TimeInterval(graceSeconds)
@@ -87,6 +110,7 @@ import UIKit
         discardGrace(); guard enabled else { return }; revokeAccess()
     }
     private func revokeAccess() {
+        foregroundGracePending = false
         attempt = UUID(); context?.invalidate(); context = nil; authenticating = false
         unlockNeedsPublication = false
         allowed = false; message = "Unlock to access your Macs"; showCover()
@@ -99,9 +123,7 @@ import UIKit
             if unlockNeedsPublication { publishUnlock() }
             return
         }
-        let time = now()
-        if let start = graceStarted, let deadline = graceDeadline,
-           time >= start, time < deadline, protectedDataAvailable() {
+        if graceValid {
             discardGrace(); allowed = true; publishUnlock()
         } else { discardGrace(); authenticate() }
     }
@@ -123,8 +145,9 @@ import UIKit
             Task { @MainActor in
                 guard let self, self.attempt == id else { return }
                 self.context = nil; self.authenticating = false
-                guard success, self.protectedDataAvailable(), UIApplication.shared.applicationState != .background else { self.message = "App locked. Tap Unlock to try again."; return }
+                guard success, self.protectedDataAvailable(), !self.isBackground() else { self.message = "App locked. Tap Unlock to try again."; return }
                 self.allowed = true
+                self.hideCover()
                 if self.isActive() { self.publishUnlock() }
                 else { self.unlockNeedsPublication = true }
             }

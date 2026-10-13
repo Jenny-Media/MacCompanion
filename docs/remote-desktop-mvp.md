@@ -340,7 +340,10 @@ An explicit, local 30-second preference can reuse a recent successful unlock on
 foreground return. Access is revoked throughout background entry, and reuse
 requires an active app, protected data availability, and an unexpired monotonic
 deadline. Protected-data loss, preference changes and process restart discard
-reuse. The privacy cover appears on inactivity, independently of this preference.
+reuse. Transient inactivity does not show a lock cover. Actual background entry covers
+the app snapshot; valid grace reuse restores presentation before active admission.
+Successful current Face ID authentication hides the cover immediately, while
+unlocked publication and remote input still wait for active state.
 These are local presentation/access gates; legacy application-authentication,
 pairing, signatures and recorded grants remain unchanged.
 

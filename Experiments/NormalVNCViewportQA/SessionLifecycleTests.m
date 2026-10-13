@@ -59,6 +59,20 @@
 @interface SessionLifecycleTests : XCTestCase
 @end
 @implementation SessionLifecycleTests
+- (void)testWarmResumeKeepsPixelsAndPausedStatusUntilFreshEvidence {
+    CompanionVNCViewer *viewer=[CompanionVNCViewer new]; [viewer loadViewIfNeeded];
+    LifecycleSession *session=[LifecycleSession new]; session.alive=YES; session.ready=YES; session.authenticated=YES; viewer.session=session;
+    NSMutableArray *phases=[NSMutableArray array]; viewer.sessionPhaseHandler=^(NSString *phase){ [phases addObject:phase]; };
+    [viewer frame:[self frame]];
+    UIImageView *image=[viewer valueForKey:@"image"]; UIImage *cached=image.image;
+    [viewer background]; XCTAssertEqualObjects(phases.lastObject,@"paused"); XCTAssertEqual(image.alpha,1);
+    [viewer foregrounded]; XCTAssertEqual(session.resumes,1); XCTAssertEqual(session.stops,0);
+    XCTAssertEqualObjects(phases.lastObject,@"paused"); XCTAssertEqual(image.alpha,1); XCTAssertTrue(image.image==cached);
+    XCTAssertTrue([[viewer valueForKey:@"checkingResume"] boolValue]);
+    UILabel *status=[viewer valueForKey:@"status"]; XCTAssertTrue(status.hidden);
+    XCTAssertFalse([[viewer valueForKey:@"inputInactive"] boolValue]);
+    [viewer stopViewer];
+}
 - (void)testLayoutStatusCannotCompleteInitialLoginOrResumeBeforeFreshFrame {
     CompanionVNCSession *session = [CompanionVNCSession new]; [session setValue:@YES forKey:@"running"];
     // An authenticated Desktop still waits for fresh pixels. A Connected
@@ -439,9 +453,9 @@
     [viewer background]; [viewer foregrounded];
     UILabel *status=[viewer valueForKey:@"status"]; XCTAssertTrue(status.hidden);
     XCTestExpectation *delay=[self expectationWithDescription:@"Delayed indication"];
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW,600*NSEC_PER_MSEC),dispatch_get_main_queue(),^{[delay fulfill];});
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW,1100*NSEC_PER_MSEC),dispatch_get_main_queue(),^{[delay fulfill];});
     [self waitForExpectations:@[delay] timeout:2];
-    XCTAssertFalse(status.hidden); XCTAssertEqualObjects(status.text,@"Restoring desktop…");
+    XCTAssertFalse(status.hidden); XCTAssertEqualObjects(status.text,@"Updating desktop…");
     UIView *pill=[viewer valueForKey:@"statusBackdrop"]; [viewer.view layoutIfNeeded]; XCTAssertFalse(pill.hidden);
     XCTAssertGreaterThan(pill.bounds.size.width,0); XCTAssertLessThanOrEqual(CGRectGetMaxX(pill.frame),viewer.view.bounds.size.width);
     UIGraphicsImageRenderer *renderer=[[UIGraphicsImageRenderer alloc] initWithSize:viewer.view.bounds.size];

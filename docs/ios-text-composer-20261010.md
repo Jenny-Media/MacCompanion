@@ -78,3 +78,31 @@ Sharing and Remote Login: native IME and dictation, explicit Paste, Unicode and
 emoji in a remote text editor, desktop Return/Tab behavior, and multiline shell
 input with bracketed paste enabled and disabled. Simulator and synthetic socket
 checks do not establish those hardware results.
+
+## Compact composer revision (2026-10-13)
+
+Compose Text is a built-in Quick Action in Desktop, Trackpad and Terminal.
+Untouched older default rows gain the action while retaining their existing
+identifiers; customized rows are preserved. The composer appears as a compact
+panel above the actual keyboard, leaving the desktop visible. Back returns to
+the destination without losing the draft; Expand provides more editing space.
+Send remains outside scrolling content, including at large accessibility sizes.
+Short landscape layouts use accessible Back, Discard and Send controls beside
+the scrollable editor; destination context and validation explanations stay accessible.
+Return/Tab confirmation, explicit delivery, size limits and generation/readiness
+fences remain in place. Background/lock cancellation clears the draft and
+dismisses even when it arrives during the presentation transition.
+
+Temporary inactive gestures do not present a lock cover. Real backgrounding
+retains the privacy mask. A valid grace return prepares visible presentation
+before becoming active without admitting inactive input; current successful
+authentication hides the cover immediately and publishes unlock when active.
+Retained Desktop recovery keeps cached pixels at normal opacity, checks for a
+fresh frame silently, and shows delayed Updating desktop feedback after one
+second. Actual connection replacement alone uses Reconnecting. iOS can suspend
+a background app; these changes do not promise unlimited background networking.
+
+Simulator coverage exercises these policies with native windows and the keyboard
+layout guide, actual rendered Send geometry, current/canceled authentication
+callbacks, native editor input and existing VNC/Terminal lifecycle fences.
+Physical Face ID and third-party keyboard acceptance remain separate checks.

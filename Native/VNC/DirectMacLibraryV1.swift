@@ -272,7 +272,9 @@ struct DirectMacSessionSelection: Identifiable {
 #if os(iOS)
 struct DirectMacLibraryRootV1: View {
     @State private var library: DirectMacLibraryV1
-    init(library: DirectMacLibraryV1 = DirectMacLibraryV1()) { _library = State(initialValue: library) }
+    init(library: DirectMacLibraryV1 = DirectMacLibraryV1(), appLock: DirectAppLockV1 = .shared) {
+        _library = State(initialValue: library); _appLock = State(initialValue: appLock)
+    }
     @State private var files: DirectMacRecordV1?
     @State private var session: DirectMacSessionSelection?
     @State private var appLock = DirectAppLockV1.shared
@@ -408,9 +410,9 @@ struct DirectMacLibraryRootV1: View {
                 }
             }
         }
-        .opacity(appLock.canAccess ? 1 : 0)
-        .allowsHitTesting(appLock.canAccess)
-        .accessibilityHidden(!appLock.canAccess)
+        .opacity(appLock.contentVisible ? 1 : 0)
+        .allowsHitTesting(appLock.canAccess && DirectClientPlatformV1.sessionAvailable)
+        .accessibilityHidden(!appLock.canAccess || !DirectClientPlatformV1.sessionAvailable)
         .onAppear { appLock.install(); DirectCloudSyncV1.shared.attach(library) }
     }
     private func edit(_ mac: DirectMacRecordV1?) {

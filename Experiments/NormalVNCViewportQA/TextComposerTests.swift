@@ -15,6 +15,153 @@ import UIKit
 }
 
 @MainActor final class TextComposerTests: XCTestCase {
+    func testComposeQuickActionUpgradesOnlyUntouchedDefaultsInEveryIOSMode() {
+        for mode in DirectControlMode.allCases {
+            XCTAssertEqual(mode.defaults.first?.kind, .composeText)
+            XCTAssertEqual(mode.defaults.first?.native["kind"] as? String, "composeText")
+            XCTAssertEqual(mode.defaults.first?.isCustom, false)
+            XCTAssertTrue(mode.defaults.allSatisfy { $0.compatible(with: mode) })
+            let old = mode.legacyDefaults
+            let upgraded = mode.upgradingUntouchedDefaults(old)
+            XCTAssertEqual(upgraded.first?.kind, .composeText)
+            XCTAssertEqual(Array(upgraded.dropFirst()), old, "Existing IDs and choices must remain intact")
+            var customized = old; customized[0].enabled = false
+            XCTAssertEqual(mode.upgradingUntouchedDefaults(customized), customized)
+            customized = old; customized[0].title = "My Action"
+            XCTAssertEqual(mode.upgradingUntouchedDefaults(customized), customized)
+            XCTAssertEqual(mode.upgradingUntouchedDefaults([]), [])
+            XCTAssertEqual(mode.upgradingUntouchedDefaults(Array(old.reversed())), Array(old.reversed()))
+        }
+    }
+    func testCompactComposerUsesActualKeyboardGuideAndLeavesDesktopVisible() async throws {
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let previous = scene.windows.first(where: \.isKeyWindow)
+        let window = UIWindow(windowScene: scene), root = UIViewController()
+        root.view.backgroundColor = .systemBlue; window.rootViewController = root; window.makeKeyAndVisible()
+        defer { root.dismiss(animated: false); window.isHidden = true; window.rootViewController = nil; previous?.makeKeyAndVisible() }
+        let composer = DirectTextComposer(macName: "Synthetic Mac", mode: "desktop")
+        composer.present(from: root, available: { true }, send: { _, _ in XCTFail("Presentation must never send text") })
+        try await Task.sleep(for: .milliseconds(600))
+        let panel = try XCTUnwrap(root.presentedViewController as? DirectTextComposerPanel)
+        func descendants(_ v: UIView) -> [UIView] { [v] + v.subviews.flatMap(descendants) }
+        let editor = try XCTUnwrap(descendants(panel.view).compactMap { $0 as? UITextView }.first)
+        XCTAssertTrue(editor.becomeFirstResponder())
+        for _ in 0..<100 {
+            if panel.view.keyboardLayoutGuide.layoutFrame.height > 150 { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        panel.view.layoutIfNeeded()
+        XCTAssertGreaterThan(panel.view.keyboardLayoutGuide.layoutFrame.height, 150, "Coverage requires the actual software keyboard")
+        let content = try XCTUnwrap(descendants(panel.view).first { $0.accessibilityIdentifier == "compose-panel" })
+        let contentRect = content.convert(content.bounds, to: panel.view)
+        XCTAssertGreaterThanOrEqual(contentRect.minY, panel.view.safeAreaInsets.top + 40, "Some remote desktop remains visible")
+        XCTAssertLessThanOrEqual(contentRect.maxY, panel.view.keyboardLayoutGuide.layoutFrame.minY)
+        let sendRect = panel.deliveryActionFrame
+        XCTAssertGreaterThan(sendRect.width, 20); XCTAssertGreaterThan(sendRect.height, 20)
+        XCTAssertGreaterThanOrEqual(sendRect.minY, contentRect.minY)
+        XCTAssertLessThanOrEqual(sendRect.maxY, panel.view.keyboardLayoutGuide.layoutFrame.minY)
+        let editorRect = editor.convert(editor.bounds, to: panel.view)
+        XCTAssertGreaterThan(editorRect.height, 35)
+        XCTAssertLessThan(editorRect.maxY, contentRect.maxY - 36, "Delivery actions remain below the editor and above the keyboard")
+        editor.insertText("synthetic draft")
+        try await Task.sleep(for: .milliseconds(50))
+        XCTAssertEqual(composer.draft.text, "synthetic draft")
+        panel.toggleExpansion(); panel.view.layoutIfNeeded()
+        XCTAssertGreaterThanOrEqual(content.bounds.height, contentRect.height)
+        XCTAssertEqual(composer.draft.text, "synthetic draft")
+        panel.traitOverrides.preferredContentSizeCategory = .accessibilityExtraExtraExtraLarge
+        panel.view.setNeedsLayout(); panel.view.layoutIfNeeded()
+        try await Task.sleep(for: .milliseconds(100))
+        let largeRect = panel.deliveryActionFrame
+        XCTAssertGreaterThan(largeRect.width, 20)
+        XCTAssertLessThanOrEqual(largeRect.maxY, panel.view.keyboardLayoutGuide.layoutFrame.minY)
+        XCTAssertLessThanOrEqual(largeRect.maxX, panel.view.bounds.maxX)
+        NotificationCenter.default.post(name: UIApplication.didEnterBackgroundNotification, object: nil)
+        XCTAssertFalse(composer.draft.active); XCTAssertEqual(composer.draft.text, "")
+    }
+    func testLandscapeComposerKeepsActualSendAndEditorAboveKeyboard() async throws {
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let previous = scene.windows.first(where: \.isKeyWindow)
+        let window = UIWindow(windowScene: scene), root = UIViewController()
+        root.view.backgroundColor = .systemBlue; window.rootViewController = root; window.makeKeyAndVisible()
+        defer {
+            root.dismiss(animated: false); window.isHidden = true; window.rootViewController = nil
+            previous?.makeKeyAndVisible(); if !scene.interfaceOrientation.isPortrait { scene.requestGeometryUpdate(.iOS(interfaceOrientations: .portrait)) }
+        }
+        scene.requestGeometryUpdate(.iOS(interfaceOrientations: .landscapeRight))
+        for _ in 0..<200 {
+            if scene.interfaceOrientation.isLandscape && window.bounds.width > window.bounds.height { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertTrue(scene.interfaceOrientation.isLandscape, "Coverage requires actual landscape geometry")
+        let composer = DirectTextComposer(macName: "Synthetic Mac", mode: "desktop")
+        composer.present(from: root, available: { true }, send: { _, _ in XCTFail("Layout must not send") })
+        try await Task.sleep(for: .milliseconds(600))
+        let panel = try XCTUnwrap(root.presentedViewController as? DirectTextComposerPanel)
+        func descendants(_ v: UIView) -> [UIView] { [v] + v.subviews.flatMap(descendants) }
+        let editor = try XCTUnwrap(descendants(panel.view).compactMap { $0 as? UITextView }.first)
+        XCTAssertTrue(editor.becomeFirstResponder())
+        for _ in 0..<100 {
+            if panel.view.keyboardLayoutGuide.layoutFrame.height > 120 { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        panel.view.layoutIfNeeded()
+        let content = try XCTUnwrap(descendants(panel.view).first { $0.accessibilityIdentifier == "compose-panel" })
+        let contentRect = content.convert(content.bounds, to: panel.view)
+        let editorRect = editor.convert(editor.bounds, to: panel.view)
+        XCTAssertGreaterThan(panel.view.keyboardLayoutGuide.layoutFrame.height, 120)
+        XCTAssertGreaterThan(panel.deliveryActionFrame.height, 20)
+        XCTAssertGreaterThanOrEqual(panel.deliveryActionFrame.minY, contentRect.minY)
+        XCTAssertLessThanOrEqual(panel.deliveryActionFrame.maxY, contentRect.maxY)
+        XCTAssertLessThanOrEqual(panel.deliveryActionFrame.maxY, panel.view.keyboardLayoutGuide.layoutFrame.minY)
+        XCTAssertGreaterThan(editorRect.height, 35)
+        XCTAssertGreaterThanOrEqual(editorRect.minY, contentRect.minY)
+        XCTAssertLessThan(editorRect.maxY, panel.deliveryActionFrame.minY)
+        editor.insertText(String(repeating: "x", count: 257))
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertFalse(composer.draft.canSend, "Invalid input keeps Send disabled in compact layout")
+        panel.traitOverrides.preferredContentSizeCategory = .accessibilityExtraExtraExtraLarge
+        panel.view.setNeedsLayout(); panel.view.layoutIfNeeded()
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertGreaterThan(panel.deliveryActionFrame.height, 40)
+        XCTAssertLessThanOrEqual(panel.deliveryActionFrame.maxY, panel.view.keyboardLayoutGuide.layoutFrame.minY)
+        let capture = XCTAttachment(image: UIGraphicsImageRenderer(bounds: window.bounds).image { _ in window.drawHierarchy(in: window.bounds, afterScreenUpdates: true) })
+        capture.name = "compose-landscape-accessibility"; capture.lifetime = .keepAlways; add(capture)
+        NotificationCenter.default.post(name: UIApplication.didEnterBackgroundNotification, object: nil)
+        for _ in 0..<100 {
+            if root.presentedViewController == nil { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertNil(root.presentedViewController)
+        scene.requestGeometryUpdate(.iOS(interfaceOrientations: .portrait))
+        for _ in 0..<200 {
+            if scene.interfaceOrientation.isPortrait && window.bounds.height > window.bounds.width { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertTrue(scene.interfaceOrientation.isPortrait)
+        // Keep the owned window alive until rotation and dismissal settle, so
+        // its transition cannot compete with the next test's presentation.
+        try await Task.sleep(for: .milliseconds(400))
+    }
+    func testBackgroundDuringPresentationRetiresPopupAndAllowsNextComposer() async throws {
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let previous = scene.windows.first(where: \.isKeyWindow)
+        let window = UIWindow(windowScene: scene), root = UIViewController()
+        window.rootViewController = root; window.makeKeyAndVisible()
+        defer { root.dismiss(animated: false); window.isHidden = true; window.rootViewController = nil; previous?.makeKeyAndVisible() }
+        let first = DirectTextComposer(macName: "Synthetic Mac", mode: "desktop")
+        first.present(from: root, available: { true }, send: { _, _ in XCTFail("Retired draft cannot send") })
+        NotificationCenter.default.post(name: UIApplication.didEnterBackgroundNotification, object: nil)
+        for _ in 0..<100 {
+            if root.presentedViewController == nil { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertNil(root.presentedViewController); XCTAssertFalse(first.draft.active)
+        let next = DirectTextComposer(macName: "Synthetic Mac", mode: "terminal")
+        next.present(from: root, available: { true }, send: { _, _ in XCTFail("Reopening must not send") })
+        try await Task.sleep(for: .milliseconds(400))
+        XCTAssertNotNil(root.presentedViewController); XCTAssertTrue(next.draft.active)
+    }
     func testCapturedComposerAvailabilityAndFinalDeliveryRejectLaterRestoration() throws {
         let url = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "direct-screen-sharing-v1", withExtension: "json"))
         let fixture = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])
@@ -231,6 +378,7 @@ import UIKit
             root.dismiss(animated: false); try await Task.sleep(for: .milliseconds(50))
             composer.present(from: root, available: { true }, send: { _, _ in XCTFail("Returning to session must not send input") })
             XCTAssertEqual(composer.draft.text, retained)
+            try await Task.sleep(for: .milliseconds(350))
             NotificationCenter.default.post(name: UIApplication.didEnterBackgroundNotification, object: nil)
             XCTAssertEqual(composer.draft.text, ""); XCTAssertFalse(composer.draft.active)
             try await Task.sleep(for: .milliseconds(350))

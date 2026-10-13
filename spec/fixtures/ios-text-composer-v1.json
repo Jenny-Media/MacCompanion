@@ -21,8 +21,8 @@
     },
     {
       "name": "cjk-emoji",
-      "text": "中文😀é",
-      "normalized": "中文😀é",
+      "text": "\u4e2d\u6587\ud83d\ude00e\u0301",
+      "normalized": "\u4e2d\u6587\ud83d\ude00e\u0301",
       "desktopKeys": [
         16797229,
         16803207,
@@ -71,7 +71,7 @@
     },
     {
       "name": "unicode-lines",
-      "text": "a b ",
+      "text": "a\u2028b\u2029",
       "normalized": "a\nb\n",
       "desktopKeys": [
         97,
@@ -130,7 +130,7 @@
     },
     {
       "name": "c1",
-      "text": "ab",
+      "text": "a\u0085b",
       "invalid": true
     }
   ],
@@ -215,5 +215,20 @@
       },
       "trackpadWithoutPixels": true
     }
+  },
+  "presentation": {
+    "quickAction": "composeText",
+    "modes": [
+      "desktop",
+      "trackpad",
+      "terminal"
+    ],
+    "untouchedDefaultsUpgrade": true,
+    "customizedProfilesPreserved": true,
+    "compactAboveKeyboard": true,
+    "sessionRemainsVisible": true,
+    "sendRemainsReachable": true,
+    "expandable": true,
+    "shortLandscape": "compact controls, editor and Send above keyboard; destination and validation accessible"
   }
 }

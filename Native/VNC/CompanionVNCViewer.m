@@ -676,7 +676,7 @@
     [self retireTextDraft];
     if (!self.foreground || self.exited) { if (completion) completion(); return; }
     self.reconnectWhenReady = self.session.running || self.starting;
-    self.foreground = NO; self.inputInactive = YES; self.statusGeneration++; self.image.alpha = .45; self.resumeGeneration++; self.checkingResume = NO;
+    self.foreground = NO; self.inputInactive = YES; self.statusGeneration++; self.image.alpha = 1; self.resumeGeneration++; self.checkingResume = NO;
     self.pendingRestorationFrame = nil;
     self.status.hidden = YES; [self updateStatusPresentation];
     [self invalidateTextReview:NO]; self.textReviewViewportPending=NO;
@@ -701,8 +701,7 @@
     self.foreground = YES; self.inputInactive = NO;
     if (!self.reconnectWhenReady) return;
     self.checkingResume = YES;
-    if (self.sessionPhaseHandler) self.sessionPhaseHandler(@"reconnecting");
-    self.status.hidden = YES; [self scheduleResumeIndicator:@"Restoring desktop…"]; self.image.alpha = .6;
+    self.status.hidden = YES; [self scheduleResumeIndicator:@"Updating desktop…"]; self.image.alpha = 1;
     if (!self.session.running) { [self reconnectAfterFailedResume]; return; }
     [self.session resume];
     CompanionVNCSession *owner = self.session; NSUInteger generation = ++self.resumeGeneration;
@@ -774,7 +773,7 @@
     NSUInteger generation = ++self.statusGeneration;
     self.status.hidden = YES; [self updateStatusPresentation];
     __weak CompanionVNCViewer *weak = self;
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 500 * NSEC_PER_MSEC), dispatch_get_main_queue(), ^{
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 1000 * NSEC_PER_MSEC), dispatch_get_main_queue(), ^{
         if (!weak || weak.statusGeneration != generation || !weak.foreground || weak.inputInactive || weak.exited
             || !(weak.checkingResume || weak.starting || weak.restoreViewportPending)) return;
         weak.status.text = message; weak.status.hidden = NO; [weak updateStatusPresentation];
