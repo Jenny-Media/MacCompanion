@@ -2,8 +2,9 @@ import XCTest
 @MainActor final class ComposerSheetUITests: XCTestCase {
     override func setUp() { super.setUp(); continueAfterFailure = false; XCUIDevice.shared.orientation = .portrait }
     override func tearDown() { XCUIDevice.shared.orientation = .portrait; super.tearDown() }
-    private func open() -> XCUIApplication {
-        let app = XCUIApplication(bundleIdentifier: "dev.maccompanion.sheetqa.ios"); app.launch()
+    private func open(narrow: Bool = false) -> XCUIApplication {
+        let app = XCUIApplication(bundleIdentifier: "dev.maccompanion.sheetqa.ios")
+        app.launchArguments = narrow ? ["--qa-narrow-composer"] : []; app.launch()
         XCTAssertTrue(app.buttons["qa-compose"].waitForExistence(timeout: 10)); app.buttons["qa-compose"].tap()
         XCTAssertTrue(app.textViews["compose-text"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5)); return app
@@ -78,6 +79,23 @@ import XCTest
         XCTAssertTrue(app.textViews["compose-text"].waitForExistence(timeout: 5))
         XCTAssertEqual(app.textViews["compose-text"].value as? String, "")
         XCTAssertEqual(app.buttons["compose-dock"].label, "Dock")
+    }
+    func testNarrowCompactWindowKeepsErrorSendAndMenuActionsReachable() {
+        let app = open(narrow: true); defer { app.terminate() }
+        let panel = app.otherElements["compose-panel"].firstMatch, send = app.buttons["compose-send"]
+        XCTAssertTrue(app.buttons["compose-back"].isHittable)
+        XCTAssertTrue(app.buttons["compose-error"].isHittable)
+        XCTAssertGreaterThanOrEqual(send.frame.minX, panel.frame.minX)
+        XCTAssertLessThanOrEqual(send.frame.maxX, panel.frame.maxX)
+        XCTAssertFalse(send.isEnabled)
+        let draft = app.textViews["compose-text"].value as? String
+        app.buttons["compose-more"].tap(); app.buttons["compose-expand"].tap()
+        app.buttons["compose-more"].tap(); app.buttons["compose-dock"].tap()
+        app.buttons["compose-more"].tap(); app.buttons["compose-dock"].tap()
+        XCTAssertEqual(app.textViews["compose-text"].value as? String, draft)
+        XCTAssertTrue(app.buttons["compose-more"].isHittable); XCTAssertTrue(app.keyboards.firstMatch.exists)
+        app.buttons["compose-back"].tap()
+        XCTAssertTrue(app.buttons["qa-compose"].isHittable)
     }
     func testFloatingRotationKeepsSendEditorAndPresentationControlsAboveKeyboard() async {
         let app = open(); defer { app.terminate() }

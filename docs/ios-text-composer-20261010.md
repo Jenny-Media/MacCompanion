@@ -139,7 +139,9 @@ target. Release and normal development targets do not link experiment sources.
 The default presentation is now a compact floating panel inside the session.
 Drag the grabber to move it; release near an edge to snap. The panel stays within
 the safe area above the actual keyboard, and relative placement follows rotation
-and keyboard changes. VoiceOver exposes movement actions on the grabber.
+and keyboard changes. VoiceOver exposes movement actions on the grabber. Narrow compact windows group
+Discard, Expand and Dock in Composer actions, leaving Back, error details and
+Send directly reachable.
 
 Expand fills the available area; Collapse restores the compact panel. Dock
 attaches it above the keyboard with the existing Maps-style height snaps. Undock

@@ -23,6 +23,34 @@ import UIKit
 }
 
 @MainActor final class TextComposerTests: XCTestCase {
+    func testNarrowCompactComposerKeepsInvalidAndErrorActionsInsideCard() async throws {
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let previous = scene.windows.first(where: \.isKeyWindow)
+        let window = UIWindow(windowScene: scene), root = UIViewController()
+        window.rootViewController = root; window.makeKeyAndVisible()
+        defer { root.dismiss(animated: false); window.isHidden = true; window.rootViewController = nil; previous?.makeKeyAndVisible() }
+        let draft = DirectTextComposerDraft(macName: "Synthetic", mode: .desktop)
+        draft.configure(available: { true }, send: { _, _ in })
+        let panel = DirectTextComposerPanel(draft: draft)
+        root.addChild(panel); root.view.addSubview(panel.view); panel.didMove(toParent: root)
+        panel.view.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([panel.view.widthAnchor.constraint(equalToConstant: 320),
+            panel.view.heightAnchor.constraint(equalToConstant: 220),
+            panel.view.topAnchor.constraint(equalTo: root.view.safeAreaLayoutGuide.topAnchor, constant: 8),
+            panel.view.centerXAnchor.constraint(equalTo: root.view.centerXAnchor)])
+        try await Task.sleep(for: .milliseconds(400))
+        for invalid in [true, false] {
+            draft.edit(invalid ? String(repeating: "x", count: 257) : "synthetic draft")
+            if !invalid { draft.issue = "Synthetic delivery failure" }
+            try await Task.sleep(for: .milliseconds(200)); panel.view.setNeedsLayout(); panel.view.layoutIfNeeded()
+            XCTAssertTrue(draft.compactLayout)
+            let bounds = panel.panelFrame, send = panel.deliveryActionFrame
+            XCTAssertGreaterThan(send.width, 35)
+            XCTAssertGreaterThanOrEqual(send.minX, bounds.minX)
+            XCTAssertLessThanOrEqual(send.maxX, bounds.maxX, "Send must remain in the actual narrow card, including invalid/error states")
+            XCTAssertLessThanOrEqual(send.maxY, bounds.maxY)
+        }
+    }
     func testFloatingPlacementSnapsAndReclampsForKeyboardAndTablet() {
         let phone = DirectComposerPlacement.area(safe: CGRect(x: 0, y: 59, width: 440, height: 860), keyboardTop: 600)
         let size = CGSize(width: 350, height: 324)

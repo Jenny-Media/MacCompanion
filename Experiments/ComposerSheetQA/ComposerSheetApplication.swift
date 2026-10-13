@@ -29,6 +29,22 @@ final class ComposerSheetRoot: UIViewController {
             button.centerXAnchor.constraint(equalTo: view.centerXAnchor)])
     }
     @objc func openComposer() {
+        if ProcessInfo.processInfo.arguments.contains("--qa-narrow-composer") {
+            let draft = composer.draft
+            draft.configure(available: { true }, send: { _, _ in })
+            let panel = DirectTextComposerPanel(draft: draft)
+            addChild(panel); view.addSubview(panel.view); panel.didMove(toParent: self)
+            panel.view.translatesAutoresizingMaskIntoConstraints = false
+            NSLayoutConstraint.activate([panel.view.widthAnchor.constraint(equalToConstant: 320),
+                panel.view.heightAnchor.constraint(equalToConstant: 220),
+                panel.view.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 8),
+                panel.view.centerXAnchor.constraint(equalTo: view.centerXAnchor)])
+            draft.close = { [weak panel] in
+                panel?.willMove(toParent: nil); panel?.view.removeFromSuperview(); panel?.removeFromParent()
+            }
+            draft.edit(String(repeating: "x", count: 257))
+            return
+        }
         composer.present(from: self, available: { true }, send: { _, _ in })
     }
 }

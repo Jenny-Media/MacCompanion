@@ -399,7 +399,9 @@ resizes the panel. A completed docked swipe dismissal retains the draft; a
 canceled gesture restores placement without changing the draft. Sending blocks
 movement, presentation switches and dismissal. Short landscape layouts use a
 compact control row and retain a scrollable editor above the keyboard; keep
-destination and validation explanations accessible. VoiceOver offers movement
+destination and validation explanations accessible. Narrow compact panels group
+Discard, Expand and Dock in Composer actions while Back, error details and Send
+remain directly reachable. VoiceOver offers movement
 actions on the grabber. The session stays visible behind the composer; use Back
 to Session to focus a remote destination. A native multiline
 editor holds an ephemeral, device-local draft bound to its originating viewer or

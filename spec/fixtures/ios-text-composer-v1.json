@@ -250,6 +250,7 @@
     "edgeSnapDistancePoints": 28,
     "docking": "Dock and Undock preserve editor identity and floating placement",
     "floatingPlacement": "relative to keyboard-safe area; clamped on keyboard, orientation and size changes",
-    "sendingBlocksMovement": true
+    "sendingBlocksMovement": true,
+    "narrowCompactActions": "Discard, Expand and Dock in menu; Back, error details and Send remain direct"
   }
 }

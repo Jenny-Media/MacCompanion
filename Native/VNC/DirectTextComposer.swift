@@ -52,6 +52,7 @@ struct DirectComposedText: Equatable {
     var floatingAnchor = CGPoint(x: 0.5, y: 1)
     var expanded = false
     var compactLayout = false
+    var narrowLayout = false
     var issue: String?
     var confirmation: DirectComposedText?
     @ObservationIgnored private var epoch = UUID()
@@ -340,6 +341,7 @@ struct DirectComposerPlacement {
         let expanded = draft.expanded || accessibility
         let size = CGSize(width: min(draft.docked || expanded ? 640 : 420, area.width * (draft.docked || expanded ? 1 : 0.88)),
                           height: min(area.height, draggingHeight ?? (expanded ? area.height : compactHeight)))
+        if draft.narrowLayout != (size.width < 360) { draft.narrowLayout = size.width < 360 }
         let target = DirectComposerPlacement.frame(area: area, size: size, anchor: draft.docked || expanded ? CGPoint(x: 0.5, y: 1) : draft.floatingAnchor)
         peek?.constant = area.minY - view.safeAreaInsets.top
         let values = [target.minX - view.safeAreaInsets.left, -8 - (area.maxY - target.maxY), target.width, target.height]
@@ -403,24 +405,35 @@ private struct DirectTextComposerView: View {
             if !draft.compactLayout, let issue = draft.issue ?? (draft.text.isEmpty ? nil : draft.validationIssue) {
                 Text(issue).font(.caption).foregroundStyle(.red).lineLimit(2).accessibilityIdentifier("compose-error")
             }
-            HStack {
+            HStack(spacing: draft.compactLayout ? 4 : 8) {
                 if draft.compactLayout {
                     Button { editing = false; draft.close?() } label: {
                         Image(systemName: "chevron.down").font(.system(size: 20)).frame(width: 44, height: 44)
                     }.disabled(draft.sending).accessibilityLabel("Back to Session").accessibilityIdentifier("compose-back")
-                    Button(role: .destructive) { discard = true } label: {
-                        Image(systemName: "trash").font(.system(size: 20)).frame(width: 44, height: 44)
-                    }.disabled(draft.text.isEmpty || draft.sending).accessibilityLabel("Discard Draft").accessibilityIdentifier("compose-discard")
+                    if draft.narrowLayout {
+                        Menu {
+                            Button(draft.expanded ? "Collapse" : "Expand", systemImage: draft.expanded ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right", action: expand)
+                                .accessibilityIdentifier("compose-expand")
+                            Button(draft.docked ? "Undock" : "Dock", systemImage: draft.docked ? "rectangle.on.rectangle" : "rectangle.bottomthird.inset.filled", action: dock)
+                                .accessibilityIdentifier("compose-dock")
+                            Button("Discard Draft", systemImage: "trash", role: .destructive) { discard = true }
+                                .disabled(draft.text.isEmpty).accessibilityIdentifier("compose-discard")
+                        } label: {
+                            Image(systemName: "ellipsis").font(.system(size: 20)).frame(width: 44, height: 44)
+                        }.disabled(draft.sending).accessibilityLabel("Composer actions").accessibilityIdentifier("compose-more")
+                    } else {
+                        Button(role: .destructive) { discard = true } label: {
+                            Image(systemName: "trash").font(.system(size: 20)).frame(width: 44, height: 44)
+                        }.disabled(draft.text.isEmpty || draft.sending).accessibilityLabel("Discard Draft").accessibilityIdentifier("compose-discard")
+                        Button(action: expand) {
+                            Image(systemName: draft.expanded ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right")
+                                .font(.system(size: 20)).frame(width: 44, height: 44)
+                        }.disabled(draft.sending).accessibilityLabel(draft.expanded ? "Collapse" : "Expand").accessibilityIdentifier("compose-expand")
+                        dockButton
+                    }
                 } else {
                     Button("Discard", role: .destructive) { discard = true }.font(.footnote)
                         .disabled(draft.text.isEmpty || draft.sending).accessibilityIdentifier("compose-discard")
-                }
-                if draft.compactLayout {
-                    Button(action: expand) {
-                        Image(systemName: draft.expanded ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right")
-                            .font(.system(size: 20)).frame(width: 44, height: 44)
-                    }.disabled(draft.sending).accessibilityLabel(draft.expanded ? "Collapse" : "Expand").accessibilityIdentifier("compose-expand")
-                    dockButton
                 }
                 Spacer()
                 if draft.compactLayout, let issue = draft.issue ?? (draft.text.isEmpty ? nil : draft.validationIssue) {
