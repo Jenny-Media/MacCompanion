@@ -238,12 +238,18 @@
       "editorIdentity"
     ],
     "editorScrollingExpands": false,
-    "interactiveDismissal": "retain only on completion; cancellation keeps state",
+    "interactiveDismissal": "docked completed swipe retains draft; cancellation restores size or floating placement",
     "sendingBlocksDismissal": true,
     "snapPositions": [
-      "compact",
-      "expanded"
+      "nearby edges in floating mode",
+      "compact and expanded in docked mode"
     ],
-    "implementation": "public UIKit keyboard guide and pan recognizer; one native editor"
+    "implementation": "public UIKit keyboard guide and pan recognizer; one native editor",
+    "defaultPresentation": "floating",
+    "draggable": true,
+    "edgeSnapDistancePoints": 28,
+    "docking": "Dock and Undock preserve editor identity and floating placement",
+    "floatingPlacement": "relative to keyboard-safe area; clamped on keyboard, orientation and size changes",
+    "sendingBlocksMovement": true
   }
 }

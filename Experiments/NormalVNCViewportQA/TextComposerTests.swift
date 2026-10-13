@@ -23,6 +23,66 @@ import UIKit
 }
 
 @MainActor final class TextComposerTests: XCTestCase {
+    func testFloatingPlacementSnapsAndReclampsForKeyboardAndTablet() {
+        let phone = DirectComposerPlacement.area(safe: CGRect(x: 0, y: 59, width: 440, height: 860), keyboardTop: 600)
+        let size = CGSize(width: 350, height: 324)
+        let anchor = DirectComposerPlacement.anchor(origin: CGPoint(x: -50, y: 400), area: phone, size: size, snap: true)
+        XCTAssertEqual(anchor, CGPoint(x: 0, y: 1))
+        let frame = DirectComposerPlacement.frame(area: phone, size: size, anchor: anchor)
+        XCTAssertEqual(frame.minX, phone.minX); XCTAssertEqual(frame.maxY, 592)
+        let near = DirectComposerPlacement.anchor(origin: CGPoint(x: phone.minX + 15, y: phone.minY + 19), area: phone, size: size, snap: true)
+        XCTAssertEqual(near, .zero)
+        let interior = DirectComposerPlacement.anchor(origin: CGPoint(x: phone.minX + 34, y: phone.minY + 40), area: phone, size: size, snap: true)
+        XCTAssertGreaterThan(interior.x, 0); XCTAssertLessThan(interior.x, 1)
+        let tight = DirectComposerPlacement.anchor(origin: CGPoint(x: phone.midX - 390 / 2, y: phone.minY + 40), area: phone, size: CGSize(width: 390, height: 324), snap: true)
+        XCTAssertEqual(tight.x, 0.5, accuracy: 0.01, "Vertical dragging must not force a horizontal edge snap in narrow layouts")
+        for safe in [CGRect(x: 59, y: 0, width: 780, height: 400), CGRect(x: 0, y: 24, width: 1024, height: 1300)] {
+            let area = DirectComposerPlacement.area(safe: safe, keyboardTop: safe.height * 0.6)
+            let resized = DirectComposerPlacement.frame(area: area, size: size, anchor: anchor)
+            XCTAssertGreaterThanOrEqual(resized.minX, area.minX); XCTAssertLessThanOrEqual(resized.maxX, area.maxX)
+            XCTAssertGreaterThanOrEqual(resized.minY, area.minY); XCTAssertEqual(resized.maxY, area.maxY)
+        }
+    }
+    func testDockAndFloatRetainSelectionAndKeyboardWithCanceledDrag() async throws {
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let previous = scene.windows.first(where: \.isKeyWindow)
+        let window = UIWindow(windowScene: scene), root = UIViewController()
+        window.rootViewController = root; window.makeKeyAndVisible()
+        defer { root.dismiss(animated: false); window.isHidden = true; window.rootViewController = nil; previous?.makeKeyAndVisible() }
+        let draft = DirectTextComposerDraft(macName: "Synthetic", mode: .terminal)
+        draft.configure(available: { true }, send: { _, _ in })
+        let panel = DirectTextComposerPanel(draft: draft); panel.modalPresentationStyle = .overFullScreen
+        root.present(panel, animated: false); try await Task.sleep(for: .milliseconds(600))
+        func descendants(_ v: UIView) -> [UIView] { [v] + v.subviews.flatMap(descendants) }
+        let editor = try XCTUnwrap(descendants(panel.view).compactMap { $0 as? UITextView }.first); editor.becomeFirstResponder()
+        draft.edit("synthetic selection"); try await Task.sleep(for: .milliseconds(200)); editor.selectedRange = NSRange(location: 3, length: 4)
+        let selected = editor.selectedRange
+        let anchor = CGPoint(x: 0, y: 0); draft.floatingAnchor = anchor
+        panel.toggleDock(); try await Task.sleep(for: .milliseconds(300))
+        XCTAssertTrue(draft.docked); XCTAssertTrue(editor.isFirstResponder); XCTAssertEqual(editor.selectedRange, selected)
+        panel.toggleExpansion(); try await Task.sleep(for: .milliseconds(300))
+        panel.toggleDock(); try await Task.sleep(for: .milliseconds(300))
+        XCTAssertFalse(draft.docked); XCTAssertFalse(draft.expanded); XCTAssertEqual(draft.floatingAnchor, anchor)
+        XCTAssertTrue(editor.isFirstResponder); XCTAssertEqual(editor.selectedRange, selected); XCTAssertEqual(draft.text, "synthetic selection")
+        let pan = ComposerPanProbe(); pan.simulatedState = .began; panel.perform(NSSelectorFromString("resize:"), with: pan)
+        pan.setTranslation(CGPoint(x: 100, y: 50), in: panel.view); pan.simulatedState = .changed
+        panel.perform(NSSelectorFromString("resize:"), with: pan)
+        pan.simulatedState = .cancelled; panel.perform(NSSelectorFromString("resize:"), with: pan)
+        XCTAssertEqual(draft.floatingAnchor, anchor); XCTAssertEqual(draft.text, "synthetic selection")
+        draft.requestSend(); XCTAssertTrue(draft.sending)
+        panel.toggleDock(); panel.toggleExpansion()
+        XCTAssertFalse(draft.docked); XCTAssertFalse(draft.expanded)
+    }
+    func testRetiredFloatingGestureCannotRestorePlacement() {
+        let draft = DirectTextComposerDraft(macName: "Synthetic", mode: .desktop)
+        draft.configure(available: { true }, send: { _, _ in })
+        let panel = DirectTextComposerPanel(draft: draft); panel.loadViewIfNeeded()
+        draft.floatingAnchor = .zero
+        let pan = ComposerPanProbe(); pan.simulatedState = .began; panel.perform(NSSelectorFromString("resize:"), with: pan)
+        draft.invalidate(); draft.configure(available: { true }, send: { _, _ in }); pan.simulatedState = .cancelled; panel.perform(NSSelectorFromString("resize:"), with: pan)
+        XCTAssertEqual(draft.floatingAnchor, CGPoint(x: 0.5, y: 1)); XCTAssertFalse(draft.docked); XCTAssertTrue(draft.active)
+        panel.toggleDock(); panel.toggleExpansion(); XCTAssertFalse(draft.docked); XCTAssertFalse(draft.expanded)
+    }
     func testComposeQuickActionUpgradesOnlyUntouchedDefaultsInEveryIOSMode() {
         for mode in DirectControlMode.allCases {
             XCTAssertEqual(mode.defaults.first?.kind, .composeText)

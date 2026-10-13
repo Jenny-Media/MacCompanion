@@ -386,14 +386,22 @@ A busy queue reports a retryable issue without partial text or a disconnect.
 Desktop, Trackpad & Keyboard and Terminal offer a free **Compose Text** session
 Quick Action (also available under Keyboard & Input). Existing untouched default
 profiles gain this action; preserve all customized profiles and their disabled
-actions. macOS does not expose this tool. Present a compact bottom panel above
+actions. macOS does not expose this tool. Present a compact floating panel above
 the native keyboard, retaining visible session content and reachable Send/Back
-actions. Use keyboard-aware compact/expanded snap positions and a draggable grabber;
-resizing retains editor identity, draft, selection and keyboard focus. Editor
-scrolling does not expand the sheet. A completed swipe dismissal retains the
-draft; a canceled gesture changes no draft state. Sending blocks dismissal. Short landscape
-layouts use a compact control row and retain a scrollable editor above the keyboard;
-keep destination and validation explanations accessible. A native multiline
+actions. Drag its grabber to move within the keyboard-safe area, gently snapping
+within 28 points of an edge on release. Relative placement follows keyboard,
+orientation and size changes and stays clamped within safe bounds. **Expand**
+fills the available editor area; **Collapse** restores compact placement. **Dock**
+attaches it above the keyboard with compact/expanded height snaps; **Undock**
+restores floating placement. Switching presentations and resizing retain editor
+identity, draft, selection and keyboard focus. Editor scrolling never moves or
+resizes the panel. A completed docked swipe dismissal retains the draft; a
+canceled gesture restores placement without changing the draft. Sending blocks
+movement, presentation switches and dismissal. Short landscape layouts use a
+compact control row and retain a scrollable editor above the keyboard; keep
+destination and validation explanations accessible. VoiceOver offers movement
+actions on the grabber. The session stays visible behind the composer; use Back
+to Session to focus a remote destination. A native multiline
 editor holds an ephemeral, device-local draft bound to its originating viewer or
 PTY generation. **Back to Session** retains the unsent draft so the user can focus
 the remote destination; **Discard** clears it. Background, app lock, connection

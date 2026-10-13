@@ -27,56 +27,72 @@ import XCTest
         let button = app.buttons["compose-grabber"]
         return button.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
     }
-    func testNativeGrabberResizesWhileKeyboardAndDraftStayMounted() {
+    func testFloatingDragSnapsAndDockExpandKeepKeyboardAndDraftMounted() async {
         let app = open(); defer { app.terminate() }
         let editor = app.textViews["compose-text"]; editor.typeText("alpha")
-        let panel = app.otherElements["compose-panel"].firstMatch
-        let compact = panel.frame
-        let before = XCTAttachment(screenshot: app.screenshot()); before.name = "synthetic-compact-keyboard"; before.lifetime = .keepAlways; add(before)
-        XCTAssertGreaterThan(compact.minY, app.frame.minY + 40)
-        grabber(app).press(forDuration: 0.15, thenDragTo: app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: app.frame.midX, dy: 80)))
-        let expanded = panel.frame
-        let after = XCTAttachment(screenshot: app.screenshot()); after.name = "synthetic-expanded-keyboard"; after.lifetime = .keepAlways; add(after)
-        XCTAssertLessThan(expanded.minY, compact.minY - 30)
-        XCTAssertTrue(app.keyboards.firstMatch.exists)
-        app.typeText(" beta"); XCTAssertEqual(editor.value as? String, "alpha beta")
-        grabber(app).press(forDuration: 0.15, thenDragTo: app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: app.frame.midX, dy: compact.minY - 22)))
-        XCTAssertGreaterThan(panel.frame.minY, expanded.minY + 30)
-        XCTAssertTrue(app.keyboards.firstMatch.exists); app.typeText(" gamma")
-        XCTAssertEqual(editor.value as? String, "alpha beta gamma")
+        await waitForDockedKeyboardAndPanel(app)
+        let panel = app.otherElements["compose-panel"].firstMatch, start = panel.frame
+        XCTAssertEqual(app.buttons["compose-dock"].label, "Dock")
+        grabber(app).press(forDuration: 0.15, thenDragTo: grabber(app).withOffset(CGVector(dx: -200, dy: -140)))
+        let moved = panel.frame
+        XCTAssertLessThan(moved.minY, start.minY - 20); XCTAssertEqual(moved.minX, app.frame.minX + 8, accuracy: 2)
+        XCTAssertTrue(app.keyboards.firstMatch.exists); app.typeText(" beta")
+        XCTAssertEqual(editor.value as? String, "alpha beta")
+        app.buttons["compose-dock"].tap(); XCTAssertEqual(app.buttons["compose-dock"].label, "Undock")
+        await waitForDockedKeyboardAndPanel(app)
+        let docked = panel.frame
+        app.buttons["compose-expand"].tap(); XCTAssertLessThan(panel.frame.minY, docked.minY - 20)
+        app.buttons["compose-dock"].tap(); XCTAssertEqual(app.buttons["compose-dock"].label, "Dock")
+        XCTAssertEqual(panel.frame.minX, moved.minX, accuracy: 2); XCTAssertEqual(panel.frame.minY, moved.minY, accuracy: 2)
+        app.typeText(" gamma"); XCTAssertEqual(editor.value as? String, "alpha beta gamma")
         XCTAssertTrue(app.buttons["compose-send"].isHittable)
+        let image = XCTAttachment(screenshot: app.screenshot()); image.name = "synthetic-floating-composer"; image.lifetime = .keepAlways; add(image)
     }
-    func testCanceledDragRetainsDraftAndCompletedDismissalReopensDraft() {
+    func testSmallFloatingDragAndDockedDismissalReopenRetainedDraft() {
         let app = open(); defer { app.terminate() }
         let editor = app.textViews["compose-text"]; editor.typeText("retained")
         let start = grabber(app)
         start.press(forDuration: 0.1, thenDragTo: start.withOffset(CGVector(dx: 0, dy: 12)))
         XCTAssertTrue(editor.exists); XCTAssertEqual(editor.value as? String, "retained")
-        start.press(forDuration: 0.1, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.96)))
-        XCTAssertTrue(app.buttons["qa-compose"].waitForExistence(timeout: 5))
-        app.buttons["qa-compose"].tap()
+        app.buttons["compose-dock"].tap()
+        grabber(app).press(forDuration: 0.1, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.96)))
+        XCTAssertTrue(app.buttons["qa-compose"].waitForExistence(timeout: 5)); app.buttons["qa-compose"].tap()
         XCTAssertTrue(app.textViews["compose-text"].waitForExistence(timeout: 5))
         XCTAssertEqual(app.textViews["compose-text"].value as? String, "retained")
     }
-    func testEditorScrollingDoesNotResizeAndSendingBlocksSwipeDismissal() async {
+    func testEditorScrollingDoesNotMoveAndSendingBlocksPresentationChanges() async {
         let app = open(); defer { app.terminate() }
-        let editor = app.textViews["compose-text"]
-        editor.typeText(String(repeating: "row\n", count: 36))
+        let editor = app.textViews["compose-text"]; editor.typeText(String(repeating: "row\n", count: 36))
         await waitForDockedKeyboardAndPanel(app)
         let panel = app.otherElements["compose-panel"].firstMatch, before = panel.frame
-        editor.swipeDown()
-        XCTAssertEqual(panel.frame.minY, before.minY, accuracy: 2)
+        editor.swipeDown(); XCTAssertEqual(panel.frame.minY, before.minY, accuracy: 2)
         XCTAssertTrue(app.keyboards.firstMatch.exists)
-        app.buttons["compose-send"].tap()
-        XCTAssertTrue(app.alerts.firstMatch.waitForExistence(timeout: 5))
+        app.buttons["compose-send"].tap(); XCTAssertTrue(app.alerts.firstMatch.waitForExistence(timeout: 5))
         app.alerts.buttons["Send Text"].tap()
-        XCTAssertTrue(app.buttons["compose-send"].exists)
+        XCTAssertFalse(app.buttons["compose-dock"].isEnabled); XCTAssertFalse(app.buttons["compose-expand"].isEnabled)
+        let sendingFrame = panel.frame // Disabling the editor can dismiss the keyboard.
         grabber(app).press(forDuration: 0.1, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.96)))
-        XCTAssertTrue(editor.exists, "Delivery blocks dismissal")
+        XCTAssertTrue(editor.exists); XCTAssertEqual(panel.frame.minY, sendingFrame.minY, accuracy: 2)
         XCUIDevice.shared.press(.home); app.activate()
         XCTAssertTrue(app.buttons["qa-compose"].waitForExistence(timeout: 5)); app.buttons["qa-compose"].tap()
         XCTAssertTrue(app.textViews["compose-text"].waitForExistence(timeout: 5))
-        XCTAssertEqual(app.textViews["compose-text"].value as? String, "", "Background retires the draft and delivery")
+        XCTAssertEqual(app.textViews["compose-text"].value as? String, "")
+        XCTAssertEqual(app.buttons["compose-dock"].label, "Dock")
     }
-
+    func testFloatingRotationKeepsSendEditorAndPresentationControlsAboveKeyboard() async {
+        let app = open(); defer { app.terminate() }
+        let editor = app.textViews["compose-text"]; editor.typeText("rotation draft")
+        XCUIDevice.shared.orientation = .landscapeLeft
+        await waitForDockedKeyboardAndPanel(app)
+        let keyboard = app.keyboards.firstMatch, panel = app.otherElements["compose-panel"].firstMatch
+        XCTAssertGreaterThanOrEqual(panel.frame.minY, app.frame.minY + 8)
+        XCTAssertLessThanOrEqual(panel.frame.maxY, keyboard.frame.minY + 2)
+        XCTAssertGreaterThan(editor.frame.height, 35)
+        XCTAssertTrue(app.buttons["compose-send"].isHittable); XCTAssertTrue(app.buttons["compose-dock"].isHittable)
+        app.buttons["compose-dock"].tap(); app.buttons["compose-dock"].tap()
+        app.typeText(" retained"); XCTAssertEqual(editor.value as? String, "rotation draft retained")
+        XCUIDevice.shared.orientation = .portrait
+        await waitForDockedKeyboardAndPanel(app)
+        XCTAssertTrue(app.buttons["compose-send"].isHittable)
+    }
 }

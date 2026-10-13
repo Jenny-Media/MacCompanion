@@ -133,3 +133,25 @@ Reproduce the drag suite after a normal simulator development build:
 
 The generated QA app links the experiment entry point only in its private
 target. Release and normal development targets do not link experiment sources.
+
+## Floating composer revision (2026-10-13)
+
+The default presentation is now a compact floating panel inside the session.
+Drag the grabber to move it; release near an edge to snap. The panel stays within
+the safe area above the actual keyboard, and relative placement follows rotation
+and keyboard changes. VoiceOver exposes movement actions on the grabber.
+
+Expand fills the available area; Collapse restores the compact panel. Dock
+attaches it above the keyboard with the existing Maps-style height snaps. Undock
+restores its floating position. All presentations share one mounted native editor,
+preserving draft, selection and typing focus. Back still retains the draft for
+choosing a remote destination. Background, lock and session replacement retire it.
+Sending blocks movement and presentation changes; late gestures from retired
+presentations cannot affect a new editor. Only Send Text delivers input, with the
+existing confirmation and readiness checks.
+
+Simulator coverage includes real grabber drags, edge snapping, docking,
+expansion, editor scrolling, rotation, actual keyboard geometry, retained selection,
+Dynamic Type and lifecycle cancellation. Tablet safe-area/keyboard geometry is
+covered with synthetic layout cases; physical dictation and IME acceptance remain
+separate. Cursor and password-manager investigations stay paused.
