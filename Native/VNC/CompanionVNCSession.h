@@ -13,6 +13,8 @@ typedef UIImage CompanionVNCImage;
 @property(nonatomic, copy) void (^stateHandler)(NSString *state, NSDictionary *counters);
 @property(nonatomic, copy) void (^displayLayoutHandler)(NSDictionary *layout);
 @property(nonatomic, readonly) BOOL running;
+/// Fresh numeric/boolean diagnostics; never includes screen or input content.
+@property(nonatomic, readonly) NSDictionary *diagnosticCounters;
 /// Authenticated transport, including paused or fresh-frame-waiting states.
 @property(nonatomic, readonly) BOOL established;
 @property(nonatomic, readonly) BOOL connected;

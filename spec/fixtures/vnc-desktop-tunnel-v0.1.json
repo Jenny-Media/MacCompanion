@@ -2204,7 +2204,12 @@
     "diagnostics": "content-free counters; synthetic is not live acceptance",
     "sameOwnerBriefInactivePreservesCursor": true,
     "activeRestoresWithoutNewReport": true,
-    "transparentRestoresWithoutFallback": true
+    "transparentRestoresWithoutFallback": true,
+    "earlyShapeSurvivesFirstFrame": true,
+    "retainedBackgroundPreservesShape": true,
+    "retainedResumeInvalidatesPosition": true,
+    "pendingResumeFencesPublication": true,
+    "diagnosticsFreshOnShapeAndAdmissionChanges": true
   },
   "stationaryCursorSequence": {
     "standard": [

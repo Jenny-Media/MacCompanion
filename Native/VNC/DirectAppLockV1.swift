@@ -12,10 +12,12 @@ import UIKit
     static let locked = Notification.Name("DirectClientLockedV1")
     private(set) var authenticating = false
     private(set) var allowed: Bool
+    private(set) var foregroundActive: Bool
     private(set) var graceSeconds: Int
     private(set) var message = "Unlock to access your Macs"
     var enabled: Bool { defaults.bool(forKey: Self.preferenceKey) }
     var canAccess: Bool { !enabled || (allowed && protectedDataAvailable()) }
+    var canInteract: Bool { canAccess && foregroundActive }
     var contentVisible: Bool { canAccess || foregroundGracePending }
     var privacyCoverVisible: Bool { cover?.isHidden == false }
     private let contextFactory: () -> LAContext
@@ -44,13 +46,17 @@ import UIKit
             return Double(elapsed.seconds) + Double(elapsed.attoseconds) / 1e18
         }
         self.isActive = isActive; self.isBackground = isBackground; self.protectedDataAvailable = protectedDataAvailable
+        foregroundActive = isActive()
         allowed = !defaults.bool(forKey: Self.preferenceKey)
         graceSeconds = defaults.integer(forKey: Self.gracePreferenceKey) == 30 ? 30 : 0
     }
     func install() {
+        foregroundActive = isActive()
         if observers.isEmpty {
             let center = NotificationCenter.default
-            observers = [center.addObserver(forName: UIApplication.willEnterForegroundNotification, object: nil, queue: .main) { [weak self] _ in
+            observers = [center.addObserver(forName: UIApplication.willResignActiveNotification, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.becameInactive() }
+            }, center.addObserver(forName: UIApplication.willEnterForegroundNotification, object: nil, queue: .main) { [weak self] _ in
                 MainActor.assumeIsolated { self?.prepareForeground() }
             }, center.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main) { [weak self] _ in
                 MainActor.assumeIsolated { self?.background() }
@@ -78,7 +84,10 @@ import UIKit
         discardGrace(); defaults.set(value, forKey: Self.preferenceKey)
         attempt = UUID(); context?.invalidate(); context = nil; authenticating = false; unlockNeedsPublication = false
         if value { allowed = false; NotificationCenter.default.post(name: Self.locked, object: nil); showCover(); authenticate() }
-        else { attempt = UUID(); context?.invalidate(); context = nil; authenticating = false; allowed = true; hideCover() }
+        else {
+            allowed = true; hideCover(); foregroundActive = isActive()
+            if foregroundActive { publishUnlock() } else { unlockNeedsPublication = true }
+        }
     }
     func setGraceSeconds(_ value: Int) {
         graceSeconds = value == 30 ? 30 : 0; defaults.set(graceSeconds, forKey: Self.gracePreferenceKey)
@@ -98,7 +107,9 @@ import UIKit
         if canAccess || foregroundGracePending { hideCover() }
         else { showCover() }
     }
+    func becameInactive() { foregroundActive = false }
     func background() {
+        foregroundActive = false
         foregroundGracePending = false
         guard enabled else { return }
         if allowed && !unlockNeedsPublication && graceSeconds > 0 && protectedDataAvailable() {
@@ -117,7 +128,8 @@ import UIKit
         NotificationCenter.default.post(name: Self.locked, object: nil)
     }
     func becameActive() {
-        guard isActive(), !authenticating else { return }
+        foregroundActive = isActive()
+        guard foregroundActive, !authenticating else { return }
         if canAccess {
             hideCover()
             if unlockNeedsPublication { publishUnlock() }
@@ -146,7 +158,7 @@ import UIKit
                 guard let self, self.attempt == id else { return }
                 self.context = nil; self.authenticating = false
                 guard success, self.protectedDataAvailable(), !self.isBackground() else { self.message = "App locked. Tap Unlock to try again."; return }
-                self.allowed = true
+                self.foregroundActive = self.isActive(); self.allowed = true
                 self.hideCover()
                 if self.isActive() { self.publishUnlock() }
                 else { self.unlockNeedsPublication = true }

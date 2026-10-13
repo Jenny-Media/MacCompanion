@@ -519,6 +519,9 @@ visible presentation when a valid grace reuse is pending, without granting input
 or credential access until active. A successful current authentication removes
 the cover immediately, including the inactive-to-active handoff; defer unlocked
 publication until active and reject replies after background/protected-data loss.
+The library interaction/accessibility gate MUST observe application activation
+directly, including when authentication succeeds before activation without a new
+scene-phase change. Losing interaction retires pending local presentations.
 
 Fullscreen hides the key strip and reclaims its viewport space without a reconnect.
 A reachable session-controls button restores it, including keyboard access. Remember
@@ -618,7 +621,11 @@ Terminal keyboard accessories show a 1–0 number row whenever the software keyb
 
 ## Lifetime Pro and permanent free access (2026-10-05)
 
-The official client has an optional lifetime non-consumable Pro product (`media.jenny.maccompanion.pro.lifetime`, US base price $9.99) and Restore Purchases. Verify StoreKit transactions, their product/type and revocation before unlocking. Resolve initial entitlements before denying paid actions. Listen for updates and read current entitlements without a custom account/server or per-session online purchase check. Cancelled, pending, unverified and unavailable purchases never unlock Pro or delete user data. Display StoreKit's localized price only when the product is available. The development StoreKit configuration is testing-only and never establishes App Store product availability.
+The official client has an optional lifetime non-consumable Pro product (`media.jenny.maccompanion.pro.lifetime`, US base price $9.99) and Restore Purchases. Verify StoreKit transactions, their product/type and revocation before unlocking. Resolve initial entitlements before denying paid actions. Free-Mac connections,
+first-Mac addition and existing-Mac management MUST NOT wait for initial StoreKit
+resolution. Pending paid-dependent actions show progress with a bounded retry
+state, never grant unverified Pro access, and recheck unlock/activity and record
+membership before presentation; retired requests cannot open a late sheet. Listen for updates and read current entitlements without a custom account/server or per-session online purchase check. Cancelled, pending, unverified and unavailable purchases never unlock Pro or delete user data. Display StoreKit's localized price only when the product is available. The development StoreKit configuration is testing-only and never establishes App Store product availability.
 
 An explicit optional free non-consumable `media.jenny.maccompanion.pro.trial14`, displayed as **14-day Trial**, grants the same Pro features for exactly 1,209,600 seconds from its verified **original** purchase date. It MUST be priced zero before the app offers it. Explain the duration, expiring Pro features, permanent free tier and separate lifetime purchase before starting. There is no automatic billing or renewal. Restore, repeated purchase, another device and reinstall MUST NOT reset the original start date. Read verified trial history, including revoked transactions, to prevent offering a second trial; revoked trials grant no access. Unverified, wrong-product, wrong-type and future-dated transactions grant no trial access. Reevaluate expiry on foreground and with a bounded local deadline while running; no per-frame timer or server is needed. Local time is used offline and is not a tamper-resistant server clock. Lifetime access overrides trial expiry. Expiry/revocation preserves saved data, free selections and active connections.
 
@@ -774,6 +781,12 @@ replace the shape at the current pointer position even without video damage.
 Brief inactivity hides the cursor overlay while retaining the current socket
 owner's decoded shape (including a transparent shape), hotspot and position.
 The active return restores that presentation without requiring another cursor
-report. Background, replacement and retirement retain their existing fences.
+report. On the same retained connection, background hides presentation and invalidates
+position while retaining the decoded shape/hotspot. Restore the shape after the
+current resume boundary without requiring a new host shape report; do not restore
+a stale pointer position. An image received before the first complete desktop
+frame survives initial geometry setup. Geometry changes invalidate position,
+not a valid same-owner shape. Replacement, teardown and explicit empty/unknown
+shape reports clear it. Cursor publication cannot cross a pending resume boundary.
 Content-free report, visible-image, publication and cache-miss counters describe
 wire delivery without claiming context semantics or live host compatibility.

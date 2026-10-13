@@ -759,7 +759,7 @@
       "path": "vnc-desktop-tunnel-v0.1.json",
       "kind": "desktop.tunnel.profile.v0.1",
       "expect": "valid",
-      "canonicalSHA256": "9d2e32939b3bc450867a3ee27a2644c655d39affd43e1fb8d7f20d436ec08c75"
+      "canonicalSHA256": "ab0bc4e7dfbe1d0f80483c3417755172055ea500edc3c5e5868e6c97b679b908"
     },
     {
       "path": "valid/desktop-tunnel-open.json",
@@ -801,7 +801,7 @@
       "path": "direct-screen-sharing-v1.json",
       "kind": "directScreenSharing.v1",
       "expect": "valid",
-      "canonicalSHA256": "b45af394d798821e5c8d26b90f74f1c6c198adca21bdc7bd730e35aed93f2241"
+      "canonicalSHA256": "bbf3a50138a07755f2b13c519ccfc9a15dbaf3a8dc48540ad6dc1276c0444ab5"
     },
     {
       "path": "native-macos-client-v1.json",

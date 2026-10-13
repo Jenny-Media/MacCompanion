@@ -3185,5 +3185,12 @@
       "protectedDataAvailable": false,
       "authenticate": true
     }
-  ]
+  ],
+  "coldStartAdmissionPolicy": {
+    "observableActivation": true,
+    "freeActionsWaitForPurchases": false,
+    "paidWaitTimeoutSeconds": 5,
+    "latePresentationAfterRetirement": false,
+    "denyPaidBeforeVerifiedReadiness": false
+  }
 }

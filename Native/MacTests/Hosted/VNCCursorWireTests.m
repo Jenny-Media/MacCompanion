@@ -11,6 +11,7 @@
 - (void)configureClient:(rfbClient *)client;
 - (void)publishCursor;
 - (rfbBool)allocate:(rfbClient *)client;
+- (BOOL)resetBaseline:(rfbClient *)client;
 @end
 
 @interface VNCCursorWireTests : XCTestCase
@@ -37,6 +38,28 @@
     client->width = 100; client->height = 100;
     [session setValue:@YES forKey:@"running"];
     return client;
+}
+- (void)testCachedHostCursorSurvivesAllocationAndRetainedResumeWithUnknownPosition {
+    CompanionVNCSession *session=[CompanionVNCSession new]; int peer;
+    rfbClient *client=[self clientFor:session peer:&peer];
+    for (NSString *key in @[@"established",@"inputReady",@"baselinePresented",@"cursorPositionKnown"]) [session setValue:@YES forKey:key];
+    NSData *packet=[self updateFor:[self profile][@"appleCursorCases"][0]];
+    XCTAssertEqual(send(peer,packet.bytes,packet.length,0),packet.length); XCTAssertTrue(HandleRFBServerMessage(client));
+    NSImage *image=[session valueForKey:@"cursorImage"]; XCTAssertNotNil(image);
+    client->width=120; XCTAssertTrue([session allocate:client]);
+    XCTAssertTrue([session valueForKey:@"cursorImage"]==image);
+    [session pauseWithCompletion:nil]; [session resume];
+    __block NSUInteger deliveries=0;
+    session.cursorHandler=^(NSImage *shape,CGPoint hotspot,CGPoint position,BOOL known) {
+        deliveries++; XCTAssertTrue(shape==image); XCTAssertFalse(known);
+    };
+    [session publishCursor]; XCTAssertEqual(deliveries,0);
+    [session setValue:@NO forKey:@"resumeRequested"]; XCTAssertTrue([session resetBaseline:client]); [session publishCursor];
+    XCTestExpectation *drained=[self expectationWithDescription:@"current owner replay"];
+    dispatch_async(dispatch_get_main_queue(),^{ [drained fulfill]; }); [self waitForExpectations:@[drained] timeout:1];
+    XCTAssertEqual(deliveries,1); XCTAssertEqualObjects(session.diagnosticCounters[@"appleCursorStores"],@1);
+    XCTAssertEqualObjects(session.diagnosticCounters[@"cursorCachedImage"],@YES);
+    session.cursorHandler=nil; [session setValue:@NO forKey:@"running"]; client->frameBuffer=NULL; rfbClientCleanup(client); close(peer);
 }
 - (void)testActualSetEncodingsRequestsCursorShapesDespiteExplicitPixelEncodingList {
     CompanionVNCSession *session = [CompanionVNCSession new]; int peer;

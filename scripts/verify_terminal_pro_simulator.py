@@ -66,6 +66,7 @@ def main():
     parser.add_argument('--duo-review', action='store_true', help='Run only the opt-in interactive, synthetic Duo comparison capture')
     parser.add_argument('--generate-only', action='store_true', help='Generate the private QA project without running tests')
     parser.add_argument('--composer-ui', action='store_true', help='Generate the simulator-only Maps-style composer app and native drag test scheme')
+    parser.add_argument('--cold-start-ui', action='store_true', help='Generate native cold-start admission interaction tests')
     parser.add_argument('--settings-ui', action='store_true', help='Also test gear navigation and live sheet appearance using native UI interactions')
     args = parser.parse_args(); base = args.build.resolve()
     qa = base / 'QA'; qa.mkdir(exist_ok=True)
@@ -139,6 +140,26 @@ def main():
             'test': {'config': 'Debug', 'macroExpansion': 'ComposerSheetApp', 'targets': [{'name': 'ComposerSheetUITests', 'parallelizable': False}]}}
         for action in ['run', 'profile', 'analyze', 'archive']:
             spec['schemes']['ComposerSheetQA'][action] = {'config': 'Debug'}
+    if args.cold_start_ui:
+        import copy
+        cold = copy.deepcopy(app)
+        cold['sources'] = [row for row in cold['sources'] if not row['path'].startswith(str(ROOT / 'Apps/MacCompanionIOS'))]
+        cold['sources'].append({'path': str(ROOT / 'Experiments/ColdStartQA/ColdStartApplication.swift')})
+        cold['settings']['base'].update({'PRODUCT_BUNDLE_IDENTIFIER': 'dev.maccompanion.coldstartqa.ios',
+                                        'PRODUCT_NAME': 'ColdStartQA', 'PRODUCT_MODULE_NAME': 'Mac_Companion'})
+        cold['dependencies'] = [row for row in cold['dependencies'] if row.get('target') != 'MacCompanionSessionActivity']
+        spec['targets']['ColdStartApp'] = cold
+        spec['targets']['ColdStartUITests'] = {
+            'type': 'bundle.ui-testing', 'platform': 'iOS',
+            'sources': [{'path': str(ROOT / 'Experiments/ColdStartQA/ColdStartUITests.swift')}],
+            'dependencies': [{'target': 'ColdStartApp'}],
+            'settings': {'base': {'GENERATE_INFOPLIST_FILE': 'YES', 'PRODUCT_BUNDLE_IDENTIFIER': 'dev.maccompanion.coldstartqa.ios.tests',
+                'SWIFT_VERSION': '6.0', 'IPHONEOS_DEPLOYMENT_TARGET': '26.0', 'ARCHS': 'arm64', 'ONLY_ACTIVE_ARCH': 'YES',
+                'CODE_SIGN_IDENTITY': '-', 'CODE_SIGNING_ALLOWED': 'YES', 'TEST_TARGET_NAME': 'ColdStartApp'}}}
+        spec['schemes']['ColdStartQA'] = {'build': {'targets': {'ColdStartApp': 'all', 'ColdStartUITests': 'all'}},
+            'test': {'config': 'Debug', 'macroExpansion': 'ColdStartApp', 'targets': [{'name': 'ColdStartUITests', 'parallelizable': False}]}}
+        for action in ['run', 'profile', 'analyze', 'archive']:
+            spec['schemes']['ColdStartQA'][action] = {'config': 'Debug'}
     spec_path = qa / 'project.json'; spec_path.write_text(json.dumps(spec, indent=2))
     run('/opt/homebrew/bin/xcodegen', 'generate', '--spec', spec_path, '--project', qa)
     lock = qa / 'DirectClientQA.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved'

@@ -12,6 +12,8 @@
 - (void)configureClient:(rfbClient *)client;
 - (void)publishCursor;
 - (rfbBool)allocate:(rfbClient *)client;
+- (BOOL)resetBaseline:(rfbClient *)client;
+- (void)report:(NSString *)state;
 @end
 
 @interface CompanionVNCViewer (CursorContinuityTesting)
@@ -82,6 +84,93 @@
     }
 }
 
+- (void)testEarlyAndRetainedCursorShapesSurviveCompleteFramesWithoutNewReports {
+    NSDictionary *profile = [self profile];
+    XCTAssertEqualObjects(profile[@"cursorPresentationPolicy"][@"earlyShapeSurvivesFirstFrame"], @YES);
+    NSArray *vectors = [profile[@"cursorWireCases"] arrayByAddingObjectsFromArray:profile[@"appleCursorCases"]];
+    for (NSDictionary *vector in vectors) {
+        CompanionVNCViewer *viewer = [CompanionVNCViewer new]; [viewer loadViewIfNeeded];
+        viewer.view.frame = CGRectMake(0,0,440,956);
+        CompanionVNCSession *session = viewer.session; int peer;
+        rfbClient *client = [self clientFor:session peer:&peer];
+        for (NSString *key in @[@"established", @"inputReady", @"baselinePresented"]) [session setValue:@YES forKey:key];
+        void (^receive)(UIImage *,CGPoint,CGPoint,BOOL) = session.cursorHandler;
+        XCTestExpectation *first = [self expectationWithDescription:@"early shape"];
+        session.cursorHandler = ^(UIImage *image,CGPoint hotspot,CGPoint position,BOOL known) {
+            receive(image,hotspot,position,known); [first fulfill];
+        };
+        NSData *packet = [self updateFor:vector]; XCTAssertEqual(send(peer,packet.bytes,packet.length,0),packet.length);
+        XCTAssertTrue(HandleRFBServerMessage(client)); [session publishCursor]; [self waitForExpectations:@[first] timeout:1];
+        UIImage *image = [viewer valueForKey:@"remoteCursorImage"]; XCTAssertNotNil(image);
+        UIImage *frame = [[[UIGraphicsImageRenderer alloc] initWithSize:CGSizeMake(100,100)] imageWithActions:^(UIGraphicsImageRendererContext *context) {
+            [UIColor.systemBlueColor setFill]; UIRectFill(CGRectMake(0,0,100,100));
+        }];
+        session.cursorHandler = receive; [viewer frame:frame]; [viewer.view layoutIfNeeded];
+        XCTAssertTrue([viewer valueForKey:@"remoteCursorImage"] == image);
+        [viewer sendPointer:CGPointMake(50,50) mask:0];
+        XCTAssertFalse([(UIView *)[viewer valueForKey:@"cursorIndicator"] isHidden]);
+        [viewer background]; XCTAssertTrue([viewer valueForKey:@"remoteCursorImage"] == image);
+        XCTAssertFalse([[viewer valueForKey:@"cursorPositionKnown"] boolValue]);
+        [viewer foregrounded];
+        XCTestExpectation *restored = [self expectationWithDescription:@"retained owner replay"];
+        session.cursorHandler = ^(UIImage *shape,CGPoint hotspot,CGPoint position,BOOL known) {
+            receive(shape,hotspot,position,known); XCTAssertFalse(known); [restored fulfill];
+        };
+        [session setValue:@NO forKey:@"resumeRequested"];
+        XCTAssertTrue([session resetBaseline:client]); [session publishCursor]; [self waitForExpectations:@[restored] timeout:1];
+        for (NSString *key in @[@"inputReady", @"baselinePresented"]) [session setValue:@YES forKey:key];
+        [session setValue:@NO forKey:@"awaitingResumeFrame"];
+        [session report:@"Connected"];
+        XCTestExpectation *drained = [self expectationWithDescription:@"active ready notification"];
+        dispatch_async(dispatch_get_main_queue(), ^{ [drained fulfill]; }); [self waitForExpectations:@[drained] timeout:1];
+        XCTAssertFalse([[viewer valueForKey:@"checkingResume"] boolValue]);
+        [viewer sendPointer:CGPointMake(51,50) mask:0];
+        XCTAssertTrue([viewer valueForKey:@"remoteCursorImage"] == image);
+        XCTAssertTrue([(UIView *)[viewer valueForKey:@"fallbackCursor"] isHidden]);
+        session.cursorHandler = nil; [viewer stopViewer]; [session setValue:@NO forKey:@"running"]; rfbClientCleanup(client); close(peer);
+    }
+}
+- (void)testPendingResumeRejectsQueuedCursorAndFreshReplayInvalidatesOldPosition {
+    CompanionVNCViewer *viewer = [CompanionVNCViewer new]; [viewer loadViewIfNeeded];
+    CompanionVNCSession *session = viewer.session; int peer; rfbClient *client = [self clientFor:session peer:&peer];
+    for (NSString *key in @[@"established", @"inputReady", @"baselinePresented", @"cursorPositionKnown"]) [session setValue:@YES forKey:key];
+    NSData *packet = [self updateFor:[self profile][@"appleCursorCases"][0]];
+    XCTAssertEqual(send(peer,packet.bytes,packet.length,0),packet.length); XCTAssertTrue(HandleRFBServerMessage(client));
+    __block NSUInteger deliveries = 0; __block BOOL known = YES;
+    session.cursorHandler = ^(UIImage *shape,CGPoint hotspot,CGPoint position,BOOL k) { deliveries++; known = k; };
+    [session publishCursor]; [viewer background]; [viewer foregrounded]; [session publishCursor];
+    XCTestExpectation *drained = [self expectationWithDescription:@"old callback retired"];
+    dispatch_async(dispatch_get_main_queue(), ^{ [drained fulfill]; }); [self waitForExpectations:@[drained] timeout:1];
+    XCTAssertEqual(deliveries,0);
+    [session setValue:@NO forKey:@"resumeRequested"]; XCTAssertTrue([session resetBaseline:client]); [session publishCursor];
+    XCTestExpectation *replayed = [self expectationWithDescription:@"fresh cached replay"];
+    dispatch_async(dispatch_get_main_queue(), ^{ [replayed fulfill]; }); [self waitForExpectations:@[replayed] timeout:1];
+    XCTAssertEqual(deliveries,1); XCTAssertFalse(known);
+    session.cursorHandler=nil; [viewer stopViewer]; [session setValue:@NO forKey:@"running"]; rfbClientCleanup(client); close(peer);
+}
+- (void)testCursorOnlyDiagnosticsAreFreshAndPointerMotionDoesNotWritePerEvent {
+    CompanionVNCViewer *viewer=[CompanionVNCViewer new]; [viewer loadViewIfNeeded]; viewer.view.frame=CGRectMake(0,0,440,956);
+    CompanionVNCSession *session=viewer.session; int peer; rfbClient *client=[self clientFor:session peer:&peer];
+    for (NSString *key in @[@"established",@"inputReady",@"baselinePresented"]) [session setValue:@YES forKey:key];
+    UIImage *frame=[[[UIGraphicsImageRenderer alloc] initWithSize:CGSizeMake(100,100)] imageWithActions:^(UIGraphicsImageRendererContext *context){ UIRectFill(CGRectMake(0,0,100,100)); }];
+    [viewer frame:frame]; [viewer.view layoutIfNeeded];
+    __block NSUInteger writes=0; __block NSDictionary *latest;
+    viewer.diagnosticHandler=^(NSDictionary *snapshot){ writes++; latest=snapshot; };
+    NSData *packet=[self updateFor:[self profile][@"appleCursorCases"][0]];
+    XCTAssertEqual(send(peer,packet.bytes,packet.length,0),packet.length); XCTAssertTrue(HandleRFBServerMessage(client));
+    [session publishCursor];
+    XCTestExpectation *drained=[self expectationWithDescription:@"shape callback"];
+    dispatch_async(dispatch_get_main_queue(),^{ [drained fulfill]; }); [self waitForExpectations:@[drained] timeout:1];
+    for (NSUInteger i=0;i<400;i++) [viewer sendPointer:CGPointMake(40+i%20,50) mask:0];
+    XCTestExpectation *snapshot=[self expectationWithDescription:@"coalesced diagnostics"];
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW,400*NSEC_PER_MSEC),dispatch_get_main_queue(),^{ [snapshot fulfill]; });
+    [self waitForExpectations:@[snapshot] timeout:1];
+    XCTAssertEqual(writes,1); XCTAssertEqualObjects(latest[@"appleCursorStores"],@1);
+    XCTAssertEqualObjects(latest[@"cursorPresentation"][@"hostShapeAvailable"],@YES);
+    XCTAssertEqualObjects(latest[@"cursorPresentation"][@"usesFallback"],@NO);
+    XCTAssertEqualObjects(session.diagnosticCounters[@"presentedFrames"],@0);
+    viewer.diagnosticHandler=nil; session.cursorHandler=nil; [viewer stopViewer]; [session setValue:@NO forKey:@"running"]; rfbClientCleanup(client); close(peer);
+}
 - (void)testActualSetEncodingsRequestsCursorShapesDespiteExplicitPixelEncodingList {
     CompanionVNCSession *session = [CompanionVNCSession new]; int peer;
     rfbClient *client = [self clientFor:session peer:&peer];

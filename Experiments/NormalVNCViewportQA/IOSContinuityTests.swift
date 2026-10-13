@@ -2,6 +2,7 @@ import ActivityKit
 import LocalAuthentication
 import SwiftUI
 import XCTest
+import Observation
 @testable import Mac_Companion
 
 private final class ContinuityAuthentication: LAContext, @unchecked Sendable {
@@ -117,6 +118,61 @@ private final class ContinuitySession: CompanionVNCSession {
         try await eventually { backend.completedUpdateIDs.contains(id) }
         XCTAssertTrue(backend.ids.isEmpty); XCTAssertEqual(backend.starts, 1)
         XCTAssertEqual(backend.endedIDs, [id]); XCTAssertEqual(backend.updatedIDs, [id])
+    }
+    func testInactiveAuthenticationObservablyAdmitsActualActivationWithoutSceneChange() async throws {
+        var active = true
+        let authentication = ContinuityAuthentication()
+        let lock = DirectAppLockV1(contextFactory: { authentication }, defaults: isolatedDefaults(),
+            isActive: { active }, isBackground: { false }, protectedDataAvailable: { true })
+        defer { lock.setEnabled(false) }
+        lock.setEnabled(true); lock.install()
+        active = false; lock.becameInactive(); authentication.reply?(true, nil)
+        try await eventually { lock.canAccess }
+        XCTAssertFalse(lock.canInteract); XCTAssertFalse(lock.privacyCoverVisible)
+        var observed = false
+        withObservationTracking { _ = lock.canInteract } onChange: {
+            MainActor.assumeIsolated { observed = true }
+        }
+        active = true; lock.becameActive()
+        XCTAssertTrue(observed); XCTAssertTrue(lock.canInteract)
+        lock.becameInactive(); XCTAssertFalse(lock.canInteract); XCTAssertTrue(lock.contentVisible)
+        lock.becameActive(); XCTAssertTrue(lock.canInteract); XCTAssertEqual(authentication.evaluations, 1)
+    }
+    func testDisablingUnlockDuringInactivityPublishesAtActiveBoundary() async throws {
+        var active = true
+        let context = ContinuityAuthentication()
+        let lock = DirectAppLockV1(contextFactory: { context }, defaults: isolatedDefaults(),
+            isActive: { active }, isBackground: { false }, protectedDataAvailable: { true })
+        lock.setEnabled(true); lock.install()
+        var publications = 0
+        let observer = NotificationCenter.default.addObserver(forName: DirectAppLockV1.unlocked, object: nil, queue: .main) { _ in
+            MainActor.assumeIsolated { publications += 1 }
+        }
+        defer { NotificationCenter.default.removeObserver(observer); lock.setEnabled(false) }
+        active = false; lock.becameInactive(); lock.setEnabled(false)
+        XCTAssertTrue(lock.canAccess); XCTAssertFalse(lock.canInteract); XCTAssertEqual(publications, 0)
+        active = true; lock.becameActive(); lock.becameActive()
+        XCTAssertTrue(lock.canInteract); XCTAssertEqual(publications, 1)
+        context.reply?(true, nil); try await Task.sleep(for: .milliseconds(20))
+        XCTAssertEqual(publications, 1)
+    }
+    func testInitialPurchaseReadPreservesFreeRightsAndOnlyNewestLookupPublishesReadiness() async throws {
+        var replies: [CheckedContinuation<DirectProSnapshot, Never>] = []
+        let access = DirectProAccess(defaults: isolatedDefaults(), readEntitlements: {
+            await withCheckedContinuation { replies.append($0) }
+        })
+        let first = Task { await access.refresh() }
+        try await eventually { replies.count == 1 }
+        let second = Task { await access.refresh() }
+        try await eventually { replies.count == 2 }
+        let free = UUID(), paid = UUID()
+        XCTAssertFalse(access.ready); XCTAssertTrue(access.canAddMac(count: 0))
+        XCTAssertTrue(access.canUseMac(free, among: [free, paid])); XCTAssertFalse(access.canUseMac(paid, among: [free, paid]))
+        replies[0].resume(returning: DirectProSnapshot(lifetime: true)); await first.value
+        XCTAssertFalse(access.ready); XCTAssertFalse(access.hasPro)
+        replies[1].resume(returning: DirectProSnapshot()); await second.value
+        XCTAssertTrue(access.ready); XCTAssertFalse(access.hasPro)
+        XCTAssertTrue(access.canUseMac(free, among: [free, paid]))
     }
     func testIndexedUnlockGraceNeverGrantsBackgroundAccessAndRequiresFreshAuthenticationAtExpiry() async throws {
         let vectors = try XCTUnwrap(try fixture()["appUnlockGraceCases"] as? [[String: Any]])
