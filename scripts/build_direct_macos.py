@@ -45,7 +45,7 @@ def main():
         files = [p for folder in roots for p in sorted(folder.rglob('*')) if p.is_file()]
         files += [Path(__file__), *[ROOT / 'scripts' / name for name in [
             'direct_mac_development_signing.py', 'verify_direct_client_dependencies.py',
-            'prepare_swiftterm_build_tool.py', 'dependency_checkout_provenance.py']],
+            'prepare_swiftterm_build_tool.py', 'dependency_checkout_provenance.py', 'prepare_macos_vnc_cursor.py']],
             ROOT / 'spec/dependency-policy/v0/direct-client-development.json',
             ROOT / 'spec/privacy-manifest/v0/targets/mac-containing-app/PrivacyInfo.xcprivacy']
         return {str(p.relative_to(ROOT)): sha(p) for p in files}
@@ -61,6 +61,8 @@ def main():
     if sha(args.openssl_archive) != lock['opensslSourceSHA256']:
         raise SystemExit('OpenSSL source archive checksum mismatch.')
     args.output.mkdir(parents=True, exist_ok=True)
+    from prepare_macos_vnc_cursor import prepare as prepare_cursor, verify as verify_cursor
+    mac_vnc_source, mac_vnc_expected, mac_vnc_before = prepare_cursor(args.source, args.output, lock)
     sdk = capture('xcrun', '--sdk', 'macosx', '--show-sdk-path')
     version = capture('xcodebuild', '-version')
     crypto = args.output / 'openssl'
@@ -103,8 +105,12 @@ def main():
         'CMAKE_IGNORE_PREFIX_PATH': '/opt/homebrew'}
     for name in ['LZO', 'JPEG', 'PNG', 'SDL', 'GTK', 'LIBSSHTUNNEL', 'GNUTLS', 'SYSTEMD', 'GCRYPT', 'FFMPEG', 'SASL', 'XCB', 'EXAMPLES', 'TESTS', 'WEBSOCKETS', 'TIGHTVNC_FILETRANSFER']:
         definitions['WITH_' + name] = 'OFF'
+    # Refresh once when migrating from the pristine checkout or a prior adapter.
+    # Normal reuse retains the verified library and does not force recompilation.
+    cache = vnc / 'CMakeCache.txt'
+    fresh = ['--fresh'] if cache.exists() and ('CMAKE_HOME_DIRECTORY:INTERNAL=' + str(mac_vnc_source)) not in cache.read_text().splitlines() else []
     with (args.output / 'vnc-build.log').open('w') as log:
-        run('/opt/homebrew/bin/cmake', '-S', args.source, '-B', vnc, *['-D' + k + '=' + str(v) for k, v in definitions.items()], stdout=log, stderr=subprocess.STDOUT)
+        run('/opt/homebrew/bin/cmake', *fresh, '-S', mac_vnc_source, '-B', vnc, *['-D' + k + '=' + str(v) for k, v in definitions.items()], stdout=log, stderr=subprocess.STDOUT)
         run('/opt/homebrew/bin/cmake', '--build', vnc, '--target', 'vncclient', '-j6', stdout=log, stderr=subprocess.STDOUT)
     shared_vnc = ['DirectMacLibraryV1.swift', 'DirectMacIdentityV1.swift', 'DirectMacDiscoveryV1.swift', 'DirectCloudSyncV1.swift',
         'DirectClientPlatformV1.swift', 'DirectAppearanceV1.swift', 'DirectProAccess.swift', 'DirectRecoveryV1.swift', 'DirectSettingsComponents.swift', 'VNCSessionPreferences.swift', 'DirectQuickActionsEditor.swift',
@@ -175,6 +181,7 @@ def main():
         raise SystemExit('Resolved package revisions changed during the build.')
     package_sources_after = verify_checkouts(args.output / 'DerivedData/SourcePackages', expected, previous=package_sources)
     vnc_sources_after = verify_source_checkout(args.source, lock['revision'], previous=vnc_sources)
+    mac_vnc_after = verify_cursor(mac_vnc_source, mac_vnc_expected)
     if source_inputs() != application_inputs:
         raise SystemExit('Application sources changed during the build. Rerun against a stable source snapshot.')
     app = args.output / 'DerivedData/Build/Products/Debug/MacCompanion.app'
@@ -187,6 +194,8 @@ def main():
               'sourceWorktreeDirty': bool(capture('git', '-C', ROOT, 'status', '--porcelain')),
               'dependencies': {'LibVNCClient': lock['revision'], 'OpenSSL': inputs, 'SwiftPackages': expected,
                                'LibVNCClientSources': {'beforeBuild': vnc_sources, 'afterBuild': vnc_sources_after},
+                               'macOSCursorAdapter': {'policy': lock['macOSCursorCallback'], 'source': str(mac_vnc_source),
+                                                      'beforeBuild': mac_vnc_before, 'afterBuild': mac_vnc_after},
                                'SwiftPackageSources': {'beforeBuild': package_sources, 'afterBuild': package_sources_after}},
               'app': str(app), 'executableSHA256': sha(executable),
               'artifactFiles': {str(p.relative_to(app)): sha(p) for p in sorted(app.rglob('*')) if p.is_file() and not p.is_symlink()},

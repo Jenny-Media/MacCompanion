@@ -125,6 +125,20 @@ has a fixed size. It never intercepts gestures or modifies framebuffer pixels.
 Cursor pixels, hotspots and positions are not written to logs or persistent
 storage; only shape/position update counts may be reported.
 
+The native macOS direct client uses AppKit cursor presentation at the received
+shape size and hotspot. Its fallback is the standard macOS arrow. A remote
+shape applies only inside the visible rendered desktop of the active, focused,
+input-ready window; letterboxing and unavailable input use the arrow. Fully
+transparent received shapes remain transparent. Servers that omit cursor
+pseudo-encodings provide no semantic cursor shape to synthesize. The indexed
+cursor wire cases exercise actual LibVNCClient negotiation and mask decoding.
+An empty standard XCursor or RichCursor rectangle clears the previous native
+macOS shape and restores the arrow without consuming pixel or mask bytes.
+Positive-size transparent shapes retain their separate intentional-hide behavior.
+The macOS build admits this one callback adaptation by original/adapted source
+hashes and an exact patch in the VNC source lock; it compiles a generated copy,
+leaving the pristine upstream checkout and other platform decoders unchanged.
+
 ## Remote keyboard
 
 Toolbar modifiers are one-shot selections, not persistent remote key-downs.

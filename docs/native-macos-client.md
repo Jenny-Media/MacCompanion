@@ -56,7 +56,20 @@ New VNC logins match iPhone's retention and field validation rules. Each new
 Desktop window consumes one usable saved-login attempt after unlock;
 later unlocks only restore a cleared remembered password for the same account.
 Cursor-only reports invalidate drawing and native cursor rectangles independently
-of framebuffer changes. Save rechecks the current machine count and Pro/trial
+of framebuffer changes. Native macOS uses a server-provided shape and hotspot
+only over the rendered desktop while the owning active window has input focus.
+An absent or unsupported shape uses the normal macOS arrow. Letterboxing and
+inactive windows also use the arrow. A server may omit cursor pseudo-encodings;
+the client cannot infer an I-beam or resize cursor from framebuffer pixels.
+An intentionally transparent shape remains transparent. A retained desktop
+shows **Click to control** when focus is elsewhere, or an unavailable/unlock
+hint when input is blocked. These hints do not intercept clicks. Shape-only
+reports refresh a stationary pointer only while the surface owns it. Full-screen
+toolbar visibility and hover controls remain unchanged.
+An empty XCursor/RichCursor report also clears the prior shape. Upstream 0.9.15
+skips its callback for this report; the macOS builder uses a hash-admitted copy
+with that callback restored. It never patches the pristine dependency checkout.
+Save rechecks the current machine count and Pro/trial
 access; existing records remain editable and a denied creation keeps its draft.
 New SSH key logins recheck the displayed key against current Pro/free-key access. Terminal
 uses a saved login for one initial attempt after local unlock; later cancellation,

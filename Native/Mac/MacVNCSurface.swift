@@ -2,6 +2,10 @@
 import AppKit
 import SwiftUI
 
+private final class MacVNCControlHint: NSTextField {
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+}
+
 struct MacVNCSurface: NSViewRepresentable {
     let session: MacVNCSession
     func makeNSView(context: Context) -> MacVNCInputView { MacVNCInputView(session: session) }
@@ -24,6 +28,8 @@ struct MacVNCSurface: NSViewRepresentable {
     private var cursorImage: NSImage?
     private var cursorHotspot = CGPoint.zero
     private var cursorPosition = CGPoint.zero
+    private var remoteCursor: NSCursor?
+    private let controlHint = MacVNCControlHint(labelWithString: "")
     private var keys = MacVNCKeyboardState()
     private var composition = MacVNCComposition()
     private var textEvent: NSEvent?
@@ -40,31 +46,46 @@ struct MacVNCSurface: NSViewRepresentable {
         setAccessibilityRole(.group)
         setAccessibilityLabel("Remote desktop")
         setAccessibilityIdentifier("mac-vnc-surface")
+        controlHint.font = .systemFont(ofSize: 12, weight: .medium)
+        controlHint.textColor = .white
+        controlHint.backgroundColor = NSColor.black.withAlphaComponent(0.8)
+        controlHint.drawsBackground = true
+        controlHint.isHidden = true
+        controlHint.setAccessibilityIdentifier("mac-vnc-control-hint")
+        addSubview(controlHint)
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) is unavailable") }
     private var destination: CGRect { MacVNCGeometry.destination(crop: crop, viewport: bounds.size, zoom: zoom, pan: pan) }
-    private var admitsInput: Bool { enabled && session?.canInput == true && window?.isKeyWindow == true && window?.firstResponder === self }
+    private var admitsInput: Bool { enabled && session?.canInput == true && NSApplication.shared.isActive && window?.isKeyWindow == true && window?.firstResponder === self }
     func update(image: NSImage?, crop: CGRect, zoom: CGFloat, pan: CGPoint, enabled: Bool,
                 cursorImage: NSImage?, cursorHotspot: CGPoint, cursorPosition: CGPoint) {
         if self.enabled && (!enabled || self.crop != crop) { releaseInput() }
         self.image = image; self.crop = crop; self.zoom = zoom; self.pan = pan
+        if self.cursorImage !== cursorImage || self.cursorHotspot != cursorHotspot {
+            remoteCursor = cursorImage.map { NSCursor(image: $0, hotSpot: cursorHotspot) }
+        }
         self.cursorImage = cursorImage; self.cursorHotspot = cursorHotspot; self.cursorPosition = cursorPosition
         self.enabled = enabled; needsDisplay = true
-        setAccessibilityHidden(!enabled)
-        window?.invalidateCursorRects(for: self)
+        setAccessibilityHidden(image == nil)
+        refreshControlPresentation()
     }
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow(); removeObservers()
         guard let window else { releaseInput(); return }
-        for (name, object) in [(NSWindow.didResignKeyNotification, window as AnyObject), (NSApplication.didResignActiveNotification, NSApplication.shared as AnyObject)] {
+        for (name, object) in [(NSWindow.didResignKeyNotification, window as AnyObject), (NSWindow.didBecomeKeyNotification, window as AnyObject),
+                               (NSApplication.didResignActiveNotification, NSApplication.shared as AnyObject), (NSApplication.didBecomeActiveNotification, NSApplication.shared as AnyObject)] {
             observers.append(NotificationCenter.default.addObserver(forName: name, object: object, queue: .main) { [weak self] _ in
-                MainActor.assumeIsolated { self?.releaseInput() }
+                MainActor.assumeIsolated {
+                    if name == NSWindow.didResignKeyNotification || name == NSApplication.didResignActiveNotification { self?.releaseInput() }
+                    self?.refreshControlPresentation()
+                }
             })
         }
+        refreshControlPresentation()
     }
     override func updateTrackingAreas() {
         super.updateTrackingAreas(); trackingAreas.forEach(removeTrackingArea)
-        addTrackingArea(NSTrackingArea(rect: .zero, options: [.mouseMoved, .activeInKeyWindow, .inVisibleRect], owner: self))
+        addTrackingArea(NSTrackingArea(rect: .zero, options: [.mouseMoved, .cursorUpdate, .activeInKeyWindow, .inVisibleRect], owner: self))
     }
     override func draw(_ dirtyRect: NSRect) {
         NSColor.black.setFill(); bounds.fill()
@@ -76,14 +97,57 @@ struct MacVNCSurface: NSViewRepresentable {
         context.translateBy(x: destination.minX, y: destination.maxY); context.scaleBy(x: 1, y: -1)
         context.draw(cropped, in: CGRect(origin: .zero, size: destination.size)); context.restoreGState()
     }
-    override func resignFirstResponder() -> Bool { releaseInput(); return super.resignFirstResponder() }
+    override func becomeFirstResponder() -> Bool {
+        let accepted = super.becomeFirstResponder()
+        // AppKit installs the new responder after this callback returns.
+        DispatchQueue.main.async { [weak self] in self?.refreshControlPresentation() }
+        return accepted
+    }
+    override func resignFirstResponder() -> Bool {
+        releaseInput()
+        DispatchQueue.main.async { [weak self] in self?.refreshControlPresentation() }
+        return super.resignFirstResponder()
+    }
     override func setFrameSize(_ newSize: NSSize) {
         if newSize != frame.size { releaseInput() }
         super.setFrameSize(newSize)
+        refreshControlPresentation()
     }
     override func resetCursorRects() {
-        if let image = cursorImage { addCursorRect(bounds, cursor: NSCursor(image: image, hotSpot: cursorHotspot)) }
-        else { addCursorRect(bounds, cursor: .crosshair) }
+        addCursorRect(visibleRect, cursor: .arrow)
+        let canvas = destination.intersection(visibleRect)
+        if admitsInput, !canvas.isEmpty, let remoteCursor { addCursorRect(canvas, cursor: remoteCursor) }
+    }
+    override func cursorUpdate(with event: NSEvent) {
+        guard window?.isKeyWindow == true, NSApplication.shared.isActive,
+              event.windowNumber == window?.windowNumber, ownsCursor(at: event.locationInWindow) else { return }
+        cursor(at: convert(event.locationInWindow, from: nil)).set()
+    }
+    private func ownsCursor(at windowPoint: CGPoint) -> Bool {
+        guard let content = window?.contentView else { return false }
+        let hitPoint = content.superview?.convert(windowPoint, from: nil) ?? windowPoint
+        return content.hitTest(hitPoint) === self
+    }
+    private func cursor(at point: CGPoint) -> NSCursor {
+        admitsInput && destination.intersection(visibleRect).contains(point) ? remoteCursor ?? .arrow : .arrow
+    }
+    private func refreshControlPresentation() {
+        let hint: String
+        if image == nil || admitsInput { hint = "" }
+        else if !enabled || session?.canInput != true { hint = session?.controlUnavailableHint ?? "Control unavailable" }
+        else { hint = "Click to control" }
+        controlHint.stringValue = hint; controlHint.isHidden = hint.isEmpty
+        controlHint.sizeToFit()
+        controlHint.frame.origin = CGPoint(x: 12, y: max(12, bounds.height - controlHint.frame.height - 12))
+        setAccessibilityHelp(hint.isEmpty ? (admitsInput ? "Controlling remote desktop" : "Remote desktop unavailable") : hint)
+        window?.invalidateCursorRects(for: self)
+        // A shape-only report can arrive while the physical mouse is stationary.
+        // Set it immediately only when this view actually owns the pointer.
+        guard let window, window.isKeyWindow, NSApplication.shared.isActive,
+              NSWindow.windowNumber(at: NSEvent.mouseLocation, belowWindowWithWindowNumber: 0) == window.windowNumber else { return }
+        let point = window.mouseLocationOutsideOfEventStream
+        guard ownsCursor(at: point) else { return }
+        cursor(at: convert(point, from: nil)).set()
     }
     override func mouseDown(with event: NSEvent) { click(event, bit: 1, down: true) }
     override func mouseUp(with event: NSEvent) { click(event, bit: 1, down: false) }
@@ -99,7 +163,7 @@ struct MacVNCSurface: NSViewRepresentable {
         return MacVNCGeometry.map(point: convert(event.locationInWindow, from: nil), crop: crop, destination: destination, clamp: clamp)
     }
     private func click(_ event: NSEvent, bit: Int, down: Bool) {
-        if down { window?.makeFirstResponder(self) }
+        if down { window?.makeFirstResponder(self); refreshControlPresentation() }
         guard admitsInput, let point = point(event, clamp: !down) else { return }
         if down { mask |= bit } else { mask &= ~bit }
         session?.pointer(point, mask: mask)
@@ -205,6 +269,9 @@ struct MacVNCSurface: NSViewRepresentable {
             .font: NSFont.systemFont(ofSize: 14), .foregroundColor: NSColor.labelColor, .underlineStyle: NSUnderlineStyle.single.rawValue])
     }
     private func removeObservers() { observers.forEach(NotificationCenter.default.removeObserver); observers = [] }
-    func detach() { releaseInput(); removeObservers(); session?.resetInput = nil; session = nil; image = nil; cursorImage = nil }
+    func detach() {
+        releaseInput(); removeObservers(); session?.resetInput = nil; session = nil; image = nil; cursorImage = nil
+        remoteCursor = nil; enabled = false; refreshControlPresentation()
+    }
 }
 #endif

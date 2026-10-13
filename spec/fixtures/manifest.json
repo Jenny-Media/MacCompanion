@@ -759,7 +759,7 @@
       "path": "vnc-desktop-tunnel-v0.1.json",
       "kind": "desktop.tunnel.profile.v0.1",
       "expect": "valid",
-      "canonicalSHA256": "1c5956cd055630e21bcdccfeb1cb87d45d95acffe1aaadd739f48d1f06eae6be"
+      "canonicalSHA256": "df3777966696f0d120b4bf94f3e8478db4693037cf5577c2d560fce3b1b79dc0"
     },
     {
       "path": "valid/desktop-tunnel-open.json",
