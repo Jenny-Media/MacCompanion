@@ -3192,5 +3192,42 @@
     "paidWaitTimeoutSeconds": 5,
     "latePresentationAfterRetirement": false,
     "denyPaidBeforeVerifiedReadiness": false
-  }
+  },
+  "liveActivityStartupRetirementCases": [
+    {
+      "name": "ended-then-connected",
+      "existingIDs": [
+        "orphan"
+      ],
+      "transition": "endedRetry",
+      "startsBeforeRetirement": false,
+      "eventsAfterRetirement": [
+        "end:orphan",
+        "start:connected"
+      ]
+    },
+    {
+      "name": "opt-out-then-opt-in",
+      "existingIDs": [
+        "orphan"
+      ],
+      "transition": "optOutIn",
+      "startsBeforeRetirement": false,
+      "eventsAfterRetirement": [
+        "end:orphan",
+        "start:connected"
+      ]
+    },
+    {
+      "name": "ended-with-pending-startup-retirement",
+      "existingIDs": [
+        "orphan"
+      ],
+      "transition": "ended",
+      "waitCompletesBeforeRetirement": false,
+      "eventsAfterRetirement": [
+        "end:orphan"
+      ]
+    }
+  ]
 }

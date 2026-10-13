@@ -44,6 +44,7 @@ import Foundation
     private var finished = false
     private var preferenceEnabled: Bool
     private var work: Task<Void, Never>?
+    private var startupRetirement: Task<Void, Never>?
     private var workGeneration: UInt64 = 0
     private var retirements: [UUID: Task<Void, Never>] = [:]
     private var dirty = false
@@ -57,10 +58,11 @@ import Foundation
         attributes = .init(macID: mac.id, macName: mac.name, kind: kind)
         // A process restart must not leave a previous socket labeled connected.
         let orphaned = backend.existingIDs()
-        let generation = workGeneration
-        work = Task { [self] in
-            for id in orphaned { await backend.end(id) }
-            await drainUpdates(generation: generation)
+        if !orphaned.isEmpty {
+            // This prerequisite outlives canceled status work and early ends.
+            startupRetirement = Task { [backend] in
+                for id in orphaned { await backend.end(id) }
+            }
         }
     }
     func setForeground(_ value: Bool) {
@@ -102,7 +104,8 @@ import Foundation
     func finish() { finished = true; phase = nil; retireActivity() }
     func ownsActivity(_ id: String) -> Bool { !finished && activityID == id }
     func waitForUpdates() async {
-        while work != nil || !retirements.isEmpty {
+        while startupRetirement != nil || work != nil || !retirements.isEmpty {
+            if let startup = startupRetirement { await startup.value; startupRetirement = nil }
             await work?.value
             for retirement in Array(retirements.values) { await retirement.value }
         }
@@ -127,6 +130,9 @@ import Foundation
         work = Task { [self] in await drainUpdates(generation: generation) }
     }
     private func drainUpdates(generation: UInt64) async {
+        if let startup = startupRetirement { await startup.value }
+        guard generation == workGeneration else { return }
+        startupRetirement = nil
         while generation == workGeneration && dirty {
             dirty = false; await reconcile()
         }

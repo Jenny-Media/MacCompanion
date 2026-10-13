@@ -477,8 +477,12 @@ owner view/process is gone opens sign-in without auto-connect and explains that 
 opens a new shell; ordinary Mac-list entry retains saved-login convenience. An already presented
 Desktop or Terminal is kept; a Terminal link cannot accidentally open Desktop.
 Old activities without a kind retain Desktop semantics. Activities left by a
-previous process are ended before starting a new one. No APNs or vendor server
-is added. Permanent extension identity/signing admission remains gated.
+previous process are ended before starting a new one. Startup retirement remains
+tracked independently of replaceable status publication: an early session end or
+opt-out/opt-in cannot discard it or permit new creation before it completes.
+Waiting for pending activity work includes this startup retirement, while ending
+the currently owned activity remains independent of stalled updates. No APNs or
+vendor server is added. Permanent extension identity/signing admission remains gated.
 
 Compact presentation shows a one-line Mac name with a bounded width and a phase
 symbol; expanded and Lock Screen presentations show the name, status,
