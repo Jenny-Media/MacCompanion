@@ -22,6 +22,13 @@ def run(*args, **kwargs):
 def output(*args):
     return subprocess.check_output([str(x) for x in args], text=True).strip()
 
+def cmake_source_options(build, source):
+    """Migrate the generated cache when its admitted source directory changes."""
+    cache = build / 'CMakeCache.txt'
+    expected = 'CMAKE_HOME_DIRECTORY:INTERNAL=' + str(source.resolve())
+    return ['--fresh'] if cache.exists() and expected not in cache.read_text().splitlines() else []
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--source', type=Path, required=True)
@@ -83,7 +90,7 @@ def main():
         'WITH_EXAMPLES': 'OFF', 'WITH_TESTS': 'OFF',
         'WITH_WEBSOCKETS': 'OFF', 'WITH_TIGHTVNC_FILETRANSFER': 'OFF'
     }
-    run('/opt/homebrew/bin/cmake', '-S', cursor_source, '-B', build,
+    run('/opt/homebrew/bin/cmake', *cmake_source_options(build, cursor_source), '-S', cursor_source, '-B', build,
         *['-D' + k + '=' + str(v) for k, v in definitions.items()])
     run('/opt/homebrew/bin/cmake', '--build', build, '--target', 'vncclient', '-j', '6')
     resolved = args.output / 'normal-project.json'
