@@ -329,7 +329,7 @@ frame and the replacement connection's display layout converge, in either order.
 Only a verified missing selection falls back to the full desktop. Input remains
 gated until presentation is ready, including Compose Text entry and delivery.
 Video-mode changes wait for replacement restoration to finish. A compact indeterminate indicator appears
-after 500 milliseconds of real restoration/reconnection work and disappears on
+after one second of real restoration/reconnection work and disappears on
 readiness; brief inactive returns do not show it. The existing one-replacement
 limit and nine-second resume deadline remain. Terminal does not silently create
 a replacement shell or replay input. Grid changes while inactive are deferred;

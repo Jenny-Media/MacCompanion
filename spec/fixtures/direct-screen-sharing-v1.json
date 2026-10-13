@@ -3018,13 +3018,17 @@
         "inactive",
         "grid-changes",
         "latest-grid-changes",
-        "active"
+        "compose-text",
+        "active",
+        "compose-text"
       ],
       "expect": [
         "no-inactive-window-change",
         "latest-grid-published-on-return",
         "same-authentication-and-PTY",
-        "no-input-replay"
+        "no-input-replay",
+        "no-inactive-composed-input",
+        "fresh-composed-input-on-foreground"
       ]
     },
     {

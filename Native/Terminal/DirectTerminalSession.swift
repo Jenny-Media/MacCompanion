@@ -399,7 +399,7 @@ private enum TerminalPTY {
     }
     #if os(iOS)
     var composeGeneration: UUID { generation }
-    var canComposeText: Bool { connected && !suspended && DirectAppLockV1.shared.canAccess && DirectClientPlatformV1.sessionAvailable && writer != nil }
+    var canComposeText: Bool { connected && !inputInactive && !suspended && DirectAppLockV1.shared.canAccess && DirectClientPlatformV1.sessionAvailable && writer != nil }
     /// Use the same PTY and write ordering as live typing. A completion confirms
     /// only the local write; the remote program supplies no consumption receipt.
     func sendComposedText(_ data: [UInt8], generation expected: UUID, completion: @escaping (String?) -> Void) {

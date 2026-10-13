@@ -419,7 +419,9 @@ commands or change terminal input. Never describe Send Text as preventing comman
 execution, even though it adds no extra Return.
 
 Confirmation binds the exact reviewed text. At sending time, recheck app unlock,
-foreground/input admission and the originating connection generation. A busy
+foreground/input admission and the originating connection generation. Terminal
+composer entry, queue admission and worker writes MUST also wait for the session
+to finish its foreground handoff, even if the application is already active. A busy
 queue keeps the draft with a non-destructive error. Once admitted, disable editing
 and duplicate sends until the local transport write completes or fails. A local
 write completion is not remote application consumption. Partial/uncertain writes
@@ -452,9 +454,9 @@ credentials, remote input or background execution mode. Its scoped End Session
 LiveActivityIntent runs in the app process without foregrounding it.
 Publish Connected only for a foreground, ready native owner. Temporary foreground
 inactivity releases input without changing the established session phase. Actual
-background entry presents Paused; publish Reconnecting while checking/replacing the
-connection. End immediately on Done, terminal failure or opt-out. A dismissed
-activity is not recreated for that session unless the user opts back in.
+background entry presents Paused. Retained Desktop checks keep Paused until fresh
+readiness evidence; publish Reconnecting only while replacing a Desktop connection.
+End immediately on Done, terminal failure or opt-out. A dismissed activity is not recreated for that session unless the user opts back in.
 Connected and paused freshness are bounded to 60 seconds. Renew connected freshness
 only on observed connection evidence, with coalesced foreground publication; returning
 to a local socket does not prove the peer is alive. Stale presentations offer Open to
