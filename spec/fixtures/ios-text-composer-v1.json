@@ -251,6 +251,8 @@
     "docking": "Dock and Undock preserve editor identity and floating placement",
     "floatingPlacement": "relative to keyboard-safe area; clamped on keyboard, orientation and size changes",
     "sendingBlocksMovement": true,
-    "narrowCompactActions": "Discard, Expand and Dock in menu; Back, error details and Send remain direct"
+    "narrowCompactActions": "Discard, Expand and Dock in menu; Back, error details and Send remain direct",
+    "undockedKeyboardTracking": true,
+    "nearEdgeKeyboardFallback": "prefer above; readable below/beside region when needed; safe-area constraint near top edge"
   }
 }

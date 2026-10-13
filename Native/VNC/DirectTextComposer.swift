@@ -182,6 +182,28 @@ struct DirectComposerPlacement {
         let top = safe.minY + (room < 284 ? 8 : 48)
         return CGRect(x: safe.minX + 8, y: top, width: max(0, safe.width - 16), height: max(0, keyboardTop - 8 - top))
     }
+    static func area(safe: CGRect, keyboard: CGRect) -> CGRect {
+        let visible = keyboard.intersection(safe)
+        guard !visible.isNull, !visible.isEmpty else { return area(safe: safe, keyboardTop: safe.maxY) }
+        let above = area(safe: safe, keyboardTop: visible.minY)
+        if above.height >= 180 { return above }
+        let base = area(safe: safe, keyboardTop: safe.maxY)
+        let belowY = max(base.minY, visible.maxY + 8)
+        let below = CGRect(x: base.minX, y: belowY, width: base.width, height: max(0, base.maxY - belowY))
+        let left = CGRect(x: base.minX, y: base.minY, width: max(0, visible.minX - 8 - base.minX), height: base.height)
+        let rightX = max(base.minX, visible.maxX + 8)
+        let right = CGRect(x: rightX, y: base.minY, width: max(0, base.maxX - rightX), height: base.height)
+        let candidates = [above, below, left, right]
+        // Prefer a region that can hold the compact editor and its actions;
+        // moving an undocked keyboard near the top must not collapse the card.
+        let readable = candidates.filter { $0.width >= 264 && $0.height >= 112 }
+        return (readable.isEmpty ? candidates : readable).max {
+            $0.width * min(324, $0.height) < $1.width * min(324, $1.height)
+        } ?? above
+    }
+    static func dockedAnchor(area: CGRect, keyboard: CGRect) -> CGPoint {
+        CGPoint(x: 0.5, y: !keyboard.isEmpty && area.minY >= keyboard.maxY ? 0 : 1)
+    }
     static func frame(area: CGRect, size: CGSize, anchor: CGPoint) -> CGRect {
         let size = CGSize(width: min(area.width, max(0, size.width)), height: min(area.height, max(0, size.height)))
         return CGRect(x: area.minX + max(0, min(1, anchor.x)) * (area.width - size.width),
@@ -208,6 +230,8 @@ struct DirectComposerPlacement {
     private let presentationEpoch: UUID
     private var usable: Bool { draft.active && draft.presentationEpoch == presentationEpoch && !draft.sending }
     private var placementConstraints: [NSLayoutConstraint] = []
+    private var keyboardBottom: NSLayoutConstraint?
+    private var safeBottom: NSLayoutConstraint?
     private var peek: NSLayoutConstraint?
     private var grabberHeight: NSLayoutConstraint?
     private var grabber: UIButton?
@@ -221,14 +245,25 @@ struct DirectComposerPlacement {
     private var dragging = false
     var deliveryActionFrame: CGRect { editorHost?.view.convert(sendBounds, to: view) ?? .zero }
     var panelFrame: CGRect { card?.frame ?? .zero }
+    #if DEBUG
+    // Controlled Simulator keyboard geometry; absent from release builds.
+    var simulatedKeyboardFrame: CGRect? { didSet { view.setNeedsLayout() } }
+    #endif
+    private var keyboardFrame: CGRect {
+        #if DEBUG
+        if let simulatedKeyboardFrame { return simulatedKeyboardFrame }
+        #endif
+        return view.keyboardLayoutGuide.layoutFrame
+    }
     var placementArea: CGRect {
-        DirectComposerPlacement.area(safe: view.safeAreaLayoutGuide.layoutFrame, keyboardTop: view.keyboardLayoutGuide.layoutFrame.minY)
+        DirectComposerPlacement.area(safe: view.safeAreaLayoutGuide.layoutFrame, keyboard: keyboardFrame)
     }
     init(draft: DirectTextComposerDraft) { self.draft = draft; presentationEpoch = draft.presentationEpoch; super.init(nibName: nil, bundle: nil) }
     required init?(coder: NSCoder) { fatalError("init(coder:) is unavailable") }
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = .clear; view.accessibilityViewIsModal = true
+        view.keyboardLayoutGuide.followsUndockedKeyboard = true
         let backdrop = UIControl(); backdrop.backgroundColor = UIColor.black.withAlphaComponent(0.12)
         backdrop.translatesAutoresizingMaskIntoConstraints = false
         backdrop.addTarget(self, action: #selector(back), for: .touchUpInside)
@@ -262,10 +297,16 @@ struct DirectComposerPlacement {
         let grabberHeight = grabber.heightAnchor.constraint(equalToConstant: 44); self.grabberHeight = grabberHeight
         let leading = card.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 8)
         let bottom = card.bottomAnchor.constraint(equalTo: view.keyboardLayoutGuide.topAnchor, constant: -8)
+        let safeBottom = card.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -8)
+        self.keyboardBottom = bottom; self.safeBottom = safeBottom
+        // A top-edge keyboard cannot force the editor above the safe area.
+        // UIKit switches these before layout; both offsets follow the selected free region.
+        view.keyboardLayoutGuide.setConstraints([bottom], activeWhenAwayFrom: .top)
+        view.keyboardLayoutGuide.setConstraints([safeBottom], activeWhenNearEdge: .top)
         let width = card.widthAnchor.constraint(equalToConstant: 320)
         let height = card.heightAnchor.constraint(equalToConstant: 324); height.priority = .defaultHigh
         let peek = card.topAnchor.constraint(greaterThanOrEqualTo: view.safeAreaLayoutGuide.topAnchor, constant: 48); self.peek = peek
-        placementConstraints = [leading, bottom, width, height]
+        placementConstraints = [leading, width, height]
         NSLayoutConstraint.activate(placementConstraints + [peek,
             grabber.topAnchor.constraint(equalTo: card.topAnchor), grabber.centerXAnchor.constraint(equalTo: card.centerXAnchor),
             grabber.widthAnchor.constraint(equalTo: card.widthAnchor), grabberHeight,
@@ -334,7 +375,7 @@ struct DirectComposerPlacement {
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
         let area = placementArea
-        let compact = area.height < 228
+        let compact = area.height < 228 || (area.width < 360 && traitCollection.preferredContentSizeCategory.isAccessibilityCategory)
         if draft.compactLayout != compact { draft.compactLayout = compact }
         grabberHeight?.constant = compact ? 20 : 44
         let accessibility = traitCollection.preferredContentSizeCategory.isAccessibilityCategory
@@ -342,9 +383,13 @@ struct DirectComposerPlacement {
         let size = CGSize(width: min(draft.docked || expanded ? 640 : 420, area.width * (draft.docked || expanded ? 1 : 0.88)),
                           height: min(area.height, draggingHeight ?? (expanded ? area.height : compactHeight)))
         if draft.narrowLayout != (size.width < 360) { draft.narrowLayout = size.width < 360 }
-        let target = DirectComposerPlacement.frame(area: area, size: size, anchor: draft.docked || expanded ? CGPoint(x: 0.5, y: 1) : draft.floatingAnchor)
+        let target = DirectComposerPlacement.frame(area: area, size: size, anchor: draft.docked || expanded ? DirectComposerPlacement.dockedAnchor(area: area, keyboard: keyboardFrame) : draft.floatingAnchor)
         peek?.constant = area.minY - view.safeAreaInsets.top
-        let values = [target.minX - view.safeAreaInsets.left, -8 - (area.maxY - target.maxY), target.width, target.height]
+        let values = [target.minX - view.safeAreaInsets.left, target.width, target.height]
+        let keyboardOffset = target.maxY - view.keyboardLayoutGuide.layoutFrame.minY
+        if keyboardBottom?.constant != keyboardOffset { keyboardBottom?.constant = keyboardOffset }
+        let safeOffset = target.maxY - view.safeAreaLayoutGuide.layoutFrame.maxY
+        if safeBottom?.constant != safeOffset { safeBottom?.constant = safeOffset }
         for (constraint, value) in zip(placementConstraints, values) where constraint.constant != value {
             constraint.constant = value
         }
@@ -373,7 +418,7 @@ private struct DirectTextComposerView: View {
             Image(systemName: draft.docked ? "rectangle.on.rectangle" : "rectangle.bottomthird.inset.filled")
                 .font(.system(size: 20)).frame(width: 44, height: 44)
         }.disabled(draft.sending).accessibilityLabel(draft.docked ? "Undock" : "Dock")
-            .accessibilityHint(draft.docked ? "Float the composer" : "Attach the composer above the keyboard")
+            .accessibilityHint(draft.docked ? "Float the composer" : "Attach the composer near the keyboard")
             .accessibilityIdentifier("compose-dock")
     }
     var body: some View {

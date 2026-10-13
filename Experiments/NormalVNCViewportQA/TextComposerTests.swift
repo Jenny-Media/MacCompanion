@@ -23,6 +23,69 @@ import UIKit
 }
 
 @MainActor final class TextComposerTests: XCTestCase {
+    func testSimulatedTabletKeyboardLayoutsRenderReadableEditorAndActions() async throws {
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let previous = scene.windows.first(where: \.isKeyWindow)
+        let window = UIWindow(windowScene: scene), root = UIViewController()
+        window.rootViewController = root; window.makeKeyAndVisible()
+        defer { root.dismiss(animated: false); window.isHidden = true; window.rootViewController = nil; previous?.makeKeyAndVisible() }
+        let draft = DirectTextComposerDraft(macName: "Synthetic", mode: .desktop)
+        draft.configure(available: { true }, send: { _, _ in })
+        let panel = DirectTextComposerPanel(draft: draft)
+        root.addChild(panel); root.view.addSubview(panel.view); panel.didMove(toParent: root)
+        panel.view.translatesAutoresizingMaskIntoConstraints = false
+        let width = panel.view.widthAnchor.constraint(equalToConstant: 1024)
+        let height = panel.view.heightAnchor.constraint(equalToConstant: 1280)
+        NSLayoutConstraint.activate([width, height, panel.view.topAnchor.constraint(equalTo: root.view.safeAreaLayoutGuide.topAnchor),
+            panel.view.leadingAnchor.constraint(equalTo: root.view.leadingAnchor)])
+        try await Task.sleep(for: .milliseconds(400)); panel.view.endEditing(true)
+        func descendants(_ v: UIView) -> [UIView] { [v] + v.subviews.flatMap(descendants) }
+        let editor = try XCTUnwrap(descendants(panel.view).compactMap { $0 as? UITextView }.first)
+        draft.edit("synthetic tablet draft"); try await Task.sleep(for: .milliseconds(100))
+        editor.selectedRange = NSRange(location: 3, length: 4); let selection = editor.selectedRange
+        for size in [CGSize(width: 1024, height: 1280), CGSize(width: 1366, height: 988)] {
+            width.constant = size.width; height.constant = size.height; root.view.layoutIfNeeded()
+            for keyboard in [CGRect(x: 0, y: size.height - 314, width: size.width, height: 314),
+                             CGRect(x: size.width / 2 - 160, y: 60, width: 320, height: 260),
+                             CGRect(x: 0, y: 60, width: size.width, height: 280),
+                             CGRect(x: size.width / 2 - 160, y: 400, width: 320, height: 260)] {
+                panel.simulatedKeyboardFrame = keyboard
+                for action in 0..<4 {
+                    if action == 1 || action == 3 { panel.toggleDock() }
+                    if action == 2 { panel.toggleExpansion() }
+                    try await Task.sleep(for: .milliseconds(300)); panel.view.setNeedsLayout(); panel.view.layoutIfNeeded()
+                    let card = panel.panelFrame, send = panel.deliveryActionFrame
+                    XCTAssertFalse(card.intersects(keyboard), "Rendered native card must avoid the controlled keyboard viewport")
+                    XCTAssertGreaterThan(editor.bounds.height, 35)
+                    XCTAssertTrue(card.contains(send)); XCTAssertGreaterThan(send.width, 35)
+                    XCTAssertTrue(panel.view.bounds.contains(card))
+                    XCTAssertTrue(descendants(panel.view).contains(where: { $0 === editor }))
+                    XCTAssertEqual(editor.selectedRange, selection); XCTAssertEqual(draft.text, "synthetic tablet draft")
+                }
+                draft.expanded = false
+            }
+        }
+    }
+    func testUndockedGuideUsesReadableFreeAreasAndTracksAllKeyboardModes() {
+        let draft = DirectTextComposerDraft(macName: "Synthetic", mode: .desktop)
+        draft.configure(available: { true }, send: { _, _ in })
+        let panel = DirectTextComposerPanel(draft: draft); panel.loadViewIfNeeded()
+        let guide = panel.view.keyboardLayoutGuide
+        XCTAssertTrue(guide.followsUndockedKeyboard)
+        let safe = CGRect(x: 0, y: 24, width: 1024, height: 1250)
+        for keyboard in [CGRect(x: 0, y: 960, width: 1024, height: 314),
+                         CGRect(x: 350, y: 60, width: 320, height: 260),
+                         CGRect(x: 0, y: 100, width: 1024, height: 280),
+                         CGRect(x: 350, y: 440, width: 320, height: 260)] {
+            let area = DirectComposerPlacement.area(safe: safe, keyboard: keyboard)
+            let card = DirectComposerPlacement.frame(area: area, size: CGSize(width: 420, height: 324), anchor: CGPoint(x: 0.5, y: 1))
+            XCTAssertFalse(card.intersects(keyboard))
+            XCTAssertGreaterThanOrEqual(card.height, 180)
+            XCTAssertGreaterThanOrEqual(card.minY, safe.minY); XCTAssertLessThanOrEqual(card.maxY, safe.maxY)
+            let docked = DirectComposerPlacement.frame(area: area, size: card.size, anchor: DirectComposerPlacement.dockedAnchor(area: area, keyboard: keyboard))
+            XCTAssertFalse(docked.intersects(keyboard))
+        }
+    }
     func testNarrowCompactComposerKeepsInvalidAndErrorActionsInsideCard() async throws {
         let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
         let previous = scene.windows.first(where: \.isKeyWindow)

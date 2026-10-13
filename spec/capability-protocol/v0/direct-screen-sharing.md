@@ -390,9 +390,12 @@ actions. macOS does not expose this tool. Present a compact floating panel above
 the native keyboard, retaining visible session content and reachable Send/Back
 actions. Drag its grabber to move within the keyboard-safe area, gently snapping
 within 28 points of an edge on release. Relative placement follows keyboard,
-orientation and size changes and stays clamped within safe bounds. **Expand**
+orientation and size changes and stays clamped within safe bounds. Track undocked
+(including floating and detached split) keyboards. Prefer space above the keyboard;
+when that cannot hold the compact editor, choose readable space below or beside it.
+Use a safe-area tracking constraint near the top edge to keep actions visible. **Expand**
 fills the available editor area; **Collapse** restores compact placement. **Dock**
-attaches it above the keyboard with compact/expanded height snaps; **Undock**
+attaches it near the keyboard in the selected free area with compact/expanded height snaps; **Undock**
 restores floating placement. Switching presentations and resizing retain editor
 identity, draft, selection and keyboard focus. Editor scrolling never moves or
 resizes the panel. A completed docked swipe dismissal retains the draft; a

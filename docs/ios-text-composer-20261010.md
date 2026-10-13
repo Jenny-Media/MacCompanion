@@ -139,12 +139,14 @@ target. Release and normal development targets do not link experiment sources.
 The default presentation is now a compact floating panel inside the session.
 Drag the grabber to move it; release near an edge to snap. The panel stays within
 the safe area above the actual keyboard, and relative placement follows rotation
-and keyboard changes. VoiceOver exposes movement actions on the grabber. Narrow compact windows group
+and keyboard changes. Undocked and floating tablet keyboards are tracked; near
+the top edge the panel uses readable space below or beside the keyboard.
+VoiceOver exposes movement actions on the grabber. Narrow compact windows group
 Discard, Expand and Dock in Composer actions, leaving Back, error details and
 Send directly reachable.
 
 Expand fills the available area; Collapse restores the compact panel. Dock
-attaches it above the keyboard with the existing Maps-style height snaps. Undock
+attaches it near the keyboard with the existing Maps-style height snaps. Undock
 restores its floating position. All presentations share one mounted native editor,
 preserving draft, selection and typing focus. Back still retains the draft for
 choosing a remote destination. Background, lock and session replacement retire it.
@@ -155,5 +157,9 @@ existing confirmation and readiness checks.
 Simulator coverage includes real grabber drags, edge snapping, docking,
 expansion, editor scrolling, rotation, actual keyboard geometry, retained selection,
 Dynamic Type and lifecycle cancellation. Tablet safe-area/keyboard geometry is
-covered with synthetic layout cases; physical dictation and IME acceptance remain
-separate. Cursor and password-manager investigations stay paused.
+covered by controlled native rendering on an iPad Simulator in portrait and
+landscape, including moved floating and full-width keyboard viewports. Actual iPad
+system-keyboard floating/undocking gestures remain a final hardware check, as
+explicitly agreed after the simulator could not enter those modes. Physical
+dictation and IME acceptance remain separate. Cursor and password-manager
+investigations stay paused.
