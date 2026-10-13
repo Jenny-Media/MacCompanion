@@ -1,6 +1,7 @@
 #import <XCTest/XCTest.h>
 #import <UIKit/UIKit.h>
 #import "CompanionVNCSession.h"
+#import "CompanionVNCViewer.h"
 #import "CompanionVNCAppleCursor.h"
 #import <rfb/rfbclient.h>
 #import <arpa/inet.h>
@@ -11,6 +12,12 @@
 - (void)configureClient:(rfbClient *)client;
 - (void)publishCursor;
 - (rfbBool)allocate:(rfbClient *)client;
+@end
+
+@interface CompanionVNCViewer (CursorContinuityTesting)
+- (void)frame:(UIImage *)frame;
+- (void)receivedCursor:(UIImage *)image hotspot:(CGPoint)hotspot position:(CGPoint)position known:(BOOL)known;
+- (void)sendPointer:(CGPoint)point mask:(NSInteger)mask;
 @end
 
 @interface CursorWireTests : XCTestCase
@@ -38,6 +45,43 @@
     [session setValue:@YES forKey:@"running"];
     return client;
 }
+- (void)testBriefInactivityRestoresStandardAppleAndTransparentCursorsWithoutNewReports {
+    NSDictionary *profile=[self profile];
+    XCTAssertEqualObjects(profile[@"cursorPresentationPolicy"][@"sameOwnerBriefInactivePreservesCursor"],@YES);
+    NSArray *vectors=[profile[@"cursorWireCases"] arrayByAddingObjectsFromArray:profile[@"appleCursorCases"]];
+    for (NSDictionary *vector in vectors) {
+        CompanionVNCSession *session=[CompanionVNCSession new]; int peer;
+        rfbClient *client=[self clientFor:session peer:&peer];
+        for (NSString *key in @[@"established",@"inputReady",@"baselinePresented"]) [session setValue:@YES forKey:key];
+        CompanionVNCViewer *viewer=[CompanionVNCViewer new]; [viewer loadViewIfNeeded]; viewer.session=session;
+        viewer.view.frame=CGRectMake(0,0,440,956);
+        UIImage *frame=[[[UIGraphicsImageRenderer alloc] initWithSize:CGSizeMake(100,100)] imageWithActions:^(UIGraphicsImageRendererContext *context){
+            [UIColor.systemBlueColor setFill]; UIRectFill(CGRectMake(0,0,100,100));
+        }];
+        [viewer frame:frame]; [viewer.view layoutIfNeeded];
+        XCTestExpectation *shape=[self expectationWithDescription:vector[@"name"]];
+        session.cursorHandler=^(UIImage *image,CGPoint hotspot,CGPoint position,BOOL known){
+            [viewer receivedCursor:image hotspot:hotspot position:position known:known]; [shape fulfill];
+        };
+        NSData *packet=[self updateFor:vector]; XCTAssertEqual(send(peer,packet.bytes,packet.length,0),packet.length);
+        XCTAssertTrue(HandleRFBServerMessage(client)); [session publishCursor]; [self waitForExpectations:@[shape] timeout:1];
+        [viewer sendPointer:CGPointMake(50,50) mask:0];
+        UIImage *image=[viewer valueForKey:@"remoteCursorImage"]; XCTAssertNotNil(image);
+        NSValue *hotspot=[viewer valueForKey:@"cursorHotspot"];
+        UIView *indicator=[viewer valueForKey:@"cursorIndicator"], *fallback=[viewer valueForKey:@"fallbackCursor"];
+        XCTAssertFalse(indicator.hidden); XCTAssertTrue(fallback.hidden);
+        NSNumber *reports=[session valueForKey:@"cursorPublications"];
+        [viewer becameInactive]; XCTAssertTrue(indicator.hidden);
+        XCTAssertTrue([viewer valueForKey:@"remoteCursorImage"]==image);
+        [viewer foregrounded]; XCTAssertFalse(indicator.hidden); XCTAssertTrue(fallback.hidden);
+        XCTAssertEqualObjects([viewer valueForKey:@"cursorHotspot"],hotspot);
+        [viewer sendPointer:CGPointMake(51,50) mask:0];
+        XCTAssertTrue([viewer valueForKey:@"remoteCursorImage"]==image); XCTAssertTrue(fallback.hidden);
+        XCTAssertEqualObjects([session valueForKey:@"cursorPublications"],reports);
+        session.cursorHandler=nil; [viewer stopViewer]; [session setValue:@NO forKey:@"running"]; rfbClientCleanup(client); close(peer);
+    }
+}
+
 - (void)testActualSetEncodingsRequestsCursorShapesDespiteExplicitPixelEncodingList {
     CompanionVNCSession *session = [CompanionVNCSession new]; int peer;
     rfbClient *client = [self clientFor:session peer:&peer];

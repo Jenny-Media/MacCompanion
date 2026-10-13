@@ -771,5 +771,9 @@ automatic streaming or change encrypted input to obtain cursor feedback.
 Both generated direct-client builds deliver empty standard cursor reports through
 the exact hash-admitted upstream callback adapter. Standard and Apple reports
 replace the shape at the current pointer position even without video damage.
+Brief inactivity hides the cursor overlay while retaining the current socket
+owner's decoded shape (including a transparent shape), hotspot and position.
+The active return restores that presentation without requiring another cursor
+report. Background, replacement and retirement retain their existing fences.
 Content-free report, visible-image, publication and cache-miss counters describe
 wire delivery without claiming context semantics or live host compatibility.

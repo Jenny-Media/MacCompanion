@@ -324,7 +324,9 @@
     "replacementComposeTextRequiresPresentedDesktop": true,
     "replacementVideoModeChange": "defer-until-presentation-ready",
     "retainedResumePhase": "paused",
-    "retainedResumeOpacity": 1
+    "retainedResumeOpacity": 1,
+    "interruptionAdmissionSeparateFromReview": true,
+    "reviewInterruptedReturnRequiresFreshFrame": true
   },
   "lifecycleCases": [
     {
@@ -3122,6 +3124,36 @@
       "name": "warm-retained-owner-return-keeps-pixels-and-paused-phase",
       "opacity": 1,
       "phase": "paused"
+    },
+    {
+      "name": "brief-inactive-cursor-shape-retained",
+      "events": [
+        "cursor-report",
+        "inactive",
+        "active",
+        "local-pointer-move"
+      ],
+      "expect": [
+        "cursor-hidden-inactive",
+        "same-owner-shape-and-hotspot",
+        "no-new-cursor-report",
+        "transparent-shape-does-not-use-fallback"
+      ]
+    },
+    {
+      "name": "copy-review-brief-inactive-awaits-fresh-frame",
+      "events": [
+        "copy-text-review",
+        "inactive",
+        "active",
+        "fresh-complete-frame"
+      ],
+      "expect": [
+        "review-retired",
+        "independent-interruption-gate",
+        "ordinary-and-composed-input-blocked-until-fresh-frame",
+        "fresh-frame-while-inactive-stays-input-blocked"
+      ]
     }
   ],
   "appUnlockGraceCases": [

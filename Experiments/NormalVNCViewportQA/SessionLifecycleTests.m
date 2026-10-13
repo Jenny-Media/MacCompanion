@@ -23,6 +23,7 @@
 - (void)sendPointer:(CGPoint)point mask:(NSInteger)mask;
 - (BOOL)clickPointer:(CGPoint)point mask:(NSInteger)mask;
 - (void)showTextComposer;
+- (void)showCopyScreenText;
 - (void)performControlAction:(NSDictionary *)action;
 @end
 @interface LifecycleSession : CompanionVNCSession
@@ -436,6 +437,62 @@
     owner.stateHandler(@"Connection ended",@{});
     XCTAssertEqualObjects(phase,@"ended"); [viewer stopViewer];
 }
+- (void)testInterruptedCopyTextReviewRequiresFreshFrameAndIndependentActiveAdmission {
+    NSDictionary *profile=[self profile];
+    XCTAssertEqualObjects(profile[@"recoveryPolicy"][@"interruptionAdmissionSeparateFromReview"],@YES);
+    XCTAssertTrue([[profile[@"interruptionCases"] valueForKey:@"name"] containsObject:@"copy-review-brief-inactive-awaits-fresh-frame"]);
+    NSArray *textEvents=@[@{@"key":@0x61,@"down":@YES},@{@"key":@0x61,@"down":@NO}];
+    for (NSNumber *frameWhileInactive in @[@NO,@YES]) {
+        int pair[2]; XCTAssertEqual(socketpair(AF_UNIX,SOCK_STREAM,0,pair),0);
+        int yes=1; setsockopt(pair[0],SOL_SOCKET,SO_NOSIGPIPE,&yes,sizeof(yes));
+        struct timeval timeout={.tv_sec=2}; setsockopt(pair[1],SOL_SOCKET,SO_RCVTIMEO,&timeout,sizeof(timeout));
+        CompanionVNCViewer *viewer=[CompanionVNCViewer new]; [viewer loadViewIfNeeded]; [viewer prepareConnection];
+        CompanionVNCSession *owner=viewer.session;
+        rfbClient *client=rfbGetClient(8,3,4); client->sock=pair[0]; client->width=2; client->height=2;
+        [owner configureClient:client]; XCTAssertTrue([owner allocate:client]);
+        client->supportedMessages.client2server[0]|=(1<<rfbKeyEvent)|(1<<rfbPointerEvent)|(1<<rfbFramebufferUpdateRequest);
+        for (NSString *key in @[@"running",@"established",@"inputReady",@"baselinePresented"]) [owner setValue:@YES forKey:key];
+        XCTAssertTrue([owner registerSocket:pair[0]]);
+        UIImage *initial=[[[UIGraphicsImageRenderer alloc] initWithSize:CGSizeMake(2,2)] imageWithActions:^(UIGraphicsImageRendererContext *context){
+            [UIColor.systemBlueColor setFill]; UIRectFill(CGRectMake(0,0,2,2));
+        }];
+        [viewer frame:initial]; [viewer showCopyScreenText]; XCTAssertNotNil([viewer valueForKey:@"textReview"]);
+        [owner suspendInputForInterruption]; [owner resumeInputAfterInterruption];
+        XCTAssertEqualObjects([owner valueForKey:@"reviewInputSuspended"],@YES);
+        XCTAssertFalse(owner.composedTextReady); XCTAssertFalse([owner tryClickX:1 y:1 mask:1]);
+        [viewer becameInactive]; XCTAssertNil([viewer valueForKey:@"textReview"]);
+        if (!frameWhileInactive.boolValue) [viewer foregrounded];
+        XCTAssertFalse(owner.connected); XCTAssertFalse(owner.composedTextReady);
+        XCTAssertFalse(([owner tryKeyEvents:@[@{@"key":@0x61,@"down":@YES}]]));
+        XCTAssertFalse([owner tryClickX:1 y:1 mask:1]);
+        XCTAssertFalse([owner tryComposedTextEvents:textEvents completion:^(BOOL written){ XCTFail(@"Blocked text must not be admitted"); }]);
+        XCTestExpectation *fresh=[self expectationWithDescription:@"Current complete frame is presented"];
+        XCTestExpectation *ended=[self expectationWithDescription:@"Owner stops"];
+        __weak CompanionVNCSession *weak=owner;
+        void (^previous)(NSString *,NSDictionary *)=owner.stateHandler;
+        owner.stateHandler=^(NSString *state,NSDictionary *stats){
+            if (previous) previous(state,stats);
+            if (weak.connected) [fresh fulfill];
+            if (!weak.running) [ended fulfill];
+        };
+        dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0),^{[owner processConnectedClient:client];});
+        uint8_t release[6],refresh[10];
+        XCTAssertEqual(recv(pair[1],release,sizeof(release),MSG_WAITALL),sizeof(release)); XCTAssertEqual(release[0],rfbPointerEvent);
+        XCTAssertEqual(recv(pair[1],refresh,sizeof(refresh),MSG_WAITALL),sizeof(refresh));
+        XCTAssertEqual(refresh[0],rfbFramebufferUpdateRequest); XCTAssertEqual(refresh[1],0);
+        const uint8_t raw[]={0,0,0,1,0,0,0,0,0,2,0,2,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0};
+        XCTAssertEqual(send(pair[1],raw,sizeof(raw),0),sizeof(raw)); [self waitForExpectations:@[fresh] timeout:2];
+        if (frameWhileInactive.boolValue) {
+            XCTAssertFalse(owner.composedTextReady); XCTAssertFalse([owner tryClickX:1 y:1 mask:1]);
+            XCTAssertFalse([owner tryComposedTextEvents:textEvents completion:^(BOOL written){ XCTFail(@"Inactive text must not be admitted"); }]);
+            [viewer foregrounded];
+        }
+        XCTAssertTrue(owner.composedTextReady); XCTAssertTrue([owner tryClickX:1 y:1 mask:1]);
+        XCTAssertTrue([owner tryComposedTextEvents:textEvents completion:^(BOOL written){}]);
+        [viewer stopViewer]; [self waitForExpectations:@[ended] timeout:2]; owner.stateHandler=nil; close(pair[1]);
+    }
+}
+
 - (void)testBriefInactiveReturnDoesNotPauseOrReconnectTheTransport {
     CompanionVNCViewer *viewer=[CompanionVNCViewer new]; [viewer loadViewIfNeeded];
     LifecycleSession *session=[LifecycleSession new]; session.alive=YES; session.ready=YES; session.authenticated=YES; viewer.session=session;

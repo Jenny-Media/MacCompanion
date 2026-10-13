@@ -2201,7 +2201,10 @@
       "macos"
     ],
     "cacheScope": "socket owner",
-    "diagnostics": "content-free counters; synthetic is not live acceptance"
+    "diagnostics": "content-free counters; synthetic is not live acceptance",
+    "sameOwnerBriefInactivePreservesCursor": true,
+    "activeRestoresWithoutNewReport": true,
+    "transparentRestoresWithoutFallback": true
   },
   "stationaryCursorSequence": {
     "standard": [

@@ -59,7 +59,7 @@ static void QuietLog(const char *format, ...) {
     dispatch_queue_t _worker;
     BOOL _running, _established, _stopping, _framePending, _overflow, _inputReady, _inputOnly, _modeChanged;
     BOOL _paused, _releaseInputRequested, _resumeRequested, _awaitingResumeFrame;
-    BOOL _reviewInputSuspended;
+    BOOL _reviewInputSuspended, _interruptionInputSuspended;
     void (^_reviewReleaseCompletion)(void);
     NSUInteger _presentationEpoch, _inputEpoch;
     dispatch_semaphore_t _wake;
@@ -212,7 +212,7 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
 }
 - (BOOL)queueMagnification:(unsigned)phase delta:(double)delta x:(NSInteger)x y:(NSInteger)y {
     [_lock lock];
-    BOOL ready = _running && _inputReady && _inputOnly && !_reviewInputSuspended && !_paused && !_stopping && !_overflow
+    BOOL ready = _running && _inputReady && _inputOnly && !_reviewInputSuspended && !_interruptionInputSuspended && !_paused && !_stopping && !_overflow
         && _appleGestureServer && _nativeGestureLayout;
     BOOL valid = isfinite(delta) && fabs(delta) <= .5 && (phase == 2 || delta == 0)
         && (phase == 1 ? !_queuedMagnification && !_queuedScroll && x >= 0 && y >= 0 && x < _framebufferWidth && y < _framebufferHeight : _queuedMagnification);
@@ -237,7 +237,7 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
 }
 - (BOOL)sendMagnificationEvent:(NSDictionary *)event client:(rfbClient *)client {
     NSUInteger epoch = [event[@"gestureEpoch"] unsignedIntegerValue];
-    [_lock lock]; BOOL valid = epoch == _gestureEpoch && _inputOnly && _inputReady && !_reviewInputSuspended && !_paused && !_stopping
+    [_lock lock]; BOOL valid = epoch == _gestureEpoch && _inputOnly && _inputReady && !_reviewInputSuspended && !_interruptionInputSuspended && !_paused && !_stopping
         && _appleGestureServer && _nativeGestureLayout; [_lock unlock];
     if (!valid) return YES; // A discarded event cannot start or resume a gesture.
     unsigned phase = [event[@"magnifyPhase"] unsignedIntValue];
@@ -252,7 +252,7 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
 }
 - (BOOL)queueScroll:(unsigned)phase dx:(double)dx dy:(double)dy x:(NSInteger)x y:(NSInteger)y {
     [_lock lock];
-    BOOL ready = _running && _inputReady && !_reviewInputSuspended && !_paused && !_stopping && !_overflow
+    BOOL ready = _running && _inputReady && !_reviewInputSuspended && !_interruptionInputSuspended && !_paused && !_stopping && !_overflow
         && _appleGestureServer && _nativeGestureLayout;
     BOOL valid = (phase == 1 || phase == 2 || phase == 4) && isfinite(dx) && isfinite(dy)
         && fabs(dx) <= 2048 && fabs(dy) <= 2048 && (phase == 2 || (dx == 0 && dy == 0))
@@ -276,7 +276,7 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
 }
 - (BOOL)sendScrollEvent:(NSDictionary *)event client:(rfbClient *)client {
     NSUInteger epoch = [event[@"gestureEpoch"] unsignedIntegerValue];
-    [_lock lock]; BOOL valid = epoch == _gestureEpoch && _inputReady && !_reviewInputSuspended && !_paused && !_stopping
+    [_lock lock]; BOOL valid = epoch == _gestureEpoch && _inputReady && !_reviewInputSuspended && !_interruptionInputSuspended && !_paused && !_stopping
         && _appleGestureServer && _nativeGestureLayout; [_lock unlock];
     if (!valid) return YES;
     unsigned phase = [event[@"scrollPhase"] unsignedIntValue];
@@ -290,7 +290,7 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
     return count && WriteToRFBServer(client, (char *)bytes, (unsigned int)count);
 }
 - (BOOL)tryClickX:(NSInteger)x y:(NSInteger)y mask:(NSInteger)mask {
-    [_lock lock]; BOOL accept = _running && _inputReady && !_reviewInputSuspended && !_paused && !_stopping && !_overflow && _events.count <= 510;
+    [_lock lock]; BOOL accept = _running && _inputReady && !_reviewInputSuspended && !_interruptionInputSuspended && !_paused && !_stopping && !_overflow && _events.count <= 510;
     if (accept) {
         [_events addObject:@{@"x": @(x), @"y": @(y), @"mask": @(mask), @"motion": @NO}];
         [_events addObject:@{@"x": @(x), @"y": @(y), @"mask": @0, @"motion": @NO}]; _queuedPointerMask = 0;
@@ -299,7 +299,7 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
 }
 - (BOOL)suspendInputForReview:(void (^)(void))completion {
     [_lock lock];
-    if (_inputOnly || _reviewInputSuspended || !CompanionVNCConnectionReady(_running, _inputReady, _inputOnly,
+    if (_inputOnly || _reviewInputSuspended || _interruptionInputSuspended || !CompanionVNCConnectionReady(_running, _inputReady, _inputOnly,
         _paused, _stopping, _overflow, _awaitingResumeFrame, _baselinePresented)) {
         [_lock unlock]; return NO;
     }
@@ -336,8 +336,8 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
 }
 - (void)suspendInputForInterruption {
     [_lock lock];
-    if (_running && _inputReady && !_paused && !_stopping) {
-        _reviewInputSuspended = YES; _releaseInputRequested = YES; _inputEpoch++;
+    if (_running && !_paused && !_stopping && !_interruptionInputSuspended) {
+        _interruptionInputSuspended = YES; _releaseInputRequested = YES; _inputEpoch++;
 #if TARGET_OS_IOS
         [self cancelComposedTextLocked];
 #endif
@@ -347,15 +347,15 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
 }
 - (void)resumeInputAfterInterruption {
     [_lock lock];
-    // Inactivity has not replaced the presented framebuffer. Pending release
-    // is still consumed by the sole socket owner before any newly queued input.
-    _reviewInputSuspended = NO; _reviewReleaseCompletion = nil;
+    // An interruption never owns the independent review gate or its refresh.
+    // Pending releases still precede newly queued input on the socket owner.
+    _interruptionInputSuspended = NO;
     [_lock unlock]; dispatch_semaphore_signal(_wake);
 }
 - (void)resume {
     [_lock lock];
     if (_running && _paused && !_stopping) {
-        _paused = NO; _resumes++; _resumeRequested = YES; _awaitingResumeFrame = !_inputOnly; if (_inputOnly) _inputReady = YES; _presentationEpoch++;
+        _paused = NO; _interruptionInputSuspended = NO; _resumes++; _resumeRequested = YES; _awaitingResumeFrame = !_inputOnly; if (_inputOnly) _inputReady = YES; _presentationEpoch++;
     }
     [_lock unlock]; dispatch_semaphore_signal(_wake);
 }
@@ -383,7 +383,7 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
     _sentMagnification = (CompanionVNCMagnification){0}; _sentScroll = (CompanionVNCScroll){0};
     _running = YES; _established = NO; _stopping = NO; _overflow = NO; _framePending = NO; _cursorPending = NO; _layoutPending = NO; _latestLayout = nil; _inputReady = NO; _failureStage = 0;
     _layoutDiagnostics = @{}; _layoutMessages = 0; _baselinePresented = NO; _coverageLayoutValid = NO; _metadataCallback = NO;
-    _paused = NO; _reviewInputSuspended = NO; _reviewReleaseCompletion = nil;
+    _paused = NO; _reviewInputSuspended = NO; _interruptionInputSuspended = NO; _reviewReleaseCompletion = nil;
     _releaseInputRequested = NO; _resumeRequested = NO; _awaitingResumeFrame = NO; _presentationEpoch++;
     [_events removeAllObjects]; _queuedPointerMask = 0; _generation++; _connections++;
     NSInteger generation = _generation;
@@ -505,7 +505,7 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
                 }
             }
             for (NSDictionary *event in events) {
-                [self->_lock lock]; BOOL currentBatch = inputEpoch == self->_inputEpoch; BOOL acceptsInput = self->_inputReady && !self->_reviewInputSuspended && !self->_paused && !self->_stopping;
+                [self->_lock lock]; BOOL currentBatch = inputEpoch == self->_inputEpoch; BOOL acceptsInput = self->_inputReady && !self->_reviewInputSuspended && !self->_interruptionInputSuspended && !self->_paused && !self->_stopping;
 #if TARGET_OS_IOS
                 NSString *textID = event[@"composedTextID"];
                 if (textID) acceptsInput = acceptsInput && [self composedTextReadyLocked];
@@ -585,7 +585,7 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
     free(_pixels); _pixels = NULL; CompanionVNCCoverageFree(&_coverage); _username = nil; _password = nil;
     _cursorImage = nil; _cursorPositionKnown = NO; _cursorDirty = NO;
     [_appleCursorCache removeAllObjects]; [_appleCursorOrder removeAllObjects]; _appleCursorBytes = 0;
-    [_lock lock]; [self cancelNativeGesturesLocked]; _appleGestureServer = NO; _nativeGestureLayout = NO; _running = NO; _established = NO; _inputReady = NO; _reviewInputSuspended = NO; _reviewReleaseCompletion = nil; [_events removeAllObjects];
+    [_lock lock]; [self cancelNativeGesturesLocked]; _appleGestureServer = NO; _nativeGestureLayout = NO; _running = NO; _established = NO; _inputReady = NO; _reviewInputSuspended = NO; _interruptionInputSuspended = NO; _reviewReleaseCompletion = nil; [_events removeAllObjects];
 #if TARGET_OS_IOS
     [self cancelComposedTextLocked];
 #endif
@@ -893,7 +893,7 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
 }
 - (void)enqueue:(NSDictionary *)event {
     [_lock lock];
-    if (_running && _inputReady && !_reviewInputSuspended && !_paused && !_stopping) {
+    if (_running && _inputReady && !_reviewInputSuspended && !_interruptionInputSuspended && !_paused && !_stopping) {
         // Coalesce only motion with identical button state, preserving key/button ordering.
         NSDictionary *last = _events.lastObject;
         if (event[@"mask"]) {
@@ -913,7 +913,7 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
 - (void)key:(uint32_t)key down:(BOOL)down { [self enqueue:@{@"key": @(key), @"down": @(down)}]; }
 - (void)keyEvents:(NSArray<NSDictionary *> *)events {
     [_lock lock];
-    if (_running && _inputReady && !_reviewInputSuspended && !_paused && !_stopping && !_overflow) {
+    if (_running && _inputReady && !_reviewInputSuspended && !_interruptionInputSuspended && !_paused && !_stopping && !_overflow) {
         if (!CompanionVNCKeyGroupFits(_events.count, events.count, 512)) _overflow = YES;
         else [_events addObjectsFromArray:events];
     }
@@ -924,7 +924,7 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
 }
 - (BOOL)tryKeyEvents:(NSArray<NSDictionary *> *)events {
     [_lock lock];
-    BOOL allowed = _running && _inputReady && !_reviewInputSuspended && !_paused && !_stopping && !_overflow
+    BOOL allowed = _running && _inputReady && !_reviewInputSuspended && !_interruptionInputSuspended && !_paused && !_stopping && !_overflow
         && events.count > 0 && CompanionVNCKeyGroupFits(_events.count, events.count, 512);
     if (allowed) [_events addObjectsFromArray:events];
     [_lock unlock]; return allowed;
@@ -934,7 +934,7 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
     return SendKeyEvent(client, key, down);
 }
 - (BOOL)composedTextReadyLocked {
-    return !_reviewInputSuspended && CompanionVNCConnectionReady(_running, _inputReady, _inputOnly,
+    return !_reviewInputSuspended && !_interruptionInputSuspended && CompanionVNCConnectionReady(_running, _inputReady, _inputOnly,
         _paused, _stopping, _overflow, _awaitingResumeFrame, _baselinePresented);
 }
 - (BOOL)composedTextReady {

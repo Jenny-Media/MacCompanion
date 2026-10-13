@@ -667,9 +667,9 @@
     if (!self.foreground || self.exited || self.inputInactive) return;
     self.inputInactive = YES;
     [self.controls close]; [self releasePointer]; [self resetModifiers]; [self cancelTrackpadTouches];
-    [self invalidateTextReview:NO];
+    [self invalidateTextReview:YES];
     [self.session suspendInputForInterruption];
-    [self clearCursor]; [self updateTrackpadFeedback];
+    [self updateCursor]; [self updateTrackpadFeedback];
 }
 - (void)background { [self backgroundWithCompletion:nil]; }
 - (void)backgroundWithCompletion:(void (^)(void))completion {
@@ -695,7 +695,7 @@
 - (void)foregrounded {
     if (self.exited) return;
     if (self.foreground) {
-        if (self.inputInactive) { self.inputInactive = NO; [self.session resumeInputAfterInterruption]; [self updateTrackpadFeedback]; }
+        if (self.inputInactive) { self.inputInactive = NO; [self.session resumeInputAfterInterruption]; [self updateCursor]; [self updateTrackpadFeedback]; }
         return;
     }
     self.foreground = YES; self.inputInactive = NO;
