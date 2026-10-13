@@ -849,7 +849,10 @@
       "graceClock": "continuous-including-device-sleep",
       "inactiveShowsCover": false,
       "graceForegroundEntryShowsCover": false,
-      "successfulInactiveAuthenticationShowsCover": false
+      "successfulInactiveAuthenticationShowsCover": true,
+      "successfulInactiveAuthenticationGrantsAccess": false,
+      "authenticationSuccessNeedsActiveAdmission": true,
+      "completedFailedAttemptRequiresExplicitRetry": true
     },
     "fullscreen": {
       "reconnect": false,
@@ -3116,9 +3119,11 @@
       "showCover": false
     },
     {
-      "name": "authentication-success-before-active-removes-cover",
+      "name": "authentication-success-before-active-retains-quiet-cover",
       "publishUnlock": false,
-      "showCover": false
+      "showCover": true,
+      "canAccess": false,
+      "canInteract": false
     },
     {
       "name": "warm-retained-owner-return-keeps-pixels-and-paused-phase",
@@ -3228,6 +3233,42 @@
       "eventsAfterRetirement": [
         "end:orphan"
       ]
+    }
+  ],
+  "appAuthenticationHandoffCases": [
+    {
+      "name": "success-before-activation",
+      "successBeforeActive": true,
+      "result": true,
+      "accessBeforeActive": false,
+      "coverBeforeActive": true,
+      "evaluationsAfterActive": 1,
+      "publishAfterActive": 1
+    },
+    {
+      "name": "activation-before-success",
+      "successBeforeActive": false,
+      "result": true,
+      "accessBeforeResult": false,
+      "coverBeforeResult": true,
+      "evaluationsAfterResult": 1,
+      "publishAfterResult": 1
+    },
+    {
+      "name": "already-active-success-without-notification",
+      "result": true,
+      "requiresNewActivationEvent": false,
+      "accessAfterResult": true,
+      "publishAfterResult": 1
+    },
+    {
+      "name": "cancel-before-activation",
+      "successBeforeActive": true,
+      "result": false,
+      "accessAfterActive": false,
+      "coverAfterActive": true,
+      "evaluationsAfterActive": 1,
+      "publishAfterActive": 0
     }
   ]
 }

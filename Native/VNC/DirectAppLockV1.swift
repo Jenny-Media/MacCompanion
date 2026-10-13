@@ -20,6 +20,7 @@ import UIKit
     var canInteract: Bool { canAccess && foregroundActive }
     var contentVisible: Bool { canAccess || foregroundGracePending }
     var privacyCoverVisible: Bool { cover?.isHidden == false }
+    var unlockTransitionVisible: Bool { authenticating || authenticationSucceeded }
     private let contextFactory: () -> LAContext
     private let defaults: UserDefaults
     private let now: () -> TimeInterval
@@ -29,6 +30,8 @@ import UIKit
     private var graceStarted: TimeInterval?
     private var graceDeadline: TimeInterval?
     private var unlockNeedsPublication = false
+    private var authenticationSucceeded = false
+    private var authenticationAttempted = false
     private var foregroundGracePending = false
     private var context: LAContext?
     private var cover: UIWindow?
@@ -83,6 +86,7 @@ import UIKit
         }
         discardGrace(); defaults.set(value, forKey: Self.preferenceKey)
         attempt = UUID(); context?.invalidate(); context = nil; authenticating = false; unlockNeedsPublication = false
+        authenticationSucceeded = false; authenticationAttempted = false
         if value { allowed = false; NotificationCenter.default.post(name: Self.locked, object: nil); showCover(); authenticate() }
         else {
             allowed = true; hideCover(); foregroundActive = isActive()
@@ -114,7 +118,7 @@ import UIKit
         guard enabled else { return }
         if allowed && !unlockNeedsPublication && graceSeconds > 0 && protectedDataAvailable() {
             let time = now(); graceStarted = time; graceDeadline = time + TimeInterval(graceSeconds)
-        } else if authenticating || unlockNeedsPublication { discardGrace() }
+        } else if authenticating || authenticationSucceeded || unlockNeedsPublication { discardGrace() }
         revokeAccess()
     }
     func protectedDataLost() {
@@ -123,13 +127,18 @@ import UIKit
     private func revokeAccess() {
         foregroundGracePending = false
         attempt = UUID(); context?.invalidate(); context = nil; authenticating = false
-        unlockNeedsPublication = false
+        unlockNeedsPublication = false; authenticationSucceeded = false; authenticationAttempted = false
         allowed = false; message = "Unlock to access your Macs"; showCover()
         NotificationCenter.default.post(name: Self.locked, object: nil)
     }
     func becameActive() {
         foregroundActive = isActive()
         guard foregroundActive, !authenticating else { return }
+        if authenticationSucceeded {
+            guard enabled, protectedDataAvailable(), !isBackground() else { revokeAccess(); return }
+            authenticationSucceeded = false; allowed = true; publishUnlock()
+            return
+        }
         if canAccess {
             hideCover()
             if unlockNeedsPublication { publishUnlock() }
@@ -137,16 +146,20 @@ import UIKit
         }
         if graceValid {
             discardGrace(); allowed = true; publishUnlock()
-        } else { discardGrace(); authenticate() }
+        } else {
+            discardGrace()
+            if !authenticationAttempted { authenticate() }
+        }
     }
     private func publishUnlock() {
         unlockNeedsPublication = false; hideCover()
         NotificationCenter.default.post(name: Self.unlocked, object: nil)
     }
     func authenticate() {
-        guard enabled, !allowed, !authenticating, isActive(), protectedDataAvailable() else { return }
+        guard enabled, !allowed, !authenticating, !authenticationSucceeded, isActive(), protectedDataAvailable() else { return }
         discardGrace()
-        showCover(); let id = UUID(); attempt = id
+        showCover(); authenticationAttempted = true
+        let id = UUID(); attempt = id
         let context = contextFactory(); self.context = context
         var error: NSError?
         guard context.canEvaluatePolicy(.deviceOwnerAuthentication, error: &error) else {
@@ -156,12 +169,14 @@ import UIKit
         context.evaluatePolicy(.deviceOwnerAuthentication, localizedReason: "Unlock Mac Companion to access your saved Macs") { [weak self] success, _ in
             Task { @MainActor in
                 guard let self, self.attempt == id else { return }
-                self.context = nil; self.authenticating = false
+                // Consume this result once; a duplicate or retired callback
+                // cannot replace a newer attempt or reopen a revoked transition.
+                self.attempt = UUID(); self.context = nil; self.authenticating = false
                 guard success, self.protectedDataAvailable(), !self.isBackground() else { self.message = "App locked. Tap Unlock to try again."; return }
-                self.foregroundActive = self.isActive(); self.allowed = true
-                self.hideCover()
-                if self.isActive() { self.publishUnlock() }
-                else { self.unlockNeedsPublication = true }
+                self.authenticationSucceeded = true
+                // Result and activation may arrive in either order. Reuse the
+                // same admission path; already-active success needs no new event.
+                self.becameActive()
             }
         }
     }
@@ -184,17 +199,22 @@ private struct DirectUnlockCover: View {
     var body: some View {
         ZStack {
             Color(uiColor: .systemBackground).ignoresSafeArea()
-            GeometryReader { geometry in
-                ScrollView {
-                    VStack(spacing: 18) {
-                        Image(systemName: "lock.fill").font(.largeTitle)
-                        Text("Mac Companion").font(.title2.bold()).fixedSize(horizontal: false, vertical: true)
-                        Text(lock.message).multilineTextAlignment(.center).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                        if lock.authenticating { ProgressView() }
-                        else { Button("Unlock", systemImage: DirectUnlockMethod.current().symbol) { lock.authenticate() }.buttonStyle(.glassProminent).accessibilityIdentifier("app-unlock") }
-                    }.padding(32).frame(maxWidth: 340).glassEffect(.regular, in: .rect(cornerRadius: 28))
-                        .padding(16).frame(maxWidth: .infinity, minHeight: geometry.size.height)
-                }.scrollBounceBehavior(.basedOnSize)
+            if lock.unlockTransitionVisible {
+                Text("Mac Companion").font(.title2.weight(.medium))
+                    .foregroundStyle(.secondary).accessibilityIdentifier("app-unlock-transition")
+            } else {
+                GeometryReader { geometry in
+                    ScrollView {
+                        VStack(spacing: 18) {
+                            Image(systemName: "lock.fill").font(.largeTitle)
+                            Text("Mac Companion").font(.title2.bold()).fixedSize(horizontal: false, vertical: true)
+                            Text(lock.message).multilineTextAlignment(.center).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                            Button("Unlock", systemImage: DirectUnlockMethod.current().symbol) { lock.authenticate() }
+                                .buttonStyle(.glassProminent).accessibilityIdentifier("app-unlock")
+                        }.padding(32).frame(maxWidth: 340).glassEffect(.regular, in: .rect(cornerRadius: 28))
+                            .padding(16).frame(maxWidth: .infinity, minHeight: geometry.size.height)
+                    }.scrollBounceBehavior(.basedOnSize)
+                }
             }
         }.accessibilityIdentifier("app-privacy-cover")
     }

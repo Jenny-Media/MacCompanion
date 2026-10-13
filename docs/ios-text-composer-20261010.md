@@ -96,7 +96,8 @@ dismisses even when it arrives during the presentation transition.
 Temporary inactive gestures do not present a lock cover. Real backgrounding
 retains the privacy mask. A valid grace return prepares visible presentation
 before becoming active without admitting inactive input; current successful
-authentication hides the cover immediately and publishes unlock when active.
+authentication keeps a quiet opaque transition until current active admission;
+then the main interface, controls and unlocked publication become available together.
 Retained Desktop recovery keeps cached pixels at normal opacity, checks for a
 fresh frame silently, and shows delayed Updating desktop feedback after one
 second. Actual connection replacement alone uses Reconnecting. iOS can suspend

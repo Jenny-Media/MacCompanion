@@ -127,8 +127,9 @@ private final class ContinuitySession: CompanionVNCSession {
         defer { lock.setEnabled(false) }
         lock.setEnabled(true); lock.install()
         active = false; lock.becameInactive(); authentication.reply?(true, nil)
-        try await eventually { lock.canAccess }
-        XCTAssertFalse(lock.canInteract); XCTAssertFalse(lock.privacyCoverVisible)
+        try await eventually { !lock.authenticating }
+        XCTAssertFalse(lock.canAccess); XCTAssertFalse(lock.contentVisible)
+        XCTAssertFalse(lock.canInteract); XCTAssertTrue(lock.privacyCoverVisible)
         var observed = false
         withObservationTracking { _ = lock.canInteract } onChange: {
             MainActor.assumeIsolated { observed = true }
@@ -137,6 +138,73 @@ private final class ContinuitySession: CompanionVNCSession {
         XCTAssertTrue(observed); XCTAssertTrue(lock.canInteract)
         lock.becameInactive(); XCTAssertFalse(lock.canInteract); XCTAssertTrue(lock.contentVisible)
         lock.becameActive(); XCTAssertTrue(lock.canInteract); XCTAssertEqual(authentication.evaluations, 1)
+    }
+    func testActivationBeforeAuthenticationResultKeepsCoverUntilSuccess() async throws {
+        var active = true
+        let context = ContinuityAuthentication()
+        let lock = DirectAppLockV1(contextFactory: { context }, defaults: isolatedDefaults(),
+            isActive: { active }, isBackground: { false }, protectedDataAvailable: { true })
+        defer { lock.setEnabled(false) }
+        lock.setEnabled(true)
+        active = false; lock.becameInactive()
+        active = true; lock.becameActive()
+        XCTAssertFalse(lock.canAccess); XCTAssertFalse(lock.canInteract); XCTAssertFalse(lock.contentVisible)
+        XCTAssertTrue(lock.privacyCoverVisible); XCTAssertTrue(lock.authenticating)
+        XCTAssertEqual(context.evaluations, 1)
+        context.reply?(true, nil); try await eventually { lock.canInteract }
+        XCTAssertTrue(lock.contentVisible); XCTAssertFalse(lock.privacyCoverVisible)
+        XCTAssertEqual(context.evaluations, 1)
+    }
+    func testAlreadyActiveAuthenticationSuccessNeedsNoLifecycleNotification() async throws {
+        let context = ContinuityAuthentication()
+        let lock = DirectAppLockV1(contextFactory: { context }, defaults: isolatedDefaults(),
+            isActive: { true }, isBackground: { false }, protectedDataAvailable: { true })
+        var publications = 0
+        let observer = NotificationCenter.default.addObserver(forName: DirectAppLockV1.unlocked, object: nil, queue: .main) { _ in
+            MainActor.assumeIsolated { publications += 1 }
+        }
+        defer { NotificationCenter.default.removeObserver(observer); lock.setEnabled(false) }
+        let vectors = try XCTUnwrap(try fixture()["appAuthenticationHandoffCases"] as? [[String: Any]])
+        XCTAssertEqual(vectors.first { $0["name"] as? String == "already-active-success-without-notification" }?["requiresNewActivationEvent"] as? Bool, false)
+        lock.setEnabled(true); context.reply?(true, nil)
+        try await eventually { lock.canInteract }
+        XCTAssertTrue(lock.contentVisible); XCTAssertFalse(lock.privacyCoverVisible)
+        XCTAssertEqual(publications, 1); XCTAssertEqual(context.evaluations, 1)
+        lock.becameActive(); XCTAssertEqual(publications, 1)
+    }
+    func testCancelledInactiveAuthenticationRequiresExplicitRetry() async throws {
+        var active = true
+        let context = ContinuityAuthentication()
+        let lock = DirectAppLockV1(contextFactory: { context }, defaults: isolatedDefaults(),
+            isActive: { active }, isBackground: { false }, protectedDataAvailable: { true })
+        defer { lock.setEnabled(false) }
+        lock.setEnabled(true)
+        active = false; lock.becameInactive(); context.reply?(false, LAError(.userCancel))
+        try await eventually { !lock.authenticating }
+        active = true; lock.becameActive(); lock.becameActive()
+        XCTAssertFalse(lock.canAccess); XCTAssertFalse(lock.canInteract)
+        XCTAssertTrue(lock.privacyCoverVisible); XCTAssertFalse(lock.authenticating)
+        XCTAssertEqual(context.evaluations, 1)
+        lock.authenticate(); XCTAssertEqual(context.evaluations, 2)
+        context.reply?(true, nil); try await eventually { lock.canInteract }
+    }
+    func testPendingAuthenticationIsRetiredByProtectedDataLoss() async throws {
+        var active = true, protected = true
+        let context = ContinuityAuthentication()
+        let lock = DirectAppLockV1(contextFactory: { context }, defaults: isolatedDefaults(),
+            isActive: { active }, isBackground: { false }, protectedDataAvailable: { protected })
+        defer { lock.setEnabled(false) }
+        lock.setEnabled(true); let reply = try XCTUnwrap(context.reply)
+        active = false; lock.becameInactive(); reply(true, nil)
+        try await eventually { !lock.authenticating }
+        XCTAssertFalse(lock.canAccess)
+        protected = false; lock.protectedDataLost(); reply(true, nil)
+        active = true; lock.becameActive()
+        try await Task.sleep(for: .milliseconds(20))
+        XCTAssertFalse(lock.canAccess); XCTAssertFalse(lock.contentVisible); XCTAssertTrue(lock.privacyCoverVisible)
+        XCTAssertEqual(context.evaluations, 1)
+        protected = true; lock.becameActive(); XCTAssertEqual(context.evaluations, 2)
+        context.reply?(true, nil); try await eventually { lock.canInteract }
     }
     func testDisablingUnlockDuringInactivityPublishesAtActiveBoundary() async throws {
         var active = true
@@ -208,7 +276,7 @@ private final class ContinuitySession: CompanionVNCSession {
         active = true; lock.becameActive()
         XCTAssertFalse(lock.privacyCoverVisible); XCTAssertEqual(context.evaluations, 1)
     }
-    func testSuccessfulInactiveAuthenticationHidesRealCoverBeforeSingleActivePublication() async throws {
+    func testSuccessfulInactiveAuthenticationKeepsQuietCoverUntilSingleActivePublication() async throws {
         var active = true, background = false
         let context = ContinuityAuthentication()
         let lock = DirectAppLockV1(contextFactory: { context }, defaults: isolatedDefaults(), isActive: { active }, isBackground: { background }, protectedDataAvailable: { true })
@@ -219,8 +287,12 @@ private final class ContinuitySession: CompanionVNCSession {
         defer { NotificationCenter.default.removeObserver(observer); lock.setEnabled(false) }
         lock.setEnabled(true); XCTAssertTrue(lock.privacyCoverVisible)
         let oldReply = try XCTUnwrap(context.reply)
-        active = false; oldReply(true, nil); try await eventually { lock.canAccess }
-        XCTAssertFalse(lock.privacyCoverVisible); XCTAssertEqual(publications, 0)
+        let policy = try XCTUnwrap(try fixture()["clientAdditions"] as? [String: Any])
+        let appLock = try XCTUnwrap(policy["appLock"] as? [String: Any])
+        XCTAssertEqual(appLock["successfulInactiveAuthenticationShowsCover"] as? Bool, true)
+        active = false; oldReply(true, nil); try await eventually { !lock.authenticating }
+        XCTAssertFalse(lock.canAccess); XCTAssertFalse(lock.canInteract); XCTAssertFalse(lock.contentVisible)
+        XCTAssertTrue(lock.privacyCoverVisible); XCTAssertEqual(publications, 0)
         active = true; lock.becameActive(); lock.becameActive()
         XCTAssertEqual(publications, 1)
         lock.background(); background = true; oldReply(true, nil)

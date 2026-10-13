@@ -12,8 +12,12 @@ import XCTest
     func testInactiveAuthenticationThenActivationMakesActualSettingsAndAddControlsWork() {
         let app = launch(["--inactive-auth", "--empty-library"]); defer { app.terminate() }
         XCTAssertTrue(app.staticTexts["Authenticated; awaiting activation"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.staticTexts["app-unlock-transition"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["app-unlock"].exists)
         XCTAssertFalse(app.buttons["open-app-settings"].isHittable)
+        XCTAssertFalse(app.navigationBars["My Macs"].isHittable)
         app.buttons["qa-activate"].tap()
+        XCTAssertFalse(app.staticTexts["app-unlock-transition"].exists)
         XCTAssertTrue(app.buttons["open-app-settings"].waitForExistence(timeout: 5)); app.buttons["open-app-settings"].tap()
         XCTAssertTrue(app.buttons["settings-appearance"].waitForExistence(timeout: 5))
         app.buttons["Done"].firstMatch.tap(); app.buttons["Add Mac"].tap()

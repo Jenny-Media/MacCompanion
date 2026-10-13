@@ -533,9 +533,17 @@ access. Transient inactivity alone MUST NOT reveal a lock cover or revoke prior
 authentication; session input still stops until active. Cover actual background
 entry for the app snapshot. On foreground entry remove that snapshot cover before
 visible presentation when a valid grace reuse is pending, without granting input
-or credential access until active. A successful current authentication removes
-the cover immediately, including the inactive-to-active handoff; defer unlocked
-publication until active and reject replies after background/protected-data loss.
+or credential access until active. A successful current authentication MUST wait
+for current active admission before revealing the main interface, granting access,
+hiding the cover and publishing unlock together on the main actor. While success
+awaits activation, keep an opaque quiet transition with no lock/retry controls and
+no second authentication request. Recheck admission from both authentication result
+and activation: an already-active success MUST NOT wait for a new notification.
+A completed failed or canceled attempt stays locked for explicit retry; transient
+activation cannot automatically repeat it. Background/protected-data loss retires
+pending success and rejects late replies. UIKit activation is the public event
+readiness boundary, not a guarantee of Face ID animation completion; no fixed
+animation-duration delay or private system-UI inspection is permitted.
 The library interaction/accessibility gate MUST observe application activation
 directly, including when authentication succeeds before activation without a new
 scene-phase change. Losing interaction retires pending local presentations.
