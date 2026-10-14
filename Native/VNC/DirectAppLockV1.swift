@@ -71,7 +71,10 @@ import UIKit
                 MainActor.assumeIsolated { self?.becameActive() }
             }]
         }
-        if canAccess { hideCover() } else { showCover(); authenticate() }
+        // Reappearance is automatic; use the same admission/retry policy as
+        // activation rather than starting a new request after cancellation.
+        becameActive()
+        if canAccess { hideCover() } else { showCover() }
     }
     isolated deinit {
         observers.forEach(NotificationCenter.default.removeObserver)

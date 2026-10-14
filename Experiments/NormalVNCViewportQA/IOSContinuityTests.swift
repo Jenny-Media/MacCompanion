@@ -181,7 +181,7 @@ private final class ContinuitySession: CompanionVNCSession {
         lock.setEnabled(true)
         active = false; lock.becameInactive(); context.reply?(false, LAError(.userCancel))
         try await eventually { !lock.authenticating }
-        active = true; lock.becameActive(); lock.becameActive()
+        active = true; lock.becameActive(); lock.install(); lock.becameActive()
         XCTAssertFalse(lock.canAccess); XCTAssertFalse(lock.canInteract)
         XCTAssertTrue(lock.privacyCoverVisible); XCTAssertFalse(lock.authenticating)
         XCTAssertEqual(context.evaluations, 1)
