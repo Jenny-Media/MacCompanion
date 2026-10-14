@@ -115,7 +115,7 @@
 @property NSDictionary *latestCounters;
 @property NSTimeInterval displayNoticeUntil;
 @property NSNumber *resumeDisplayID;
-@property CGSize resumeFramebufferSize;
+@property CGSize resumeCropSize;
 @property CGFloat resumeZoomRatio;
 @property CGPoint resumeCenter;
 @property(nonatomic, weak) CompanionVNCDisplayPicker *displayPicker;
@@ -668,7 +668,7 @@
 }
 - (void)rememberViewport {
     self.resumeDisplayID = self.selectedDisplay[@"id"];
-    self.resumeFramebufferSize = self.framebufferSize;
+    self.resumeCropSize = self.activeCrop.size;
     self.resumeZoomRatio = self.canvas.minimumZoomScale > 0 ? self.canvas.zoomScale / self.canvas.minimumZoomScale : 1;
     self.resumeCenter = CGRectIsEmpty(self.activeCrop) || CGRectIsNull(self.activeCrop) ? CGPointMake(.5, .5) : [self viewportCenter];
 }
@@ -731,11 +731,12 @@
 - (void)restoreViewport {
     if (!self.restoreViewportPending || self.awaitingReplacementLayout || !self.lastFramebuffer) return;
     self.restoreViewportPending = NO;
-    BOOL sameSize = CGSizeEqualToSize(self.framebufferSize, self.resumeFramebufferSize);
     NSDictionary *display = nil;
     for (NSDictionary *candidate in self.displayViews) if ([candidate[@"id"] isEqual:self.resumeDisplayID]) { display = candidate; break; }
     BOOL missing = self.resumeDisplayID && !display;
-    [self selectDisplay:display]; self.resumeDisplayID = nil;
+    [self selectDisplay:display];
+    BOOL selectionValid = !self.resumeDisplayID || [self.selectedDisplay[@"id"] isEqual:self.resumeDisplayID];
+    self.resumeDisplayID = nil;
     if (missing) {
         self.displayNoticeUntil = NSProcessInfo.processInfo.systemUptime + 3;
         self.status.text = @"Selected display is unavailable. Showing all displays."; self.status.hidden = NO; [self updateStatusPresentation];
@@ -744,7 +745,8 @@
             if (NSProcessInfo.processInfo.systemUptime >= weak.displayNoticeUntil && !weak.checkingResume && !weak.starting) { weak.status.hidden = YES; [weak updateStatusPresentation]; }
         });
     }
-    if (missing || !sameSize || CGRectIsNull(self.activeCrop)) return;
+    if (missing || !selectionValid || CGRectIsNull(self.activeCrop) || CGRectIsEmpty(self.activeCrop)
+        || !CGSizeEqualToSize(self.activeCrop.size, self.resumeCropSize)) return;
     [self applyViewportRatio:self.resumeZoomRatio center:self.resumeCenter];
 }
 - (void)resetModifiers {

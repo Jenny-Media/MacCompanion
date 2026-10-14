@@ -178,7 +178,9 @@ availability and final delivery MUST all enforce this presentation gate. Defer U
 video-mode changes during replacement restoration; they become available after readiness.
 A verified missing display falls back to All Displays and fit with a concise notice.
 A retained display with changed dimensions remains selected and fits its new geometry;
-old relative zoom/center apply only to matching dimensions. Restoration feedback is a
+old relative zoom/center apply only to matching selected-crop pixel dimensions,
+including when the overall framebuffer is unchanged. Moving a same-sized crop
+to a new origin preserves relative zoom and normalized center. Restoration feedback is a
 compact indeterminate indicator delayed 1000 ms, cancelled on readiness or exit.
 A retained-owner refresh keeps cached pixels at full opacity and remains paused
 until fresh readiness evidence; only a replacement dial announces Reconnecting.
@@ -632,6 +634,13 @@ Library file version 5 persists manual array order. Older files initially retain
 the previous alphabetical presentation. Reordering preserves record UUIDs, logins,
 server trust, and the selected free Mac. Order is local to each device: cloud
 metadata merges preserve surviving local positions and append new records.
+iOS initial saved-Mac reads, decoding and validation run off the UI actor and
+may overlap app unlock. Loading is distinct from an empty or unreadable library;
+persistence and cloud attachment wait for its validated snapshot. Concurrent
+load callers share one read, and a superseded read cannot replace newer state.
+Storage failure preserves the file and allows retry. Session deep links received
+during loading are resolved only after the list is available and still pass
+existing app-unlock, activity and membership admission.
 
 ## SSH key login and opt-in iCloud library sync
 

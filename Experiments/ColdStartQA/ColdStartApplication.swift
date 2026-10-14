@@ -32,6 +32,12 @@ final class ColdStartAuthentication: LAContext {
     override func evaluatePolicy(_ policy: LAPolicy, localizedReason: String,
                                  reply: @escaping (Bool, Error?) -> Void) { self.reply = reply }
 }
+final class ColdStartLibraryReadGate: @unchecked Sendable {
+    private let condition = NSCondition()
+    private var released = false
+    func wait() { condition.lock(); defer { condition.unlock() }; while !released { condition.wait() } }
+    func release() { condition.lock(); released = true; condition.broadcast(); condition.unlock() }
+}
 @MainActor final class ColdStartStore {
     var replies: [CheckedContinuation<DirectProSnapshot, Never>] = []
     func read() async -> DirectProSnapshot { await withCheckedContinuation { replies.append($0) } }
@@ -50,6 +56,7 @@ final class ColdStartAuthentication: LAContext {
     let store: ColdStartStore
     let needsAuthentication: Bool
     let timeout: Duration
+    let libraryRead = ColdStartLibraryReadGate()
     var stage = "Starting"
     init() {
         let arguments = ProcessInfo.processInfo.arguments
@@ -64,11 +71,16 @@ final class ColdStartAuthentication: LAContext {
                                isActive: { activity.active }, isBackground: { false }, protectedDataAvailable: { true })
         pro = DirectProAccess(defaults: defaults, readEntitlements: { await store.read() })
         let url = URL.cachesDirectory.appending(path: "cold-start-synthetic-\(UUID()).json")
-        library = DirectMacLibraryV1(url: url)
+        let seeded = DirectMacLibraryV1(url: url)
         if !arguments.contains("--empty-library") {
-            _ = library.save(id: nil, name: "Free Mac", address: "127.0.0.1")
-            _ = library.save(id: nil, name: "Second Mac", address: "127.0.0.1")
+            _ = seeded.save(id: nil, name: "Free Mac", address: "127.0.0.1")
+            _ = seeded.save(id: nil, name: "Second Mac", address: "127.0.0.1")
         }
+        let gate = libraryRead
+        if !arguments.contains("--held-library") { gate.release() }
+        library = DirectMacLibraryV1(url: url, loadInBackground: true, readInitialRecords: {
+            gate.wait(); return try DirectMacLibraryV1.readRecords(at: $0)
+        })
     }
     func begin() async {
         guard needsAuthentication else { stage = "Active; purchases pending"; return }
@@ -109,6 +121,7 @@ struct ColdStartControls: View {
             VStack(spacing: 8) {
                 Text(model.stage).accessibilityIdentifier("qa-startup-stage")
                 HStack {
+                    Button("Load") { model.libraryRead.release() }.accessibilityIdentifier("qa-load-macs")
                     Button("Finish Auth") { Task { await model.completeAuthentication() } }.accessibilityIdentifier("qa-finish-auth")
                     Button("Activate") { model.activate() }.accessibilityIdentifier("qa-activate")
                     Button("Background") { model.background() }.accessibilityIdentifier("qa-background")

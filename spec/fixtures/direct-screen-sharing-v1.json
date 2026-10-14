@@ -326,7 +326,8 @@
     "retainedResumePhase": "paused",
     "retainedResumeOpacity": 1,
     "interruptionAdmissionSeparateFromReview": true,
-    "reviewInterruptedReturnRequiresFreshFrame": true
+    "reviewInterruptedReturnRequiresFreshFrame": true,
+    "viewportDimensionScope": "selected-pixel-crop"
   },
   "lifecycleCases": [
     {
@@ -506,7 +507,12 @@
     "cloudMergePreservesOrder": true,
     "metadataRefresh": "explicitOrEndpointEdit",
     "refreshOnForeground": false,
-    "refreshOnEditorEntry": false
+    "refreshOnEditorEntry": false,
+    "initialIOSLoad": "background-read-decode-validate",
+    "initialLoadMutationAdmission": "validated-readable-snapshot",
+    "initialLoadConcurrentCallers": "share-one-read",
+    "initialLoadSupersededCompletion": "ignored",
+    "initialLoadDeepLink": "defer-until-snapshot-then-existing-admission"
   },
   "macLibraryEditCases": [
     {
@@ -3283,6 +3289,50 @@
       "evaluationsAfterActive": 1,
       "publishAfterActive": 0,
       "unlockCardRetained": true
+    }
+  ],
+  "viewportRestorationCases": [
+    {
+      "name": "selected-crop-resizes-total-framebuffer-unchanged",
+      "framebuffer": [
+        800,
+        600
+      ],
+      "oldCrop": [
+        0,
+        0,
+        400,
+        600
+      ],
+      "newCrop": [
+        0,
+        0,
+        200,
+        600
+      ],
+      "relativeZoom": 2,
+      "restoredRelativeZoom": 1
+    },
+    {
+      "name": "selected-crop-moves-with-matching-size",
+      "framebuffer": [
+        800,
+        600
+      ],
+      "oldCrop": [
+        0,
+        0,
+        400,
+        600
+      ],
+      "newCrop": [
+        400,
+        0,
+        400,
+        600
+      ],
+      "relativeZoom": 2,
+      "restoredRelativeZoom": 2
     }
   ]
 }

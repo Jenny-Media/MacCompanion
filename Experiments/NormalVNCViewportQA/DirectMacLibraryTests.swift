@@ -370,3 +370,123 @@ import SwiftUI
         XCTAssertNotNil(library.failure)
     }
 }
+
+// A held worker read lets the tests prove actor responsiveness without relying on
+// a fast disk or timing a synthetic authentication animation.
+private final class InitialLibraryReadGate: @unchecked Sendable {
+    private let condition = NSCondition()
+    private var opened = false
+    private var arrivals = 0
+    var count: Int { condition.lock(); defer { condition.unlock() }; return arrivals }
+    func hold() {
+        condition.lock(); defer { condition.unlock() }
+        arrivals += 1
+        while !opened { condition.wait() }
+    }
+    func release() { condition.lock(); opened = true; condition.broadcast(); condition.unlock() }
+}
+@MainActor final class InitialLibraryLoadingTests: XCTestCase {
+    private func location() -> URL { URL.temporaryDirectory.appending(path: "initial-library-\(UUID())/macs.json") }
+    private func seed(_ records: [DirectMacRecordV1], at url: URL, version: Int = 5) throws {
+        struct File: Encodable { let version: Int; let macs: [DirectMacRecordV1] }
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try JSONEncoder().encode(File(version: version, macs: records)).write(to: url, options: .atomic)
+    }
+    private func arrived(_ gate: InitialLibraryReadGate) async throws {
+        for _ in 0..<200 {
+            if gate.count > 0 { return }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        XCTFail("Background read did not start")
+        throw DirectMacRecordV1.LibraryFailure.invalid
+    }
+    func testBackgroundInitialLoadKeepsMainActorResponsiveAndProtectsPendingFile() async throws {
+        let url = location(), gate = InitialLibraryReadGate()
+        defer { gate.release(); try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        let mac = try DirectMacRecordV1.normalized(name: "Saved", address: "saved.invalid")
+        try seed([mac], at: url); let original = try Data(contentsOf: url)
+        var credentialRemovals = 0
+        let library = DirectMacLibraryV1(url: url, removeLogin: { _ in credentialRemovals += 1 }, loadInBackground: true,
+                                        readInitialRecords: { location in
+                                            XCTAssertFalse(Thread.isMainThread, "Disk read, decode and validation must leave the UI thread")
+                                            gate.hold(); return try DirectMacLibraryV1.readRecords(at: location)
+                                        })
+        XCTAssertTrue(library.loading); XCTAssertFalse(library.readable)
+        let caller = Task { await library.loadInitial() }
+        try await arrived(gate)
+        // This actor turn ran while the disk worker was still held.
+        XCTAssertFalse(library.save(id: nil, name: "Overwrite", address: "overwrite.invalid"))
+        XCTAssertFalse(library.move(fromOffsets: [0], toOffset: 0))
+        XCTAssertThrowsError(try library.applyCloud([]))
+        library.remove(mac); library.updateDetectedMetadata([])
+        XCTAssertEqual(credentialRemovals, 0); XCTAssertEqual(try Data(contentsOf: url), original)
+        caller.cancel(); gate.release(); await caller.value
+        XCTAssertFalse(library.loading); XCTAssertTrue(library.readable)
+        XCTAssertEqual(library.macs, [mac], "A canceled UI waiter cannot strand the shared read")
+    }
+    func testConcurrentInitialLoadSharesReadAndPublishesOneValidatedSnapshot() async throws {
+        let url = location(), gate = InitialLibraryReadGate()
+        defer { gate.release(); try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        let bravo = try DirectMacRecordV1.normalized(name: "Bravo", address: "bravo.invalid")
+        let alpha = try DirectMacRecordV1.normalized(name: "Alpha", address: "alpha.invalid")
+        try seed([bravo, alpha], at: url, version: 4)
+        let library = DirectMacLibraryV1(url: url, loadInBackground: true,
+                                        readInitialRecords: { gate.hold(); return try DirectMacLibraryV1.readRecords(at: $0) })
+        let first = Task { await library.loadInitial() }, second = Task { await library.loadInitial() }
+        try await arrived(gate); gate.release(); await first.value; await second.value
+        XCTAssertEqual(gate.count, 1); XCTAssertEqual(library.macs, [alpha, bravo])
+        XCTAssertTrue(library.readable); XCTAssertFalse(library.loading)
+        await library.loadInitial(); XCTAssertEqual(gate.count, 1)
+    }
+    func testMalformedBackgroundLoadKeepsFileAndAllowsSafeRetry() async throws {
+        let url = location()
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let broken = Data("synthetic malformed library".utf8); try broken.write(to: url)
+        let library = DirectMacLibraryV1(url: url, loadInBackground: true)
+        await library.loadInitial()
+        XCTAssertFalse(library.loading); XCTAssertFalse(library.readable); XCTAssertNotNil(library.recovery)
+        XCTAssertFalse(library.save(id: nil, name: "Overwrite", address: "overwrite.invalid"))
+        XCTAssertEqual(try Data(contentsOf: url), broken)
+        let recovered = try DirectMacRecordV1.normalized(name: "Recovered", address: "recovered.invalid")
+        try seed([recovered], at: url); await library.reloadInBackground()
+        XCTAssertEqual(library.macs, [recovered]); XCTAssertTrue(library.readable); XCTAssertNil(library.recovery)
+        let fixtureURL = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "direct-screen-sharing-v1", withExtension: "json"))
+        let fixture = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: fixtureURL)) as? [String: Any])
+        let policy = try XCTUnwrap(fixture["macLibraryPolicy"] as? [String: Any])
+        XCTAssertEqual(policy["initialIOSLoad"] as? String, "background-read-decode-validate")
+        XCTAssertEqual(policy["initialLoadConcurrentCallers"] as? String, "share-one-read")
+    }
+    func testLoadedHookSeesValidatedSnapshotBeforeSubsequentActions() async throws {
+        let url = location()
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        let mac = try DirectMacRecordV1.normalized(name: "Loaded", address: "loaded.invalid")
+        try seed([mac], at: url)
+        let library = DirectMacLibraryV1(url: url, loadInBackground: true)
+        var trackedChanges: [UUID] = []
+        await library.loadInitial(onLoad: {
+            XCTAssertTrue(Thread.isMainThread); XCTAssertTrue(library.readable); XCTAssertFalse(library.loading)
+            XCTAssertEqual(library.macs, [mac])
+            library.localChange = { trackedChanges.append($0) }
+            XCTAssertTrue(library.save(id: mac.id, name: "Edited", address: "loaded.invalid"))
+        })
+        XCTAssertEqual(trackedChanges, [mac.id]); XCTAssertEqual(library.macs.first?.name, "Edited")
+    }
+    func testBackgroundLoadCannotOverwriteSynchronousReload() async throws {
+        let url = location(), gate = InitialLibraryReadGate()
+        defer { gate.release(); try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        let old = try DirectMacRecordV1.normalized(name: "Old", address: "old.invalid")
+        let newer = try DirectMacRecordV1.normalized(name: "New", address: "new.invalid")
+        try seed([old], at: url)
+        let library = DirectMacLibraryV1(url: url, loadInBackground: true, readInitialRecords: {
+            let snapshot = try DirectMacLibraryV1.readRecords(at: $0); gate.hold(); return snapshot
+        })
+        let stale = Task { await library.loadInitial() }; try await arrived(gate)
+        try seed([newer], at: url); library.reload()
+        XCTAssertEqual(library.macs, [newer]); XCTAssertTrue(library.readable)
+        gate.release(); await stale.value
+        XCTAssertEqual(library.macs, [newer]); XCTAssertFalse(library.loading)
+        XCTAssertTrue(library.save(id: newer.id, name: "Edited", address: "new.invalid"))
+        XCTAssertEqual(library.macs.first?.name, "Edited")
+    }
+}

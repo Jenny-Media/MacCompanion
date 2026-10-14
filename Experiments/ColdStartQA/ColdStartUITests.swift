@@ -34,6 +34,22 @@ import XCTest
         app.buttons["Done"].firstMatch.tap(); app.buttons["Add Mac"].tap()
         XCTAssertTrue(app.descendants(matching: .any)["mac-editor-form"].waitForExistence(timeout: 5))
     }
+    func testLoadingSavedMacsOverlapsAuthenticationAndKeepsSettingsUsable() {
+        let app = launch(["--held-library", "--inactive-auth", "--manual-auth"]); defer { app.terminate() }
+        XCTAssertTrue(app.staticTexts["Authenticating; inactive"].waitForExistence(timeout: 8))
+        XCTAssertEqual(app.buttons["app-unlock"].label, "Unlocking…")
+        app.buttons["qa-finish-auth"].tap(); app.buttons["qa-activate"].tap()
+        XCTAssertTrue(app.staticTexts["Loading saved Macs…"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["Add Mac"].isEnabled)
+        app.buttons["open-app-settings"].tap()
+        XCTAssertTrue(app.buttons["settings-appearance"].waitForExistence(timeout: 5))
+        app.buttons["Done"].firstMatch.tap()
+        app.buttons["qa-load-macs"].tap()
+        XCTAssertTrue(app.buttons["Manage Free Mac"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.staticTexts["Loading saved Macs…"].exists)
+        app.buttons["Manage Free Mac"].tap(); app.buttons["Mac Settings"].tap()
+        XCTAssertTrue(app.descendants(matching: .any)["mac-editor-form"].waitForExistence(timeout: 5))
+    }
     func testFreeConnectionAndExistingEditingDoNotWaitForStoreKit() {
         let app = launch(); defer { app.terminate() }
         XCTAssertTrue(app.buttons["Manage Free Mac"].waitForExistence(timeout: 5)); app.buttons["Manage Free Mac"].tap()

@@ -10,6 +10,10 @@
 - (void)clickAt:(UITapGestureRecognizer *)gesture;
 - (void)receivedCursor:(UIImage *)image hotspot:(CGPoint)hotspot position:(CGPoint)position known:(BOOL)known;
 - (void)fitDesktop;
+- (void)rememberViewport;
+- (void)restoreViewport;
+- (CGPoint)viewportCenter;
+- (void)applyViewportRatio:(CGFloat)ratio center:(CGPoint)center;
 - (void)setTrackpadModeEnabled:(BOOL)enabled;
 - (void)chooseView;
 - (void)dragAt:(UIPanGestureRecognizer *)gesture;
@@ -145,6 +149,39 @@
     viewer.displayLayout = @{@"aspectRatio": @1, @"views": @[]};
     [viewer stopViewer];
 }
+- (void)assertRestoredCropCase:(NSUInteger)index {
+    NSURL *url = [[NSBundle bundleForClass:self.class] URLForResource:@"direct-screen-sharing-v1" withExtension:@"json"];
+    NSDictionary *fixture = [NSJSONSerialization JSONObjectWithData:[NSData dataWithContentsOfURL:url] options:0 error:NULL];
+    NSDictionary *vector = fixture[@"viewportRestorationCases"][index];
+    NSArray *fb = vector[@"framebuffer"], *before = vector[@"oldCrop"], *after = vector[@"newCrop"];
+    CGSize size = CGSizeMake([fb[0] doubleValue], [fb[1] doubleValue]);
+    CompanionVNCViewer *viewer = [CompanionVNCViewer new]; [viewer loadViewIfNeeded];
+    viewer.view.frame = CGRectMake(0, 0, 440, 956); [viewer.view layoutIfNeeded];
+    NSMutableDictionary *(^display)(NSArray *) = ^(NSArray *crop) {
+        return [@{@"id": @2, @"title": @"Selected", @"x": @([crop[0] doubleValue]/size.width),
+                  @"y": @([crop[1] doubleValue]/size.height), @"width": @([crop[2] doubleValue]/size.width),
+                  @"height": @([crop[3] doubleValue]/size.height)} mutableCopy];
+    };
+    NSDictionary *old = display(before), *replacement = display(after);
+    viewer.displayLayout = @{@"aspectRatio": @(size.width/size.height), @"views": @[old]};
+    [viewer frame:[self syntheticFrame:size]]; [viewer selectDisplay:old];
+    UIScrollView *canvas = [viewer valueForKey:@"canvas"];
+    [viewer applyViewportRatio:[vector[@"relativeZoom"] doubleValue] center:CGPointMake(.5, .5)];
+    [viewer.view layoutIfNeeded];
+    CGPoint center = [viewer viewportCenter]; [viewer rememberViewport];
+    [viewer setValue:@YES forKey:@"restoreViewportPending"];
+    viewer.displayLayout = @{@"aspectRatio": @(size.width/size.height), @"views": @[replacement]};
+    [viewer frame:[self syntheticFrame:size]];
+    XCTAssertEqualObjects([viewer valueForKey:@"selectedDisplay"][@"id"], @2);
+    XCTAssertEqualWithAccuracy(canvas.zoomScale/canvas.minimumZoomScale, [vector[@"restoredRelativeZoom"] doubleValue], .001);
+    if (index == 1) {
+        CGPoint restored = [viewer viewportCenter];
+        XCTAssertEqualWithAccuracy(restored.x, center.x, .01); XCTAssertEqualWithAccuracy(restored.y, center.y, .01);
+    }
+    [viewer stopViewer];
+}
+- (void)testReplacementUsesSelectedCropDimensionsWhenFramebufferSizeIsUnchanged { [self assertRestoredCropCase:0]; }
+- (void)testReplacementPreservesRelativeViewportWhenSameSizedCropMoves { [self assertRestoredCropCase:1]; }
 - (NSDictionary *)profile {
     NSURL *url = [[NSBundle bundleForClass:self.class] URLForResource:@"vnc-desktop-tunnel-v0.1" withExtension:@"json"];
     return [NSJSONSerialization JSONObjectWithData:[NSData dataWithContentsOfURL:url] options:0 error:NULL];
