@@ -21,8 +21,8 @@
     },
     {
       "name": "cjk-emoji",
-      "text": "\u4e2d\u6587\ud83d\ude00e\u0301",
-      "normalized": "\u4e2d\u6587\ud83d\ude00e\u0301",
+      "text": "中文😀é",
+      "normalized": "中文😀é",
       "desktopKeys": [
         16797229,
         16803207,
@@ -71,7 +71,7 @@
     },
     {
       "name": "unicode-lines",
-      "text": "a\u2028b\u2029",
+      "text": "a b ",
       "normalized": "a\nb\n",
       "desktopKeys": [
         97,
@@ -130,7 +130,7 @@
     },
     {
       "name": "c1",
-      "text": "a\u0085b",
+      "text": "ab",
       "invalid": true
     }
   ],
@@ -228,9 +228,9 @@
     "compactAboveKeyboard": true,
     "sessionRemainsVisible": true,
     "sendRemainsReachable": true,
-    "expandable": true,
-    "shortLandscape": "compact controls, editor and Send above keyboard; destination and validation accessible",
-    "grabberResizable": true,
+    "expandable": false,
+    "shortLandscape": "scrollable editor with reachable Close, Send and conditional error details above keyboard",
+    "grabberResizable": false,
     "resizePreserves": [
       "draft",
       "selection",
@@ -238,21 +238,28 @@
       "editorIdentity"
     ],
     "editorScrollingExpands": false,
-    "interactiveDismissal": "docked completed swipe retains draft; cancellation restores size or floating placement",
+    "interactiveDismissal": "Close retains draft; canceled movement restores placement",
     "sendingBlocksDismissal": true,
     "snapPositions": [
-      "nearby edges in floating mode",
-      "compact and expanded in docked mode"
+      "nearby edges in floating mode"
     ],
     "implementation": "public UIKit keyboard guide and pan recognizer; one native editor",
     "defaultPresentation": "floating",
     "draggable": true,
     "edgeSnapDistancePoints": 28,
-    "docking": "Dock and Undock preserve editor identity and floating placement",
+    "docking": "no visible Dock or Undock control",
     "floatingPlacement": "relative to keyboard-safe area; clamped on keyboard, orientation and size changes",
     "sendingBlocksMovement": true,
-    "narrowCompactActions": "Discard, Expand and Dock in menu; Back, error details and Send remain direct",
+    "narrowCompactActions": "Close and circular Send remain direct; error details are conditional; no presentation menu",
     "undockedKeyboardTracking": true,
-    "nearEdgeKeyboardFallback": "prefer above; readable below/beside region when needed; safe-area constraint near top edge"
+    "nearEdgeKeyboardFallback": "prefer above; readable below/beside region when needed; safe-area constraint near top edge",
+    "style": "textBubble",
+    "visibleControls": [
+      "grabber",
+      "closeKeepingDraft",
+      "circularArrowSend"
+    ],
+    "grabberTapExpands": false,
+    "minimumActionHitPoints": 44
   }
 }

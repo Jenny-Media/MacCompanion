@@ -66,6 +66,45 @@ import UIKit
             }
         }
     }
+    func testTextBubbleHasOnlyDirectCloseAndSendWithSafeAccessibleBounds() async throws {
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let previous = scene.windows.first(where: \.isKeyWindow)
+        let window = UIWindow(windowScene: scene), root = UIViewController()
+        window.rootViewController = root; window.makeKeyAndVisible()
+        defer { window.isHidden = true; window.rootViewController = nil; previous?.makeKeyAndVisible() }
+        let draft = DirectTextComposerDraft(macName: "Synthetic", mode: .desktop)
+        draft.configure(available: { true }, send: { _, _ in XCTFail("Layout must not send") })
+        let panel = DirectTextComposerPanel(draft: draft)
+        root.addChild(panel); root.view.addSubview(panel.view); panel.didMove(toParent: root)
+        panel.view.translatesAutoresizingMaskIntoConstraints = false
+        let width = panel.view.widthAnchor.constraint(equalToConstant: 390), height = panel.view.heightAnchor.constraint(equalToConstant: 800)
+        NSLayoutConstraint.activate([width, height, panel.view.topAnchor.constraint(equalTo: root.view.topAnchor), panel.view.leadingAnchor.constraint(equalTo: root.view.leadingAnchor)])
+        try await Task.sleep(for: .milliseconds(400)); panel.view.endEditing(true)
+        func descendants(_ v: UIView) -> [UIView] { [v] + v.subviews.flatMap(descendants) }
+        let editor = try XCTUnwrap(descendants(panel.view).compactMap { $0 as? UITextView }.first)
+        draft.edit("synthetic bubble draft"); try await Task.sleep(for: .milliseconds(80))
+        editor.selectedRange = NSRange(location: 2, length: 3); let selection = editor.selectedRange
+        for large in [false, true] {
+            panel.traitOverrides.preferredContentSizeCategory = large ? .accessibilityExtraExtraExtraLarge : .large
+            for size in [CGSize(width: 390, height: 800), CGSize(width: 320, height: 180), CGSize(width: 844, height: 200)] {
+                width.constant = size.width; height.constant = size.height; root.view.layoutIfNeeded()
+                panel.simulatedKeyboardFrame = .zero
+                for issue in [false, true] {
+                    draft.issue = issue ? "Synthetic delivery error" : nil
+                    try await Task.sleep(for: .milliseconds(120)); panel.view.setNeedsLayout(); panel.view.layoutIfNeeded()
+                    let card = panel.panelFrame, close = panel.closeActionFrame, send = panel.deliveryActionFrame
+                    XCTAssertTrue(card.contains(close)); XCTAssertTrue(card.contains(send))
+                    XCTAssertGreaterThanOrEqual(close.width, 44); XCTAssertGreaterThanOrEqual(close.height, 44)
+                    XCTAssertGreaterThanOrEqual(send.width, 44); XCTAssertGreaterThanOrEqual(send.height, 44)
+                    XCTAssertFalse(close.intersects(send)); XCTAssertFalse(editor.convert(editor.bounds, to: panel.view).intersects(send))
+                    XCTAssertGreaterThan(editor.bounds.width, 80); XCTAssertGreaterThan(editor.bounds.height, 35)
+                    XCTAssertTrue(descendants(panel.view).contains(where: { $0 === editor })); XCTAssertEqual(editor.selectedRange, selection)
+                    XCTAssertFalse(descendants(panel.view).contains { ["compose-expand", "compose-dock", "compose-more", "compose-discard", "compose-destination"].contains($0.accessibilityIdentifier ?? "") })
+                    if !large { XCTAssertLessThanOrEqual(card.width, 284); XCTAssertLessThanOrEqual(card.height, 156) }
+                }
+            }
+        }
+    }
     func testUndockedGuideUsesReadableFreeAreasAndTracksAllKeyboardModes() {
         let draft = DirectTextComposerDraft(macName: "Synthetic", mode: .desktop)
         draft.configure(available: { true }, send: { _, _ in })
@@ -221,7 +260,7 @@ import UIKit
         XCTAssertLessThanOrEqual(sendRect.maxY, panel.view.keyboardLayoutGuide.layoutFrame.minY)
         let editorRect = editor.convert(editor.bounds, to: panel.view)
         XCTAssertGreaterThan(editorRect.height, 35)
-        XCTAssertLessThan(editorRect.maxY, contentRect.maxY - 36, "Delivery actions remain below the editor and above the keyboard")
+        XCTAssertLessThanOrEqual(editorRect.maxX, sendRect.minX, "Send has reserved space beside editable text")
         editor.insertText("synthetic draft")
         try await Task.sleep(for: .milliseconds(50))
         XCTAssertEqual(composer.draft.text, "synthetic draft")
@@ -285,7 +324,7 @@ import UIKit
         XCTAssertLessThanOrEqual(panel.deliveryActionFrame.maxY, panel.view.keyboardLayoutGuide.layoutFrame.minY)
         XCTAssertGreaterThan(editorRect.height, 35)
         XCTAssertGreaterThanOrEqual(editorRect.minY, contentRect.minY)
-        XCTAssertLessThan(editorRect.maxY, panel.deliveryActionFrame.minY)
+        XCTAssertLessThanOrEqual(editorRect.maxX, panel.deliveryActionFrame.minX, "Send has reserved space beside the editor")
         editor.insertText(String(repeating: "x", count: 257))
         try await Task.sleep(for: .milliseconds(100))
         XCTAssertFalse(composer.draft.canSend, "Invalid input keeps Send disabled in compact layout")

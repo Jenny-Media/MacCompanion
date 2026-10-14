@@ -79,7 +79,7 @@ emoji in a remote text editor, desktop Return/Tab behavior, and multiline shell
 input with bracketed paste enabled and disabled. Simulator and synthetic socket
 checks do not establish those hardware results.
 
-## Compact composer revision (2026-10-13)
+## Compact composer revision (historical, 2026-10-13)
 
 Compose Text is a built-in Quick Action in Desktop, Trackpad and Terminal.
 Untouched older default rows gain the action while retaining their existing
@@ -135,7 +135,7 @@ Reproduce the drag suite after a normal simulator development build:
 The generated QA app links the experiment entry point only in its private
 target. Release and normal development targets do not link experiment sources.
 
-## Floating composer revision (2026-10-13)
+## Floating composer revision (historical, 2026-10-13)
 
 The default presentation is now a compact floating panel inside the session.
 Drag the grabber to move it; release near an edge to snap. The panel stays within
@@ -164,3 +164,22 @@ system-keyboard floating/undocking gestures remain a final hardware check, as
 explicitly agreed after the simulator could not enter those modes. Physical
 dictation and IME acceptance remain separate. Cursor and password-manager
 investigations stay paused.
+
+## Text bubble and persistent Unlock card (2026-10-13)
+
+The current composer is a smaller floating text bubble with a grabber, Close and
+circular arrow Send. The title, destination/presentation toolbar, Expand/Collapse,
+Dock/Undock and Discard controls are removed. Close keeps the draft; long text
+scrolls in the same native editor. Destination context is available to accessibility,
+and conditional validation/delivery-error details remain reachable. Drag/snapping,
+keyboard/orientation tracking, explicit confirmation and lifecycle fences remain.
+Close and Send have 44-point hit regions. Dynamic Type grows the editor within
+keyboard-safe bounds. Compatibility transitions remain internal and have no UI
+entry or grabber-tap action.
+
+Unlock uses one persistent card through authentication and active admission.
+Unlocking indicates evaluation; Opening indicates success awaiting activation.
+Both states disable the button. Failure/cancellation exposes an explicit Unlock
+retry only while foreground and protected data permit it. Current successful
+authentication plus active admission still reveal the main UI and enable controls
+together. The separate Mac Companion-only transition is removed.

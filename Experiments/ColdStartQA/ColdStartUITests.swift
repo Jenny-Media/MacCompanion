@@ -10,13 +10,21 @@ import XCTest
         XCTAssertTrue(row.waitForExistence(timeout: 5)); row.tap()
     }
     func testInactiveAuthenticationThenActivationMakesActualSettingsAndAddControlsWork() {
-        let app = launch(["--inactive-auth", "--empty-library"]); defer { app.terminate() }
+        let app = launch(["--inactive-auth", "--manual-auth", "--empty-library"]); defer { app.terminate() }
+        XCTAssertTrue(app.staticTexts["Authenticating; inactive"].waitForExistence(timeout: 8))
+        let unlock = app.buttons["app-unlock"]
+        XCTAssertTrue(unlock.waitForExistence(timeout: 5)); XCTAssertEqual(unlock.label, "Unlocking…")
+        XCTAssertFalse(unlock.isEnabled)
+        let evaluating = XCTAttachment(screenshot: app.screenshot()); evaluating.name = "synthetic-unlock-evaluating"; evaluating.lifetime = .keepAlways; add(evaluating)
+        app.buttons["qa-finish-auth"].tap()
         XCTAssertTrue(app.staticTexts["Authenticated; awaiting activation"].waitForExistence(timeout: 8))
+        XCTAssertEqual(unlock.label, "Opening…"); XCTAssertFalse(unlock.isEnabled)
+        let pending = XCTAttachment(screenshot: app.screenshot()); pending.name = "synthetic-unlock-pending"; pending.lifetime = .keepAlways; add(pending)
         let cover = app.descendants(matching: .any)["app-privacy-cover"]
         XCTAssertTrue(cover.waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["Mac Companion"].isHittable)
-        XCTAssertFalse(app.staticTexts["Unlock to access your Macs"].exists)
-        XCTAssertFalse(app.buttons["app-unlock"].exists)
+        XCTAssertTrue(app.staticTexts["Unlock to access your Macs"].exists)
+        XCTAssertTrue(unlock.exists)
         XCTAssertFalse(app.buttons["open-app-settings"].isHittable)
         XCTAssertFalse(app.navigationBars["My Macs"].isHittable)
         app.buttons["qa-activate"].tap()

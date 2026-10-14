@@ -206,6 +206,43 @@ private final class ContinuitySession: CompanionVNCSession {
         protected = true; lock.becameActive(); XCTAssertEqual(context.evaluations, 2)
         context.reply?(true, nil); try await eventually { lock.canInteract }
     }
+    func testUnlockButtonReflectsCurrentAttemptAndActiveAdmission() async throws {
+        var active = true
+        let context = ContinuityAuthentication()
+        let lock = DirectAppLockV1(contextFactory: { context }, defaults: isolatedDefaults(),
+            isActive: { active }, isBackground: { false }, protectedDataAvailable: { true })
+        defer { lock.setEnabled(false) }
+        let appLock = try XCTUnwrap((try fixture()["clientAdditions"] as? [String: Any])?["appLock"] as? [String: Any])
+        XCTAssertEqual(appLock["authenticationPresentation"] as? String, "persistentUnlockCard")
+        lock.setEnabled(true)
+        XCTAssertEqual(lock.unlockButtonTitle, appLock["evaluatingButtonTitle"] as? String)
+        XCTAssertFalse(lock.unlockButtonEnabled); XCTAssertFalse(lock.canInteract)
+        active = false; lock.becameInactive(); context.reply?(true, nil)
+        try await eventually { !lock.authenticating }
+        XCTAssertEqual(lock.unlockButtonTitle, appLock["pendingActiveButtonTitle"] as? String)
+        XCTAssertFalse(lock.unlockButtonEnabled); XCTAssertTrue(lock.privacyCoverVisible)
+        XCTAssertFalse(lock.contentVisible)
+        active = true; lock.becameActive()
+        XCTAssertTrue(lock.canInteract); XCTAssertFalse(lock.privacyCoverVisible)
+        XCTAssertFalse(lock.unlockButtonEnabled); XCTAssertEqual(context.evaluations, 1)
+    }
+    func testUnlockRetryButtonRequiresForegroundAndProtectedData() async throws {
+        var active = true, protected = true
+        let context = ContinuityAuthentication()
+        let lock = DirectAppLockV1(contextFactory: { context }, defaults: isolatedDefaults(),
+            isActive: { active }, isBackground: { false }, protectedDataAvailable: { protected })
+        defer { lock.setEnabled(false) }
+        lock.setEnabled(true); active = false; lock.becameInactive()
+        context.reply?(false, LAError(.userCancel)); try await eventually { !lock.authenticating }
+        XCTAssertEqual(lock.unlockButtonTitle, "Unlock"); XCTAssertFalse(lock.unlockButtonEnabled)
+        active = true; lock.becameActive(); XCTAssertTrue(lock.unlockButtonEnabled)
+        protected = false; lock.becameActive(); XCTAssertFalse(lock.unlockButtonEnabled)
+        var observed = false
+        withObservationTracking { _ = lock.unlockButtonEnabled } onChange: { MainActor.assumeIsolated { observed = true } }
+        protected = true; lock.becameActive()
+        XCTAssertTrue(observed); XCTAssertTrue(lock.unlockButtonEnabled); XCTAssertEqual(context.evaluations, 1)
+        lock.authenticate(); XCTAssertEqual(context.evaluations, 2); XCTAssertFalse(lock.unlockButtonEnabled)
+    }
     func testDisablingUnlockDuringInactivityPublishesAtActiveBoundary() async throws {
         var active = true
         let context = ContinuityAuthentication()

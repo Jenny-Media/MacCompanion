@@ -76,7 +76,17 @@ final class ColdStartAuthentication: LAContext {
             if authentication.reply != nil { break }
             try? await Task.sleep(for: .milliseconds(20))
         }
-        activity.active = false; lock.becameInactive(); authentication.reply?(true, nil)
+        activity.active = false; lock.becameInactive()
+        if ProcessInfo.processInfo.arguments.contains("--manual-auth") { stage = "Authenticating; inactive"; return }
+        await completeAuthentication()
+        for _ in 0..<100 {
+            if !lock.authenticating { break }
+            try? await Task.sleep(for: .milliseconds(20))
+        }
+        stage = "Authenticated; awaiting activation"
+    }
+    func completeAuthentication() async {
+        authentication.reply?(true, nil)
         for _ in 0..<100 {
             if !lock.authenticating { break }
             try? await Task.sleep(for: .milliseconds(20))
@@ -99,6 +109,7 @@ struct ColdStartControls: View {
             VStack(spacing: 8) {
                 Text(model.stage).accessibilityIdentifier("qa-startup-stage")
                 HStack {
+                    Button("Finish Auth") { Task { await model.completeAuthentication() } }.accessibilityIdentifier("qa-finish-auth")
                     Button("Activate") { model.activate() }.accessibilityIdentifier("qa-activate")
                     Button("Background") { model.background() }.accessibilityIdentifier("qa-background")
                     Button("Resolve Store") { model.store.resolve() }.accessibilityIdentifier("qa-resolve-store")

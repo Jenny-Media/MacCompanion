@@ -235,6 +235,7 @@ struct DirectComposerPlacement {
     private var peek: NSLayoutConstraint?
     private var grabberHeight: NSLayoutConstraint?
     private var grabber: UIButton?
+    private var closeButton: UIButton?
     private var editorHost: UIHostingController<AnyView>?
     private var card: UIView?
     private var sendBounds = CGRect.zero
@@ -245,6 +246,7 @@ struct DirectComposerPlacement {
     private var dragging = false
     var deliveryActionFrame: CGRect { editorHost?.view.convert(sendBounds, to: view) ?? .zero }
     var panelFrame: CGRect { card?.frame ?? .zero }
+    var closeActionFrame: CGRect { closeButton?.convert(closeButton?.bounds ?? .zero, to: view) ?? .zero }
     #if DEBUG
     // Controlled Simulator keyboard geometry; absent from release builds.
     var simulatedKeyboardFrame: CGRect? { didSet { view.setNeedsLayout() } }
@@ -272,11 +274,12 @@ struct DirectComposerPlacement {
             backdrop.trailingAnchor.constraint(equalTo: view.trailingAnchor), backdrop.topAnchor.constraint(equalTo: view.topAnchor),
             backdrop.bottomAnchor.constraint(equalTo: view.bottomAnchor)])
         let card = UIView(); self.card = card; view.addSubview(card); card.translatesAutoresizingMaskIntoConstraints = false
-        card.backgroundColor = .secondarySystemBackground; card.layer.cornerRadius = 20; card.clipsToBounds = true
+        card.accessibilityIdentifier = "compose-bubble"
+        card.accessibilityContainerType = .semanticGroup
+        card.backgroundColor = .systemBackground; card.layer.cornerRadius = 20; card.clipsToBounds = true
         card.layer.borderWidth = 1; card.layer.borderColor = UIColor.separator.cgColor
         let grabber = UIButton(type: .custom); self.grabber = grabber; grabber.translatesAutoresizingMaskIntoConstraints = false
         grabber.accessibilityIdentifier = "compose-grabber"
-        grabber.addTarget(self, action: #selector(toggleExpansion), for: .touchUpInside)
         // VoiceOver can reposition the floating panel without a touch drag.
         grabber.accessibilityCustomActions = [
             UIAccessibilityCustomAction(name: "Move composer up", target: self, selector: #selector(moveUp)),
@@ -289,10 +292,11 @@ struct DirectComposerPlacement {
         let pan = UIPanGestureRecognizer(target: self, action: #selector(resize(_:))); pan.delegate = self
         grabber.addGestureRecognizer(pan)
         let host = UIHostingController(rootView: AnyView(DirectTextComposerView(draft: draft,
-            expand: { [weak self] in self?.toggleExpansion() }, dock: { [weak self] in self?.toggleDock() },
+            isCurrent: { [weak self] in self?.usable == true },
+            requestLayout: { [weak self] in self?.view.setNeedsLayout() },
             reportSendBounds: { [weak self] in self?.sendBounds = $0 }).directAppearance()))
         editorHost = host; addChild(host); card.addSubview(host.view); host.didMove(toParent: self)
-        host.view.translatesAutoresizingMaskIntoConstraints = false; host.view.backgroundColor = .secondarySystemBackground
+        host.view.translatesAutoresizingMaskIntoConstraints = false; host.view.backgroundColor = .systemBackground
         host.view.accessibilityIdentifier = "compose-panel"
         let grabberHeight = grabber.heightAnchor.constraint(equalToConstant: 44); self.grabberHeight = grabberHeight
         let leading = card.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 8)
@@ -303,23 +307,34 @@ struct DirectComposerPlacement {
         // UIKit switches these before layout; both offsets follow the selected free region.
         view.keyboardLayoutGuide.setConstraints([bottom], activeWhenAwayFrom: .top)
         view.keyboardLayoutGuide.setConstraints([safeBottom], activeWhenNearEdge: .top)
-        let width = card.widthAnchor.constraint(equalToConstant: 320)
+        let close = UIButton(type: .system); closeButton = close
+        close.setImage(UIImage(systemName: "xmark"), for: .normal); close.tintColor = .secondaryLabel
+        close.accessibilityLabel = "Close and keep draft"; close.accessibilityIdentifier = "compose-back"
+        close.addTarget(self, action: #selector(back), for: .touchUpInside)
+        close.translatesAutoresizingMaskIntoConstraints = false; card.addSubview(close)
+        NSLayoutConstraint.activate([close.topAnchor.constraint(equalTo: card.topAnchor),
+            close.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -4),
+            close.widthAnchor.constraint(equalToConstant: 44), close.heightAnchor.constraint(equalToConstant: 44)])
+        let width = card.widthAnchor.constraint(equalToConstant: 284)
         let height = card.heightAnchor.constraint(equalToConstant: 324); height.priority = .defaultHigh
         let peek = card.topAnchor.constraint(greaterThanOrEqualTo: view.safeAreaLayoutGuide.topAnchor, constant: 48); self.peek = peek
         placementConstraints = [leading, width, height]
         NSLayoutConstraint.activate(placementConstraints + [peek,
             grabber.topAnchor.constraint(equalTo: card.topAnchor), grabber.centerXAnchor.constraint(equalTo: card.centerXAnchor),
-            grabber.widthAnchor.constraint(equalTo: card.widthAnchor), grabberHeight,
+            grabber.widthAnchor.constraint(equalTo: card.widthAnchor, constant: -104), grabberHeight,
             indicator.widthAnchor.constraint(equalToConstant: 36), indicator.heightAnchor.constraint(equalToConstant: 5),
             indicator.centerXAnchor.constraint(equalTo: grabber.centerXAnchor), indicator.centerYAnchor.constraint(equalTo: grabber.centerYAnchor),
             host.view.leadingAnchor.constraint(equalTo: card.leadingAnchor), host.view.trailingAnchor.constraint(equalTo: card.trailingAnchor),
             host.view.topAnchor.constraint(equalTo: grabber.bottomAnchor), host.view.bottomAnchor.constraint(equalTo: card.bottomAnchor)])
     }
     private var availableHeight: CGFloat { placementArea.height }
-    private var compactHeight: CGFloat { min(availableHeight, draft.compactLayout ? 180 : 324) }
+    private var compactHeight: CGFloat {
+        let line = UIFont.preferredFont(forTextStyle: .body, compatibleWith: traitCollection).lineHeight
+        return min(availableHeight, max(156, line * 2 + 60))
+    }
     @objc private func back() { if usable { draft.close?() } }
     func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
-        usable && (draft.docked || (!draft.expanded && !traitCollection.preferredContentSizeCategory.isAccessibilityCategory))
+        usable && (draft.docked || !draft.expanded)
     }
     @objc func toggleExpansion() {
         guard usable else { return }
@@ -377,10 +392,10 @@ struct DirectComposerPlacement {
         let area = placementArea
         let compact = area.height < 228 || (area.width < 360 && traitCollection.preferredContentSizeCategory.isAccessibilityCategory)
         if draft.compactLayout != compact { draft.compactLayout = compact }
-        grabberHeight?.constant = compact ? 20 : 44
+        grabberHeight?.constant = 44
         let accessibility = traitCollection.preferredContentSizeCategory.isAccessibilityCategory
-        let expanded = draft.expanded || accessibility
-        let size = CGSize(width: min(draft.docked || expanded ? 640 : 420, area.width * (draft.docked || expanded ? 1 : 0.88)),
+        let expanded = draft.expanded
+        let size = CGSize(width: min(draft.docked || expanded ? 640 : accessibility ? 360 : 284, area.width),
                           height: min(area.height, draggingHeight ?? (expanded ? area.height : compactHeight)))
         if draft.narrowLayout != (size.width < 360) { draft.narrowLayout = size.width < 360 }
         let target = DirectComposerPlacement.frame(area: area, size: size, anchor: draft.docked || expanded ? DirectComposerPlacement.dockedAnchor(area: area, keyboard: keyboardFrame) : draft.floatingAnchor)
@@ -394,122 +409,73 @@ struct DirectComposerPlacement {
             constraint.constant = value
         }
         grabber?.isEnabled = usable
+        closeButton?.isEnabled = usable
         grabber?.accessibilityLabel = draft.docked ? "Resize composer" : "Move composer"
-        grabber?.accessibilityHint = draft.docked ? "Drag up or down to resize, or double tap to expand" : "Drag to move and snap to edges, or double tap to expand"
+        grabber?.accessibilityHint = draft.docked ? "Drag up or down to resize" : "Drag to move and snap to edges"
     }
 }
 
 private struct DirectTextComposerView: View {
     @Bindable var draft: DirectTextComposerDraft
-    var expand: () -> Void
-    var dock: () -> Void
+    var isCurrent: () -> Bool
+    var requestLayout: () -> Void
     var reportSendBounds: (CGRect) -> Void
     @FocusState private var editing: Bool
-    @State private var discard = false
     @State private var showIssue = false
+    private var issue: String? { draft.issue ?? (draft.text.isEmpty ? nil : draft.validationIssue) }
     private func confirmationMessage(_ reviewed: DirectComposedText) -> String {
         let explanation = draft.mode == .terminal
             ? "Without bracketed paste, line breaks can run commands and tabs can change terminal input."
             : "Line breaks press Return on your Mac and may submit content or run commands. Tabs press Tab and may change focus."
         return explanation + (reviewed.endsWithNewline ? " This draft ends with a line break." : "") + " Send Text adds no extra Return."
     }
-    private var dockButton: some View {
-        Button(action: dock) {
-            Image(systemName: draft.docked ? "rectangle.on.rectangle" : "rectangle.bottomthird.inset.filled")
-                .font(.system(size: 20)).frame(width: 44, height: 44)
-        }.disabled(draft.sending).accessibilityLabel(draft.docked ? "Undock" : "Dock")
-            .accessibilityHint(draft.docked ? "Float the composer" : "Attach the composer near the keyboard")
-            .accessibilityIdentifier("compose-dock")
-    }
     var body: some View {
-        VStack(alignment: .leading, spacing: draft.compactLayout ? 4 : 8) {
-          if !draft.compactLayout {
-            HStack {
-                Button("Back", systemImage: "chevron.down") { editing = false; draft.close?() }
-                    .labelStyle(.iconOnly).frame(minWidth: 44, minHeight: 44).disabled(draft.sending).accessibilityLabel("Back to Session").accessibilityIdentifier("compose-back")
-                Spacer()
-                Text("Compose Text").font(.headline).lineLimit(1).minimumScaleFactor(0.7)
-                Spacer()
-                Button(draft.expanded ? "Collapse" : "Expand", systemImage: draft.expanded ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right", action: expand)
-                    .labelStyle(.iconOnly).frame(minWidth: 44, minHeight: 44).disabled(draft.sending).accessibilityIdentifier("compose-expand")
-                dockButton
-            }
-            Label(draft.macName + " · " + draft.mode.title, systemImage: draft.mode == .terminal ? "terminal" : "desktopcomputer")
-                .font(.caption).foregroundStyle(.secondary).lineLimit(1).accessibilityIdentifier("compose-destination")
-          }
+        HStack(alignment: .bottom, spacing: 8) {
             TextEditor(text: Binding(get: { draft.text }, set: draft.edit))
                 .font(draft.mode == .terminal ? .body.monospaced() : .body)
-                .frame(minHeight: 36, maxHeight: .infinity).padding(4)
-                .background(.background, in: RoundedRectangle(cornerRadius: 10))
-                .overlay(RoundedRectangle(cornerRadius: 10).stroke(.secondary.opacity(0.4)))
+                .frame(minHeight: 36, maxHeight: .infinity)
+                .scrollContentBackground(.hidden)
                 .autocorrectionDisabled(draft.mode == .terminal).textInputAutocapitalization(draft.mode == .terminal ? .never : .sentences)
                 .focused($editing).disabled(draft.sending).scrollDismissesKeyboard(.never)
-                .accessibilityLabel(draft.compactLayout ? "Text to Send · " + draft.macName + " · " + draft.mode.title : "Text to Send")
-                .accessibilityHint(draft.issue ?? draft.validationIssue ?? "")
+                .accessibilityLabel("Text to Send · " + draft.macName + " · " + draft.mode.title)
+                .accessibilityHint(issue ?? "Nothing is sent until you choose Send Text")
                 .accessibilityIdentifier("compose-text").privacySensitive()
-            if !draft.compactLayout, let issue = draft.issue ?? (draft.text.isEmpty ? nil : draft.validationIssue) {
-                Text(issue).font(.caption).foregroundStyle(.red).lineLimit(2).accessibilityIdentifier("compose-error")
-            }
-            HStack(spacing: draft.compactLayout ? 4 : 8) {
-                if draft.compactLayout {
-                    Button { editing = false; draft.close?() } label: {
-                        Image(systemName: "chevron.down").font(.system(size: 20)).frame(width: 44, height: 44)
-                    }.disabled(draft.sending).accessibilityLabel("Back to Session").accessibilityIdentifier("compose-back")
-                    if draft.narrowLayout {
-                        Menu {
-                            Button(draft.expanded ? "Collapse" : "Expand", systemImage: draft.expanded ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right", action: expand)
-                                .accessibilityIdentifier("compose-expand")
-                            Button(draft.docked ? "Undock" : "Dock", systemImage: draft.docked ? "rectangle.on.rectangle" : "rectangle.bottomthird.inset.filled", action: dock)
-                                .accessibilityIdentifier("compose-dock")
-                            Button("Discard Draft", systemImage: "trash", role: .destructive) { discard = true }
-                                .disabled(draft.text.isEmpty).accessibilityIdentifier("compose-discard")
-                        } label: {
-                            Image(systemName: "ellipsis").font(.system(size: 20)).frame(width: 44, height: 44)
-                        }.disabled(draft.sending).accessibilityLabel("Composer actions").accessibilityIdentifier("compose-more")
-                    } else {
-                        Button(role: .destructive) { discard = true } label: {
-                            Image(systemName: "trash").font(.system(size: 20)).frame(width: 44, height: 44)
-                        }.disabled(draft.text.isEmpty || draft.sending).accessibilityLabel("Discard Draft").accessibilityIdentifier("compose-discard")
-                        Button(action: expand) {
-                            Image(systemName: draft.expanded ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right")
-                                .font(.system(size: 20)).frame(width: 44, height: 44)
-                        }.disabled(draft.sending).accessibilityLabel(draft.expanded ? "Collapse" : "Expand").accessibilityIdentifier("compose-expand")
-                        dockButton
-                    }
-                } else {
-                    Button("Discard", role: .destructive) { discard = true }.font(.footnote)
-                        .disabled(draft.text.isEmpty || draft.sending).accessibilityIdentifier("compose-discard")
+            let actions = draft.compactLayout ? AnyLayout(HStackLayout(spacing: 4)) : AnyLayout(VStackLayout(spacing: 4))
+            actions {
+                if let issue {
+                    Button { if isCurrent() { showIssue = true } } label: {
+                        Image(systemName: "exclamationmark.circle").font(.system(size: 20))
+                            .frame(width: 44, height: 44).contentShape(Rectangle())
+                    }.buttonStyle(.plain).disabled(!isCurrent())
+                        .accessibilityLabel(issue).accessibilityIdentifier("compose-error")
+                        .popover(isPresented: $showIssue) {
+                            VStack(spacing: 12) {
+                                Text(issue)
+                                Button("Done") { showIssue = false }.frame(minHeight: 44)
+                                    .accessibilityIdentifier("compose-error-done")
+                            }.padding().presentationCompactAdaptation(.popover)
+                        }
                 }
-                Spacer()
-                if draft.compactLayout, let issue = draft.issue ?? (draft.text.isEmpty ? nil : draft.validationIssue) {
-                    Button { showIssue = true } label: {
-                        Image(systemName: "exclamationmark.circle").font(.system(size: 20)).frame(width: 44, height: 44)
-                    }.accessibilityLabel(issue).accessibilityIdentifier("compose-error")
-                        .popover(isPresented: $showIssue) { Text(issue).padding().presentationCompactAdaptation(.popover) }
-                }
-                Button { draft.requestSend() } label: {
-                    if draft.compactLayout {
-                        Group {
-                            if draft.sending { ProgressView() }
-                            else { Image(systemName: "paperplane.fill").font(.system(size: 20)) }
-                        }.frame(width: 20, height: 20)
-                    } else {
-                        HStack { if draft.sending { ProgressView() }; Text(draft.sending ? "Sending…" : "Send Text") }
-                    }
-                }.buttonStyle(.borderedProminent).frame(minWidth: 44, minHeight: 44)
-                    .disabled(!draft.canSend).accessibilityLabel(draft.sending ? "Sending…" : "Send Text").accessibilityIdentifier("compose-send")
+                Button { if isCurrent() { draft.requestSend() } } label: {
+                    Group {
+                        if draft.sending { ProgressView().tint(.primary) }
+                        else { Image(systemName: "arrow.up").font(.system(size: 20, weight: .semibold)) }
+                    }.frame(width: 44, height: 44)
+                        .foregroundStyle(draft.canSend ? Color.white : Color.secondary)
+                        .background(draft.canSend ? Color.accentColor : Color.secondary.opacity(0.18), in: .circle)
+                        .contentShape(Rectangle())
+                }.buttonStyle(.plain).disabled(!draft.canSend || !isCurrent())
+                    .accessibilityLabel(draft.sending ? "Sending…" : "Send Text").accessibilityIdentifier("compose-send")
                     .onGeometryChange(for: CGRect.self) { $0.frame(in: .named("composer-panel")) } action: { reportSendBounds($0) }
             }
-
-        }.padding(draft.compactLayout ? 4 : 12).background(.background).coordinateSpace(name: "composer-panel")
+        }.padding(8).background(.background).coordinateSpace(name: "composer-panel")
             .onAppear { editing = true }
+            .onChange(of: draft.sending) { _, _ in requestLayout() }
+            .onChange(of: draft.active) { _, _ in requestLayout() }
             .alert("Send line breaks or tabs?", isPresented: Binding(get: { draft.confirmation != nil }, set: { if !$0 { draft.confirmation = nil } }), presenting: draft.confirmation) { reviewed in
-                Button("Send Text") { draft.confirmSend(reviewed) }
+                Button("Send Text") { if isCurrent() { draft.confirmSend(reviewed) } }
                 Button("Cancel", role: .cancel) { draft.confirmation = nil }
             } message: { reviewed in Text(confirmationMessage(reviewed)) }
-            .confirmationDialog("Discard this draft?", isPresented: $discard, titleVisibility: .visible) {
-                Button("Discard", role: .destructive) { draft.invalidate() }
-            }
             .onChange(of: DirectAppLockV1.shared.canAccess) { _, value in if !value { draft.invalidate() } }
     }
 }

@@ -386,32 +386,26 @@ A busy queue reports a retryable issue without partial text or a disconnect.
 Desktop, Trackpad & Keyboard and Terminal offer a free **Compose Text** session
 Quick Action (also available under Keyboard & Input). Existing untouched default
 profiles gain this action; preserve all customized profiles and their disabled
-actions. macOS does not expose this tool. Present a compact floating panel above
-the native keyboard, retaining visible session content and reachable Send/Back
-actions. Drag its grabber to move within the keyboard-safe area, gently snapping
+actions. macOS does not expose this tool. Present a small floating text bubble
+above the native keyboard, retaining visible session content. Expose a grabber,
+Close and a circular arrow Send action; do not expose a title/presentation toolbar,
+Expand/Collapse, Dock/Undock or a grabber-tap expansion action. Close retains the
+unsent draft so the user can choose a remote destination; clearing selected text
+uses the native editor. Drag within the keyboard-safe area, gently snapping
 within 28 points of an edge on release. Relative placement follows keyboard,
 orientation and size changes and stays clamped within safe bounds. Track undocked
 (including floating and detached split) keyboards. Prefer space above the keyboard;
-when that cannot hold the compact editor, choose readable space below or beside it.
-Use a safe-area tracking constraint near the top edge to keep actions visible. **Expand**
-fills the available editor area; **Collapse** restores compact placement. **Dock**
-attaches it near the keyboard in the selected free area with compact/expanded height snaps; **Undock**
-restores floating placement. Switching presentations and resizing retain editor
-identity, draft, selection and keyboard focus. Editor scrolling never moves or
-resizes the panel. A completed docked swipe dismissal retains the draft; a
-canceled gesture restores placement without changing the draft. Sending blocks
-movement, presentation switches and dismissal. Short landscape layouts use a
-compact control row and retain a scrollable editor above the keyboard; keep
-destination and validation explanations accessible. Narrow compact panels group
-Discard, Expand and Dock in Composer actions while Back, error details and Send
-remain directly reachable. VoiceOver offers movement
-actions on the grabber. The session stays visible behind the composer; use Back
-to Session to focus a remote destination. A native multiline
-editor holds an ephemeral, device-local draft bound to its originating viewer or
-PTY generation. **Back to Session** retains the unsent draft so the user can focus
-the remote destination; **Discard** clears it. Background, app lock, connection
-replacement and session closure clear the draft and dismiss its editor. Neither
-the draft nor its content enters storage, sync, diagnostics or ActivityKit.
+when that cannot hold the editor, choose readable space below or beside it.
+Use a safe-area tracking constraint near the top edge. Retain one mounted native
+editor, draft, selection and keyboard focus through movement and layout changes.
+Editor scrolling never moves the bubble. Canceled gestures restore placement;
+sending blocks movement and dismissal. Keep 44-point Close/Send hit regions,
+readable scrolling text and accessible destination context/validation in narrow,
+short landscape and Dynamic Type layouts. Conditional error details remain
+reachable. VoiceOver offers movement actions on the grabber. Background, app lock,
+connection replacement and session closure clear the ephemeral viewer/PTY-bound
+draft and dismiss its editor. Neither draft nor content enters storage, sync,
+diagnostics or ActivityKit.
 
 The only delivery action is **Send Text**. It never appends Return. Clipboard
 reads require an explicit native Paste action. Preserve spaces and trailing line
@@ -536,8 +530,11 @@ visible presentation when a valid grace reuse is pending, without granting input
 or credential access until active. A successful current authentication MUST wait
 for current active admission before revealing the main interface, granting access,
 hiding the cover and publishing unlock together on the main actor. While success
-awaits activation, keep an opaque quiet transition with no lock/retry controls and
-no second authentication request. Recheck admission from both authentication result
+awaits activation, retain the same opaque Unlock card. Its button says Unlocking
+during authentication and Opening while successful admission awaits activation;
+disable it throughout either state. Do not show a separate branded transition
+screen or start a second request. Enable Unlock only for an explicit retry with
+current foreground and protected-data availability. Recheck admission from both authentication result
 and activation: an already-active success MUST NOT wait for a new notification.
 A completed failed or canceled attempt stays locked for explicit retry; transient
 activation cannot automatically repeat it. Background/protected-data loss retires

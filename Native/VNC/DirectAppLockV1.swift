@@ -13,6 +13,7 @@ import UIKit
     private(set) var authenticating = false
     private(set) var allowed: Bool
     private(set) var foregroundActive: Bool
+    private(set) var protectedDataReady: Bool
     private(set) var graceSeconds: Int
     private(set) var message = "Unlock to access your Macs"
     var enabled: Bool { defaults.bool(forKey: Self.preferenceKey) }
@@ -21,6 +22,8 @@ import UIKit
     var contentVisible: Bool { canAccess || foregroundGracePending }
     var privacyCoverVisible: Bool { cover?.isHidden == false }
     var unlockTransitionVisible: Bool { authenticating || authenticationSucceeded }
+    var unlockButtonTitle: String { authenticating ? "Unlocking…" : authenticationSucceeded ? "Opening…" : "Unlock" }
+    var unlockButtonEnabled: Bool { enabled && !allowed && !unlockTransitionVisible && foregroundActive && protectedDataReady && protectedDataAvailable() }
     private let contextFactory: () -> LAContext
     private let defaults: UserDefaults
     private let now: () -> TimeInterval
@@ -49,7 +52,7 @@ import UIKit
             return Double(elapsed.seconds) + Double(elapsed.attoseconds) / 1e18
         }
         self.isActive = isActive; self.isBackground = isBackground; self.protectedDataAvailable = protectedDataAvailable
-        foregroundActive = isActive()
+        foregroundActive = isActive(); protectedDataReady = protectedDataAvailable()
         allowed = !defaults.bool(forKey: Self.preferenceKey)
         graceSeconds = defaults.integer(forKey: Self.gracePreferenceKey) == 30 ? 30 : 0
     }
@@ -125,6 +128,7 @@ import UIKit
         revokeAccess()
     }
     func protectedDataLost() {
+        protectedDataReady = false
         discardGrace(); guard enabled else { return }; revokeAccess()
     }
     private func revokeAccess() {
@@ -135,7 +139,7 @@ import UIKit
         NotificationCenter.default.post(name: Self.locked, object: nil)
     }
     func becameActive() {
-        foregroundActive = isActive()
+        foregroundActive = isActive(); protectedDataReady = protectedDataAvailable()
         guard foregroundActive, !authenticating else { return }
         if authenticationSucceeded {
             guard enabled, protectedDataAvailable(), !isBackground() else { revokeAccess(); return }
@@ -202,22 +206,24 @@ private struct DirectUnlockCover: View {
     var body: some View {
         ZStack {
             Color(uiColor: .systemBackground).ignoresSafeArea()
-            if lock.unlockTransitionVisible {
-                Text("Mac Companion").font(.title2.weight(.medium))
-                    .foregroundStyle(.secondary).accessibilityIdentifier("app-unlock-transition")
-            } else {
-                GeometryReader { geometry in
-                    ScrollView {
-                        VStack(spacing: 18) {
-                            Image(systemName: "lock.fill").font(.largeTitle)
-                            Text("Mac Companion").font(.title2.bold()).fixedSize(horizontal: false, vertical: true)
-                            Text(lock.message).multilineTextAlignment(.center).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                            Button("Unlock", systemImage: DirectUnlockMethod.current().symbol) { lock.authenticate() }
-                                .buttonStyle(.glassProminent).accessibilityIdentifier("app-unlock")
-                        }.padding(32).frame(maxWidth: 340).glassEffect(.regular, in: .rect(cornerRadius: 28))
-                            .padding(16).frame(maxWidth: .infinity, minHeight: geometry.size.height)
-                    }.scrollBounceBehavior(.basedOnSize)
-                }
+            GeometryReader { geometry in
+                ScrollView {
+                    VStack(spacing: 18) {
+                        Image(systemName: "lock.fill").font(.largeTitle)
+                        Text("Mac Companion").font(.title2.bold()).fixedSize(horizontal: false, vertical: true)
+                        Text(lock.unlockTransitionVisible ? "Unlock to access your Macs" : lock.message)
+                            .multilineTextAlignment(.center).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                        Button { lock.authenticate() } label: {
+                            HStack {
+                                if lock.unlockTransitionVisible { ProgressView().accessibilityHidden(true) }
+                                else { Image(systemName: DirectUnlockMethod.current().symbol) }
+                                Text(lock.unlockButtonTitle)
+                            }
+                        }.buttonStyle(.glassProminent).disabled(!lock.unlockButtonEnabled)
+                            .accessibilityLabel(lock.unlockButtonTitle).accessibilityIdentifier("app-unlock")
+                    }.padding(32).frame(maxWidth: 340).glassEffect(.regular, in: .rect(cornerRadius: 28))
+                        .padding(16).frame(maxWidth: .infinity, minHeight: geometry.size.height)
+                }.scrollBounceBehavior(.basedOnSize)
             }
         }.accessibilityIdentifier("app-privacy-cover")
     }

@@ -852,7 +852,14 @@
       "successfulInactiveAuthenticationShowsCover": true,
       "successfulInactiveAuthenticationGrantsAccess": false,
       "authenticationSuccessNeedsActiveAdmission": true,
-      "completedFailedAttemptRequiresExplicitRetry": true
+      "completedFailedAttemptRequiresExplicitRetry": true,
+      "authenticationPresentation": "persistentUnlockCard",
+      "evaluatingButtonTitle": "Unlocking…",
+      "pendingActiveButtonTitle": "Opening…",
+      "lockedButtonTitle": "Unlock",
+      "busyButtonEnabled": false,
+      "separateBrandedTransition": false,
+      "retryRequiresActiveAndProtectedData": true
     },
     "fullscreen": {
       "reconnect": false,
@@ -3243,7 +3250,9 @@
       "accessBeforeActive": false,
       "coverBeforeActive": true,
       "evaluationsAfterActive": 1,
-      "publishAfterActive": 1
+      "publishAfterActive": 1,
+      "unlockCardRetained": true,
+      "buttonEnabledBeforeAdmission": false
     },
     {
       "name": "activation-before-success",
@@ -3252,14 +3261,18 @@
       "accessBeforeResult": false,
       "coverBeforeResult": true,
       "evaluationsAfterResult": 1,
-      "publishAfterResult": 1
+      "publishAfterResult": 1,
+      "unlockCardRetained": true,
+      "buttonEnabledBeforeAdmission": false
     },
     {
       "name": "already-active-success-without-notification",
       "result": true,
       "requiresNewActivationEvent": false,
       "accessAfterResult": true,
-      "publishAfterResult": 1
+      "publishAfterResult": 1,
+      "unlockCardRetained": true,
+      "buttonEnabledBeforeAdmission": false
     },
     {
       "name": "cancel-before-activation",
@@ -3268,7 +3281,8 @@
       "accessAfterActive": false,
       "coverAfterActive": true,
       "evaluationsAfterActive": 1,
-      "publishAfterActive": 0
+      "publishAfterActive": 0,
+      "unlockCardRetained": true
     }
   ]
 }

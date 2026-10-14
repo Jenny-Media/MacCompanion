@@ -344,7 +344,10 @@ reuse. Transient inactivity does not show a lock cover. Actual background entry 
 the app snapshot; valid grace reuse restores presentation before active admission.
 Successful current Face ID authentication and current active state admit the main
 interface together with controls, credentials and unlocked publication. A success
-that arrives while inactive keeps a quiet opaque transition until activation;
+that arrives while inactive retains the same opaque Unlock card until activation;
+the button changes from Unlocking to Opening and stays disabled. There is no
+separate branded transition screen; Unlock becomes available for an explicit
+foreground retry after failure or cancellation;
 activation that arrives first waits for the result. Already-active success proceeds
 without another lifecycle event or guessed animation delay. A completed canceled
 or failed attempt requires explicit retry. Background/protected-data loss retires

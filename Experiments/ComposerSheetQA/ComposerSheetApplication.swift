@@ -18,6 +18,7 @@ final class ComposerSheetScene: UIResponder, UIWindowSceneDelegate {
 }
 final class ComposerSheetRoot: UIViewController {
     let composer = DirectTextComposer(macName: "Synthetic Mac", mode: "desktop")
+    private var sends = 0
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = .systemBlue
@@ -45,6 +46,9 @@ final class ComposerSheetRoot: UIViewController {
             draft.edit(String(repeating: "x", count: 257))
             return
         }
-        composer.present(from: self, available: { true }, send: { _, _ in })
+        composer.present(from: self, available: { true }, send: { [weak self] _, completion in
+            guard let self, ProcessInfo.processInfo.arguments.contains("--qa-delivery-result") else { return }
+            self.sends += 1; completion(self.sends == 1 ? "Synthetic delivery failure" : nil)
+        })
     }
 }
