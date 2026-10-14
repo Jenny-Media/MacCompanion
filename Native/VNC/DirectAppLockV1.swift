@@ -5,7 +5,7 @@ import SwiftUI
 import UIKit
 
 @MainActor @Observable final class DirectAppLockV1 {
-    static let shared = DirectAppLockV1()
+    static let shared = DirectAppLockV1(unlockTimings: DirectUnlockTimingsV1(persist: true))
     static let preferenceKey = "direct-client-require-device-unlock-v1"
     static let gracePreferenceKey = "direct-client-unlock-grace-seconds-v1"
     static let unlocked = Notification.Name("DirectClientUnlockedV1")
@@ -24,6 +24,8 @@ import UIKit
     var unlockTransitionVisible: Bool { authenticating || authenticationSucceeded }
     var unlockButtonTitle: String { authenticating ? "Unlocking…" : authenticationSucceeded ? "Opening…" : "Unlock" }
     var unlockButtonEnabled: Bool { enabled && !allowed && !unlockTransitionVisible && foregroundActive && protectedDataReady && protectedDataAvailable() }
+    @ObservationIgnored let unlockTimings: DirectUnlockTimingsV1
+    private(set) var unlockTimingToken: UUID?
     private let contextFactory: () -> LAContext
     private let defaults: UserDefaults
     private let now: () -> TimeInterval
@@ -41,11 +43,12 @@ import UIKit
     private var observers: [NSObjectProtocol] = []
     private var attempt = UUID()
     init(contextFactory: @escaping () -> LAContext = { LAContext() }, defaults: UserDefaults = .standard,
-         now: (() -> TimeInterval)? = nil,
+         now: (() -> TimeInterval)? = nil, unlockTimings: DirectUnlockTimingsV1? = nil,
          isActive: @escaping () -> Bool = { UIApplication.shared.applicationState == .active },
          isBackground: @escaping () -> Bool = { UIApplication.shared.applicationState == .background },
          protectedDataAvailable: @escaping () -> Bool = { UIApplication.shared.isProtectedDataAvailable }) {
         self.contextFactory = contextFactory; self.defaults = defaults
+        self.unlockTimings = unlockTimings ?? DirectUnlockTimingsV1()
         let origin = ContinuousClock.now
         self.now = now ?? {
             let elapsed = origin.duration(to: ContinuousClock.now).components
@@ -67,7 +70,7 @@ import UIKit
             }, center.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main) { [weak self] _ in
                 MainActor.assumeIsolated { self?.background() }
             }, center.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
-                MainActor.assumeIsolated { self?.becameActive() }
+                MainActor.assumeIsolated { self?.receivedActivationNotification() }
             }, center.addObserver(forName: UIApplication.protectedDataWillBecomeUnavailableNotification, object: nil, queue: .main) { [weak self] _ in
                 MainActor.assumeIsolated { self?.protectedDataLost() }
             }, center.addObserver(forName: UIApplication.protectedDataDidBecomeAvailableNotification, object: nil, queue: .main) { [weak self] _ in
@@ -90,6 +93,7 @@ import UIKit
                 message = "Set up an iPhone passcode before enabling app unlock."; return
             }
         }
+        retireUnlockTiming(.preferenceChanged)
         discardGrace(); defaults.set(value, forKey: Self.preferenceKey)
         attempt = UUID(); context?.invalidate(); context = nil; authenticating = false; unlockNeedsPublication = false
         authenticationSucceeded = false; authenticationAttempted = false
@@ -132,11 +136,25 @@ import UIKit
         discardGrace(); guard enabled else { return }; revokeAccess()
     }
     private func revokeAccess() {
+        retireUnlockTiming(.revoked)
         foregroundGracePending = false
         attempt = UUID(); context?.invalidate(); context = nil; authenticating = false
         unlockNeedsPublication = false; authenticationSucceeded = false; authenticationAttempted = false
         allowed = false; message = "Unlock to access your Macs"; showCover()
         NotificationCenter.default.post(name: Self.locked, object: nil)
+    }
+    func receivedActivationNotification() {
+        unlockTimings.mark(.activationNotification, token: unlockTimingToken)
+        becameActive()
+    }
+    private func retireUnlockTiming(_ outcome: DirectUnlockTimingsV1.Outcome) {
+        unlockTimings.finish(outcome, token: unlockTimingToken); unlockTimingToken = nil
+    }
+    func recordUnlockDisplayTick(token: UUID, phase: DirectUnlockTimingsV1.Phase) {
+        guard unlockTimingToken == token, canInteract, contentVisible, !privacyCoverVisible else { return }
+        guard [.libraryDisplayTick, .desktopDisplayTick, .terminalDisplayTick].contains(phase) else { return }
+        unlockTimings.mark(phase, token: token); unlockTimings.finish(.success, token: token)
+        unlockTimingToken = nil
     }
     func becameActive() {
         foregroundActive = isActive(); protectedDataReady = protectedDataAvailable()
@@ -159,27 +177,41 @@ import UIKit
         }
     }
     private func publishUnlock() {
+        unlockTimings.mark(.activeAdmission, token: unlockTimingToken)
         unlockNeedsPublication = false; hideCover()
+        unlockTimings.mark(.coverRemoved, token: unlockTimingToken)
+        unlockTimings.mark(.unlockNotification, token: unlockTimingToken)
         NotificationCenter.default.post(name: Self.unlocked, object: nil)
+        unlockTimings.mark(.unlockObserversReturned, token: unlockTimingToken)
     }
     func authenticate() {
         guard enabled, !allowed, !authenticating, !authenticationSucceeded, isActive(), protectedDataAvailable() else { return }
         discardGrace()
         showCover(); authenticationAttempted = true
         let id = UUID(); attempt = id
+        unlockTimingToken = unlockTimings.begin(active: isActive())
+        let timingToken = unlockTimingToken, callbackClock = unlockTimings.callbackClock
         let context = contextFactory(); self.context = context
         var error: NSError?
         guard context.canEvaluatePolicy(.deviceOwnerAuthentication, error: &error) else {
+            retireUnlockTiming(.unavailable)
             message = "Set up a device passcode in iPhone Settings, then try again."; return
         }
         authenticating = true; message = "Authenticating…"
+        unlockTimings.mark(.evaluationIssued, token: timingToken)
         context.evaluatePolicy(.deviceOwnerAuthentication, localizedReason: "Unlock Mac Companion to access your saved Macs") { [weak self] success, _ in
+            let callbackInstant = callbackClock()
             Task { @MainActor in
                 guard let self, self.attempt == id else { return }
+                self.unlockTimings.mark(.authenticationCallback, token: timingToken, at: callbackInstant)
+                self.unlockTimings.mark(.authenticationHandled, token: timingToken)
                 // Consume this result once; a duplicate or retired callback
                 // cannot replace a newer attempt or reopen a revoked transition.
                 self.attempt = UUID(); self.context = nil; self.authenticating = false
-                guard success, self.protectedDataAvailable(), !self.isBackground() else { self.message = "App locked. Tap Unlock to try again."; return }
+                guard success, self.protectedDataAvailable(), !self.isBackground() else {
+                    self.retireUnlockTiming(.failed)
+                    self.message = "App locked. Tap Unlock to try again."; return
+                }
                 self.authenticationSucceeded = true
                 // Result and activation may arrive in either order. Reuse the
                 // same admission path; already-active success needs no new event.

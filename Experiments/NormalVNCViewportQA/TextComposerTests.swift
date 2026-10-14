@@ -23,6 +23,45 @@ import UIKit
 }
 
 @MainActor final class TextComposerTests: XCTestCase {
+
+    func testInlineFooterNativeEditorGrowsAndUsesFullWidthWithSafeActions() async throws {
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let previous = scene.windows.first(where: \.isKeyWindow), window = UIWindow(windowScene: scene)
+        let root = UIViewController(); window.rootViewController = root; window.makeKeyAndVisible()
+        defer { window.isHidden = true; window.rootViewController = nil; previous?.makeKeyAndVisible() }
+        let draft = DirectTextComposerDraft(macName: "Synthetic", mode: .desktop)
+        draft.configure(available: { true }, send: { _, _ in XCTFail("Layout must not send") })
+        let panel = DirectTextComposerPanel(draft: draft)
+        root.addChild(panel); root.view.addSubview(panel.view); panel.didMove(toParent: root)
+        panel.view.frame = root.view.bounds; panel.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        panel.simulatedKeyboardFrame = .zero
+        try await Task.sleep(for: .milliseconds(300)); panel.view.endEditing(true)
+        func descendants(_ view: UIView) -> [UIView] { [view] + view.subviews.flatMap(descendants) }
+        let editor = try XCTUnwrap(descendants(panel.view).compactMap { $0 as? UITextView }.first)
+        let grabber = try XCTUnwrap(descendants(panel.view).first { $0.accessibilityIdentifier == "compose-grabber" })
+        draft.edit("alpha"); try await Task.sleep(for: .milliseconds(80)); panel.view.layoutIfNeeded()
+        let shortHeight = panel.panelFrame.height
+        draft.edit("one\ntwo\nthree\nfour\nfive\nsix\nseven\neight")
+        try await Task.sleep(for: .milliseconds(100)); panel.view.layoutIfNeeded()
+        XCTAssertGreaterThan(panel.panelFrame.height, shortHeight)
+        XCTAssertLessThan(panel.panelFrame.height, 200)
+        editor.selectedRange = NSRange(location: 2, length: 3)
+        for hasIssue in [false, true, false] {
+            draft.issue = hasIssue ? "Synthetic delivery error" : nil
+            try await Task.sleep(for: .milliseconds(80)); panel.view.layoutIfNeeded()
+            let card = panel.panelFrame, close = panel.closeActionFrame, send = panel.deliveryActionFrame
+            let text = editor.convert(editor.bounds, to: panel.view), grip = grabber.convert(grabber.bounds, to: panel.view)
+            XCTAssertGreaterThanOrEqual(text.width, card.width - 24)
+            XCTAssertEqual(close.midY, send.midY, accuracy: 1); XCTAssertEqual(grip.midY, send.midY, accuracy: 1)
+            XCTAssertLessThan(close.minX, grip.minX); XCTAssertLessThan(grip.maxX, send.minX + 1)
+            XCTAssertFalse(text.intersects(close)); XCTAssertFalse(text.intersects(send)); XCTAssertFalse(text.intersects(grip))
+            XCTAssertFalse(close.intersects(grip)); XCTAssertFalse(grip.intersects(send))
+            XCTAssertGreaterThanOrEqual(grip.height, 44); XCTAssertGreaterThanOrEqual(grip.width, 44)
+            XCTAssertEqual(editor.selectedRange, NSRange(location: 2, length: 3))
+            XCTAssertTrue(descendants(panel.view).contains { $0 === editor })
+        }
+    }
+
     func testSimulatedTabletKeyboardLayoutsRenderReadableEditorAndActions() async throws {
         let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
         let previous = scene.windows.first(where: \.isKeyWindow)

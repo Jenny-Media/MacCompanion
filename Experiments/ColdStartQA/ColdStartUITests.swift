@@ -9,6 +9,28 @@ import XCTest
         let row = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Connect to " + name + " using ")).firstMatch
         XCTAssertTrue(row.waitForExistence(timeout: 5)); row.tap()
     }
+
+    func testUnlockTimingSnapshotWaitsForAdmissionAndEligibleNativeDisplayTick() {
+        let app = launch(["--held-library", "--inactive-auth", "--manual-auth"]); defer { app.terminate() }
+        XCTAssertTrue(app.staticTexts["Authenticating; inactive"].waitForExistence(timeout: 8))
+        app.buttons["qa-finish-auth"].tap()
+        XCTAssertTrue(app.staticTexts["Authenticated; awaiting activation"].waitForExistence(timeout: 5))
+        XCTAssertEqual(app.staticTexts["qa-timing-status"].label, "Timing pending")
+        XCTAssertFalse(app.buttons["open-app-settings"].isHittable)
+        app.buttons["qa-activate"].tap()
+        let ready = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", "Timing ready"), object: app.staticTexts["qa-timing-status"])
+        XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 5), .completed)
+        let phases = app.staticTexts["qa-timing-phases"].label
+        for phase in ["authenticationCallback", "authenticationHandled", "activationNotification", "activeAdmission", "coverRemoved", "unlockObserversReturned", "libraryDisplayTick"] {
+            XCTAssertTrue(phases.contains(phase), phase)
+        }
+        XCTAssertTrue(app.staticTexts["Loading saved Macs…"].exists)
+        app.buttons["open-app-settings"].tap()
+        XCTAssertTrue(app.buttons["settings-appearance"].waitForExistence(timeout: 5))
+        app.buttons["Done"].firstMatch.tap(); app.buttons["qa-load-macs"].tap()
+        XCTAssertTrue(app.buttons["Manage Free Mac"].waitForExistence(timeout: 5))
+    }
+
     func testInactiveAuthenticationThenActivationMakesActualSettingsAndAddControlsWork() {
         let app = launch(["--inactive-auth", "--manual-auth", "--empty-library"]); defer { app.terminate() }
         XCTAssertTrue(app.staticTexts["Authenticating; inactive"].waitForExistence(timeout: 8))

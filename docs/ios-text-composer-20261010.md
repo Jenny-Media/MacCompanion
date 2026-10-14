@@ -217,3 +217,26 @@ the single accent action. The native material keeps accessibility adaptations,
 with a system-material fallback where Liquid Glass is unavailable. No additional
 glass layers or controls are added. Drag, snapping, keyboard/selection retention,
 confirmation, delivery and background/lock retirement are unchanged.
+
+## Inline footer and unlock phase diagnostics (2026-10-14)
+
+The bubble uses one full-width multiline editor with Close, a draggable grip,
+conditional error details and Send inside its bottom edge. Its compact height
+grows with text up to six preferred body lines, then scrolls; keyboard-safe space
+and accessibility sizes still bound it. The same native editor stays mounted.
+Close keeps the draft, while multiline/tab confirmation and lifecycle retirement
+keep their existing behavior. No extra toolbar or presentation controls return.
+
+Development unlock diagnostics distinguish the raw LocalAuthentication callback
+from its MainActor handling, the actual UIKit activation notification, admission,
+cover removal, synchronous unlock observer return and the first eligible native
+display tick. That tick is a refresh opportunity, not proof of pixel delivery or
+system Face ID animation completion. The initial library wait is recorded separately
+and can overlap authentication. Every offset uses one continuous monotonic origin.
+Only fixed phase/outcome names, booleans and numeric offsets are recorded, bounded
+to eight attempts and 16 events per attempt; retired/duplicate callbacks cannot
+complete a replacement trace. Development snapshots are encoded and atomically
+written on an ordered utility queue to Caches/UnlockPhaseTimings-v1.json. Nothing
+is uploaded. Release builds disable the recorder and do not mount a display probe.
+The diagnostics do not add delays or change authentication, grace, cover or input
+admission. They establish evidence for a later measured latency change.

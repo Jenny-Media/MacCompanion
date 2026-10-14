@@ -267,6 +267,11 @@
       "nestedGlass": false,
       "systemAccessibilityAdaptations": true,
       "fallback": "systemMaterial"
-    }
+    },
+    "controlLayout": "inlineFooter",
+    "editorUsesFullWidth": true,
+    "compactHeight": "content-dependent up to six preferred body lines; keyboard-safe clamped",
+    "footerControlsDoNotOverlapEditor": true,
+    "minimumGrabberHitPoints": 44
   }
 }

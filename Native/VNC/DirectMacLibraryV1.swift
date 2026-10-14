@@ -445,11 +445,13 @@ struct DirectMacLibraryRootV1: View {
             .sheet(isPresented: $paywall) { DirectProView() }
             .task {
                 pro.start()
+                appLock.unlockTimings.libraryWaitStarted()
                 await library.loadInitial(onLoad: {
                     // Bind cloud change tracking in this same actor turn, before
                     // the newly loaded list can accept a user edit or deletion.
                     attachLoadedServices()
                 })
+                appLock.unlockTimings.libraryWaitFinished(readable: library.readable)
                 guard !Task.isCancelled else { return }
                 attachLoadedServices()
             }
@@ -495,13 +497,23 @@ struct DirectMacLibraryRootV1: View {
                 switch selection.connection {
                 case .terminal:
                     DirectTerminalView(mac: selection.mac, macLibrary: library, autoConnect: selection.autoConnect, exit: { session = nil })
+                        #if DEBUG
+                        .background(DirectUnlockFrameProbe(lock: appLock, token: appLock.unlockTimingToken, phase: .terminalDisplayTick))
+                        #endif
                 case .desktop, .trackpad:
                     DirectDesktopSessionView(mac: selection.mac, inputOnly: selection.connection.inputOnly,
                                              connectionMacNames: library.macs.map(\.name), showMacs: { session = nil })
                         .ignoresSafeArea(.container, edges: .bottom)
+                        #if DEBUG
+                        .background(DirectUnlockFrameProbe(lock: appLock, token: appLock.unlockTimingToken, phase: .desktopDisplayTick))
+                        #endif
                 }
             }
         }
+        #if DEBUG
+        .background(DirectUnlockFrameProbe(lock: appLock, token: appLock.unlockTimingToken, phase: .libraryDisplayTick,
+            enabled: session == nil && !settings && editor == nil && files == nil && !setup && !paywall))
+        #endif
         .opacity(appLock.contentVisible ? 1 : 0)
         .allowsHitTesting(appLock.canInteract)
         .accessibilityHidden(!appLock.canInteract)

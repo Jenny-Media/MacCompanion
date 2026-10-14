@@ -105,7 +105,7 @@ final class ColdStartLibraryReadGate: @unchecked Sendable {
         }
         stage = "Authenticated; awaiting activation"
     }
-    func activate() { activity.active = true; lock.becameActive(); stage = "Active; purchases pending" }
+    func activate() { activity.active = true; lock.receivedActivationNotification(); stage = "Active; purchases pending" }
     func background() { activity.active = false; lock.background(); stage = "Background" }
 }
 final class ColdStartControlWindow: UIWindow {
@@ -120,6 +120,11 @@ struct ColdStartControls: View {
             Spacer()
             VStack(spacing: 8) {
                 Text(model.stage).accessibilityIdentifier("qa-startup-stage")
+                Text(model.lock.unlockTimingToken == nil && model.lock.unlockTimings.records.last?.outcome == .success ? "Timing ready" : "Timing pending")
+                    .font(.caption).accessibilityIdentifier("qa-timing-status")
+                Text(model.lock.unlockTimings.records.last?.events.map { $0.phase.rawValue }.joined(separator: ",") ?? "")
+                    .font(.caption2).lineLimit(1).accessibilityIdentifier("qa-timing-phases")
+
                 HStack {
                     Button("Load") { model.libraryRead.release() }.accessibilityIdentifier("qa-load-macs")
                     Button("Finish Auth") { Task { await model.completeAuthentication() } }.accessibilityIdentifier("qa-finish-auth")

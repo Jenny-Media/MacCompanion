@@ -28,6 +28,31 @@ import XCTest
         let button = app.buttons["compose-grabber"]
         return button.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
     }
+
+    func testInlineFooterGrowsMultilineWithoutTextControlOverlapAndRetainsDraft() async {
+        let app = open(); defer { app.terminate() }
+        let editor = app.textViews["compose-text"], panel = app.otherElements["compose-panel"].firstMatch
+        editor.typeText("one"); await waitForKeyboardAndPanel(app)
+        let shortHeight = panel.frame.height
+        app.typeText("\ntwo\nthree\nfour\nfive")
+        await waitForKeyboardAndPanel(app)
+        XCTAssertGreaterThan(panel.frame.height, shortHeight)
+        let close = app.buttons["compose-back"], grip = app.buttons["compose-grabber"], send = app.buttons["compose-send"]
+        XCTAssertEqual(close.frame.midY, send.frame.midY, accuracy: 2)
+        XCTAssertEqual(grip.frame.midY, send.frame.midY, accuracy: 2)
+        XCTAssertGreaterThanOrEqual(editor.frame.width, panel.frame.width - 24)
+        for control in [close, grip, send] {
+            XCTAssertTrue(control.isHittable)
+            XCTAssertGreaterThanOrEqual(control.frame.width, 44); XCTAssertGreaterThanOrEqual(control.frame.height, 44)
+            XCTAssertFalse(editor.frame.intersects(control.frame))
+        }
+        send.tap(); XCTAssertTrue(app.alerts["Send line breaks or tabs?"].waitForExistence(timeout: 5))
+        app.alerts.buttons["Cancel"].tap()
+        XCTAssertEqual(editor.value as? String, "one\ntwo\nthree\nfour\nfive")
+        close.tap(); app.buttons["qa-compose"].tap()
+        XCTAssertTrue(editor.waitForExistence(timeout: 5)); XCTAssertEqual(editor.value as? String, "one\ntwo\nthree\nfour\nfive")
+    }
+
     func testTextBubbleDragSnapAndGrabberTapKeepKeyboardAndDraftMounted() async {
         let app = open(); defer { app.terminate() }
         let editor = app.textViews["compose-text"]; editor.typeText("alpha")

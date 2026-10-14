@@ -1,3 +1,4 @@
+import Darwin
 import ActivityKit
 import LocalAuthentication
 import SwiftUI
@@ -55,6 +56,164 @@ private final class ContinuitySession: CompanionVNCSession {
 }
 
 @MainActor final class IOSContinuityTests: XCTestCase {
+
+    func testUnlockPhaseTimingsSeparateRawCallbackFromActorHandling() async throws {
+        let context = ContinuityAuthentication(), timings = DirectUnlockTimingsV1()
+        let lock = DirectAppLockV1(contextFactory: { context }, defaults: isolatedDefaults(), unlockTimings: timings,
+                                   isActive: { true }, protectedDataAvailable: { true })
+        defer { lock.setEnabled(false) }
+        lock.setEnabled(true)
+        let reply = try XCTUnwrap(context.reply), signaled = DispatchSemaphore(value: 0)
+        DispatchQueue.global().async { reply(true, nil); signaled.signal() }
+        XCTAssertEqual(signaled.wait(timeout: .now() + 1), .success)
+        // A deliberate test-only actor stall must appear after the raw callback.
+        usleep(80_000)
+        try await eventually { lock.canInteract }
+        let events = try XCTUnwrap(timings.records.last).events
+        let raw = try XCTUnwrap(events.first { $0.phase == .authenticationCallback }).milliseconds
+        let handled = try XCTUnwrap(events.first { $0.phase == .authenticationHandled }).milliseconds
+        XCTAssertGreaterThanOrEqual(handled - raw, 70)
+        XCTAssertFalse(events.contains { $0.phase == .activationNotification }, "Reconciliation is not an activation notification")
+        XCTAssertFalse(lock.privacyCoverVisible)
+        XCTAssertEqual(events.filter { $0.phase == .activeAdmission }.count, 1)
+    }
+    func testUnlockPhaseTimingsKeepActivationAndAuthenticationOrderDistinct() async throws {
+        for resultFirst in [false, true] {
+            var active = true
+            let context = ContinuityAuthentication(), timings = DirectUnlockTimingsV1()
+            let lock = DirectAppLockV1(contextFactory: { context }, defaults: isolatedDefaults(), unlockTimings: timings,
+                                       isActive: { active }, protectedDataAvailable: { true })
+            lock.setEnabled(true); active = false; lock.becameInactive()
+            if resultFirst {
+                context.reply?(true, nil); try await eventually { !lock.authenticating }
+                XCTAssertEqual(lock.unlockButtonTitle, "Opening…"); XCTAssertTrue(lock.privacyCoverVisible)
+                XCTAssertFalse(lock.canInteract)
+                active = true; lock.receivedActivationNotification()
+            } else {
+                active = true; lock.receivedActivationNotification()
+                XCTAssertTrue(lock.privacyCoverVisible); XCTAssertFalse(lock.canInteract)
+                context.reply?(true, nil); try await eventually { lock.canInteract }
+            }
+            let events = try XCTUnwrap(timings.records.last).events
+            let result = try XCTUnwrap(events.firstIndex { $0.phase == .authenticationHandled })
+            let activation = try XCTUnwrap(events.firstIndex { $0.phase == .activationNotification })
+            XCTAssertEqual(result < activation, resultFirst)
+            XCTAssertEqual(events.filter { $0.phase == .activeAdmission }.count, 1)
+            XCTAssertFalse(lock.privacyCoverVisible); XCTAssertTrue(lock.canInteract)
+            lock.setEnabled(false)
+        }
+    }
+    func testUnlockPhaseTimingsRetireOldCallbacksAndFrameProbes() async throws {
+        var active = true
+        let context = ContinuityAuthentication(), timings = DirectUnlockTimingsV1()
+        let lock = DirectAppLockV1(contextFactory: { context }, defaults: isolatedDefaults(), unlockTimings: timings,
+                                   isActive: { active }, protectedDataAvailable: { true })
+        defer { lock.setEnabled(false) }
+        lock.setEnabled(true)
+        let oldReply = try XCTUnwrap(context.reply), oldToken = try XCTUnwrap(lock.unlockTimingToken)
+        active = false; lock.background()
+        XCTAssertEqual(timings.records.first?.outcome, .revoked)
+        active = true; lock.becameActive()
+        let currentReply = try XCTUnwrap(context.reply), currentToken = try XCTUnwrap(lock.unlockTimingToken)
+        XCTAssertNotEqual(oldToken, currentToken)
+        oldReply(true, nil); try await Task.sleep(for: .milliseconds(25))
+        lock.recordUnlockDisplayTick(token: oldToken, phase: .libraryDisplayTick)
+        XCTAssertFalse(lock.canInteract); XCTAssertEqual(timings.records.count, 2)
+        XCTAssertFalse(try XCTUnwrap(timings.records.last).events.contains { $0.phase == .authenticationCallback })
+        currentReply(true, nil); try await eventually { lock.canInteract }
+        let eventCount = try XCTUnwrap(timings.records.last).events.count
+        currentReply(true, nil); try await Task.sleep(for: .milliseconds(25))
+        XCTAssertEqual(timings.records.last?.events.count, eventCount)
+        lock.protectedDataLost()
+        lock.recordUnlockDisplayTick(token: currentToken, phase: .libraryDisplayTick)
+        XCTAssertEqual(timings.records.last?.outcome, .revoked)
+        XCTAssertFalse(try XCTUnwrap(timings.records.last).events.contains { $0.phase == .libraryDisplayTick })
+        XCTAssertNil(lock.unlockTimingToken)
+    }
+    func testUnlockTimingDisplayProbeRecordsOneRealEligibleTick() async throws {
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let previous = scene.windows.first(where: \.isKeyWindow), window = UIWindow(windowScene: scene)
+        let root = UIViewController(); window.rootViewController = root; window.makeKeyAndVisible()
+        let context = ContinuityAuthentication(), timings = DirectUnlockTimingsV1()
+        var active = true
+        let lock = DirectAppLockV1(contextFactory: { context }, defaults: isolatedDefaults(), unlockTimings: timings,
+                                   isActive: { active }, protectedDataAvailable: { true })
+        let probe = DirectUnlockFrameProbeView(frame: root.view.bounds)
+        root.view.addSubview(probe); probe.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        defer { probe.stop(); lock.setEnabled(false); window.isHidden = true; window.rootViewController = nil; previous?.makeKeyAndVisible() }
+        lock.setEnabled(true)
+        let token = try XCTUnwrap(lock.unlockTimingToken)
+        probe.configure(lock: lock, token: token, phase: .libraryDisplayTick, enabled: true)
+        XCTAssertFalse(probe.sampling)
+        active = false; lock.becameInactive(); context.reply?(true, nil)
+        try await eventually { !lock.authenticating }
+        probe.configure(lock: lock, token: token, phase: .libraryDisplayTick, enabled: true)
+        XCTAssertFalse(probe.sampling); XCTAssertTrue(lock.privacyCoverVisible)
+        active = true; lock.receivedActivationNotification()
+        probe.configure(lock: lock, token: token, phase: .libraryDisplayTick, enabled: true)
+        root.view.layoutIfNeeded()
+        try await eventually { timings.records.last?.outcome == .success }
+        XCTAssertNil(lock.unlockTimingToken); XCTAssertFalse(probe.sampling)
+        probe.configure(lock: lock, token: token, phase: .libraryDisplayTick, enabled: true)
+        try await Task.sleep(for: .milliseconds(30))
+        XCTAssertEqual(timings.records.last?.events.filter { $0.phase == .libraryDisplayTick }.count, 1)
+        probe.removeFromSuperview(); XCTAssertFalse(probe.sampling)
+    }
+    func testUnlockTimingWritesOrderedBoundedSnapshotOffAdmissionPath() async throws {
+        let url = URL.temporaryDirectory.appending(path: "synthetic-unlock-timing-" + UUID().uuidString + ".json")
+        let disabledURL = URL.temporaryDirectory.appending(path: "synthetic-disabled-timing-" + UUID().uuidString + ".json")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let timings = DirectUnlockTimingsV1(persist: true, storageURL: url)
+        timings.libraryWaitStarted(); timings.libraryWaitFinished(readable: true)
+        for _ in 0..<12 { _ = timings.begin(active: true) }
+        timings.finish(.success)
+        await timings.waitForWrites()
+        let data = try Data(contentsOf: url)
+        let snapshot = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let records = try XCTUnwrap(snapshot["records"] as? [[String: Any]])
+        XCTAssertEqual(records.count, 8)
+        XCTAssertEqual(records.compactMap { $0["sequence"] as? Int }, Array(5...12))
+        XCTAssertEqual(records.last?["outcome"] as? String, "success")
+        let disabled = DirectUnlockTimingsV1(enabled: false, persist: true, storageURL: disabledURL)
+        XCTAssertNil(disabled.begin(active: true)); disabled.libraryWaitStarted(); disabled.libraryWaitFinished(readable: true)
+        await disabled.waitForWrites()
+        XCTAssertFalse(FileManager.default.fileExists(atPath: disabledURL.path))
+    }
+    func testUnlockTimingSnapshotContainsOnlyBoundedContentFreePhases() throws {
+        let timings = DirectUnlockTimingsV1()
+        timings.libraryWaitStarted(); timings.libraryWaitFinished(readable: true)
+        for _ in 0..<12 {
+            let token = try XCTUnwrap(timings.begin(active: true))
+            for phase in [DirectUnlockTimingsV1.Phase.evaluationIssued, .authenticationCallback, .authenticationHandled] {
+                timings.mark(phase, token: token); timings.mark(phase, token: token)
+            }
+        }
+        timings.finish(.success)
+        XCTAssertEqual(timings.records.count, 8)
+        XCTAssertEqual(timings.records.map(\.sequence), Array(5...12))
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(timings.snapshot)) as? [String: Any])
+        XCTAssertEqual(Set(object.keys), ["schema", "clock", "frameMeaning", "library", "records"])
+        let records = try XCTUnwrap(object["records"] as? [[String: Any]])
+        for record in records {
+            XCTAssertEqual(Set(record.keys), ["sequence", "activeAtRequest", "libraryAtRequest", "outcome", "events"])
+            let events = try XCTUnwrap(record["events"] as? [[String: Any]])
+            XCTAssertLessThanOrEqual(events.count, 16)
+            XCTAssertEqual(Set(events.compactMap { $0["phase"] as? String }).count, events.count)
+            for event in events {
+                XCTAssertEqual(Set(event.keys), ["phase", "milliseconds"])
+                XCTAssertNotNil(event["milliseconds"] as? Double)
+            }
+        }
+        let disabled = DirectUnlockTimingsV1(enabled: false)
+        XCTAssertNil(disabled.begin(active: true)); disabled.libraryWaitStarted()
+        XCTAssertTrue(disabled.snapshot.records.isEmpty); XCTAssertTrue(disabled.snapshot.library.isEmpty)
+        let policy = try XCTUnwrap(try fixture()["clientAdditions"] as? [String: Any])
+        let appLock = try XCTUnwrap(policy["appLock"] as? [String: Any])
+        let diagnostic = try XCTUnwrap(appLock["developmentTimings"] as? [String: Any])
+        XCTAssertEqual(diagnostic["maximumAttempts"] as? Int, 8)
+        XCTAssertEqual(diagnostic["changesAdmission"] as? Bool, false)
+    }
+
     private enum WaitFailure: Error { case conditionNotReached }
     private func isolatedDefaults() -> UserDefaults { UserDefaults(suiteName: "continuity-qa-" + UUID().uuidString)! }
     private func fixture() throws -> [String: Any] {

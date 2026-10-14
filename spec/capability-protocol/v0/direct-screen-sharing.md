@@ -389,8 +389,12 @@ Desktop, Trackpad & Keyboard and Terminal offer a free **Compose Text** session
 Quick Action (also available under Keyboard & Input). Existing untouched default
 profiles gain this action; preserve all customized profiles and their disabled
 actions. macOS does not expose this tool. Present a small floating text bubble
-above the native keyboard, retaining visible session content. Expose a grabber,
-Close and a circular arrow Send action; do not expose a title/presentation toolbar,
+above the native keyboard, retaining visible session content. Use one multiline
+input surface with a full-width editor and an inline bottom row containing Close,
+a drag grip and circular arrow Send. Grow the compact bubble with text up to six
+preferred body lines, then scroll within the same editor; clamp to keyboard-safe
+space and retain readable text at accessibility sizes. Conditional error details
+share the footer without overlapping the drag grip or other actions; do not expose a title/presentation toolbar,
 Expand/Collapse, Dock/Undock or a grabber-tap expansion action. Close retains the
 unsent draft so the user can choose a remote destination; clearing selected text
 uses the native editor. Drag within the keyboard-safe area, gently snapping
@@ -546,7 +550,15 @@ A completed failed or canceled attempt stays locked for explicit retry; transien
 activation cannot automatically repeat it. Background/protected-data loss retires
 pending success and rejects late replies. UIKit activation is the public event
 readiness boundary, not a guarantee of Face ID animation completion; no fixed
-animation-duration delay or private system-UI inspection is permitted.
+animation-duration delay or private system-UI inspection is permitted. Development
+phase diagnostics may record bounded fixed phase/outcome names and monotonic numeric
+offsets for the raw authentication callback, actor handling, actual activation
+notification, admission/cover removal, synchronous observer return, initial library
+wait and the first eligible native display tick. The display tick is explicitly a
+frame-opportunity proxy, never proof of pixel delivery. Retire diagnostic attempts
+independently of access; no diagnostic may grant admission or change its timing.
+Do not record credentials, user/host identifiers, errors, screen or input content;
+do not upload these records. Release builds do not persist or probe them.
 The library interaction/accessibility gate MUST observe application activation
 directly, including when authentication succeeds before activation without a new
 scene-phase change. Losing interaction retires pending local presentations.

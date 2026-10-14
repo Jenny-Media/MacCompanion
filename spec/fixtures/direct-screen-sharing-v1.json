@@ -865,7 +865,20 @@
       "lockedButtonTitle": "Unlock",
       "busyButtonEnabled": false,
       "separateBrandedTransition": false,
-      "retryRequiresActiveAndProtectedData": true
+      "retryRequiresActiveAndProtectedData": true,
+      "developmentTimings": {
+        "content": "fixed phases/outcomes and monotonic numeric offsets only",
+        "rawCallbackSeparateFromMainActor": true,
+        "actualActivationNotificationSeparateFromReconciliation": true,
+        "firstFrame": "eligible native display tick proxy",
+        "maximumAttempts": 8,
+        "maximumEventsPerAttempt": 16,
+        "lateOrRetiredRepliesIgnored": true,
+        "changesAdmission": false,
+        "releasePersistence": false,
+        "releaseDisplayProbe": false,
+        "automaticUpload": false
+      }
     },
     "fullscreen": {
       "reconnect": false,

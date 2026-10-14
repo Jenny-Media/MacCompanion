@@ -801,7 +801,7 @@
       "path": "direct-screen-sharing-v1.json",
       "kind": "directScreenSharing.v1",
       "expect": "valid",
-      "canonicalSHA256": "72f9b7d803d7886890e421c80527052c86dc2a7248fa1370218be7ea0318f723"
+      "canonicalSHA256": "47914b2c42d99cb46a385c0c7e8fa00da4c55854576fc8fa0ae3a247e13b423d"
     },
     {
       "path": "native-macos-client-v1.json",
@@ -825,7 +825,7 @@
       "path": "ios-text-composer-v1.json",
       "kind": "client.iosTextComposer.v1",
       "expect": "valid",
-      "canonicalSHA256": "2a1c85c91d0f53cb143fb08b5a63eca7a97915476a53d910dfa5c352e5b1810c"
+      "canonicalSHA256": "3b1b5b91e54ca8b0613a0ab0040b0b9f52c0fd7ac1a00fdd4be4618587ecea2f"
     }
   ]
 }

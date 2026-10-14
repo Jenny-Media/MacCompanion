@@ -234,6 +234,12 @@ struct DirectComposerPlacement {
     private var safeBottom: NSLayoutConstraint?
     private var peek: NSLayoutConstraint?
     private var grabberHeight: NSLayoutConstraint?
+    private var grabberWidth: NSLayoutConstraint?
+    private var grabberCenter: NSLayoutConstraint?
+    private var measuredText: String?
+    private var measuredWidth: CGFloat = 0
+    private var measuredCategory: UIContentSizeCategory?
+    private var measuredEditorHeight: CGFloat = 0
     private var grabber: UIButton?
     private var closeButton: UIButton?
     private var editorHost: UIHostingController<AnyView>?
@@ -296,7 +302,7 @@ struct DirectComposerPlacement {
             UIAccessibilityCustomAction(name: "Move composer left", target: self, selector: #selector(moveLeft)),
             UIAccessibilityCustomAction(name: "Move composer right", target: self, selector: #selector(moveRight))]
         card.contentView.addSubview(grabber)
-        let indicator = UIView(); indicator.backgroundColor = .tertiaryLabel; indicator.layer.cornerRadius = 2.5
+        let indicator = UIView(); indicator.backgroundColor = .tertiaryLabel; indicator.layer.cornerRadius = 2
         indicator.isUserInteractionEnabled = false; indicator.translatesAutoresizingMaskIntoConstraints = false; grabber.addSubview(indicator)
         let pan = UIPanGestureRecognizer(target: self, action: #selector(resize(_:))); pan.delegate = self
         grabber.addGestureRecognizer(pan)
@@ -308,6 +314,8 @@ struct DirectComposerPlacement {
         host.view.translatesAutoresizingMaskIntoConstraints = false; host.view.backgroundColor = .clear
         host.view.accessibilityIdentifier = "compose-panel"
         let grabberHeight = grabber.heightAnchor.constraint(equalToConstant: 44); self.grabberHeight = grabberHeight
+        let grabberWidth = grabber.widthAnchor.constraint(equalTo: card.widthAnchor, constant: -100); self.grabberWidth = grabberWidth
+        let grabberCenter = grabber.centerXAnchor.constraint(equalTo: card.centerXAnchor); self.grabberCenter = grabberCenter
         let leading = card.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 8)
         let bottom = card.bottomAnchor.constraint(equalTo: view.keyboardLayoutGuide.topAnchor, constant: -8)
         let safeBottom = card.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -8)
@@ -318,28 +326,42 @@ struct DirectComposerPlacement {
         view.keyboardLayoutGuide.setConstraints([safeBottom], activeWhenNearEdge: .top)
         let close = UIButton(type: .system); closeButton = close
         close.setImage(UIImage(systemName: "xmark"), for: .normal); close.tintColor = .secondaryLabel
+        close.setPreferredSymbolConfiguration(UIImage.SymbolConfiguration(pointSize: 18, weight: .regular), forImageIn: .normal)
         close.accessibilityLabel = "Close and keep draft"; close.accessibilityIdentifier = "compose-back"
         close.addTarget(self, action: #selector(back), for: .touchUpInside)
         close.translatesAutoresizingMaskIntoConstraints = false; card.contentView.addSubview(close)
-        NSLayoutConstraint.activate([close.topAnchor.constraint(equalTo: card.topAnchor),
-            close.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -4),
+        NSLayoutConstraint.activate([close.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -6),
+            close.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 6),
             close.widthAnchor.constraint(equalToConstant: 44), close.heightAnchor.constraint(equalToConstant: 44)])
         let width = card.widthAnchor.constraint(equalToConstant: 284)
         let height = card.heightAnchor.constraint(equalToConstant: 324); height.priority = .defaultHigh
         let peek = card.topAnchor.constraint(greaterThanOrEqualTo: view.safeAreaLayoutGuide.topAnchor, constant: 48); self.peek = peek
         placementConstraints = [leading, width, height]
         NSLayoutConstraint.activate(placementConstraints + [peek,
-            grabber.topAnchor.constraint(equalTo: card.topAnchor), grabber.centerXAnchor.constraint(equalTo: card.centerXAnchor),
-            grabber.widthAnchor.constraint(equalTo: card.widthAnchor, constant: -104), grabberHeight,
-            indicator.widthAnchor.constraint(equalToConstant: 36), indicator.heightAnchor.constraint(equalToConstant: 5),
+            grabber.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -6), grabberCenter,
+            grabberWidth, grabberHeight,
+            indicator.widthAnchor.constraint(equalToConstant: 28), indicator.heightAnchor.constraint(equalToConstant: 4),
             indicator.centerXAnchor.constraint(equalTo: grabber.centerXAnchor), indicator.centerYAnchor.constraint(equalTo: grabber.centerYAnchor),
             host.view.leadingAnchor.constraint(equalTo: card.leadingAnchor), host.view.trailingAnchor.constraint(equalTo: card.trailingAnchor),
-            host.view.topAnchor.constraint(equalTo: grabber.bottomAnchor), host.view.bottomAnchor.constraint(equalTo: card.bottomAnchor)])
+            host.view.topAnchor.constraint(equalTo: card.topAnchor), host.view.bottomAnchor.constraint(equalTo: card.bottomAnchor)])
+        card.contentView.bringSubviewToFront(grabber)
+        card.contentView.bringSubviewToFront(close)
     }
     private var availableHeight: CGFloat { placementArea.height }
     private var compactHeight: CGFloat {
-        let line = UIFont.preferredFont(forTextStyle: .body, compatibleWith: traitCollection).lineHeight
-        return min(availableHeight, max(156, line * 2 + 60))
+        let preferred = UIFont.preferredFont(forTextStyle: .body, compatibleWith: traitCollection)
+        let font = draft.mode == .terminal ? UIFont.monospacedSystemFont(ofSize: preferred.pointSize, weight: .regular) : preferred
+        let width = max(1, min(traitCollection.preferredContentSizeCategory.isAccessibilityCategory ? 360 : 284, placementArea.width) - 30)
+        let category = traitCollection.preferredContentSizeCategory
+        if measuredText != draft.text || measuredWidth != width || measuredCategory != category {
+            // Trailing line breaks need one final insertion line. Nothing leaves this owner.
+            let text = draft.text.isEmpty ? " " : draft.text + "\u{200B}"
+            let bounds = (text as NSString).boundingRect(with: CGSize(width: width, height: font.lineHeight * 6),
+                options: [.usesLineFragmentOrigin, .usesFontLeading], attributes: [.font: font], context: nil)
+            measuredEditorHeight = min(font.lineHeight * 6, max(font.lineHeight * 2, ceil(bounds.height)))
+            measuredText = draft.text; measuredWidth = width; measuredCategory = category
+        }
+        return min(availableHeight, max(112, measuredEditorHeight + 64))
     }
     @objc private func back() { if usable { draft.close?() } }
     func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
@@ -402,6 +424,9 @@ struct DirectComposerPlacement {
         let compact = area.height < 228 || (area.width < 360 && traitCollection.preferredContentSizeCategory.isAccessibilityCategory)
         if draft.compactLayout != compact { draft.compactLayout = compact }
         grabberHeight?.constant = 44
+        let hasIssue = draft.issue != nil || (!draft.text.isEmpty && draft.validationIssue != nil)
+        grabberWidth?.constant = hasIssue ? -144 : -100
+        grabberCenter?.constant = hasIssue ? -22 : 0
         let accessibility = traitCollection.preferredContentSizeCategory.isAccessibilityCategory
         let expanded = draft.expanded
         let size = CGSize(width: min(draft.docked || expanded ? 640 : accessibility ? 360 : 284, area.width),
@@ -439,19 +464,21 @@ private struct DirectTextComposerView: View {
         return explanation + (reviewed.endsWithNewline ? " This draft ends with a line break." : "") + " Send Text adds no extra Return."
     }
     var body: some View {
-        HStack(alignment: .bottom, spacing: 8) {
+        VStack(spacing: 0) {
             TextEditor(text: Binding(get: { draft.text }, set: draft.edit))
                 .font(draft.mode == .terminal ? .body.monospaced() : .body)
                 .frame(minHeight: 36, maxHeight: .infinity)
                 .scrollContentBackground(.hidden)
-                .background(Color(uiColor: .secondarySystemBackground), in: .rect(cornerRadius: 12))
+                .padding(.horizontal, 4).padding(.top, 4)
                 .autocorrectionDisabled(draft.mode == .terminal).textInputAutocapitalization(draft.mode == .terminal ? .never : .sentences)
                 .focused($editing).disabled(draft.sending).scrollDismissesKeyboard(.never)
                 .accessibilityLabel("Text to Send · " + draft.macName + " · " + draft.mode.title)
                 .accessibilityHint(issue ?? "Nothing is sent until you choose Send Text")
                 .accessibilityIdentifier("compose-text").privacySensitive()
-            let actions = draft.compactLayout ? AnyLayout(HStackLayout(spacing: 4)) : AnyLayout(VStackLayout(spacing: 4))
-            actions {
+            HStack(spacing: 0) {
+                // Native Close occupies the first 44pt; its drag grip occupies this spacer.
+                Color.clear.frame(width: 44, height: 44).accessibilityHidden(true)
+                Spacer(minLength: 44)
                 if let issue {
                     Button { if isCurrent() { showIssue = true } } label: {
                         Image(systemName: "exclamationmark.circle").font(.system(size: 20))
@@ -470,16 +497,21 @@ private struct DirectTextComposerView: View {
                     Group {
                         if draft.sending { ProgressView().tint(.primary) }
                         else { Image(systemName: "arrow.up").font(.system(size: 20, weight: .semibold)) }
-                    }.frame(width: 44, height: 44)
+                    }.frame(width: 32, height: 32)
                         .foregroundStyle(draft.canSend ? Color.white : Color.secondary)
                         .background(draft.canSend ? Color.accentColor : Color.secondary.opacity(0.18), in: .circle)
-                        .contentShape(Rectangle())
+                        .frame(width: 44, height: 44).contentShape(Rectangle())
                 }.buttonStyle(.plain).disabled(!draft.canSend || !isCurrent())
                     .accessibilityLabel(draft.sending ? "Sending…" : "Send Text").accessibilityIdentifier("compose-send")
                     .onGeometryChange(for: CGRect.self) { $0.frame(in: .named("composer-panel")) } action: { reportSendBounds($0) }
             }
-        }.padding(8).coordinateSpace(name: "composer-panel")
+        }
+            .background(Color(uiColor: .secondarySystemBackground), in: .rect(cornerRadius: 16))
+            .padding(6)
+            .coordinateSpace(name: "composer-panel")
             .onAppear { editing = true }
+            .onChange(of: draft.text) { _, _ in requestLayout() }
+            .onChange(of: draft.issue) { _, _ in requestLayout() }
             .onChange(of: draft.sending) { _, _ in requestLayout() }
             .onChange(of: draft.active) { _, _ in requestLayout() }
             .alert("Send line breaks or tabs?", isPresented: Binding(get: { draft.confirmation != nil }, set: { if !$0 { draft.confirmation = nil } }), presenting: draft.confirmation) { reviewed in
