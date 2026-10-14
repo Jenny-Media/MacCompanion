@@ -215,5 +215,51 @@
       },
       "trackpadWithoutPixels": true
     }
+  },
+  "presentation": {
+    "quickAction": "composeText",
+    "modes": [
+      "desktop",
+      "trackpad",
+      "terminal"
+    ],
+    "untouchedDefaultsUpgrade": true,
+    "customizedProfilesPreserved": true,
+    "compactAboveKeyboard": true,
+    "sessionRemainsVisible": true,
+    "sendRemainsReachable": true,
+    "expandable": false,
+    "shortLandscape": "scrollable editor with reachable Close, Send and conditional error details above keyboard",
+    "grabberResizable": false,
+    "resizePreserves": [
+      "draft",
+      "selection",
+      "keyboardFocus",
+      "editorIdentity"
+    ],
+    "editorScrollingExpands": false,
+    "interactiveDismissal": "Close retains draft; canceled movement restores placement",
+    "sendingBlocksDismissal": true,
+    "snapPositions": [
+      "nearby edges in floating mode"
+    ],
+    "implementation": "public UIKit keyboard guide and pan recognizer; one native editor",
+    "defaultPresentation": "floating",
+    "draggable": true,
+    "edgeSnapDistancePoints": 28,
+    "docking": "no visible Dock or Undock control",
+    "floatingPlacement": "relative to keyboard-safe area; clamped on keyboard, orientation and size changes",
+    "sendingBlocksMovement": true,
+    "narrowCompactActions": "Close and circular Send remain direct; error details are conditional; no presentation menu",
+    "undockedKeyboardTracking": true,
+    "nearEdgeKeyboardFallback": "prefer above; readable below/beside region when needed; safe-area constraint near top edge",
+    "style": "textBubble",
+    "visibleControls": [
+      "grabber",
+      "closeKeepingDraft",
+      "circularArrowSend"
+    ],
+    "grabberTapExpands": false,
+    "minimumActionHitPoints": 44
   }
 }

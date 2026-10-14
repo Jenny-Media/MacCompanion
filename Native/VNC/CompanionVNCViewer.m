@@ -126,6 +126,9 @@
 @property CGFloat textReviewZoom;
 @property CGPoint textReviewCenter;
 @property BOOL textReviewViewportPending;
+@property BOOL diagnosticScheduled;
+@property NSUInteger diagnosticGeneration, diagnosticWrites;
+@property NSDictionary *diagnosticFlags;
 - (BOOL)composedTextAvailable;
 @end
 
@@ -246,8 +249,8 @@
     [arrow addLineToPoint:CGPointMake(7, 18)]; [arrow addLineToPoint:CGPointMake(12, 27)];
     [arrow addLineToPoint:CGPointMake(16, 25)]; [arrow addLineToPoint:CGPointMake(11, 16)];
     [arrow addLineToPoint:CGPointMake(20, 16)]; [arrow closePath];
-    self.fallbackCursor.path = arrow.CGPath; self.fallbackCursor.fillColor = UIColor.whiteColor.CGColor;
-    self.fallbackCursor.strokeColor = UIColor.blackColor.CGColor; self.fallbackCursor.lineWidth = 1.5;
+    self.fallbackCursor.path = arrow.CGPath; self.fallbackCursor.fillColor = UIColor.blackColor.CGColor;
+    self.fallbackCursor.strokeColor = UIColor.whiteColor.CGColor; self.fallbackCursor.lineWidth = 1.5;
     [self.cursorIndicator.layer addSublayer:self.fallbackCursor];
     self.click = [[CompanionVNCTapGesture alloc] initWithTarget:self action:@selector(clickAt:)];
     self.drag = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(dragAt:)];
@@ -478,9 +481,11 @@
     return self.inputOnly ? @"Connecting to Trackpad & Keyboard…" : @"Connecting to Screen Sharing…";
 }
 - (void)prepareConnection {
+    self.diagnosticGeneration++; self.diagnosticScheduled = NO; self.diagnosticFlags = nil;
     [self retireTextDraft];
     [self invalidateTextReview:NO]; self.textReviewViewportPending=NO;
     self.session = [CompanionVNCSession new];
+    [self clearCursor];
     self.latestCounters = @{};
     __weak CompanionVNCViewer *weak = self;
     __weak CompanionVNCSession *owner = self.session;
@@ -521,6 +526,7 @@
             if (strong.textSendInterrupted) [strong showTextSendWarning];
             else { [strong clearRecovery]; strong.image.alpha = 1; }
             strong.checkingResume = NO; strong.reconnectWhenReady = NO; strong.resumeGeneration++; strong.statusGeneration++;
+            [strong updateCursor];
             if (strong.sessionPhaseHandler) strong.sessionPhaseHandler(@"connected");
             if (strong.connectedHandler) strong.connectedHandler();
         }
@@ -542,7 +548,10 @@
 }
 - (void)reportDiagnostics:(NSDictionary *)stats {
     if (!self.diagnosticHandler) return;
-    NSMutableDictionary *diagnostics = [stats mutableCopy];
+    NSMutableDictionary *diagnostics = [stats mutableCopy] ?: [NSMutableDictionary new];
+    [diagnostics addEntriesFromDictionary:self.session.diagnosticCounters ?: @{}];
+    diagnostics[@"cursorPresentation"] = [self cursorDiagnosticFlags];
+    diagnostics[@"diagnosticWrites"] = @(++self.diagnosticWrites);
     diagnostics[@"viewer"] = @{@"canvasWidth": @(self.canvas.bounds.size.width), @"canvasHeight": @(self.canvas.bounds.size.height),
         @"imageWidth": @(self.image.bounds.size.width), @"imageHeight": @(self.image.bounds.size.height),
         @"imageFrameX": @(self.image.frame.origin.x), @"imageFrameY": @(self.image.frame.origin.y),
@@ -667,21 +676,21 @@
     if (!self.foreground || self.exited || self.inputInactive) return;
     self.inputInactive = YES;
     [self.controls close]; [self releasePointer]; [self resetModifiers]; [self cancelTrackpadTouches];
-    [self invalidateTextReview:NO];
+    [self invalidateTextReview:YES];
     [self.session suspendInputForInterruption];
-    [self clearCursor]; [self updateTrackpadFeedback];
+    [self updateCursor]; [self updateTrackpadFeedback];
 }
 - (void)background { [self backgroundWithCompletion:nil]; }
 - (void)backgroundWithCompletion:(void (^)(void))completion {
     [self retireTextDraft];
     if (!self.foreground || self.exited) { if (completion) completion(); return; }
     self.reconnectWhenReady = self.session.running || self.starting;
-    self.foreground = NO; self.inputInactive = YES; self.statusGeneration++; self.image.alpha = .45; self.resumeGeneration++; self.checkingResume = NO;
+    self.foreground = NO; self.inputInactive = YES; self.statusGeneration++; self.image.alpha = 1; self.resumeGeneration++; self.checkingResume = NO;
     self.pendingRestorationFrame = nil;
     self.status.hidden = YES; [self updateStatusPresentation];
     [self invalidateTextReview:NO]; self.textReviewViewportPending=NO;
     [self updateTrackpadFeedback];
-    [self.controls close]; [self rememberViewport]; [self releasePointer]; [self resetModifiers]; [self clearCursor];
+    [self.controls close]; [self rememberViewport]; [self releasePointer]; [self resetModifiers]; [self invalidateCursorPosition];
     self.zoomGeneration++; self.smartZoomPending = NO;
     [self.view endEditing:YES]; UIApplication.sharedApplication.idleTimerDisabled = NO;
     self.status.text = @"Paused · Return to resume";
@@ -695,14 +704,13 @@
 - (void)foregrounded {
     if (self.exited) return;
     if (self.foreground) {
-        if (self.inputInactive) { self.inputInactive = NO; [self.session resumeInputAfterInterruption]; [self updateTrackpadFeedback]; }
+        if (self.inputInactive) { self.inputInactive = NO; [self.session resumeInputAfterInterruption]; [self updateCursor]; [self updateTrackpadFeedback]; }
         return;
     }
     self.foreground = YES; self.inputInactive = NO;
     if (!self.reconnectWhenReady) return;
     self.checkingResume = YES;
-    if (self.sessionPhaseHandler) self.sessionPhaseHandler(@"reconnecting");
-    self.status.hidden = YES; [self scheduleResumeIndicator:@"Restoring desktop…"]; self.image.alpha = .6;
+    self.status.hidden = YES; [self scheduleResumeIndicator:@"Updating desktop…"]; self.image.alpha = 1;
     if (!self.session.running) { [self reconnectAfterFailedResume]; return; }
     [self.session resume];
     CompanionVNCSession *owner = self.session; NSUInteger generation = ++self.resumeGeneration;
@@ -756,7 +764,7 @@
         self.awaitingReplacementLayout = YES; self.pendingRestorationFrame = frame; return;
     }
     BOOL resized = !CGSizeEqualToSize(self.framebufferSize, pixels);
-    if (resized) { [self releasePointer]; self.zoomGeneration++; self.smartZoomed = NO; self.smartZoomPending = NO; [self clearCursor]; }
+    if (resized) { [self releasePointer]; self.zoomGeneration++; self.smartZoomed = NO; self.smartZoomPending = NO; [self invalidateCursorPosition]; }
     self.framebufferSize = pixels; self.lastFramebuffer = frame;
     if (resized || restoring) [self updateDisplayPicker];
     if (restoring) [self restoreViewport];
@@ -774,7 +782,7 @@
     NSUInteger generation = ++self.statusGeneration;
     self.status.hidden = YES; [self updateStatusPresentation];
     __weak CompanionVNCViewer *weak = self;
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 500 * NSEC_PER_MSEC), dispatch_get_main_queue(), ^{
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 1000 * NSEC_PER_MSEC), dispatch_get_main_queue(), ^{
         if (!weak || weak.statusGeneration != generation || !weak.foreground || weak.inputInactive || weak.exited
             || !(weak.checkingResume || weak.starting || weak.restoreViewportPending)) return;
         weak.status.text = message; weak.status.hidden = NO; [weak updateStatusPresentation];
@@ -1249,6 +1257,33 @@
     // Gesture-paced offset updates avoid queued animations and idle timers.
     [self.canvas setContentOffset:offset animated:NO];
 }
+- (NSDictionary *)cursorDiagnosticFlags {
+    return @{@"hostShapeAvailable": @(self.remoteCursorImage != nil), @"positionKnown": @(self.cursorPositionKnown),
+        @"indicatorShown": @(!self.cursorIndicator.hidden),
+        @"usesFallback": @(!self.cursorIndicator.hidden && self.remoteCursorImage == nil),
+        @"foreground": @(self.foreground), @"inputInactive": @(self.inputInactive),
+        @"checkingResume": @(self.checkingResume), @"restoringViewport": @(self.restoreViewportPending)};
+}
+- (void)updateCursorDiagnostics {
+    NSDictionary *flags = [self cursorDiagnosticFlags];
+    if ([flags isEqual:self.diagnosticFlags]) return;
+    self.diagnosticFlags = flags; [self scheduleCursorDiagnostics];
+}
+- (void)scheduleCursorDiagnostics {
+    if (!self.diagnosticHandler || self.diagnosticScheduled) return;
+    self.diagnosticScheduled = YES;
+    NSUInteger generation = self.diagnosticGeneration;
+    __weak CompanionVNCViewer *weak = self; __weak CompanionVNCSession *owner = self.session;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 250 * NSEC_PER_MSEC), dispatch_get_main_queue(), ^{
+        CompanionVNCViewer *strong = weak;
+        if (!strong || strong.session != owner || strong.diagnosticGeneration != generation) return;
+        strong.diagnosticScheduled = NO;
+        [strong reportDiagnostics:strong.latestCounters];
+    });
+}
+- (void)invalidateCursorPosition {
+    self.cursorPositionKnown = NO; [self updateCursor];
+}
 - (void)clearCursor {
     self.cursorPositionKnown = NO; self.remoteCursorImage = nil; self.cursorHotspot = CGPointZero;
     [self updateCursor];
@@ -1256,23 +1291,24 @@
 - (void)receivedCursor:(UIImage *)image hotspot:(CGPoint)hotspot position:(CGPoint)position known:(BOOL)known {
     self.remoteCursorImage = image; self.cursorHotspot = hotspot;
     if (known) { self.cursorPosition = position; self.cursorPositionKnown = YES; }
-    [self updateCursor];
+    [self updateCursor]; [self scheduleCursorDiagnostics];
 }
 - (void)updateCursor {
     CGPoint local = CGPointZero;
     if (!self.foreground || self.inputInactive || self.checkingResume || self.restoreViewportPending || !self.cursorPositionKnown || !self.image.image || !CompanionVNCCursorLocalPoint(self.activeCrop, self.cursorPosition, &local)) {
-        self.cursorIndicator.hidden = YES; return;
+        self.cursorIndicator.hidden = YES; [self updateCursorDiagnostics]; return;
     }
     CGPoint anchor = [self.image convertPoint:local toView:self.cursorOverlay];
     UIImage *shape = self.remoteCursorImage;
     CGRect bounds = CompanionVNCCursorScreenRect(anchor, shape ? shape.size : CGSizeMake(20, 28),
         shape ? self.cursorHotspot : CGPointMake(1, 1), shape ? self.canvas.zoomScale : 1);
     self.cursorIndicator.hidden = CGRectIsNull(bounds) || !CGRectContainsPoint(self.cursorOverlay.bounds, anchor);
-    if (self.cursorIndicator.hidden) return;
+    if (self.cursorIndicator.hidden) { [self updateCursorDiagnostics]; return; }
     self.cursorIndicator.frame = bounds; self.cursorImage.frame = self.cursorIndicator.bounds;
     self.cursorImage.image = shape; self.cursorImage.hidden = shape == nil; self.fallbackCursor.hidden = shape != nil;
     [CATransaction begin]; [CATransaction setDisableActions:YES];
     self.fallbackCursor.frame = self.cursorIndicator.bounds; [CATransaction commit];
+    [self updateCursorDiagnostics];
 }
 - (void)releasePointer {
     [self.trackpadFeedback setDragging:NO]; [self.tabletopFeedback setDragging:NO];

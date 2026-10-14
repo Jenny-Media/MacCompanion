@@ -3,6 +3,7 @@
 #import "CompanionVNCCoverage.h"
 #import "CompanionVNCKeyboard.h"
 #import "CompanionVNCCursor.h"
+#import "CompanionVNCAppleCursor.h"
 #import "CompanionVNCDirectConnection.h"
 #import "CompanionVNCDirectEndpoint.h"
 #import "CompanionVNCDisplayLayout.h"
@@ -58,7 +59,7 @@ static void QuietLog(const char *format, ...) {
     dispatch_queue_t _worker;
     BOOL _running, _established, _stopping, _framePending, _overflow, _inputReady, _inputOnly, _modeChanged;
     BOOL _paused, _releaseInputRequested, _resumeRequested, _awaitingResumeFrame;
-    BOOL _reviewInputSuspended;
+    BOOL _reviewInputSuspended, _interruptionInputSuspended;
     void (^_reviewReleaseCompletion)(void);
     NSUInteger _presentationEpoch, _inputEpoch;
     dispatch_semaphore_t _wake;
@@ -95,8 +96,14 @@ static void QuietLog(const char *format, ...) {
     int _magnificationWidth, _magnificationHeight;
     CompanionVNCImage *_cursorImage;
     CGPoint _cursorHotspot, _cursorPosition;
-    BOOL _cursorPositionKnown, _cursorPending, _cursorDirty;
+    BOOL _cursorPositionKnown, _cursorPending, _cursorDirty, _cursorImageAvailable;
+    NSDictionary *_reportedCounters;
+    NSUInteger _handshakeStage;
     NSUInteger _cursorShapes, _cursorPositions, _pauses, _resumes, _resumeFrames;
+    NSMutableDictionary<NSNumber *, NSDictionary *> *_appleCursorCache;
+    NSMutableArray<NSNumber *> *_appleCursorOrder;
+    NSUInteger _appleCursorBytes, _appleCursorStores, _appleCursorSelections, _appleCursorMisses;
+    NSUInteger _standardCursorReports, _visibleCursorImages, _cursorPublications;
 }
 - (rfbCredential *)credential:(int)type;
 - (rfbBool)allocate:(rfbClient *)client;
@@ -122,6 +129,7 @@ static void QuietLog(const char *format, ...) {
 - (BOOL)sendScrollEvent:(NSDictionary *)event client:(rfbClient *)client;
 - (rfbBool)displayLayout:(rfbClient *)client;
 - (rfbBool)displayLayout:(rfbClient *)client encoding:(int)encoding;
+- (rfbBool)appleCursor:(rfbClient *)client rect:(rfbFramebufferUpdateRectHeader *)rect;
 @end
 
 static CompanionVNCSession *Owner(rfbClient *client) {
@@ -135,12 +143,19 @@ static void CursorShape(rfbClient *client, int x, int y, int width, int height, 
 }
 static rfbBool CursorPosition(rfbClient *client, int x, int y) { return [Owner(client) cursorPosition:client x:x y:y]; }
 static rfbBool AppleLayout(rfbClient *client, rfbFramebufferUpdateRectHeader *rect) {
+#if TARGET_OS_OSX || TARGET_OS_IOS
+    if (rect->encoding == 1104) return [Owner(client) appleCursor:client rect:rect];
+#endif
     if (rect->encoding != 1101 && rect->encoding != 1105) return FALSE;
     return [Owner(client) displayLayout:client encoding:rect->encoding];
 }
 // 1101 enables the server's display-info delivery; 1105 selects the newer
 // layout format. Requesting 1105 alone leaves its send-display-info gate off.
-static int layoutEncodings[] = {1101, 1105, 0};
+static int layoutEncodings[] = {1101,
+#if TARGET_OS_OSX || TARGET_OS_IOS
+    1104,
+#endif
+    1105, 0};
 static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncodings, .handleEncoding = AppleLayout};
 
 @implementation CompanionVNCSession
@@ -199,7 +214,7 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
 }
 - (BOOL)queueMagnification:(unsigned)phase delta:(double)delta x:(NSInteger)x y:(NSInteger)y {
     [_lock lock];
-    BOOL ready = _running && _inputReady && _inputOnly && !_reviewInputSuspended && !_paused && !_stopping && !_overflow
+    BOOL ready = _running && _inputReady && _inputOnly && !_reviewInputSuspended && !_interruptionInputSuspended && !_paused && !_stopping && !_overflow
         && _appleGestureServer && _nativeGestureLayout;
     BOOL valid = isfinite(delta) && fabs(delta) <= .5 && (phase == 2 || delta == 0)
         && (phase == 1 ? !_queuedMagnification && !_queuedScroll && x >= 0 && y >= 0 && x < _framebufferWidth && y < _framebufferHeight : _queuedMagnification);
@@ -224,7 +239,7 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
 }
 - (BOOL)sendMagnificationEvent:(NSDictionary *)event client:(rfbClient *)client {
     NSUInteger epoch = [event[@"gestureEpoch"] unsignedIntegerValue];
-    [_lock lock]; BOOL valid = epoch == _gestureEpoch && _inputOnly && _inputReady && !_reviewInputSuspended && !_paused && !_stopping
+    [_lock lock]; BOOL valid = epoch == _gestureEpoch && _inputOnly && _inputReady && !_reviewInputSuspended && !_interruptionInputSuspended && !_paused && !_stopping
         && _appleGestureServer && _nativeGestureLayout; [_lock unlock];
     if (!valid) return YES; // A discarded event cannot start or resume a gesture.
     unsigned phase = [event[@"magnifyPhase"] unsignedIntValue];
@@ -239,7 +254,7 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
 }
 - (BOOL)queueScroll:(unsigned)phase dx:(double)dx dy:(double)dy x:(NSInteger)x y:(NSInteger)y {
     [_lock lock];
-    BOOL ready = _running && _inputReady && !_reviewInputSuspended && !_paused && !_stopping && !_overflow
+    BOOL ready = _running && _inputReady && !_reviewInputSuspended && !_interruptionInputSuspended && !_paused && !_stopping && !_overflow
         && _appleGestureServer && _nativeGestureLayout;
     BOOL valid = (phase == 1 || phase == 2 || phase == 4) && isfinite(dx) && isfinite(dy)
         && fabs(dx) <= 2048 && fabs(dy) <= 2048 && (phase == 2 || (dx == 0 && dy == 0))
@@ -263,7 +278,7 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
 }
 - (BOOL)sendScrollEvent:(NSDictionary *)event client:(rfbClient *)client {
     NSUInteger epoch = [event[@"gestureEpoch"] unsignedIntegerValue];
-    [_lock lock]; BOOL valid = epoch == _gestureEpoch && _inputReady && !_reviewInputSuspended && !_paused && !_stopping
+    [_lock lock]; BOOL valid = epoch == _gestureEpoch && _inputReady && !_reviewInputSuspended && !_interruptionInputSuspended && !_paused && !_stopping
         && _appleGestureServer && _nativeGestureLayout; [_lock unlock];
     if (!valid) return YES;
     unsigned phase = [event[@"scrollPhase"] unsignedIntValue];
@@ -277,7 +292,7 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
     return count && WriteToRFBServer(client, (char *)bytes, (unsigned int)count);
 }
 - (BOOL)tryClickX:(NSInteger)x y:(NSInteger)y mask:(NSInteger)mask {
-    [_lock lock]; BOOL accept = _running && _inputReady && !_reviewInputSuspended && !_paused && !_stopping && !_overflow && _events.count <= 510;
+    [_lock lock]; BOOL accept = _running && _inputReady && !_reviewInputSuspended && !_interruptionInputSuspended && !_paused && !_stopping && !_overflow && _events.count <= 510;
     if (accept) {
         [_events addObject:@{@"x": @(x), @"y": @(y), @"mask": @(mask), @"motion": @NO}];
         [_events addObject:@{@"x": @(x), @"y": @(y), @"mask": @0, @"motion": @NO}]; _queuedPointerMask = 0;
@@ -286,7 +301,7 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
 }
 - (BOOL)suspendInputForReview:(void (^)(void))completion {
     [_lock lock];
-    if (_inputOnly || _reviewInputSuspended || !CompanionVNCConnectionReady(_running, _inputReady, _inputOnly,
+    if (_inputOnly || _reviewInputSuspended || _interruptionInputSuspended || !CompanionVNCConnectionReady(_running, _inputReady, _inputOnly,
         _paused, _stopping, _overflow, _awaitingResumeFrame, _baselinePresented)) {
         [_lock unlock]; return NO;
     }
@@ -323,8 +338,8 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
 }
 - (void)suspendInputForInterruption {
     [_lock lock];
-    if (_running && _inputReady && !_paused && !_stopping) {
-        _reviewInputSuspended = YES; _releaseInputRequested = YES; _inputEpoch++;
+    if (_running && !_paused && !_stopping && !_interruptionInputSuspended) {
+        _interruptionInputSuspended = YES; _releaseInputRequested = YES; _inputEpoch++;
 #if TARGET_OS_IOS
         [self cancelComposedTextLocked];
 #endif
@@ -334,15 +349,15 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
 }
 - (void)resumeInputAfterInterruption {
     [_lock lock];
-    // Inactivity has not replaced the presented framebuffer. Pending release
-    // is still consumed by the sole socket owner before any newly queued input.
-    _reviewInputSuspended = NO; _reviewReleaseCompletion = nil;
+    // An interruption never owns the independent review gate or its refresh.
+    // Pending releases still precede newly queued input on the socket owner.
+    _interruptionInputSuspended = NO;
     [_lock unlock]; dispatch_semaphore_signal(_wake);
 }
 - (void)resume {
     [_lock lock];
     if (_running && _paused && !_stopping) {
-        _paused = NO; _resumes++; _resumeRequested = YES; _awaitingResumeFrame = !_inputOnly; if (_inputOnly) _inputReady = YES; _presentationEpoch++;
+        _paused = NO; _interruptionInputSuspended = NO; _resumes++; _resumeRequested = YES; _awaitingResumeFrame = !_inputOnly; if (_inputOnly) _inputReady = YES; _presentationEpoch++;
     }
     [_lock unlock]; dispatch_semaphore_signal(_wake);
 }
@@ -369,8 +384,8 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
     [self cancelNativeGesturesLocked]; _appleGestureServer = NO; _nativeGestureLayout = NO;
     _sentMagnification = (CompanionVNCMagnification){0}; _sentScroll = (CompanionVNCScroll){0};
     _running = YES; _established = NO; _stopping = NO; _overflow = NO; _framePending = NO; _cursorPending = NO; _layoutPending = NO; _latestLayout = nil; _inputReady = NO; _failureStage = 0;
-    _layoutDiagnostics = @{}; _layoutMessages = 0; _baselinePresented = NO; _coverageLayoutValid = NO; _metadataCallback = NO;
-    _paused = NO; _reviewInputSuspended = NO; _reviewReleaseCompletion = nil;
+    _handshakeStage = 0; _layoutDiagnostics = @{}; _layoutMessages = 0; _baselinePresented = NO; _coverageLayoutValid = NO; _metadataCallback = NO;
+    _paused = NO; _reviewInputSuspended = NO; _interruptionInputSuspended = NO; _reviewReleaseCompletion = nil;
     _releaseInputRequested = NO; _resumeRequested = NO; _awaitingResumeFrame = NO; _presentationEpoch++;
     [_events removeAllObjects]; _queuedPointerMask = 0; _generation++; _connections++;
     NSInteger generation = _generation;
@@ -480,6 +495,7 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
             } else {
                 *requests |= bit; rfbClientSetUpdateRect(client, NULL);
             }
+            if (resume || modeChanged) { self->_cursorPositionKnown = NO; self->_cursorDirty = YES; }
             if (!inputOnly && (resume || modeChanged)) {
                 if (![self resetBaseline:client] || !SendFramebufferUpdateRequest(client, 0, 0, client->width, client->height, FALSE)) { healthy = NO; break; }
             }
@@ -492,7 +508,7 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
                 }
             }
             for (NSDictionary *event in events) {
-                [self->_lock lock]; BOOL currentBatch = inputEpoch == self->_inputEpoch; BOOL acceptsInput = self->_inputReady && !self->_reviewInputSuspended && !self->_paused && !self->_stopping;
+                [self->_lock lock]; BOOL currentBatch = inputEpoch == self->_inputEpoch; BOOL acceptsInput = self->_inputReady && !self->_reviewInputSuspended && !self->_interruptionInputSuspended && !self->_paused && !self->_stopping;
 #if TARGET_OS_IOS
                 NSString *textID = event[@"composedTextID"];
                 if (textID) acceptsInput = acceptsInput && [self composedTextReadyLocked];
@@ -552,6 +568,9 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
 
 }
 - (void)configureClient:(rfbClient *)client {
+    _appleCursorCache = [NSMutableDictionary new]; _appleCursorOrder = [NSMutableArray new]; _appleCursorBytes = 0;
+    _cursorImage = nil; _cursorHotspot = CGPointZero; _cursorPositionKnown = NO; _cursorDirty = YES;
+    [_lock lock]; _cursorImageAvailable = NO; [_lock unlock];
     decoderFailed = NO; appleGestureBanner = NO;
     rfbClientSetClientData(client, &ownerTag, (__bridge void *)self);
     free(client->serverHost);
@@ -570,7 +589,8 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
     [self registerSocket:-1];
     free(_pixels); _pixels = NULL; CompanionVNCCoverageFree(&_coverage); _username = nil; _password = nil;
     _cursorImage = nil; _cursorPositionKnown = NO; _cursorDirty = NO;
-    [_lock lock]; [self cancelNativeGesturesLocked]; _appleGestureServer = NO; _nativeGestureLayout = NO; _running = NO; _established = NO; _inputReady = NO; _reviewInputSuspended = NO; _reviewReleaseCompletion = nil; [_events removeAllObjects];
+    [_appleCursorCache removeAllObjects]; [_appleCursorOrder removeAllObjects]; _appleCursorBytes = 0;
+    [_lock lock]; _cursorImageAvailable = NO; [self cancelNativeGesturesLocked]; _appleGestureServer = NO; _nativeGestureLayout = NO; _running = NO; _established = NO; _inputReady = NO; _reviewInputSuspended = NO; _interruptionInputSuspended = NO; _reviewReleaseCompletion = nil; [_events removeAllObjects];
 #if TARGET_OS_IOS
     [self cancelComposedTextLocked];
 #endif
@@ -580,7 +600,7 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
 - (rfbCredential *)credential:(int)type {
     if (type != rfbCredentialTypeUser) return NULL;
     protocolStage = 3;
-    [_lock lock]; _credentialRequests++; [_lock unlock];
+    [_lock lock]; _handshakeStage = 3; _credentialRequests++; [_lock unlock];
 
     [self report:@"Authenticating with macOS"];
     rfbCredential *credential = calloc(1, sizeof(rfbCredential));
@@ -602,8 +622,8 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
     if (![self resetBaseline:client]) { free(pixels); return FALSE; }
     free(_pixels); _pixels = pixels; client->frameBuffer = pixels;
     protocolStage = 5;
-    [_lock lock]; _resizes++; [_lock unlock]; _dirty = NO;
-    _cursorImage = nil; _cursorHotspot = CGPointZero; _cursorPositionKnown = NO; _cursorDirty = YES;
+    [_lock lock]; _handshakeStage = 5; _resizes++; [_lock unlock]; _dirty = NO;
+    _cursorPositionKnown = NO; _cursorDirty = YES;
     return TRUE;
 }
 - (BOOL)resetBaseline:(rfbClient *)client {
@@ -620,7 +640,7 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
     [_lock unlock];
     if (!CompanionVNCCoverageReset(&_coverage, client->width, client->height)) return NO;
     _baselineStarted = _lastFullRefresh = NSProcessInfo.processInfo.systemUptime;
-    _dirty = NO;
+    _dirty = NO; _cursorPositionKnown = NO; _cursorDirty = YES;
     [self applyCoverageLayout:client]; return YES;
 }
 - (void)applyCoverageLayout:(rfbClient *)client {
@@ -716,7 +736,7 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
 }
 - (void)cursorShape:(rfbClient *)client x:(int)x y:(int)y width:(int)width height:(int)height bytesPerPixel:(int)bytes {
     _cursorImage = nil; _cursorHotspot = CGPointZero; _cursorDirty = YES;
-    [_lock lock]; _cursorShapes++; [_lock unlock];
+    [_lock lock]; _cursorImageAvailable = NO; _cursorShapes++; _standardCursorReports++; [_lock unlock];
     if (width <= 0 || height <= 0 || width > 256 || height > 256 || bytes != 4) return;
     NSUInteger count = (NSUInteger)width * height;
     NSMutableData *rgba = [NSMutableData dataWithLength:count * 4];
@@ -726,8 +746,53 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
     CGColorSpaceRef colors = CGColorSpaceCreateDeviceRGB();
     CGImageRef image = CGImageCreate(width, height, 8, 32, width * 4, colors,
         (CGBitmapInfo)kCGBitmapByteOrder32Big | (CGBitmapInfo)kCGImageAlphaPremultipliedLast, provider, NULL, NO, kCGRenderingIntentDefault);
-    if (image) { _cursorImage = PlatformImage(image); _cursorHotspot = CGPointMake(x, y); CGImageRelease(image); }
+    if (image) { [_lock lock]; _cursorImageAvailable = YES; _visibleCursorImages++; [_lock unlock]; _cursorImage = PlatformImage(image); _cursorHotspot = CGPointMake(x, y); CGImageRelease(image); }
     CGColorSpaceRelease(colors); CGDataProviderRelease(provider);
+}
+- (rfbBool)appleCursor:(rfbClient *)client rect:(rfbFramebufferUpdateRectHeader *)rect {
+    _metadataCallback = YES;
+    uint8_t header[8];
+    if (!ReadFromRFBServer(client, (char *)header, sizeof(header))) { _extensionFailed = YES; return FALSE; }
+    uint32_t identifier = ((uint32_t)header[0] << 24) | ((uint32_t)header[1] << 16) | ((uint32_t)header[2] << 8) | header[3];
+    uint32_t length = ((uint32_t)header[4] << 24) | ((uint32_t)header[5] << 16) | ((uint32_t)header[6] << 8) | header[7];
+    NSNumber *key = @(identifier);
+    if (length) {
+        int width = rect->r.w, height = rect->r.h, x = rect->r.x, y = rect->r.y;
+        if (length > 512 * 1024 || width < 1 || height < 1 || width > 256 || height > 256 || x >= width || y >= height) {
+            _extensionFailed = YES; return FALSE;
+        }
+        NSMutableData *compressed = [NSMutableData dataWithLength:length];
+        NSMutableData *rgba = [NSMutableData dataWithLength:(NSUInteger)width * height * 4];
+        if (!ReadFromRFBServer(client, compressed.mutableBytes, length)
+            || !CompanionVNCAppleCursorRGBA(width, height, x, y, compressed.bytes, length, rgba.mutableBytes, rgba.length)) {
+            _extensionFailed = YES; return FALSE;
+        }
+        CGDataProviderRef provider = CGDataProviderCreateWithCFData((__bridge CFDataRef)rgba);
+        CGColorSpaceRef colors = CGColorSpaceCreateDeviceRGB();
+        CGImageRef cg = CGImageCreate(width, height, 8, 32, width * 4, colors,
+            (CGBitmapInfo)kCGBitmapByteOrder32Big | (CGBitmapInfo)kCGImageAlphaPremultipliedLast, provider, NULL, NO, kCGRenderingIntentDefault);
+        CompanionVNCImage *image = cg ? PlatformImage(cg) : nil;
+        if (cg) CGImageRelease(cg); CGColorSpaceRelease(colors); CGDataProviderRelease(provider);
+        if (!image) { _extensionFailed = YES; return FALSE; }
+        _appleCursorBytes -= [_appleCursorCache[key][@"bytes"] unsignedIntegerValue];
+        [_appleCursorOrder removeObject:key];
+        while (_appleCursorOrder.count && (_appleCursorOrder.count >= 64 || _appleCursorBytes + rgba.length > 4 * 1024 * 1024)) {
+            NSNumber *oldest = _appleCursorOrder.firstObject;
+            _appleCursorBytes -= [_appleCursorCache[oldest][@"bytes"] unsignedIntegerValue];
+            [_appleCursorCache removeObjectForKey:oldest]; [_appleCursorOrder removeObjectAtIndex:0];
+        }
+        _appleCursorCache[key] = @{@"image": image, @"x": @(x), @"y": @(y), @"bytes": @(rgba.length)};
+        _appleCursorBytes += rgba.length;
+        [_lock lock]; _appleCursorStores++; _visibleCursorImages++; [_lock unlock];
+    } else { [_lock lock]; _appleCursorSelections++; [_lock unlock]; }
+    NSDictionary *selected = _appleCursorCache[key];
+    _cursorImage = selected[@"image"];
+    _cursorHotspot = selected ? CGPointMake([selected[@"x"] doubleValue], [selected[@"y"] doubleValue]) : CGPointZero;
+    if (selected) { [_appleCursorOrder removeObject:key]; [_appleCursorOrder addObject:key]; }
+    else { [_lock lock]; _appleCursorMisses++; [_lock unlock]; }
+    _cursorDirty = YES;
+    [_lock lock]; _cursorImageAvailable = selected != nil; _cursorShapes++; [_lock unlock];
+    return TRUE;
 }
 - (rfbBool)cursorPosition:(rfbClient *)client x:(int)x y:(int)y {
     _cursorPositionKnown = x >= 0 && y >= 0 && x < client->width && y < client->height;
@@ -738,7 +803,7 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
 - (void)publishCursor {
     if (!_cursorDirty) return;
     [_lock lock];
-    if (_cursorPending || _stopping || _paused) { [_lock unlock]; return; }
+    if (_cursorPending || _stopping || _paused || _resumeRequested || _modeChanged) { [_lock unlock]; return; }
     _cursorPending = YES; NSInteger generation = _generation; NSUInteger epoch = _presentationEpoch; [_lock unlock];
     _cursorDirty = NO;
     CompanionVNCImage *image = _cursorImage; CGPoint hotspot = _cursorHotspot, position = _cursorPosition;
@@ -746,7 +811,10 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
     dispatch_async(dispatch_get_main_queue(), ^{
         [self->_lock lock]; BOOL valid = generation == self->_generation && epoch == self->_presentationEpoch && self->_running && !self->_stopping && !self->_paused;
         if (generation == self->_generation) self->_cursorPending = NO; [self->_lock unlock];
-        if (valid && self.cursorHandler) self.cursorHandler(image, hotspot, position, known);
+        if (valid && self.cursorHandler) {
+            [self->_lock lock]; self->_cursorPublications++; [self->_lock unlock];
+            self.cursorHandler(image, hotspot, position, known);
+        }
     });
 }
 - (void)publishFrame:(rfbClient *)client {
@@ -783,6 +851,20 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
     });
     if (_presentedFrames > 0 && _updates % 30 == 0) [self report:@"Connected"];
 }
+- (NSDictionary *)diagnosticCounters {
+    [_lock lock];
+    NSMutableDictionary *stats = [_reportedCounters mutableCopy] ?: [NSMutableDictionary new];
+    [stats addEntriesFromDictionary:@{
+        @"cursorShapeUpdates": @(_cursorShapes), @"cursorPositionUpdates": @(_cursorPositions),
+        @"standardCursorReports": @(_standardCursorReports), @"decodedCursorImages": @(_visibleCursorImages),
+        @"appleCursorStores": @(_appleCursorStores), @"appleCursorSelections": @(_appleCursorSelections),
+        @"appleCursorCacheMisses": @(_appleCursorMisses), @"cursorPublications": @(_cursorPublications),
+        @"cursorCachedImage": @(_cursorImageAvailable), @"inputEvents": @(_inputs),
+        @"presentedFrames": @(_presentedFrames), @"backgroundPauses": @(_pauses), @"retainedResumes": @(_resumes),
+        @"sessionInputReady": @(_inputReady), @"sessionReviewBlocked": @(_reviewInputSuspended),
+        @"sessionInterruptionBlocked": @(_interruptionInputSuspended), @"sessionPaused": @(_paused)}];
+    [_lock unlock]; return stats;
+}
 - (void)report:(NSString *)state {
     // No endpoints, names, credentials, pixels, or typed content in diagnostics.
     [_lock lock];
@@ -794,11 +876,15 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
         @"framebufferAllocations": @(_resizes), @"inputEvents": @(_inputs), @"viewChanges": @(_viewChanges), @"presentedFrames": @(_presentedFrames),
         @"baselineReady": @(_baselinePresented), @"baselineReceivedPixels": @(_receivedPixels), @"baselineExpectedPixels": @(_expectedPixels), @"fullRefreshRetries": @(_fullRefreshRetries),
         @"decoderFailures": @(_decoderFailures),
-        @"failureStage": @(_failureStage), @"credentialRequests": @(_credentialRequests), @"handshakeStage": @(protocolStage),
+        @"failureStage": @(_failureStage), @"credentialRequests": @(_credentialRequests), @"handshakeStage": @(_handshakeStage),
         @"framebufferWidth": @(_framebufferWidth), @"framebufferHeight": @(_framebufferHeight),
         @"displayLayoutMessages": @(_layoutMessages), @"displayLayout": _layoutDiagnostics ?: @{},
         @"backgroundPauses": @(_pauses), @"retainedResumes": @(_resumes), @"resumeFrames": @(_resumeFrames),
-        @"cursorShapeUpdates": @(_cursorShapes), @"cursorPositionUpdates": @(_cursorPositions)};
+        @"cursorShapeUpdates": @(_cursorShapes), @"cursorPositionUpdates": @(_cursorPositions),
+        @"standardCursorReports": @(_standardCursorReports), @"decodedCursorImages": @(_visibleCursorImages),
+        @"appleCursorStores": @(_appleCursorStores), @"appleCursorSelections": @(_appleCursorSelections),
+        @"appleCursorCacheMisses": @(_appleCursorMisses), @"cursorPublications": @(_cursorPublications)};
+    _reportedCounters = stats;
     [_lock unlock];
     dispatch_async(dispatch_get_main_queue(), ^{
         [self->_lock lock]; BOOL current = generation == self->_generation && !(intermediate && (self->_stopping || epoch != self->_presentationEpoch)); [self->_lock unlock];
@@ -827,7 +913,7 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
 }
 - (void)enqueue:(NSDictionary *)event {
     [_lock lock];
-    if (_running && _inputReady && !_reviewInputSuspended && !_paused && !_stopping) {
+    if (_running && _inputReady && !_reviewInputSuspended && !_interruptionInputSuspended && !_paused && !_stopping) {
         // Coalesce only motion with identical button state, preserving key/button ordering.
         NSDictionary *last = _events.lastObject;
         if (event[@"mask"]) {
@@ -847,7 +933,7 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
 - (void)key:(uint32_t)key down:(BOOL)down { [self enqueue:@{@"key": @(key), @"down": @(down)}]; }
 - (void)keyEvents:(NSArray<NSDictionary *> *)events {
     [_lock lock];
-    if (_running && _inputReady && !_reviewInputSuspended && !_paused && !_stopping && !_overflow) {
+    if (_running && _inputReady && !_reviewInputSuspended && !_interruptionInputSuspended && !_paused && !_stopping && !_overflow) {
         if (!CompanionVNCKeyGroupFits(_events.count, events.count, 512)) _overflow = YES;
         else [_events addObjectsFromArray:events];
     }
@@ -858,7 +944,7 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
 }
 - (BOOL)tryKeyEvents:(NSArray<NSDictionary *> *)events {
     [_lock lock];
-    BOOL allowed = _running && _inputReady && !_reviewInputSuspended && !_paused && !_stopping && !_overflow
+    BOOL allowed = _running && _inputReady && !_reviewInputSuspended && !_interruptionInputSuspended && !_paused && !_stopping && !_overflow
         && events.count > 0 && CompanionVNCKeyGroupFits(_events.count, events.count, 512);
     if (allowed) [_events addObjectsFromArray:events];
     [_lock unlock]; return allowed;
@@ -868,7 +954,7 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
     return SendKeyEvent(client, key, down);
 }
 - (BOOL)composedTextReadyLocked {
-    return !_reviewInputSuspended && CompanionVNCConnectionReady(_running, _inputReady, _inputOnly,
+    return !_reviewInputSuspended && !_interruptionInputSuspended && CompanionVNCConnectionReady(_running, _inputReady, _inputOnly,
         _paused, _stopping, _overflow, _awaitingResumeFrame, _baselinePresented);
 }
 - (BOOL)composedTextReady {

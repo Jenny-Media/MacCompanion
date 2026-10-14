@@ -154,11 +154,11 @@
       "valid": false
     },
     {
-      "value": "\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9",
+      "value": "ééééééééééééééééééééééééééééééé",
       "valid": true
     },
     {
-      "value": "\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9",
+      "value": "éééééééééééééééééééééééééééééééé",
       "valid": false
     },
     {
@@ -312,7 +312,7 @@
     "pausedStatusStaleSeconds": 60,
     "inactiveRetainsEstablishedTransport": true,
     "inputReleaseIndependentOfActivityUpdate": true,
-    "resumeIndicatorDelayMilliseconds": 500,
+    "resumeIndicatorDelayMilliseconds": 1000,
     "replacementPresentation": "matching-frame-and-display-layout",
     "staleStatus": "open-to-check",
     "renewConnectedStatusOnEvidence": true,
@@ -322,7 +322,11 @@
     "knownEndIndependentOfActivityUpdate": true,
     "inactiveReturnRestoresLatestTerminalGrid": true,
     "replacementComposeTextRequiresPresentedDesktop": true,
-    "replacementVideoModeChange": "defer-until-presentation-ready"
+    "replacementVideoModeChange": "defer-until-presentation-ready",
+    "retainedResumePhase": "paused",
+    "retainedResumeOpacity": 1,
+    "interruptionAdmissionSeparateFromReview": true,
+    "reviewInterruptedReturnRequiresFreshFrame": true
   },
   "lifecycleCases": [
     {
@@ -842,7 +846,20 @@
       "backgroundGraceDoesNotGrantBackgroundAccess": true,
       "protectedDataLossRevokesGrace": true,
       "processRestartRevokesGrace": true,
-      "graceClock": "continuous-including-device-sleep"
+      "graceClock": "continuous-including-device-sleep",
+      "inactiveShowsCover": false,
+      "graceForegroundEntryShowsCover": false,
+      "successfulInactiveAuthenticationShowsCover": true,
+      "successfulInactiveAuthenticationGrantsAccess": false,
+      "authenticationSuccessNeedsActiveAdmission": true,
+      "completedFailedAttemptRequiresExplicitRetry": true,
+      "authenticationPresentation": "persistentUnlockCard",
+      "evaluatingButtonTitle": "Unlocking…",
+      "pendingActiveButtonTitle": "Opening…",
+      "lockedButtonTitle": "Unlock",
+      "busyButtonEnabled": false,
+      "separateBrandedTransition": false,
+      "retryRequiresActiveAndProtectedData": true
     },
     "fullscreen": {
       "reconnect": false,
@@ -1205,16 +1222,16 @@
     },
     {
       "id": "unicode",
-      "value": "\u5de5\u4f5c Mac",
+      "value": "工作 Mac",
       "macValid": true,
-      "normalizedName": "\u5de5\u4f5c Mac",
+      "normalizedName": "工作 Mac",
       "keyValid": true
     },
     {
       "id": "emoji",
-      "value": "Mac \ud83d\udda5\ufe0f",
+      "value": "Mac 🖥️",
       "macValid": true,
-      "normalizedName": "Mac \ud83d\udda5\ufe0f",
+      "normalizedName": "Mac 🖥️",
       "keyValid": true
     },
     {
@@ -1250,7 +1267,7 @@
     },
     {
       "id": "bidi-format",
-      "value": "Mac\u202e",
+      "value": "Mac‮",
       "macValid": false,
       "keyValid": false
     },
@@ -2201,8 +2218,8 @@
       "normalized": "Studio Mac"
     },
     {
-      "value": "\u5f00\u53d1 Mac",
-      "normalized": "\u5f00\u53d1 Mac"
+      "value": "开发 Mac",
+      "normalized": "开发 Mac"
     },
     {
       "value": "",
@@ -2217,7 +2234,7 @@
       "normalized": null
     },
     {
-      "value": "Mac\u202eName",
+      "value": "Mac‮Name",
       "normalized": null
     }
   ],
@@ -3013,13 +3030,17 @@
         "inactive",
         "grid-changes",
         "latest-grid-changes",
-        "active"
+        "compose-text",
+        "active",
+        "compose-text"
       ],
       "expect": [
         "no-inactive-window-change",
         "latest-grid-published-on-return",
         "same-authentication-and-PTY",
-        "no-input-replay"
+        "no-input-replay",
+        "no-inactive-composed-input",
+        "fresh-composed-input-on-foreground"
       ]
     },
     {
@@ -3098,6 +3119,53 @@
         "current-presentation-ready",
         "native-trackpad-admitted"
       ]
+    },
+    {
+      "name": "cancelled-inactive-gesture-has-no-lock-cover",
+      "reconnect": false,
+      "showCover": false
+    },
+    {
+      "name": "authentication-success-before-active-retains-quiet-cover",
+      "publishUnlock": false,
+      "showCover": true,
+      "canAccess": false,
+      "canInteract": false
+    },
+    {
+      "name": "warm-retained-owner-return-keeps-pixels-and-paused-phase",
+      "opacity": 1,
+      "phase": "paused"
+    },
+    {
+      "name": "brief-inactive-cursor-shape-retained",
+      "events": [
+        "cursor-report",
+        "inactive",
+        "active",
+        "local-pointer-move"
+      ],
+      "expect": [
+        "cursor-hidden-inactive",
+        "same-owner-shape-and-hotspot",
+        "no-new-cursor-report",
+        "transparent-shape-does-not-use-fallback"
+      ]
+    },
+    {
+      "name": "copy-review-brief-inactive-awaits-fresh-frame",
+      "events": [
+        "copy-text-review",
+        "inactive",
+        "active",
+        "fresh-complete-frame"
+      ],
+      "expect": [
+        "review-retired",
+        "independent-interruption-gate",
+        "ordinary-and-composed-input-blocked-until-fresh-frame",
+        "fresh-frame-while-inactive-stays-input-blocked"
+      ]
     }
   ],
   "appUnlockGraceCases": [
@@ -3128,6 +3196,93 @@
       "elapsedSeconds": 1,
       "protectedDataAvailable": false,
       "authenticate": true
+    }
+  ],
+  "coldStartAdmissionPolicy": {
+    "observableActivation": true,
+    "freeActionsWaitForPurchases": false,
+    "paidWaitTimeoutSeconds": 5,
+    "latePresentationAfterRetirement": false,
+    "denyPaidBeforeVerifiedReadiness": false
+  },
+  "liveActivityStartupRetirementCases": [
+    {
+      "name": "ended-then-connected",
+      "existingIDs": [
+        "orphan"
+      ],
+      "transition": "endedRetry",
+      "startsBeforeRetirement": false,
+      "eventsAfterRetirement": [
+        "end:orphan",
+        "start:connected"
+      ]
+    },
+    {
+      "name": "opt-out-then-opt-in",
+      "existingIDs": [
+        "orphan"
+      ],
+      "transition": "optOutIn",
+      "startsBeforeRetirement": false,
+      "eventsAfterRetirement": [
+        "end:orphan",
+        "start:connected"
+      ]
+    },
+    {
+      "name": "ended-with-pending-startup-retirement",
+      "existingIDs": [
+        "orphan"
+      ],
+      "transition": "ended",
+      "waitCompletesBeforeRetirement": false,
+      "eventsAfterRetirement": [
+        "end:orphan"
+      ]
+    }
+  ],
+  "appAuthenticationHandoffCases": [
+    {
+      "name": "success-before-activation",
+      "successBeforeActive": true,
+      "result": true,
+      "accessBeforeActive": false,
+      "coverBeforeActive": true,
+      "evaluationsAfterActive": 1,
+      "publishAfterActive": 1,
+      "unlockCardRetained": true,
+      "buttonEnabledBeforeAdmission": false
+    },
+    {
+      "name": "activation-before-success",
+      "successBeforeActive": false,
+      "result": true,
+      "accessBeforeResult": false,
+      "coverBeforeResult": true,
+      "evaluationsAfterResult": 1,
+      "publishAfterResult": 1,
+      "unlockCardRetained": true,
+      "buttonEnabledBeforeAdmission": false
+    },
+    {
+      "name": "already-active-success-without-notification",
+      "result": true,
+      "requiresNewActivationEvent": false,
+      "accessAfterResult": true,
+      "publishAfterResult": 1,
+      "unlockCardRetained": true,
+      "buttonEnabledBeforeAdmission": false
+    },
+    {
+      "name": "cancel-before-activation",
+      "successBeforeActive": true,
+      "result": false,
+      "accessAfterActive": false,
+      "coverAfterActive": true,
+      "evaluationsAfterActive": 1,
+      "publishAfterActive": 0,
+      "unlockCardRetained": true
     }
   ]
 }

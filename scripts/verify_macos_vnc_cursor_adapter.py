@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
-"""Check macOS adapter admission and cache reuse against a supplied pinned checkout."""
+"""Check shared cursor admission and iOS CMake cache migration/reuse against a pinned checkout."""
 import argparse
 import copy
 import json
 from pathlib import Path
+import subprocess
 import tempfile
 import unittest
 
 from prepare_macos_vnc_cursor import ROOT, adapted_cursor, prepare, verify
+from build_vnc_ios_development import cmake_source_options
 
 
 class CursorAdapterTests(unittest.TestCase):
@@ -56,6 +58,51 @@ class CursorAdapterTests(unittest.TestCase):
         extra.symlink_to(path)
         with self.assertRaises(ValueError):
             verify(directory, expected)
+
+
+class IOSCursorBuildCacheTests(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory(prefix='maccompanion-cursor-cmake-', dir='/private/tmp')
+        self.addCleanup(temporary.cleanup)
+        self.output = Path(temporary.name)
+        self.build = self.output / 'build'
+
+    def source(self, name):
+        directory = self.output / name
+        directory.mkdir()
+        (directory / 'CMakeLists.txt').write_text(
+            'cmake_minimum_required(VERSION 3.24)\nproject(CursorCacheProbe NONE)\n')
+        return directory
+
+    def configure(self, source, *definitions):
+        subprocess.run(['/opt/homebrew/bin/cmake', *cmake_source_options(self.build, source),
+                        '-S', str(source), '-B', str(self.build), *definitions],
+                       check=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+
+    def test_ios_migrates_pristine_source_cache(self):
+        pristine = self.source('pristine')
+        adapted = self.source('adapted source')
+        self.assertEqual(cmake_source_options(self.build, pristine), [])
+        self.configure(pristine, '-DMC_OLD_SOURCE_MARKER:STRING=old')
+        sentinel = self.build / 'preserved-output.txt'
+        sentinel.write_text('preserved')
+        self.assertEqual(cmake_source_options(self.build, adapted), ['--fresh'])
+        self.configure(adapted)
+        cache = (self.build / 'CMakeCache.txt').read_text().splitlines()
+        self.assertIn('CMAKE_HOME_DIRECTORY:INTERNAL=' + str(adapted.resolve()), cache)
+        self.assertNotIn('MC_OLD_SOURCE_MARKER:STRING=old', cache)
+        self.assertEqual(sentinel.read_text(), 'preserved')
+
+    def test_ios_reuses_unchanged_source_cache(self):
+        source = self.source('adapted')
+        self.configure(source, '-DMC_REUSE_MARKER:STRING=keep')
+        sentinel = self.build / 'CMakeFiles' / 'retained-probe.txt'
+        sentinel.write_text('retained')
+        self.assertEqual(cmake_source_options(self.build, source), [])
+        self.configure(source)
+        self.assertIn('MC_REUSE_MARKER:STRING=keep',
+                      (self.build / 'CMakeCache.txt').read_text().splitlines())
+        self.assertEqual(sentinel.read_text(), 'retained')
 
 
 if __name__ == '__main__':

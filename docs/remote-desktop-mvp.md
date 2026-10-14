@@ -329,7 +329,7 @@ frame and the replacement connection's display layout converge, in either order.
 Only a verified missing selection falls back to the full desktop. Input remains
 gated until presentation is ready, including Compose Text entry and delivery.
 Video-mode changes wait for replacement restoration to finish. A compact indeterminate indicator appears
-after 500 milliseconds of real restoration/reconnection work and disappears on
+after one second of real restoration/reconnection work and disappears on
 readiness; brief inactive returns do not show it. The existing one-replacement
 limit and nine-second resume deadline remain. Terminal does not silently create
 a replacement shell or replay input. Grid changes while inactive are deferred;
@@ -340,7 +340,18 @@ An explicit, local 30-second preference can reuse a recent successful unlock on
 foreground return. Access is revoked throughout background entry, and reuse
 requires an active app, protected data availability, and an unexpired monotonic
 deadline. Protected-data loss, preference changes and process restart discard
-reuse. The privacy cover appears on inactivity, independently of this preference.
+reuse. Transient inactivity does not show a lock cover. Actual background entry covers
+the app snapshot; valid grace reuse restores presentation before active admission.
+Successful current Face ID authentication and current active state admit the main
+interface together with controls, credentials and unlocked publication. A success
+that arrives while inactive retains the same opaque Unlock card until activation;
+the button changes from Unlocking to Opening and stays disabled. There is no
+separate branded transition screen; Unlock becomes available for an explicit
+foreground retry after failure or cancellation;
+activation that arrives first waits for the result. Already-active success proceeds
+without another lifecycle event or guessed animation delay. A completed canceled
+or failed attempt requires explicit retry. Background/protected-data loss retires
+pending success; ordinary interruptions and configured grace retain their policy.
 These are local presentation/access gates; legacy application-authentication,
 pairing, signatures and recorded grants remain unchanged.
 

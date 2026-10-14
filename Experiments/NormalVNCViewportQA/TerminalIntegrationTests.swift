@@ -653,7 +653,10 @@ private final class SSHEarlyReadProbe: ChannelInboundHandler, @unchecked Sendabl
         let policy = try XCTUnwrap(fixture["recoveryPolicy"] as? [String: Any])
         XCTAssertEqual(policy["inactiveReturnRestoresLatestTerminalGrid"] as? Bool, true)
         let vectors = try XCTUnwrap(fixture["interruptionCases"] as? [[String: Any]])
-        XCTAssertNotNil(vectors.first { $0["name"] as? String == "brief-inactive-terminal-grid-change" })
+        let vector = try XCTUnwrap(vectors.first { $0["name"] as? String == "brief-inactive-terminal-grid-change" })
+        let expectations = try XCTUnwrap(vector["expect"] as? [String])
+        XCTAssertTrue(expectations.contains("no-inactive-composed-input"))
+        XCTAssertTrue(expectations.contains("fresh-composed-input-on-foreground"))
         let record = SSHTestRecord(), server = try await server(record: record, key: NIOSSHPrivateKey(ed25519Key: .init()))
         defer { _ = server.close() }
         let mac = DirectMacRecordV1(id: UUID(), name: "Synthetic Grid Return", addresses: ["127.0.0.1"], sshPort: try XCTUnwrap(server.localAddress?.port))
@@ -666,7 +669,15 @@ private final class SSHEarlyReadProbe: ChannelInboundHandler, @unchecked Sendabl
         session.becameInactive(); XCTAssertFalse(session.suspended)
         session.resize(columns: 100, rows: 30); session.resize(columns: 120, rows: 40)
         session.send(Array("MUST-NOT-REPLAY".utf8))
+        XCTAssertFalse(session.canComposeText, "Composer entry waits for the session foreground handoff")
+        var inactiveComposeReply = false
+        var inactiveComposeIssue: String?
+        session.sendComposedText(Array("INACTIVE-COMPOSER-MUST-NOT-REPLAY".utf8), generation: session.composeGeneration) {
+            inactiveComposeReply = true; inactiveComposeIssue = $0
+        }
         try await Task.sleep(for: .milliseconds(100))
+        XCTAssertTrue(inactiveComposeReply)
+        XCTAssertNotNil(inactiveComposeIssue, "Composed input must be rejected even while UIKit is globally active")
         XCTAssertEqual(record.sizes, [[80, 24]], "Inactive layout changes cannot write to the PTY")
         XCTAssertTrue(record.received.isEmpty)
         session.foreground()
@@ -675,8 +686,19 @@ private final class SSHEarlyReadProbe: ChannelInboundHandler, @unchecked Sendabl
             record.size == [120, 40] && String(decoding: record.received, as: UTF8.self) == "active-only"
         }
         XCTAssertEqual(record.sizes, [[80, 24], [120, 40]], "Only the latest inactive grid is published")
+        XCTAssertTrue(session.canComposeText)
+        var freshComposeReply = false
+        var freshComposeIssue: String?
+        session.sendComposedText(Array("fresh-compose-only".utf8), generation: session.composeGeneration) {
+            freshComposeReply = true; freshComposeIssue = $0
+        }
+        try await wait("fresh composed input on the same foreground PTY") {
+            freshComposeReply && String(decoding: record.received, as: UTF8.self) == "active-onlyfresh-compose-only"
+        }
+        XCTAssertNil(freshComposeIssue)
         XCTAssertEqual(record.passwordRequests, 1); XCTAssertEqual(record.shellRequests, 1)
         session.foreground(); try await Task.sleep(for: .milliseconds(100))
+        XCTAssertEqual(String(decoding: record.received, as: UTF8.self), "active-onlyfresh-compose-only", "Rejected input is never replayed")
         XCTAssertEqual(record.sizes, [[80, 24], [120, 40]], "Duplicate active notifications do not resend an unchanged grid")
     }
     func testBriefInactivityAndSlowStatusUpdateRetainTheSameShellWithoutInputReplay() async throws {

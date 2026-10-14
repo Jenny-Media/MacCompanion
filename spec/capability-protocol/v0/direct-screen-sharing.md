@@ -179,7 +179,9 @@ video-mode changes during replacement restoration; they become available after r
 A verified missing display falls back to All Displays and fit with a concise notice.
 A retained display with changed dimensions remains selected and fits its new geometry;
 old relative zoom/center apply only to matching dimensions. Restoration feedback is a
-compact indeterminate indicator delayed 500 ms, cancelled on readiness or exit.
+compact indeterminate indicator delayed 1000 ms, cancelled on readiness or exit.
+A retained-owner refresh keeps cached pixels at full opacity and remains paused
+until fresh readiness evidence; only a replacement dial announces Reconnecting.
 A manual retry remains available after the automatic attempt fails.
 Returning to My Macs permanently retires that viewer. Late native frame, cursor
 and status callbacks cannot revive a stopped or replaced connection.
@@ -382,12 +384,28 @@ A busy queue reports a retryable issue without partial text or a disconnect.
 ## iOS session text composer
 
 Desktop, Trackpad & Keyboard and Terminal offer a free **Compose Text** session
-tool under Keyboard & Input. macOS does not expose this tool. A native multiline
-editor holds an ephemeral, device-local draft bound to its originating viewer or
-PTY generation. **Back to Session** retains the unsent draft so the user can focus
-the remote destination; **Discard** clears it. Background, app lock, connection
-replacement and session closure clear the draft and dismiss its editor. Neither
-the draft nor its content enters storage, sync, diagnostics or ActivityKit.
+Quick Action (also available under Keyboard & Input). Existing untouched default
+profiles gain this action; preserve all customized profiles and their disabled
+actions. macOS does not expose this tool. Present a small floating text bubble
+above the native keyboard, retaining visible session content. Expose a grabber,
+Close and a circular arrow Send action; do not expose a title/presentation toolbar,
+Expand/Collapse, Dock/Undock or a grabber-tap expansion action. Close retains the
+unsent draft so the user can choose a remote destination; clearing selected text
+uses the native editor. Drag within the keyboard-safe area, gently snapping
+within 28 points of an edge on release. Relative placement follows keyboard,
+orientation and size changes and stays clamped within safe bounds. Track undocked
+(including floating and detached split) keyboards. Prefer space above the keyboard;
+when that cannot hold the editor, choose readable space below or beside it.
+Use a safe-area tracking constraint near the top edge. Retain one mounted native
+editor, draft, selection and keyboard focus through movement and layout changes.
+Editor scrolling never moves the bubble. Canceled gestures restore placement;
+sending blocks movement and dismissal. Keep 44-point Close/Send hit regions,
+readable scrolling text and accessible destination context/validation in narrow,
+short landscape and Dynamic Type layouts. Conditional error details remain
+reachable. VoiceOver offers movement actions on the grabber. Background, app lock,
+connection replacement and session closure clear the ephemeral viewer/PTY-bound
+draft and dismiss its editor. Neither draft nor content enters storage, sync,
+diagnostics or ActivityKit.
 
 The only delivery action is **Send Text**. It never appends Return. Clipboard
 reads require an explicit native Paste action. Preserve spaces and trailing line
@@ -411,7 +429,9 @@ commands or change terminal input. Never describe Send Text as preventing comman
 execution, even though it adds no extra Return.
 
 Confirmation binds the exact reviewed text. At sending time, recheck app unlock,
-foreground/input admission and the originating connection generation. A busy
+foreground/input admission and the originating connection generation. Terminal
+composer entry, queue admission and worker writes MUST also wait for the session
+to finish its foreground handoff, even if the application is already active. A busy
 queue keeps the draft with a non-destructive error. Once admitted, disable editing
 and duplicate sends until the local transport write completes or fails. A local
 write completion is not remote application consumption. Partial/uncertain writes
@@ -444,9 +464,9 @@ credentials, remote input or background execution mode. Its scoped End Session
 LiveActivityIntent runs in the app process without foregrounding it.
 Publish Connected only for a foreground, ready native owner. Temporary foreground
 inactivity releases input without changing the established session phase. Actual
-background entry presents Paused; publish Reconnecting while checking/replacing the
-connection. End immediately on Done, terminal failure or opt-out. A dismissed
-activity is not recreated for that session unless the user opts back in.
+background entry presents Paused. Retained Desktop checks keep Paused until fresh
+readiness evidence; publish Reconnecting only while replacing a Desktop connection.
+End immediately on Done, terminal failure or opt-out. A dismissed activity is not recreated for that session unless the user opts back in.
 Connected and paused freshness are bounded to 60 seconds. Renew connected freshness
 only on observed connection evidence, with coalesced foreground publication; returning
 to a local socket does not prove the peer is alive. Stale presentations offer Open to
@@ -464,8 +484,12 @@ owner view/process is gone opens sign-in without auto-connect and explains that 
 opens a new shell; ordinary Mac-list entry retains saved-login convenience. An already presented
 Desktop or Terminal is kept; a Terminal link cannot accidentally open Desktop.
 Old activities without a kind retain Desktop semantics. Activities left by a
-previous process are ended before starting a new one. No APNs or vendor server
-is added. Permanent extension identity/signing admission remains gated.
+previous process are ended before starting a new one. Startup retirement remains
+tracked independently of replaceable status publication: an early session end or
+opt-out/opt-in cannot discard it or permit new creation before it completes.
+Waiting for pending activity work includes this startup retirement, while ending
+the currently owned activity remains independent of stalled updates. No APNs or
+vendor server is added. Permanent extension identity/signing admission remains gated.
 
 Compact presentation shows a one-line Mac name with a bounded width and a phase
 symbol; expanded and Lock Screen presentations show the name, status,
@@ -499,7 +523,27 @@ preference may reuse prior successful access only when the app is active, protec
 data is available and a continuous monotonic deadline (including sleep) is unexpired.
 Access remains revoked throughout background entry. Protected-data loss, preference
 changes and process restart discard reuse; a late retired authentication cannot restore
-access. The opaque cover appears on inactivity independently of this preference.
+access. Transient inactivity alone MUST NOT reveal a lock cover or revoke prior
+authentication; session input still stops until active. Cover actual background
+entry for the app snapshot. On foreground entry remove that snapshot cover before
+visible presentation when a valid grace reuse is pending, without granting input
+or credential access until active. A successful current authentication MUST wait
+for current active admission before revealing the main interface, granting access,
+hiding the cover and publishing unlock together on the main actor. While success
+awaits activation, retain the same opaque Unlock card. Its button says Unlocking
+during authentication and Opening while successful admission awaits activation;
+disable it throughout either state. Do not show a separate branded transition
+screen or start a second request. Enable Unlock only for an explicit retry with
+current foreground and protected-data availability. Recheck admission from both authentication result
+and activation: an already-active success MUST NOT wait for a new notification.
+A completed failed or canceled attempt stays locked for explicit retry; transient
+activation cannot automatically repeat it. Background/protected-data loss retires
+pending success and rejects late replies. UIKit activation is the public event
+readiness boundary, not a guarantee of Face ID animation completion; no fixed
+animation-duration delay or private system-UI inspection is permitted.
+The library interaction/accessibility gate MUST observe application activation
+directly, including when authentication succeeds before activation without a new
+scene-phase change. Losing interaction retires pending local presentations.
 
 Fullscreen hides the key strip and reclaims its viewport space without a reconnect.
 A reachable session-controls button restores it, including keyboard access. Remember
@@ -599,7 +643,11 @@ Terminal keyboard accessories show a 1–0 number row whenever the software keyb
 
 ## Lifetime Pro and permanent free access (2026-10-05)
 
-The official client has an optional lifetime non-consumable Pro product (`media.jenny.maccompanion.pro.lifetime`, US base price $9.99) and Restore Purchases. Verify StoreKit transactions, their product/type and revocation before unlocking. Resolve initial entitlements before denying paid actions. Listen for updates and read current entitlements without a custom account/server or per-session online purchase check. Cancelled, pending, unverified and unavailable purchases never unlock Pro or delete user data. Display StoreKit's localized price only when the product is available. The development StoreKit configuration is testing-only and never establishes App Store product availability.
+The official client has an optional lifetime non-consumable Pro product (`media.jenny.maccompanion.pro.lifetime`, US base price $9.99) and Restore Purchases. Verify StoreKit transactions, their product/type and revocation before unlocking. Resolve initial entitlements before denying paid actions. Free-Mac connections,
+first-Mac addition and existing-Mac management MUST NOT wait for initial StoreKit
+resolution. Pending paid-dependent actions show progress with a bounded retry
+state, never grant unverified Pro access, and recheck unlock/activity and record
+membership before presentation; retired requests cannot open a late sheet. Listen for updates and read current entitlements without a custom account/server or per-session online purchase check. Cancelled, pending, unverified and unavailable purchases never unlock Pro or delete user data. Display StoreKit's localized price only when the product is available. The development StoreKit configuration is testing-only and never establishes App Store product availability.
 
 An explicit optional free non-consumable `media.jenny.maccompanion.pro.trial14`, displayed as **14-day Trial**, grants the same Pro features for exactly 1,209,600 seconds from its verified **original** purchase date. It MUST be priced zero before the app offers it. Explain the duration, expiring Pro features, permanent free tier and separate lifetime purchase before starting. There is no automatic billing or renewal. Restore, repeated purchase, another device and reinstall MUST NOT reset the original start date. Read verified trial history, including revoked transactions, to prevent offering a second trial; revoked trials grant no access. Unverified, wrong-product, wrong-type and future-dated transactions grant no trial access. Reevaluate expiry on foreground and with a bounded local deadline while running; no per-frame timer or server is needed. Local time is used offline and is not a tamper-resistant server clock. Lifetime access overrides trial expiry. Expiry/revocation preserves saved data, free selections and active connections.
 
@@ -723,3 +771,44 @@ Opaque model mappings are based on Apple's model identification references:
 [Mac Pro](https://support.apple.com/en-us/102887).
 Bonjour privacy declarations follow Apple's
 [TN3179](https://developer.apple.com/documentation/technotes/tn3179-understanding-local-network-privacy).
+
+### Direct-client cached cursor images
+
+
+Both native iOS and Mac direct clients advertises Apple cursor encoding 1104 (`0x450`)
+through the existing authenticated classic RFB transport. This does not select
+Apple's encrypted record layer or alter authentication, ClientInit or input.
+Compatibility with a particular Screen Sharing host requires live verification.
+A rectangle contains a big-endian uint32 opaque cache identifier and uint32
+compressed length, followed by exactly that many zlib bytes. A positive length
+stores and selects an image: rectangle width/height are 1–256 and its hotspot
+must be inside the image. The decoded payload is exactly width × height × 5
+bytes: BGRA pixels followed by a separate alpha plane. Preserve fractional alpha
+by converting to premultiplied RGBA. Finished and complete sync-flushed zlib
+streams are admitted; corruption, truncation, trailing data, extra output and
+compressed lengths above 512 KiB fail the owning connection safely.
+
+A zero compressed length selects a cached identifier, including when rectangle
+geometry is zero. Unknown identifiers clear the shape to the local fallback;
+identifiers have no semantic meaning. Cache at most 64 images and 4 MiB of pixel
+data per socket owner, evicting the least recently used. Clear the cache on new
+connection and teardown. Cursor metadata must not satisfy framebuffer coverage
+or fabricate a video update. Existing pause, retirement and presentation epochs
+also fence these reports. Keep request-driven framebuffer updates; do not enable
+automatic streaming or change encrypted input to obtain cursor feedback.
+
+Both generated direct-client builds deliver empty standard cursor reports through
+the exact hash-admitted upstream callback adapter. Standard and Apple reports
+replace the shape at the current pointer position even without video damage.
+Brief inactivity hides the cursor overlay while retaining the current socket
+owner's decoded shape (including a transparent shape), hotspot and position.
+The active return restores that presentation without requiring another cursor
+report. On the same retained connection, background hides presentation and invalidates
+position while retaining the decoded shape/hotspot. Restore the shape after the
+current resume boundary without requiring a new host shape report; do not restore
+a stale pointer position. An image received before the first complete desktop
+frame survives initial geometry setup. Geometry changes invalidate position,
+not a valid same-owner shape. Replacement, teardown and explicit empty/unknown
+shape reports clear it. Cursor publication cannot cross a pending resume boundary.
+Content-free report, visible-image, publication and cache-miss counters describe
+wire delivery without claiming context semantics or live host compatibility.

@@ -574,8 +574,15 @@
     [self withFollowViewer:^(CompanionVNCViewer *viewer, ControlsSession *owner) {
         for (NSNumber *only in @[@NO,@YES,@NO]) {
             viewer.inputOnly=only.boolValue;
+            XCTAssertEqual(viewer.inputOnly,only.boolValue);
             [viewer performControlAction:@{@"kind": @"viewMenu"}];
-            [[NSRunLoop mainRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:.35]];
+            XCTNSPredicateExpectation *presented = [[XCTNSPredicateExpectation alloc]
+                initWithPredicate:[NSPredicate predicateWithBlock:^BOOL(CompanionVNCViewer *candidate, NSDictionary *bindings) {
+                    UIViewController *menu = candidate.presentedViewController;
+                    return [menu isKindOfClass:UINavigationController.class] && !menu.isBeingPresented
+                        && !menu.isBeingDismissed && menu.transitionCoordinator == nil;
+                }] object:viewer];
+            [self waitForExpectations:@[presented] timeout:3];
             UINavigationController *navigation=(id)viewer.presentedViewController;
             CompanionVNCMenu *menu=(id)navigation.topViewController; [menu loadViewIfNeeded];
             NSUInteger copies=0;
@@ -586,8 +593,10 @@
                 }
             }
             XCTAssertEqual(copies,only.boolValue ? 0 : 1); XCTAssertEqual(viewer.session,owner);
-            [viewer dismissViewControllerAnimated:NO completion:nil];
-            [[NSRunLoop mainRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:.1]];
+            XCTestExpectation *dismissed = [self expectationWithDescription:@"View menu dismissal completes"];
+            [viewer dismissViewControllerAnimated:NO completion:^{ [dismissed fulfill]; }];
+            [self waitForExpectations:@[dismissed] timeout:3];
+            XCTAssertNil(viewer.presentedViewController);
         }
     }];
 }

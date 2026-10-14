@@ -78,3 +78,108 @@ Sharing and Remote Login: native IME and dictation, explicit Paste, Unicode and
 emoji in a remote text editor, desktop Return/Tab behavior, and multiline shell
 input with bracketed paste enabled and disabled. Simulator and synthetic socket
 checks do not establish those hardware results.
+
+## Compact composer revision (historical, 2026-10-13)
+
+Compose Text is a built-in Quick Action in Desktop, Trackpad and Terminal.
+Untouched older default rows gain the action while retaining their existing
+identifiers; customized rows are preserved. The composer appears as a compact
+panel above the actual keyboard, leaving the desktop visible. Back returns to
+the destination without losing the draft; Expand provides more editing space.
+Send remains outside scrolling content, including at large accessibility sizes.
+Short landscape layouts use accessible Back, Discard and Send controls beside
+the scrollable editor; destination context and validation explanations stay accessible.
+Return/Tab confirmation, explicit delivery, size limits and generation/readiness
+fences remain in place. Background/lock cancellation clears the draft and
+dismisses even when it arrives during the presentation transition.
+
+Temporary inactive gestures do not present a lock cover. Real backgrounding
+retains the privacy mask. A valid grace return prepares visible presentation
+before becoming active without admitting inactive input; current successful
+authentication keeps a quiet opaque transition until current active admission;
+then the main interface, controls and unlocked publication become available together.
+Retained Desktop recovery keeps cached pixels at normal opacity, checks for a
+fresh frame silently, and shows delayed Updating desktop feedback after one
+second. Actual connection replacement alone uses Reconnecting. iOS can suspend
+a background app; these changes do not promise unlimited background networking.
+
+Simulator coverage exercises these policies with native windows and the keyboard
+layout guide, actual rendered Send geometry, current/canceled authentication
+callbacks, native editor input and existing VNC/Terminal lifecycle fences.
+Physical Face ID and third-party keyboard acceptance remain separate checks.
+
+
+## Maps-style resizing revision (2026-10-13)
+
+The keyboard-aware panel now has a grabber with compact and expanded snap
+positions. Dragging keeps the same native editor mounted, preserving the draft,
+selection and keyboard focus. Expand/Collapse also provides an accessible action.
+Editor scrolling leaves the panel size unchanged. A short canceled closing drag
+retains the draft; a completed swipe closes it while retaining unsent text.
+Sending prevents swipe dismissal. Background and lock still retire the draft.
+
+The panel uses public UIKit gestures and the actual keyboard guide. Native
+UISheetPresentationController prototypes expanded automatically with the
+keyboard and dismissed it during resizing, so they failed the required typing
+experience. The snapping panel preserves the verified keyboard-aware layout.
+Simulator UI tests use real grabber drags, editor scrolling, typing, dismissal
+and background transitions; native editor tests cover selection, short landscape
+and accessibility sizes. Physical iPhone acceptance remains a separate check.
+
+
+Reproduce the drag suite after a normal simulator development build:
+
+    python3 scripts/verify_terminal_pro_simulator.py --build /absolute/build-output --simulator SIMULATOR_ID --generate-only --composer-ui
+    xcodebuild -project /absolute/build-output/QA/DirectClientQA.xcodeproj -scheme ComposerSheetQA -destination 'platform=iOS Simulator,id=SIMULATOR_ID' -derivedDataPath /absolute/build-output/DerivedData -parallel-testing-enabled NO test
+
+The generated QA app links the experiment entry point only in its private
+target. Release and normal development targets do not link experiment sources.
+
+## Floating composer revision (historical, 2026-10-13)
+
+The default presentation is now a compact floating panel inside the session.
+Drag the grabber to move it; release near an edge to snap. The panel stays within
+the safe area above the actual keyboard, and relative placement follows rotation
+and keyboard changes. Undocked and floating tablet keyboards are tracked; near
+the top edge the panel uses readable space below or beside the keyboard.
+VoiceOver exposes movement actions on the grabber. Narrow compact windows group
+Discard, Expand and Dock in Composer actions, leaving Back, error details and
+Send directly reachable.
+
+Expand fills the available area; Collapse restores the compact panel. Dock
+attaches it near the keyboard with the existing Maps-style height snaps. Undock
+restores its floating position. All presentations share one mounted native editor,
+preserving draft, selection and typing focus. Back still retains the draft for
+choosing a remote destination. Background, lock and session replacement retire it.
+Sending blocks movement and presentation changes; late gestures from retired
+presentations cannot affect a new editor. Only Send Text delivers input, with the
+existing confirmation and readiness checks.
+
+Simulator coverage includes real grabber drags, edge snapping, docking,
+expansion, editor scrolling, rotation, actual keyboard geometry, retained selection,
+Dynamic Type and lifecycle cancellation. Tablet safe-area/keyboard geometry is
+covered by controlled native rendering on an iPad Simulator in portrait and
+landscape, including moved floating and full-width keyboard viewports. Actual iPad
+system-keyboard floating/undocking gestures remain a final hardware check, as
+explicitly agreed after the simulator could not enter those modes. Physical
+dictation and IME acceptance remain separate. Cursor and password-manager
+investigations stay paused.
+
+## Text bubble and persistent Unlock card (2026-10-13)
+
+The current composer is a smaller floating text bubble with a grabber, Close and
+circular arrow Send. The title, destination/presentation toolbar, Expand/Collapse,
+Dock/Undock and Discard controls are removed. Close keeps the draft; long text
+scrolls in the same native editor. Destination context is available to accessibility,
+and conditional validation/delivery-error details remain reachable. Drag/snapping,
+keyboard/orientation tracking, explicit confirmation and lifecycle fences remain.
+Close and Send have 44-point hit regions. Dynamic Type grows the editor within
+keyboard-safe bounds. Compatibility transitions remain internal and have no UI
+entry or grabber-tap action.
+
+Unlock uses one persistent card through authentication and active admission.
+Unlocking indicates evaluation; Opening indicates success awaiting activation.
+Both states disable the button. Failure/cancellation exposes an explicit Unlock
+retry only while foreground and protected data permit it. Current successful
+authentication plus active admission still reveal the main UI and enable controls
+together. The separate Mac Companion-only transition is removed.

@@ -33,6 +33,10 @@ review. Opening review retires queued and copied composed-text groups with one
 failed local completion; a later return cannot replay their remaining events. Return to Live Desktop requests a fresh complete frame before reopening
 input; it preserves the viewport only when its display crop remains valid.
 Background during that wait pauses the established owner without disconnecting.
+Brief inactivity cancels review through the same fresh-frame return path.
+Interruption admission remains separate from review admission: an active return
+cannot clear a pending review refresh, and a complete frame arriving while
+inactive cannot admit input until the app is active again.
 If the display baseline changes during presentation, the superseded callback
 cannot reopen input; wait for a complete frame from the current baseline.
 Cancellation/replacement/background/lock/closure clears the snapshot, local
