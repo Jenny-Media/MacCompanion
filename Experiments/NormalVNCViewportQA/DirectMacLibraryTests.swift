@@ -114,6 +114,7 @@ import SwiftUI
     func testModeProfilesKeepLegacyActionsUntilSavedAndRemainIndependent() throws {
         let policy = try XCTUnwrap(profile()["interfacePolicy"] as? [String: Any])
         XCTAssertEqual(policy["quickActionProfileScope"] as? String, "mode")
+        XCTAssertEqual(policy["defaultQuickActionPlatform"] as? String, "ios")
         XCTAssertEqual(policy["quickActionConfigurationRequiresConnection"] as? Bool, false)
         XCTAssertEqual(DirectControlMode.allCases.map(\.rawValue), policy["quickActionProfiles"] as? [String])
         XCTAssertEqual(DirectControlMode.terminal.defaults.map { $0.kind.rawValue }, policy["terminalDefaultQuickActionKinds"] as? [String])
@@ -125,13 +126,13 @@ import SwiftUI
         let legacy = VNCQuickAction(title: "Legacy Shortcut", kind: .shortcut, key: 0x63, modifiers: [0xffeb])
         try VNCSessionPreferences.saveActions([legacy], mac: mac)
         XCTAssertEqual(try VNCSessionPreferences.profileActions(.desktop, legacyMac: mac), [legacy])
-        XCTAssertEqual(try VNCSessionPreferences.profileActions(.terminal).map(\.kind), [.paste, .interrupt])
-        XCTAssertEqual(try VNCSessionPreferences.profileActions(.trackpad, legacyMac: mac).map(\.kind), [.rightClick, .returnKey])
+        XCTAssertEqual(try VNCSessionPreferences.profileActions(.terminal).map(\.kind), [.composeText, .paste, .interrupt])
+        XCTAssertEqual(try VNCSessionPreferences.profileActions(.trackpad, legacyMac: mac).map(\.kind), [.composeText, .rightClick, .returnKey])
         let shared = VNCQuickAction(title: "Fit", kind: .fit)
         try VNCSessionPreferences.saveProfile([shared], mode: .desktop)
         XCTAssertEqual(try VNCSessionPreferences.profileActions(.desktop, legacyMac: mac), [shared])
         XCTAssertEqual(try VNCSessionPreferences.readActions(mac), [legacy], "Do not delete the legacy record")
-        XCTAssertEqual(try VNCSessionPreferences.profileActions(.terminal).map(\.kind), [.paste, .interrupt])
+        XCTAssertEqual(try VNCSessionPreferences.profileActions(.terminal).map(\.kind), [.composeText, .paste, .interrupt])
         try VNCSessionPreferences.saveProfile([], mode: .terminal)
         XCTAssertTrue(try VNCSessionPreferences.profileActions(.terminal).isEmpty, "An intentionally empty profile must not restore defaults")
     }
@@ -311,6 +312,7 @@ import SwiftUI
         XCTAssertTrue(removed.isEmpty); XCTAssertEqual(DirectMacLibraryV1(url: url).macs, library.macs)
     }
     func testPreferencesAndCustomContentAreIsolatedByMacUUID() throws {
+        let policy = try XCTUnwrap(profile()["interfacePolicy"] as? [String: Any])
         let first = UUID(), second = UUID()
         defer { VNCSessionPreferences.clear(first); VNCSessionPreferences.clear(second) }
         VNCSessionPreferences.setSpeed(2.2, mac: first); VNCSessionPreferences.setDisplay(85, mac: first)
@@ -322,7 +324,7 @@ import SwiftUI
         XCTAssertFalse(VNCSessionPreferences.trackpad(second))
         let action = VNCQuickAction(title: "Test", kind: .text, text: "Synthetic text")
         try VNCSessionPreferences.saveActions([action], mac: first)
-        XCTAssertTrue(VNCSessionPreferences.actions(first).isEmpty); XCTAssertEqual(try VNCSessionPreferences.readActions(first), [action]); XCTAssertEqual(VNCSessionPreferences.actions(second).map(\.kind), [.mode, .copyText, .fit, .rightClick])
+        XCTAssertTrue(VNCSessionPreferences.actions(first).isEmpty); XCTAssertEqual(try VNCSessionPreferences.readActions(first), [action]); XCTAssertEqual(VNCSessionPreferences.actions(second).map { $0.kind.rawValue }, policy["desktopDefaultQuickActionKinds"] as? [String])
         XCTAssertFalse(VNCQuickAction(title: "Too long", kind: .text, text: String(repeating: "a", count: 257)).valid)
         XCTAssertThrowsError(try DirectMacRecordV1.normalized(name: "Mac", addresses: ["same.local", "same.local"]))
         XCTAssertThrowsError(try DirectMacRecordV1.normalized(name: "Mac", addresses: ["mac.local"], port: 0))
