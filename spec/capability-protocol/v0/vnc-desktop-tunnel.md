@@ -135,9 +135,10 @@ cursor wire cases exercise actual LibVNCClient negotiation and mask decoding.
 An empty standard XCursor or RichCursor rectangle clears the previous native
 macOS shape and restores the arrow without consuming pixel or mask bytes.
 Positive-size transparent shapes retain their separate intentional-hide behavior.
-The macOS build admits this one callback adaptation by original/adapted source
-hashes and an exact patch in the VNC source lock; it compiles a generated copy,
-leaving the pristine upstream checkout and other platform decoders unchanged.
+The generated native iOS and macOS direct-client builds admit this callback
+adaptation by original/adapted source hashes and an exact patch in the VNC
+source lock. Both compile generated copies, leaving the pristine upstream
+checkout and unrelated decoder behavior unchanged.
 
 ## Remote keyboard
 
