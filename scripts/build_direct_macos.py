@@ -5,6 +5,7 @@ Generated development output stays outside the checkout. No host/Agent sources
 or experiments are linked into the client. Distribution admission is separate.
 """
 import argparse
+from build_cache import BuildSession, cmake_refresh_args, toolchain_identity, write_if_changed
 import hashlib
 import json
 import os
@@ -33,18 +34,27 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--source', type=Path, required=True, help='Clean pinned LibVNCClient checkout')
     parser.add_argument('--openssl-archive', type=Path, required=True)
-    parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--output', type=Path, required=True, help='Evidence directory outside the checkout; compiler files are reused separately')
+    parser.add_argument('--cache-root', type=Path, help='Override MACCOMPANION_BUILD_CACHE_ROOT')
+    parser.add_argument('--cold', action='store_true', help='Use a fresh compiler workspace without deleting existing caches')
     parser.add_argument('--arch', choices=['arm64', 'x86_64'], default='arm64')
     parser.add_argument('--signing-identity', help='Existing local Apple Development certificate SHA-1')
     parser.add_argument('--team', help='Existing Apple team; required for development signing')
     parser.add_argument('--profile', type=Path, help='Existing installed Mac development provisioning profile')
     args = parser.parse_args()
+    identity = {'kind': 'native-macos', 'sdk': 'macosx', 'arch': args.arch, 'signing': 'development' if args.signing_identity else 'unsigned', 'toolchain': toolchain_identity(('macosx',))}
+    with BuildSession(ROOT, args.output, identity, cache_root=args.cache_root, cold=args.cold) as session:
+        args.output = session.workspace
+        build(args, parser, session)
+
+
+def build(args, parser, session):
     def source_inputs():
         roots = [ROOT / 'Native/Mac', ROOT / 'Native/VNC', ROOT / 'Native/Terminal', ROOT / 'Native/Dependencies',
                  ROOT / 'Apps/MacCompanionMac/Assets.xcassets']
         files = [p for folder in roots for p in sorted(folder.rglob('*')) if p.is_file()]
         files += [Path(__file__), *[ROOT / 'scripts' / name for name in [
-            'direct_mac_development_signing.py', 'verify_direct_client_dependencies.py',
+            'build_cache.py', 'direct_mac_development_signing.py', 'verify_direct_client_dependencies.py',
             'prepare_swiftterm_build_tool.py', 'dependency_checkout_provenance.py', 'prepare_macos_vnc_cursor.py']],
             ROOT / 'spec/dependency-policy/v0/direct-client-development.json',
             ROOT / 'spec/privacy-manifest/v0/targets/mac-containing-app/PrivacyInfo.xcprivacy']
@@ -107,8 +117,7 @@ def main():
         definitions['WITH_' + name] = 'OFF'
     # Refresh once when migrating from the pristine checkout or a prior adapter.
     # Normal reuse retains the verified library and does not force recompilation.
-    cache = vnc / 'CMakeCache.txt'
-    fresh = ['--fresh'] if cache.exists() and ('CMAKE_HOME_DIRECTORY:INTERNAL=' + str(mac_vnc_source)) not in cache.read_text().splitlines() else []
+    fresh = cmake_refresh_args(vnc, mac_vnc_source)
     with (args.output / 'vnc-build.log').open('w') as log:
         run('/opt/homebrew/bin/cmake', *fresh, '-S', mac_vnc_source, '-B', vnc, *['-D' + k + '=' + str(v) for k, v in definitions.items()], stdout=log, stderr=subprocess.STDOUT)
         run('/opt/homebrew/bin/cmake', '--build', vnc, '--target', 'vncclient', '-j6', stdout=log, stderr=subprocess.STDOUT)
@@ -123,7 +132,7 @@ def main():
         {'path': str(ROOT / 'Apps/MacCompanionMac/Assets.xcassets'), 'buildPhase': 'resources'},
         {'path': str(ROOT / 'spec/privacy-manifest/v0/targets/mac-containing-app/PrivacyInfo.xcprivacy'), 'buildPhase': 'resources'}]
     info = args.output / 'Info.plist'
-    info.write_bytes(plistlib.dumps({'CFBundleIdentifier': '$(PRODUCT_BUNDLE_IDENTIFIER)', 'CFBundleExecutable': '$(EXECUTABLE_NAME)',
+    write_if_changed(info, plistlib.dumps({'CFBundleIdentifier': '$(PRODUCT_BUNDLE_IDENTIFIER)', 'CFBundleExecutable': '$(EXECUTABLE_NAME)',
         'CFBundleName': 'Mac Companion', 'CFBundlePackageType': 'APPL', 'CFBundleShortVersionString': '1.0', 'CFBundleVersion': '1',
         'LSMinimumSystemVersion': '26.0', 'NSHighResolutionCapable': True, 'LSApplicationCategoryType': 'public.app-category.utilities',
         'NSLocalNetworkUsageDescription': 'Connect to your Macs using Screen Sharing and Remote Login.',
@@ -155,14 +164,14 @@ def main():
                             sync_group=args.team + '.media.jenny.maccompanion.ios')
         metadata = plistlib.loads(info.read_bytes())
         metadata['MacCompanionSharedKeychainGroup'] = args.team + '.media.jenny.maccompanion.ios'
-        info.write_bytes(plistlib.dumps(metadata))
+        write_if_changed(info, plistlib.dumps(metadata))
     project = args.output / 'project.json'
-    project.write_text(json.dumps(spec, indent=2) + '\n')
-    run('/opt/homebrew/bin/xcodegen', 'generate', '--spec', project)
+    write_if_changed(project, json.dumps(spec, indent=2) + '\n')
+    run('/opt/homebrew/bin/xcodegen', 'generate', '--use-cache', '--cache-path', args.output / '.xcodegen-cache', '--spec', project)
     project_path = args.output / 'NativeMacClient.xcodeproj'
     lock_path = project_path / 'project.xcworkspace/xcshareddata/swiftpm/Package.resolved'
     lock_path.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(ROOT / 'Native/Terminal/Package.resolved', lock_path)
+    write_if_changed(lock_path, (ROOT / 'Native/Terminal/Package.resolved').read_bytes())
     with (args.output / 'resolve.log').open('w') as log:
         run('xcodebuild', '-resolvePackageDependencies', '-project', project_path, '-scheme', 'MacCompanion', '-derivedDataPath', args.output / 'DerivedData',
             '-onlyUsePackageVersionsFromResolvedFile', '-skipPackageUpdates', stdout=log, stderr=subprocess.STDOUT)
@@ -201,8 +210,8 @@ def main():
               'artifactFiles': {str(p.relative_to(app)): sha(p) for p in sorted(app.rglob('*')) if p.is_file() and not p.is_symlink()},
               'signedDeviceAcceptance': False,
               'developmentSigning': signing, 'iCloudDeliveryVerified': False, 'releaseReadiness': False}
-    (args.output / 'build-report.json').write_text(json.dumps(report, indent=2) + '\n')
-    print(app)
+    report = session.publish(report, app)
+    print(report['app'])
 
 
 if __name__ == '__main__':

@@ -7,6 +7,7 @@ does not admit the development dependency graph for production release.
 External beta preparation requires the explicit --external-beta option.
 """
 import argparse
+from build_cache import compiler_workspace
 import hashlib
 import json
 from pathlib import Path
@@ -37,6 +38,11 @@ def main():
     parser.add_argument('--app-profile', type=Path)
     parser.add_argument('--widget-profile', type=Path)
     args = parser.parse_args()
+    with compiler_workspace(args.build, ROOT) as compiler:
+        execute(args, parser, compiler)
+
+
+def execute(args, parser, compiler):
     base, output = args.build.resolve(strict=True), args.output.resolve()
     if output.is_relative_to(ROOT) or output.exists() or args.build_number < 1:
         raise SystemExit('Use a fresh output directory outside the checkout and a positive build number.')
@@ -46,7 +52,7 @@ def main():
     for relative, sha in report['inputs'].items():
         if digest(ROOT / relative) != sha:
             raise SystemExit('Application source changed: ' + relative)
-    if digest(base / 'libvncclient/libvncclient.a') != report['libVNCClientSHA256']:
+    if digest(compiler / 'libvncclient/libvncclient.a') != report['libVNCClientSHA256']:
         raise SystemExit('Native library changed.')
     spec = json.loads((base / 'project.json').read_text())
     signing = (args.distribution_team, args.distribution_certificate, args.app_profile, args.widget_profile)
@@ -111,7 +117,7 @@ def main():
     archive = output / 'Mac Companion.xcarchive'
     with (output / 'archive.log').open('w') as log:
         run('xcodebuild', '-project', project, '-scheme', 'MacCompanionIOS', '-configuration', 'InternalTesting',
-            '-destination', 'generic/platform=iOS', '-derivedDataPath', base / 'DerivedData',
+            '-destination', 'generic/platform=iOS', '-derivedDataPath', compiler / 'DerivedData',
             '-onlyUsePackageVersionsFromResolvedFile', '-skipPackagePluginValidation',
             '-archivePath', archive, 'archive', stdout=log, stderr=subprocess.STDOUT)
     for relative, sha in report['inputs'].items():

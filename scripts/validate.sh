@@ -5,13 +5,19 @@ set -euo pipefail
 repository_root="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$repository_root"
 
-# A caller may isolate cached compiler inputs without changing the check set.
+# The manager locks a stable toolchain/checkout cache and saves each run's log.
+if [[ "${MACCOMPANION_VALIDATION_MANAGED:-0}" != "1" ]]; then
+  exec python3 scripts/build_cache.py validate "$@"
+fi
+
+# The internal scratch root is selected by the manager, independently of evidence.
 maccompanion_validation_scratch_root="${MACCOMPANION_VALIDATION_SCRATCH_ROOT:-/private/tmp}"
 if [[ "$maccompanion_validation_scratch_root" != /* ]]; then
   echo "MACCOMPANION_VALIDATION_SCRATCH_ROOT must be an absolute path." >&2
   exit 2
 fi
 
+python3 scripts/verify_build_cache.py
 python3 scripts/validate_fixtures.py
 python3 scripts/verify_vnc_framebuffer_bounds.py
 python3 scripts/verify_vnc_keyboard.py
@@ -106,7 +112,7 @@ if [[ "${MACCOMPANION_DISABLE_SWIFTPM_SANDBOX:-0}" == "1" ]]; then
   network_platform_arguments+=(--disable-sandbox)
 fi
 if [[ "${MACCOMPANION_DISABLE_SWIFTPM_SANDBOX:-0}" == "1" || -n "${MACCOMPANION_VALIDATION_SCRATCH_ROOT:-}" ]]; then
-  network_platform_arguments+=(--scratch-path "$maccompanion_validation_scratch_root/maccompanion-network-platform-build")
+  network_platform_arguments+=(--scratch-path "$maccompanion_validation_scratch_root/maccompanion-swift-build")
 fi
 swift "${network_platform_arguments[@]}"
 
@@ -119,7 +125,7 @@ if [[ "${MACCOMPANION_DISABLE_SWIFTPM_SANDBOX:-0}" == "1" ]]; then
   client_network_platform_arguments+=(--disable-sandbox)
 fi
 if [[ "${MACCOMPANION_DISABLE_SWIFTPM_SANDBOX:-0}" == "1" || -n "${MACCOMPANION_VALIDATION_SCRATCH_ROOT:-}" ]]; then
-  client_network_platform_arguments+=(--scratch-path "$maccompanion_validation_scratch_root/maccompanion-client-network-platform-build")
+  client_network_platform_arguments+=(--scratch-path "$maccompanion_validation_scratch_root/maccompanion-swift-build")
 fi
 swift "${client_network_platform_arguments[@]}"
 
@@ -133,7 +139,7 @@ if [[ "${MACCOMPANION_DISABLE_SWIFTPM_SANDBOX:-0}" == "1" ]]; then
   ios_client_platform_arguments+=(--disable-sandbox)
 fi
 if [[ "${MACCOMPANION_DISABLE_SWIFTPM_SANDBOX:-0}" == "1" || -n "${MACCOMPANION_VALIDATION_SCRATCH_ROOT:-}" ]]; then
-  ios_client_platform_arguments+=(--scratch-path "$maccompanion_validation_scratch_root/maccompanion-ios-client-platform-build")
+  ios_client_platform_arguments+=(--scratch-path "$maccompanion_validation_scratch_root/maccompanion-ios-package-build")
 fi
 swift "${ios_client_platform_arguments[@]}"
 
@@ -147,7 +153,7 @@ if [[ "${MACCOMPANION_DISABLE_SWIFTPM_SANDBOX:-0}" == "1" ]]; then
   ios_local_xpc_platform_arguments+=(--disable-sandbox)
 fi
 if [[ "${MACCOMPANION_DISABLE_SWIFTPM_SANDBOX:-0}" == "1" || -n "${MACCOMPANION_VALIDATION_SCRATCH_ROOT:-}" ]]; then
-  ios_local_xpc_platform_arguments+=(--scratch-path "$maccompanion_validation_scratch_root/maccompanion-ios-local-xpc-platform-build")
+  ios_local_xpc_platform_arguments+=(--scratch-path "$maccompanion_validation_scratch_root/maccompanion-ios-package-build")
 fi
 swift "${ios_local_xpc_platform_arguments[@]}"
 
@@ -161,7 +167,7 @@ if [[ "${MACCOMPANION_DISABLE_SWIFTPM_SANDBOX:-0}" == "1" ]]; then
   ios_client_ui_arguments+=(--disable-sandbox)
 fi
 if [[ "${MACCOMPANION_DISABLE_SWIFTPM_SANDBOX:-0}" == "1" || -n "${MACCOMPANION_VALIDATION_SCRATCH_ROOT:-}" ]]; then
-  ios_client_ui_arguments+=(--scratch-path "$maccompanion_validation_scratch_root/maccompanion-ios-client-ui-build")
+  ios_client_ui_arguments+=(--scratch-path "$maccompanion_validation_scratch_root/maccompanion-ios-package-build")
 fi
 swift "${ios_client_ui_arguments[@]}"
 
@@ -174,7 +180,7 @@ if [[ "${MACCOMPANION_DISABLE_SWIFTPM_SANDBOX:-0}" == "1" ]]; then
   mac_ui_arguments+=(--disable-sandbox)
 fi
 if [[ "${MACCOMPANION_DISABLE_SWIFTPM_SANDBOX:-0}" == "1" || -n "${MACCOMPANION_VALIDATION_SCRATCH_ROOT:-}" ]]; then
-  mac_ui_arguments+=(--scratch-path "$maccompanion_validation_scratch_root/maccompanion-mac-ui-build")
+  mac_ui_arguments+=(--scratch-path "$maccompanion_validation_scratch_root/maccompanion-swift-build")
 fi
 swift "${mac_ui_arguments[@]}"
 

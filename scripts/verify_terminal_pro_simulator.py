@@ -5,6 +5,7 @@ Requires a completed build_vnc_ios_development.py Simulator output. All test
 keys are fresh, temporary and synthetic. The user's ~/.ssh is never modified.
 """
 import argparse
+from build_cache import compiler_workspace
 import os
 import json
 from pathlib import Path
@@ -68,8 +69,15 @@ def main():
     parser.add_argument('--composer-ui', action='store_true', help='Generate the simulator-only Maps-style composer app and native drag test scheme')
     parser.add_argument('--cold-start-ui', action='store_true', help='Generate native cold-start admission interaction tests')
     parser.add_argument('--settings-ui', action='store_true', help='Also test gear navigation and live sheet appearance using native UI interactions')
-    args = parser.parse_args(); base = args.build.resolve()
-    qa = base / 'QA'; qa.mkdir(exist_ok=True)
+    args = parser.parse_args()
+    with compiler_workspace(args.build, ROOT) as compiler:
+        execute(args, parser, compiler)
+
+
+def execute(args, parser, compiler):
+    base = args.build.resolve()
+    qa = compiler / 'QA'; qa.mkdir(exist_ok=True)
+    evidence = base / 'QA'; evidence.mkdir(exist_ok=True)
     spec = json.loads((base / 'project.json').read_text())
     spec['name'] = 'DirectClientQA'
     app = spec['targets']['MacCompanionIOS']; settings = app['settings']['base']
@@ -167,19 +175,20 @@ def main():
     if args.generate_only:
         print(qa / 'DirectClientQA.xcodeproj')
         return
-    shutil.rmtree(qa / 'Results.xcresult', ignore_errors=True)
-    with (qa / 'test.log').open('w') as log:
+    import time
+    result = evidence / ('Results-' + str(time.time_ns()) + '.xcresult')
+    with (evidence / 'test.log').open('w') as log:
         run('xcodebuild', '-project', qa / 'DirectClientQA.xcodeproj', '-scheme', 'DirectClientQA',
-            '-destination', 'platform=iOS Simulator,id=' + args.simulator, '-derivedDataPath', base / 'DerivedData',
+            '-destination', 'platform=iOS Simulator,id=' + args.simulator, '-derivedDataPath', compiler / 'DerivedData',
             '-onlyUsePackageVersionsFromResolvedFile', '-skipPackagePluginValidation', '-parallel-testing-enabled', 'NO',
             *(['-only-testing:DirectClientTests/DuoComparisonTests/testInteractiveCapture'] if args.duo_review else []),
-            '-collect-test-diagnostics', args.test_diagnostics, '-resultBundlePath', qa / 'Results.xcresult', 'test', stdout=log, stderr=subprocess.STDOUT)
+            '-collect-test-diagnostics', args.test_diagnostics, '-resultBundlePath', result, 'test', stdout=log, stderr=subprocess.STDOUT)
     container = subprocess.check_output(['xcrun', 'simctl', 'get_app_container', args.simulator, bundle, 'data'], text=True).strip()
     if not args.duo_review:
         verify_external(Path(container) / 'Documents/synthetic-key-interop')
     for name in ['synthetic-ed25519', 'synthetic-ed25519.pub', 'synthetic-rsa', 'synthetic-rsa.pub']:
         (qa / name).unlink(missing_ok=True)
-    print('Direct client Simulator QA passed. Results:', qa / 'Results.xcresult')
+    print('Direct client Simulator QA passed. Results:', result)
 
 
 if __name__ == '__main__':

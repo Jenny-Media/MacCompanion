@@ -7,6 +7,7 @@ disposable fixture with built-in Screen Sharing and Remote Login. Neither lane
 certifies signed iCloud delivery. Output remains outside the repository.
 """
 import argparse
+from build_cache import compiler_workspace
 import fcntl
 import json
 import os
@@ -27,6 +28,11 @@ def main():
     parser.add_argument('--only-ui', action='store_true', help='Run only native UI acceptance, including its macOS automation permission prompt')
     parser.add_argument('--live-vm', action='store_true', help='Run only opt-in disposable VM GUI acceptance and screenshot attachments; requires MC_LIVE_VM_HOST/ACCOUNT/PASSWORD/FINGERPRINT')
     args = parser.parse_args()
+    with compiler_workspace(args.build, ROOT) as compiler:
+        execute(args, parser, compiler)
+
+
+def execute(args, parser, compiler):
     if args.live_vm:
         args.only_ui = True
         required = ['MC_LIVE_VM_HOST', 'MC_LIVE_VM_ACCOUNT', 'MC_LIVE_VM_PASSWORD', 'MC_LIVE_VM_FINGERPRINT']
@@ -35,8 +41,10 @@ def main():
     if args.only_ui:
         args.ui = True
     base = args.build.resolve()
-    qa = base / 'QA'
+    qa = compiler / 'QA'
     qa.mkdir(exist_ok=True)
+    evidence = base / 'QA'
+    evidence.mkdir(exist_ok=True)
     # All test invocations mutate this generated project and its build products.
     # Keep the descriptor open until this invocation ends; stale lock files do
     # not block a later run because the kernel owns the actual lock lifetime.
@@ -120,11 +128,11 @@ def main():
     shutil.copyfile(ROOT / 'Native/Terminal/Package.resolved', lock)
     # A fresh result directory preserves previous runs as reviewable evidence.
     import time
-    result = qa / ('Results-' + str(time.time_ns()) + '.xcresult')
-    with (qa / 'test.log').open('w') as log:
+    result = evidence / ('Results-' + str(time.time_ns()) + '.xcresult')
+    with (evidence / 'test.log').open('w') as log:
         command = ['xcodebuild', '-project', str(project_path), '-scheme', 'NativeMacClientQA',
             '-destination', 'platform=macOS', '-derivedDataPath', str(qa / 'DerivedData'),
-            '-clonedSourcePackagesDirPath', str(base / 'DerivedData/SourcePackages'),
+            '-clonedSourcePackagesDirPath', str(compiler / 'DerivedData/SourcePackages'),
             '-onlyUsePackageVersionsFromResolvedFile', '-skipPackagePluginValidation',
             '-parallel-testing-enabled', 'NO', '-resultBundlePath', str(result)]
         if args.live_vm:
