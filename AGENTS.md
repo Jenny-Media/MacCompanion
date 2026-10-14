@@ -6,5 +6,6 @@
 - Do not implement application-authentication, pairing, approval, or operation-signature semantics without matching golden cryptographic vectors.
 - Permanent Apple target IDs, signing, Keychain groups, designated requirements, TCC attribution, and `SMAppService` labels wait for the gates in `docs/execution-status.md`.
 - Disposable platform experiments stay under `Experiments/` and cannot be linked into release targets.
+- Use the managed native build/validation workflows in `docs/build-cache-workflow.md`. Keep compiler paths stable; dated output paths are evidence only. Use `--cold` only for an intentional fresh check, and obtain explicit approval before deleting caches or evidence.
 - Run `bash scripts/validate.sh` before handing off changes. Local beta-toolchain results are provisional until the stable Xcode lane also passes.
 - Never commit certificates, provisioning profiles, notarization credentials, Sparkle private keys, App Store keys, pairing secrets, real audit databases, screenshots, or typed/input content.

@@ -5,6 +5,7 @@
 never installs or contacts a device. Outputs and package caches stay outside Git.
 """
 import argparse
+from build_cache import BuildSession, cmake_refresh_args, toolchain_identity, write_if_changed
 import hashlib
 import json
 import os
@@ -21,7 +22,7 @@ def application_inputs(probe):
              ROOT / ('Experiments/VisionOSFeasibility' if probe else 'Native/Vision')]
     files = [p for folder in roots for p in sorted(folder.rglob('*')) if p.is_file()]
     files += [ROOT / 'Native/Mac' / (name + '.swift') for name in ['MacSessionStatus', 'MacTerminalHeldInput', 'MacTerminalMouseReport']]
-    files += [Path(__file__), *[ROOT / 'scripts' / name for name in ['verify_direct_client_dependencies.py',
+    files += [Path(__file__), *[ROOT / 'scripts' / name for name in ['build_cache.py', 'verify_direct_client_dependencies.py',
         'prepare_swiftterm_build_tool.py', 'prepare_visionos_swiftterm.py', 'dependency_checkout_provenance.py']],
         ROOT / 'spec/dependency-policy/v0/direct-client-development.json',
         ROOT / 'spec/privacy-manifest/v0/targets/ios-app/PrivacyInfo.xcprivacy']
@@ -40,11 +41,20 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--source', type=Path, required=True)
     parser.add_argument('--openssl-archive', type=Path, required=True)
-    parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--output', type=Path, required=True, help='Evidence directory outside the checkout; compiler files are reused separately')
+    parser.add_argument('--cache-root', type=Path, help='Override MACCOMPANION_BUILD_CACHE_ROOT')
+    parser.add_argument('--cold', action='store_true', help='Use a fresh compiler workspace without deleting existing caches')
     parser.add_argument('--sdk', choices=['xros', 'xrsimulator'], required=True)
     parser.add_argument('--probe', action='store_true')
     parser.add_argument('--prepare-only', action='store_true')
     args = parser.parse_args()
+    identity = {'kind': 'visionos-probe' if args.probe else 'native-visionos', 'sdk': args.sdk, 'arch': 'arm64', 'toolchain': toolchain_identity((args.sdk,))}
+    with BuildSession(ROOT, args.output, identity, cache_root=args.cache_root, cold=args.cold) as session:
+        args.output = session.workspace
+        build(args, parser, session)
+
+
+def build(args, parser, session):
     application_before = application_inputs(args.probe)
     args.output = args.output.resolve()
     if args.output.is_relative_to(ROOT):
@@ -105,7 +115,7 @@ def main():
     for name in ['LZO', 'JPEG', 'PNG', 'SDL', 'GTK', 'LIBSSHTUNNEL', 'GNUTLS', 'SYSTEMD', 'GCRYPT', 'FFMPEG', 'SASL', 'XCB', 'EXAMPLES', 'TESTS', 'WEBSOCKETS', 'TIGHTVNC_FILETRANSFER']:
         definitions['WITH_' + name] = 'OFF'
     with (args.output / 'vnc-build.log').open('w') as log:
-        run('/opt/homebrew/bin/cmake', '-S', args.source, '-B', vnc, *['-D' + k + '=' + str(v) for k, v in definitions.items()], stdout=log, stderr=subprocess.STDOUT)
+        run('/opt/homebrew/bin/cmake', *cmake_refresh_args(vnc, args.source), '-S', args.source, '-B', vnc, *['-D' + k + '=' + str(v) for k, v in definitions.items()], stdout=log, stderr=subprocess.STDOUT)
         run('/opt/homebrew/bin/cmake', '--build', vnc, '--target', 'vncclient', '-j6', stdout=log, stderr=subprocess.STDOUT)
     app_sources = ROOT / ('Experiments/VisionOSFeasibility' if args.probe else 'Native/Vision')
     sources = [{'path': str(app_sources), 'excludes': ['README.md', '*Tests.swift']}]
@@ -122,7 +132,7 @@ def main():
         'OTHER_LDFLAGS': ['$(inherited)', '-lz'], 'ARCHS': 'arm64', 'ONLY_ACTIVE_ARCH': 'YES'}
     if args.sdk == 'xrsimulator':
         entitlements = args.output / 'Simulator.entitlements'
-        entitlements.write_bytes(plistlib.dumps({'application-identifier': bundle, 'keychain-access-groups': [bundle]}))
+        write_if_changed(entitlements, plistlib.dumps({'application-identifier': bundle, 'keychain-access-groups': [bundle]}))
         base.update(CODE_SIGNING_ALLOWED='YES', CODE_SIGN_IDENTITY='-', CODE_SIGN_ENTITLEMENTS=str(entitlements))
     spec = {'name': name, 'options': {'deploymentTarget': {'visionOS': '26.0'}},
         'packages': {'Citadel': {'path': str(ROOT / 'Native/Dependencies/Citadel')},
@@ -145,12 +155,12 @@ def main():
         spec['schemes'][name]['test'] = {'targets': ['VisionInputUITests']}
     else:
         configure_client(spec, name, args)
-    (args.output / 'project.json').write_text(json.dumps(spec, indent=2))
-    run('/opt/homebrew/bin/xcodegen', 'generate', '--spec', args.output / 'project.json', '--project', args.output)
+    write_if_changed(args.output / 'project.json', json.dumps(spec, indent=2))
+    run('/opt/homebrew/bin/xcodegen', 'generate', '--use-cache', '--cache-path', args.output / '.xcodegen-cache', '--spec', args.output / 'project.json', '--project', args.output)
     project = args.output / (name + '.xcodeproj')
     package_lock = project / 'project.xcworkspace/xcshareddata/swiftpm/Package.resolved'
     package_lock.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copyfile(ROOT / 'Native/Terminal/Package.resolved', package_lock)
+    write_if_changed(package_lock, (ROOT / 'Native/Terminal/Package.resolved').read_bytes())
     build_args = ['xcodebuild', '-project', project, '-scheme', name, '-derivedDataPath', args.output / 'DerivedData', '-onlyUsePackageVersionsFromResolvedFile']
     with (args.output / 'resolve.log').open('w') as log:
         run(*build_args, '-resolvePackageDependencies', stdout=log, stderr=subprocess.STDOUT)
@@ -162,6 +172,7 @@ def main():
     expected = json.loads((ROOT / 'Native/Terminal/Package.resolved').read_text())['pins']
     package_sources = verify_checkouts(args.output / 'DerivedData/SourcePackages', expected, transforms=transforms)
     if args.prepare_only:
+        session.prepared(project)
         print(project); return
     with (args.output / 'build.log').open('w') as log:
         run(*build_args, '-sdk', args.sdk, '-destination', 'generic/platform=visionOS Simulator' if args.sdk == 'xrsimulator' else 'generic/platform=visionOS',
@@ -175,15 +186,16 @@ def main():
         raise SystemExit('Application inputs changed during build. Rebuild the final source.')
     verify_checkouts(args.output / 'DerivedData/SourcePackages', expected, previous=package_sources, transforms=transforms)
     app = args.output / ('DerivedData/Build/Products/Debug-' + args.sdk) / (name + '.app')
-    (args.output / 'build-report.json').write_text(json.dumps({'profile': 'maccompanion.native-visionos-development.v1',
+    report = {'profile': 'maccompanion.native-visionos-development.v1',
         'sdk': args.sdk, 'toolchain': version, 'app': str(app), 'binarySHA256': digest(app / name),
         'applicationCode': {str(p.relative_to(app)): digest(p) for p in sorted(app.rglob('*'))
                             if p.is_file() and (p == app / name or p.suffix == '.dylib')},
         'libVNCClientSources': vnc_before, 'pins': expected, 'packageSources': package_sources,
         'swiftTermPressEndpoint': json.loads((ROOT / 'spec/dependency-policy/v0/direct-client-development.json').read_text())['visionOSSwiftTermPressEndpoint'],
         'applicationInputs': application_before, 'applicationInputsUnchanged': True, 'probe': args.probe,
-        'installed': False, 'physicalAcceptance': False, 'releaseAdmitted': False}, indent=2) + '\n')
-    print('Native visionOS application:', app)
+        'installed': False, 'physicalAcceptance': False, 'releaseAdmitted': False}
+    report = session.publish(report, app)
+    print('Native visionOS application:', report['app'])
 
 def configure_client(spec, name, args):
     shared_vnc = ['DirectMacLibraryV1', 'DirectMacIdentityV1', 'DirectMacDiscoveryV1', 'DirectCloudSyncV1',
