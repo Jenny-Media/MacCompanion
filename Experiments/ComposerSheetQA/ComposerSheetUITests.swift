@@ -48,6 +48,29 @@ import XCTest
         XCTAssertFalse(close.frame.intersects(send.frame)); XCTAssertFalse(editor.frame.intersects(send.frame))
         let capture = XCTAttachment(screenshot: app.screenshot()); capture.name = "synthetic-text-bubble"; capture.lifetime = .keepAlways; add(capture)
     }
+    func testRegularGlassBubbleOverBusyDesktopKeepsTypingAndCloseUsable() async {
+        for dark in [false, true] {
+            let app = XCUIApplication(bundleIdentifier: "dev.maccompanion.sheetqa.ios")
+            app.launchArguments = ["--qa-glass-background"] + (dark ? ["--qa-dark"] : [])
+            app.launch()
+            XCTAssertTrue(app.buttons["qa-compose"].waitForExistence(timeout: 10)); app.buttons["qa-compose"].tap()
+            let editor = app.textViews["compose-text"]
+            XCTAssertTrue(editor.waitForExistence(timeout: 5)); XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+            editor.typeText("glass draft"); await waitForKeyboardAndPanel(app)
+            let close = app.buttons["compose-back"], send = app.buttons["compose-send"]
+            XCTAssertTrue(close.isHittable); XCTAssertTrue(send.isHittable)
+            XCTAssertGreaterThanOrEqual(close.frame.width, 44); XCTAssertGreaterThanOrEqual(send.frame.width, 44)
+            XCTAssertFalse(editor.frame.intersects(send.frame))
+            let start = grabber(app)
+            start.press(forDuration: 0.15, thenDragTo: start.withOffset(CGVector(dx: -100, dy: -90)))
+            app.typeText(" retained"); XCTAssertEqual(editor.value as? String, "glass draft retained")
+            let capture = XCTAttachment(screenshot: app.screenshot()); capture.name = "synthetic-glass-busy-" + (dark ? "dark" : "light")
+            capture.lifetime = .keepAlways; add(capture)
+            close.tap(); XCTAssertTrue(app.buttons["qa-compose"].waitForExistence(timeout: 5)); app.buttons["qa-compose"].tap()
+            XCTAssertTrue(editor.waitForExistence(timeout: 5)); XCTAssertEqual(editor.value as? String, "glass draft retained")
+            app.terminate()
+        }
+    }
     func testSmallFloatingDragAndCloseReopenRetainedDraft() {
         let app = open(); defer { app.terminate() }
         let editor = app.textViews["compose-text"]; editor.typeText("retained")

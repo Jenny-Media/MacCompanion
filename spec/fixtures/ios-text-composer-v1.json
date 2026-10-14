@@ -260,6 +260,13 @@
       "circularArrowSend"
     ],
     "grabberTapExpands": false,
-    "minimumActionHitPoints": 44
+    "minimumActionHitPoints": 44,
+    "material": {
+      "outer": "nativeRegularLiquidGlass",
+      "editor": "stableSecondarySystemBackground",
+      "nestedGlass": false,
+      "systemAccessibilityAdaptations": true,
+      "fallback": "systemMaterial"
+    }
   }
 }

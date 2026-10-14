@@ -398,6 +398,10 @@ orientation and size changes and stays clamped within safe bounds. Track undocke
 when that cannot hold the editor, choose readable space below or beside it.
 Use a safe-area tracking constraint near the top edge. Retain one mounted native
 editor, draft, selection and keyboard focus through movement and layout changes.
+Use one native regular Liquid Glass surface for the outer bubble on supported
+systems, with a stable filled background behind editable text. The material keeps
+its system accessibility adaptations; use a non-glass fallback where unavailable.
+Do not stack additional glass surfaces inside the bubble or add presentation controls.
 Editor scrolling never moves the bubble. Canceled gestures restore placement;
 sending blocks movement and dismissal. Keep 44-point Close/Send hit regions,
 readable scrolling text and accessible destination context/validation in narrow,

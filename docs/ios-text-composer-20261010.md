@@ -183,3 +183,12 @@ Both states disable the button. Failure/cancellation exposes an explicit Unlock
 retry only while foreground and protected data permit it. Current successful
 authentication plus active admission still reveal the main UI and enable controls
 together. The separate Mac Companion-only transition is removed.
+
+## Restrained Liquid Glass (2026-10-14)
+
+The floating bubble uses one native regular Liquid Glass outer surface. Editable
+text has a stable secondary system background; Close stays quiet and Send remains
+the single accent action. The native material keeps accessibility adaptations,
+with a system-material fallback where Liquid Glass is unavailable. No additional
+glass layers or controls are added. Drag, snapping, keyboard/selection retention,
+confirmation, delivery and background/lock retirement are unchanged.

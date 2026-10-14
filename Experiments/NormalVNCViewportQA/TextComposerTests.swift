@@ -66,6 +66,51 @@ import UIKit
             }
         }
     }
+    func testNativeGlassBubblePreservesReadableEditorAndActionsAcrossAppearance() async throws {
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let previous = scene.windows.first(where: \.isKeyWindow)
+        let window = UIWindow(windowScene: scene), root = UIViewController()
+        root.view.backgroundColor = .systemOrange
+        window.rootViewController = root; window.makeKeyAndVisible()
+        defer { window.isHidden = true; window.rootViewController = nil; previous?.makeKeyAndVisible() }
+        let draft = DirectTextComposerDraft(macName: "Synthetic", mode: .desktop)
+        draft.configure(available: { true }, send: { _, _ in XCTFail("Appearance must not send") })
+        let panel = DirectTextComposerPanel(draft: draft)
+        root.addChild(panel); root.view.addSubview(panel.view); panel.didMove(toParent: root)
+        panel.view.frame = root.view.bounds; panel.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        func descendants(_ view: UIView) -> [UIView] { [view] + view.subviews.flatMap(descendants) }
+        let deadline = ContinuousClock.now.advanced(by: .seconds(3))
+        while !descendants(panel.view).contains(where: { ($0 as? UITextView)?.isFirstResponder == true }), ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        let editor = try XCTUnwrap(descendants(panel.view).compactMap { $0 as? UITextView }.first)
+        XCTAssertTrue(editor.isFirstResponder)
+        draft.edit("synthetic glass draft"); try await Task.sleep(for: .milliseconds(80))
+        editor.selectedRange = NSRange(location: 3, length: 4); let selection = editor.selectedRange
+        let material = try XCTUnwrap(descendants(panel.view).first(where: { $0.accessibilityIdentifier == "compose-bubble" }) as? UIVisualEffectView)
+        if #available(iOS 26.0, *) {
+            let glass = try XCTUnwrap(material.effect as? UIGlassEffect)
+            XCTAssertFalse(glass.isInteractive, "Typing must not energize a second interactive glass layer")
+        } else { XCTAssertTrue(material.effect is UIBlurEffect) }
+        for style in [UIUserInterfaceStyle.light, .dark] {
+            panel.overrideUserInterfaceStyle = style
+            for contrast in [UIAccessibilityContrast.normal, .high] {
+                panel.traitOverrides.accessibilityContrast = contrast
+                root.view.backgroundColor = contrast == .high ? .systemTeal : .systemOrange
+                try await Task.sleep(for: .milliseconds(100)); panel.view.setNeedsLayout(); panel.view.layoutIfNeeded()
+                XCTAssertEqual(editor.traitCollection.userInterfaceStyle, style)
+                XCTAssertTrue(descendants(panel.view).contains(where: { $0 === editor }))
+                XCTAssertEqual(draft.text, "synthetic glass draft"); XCTAssertEqual(editor.selectedRange, selection)
+                XCTAssertTrue(editor.isFirstResponder); XCTAssertGreaterThan(editor.bounds.height, 35)
+                XCTAssertTrue(panel.panelFrame.contains(panel.closeActionFrame)); XCTAssertTrue(panel.panelFrame.contains(panel.deliveryActionFrame))
+                XCTAssertGreaterThanOrEqual(panel.closeActionFrame.width, 44); XCTAssertGreaterThanOrEqual(panel.deliveryActionFrame.width, 44)
+                XCTAssertFalse(panel.closeActionFrame.intersects(panel.deliveryActionFrame))
+                let capture = XCTAttachment(image: UIGraphicsImageRenderer(bounds: window.bounds).image { _ in window.drawHierarchy(in: window.bounds, afterScreenUpdates: true) })
+                capture.name = "synthetic-native-glass-" + (style == .dark ? "dark" : "light") + (contrast == .high ? "-high-contrast" : "")
+                capture.lifetime = .keepAlways; add(capture)
+            }
+        }
+    }
     func testTextBubbleHasOnlyDirectCloseAndSendWithSafeAccessibleBounds() async throws {
         let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
         let previous = scene.windows.first(where: \.isKeyWindow)

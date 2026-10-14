@@ -273,11 +273,20 @@ struct DirectComposerPlacement {
         NSLayoutConstraint.activate([backdrop.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             backdrop.trailingAnchor.constraint(equalTo: view.trailingAnchor), backdrop.topAnchor.constraint(equalTo: view.topAnchor),
             backdrop.bottomAnchor.constraint(equalTo: view.bottomAnchor)])
-        let card = UIView(); self.card = card; view.addSubview(card); card.translatesAutoresizingMaskIntoConstraints = false
+        let material: UIVisualEffect
+        if #available(iOS 26.0, *) {
+            let glass = UIGlassEffect(style: .regular)
+            // Editing stays visually quiet; only the existing handle moves the bubble.
+            glass.isInteractive = false
+            material = glass
+        } else {
+            material = UIBlurEffect(style: .systemMaterial)
+        }
+        let card = UIVisualEffectView(effect: material); self.card = card
+        view.addSubview(card); card.translatesAutoresizingMaskIntoConstraints = false
         card.accessibilityIdentifier = "compose-bubble"
         card.accessibilityContainerType = .semanticGroup
-        card.backgroundColor = .systemBackground; card.layer.cornerRadius = 20; card.clipsToBounds = true
-        card.layer.borderWidth = 1; card.layer.borderColor = UIColor.separator.cgColor
+        card.layer.cornerRadius = 20; card.clipsToBounds = true
         let grabber = UIButton(type: .custom); self.grabber = grabber; grabber.translatesAutoresizingMaskIntoConstraints = false
         grabber.accessibilityIdentifier = "compose-grabber"
         // VoiceOver can reposition the floating panel without a touch drag.
@@ -286,7 +295,7 @@ struct DirectComposerPlacement {
             UIAccessibilityCustomAction(name: "Move composer down", target: self, selector: #selector(moveDown)),
             UIAccessibilityCustomAction(name: "Move composer left", target: self, selector: #selector(moveLeft)),
             UIAccessibilityCustomAction(name: "Move composer right", target: self, selector: #selector(moveRight))]
-        card.addSubview(grabber)
+        card.contentView.addSubview(grabber)
         let indicator = UIView(); indicator.backgroundColor = .tertiaryLabel; indicator.layer.cornerRadius = 2.5
         indicator.isUserInteractionEnabled = false; indicator.translatesAutoresizingMaskIntoConstraints = false; grabber.addSubview(indicator)
         let pan = UIPanGestureRecognizer(target: self, action: #selector(resize(_:))); pan.delegate = self
@@ -295,8 +304,8 @@ struct DirectComposerPlacement {
             isCurrent: { [weak self] in self?.usable == true },
             requestLayout: { [weak self] in self?.view.setNeedsLayout() },
             reportSendBounds: { [weak self] in self?.sendBounds = $0 }).directAppearance()))
-        editorHost = host; addChild(host); card.addSubview(host.view); host.didMove(toParent: self)
-        host.view.translatesAutoresizingMaskIntoConstraints = false; host.view.backgroundColor = .systemBackground
+        editorHost = host; addChild(host); card.contentView.addSubview(host.view); host.didMove(toParent: self)
+        host.view.translatesAutoresizingMaskIntoConstraints = false; host.view.backgroundColor = .clear
         host.view.accessibilityIdentifier = "compose-panel"
         let grabberHeight = grabber.heightAnchor.constraint(equalToConstant: 44); self.grabberHeight = grabberHeight
         let leading = card.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 8)
@@ -311,7 +320,7 @@ struct DirectComposerPlacement {
         close.setImage(UIImage(systemName: "xmark"), for: .normal); close.tintColor = .secondaryLabel
         close.accessibilityLabel = "Close and keep draft"; close.accessibilityIdentifier = "compose-back"
         close.addTarget(self, action: #selector(back), for: .touchUpInside)
-        close.translatesAutoresizingMaskIntoConstraints = false; card.addSubview(close)
+        close.translatesAutoresizingMaskIntoConstraints = false; card.contentView.addSubview(close)
         NSLayoutConstraint.activate([close.topAnchor.constraint(equalTo: card.topAnchor),
             close.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -4),
             close.widthAnchor.constraint(equalToConstant: 44), close.heightAnchor.constraint(equalToConstant: 44)])
@@ -435,6 +444,7 @@ private struct DirectTextComposerView: View {
                 .font(draft.mode == .terminal ? .body.monospaced() : .body)
                 .frame(minHeight: 36, maxHeight: .infinity)
                 .scrollContentBackground(.hidden)
+                .background(Color(uiColor: .secondarySystemBackground), in: .rect(cornerRadius: 12))
                 .autocorrectionDisabled(draft.mode == .terminal).textInputAutocapitalization(draft.mode == .terminal ? .never : .sentences)
                 .focused($editing).disabled(draft.sending).scrollDismissesKeyboard(.never)
                 .accessibilityLabel("Text to Send · " + draft.macName + " · " + draft.mode.title)
@@ -468,7 +478,7 @@ private struct DirectTextComposerView: View {
                     .accessibilityLabel(draft.sending ? "Sending…" : "Send Text").accessibilityIdentifier("compose-send")
                     .onGeometryChange(for: CGRect.self) { $0.frame(in: .named("composer-panel")) } action: { reportSendBounds($0) }
             }
-        }.padding(8).background(.background).coordinateSpace(name: "composer-panel")
+        }.padding(8).coordinateSpace(name: "composer-panel")
             .onAppear { editing = true }
             .onChange(of: draft.sending) { _, _ in requestLayout() }
             .onChange(of: draft.active) { _, _ in requestLayout() }
