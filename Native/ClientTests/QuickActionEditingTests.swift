@@ -9,7 +9,7 @@ import XCTest
     func testScreenTextIsAFreeDesktopBuiltInAndPreservesSavedProfiles() throws {
         let action = VNCQuickAction(title: "Copy Text", kind: .copyText)
         #if os(iOS)
-        XCTAssertEqual(DirectControlMode.desktop.defaults.map(\.kind), [.mode, .copyText, .fit, .rightClick])
+        XCTAssertEqual(DirectControlMode.desktop.defaults.map(\.kind), [.composeText, .mode, .copyText, .fit, .rightClick])
         XCTAssertTrue(DirectQuickActionEditing.standards(.desktop).contains { $0.kind == .copyText })
         XCTAssertTrue(DirectQuickActionEditing.canSave([action], mode: .desktop, hasPro: false))
         #else
