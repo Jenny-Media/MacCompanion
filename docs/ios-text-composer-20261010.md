@@ -127,10 +127,35 @@ and background transitions; native editor tests cover selection, short landscape
 and accessibility sizes. Physical iPhone acceptance remains a separate check.
 
 
-Reproduce the drag suite after a normal simulator development build:
+From the checkout, reproduce the drag suite after a normal simulator development
+build. Use the same `DEVELOPER_DIR` for the builder and these commands. The build
+output is saved evidence; the leased compiler workspace contains the QA project,
+intermediates and package checkouts. Choose a new result-bundle path for each run.
 
-    python3 scripts/verify_terminal_pro_simulator.py --build /absolute/build-output --simulator SIMULATOR_ID --generate-only --composer-ui
-    xcodebuild -project /absolute/build-output/QA/DirectClientQA.xcodeproj -scheme ComposerSheetQA -destination 'platform=iOS Simulator,id=SIMULATOR_ID' -derivedDataPath /absolute/build-output/DerivedData -parallel-testing-enabled NO test
+```bash
+python3 scripts/verify_terminal_pro_simulator.py --build /absolute/build-output --simulator SIMULATOR_ID --generate-only --composer-ui
+python3 - /absolute/build-output SIMULATOR_ID /absolute/composer-results.xcresult <<'PY'
+from pathlib import Path
+import subprocess
+import sys
+
+root = Path.cwd()
+sys.path.insert(0, str(root / 'scripts'))
+from build_cache import compiler_workspace
+
+with compiler_workspace(Path(sys.argv[1]), root) as compiler:
+    subprocess.run([
+        'xcodebuild', '-project', str(compiler / 'QA/DirectClientQA.xcodeproj'),
+        '-scheme', 'ComposerSheetQA',
+        '-destination', 'platform=iOS Simulator,id=' + sys.argv[2],
+        '-derivedDataPath', str(compiler / 'DerivedData'),
+        '-clonedSourcePackagesDirPath', str(compiler / 'DerivedData/SourcePackages'),
+        '-onlyUsePackageVersionsFromResolvedFile', '-skipPackagePluginValidation',
+        '-parallel-testing-enabled', 'NO', '-collect-test-diagnostics', 'never',
+        '-resultBundlePath', sys.argv[3], 'test'
+    ], cwd=root, check=True)
+PY
+```
 
 The generated QA app links the experiment entry point only in its private
 target. Release and normal development targets do not link experiment sources.
