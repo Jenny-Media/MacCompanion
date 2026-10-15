@@ -223,7 +223,8 @@
     AdaptiveViewer *viewer = [AdaptiveViewer new]; viewer.division = CGRectMake(0,465,669,20); viewer.pointerSpeed = 1;
     [viewer loadViewIfNeeded]; viewer.view.frame = CGRectMake(0,0,669,951); [viewer.view layoutIfNeeded];
     AdaptiveSession *session = [AdaptiveSession new]; session.events = [NSMutableArray new]; viewer.session = session;
-    [viewer frame:[self frame]]; [viewer receivedCursor:nil hotspot:CGPointZero position:CGPointMake(800,500) known:YES];
+    [viewer frame:[self frame]];[(UIView *)[viewer valueForKey:@"login"] setHidden:YES];[viewer updateConnectionChrome];
+    [viewer receivedCursor:nil hotspot:CGPointZero position:CGPointMake(800,500) known:YES];
     UIView *pad = [viewer valueForKey:@"tabletopPad"]; AdaptivePan *pan = [AdaptivePan new]; [pad addGestureRecognizer:pan];
     [viewer dragAt:pan]; XCTAssertEqualObjects(session.events.lastObject,(@[@820,@510,@0]));
     UITapGestureRecognizer *tap = [UITapGestureRecognizer new]; [pad addGestureRecognizer:tap]; [viewer clickAt:tap];

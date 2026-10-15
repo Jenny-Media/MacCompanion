@@ -237,7 +237,7 @@ struct VNCInputSettings: View {
                                 Button("Reset to Default") { speed = 1.5 }
                                 if mode == .desktop {
                                     Divider()
-                                    Toggle("Follow Cursor", isOn: $followCursor).accessibilityIdentifier("follow-cursor-toggle")
+                                    Toggle("Keep Pointer Visible", isOn: $followCursor).accessibilityIdentifier("follow-cursor-toggle")
                                     Text("Keep the cursor visible in zoomed Trackpad mode. Pan or zoom pauses following until the next pointer movement.").font(.caption).foregroundStyle(.secondary)
                                 }
                             }

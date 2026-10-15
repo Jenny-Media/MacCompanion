@@ -2042,7 +2042,8 @@
     0,
     -240,
     -239,
-    -232
+    -232,
+    1100
   ],
   "cursorWireSequences": [
     {
@@ -2226,7 +2227,7 @@
   },
   "appleAutomaticUpdates": {
     "opcode": 9,
-    "periodMicroseconds": 100000,
+    "periodMicroseconds": 0,
     "disablePeriod": 4294967295,
     "reservedBytes": [
       0,
@@ -2239,7 +2240,7 @@
     "renewOnEveryLayout": true,
     "inputOnlyEnabled": false,
     "backgroundEnabled": false,
-    "routinePullRequestsWhileActive": false,
+    "routinePullRequestsWhileActive": true,
     "explicitBaselineRefreshWrites": true,
     "cases": [
       {
@@ -2255,9 +2256,9 @@
           0,
           0,
           0,
-          1,
-          134,
-          160,
+          0,
+          0,
+          0,
           0,
           0,
           0,
@@ -2307,9 +2308,9 @@
           0,
           0,
           0,
-          1,
-          134,
-          160,
+          0,
+          0,
+          0,
           0,
           0,
           0,
@@ -2439,5 +2440,120 @@
       "iOS",
       "macOS"
     ]
+  },
+  "appleCursorPosition": {
+    "encoding": 1100,
+    "payloadLength": 0,
+    "coordinateSpace": "framebuffer-pixels",
+    "cases": [
+      {
+        "name": "physical-mouse-moves-without-desktop-damage",
+        "framebuffer": [
+          100,
+          100
+        ],
+        "rect": [
+          75,
+          60,
+          0,
+          0
+        ],
+        "known": true
+      },
+      {
+        "name": "position-at-exclusive-framebuffer-edge-is-unknown",
+        "framebuffer": [
+          100,
+          100
+        ],
+        "rect": [
+          100,
+          60,
+          0,
+          0
+        ],
+        "known": false
+      }
+    ]
+  },
+  "cursorPositionOwnership": {
+    "localInputPoint": [
+      20,
+      30
+    ],
+    "firstHostPoint": [
+      75,
+      60
+    ],
+    "nextHostPoint": [
+      90,
+      70
+    ],
+    "shapeOnlyReplaysCachedPosition": false,
+    "coalescedShapePreservesUndeliveredFreshPosition": true,
+    "wirePositionHasTimestampOrAcknowledgement": false,
+    "hostPositionFollowing": "automatic",
+    "hostPositionFollowingSetting": false,
+    "hostReportsMayUpdateDuringLocalGesture": false,
+    "hostReportsRewriteLocalAimAfterTouch": true,
+    "repeatedGesturesKeepLocalAim": false,
+    "newConnectionRetiresBothPositions": true,
+    "macOSPositionAdmissionUnchanged": true,
+    "presentation": "one-persistent-native-shaped-cursor",
+    "displayedHotspotIsNextClickTarget": true,
+    "idleHostHandoff": "new-position-outside-retained-local-targets",
+    "localTargetHistoryLimit": 512,
+    "handoffIsFreshnessAcknowledgement": false,
+    "cachedHostPositionAdoptedOnLift": false,
+    "shapeOnlyRepositionsCursor": false,
+    "olderMessageRevisionMayReconcile": false,
+    "idleSettlingMilliseconds": 200,
+    "settlingReportsReplayedLater": false,
+    "indirectHostOutsideSelectedCropReanchors": false,
+    "cropChangeRetiresHistory": true,
+    "initialObservationSeedsBeforeLoginCompletes": true
+  },
+  "cursorPipelineDiagnostics": {
+    "numericAggregatesOnly": true,
+    "recordsCoordinatesOrPayload": false,
+    "workerCPUSeparateFromWall": true,
+    "postBaselineSeparateFromInitialLoad": true,
+    "unreadBytesAreNotReportAge": true,
+    "relayWriteIsNotRemoteAcknowledgement": true,
+    "changesWireOrPacing": false,
+    "drainLibVNCBufferedBytesBeforeSocketWait": true
+  },
+  "desktopReadInputService": {
+    "soleSocketOwner": true,
+    "afterSuccessfulHandshakeOnly": true,
+    "nonblockingRFBDescriptor": true,
+    "maximumIdleServiceWaitMicroseconds": 10000,
+    "sameInputFIFOAndEpoch": true,
+    "pendingReleaseResumeOrModeChangeBlocksService": true,
+    "foregroundPauseReviewAndStopAdmissionUnchanged": true,
+    "beforeCleanupRemoved": true,
+    "wireBytesUnchanged": true,
+    "incomingMetadataStillOrderedBehindPixels": true
+  },
+  "iosCursorInteractionFeedback": {
+    "touchFeedbackModes": [
+      "desktopPointer",
+      "desktopTrackpad",
+      "inputOnly",
+      "tabletop"
+    ],
+    "usesExistingTouchAndHapticsSettings": true,
+    "blocksInputRecognizers": false,
+    "clickFeedbackMeans": "localInputAdmission",
+    "remoteCompletionRequires": "visibleRemoteResult",
+    "inputOnlyRendersDesktopCursor": false,
+    "rejectedClicksPulse": false,
+    "modeAndLifecycleBoundariesRetireFeedback": true,
+    "localAimStyle": "none",
+    "localAimVisibleDuringTrackpadTouch": false,
+    "directPointerUsesFingerFeedback": true,
+    "directPointerMacCursorAlpha": 1.0,
+    "persistentCursorAfterLift": true,
+    "cursorVisibleWithTouchIndicatorsDisabled": true
   }
 }

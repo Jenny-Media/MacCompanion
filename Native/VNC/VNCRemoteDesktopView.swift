@@ -85,13 +85,8 @@ struct VNCRemoteDesktopView: UIViewControllerRepresentable {
         viewer.inputModeHandler = { trackpad in
             MainActor.assumeIsolated { VNCSessionPreferences.setTrackpad(trackpad, mac: mac.id) }
         }
-        viewer.diagnosticHandler = { counters in
-            // A bounded latest snapshot with fixed numeric counters and display
-            // geometry only. Never persist endpoint, login, pixels, or input.
-            let url = URL.cachesDirectory.appending(path: "VNCDisplayDiagnostics-v1.json")
-            if let data = try? JSONSerialization.data(withJSONObject: counters, options: [.sortedKeys]) {
-                try? data.write(to: url, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
-            }
+        viewer.diagnosticHandler = { [weak coordinator = context.coordinator] counters in
+            MainActor.assumeIsolated { coordinator?.recordDiagnostics(counters) }
         }
         context.coordinator.viewer = viewer
         viewer.sessionPhaseHandler = { [weak coordinator = context.coordinator] phase in
@@ -134,6 +129,7 @@ struct VNCRemoteDesktopView: UIViewControllerRepresentable {
         var authenticatedGeneration = UUID()
         private var work: Task<Void, Never>?
         private var generation = UUID()
+        private var diagnosticTicket = UUID()
         private var tunnel: DirectDesktopSSHTunnel?
         private var retirement: Task<Void, Never>?
         private var trustReply: CheckedContinuation<Bool, Never>?
@@ -226,6 +222,22 @@ struct VNCRemoteDesktopView: UIViewControllerRepresentable {
         private func finishBackgroundWork() {
             backgroundGeneration = UUID()
             if backgroundTask != .invalid { UIApplication.shared.endBackgroundTask(backgroundTask); backgroundTask = .invalid }
+        }
+        func recordDiagnostics(_ counters: [AnyHashable: Any]) {
+            let ticket = UUID(); diagnosticTicket = ticket
+            let generation = generation, owner = tunnel
+            Task { [weak self] in
+                let transport = try? await owner?.diagnosticCounters()
+                guard let self, self.diagnosticTicket == ticket, self.generation == generation,
+                      self.tunnel === owner, !self.removed else { return }
+                // Fixed numeric aggregates and geometry only; latest owner wins.
+                var snapshot = counters
+                if let transport { snapshot["desktopSSH"] = transport }
+                let url = URL.cachesDirectory.appending(path: "VNCDisplayDiagnostics-v1.json")
+                if let data = try? JSONSerialization.data(withJSONObject: snapshot, options: [.sortedKeys]) {
+                    try? data.write(to: url, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+                }
+            }
         }
         func saveSuccessfulLogin() {
             guard !removed, remember, let login, let owner = accessLease else { return }
