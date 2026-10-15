@@ -4,6 +4,13 @@ The native macOS, iOS VNC and visionOS builders, and `bash scripts/validate.sh`,
 now reuse compiler workspaces. A new dated `--output` directory retains evidence
 without creating another full dependency build and DerivedData tree.
 
+## Hosted validation during rapid iteration
+
+The GitHub **Public CI** workflow runs manually through Actions → Public CI →
+Run workflow. Automatic pull-request and `main` push triggers are disabled.
+Its full validation steps remain available; `bash scripts/validate.sh` remains
+the local validation command required before handing off changes.
+
 ## Normal usage
 
 Keep using the existing builder arguments, including `--output`. For example:

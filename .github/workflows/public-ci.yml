@@ -1,9 +1,8 @@
 name: Public CI
 
+# Full hosted validation is opt-in during rapid iteration.
 on:
-  pull_request:
-  push:
-    branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: read
