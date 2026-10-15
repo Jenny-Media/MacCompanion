@@ -34,10 +34,20 @@ struct TerminalKeySettings: View {
             Form {
                 if let mac {
                     Section {
+                        #if os(iOS)
+                        NavigationLink("Login & Access", destination: DirectMacAccessView(mac: mac))
+                        #else
                         Button("Use Password Login", systemImage: "person.badge.key") {
                             library.perform { try TerminalSecretStore.forgetKey(mac.id) }; changed()
                         }
-                    } footer: { Text("Select a key below for \(mac.name). Keys can be used with any of your Macs.") }
+                        #endif
+                    } footer: {
+                        #if os(iOS)
+                        Text("Choose a key for \(mac.name) in Login & Access. Keys can be used with any of your Macs.")
+                        #else
+                        Text("Select a key below for \(mac.name). Keys can be used with any of your Macs.")
+                        #endif
+                    }
                 }
                 Section("Keychain Keys") {
                     ForEach(library.keys) { entry in
@@ -55,7 +65,13 @@ struct TerminalKeySettings: View {
                             if let mac {
                                 let selected = library.associations.contains { $0.macID == mac.id && $0.keyID == entry.id }
                                 if selected { Label("Selected for \(mac.name)", systemImage: "checkmark").font(.subheadline).foregroundStyle(.secondary) }
-                                else { Button("Use for \(mac.name)") { select(entry, for: mac) }.buttonStyle(.borderless).disabled(!pro.ready) }
+                                else {
+                                    #if os(iOS)
+                                    NavigationLink("Configure in Login & Access", destination: DirectMacAccessView(mac: mac))
+                                    #else
+                                    Button("Use for \(mac.name)") { select(entry, for: mac) }.buttonStyle(.borderless).disabled(!pro.ready)
+                                    #endif
+                                }
                             }
                         }
                     }
@@ -82,6 +98,8 @@ struct TerminalKeySettings: View {
                 Section {} footer: {
                     #if os(macOS)
                     Text("Install the public key from the Mac’s Connection Settings → SSH Keys. Imported keys stay in Keychain; referenced keys stay in their original files. Neither is synced.")
+                    #elseif os(iOS)
+                    Text("To install a public key, open Mac Settings → Set Up Key on This Mac. Private keys stay securely on this device and don’t sync.")
                     #else
                     Text("Install the public key from the Mac’s Terminal Access settings. Private keys stay in this device’s Keychain and are never synced.")
                     #endif
@@ -337,6 +355,12 @@ struct TerminalKeyDetail: View {
             if let issue { DirectRecoveryCard(notice: issue) }
             Section {
                 Button("Delete Key from This Device", role: .destructive) { deleting = true }
+                    #if os(iOS)
+                    .disabled(DirectMacConnections.shared.keyInUse(entry.id))
+                    #endif
+                #if os(iOS)
+                if DirectMacConnections.shared.keyInUse(entry.id) { Text("Disconnect sessions using this key before deleting it.").font(.footnote).foregroundStyle(.secondary) }
+                #endif
             } footer: { Text("This clears local selections. It does not remove the public key or revoke access on your Macs.") }
         }
         .navigationTitle("SSH Key").directInlineNavigationTitle()

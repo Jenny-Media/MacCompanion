@@ -13,9 +13,9 @@ struct DirectDesktopSessionView: View {
     @State private var immersive = false
     @State private var appearance = DirectAppearanceV1.shared
     @State private var files: DirectFilesSession
-    init(mac: DirectMacRecordV1, inputOnly: Bool = false, connectionMacNames: [String] = [], files: DirectFilesSession? = nil, showMacs: @escaping @MainActor () -> Void) {
+    init(mac: DirectMacRecordV1, inputOnly: Bool = false, connectionMacNames: [String] = [], files: DirectFilesSession? = nil, libraryURL: URL = DirectMacLibraryV1.defaultURL, showMacs: @escaping @MainActor () -> Void) {
         self.mac = mac; self.inputOnly = inputOnly; self.connectionMacNames = connectionMacNames; self.showMacs = showMacs
-        _files = State(initialValue: files ?? DirectFilesSession(mac: mac))
+        _files = State(initialValue: files ?? DirectFilesWorkspace.session(mac, libraryURL: libraryURL))
     }
     var body: some View {
         ZStack {
@@ -71,6 +71,9 @@ struct VNCRemoteDesktopView: UIViewControllerRepresentable {
         viewer.settingsHandler = { [weak coordinator = context.coordinator] in
             MainActor.assumeIsolated { coordinator?.showInputSettings() }
         }
+        viewer.accessEditingAllowed = { MainActor.assumeIsolated { !DirectMacConnections.shared.isActive(mac.id) } }
+        viewer.accessHandler = { [weak coordinator = context.coordinator] in MainActor.assumeIsolated { coordinator?.showAccess() } }
+        viewer.requestExitHandler = { [weak coordinator = context.coordinator] in MainActor.assumeIsolated { coordinator?.confirmExitIfNeeded() ?? false } }
         viewer.filesHandler = { [weak coordinator = context.coordinator] in MainActor.assumeIsolated { coordinator?.showFiles() } }
         context.coordinator.files.activityChanged = { [weak viewer] value in viewer?.filesStatus = value == "Ready" ? "" : value }
         viewer.appSettingsHandler = { [weak coordinator = context.coordinator] in
@@ -116,7 +119,7 @@ struct VNCRemoteDesktopView: UIViewControllerRepresentable {
     static func dismantleUIViewController(_ controller: CompanionVNCViewer, coordinator: Coordinator) {
         // Removal tears down the remote controller while its SwiftUI parent
         // owns the download-only recovery presentation.
-        if !coordinator.files.macRemoved || !coordinator.files.hasUnsavedDownloads { coordinator.files.close() }
+        if !coordinator.files.macRemoved { coordinator.files.disconnectBorrowed(coordinator.authenticatedGeneration) }
         coordinator.disconnect(); coordinator.stopObserving(); coordinator.activity.finish()
         controller.stop()
     }
@@ -125,6 +128,10 @@ struct VNCRemoteDesktopView: UIViewControllerRepresentable {
         let files: DirectFilesSession
         let mac: DirectMacRecordV1
         weak var viewer: CompanionVNCViewer?
+        private let accessOwnerID = UUID()
+        private var accessLease: UUID?
+        private var authenticatedAccount = ""
+        var authenticatedGeneration = UUID()
         private var work: Task<Void, Never>?
         private var generation = UUID()
         private var tunnel: DirectDesktopSSHTunnel?
@@ -142,7 +149,7 @@ struct VNCRemoteDesktopView: UIViewControllerRepresentable {
         private var removed = false
         private var removalObserver: DirectMacRemovalObservation?
         init(mac: DirectMacRecordV1, files: DirectFilesSession? = nil, activityController: VNCSessionActivityController? = nil, showMacs: @escaping @MainActor () -> Void = {}) {
-            self.mac = mac; self.files = files ?? DirectFilesSession(mac: mac); self.showMacs = showMacs; activity = activityController ?? VNCSessionActivityController(mac: mac)
+            self.mac = mac; self.files = files ?? DirectFilesWorkspace.session(mac); self.showMacs = showMacs; activity = activityController ?? VNCSessionActivityController(mac: mac)
             removalObserver = DirectMacRemovalObservation(macID: mac.id, libraryURL: self.files.libraryURL) { [weak self] in
                 guard let self else { return }
                 self.removed = true; self.disconnect(); self.viewer?.stop(); self.activity.finish()
@@ -150,7 +157,9 @@ struct VNCRemoteDesktopView: UIViewControllerRepresentable {
             }
         }
         func observeActivity() {
-            observers = [NotificationCenter.default.addObserver(forName: VNCSessionPreferences.scrollSpeedChanged, object: nil, queue: .main) { [weak self] _ in
+            observers = [NotificationCenter.default.addObserver(forName: DirectMacConnections.changed, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.viewer?.refreshAccessEditing() }
+            }, NotificationCenter.default.addObserver(forName: VNCSessionPreferences.scrollSpeedChanged, object: nil, queue: .main) { [weak self] _ in
                 MainActor.assumeIsolated { self?.viewer?.scrollSpeed = VNCSessionPreferences.scrollSpeed }
             }, NotificationCenter.default.addObserver(forName: VNCSessionPreferences.trackpadFeedbackChanged, object: nil, queue: .main) { [weak self] _ in
                 MainActor.assumeIsolated {
@@ -219,9 +228,9 @@ struct VNCRemoteDesktopView: UIViewControllerRepresentable {
             if backgroundTask != .invalid { UIApplication.shared.endBackgroundTask(backgroundTask); backgroundTask = .invalid }
         }
         func saveSuccessfulLogin() {
-            guard !removed, remember, let login else { return }
+            guard !removed, remember, let login, let owner = accessLease else { return }
             remember = false
-            do { try DesktopCredentialStoreV1.save(login, hostID: mac.id) }
+            do { try DirectMacAccessStore.retain(.init(username: login.username, password: login.password), macID: mac.id, ssh: false, owner: owner) }
             catch { viewer?.showLoginRetentionFailure() }
             self.login = nil
         }
@@ -232,9 +241,15 @@ struct VNCRemoteDesktopView: UIViewControllerRepresentable {
             guard (1...63).contains(u.count), (1...63).contains(p.count), !u.contains(0), !p.contains(0) else {
                 viewer?.showInvalidLogin(); return
             }
-            do { if !remember { try DesktopCredentialStoreV1.remove(mac.id) } }
+            do {
+                try DirectMacAccessStore.checkConnection(macID: mac.id, username: user, password: password, key: nil, ssh: false, ownerID: accessOwnerID)
+                if !remember { try DesktopCredentialStoreV1.remove(mac.id) }
+            }
             catch { viewer?.showLoginRetentionFailure(); return }
             let token = UUID(); generation = token
+            authenticatedAccount = user; authenticatedGeneration = token
+            accessLease = DirectMacConnections.shared.begin(macID: mac.id, kind: "desktop", ownerID: accessOwnerID,
+                pendingAccessChange: DirectMacAccessStore.willRetainChange(macID: mac.id, username: user, password: password, key: nil, ssh: false, remember: remember), disconnect: { [weak self] in self?.disconnect() })
             login = remember ? .init(username: user, password: password) : nil
             self.remember = remember
             let previous = viewer?.session
@@ -285,10 +300,32 @@ struct VNCRemoteDesktopView: UIViewControllerRepresentable {
             controller.modalPresentationStyle = .pageSheet
             viewer.present(controller, animated: true)
         }
+        func showAccess() {
+            guard let viewer, viewer.presentedViewController == nil else { return }
+            let root = DirectMacAccessView(mac: mac).onDisappear { [weak self, weak viewer] in
+                guard let self, DirectAppLockV1.shared.canAccess, DirectClientPlatformV1.sessionAvailable else { return }
+                let login = DesktopCredentialStoreV1.read(self.mac.id)
+                viewer?.reloadAccessUsername(login?.username ?? "", password: login?.password ?? "")
+            }
+            let controller = UIHostingController(rootView: root); controller.modalPresentationStyle = .pageSheet
+            viewer.present(controller, animated: true)
+        }
+        func confirmExitIfNeeded() -> Bool {
+            guard files.isBorrowed, files.transferActive, let viewer, viewer.presentedViewController == nil else { return false }
+            let alert = UIAlertController(title: "End this session?", message: "The active file transfer will be interrupted. Completed downloads are kept in Files.", preferredStyle: .alert)
+            alert.addAction(UIAlertAction(title: "Keep Session", style: .cancel))
+            alert.addAction(UIAlertAction(title: "End Session", style: .destructive) { [weak self] _ in self?.endSession() })
+            viewer.present(alert, animated: true); return true
+        }
         func showFiles() {
             guard let viewer, viewer.presentedViewController == nil, DirectAppLockV1.shared.canAccess else { return }
-            let controller = UIHostingController(rootView: DirectFilesView(mac: mac, session: files, retainWhenDismissed: true).directAppearance())
+            let controller = UIHostingController(rootView: DirectFilesView(mac: mac, session: files, retainWhenDismissed: true).usingConnection { [weak self] in
+                guard let self, let tunnel = self.tunnel, self.viewer?.session.running == true else { return nil }
+                return .init(client: tunnel.client, macID: self.mac.id, ownerID: self.accessOwnerID, account: self.authenticatedAccount, keyID: nil, generation: self.authenticatedGeneration)
+            }.directAppearance())
             controller.modalPresentationStyle = .pageSheet
+            controller.sheetPresentationController?.detents = [.medium(), .large()]
+            controller.sheetPresentationController?.prefersGrabberVisible = true
             viewer.present(controller, animated: true)
         }
         func showAppSettings() {
@@ -328,10 +365,16 @@ struct VNCRemoteDesktopView: UIViewControllerRepresentable {
             reply?.resume(returning: accepted)
         }
         func disconnect() {
+            let pendingConnection = work
             generation = UUID(); work?.cancel(); work = nil; answerTrust(false)
             let native = viewer?.session
             native?.stop(); login = nil; remember = false
-            guard let retired = tunnel else { return }
+            let lease = accessLease; accessLease = nil
+            files.disconnectBorrowed(authenticatedGeneration)
+            guard let retired = tunnel else {
+                Task { await pendingConnection?.value; DirectMacConnections.shared.end(lease) }
+                return
+            }
             tunnel = nil
             let earlier = retirement
             retirement = Task {
@@ -343,6 +386,7 @@ struct VNCRemoteDesktopView: UIViewControllerRepresentable {
                     try? await Task.sleep(for: .milliseconds(50))
                 }
                 await retired.close()
+                DirectMacConnections.shared.end(lease)
             }
         }
         func endSession() {

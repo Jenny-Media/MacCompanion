@@ -23,7 +23,7 @@
 }
 @end
 
-@interface CompanionVNCViewer () <UIScrollViewDelegate, UITextViewDelegate>
+@interface CompanionVNCViewer () <UIScrollViewDelegate, UITextViewDelegate, UIGestureRecognizerDelegate>
 
 @property UITextField *host, *username, *password;
 @property UIViewController *recoveryController;
@@ -78,6 +78,7 @@
 @property UILabel *trackpadHelp;
 @property CompanionVNCTrackpadFeedback *trackpadFeedback, *tabletopFeedback;
 @property UIGestureRecognizer *click;
+@property UITapGestureRecognizer *secondaryTap, *smartTap, *tabletopSecondaryTap;
 @property UIPanGestureRecognizer *drag, *remoteScroll;
 @property UIPinchGestureRecognizer *remotePinch;
 @property BOOL magnificationActive;
@@ -216,11 +217,7 @@
     self.pan = [self button:@"Pointer" action:@selector(chooseInputMode)];
     self.controls = [CompanionVNCControls new]; self.controls.translatesAutoresizingMaskIntoConstraints = NO;
     self.controls.macName = self.macName ?: @"Mac";
-    self.controls.quickActions = self.quickActions ?: @[
-        @{@"kind": @"mode", @"title": @"Mouse Mode", @"enabled": @YES},
-        @{@"kind": @"copyText", @"title": @"Copy Text", @"symbol": @"text.viewfinder", @"enabled": @YES},
-        @{@"kind": @"fit", @"title": @"Fit to Window", @"enabled": @YES},
-        @{@"kind": @"rightClick", @"title": @"Right Click", @"enabled": @YES}];
+    self.controls.quickActions = self.quickActions ?: [DirectConnectionBridge defaultQuickActionsForInputOnly:self.inputOnly];
     self.controls.actionHandler = ^(NSDictionary *action) { [weak performControlAction:action]; };
     self.controls.customizeHandler = ^{ if (weak.settingsHandler) weak.settingsHandler(); };
     self.controls.openingHandler = ^{
@@ -268,9 +265,16 @@
     self.remotePinch = [[UIPinchGestureRecognizer alloc] initWithTarget:self action:@selector(pinchRemote:)];
     self.remotePinch.enabled = self.inputOnly;
     [self.canvas addGestureRecognizer:self.remotePinch];
-    UITapGestureRecognizer *smart = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(smartZoom:)];
-    smart.numberOfTapsRequired = 2; smart.numberOfTouchesRequired = 2;
-    [self.canvas addGestureRecognizer:smart];
+    self.smartTap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(smartZoom:)];
+    self.smartTap.numberOfTapsRequired = 2; self.smartTap.numberOfTouchesRequired = 2;
+    self.smartTap.enabled = !self.inputOnly;
+    [self.canvas addGestureRecognizer:self.smartTap];
+    self.secondaryTap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(secondaryClickAt:)];
+    self.secondaryTap.numberOfTouchesRequired = 2;
+    // Preserve Desktop's existing double-tap zoom. Input-only has no image
+    // zoom, so its secondary tap need not wait for another tap.
+    self.secondaryTap.delegate = self;
+    [self.canvas addGestureRecognizer:self.secondaryTap];
     self.canvas.panGestureRecognizer.minimumNumberOfTouches = 2;
     self.host = [self field:@"Paired Mac"]; self.host.hidden = YES;
     self.host.keyboardType = UIKeyboardTypeASCIICapable;
@@ -356,6 +360,11 @@
     self.loginDetailsText.adjustsFontForContentSizeCategory = YES;
     self.loginDetailsText.textColor = UIColor.secondaryLabelColor; self.loginDetailsText.hidden = YES;
     self.login = [[UIStackView alloc] initWithArrangedSubviews:@[self.loginIntro, self.progressRow, self.loginFields, actions, self.loginDetails, self.loginDetailsText]];
+    if (self.accessHandler) {
+        UIButton *access = [self button:@"Login & Access" action:@selector(showAccessSettings)];
+        access.accessibilityIdentifier = @"mac-login-access";
+        [self.login insertArrangedSubview:access atIndex:4];
+    }
     self.login.axis = UILayoutConstraintAxisVertical; self.login.spacing = 18;
     self.login.layoutMargins = UIEdgeInsetsMake(22, 22, 22, 22); self.login.layoutMarginsRelativeArrangement = YES;
     [DirectConnectionBridge styleCard:self.login];
@@ -464,7 +473,8 @@
     self.password.text = self.savedPassword ?: @"";
     self.remember.on = self.password.text.length > 0;
     self.savedPassword = nil;
-    self.trackpadHelp = [UILabel new]; self.trackpadHelp.text = @"Trackpad & Keyboard\nSlide to move · Tap to click\nHold to drag · Two fingers to scroll";
+    [self refreshAccessEditing];
+    self.trackpadHelp = [UILabel new]; self.trackpadHelp.text = @"Trackpad & Keyboard\nSlide to move · Tap to click\nHold to drag · Two fingers to scroll\nTwo-finger tap to right-click";
     self.trackpadHelp.numberOfLines = 0; self.trackpadHelp.textAlignment = NSTextAlignmentCenter;
     self.trackpadHelp.textColor = UIColor.secondaryLabelColor; self.trackpadHelp.userInteractionEnabled = NO;
     self.trackpadHelp.translatesAutoresizingMaskIntoConstraints = NO; [self.view insertSubview:self.trackpadHelp aboveSubview:self.canvas];
@@ -591,7 +601,19 @@
     return [lines componentsJoinedByString:@"\n"];
 }
 - (void)loginEdited { [self clearRecovery]; self.progressLabel.text = @""; [self updateConnectionChrome]; }
-- (void)showMacs { [self stopViewer]; if (self.macsHandler) self.macsHandler(); }
+- (void)showMacs {
+    if (self.requestExitHandler && self.requestExitHandler()) return;
+    [self stopViewer]; if (self.macsHandler) self.macsHandler();
+}
+- (void)showAccessSettings { if (self.accessHandler) self.accessHandler(); }
+- (void)refreshAccessEditing {
+    BOOL allowed = !self.accessEditingAllowed || self.accessEditingAllowed();
+    self.username.enabled = allowed; self.password.enabled = allowed; self.remember.enabled = allowed;
+}
+- (void)reloadAccessUsername:(NSString *)username password:(NSString *)password {
+    self.username.text = username; self.password.text = password; self.remember.on = password.length > 0;
+    [self loginEdited]; [self refreshAccessEditing];
+}
 - (void)stopViewer {
     self.status.hidden = YES; [self updateStatusPresentation];
     [self invalidateTextReview:NO]; self.textReviewViewportPending=NO;
@@ -1002,7 +1024,7 @@
     self.tabletopPad.accessibilityIdentifier = @"tabletop-trackpad";
     [self.view insertSubview:self.tabletopPad belowSubview:self.controls];
     self.tabletopLabel = [UILabel new]; self.tabletopLabel.numberOfLines = 0; self.tabletopLabel.textAlignment = NSTextAlignmentCenter;
-    self.tabletopLabel.text = @"Trackpad\nTap to click · Hold to drag\nTwo fingers to scroll";
+    self.tabletopLabel.text = @"Trackpad\nTap to click · Hold to drag\nTwo fingers to scroll · Tap with two to right-click";
     self.tabletopLabel.font = [UIFont preferredFontForTextStyle:UIFontTextStyleBody]; self.tabletopLabel.adjustsFontForContentSizeCategory = YES;
     self.tabletopLabel.textColor = UIColor.secondaryLabelColor; [self.tabletopPad addSubview:self.tabletopLabel];
     CompanionVNCTapGesture *tap = [[CompanionVNCTapGesture alloc] initWithTarget:self action:@selector(clickAt:)];
@@ -1011,7 +1033,9 @@
     [pan requireGestureRecognizerToFail:hold]; [pan requireGestureRecognizerToFail:tap];
     UIPanGestureRecognizer *scroll = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(scrollRemote:)];
     scroll.minimumNumberOfTouches = 2; scroll.maximumNumberOfTouches = 2;
-    self.tabletopGestures = @[tap, pan, hold, scroll];
+    self.tabletopSecondaryTap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(secondaryClickAt:)];
+    self.tabletopSecondaryTap.numberOfTouchesRequired = 2;
+    self.tabletopGestures = @[tap, pan, hold, scroll, self.tabletopSecondaryTap];
     for (UIGestureRecognizer *gesture in self.tabletopGestures) [self.tabletopPad addGestureRecognizer:gesture];
 }
 - (void)prepareTrackpadFeedback {
@@ -1053,7 +1077,7 @@
     return gesture.view == self.tabletopPad ? self.tabletopFeedback : (self.trackpadMode ? self.trackpadFeedback : nil);
 }
 - (void)presentViewController:(UIViewController *)controller animated:(BOOL)animated completion:(void (^)(void))completion {
-    [self cancelTrackpadTouches]; [super presentViewController:controller animated:animated completion:completion];
+    [self cancelPendingTaps]; [self cancelTrackpadTouches]; [super presentViewController:controller animated:animated completion:completion];
 }
 - (void)chooseView {
     if (self.restoreViewportPending) return;
@@ -1136,11 +1160,20 @@
     if (valid) self.trackpadOrigin = *p;
     return valid;
 }
-- (void)clickAt:(UIGestureRecognizer *)gesture {
+- (BOOL)gestureRecognizer:(UIGestureRecognizer *)gesture shouldRequireFailureOfGestureRecognizer:(UIGestureRecognizer *)other {
+    return gesture == self.secondaryTap && other == self.smartTap && !self.inputOnly;
+}
+- (void)clickAt:(UIGestureRecognizer *)gesture { [self clickAt:gesture mask:1]; }
+- (void)secondaryClickAt:(UITapGestureRecognizer *)gesture {
+    if (gesture.state != UIGestureRecognizerStateRecognized || self.textReview || self.presentedViewController
+        || self.recoveryController || !self.login.hidden) return;
+    [self clickAt:gesture mask:4];
+}
+- (void)clickAt:(UIGestureRecognizer *)gesture mask:(NSInteger)mask {
     CGPoint p;
     if (self.trackpadMode || gesture.view == self.tabletopPad) { if (CGRectIsNull(self.activeCrop) || CGRectIsEmpty(self.activeCrop)) return; p = [self trackpadPointer]; }
     else if (!CompanionVNCPointerPoint(self.activeCrop, [gesture locationInView:self.image], false, &p)) return;
-    if ([self clickPointer:p mask:1]) {
+    if ([self clickPointer:p mask:mask]) {
         CompanionVNCTrackpadFeedback *feedback = [self feedbackForGesture:gesture];
         [feedback clickAtPoint:[gesture locationInView:feedback]];
     }
@@ -1312,7 +1345,15 @@
     self.fallbackCursor.frame = self.cursorIndicator.bounds; [CATransaction commit];
     [self updateCursorDiagnostics];
 }
+- (void)cancelTapRecognizer:(UIGestureRecognizer *)recognizer {
+    BOOL enabled = recognizer.enabled; recognizer.enabled = NO; recognizer.enabled = enabled;
+}
+- (void)cancelPendingTaps {
+    [self cancelTapRecognizer:self.secondaryTap]; [self cancelTapRecognizer:self.smartTap];
+    [self cancelTapRecognizer:self.tabletopSecondaryTap];
+}
 - (void)releasePointer {
+    [self cancelPendingTaps];
     [self.trackpadFeedback setDragging:NO]; [self.tabletopFeedback setDragging:NO];
     [self.session cancelNativeGestures]; self.magnificationActive = NO;
     self.scrollingActive = NO; self.scrollUsesNative = NO; self.scrollGestureActive = NO; self.scrollRemainder = 0; self.scrollFraction = CGPointZero;
@@ -1432,15 +1473,16 @@
 }
 - (void)showGestureHelp {
     NSString *gestures = self.inputOnly
-        ? [@"Slide anywhere to move the cursor. Tap to click. Hold, then move to drag. Scroll with two fingers.\n\n" stringByAppendingString:self.session.nativeMagnificationSupported ? @"Pinch to zoom the app on your Mac at the cursor." : @"Native pinch is unavailable for this connection."]
-        : @"Pointer: tap where you want to click.\nTrackpad: slide anywhere to move the cursor; scroll with two fingers.\n\nTap to click. Hold, then move to drag.\nPan the zoomed view with two fingers in Pointer or three in Trackpad.\nPinch to zoom the desktop image. Double tap with two fingers to zoom in or fit.";
+        ? [@"Slide anywhere to move the cursor. Tap to click. Hold, then move to drag. Scroll with two fingers; tap with two to right-click.\n\n" stringByAppendingString:self.session.nativeMagnificationSupported ? @"Pinch to zoom the app on your Mac at the cursor." : @"Native pinch is unavailable for this connection."]
+        : @"Pointer: tap where you want to click.\nTrackpad: slide anywhere to move the cursor; scroll with two fingers.\n\nTap to click. Hold, then move to drag. Tap with two fingers to right-click.\nPan the zoomed view with two fingers in Pointer or three in Trackpad.\nPinch to zoom the desktop image. Double tap with two fingers to zoom in or fit.";
     NSString *message = [gestures stringByAppendingString:@"\n\nHold Session Controls, slide onto a quick action or category, then release. Slide away to cancel."];
     UIAlertController *help = [UIAlertController alertControllerWithTitle:@"Gestures" message:message preferredStyle:UIAlertControllerStyleAlert];
     [help addAction:[UIAlertAction actionWithTitle:@"Done" style:UIAlertActionStyleCancel handler:nil]];
     [self presentViewController:help animated:YES completion:nil];
 }
 - (void)setQuickActions:(NSArray<NSDictionary *> *)quickActions {
-    _quickActions = [quickActions copy]; self.controls.quickActions = quickActions;
+    _quickActions = [quickActions copy];
+    self.controls.quickActions = quickActions ?: [DirectConnectionBridge defaultQuickActionsForInputOnly:self.inputOnly];
 }
 - (void)updateConnectionChrome {
     self.loginSubtitle.text = self.inputOnly ? @"Trackpad & Keyboard" : @"Desktop";
@@ -1505,6 +1547,7 @@
     if (_inputOnly != value) { [self retireTextDraft]; self.textComposer = nil; }
     _inputOnly = value;
     if (self.quickActionsProvider) self.quickActions = self.quickActionsProvider(value);
+    else if (!self.quickActions) self.controls.quickActions = [DirectConnectionBridge defaultQuickActionsForInputOnly:value];
     if (self.isViewLoaded) {
         [self releasePointer]; [self cancelTrackpadTouches]; [self resetModifiers];
         if (self.session.established) self.session.inputOnly = value;
@@ -1519,7 +1562,7 @@
     self.canvasToolbarBottom.active = !self.tabletop && !self.fullscreen; self.canvasFullscreenBottom.active = !self.tabletop && self.fullscreen;
     self.image.hidden = self.inputOnly; self.cursorOverlay.hidden = self.inputOnly;
     self.canvas.pinchGestureRecognizer.enabled = !self.inputOnly;
-    self.remotePinch.enabled = self.inputOnly;
+    self.remotePinch.enabled = self.inputOnly; self.smartTap.enabled = !self.inputOnly;
     self.canvas.backgroundColor = self.inputOnly ? UIColor.systemBackgroundColor : UIColor.blackColor;
     self.trackpadHelp.hidden = !self.inputOnly || !self.login.hidden;
     self.controls.fullscreen = self.fullscreen; self.controls.inputOnly = self.inputOnly;

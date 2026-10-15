@@ -858,3 +858,55 @@ not a valid same-owner shape. Replacement, teardown and explicit empty/unknown
 shape reports clear it. Cursor publication cannot cross a pending resume boundary.
 Content-free report, visible-image, publication and cache-miss counters describe
 wire delivery without claiming context semantics or live host compatibility.
+
+
+## Live Apple cursor delivery
+
+The direct clients request standard XCursor/RichCursor and Apple cached-cursor
+encoding 1104. Decoding a STORE or SELECT is insufficient to keep the server
+sending subsequent changes: the classic Apple framebuffer sender must also be
+armed. On iOS and macOS, the same socket owner may use Apple's automatic-update control only after
+an Apple 3.889 server banner, successful existing ARD authentication and a valid
+version-5 display layout matching the bounded framebuffer. Other servers keep
+ordinary incremental requests. No authentication, banner reply, encryption or
+remote display configuration changes are introduced.
+
+The admitted **classic** control is 16 bytes: opcode 9; three zero reserved bytes;
+a big-endian uint32 update period in microseconds; then big-endian uint16 x, y,
+width and height. Enable uses period 100000 and the full current framebuffer;
+disable uses period 0xffffffff and the last subscribed framebuffer. Coordinates
+are zero. Positive dimensions must pass the existing 16384-axis / 96-MiB bounds.
+This period-based classic layout is verified against the macOS server's opcode-9
+reader; do not substitute the separately described high-performance session
+fields. The exact enable/disable byte vectors are in the sole indexed VNC fixture.
+
+Enable after valid layout delivery, renew on every subsequent 1105 layout report
+(including an identical layout at an agent transition), framebuffer allocation
+or foreground resume, and disable before background-pause completion, input-only
+mode or socket retirement. Invalid/unsupported layouts disable this extension.
+These controls are owner-serialized. No timer or additional connection is used.
+Suppress LibVNCClient's routine pull requests while automatic delivery is active;
+explicit baseline refreshes must still write non-incremental requests. The empty
+update rectangle also prevents a late capability refresh from requesting pixels
+in input-only mode. Input-only mode never enables automatic desktop delivery.
+The existing baseline/input/presentation epochs remain authoritative, and the
+paused owner sleeps after its bounded release/disable work.
+
+This is a compatibility extension based on the host implementation, not an
+Apple-published API. The current server reader interprets bytes 4–7 as the period
+and enables automatic delivery unless they are 0xffffffff; bytes 2–3 have no
+admitted semantics and remain zero. Independent reverse-engineering also
+documents automatic arming and renewal as necessary for live cursor delivery:
+[iShareScreen cursor and update notes](https://github.com/renegadelink/iShareScreen/blob/main/docs/apple_vnc_rfc.md#83-cursorimage-0x450)
+and [remotex display arming](https://github.com/andrewtheguy/remotex/blob/main/docs/apple-vnc-889.md#the-display-layout).
+Physical shape changes remain an acceptance check separate from synthetic wire,
+pause/resume and presentation tests. Only numeric delivery counters are retained.
+
+## iOS credential management revision, 2026-10-15
+
+The shared local Login & Access profile and active-owner mutation guards in
+[Direct Files](direct-files.md#ios-shared-access-revision-2026-10-15) supersede
+separate saved Desktop/Terminal password management on iOS. Screen Sharing still
+requires its Mac account/password; SSH-key overrides apply to Terminal and its
+Files channel. Desktop-originated Files uses Desktop's authenticated SSH account.
+SSH host-key verification and all ARD/SSH wire authentication remain unchanged.

@@ -22,16 +22,17 @@ struct DirectTerminalView: View {
     @State private var loadedLogin = false
     private let autoConnect: Bool
     private enum Sheet: Identifiable {
-        case keys, install, manual, macSettings, appSettings, pro, quickActions, keyboard, verifyGuide, connectionInfo, files
+        case keys, install, manual, macSettings, appSettings, pro, quickActions, keyboard, verifyGuide, connectionInfo, files, access
         var id: String {
             switch self {
             case .keys: "keys"; case .install: "install"; case .manual: "manual"; case .macSettings: "macSettings"
             case .appSettings: "appSettings"; case .pro: "pro"; case .quickActions: "quickActions"; case .keyboard: "keyboard"
-            case .files: "files"; case .verifyGuide: "verifyGuide"; case .connectionInfo: "connectionInfo"
+            case .access: "access"; case .files: "files"; case .verifyGuide: "verifyGuide"; case .connectionInfo: "connectionInfo"
             }
         }
     }
     @State private var sheet: Sheet?
+    @State private var confirmingExit = false
     @Environment(DirectAppearanceV1.self) private var appearance
     @Environment(\.dynamicTypeSize) private var dynamicType
     @Environment(\.colorScheme) private var colorScheme
@@ -47,7 +48,7 @@ struct DirectTerminalView: View {
         self.macLibrary = macLibrary; self.exit = exit
         let libraryURL = macLibrary?.storageURL ?? DirectMacLibraryV1.defaultURL
         _session = State(initialValue: session ?? DirectTerminalSession(mac: mac, libraryURL: libraryURL))
-        _files = State(initialValue: files ?? DirectFilesSession(mac: mac, libraryURL: libraryURL))
+        _files = State(initialValue: files ?? DirectFilesWorkspace.session(mac, libraryURL: libraryURL))
         self.autoConnect = autoConnect
     }
     private func connect() {
@@ -73,6 +74,9 @@ struct DirectTerminalView: View {
         do { if let saved = try TerminalSecretStore.login(mac.id) { login.loadPasswordAccount(saved.username); password = saved.password; remember = true } }
         catch { loginIssue = .make(.savedDataUnavailable, message: "The saved Terminal login couldn’t be read. Existing data is kept.") }
         loadKey(preferSelected: !loadedLogin)
+        if let profile = try? DirectMacAccessStore.load(mac.id) {
+            login.select(profile.sshMethod == .key ? .sshKey : .password)
+        }
     }
     private func selectLoginMethod(_ method: TerminalLoginMethod) {
         login.select(method)
@@ -130,8 +134,8 @@ struct DirectTerminalView: View {
             .toolbar(.hidden, for: .navigationBar)
             .sheet(item: $sheet, onDismiss: { if let updated = macLibrary?.macs.first(where: { $0.id == mac.id }) { session.updateMac(updated) } }) { destination in
                 switch destination {
-                case .files: DirectFilesView(mac: mac, session: files, retainWhenDismissed: true)
-                case .keys: TerminalKeySettings(mac: mac, changed: { loadKey(preferSelected: true); session.clearRecovery() })
+                case .files: DirectFilesView(mac: mac, session: files, retainWhenDismissed: true).usingConnection { session.filesContext }
+                case .keys, .access: DirectMacAccessView(mac: mac).onDisappear { loadLogin() }
                 case .install: TerminalKeyInstallView(mac: mac, initialUsername: username, changed: { loadKey(preferSelected: true); session.clearRecovery() })
                 case .manual: TerminalManualKeySetupView(mac: mac)
                 case .macSettings:
@@ -159,7 +163,11 @@ struct DirectTerminalView: View {
             loadLogin(); loadedLogin = true
             if autoConnect && loginIssue == nil && session.recovery == nil { connect() }
         }
-        .onDisappear { files.close(); session.stop() }
+        .confirmationDialog("End this session?", isPresented: $confirmingExit, titleVisibility: .visible) {
+            Button("End Session", role: .destructive) { session.stop(); exit() }
+            Button("Keep Session", role: .cancel) {}
+        } message: { Text("The active file transfer will be interrupted. Completed downloads are kept in Files.") }
+        .onDisappear { if let context = session.filesContext { files.disconnectBorrowed(context.generation) }; session.stop() }
         .onChange(of: session.completedNormally) { _, _ in returnAfterNormalExit() }
         .onChange(of: session.macRemoved) { _, removed in
             if removed { sheet = nil; password = ""; key = nil; if !files.hasUnsavedDownloads { exit() } }
@@ -187,7 +195,9 @@ struct DirectTerminalView: View {
         case "manual": sheet = .manual
         case "quickActions": sheet = .quickActions
         case "customize": sheet = .keyboard
-        case "exit": session.stop(); exit()
+        case "exit":
+            if files.isBorrowed && files.transferActive { confirmingExit = true }
+            else { session.stop(); exit() }
         default: break
         }
     }
@@ -237,10 +247,8 @@ struct DirectTerminalView: View {
                 authentication {
                     Text("Sign in with").foregroundStyle(.secondary)
                     if !dynamicType.isAccessibilitySize { Spacer() }
-                    Picker("Sign in with", selection: Binding(get: { login.method }, set: selectLoginMethod)) {
-                        ForEach(TerminalLoginMethod.allCases) { Text($0.rawValue).tag($0) }
-                    }.pickerStyle(.menu).labelsHidden().tint(.primary)
-                        .accessibilityIdentifier("terminal-login-method")
+                    Button(useKey ? "SSH Key · Login & Access" : "Mac Login · Login & Access") { sheet = .access }
+                        .accessibilityIdentifier("terminal-login-access")
                 }.font(.subheadline)
                 let notice = loginIssue ?? session.recovery
                 if let notice { DirectConnectionNotice(notice: notice) }
@@ -251,11 +259,12 @@ struct DirectTerminalView: View {
                         Divider().frame(width: compact ? 1 : nil, height: compact ? 56 : 1)
                         passwordField
                     }
-                }.padding(14).background(Color(uiColor: DirectConnectionStyle.field), in: RoundedRectangle(cornerRadius: 16))
+                }.disabled(DirectMacConnections.shared.isActive(mac.id))
+                    .padding(14).background(Color(uiColor: DirectConnectionStyle.field), in: RoundedRectangle(cornerRadius: 16))
                     .overlay(RoundedRectangle(cornerRadius: 16).stroke(Color(uiColor: .separator).opacity(0.25)))
                 if useKey {
                     selectedKeyView
-                } else { Toggle("Save login", isOn: $remember).font(.subheadline).padding(.horizontal, 2) }
+                } else { Toggle("Save login", isOn: $remember).font(.subheadline).padding(.horizontal, 2).disabled(DirectMacConnections.shared.isActive(mac.id)) }
                 if let notice {
                     let action = loginIssue != nil ? DirectRecoveryAction(title: "Retry", perform: loadLogin) : recoveryAction(notice)
                     connectionButton(action.title, symbol: action.symbol, enabled: ![.loginRejected, .terminalEnded, .inputPaused].contains(notice.reason) || canConnect, perform: action.perform)

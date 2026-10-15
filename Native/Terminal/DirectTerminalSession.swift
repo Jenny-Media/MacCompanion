@@ -190,6 +190,16 @@ private enum TerminalPTY {
     private var work: Task<Void, Never>?
     private var writeTail: Task<Void, Never>?
     private var queuedBytes = 0
+    #if os(iOS)
+    private let accessOwnerID = UUID()
+    private var accessLease: UUID?
+    private var authenticatedAccount = ""
+    private var authenticatedKeyID: UUID?
+    var filesContext: DirectFilesConnectionContext? {
+        guard connected, let client, DirectAppLockV1.shared.canAccess, DirectClientPlatformV1.sessionAvailable else { return nil }
+        return .init(client: client, macID: mac.id, ownerID: accessOwnerID, account: authenticatedAccount, keyID: authenticatedKeyID, generation: generation)
+    }
+    #endif
     private var client: SSHClient?
     private var channel: Channel?
     private var writer: TerminalWriter?
@@ -209,6 +219,13 @@ private enum TerminalPTY {
     func connect(username: String, password: String, remember: Bool, key: TerminalSSHKey? = nil, installation: TerminalNamedKey? = nil, verificationOnly: Bool = false, keyFileID: UUID? = nil) {
         guard !macRemoved, DirectAppLockV1.shared.canAccess, DirectClientPlatformV1.sessionAvailable, !connecting, !connected else { return }
         let loginKey = verificationOnly ? installation?.key : key
+        #if os(iOS)
+        if installation != nil, DirectMacConnections.shared.isActive(mac.id) {
+            present(.savedDataUnavailable, message: "Disconnect this Mac before setting up an SSH key."); return
+        }
+        do { try DirectMacAccessStore.checkConnection(macID: mac.id, username: username, password: password, key: loginKey, ssh: true, ownerID: accessOwnerID) }
+        catch { present(.savedDataUnavailable, message: "Disconnect this Mac before changing its login."); return }
+        #endif
         guard !username.isEmpty, (loginKey != nil || !password.isEmpty), username.utf8.count <= 255, password.utf8.count <= 4096,
               !username.contains("\0"), !password.contains("\0") else { present(.loginRejected, message: "Enter a Mac account and password or choose an SSH key. Account names must be at most 255 UTF-8 bytes and passwords at most 4 KiB, with no NUL characters."); return }
         let authentication: @Sendable () -> SSHAuthenticationMethod
@@ -225,8 +242,17 @@ private enum TerminalPTY {
             } else { keyFileSelection = nil }
         } catch { present(.savedDataUnavailable, message: "The selected SSH key couldn’t be read. Existing keys are kept."); return }
         #endif
+        #if os(iOS)
+        do {
+            if installation == nil && key == nil && !remember { try TerminalSecretStore.forgetLogin(mac.id) }
+        } catch { present(.savedDataUnavailable, message: "Disconnect this Mac before changing its saved login."); return }
+        #endif
         stop()
         #if os(iOS)
+        authenticatedAccount = username
+        authenticatedKeyID = installation?.id ?? (key == nil ? nil : (try? DirectMacAccessStore.load(mac.id).keyID))
+        accessLease = DirectMacConnections.shared.begin(macID: mac.id, kind: "terminal", keyID: authenticatedKeyID, ownerID: accessOwnerID,
+            pendingAccessChange: installation != nil || DirectMacAccessStore.willRetainChange(macID: mac.id, username: username, password: password, key: loginKey, ssh: true, remember: remember), disconnect: { [weak self] in self?.stop() })
         textSendNotice = nil
         #endif
         identityDetails = []; installedKey = nil; recovery = nil; phase = "Contacting Mac"; setupPhase = .notSent; settingUp = installation != nil; let id = UUID(); generation = id
@@ -235,7 +261,9 @@ private enum TerminalPTY {
         let addresses = mac.addresses, port = mac.sshPort
         work = Task {
             do {
+                #if !os(iOS)
                 if installation == nil && key == nil && !remember { try TerminalSecretStore.forgetLogin(mac.id) }
+                #endif
                 let client = try await dial(addresses: addresses, port: port, authentication: authentication, owner: owner, id: id)
                 self.client = client
                 if let installation {
@@ -263,7 +291,15 @@ private enum TerminalPTY {
                     }
                     self.setupPhase = .verified; self.phase = "Saving the preferred key"
                     guard self.generation == id, DirectAppLockV1.shared.canAccess else { throw CancellationError() }
+                    #if os(iOS)
+                    if let owner = accessLease, DirectMacConnections.shared.owns(owner, macID: mac.id) {
+                        var profile = try DirectMacAccessStore.load(mac.id)
+                        profile.keyID = installation.id; profile.keyUsername = username; profile.sshMethod = .key
+                        try DirectMacAccessStore.write(profile, id: mac.id)
+                    }
+                    #else
                     try TerminalKeyLibraryStore.associate(installation.id, macID: mac.id, username: username)
+                    #endif
                     stop(); installedKey = installation.id; present(.setupVerified, stage: "Key-only login verified; preference saved")
                     return
                 }
@@ -277,8 +313,15 @@ private enum TerminalPTY {
                 }
                 #endif
                 if !savedFileReference {
+                    #if os(iOS)
+                    if let owner = accessLease {
+                        if key != nil { try DirectMacAccessStore.retainKeyAccount(username, macID: mac.id, keyID: authenticatedKeyID, owner: owner) }
+                        else if remember { try DirectMacAccessStore.retain(.init(username: username, password: password), macID: mac.id, ssh: true, owner: owner) }
+                    }
+                    #else
                     if var key { key.username = username; try TerminalSecretStore.saveKey(key, id: mac.id) }
                     else if remember { try TerminalSecretStore.save(.init(username: username, password: password), id: mac.id) }
+                    #endif
                 }
                 self.phase = "Opening a new shell"
                 let exitStatus = try await TerminalPTY.run(client: client, columns: columns, rows: rows, ready: { writer in
@@ -476,6 +519,7 @@ private enum TerminalPTY {
         pauseWork?.cancel(); pauseWork = nil; resumeWork?.cancel(); resumeWork = nil; finishBackgroundWork()
         suspended = false; pausedOutput.removeAll(keepingCapacity: false)
         suspendInput?(); activity?.finish(); activity = nil
+        let pendingConnection = work
         generation = UUID(); let reply = trustReply; trustReply = nil; trust = nil; reply?.resume(returning: false); work?.cancel(); work = nil; writeTail?.cancel(); writeTail = nil
         #if os(macOS) || os(visionOS)
         nativeInputReleaseTail?.cancel(); nativeInputReleaseTail = nil; nativeInputReleaseBytes = 0
@@ -483,7 +527,17 @@ private enum TerminalPTY {
         socketOwner?.cancel(); socketOwner = nil
         let client = self.client, channel = self.channel; self.client = nil; self.channel = nil; writer = nil
         connected = false; connecting = false; completedNormally = false; queuedBytes = 0
-        Task { try? await client?.close(); try? await channel?.close() }
+        #if os(iOS)
+        let lease = accessLease; accessLease = nil
+        authenticatedAccount = ""; authenticatedKeyID = nil
+        #endif
+        Task {
+            try? await client?.close(); try? await channel?.close()
+            await pendingConnection?.value
+            #if os(iOS)
+            DirectMacConnections.shared.end(lease)
+            #endif
+        }
     }
     func receiveOutput(_ bytes: [UInt8]) throws {
         guard !inputInactive, !suspended, DirectAppLockV1.shared.canAccess, DirectClientPlatformV1.sessionAvailable else {
