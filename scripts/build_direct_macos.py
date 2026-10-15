@@ -55,7 +55,7 @@ def build(args, parser, session):
         files = [p for folder in roots for p in sorted(folder.rglob('*')) if p.is_file()]
         files += [Path(__file__), *[ROOT / 'scripts' / name for name in [
             'build_cache.py', 'direct_mac_development_signing.py', 'verify_direct_client_dependencies.py',
-            'prepare_swiftterm_build_tool.py', 'dependency_checkout_provenance.py', 'prepare_macos_vnc_cursor.py']],
+            'prepare_swiftterm_build_tool.py', 'dependency_checkout_provenance.py', 'prepare_macos_vnc_cursor.py', 'prepare_vnc_read_service.py']],
             ROOT / 'spec/dependency-policy/v0/direct-client-development.json',
             ROOT / 'spec/privacy-manifest/v0/targets/mac-containing-app/PrivacyInfo.xcprivacy']
         return {str(p.relative_to(ROOT)): sha(p) for p in files}
@@ -149,7 +149,7 @@ def build(args, parser, session):
                 'SWIFT_VERSION': '6.0', 'SWIFT_STRICT_CONCURRENCY': 'complete', 'CODE_SIGNING_ALLOWED': 'NO',
                 'SWIFT_ACTIVE_COMPILATION_CONDITIONS': '$(inherited) MACCOMPANION_VNC_DEVELOPMENT',
                 'SWIFT_OBJC_BRIDGING_HEADER': str(ROOT / 'Native/Mac/MacCompanionDirect-Bridging-Header.h'),
-                'HEADER_SEARCH_PATHS': [str(ROOT / 'Native/VNC'), str(args.source / 'include'), str(vnc / 'include')],
+                'HEADER_SEARCH_PATHS': [str(ROOT / 'Native/VNC'), str(mac_vnc_source / 'include'), str(vnc / 'include')],
                 'LIBRARY_SEARCH_PATHS': [str(vnc), str(work)],
                 'ASSETCATALOG_COMPILER_APPICON_NAME': 'AppIcon',
                 'OTHER_LDFLAGS': ['$(inherited)', '-lz'], 'ARCHS': args.arch, 'ONLY_ACTIVE_ARCH': 'YES'}}}},
@@ -203,7 +203,7 @@ def build(args, parser, session):
               'sourceWorktreeDirty': bool(capture('git', '-C', ROOT, 'status', '--porcelain')),
               'dependencies': {'LibVNCClient': lock['revision'], 'OpenSSL': inputs, 'SwiftPackages': expected,
                                'LibVNCClientSources': {'beforeBuild': vnc_sources, 'afterBuild': vnc_sources_after},
-                               'macOSCursorAdapter': {'policy': lock['macOSCursorCallback'], 'source': str(mac_vnc_source),
+                               'macOSCursorAdapter': {'policy': lock['macOSCursorCallback'], 'readServicePolicy': lock['desktopReadInputService'], 'source': str(mac_vnc_source),
                                                       'beforeBuild': mac_vnc_before, 'afterBuild': mac_vnc_after},
                                'SwiftPackageSources': {'beforeBuild': package_sources, 'afterBuild': package_sources_after}},
               'app': str(app), 'executableSHA256': sha(executable),

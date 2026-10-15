@@ -90,7 +90,7 @@ accelerated independently of zoom. Restore the last per-Mac display only against
 verified current metadata. Custom quick actions support balanced shortcut chords
 and sending saved text as typing, with content held only in protected local Keychain.
 
-Follow Cursor defaults on per Mac and is configurable in the session’s mode-specific Controls settings.
+Keep Pointer Visible defaults on per Mac and is configurable in the session’s mode-specific Controls settings.
 In zoomed Trackpad mode, iPhone pointer movement and dragging pan the view only
 near its edges, retaining zoom and the selected display. Manual pan/pinch pauses
 following until the next trackpad gesture. Mac-originated cursor notifications
@@ -423,3 +423,20 @@ Browse Files. New sessions never replay a transfer automatically. Transfers and
 results remain bound to their original Mac/account. See the iOS revision in
 [Direct Files](../spec/capability-protocol/v0/direct-files.md). macOS and visionOS
 retain their existing access behavior.
+
+### Persistent iOS pointer and automatic host following, 2026-10-15
+
+Desktop shows one persistent pointer using the Mac's streamed cursor shape. Local
+movement immediately updates its position and sends that target to the Mac;
+lifting a finger leaves the cursor visible, and the next Trackpad tap clicks at
+its displayed hotspot. Host following is always enabled without a menu option.
+While local fingers/gestures are active, incoming positions cannot move it.
+While idle, newly delivered host positions update the visible pointer and next
+click target together. A bounded in-memory history rejects recognizable older
+local targets. This cannot establish freshness: a genuine host move to an old
+local target may be suppressed, and an unrecognized delayed report remains
+ambiguous. No host execution acknowledgement or perfect handoff is claimed.
+Shape-only updates never reposition it. The cursor stays visible independently
+of Touch & Haptics indicators; input-only mode shows finger feedback without a
+desktop pointer. Keep Pointer Visible only pans a zoomed viewport. No Mac helper,
+new wire extension or automatic cursor probing is introduced.

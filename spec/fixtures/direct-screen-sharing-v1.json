@@ -2574,10 +2574,16 @@
     "readChunkBytes": 16384,
     "writeLowBytes": 16384,
     "writeHighBytes": 65536,
-    "queueLimitBytes": 262144,
+    "queueLimitBytes": 2097152,
     "plaintextFallback": false,
     "sharesHostPinWithTerminal": true,
-    "sharesLoginWithTerminal": false
+    "sharesLoginWithTerminal": false,
+    "maximumSSHPacketBytes": 1048576,
+    "receiveWindowBytes": 1048576,
+    "backpressureScope": "perDirection",
+    "sourceReadRequiresOwnQueueBelowHighWatermark": true,
+    "sourceReadRequiresDestinationWritable": true,
+    "reversePendingWritesBlockSourceRead": false
   },
   "sshTransportCases": [
     {

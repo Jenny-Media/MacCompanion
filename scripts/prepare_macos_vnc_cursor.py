@@ -67,6 +67,13 @@ def prepare(source, output, lock):
     verify_source_checkout(source, lock['revision'])
     policy = lock['macOSCursorCallback']
     adapted = adapted_cursor((source / policy['path']).read_bytes(), policy)
+    from prepare_vnc_read_service import adapted_read_service, TRANSFORMS
+    read_policies = lock['desktopReadInputService']['patches']
+    if len(read_policies) != len(TRANSFORMS) or {row['path'] for row in read_policies} != set(TRANSFORMS):
+        raise ValueError('Missing or duplicate VNC read-service adapter policies.')
+    adaptations = {policy['path']: adapted}
+    for row in read_policies:
+        adaptations[row['path']] = adapted_read_service((source / row['path']).read_bytes(), row)
     # Enumerate the pinned Git tree, never mutable ignored/untracked files.
     tree = subprocess.check_output(['git', '--no-replace-objects', '-C', str(source), 'ls-tree', '-r', '-z', 'HEAD'])
     files, directories = {}, set()
@@ -81,13 +88,14 @@ def prepare(source, output, lock):
             directories.add(name)
         elif kind == b'blob' and mode in [b'100644', b'100755']:
             files[name] = (0o755 if mode == b'100755' else 0o644,
-                           adapted if name == policy['path'] else (source / name).read_bytes())
+                           adaptations[name] if name in adaptations else (source / name).read_bytes())
         else:
             raise ValueError('Unsupported pinned VNC source entry: ' + name)
         directories.update(str(parent) for parent in Path(name).parents if str(parent) != '.')
     expected = {name: {'kind': 'directory'} for name in directories}
     expected.update({name: {'kind': 'file', 'mode': mode, 'sha256': digest(data)} for name, (mode, data) in files.items()})
-    destination = Path(output) / ('libvncclient-source-macos-' + policy['adaptedSHA256'])
+    adaptation_key = digest(json.dumps({name: digest(data) for name, data in adaptations.items()}, sort_keys=True).encode())
+    destination = Path(output) / ('libvncclient-source-direct-' + adaptation_key)
     if not destination.exists() and not destination.is_symlink():
         with tempfile.TemporaryDirectory(prefix='macos-vnc-source-', dir=output) as temporary:
             staging = Path(temporary) / 'source'; staging.mkdir()

@@ -1,0 +1,65 @@
+--- a/src/libvncclient/sockets.c
++++ b/src/libvncclient/sockets.c
+@@ -45,6 +45,25 @@
+ 
+ rfbBool errorMessageOnReadFailure = TRUE;
+ 
++/* Optional cooperative input service, installed only after authentication. */
++static char companionReadServiceTag;
++void
++CompanionVNCSetReadService(rfbClient *client, const CompanionVNCReadService *service)
++{
++  rfbClientSetClientData(client, &companionReadServiceTag, (void *)service);
++}
++static const CompanionVNCReadService *
++CompanionVNCGetReadService(rfbClient *client)
++{
++  return (const CompanionVNCReadService *)rfbClientGetClientData(client, &companionReadServiceTag);
++}
++static rfbBool
++CompanionVNCServiceRead(rfbClient *client)
++{
++  const CompanionVNCReadService *service = CompanionVNCGetReadService(client);
++  return !service || !service->service || service->service(client);
++}
++
+ /*
+  * ReadFromRFBServer is called whenever we want to read some data from the RFB
+  * server.  It is non-trivial for two reasons:
+@@ -62,7 +81,7 @@
+ rfbBool
+ ReadFromRFBServer(rfbClient* client, char *out, unsigned int n)
+ {
+-  const int USECS_WAIT_PER_RETRY = 100000;
++  const int USECS_WAIT_PER_RETRY = CompanionVNCGetReadService(client) ? 10000 : 100000;
+   int retries = 0;
+ #undef DEBUG_READ_EXACT
+ #ifdef DEBUG_READ_EXACT
+@@ -112,6 +131,9 @@
+     return (fread(out,1,n,rec->file) != n ? FALSE : TRUE);
+   }
+   
++  if (!CompanionVNCServiceRead(client))
++    return FALSE;
++
+   if (n <= client->buffered) {
+     memcpy(out, client->bufoutptr, n);
+     client->bufoutptr += n;
+@@ -134,6 +156,8 @@
+ 
+     while (client->buffered < n) {
+       int i;
++      if (!CompanionVNCServiceRead(client))
++        return FALSE;
+       if (client->tlsSession)
+         i = ReadFromTLS(client, client->buf + client->buffered, RFB_BUF_SIZE - client->buffered);
+       else
+@@ -186,6 +210,8 @@
+ 
+     while (n > 0) {
+       int i;
++      if (!CompanionVNCServiceRead(client))
++        return FALSE;
+       if (client->tlsSession)
+         i = ReadFromTLS(client, out, n);
+       else

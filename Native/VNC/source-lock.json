@@ -13,5 +13,24 @@
     "patchPath": "Native/VNC/macos-empty-cursor.patch",
     "patchSHA256": "c5894894421a176b225e9f6b212a5eff82658f94f92718d24cbdc5d080da7fb8",
     "purpose": "Both native direct-client generated builds deliver empty standard cursor reports; historical key and adapter filename retained for exact patch admission."
+  },
+  "desktopReadInputService": {
+    "purpose": "Cooperative input service on the sole direct-client socket owner, after authentication only; wire/authentication unchanged.",
+    "patches": [
+      {
+        "path": "include/rfb/rfbclient.h",
+        "originalSHA256": "1dfd2c3050d4c92854e0c37c4e9825e5db966f594b834fd983383929d3deed7b",
+        "adaptedSHA256": "16485be1655011ef3f574f105b8e6377defbc69b7d1ce87d20e4fbbfdb124032",
+        "patchPath": "Native/VNC/direct-read-service-header.patch",
+        "patchSHA256": "fdcbd2c97c4624fcd38f3b6230ffcb841ceda2f672f107d6ef23ce847098de0f"
+      },
+      {
+        "path": "src/libvncclient/sockets.c",
+        "originalSHA256": "5ce6cda0978c8ac4505b1d321724069ca074e4e049ab34991ad05a13337e221d",
+        "adaptedSHA256": "9731598b1333d4b5900ddef46ca9b361d4a2e3c753c8bd070faf7d5661f318c2",
+        "patchPath": "Native/VNC/direct-read-service-sockets.patch",
+        "patchSHA256": "a8f99f7326979e8ce6421df1c4d91f3622a1c9cc567967c6765589d4fd56ebac"
+      }
+    ]
   }
 }

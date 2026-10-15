@@ -35,6 +35,7 @@
         points[[NSValue valueWithNonretainedObject:finger]] = [NSValue valueWithCGPoint:[finger locationInView:self.feedback]];
     }
     [self.feedback updateTouchPoints:points];
+    if (self.feedback.touchActivityChanged) self.feedback.touchActivityChanged();
 }
 - (void)touchesBegan:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
     if (!self.feedback.active || (self.feedback.touchesAllowed && !self.feedback.touchesAllowed())) {
@@ -72,6 +73,7 @@
     }
     return self;
 }
+- (BOOL)hasTouches { return self.active && ((CompanionVNCTrackpadTouchObserver *)self.touchObserver).fingers.count > 0; }
 - (BOOL)reduceMotion { return UIAccessibilityIsReduceMotionEnabled(); }
 - (void)setActive:(BOOL)active {
     if (_active == active) return;
@@ -165,5 +167,6 @@
     self.touchObserver.enabled = NO;
     [((CompanionVNCTrackpadTouchObserver *)self.touchObserver).fingers removeAllObjects];
     [self setDragging:NO]; [self clearRings]; self.touchObserver.enabled = enabled;
+    if (self.touchActivityChanged) self.touchActivityChanged();
 }
 @end

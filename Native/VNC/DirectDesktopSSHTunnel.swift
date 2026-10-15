@@ -39,20 +39,24 @@ private final class DesktopSSHOpening: @unchecked Sendable {
     deinit { cancel() }
 }
 
-// Both handlers live on one event loop. Pause reads while a partner's writes are
-// buffered; fail closed at a hard queue limit even if an upstream ignores reads.
+// Both handlers live on one event loop. Each source owns its pending writes;
+// only its destination channel's writability gates that direction. Fail closed
+// at a hard queue limit even if an upstream ignores reads.
 // No retries, replay, local TCP listener, or fallback transport.
 final class DesktopSSHRelay: ChannelDuplexHandler, @unchecked Sendable {
     typealias InboundIn = ByteBuffer
     typealias OutboundIn = ByteBuffer
     typealias OutboundOut = ByteBuffer
-    static let limit = 256 * 1024
+    // Leave room for an already permitted SSH packet beyond the write watermark.
+    static let limit = 2 * 1024 * 1024
     private weak var partner: DesktopSSHRelay?
     private var context: ChannelHandlerContext?
     private var pendingRead = false
     private var queued = 0
     private(set) var transferred = 0
     private(set) var peakQueued = 0
+    private(set) var maxWriteCompletionMS: Double = 0
+    var queuedBytes: Int { queued }
     static func pair() -> (DesktopSSHRelay, DesktopSSHRelay) {
         let a = DesktopSSHRelay(), b = DesktopSSHRelay()
         a.partner = b; b.partner = a
@@ -65,7 +69,9 @@ final class DesktopSSHRelay: ChannelDuplexHandler, @unchecked Sendable {
     func handlerRemoved(context: ChannelHandlerContext) {
         self.context = nil; partner = nil
     }
-    private var writable: Bool { context?.channel.isWritable == true && queued < 64 * 1024 }
+    // This channel is the other relay's destination. Its queued bytes belong
+    // to traffic in the reverse direction and must not gate that reader.
+    private var writable: Bool { context?.channel.isWritable == true }
     private func resumeRead() {
         guard pendingRead, queued < 64 * 1024, partner?.writable == true else { return }
         pendingRead = false; context?.read()
@@ -82,9 +88,11 @@ final class DesktopSSHRelay: ChannelDuplexHandler, @unchecked Sendable {
         }
         queued += count; transferred += count; peakQueued = max(peakQueued, queued)
         let completion = context.eventLoop.makePromise(of: Void.self)
+        let started = ProcessInfo.processInfo.systemUptime
         completion.futureResult.whenComplete { [weak self] result in
             guard let self else { return }
             self.queued -= count
+            self.maxWriteCompletionMS = max(self.maxWriteCompletionMS, (ProcessInfo.processInfo.systemUptime - started) * 1000)
             if case .failure = result { self.closeBoth() }
             else { self.resumeRead(); self.partner?.resumeRead() }
         }
@@ -106,6 +114,9 @@ final class DesktopSSHRelay: ChannelDuplexHandler, @unchecked Sendable {
 }
 
 final class DirectDesktopSSHTunnel: @unchecked Sendable {
+    // The pinned NIOSSH library also uses this as its initial receive window.
+    // Keep this Desktop-only; Terminal and Files have independent settings.
+    static let maximumPacketBytes = 1024 * 1024
     let client: SSHClient
     let remote: Channel
     let bridge: Channel
@@ -150,6 +161,17 @@ final class DirectDesktopSSHTunnel: @unchecked Sendable {
     func counts() async throws -> (outbound: Int, inbound: Int, peak: Int) {
         try await bridge.eventLoop.submit { [relays] in
             (relays.0.transferred, relays.1.transferred, max(relays.0.peakQueued, relays.1.peakQueued))
+        }.get()
+    }
+    // The event loop owns both relays. Completion measures local forwarding,
+    // never remote application consumption or end-to-end cursor latency.
+    func diagnosticCounters() async throws -> [String: Double] {
+        try await bridge.eventLoop.submit { [relays] in
+            ["configuredMaximumPacketBytes": Double(Self.maximumPacketBytes),
+             "outboundBytes": Double(relays.0.transferred), "inboundBytes": Double(relays.1.transferred),
+             "outboundQueuedBytes": Double(relays.0.queuedBytes), "inboundQueuedBytes": Double(relays.1.queuedBytes),
+             "outboundPeakQueuedBytes": Double(relays.0.peakQueued), "inboundPeakQueuedBytes": Double(relays.1.peakQueued),
+             "outboundWriteMaxMS": relays.0.maxWriteCompletionMS, "inboundWriteMaxMS": relays.1.maxWriteCompletionMS]
         }.get()
     }
     static func failureStage(_ error: Error) -> Int {
@@ -210,6 +232,7 @@ final class DirectDesktopSSHTunnel: @unchecked Sendable {
             authenticationMethod: { .passwordBased(username: username, password: password) },
             hostKeyValidator: .custom(TerminalHostValidator(validate: validateHost)))
         settings.connectTimeout = .seconds(60)
+        settings.protocolOptions = [.maximumPacketSize(Self.maximumPacketBytes)]
         let client: SSHClient
         do { try Task.checkCancellation(); client = try await SSHClient.connect(on: parent, settings: settings); try Task.checkCancellation() }
         catch { try? await parent.close(); throw error }

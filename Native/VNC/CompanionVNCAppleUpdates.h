@@ -9,7 +9,9 @@
 static inline bool CompanionVNCAppleUpdatePacket(int width, int height, bool enabled, uint8_t packet[16]) {
     size_t bytes;
     if (!packet || !CompanionVNCFramebufferByteCount(width, height, &bytes)) return false;
-    uint32_t period = enabled ? 100000 : UINT32_MAX;
+    // A positive period also delays host CursorPos reports after each pixel update.
+    // Keep the active classic stream unpaced; pause still disables it explicitly.
+    uint32_t period = enabled ? 0 : UINT32_MAX;
     memset(packet, 0, 16); packet[0] = 9;
     for (int i = 0; i < 4; i++) packet[4 + i] = (uint8_t)(period >> (24 - 8 * i));
     packet[12] = (uint8_t)(width >> 8); packet[13] = (uint8_t)width;

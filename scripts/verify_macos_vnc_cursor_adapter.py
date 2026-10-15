@@ -10,6 +10,7 @@ import unittest
 
 from prepare_macos_vnc_cursor import ROOT, adapted_cursor, prepare, verify
 from build_vnc_ios_development import cmake_source_options
+from prepare_vnc_read_service import adapted_read_service, TRANSFORMS
 
 
 class CursorAdapterTests(unittest.TestCase):
@@ -27,6 +28,28 @@ class CursorAdapterTests(unittest.TestCase):
         self.assertEqual((self.source / self.lock['macOSCursorCallback']['path']).read_bytes(), original)
         self.assertEqual((directory / self.lock['macOSCursorCallback']['path']).read_bytes(),
                          adapted_cursor(original, self.lock['macOSCursorCallback']))
+
+    def test_read_service_exact_patches_and_originals_are_preserved(self):
+        directory, expected, _ = prepare(self.source, self.output, self.lock)
+        for policy in self.lock['desktopReadInputService']['patches']:
+            original = (self.source / policy['path']).read_bytes()
+            self.assertEqual((directory / policy['path']).read_bytes(), adapted_read_service(original, policy))
+            self.assertEqual((self.source / policy['path']).read_bytes(), original)
+        self.assertEqual({p['path'] for p in self.lock['desktopReadInputService']['patches']}, set(TRANSFORMS))
+        verify(directory, expected)
+
+    def test_read_service_unadmitted_patches_and_missing_policy_are_rejected(self):
+        for policy in self.lock['desktopReadInputService']['patches']:
+            original = (self.source / policy['path']).read_bytes()
+            with self.assertRaises(ValueError):
+                adapted_read_service(original + b'\n', policy)
+            for field in ['path', 'originalSHA256', 'adaptedSHA256', 'patchPath', 'patchSHA256']:
+                changed = copy.deepcopy(policy); changed[field] = 'unadmitted'
+                with self.assertRaises(ValueError):
+                    adapted_read_service(original, changed)
+        changed = copy.deepcopy(self.lock); changed['desktopReadInputService']['patches'].pop()
+        with self.assertRaises(ValueError):
+            prepare(self.source, self.output, changed)
 
     def test_unadmitted_transform_is_rejected(self):
         policy = self.lock['macOSCursorCallback']
